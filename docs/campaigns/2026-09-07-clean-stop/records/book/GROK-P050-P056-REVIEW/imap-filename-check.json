@@ -1,0 +1,40 @@
+{
+  "schema": "kizuki.fleet-local-mime-fidelity-review/v1",
+  "checked_at": "2026-09-06T22:05:48.252Z",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "runtime": {
+    "name": "bun",
+    "version": "1.3.14"
+  },
+  "scope": "Pure parser check of ordinary MIME filenames; no network, accounts, source edits, or release qualification",
+  "results": [
+    {
+      "id": "existing-whole-utf8-character",
+      "expected": "café report.pdf",
+      "observed": "café report.pdf",
+      "contentTypeObserved": "café report.pdf",
+      "pass": true
+    },
+    {
+      "id": "continued-latin1-charset",
+      "expected": "café.txt",
+      "observed": "caf�.txt",
+      "contentTypeObserved": "caf�.txt",
+      "pass": false
+    },
+    {
+      "id": "continued-utf8-character",
+      "expected": "café.txt",
+      "observed": "caf��.txt",
+      "contentTypeObserved": "caf��.txt",
+      "pass": false
+    },
+    {
+      "id": "mixed-extended-and-plain-segments",
+      "expected": "café.txt",
+      "observed": "caf�.txt",
+      "contentTypeObserved": "caf�.txt",
+      "pass": false
+    }
+  ]
+}

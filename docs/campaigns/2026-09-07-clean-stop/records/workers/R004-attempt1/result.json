@@ -1,0 +1,201 @@
+{
+  "task_id": "R004",
+  "packet_id": "R004",
+  "title": "Map effective runtime and SQLite identity observations",
+  "issue": 539,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "findings": [
+    {
+      "severity": "limitation",
+      "id": "no-native-copied-binary",
+      "summary": "This archive has no dist/ native package. Requested BUILD labels and host bun:sqlite were observed; copied kizuki/kizuki-mcp children were not spawned.",
+      "confirmed": true,
+      "product_defect": false
+    },
+    {
+      "severity": "limitation",
+      "id": "workspace-modules-absent",
+      "summary": "scripts/qualification.test.ts, scripts/go-no-go.test.ts, CLI doctor tests, and MCP stdio tests were not executed because workspace modules are not installed and bun install is forbidden.",
+      "confirmed": true,
+      "product_defect": false
+    },
+    {
+      "severity": "contract",
+      "id": "requested-is-not-measured",
+      "summary": "kizuki.release-build/v1 (source_sha, target, bun_version) does not contain sqlite_version or sqlite_source_id. Measured identity is readSqliteRuntime on the child's open ledger handle. Unknown measured pairs stay observable and FAIL engine qualification.",
+      "confirmed": true,
+      "product_defect": false,
+      "source": [
+        "packages/core/src/ledger/runtime.ts:4-50",
+        "scripts/stranger-proof.ts:109-116",
+        "scripts/artifact-proof.ts:23-31,138-144"
+      ]
+    }
+  ],
+  "deliverables": [
+    "/work/out/runtime-observation-field-map.json",
+    "/work/out/expected-observations.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/provider-docs.json",
+    "/work/out/local-bun-sqlite-observation.json",
+    "/work/out/validate-artifact-proof-check.json",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/runtime-observation-field-map.json",
+    "/work/out/expected-observations.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/provider-docs.json",
+    "/work/out/local-bun-sqlite-observation.json",
+    "/work/out/validate-artifact-proof-check.json"
+  ],
+  "source_references": [
+    { "file": "packages/core/src/ledger/runtime.ts", "lines": "4-50", "role": "measured sqlite-runtime fragment" },
+    { "file": "packages/core/src/ledger/schema.ts", "lines": "15-26", "role": "oneShotGet finalize" },
+    { "file": "packages/cli/src/commands/doctor.ts", "lines": "80,382", "role": "CLI doctor runtime field" },
+    { "file": "packages/core/src/serving/health.ts", "lines": "14-16,114", "role": "MCP system_health runtime field" },
+    { "file": "scripts/artifact-engine.ts", "lines": "31-61,79-161", "role": "child collection and projection" },
+    { "file": "scripts/artifact-proof.ts", "lines": "11-31,87-155", "role": "observation types, policy, validateArtifactProof" },
+    { "file": "scripts/stranger-proof.ts", "lines": "19-24,109-116,252-294", "role": "BUILD.json requested identity and v2 producer" },
+    { "file": "scripts/qualification.ts", "lines": "81-105", "role": "manifest Identity is artifact hashes plus target, not sqlite-runtime" },
+    { "file": "scripts/release-targets.ts", "lines": "1-24", "role": "closed target registry" },
+    { "file": "scripts/go-no-go.ts", "lines": "154,183-187", "role": "engine.<target> gate from measured proof, not BUILD.json" },
+    { "file": "docs/stranger-proof.md", "lines": "42-77", "role": "effective SQLite engine evidence" },
+    { "file": "docs/native-build.md", "lines": "23-37", "role": "BUILD.json four-field contract" },
+    { "file": "packages/core/test/sqlite-runtime.test.ts", "lines": "13-101", "role": "existing observation tests" },
+    { "file": "scripts/artifact-proof.test.ts", "lines": "77-133", "role": "existing requested-versus-measured tests" }
+  ],
+  "checks": [
+    {
+      "name": "sqlite-runtime unit tests",
+      "command": "cd /repo && bun test packages/core/test/sqlite-runtime.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14 (0d9b296a)",
+      "time": "2026-09-06T21:37:50Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "27 pass, 0 fail"
+    },
+    {
+      "name": "artifact-proof and artifact-engine tests",
+      "command": "cd /repo && bun test scripts/artifact-proof.test.ts scripts/artifact-engine.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14 (0d9b296a)",
+      "time": "2026-09-06T21:38:04Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "44 pass, 0 fail, 30.50s"
+    },
+    {
+      "name": "serveHealth runtime seam",
+      "command": "cd /repo && bun test packages/core/test/serving/health.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14 (0d9b296a)",
+      "time": "2026-09-06T21:44:10Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "7 pass, 0 fail, 568ms"
+    },
+    {
+      "name": "CLI doctor JSON runtime",
+      "command": "cd /repo && bun test packages/cli/test/doctor/legacy-ledger.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "time": "2026-09-06T21:39:20Z",
+      "result": "NOT_RUN",
+      "detail": "Cannot find module '@kizuki/core/internal'. Missing input: installed workspace package links."
+    },
+    {
+      "name": "MCP stdio system_health runtime",
+      "command": "cd /repo && bun test packages/mcp/test/stdio.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "time": "2026-09-06T21:39:20Z",
+      "result": "NOT_RUN",
+      "detail": "Cannot find module '@kizuki/retrieval-pg'. Missing input: installed workspace package links."
+    },
+    {
+      "name": "validateArtifactProof matching vs unmatched fixtures",
+      "command": "cd /repo && bun -e validateArtifactProof(matching) and validateArtifactProof(unmatched)",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14 (0d9b296a)",
+      "time": "2026-09-06T21:38:58.417Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/validate-artifact-proof-check.json",
+      "detail": "matching PASS/effective-sqlite-identity-qualified; unmatched FAIL/unqualified-sqlite-identity"
+    },
+    {
+      "name": "archive-host bun:sqlite observation",
+      "command": "cd /repo && bun -e readSqliteRuntime(new Database(':memory:'))",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14 (0d9b296a) linux x64",
+      "time": "2026-09-06T21:38:04.860Z",
+      "exit_code": 0,
+      "result": "PASS_HOST_ONLY",
+      "evidence": "/work/out/local-bun-sqlite-observation.json",
+      "detail": "Measured sqlite 3.53.0 with official SOURCE_ID. Not a copied native kizuki/kizuki-mcp execution."
+    },
+    {
+      "name": "qualification tests",
+      "command": "cd /repo && bun test scripts/qualification.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "time": "2026-09-06T21:38:40Z",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "detail": "Cannot find module 'js-tiktoken/lite'. Missing input: installed workspace node_modules. Install forbidden."
+    },
+    {
+      "name": "go-no-go tests",
+      "command": "cd /repo && bun test scripts/go-no-go.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "time": "2026-09-06T21:38:40Z",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "detail": "Cannot find module 'js-tiktoken/lite'. Missing input: installed workspace node_modules. Install forbidden."
+    },
+    {
+      "name": "native artifact proof",
+      "command": "bun run proof:artifact -- --report DIR",
+      "result": "NOT_RUN",
+      "detail": "Missing input: retained native package under dist/. This archive contains no built kizuki/kizuki-mcp binaries."
+    },
+    {
+      "name": "full repository gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "detail": "Missing workspace modules and native package; full gate not claimed."
+    }
+  ],
+  "verification": {
+    "focused": "PASS for sqlite-runtime, artifact-proof, artifact-engine, health runtime, and synthetic validateArtifactProof",
+    "full_gate": "NOT_RUN",
+    "native_package": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "release_acceptance": "not claimed"
+  },
+  "blockers": [],
+  "limitations": [
+    "No native copied-binary execution in this packet.",
+    "No workspace node_modules; several package tests unexecuted.",
+    "Git remotes and live issue/PR state were not refreshed; root owns that.",
+    "Host bun:sqlite matching the policy does not qualify bun-darwin-arm64 or a shipped package.",
+    "P003/P015/P006/Astra ownership unchanged."
+  ],
+  "downstream_handoff": {
+    "feeds_packets": ["P008", "P091", "P092"],
+    "use": [
+      "/work/out/runtime-observation-field-map.json",
+      "/work/out/expected-observations.json"
+    ],
+    "do_not": [
+      "Infer native execution or SQLite identity from BUILD.json target",
+      "Duplicate sqlite-runtime or artifact-proof tests; the exact cases already exist",
+      "Treat host Bun observation as copied-child engine credit",
+      "Upgrade historical v1 receipts to engine PASS"
+    ]
+  },
+  "next_step": "P008/P091/P092 consume the field map and two expected observation objects; a retained native package plus copied-child proof remains a separate producer before any engine gate can be current."
+}

@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "kizuki.acceptance-evidence/v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "candidate_source_sha",
+    "artifacts",
+    "fixture_observation",
+    "gate_receipts"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kizuki.acceptance-evidence/v3"
+    },
+    "candidate_source_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "producer",
+          "target",
+          "directory",
+          "proof",
+          "proof_sha256"
+        ],
+        "properties": {
+          "producer": {
+            "enum": [
+              "kizuki.artifact-proof/v1",
+              "kizuki.artifact-proof/v2"
+            ]
+          },
+          "target": {
+            "enum": [
+              "bun-linux-x64-baseline",
+              "bun-darwin-arm64"
+            ]
+          },
+          "directory": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^/"
+          },
+          "proof": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^/"
+          },
+          "proof_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        }
+      }
+    },
+    "fixture_observation": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "producer",
+            "directory",
+            "manifest_sha256",
+            "genesis_sha256",
+            "samples_sha256"
+          ],
+          "properties": {
+            "producer": {
+              "const": "kizuki.qualification/v1"
+            },
+            "directory": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "pattern": "^/"
+            },
+            "manifest_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "genesis_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "samples_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          }
+        }
+      ]
+    },
+    "gate_receipts": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "producer",
+          "gate_id",
+          "target",
+          "path",
+          "sha256"
+        ],
+        "properties": {
+          "producer": {
+            "enum": [
+              "kizuki.native-attestation/v1",
+              "kizuki.native-lifecycle/v1",
+              "kizuki.required-checks/v1",
+              "kizuki.independent-review/v1",
+              "kizuki.p0-disposition/v1",
+              "kizuki.surface-inventory/v1",
+              "kizuki.journey-proof/v1",
+              "kizuki.connector-evidence/v1",
+              "kizuki.unfamiliar-user/v1",
+              "kizuki.owner-rails-observation/v1",
+              "kizuki.estate-parity-observation/v1",
+              "kizuki.cutover-authority/v1"
+            ]
+          },
+          "gate_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[\\x20-\\x7e]+$"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "enum": [
+                  "bun-linux-x64-baseline",
+                  "bun-darwin-arm64"
+                ]
+              }
+            ]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^/"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        }
+      }
+    }
+  }
+}

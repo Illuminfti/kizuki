@@ -1,0 +1,185 @@
+{
+  "task_id": "R084",
+  "packet_id": "R084",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "finding",
+  "issue": 550,
+  "feeds_packets": ["P082"],
+  "title": "Review Screenpipe bounded read-query accounting",
+  "identity": {
+    "checkout": "/repo git archive of exact base; no Git metadata",
+    "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+    "owner": "grok-R084",
+    "write_scope": "/work/out only",
+    "remote_verified": false,
+    "bun": "1.3.14"
+  },
+  "findings": [
+    {
+      "id": "R084-F1",
+      "severity": "contract",
+      "file_line": "packages/connector-screenpipe/src/read.ts:236-262",
+      "symbol": "maxIdBefore / seedAfterIds",
+      "invariant": "since compares normalized instants; rows with iso >= since must remain readable",
+      "evidence": "Draft seed_after_since observed 4. Frame 4 at 2026-03-01T09:50:00Z is before since 09:55Z and raises the id watermark past frames 1 and 2 (10:00Z / 10:00:30Z). Trace: /work/out/row-sequence-trace.json cases.seed_after_since and current_code_since_seeded.events (transcriptions only).",
+      "independent_expected": "Seed should exclude only instants strictly before since. Frames 1 and 2 stay in range.",
+      "current_code": "max id among resolved.iso < since over a full ORDER BY id scan.",
+      "existing_coverage": "backfill.test.ts:198-223 and p1-regressions.test.ts:21-58 use monotonic times only. Do not duplicate those.",
+      "required_fix": "P082: either document the max-id approximation and its non-monotonic hole, or filter by resolved instant without advancing last_frame_id past an in-range earlier id."
+    },
+    {
+      "id": "R084-F2",
+      "severity": "contract",
+      "file_line": "packages/connector-screenpipe/src/walk.ts:24-32,140-148,161; packages/connector-screenpipe/src/connector.ts:256-267",
+      "symbol": "comparePrepared / RowWalker pause / #advance merge",
+      "invariant": "README: each call merges frame and audio streams in global occurrence order; settle pause does not skip the paused row",
+      "evidence": "SQL after id 2 limit 2 through 4 returned [3,4] (id order, not time). Settle drain at boundary 10:02Z emitted frame:1, transcription:1, transcription:2, frame:2, transcription:3 with last_frame_id=2, phase caught_up. Frame 4 at 09:50Z was held behind paused frame 3 at 10:05Z while transcription 3 at 10:00:40Z emitted.",
+      "independent_expected": "Global time order would emit frame:4 before transcription:3. A paused head should not let the other stream pass a held earlier-time later-id row.",
+      "current_code": "Each stream is ORDER BY id. Pause returns null for that walker; the merge treats it as empty and continues the other stream.",
+      "existing_coverage": "Monotonic merge: p1-regressions.test.ts:148-182. One-stream pause: backfill.test.ts:159-196. Cross-stream + non-monotonic hold is missing.",
+      "required_fix": "P082: decide whether id-order-plus-head-merge is the contract (then tighten README) or true global order (then stall both streams or time-sort within the snapshot page)."
+    },
+    {
+      "id": "R084-F3",
+      "severity": "stale-accounting",
+      "file_line": "packages/connector-screenpipe/src/cursor.ts:11-18,81-88,196-207; packages/connector-screenpipe/src/walk.ts:162-164",
+      "symbol": "SkippedCounters / prepareFrame empty text",
+      "invariant": "Current README: malformed settled row fails the batch before a new checkpoint. Wave1 spec §5/§6: skip and count.",
+      "evidence": "Draft empty-text case: events=[], last_frame_id stays 4, phase parse_error, malformed frame:5 text. recordSkippedFrame is never called from walk. parseSkipTotal omits frames_without_text.",
+      "independent_expected": "Follow the current README: fail closed, no skip increment.",
+      "current_code": "Matches README. Skip counters are serialized leftovers.",
+      "existing_coverage": "Fail-closed: backfill.test.ts:143-157. Counter round-trip only: cursor.test.ts:20-32. Do not add a skip-and-count test without a contract choice.",
+      "required_fix": "P082: keep fail-closed, or implement skip-and-count and update README. Do not leave both stories live."
+    },
+    {
+      "id": "R084-F4",
+      "severity": "hygiene",
+      "file_line": "packages/connector-screenpipe/src/walk.ts:145",
+      "symbol": "RowWalker.#refill",
+      "invariant": "SQL pages are bounded and named next to BATCH_LIMIT",
+      "evidence": "Hardcoded 64. Production BATCH_LIMIT 500 implies up to 8 pages per stream per call. No walk.test.ts.",
+      "independent_expected": "Named constant, covered by existing 1200-row batch test indirectly.",
+      "current_code": "Bounded but unnamed.",
+      "existing_coverage": "backfill.test.ts:49-76 exercises multiple pages but asserts only 500.",
+      "required_fix": "Optional: export WALK_PAGE=64 beside BATCH_LIMIT. Not a functional blocker."
+    },
+    {
+      "id": "R084-F5",
+      "severity": "hygiene",
+      "file_line": "packages/connector-screenpipe/src/cursor.ts:41",
+      "symbol": "DISTINCT_SCAN_CAP",
+      "invariant": "Exported bounds should be used or removed by their owner",
+      "evidence": "Exported from index.ts; not referenced in read.ts or walk.ts. Purge uses a separate PLAN_SQL_ROWS=256.",
+      "independent_expected": "Read-path unused.",
+      "current_code": "Leftover export.",
+      "existing_coverage": "purge.test.ts uses it as a fixture size, not as a read-query bound.",
+      "required_fix": "Out of R084 write scope. P082 may ignore unless touching cursor exports."
+    }
+  ],
+  "deliverables": [
+    "/work/out/query-limit-cursor-accounting.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/row-sequence-draft.json",
+    "/work/out/row-sequence-draft.ts",
+    "/work/out/row-sequence-trace.json",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/query-limit-cursor-accounting.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/row-sequence-draft.json",
+    "/work/out/row-sequence-draft.ts",
+    "/work/out/row-sequence-trace.json",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/connector-screenpipe/src/read.ts:80-262",
+    "packages/connector-screenpipe/src/walk.ts:24-148,151-206",
+    "packages/connector-screenpipe/src/cursor.ts:5-43,91-113,171-174,196-207,210-226",
+    "packages/connector-screenpipe/src/connector.ts:196-337",
+    "packages/connector-screenpipe/src/identity.ts:12-57",
+    "packages/connector-screenpipe/README.md:33-41,91-114",
+    "packages/core/src/ingest/run.ts:121-137,345-346",
+    "packages/core/src/contracts/connector.ts:8-9",
+    "docs/wave1/specs/connector-screenpipe.md:403-431 (stale v1 skip-and-count)",
+    "packages/connector-screenpipe/test/backfill.test.ts",
+    "packages/connector-screenpipe/test/sync.test.ts",
+    "packages/connector-screenpipe/test/cursor.test.ts",
+    "packages/connector-screenpipe/test/p1-regressions.test.ts",
+    "packages/connector-screenpipe/test/open.test.ts:78-93"
+  ],
+  "checks": [
+    {
+      "name": "existing_connector_tests",
+      "command": "cd /repo && bun test ./packages/connector-screenpipe/test/backfill.test.ts ./packages/connector-screenpipe/test/sync.test.ts ./packages/connector-screenpipe/test/cursor.test.ts ./packages/connector-screenpipe/test/p1-regressions.test.ts ./packages/connector-screenpipe/test/open.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T22:01:00Z",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "note": "Archive has no node_modules. bun could not resolve @kizuki/core or @kizuki/connector-screenpipe/testkit. Not treated as a product test failure. Assertions were read statically."
+    },
+    {
+      "name": "in_memory_row_sequence_draft",
+      "command": "bun /work/out/row-sequence-draft.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T22:05:41Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/row-sequence-trace.json",
+      "note": "Self-contained bun:sqlite. Replays read.ts SQL text and a walk/merge simulation. Does not import workspace packages. Tiny page/batch stand-ins (2) labeled in the fixture; production constants remain 64/500/5000."
+    },
+    {
+      "name": "typecheck_and_full_gate",
+      "command": "bun run typecheck && bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "note": "No workspace install. Read-only preparation packet. Full repository gate not assigned."
+    },
+    {
+      "name": "auth_or_other_model",
+      "result": "NOT_RUN",
+      "note": "Controller already verified the owner's Grok Build subscription. Not retested. No other model invoked."
+    }
+  ],
+  "verification": {
+    "focused": "NOT_RUN (missing node_modules); static coverage map provided",
+    "draft": "PASS bun /work/out/row-sequence-draft.ts exit 0",
+    "full_gate": "NOT_RUN",
+    "live_account": "NOT_RUN (not authorized; connector is offline file read)",
+    "independent_review": "NOT_RUN",
+    "limitations": [
+      "Could not execute existing package tests in this archive.",
+      "Draft simulates walk/merge from source; it is not the ScreenpipeConnector class.",
+      "No owner Screenpipe database was opened.",
+      "No native/account/model/human qualification claim."
+    ]
+  },
+  "blockers": [],
+  "next_step": "P082 owns implementation. Review F1–F3, choose fail-closed vs skip-and-count, and add only the missing tiny in-memory cases (non-monotonic since; settle pause vs held earlier-time later-id across streams). Do not duplicate BATCH_LIMIT, monotonic merge, or cursor JSON round-trip tests.",
+  "downstream_handoff": {
+    "to": "P082",
+    "contract": "kizuki.screenpipe local read paging and cursor progress",
+    "do_not_duplicate": [
+      "packages/connector-screenpipe/test/backfill.test.ts:49-76 BATCH_LIMIT 1200",
+      "packages/connector-screenpipe/test/p1-regressions.test.ts:148-182 monotonic merge",
+      "packages/connector-screenpipe/test/backfill.test.ts:93-117 settle last_frame_id=0",
+      "packages/connector-screenpipe/test/backfill.test.ts:143-157 empty text parse_error",
+      "packages/connector-screenpipe/test/cursor.test.ts skip-counter round-trip"
+    ],
+    "candidate_tests": [
+      "non-monotonic since max-id watermark vs time predicate (fixture in /work/out/row-sequence-draft.json)",
+      "pause on frame 3 holding frame 4 while transcription 3 emits"
+    ],
+    "must_not_claim": [
+      "integrated",
+      "released",
+      "live-account tested",
+      "unfamiliar-user accepted",
+      "full-gate pass"
+    ]
+  }
+}

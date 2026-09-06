@@ -1,0 +1,200 @@
+{
+  "task_id": "R061",
+  "packet_id": "R061",
+  "title": "Draft IMAP transfer-encoding fidelity examples",
+  "issue": 547,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "read_root": "/repo",
+  "write_scope": "/work/out only",
+  "capability": "live sync (kizuki.imap); this packet covers local MIME transfer+charset conversion only",
+  "findings": [
+    {
+      "severity": "limitation",
+      "id": "unsupported-charset-fallback-mojibake",
+      "summary": "decodeCharset stands in windows-1252 when Bun lacks the label. Independently correct iso-8859-2 łódź and windows-1251 Привет become ³ód¼ and Ïðèâåò, with fallback recorded. Existing iso-8859-2 test uses 0xE9 (é in both maps) and does not catch this.",
+      "source": "packages/connector-imap/src/mime/charset.ts:14-25",
+      "corpus_ids": ["iso88592-pl-lodz-qp", "iso88592-pl-lodz-8bit", "cp1251-ru-privet-8bit", "cp1251-ru-privet-base64"],
+      "existing_test": "packages/connector-imap/test/mime/transfer.test.ts:64-67 (executed pass; different bytes)"
+    },
+    {
+      "severity": "info",
+      "id": "transfer-matches-independent-spec",
+      "summary": "Product decodeTransfer matched independently specified RFC 2045/4648 bytes for all 49 new vectors (draft 49/49, product 49/49).",
+      "source": "packages/connector-imap/src/mime/transfer.ts:13-124"
+    },
+    {
+      "severity": "info",
+      "id": "existing-coverage-not-duplicated",
+      "summary": "hello/café/emoji/windows-1252 café/latin-1 8bit/RFC 2047 encoded-words already exist; cited, not redesigned."
+    }
+  ],
+  "deliverables": [
+    "/work/out/transfer-encoding-golden-corpus.json",
+    "/work/out/decode-transfer-draft.ts",
+    "/work/out/generate-corpus.ts",
+    "/work/out/run-golden-corpus.ts",
+    "/work/out/golden-corpus-run.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/research-notes.md",
+    "/work/out/recommended-p057-tests.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    {
+      "path": "/work/out/transfer-encoding-golden-corpus.json",
+      "kind": "golden_corpus",
+      "vectors": 49,
+      "notes": "Independently specified Unicode + RFC/WHATWG encoded forms. Includes already_covered citations."
+    },
+    {
+      "path": "/work/out/decode-transfer-draft.ts",
+      "kind": "pure_decoder_draft",
+      "notes": "RFC 2045/4648 transfer decode; charset via platform TextDecoder with windows-1252 fallback."
+    },
+    {
+      "path": "/work/out/run-golden-corpus.ts",
+      "kind": "runner",
+      "notes": "Compares draft and product decoders to the corpus."
+    }
+  ],
+  "source_references": [
+    {
+      "path": "packages/connector-imap/src/mime/transfer.ts",
+      "lines": "13-34",
+      "symbol": "decodeBase64Text",
+      "note": "Strict base64; leftover 6-bit quantum returns null"
+    },
+    {
+      "path": "packages/connector-imap/src/mime/transfer.ts",
+      "lines": "40-80",
+      "symbol": "decodeQuotedPrintableText"
+    },
+    {
+      "path": "packages/connector-imap/src/mime/transfer.ts",
+      "lines": "92-94",
+      "symbol": "decodeBase64Lenient",
+      "note": "RFC 2045 ignore non-alphabet for bodies"
+    },
+    {
+      "path": "packages/connector-imap/src/mime/transfer.ts",
+      "lines": "102-124",
+      "symbol": "decodeTransfer"
+    },
+    {
+      "path": "packages/connector-imap/src/mime/charset.ts",
+      "lines": "14-25",
+      "symbol": "decodeCharset"
+    },
+    {
+      "path": "packages/connector-imap/src/mime/parse.ts",
+      "lines": "258-263,277-287",
+      "symbol": "buildPart/partText",
+      "note": "transfer then charset composition"
+    },
+    {
+      "path": "packages/connector-imap/src/text.ts",
+      "lines": "9-17",
+      "symbol": "stripControls",
+      "note": "Not applied to decoded body text; filenames/display/folder only"
+    },
+    {
+      "path": "packages/connector-imap/src/events.ts",
+      "lines": "169-172",
+      "symbol": "normalizeBody",
+      "note": "CRLF to LF after charset decode"
+    },
+    {
+      "path": "packages/connector-imap/test/mime/transfer.test.ts",
+      "lines": "16-107",
+      "note": "Existing exact cases; executed 12 pass"
+    },
+    {
+      "path": "https://www.rfc-editor.org/rfc/rfc2045.txt",
+      "checked": "2026-09-06",
+      "http": 200
+    },
+    {
+      "path": "https://www.rfc-editor.org/rfc/rfc4648.txt",
+      "checked": "2026-09-06",
+      "http": 200
+    },
+    {
+      "path": "https://encoding.spec.whatwg.org/",
+      "checked": "2026-09-06",
+      "http": 200
+    }
+  ],
+  "checks": [
+    {
+      "name": "existing transfer unit tests",
+      "command": "bun test /repo/packages/connector-imap/test/mime/transfer.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14 (0d9b296a)",
+      "date": "2026-09-06",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "12 pass, 0 fail, 34 expect() calls"
+    },
+    {
+      "name": "golden corpus draft+product",
+      "command": "bun /work/out/run-golden-corpus.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "date": "2026-09-06",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "49/49 draft, 49/49 product, RFC 4648 foobar Zm9vYmFy",
+      "evidence": "/work/out/golden-corpus-run.json"
+    },
+    {
+      "name": "events fixture tests",
+      "command": "bun test /repo/packages/connector-imap/test/events.test.ts",
+      "result": "NOT_RUN",
+      "exit_code": 1,
+      "detail": "Cannot find module '@kizuki/core' in this git-archive container. Statically cited fixture.ts:117-130, 282-296 and events.test.ts:114-123, 269-272."
+    },
+    {
+      "name": "full repository gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "detail": "Not assigned; no workspace install; preparation packet only"
+    }
+  ],
+  "verification": {
+    "focused_existing_tests": "PASS",
+    "draft_corpus": "PASS",
+    "product_vs_independent_corpus": "PASS",
+    "events_tests": "NOT_RUN",
+    "typecheck": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "live_imap": "NOT_RUN",
+    "auth_reprobe": "not performed (controller already verified)"
+  },
+  "blockers": [
+    "events.test.ts requires @kizuki/core (absent in this archive)",
+    "No live IMAP account; none authorized",
+    "Product source is read-only; P057 owns landing tests",
+    "iso-8859-2 and windows-1251 remain unusable on Bun 1.3.14 TextDecoder; product fallback is the shipped contract, not a decoder for those labels"
+  ],
+  "next_step": "P057 adds focused decodeTransfer+decodeCharset tests from transfer-encoding-golden-corpus.json vectors, skipping already_covered ids and RFC 2047/MIME structure.",
+  "downstream_handoff": {
+    "feeds": ["P057"],
+    "do_not_duplicate": [
+      "packages/connector-imap/test/mime/transfer.test.ts:16-72 (hello, café QP, emoji, routing, fallback 0xE9)",
+      "packages/connector-imap/test/mime/transfer.test.ts:76-107 (RFC 2047 encoded-words)",
+      "packages/connector-imap/src/fixture.ts uid 4/5/14 and events.test.ts:114-123,269-272"
+    ],
+    "use": [
+      "/work/out/transfer-encoding-golden-corpus.json",
+      "/work/out/decode-transfer-draft.ts",
+      "/work/out/recommended-p057-tests.md"
+    ],
+    "limitations_to_preserve": [
+      "unsupported charset → windows-1252 + charset_fallback metadata",
+      "strict base64 for encoded words vs lenient for bodies",
+      "no live-account qualification from this packet"
+    ]
+  }
+}

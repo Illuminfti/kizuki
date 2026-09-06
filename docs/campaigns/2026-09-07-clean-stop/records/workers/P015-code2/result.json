@@ -1,0 +1,46 @@
+{
+  "task_id": "P015",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "5d21ed6eea9f7f9bc93ca288096b59c7201f1397",
+  "status": "awaiting_root_test",
+  "changed_files": [
+    "packages/core/src/canon/apply.ts",
+    "packages/core/src/canon/authority.ts",
+    "packages/core/src/canon/source-erasure-intent.ts",
+    "packages/core/src/export.ts",
+    "packages/core/src/ledger/canon-source-survivor-lineage.ts",
+    "packages/core/src/ledger/db.ts",
+    "packages/core/src/ledger/integrity.ts",
+    "packages/core/test/agent-enrollment-backup.test.ts",
+    "packages/core/test/canon/authority-projection.test.ts",
+    "packages/core/test/canon/source-survivor-lineage.test.ts",
+    "packages/core/test/event-backup-v2.test.ts",
+    "packages/core/test/export-connections.test.ts",
+    "packages/core/test/export-purge-history.test.ts",
+    "packages/core/test/export.test.ts",
+    "packages/core/test/migration.test.ts"
+  ],
+  "findings": [
+    "Fixed writeIntent to serialize the intended object while keeping the 256 KiB UTF-8 bound; both new v2 staging and valid legacy preimage upgrades now pass a JSON string into the byte-length check.",
+    "Resolver checkpoint recursion and portable binding validation now share the 128-generation visited budget, including terminal predecessors and revert targets. Distinct-row overflow remains 4,096 plus sentinel; refusal stays unavailable/no positive basis.",
+    "Portable restore rejects duplicate child IDs in the stream before publication and requires unique inserted IDs to match both the stream count and stored row count. Runtime insert remains idempotent for identical retry pairs.",
+    "Live current non-archive survivors require and receive lineage. Archive and deletion paths keep null lineage and do not use archive matching hashes as live positive authority.",
+    "assertLedgerSchema now asserts the v20 source-survivor table for expectedVersion >= 20, including enrollment's immutable preview. The parallel db.ts wrapper was removed.",
+    "Enrollment backup current-version pin is 20. Historical ledger16 fixtures and supported 16-20 compatibility matrices are preserved; unsupported versions now start at 21.",
+    "Lineage export/restore fixtures use sibling directories outside the vault. Added ordinary evidence for mixed-source archive continuity, valid v1 preimage upgrade, post-checkpoint purge/revert/undo-of-undo, and duplicate-stream refusal.",
+    "source-grants.test.ts was not modified; genuine surviving-B assertions and the raw-unrecorded negative fixture remain unchanged."
+  ],
+  "deliverables": [
+    "Corrective commit 5d21ed6eea9f7f9bc93ca288096b59c7201f1397 on agent/grok-p015, parent 34d02119014e7fd071e5ab3709fd65b7c0a5e065, integration base f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+    "/work/out/test-request.json request_id p015-corrective-lineage-20260906 using packet.test_paths"
+  ],
+  "verification": {
+    "focused": "NOT_RUN",
+    "full": "NOT_RUN",
+    "reason": "Root owns network-disabled test execution. Candidate tests were not installed or run in this network-enabled agent container.",
+    "test_request": "/work/out/test-request.json",
+    "test_request_id": "p015-corrective-lineage-20260906"
+  },
+  "blockers": [],
+  "next_step": "Root should run the sealed network-disabled tests for request p015-corrective-lineage-20260906 on head 5d21ed6eea9f7f9bc93ca288096b59c7201f1397, then independent review."
+}

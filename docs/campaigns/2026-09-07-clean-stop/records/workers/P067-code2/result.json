@@ -1,0 +1,61 @@
+{
+  "task_id": "P067",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "b82dbcbb8d390e3e315d2dbea335f93ef57d0954",
+  "status": "awaiting_root_test",
+  "changed_files": [
+    "packages/connectors/test/fleet-markdown-lifecycle.test.ts"
+  ],
+  "findings": [
+    {
+      "severity": "info",
+      "summary": "Existing markdown-folder and vault-boundary tests already cover isolated capture, change, tombstone, paging exhaust, and subject stability. They do not independently specify selected-folder isolation from sibling/parent files, a mixed unchanged/changed/deleted resume on a new connector instance, non-repetition of that mixed resume, fresh backfill after deletion (current files only), or identical-text distinct identities."
+    }
+  ],
+  "deliverables": [
+    {
+      "path": "packages/connectors/test/fleet-markdown-lifecycle.test.ts",
+      "kind": "independent_fixture_tests",
+      "commit": "b82dbcbb8d390e3e315d2dbea335f93ef57d0954",
+      "expectations": [
+        "Selecting an independent synthetic folder captures only that folder's ordinary markdown (relative ids and texts); parent and sibling files are not ingested.",
+        "Repeat backfill(null) of an unchanged selected folder re-emits the same source_record_id and subjects.",
+        "sync(cursor) of an unchanged selected folder emits no events.",
+        "One resume after editing one ordinary file and deleting another emits the new text for the edited id (same subjects) and a tombstone for the deleted id (same subjects), and does not re-emit the unchanged file.",
+        "A further resume does not repeat the change or tombstone.",
+        "A fresh backfill(null) after deletion reports the current files only and does not emit a historical tombstone.",
+        "Two ordinary files with identical text keep distinct, stable source_record_id and subject identities; an idle resume emits nothing."
+      ]
+    },
+    {
+      "path": "/work/out/coverage-inspection.md",
+      "kind": "coverage_inspection"
+    }
+  ],
+  "verification": {
+    "focused": {
+      "result": "NOT_RUN",
+      "reason": "Qualified execution belongs to the root network-disabled runner. Request p067-markdown-lifecycle-1 submitted; /work/out/test-result.json has not arrived.",
+      "request_id": "p067-markdown-lifecycle-1",
+      "test_paths": [
+        "packages/connectors/test/fleet-markdown-lifecycle.test.ts",
+        "packages/connectors/test/markdown-folder.test.ts",
+        "packages/connectors/test/markdown-vault-boundary.test.ts"
+      ]
+    },
+    "package_type_full_gate": {
+      "result": "NOT_RUN",
+      "reason": "This assignment may not launch tests in the network-enabled agent container."
+    },
+    "independent_review": {
+      "result": "NOT_RUN",
+      "reason": "Draft candidate pending root tests and independent exact-head review."
+    }
+  },
+  "blockers": [
+    "Focused tests and existing markdown-folder/vault-boundary tests are awaiting the root network-disabled runner.",
+    "Final connector release credit still requires the final compiled package and separate required evidence.",
+    "Any production repair or shared helper change needs a newly reconciled, explicitly owned scope; this packet does not take it."
+  ],
+  "next_step": "Root runs request p067-markdown-lifecycle-1 on head b82dbcbb8d390e3e315d2dbea335f93ef57d0954 and records /work/out/test-result.json. If those tests fail on production behavior, report a static path/proposal without editing production."
+}

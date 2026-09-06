@@ -1,0 +1,66 @@
+{
+  "task_id": "P103",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "c7484874913df3ccab72a66f51310942e4daf3c5",
+  "tree_sha": "e39c33a1d573d7d235c94f829f9be4a39266e04e",
+  "status": "awaiting_root_test",
+  "branch": "agent/grok-p103",
+  "worktree": "/repo",
+  "changed_files": [
+    "packages/connectors/src/sensitivity.ts",
+    "packages/connectors/test/sensitivity.test.ts"
+  ],
+  "commit": {
+    "sha": "c7484874913df3ccab72a66f51310942e4daf3c5",
+    "subject": "Use the core sensitivity lattice for connector event hints"
+  },
+  "findings": [
+    {
+      "severity": "info",
+      "location": "packages/connectors/src/sensitivity.ts",
+      "summary": "Removed the connector-local lattice table and comparison. The helper now maps floor, default, and event hint onto the exported core resolver and returns its sensitivity.",
+      "status": "addressed"
+    },
+    {
+      "severity": "info",
+      "location": "packages/connectors/test/sensitivity.test.ts",
+      "summary": "Replaced the downward-hint expectation with combinatorial core-parity coverage plus named raise-only and fail-closed cases. Importer manifest and fixture assertions are unchanged.",
+      "status": "addressed"
+    }
+  ],
+  "deliverables": [
+    "/work/out/result.json",
+    "/work/out/RESULT.md",
+    "/work/out/findings.md",
+    "/work/out/test-request.json"
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun test packages/connectors/test/sensitivity.test.ts",
+      "head": "c7484874913df3ccab72a66f51310942e4daf3c5",
+      "request_id": "p103-sensitivity-lattice-c748487",
+      "result": "NOT_RUN",
+      "reason": "Root owns network-disabled test execution. test-request.json written; test-result.json not supplied in this session."
+    },
+    "package_type_full_gate": {
+      "result": "NOT_RUN",
+      "reason": "Not executed in this network-enabled agent container."
+    },
+    "privacy_diff_integrity": {
+      "result": "PASS",
+      "kind": "static",
+      "notes": "Owned diff uses only synthetic public/personal/private labels and unknown tokens. No vault, credential, provider, or exposure-reproduction cases."
+    },
+    "independent_review": {
+      "result": "NOT_RUN"
+    }
+  },
+  "blockers": [],
+  "next_step": "Root runs bun test packages/connectors/test/sensitivity.test.ts with Bun 1.3.14 on head c7484874913df3ccab72a66f51310942e4daf3c5 and returns /work/out/test-result.json, then independent review of the same head.",
+  "limits_honored": [
+    "Edited only packet write_paths",
+    "Did not edit callers, conformance, manifests, core sensitivity, RFCs, or fixtures",
+    "Did not install dependencies or run tests in this container",
+    "No fetch, push, or remote operations"
+  ]
+}

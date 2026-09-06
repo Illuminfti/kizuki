@@ -1,0 +1,66 @@
+{
+  "schema": "kizuki.production-packet-validation/v1",
+  "validated_at": "2026-09-06T22:23:26Z",
+  "packet_path": "CHECKPOINT_BOOK/GROK-P101-P105-CODE-PACKETS/GROK-FLEET-P101-P105.json",
+  "packet_sha256": "4421f5d2829c00bc1c8d591837e495cb0b0d61a06f767a26237456c8a909e193",
+  "packet_bytes": 16725,
+  "source_verification_path": "CHECKPOINT_BOOK/GROK-P101-P105-CODE-PACKETS/SOURCE-VERIFICATION.json",
+  "source_verification_sha256": "677b91838836c62f7c361693ace740651beb3d65b8d134f8e8c3a7123ae2b776",
+  "checks": {
+    "json_parsed": true,
+    "schema_and_ids_exact": true,
+    "base_tree_exact": true,
+    "write_paths_unique": true,
+    "test_paths_subset_of_write_paths": true,
+    "all_owned_paths_exist_at_base": true,
+    "skills_exist": true,
+    "context_files_exist": true,
+    "handoffs_at_most_8192_bytes": true,
+    "reserved_paths_excluded": true
+  },
+  "owned_write_paths": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/macos-native.yml",
+    "packages/cli/src/commands/audit.ts",
+    "packages/cli/test/audit-undo.test.ts",
+    "packages/connectors/src/sensitivity.ts",
+    "packages/connectors/test/sensitivity.test.ts",
+    "packages/mcp/src/schemas.ts",
+    "packages/mcp/test/schema.test.ts",
+    "scripts/qualification.test.ts",
+    "scripts/qualification.ts",
+    "scripts/verify-workflows.test.ts",
+    "scripts/verify-workflows.ts"
+  ],
+  "handoffs": {
+    "P101": {
+      "path": "CHECKPOINT_BOOK/GROK-P101-P105-CODE-PACKETS/P101-HANDOFF.md",
+      "bytes": 2134,
+      "sha256": "352719e89cc7c54c7e02f05a349027781f7b1092a8412d59e55af5c97fe3a9bd"
+    },
+    "P102": {
+      "path": "CHECKPOINT_BOOK/GROK-P101-P105-CODE-PACKETS/P102-HANDOFF.md",
+      "bytes": 1940,
+      "sha256": "f7aa0b342235e5fbc627f063a3461890446a1412b1494e6a2c8c13df545aba99"
+    },
+    "P103": {
+      "path": "CHECKPOINT_BOOK/GROK-P101-P105-CODE-PACKETS/P103-HANDOFF.md",
+      "bytes": 1930,
+      "sha256": "c0e976eb0160d0ad9fd212e5039bea766961aa64cc434b27856988abc181e002"
+    },
+    "P104": {
+      "path": "CHECKPOINT_BOOK/GROK-P101-P105-CODE-PACKETS/P104-HANDOFF.md",
+      "bytes": 1824,
+      "sha256": "2a643722e409f05fb33fcffd9369c009fd294f7e830c270fff4346a34f7c92af"
+    },
+    "P105": {
+      "path": "CHECKPOINT_BOOK/GROK-P101-P105-CODE-PACKETS/P105-HANDOFF.md",
+      "bytes": 1843,
+      "sha256": "3a1d11a303d0f4968aed1acf9deef1eae205f491d0975681424e757d0df1c916"
+    }
+  },
+  "claim_limits": [
+    "Packet structure and source identity were validated.",
+    "No implementation tests, production edits, release qualification, or dispatch occurred."
+  ]
+}

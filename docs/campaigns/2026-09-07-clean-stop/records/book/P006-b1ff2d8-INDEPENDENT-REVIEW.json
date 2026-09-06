@@ -1,0 +1,53 @@
+{
+  "schema": "kizuki.p006-static-review/v1",
+  "reviewed_at": "2026-09-06T22:39:42.275725+00:00",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "candidate_sha": "b1ff2d812bb3cd0384d0f0f6f98ed32704774cac",
+  "candidate_tree": "20fe23f62c16704abdd6a7437a49dc331a257b16",
+  "raw_commit_parents": [
+    "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7"
+  ],
+  "changed_paths": [
+    "README.md",
+    "SECURITY.md",
+    "docs/CURRENT.md",
+    "docs/README.md",
+    "docs/cli.md",
+    "docs/connect.md",
+    "docs/release-acceptance.md",
+    "packages/cli/src/help.ts",
+    "packages/connectors/README.md"
+  ],
+  "outside_owned_paths": [],
+  "head_index_equal": true,
+  "tracked_worktree_changes": [],
+  "untracked_paths": [],
+  "tracked_files_read": 1228,
+  "tracked_bytes_hashed": 9948211,
+  "diff_check": "PASS",
+  "file_sha256": {
+    "README.md": "fa2c431af1594d2be54a5073c3e24cf3aa09159a0c42c0ee34175fe07982bd18",
+    "SECURITY.md": "e01ea13e21be1cb0f5c73399a28f33809c98a2d2d61f22ae40f5bde1d5364d08",
+    "docs/CURRENT.md": "d69a0cd77d0eff01bc64e265502f370e8a8f4cd37f5af45ff17b32e9345e598d",
+    "docs/README.md": "042f9e06ff2012160a425dd912ceab5790f84fd1656311ae4a84839062fba96d",
+    "docs/cli.md": "5c1abf43209162abbee32d5ef52d3e68ea0b5dad78a2d01274d0c18616fdd84a",
+    "docs/connect.md": "34ce1d163cbd63d0149f6cbe9101901e9bc96d610d4cca58219e587cea492461",
+    "docs/release-acceptance.md": "cae7db34069abf372d4a4224d86f0f3c00c9f5d94b19f6361df4854f505a1681",
+    "packages/cli/src/help.ts": "378daeeb0baed6ff6546713a3a9a68a459a3ca12a0e4a1a53c0b730b9cbfdc0f",
+    "packages/connectors/README.md": "d4254ba66a9cb451db14d8ac78a97fa3f52b7c3869fe9dc0a6799518ad2b6137"
+  },
+  "review_decision": "ACCEPT_WITH_NONBLOCKING_DOC_FOLLOWUP",
+  "finding": {
+    "file": "SECURITY.md",
+    "line": 67,
+    "severity": "low",
+    "origin": "pre-existing retained text",
+    "summary": "No packaged binary claim conflicts with the documented local Linux x64 baseline package.",
+    "suggested_replacement": "A published or signed installer."
+  },
+  "limitations": [
+    "Static documentation/source review only; no product or account execution.",
+    "No live-account, native artifact, release or unfamiliar-human acceptance credit.",
+    "The capability-proof producer remains outside this docs phase."
+  ]
+}

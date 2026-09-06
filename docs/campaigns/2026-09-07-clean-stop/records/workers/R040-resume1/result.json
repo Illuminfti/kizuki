@@ -1,0 +1,136 @@
+{
+  "task_id": "R040",
+  "packet_id": "R040",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Map current-main doctor command exit and output behavior",
+  "findings": [
+    {
+      "severity": "blocker_for_live_cli_in_this_container",
+      "id": "missing-workspace-node-modules",
+      "location": "/repo (git archive, no node_modules)",
+      "evidence": "bun packages/cli/src/main.ts doctor → Cannot find module '@kizuki/tui' from packages/cli/src/output.ts",
+      "invariant": "CLI process seam requires workspace install",
+      "required_fix": "none in this packet; prerequisite is bun install on a writable checkout of the same SHA"
+    },
+    {
+      "severity": "docs-code-mismatch",
+      "id": "cli-md-omits-integrity-and-unverified",
+      "location": "docs/cli.md:231-239 vs packages/cli/src/commands/doctor.ts:86 and packages/core/src/serve/doctor.ts:228-248",
+      "evidence": "documented usage doctor [--json]; implemented doctor [--json] [--integrity]; documented canon writing on|off; implemented on|off|unverified",
+      "invariant": "public command documentation must match the verb",
+      "required_fix": "P006 docs lane; this packet does not edit docs",
+      "kind": "characterization"
+    },
+    {
+      "severity": "contract-shape",
+      "id": "envelope-degraded-excludes-serve-failures",
+      "location": "packages/cli/src/commands/doctor.ts:100-106,335-343",
+      "evidence": "jsonEnvelope degraded is problems[].error; serve.ok false does not populate problems",
+      "invariant": "machine consumers must read data.serve.failures and data.ok, not envelope.degraded alone",
+      "kind": "characterization"
+    },
+    {
+      "severity": "contract-shape",
+      "id": "identity-authority-unavailable-nonfailing",
+      "location": "packages/core/src/serve/doctor.ts:331; packages/cli/src/commands/doctor.ts:409-411",
+      "evidence": "stores.degraded always includes identity-authority-unavailable; core test serve/doctor.test.ts:52-57 PASS here; CLI liveness.test.ts:17-21 plus exit 0 in :95-110",
+      "kind": "characterization"
+    }
+  ],
+  "deliverables": [
+    "/work/out/command-health-truth-table.md",
+    "/work/out/command-health-matrix.json",
+    "/work/out/json-and-human-shape.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/execution.md",
+    "/work/out/capture-doctor-baseline.ts",
+    "/work/out/fixtures/expected-help-doctor.txt",
+    "/work/out/fixtures/expected-fresh-init.stdout.txt",
+    "/work/out/fixtures/expected-json-envelope.schema.json",
+    "/work/out/fixtures/expected-import-ok.stdout-fragments.json",
+    "/work/out/fixtures/expected-provenance-json.fragments.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/command-health-truth-table.md",
+    "/work/out/command-health-matrix.json",
+    "/work/out/json-and-human-shape.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/execution.md",
+    "/work/out/capture-doctor-baseline.ts",
+    "/work/out/fixtures/",
+    "/work/out/test-logs/core-doctor-default-tmp.txt",
+    "/work/out/test-logs/focused-doctor.txt"
+  ],
+  "source_references": [
+    "packages/cli/src/commands/doctor.ts",
+    "packages/core/src/serve/doctor.ts",
+    "packages/core/src/vault/doctor.ts",
+    "packages/cli/src/output.ts",
+    "packages/cli/src/main.ts",
+    "packages/cli/src/help.ts",
+    "packages/cli/src/args.ts",
+    "packages/cli/src/context.ts",
+    "packages/core/src/serve/types.ts",
+    "packages/core/src/ledger/integrity.ts",
+    "packages/core/src/contracts/connector.ts",
+    "docs/cli.md:228-241",
+    "scripts/artifact-engine.ts:31-41",
+    "packages/cli/test/doctor/liveness.test.ts",
+    "packages/cli/test/doctor/page-provenance.test.ts",
+    "packages/cli/test/doctor/legacy-ledger.test.ts",
+    "packages/cli/test/e2e.test.ts",
+    "packages/core/test/serve/doctor.test.ts"
+  ],
+  "checks": [
+    {
+      "name": "cli-doctor-process",
+      "command": "bun /work/out/capture-doctor-baseline.ts",
+      "result": "NOT_RUN",
+      "reason": "Cannot find module '@kizuki/tui'"
+    },
+    {
+      "name": "cli-doctor-tests",
+      "command": "bun test packages/cli/test/doctor/*.ts packages/cli/test/vault-identity.test.ts packages/cli/test/help.test.ts",
+      "result": "NOT_RUN",
+      "reason": "workspace packages unresolved"
+    },
+    {
+      "name": "core-serve-doctor",
+      "command": "cd /repo && bun test packages/core/test/serve/doctor.test.ts packages/core/test/ledger-health.test.ts packages/core/test/sqlite-runtime.test.ts packages/core/test/page-provenance.test.ts",
+      "result": "PASS",
+      "evidence": "/work/out/test-logs/core-doctor-default-tmp.txt"
+    },
+    {
+      "name": "full-verify",
+      "command": "bun run verify",
+      "result": "NOT_RUN"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "NOT_RUN",
+    "core_unit": "PASS",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "bun": "1.3.14",
+    "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7"
+  },
+  "blockers": [
+    "This archive has no node_modules; live CLI doctor and CLI tests cannot run without bun install, which this packet forbids."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P039", "P040"],
+    "use": [
+      "/work/out/command-health-truth-table.md",
+      "/work/out/command-health-matrix.json",
+      "/work/out/fixtures/expected-*.txt",
+      "/work/out/fixtures/expected-*.json"
+    ],
+    "do_not_use_as_doctor_output": "/work/out/fixtures/{help-doctor,doctor-help-flag,usage-*,uninitialized-directory,missing-vault-identity}/",
+    "do_not": "treat this as fork review, docs rewrite, or live-process golden stdout",
+    "re-capture": "bun /work/out/capture-doctor-baseline.ts on a bun-installed checkout of the same SHA"
+  },
+  "next_step": "P039/P040 compare the lmvdz fork to this current-main matrix; re-run capture-doctor-baseline.ts only after workspace install on f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7."
+}

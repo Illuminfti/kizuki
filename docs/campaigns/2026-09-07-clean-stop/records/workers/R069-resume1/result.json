@@ -1,0 +1,139 @@
+{
+  "task_id": "R069",
+  "packet_id": "R069",
+  "issue": 550,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Map Markdown selected-folder consent to connector configuration",
+  "findings": [
+    {
+      "severity": "contract-gap",
+      "id": "host-state-path-only",
+      "summary": "CLI and local-app enrollment persist only absolute config.path. MarkdownFolderConfig.page_size and exclude are constructor-only and would be dropped or refused by host-state encode/decode.",
+      "evidence": [
+        "packages/connectors/src/markdown-folder/index.ts:52-58,123-128",
+        "packages/cli/src/connections.ts:31-38,47-59,113-124",
+        "packages/cli/src/commands/connect.ts:290-314"
+      ]
+    },
+    {
+      "severity": "contract-gap",
+      "id": "no-markdown-loadConnector-field-join",
+      "summary": "Markdown loadConnector checks sourceCaptureAdmission only. It does not pre-join app catalog required_fields (text, subjects, metadata) to grant.allowed_fields. Field mismatch is detected later at authorizeSourceCapture. Existing test covers capture refusal when text is omitted.",
+      "evidence": [
+        "packages/cli/src/connections.ts:370-377,443-446",
+        "packages/cli/src/app/host.ts:88,163",
+        "packages/core/src/ledger/source-grants.ts:599-650",
+        "packages/cli/test/source-consent.test.ts:116-126"
+      ]
+    },
+    {
+      "severity": "seam-difference",
+      "id": "app-enroll-skips-health",
+      "summary": "CLI connect constructs the connector and health-checks before persist. App markdown enroll resolves path and persists without constructing the connector.",
+      "evidence": [
+        "packages/cli/src/commands/connect.ts:290-304",
+        "packages/cli/src/app/host.ts:276-286",
+        "packages/cli/test/connect.test.ts:55-73"
+      ]
+    }
+  ],
+  "deliverables": [
+    "/work/out/cli-consent-config-field-join.json",
+    "/work/out/field-join.md",
+    "/work/out/supported-folder-config-fixtures.json",
+    "/work/out/coverage-inventory.json",
+    "/work/out/validate-fixtures.ts",
+    "/work/out/validate-fixtures.receipt.json",
+    "/work/out/draft-host-state-path-only.test.ts",
+    "/work/out/fixtures/notes/journal/2026-01-01.md",
+    "/work/out/fixtures/notes/people/ada.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/cli-consent-config-field-join.json",
+    "/work/out/field-join.md",
+    "/work/out/supported-folder-config-fixtures.json",
+    "/work/out/coverage-inventory.json",
+    "/work/out/validate-fixtures.ts",
+    "/work/out/validate-fixtures.receipt.json",
+    "/work/out/draft-host-state-path-only.test.ts",
+    "/work/out/fixtures/notes/journal/2026-01-01.md",
+    "/work/out/fixtures/notes/people/ada.md"
+  ],
+  "source_references": [
+    "packages/cli/src/commands/connect.ts:247-326",
+    "packages/cli/src/source-consent.ts:8-69",
+    "packages/cli/src/commands/connect-consent.ts:9-26",
+    "packages/cli/src/commands/import.ts:74-126",
+    "packages/cli/src/connections.ts:29-59,113-124,370-470",
+    "packages/cli/src/app/host.ts:88,163,193-198,276-286",
+    "packages/connectors/src/markdown-folder/index.ts:31-128,314-341,576-626",
+    "packages/core/src/ledger/source-grants.ts:39-56,182-197,599-650",
+    "packages/cli/test/connect.test.ts:55-143",
+    "packages/cli/test/source-consent.test.ts:22-67,116-126",
+    "packages/cli/test/app-host.test.ts:10-58",
+    "packages/connectors/test/markdown-folder.test.ts:289-322",
+    "docs/markdown-sources.md",
+    "docs/cli.md:62-72,104-117"
+  ],
+  "checks": [
+    {
+      "name": "local-fixture-validator",
+      "command": "bun /work/out/validate-fixtures.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/validate-fixtures.receipt.json",
+      "detail": "22 mirrored constructor/host/policy checks; no workspace imports"
+    },
+    {
+      "name": "workspace-module-import",
+      "command": "bun -e 'await import(\"/repo/packages/connectors/src/markdown-folder/index.ts\")'",
+      "result": "NOT_RUN_AS_PROOF",
+      "exit_code": 1,
+      "detail": "Cannot find module '@kizuki/core'; no node_modules; installs forbidden"
+    },
+    {
+      "name": "existing-cli-and-connector-tests",
+      "command": "bun test packages/cli/test/connect.test.ts packages/cli/test/source-consent.test.ts packages/connectors/test/markdown-folder.test.ts",
+      "result": "NOT_RUN",
+      "detail": "statically inventoried only; workspace modules absent"
+    },
+    {
+      "name": "draft-host-state-path-only",
+      "command": "bun test /work/out/draft-host-state-path-only.test.ts",
+      "result": "NOT_RUN",
+      "detail": "labeled unexecuted; needs CLI helpers and temp vaults"
+    },
+    {
+      "name": "full-repository-gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "detail": "preparation packet; no source edits; no test slot claimed"
+    }
+  ],
+  "verification": {
+    "focused": "PASS",
+    "package_type_full_gate": "NOT_RUN",
+    "existing_tests": "static inventory only",
+    "limitations": [
+      "/repo is a git archive without Git metadata or node_modules",
+      "connector module cannot be imported without @kizuki/core",
+      "no live account, native, or stranger-proof claim",
+      "P067 vault-boundary tests were cited, not duplicated or probed"
+    ]
+  },
+  "blockers": [],
+  "next_step": "P068: implement against cli-consent-config-field-join.json; keep host state path-only unless a named owner expands HostConnectionState; reuse source-consent.test.ts field-denial rather than duplicating it; optionally add the unexecuted path-only host-state assertion after rebase.",
+  "downstream_handoff": {
+    "feeds": ["P068", "P083"],
+    "do_not_take": ["HostConnectionState schema", "source-grant schema", "package lockfiles", "P006 docs", "P067 vault-boundary tests"],
+    "cli_supported_config": { "path": "absolute string only" },
+    "constructor_only": ["page_size", "exclude"],
+    "ordinary_consent_fields": ["text", "subjects", "metadata"],
+    "capture_requires_purpose": "capture"
+  }
+}

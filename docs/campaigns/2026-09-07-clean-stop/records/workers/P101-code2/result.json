@@ -1,0 +1,53 @@
+{
+  "task_id": "P101",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "start_head": "d9b3969c7ff2d43e624094760c854456fc590cbc",
+  "head_sha": "7a217b3f274068b8bdb4b471811692622fcccf85",
+  "tree": "bc1e0ca6c157153404e018d7d566a0f0c877f4f7",
+  "status": "awaiting_root_test",
+  "changed_files": [
+    "scripts/qualification.ts",
+    "scripts/qualification.test.ts"
+  ],
+  "findings": [
+    {
+      "severity": "resolved_in_candidate",
+      "title": "CLI diagnostic fallback admitted arbitrary Error.message and unchecked ArtifactProofError.reason",
+      "location": "scripts/qualification.ts cliDiagnostic",
+      "invariant": "CLI stderr is a closed content-free vocabulary; unknown exceptions and proof reasons fail closed",
+      "correction": "Admit only exact local throw literals and reviewed artifact-proof reasons. Unknown Error, unknown proof reason, non-Error, and lookalike strings render as qualification failed. JSON, filesystem, and SQLite type mappings and usage text are unchanged."
+    }
+  ],
+  "deliverables": {
+    "implementation": "Corrective commit 7a217b3f274068b8bdb4b471811692622fcccf85 on agent/grok-p101. Start head d9b3969c7ff2d43e624094760c854456fc590cbc is an ancestor. Canonical identity/rail comparisons, genesis, proof validation, and collection control flow were not altered.",
+    "tests": "Added focused closed-set CLI and mapper cases: known local/proof diagnostics still appear; unknown Error, unknown ArtifactProofError, non-Error, lookalike reason strings, and an unclassified BUILD.json exception map to qualification failed with empty stdout and no NEUTRAL_INPUT_SENTINEL. Existing reorder, changed-value, JSON/filesystem/SQLite, genesis, proof, custody, and identity assertions were preserved.",
+    "commit": "Close qualification CLI diagnostics to a fixed vocabulary"
+  },
+  "verification": {
+    "focused": {
+      "command": "bun test scripts/qualification.test.ts",
+      "request_id": "p101-correction-closed-diagnostics",
+      "result": "NOT_RUN",
+      "reason": "Root owns the network-disabled sealed runner. Worker did not install dependencies or execute tests."
+    },
+    "prior_candidate_receipt": {
+      "head": "d9b3969c7ff2d43e624094760c854456fc590cbc",
+      "run": "633ee1bb85eb49868a28828511ebecb0",
+      "result": "38 tests passed, 184 assertions, exit 0",
+      "note": "Does not resolve the closed-diagnostic review finding and does not replace a corrected-candidate run."
+    },
+    "package_type_full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "worker_static_inspection": "Compared throw literals in scripts/qualification.ts and packages/core/src/serve/qualification.ts plus artifact-proof reject/engine reasons against the closed sets. cliDiagnostic type-maps SyntaxError, SQLiteError, and syscall errors before set admission."
+  },
+  "blockers": [],
+  "next_step": "Root runs bun test scripts/qualification.test.ts in the sealed runner for request p101-correction-closed-diagnostics, then independent review of head 7a217b3f274068b8bdb4b471811692622fcccf85.",
+  "ownership": {
+    "branch": "agent/grok-p101",
+    "worktree": "/repo",
+    "write_paths": ["scripts/qualification.ts", "scripts/qualification.test.ts"],
+    "dirty": false,
+    "remote_verified": false,
+    "note": "Shallow clone; no fetch/push. Remote state not refreshed."
+  }
+}

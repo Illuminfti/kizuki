@@ -1,0 +1,207 @@
+{
+  "task_id": "R065",
+  "packet_id": "R065",
+  "title": "Inspect X API rate-window and page-budget representation",
+  "issue": 549,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "finding",
+  "owner": "grok-R065",
+  "write_scope": "/work/out only",
+  "findings": [
+    {
+      "severity": "coverage_gap",
+      "id": "untested-x-rate-limit-reset",
+      "file_line": "packages/connector-x/src/api/client.ts:42-43",
+      "evidence": "retrySeconds reads x-rate-limit-reset only when retry-after is absent; rg under packages/connector-x/test has zero x-rate-limit matches; XApiFixture 429 always sets retry-after (src/api/testkit.ts:42).",
+      "invariant": "GET 429 cooldown must be determined from untrusted headers with the documented local clamp.",
+      "required_follow_up": "Add the seven proposed_new rows from rate-window-cases.json to client.test.ts via the exported request() seam. Do not duplicate client.test.ts:74-84 retry-after cases."
+    },
+    {
+      "severity": "behavior",
+      "id": "malformed-retry-after-shadows-reset",
+      "file_line": "packages/connector-x/src/api/client.ts:34-40",
+      "evidence": "A present retry-after that is not all-digits and not a round-tripped 29-char IMF-fixdate returns 60 before L42.",
+      "invariant": "Cooldown source selection.",
+      "required_follow_up": "Characterize in tests. Do not silently invert precedence; official docs (2026-09-06) recommend x-rate-limit-reset and do not mention Retry-After."
+    },
+    {
+      "severity": "behavior",
+      "id": "past-reset-clamps-to-one-second",
+      "file_line": "packages/connector-x/src/api/client.ts:32,43",
+      "evidence": "bounded() is Math.max(1, Math.min(86400, seconds)). Official rate-limits.md sample (fetched 2026-09-06) uses max(reset-now, 60).",
+      "invariant": "Local automatic delay is a scheduling rule, not the provider reset (API.md:135-140).",
+      "required_follow_up": "Keep the local clamp explicit. Do not treat a 1s retry_at as proof the provider window elapsed."
+    },
+    {
+      "severity": "omission",
+      "id": "limit-and-remaining-unread",
+      "file_line": "packages/connector-x/src/api/client.ts (no reads)",
+      "evidence": "Only retry-after and x-rate-limit-reset are consulted, and only on status 429 (client.ts:97-99). Official headers x-rate-limit-limit and x-rate-limit-remaining (docs.x.com 2026-09-06) are unused. A 200 with remaining 0 does not pause.",
+      "invariant": "Progress reporting cannot include remaining/limit. Wave1 paused_until-on-remaining-0 is not current code.",
+      "required_follow_up": "P063/P064 must not add remaining-0 pause tests against this revision. Consuming those headers is a later contract change."
+    },
+    {
+      "severity": "progress_reporting",
+      "id": "detail-is-binary-not-numeric",
+      "file_line": "packages/connector-x/src/api/connector.ts:11-12,47-48,219-220,275,294",
+      "evidence": "coverageDetail emits available window drained vs continuation pending. Health detail is static coverage. Future retry_at gates run() with zero GETs and returns unavailable with the previous cursor. Numeric remaining/reset/pages-left are not in SyncBatch.detail.",
+      "invariant": "RFC 0002 E11 tri-state: unavailable is not emptiness; checkpoint does not advance.",
+      "required_follow_up": "Treat pages 0..64, max_results=100, and 5-request/45s budget as local page/operation budgets, distinct from the provider 15-minute window."
+    }
+  ],
+  "deliverables": [
+    "/work/out/unit-type-count-table.md",
+    "/work/out/rate-window-cases.json",
+    "/work/out/rate-window-fixture.ts",
+    "/work/out/rate-window-fixture-report.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    {
+      "path": "/work/out/unit-type-count-table.md",
+      "kind": "unit_type_count_table"
+    },
+    {
+      "path": "/work/out/rate-window-fixture.ts",
+      "kind": "pure_rate_window_calculation_fixture"
+    },
+    {
+      "path": "/work/out/rate-window-cases.json",
+      "kind": "fixture_matrix"
+    },
+    {
+      "path": "/work/out/rate-window-fixture-report.json",
+      "kind": "fixture_execution_receipt"
+    },
+    {
+      "path": "/work/out/existing-coverage.md",
+      "kind": "coverage_check"
+    },
+    {
+      "path": "/work/out/RESULT.md",
+      "kind": "handoff_prose"
+    }
+  ],
+  "source_references": [
+    {
+      "path": "packages/connector-x/src/api/client.ts",
+      "lines": "4-10,12-27,29-44,97-99",
+      "symbols": ["X_API_REQUEST_LIMIT", "X_API_RETRY_SECONDS", "ApiBudget", "retrySeconds", "HttpFailure.retrySeconds"]
+    },
+    {
+      "path": "packages/connector-x/src/api/state.ts",
+      "lines": "8-9,77,92-101,114,138,146",
+      "symbols": ["MAX_PAGE_POSTS", "MAX_WALK_PAGES", "XApiCursor.pages", "XApiState.retry_at"]
+    },
+    {
+      "path": "packages/connector-x/src/api/connector.ts",
+      "lines": "11-12,47-48,77-81,218-220,237,247-259,275,290-294",
+      "symbols": ["coverageDetail", "max_results", "next", "run"]
+    },
+    {
+      "path": "packages/connector-x/src/api/parse.ts",
+      "lines": "121-123,130-131",
+      "symbols": ["parsePage", "result_count", "next_token"]
+    },
+    {
+      "path": "packages/connector-x/src/api/testkit.ts",
+      "lines": "22,42",
+      "symbols": ["retryAfter"]
+    },
+    {
+      "path": "packages/connector-x/API.md",
+      "lines": "90-126,135-145"
+    },
+    {
+      "url": "https://docs.x.com/x-api/fundamentals/rate-limits.md",
+      "fetched": "2026-09-06",
+      "http_status": 200,
+      "note": "Headers x-rate-limit-limit/remaining/reset; 429 recovery via reset; no Retry-After mention; user /2/users/:id/tweets 900/15min; /2/users/me 75/15min."
+    },
+    {
+      "url": "https://docs.x.com/x-api/fundamentals/pagination.md",
+      "fetched": "2026-09-06",
+      "http_status": 200,
+      "note": "max_results, next_token, pagination_token, result_count."
+    },
+    {
+      "url": "https://docs.x.com/x-api/users/get-posts.md",
+      "fetched": "2026-09-06",
+      "http_status": 200,
+      "note": "OpenAPI 2.168; max_results integer min 5 max 100."
+    }
+  ],
+  "checks": [
+    {
+      "name": "pure_rate_window_fixture",
+      "command": "bun /work/out/rate-window-fixture.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T22:03:20Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/rate-window-fixture-report.json",
+      "detail": "20/20 cases; 7 proposed_new rows are in-repo coverage gaps"
+    },
+    {
+      "name": "in_repo_connector_x_tests",
+      "command": "bun test packages/connector-x/test",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "missing": "workspace node_modules; bun install forbidden in this container"
+    },
+    {
+      "name": "typecheck",
+      "command": "bun run typecheck",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "missing": "workspace node_modules / typescript install"
+    },
+    {
+      "name": "full_repository_gate",
+      "command": "bash scripts/verify.sh",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "missing": "workspace node_modules; full-suite slot not assigned"
+    }
+  ],
+  "verification": {
+    "focused": "PASS",
+    "package_type_full_gate": "NOT_RUN",
+    "live_account": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "limitations": [
+      "Fixture is a pure replica of unexported retrySeconds; it does not import packages/connector-x (would require @kizuki/core).",
+      "In-repo tests were statically read, not executed.",
+      "No paid/provider/account calls.",
+      "No native, model, or unfamiliar-user qualification."
+    ]
+  },
+  "downstream_handoff": {
+    "feeds": ["P063", "P064"],
+    "use": [
+      "/work/out/unit-type-count-table.md",
+      "/work/out/rate-window-cases.json",
+      "/work/out/rate-window-fixture.ts"
+    ],
+    "do_not": [
+      "Duplicate client.test.ts retry-after cases.",
+      "Assert 200 + x-rate-limit-remaining:0 pauses (not current code).",
+      "Treat local 1s/24h clamps as the provider window.",
+      "Wait for unpublished P-packet output.",
+      "Claim live X qualification or registry enrollment."
+    ],
+    "smallest_next_implementation": "On the exported request() seam, assert GET 429 with only x-rate-limit-reset (120s, past→1, far→86400, malformed→60) and retry-after shadowing reset."
+  },
+  "blockers": [],
+  "next_step": "P063/P064 consume the table and proposed_new fixture rows; add x-rate-limit-reset coverage on request() without redesigning cooldown or remaining-header policy.",
+  "limitations_preserved": [
+    "API connector enrollment, paid access, deployed dialect, and provider deletion remain unqualified (API.md).",
+    "Local 24h GET 429 cap is a scheduling rule, not a provider reset claim.",
+    "Token 429 cannot read rate headers.",
+    "History cap and archive fallback are out of this packet.",
+    "P003/P006/P015, Astra, doctor, registry, and lockfiles remain with their owners."
+  ]
+}

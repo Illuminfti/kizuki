@@ -1,0 +1,29 @@
+{
+  "schema": "kizuki.production-packet-static-validation/v1",
+  "observed_at": "2026-09-06T23:07:52.827451+00:00",
+  "packet": "P106",
+  "status": "PASS_ARTIFACT_STRUCTURE_AND_OWNERSHIP_ONLY",
+  "write_path_count": 3,
+  "test_path_count": 2,
+  "all_owned_paths_exist_at_base": true,
+  "all_test_paths_within_write_allowance": true,
+  "overlap_count": 0,
+  "source_execution": "NOT_RUN",
+  "launch": "NOT_RUN",
+  "implementation": "NOT_STARTED",
+  "native_qualification": "NOT_RUN",
+  "artifacts": [
+    {
+      "path": "CHECKPOINT_BOOK/GROK-SUPERVISOR-OWNERSHIP-20260906.json",
+      "sha256": "d8f88080f6be745354ea582863766fd1db430f0b38ac000230ea734d955fcad7"
+    },
+    {
+      "path": "CHECKPOINT_BOOK/GROK-P106-SUPERVISOR-CONTRACT-20260906.md",
+      "sha256": "649161babc566120ed5415ed989966cf70017c04ecbc77f43fd218e684abbaf3"
+    },
+    {
+      "path": "CHECKPOINT_BOOK/GROK-FLEET-PRODUCTION-P106-20260906.json",
+      "sha256": "da861eabb32f2a4640719fc5618ff4d8a227f9e1a802d48454c1b8dd0cbc6c6d"
+    }
+  ]
+}

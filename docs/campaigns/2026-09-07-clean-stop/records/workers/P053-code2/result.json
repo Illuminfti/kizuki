@@ -1,0 +1,50 @@
+{
+  "task_id": "P053",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "bca137d398ada6bce612d668f4377f50dc29628c",
+  "status": "awaiting_root_test",
+  "changed_files": [
+    "packages/connector-google-calendar/test/fleet-temporal.test.ts"
+  ],
+  "findings": [
+    "Existing calendar tests already cover all-day date-only start/end with occurred_at=provider updated, cancelled observation surviving 410 rescan without inferred deletion, resource about-identity stability, cancellation-anchor clearing, metadata-only projection, and refusal of invalid dates/zones/status.",
+    "Missing independent cases were timezone preservation (offset and IANA, including DST winter/summer and local civil time without offset), multi-day all-day dates that keep exclusive civil days when a provider zone is present, unexpanded RRULE/EXDATE series identity that is not iCalUID, moved exception originalStartTime/instance identity, cancelled exception tombstoning only that instance, cancelled timed events without updated using observation time not meeting start, tentative remaining live, and attendance/organizer being distinct from the scheduled event including unselected attendees.",
+    "No production failures were observed in static review. This packet cannot repair production or shared helpers.",
+    "Live Google account qualification, compiled package credit, and OAuth/enrollment remain out of scope (P050/P054 and package blockers)."
+  ],
+  "deliverables": [
+    "packages/connector-google-calendar/test/fleet-temporal.test.ts",
+    "/work/out/temporal-coverage.md",
+    "/work/out/test-request.json",
+    "/work/out/result.json"
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun test packages/connector-google-calendar/test/fleet-temporal.test.ts packages/connector-google-calendar/test/",
+      "head": "bca137d398ada6bce612d668f4377f50dc29628c",
+      "result": "NOT_RUN",
+      "reason": "Network-enabled agent container must not launch tests; requested root network-disabled runner as p053-fleet-temporal-1"
+    },
+    "package_type_full_gate": {
+      "result": "NOT_RUN",
+      "reason": "Assigned test_execution is root network-disabled runner only"
+    },
+    "privacy_diff_integrity": {
+      "result": "PASS",
+      "detail": "Single owned test file; synthetic CalendarFixture transport; no credentials, accounts, or production edits"
+    },
+    "independent_review": {
+      "result": "NOT_RUN"
+    },
+    "retained_package": {
+      "result": "NOT_RUN",
+      "reason": "Final connector release credit still requires the final compiled package and separate required evidence"
+    }
+  },
+  "blockers": [
+    "Awaiting root network-disabled run of p053-fleet-temporal-1; candidate remains draft until those tests and review pass.",
+    "Final connector release credit still requires the final compiled package and separate required evidence.",
+    "Any production repair or shared helper change needs a newly reconciled, explicitly owned scope; this packet does not take it."
+  ],
+  "next_step": "Root runs p053-fleet-temporal-1 on head bca137d398ada6bce612d668f4377f50dc29628c and returns /work/out/test-result.json. If tests fail on production behavior, report a static path/proposal without editing production."
+}

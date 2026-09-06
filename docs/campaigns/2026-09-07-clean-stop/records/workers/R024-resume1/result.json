@@ -1,0 +1,152 @@
+{
+  "task_id": "R024",
+  "packet_id": "R024",
+  "title": "Trace correction parsing to precedence epoch",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "readiness": "project_scope_ready_now",
+  "owner": "grok-R024",
+  "write_scope": "/work/out only",
+  "identity": {
+    "repository": "/repo git archive of FLEET-SOURCE-IDENTITY.json",
+    "branch": "unavailable in this container",
+    "remote_verified": false,
+    "git_metadata": "absent by design",
+    "dirty": "not applicable; read-only archive plus /work/out outputs"
+  },
+  "findings": [
+    {
+      "severity": "contract_split",
+      "id": "dual-epoch",
+      "location": "packages/core/src/correction/epoch.ts:18-33 vs packages/core/src/serving/epoch.ts:16-28",
+      "confirmed": true,
+      "invariant": "RFC 0002 §6.5 says correct bumps claims_epoch; subsequent packet reads must observe staleness",
+      "evidence": "After one ordinary tell --claim, stored getClaimsEpoch is 1 and computed serving claimsEpoch is 2 (1 owner_correction + 1 R5 supersession). serveCorrect never calls bumpClaimsEpoch; packets still move because they use the computed number. App host visibility_epoch uses sourcePolicyEpoch:getClaimsEpoch.",
+      "required_of_downstream": "P022 and P084 must treat stored vault_epoch and packet claims_epoch as distinct numbers. Do not collapse them. Do not assume MCP correct() bumps vault_epoch.",
+      "not_fixed_here": "No authority redesign. P003 retains shared evidence design."
+    },
+    {
+      "severity": "contract_split",
+      "id": "cli-vs-mcp-evidence-shape",
+      "location": "packages/core/src/correction/parse.ts:25-42 and correct.ts:331-352 vs packages/core/src/serving/correct.ts:75-86,96-101",
+      "confirmed": true,
+      "invariant": "Idempotent owner evidence identity is sha256(statement || 0 || target_json)",
+      "evidence": "CLI correct() targetJson omits empty keys and includes page_id; event kind is note; request_digest equals source_record_id. serveCorrect serializes {claim_id, claim_key, subject} with nulls, omits page_id, uses kind correction, and hashes [statement, target, object] as request_digest. objectFromStatement is CLI-only; MCP uses args.object or negative polarity.",
+      "required_of_downstream": "Do not assume one source_record_id function. Map the CLI tell path for parse.ts/epoch.ts/evidence.ts; treat MCP as a sibling.",
+      "not_fixed_here": "P003 retains shared evidence design."
+    }
+  ],
+  "artifacts": [
+    "/work/out/correction-to-epoch-sequence.json",
+    "/work/out/public-outcome-before.json",
+    "/work/out/public-outcome-after.json",
+    "/work/out/public-outcome-matrix.json",
+    "/work/out/subsequent-reads-api.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/parse-seam.json",
+    "/work/out/epoch-seam.json",
+    "/work/out/fixture-run.json",
+    "/work/out/generate-fixtures.ts",
+    "/work/out/checks.json",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/correction-to-epoch-sequence.json",
+    "/work/out/public-outcome-before.json",
+    "/work/out/public-outcome-after.json",
+    "/work/out/public-outcome-matrix.json",
+    "/work/out/subsequent-reads-api.json",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    "packages/core/src/correction/parse.ts:10-50",
+    "packages/core/src/correction/epoch.ts:1-33",
+    "packages/core/src/correction/evidence.ts:1",
+    "packages/core/src/correction/correct.ts:107-131,323-404,513-582,687-699",
+    "packages/core/src/ledger/ledger.ts:212-241",
+    "packages/core/src/serving/epoch.ts:16-28",
+    "packages/core/src/serving/packet.ts:216-222",
+    "packages/core/src/serving/correct.ts:75-101,158-161",
+    "packages/cli/src/commands/tell.ts:39-49",
+    "packages/cli/src/app/host.ts:97-98",
+    "packages/core/test/correction/correct.test.ts:71-127",
+    "rfcs/0002-autonomous-canon.md §6.3-6.5, §16.3",
+    "docs/decision-log.md D14"
+  ],
+  "checks": [
+    {
+      "name": "existing correction tests",
+      "command": "cd /repo && bun test packages/core/test/correction/correct.test.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "10 pass, 0 fail, 84 expect() calls"
+    },
+    {
+      "name": "local parse/epoch/correct fixture generator",
+      "command": "bun /work/out/generate-fixtures.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "stored epoch 0->1; computed serving epoch 0->2; parse object initech; evidence filed"
+    },
+    {
+      "name": "source-consent tests",
+      "command": "cd /repo && bun test packages/core/test/correction/source-consent.test.ts",
+      "result": "NOT_RUN",
+      "reason": "js-tiktoken/lite missing via src/index import; installs forbidden"
+    },
+    {
+      "name": "context packet epoch tests",
+      "command": "cd /repo && bun test packages/core/test/serving/packet.test.ts",
+      "result": "NOT_RUN",
+      "reason": "js-tiktoken/lite missing; installs forbidden"
+    },
+    {
+      "name": "CLI tell tests",
+      "result": "NOT_RUN",
+      "reason": "workspace node_modules absent"
+    },
+    {
+      "name": "full verify",
+      "result": "NOT_RUN",
+      "reason": "not assigned; would also miss dependencies"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": {
+      "command": "cd /repo && bun test packages/core/test/correction/correct.test.ts",
+      "result": "PASS",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7 archive"
+    },
+    "local_seam_fixtures": {
+      "command": "bun /work/out/generate-fixtures.ts",
+      "result": "PASS"
+    },
+    "package_type_full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "native_account_model_human": "NOT_CLAIMED"
+  },
+  "blockers": [],
+  "limitations": [
+    "No Git metadata in /repo; remote/PR/CI not verified.",
+    "node_modules absent; js-tiktoken unavailable; packet and CLI tests NOT_RUN.",
+    "Vault init under /work/out requires mode 0700 on parents (group-writable /work/out was canon_files_unsafe).",
+    "ULIDs in before/after snapshots are from one local run; use public-outcome-matrix.json for stable fields.",
+    "No authority redesign, concurrent mutation, native/account/model/human qualification, or release claim."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P022", "P084"],
+    "do_not_duplicate_test": "packages/core/test/correction/correct.test.ts:71-127 already proves claim_id parse, evidence, rewrite, and getClaimsEpoch===1.",
+    "consume": [
+      "/work/out/correction-to-epoch-sequence.json",
+      "/work/out/public-outcome-matrix.json",
+      "/work/out/subsequent-reads-api.json"
+    ],
+    "must_not": [
+      "Treat getClaimsEpoch and packet claims_epoch as the same integer",
+      "Assume serveCorrect bumps vault_epoch",
+      "Assume objectFromStatement runs on the MCP path",
+      "Redesign shared evidence (P003) or source-B authority (P015)"
+    ]
+  },
+  "next_step": "P022/P084 should read stored vault_epoch and computed packet claims_epoch as separate subsequent-read APIs, using the existing correct.test.ts case rather than adding a duplicate test."
+}

@@ -1,0 +1,177 @@
+{
+  "task_id": "R095",
+  "packet_id": "R095",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Inspect CLI/MCP native package content manifest",
+  "findings": [
+    {
+      "severity": "coverage",
+      "id": "listing-exclusivity-untested",
+      "location": "scripts/smoke-release.ts:18-24; scripts/stranger-proof.ts:148-149",
+      "failure": "Existing consumers require the five package names to exist and checksum four of them. They do not reject extra names, nested paths, or sibling app-asset files.",
+      "affected_invariant": "docs/native-build.md states the package contains exactly kizuki, kizuki-mcp, README.txt, BUILD.json, and SHA256SUMS.",
+      "evidence": "Static read of presence-only loops. Draft validator extra-file fixture exits 1 (see checks).",
+      "confirmed": true,
+      "required_fix": "P094 should add listing exclusivity beside verifyChecksumManifest; do not replace hashing tests."
+    },
+    {
+      "severity": "policy-note",
+      "id": "license-file-absent",
+      "location": "scripts/build-release.ts:108-109; LICENSE (repository root)",
+      "failure": "Current producer does not copy LICENSE or third-party notices into the native package. README.txt is the only notice file.",
+      "affected_invariant": "D8 records MIT. Independently, MIT asks that the copyright notice travel with copies. This is not a failing test of the current producer contract.",
+      "evidence": "packaged = binaries + README.txt + BUILD.json only.",
+      "confirmed": true,
+      "required_fix": "If P006/P094 add LICENSE, change the producer and this expected tree in the same change. Do not treat LICENSE as required until then."
+    }
+  ],
+  "deliverables": [
+    "/work/out/native-package-expected-manifest.json",
+    "/work/out/archive-listing-validator.ts",
+    "/work/out/archive-listing-validator.test.ts",
+    "/work/out/expected-behavior.md",
+    "/work/out/coverage-existing.json",
+    "/work/out/source-evidence.json",
+    "/work/out/handoff.md",
+    "/work/out/fixtures/listings/",
+    "/work/out/fixtures/texts/",
+    "/work/out/check-logs/local-checks.clean.txt",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "native-package-expected-manifest.json",
+    "archive-listing-validator.ts",
+    "archive-listing-validator.test.ts",
+    "expected-behavior.md",
+    "coverage-existing.json",
+    "source-evidence.json",
+    "handoff.md",
+    "fixtures/listings/*.json",
+    "fixtures/texts/*",
+    "check-logs/local-checks.clean.txt"
+  ],
+  "source_references": [
+    "scripts/release-targets.ts:2-5",
+    "scripts/build-release.ts:12-23,44-109",
+    "scripts/release-artifacts.ts:35-50",
+    "scripts/artifact-proof.ts:6-7",
+    "scripts/smoke-release.ts:18-24",
+    "scripts/stranger-proof.ts:16,98-116,148-149",
+    "packages/cli/src/app/assets.ts:1-9",
+    "packages/cli/package.json:3",
+    ".bun-version:1",
+    "docs/native-build.md:23-26",
+    ".github/workflows/ci.yml:27-43",
+    "https://bun.com/docs/bundler/executables (200, 2026-09-06)"
+  ],
+  "checks": [
+    {
+      "name": "draft listing validator unit tests",
+      "command": "bun test /work/out/archive-listing-validator.test.ts",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T22:06:15Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/check-logs/local-checks.clean.txt"
+    },
+    {
+      "name": "valid Linux listing CLI",
+      "command": "bun /work/out/archive-listing-validator.ts --manifest /work/out/native-package-expected-manifest.json --listing /work/out/fixtures/listings/linux-x64-baseline.valid.json",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "valid Darwin listing CLI",
+      "command": "bun /work/out/archive-listing-validator.ts --manifest /work/out/native-package-expected-manifest.json --listing /work/out/fixtures/listings/darwin-arm64.valid.json",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "Linux listing with README/BUILD/SHA256SUMS texts",
+      "command": "bun /work/out/archive-listing-validator.ts --manifest /work/out/native-package-expected-manifest.json --listing /work/out/fixtures/listings/linux-x64-baseline.with-texts.valid.json",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "extra LICENSE listing",
+      "command": "bun /work/out/archive-listing-validator.ts --manifest /work/out/native-package-expected-manifest.json --listing /work/out/fixtures/listings/extra-file.invalid.json",
+      "exit_code": 1,
+      "result": "PASS",
+      "note": "expected failure: extra-entry LICENSE"
+    },
+    {
+      "name": "missing kizuki-mcp listing",
+      "command": "bun /work/out/archive-listing-validator.ts --manifest /work/out/native-package-expected-manifest.json --listing /work/out/fixtures/listings/missing-mcp.invalid.json",
+      "exit_code": 1,
+      "result": "PASS",
+      "note": "expected failure: missing-entry kizuki-mcp"
+    },
+    {
+      "name": "usage without args",
+      "command": "bun /work/out/archive-listing-validator.ts",
+      "exit_code": 2,
+      "result": "PASS"
+    },
+    {
+      "name": "directory listing mode on synthetic files",
+      "command": "bun /work/out/archive-listing-validator.ts --manifest /work/out/native-package-expected-manifest.json --dir /work/outTEMP/dir-listing --target bun-linux-x64-baseline",
+      "exit_code": 0,
+      "result": "PASS",
+      "note": "synthetic placeholders, not compiled binaries"
+    },
+    {
+      "name": "existing closed-target tests",
+      "command": "bun test /repo/scripts/release-targets.test.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7"
+    },
+    {
+      "name": "existing checksum tests",
+      "command": "bun test /repo/scripts/release-artifacts.test.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7"
+    },
+    {
+      "name": "native compile / smoke:release / proof:artifact",
+      "command": "bun run build:release",
+      "result": "NOT_RUN",
+      "reason": "Packet forbids publish builds and compiling binaries in this container."
+    },
+    {
+      "name": "full repository verify.sh gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "reason": "Read-only preparation; no source edits. Waiting for a full-suite slot is not claimed as PASS."
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS — draft listing validator 9/9 and CLI exit codes 0/1/2 as specified",
+    "existing_unit_coverage": "PASS — release-targets.test.ts and release-artifacts.test.ts",
+    "package_type_full_gate": "NOT_RUN",
+    "native_package_build": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "release_acceptance": "NOT_CLAIMED"
+  },
+  "blockers": [],
+  "next_step": "P094/P093 rebase onto live main and add listing exclusivity beside existing checksum tests without compiling in this lane.",
+  "downstream_handoff": {
+    "feeds": ["P094", "P093"],
+    "contract": "Per-target expected tree is the five-file directory dist/kizuki-0.1.0/<target>/ for bun-linux-x64-baseline and bun-darwin-arm64. Integrate archive-listing-validator.ts as a pure listing check; keep verifyChecksumManifest.",
+    "do_not": [
+      "duplicate R045 app asset internals",
+      "replace checksum tests",
+      "claim native/human/release acceptance",
+      "add LICENSE to the expected tree without a producer change"
+    ],
+    "note": "/work/out/handoff.md"
+  },
+  "limitations": [
+    "/repo is a git archive of f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7 with no Git metadata; remote/PR state was not refreshed here.",
+    "No compiled native package was produced or inspected as bytes.",
+    "macOS arm64 remains an unqualified candidate until an exact-head native receipt exists.",
+    "This is not 1.0, signed, published, or unfamiliar-user evidence."
+  ]
+}

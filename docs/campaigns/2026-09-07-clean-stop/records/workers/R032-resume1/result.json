@@ -1,0 +1,154 @@
+{
+  "task_id": "R032",
+  "packet_id": "R032",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Trace SQLite transaction result and error propagation",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "findings": [
+    {
+      "severity": "note",
+      "id": "no-kizuki-tx-helper",
+      "location": "packages/core/src/util/sql.ts:6-8",
+      "confirmed": true,
+      "claim": "sql.ts only builds IN (...) placeholders. The transaction wrapper on this runtime is bun:sqlite Database.transaction (Bun 1.3.14 wrapTransaction).",
+      "evidence": "static read of sql.ts; bun sqlite.ts wrapTransaction fetched 2026-09-06 from https://raw.githubusercontent.com/oven-sh/bun/bun-v1.3.14/src/js/bun/sqlite.ts (HTTP 200)"
+    },
+    {
+      "severity": "note",
+      "id": "nested-immediate-is-savepoint",
+      "location": "packages/core/src/ledger/ledger.ts:114-177 nested under ingest/run.ts:75-118",
+      "confirmed": true,
+      "claim": "Inner db.transaction(fn).immediate() does not run BEGIN IMMEDIATE when db.inTransaction is already true. It runs SAVEPOINT / RELEASE (or ROLLBACK TO then RELEASE on throw). Outer ROLLBACK still undoes released savepoint work.",
+      "evidence": "Bun 1.3.14 wrapTransaction; existing static case packages/core/test/event-causal-origin.test.ts:81-90; stub call-order PASS"
+    },
+    {
+      "severity": "note",
+      "id": "return-object-does-not-abort-outer",
+      "location": "packages/core/src/ledger/ledger.ts:178-194; packages/core/src/ingest/run.ts:86-92",
+      "confirmed": true,
+      "claim": "accept() converts EventRecordError/EventOriginError to {status:error, kind:infrastructure} and other throws to kind:validation after the inner wrapper has rolled back. processEvent rethrows infrastructure (outer ROLLBACK) and returns validation errors (outer COMMIT of an empty event). Returning a result never aborts an enclosing bun transaction.",
+      "evidence": "static source; stub processEventLike tests PASS; no existing core test records this call-order"
+    },
+    {
+      "severity": "hypothesis",
+      "id": "mixed-begin-modes",
+      "location": "staging/proposals.ts:662 (default BEGIN) vs ledger write paths (.immediate())",
+      "confirmed": false,
+      "claim": "Top-level staging uses default BEGIN rather than BEGIN IMMEDIATE. Nested under processEvent this is a savepoint so the flavor is ignored. Not treated as a defect in this packet.",
+      "evidence": "static scan only"
+    }
+  ],
+  "deliverables": [
+    "/work/out/wrapper-contract-table.md",
+    "/work/out/wrapper-contract.json",
+    "/work/out/nested-caller-map.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/sqlite-tx-wrapper-stub.ts",
+    "/work/out/sqlite-tx-call-order.draft.test.ts",
+    "/work/out/draft-execution.txt",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/wrapper-contract-table.md",
+    "/work/out/wrapper-contract.json",
+    "/work/out/nested-caller-map.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/sqlite-tx-wrapper-stub.ts",
+    "/work/out/sqlite-tx-call-order.draft.test.ts",
+    "/work/out/draft-execution.txt",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/core/src/ledger/db.ts:250-283",
+    "packages/core/src/ledger/runtime.ts:16-49",
+    "packages/core/src/util/sql.ts:6-8",
+    "packages/core/src/ledger/ledger.ts:88-240",
+    "packages/core/src/ledger/event-origin.ts:29-71",
+    "packages/core/src/ledger/errors.ts:36-68",
+    "packages/core/src/ingest/run.ts:68-187",
+    "packages/core/src/staging/proposals.ts:584-740",
+    "packages/core/src/staging/producers.ts:181-274",
+    "packages/core/src/claims/store.ts:580,977,1205-1211",
+    "packages/core/src/serve/extract.ts:611-625",
+    "packages/core/src/serve/extract-checkpoint.ts:14",
+    "packages/core/src/canon/apply.ts:388-459,528-531,706,856-872",
+    "packages/core/src/export.ts:335-347,1571-1576",
+    "packages/core/src/agents/enrollment.ts:167-174",
+    "packages/core/test/event-causal-origin.test.ts:81-102",
+    "packages/core/test/serve/extract-atomic.test.ts:261-272",
+    "packages/core/test/sqlite-runtime.test.ts",
+    "https://raw.githubusercontent.com/oven-sh/bun/bun-v1.3.14/src/js/bun/sqlite.ts",
+    "https://bun.sh/docs/api/sqlite"
+  ],
+  "checks": [
+    {
+      "name": "stub-call-order-draft",
+      "command": "bun test /work/out/sqlite-tx-call-order.draft.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14 (0d9b296a)",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "12 pass, 0 fail, 43 expect() calls; no SQLite opened",
+      "evidence": "/work/out/draft-execution.txt"
+    },
+    {
+      "name": "existing-core-transaction-tests",
+      "command": "static read only; bun test packages/core/test/event-causal-origin.test.ts not run",
+      "result": "NOT_RUN",
+      "reason": "packet forbids stressing the database or injecting malformed SQL; coverage cited from source"
+    },
+    {
+      "name": "package-type-full-gate",
+      "command": "bun test && bunx tsc --noEmit && bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "reason": "read-only preparation; no source change; full gate not assigned"
+    }
+  ],
+  "verification": {
+    "focused": {
+      "result": "PASS",
+      "command": "bun test /work/out/sqlite-tx-call-order.draft.test.ts",
+      "exit_code": 0,
+      "limitation": "stub of wrapTransaction plus accept/processEvent catch semantics; not bun:sqlite and not the ledger"
+    },
+    "existing_coverage": {
+      "result": "NOT_RUN",
+      "method": "static"
+    },
+    "full_gate": {
+      "result": "NOT_RUN"
+    },
+    "independent_review": {
+      "result": "NOT_RUN"
+    }
+  },
+  "blockers": [],
+  "next_step": "P018/P030 should consume wrapper-contract-table.md and sqlite-tx-call-order.draft.test.ts, keep top-level inTransaction guards on claim insert / loop byte intent / export / enrollment / extraction filing, and not duplicate event-causal-origin.test.ts:81-90.",
+  "downstream_handoff": {
+    "feeds": ["P018", "P030"],
+    "use": [
+      "/work/out/wrapper-contract-table.md",
+      "/work/out/wrapper-contract.json",
+      "/work/out/nested-caller-map.md",
+      "/work/out/sqlite-tx-wrapper-stub.ts",
+      "/work/out/sqlite-tx-call-order.draft.test.ts"
+    ],
+    "do_not_duplicate": [
+      "packages/core/test/event-causal-origin.test.ts:81-90",
+      "packages/core/test/serve/extract-atomic.test.ts:261-272",
+      "packages/core/test/export-snapshot.test.ts:132-138",
+      "packages/core/test/loop/self-ingest.test.ts:230-245"
+    ],
+    "do_not_replace": ["P003 evidence design", "P015 source-B implementation", "P006 docs"],
+    "integration_rule": "Inner .immediate() is a savepoint when already in a transaction. Result objects do not abort an outer bun transaction. Review/rebase before production use."
+  },
+  "limitations": [
+    "Read-only git archive; no Git metadata; vps-nav/git fetch not run by controller certificate.",
+    "Stub draft is not an execution of bun:sqlite or Kizuki ledger tests.",
+    "Existing core tests were statically verified, not re-run.",
+    "No native/account/model/human qualification or release-acceptance claim.",
+    "Auth/model probe not retested (controller already verified)."
+  ]
+}

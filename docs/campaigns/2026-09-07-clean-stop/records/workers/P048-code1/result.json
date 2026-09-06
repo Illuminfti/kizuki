@@ -1,0 +1,33 @@
+{
+  "task_id": "P048",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "771f7c774096e86c2402f7fa54635f889d5fc3aa",
+  "status": "awaiting_root_test",
+  "changed_files": [
+    "packages/cli/src/commands/connect-telegram.ts",
+    "packages/cli/test/telegram-enrollment.test.ts",
+    "packages/cli/test/telegram-signin-diagnostics.test.ts"
+  ],
+  "findings": [
+    "Phone Ctrl-C arrived at telegramFailure as UsageError and was remapped to a generic ConnectionError, so CLI dispatch used exit 1 instead of the cancellation/usage exit.",
+    "Code and password prompts can be classified by the provider adapter, so an instanceof UsageError check on the final throw is not enough; local cancellation must be remembered at the prompt wrapper.",
+    "Classified flood_wait without a positive safe retry_after fell through to connectivity/retry wording. Duration-specific wording is unchanged when retry_after is a positive safe integer."
+  ],
+  "deliverables": {
+    "implementation": "packages/cli/src/commands/connect-telegram.ts remembers local interactive sign-in cancellation and maps it to UsageError with fixed wording. flood_wait with a usable positive duration keeps the existing wait Ns message; the same class without a usable duration uses wait-specific wording with no invented count. Unknown exceptions and unreachable errors keep the previous sanitized diagnostics.",
+    "tests": "New helper coverage in packages/cli/test/telegram-signin-diagnostics.test.ts and enrollment coverage in packages/cli/test/telegram-enrollment.test.ts for phone/code/password cancellation, wrapped prompt exceptions, retry_after=120, unspecified wait, and ordinary unreachable. Existing missing-credentials, successful enrollment, cooldown, unknown-prompt sanitization, and transport-cleanup assertions are unchanged.",
+    "commit": "771f7c774096e86c2402f7fa54635f889d5fc3aa"
+  },
+  "verification": {
+    "focused": "NOT_RUN",
+    "request_id": "p048-telegram-diagnostics-771f7c7",
+    "test_paths": [
+      "packages/cli/test/telegram-signin-diagnostics.test.ts",
+      "packages/cli/test/telegram-enrollment.test.ts"
+    ],
+    "package_type_full_gate": "NOT_RUN",
+    "reason": "Root owns the network-disabled qualified runner. This container did not install dependencies or launch tests."
+  },
+  "blockers": [],
+  "next_step": "Root runs the focused CLI tests at head 771f7c774096e86c2402f7fa54635f889d5fc3aa and records /work/out/test-result.json. Independent review and full repository qualification remain with root."
+}

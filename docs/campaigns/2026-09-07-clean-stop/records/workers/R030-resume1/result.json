@@ -1,0 +1,123 @@
+{
+  "task_id": "R030",
+  "packet_id": "R030",
+  "title": "Inventory machine-origin and source-origin bookkeeping",
+  "issue": 550,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "finding",
+  "readiness_claim": "none; preparation artifacts only; D19 / stranger / native / account qualification not asserted",
+  "findings": [
+    {
+      "severity": "high",
+      "id": "source-record-id-strict-512-vs-ingress-1mib",
+      "location": "packages/core/src/ledger/schema-v16.ts:20 vs packages/core/src/contracts/event.ts:16-18",
+      "evidence": "Local accept() of ASCII source_record_id length 513 after validateEventInput ok=true threw LedgerStoreError code=infrastructure message=ledger store is unavailable (SQLITE_CONSTRAINT_CHECK). Receipt: /work/out/checks/classify-receipt.json",
+      "affected_invariant": "opaque native source identifiers must persist through admission",
+      "required_fix": "Align STRICT CHECK / fail closed at ingress with a field-named error. Schema owner is not R030 (P015 reserved).",
+      "confirmed": true
+    },
+    {
+      "severity": "medium",
+      "id": "missing-field-diagnostics-opaque-beyond-ingress",
+      "location": "packages/core/src/ledger/event-record.ts:20-67; packages/core/src/ledger/event-identity-schema.ts:108-110; packages/core/src/ledger/errors.ts:54-65",
+      "evidence": "Classifier: missing origin/origin_binding/text_hash → event_record_invalid; SQL omit → event identity fields are required; CHECK → infrastructure.",
+      "affected_invariant": "unrecorded, unavailable, denied, and empty stay distinct; callers can name which field was missing only at ingress",
+      "required_fix": "Optional diagnostic naming at the stored-record seam; do not redesign the frozen ingress. Not a duplicate of event.test.ts missing source_record_id.",
+      "confirmed": true
+    }
+  ],
+  "deliverables": [
+    "/work/out/origin-field-lineage.md",
+    "/work/out/origin-field-lineage.json",
+    "/work/out/fixtures/neutral-cases.json",
+    "/work/out/fixtures/executed-records.json",
+    "/work/out/fixtures/missing-field-diagnostics.json",
+    "/work/out/classify-origin-fixtures.ts",
+    "/work/out/existing-coverage.json",
+    "/work/out/checks/classify-receipt.json",
+    "/work/out/checks/commands.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/origin-field-lineage.md",
+    "/work/out/origin-field-lineage.json",
+    "/work/out/fixtures/neutral-cases.json",
+    "/work/out/fixtures/executed-records.json",
+    "/work/out/fixtures/missing-field-diagnostics.json",
+    "/work/out/classify-origin-fixtures.ts",
+    "/work/out/existing-coverage.json",
+    "/work/out/checks/classify-receipt.json",
+    "/work/out/checks/commands.json",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/core/src/ledger/event-origin.ts",
+    "packages/core/src/ledger/event-origin-binding.ts",
+    "packages/core/src/ledger/event-record.ts",
+    "packages/connectors/src/source-id.ts",
+    "packages/core/src/ledger/ledger.ts",
+    "packages/core/src/ledger/schema-v16.ts",
+    "packages/core/src/ledger/event-identity-schema.ts",
+    "packages/core/src/contracts/event.ts",
+    "docs/event-identity-origin.md",
+    "docs/architecture.md",
+    "rfcs/0002-autonomous-canon.md"
+  ],
+  "checks": [
+    {
+      "name": "core in-memory origin tests",
+      "command": "cd /repo && bun test packages/core/test/event-causal-origin.test.ts packages/core/test/event-identity.test.ts packages/core/test/event.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit": 0,
+      "result": "PASS",
+      "detail": "167 pass, 0 fail"
+    },
+    {
+      "name": "local origin classifier",
+      "command": "cd /repo && bun --no-install /work/out/classify-origin-fixtures.ts",
+      "exit": 0,
+      "result": "PASS",
+      "detail": "ordinary=external, empty=external, marker=self, ascii_513=SQLITE_CONSTRAINT_CHECK, missing origin=event record is invalid"
+    },
+    {
+      "name": "connector source-id tests",
+      "result": "NOT_RUN",
+      "detail": "workspace module resolution missing in git archive"
+    },
+    {
+      "name": "vault-backed origin tests",
+      "result": "NOT_RUN",
+      "detail": "canon_files_unsafe on container tmpdir"
+    },
+    {
+      "name": "typecheck and verify",
+      "result": "NOT_RUN",
+      "detail": "full gate not assigned"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS",
+    "package_type_full_gate": "NOT_RUN",
+    "privacy_diff_integrity": "PASS no source edits",
+    "independent_review": "NOT_RUN",
+    "limitations": [
+      "Git archive has no Git metadata and no workspace node_modules.",
+      "Vault init refuses group/world-writable tmp directories.",
+      "No live provider, account, model, or self-ingest injection was attempted."
+    ]
+  },
+  "blockers": [
+    "Connector package tests need a workspace install; not available in this archive container.",
+    "Vault-backed suites need a private tmpdir that satisfies canon_files ownership/mode checks."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P029", "P067", "P087"],
+    "reserved": ["P003 evidence design", "P015 source-B schema/recovery/authority/export", "P006 canonical docs"],
+    "do_not": "duplicate existing ingress or causal-origin tests; do not treat this packet as schema authority"
+  },
+  "next_step": "P029/P067/P087 consume /work/out/origin-field-lineage.md and fixtures/executed-records.json. A named schema owner should reconcile events.source_record_id STRICT length 512 with EVENT_LIMITS.sourceRecordIdBytes before 1 MiB native ids are treated as durable.",
+  "limitations_preserved": true
+}

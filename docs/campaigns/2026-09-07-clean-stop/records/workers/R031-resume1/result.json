@@ -1,0 +1,172 @@
+{
+  "task_id": "R031",
+  "packet_id": "R031",
+  "title": "Model normal lease expiry and clock interpretation",
+  "issue": 48,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "finding",
+  "owner": "grok-R031",
+  "write_scope": "/work/out only",
+  "git": {
+    "worktree": "/repo",
+    "kind": "git archive of exact commit; no Git metadata",
+    "branch": null,
+    "head": null,
+    "dirty": "not observable",
+    "remote_verified": false
+  },
+  "findings": [
+    {
+      "severity": "medium",
+      "id": "named-rfc-test-does-not-isolate-heartbeat-expiry",
+      "location": "packages/core/test/serve/leases.test.ts:84-94; packages/core/src/serve/leases.ts:95-114",
+      "invariant": "A dead holder's lease whose heartbeat is older than 3 × HEARTBEAT is reclaimable (RFC 0002 §9.7.3).",
+      "evidence": "Existing test acquires as pid 11 boot-a then challenges as pid 22 boot-b at +60s. isBusy returns false at leases.ts:106-110 because real boot ids differ, before ageSeconds. Executed 2026-09-06T22:00:11Z: 7 existing tests pass, including this one, without covering same-boot dead PID at 29s/30s/31s.",
+      "required_fix": "P020 land same-boot dead-holder fixed-timestamp cases from /work/out/leases-expiry.test.ts. Do not treat leases.test.ts:84-94 as heartbeat-window proof."
+    },
+    {
+      "severity": "low",
+      "id": "inclusive-30s-vs-rfc-older-than",
+      "location": "packages/core/src/serve/leases.ts:88-93,112-113; rfcs/0002-autonomous-canon.md §9.7.3 and §11.3; scripts/qualification.ts:248",
+      "invariant": "RFC wording is older than / past 3 × heartbeat. Qualification uses millisecond strict greater-than against row ttl_s.",
+      "evidence": "Replica and draft: T0 to T0+30000ms, dead same-boot → acquireLease reason reclaimed (draft test passed). Qualification replica at 30000ms is ok, not lease-stale. RFC expected under strict older-than is still busy.",
+      "required_fix": "P020 keep or change the inclusive 30s boundary explicitly. Do not silently rely on floor(ms/1000) < 30."
+    },
+    {
+      "severity": "low",
+      "id": "ttl_s-unused-by-isBusy",
+      "location": "packages/core/src/serve/leases.ts:112-113,140,176-178; scripts/qualification.ts:242,248",
+      "invariant": "Schema stores ttl_s; reclaim math uses HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS only.",
+      "evidence": "Draft test stored ttl_s=1, dead same-boot, age 5s → busy; row ttl_s remained 1. Qualification would emit lease-stale for ttl_s=1 at 5s.",
+      "required_fix": "P020/P091 document or wire ttl_s; do not assume the column is the reclaim window."
+    },
+    {
+      "severity": "note",
+      "id": "clock-parser-family",
+      "location": "packages/core/src/serve/leases.ts:88-93; packages/core/src/util/time.ts:20-50,37-38; packages/core/src/serve/qualification.ts:32-36",
+      "invariant": "Unparseable times must not justify a steal. RFC3339 leap seconds are legal in isRfc3339.",
+      "evidence": "Bun 1.3.14 Date.parse('2026-06-30T23:59:60Z') is NaN → ageSeconds 0 → busy. qualificationDate requires ^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z$. Lease reclaim does not call isRfc3339."
+    }
+  ],
+  "deliverables": [
+    "/work/out/lease-time-unit-transition-matrix.md",
+    "/work/out/lease-time-unit-transition-matrix.json",
+    "/work/out/lease-expiry-arithmetic.ts",
+    "/work/out/leases-expiry.test.ts",
+    "/work/out/existing-coverage.md",
+    "/work/out/ORIENTATION.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/lease-time-unit-transition-matrix.md",
+    "/work/out/lease-time-unit-transition-matrix.json",
+    "/work/out/lease-expiry-arithmetic.ts",
+    "/work/out/leases-expiry.test.ts",
+    "/work/out/existing-coverage.md",
+    "/work/out/ORIENTATION.md",
+    "/work/out/RESULT.md",
+    "/work/out/evidence/arithmetic.stdout.txt",
+    "/work/out/evidence/existing-leases.stderr.txt",
+    "/work/out/evidence/draft-expiry.stderr.txt",
+    "/work/out/evidence/time.stderr.txt"
+  ],
+  "source_references": [
+    "packages/core/src/serve/leases.ts:17-23,68-76,88-114,136-166,186-207,227-234",
+    "packages/core/src/serve/types.ts:17-18,25,86-93",
+    "packages/core/src/util/time.ts:1-50",
+    "packages/core/src/serve/schema.ts:63-70",
+    "packages/core/src/serve/daemon.ts:103-106,162,175,185",
+    "packages/core/src/serve/doctor.ts:47-53",
+    "packages/core/src/serve/qualification.ts:32-36",
+    "packages/core/test/serve/leases.test.ts:42-141",
+    "packages/core/test/time.test.ts:1-50",
+    "scripts/qualification.ts:240-248",
+    "rfcs/0002-autonomous-canon.md §9.7 rows 2-3, §11.3, §18.1 v5 leases table"
+  ],
+  "checks": [
+    {
+      "name": "pure-arithmetic-replica",
+      "command": "bun /work/out/lease-expiry-arithmetic.ts",
+      "cwd": "/work",
+      "bun": "1.3.14",
+      "started_utc": "2026-09-06T22:00:11Z",
+      "ended_utc": "2026-09-06T22:00:15Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/evidence/arithmetic.stdout.txt"
+    },
+    {
+      "name": "existing-leases-tests",
+      "command": "TMPDIR=/work/out/tmp bun test /repo/packages/core/test/serve/leases.test.ts",
+      "bun": "1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "summary": "7 pass, 0 fail, 36 expect() calls",
+      "evidence": "/work/out/evidence/existing-leases.stderr.txt",
+      "note": "Existing named dead-holder test still passes; it does not isolate 3×heartbeat."
+    },
+    {
+      "name": "draft-expiry-tests",
+      "command": "TMPDIR=/work/out/tmp bun test /work/out/leases-expiry.test.ts",
+      "bun": "1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "summary": "8 pass, 0 fail, 23 expect() calls; characterizes HEAD including inclusive 30000ms reclaim",
+      "evidence": "/work/out/evidence/draft-expiry.stderr.txt"
+    },
+    {
+      "name": "existing-rfc3339-tests",
+      "command": "bun test /repo/packages/core/test/time.test.ts",
+      "bun": "1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "summary": "29 pass, 0 fail",
+      "evidence": "/work/out/evidence/time.stderr.txt"
+    },
+    {
+      "name": "workspace-test",
+      "command": "bun test",
+      "result": "NOT_RUN",
+      "reason": "Full suite is a root test-slot; packet write scope is /work/out only."
+    },
+    {
+      "name": "typecheck",
+      "command": "bunx tsc --noEmit",
+      "result": "NOT_RUN",
+      "reason": "No source change; full gate not assigned."
+    },
+    {
+      "name": "verify.sh",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "reason": "Required repository gate not assigned to this preparation packet."
+    }
+  ],
+  "verification": {
+    "focused": "PASS",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "qualification": "NOT_RUN",
+    "release_acceptance": "NOT_CLAIMED",
+    "auth_retest": "NOT_RUN (controller already verified; packet forbids retest)"
+  },
+  "blockers": [],
+  "limitations": [
+    "Git branch/HEAD/dirty/remotes unavailable in the archive.",
+    "Remote issue/PR state not fetched.",
+    "Full repository gate NOT_RUN.",
+    "Draft test is a /work/out characterization of HEAD, not landed in packages/core.",
+    "No native/account/model/human qualification or 1.0 readiness claim.",
+    "Retrieval-pg file-lease is a different contract and was not redesigned."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P020", "P091"],
+    "do_not_wait_for": ["P020", "P091"],
+    "reserved_owners": ["P003 evidence design", "P015 source-B", "P006 canonical docs", "Astra", "external doctor"],
+    "p020": "Copy new cases from /work/out/leases-expiry.test.ts into packages/core/test/serve/leases.test.ts. Do not duplicate live-holder, reboot, pid-fallback, heartbeat/release, or failed-replacement tests. Decide inclusive vs strict 30s before changing isBusy. Keep injected now/isAlive; do not race workers or kill processes.",
+    "p091": "If integrating observer/doctor/qualification with serve reclaim, treat ttl_s, millisecond > vs second floor, and live-but-stale observer flags as distinct from steal-busy."
+  },
+  "next_step": "P020 land the same-boot dead-holder fixed-timestamp cases and explicitly keep or change the 30000 ms reclaim boundary."
+}

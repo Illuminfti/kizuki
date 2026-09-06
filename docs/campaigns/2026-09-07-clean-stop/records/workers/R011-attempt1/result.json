@@ -1,0 +1,152 @@
+{
+  "task_id": "R011",
+  "packet_id": "R011",
+  "issue": 541,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "finding",
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "medium",
+      "location": "scripts/qualification.ts:236,294,312",
+      "evidence": "/work/out/snapshots/key-order-fragility.json",
+      "invariant": "Identity and rail-policy equality should be order-insensitive like exact() and canonical().",
+      "detail": "JSON.stringify(verifyArtifact()) versus JSON.stringify(manifest.identity), and rest-spread rail JSON.stringify, follow insertion order. Reordered keys make equal values look changed; canonical() does not. Genesis still matches hash(canonical(manifest)); go-no-go hashes file bytes.",
+      "required_fix": "Compare canonical(identity) and canonical(rails-without-next_run_at), or compare fields. Do not weaken genesis or proof checks."
+    },
+    {
+      "id": "F2",
+      "severity": "medium",
+      "location": "scripts/qualification.ts:328",
+      "evidence": "/work/out/snapshot-draft.json errorMessageForwarding",
+      "invariant": "Reporter failures are closed codes; paths and source snippets stay out of stderr.",
+      "detail": "CLI prints Error.message. JSON.parse echoed NEUTRAL_SOURCE_TEXT_MUST_NOT_APPEAR; ENOENT echoed /work/out/neutral-missing-path. collect() swallows receipt-journal parse errors; load/init/create/sqlite do not.",
+      "required_fix": "Map fs/JSON/sqlite failures to closed strings before console.error, matching ArtifactProofError."
+    },
+    {
+      "id": "F3",
+      "severity": "low",
+      "location": "scripts/qualification.ts:235-236,282 versus packages/core/src/serve/qualification.ts:75,110",
+      "evidence": "static",
+      "invariant": "Status issues/rails are sorted; durable sample bytes are a separate encoding.",
+      "detail": "sample.issues are collect() push order and can duplicate schedule-profile-changed. receipts stay journal order; evaluator sorts a copy by finished_at.",
+      "required_fix": "Sort sample.issues before append if byte-stable journals are required. New schema if the hash chain changes."
+    },
+    {
+      "id": "F4",
+      "severity": "low",
+      "location": "scripts/qualification.ts:152,171-183 versus scripts/artifact-proof.ts:56-57",
+      "evidence": "scripts/artifact-proof.test.ts:30-35 covers proof only",
+      "invariant": "Duplicate JSON keys are refused on proof; report files currently last-key-win.",
+      "detail": "manifest/genesis/samples/scope use JSON.parse without a duplicate-key scan.",
+      "required_fix": "Reuse parseProofJson or the same key scan for report files."
+    }
+  ],
+  "deliverables": [
+    "/work/out/result.json",
+    "/work/out/RESULT.md",
+    "/work/out/orientation.md",
+    "/work/out/report-key-order-map.json",
+    "/work/out/report-key-order-map.md",
+    "/work/out/snapshot-draft.json",
+    "/work/out/snapshot-runner.ts",
+    "/work/out/snapshot-run.json",
+    "/work/out/sensitive-forwarding-sites.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/findings.md",
+    "/work/out/snapshots/status-awaiting.json",
+    "/work/out/snapshots/status-interrupted.json",
+    "/work/out/snapshots/cli-pretty-status.json",
+    "/work/out/snapshots/receipt-projection.json",
+    "/work/out/snapshots/canonical-receipt.json",
+    "/work/out/snapshots/key-order-fragility.json"
+  ],
+  "artifacts": [
+    "/work/out/report-key-order-map.json",
+    "/work/out/report-key-order-map.md",
+    "/work/out/snapshot-draft.json",
+    "/work/out/snapshot-runner.ts",
+    "/work/out/sensitive-forwarding-sites.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/findings.md"
+  ],
+  "source_references": [
+    "scripts/qualification.ts",
+    "scripts/qualification.test.ts",
+    "scripts/artifact-proof.ts",
+    "scripts/artifact-proof.test.ts",
+    "scripts/go-no-go.ts",
+    "packages/core/src/serve/qualification.ts",
+    "packages/core/src/serve/receipts.ts",
+    "packages/core/test/serve/qualification.test.ts",
+    "docs/qualification.md",
+    "docs/CURRENT.md",
+    "docs/decision-log.md"
+  ],
+  "checks": [
+    {
+      "name": "snapshot-runner",
+      "command": "HOME=/work/out/home TMPDIR=/work/out/tmp BUN_INSTALL=/work/out/home/.bun BUN_RUNTIME_TRANSPILER_CACHE_PATH=/work/out/bun-cache XDG_CACHE_HOME=/work/out/cache bun /work/out/snapshot-runner.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14 /usr/local/bin/bun",
+      "time": "2026-09-06T21:41:43.025Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/snapshot-run.json"
+    },
+    {
+      "name": "scripts/qualification.test.ts",
+      "command": "bun test scripts/qualification.test.ts",
+      "result": "NOT_RUN",
+      "reason": "Existing suite writes os.tmpdir() fixtures outside /work/out. Draft execution is restricted to /work/out."
+    },
+    {
+      "name": "packages/core/test/serve/qualification.test.ts",
+      "command": "bun test packages/core/test/serve/qualification.test.ts",
+      "result": "NOT_RUN",
+      "reason": "Same tmpdir restriction. Static line citations in existing-coverage.md."
+    },
+    {
+      "name": "typecheck-and-docs-gate",
+      "command": "bun run typecheck",
+      "result": "NOT_RUN",
+      "reason": "No full-suite slot. docs/qualification.md named gate not claimed as PASS."
+    }
+  ],
+  "verification": {
+    "focused": "PASS",
+    "package_type_full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "native_or_account_qualification": "NOT_RUN",
+    "limitations": [
+      "init/sample/status CLI not executed (would create a vault/report and read /proc).",
+      "Existing bun test files not executed.",
+      "Git/vps-nav/remote/PR state not available; identity is FLEET-SOURCE-IDENTITY.json.",
+      "No auth/model retest. No source edits."
+    ]
+  },
+  "blockers": [],
+  "downstream_handoff": {
+    "feeds": ["P004", "P008"],
+    "use": [
+      "/work/out/report-key-order-map.json",
+      "/work/out/snapshot-draft.json",
+      "/work/out/sensitive-forwarding-sites.json",
+      "/work/out/existing-coverage.md"
+    ],
+    "do_not_duplicate": [
+      "scripts/qualification.test.ts:122-127,143-146,195-202,204-213,238-256,275-296",
+      "scripts/artifact-proof.test.ts:30-49,54-75"
+    ],
+    "reserved": ["P003 shared evidence design", "P015 source-B schema/recovery/export", "P006 canonical docs", "Astra and external doctor"],
+    "note": "These artifacts are current-code preparation. They must be reviewed/rebased before production use. No native/account/model/human qualification or release acceptance claim."
+  },
+  "next_step": "P004/P008 consume the key/order map and snapshot. An implementation owner may replace identity/rail JSON.stringify compares with canonical() and close CLI error strings; do not duplicate existing content-free projection tests.",
+  "limitations": [
+    "Read-only /repo archive; no Git metadata.",
+    "No owner vault, live provider, or qualification window.",
+    "release_qualified remains false by contract.",
+    "Snapshot runner used writable cache under /work/out because default HOME was not writable for Bun transpiler cache."
+  ]
+}

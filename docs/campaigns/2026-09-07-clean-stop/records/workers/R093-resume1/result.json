@@ -1,0 +1,138 @@
+{
+  "task_id": "R093",
+  "packet_id": "R093",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "finding",
+  "title": "Prepare Linux systemd lifecycle observation script",
+  "issue": 539,
+  "feeds_packets": ["P091"],
+  "native_script_execution": "unexecuted",
+  "findings": [
+    {
+      "severity": "confirmed-static",
+      "location": "packages/core/src/serve/supervisor.ts:85-106,204-247; packages/cli/src/commands/serve.ts:76-89; packages/core/src/serve/units.ts:45",
+      "failure": "kizuki serve stop sends SIGTERM. Unit Restart=on-failure does not restart SIGTERM. systemctl then reports is-enabled enabled/0 and is-active inactive/3. query() maps that to state=disabled with enabled=true. changeService requires confirmedActive (active&&enabled) or confirmedStopped (!enabled && disabled|absent|masked), so serve --install and serve --uninstall both throw 'service state is unknown or inconsistent; no service change made'.",
+      "affected_invariant": "docs/service-lifecycle.md: uninstall must be able to confirm stop+disable and must not delete vault data; stop is documented as a termination request, not removal, but it can block the public uninstall path.",
+      "evidence": "Static source trace. Independent expected behavior encoded in expected-observations.json and observe-linux-systemd-lifecycle.sh steps install_after_stop / uninstall_after_stop. Not observed on a real systemd user manager.",
+      "smallest_correction": "Allow uninstall (disable --now) from enabled+inactive, or map that pair to a state uninstall can confirm, or document and recover via systemctl --user start before further CLI mutations. Do not weaken confirmedActive for install.",
+      "native_status": "untested"
+    },
+    {
+      "severity": "doc-source-mismatch",
+      "location": "rfcs/0002-autonomous-canon.md:2018-2020 vs packages/core/src/serve/supervisor.ts:128-138",
+      "failure": "RFC 0002 §11.1 says systemctl --user enable --now plus loginctl enable-linger guidance. Current enable() runs daemon-reload, enable, restart and never prints or invokes linger.",
+      "affected_invariant": "No-fake-surface / documentation accuracy. P006 owns canonical docs; this packet does not rewrite them.",
+      "evidence": "grep loginctl in /repo hits only the RFC.",
+      "native_status": "n/a"
+    }
+  ],
+  "artifacts": [
+    "/work/out/observe-linux-systemd-lifecycle.sh",
+    "/work/out/prerequisites.md",
+    "/work/out/expected-observations.json",
+    "/work/out/source-map.json",
+    "/work/out/operations-map.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/prep-host-identity.txt",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/observe-linux-systemd-lifecycle.sh",
+    "/work/out/prerequisites.md",
+    "/work/out/expected-observations.json",
+    "/work/out/source-map.json",
+    "/work/out/operations-map.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/prep-host-identity.txt",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    "packages/core/src/serve/units.ts:10-60",
+    "packages/core/src/serve/supervisor.ts:38-309",
+    "packages/core/src/serve/service-files.ts:6-60",
+    "packages/core/src/serve/types.ts:12-45",
+    "packages/core/src/serve/intent.ts",
+    "packages/core/src/serve/doctor.ts:405-414",
+    "packages/cli/src/service-host.ts:5-10",
+    "packages/cli/src/runtime.ts:16-19",
+    "packages/cli/src/commands/serve.ts:22-90",
+    "packages/cli/src/commands/init.ts:87-106",
+    "packages/cli/src/main.ts:216-225",
+    "docs/service-lifecycle.md",
+    "docs/native-build.md",
+    "docs/unfamiliar-user-proof.md:70-77",
+    "docs/decision-log.md:D15",
+    "rfcs/0002-autonomous-canon.md:2014-2027",
+    "packages/core/test/serve/units.test.ts",
+    "packages/core/test/serve/supervisor.test.ts",
+    "packages/cli/test/serve/install.test.ts",
+    "packages/cli/test/serve/supervisor-fixture.ts"
+  ],
+  "checks": [
+    {
+      "name": "core unit rendering and native filesystem",
+      "command": "bun test packages/core/test/serve/units.test.ts packages/core/test/serve/service-arguments.test.ts scripts/native-platform.test.ts",
+      "cwd": "/repo",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14 (0d9b296a)",
+      "result": "PASS",
+      "detail": "6 pass, 1 skip (darwin plutil), 0 fail, 34 expects, 50ms"
+    },
+    {
+      "name": "core supervisor host and serve doctor",
+      "command": "bun test packages/core/test/serve/supervisor.test.ts packages/core/test/serve/doctor.test.ts",
+      "cwd": "/repo",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14 (0d9b296a)",
+      "result": "PASS",
+      "detail": "21 pass, 0 fail, 91 expects, 450ms; synthetic SupervisorHost only"
+    },
+    {
+      "name": "CLI fakeSystemd public install tests",
+      "command": "bun test packages/cli/test/serve/install.test.ts",
+      "result": "NOT_RUN",
+      "reason": "no /repo/node_modules; bun install and network downloads forbidden"
+    },
+    {
+      "name": "native systemd lifecycle script",
+      "command": "KIZUKI_NATIVE_DIR=... /work/out/observe-linux-systemd-lifecycle.sh /absolute/observation-dir",
+      "result": "NOT_RUN",
+      "reason": "unexecuted: no systemctl, no user systemd, no dist native package; packet forbids operating systemd in this container"
+    },
+    {
+      "name": "full repository gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "reason": "no source change; expensive gate not assigned; missing node_modules"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS for synthetic core unit/supervisor/doctor tests; NOT_RUN for CLI fakeSystemd and native systemd",
+    "package_type_full_gate": "NOT_RUN",
+    "native_lifecycle": "NOT_RUN / draft unexecuted",
+    "independent_review": "NOT_RUN",
+    "release_or_unfamiliar_user": "not claimed"
+  },
+  "blockers": [
+    "Preparation container has no systemctl, no live systemd --user, and no dist/bun-linux-x64-baseline package.",
+    "Packet forbids operating systemd and compiling binaries here.",
+    "CLI workspace tests need node_modules; bun install is forbidden.",
+    "Authorized disposable Linux user account and frozen stable-path native package are required before the script can run."
+  ],
+  "downstream_handoff": {
+    "to": "P091",
+    "use": "Run observe-linux-systemd-lifecycle.sh on a disposable Linux x64 systemd-user account with a frozen native package at a stable path. Compare receipts to expected-observations.json. Do not treat this draft as qualification.",
+    "unit": "kizuki@<vault-id>.service",
+    "unit_path": "$XDG_CONFIG_HOME/systemd/user/kizuki@<id>.service or $HOME/.config/systemd/user/kizuki@<id>.service",
+    "preserve": "Uninstall must leave vault-id, kizuki.db, CANON.md, and imported Markdown evidence."
+  },
+  "next_step": "P091 executes /work/out/observe-linux-systemd-lifecycle.sh on an isolated Linux test account with a frozen native package and records native receipts; decide whether enabled+inactive after serve stop should allow uninstall.",
+  "limitations": [
+    "No native/account/model/human qualification or release acceptance claim.",
+    "Synthetic supervisor tests do not prove a user-machine install (docs/service-lifecycle.md).",
+    "RFC linger guidance is not implemented in current source.",
+    "Existing coverage was checked; no duplicate repository test was drafted."
+  ]
+}

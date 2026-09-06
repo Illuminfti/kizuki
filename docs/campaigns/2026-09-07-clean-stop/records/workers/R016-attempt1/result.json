@@ -1,0 +1,177 @@
+{
+  "task_id": "R016",
+  "packet_id": "R016",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "issue": 49,
+  "feeds_packets": ["P022", "P028"],
+  "findings": [
+    {
+      "id": "sources-schema-split",
+      "severity": "medium",
+      "confirmed": true,
+      "location": "packages/core/src/vault/schema.ts:47-54,118-132",
+      "summary": "validatePage does not require sources; parsePageSources does. Absent sources omit the key; empty-active writes sources: [] and is refused by parsePageSources unless archived.",
+      "invariant": "absent, empty, and unknown provenance must stay distinct and must not grant ledger authority",
+      "existing_test": "packages/core/test/page-provenance.test.ts:41-58 (executed, exit 0)",
+      "correction": "P022 keep both layers. Do not make validatePage silently invent sources, and do not treat stringArray([]) as proof the page named none."
+    },
+    {
+      "id": "whitespace-id-validates",
+      "severity": "medium",
+      "confirmed": true,
+      "location": "packages/core/src/util/validate.ts:102-104; packages/core/src/vault/schema.ts:141-145",
+      "summary": "Whitespace-only id currently passes validatePage (length > 0, no trim). Source blankness uses trim().",
+      "invariant": "empty identity should not occupy a page id",
+      "existing_test": null,
+      "golden": "fixtures/distinctions/whitespace-id.md",
+      "correction": "P022 characterization test already drafted; any trim change is a schema decision, not an authority grant."
+    },
+    {
+      "id": "stringarray-collapse",
+      "severity": "medium",
+      "confirmed": true,
+      "location": "packages/core/src/vault/pages.ts:45-48; callers in serving/search/graph",
+      "summary": "stringArray maps absent, wrong-type, and explicit empty arrays to []. Parse/serialize still distinguish omitted keys from [].",
+      "invariant": "lossless representation of provenance fields",
+      "correction": "Do not use stringArray as the round-trip oracle. Admission already uses parsePageSources (fail closed, no new authority)."
+    },
+    {
+      "id": "padded-source-ids",
+      "severity": "low",
+      "confirmed": true,
+      "location": "packages/core/src/vault/schema.ts:128-129",
+      "summary": "parsePageSources treats trim-empty as blank, but keeps padded nonempty ids such as \" event:01 \". Those will not resolve to event:01.",
+      "invariant": "do not coerce padded text into a live event id",
+      "existing_test": null,
+      "golden": "fixtures/distinctions/padded-source-id.md",
+      "correction": "Keep as-is unless P015/P022 explicitly define trim-on-admit; trimming would be a new identity rule."
+    },
+    {
+      "id": "write-path-taint-collapse",
+      "severity": "low",
+      "confirmed": true,
+      "location": "packages/core/src/canon/apply.ts:317-318,794-797",
+      "summary": "Out of assigned files: prepareRevision/purge maps unknown/absent taint to clean. Parse/validate preserve unknown taint and refuse it.",
+      "invariant": "unknown must not become the trusted clean class at the representation layer",
+      "correction": "P015/P022. This packet does not change authority or writer recovery."
+    }
+  ],
+  "deliverables": [
+    "/work/out/result.json",
+    "/work/out/RESULT.md",
+    "/work/out/orientation.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/source-evidence.md",
+    "/work/out/verification-receipt.md",
+    "/work/out/round-trip-matrix.md",
+    "/work/out/round-trip-matrix.json",
+    "/work/out/origin-path-cases.json",
+    "/work/out/verify-round-trip.ts",
+    "/work/out/draft-round-trip.test.ts",
+    "/work/out/checks.json",
+    "/work/out/fixtures/MANIFEST.json",
+    "/work/out/fixtures/supported/",
+    "/work/out/fixtures/distinctions/",
+    "/work/out/fixtures/parse-accepted/",
+    "/work/out/fixtures/origin/path-cases.json"
+  ],
+  "artifacts": [
+    "/work/out/round-trip-matrix.md",
+    "/work/out/round-trip-matrix.json",
+    "/work/out/fixtures/supported/complete-canonical.md",
+    "/work/out/fixtures/supported/canonical-key-order.md",
+    "/work/out/fixtures/distinctions/sources-absent.md",
+    "/work/out/fixtures/distinctions/sources-empty-active.md",
+    "/work/out/fixtures/distinctions/origin-unknown-key.md",
+    "/work/out/draft-round-trip.test.ts",
+    "/work/out/verify-round-trip.ts"
+  ],
+  "source_references": [
+    "packages/core/src/vault/frontmatter.ts:121-211",
+    "packages/core/src/vault/schema.ts:8-177",
+    "packages/core/src/vault/provenance.ts:14-72",
+    "packages/core/src/canon/origin.ts:1-12",
+    "packages/core/src/vault/pages.ts:45-54",
+    "packages/core/src/util/validate.ts:102-104",
+    "packages/core/test/vault.test.ts:296-377,581-610",
+    "packages/core/test/page-provenance.test.ts:41-58",
+    "packages/core/test/canon/origin.test.ts:8-17",
+    "rfcs/0002-autonomous-canon.md:191-193,1005-1007,1957-1974,2470",
+    "docs/architecture.md:166-167",
+    "docs/provenance-admission.md:23-25"
+  ],
+  "checks": [
+    {
+      "name": "existing-parsePageSources-shapes",
+      "command": "cd /repo && bun test packages/core/test/page-provenance.test.ts -t \"source shape requires\"",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "existing-machine-origin-paths",
+      "command": "cd /repo && bun test packages/core/test/canon/origin.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "existing-vault-frontmatter-via-public-index",
+      "command": "cd /repo && bun test packages/core/test/vault.test.ts -t \"round-trips every supported|parses bare strings|requires identity|rejects bad enums|rejects unknown keys|rejects nested|serializes frontmatter in canonical\"",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit": 1,
+      "result": "NOT_RUN_AS_PRODUCT_FAIL",
+      "detail": "Cannot find module 'js-tiktoken/lite' from packages/core/src/serving/packet-tokenizer.ts because vault.test.ts imports src/index. Same assertions re-checked via leaf imports in verify-round-trip.ts."
+    },
+    {
+      "name": "independent-matrix-and-goldens",
+      "command": "cd /work/out && bun /work/out/verify-round-trip.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit": 0,
+      "result": "PASS",
+      "detail": "goldens=38 parse_accepted=5 matrix=40 origin=7 fixtures=43"
+    },
+    {
+      "name": "independent-gap-tests",
+      "command": "bun test /work/out/draft-round-trip.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time_utc": "2026-09-06T21:46:47Z",
+      "exit": 0,
+      "result": "PASS",
+      "detail": "12 pass, 85 expects, 25ms"
+    },
+    {
+      "name": "full-repository-gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "detail": "Read-only preparation packet; no root test slot; archive lacks node_modules for public index."
+    }
+  ],
+  "verification": {
+    "focused": "PASS",
+    "package_type_full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "qualification": "NOT_RUN",
+    "limitations": [
+      "Git/curl/Python absent in this container",
+      "js-tiktoken/lite unresolved; public index imports fail",
+      "No live provider, account, or model calls",
+      "No product source edits",
+      "assessLivePageEvidence ledger path not re-executed in the independent verifier (covered by existing page-provenance tests; first test executed here)"
+    ]
+  },
+  "blockers": [],
+  "next_step": "P022 should adopt /work/out/draft-round-trip.test.ts and the golden fixtures as characterization tests, keeping absent/empty/unknown distinct and without granting source authority. P028 should use fixtures/origin/path-cases.json. P015 remains owner of authority/schema/recovery/export. Rebase onto live head before any product commit; this archive is frozen.",
+  "downstream_handoff": {
+    "P022": "Field round-trip matrix, goldens for documented enums, and gap tests for absent/empty/unknown sources, subjects, taint, origin-as-key, whitespace id, padded source ids. Do not duplicate vault.test.ts mixed-type round-trip or page-provenance sources-shape tests.",
+    "P028": "Machine-origin path cases (auto/ prefix, autograph.md non-match, idempotence, case sensitivity). origin is not a frontmatter field.",
+    "reserved": "P003 evidence design, P015 authority/schema/recovery/export, P006 canonical docs, Astra/external doctor."
+  }
+}

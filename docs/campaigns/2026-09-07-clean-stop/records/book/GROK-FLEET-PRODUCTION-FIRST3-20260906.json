@@ -1,0 +1,167 @@
+{
+  "schema": "kizuki.grok-production-wave/v1",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+  "packets": [
+    {
+      "id": "P004",
+      "title": "Implement the shared release evidence validator and gate integration",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "implement-change",
+        "api-contract-design",
+        "elegance-review",
+        "security-privacy-review"
+      ],
+      "read_paths": [
+        "scripts/go-no-go.ts",
+        "scripts/go-no-go.test.ts",
+        "scripts/release-evidence.ts (new scoped module)"
+      ],
+      "scope": "Implement the shared release evidence validator and gate integration. Owned read/write paths and acceptance evidence below are binding; predecessor completion and owner allocation remain required for dependent changes.",
+      "owner": "grok-P004",
+      "kind": "implementation",
+      "dependencies": [],
+      "readiness": "ready_now",
+      "acceptance": [
+        "Strict schemas and typed PASS/FAIL/MISSING/UNVERIFIABLE/NOT_IMPLEMENTED propagation; RC and1.0 fail when any required gate lacks current evidence.",
+        "Synthetic validator fixtures cannot be promoted to real actor/account/platform proof; full pinned checks and independent review."
+      ],
+      "limits": [
+        "Only assigned neutral/public-seam work on an isolated immutable checkout. No private vaults, credentials, account calls, remote writes, publication, spending or held-lane resumption unless root separately supplies the applicable existing authorization. Static defensive review only; do not construct or replay vulnerability reproductions."
+      ],
+      "write_paths": [
+        "scripts/go-no-go.ts",
+        "scripts/go-no-go.test.ts",
+        "scripts/release-evidence.ts"
+      ],
+      "test_paths": [
+        "scripts/go-no-go.test.ts"
+      ],
+      "context_files": [
+        "P004-WORKER-HANDOFF.md",
+        "P003-RELEASE-CONTRACT-OWNER-REVIEW.md",
+        "GROK-CODE-INPUTS/01-shared-identity.md",
+        "GROK-CODE-INPUTS/kizuki.acceptance-evidence.v3.schema.json",
+        "GROK-CODE-INPUTS/kizuki.gate-receipt-identity.v1.schema.json",
+        "GROK-CODE-INPUTS/kizuki.surface-inventory.v1.schema.json"
+      ]
+    },
+    {
+      "id": "P006",
+      "title": "Implement capability/docs inventory producer and canonical parity edits",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "implement-change",
+        "documentation-accuracy",
+        "elegance-review"
+      ],
+      "read_paths": [
+        "scripts/capability-proof.ts (new producer)",
+        "README.md",
+        "SECURITY.md",
+        "docs/cli.md",
+        "docs/connect.md",
+        "docs/release-acceptance.md"
+      ],
+      "scope": "Implement reviewed current-product documentation corrections in P006-DOCS-PHASE-HANDOFF.md; capability producer remains separately gated.",
+      "owner": "grok-P006",
+      "kind": "documentation",
+      "dependencies": [],
+      "readiness": "ready_now",
+      "acceptance": [
+        "Generate machine-checkable commands/exports/registry/enrollment/platform/assets coverage; reconcile present-tense documentation using P095 findings and source-specific reports."
+      ],
+      "limits": [
+        "Only assigned neutral/public-seam work on an isolated immutable checkout. No private vaults, credentials, account calls, remote writes, publication, spending or held-lane resumption unless root separately supplies the applicable existing authorization. Static defensive review only; do not construct or replay vulnerability reproductions."
+      ],
+      "write_paths": [
+        "README.md",
+        "SECURITY.md",
+        "docs/README.md",
+        "docs/CURRENT.md",
+        "docs/cli.md",
+        "docs/connect.md",
+        "docs/release-acceptance.md",
+        "packages/connectors/README.md",
+        "packages/cli/src/help.ts"
+      ],
+      "test_paths": [],
+      "context_files": [
+        "P006-DOCS-PHASE-HANDOFF.md",
+        "GROK-FIRST-RESULTS-INDEPENDENT-REVIEW.md",
+        "GROK-CODE-INPUTS/P095-capability-inventory.json",
+        "GROK-CODE-INPUTS/P095-contradictions.json",
+        "GROK-CODE-INPUTS/P095-d19-readiness.json"
+      ]
+    },
+    {
+      "id": "P015",
+      "title": "Implement the approved source-survivor lineage unit",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "implement-change",
+        "migration-work",
+        "provenance-invalidation",
+        "elegance-review"
+      ],
+      "read_paths": [
+        "packages/core/src/canon/authority.ts",
+        "packages/core/src/canon/receipts.ts",
+        "packages/core/src/ledger/source-canon-erasure.ts",
+        "packages/core/src/export.ts",
+        "packages/core/src/db/",
+        "Existing write-ahead source-erasure intent and recovery path selected by P014"
+      ],
+      "scope": "Implement complete independently accepted P014 source-survivor unit. Existing genuine source-B positive expectations and raw-unrecorded negative fixture remain unchanged. Migration20 reserved solely for this owner. Preserve accepted purge history and legacy portability.",
+      "owner": "grok-P015",
+      "kind": "implementation",
+      "dependencies": [],
+      "readiness": "ready_now",
+      "acceptance": [
+        "Approved lineage unit keeps valid surviving canon admitted without accepting unrecorded owner pages, restoring erased preimages or using global sanitized-hash fallback; migration/restore and both unchanged positive tests pass."
+      ],
+      "limits": [
+        "Only assigned neutral/public-seam work on an isolated immutable checkout. No private vaults, credentials, account calls, remote writes, publication, spending or held-lane resumption unless root separately supplies the applicable existing authorization. Static defensive review only; do not construct or replay vulnerability reproductions."
+      ],
+      "write_paths": [
+        "packages/core/src/ledger/db.ts",
+        "packages/core/src/ledger/schema.ts",
+        "packages/core/src/ledger/source-canon-erasure.ts",
+        "packages/core/src/ledger/canon-source-survivor-lineage.ts",
+        "packages/core/src/canon/source-erasure-intent.ts",
+        "packages/core/src/canon/apply.ts",
+        "packages/core/src/canon/authority.ts",
+        "packages/core/src/canon/receipts.ts",
+        "packages/core/src/export.ts",
+        "packages/core/test/canon/source-survivor-lineage.test.ts",
+        "packages/core/test/canon/authority-projection.test.ts",
+        "packages/core/test/source-grants.test.ts",
+        "packages/core/test/migration.test.ts",
+        "packages/core/test/export-purge-history.test.ts",
+        "packages/core/test/export.test.ts",
+        "packages/core/test/export-connections.test.ts",
+        "packages/core/test/event-backup-v2.test.ts"
+      ],
+      "test_paths": [
+        "packages/core/test/canon/source-survivor-lineage.test.ts",
+        "packages/core/test/canon/authority-projection.test.ts",
+        "packages/core/test/source-grants.test.ts",
+        "packages/core/test/migration.test.ts",
+        "packages/core/test/export-purge-history.test.ts",
+        "packages/core/test/export.test.ts",
+        "packages/core/test/export-connections.test.ts",
+        "packages/core/test/event-backup-v2.test.ts"
+      ],
+      "context_files": [
+        "P014-SOURCE-SURVIVOR-LINEAGE-CONTRACT.md"
+      ]
+    }
+  ]
+}

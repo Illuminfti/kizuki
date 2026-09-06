@@ -1,0 +1,142 @@
+{
+  "task_id": "R051",
+  "packet_id": "R051",
+  "issue": 544,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Map Telegram planner budgets and progress counters",
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "latent_coupling",
+      "summary": "Live MAX_PAGE clamp plus walk short-page exhaustion will drop remaining history if BATCH_LIMIT ever exceeds MAX_PAGE.",
+      "evidence": [
+        "packages/connector-telegram/src/walk.ts:290-304 want = BATCH_LIMIT - events.length; seen < want sets exhausted",
+        "packages/connector-telegram/src/client.ts:22,149 MAX_PAGE=500; limit Math.min(query.limit, MAX_PAGE)",
+        "packages/connector-telegram/src/scripted.ts:125 scripted API does not clamp, so in-tree tests would miss a BATCH_LIMIT increase"
+      ],
+      "current_production": "BATCH_LIMIT === MAX_PAGE === 500, so the clamp is a no-op today",
+      "scaled_proof": "small-page-fixture.ts case S7 (PAGE=3, BATCH=5) marks exhausted at last_id=3; S7b (PAGE=5) fills the batch instead"
+    },
+    {
+      "id": "F2",
+      "severity": "note",
+      "summary": "Durable progress is the cursor only. batch.read, seen, want, and PurgeIndex are process-local.",
+      "evidence": [
+        "packages/connector-telegram/src/cursor.ts:25-33 TelegramCursor fields",
+        "packages/connector-telegram/src/walk.ts:297,236 read is returned on WalkResult, not encoded",
+        "packages/connector-telegram/src/connector.ts:350-353 flood resumability uses events.length || read",
+        "packages/connector-telegram/src/plan.ts:11-36 PurgeIndex in-memory; connector.ts:278-283 purgeSource reports those ids as unreachable"
+      ]
+    }
+  ],
+  "deliverables": [
+    "/work/out/budget-progress-table.md",
+    "/work/out/budget-progress-matrix.json",
+    "/work/out/small-page-fixture.ts",
+    "/work/out/small-page-results.json",
+    "/work/out/coverage-map.md",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/cursor-test-load.log",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "budget-progress-table.md",
+    "budget-progress-matrix.json",
+    "small-page-fixture.ts",
+    "small-page-results.json",
+    "coverage-map.md",
+    "orientation.md",
+    "RESULT.md",
+    "cursor-test-load.log"
+  ],
+  "source_references": [
+    "packages/connector-telegram/src/cursor.ts:5-33,46-130",
+    "packages/connector-telegram/src/walk.ts:56-60,70-88,91-238,247-265,270-350",
+    "packages/connector-telegram/src/plan.ts:3-36",
+    "packages/connector-telegram/src/client.ts:21-22,136-154",
+    "packages/connector-telegram/src/connector.ts:343-354",
+    "packages/connector-telegram/src/map.ts:128-130",
+    "packages/connector-telegram/src/api.ts:58-78",
+    "packages/connector-telegram/src/scripted.ts:108-136",
+    "packages/connector-telegram/src/degraded.ts:13-15",
+    "packages/connector-telegram/test/cursor.test.ts",
+    "packages/connector-telegram/test/backfill.test.ts",
+    "packages/connector-telegram/test/sync.test.ts",
+    "packages/connector-telegram/test/drain.test.ts",
+    "packages/connector-telegram/test/purge.test.ts",
+    "packages/connector-telegram/test/client.test.ts:172-190",
+    "packages/connector-telegram/README.md"
+  ],
+  "checks": [
+    {
+      "name": "small-page-fixture",
+      "command": "bun /work/out/small-page-fixture.ts",
+      "cwd": "/work",
+      "runtime": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "18/18 checks; evidence /work/out/small-page-results.json"
+    },
+    {
+      "name": "existing-cursor-test-load",
+      "command": "bun test packages/connector-telegram/test/cursor.test.ts",
+      "cwd": "/repo",
+      "runtime": "bun 1.3.14",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "detail": "Cannot find module '@kizuki/core'. Workspace node_modules absent; install forbidden. Evidence /work/out/cursor-test-load.log. Existing assertions statically mapped in coverage-map.md; not claimed passing."
+    },
+    {
+      "name": "repository-typecheck-and-verify",
+      "command": "bun run typecheck && bun run verify",
+      "result": "NOT_RUN",
+      "detail": "Read-only preparation packet; no source edits; no workspace install."
+    }
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun /work/out/small-page-fixture.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "passed": 18,
+      "failed": 0
+    },
+    "existing_package_tests": {
+      "command": "cd /repo && bun test packages/connector-telegram/test/cursor.test.ts",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "reason": "missing @kizuki/core; no dependency install permitted"
+    },
+    "full_gate": "NOT_RUN"
+  },
+  "blockers": [
+    "Cannot execute in-tree @kizuki/connector-telegram tests on this host without a workspace install, which is forbidden here."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P048", "P049"],
+    "do_not_duplicate": [
+      "test/backfill.test.ts 500-scale batch split and skip-only full page",
+      "test/cursor.test.ts codec and MAX_DIALOGS+1 parse",
+      "test/purge.test.ts MAX_PLAN_IDS newest-kept",
+      "test/sync.test.ts pass.next_peer and MAX_DIALOGS eviction"
+    ],
+    "implement_against": {
+      "BATCH_LIMIT": 500,
+      "MAX_DIALOGS": 5000,
+      "EDIT_WINDOW": 200,
+      "MAX_PAGE": 500,
+      "MAX_PLAN_IDS": 10000,
+      "invariant": "BATCH_LIMIT must remain <= MAX_PAGE, or readDialog must loop when seen === MAX_PAGE and want > MAX_PAGE"
+    },
+    "small_page_draft": "small-page-fixture.ts (PAGE=5/BATCH=5 plus S7 PAGE=3 clamp). Prefer injecting page/batch sizes over another 500-skip test."
+  },
+  "next_step": "P048/P049 should consume budget-progress-table.md and small-page-fixture.ts; keep BATCH_LIMIT <= MAX_PAGE or change walk to continue on a full live page; do not add a second BATCH_LIMIT=500 skip-page test.",
+  "limitations": [
+    "No live Telegram account or provider-doc refetch (P047 out of scope).",
+    "Scaled fixture copies walk/cursor/plan control flow; it is not the shipped walk() export.",
+    "No native/account/model/human qualification or release-acceptance claim.",
+    "Artifacts must be reviewed/rebased before production use."
+  ]
+}

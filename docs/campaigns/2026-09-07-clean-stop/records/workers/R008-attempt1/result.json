@@ -1,0 +1,143 @@
+{
+  "task_id": "R008",
+  "packet_id": "R008",
+  "issue": 541,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "finding",
+  "title": "Cross-check mandatory connector IDs at the release consumer",
+  "findings": [
+    {
+      "severity": "confirmed",
+      "id": "whoop-c3-id-unregistered",
+      "location": "scripts/go-no-go.ts:29; packages/connectors/src/registry.ts:251,446; packages/connector-whoop/src/state.ts:3",
+      "failure": "C3 row whoop declares connector_id kizuki.whoop but defaultConnectorRegistry does not enroll it and the CLI catalog cannot list it.",
+      "affected_invariant": "C3 connector_id is an acceptance label, not registry proof; unlike x-api, whoop does not use null for the unregistered case.",
+      "smallest_correction": "Either set whoop.connector_id to null like x-api, or enroll kizuki.whoop in the shared registry under its named owner. Out of R008 write scope."
+    },
+    {
+      "severity": "confirmed",
+      "id": "x-api-and-x-archive-distinct",
+      "location": "scripts/go-no-go.ts:30,35; packages/connector-x/src/api/state.ts:4; packages/connector-x/src/connector.ts:34; packages/connectors/src/registry.ts:418-429",
+      "failure": "None if kept distinct. x-api.connector_id is null; kizuki.x exists only as @kizuki/connector-x/api and is not in REGISTRY. x-archive is kizuki.import-x-archive, registered and CLI-enrollable.",
+      "affected_invariant": "File importers cannot stand in for live-account rows; X API and X archive must remain separate C3 gates.",
+      "smallest_correction": "Do not collapse these rows in P004/P007."
+    },
+    {
+      "severity": "confirmed",
+      "id": "x-archive-catalog-title-missing",
+      "location": "packages/cli/src/connect-catalog.ts:10-26,32",
+      "failure": "TITLES omits kizuki.import-x-archive, so the catalog name falls back to the raw id. Enrollment still works.",
+      "affected_invariant": "Catalog honesty for a registered enrollable source.",
+      "smallest_correction": "Add a human title. Not an id-join defect."
+    }
+  ],
+  "deliverables": [
+    "/work/out/c3-consumer-join.json",
+    "/work/out/c3-consumer-join.tsv",
+    "/work/out/c3-completeness-check.ts",
+    "/work/out/harness-stdout.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/orientation.md",
+    "/work/out/findings.md",
+    "/work/out/checks.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/c3-consumer-join.json",
+    "/work/out/c3-consumer-join.tsv",
+    "/work/out/c3-completeness-check.ts",
+    "/work/out/harness-stdout.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/orientation.md",
+    "/work/out/findings.md",
+    "/work/out/checks.md",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": {
+    "consumer_connectors": { "file": "scripts/go-no-go.ts", "line": 23 },
+    "consumer_comment": { "file": "scripts/go-no-go.ts", "line": 22 },
+    "c3_docs": { "file": "docs/release-acceptance.md", "line": 156 },
+    "registry_enroll": { "file": "packages/connectors/src/registry.ts", "line": 251 },
+    "registry_export": { "file": "packages/connectors/src/registry.ts", "line": 446 },
+    "cli_catalog": { "file": "packages/cli/src/connect-catalog.ts", "line": 28 },
+    "cli_enrollable": { "file": "packages/cli/src/connections.ts", "line": 143 },
+    "x_api_id": { "file": "packages/connector-x/src/api/state.ts", "line": 4 },
+    "x_archive_id": { "file": "packages/connector-x/src/connector.ts", "line": 34 },
+    "whoop_id": { "file": "packages/connector-whoop/src/state.ts", "line": 3 },
+    "existing_c3_length_test": { "file": "scripts/go-no-go.test.ts", "line": 146 },
+    "existing_registry_battery_test": { "file": "packages/connectors/test/conformance.test.ts", "line": 464 }
+  },
+  "checks": [
+    {
+      "name": "source-text completeness harness",
+      "command": "bun --no-install /work/out/c3-completeness-check.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/c3-consumer-join.json"
+    },
+    {
+      "name": "live workspace import of REGISTRY and listEnrollableConnectorIds",
+      "command": "bun /work/out/c3-completeness-check.ts (workspace-import draft, superseded)",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "exit_code": 1,
+      "reason": "Cannot find module @kizuki/connector-google-calendar; archive has no node_modules; installs forbidden"
+    },
+    {
+      "name": "go-no-go.test.ts C3 length",
+      "command": "bun test scripts/go-no-go.test.ts",
+      "result": "NOT_RUN",
+      "static": "scripts/go-no-go.test.ts:146 asserts connectors length 15 only; not the three-column join"
+    },
+    {
+      "name": "full repository gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "reason": "not assigned; missing workspace install"
+    }
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun --no-install /work/out/c3-completeness-check.ts",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "live_account": "NOT_RUN",
+    "limitations": [
+      "Join is source-text, not live module execution of REGISTRY or printConnectorCatalog.",
+      "No node_modules in the archive; bun --no-install was required.",
+      "No Git metadata; remote and CI were not verified.",
+      "No native/account/model/human qualification or release GO claim."
+    ]
+  },
+  "blockers": [],
+  "downstream_handoff": {
+    "feeds": ["P004", "P007"],
+    "must_preserve": [
+      "Exactly fifteen C3 rows",
+      "Distinct x-api (connector_id null, not-listed) and x-archive (kizuki.import-x-archive, enrollable)",
+      "whoop C3 connector_id kizuki.whoop is currently unregistered and not CLI-listed",
+      "Extra registry ids kizuki.beeper, kizuki.import-legacy-wiki, kizuki.import-legacy-events are not C3 rows"
+    ],
+    "do_not": [
+      "Repeat P062 provider research",
+      "Modify the shared registry from this packet",
+      "Treat the join as release acceptance"
+    ]
+  },
+  "next_step": "P004/P007 consume /work/out/c3-consumer-join.json without collapsing X rows or treating WHOOP as registered; any in-tree test belongs to those owners after review.",
+  "limitations": [
+    "Read-only preparation. No source edits, no registry changes, no docs rewrite (P006), no implementation (WHOOP/X owners).",
+    "Live connector constructors and CLI catalog JSON were not executed.",
+    "Existing tests do not cover this join; the harness is an out-of-tree draft.",
+    "Not native, account, model, human, or 1.0 acceptance evidence."
+  ]
+}

@@ -1,0 +1,124 @@
+{
+  "task_id": "R058",
+  "packet_id": "R058",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Map Calendar request parameters to supported source configuration",
+  "issue": 546,
+  "findings": [
+    {
+      "severity": "coverage_gap",
+      "summary": "No in-tree test asserts the full events.list query string, encoded calendar path, or absence of timeMin/timeMax/orderBy/q.",
+      "evidence": "packages/connector-google-calendar/test/bounds.test.ts:71-83 asserts only projection field-name omission; bounds.test.ts:11-27 asserts behavioral page size ≤20; google-calendar-enrollment.test.ts:159-163 asserts primary refusal only.",
+      "required_fix": "P054/P055 should add public-seam URL assertions from calendar-request-construction.fixture.ts without duplicating primary-alias or projection-omission tests."
+    },
+    {
+      "severity": "harness_limitation",
+      "summary": "CalendarFixture pathname compare is unencoded and would reject production-encoded @/# calendar IDs.",
+      "evidence": "packages/connector-google-calendar/src/testing.ts:26 vs connector.ts:313 encodeURIComponent(state.calendar)",
+      "required_fix": "Compare decodeURIComponent(pathname) or the full href when adding encoded-ID cases."
+    },
+    {
+      "severity": "stale_spec",
+      "summary": "Wave1 Google spec still says singleEvents=true and optional q; current native connector sends singleEvents=false and never q.",
+      "evidence": "docs/wave1/specs/connector-google.md:290-292 vs packages/connector-google-calendar/src/connector.ts:306"
+    }
+  ],
+  "deliverables": [
+    "/work/out/calendar-argument-to-query-map.json",
+    "/work/out/calendar-argument-to-query-map.md",
+    "/work/out/calendar-request-construction.fixture.ts",
+    "/work/out/calendar-request-construction.results.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/calendar-argument-to-query-map.json",
+    "/work/out/calendar-argument-to-query-map.md",
+    "/work/out/calendar-request-construction.fixture.ts",
+    "/work/out/calendar-request-construction.results.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/_google-calendar-docs.json",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/cli/src/google-calendar.ts:5-11,32-35,39",
+    "packages/cli/src/commands/connect-google-calendar.ts:22,40",
+    "packages/cli/src/commands/connect.ts:117-137",
+    "packages/cli/src/commands/backfill.ts:16",
+    "packages/cli/src/commands/sync.ts:22",
+    "packages/cli/src/connections.ts:416-429",
+    "packages/cli/src/app/host.ts:295-314",
+    "packages/cli/src/args.ts:57",
+    "packages/connector-google-calendar/src/api.ts:3,9-23",
+    "packages/connector-google-calendar/src/connector.ts:277-282,300,306-313",
+    "packages/connector-google-calendar/src/events.ts:28-29",
+    "packages/connector-google-calendar/src/state.ts:5,40-43",
+    "packages/connector-google-calendar/src/testing.ts:26-33",
+    "packages/connector-google-calendar/test/bounds.test.ts:11-27,41-56,71-83",
+    "packages/connector-google-calendar/test/validation.test.ts:24-26",
+    "packages/cli/test/google-calendar-enrollment.test.ts:159-163",
+    "docs/google-calendar.md",
+    "docs/wave1/specs/connector-google.md:290-292",
+    "https://developers.google.com/workspace/calendar/api/v3/reference/events/list (fetched 2026-09-06, HTTP 200)",
+    "https://developers.google.com/workspace/calendar/api/guides/sync (fetched 2026-09-06, HTTP 200)"
+  ],
+  "checks": [
+    {
+      "name": "pure_request_construction_fixture",
+      "command": "bun /work/out/calendar-request-construction.fixture.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "executed_at": "2026-09-06T22:01:58.602Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/calendar-request-construction.results.json",
+      "detail": "10 passed, 0 failed"
+    },
+    {
+      "name": "existing_coverage_static_read",
+      "command": "static read of Calendar tests; exact full-query case absent",
+      "result": "PASS",
+      "evidence": "/work/out/existing-coverage.json"
+    },
+    {
+      "name": "repository_package_tests",
+      "command": "bun test packages/connector-google-calendar packages/cli",
+      "result": "NOT_RUN",
+      "detail": "archive has no node_modules; installs forbidden; existing tests statically verified only"
+    },
+    {
+      "name": "full_repository_gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "detail": "read-only preparation packet; no source edits"
+    }
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun /work/out/calendar-request-construction.fixture.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/calendar-request-construction.results.json"
+    },
+    "package_type_full_gate": "NOT_RUN",
+    "live_account": "NOT_RUN",
+    "independent_review": "NOT_RUN"
+  },
+  "blockers": [],
+  "limitations": [
+    "No CLI timeMin/timeMax/since/until flags exist; time windows are intentionally absent so nextSyncToken remains available.",
+    "Repository tests and typecheck were not executed in this container.",
+    "Live Google account qualification remains separate and unrun.",
+    "Wave1 connector-google.md is not current native behavior.",
+    "No native/account/model/human qualification or release acceptance claim."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P054", "P055"],
+    "use": "calendar-argument-to-query-map.json plus the executed fixture cases",
+    "do_not": "duplicate primary-alias tests, projection-omission tests, OAuth, or recurrence expansion; do not add timeMin/timeMax; do not follow wave1 singleEvents=true",
+    "next_smallest": "On a writable checkout, assert capture GET URLs for encoded canonical IDs and invariant query keys against CalendarFixture.calls, decoding the path."
+  },
+  "next_step": "P054/P055 should land public-seam events.list URL assertions from the executed fixture, using decodeURIComponent for calendar path, without duplicating existing primary-alias or projection tests."
+}

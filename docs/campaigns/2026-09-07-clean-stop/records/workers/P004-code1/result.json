@@ -1,0 +1,34 @@
+{
+  "task_id": "P004",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "ce8395792a333ad760594f92f1198639e0936445",
+  "status": "awaiting_root_test",
+  "changed_files": [
+    "scripts/release-evidence.ts",
+    "scripts/go-no-go.ts",
+    "scripts/go-no-go.test.ts"
+  ],
+  "findings": [
+    "Shared v3 reader and surface family validator are implemented on the owned paths only. P006 still owns scripts/capability-proof.ts; until that regular file exists the surface producer stays inactive and surface.capabilities-and-docs remains NOT_IMPLEMENTED.",
+    "v1/v2 index behavior, artifact/fixture credit, and the 41-row gate inventory are preserved. Reserved producers are names only: listing them never opens files or grants native, CI, review, P0, journey, connector, human, or release credit.",
+    "Synthetic isolated-tree fixtures exercise the surface recomputation contract. They are not retained release evidence and cannot promote a GO."
+  ],
+  "deliverables": [
+    "scripts/release-evidence.ts: fail-closed v3 gate_receipts parser, total producer-to-gate map, custody read, shared identity, RFC3339 instant check, optional capability-proof verifier sentinel, and kizuki.surface-inventory/v1 recomputation.",
+    "scripts/go-no-go.ts: v3 index integration (32,768-byte cap), mandatory scripts/release-evidence.ts verifier hash, MISSING/PRESENT capability-proof sentinel, consume surface receipts only when the producer file is a regular file.",
+    "scripts/go-no-go.test.ts: v1/v2 compatibility, v3 mapping/unknown/duplicate/cap, inactive-producer non-credit, verifier sentinel, surface mismatch/truthful disagreement/fail/unresolved, identity/RFC3339/custody failures."
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun test scripts/go-no-go.test.ts",
+      "result": "NOT_RUN",
+      "reason": "Root owns network-disabled test execution. test-request.json written with request_id p004-go-no-go-v3-evidence."
+    },
+    "typecheck": { "command": "bun run typecheck", "result": "NOT_RUN" },
+    "full_gate": { "command": "bun run verify", "result": "NOT_RUN" },
+    "independent_review": "NOT_RUN",
+    "release_decision": "NO-GO remains required; this packet does not authorize GO."
+  },
+  "blockers": [],
+  "next_step": "Root runs scripts/go-no-go.test.ts on this head and returns /work/out/test-result.json. Independent review of ce8395792a333ad760594f92f1198639e0936445 follows. P006 can then add scripts/capability-proof.ts to activate surface validation without changing this reader."
+}

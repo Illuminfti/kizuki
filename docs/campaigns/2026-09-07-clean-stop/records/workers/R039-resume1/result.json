@@ -1,0 +1,221 @@
+{
+  "task_id": "R039",
+  "packet_id": "R039",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Inspect model prompt budget accounting and truncation notices",
+  "issue": 472,
+  "owner": "grok-R039",
+  "read_root": "/repo",
+  "write_scope": "/work/out only",
+  "identity": {
+    "source_kind": "git archive of exact commit; no Git metadata or runtime data",
+    "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+    "branch": null,
+    "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+    "remote_verified": false,
+    "note": "Root owns live issue/PR/worktree reconciliation. This worker did not run vps-nav, git fetch, or GitHub inspection."
+  },
+  "findings": [
+    {
+      "severity": "observation",
+      "id": "quoted-vs-token-counters",
+      "location": "packages/core/src/producer/model.ts:303 and 322-324",
+      "fact": "quoted_chars counts only escapeFenceText(event.text).length. input_tokens counts complete system+user message UTF-16 length / 4, rounded up, including fence wrappers, headers, predicates, subject JSON and known claims.",
+      "tiny_proof": "text \"hello\" is 5 quoted chars and 2112 message chars / 528 estimated tokens.",
+      "invariant": "A record under 24000 quoted chars can still exhaust max_input_tokens."
+    },
+    {
+      "severity": "observation",
+      "id": "model-never-truncates",
+      "location": "packages/core/src/producer/model.ts:286-288, 304-310, 345-346",
+      "fact": "Model extraction never slices quoted text. An escaped body over EXTRACT_INPUT_CHARS=24000 becomes budget_exhausted / max_quoted_chars with used=0. planBatches DroppedDraft event_too_large is not returned from produce(); the first oversized record aborts the whole input, including later records that would fit. Diagnostic has no event_id.",
+      "existing_test": "packages/core/test/producer/model.test.ts:296-306 (executed PASS)"
+    },
+    {
+      "severity": "observation",
+      "id": "capture-note-prose-notice",
+      "location": "packages/core/src/staging/producers.ts:92-100",
+      "fact": "Deterministic capture notes clip with text.slice(0, 8000) and insert the sentence \" Quoted text truncated to the capture-note budget.\" into the header. There is no structured truncated boolean on the proposal.",
+      "existing_test": "packages/core/test/staging/producers.test.ts:256-275 (executed PASS)",
+      "tiny_analog": "maxChars=8, \"hello world\" -> clipped \"hello wo\", truncated=true, notice present"
+    },
+    {
+      "severity": "observation",
+      "id": "silent-subject-skip",
+      "location": "packages/core/src/staging/producers.ts:101-103 and 154-157; page-candidate.ts:34-37",
+      "fact": "Subjects beyond maxSubjectsPerEvent=16 are sliced with no truncation notice on capture notes or page candidates. Page-candidate bodies are not clipped to 8000.",
+      "existing_test": "producers.test.ts:256-265 and page-candidate.test.ts:156-178 assert counts, not a notice"
+    },
+    {
+      "severity": "coverage_gap",
+      "id": "fence-escape-vs-quoted-cap",
+      "location": "packages/core/src/producer/fence.ts:43-45 with model.ts:303-306",
+      "fact": "Each <<<KZ- lookalike adds one escaped code unit. A 24000-char raw body containing a lookalike would exceed EXTRACT_INPUT_CHARS after escape. Existing oversized test uses 24001 raw y characters with no lookalike.",
+      "tiny_proof": "\"<<<KZ-QUOTE\" raw 11 -> escaped 12, truncated=false"
+    },
+    {
+      "severity": "observation",
+      "id": "known-claim-omission",
+      "location": "packages/core/src/producer/model.ts:356; serve/extract.ts:828-837",
+      "fact": "Known claims whose subject is absent from the batch event subject map are omitted from the prompt. Serving also caps authorized known claims at 32. Neither path emits a truncation notice.",
+      "tiny_proof": "c-bob omitted; c-ada kept in known-claims fence"
+    }
+  ],
+  "deliverables": [
+    "/work/out/budget-worksheet.md",
+    "/work/out/budget-fixture.ts",
+    "/work/out/budget-fixture.observed.json",
+    "/work/out/coverage-map.md",
+    "/work/out/orientation.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    {
+      "path": "/work/out/budget-worksheet.md",
+      "kind": "budget_counter_worksheet",
+      "role": "Named counters, formulas, tiny-input arithmetic, reporting matrix"
+    },
+    {
+      "path": "/work/out/budget-fixture.ts",
+      "kind": "pure_small_input_fixture",
+      "role": "Executable draft against live seams; preserves explicit truncation state"
+    },
+    {
+      "path": "/work/out/budget-fixture.observed.json",
+      "kind": "fixture_receipt",
+      "role": "Observed counters and truncation-state object from bun /work/out/budget-fixture.ts"
+    },
+    {
+      "path": "/work/out/coverage-map.md",
+      "kind": "existing_coverage_map",
+      "role": "Exact tests not to duplicate"
+    },
+    {
+      "path": "/work/out/orientation.md",
+      "kind": "orientation"
+    }
+  ],
+  "source_references": [
+    {
+      "path": "packages/core/src/producer/prompt.ts",
+      "lines": "13-37,80-131",
+      "why": "Constant system prompt (1252) and user assembly; captured text only inside fences"
+    },
+    {
+      "path": "packages/core/src/producer/fence.ts",
+      "lines": "10-13,43-59",
+      "why": "Fence template and lookalike escape that changes quoted_chars"
+    },
+    {
+      "path": "packages/core/src/staging/budget.ts",
+      "lines": "5-8",
+      "why": "maxSubjectsPerEvent=16, maxCaptureNoteChars=8000"
+    },
+    {
+      "path": "packages/core/src/staging/producers.ts",
+      "lines": "91-103,154-157",
+      "why": "Capture-note clip + prose notice; silent subject slice"
+    },
+    {
+      "path": "packages/core/src/producer/model.ts",
+      "lines": "49-56,290-366,465-466",
+      "why": "planBatches, estimateTokens, planModelExtraction, produce rejection"
+    },
+    {
+      "path": "packages/core/src/producer/diagnostics.ts",
+      "lines": "9,39-41,52",
+      "why": "Budget diagnostic vocabulary and notice format"
+    },
+    {
+      "path": "packages/core/src/contracts/producer.ts",
+      "lines": "6-7,38-42,66,104-131",
+      "why": "Caller budget, minor 3 max_quoted_chars, DroppedDraft event_too_large"
+    },
+    {
+      "path": "packages/core/src/serve/extract.ts",
+      "lines": "821-853",
+      "why": "Serving prefix walk, 32-claim cap, budget {2,8000,2000}, single-call requirement"
+    },
+    {
+      "path": "docs/extraction-budgets.md",
+      "lines": "1-43",
+      "why": "Documented refuse-not-truncate and used=0 planning diagnostic"
+    },
+    {
+      "path": "rfcs/0002-autonomous-canon.md",
+      "lines": "763-766",
+      "why": "EXTRACT_BATCH=8 and EXTRACT_INPUT_CHARS=24000"
+    }
+  ],
+  "checks": [
+    {
+      "name": "focused_producer_staging_tests",
+      "command": "bun test packages/core/test/producer/model.test.ts packages/core/test/producer/fence.test.ts packages/core/test/producer/diagnostics.test.ts packages/core/test/producer/subject-roles.test.ts packages/core/test/staging/producers.test.ts packages/core/test/staging/page-candidate.test.ts",
+      "cwd": "/repo",
+      "runtime": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "time": "2026-09-06T22:03:09Z-window",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "83 pass, 0 fail, 303 expect() calls, 539ms. Includes existing 24001-char refuse, capture-note notice, and subject-cap tests."
+    },
+    {
+      "name": "budget_fixture_tiny_inputs",
+      "command": "bun /work/out/budget-fixture.ts",
+      "cwd": "/work",
+      "runtime": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "time": "2026-09-06T22:03:09Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "Independent arithmetic matched live functions: tokens=528, truncation_state analog_clip.truncated=true, live hello notice empty, mismatches=[]"
+    },
+    {
+      "name": "extraction_budget_serving_tests",
+      "command": "bun test packages/core/test/serve/extraction-budget.test.ts",
+      "cwd": "/repo",
+      "runtime": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "detail": "Process started then failed to load js-tiktoken/lite from packages/core/src/serving/packet-tokenizer.ts. Archive has no node_modules. Installs are forbidden. Not evidence that those tests fail on a full checkout. Cases at extraction-budget.test.ts:259-288 were read statically only."
+    },
+    {
+      "name": "full_repository_gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "detail": "Out of this preparation packet; missing node_modules would block it here."
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS on producer/staging files listed above; fixture PASS",
+    "package_type_full_gate": "NOT_RUN",
+    "serving_extraction_budget_file": "NOT_RUN (missing js-tiktoken)",
+    "independent_review": "NOT_RUN",
+    "native_or_account_qualification": "NOT_CLAIMED",
+    "limitations": [
+      "Git metadata and live GitHub issue/PR state unavailable in this archive.",
+      "js-tiktoken is a declared @kizuki/core dependency but is not present; serving tests that import src/index cannot load.",
+      "No 24000-character bodies were constructed in the new fixture; those exact cases already exist and were executed in model.test.ts / producers.test.ts.",
+      "Fence lookalike string used only for length accounting, not instruction-following tests."
+    ]
+  },
+  "blockers": [
+    "Serving extraction-budget tests require js-tiktoken in node_modules; cannot install in this container.",
+    "Live issue #472 / P033 / P036 unpublished output was not read; packet forbids waiting on them."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P033", "P036"],
+    "use": "Treat /work/out/budget-worksheet.md plus budget-fixture.observed.json as the counter contract. Preserve refuse-not-truncate on the model path. If a structured truncated/skipped field is added, it is new API, not current behavior.",
+    "do_not": "Do not duplicate model.test.ts:278-360 or producers.test.ts:256-275. Do not replace P003 evidence design, P015 source-B, or P006 docs."
+  },
+  "next_step": "P033/P036 rebase onto this worksheet: keep model refuse-not-truncate; decide whether capture-note clipping and subject skips should gain structured truncated/skipped fields. Re-run extraction-budget.test.ts on a checkout that has js-tiktoken.",
+  "not_claimed": [
+    "implementation merged",
+    "full verify",
+    "independent C2 review",
+    "native/account/human qualification",
+    "release acceptance"
+  ]
+}

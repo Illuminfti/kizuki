@@ -1,0 +1,176 @@
+{
+  "task_id": "R083",
+  "packet_id": "R083",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Inventory Screenpipe supported schema detection",
+  "issue": 550,
+  "capability": "offline read-only SQLite loopback",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "checkout": "/repo git archive; no Git metadata; remote not verified here",
+  "write_scope": "/work/out only",
+  "artifacts": [
+    "/work/out/schema-compatibility-matrix.md",
+    "/work/out/schema-compatibility-matrix.json",
+    "/work/out/fixtures/schema-descriptors.json",
+    "/work/out/inspect-schema-fixtures.ts",
+    "/work/out/expected-behavior.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/ORIENTATION.md",
+    "/work/out/provider-research.md",
+    "/work/out/downstream-handoff.md",
+    "/work/out/checks/inspection-report.json",
+    "/work/out/checks/existing-tests-receipt.txt",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/schema-compatibility-matrix.md",
+    "/work/out/schema-compatibility-matrix.json",
+    "/work/out/fixtures/schema-descriptors.json",
+    "/work/out/inspect-schema-fixtures.ts",
+    "/work/out/expected-behavior.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/checks/inspection-report.json"
+  ],
+  "source_references": [
+    {
+      "path": "packages/connector-screenpipe/src/schema.ts",
+      "lines": "4-5,16-73,107-318",
+      "role": "floor, verified max, column contracts, inspectSchema, sqliteAffinity, diagnosis precedence"
+    },
+    {
+      "path": "packages/connector-screenpipe/src/open.ts",
+      "lines": "10-45",
+      "role": "missing/non-database files are misconfigured before schema"
+    },
+    {
+      "path": "packages/connector-screenpipe/src/config.ts",
+      "lines": "10-80",
+      "role": "path-only config; not schema detection"
+    },
+    {
+      "path": "packages/connector-screenpipe/src/connector.ts",
+      "lines": "88-143,202",
+      "role": "health inspectSchema; connect/backfill/sync assertSchema"
+    },
+    {
+      "path": "packages/connector-screenpipe/src/fixture.ts",
+      "lines": "5-110",
+      "role": "supported FIXTURE_DDL and FIXTURE_MIGRATIONS"
+    },
+    {
+      "path": "packages/connector-screenpipe/src/read.ts",
+      "lines": "80-149",
+      "role": "reader column list; audio_chunks unused; speakers LEFT JOIN"
+    },
+    {
+      "path": "packages/connector-screenpipe/test/schema.test.ts",
+      "lines": "20-202",
+      "role": "existing detection coverage"
+    },
+    {
+      "path": "packages/connector-screenpipe/test/open.test.ts",
+      "lines": "29-61",
+      "role": "missing file and non-database file"
+    },
+    {
+      "path": "packages/connector-screenpipe/test/health.test.ts",
+      "lines": "83-123",
+      "role": "verified ok; missing file and old schema misconfigured"
+    },
+    {
+      "path": "packages/connector-screenpipe/test/p1-regressions.test.ts",
+      "lines": "205-234",
+      "role": "too-new additive migration fails closed"
+    },
+    {
+      "path": "packages/connector-screenpipe/README.md",
+      "lines": "50-61",
+      "role": "documented floor/verified and too-new refusal"
+    },
+    {
+      "path": "docs/wave1/specs/connector-screenpipe.md",
+      "lines": "307-379",
+      "role": "stale §4: types unchecked; too-new stays ok"
+    }
+  ],
+  "checks": [
+    {
+      "name": "inspectSchema fixture inspector",
+      "command": "bun /work/out/inspect-schema-fixtures.ts",
+      "bun": "1.3.14",
+      "time_utc": "2026-09-06T22:05:22Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/checks/inspection-report.json",
+      "detail": "18 layouts and 18 affinity cases matched"
+    },
+    {
+      "name": "existing connector-screenpipe tests",
+      "command": "bun test /repo/packages/connector-screenpipe/test/schema.test.ts /repo/packages/connector-screenpipe/test/open.test.ts /repo/packages/connector-screenpipe/test/health.test.ts /repo/packages/connector-screenpipe/test/p1-regressions.test.ts /repo/packages/connector-screenpipe/test/production-exports.test.ts",
+      "bun": "1.3.14",
+      "time_utc": "2026-09-06T22:05:22Z",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "evidence": "/work/out/checks/existing-tests-receipt.txt",
+      "detail": "Cannot find module '@kizuki/core'. Archive has no workspace install; bun install forbidden. Tests were read statically."
+    },
+    {
+      "name": "full repository gate",
+      "command": "bash /repo/scripts/verify.sh",
+      "result": "NOT_RUN",
+      "detail": "Read-only preparation packet; no source change; archive cannot resolve workspace packages"
+    }
+  ],
+  "verification": {
+    "focused": "PASS",
+    "existing_package_tests": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "live_account": "NOT_RUN",
+    "independent_review": "NOT_RUN"
+  },
+  "findings": [
+    {
+      "severity": "docs",
+      "id": "stale-lane-spec-section-4",
+      "confirmed": true,
+      "summary": "docs/wave1/specs/connector-screenpipe.md §4 still says types are not checked and newer-than-verified schemas stay healthy. schema.ts, README, schema.test.ts:97-128, and p1-regressions.test.ts:205-234 refuse too-new databases and check affinity, nullability, pk, and covering indexes.",
+      "owner": "P006 canonical docs; P082 must implement against current code"
+    },
+    {
+      "severity": "coverage",
+      "id": "missing-table-diagnosis-untested",
+      "confirmed": true,
+      "summary": "A missing required table is diagnosed only as the sorted list of table.column names. No dedicated test for speakers, audio_chunks, or frames. Characterized in fixtures; do not duplicate the existing frames.full_text missing-column test.",
+      "owner": "P082 optional gap fill"
+    },
+    {
+      "severity": "observation",
+      "id": "audio-chunks-required-unread",
+      "confirmed": true,
+      "summary": "REQUIRED_COLUMN_CONTRACTS.audio_chunks is enforced by inspectSchema; read.ts never SELECTs audio_chunks. Media file_path is never opened.",
+      "owner": "leave unless a named owner changes the fingerprint"
+    },
+    {
+      "severity": "hypothesis",
+      "id": "empty-declared-type-affinity",
+      "confirmed": false,
+      "summary": "sqliteAffinity('') returns NUMERIC. SQLite's own rule treats an unspecified type as BLOB. No required Screenpipe column is untyped on this revision."
+    }
+  ],
+  "blockers": [],
+  "limitations": [
+    "No owner Screenpipe database was opened or copied.",
+    "No live provider/account/API calls.",
+    "Existing in-repo tests could not execute in this git archive because @kizuki/core is unresolved and bun install is forbidden.",
+    "Public Screenpipe architecture.md was fetched 2026-09-06; column declared types come from Kizuki FIXTURE_DDL/README (c758770e, 2026-09-04), not a live schema dump.",
+    "OCR/transcript fidelity left to P081.",
+    "No native/account/model/human qualification or release acceptance claim."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P082"],
+    "note": "See /work/out/downstream-handoff.md. Use the matrix and descriptors. Do not duplicate existing schema.test.ts cases. Do not follow stale spec §4. Re-run package tests on a real worktree."
+  },
+  "next_step": "P082 consume /work/out/schema-compatibility-matrix.md and fixtures/schema-descriptors.json on a worktree that can resolve @kizuki/core; fill only the listed coverage gaps; route stale spec §4 to P006."
+}

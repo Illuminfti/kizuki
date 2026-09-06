@@ -1,0 +1,165 @@
+{
+  "task_id": "R068",
+  "packet_id": "R068",
+  "title": "Document shared X identity namespace call sites",
+  "issue": 549,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "owner": "grok-R068",
+  "write_scope": "/work/out only",
+  "findings": [
+    {
+      "severity": "contract",
+      "id": "native-validator-split",
+      "summary": "Archive nativeId and API id() are different regexes; shared x:user: / post: prefixes do not mean a shared native grammar.",
+      "evidence": [
+        "packages/connector-x/src/ids.ts:3,12-17 /^[0-9]{1,20}$/",
+        "packages/connector-x/src/api/state.ts:30-33 /^[1-9][0-9]{0,18}$/",
+        "static-identity-scan.json mismatches: 0, 0123, 20-digit strings"
+      ],
+      "expected": "P063 must record which validator is canonical before sharing helpers.",
+      "confirmed": true
+    },
+    {
+      "severity": "integration",
+      "id": "api-does-not-call-ids-ts",
+      "summary": "API constructs x:user: and post: with template literals and inverts post: via slice(5); it never imports ids.ts.",
+      "evidence": [
+        "packages/connector-x/src/api/parse.ts:96-98,104,126,133",
+        "packages/connector-x/src/api/connector.ts:255,265,286",
+        "packages/connector-x/src/api/index.ts exports no identity helpers"
+      ],
+      "confirmed": true
+    },
+    {
+      "severity": "integration",
+      "id": "namespace-is-connector-id",
+      "summary": "API/archive namespace selection is event connector_id plus metadata.source, not ids.ts.",
+      "evidence": [
+        "packages/connector-x/src/map.ts:131,147 kizuki.import-x-archive / x_archive",
+        "packages/connector-x/src/api/parse.ts:104,107 kizuki.x / x_api",
+        "packages/connectors/src/registry.ts enrolls archive only"
+      ],
+      "confirmed": true
+    },
+    {
+      "severity": "coverage",
+      "id": "ids-test-omits-helpers",
+      "summary": "Existing ids.test.ts only covers parseArchiveDate; no test compares the two native validators.",
+      "evidence": [
+        "packages/connector-x/test/ids.test.ts:2,4-19",
+        "existing-coverage.md"
+      ],
+      "confirmed": true
+    }
+  ],
+  "deliverables": [
+    "/work/out/x-identity-call-site-graph.md",
+    "/work/out/x-identity-call-site-graph.json",
+    "/work/out/p063-identity-helper-integration-checklist.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/static-identity-scan.ts",
+    "/work/out/static-identity-scan.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/x-identity-call-site-graph.md",
+    "/work/out/x-identity-call-site-graph.json",
+    "/work/out/p063-identity-helper-integration-checklist.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/static-identity-scan.ts",
+    "/work/out/static-identity-scan.json",
+    "/work/out/ids-test.attempt.log",
+    "/work/out/ids-test.attempt.exit",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/connector-x/src/ids.ts:3,12-25,28-70",
+    "packages/connector-x/src/index.ts:32",
+    "packages/connector-x/src/api/index.ts:1-4",
+    "packages/connector-x/src/map.ts:5,19,77,82,106,111,123,128,131-132,138,147",
+    "packages/connector-x/src/archive.ts:204,263,393-399",
+    "packages/connector-x/src/cursor.ts:51",
+    "packages/connector-x/src/connector.ts:34",
+    "packages/connector-x/src/api/state.ts:4,30-33",
+    "packages/connector-x/src/api/parse.ts:96-98,104-107,126,133",
+    "packages/connector-x/src/api/connector.ts:41,255,265,286",
+    "packages/connector-x/src/api/client.ts:84",
+    "packages/connectors/src/registry.ts:418-429",
+    "packages/core/src/staging/subjects.ts:24-35",
+    "packages/connector-x/test/ids.test.ts",
+    "packages/connector-x/test/connector.test.ts:55-65",
+    "packages/connector-x/test/api/parse.test.ts:15-17",
+    "packages/connector-x/test/api/native-recovery.test.ts",
+    "docs/wave1/specs/connector-x.md:109-112,186-201",
+    "docs/event-identity-origin.md:29"
+  ],
+  "checks": [
+    {
+      "name": "static-identity-scan",
+      "command": "bun /work/out/static-identity-scan.ts",
+      "runtime": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/static-identity-scan.json"
+    },
+    {
+      "name": "existing-ids-test",
+      "command": "bun test /repo/packages/connector-x/test/ids.test.ts",
+      "runtime": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "reason": "Cannot find module @kizuki/core; workspace node_modules absent; installs forbidden",
+      "evidence": "/work/out/ids-test.attempt.log"
+    },
+    {
+      "name": "typecheck",
+      "command": "bun run typecheck",
+      "result": "NOT_RUN",
+      "reason": "workspace dependencies not installed in this git-archive container"
+    },
+    {
+      "name": "full-gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "reason": "workspace dependencies not installed; /repo has no Git metadata"
+    }
+  ],
+  "verification": {
+    "focused": "PASS static scan only",
+    "package_tests": "NOT_RUN missing @kizuki/core",
+    "typecheck": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "live_account": "NOT_RUN not authorized",
+    "limitations": [
+      "No source edits.",
+      "No workspace install.",
+      "No live provider/account/model calls.",
+      "No Git fetch or vps-nav in this container.",
+      "Wave1 spec identity helpers beyond nativeId/userSubjectId/postRecordId/parseArchiveDate are unimplemented; not treated as shipped.",
+      "Not a P065 lineage oracle; native-recovery.test.ts remains the existing API recovery proof."
+    ]
+  },
+  "blockers": [],
+  "downstream_handoff": {
+    "feeds": ["P063", "P066"],
+    "required_reading": [
+      "/work/out/x-identity-call-site-graph.md",
+      "/work/out/x-identity-call-site-graph.json",
+      "/work/out/p063-identity-helper-integration-checklist.md",
+      "/work/out/existing-coverage.md"
+    ],
+    "do_not": [
+      "Create a second P065 lineage/origin oracle",
+      "Edit ids.ts or API identity literals in R068",
+      "Register kizuki.x in CLI/registry without a named owner",
+      "Wait for unpublished P-packet output",
+      "Claim native/account/human qualification"
+    ]
+  },
+  "next_step": "P063 rebases onto live root and applies the identity-helper checklist: choose one native validator, update every listed call site in one diff, re-run existing connector-x tests on a full checkout; do not duplicate native-recovery tests."
+}

@@ -1,0 +1,37 @@
+{
+  "task_id": "P104",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "66040e3df3ee452c459ac1e45360efe731158715",
+  "tree_sha": "4b33eca55ab3e6df5344595cf23fa7c37873e0e5",
+  "status": "awaiting_root_test",
+  "changed_files": [
+    "packages/mcp/src/schemas.ts",
+    "packages/mcp/test/schema.test.ts"
+  ],
+  "findings": [
+    "Core already emits optional source_policy {mode:enforced, epoch, legacy_unbound:owner_only} when sourcePolicyEpoch is nonzero; advertised ENVELOPE_SHAPE omitted that field, so a tools/list client validator could reject a valid enforced response.",
+    "No core emission, tool registration, authorization, or transport changes were made. Only the shared advertised envelope schema and its focused tests were updated."
+  ],
+  "deliverables": [
+    "packages/mcp/src/schemas.ts now advertises optional source_policy with literal mode=enforced, positive integer epoch, and literal legacy_unbound=owner_only.",
+    "packages/mcp/test/schema.test.ts proves listed-client acceptance at epoch>0 on both text and structured content, epoch-0 omission, advertised optional exact members, and rejection of missing, extra, mistyped, and invalid policy members without loosening other envelope keys.",
+    "Commit 66040e3df3ee452c459ac1e45360efe731158715 on agent/grok-p104."
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun test packages/mcp/test/schema.test.ts",
+      "result": "NOT_RUN",
+      "reason": "Root owns network-disabled test execution. Request written to /work/out/test-request.json as p104-mcp-source-policy-schema."
+    },
+    "package_typecheck_full_gate": {
+      "result": "NOT_RUN",
+      "reason": "Agent container must not install dependencies or launch tests."
+    },
+    "independent_review": {
+      "result": "NOT_RUN",
+      "reason": "Self-review only; independent exact-head review is a later root step."
+    }
+  },
+  "blockers": [],
+  "next_step": "Root runs bun test packages/mcp/test/schema.test.ts on head 66040e3df3ee452c459ac1e45360efe731158715 and returns /work/out/test-result.json. Independent review follows a passing focused result."
+}

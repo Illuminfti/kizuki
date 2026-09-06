@@ -1,0 +1,259 @@
+{
+  "schema": "kizuki.fleet-reviewed-scoped-packets/v1",
+  "reviewed_at": "2026-09-06T22:20:43Z",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "source_archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "input_workers": [
+    "R053-resume1",
+    "R093-resume1",
+    "R074-resume1",
+    "P071-code2"
+  ],
+  "report": "CHECKPOINT_BOOK/GROK-R053-R093-R074-REVIEW/REVIEW.md",
+  "authority": "Review and proposed allocation only; no source/controller/worker edits or launches. Root retains live ownership reconciliation and admission.",
+  "packets": [
+    {
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "source_evidence": "Independent static inspection of exact f57 sources and existing tests; no product, service or native execution during this review.",
+      "requires_accounts": false,
+      "release_claim": false,
+      "read_before_work": [
+        "AGENTS.md",
+        "docs/CURRENT.md",
+        "docs/decision-log.md",
+        "rfcs/0002-autonomous-canon.md"
+      ],
+      "id": "P048-DIAGNOSTICS",
+      "parent_packet": "P048",
+      "kind": "production_correction",
+      "readiness": "ready_for_owner_assignment",
+      "owner": "Root assigns one P048 owner; do not create a second Telegram package writer.",
+      "title": "Preserve local Telegram cancellation and unspecified flood-wait diagnostics",
+      "owned_write_paths": [
+        "packages/cli/src/commands/connect-telegram.ts",
+        "packages/cli/test/telegram-signin-diagnostics.test.ts",
+        "packages/cli/test/telegram-enrollment.test.ts"
+      ],
+      "lock_groups": [
+        "telegram-cli-diagnostics"
+      ],
+      "finding": "The final CLI error mapper turns a local Ctrl-C UsageError into generic ConnectionError. A flood_wait with no positive retry duration also loses its wait-specific guidance.",
+      "exact_source_refs": [
+        "packages/cli/src/main.ts:76",
+        "packages/cli/src/main.ts:219",
+        "packages/cli/src/commands/connect-telegram.ts:26",
+        "packages/cli/src/commands/connect-telegram.ts:67",
+        "packages/connector-telegram/src/sign-in.ts:158",
+        "packages/connector-telegram/src/client.ts:75",
+        "packages/connector-telegram/src/guard.ts:65"
+      ],
+      "implementation_contract": [
+        "Preserve local prompt cancellation using fixed safe wording and the existing cancellation/usage classification, including when a provider adapter wraps the prompt exception.",
+        "Keep duration-specific guidance for a positive safe retry_after; retain the wait class without inventing a duration when it is absent or unusable.",
+        "Leave provider error sanitization, connector authentication, cooldown persistence, retries, app credentials and source enrollment architecture unchanged.",
+        "Retain generic fallback for unknown exceptions; do not forward all Error/ConnectionError/provider messages."
+      ],
+      "normal_acceptance": [
+        "At phone, code and password prompts, ordinary local cancellation produces the fixed cancellation diagnostic and UsageError classification consumed by existing CLI dispatch; no success output or new connection is recorded and normal cleanup runs.",
+        "Map a classified flood_wait with retry_after=120 to duration-specific wait wording; map the same code without a usable duration to wait-specific wording with no fabricated count or immediate connectivity retry advice.",
+        "An ordinary unreachable error still uses the existing generic connectivity diagnostic.",
+        "Existing unknown prompt-error sanitization, missing app credentials, successful enrollment and cooldown tests retain their assertions."
+      ],
+      "validation": [
+        "Qualified root runner executes the new helper tests and relevant normal enrollment/cancellation tests on the exact candidate.",
+        "Apply required CLI/type/full repository checks and independent exact-change review; product/native/account qualification remains separate."
+      ],
+      "dependencies": [
+        "Root accepted P047 review; current P048 owner allocation"
+      ],
+      "excluded": [
+        "packages/connector-telegram/src/",
+        "packages/core/",
+        "packages/cli/src/main.ts",
+        "packages/cli/src/args.ts",
+        "packages/cli/src/connections.ts",
+        "Provider registration/account calls",
+        "Additional sign_in_aborted taxonomy",
+        "P049 live/native qualification"
+      ],
+      "skills": [
+        ".agents/skills/connector-work/SKILL.md",
+        ".agents/skills/cli-terminal-ux/SKILL.md",
+        ".agents/skills/review-change/SKILL.md",
+        ".agents/skills/elegance-review/SKILL.md"
+      ]
+    },
+    {
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "source_evidence": "Independent static inspection of exact f57 sources and existing tests; no product, service or native execution during this review.",
+      "requires_accounts": false,
+      "release_claim": false,
+      "read_before_work": [
+        "AGENTS.md",
+        "docs/CURRENT.md",
+        "docs/decision-log.md",
+        "rfcs/0002-autonomous-canon.md"
+      ],
+      "id": "ROOT-SUPERVISOR-STOPPED-UNINSTALL",
+      "parent_packet": null,
+      "kind": "production_correction",
+      "readiness": "ready_after_root_runtime_ownership_reconciliation",
+      "owner": "One new root-assigned supervisor transaction owner. Exact files are absent from current production grants; held runtime reservation still requires root reconciliation.",
+      "title": "Allow uninstall of a known enabled and inactive service without restarting it during rollback",
+      "owned_write_paths": [
+        "packages/core/src/serve/supervisor.ts",
+        "packages/core/test/serve/supervisor.test.ts",
+        "packages/cli/test/serve/install.test.ts"
+      ],
+      "lock_groups": [
+        "core-supervisor-transaction"
+      ],
+      "finding": "The real query produces state=disabled, enabled=true for a known inactive enabled systemd unit. changeService accepts only active+enabled or stopped+not-enabled, so both uninstall and reinstall refuse that normal state.",
+      "exact_source_refs": [
+        "packages/core/src/serve/supervisor.ts:85",
+        "packages/core/src/serve/supervisor.ts:204",
+        "packages/core/src/serve/supervisor.ts:247",
+        "packages/core/src/serve/supervisor.ts:299",
+        "packages/core/src/serve/supervisor.ts:229",
+        "packages/core/src/serve/units.ts:45",
+        "packages/cli/src/commands/serve.ts:83"
+      ],
+      "implementation_contract": [
+        "Represent the known pre-change runtime activity independently from enablement for the normal stopped-but-enabled systemd case.",
+        "Permit uninstall from that state while still disabling and verifying both stop and disabled enablement before removing the owned unit.",
+        "Do not redefine confirmedStopped to accept enabled units.",
+        "Preserve prior inactivity during recoverable failure restoration; current enable() starts/restarts, so merely widening admission is insufficient.",
+        "Retain backward-compatible reading/recovery of version-2 service-change journals. An internal journal extension must explicitly preserve the prior activity and enablement semantics; no SQL/schema migration is in scope.",
+        "Retain unknown-state refusal, owned-definition checks, service identity, existing active-service recovery and truthful pending-recovery errors when restoration cannot be verified.",
+        "Keep the implementation limited to the systemd stopped/enabled correction; preserve launchd behavior and optional host-adapter compatibility."
+      ],
+      "normal_acceptance": [
+        "A fake supervisor with independent state and enablement starts active+enabled; after an ordinary stop it reports inactive+enabled; uninstall disables it, removes its unit, writes opted-out intent and preserves all ordinary vault content.",
+        "An already inactive+disabled unit and a normal active+enabled unit remain uninstallable.",
+        "Ordinary unsuccessful disable/reload/restore responses preserve or truthfully report recovery state and never start a previously inactive service.",
+        "An ordinary known inactive+enabled service can be reinstalled using the existing activation contract if that shares the corrected transaction admission.",
+        "Existing version-2 normal rollback/recovery fixtures continue to work; existing unknown-state refusal remains."
+      ],
+      "validation": [
+        "Use synthetic SupervisorHost/service-command fixtures only in the qualified test runner; do not operate systemd, launchd or a daemon during implementation.",
+        "Run focused supervisor and CLI install tests, typecheck and required repository checks; independent review must assess journal compatibility and prior activity restoration.",
+        "P091 subsequently owns actual Linux native install/stop/uninstall and vault-preservation qualification."
+      ],
+      "dependencies": [
+        "Root confirms no held app/runtime owner outside the inspected roster owns these exact supervisor files"
+      ],
+      "excluded": [
+        "packages/cli/src/app/",
+        "packages/cli/src/service-host.ts",
+        "packages/core/src/serve/doctor.ts",
+        "Daemon rail/loop implementations",
+        "Core ledger/schema/canon/export",
+        "Native packaging",
+        "Service/native calls or timing/resource reproductions"
+      ],
+      "skills": [
+        ".agents/skills/reliability-engineering/SKILL.md",
+        ".agents/skills/review-change/SKILL.md",
+        ".agents/skills/elegance-review/SKILL.md"
+      ],
+      "primary_sources": [
+        "https://raw.githubusercontent.com/systemd/systemd/main/man/systemd.service.xml",
+        "https://raw.githubusercontent.com/systemd/systemd/main/man/systemctl.xml"
+      ]
+    },
+    {
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "source_evidence": "Independent static inspection of exact f57 sources and existing tests; no product, service or native execution during this review.",
+      "requires_accounts": false,
+      "release_claim": false,
+      "read_before_work": [
+        "AGENTS.md",
+        "docs/CURRENT.md",
+        "docs/decision-log.md",
+        "rfcs/0002-autonomous-canon.md"
+      ],
+      "id": "P072-IMPORT-DIAGNOSTICS",
+      "parent_packet": "P072",
+      "kind": "deferred_reporting_correction",
+      "readiness": "deferred_pending_P071_test_and_root_reporting_contract",
+      "owner": "Future root-assigned CLI import reporting owner; P071 remains the sole owner of its parser/fidelity test file.",
+      "title": "Expose safe Claude import health warnings without redefining ingestion totals",
+      "owned_write_paths": [
+        "packages/cli/src/commands/import.ts",
+        "packages/cli/test/import-claude-lifecycle.test.ts"
+      ],
+      "lock_groups": [
+        "cli-import-reporting"
+      ],
+      "finding": "Initial import discards a degraded Claude health summary; repeated import skips that enrollment health branch. Supported events can be stored with errors=0 and no import-time explanation of ordinary unsupported content parts.",
+      "exact_source_refs": [
+        "packages/connectors/src/import-report.ts:41",
+        "packages/connectors/src/import-claude/index.ts:104",
+        "packages/cli/src/commands/import.ts:97",
+        "packages/cli/src/commands/import.ts:137",
+        "packages/connectors/src/import-snapshot.ts:133",
+        "packages/core/src/ingest/run.ts:546"
+      ],
+      "implementation_contract": [
+        "After root freezes the reporting contract, expose a bounded and explicitly labeled health warning on stderr for initial and repeated Claude imports with ordinary unsupported parts.",
+        "Retain invocation event totals and ingestion error counts on stdout; parse issues remain distinct from event-write errors.",
+        "Preserve the existing successful partial-import exit behavior unless root separately approves changing it.",
+        "Do not claim that a fresh health observation is the exact captured snapshot; if snapshot-bound reporting requires a new public connector/core contract, return that gap rather than widening this write grant."
+      ],
+      "normal_acceptance": [
+        "A clean ordinary two-message Claude file imports successfully with two stored events; unchanged repeat stores zero.",
+        "An ordinary message containing a supported text part plus an unsupported part retains its supported text and emits a fixed bounded labeled health warning containing no private message/path text.",
+        "Repeating that partial export still emits the health warning and does not invent ingestion errors or additional stored events.",
+        "No test duplicates the P071 parser identity/role/timestamp/duplicate/reordering cases."
+      ],
+      "validation": [
+        "Wait for the P071 candidate a90db5339762f2436bb446b805d8fc81cdeeada8 focused execution result before additional overlapping lifecycle validation.",
+        "Qualified root runner executes the new CLI process tests and required CLI/type/repository checks after the reporting contract is approved."
+      ],
+      "dependencies": [
+        "P071 focused test result and review",
+        "Root chooses the bounded warning presentation contract; no shared count-schema change"
+      ],
+      "excluded": [
+        "packages/connectors/src/",
+        "packages/connectors/test/fleet-claude-fidelity.test.ts",
+        "packages/core/src/ingest/",
+        "Doctor/connect-status/serve-health count changes",
+        "P006 documentation",
+        "P087 journey producer",
+        "Cursor bound/resource investigation"
+      ],
+      "skills": [
+        ".agents/skills/cli-terminal-ux/SKILL.md",
+        ".agents/skills/test-strategy/SKILL.md",
+        ".agents/skills/review-change/SKILL.md",
+        ".agents/skills/elegance-review/SKILL.md"
+      ],
+      "candidate_dependency": {
+        "worker": "P071-code2",
+        "head_sha": "a90db5339762f2436bb446b805d8fc81cdeeada8",
+        "status": "awaiting_root_test",
+        "test_result_present": false
+      }
+    }
+  ],
+  "not_adopted": [
+    "R053 sign_in_aborted taxonomy expansion or broad raw error passthrough.",
+    "R074 treats invocation totals and explicitly last-batch checkpoint counts as automatically the same contract.",
+    "R074 resource/cursor-size investigation.",
+    "Any worker-reported PASS as independent product/native/account acceptance."
+  ],
+  "reader_maintenance": {
+    "code_change": "None needed; repeatable --roster already exists.",
+    "selected_rosters": [
+      "GROK-FLEET-FIRST-10-20260906.json",
+      "GROK-FLEET-NEXT-6-20260906.json",
+      "GROK-FLEET-IMMEDIATE-R100-20260906.json",
+      "GROK-FLEET-PRODUCTION-20260906.json"
+    ],
+    "supplemental_report": "CHECKPOINT_BOOK/GROK-R053-R093-R074-REVIEW/status-with-production.json",
+    "default_rosters_changed": false,
+    "R100_membership_changed": false
+  },
+  "release_claim": false
+}

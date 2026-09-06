@@ -1,0 +1,45 @@
+{
+  "task_id": "P004",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "start_head": "ce8395792a333ad760594f92f1198639e0936445",
+  "head_sha": "78574f47b3c123f11e28fb43ad063340260b0607",
+  "tree_sha": "01437b06e6673b09aeebbe08e07be2b42470e996",
+  "status": "awaiting_root_test",
+  "changed_files": [
+    "scripts/release-evidence.ts",
+    "scripts/go-no-go.ts",
+    "scripts/go-no-go.test.ts"
+  ],
+  "findings": [
+    "Root sealed run cb9fb1aa075e41698864945a4cc02685 failed before tests because scripts/release-evidence.ts imported @kizuki/connectors and @kizuki/mcp. Those aliases are replaced with repository-relative source imports.",
+    "Surface inventory no longer derives CLI/MCP/connector values from a foreign candidate mixed with parent-process product globals. Production consumption is fixed to EVALUATOR_ROOT and requires checkout custody.",
+    "Capability activation now requires a tracked regular file. A merely present untracked scripts/capability-proof.ts does not activate the family.",
+    "CLI verb order is taken from printRootHelp(COMMANDS) rather than a hard-coded help-group oracle.",
+    "Overall decision remains NO-GO. surface.capabilities-and-docs stays NOT_IMPLEMENTED until P006 adds the tracked producer. Synthetic fixtures receive no native, CI, review, P0, account, human, journey, connector, lifecycle, or release credit."
+  ],
+  "deliverables": [
+    "Corrective commit 78574f47b3c123f11e28fb43ad063340260b0607 on top of ce8395792a333ad760594f92f1198639e0936445, descending from integration base f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7.",
+    "scripts/release-evidence.ts: relative product imports, checkout custody, printRootHelp CLI sequence, pure surface comparison, evaluator-bound consumption.",
+    "scripts/go-no-go.ts: consume surface receipts only when the capability producer is tracked, through EVALUATOR_ROOT custody.",
+    "scripts/go-no-go.test.ts: v1/v2 compatibility preserved; pure comparison fixtures; printRootHelp order test; bounded Git custody tests; no trailing blank line."
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun test scripts/go-no-go.test.ts",
+      "result": "NOT_RUN",
+      "reason": "Root owns network-disabled test execution. Request p004-corrective-checkout-custody written to /work/out/test-request.json."
+    },
+    "typecheck": {
+      "command": "bunx tsc --noEmit",
+      "result": "NOT_RUN",
+      "reason": "Assigned container must not install dependencies or launch tests."
+    },
+    "full_gate": {
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "reason": "Assigned container must not install dependencies or launch tests."
+    }
+  },
+  "blockers": [],
+  "next_step": "Root runs scripts/go-no-go.test.ts on 78574f47b3c123f11e28fb43ad063340260b0607, then typecheck and the pinned repository gate. Independent review follows. No merge, publication, capability activation, or release credit from this correction."
+}

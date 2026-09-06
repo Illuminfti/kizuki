@@ -1,0 +1,150 @@
+{
+  "task_id": "R089",
+  "packet_id": "R089",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "finding",
+  "title": "Draft estate-slice import summary adapter",
+  "findings": [
+    {
+      "severity": "contract",
+      "location": "packages/core/src/import/estate.ts:181-182",
+      "failure": "Any blocked issue clears templates and rewrites every mapping to blocked.",
+      "affected_invariant": "Partial success across sources is unrepresentable on kizuki.estate-plan/v1.",
+      "evidence": "Executed mixed fixture: source 1 domain_not_owned; both mappings blocked; adapter counts accepted=0 excluded=1 collateral_blocked=1. Existing two-source test only covers compatible (packages/core/test/estate-import.test.ts:34-52).",
+      "correction": "Keep whole-plan blocking unless a later owned contract change says otherwise. Adapter must report collateral_blocked separately from excluded. Do not treat mapping.disposition as per-source accept after a mixed block."
+    },
+    {
+      "severity": "contract",
+      "location": "packages/core/src/contracts/estate-import.ts:27-37",
+      "failure": "EstateImportReport has records, mappings, and issues, not accepted/excluded/failed counts.",
+      "affected_invariant": "journey.import-estate-slice summary counts are adapter-derived, not a shipped schema.",
+      "evidence": "Public type lists schema, digests, status, records, mappings, issues, limitations.",
+      "correction": "P003 owns shared evidence design. Downstream must not add count keys to the product report in this packet's name."
+    },
+    {
+      "severity": "gap",
+      "location": "packages/cli/src/commands/import.ts:56-57",
+      "failure": "Apply/run is not implemented; omitting --dry-run is UsageError.",
+      "affected_invariant": "journey.import-estate-slice applied import/recovery/receipts cannot be observed at the public CLI.",
+      "evidence": "Usage string and README limitations include dry_run_only_no_records_written. CLI apply not executed here.",
+      "correction": "P015 retains source-B recovery/authority/export. This adapter records apply as unimplemented and restart of apply as repeated refusal."
+    },
+    {
+      "severity": "docs-owned-elsewhere",
+      "location": "docs/cli.md:63-72",
+      "failure": "Canonical import usage omits estate-slice. CLI --json prints the raw plan report, not kizuki.cli.import/v1.",
+      "affected_invariant": "Honest surface / docs parity (P006).",
+      "evidence": "import.ts:63 JSON.stringify(report) vs docs/cli.md:22 envelope claim.",
+      "correction": "Leave to P006; do not edit docs in this packet."
+    }
+  ],
+  "deliverables": [
+    "/work/out/estate-slice-summary-adapter.ts",
+    "/work/out/fixtures/compatible-two-source/slice.json",
+    "/work/out/fixtures/compatible-two-source/authorization.json",
+    "/work/out/fixtures/mixed-blocked-two-source/slice.json",
+    "/work/out/fixtures/mixed-blocked-two-source/authorization.json",
+    "/work/out/counts-matrix.json",
+    "/work/out/expected-behavior.json",
+    "/work/out/coverage-map.json",
+    "/work/out/source-evidence.json",
+    "/work/out/execution-receipt.json",
+    "/work/out/downstream-handoff.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/estate-slice-summary-adapter.ts",
+    "/work/out/fixtures/compatible-two-source/slice.json",
+    "/work/out/fixtures/compatible-two-source/authorization.json",
+    "/work/out/fixtures/mixed-blocked-two-source/slice.json",
+    "/work/out/fixtures/mixed-blocked-two-source/authorization.json",
+    "/work/out/counts-matrix.json",
+    "/work/out/expected-behavior.json",
+    "/work/out/coverage-map.json",
+    "/work/out/source-evidence.json",
+    "/work/out/execution-receipt.json",
+    "/work/out/downstream-handoff.json"
+  ],
+  "source_references": [
+    "packages/core/src/contracts/estate-import.ts:1-89",
+    "packages/core/src/import/estate.ts:59-186",
+    "packages/core/src/import/README.md:1-45",
+    "packages/cli/src/commands/import.ts:21-69",
+    "packages/cli/src/main.ts:216-221",
+    "packages/core/test/estate-import.test.ts:34-144",
+    "packages/cli/test/estate-import.test.ts:22-60",
+    "docs/release-acceptance.md:141-154",
+    "scripts/go-no-go.ts:21,148-161",
+    "docs/cli.md:63-72"
+  ],
+  "checks": [
+    {
+      "name": "planEstateImport two-source compatible, mixed, restart, content-free report",
+      "command": "bun /work/out/estate-slice-summary-adapter.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14 /usr/local/bin/bun",
+      "time": "2026-09-06T22:03:17Z",
+      "result": "PASS",
+      "evidence": "/work/out/execution-receipt.json"
+    },
+    {
+      "name": "CLI import estate-slice dry-run/apply/missing",
+      "command": "bun /repo/packages/cli/src/main.ts import estate-slice --source FILE --authorization FILE [--dry-run --json]",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "result": "NOT_RUN",
+      "reason": "workspace node_modules absent; Cannot find module '@kizuki/tui' from packages/cli/src/output.ts; bun install forbidden",
+      "static_expected": {
+        "compatible_exit": 0,
+        "mixed_exit": 1,
+        "apply_exit": 2,
+        "evidence": [
+          "packages/cli/src/commands/import.ts:56-69",
+          "packages/cli/test/estate-import.test.ts:22-39"
+        ]
+      }
+    },
+    {
+      "name": "existing two-source compatible unit test",
+      "command": "bun test packages/core/test/estate-import.test.ts",
+      "result": "NOT_RUN",
+      "reason": "same missing workspace install; covered by adapter's in-process planEstateImport plus static path/line in coverage-map.json"
+    },
+    {
+      "name": "full repository gate",
+      "result": "NOT_RUN",
+      "reason": "read-only preparation packet; no source edits"
+    }
+  ],
+  "verification": {
+    "planner": "PASS",
+    "cli": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "executed_counts": {
+      "compatible_two_source": { "accepted": 2, "excluded": 0, "collateral_blocked": 0, "failed": 0 },
+      "mixed_blocked_two_source": { "accepted": 0, "excluded": 1, "collateral_blocked": 1, "failed": 0 }
+    },
+    "restart": "planEstateImport twice produced identical reports for both fixtures"
+  },
+  "blockers": [
+    "CLI execution requires workspace node_modules resolving @kizuki/tui; install is forbidden in this container.",
+    "Public apply/run does not exist; journey applied-import evidence cannot be produced from this seam."
+  ],
+  "next_step": "P087/P099 consume /work/out/estate-slice-summary-adapter.ts and counts-matrix.json. Re-run CLI only after an authorized workspace install. Do not add count fields to kizuki.estate-plan/v1 here (P003) and do not implement source-B recovery/export (P015).",
+  "downstream_handoff": {
+    "feeds": ["P087", "P099"],
+    "file": "/work/out/downstream-handoff.json"
+  },
+  "limitations": [
+    "Dry-run only; no records written.",
+    "Durable authorization and revocation are not implemented.",
+    "Disconnect is not revocation.",
+    "Claim identity and canon changes are not applied.",
+    "External backups are not covered by purge.",
+    "Slice omissions never infer deletion.",
+    "Adapter accepted/excluded/failed counts are derived, not product fields.",
+    "No native/account/model/human qualification or release acceptance claim.",
+    "CLI public-seam exits were not executed in this container."
+  ]
+}

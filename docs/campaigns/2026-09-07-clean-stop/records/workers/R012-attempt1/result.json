@@ -1,0 +1,181 @@
+{
+  "task_id": "R012",
+  "packet_id": "R012",
+  "issue": 541,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "owner": "grok-R012",
+  "readiness": "project_scope_ready_now",
+  "findings": [
+    {
+      "severity": "info",
+      "id": "consumer-divergence-bun-pin",
+      "location": "scripts/artifact-proof.ts:122; scripts/go-no-go.ts:120; scripts/qualification.ts:100-103",
+      "confirmed": true,
+      "how": "static trace plus executed validateArtifactProof on fixtures/historical-v1-other-bun-on-validator-only",
+      "invariant": "Bun policy is not one comparison. The shared validator has no .bun-version pin. go-no-go always requires BUILD.bun_version === .bun-version, including historical v1. qualification allows v1 bun 1.3.10 and refuses v2 mismatches.",
+      "correction": "P003 decides whether to unify. Do not silently change the three consumers in this packet."
+    },
+    {
+      "severity": "info",
+      "id": "consumer-divergence-unknown-sqlite",
+      "location": "scripts/artifact-proof.ts:142-144; scripts/go-no-go.ts:185-188; scripts/qualification.ts:100-103",
+      "confirmed": true,
+      "how": "executed validateArtifactProof (engine FAIL, no throw); existing tests cited, wrappers unexecuted here",
+      "invariant": "Unknown SQLite identity is observable fixture evidence in go-no-go (artifact PASS, engine FAIL) and a hard init refusal in qualification v2.",
+      "correction": "P003 owns any unification."
+    },
+    {
+      "severity": "info",
+      "id": "no-historical-pin-in-go-no-go",
+      "location": "scripts/go-no-go.ts:116-131, 196-202; POLICY.carry_forward false at L42",
+      "confirmed": true,
+      "how": "static trace; coordinated-rewrite validator cases executed and accepted",
+      "invariant": "evaluateRelease trusts the current index only. Coordinated source-only or artifact-only rewrites that stay internally consistent PASS. Qualification pins identity at init. policy_sha256/verifier_sha256 are report identity, not stored-evidence predicates. candidate.current-p0-disposition remains UNVERIFIABLE.",
+      "correction": "P003 owns a future freshness policy. P004 can add the two gap tests; do not duplicate existing inconsistent-bundle tests."
+    },
+    {
+      "severity": "info",
+      "id": "qualification-sample-issue-coarseness",
+      "location": "scripts/qualification.ts:292-297",
+      "confirmed": true,
+      "how": "static trace of failureReason assignment order",
+      "invariant": "After verifyArtifact succeeds, an identity JSON mismatch still records sample issue artifact-verification-failed.",
+      "correction": "Optional P003/P004 clarification; not a failing existing test. Existing append-without-checksums test does not cover this path."
+    }
+  ],
+  "artifacts": [
+    "/work/out/comparison-matrix.md",
+    "/work/out/comparison-matrix.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/test-draft-inputs.json",
+    "/work/out/drafts/run-freshness-matrix.ts",
+    "/work/out/drafts/p004-gap-tests.ts",
+    "/work/out/draft-execution.json",
+    "/work/out/fixtures/",
+    "/work/out/sqlite-primary-doc.json",
+    "/work/out/orientation.md",
+    "/work/out/handoff.md",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/comparison-matrix.md",
+    "/work/out/comparison-matrix.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/test-draft-inputs.json",
+    "/work/out/drafts/run-freshness-matrix.ts",
+    "/work/out/drafts/p004-gap-tests.ts",
+    "/work/out/draft-execution.json",
+    "/work/out/fixtures/unchanged-identity-v2/",
+    "/work/out/fixtures/unchanged-identity-v1/",
+    "/work/out/fixtures/source-only-inconsistent-expected/",
+    "/work/out/fixtures/source-only-coordinated-rewrite/",
+    "/work/out/fixtures/artifact-only-inconsistent-kizuki-hash/",
+    "/work/out/fixtures/artifact-only-inconsistent-readme-hash/",
+    "/work/out/fixtures/artifact-only-coordinated-rewrite/",
+    "/work/out/fixtures/policy-bun-version-mismatch/",
+    "/work/out/fixtures/policy-unqualified-sqlite-identity/",
+    "/work/out/fixtures/policy-qualification-profile-digest/",
+    "/work/out/fixtures/historical-v1-other-bun-on-validator-only/",
+    "/work/out/sqlite-primary-doc.json",
+    "/work/out/orientation.md",
+    "/work/out/handoff.md"
+  ],
+  "source_references": [
+    { "path": "scripts/go-no-go.ts", "sha256": "62a5cc2d93f4e7e55bd87ebb989f750c0b35bda9549b9e939000a702056593d7", "lines": "16-43,99-145,171-202" },
+    { "path": "scripts/artifact-proof.ts", "sha256": "a7116f9a6d34a0cb22f0310c5e30dfa4dafa9c5208e3870c9e3ac30b2cea32db", "lines": "23-31,87-113,116-155" },
+    { "path": "scripts/qualification.ts", "sha256": "0126a8ba22eaf6a2a2acdcdbcc660700c2eede5def17340ba4cd9ea2b66ea5e0", "lines": "81-109,151-175,284-316" },
+    { "path": "scripts/go-no-go.test.ts", "lines": "158-173,192-216,242-259,310-332,360-374" },
+    { "path": "scripts/artifact-proof.test.ts", "lines": "54-106" },
+    { "path": "scripts/qualification.test.ts", "lines": "44-60,70-109,128-131,165-186" },
+    { "path": "docs/release-acceptance.md", "lines": "43-117,163-197" },
+    { "path": "docs/qualification.md", "lines": "1-90" },
+    { "path": "docs/CURRENT.md", "lines": "1-19" },
+    { "path": "docs/decision-log.md", "lines": "D19" },
+    { "path": ".bun-version", "sha256": "56b0485099b6c5427d3b68c042fd05b632d5e52e924c5064473389812227164c", "value": "1.3.14" },
+    { "path": "FLEET-SOURCE-IDENTITY.json", "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7" }
+  ],
+  "checks": [
+    {
+      "name": "artifact-proof focused tests",
+      "command": "cd /work/out && TMPDIR=/work/out/tmp bun --no-install test /repo/scripts/artifact-proof.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06",
+      "result": "PASS",
+      "detail": "35 pass, 0 fail, 279ms"
+    },
+    {
+      "name": "shared-validator freshness draft",
+      "command": "cd /work/out && bun --no-install /work/out/drafts/run-freshness-matrix.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T21:43:37.424Z",
+      "result": "PASS",
+      "detail": "11 cases, 10 executed through validateArtifactProof, 1 labeled unexecuted (qualification profile digest). Observed reasons matched independently stated validator outcomes. verifier_sha256=9429f201285c4c146c0d1c69710c8f1d14f623bad7317afd24ed1da438cace0d"
+    },
+    {
+      "name": "go-no-go.test.ts",
+      "command": "cd /repo && bun test ./scripts/go-no-go.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "detail": "Unhandled Cannot find module js-tiktoken/lite from packages/core/src/serving/packet-tokenizer.ts. /repo has no node_modules; installs forbidden. Existing cases statically verified."
+    },
+    {
+      "name": "qualification.test.ts",
+      "command": "cd /repo && bun test ./scripts/qualification.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "detail": "Same missing js-tiktoken/lite import graph (qualification.ts → serve/daemon.ts → packet-tokenizer.ts). Existing cases statically verified."
+    },
+    {
+      "name": "evaluateRelease / initQualification draft wrappers",
+      "command": "cd /work/out && bun --no-install -e 'await import(\"/repo/scripts/go-no-go.ts\")'",
+      "result": "NOT_RUN",
+      "detail": "Import fails: Cannot find module js-tiktoken/lite. policy_sha256 not computed."
+    },
+    {
+      "name": "SQLite 3.53.0 primary doc",
+      "command": "Bun.fetch https://www.sqlite.org/releaselog/3_53_0.html",
+      "time": "2026-09-06",
+      "result": "PASS",
+      "detail": "HTTP 200, title SQLite Release 3.53.0 On 2026-04-09, version and source-id present"
+    },
+    {
+      "name": "repository typecheck / verify / full gate",
+      "result": "NOT_RUN",
+      "detail": "No root test slot; missing node_modules; not claimed."
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS for validateArtifactProof and scripts/artifact-proof.test.ts",
+    "package_type_full_gate": "NOT_RUN",
+    "privacy_diff_integrity": "PASS: synthetic R012 fixtures only; no owner paths, credentials, or captured text copied into reports",
+    "independent_review": "NOT_RUN",
+    "retained_package_consumer": "NOT_RUN: no native package; fixtures are never-executed byte objects",
+    "go_no_go_evaluateRelease": "NOT_RUN",
+    "qualification_init_sample_status": "NOT_RUN"
+  },
+  "blockers": [
+    "This container has no /repo/node_modules. Importing scripts/go-no-go.ts or scripts/qualification.ts requires js-tiktoken/lite via packages/core/src/serving/packet-tokenizer.ts. bun install is forbidden here, so evaluateRelease and qualification init/sample/status remain unexecuted.",
+    "Git is absent; /repo is a git archive. Live branch/PR/CI association was not verified.",
+    "P003 retains shared evidence design. These artifacts are current-code preparation, not a replacement contract."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P004", "P099"],
+    "reserved": {
+      "P003": "shared evidence design / freshness policy",
+      "P006": "canonical docs",
+      "P015": "source-B schema/recovery/authority/export"
+    },
+    "use": "Consume comparison-matrix.md/json and fixtures as current invalidation behavior. Add only the two gap tests in drafts/p004-gap-tests.ts after rebase onto a checkout with node_modules. Do not duplicate existing inconsistent-bundle tests. Do not claim release GO, native qualification, or unfamiliar-user acceptance."
+  },
+  "next_step": "P004 should add the two gap tests (coordinated source rewrite; coordinated artifact rewrite versus frozen qualification identity) on a writable checkout with bun install --frozen-lockfile. P003 decides whether go-no-go should pin prior reports. P099 can use the matrix as invalidation inputs.",
+  "limitations": [
+    "No source edits.",
+    "No native/account/model/human qualification or release acceptance claim.",
+    "Local hashes are not attestation.",
+    "One accidental Bun auto-resolve of js-tiktoken into /work/out/node_modules during an import probe was deleted and not used as evidence.",
+    "policy_sha256 of evaluateRelease was not computed."
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "task_id": "P056",
+  "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+  "status": "FINDINGS",
+  "findings": [
+    "Live-account IMAP qualification is unrun; go-no-go still requires it; smoke.test.ts does not inspect FLAGS/\\Seen.",
+    "This client sends LOGIN only. Microsoft 365 IMAP requires AUTHENTICATE XOAUTH2 after basic-auth retirement; Gmail documents XOAUTH2 as the IMAP client protocol. Those providers are not qualified and Microsoft 365 is unsupported.",
+    "connector-imap README Sign-in still says no CLI verb exists; CLI and docs/connect.md already implement kizuki connect imap on this base.",
+    "fixture() UID 11 is header-only by construction; walkMailboxes header-only capture is size-gated. Recorded in mime-encoding-expected.md.",
+    "Wave1 IMAP spec cursor omits pending; implementation cursor.ts includes pending. Tests and oracles follow implementation."
+  ],
+  "deliverables": [
+    "/work/out/result.json",
+    "/work/out/RESULT.md",
+    "/work/out/orientation.md",
+    "/work/out/imap-protocol-commands.md",
+    "/work/out/imap-protocol-commands.json",
+    "/work/out/proof-plan.md",
+    "/work/out/auth-server-matrix.md",
+    "/work/out/auth-server-matrix.json",
+    "/work/out/live-account-blockers.md",
+    "/work/out/research-sources.md",
+    "/work/out/research-fetches.json",
+    "/work/out/research-excerpts.json",
+    "/work/out/research-excerpts-2.json",
+    "/work/out/fixtures/imap-oracle.json",
+    "/work/out/fixtures/mime-encoding-expected.json",
+    "/work/out/fixtures/mime-encoding-expected.md",
+    "/work/out/fixtures/uidvalidity-restart-expected.json",
+    "/work/out/fixtures/uidvalidity-restart-expected.md"
+  ],
+  "verification": {
+    "focused_public_behavior": {
+      "result": "PASS",
+      "note": "Synthetic MIME/UID oracles generated from copied connector-imap + FakeImapServer; no live mailbox."
+    },
+    "package_type_full_gate": {
+      "result": "NOT_RUN",
+      "note": "/repo is a read-only mount; Bun cannot write there; no test slot."
+    },
+    "privacy": {
+      "result": "PASS",
+      "note": "Neutral acme.example fixtures; no credential files read; smoke env unset."
+    },
+    "independent_review": { "result": "NOT_RUN", "note": "No code change." },
+    "live_mailbox": { "result": "NOT_RUN", "note": "Forbidden by packet." },
+    "auth_probe": { "result": "NOT_RUN", "note": "Controller already verified Grok Build subscription; not retested." }
+  },
+  "blockers": [
+    "No owner-authorized LOGIN IMAPS mailbox and FLAGS-before/after harness.",
+    "AUTHENTICATE/XOAUTH2 unimplemented; Microsoft 365 cannot qualify.",
+    "Full repository gate not run on this archive.",
+    "Several provider how-to URLs 404 (Proton IMAP, Fastmail dedicated app-password article, Dovecot 2.3 mechanisms)."
+  ],
+  "next_step": "On an owner-authorized LOGIN-capable IMAPS account, run FLAGS-before/after plus smoke, and keep that receipt separate from these synthetic oracles. Do not add XOAUTH2 unless a later packet assigns it."
+}

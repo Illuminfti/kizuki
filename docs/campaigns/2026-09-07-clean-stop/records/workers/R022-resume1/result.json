@@ -1,0 +1,123 @@
+{
+  "packet_id": "R022",
+  "task_id": "R022",
+  "title": "Map vault initialization and repeat-init preservation",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "owner": "grok-R022",
+  "write_scope": "/work/out only",
+  "source_kind": "git archive of exact commit; no Git metadata",
+  "remote_state": "not verified in this container (no .git; fetch forbidden)",
+  "findings": [],
+  "limitations": [
+    "packages/core/test/vault.test.ts could not execute: missing js-tiktoken/lite via packages/core/src/index.ts. Exact preservation cases at lines 68-126, 173-223, 241-277 are statically verified and re-observed by the isolated draft, not duplicated as repository tests.",
+    "CLI process seam could not execute: bun packages/cli/src/main.ts fails with Cannot find module '@kizuki/tui'. CLI extras were exercised through core functions ensureVaultId, openLedger, writeServeIntent only.",
+    "CanonFiles refuses group/world-writable ancestors (packages/core/src/vault/canon-files.ts:53-71). Isolated vaults under /work/out require mode 0700 on /work/out and descendants. /tmp (1777 root sticky) is the product's usual trusted ancestor.",
+    "initVault does not create kizuki.db, vault-id, serve-intent, or user config. Those are CLI post-steps (packages/cli/src/commands/init.ts:68-106).",
+    "No native/account/model/human qualification or release-acceptance claim. Artifacts feed P091/P092 and must be reviewed/rebased before production use."
+  ],
+  "artifacts": [
+    "/work/out/vault-init-preservation-manifest.json",
+    "/work/out/vault-init-preservation-draft.ts",
+    "/work/out/existing-coverage.json",
+    "/work/out/preservation-run.json",
+    "/work/out/isolated-vault/",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/vault-init-preservation-manifest.json",
+    "/work/out/vault-init-preservation-draft.ts",
+    "/work/out/existing-coverage.json",
+    "/work/out/preservation-run.json",
+    "/work/out/isolated-vault/first/",
+    "/work/out/isolated-vault/doctrine/",
+    "/work/out/isolated-vault/adopt/",
+    "/work/out/isolated-vault/cli-extras/",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    { "path": "packages/core/src/vault/init.ts", "lines": "32-57,78-128,409-427,468-512,536-554,723-860", "role": "layout, doctrine, gitignore, journal, initVault, repeat/upgrade/preserve" },
+    { "path": "packages/core/src/vault/schema.ts", "lines": "32-54,134-178", "role": "page frontmatter required keys documented by SCHEMA.md" },
+    { "path": "packages/cli/src/commands/init.ts", "lines": "30-114", "role": "CLI after initVault: vault-id, ledger, default_vault, serve-intent" },
+    { "path": "packages/core/src/serve/vault-id.ts", "lines": "78-119", "role": "mint-once vault identity" },
+    { "path": "packages/core/src/ledger/db.ts", "lines": "188,267-279", "role": "LEDGER_SCHEMA_VERSION 19; openLedger migrate" },
+    { "path": "packages/core/src/serve/intent.ts", "lines": "16-19", "role": "serve-intent always replaced" },
+    { "path": "packages/core/src/vault/canon-files.ts", "lines": "53-71", "role": "ancestor 0700 / sticky-/tmp requirement" },
+    { "path": "docs/cli.md", "lines": "34-60", "role": "public init contract" },
+    { "path": "packages/core/test/vault.test.ts", "lines": "68-126,173-277", "role": "existing exact preservation/adopt/upgrade coverage" },
+    { "path": "packages/core/test/vault-git-ignore.test.ts", "lines": "53-71", "role": "existing repeated-init gitignore coverage (executed PASS)" },
+    { "path": "packages/cli/test/init.test.ts", "lines": "184-203", "role": "existing CLI repeat-after-partial-journal coverage" },
+    { "path": "packages/cli/test/config.test.ts", "lines": "89-111", "role": "existing default_vault-once coverage" },
+    { "path": "rfcs/0002-autonomous-canon.md", "lines": "402-419", "role": "doctrine shipped into every vault" },
+    { "path": "docs/decision-log.md", "lines": "23", "role": "D15 daemon at init" }
+  ],
+  "checks": [
+    {
+      "name": "isolated preservation draft",
+      "command": "TMPDIR=/work/out/tmp bun /work/out/vault-init-preservation-draft.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "69 checks; receipt /work/out/preservation-run.json"
+    },
+    {
+      "name": "existing gitignore/platform/vault-id tests",
+      "command": "TMPDIR=/work/out/tmp bun test /repo/packages/core/test/vault-git-ignore.test.ts /repo/packages/core/test/vault-platform.test.ts /repo/packages/core/test/serve/vault-id.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14 / 5.47s",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "24 pass / 0 fail / 242 expect()"
+    },
+    {
+      "name": "existing core vault.test.ts initVault cases",
+      "command": "TMPDIR=/work/out/tmp bun test /repo/packages/core/test/vault.test.ts --test-name-pattern initVault",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "missing_input": "js-tiktoken/lite"
+    },
+    {
+      "name": "CLI process seam",
+      "command": "bun /repo/packages/cli/src/main.ts init --help",
+      "result": "NOT_RUN",
+      "missing_input": "@kizuki/tui (workspace node_modules absent)"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS (isolated initVault draft, 69 checks, exit 0)",
+    "existing_direct_import_tests": "PASS (24 tests)",
+    "package_index_suite": "NOT_RUN (js-tiktoken/lite missing)",
+    "cli_process_suite": "NOT_RUN (@kizuki/tui missing)",
+    "typecheck_full_gate": "NOT_RUN (not assigned; workspace install forbidden)",
+    "independent_review": "NOT_RUN",
+    "doctrine_sha256": {
+      "CANON.md": "2da51f0bf8dffb95b8586f45a29511aa2df3e5c419da9a50720b2ba7343aed34",
+      "SCHEMA.md": "0386740d474f9c860b91995024dcb4ae38a72ed12ece92e1d3f9d2679776ae85"
+    }
+  },
+  "authoritative_unchanged_on_repeat_init": [
+    "CANON.md when current or owner-edited",
+    "SCHEMA.md when current or owner-edited",
+    ".kizuki/.gitignore when present",
+    ".gitignore when /.kizuki/ is already effective",
+    "non-reserved owner files (notes.md, inbox.md, canon pages)",
+    ".kizuki/vault-id and .kizuki/vault-machine on the same host",
+    "Git index and history"
+  ],
+  "downstream_handoff": {
+    "feeds": ["P091", "P092"],
+    "do_not_duplicate": [
+      "packages/core/test/vault.test.ts:68-126",
+      "packages/core/test/vault.test.ts:195-277",
+      "packages/core/test/vault-git-ignore.test.ts:53-71",
+      "packages/cli/test/init.test.ts:184-203",
+      "packages/cli/test/config.test.ts:89-111"
+    ],
+    "use": "Treat /work/out/vault-init-preservation-manifest.json as the creation/preservation map. initVault is the directory/doctrine seam; CLI adds vault-id, ledger v19, serve-intent, and optional default_vault. Repeat init must not clobber the authoritative unchanged set.",
+    "integration_order": "Rebase onto the live base before production use. P003/P015/P006/Astra/doctor remain reserved."
+  },
+  "blockers": [],
+  "next_step": "P091/P092 consume the manifest without adding duplicate init tests; after a workspace install, execute packages/core/test/vault.test.ts and the CLI init process seam on the live head."
+}

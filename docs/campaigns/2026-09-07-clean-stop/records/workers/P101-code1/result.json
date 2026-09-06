@@ -1,0 +1,56 @@
+{
+  "task_id": "P101",
+  "title": "Make qualification comparisons semantic and diagnostics content-free",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "d9b3969c7ff2d43e624094760c854456fc590cbc",
+  "tree_sha": "fe66865186ca452058f5593c8627ae280f3fe720",
+  "branch": "agent/grok-p101",
+  "status": "awaiting_root_test",
+  "changed_files": [
+    "scripts/qualification.ts",
+    "scripts/qualification.test.ts"
+  ],
+  "owned_write_paths": [
+    "scripts/qualification.ts",
+    "scripts/qualification.test.ts"
+  ],
+  "commit": {
+    "sha": "d9b3969c7ff2d43e624094760c854456fc590cbc",
+    "subject": "Compare qualification identity and rails by canonical value"
+  },
+  "findings": [
+    {
+      "severity": "info",
+      "location": "scripts/qualification.ts:cliDiagnostic",
+      "summary": "JSON SyntaxError, Node filesystem syscall errors, and bun:sqlite SQLiteError now map to fixed stderr strings. ArtifactProofError.reason and existing bounded qualification Error.message still print. Sample collector still swallows inner failures into collection-rejected; CLI sqlite mapping is exercised on init against a corrupt observation database."
+    }
+  ],
+  "deliverables": {
+    "implementation": "Identity and rail-policy equality now use the existing canonical() encoding instead of JSON.stringify, so object-key reorder is not a change and a changed field still fails. CLI top-level catch maps JSON/filesystem/SQLite failures to content-free diagnostics; stdout stays empty and exit status stays 1 on failure.",
+    "tests": "Added reorder vs changed-value coverage for identity and rail policy, plus CLI redaction cases that assert a neutral sentinel never appears on stderr.",
+    "untouched": "artifact-proof, core qualification, genesis inode/digest checks, proof validation, package hashes, P004 go-no-go/release-evidence, docs/help, and other owner lanes."
+  },
+  "verification": {
+    "focused": {
+      "command": "bun test scripts/qualification.test.ts",
+      "requested": true,
+      "request_id": "p101-canonical-diagnostics",
+      "result": "NOT_RUN",
+      "reason": "Root owns the network-disabled runner. This agent did not install dependencies or launch tests."
+    },
+    "package_type_full_gate": {
+      "result": "NOT_RUN",
+      "reason": "Not assigned to this container; depends on focused tests first."
+    },
+    "independent_review": {
+      "result": "NOT_RUN",
+      "reason": "Draft candidate pending root tests and independent review."
+    }
+  },
+  "blockers": [],
+  "next_step": "Root runs bun test scripts/qualification.test.ts on head d9b3969c7ff2d43e624094760c854456fc590cbc and returns /work/out/test-result.json. Independent review follows a green focused run.",
+  "privacy": {
+    "fixtures": "synthetic only",
+    "diagnostics": "CLI failure stderr for JSON/filesystem/SQLite is a closed string with no path or source snippet"
+  }
+}

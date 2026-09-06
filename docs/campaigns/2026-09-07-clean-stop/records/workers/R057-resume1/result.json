@@ -1,0 +1,220 @@
+{
+  "task_id": "R057",
+  "packet_id": "R057",
+  "title": "Inspect Calendar sync cursor and pagination bookkeeping",
+  "issue": 546,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "owner": "grok-R057",
+  "read_root": "/repo",
+  "write_scope": "/work/out only",
+  "identity": {
+    "source_kind": "git archive of exact commit; no Git metadata or runtime data",
+    "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+    "branch": null,
+    "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+    "remote_verified": false,
+    "reason": "Controller owns host git/fetch. This container is a read-only archive."
+  },
+  "findings": [
+    {
+      "severity": "coverage_gap",
+      "id": "two-page-cursor-fields-untested",
+      "summary": "No existing test inspects two-page cursor.page/sync/count or pending.input/request/next.",
+      "evidence": "packages/connector-google-calendar/test/bounds.test.ts:11-27 walks 45 rows and only asserts event totals, status omitted, and cursor bytes <= 8192.",
+      "expected": "After 21 rows: page1 count=20 page='20' sync=null; page2 count=21 page=null sync='s1'; pending overwritten from digest(null) to digest(page1 cursor string).",
+      "action": "P054 add that assertion using CalendarFixture. Do not duplicate the 45-event test."
+    },
+    {
+      "severity": "coverage_gap",
+      "id": "native-two-page-interruption-untested",
+      "summary": "Native runToCompletion interruption tests use the default two-row single page only.",
+      "evidence": "packages/connector-google-calendar/test/native-recovery.test.ts:63-141",
+      "action": "P055 may add a two-page before-accept/after-accept case. Do not change persistRun."
+    },
+    {
+      "severity": "limitation",
+      "id": "http-410-does-not-clear-ledger",
+      "summary": "410 rescan sets cursor.gap=true and does not delete stored events.",
+      "evidence": "packages/connector-google-calendar/src/connector.ts:316-320,362-363; README bounded synchronization; Google list docs 2026-09-06 say clear storage.",
+      "action": "Keep the honest history_gap detail. Not a R057 code change. P053 owns temporal fidelity of those events."
+    },
+    {
+      "severity": "doc_stale_elsewhere",
+      "id": "wave1-forbids-both-tokens",
+      "summary": "Wave1 connector-google.md says Google forbids pageToken with syncToken. Current official sync guide and capture() send both.",
+      "evidence": "docs/wave1/specs/connector-google.md around the incremental calendar pages; connector.ts:307-310; provider-quotes.json 2026-09-06.",
+      "action": "P006 docs if anyone restates wave1. Do not change capture() to drop syncToken on continuation pages."
+    },
+    {
+      "severity": "limitation",
+      "id": "empty-page-drain-has-no-pending",
+      "summary": "Empty intermediate pages continue internally without writing pending, so drain progress is not a checkpoint.",
+      "evidence": "connector.ts:332-334; validation.test.ts:28-37 already covers the 25-GET bound.",
+      "action": "Do not add a duplicate empty-drain test. Optional P054 note only."
+    }
+  ],
+  "deliverables": [
+    "/work/out/cursor-transition-table.md",
+    "/work/out/two-page-state-fixture.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/run-two-page-fixture.ts",
+    "/work/out/cursor-json-computed.json",
+    "/work/out/provider-quotes.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    {
+      "path": "/work/out/cursor-transition-table.md",
+      "role": "required cursor transition table"
+    },
+    {
+      "path": "/work/out/two-page-state-fixture.json",
+      "role": "required neutral two-page state fixture draft",
+      "execution": "unexecuted"
+    },
+    {
+      "path": "/work/out/existing-coverage.json",
+      "role": "existing test map so P054 does not duplicate contracts"
+    },
+    {
+      "path": "/work/out/run-two-page-fixture.ts",
+      "role": "permitted local runner; blocked here by missing @kizuki/core"
+    },
+    {
+      "path": "/work/out/cursor-json-computed.json",
+      "role": "executed cursor JSON and pending.input digests via node:crypto"
+    },
+    {
+      "path": "/work/out/provider-quotes.json",
+      "role": "public Google list/sync/pagination quotes fetched 2026-09-06"
+    }
+  ],
+  "source_references": [
+    {
+      "path": "packages/connector-google-calendar/src/state.ts",
+      "lines": "7-15,16-21,33,38-48,49-58,75-83,92-94"
+    },
+    {
+      "path": "packages/connector-google-calendar/src/connector.ts",
+      "lines": "283-375"
+    },
+    {
+      "path": "packages/connector-google-calendar/src/testing.ts",
+      "lines": "15,19-33"
+    },
+    {
+      "path": "packages/core/src/contracts/connector.ts",
+      "lines": "7,215-225"
+    },
+    {
+      "path": "packages/core/src/ingest/run.ts",
+      "lines": "345-346,471-477,542-544"
+    },
+    {
+      "path": "packages/connector-google-calendar/test/bounds.test.ts",
+      "lines": "11-27,41-56"
+    },
+    {
+      "path": "packages/connector-google-calendar/test/connector.test.ts",
+      "lines": "11-24"
+    },
+    {
+      "path": "packages/connector-google-calendar/test/validation.test.ts",
+      "lines": "26,28-37"
+    },
+    {
+      "path": "packages/connector-google-calendar/README.md",
+      "lines": "21-25"
+    },
+    {
+      "path": "docs/google-calendar.md",
+      "lines": "32"
+    }
+  ],
+  "checks": [
+    {
+      "name": "workspace_calendar_bounds_test",
+      "command": "cd /repo && TMPDIR=/work/out bun test packages/connector-google-calendar/test/bounds.test.ts --timeout 15000",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "runtime": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "when": "2026-09-06",
+      "evidence": "Cannot find module '@kizuki/core' from packages/connector-google-calendar/src/testing.ts; 0 pass, 1 fail, 1 error. Missing tool/input: workspace node_modules linking @kizuki/core."
+    },
+    {
+      "name": "two_page_fixture_runner",
+      "command": "cd /repo && TMPDIR=/work/out bun /work/out/run-two-page-fixture.ts",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "evidence": "same missing @kizuki/core"
+    },
+    {
+      "name": "cursor_json_digests",
+      "command": "bun /work/out/compute-cursor-json.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/cursor-json-computed.json"
+    },
+    {
+      "name": "provider_docs_fetch",
+      "command": "bun /work/out/extract-provider-docs.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "when": "2026-09-06",
+      "urls": [
+        "https://developers.google.com/workspace/calendar/api/v3/reference/events/list",
+        "https://developers.google.com/workspace/calendar/api/guides/sync",
+        "https://developers.google.com/workspace/calendar/api/guides/pagination"
+      ],
+      "http_status": [200, 200, 200]
+    },
+    {
+      "name": "full_repository_gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "evidence": "Read-only preparation packet; workspace install absent. Waiting for a slot is NOT_RUN, not PASS."
+    }
+  ],
+  "verification": {
+    "focused": "NOT_RUN",
+    "package_type_full_gate": "NOT_RUN",
+    "privacy": "PASS",
+    "independent_review": "NOT_RUN",
+    "live_account": "not claimed",
+    "notes": "Cursor JSON strings and pending.input digests were executed with bun/node:crypto. Connector capture() itself was not executed. Fingerprints are labeled unexecuted and were not invented."
+  },
+  "blockers": [
+    {
+      "id": "missing_workspace_install",
+      "detail": "Archive has no node_modules/@kizuki/core. bun install is forbidden here. Fixture runner and package tests remain unexecuted.",
+      "does_not_block": "Static transition table and cursor/pending draft."
+    }
+  ],
+  "downstream_handoff": {
+    "feeds": ["P054", "P055"],
+    "do": "Add the missing two-page CalendarFixture assertions from two-page-state-fixture.json and existing-coverage.json missing_exact_case. Execute run-two-page-fixture.ts on a workspace-installed tree to fill fingerprints.",
+    "do_not": [
+      "Duplicate bounds.test.ts:11-27",
+      "Redesign Cursor or capture()",
+      "Absorb P053 event time semantics or P051 OAuth/CAS",
+      "Claim live Google qualification"
+    ],
+    "contract_to_keep": {
+      "incomplete": "status omitted, cursor.page non-null, events 1..20",
+      "complete": "status omitted, cursor.page null, cursor.sync is nextSyncToken, events 0..20",
+      "unavailable": "status unavailable, events [], cursor is caller input, host must not advance"
+    }
+  },
+  "next_step": "P054: on a workspace-installed checkout of this base (rebased if main moved), add the two-page cursor/pending test from two-page-state-fixture.json without duplicating bounds.test.ts:11-27.",
+  "limitations": [
+    "No source edits.",
+    "No live provider/account calls.",
+    "No native/account/model/human qualification or release acceptance.",
+    "Artifacts must be reviewed/rebased before production use.",
+    "Event fingerprints in the two-page fixture are unexecuted.",
+    "Remote issue/PR/worktree state was not refreshed in this container."
+  ]
+}

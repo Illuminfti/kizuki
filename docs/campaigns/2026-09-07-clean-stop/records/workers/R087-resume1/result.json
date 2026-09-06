@@ -1,0 +1,173 @@
+{
+  "task_id": "R087",
+  "packet_id": "R087",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Draft ordinary revoke-purge-rebuild observation adapter",
+  "issue": 542,
+  "owner": "grok-R087",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "remote_verified": false,
+  "repository_edits": false,
+  "findings": [
+    {
+      "severity": "coverage_gap",
+      "id": "G-COMBINED-CLI-CHAIN",
+      "location": "packages/cli/test (no combined file)",
+      "confirmed": false,
+      "failure": "No CLI test enrolls two independent sources, targets only A with revoke or exact purge, rebuilds, and asserts B snapshots.",
+      "affected_invariant": "provenance-invalidation: dependent state changes while unrelated state remains valid, then rebuild compares semantics",
+      "evidence": "existing-coverage.json; preservation-observations.json",
+      "correction": "P085 may add one CLI longitudinal test after review; do not duplicate purge-subject-scope, rebuild, or agent revoke tests"
+    },
+    {
+      "severity": "ux_note",
+      "id": "N-REBUILD-HELP-GROUP",
+      "location": "packages/cli/src/help.ts:7-15,17-69 versus packages/cli/src/commands/index.ts:59 and rebuild.ts:7-10",
+      "confirmed": true,
+      "failure": "rebuild is registered but omitted from help GROUPS and EXAMPLES; leftover listing and `help rebuild` still work",
+      "affected_invariant": "none of the assigned revoke/purge/rebuild mutation contracts",
+      "correction": "optional P006 docs/help alignment; not required to use this adapter"
+    }
+  ],
+  "deliverables": [
+    "/work/out/observe-revoke-purge-rebuild.ts",
+    "/work/out/ordinary-contract-map.json",
+    "/work/out/argv-observation-matrix.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/preservation-observations.json",
+    "/work/out/fixtures/independent-sources.json",
+    "/work/out/fixtures/source-a.md",
+    "/work/out/fixtures/source-b.md",
+    "/work/out/ORIENT.md",
+    "/work/out/RESULT.md",
+    "/work/out/checks/summary.json",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/observe-revoke-purge-rebuild.ts",
+    "/work/out/ordinary-contract-map.json",
+    "/work/out/argv-observation-matrix.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/preservation-observations.json",
+    "/work/out/fixtures/independent-sources.json",
+    "/work/out/fixtures/source-a.md",
+    "/work/out/fixtures/source-b.md",
+    "/work/out/ORIENT.md",
+    "/work/out/RESULT.md",
+    "/work/out/checks/argv-self-check.json",
+    "/work/out/checks/execute-gated.json",
+    "/work/out/checks/observe-agent-revoke.json",
+    "/work/out/checks/observe-purge-dry-run.json",
+    "/work/out/checks/observe-rebuild-vector.json",
+    "/work/out/checks/summary.json"
+  ],
+  "source_references": [
+    "packages/cli/src/commands/agent.ts:17,78-125",
+    "packages/cli/src/commands/purge.ts:14-15,25-27,62-242",
+    "packages/cli/src/commands/rebuild.ts:7-22",
+    "packages/cli/src/commands/index.ts:40-61",
+    "packages/cli/src/commands/connect.ts:113-116",
+    "packages/cli/src/commands/connect-consent.ts:9-57",
+    "packages/cli/src/main.ts:149-225",
+    "packages/cli/src/args.ts:16-97",
+    "packages/cli/src/output.ts:24-43",
+    "packages/cli/src/help.ts:7-69,124-150",
+    "packages/core/src/agents/enrollment.ts:30-43,409-456",
+    "packages/core/src/agents/identity.ts:24",
+    "packages/core/src/ledger/purge.ts:40,130-151,231-251,333-340,538-569,1409-1438",
+    "packages/core/src/retrieval/rebuild.ts:167-199",
+    "packages/cli/test/agent.test.ts:63-73,119-144",
+    "packages/cli/test/purge.test.ts:167-192,243-260,295-306",
+    "packages/cli/test/purge-subject-scope.test.ts:72-138",
+    "packages/cli/test/rebuild.test.ts:10-65",
+    "packages/cli/test/source-consent.test.ts:22-55",
+    "packages/core/test/source-grants.test.ts:399-438",
+    "packages/core/test/estate-import.test.ts:103-137",
+    "docs/cli.md:177-196,313-348,378-397,416-450",
+    "docs/architecture.md:1-57",
+    "docs/CURRENT.md",
+    "docs/decision-log.md D4 D5 D9-D13 D19",
+    "rfcs/0002-autonomous-canon.md §13",
+    "packages/core/RETRIEVAL-REBUILD.md"
+  ],
+  "checks": [
+    {
+      "name": "adapter_self_check",
+      "command": "bun /work/out/observe-revoke-purge-rebuild.ts --self-check --receipt /work/out/checks/argv-self-check.json",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T22:06:43Z",
+      "exit": 0,
+      "result": "PASS",
+      "evidence": "/work/out/checks/argv-self-check.json"
+    },
+    {
+      "name": "execute_without_permit",
+      "command": "bun /work/out/observe-revoke-purge-rebuild.ts --execute --workspace /work/out/synth",
+      "exit": 2,
+      "result": "PASS",
+      "evidence": "/work/out/checks/execute-refused.stderr"
+    },
+    {
+      "name": "execute_gated_unexecuted",
+      "command": "bun /work/out/observe-revoke-purge-rebuild.ts --execute --permit-synthetic-mutation --workspace /work/out/synth --receipt /work/out/checks/execute-gated.json",
+      "exit": 0,
+      "result": "PASS",
+      "status": "unexecuted",
+      "missing": [
+        "installed workspace packages at /repo/node_modules (bun install is forbidden in this packet)",
+        "packet R087 forbids spawning purge or revoke; reviewed P085 execution slot required"
+      ],
+      "evidence": "/work/out/checks/execute-gated.json"
+    },
+    {
+      "name": "cli_tests_agent_purge_rebuild",
+      "command": "bun test packages/cli/test/agent.test.ts packages/cli/test/purge.test.ts packages/cli/test/purge-subject-scope.test.ts packages/cli/test/rebuild.test.ts",
+      "result": "NOT_RUN",
+      "reason": "missing /repo/node_modules; bun install forbidden; destructive spawn forbidden"
+    },
+    {
+      "name": "repository_gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "reason": "no full-suite slot; archive has no installed workspace packages"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS",
+    "focused_note": "adapter argv classifier and execution gate only; Kizuki CLI verbs were classified, not spawned",
+    "package_type_full_gate": "NOT_RUN",
+    "privacy_diff_integrity": "PASS",
+    "independent_review": "NOT_RUN",
+    "retained_artifact": "NOT_RUN",
+    "kizuki_mutation_spawn": "UNEXECUTED"
+  },
+  "blockers": [
+    "Installed workspace packages at /repo/node_modules are absent; bun install is forbidden here.",
+    "Packet R087 forbids spawning kizuki purge or revoke, so the two-source longitudinal chain remains unexecuted."
+  ],
+  "next_step": "P085 reviews this adapter and, after workspace packages plus an explicit synthetic /work/out permit, runs the unexecuted two-source purge-then-rebuild observations without duplicating existing single-seam tests. P015 remains owner of source-B schema/recovery/authority/export.",
+  "downstream_handoff": {
+    "feeds": ["P085", "P099"],
+    "do_not_duplicate": [
+      "packages/cli/test/agent.test.ts:63-73,119-144",
+      "packages/cli/test/purge.test.ts:167-192,243-260,295-306",
+      "packages/cli/test/purge-subject-scope.test.ts:72-138",
+      "packages/cli/test/rebuild.test.ts:10-65",
+      "packages/cli/test/source-consent.test.ts:22-55"
+    ],
+    "assigned_vs_adjacent": {
+      "assigned": ["kizuki agent revoke", "kizuki purge", "kizuki rebuild"],
+      "adjacent_not_assigned": ["kizuki connect revoke", "kizuki connect resume-revocation"]
+    },
+    "reserved_owners": ["P003 shared evidence design", "P015 source-B", "P006 canonical docs"]
+  },
+  "limitations": [
+    "Read-only archive; no Git metadata; remote state not verified in this container.",
+    "No native, account, model, or unfamiliar-user qualification.",
+    "Agent revoke CLI credential proof is test.if(qualified) Linux x64; statically cited, not executed.",
+    "Connect revoke is documented ordinary source revoke but outside packet read_paths.",
+    "Adapter never opens an owner vault and never deletes files."
+  ]
+}

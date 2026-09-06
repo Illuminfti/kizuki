@@ -1,0 +1,127 @@
+{
+  "task_id": "R047",
+  "packet_id": "R047",
+  "title": "Map app pending-request controls and cancellation display",
+  "issue": 458,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "owner": "grok-R047",
+  "write_scope": "/work/out only",
+  "source_references": [
+    "packages/cli/src/app/ui/client.js:8,74-83,89,100-112,115-122,158,169-193,205-209,251,265-268,328-409",
+    "packages/cli/src/app/host.ts:53-54,62-85,127-129,200-223,246-247,337-357",
+    "packages/cli/src/app/protocol.ts:45-61",
+    "docs/local-app.md:15,18",
+    "packages/cli/test/app-client.test.ts:72-80,159-169,171-183,218-225",
+    "packages/cli/test/app-host.test.ts:10-58"
+  ],
+  "findings": [
+    {
+      "severity": "observation",
+      "id": "no-cancelled-state",
+      "location": "packages/cli/src/app/protocol.ts:48; packages/cli/src/app/ui/client.js:375",
+      "failure": "none versus shipped copy",
+      "invariant": "Closing the progress panel does not cancel a started operation; unknown is never reported complete.",
+      "evidence": "SEQ-CLOSE-PANEL-NOT-CANCEL and SEQ-TRANSPORT-NOT-CANCEL passed. Host close does not set cancelled (host.ts:352-357)."
+    },
+    {
+      "severity": "coverage-gap",
+      "id": "controls-stay-enabled-while-running",
+      "location": "packages/cli/src/app/ui/client.js:169,205-209 vs host.ts:69-70",
+      "failure": "Search is the only control disabled for client busy; source/undo/enroll buttons stay enabled during a running host job.",
+      "invariant": "Second non-urgent operation() is busy; UI currently shows that as a refresh/retry sentence.",
+      "evidence": "SEQ-SEARCH-BUSY and SEQ-BUSY-REFUSED-START passed. HOST-MUTATION-BUSY unexecuted."
+    },
+    {
+      "severity": "bookkeeping",
+      "id": "invalidate-leaves-operation",
+      "location": "packages/cli/src/app/ui/client.js:75-83 vs 115-122",
+      "failure": "invalidatePrivateView clears busy/hits/sources but not state.operation; disconnect clears it.",
+      "invariant": "Abandoned watches must not be reported succeeded.",
+      "evidence": "static read; existing epoch/disconnect tests do not assert operation clearing"
+    }
+  ],
+  "artifacts": [
+    "/work/out/pending-state-table.md",
+    "/work/out/pending-state-table.json",
+    "/work/out/event-sequence-fixture.json",
+    "/work/out/event-sequence-fixture.test.ts",
+    "/work/out/existing-coverage.json",
+    "/work/out/checks.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/pending-state-table.md",
+    "/work/out/pending-state-table.json",
+    "/work/out/event-sequence-fixture.json",
+    "/work/out/event-sequence-fixture.test.ts",
+    "/work/out/existing-coverage.json",
+    "/work/out/checks.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "checks": [
+    {
+      "name": "existing-app-client",
+      "command": "bun test /repo/packages/cli/test/app-client.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "14 pass, 0 fail, 60 expect()"
+    },
+    {
+      "name": "r047-event-sequence-fixture",
+      "command": "bun test /work/out/event-sequence-fixture.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "7 pass, 0 fail, 38 expect()"
+    },
+    {
+      "name": "existing-app-host",
+      "command": "bun test /repo/packages/cli/test/app-host.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "detail": "Cannot find module '@kizuki/connector-gmail'; workspace node_modules absent"
+    },
+    {
+      "name": "full-repository-gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "detail": "No source edits; missing workspace install; not this packet's test slot"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS (existing app-client 14; R047 fixture 7)",
+    "host_busy_gate": "NOT_RUN",
+    "package_type_full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "native_or_account": "not claimed"
+  },
+  "blockers": [],
+  "limitations": [
+    "Read-only archive with no Git metadata and no workspace node_modules.",
+    "Host mutation-busy sequence is an unexecuted draft.",
+    "Did not race overlapping requests or exercise the 32-job cap.",
+    "Did not duplicate P044 revocation oracle tests.",
+    "No cancel protocol was designed or implemented.",
+    "No native, account, model, or unfamiliar-user qualification."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P042", "P043"],
+    "do_not_wait_for": ["P044 unpublished output"],
+    "use": [
+      "pending-state-table.md as the finite UI/host matrix",
+      "event-sequence-fixture.test.ts as the executable client draft (already passing against shipped client.js)",
+      "existing-coverage.json to avoid duplicating reconcile/unknown/setup/revoke-search cases"
+    ],
+    "next_implementation_slice": "Optional in-repo lift of the seven client sequences; add HOST-MUTATION-BUSY in app-host.test.ts once @kizuki/core resolves. Do not add a cancelled state unless product copy changes."
+  },
+  "next_step": "P042/P043 consume the pending-state table and passing client sequences; add host mutation-busy coverage when workspace packages are available. Do not implement operation cancel unless explicitly assigned."
+}

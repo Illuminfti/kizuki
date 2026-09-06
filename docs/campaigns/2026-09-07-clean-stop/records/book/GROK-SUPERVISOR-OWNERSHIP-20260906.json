@@ -1,0 +1,1653 @@
+{
+  "schema": "kizuki.supervisor-ownership-reconciliation/v1",
+  "observed_at": "2026-09-06T23:07:52.827451+00:00",
+  "status": "clear_for_root_packet_assignment",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "base_tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+  "live_main_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+  "proposed_packet": "P106",
+  "proposed_write_paths": [
+    "packages/core/src/serve/supervisor.ts",
+    "packages/core/test/serve/supervisor.test.ts",
+    "packages/cli/test/serve/install.test.ts"
+  ],
+  "source_blobs": {
+    "packages/core/src/serve/supervisor.ts": "f091abc362b5b220c1611d43e6d9399d79dfd464",
+    "packages/core/test/serve/supervisor.test.ts": "debafdee56cc883ffb3d7aef1ef25c9b09299ece",
+    "packages/cli/test/serve/install.test.ts": "68047304c51fc8518b49c18480d22cd4bd214de8"
+  },
+  "existing_worktree_count": 161,
+  "private_clone_count": 25,
+  "worktree_observations": [
+    {
+      "path": "KIZUKI_REPO",
+      "head": "56ef852dba308ec31f9541296a027820e26f108f",
+      "dirty_scope": []
+    },
+    {
+      "path": "/data/kizuki-worktrees/cli-verbs",
+      "head": "3ec0eebd43b023905f7219130cd74da28e8b8bbc",
+      "dirty_scope": []
+    },
+    {
+      "path": "/data/kizuki-worktrees/kizuki-cli-docs-434-20260906",
+      "head": "5e2958fff073bf8ac8ba446d09fc7b38faa3047f",
+      "dirty_scope": []
+    },
+    {
+      "path": "/data/kizuki-worktrees/kizuki-wsl-proof-455",
+      "head": "5e2958fff073bf8ac8ba446d09fc7b38faa3047f",
+      "dirty_scope": []
+    },
+    {
+      "path": "/data/kizuki-worktrees/llm-producer",
+      "head": "ff8318cca503c64af7b5a82836602017b3b3e377",
+      "dirty_scope": []
+    },
+    {
+      "path": "/data/kizuki-worktrees/security-docs",
+      "head": "7653cb0ce0ed37027bea57eb04ff58b48ba52f2d",
+      "dirty_scope": []
+    },
+    {
+      "path": "OPERATOR_HOME/.codex-hermes/worktrees/ed18/ubuntu/LifeOS/apps/kizuki",
+      "head": "372af0095e03e0689e11bd4986b84defeb862e65",
+      "dirty_scope": []
+    },
+    {
+      "path": "OPERATOR_HOME/LifeOS/.codex-work/kizuki-product-producer-current-main-reconcile-20260905",
+      "head": "a3ff82e705237386a9a5e13345eaecb72915d8dd",
+      "dirty_scope": []
+    },
+    {
+      "path": "OPERATOR_HOME/LifeOS/.codex-work/kizuki-product-producer-reconcile-20260903",
+      "head": "991061d14fe582c034c4a7e669ef9f82eadb52c0",
+      "dirty_scope": []
+    },
+    {
+      "path": "OPERATOR_HOME/LifeOS/.codex-work/kizuki-product-sensitivity-20260903",
+      "head": "56ef852dba308ec31f9541296a027820e26f108f",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-6e-review-snapshot-xBu4S8",
+      "head": "6e041448c5391b53dfedcf07dbe619df733ba71d",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-acceptance-aggregator-20260905",
+      "head": "e735a0c889aa996936560a2f609a912f4777e110",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-agent-enrollment-20260905",
+      "head": "6bc8e0493f0e0d3b4af491e8cc535e68555eac15",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-agent-provisioning-20260906",
+      "head": "6a445fc48c7880ad64c1887a583ed0622ce9d01a",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-agent-provisioning-core-20260906",
+      "head": "876c2a81fdff2c383950de8b2792231cd8065854",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-app-service-resume-20260905",
+      "head": "ae2bf5683f47a154f2c66d0efa51dedbc3dab6a5",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-archived-graph-cleanup-20260906",
+      "head": "fdcd1ee35b32901d0890a113521d9935d532bc51",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-artifact-proof-20260904",
+      "head": "d3d0175b004dd09c47f2b4a062720380e7f4bbd3",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-artifact-proof-validation-20260906",
+      "head": "6d938cf796bd53754fa0430b6b65127ca44074fd",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-async-ports-20260905",
+      "head": "8af813f05048386d5ba18e3086e6546bfd79deed",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-atomic-extract-20260905",
+      "head": "bb19615453dbdf936bcfdc8bbdeda7ce3410cfc1",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-audit-bounds-integration-20260905",
+      "head": "782f148c58e955f019bac62b99f18b498c4e1b7d",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-audit-delight-20260904",
+      "head": "27cf2bcd4981f4634f29b2ad7d2f459c5400aae0",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-audit-shape-bounds-20260905",
+      "head": "e0f9ef6cfd899b824bcf63af88fad5b016ab0790",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-build-delight-20260904",
+      "head": "9627f67bea6755b82fd9d543e03f9d0dbd3965eb",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-calendar-cli-20260905",
+      "head": "a2379d59025991a97a6a487ce2a2ff848fa8124d",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-canon-authority-20260905",
+      "head": "1191878d2c8283d67349ea7148a75217989bed28",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-canon-native-adapter-20260906",
+      "head": "4d6e9702dbe8e94c87542643e855732d6aca9aa3",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-canon-native-writer-20260906",
+      "head": "58609fd7a0be873777493efc932757d342b336b5",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-canon-vault-containment-20260906",
+      "head": "82ca521d87666d3635f9ef91aad32515c51d064c",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-capture-retrieval-independence-20260905",
+      "head": "517cf886dcb144161089ff61ad00d7cb1117508e",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-checkpoint-ownership-20260905",
+      "head": "bb67294e40b2f83b7ef7a9244b2ae6b3e27820c3",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-checkpoint-public-api-20260906",
+      "head": "42e0e4ce98360cf4995bba80a304fac82ec9acd8",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-ci-contracts-20260905",
+      "head": "cb280dd01f450a769e8883e23cfa677f0fe45527",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-ci-isolation-20260905",
+      "head": "07c9ab5b13bcffd03f4c2c9222303f23a80d1735",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-connect-beeper-20260904",
+      "head": "a439fb5a0ede9a0d9a18fd2ecd2a4f0d06b9b7a0",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-connection-state-ownership-20260906",
+      "head": "edc15beab4612bd4706a90a013ce69ee4f02b030",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-connector-consent-fixtures-20260905",
+      "head": "9e4754ea296c521f66020349c8d8f12dcbcb3089",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-credential-file-20260906",
+      "head": "1c9d9094c85ad985375073d0ce3b9955404550af",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-current-hardening-20260905",
+      "head": "cccade998c593c6908f7c7a09836f3efbb826a43",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-daemon-runtime-20260904",
+      "head": "8a4d4ac336561be31380ae4f1bf0ebcb6dcbbf38",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-delight-20260904",
+      "head": "f9c9433cd82c55249eb63f789a61223ee7a4a5aa",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-doctor-legacy-hash-20260906",
+      "head": "71f62c73b388eb5a343e7bf7e9e0c7ad17a9db43",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-ea25-review-snapshot-WB79ml",
+      "head": "ea25d5e8860efd3b3c3f4e0a9d83f75854618a2b",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-empty-fts-inventory-20260905",
+      "head": "7900448a301eb3cb149dd628f80512f978ae8ee5",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-estate-plan-20260905",
+      "head": "6d101dce7af5e89eb0dad9a0f3ae78d78ed536ea",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-event-causal-origin-20260905",
+      "head": "a76ffeb34febce067b87e76bef4773f97e780023",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-event-contract-20260905",
+      "head": "84a445a8d986b75d6c2a362561d2c49949a57123",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-event-final-integration-20260905",
+      "head": "c02d7b45af3e826c52df74007b96d737de9c59e2",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-event-origin-20260905",
+      "head": "3ad68b08bf269a608e2243e13ff89bd8bbb07d88",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-export-final-20260906",
+      "head": "55c71cf22ffb9639ebb196b19147d60080663fea",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-export-inventory-20260906",
+      "head": "56ba10cf5a366a4a7c2b0567eb956082788a26fe",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-export-purge-history-20260906",
+      "head": "dbbb5e8f0d363d1f02a4809ad5f2f118328c0829",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-export-snapshot-20260906",
+      "head": "2380a97c8e576550f00edc59f08af0c3b61421fc",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-export-snapshot-v2-20260906",
+      "head": "159e11b91d602f6c22be1a217a1a5a944e893052",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-extract-budget-integration-20260905",
+      "head": "d2fce10a39f8e917ef058c8421967b4c42b96e2e",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-extract-budget-resume-20260905",
+      "head": "08c1934e22e4d616d737435b60d7a64df52bb560",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-fleet-base-20260906",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-foundation-integration-20260905",
+      "head": "5bf417dca48460e3e3a121a529c943b17f07a13d",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-gmail-cli-20260905",
+      "head": "a39662779af03eafb0f43007ac56671123e75e93",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-gmail-custody-20260905",
+      "head": "d168003383cf20cd7e3c74712ab9ba7da52fdea1",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-gmail-host-drain-20260905",
+      "head": "6e346b290be2afc762c08720a4c9fbfb12d54d0f",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-gmail-native-20260905",
+      "head": "b94a4f5add0d0bdb52b810679dee7093e0216eca",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-google-calendar-native-20260905",
+      "head": "8d934e02d65be8065963defbaebe88d80477c369",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-google-multi-source-20260905",
+      "head": "1b1de81d394199084cc6270d6ac2f7a649c3e593",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-history-policy-20260906",
+      "head": "19e0c7feac088e243c1111b027f8c53736c9f18c",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-identity-containment-20260905",
+      "head": "a7617873c24c079512394e9b0355032c40f8e13a",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-imap-connect-20260904",
+      "head": "11e1552e94951989011e1e7973d255a9dd9c705a",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-imap-review-20260905",
+      "head": "bed407da9c5a4a51c91cc98492a2fc0fd2eb72c6",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-ingest-labels-20260904",
+      "head": "be50fa6e442287512d5967e38af81d88f1f5845b",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-init-bootstrap-fixture-20260906",
+      "head": "12ae13e3e23fd6632601f18129a7f2401e3b3fd3",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-init-git-exclusion-20260906",
+      "head": "a5ee94e8634b4b0bde5a8f998336e7bab6316d6b",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-init-snapshot-preservation-20260906",
+      "head": "1a238634bfded3df8fb972f9ba4e1cb22036fae9",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-inventory-resume-20260905",
+      "head": "8838fc966d902a84f8b175cef59dc7781e15fc7b",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-issue-batch-20260905",
+      "head": "6265bb9611267126594353655e3bb9c1557cb829",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-lease-boot-reconciliation-20260905",
+      "head": "31777aaf26a75b9237ba11c18cda83fd08d0b164",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-llm-bounds-20260905",
+      "head": "0391e82be8aca3a9905ecc045e39435fb2087bfd",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-local-app-20260905",
+      "head": "52705b7735c0cc8c8dd26c588e74db9c354e1e6a",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-macos-native-20260905",
+      "head": "1d54521cb01a614056a86aac90435891dbd92780",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-main327-artifact-verification-20260906",
+      "head": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-mapped-import-discovery-20260905",
+      "head": "9cc9901a33947755a1c71d399cb85c4b9aa9ec44",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-markdown-vault-boundary-20260905",
+      "head": "1450b5fc4e73b90cb2031499d79ae893f33d337b",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-mcp-offline-fallback-20260905",
+      "head": "a5744ee76efb18c076ea24f95b60d3c11b4fbaca",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-metadata-projection-20260905",
+      "head": "e9165a161310874d0d84dc184d7fefa2bffc4f55",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-model-compat-resume-20260905",
+      "head": "11dc0164fb419210585c403e9856d036346d8373",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-mutation-callers-20260906",
+      "head": "959aacb2ec68b376b7062a1fe44abf90661966be",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-mutation-callers-main5118-20260906",
+      "head": "3828133d8fa36cec62136f4add6f5dbd5a289343",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-mutation-scope-20260906",
+      "head": "70e3c38bce96675599af228de74c1356ed14a03b",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-native-enumeration-20260905",
+      "head": "c76208ae5a16d6b0c3fd8e941de650ecb4272cd8",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-native-erasure-resume-20260905",
+      "head": "cb4cd395ad16477b15f131d19d974dbf3a7992cc",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-native-errno-fix-20260905",
+      "head": "4a9f8cdc0ad73c3eceb524e60a0e62e5f01f532b",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-native-shutdown-diagnosis-20260905",
+      "head": "3c83ed6f27e2ffc6b034a714b2cea7fe570f2c17",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-native-test-liveness-20260905",
+      "head": "01cfdd926f2dc1a2fa4f7477609ffec3d1811c23",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-observation-diagnostics-20260905",
+      "head": "c778a72c3293d9b55c1889aaa6313b17cd6d4e63",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-offline-retrieval-20260905",
+      "head": "5cda9b8dfde098566b4da4ffd8c08c76a68e3c25",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-operating-guide-integration-20260905",
+      "head": "0fff48820d9205b5b6ffaca550ce2b8acc80ac0e",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-owned-publication-20260906",
+      "head": "cbf610f8ecbc1624dfab4db676ed57dd88f01f18",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-owned-retrieval-20260905",
+      "head": "c5573a84d43506da2a2ca0bf0290fb3414bc1a3c",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-packet-tokens-20260905",
+      "head": "890433b2f7df1b9dca9ed35162d40aacc78e92a9",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-page-discovery-successor-20260906",
+      "head": "04b2941f07fc2679f84eea3069847f16c96e8430",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-page-provenance-guard-20260906",
+      "head": "8d83709d8246d8a6f302fc66e04b699e678f6229",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-platform-recovery-composition-20260905",
+      "head": "5a45998a8e43a3dd5f184ba89acc48b6b8b7f54b",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-portable-connections-20260906",
+      "head": "cbe32aa47d649926e64b6a49908cd6c0ffbcaa07",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-positive-migration-fixture-20260906",
+      "head": "966220608b8d450f44898a807d76f56637ab0851",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-positive-provenance-admission-20260906",
+      "head": "83434b3b606ae5ea93e5c813f9b89de77cdfd274",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-positive-provenance-settlement-20260906",
+      "head": "2bb6f2e0f6eb402d72a23a1ad633c489f68d094a",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-pr498-main-repair-20260906",
+      "head": "330ee6900ae8adcdab77c924c215dab6d4d442d6",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-pr536-main626-reconcile-20260906",
+      "head": "f7817a360b4ac034f890ad6ffe773ba696a42906",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-producer-grounding-20260905",
+      "head": "536fb4b2d6cc6919911908bce123d5377afad6cf",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-product-completion-20260904",
+      "head": "999c5536946951912d2952492f8385cc32daa343",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-public-rebuild-20260905",
+      "head": "89d49b67f4256d5b8b363df7dfab98e3db185190",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-purge-totality-20260906",
+      "head": "f64be51f4384a7476faafb86377ca6a9eb27feea",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-qualification-harness-20260905",
+      "head": "11bcd1ef9be65837a9504cda24cf7973f593c169",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-qualification-integration-20260905",
+      "head": "e2bba74cd505400042cf9c4183fafdfa756bb683",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-quality-eval-resume-20260905",
+      "head": "9a46ab8277cc8fa27c124bfe9d763e51952ffdce",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-quality-integration-20260905",
+      "head": "f50eab29e72365fcbd463209b5ae0447e00ecf99",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-receipt-stream-20260906",
+      "head": "064093486d12a9b320ce5026506d765d6cd69479",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-recovery-proof-20260905",
+      "head": "2f5e37998c5b14eb2e94566a8913a396ed17ce5f",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-rejection-migration-binding-20260906",
+      "head": "baf086369516e22c9dcf981bf8df13e56ed0afd0",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-retire-purge-review-20260906",
+      "head": "7884cedd1c2596f0d493b78910f6bbf75e70a497",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-retrieval-ceilings-20260905",
+      "head": "753c96f5eb6a3a56f4daef3b5ee99814e6312963",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-retrieval-consumers-20260905",
+      "head": "87807d3d3dce524b358d79a19d8b52f1664d9c7c",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-retrieval-engine-20260905",
+      "head": "e36ad4fbf9c4dbd1859506518d81c8f14be8efe7",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-reviewed-components-20260905",
+      "head": "78861c91fdb1ab0069b6209b3e2a25e61ddfc9cc",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-rich-contracts-20260905",
+      "head": "f047ebc9df2d15cb6f42f5226979bce01066cfc2",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-rich-durable-20260905",
+      "head": "1d106e2353da7b45d00386de1ed30b290899f386",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-screenpipe-issues-20260905",
+      "head": "ee79589244b7665776c02d0f49919c6e4956836e",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-service-lifecycle-20260905",
+      "head": "9985e95db0e09d65feb5fd8c4b04d752438daa44",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-serving-fixture-migration-20260906",
+      "head": "76f0c438ad745c6ec8abb1ee9113df7761ab7766",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-source-consent-20260905",
+      "head": "3feabe8f8d5de13948bce4fa7418a632746a1714",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-source-consent-cli-20260905",
+      "head": "99d0b9e8011671568e91ce6954086cbd679c1fd8",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-source-enrollment-docs-20260906",
+      "head": "0fbaca1aba5c0dcaf5b9cd710126e3f282f2db34",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-source-grant-positive-fixture-20260906",
+      "head": "4a0c36aaeb45e072844d6a883f7898e8db737edd",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-source-integration-20260905",
+      "head": "26376e7cb36d498c5cab8286a2ac3745b9088522",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-source-model-egress-20260905",
+      "head": "fae79c7396481110ce772704f0a5dd77a2a6155c",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-sqlite-artifact-proof-20260906",
+      "head": "c8b65c134cb09fe76c326d8d14bd6c43a0e1bc18",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-sqlite-runtime-20260906",
+      "head": "cbcc0291271c5b7322f3937bbed8dc96194ad7e7",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-sqlite-runtime-observation-20260906",
+      "head": "129252530738aeff8b64489146302fd917b3ba3c",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-staging-open-order-20260906",
+      "head": "71a56798272e2ce971208451b5d648fef114d217",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-storage-foundation-integration-20260906",
+      "head": "82fff91cfba6f2400b8033ad6b89b6991fb4ad7f",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-storage-integration-20260906",
+      "head": "65126c8fa28b3552569c69cbb84a82302d653b08",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-storage-purge-integration-20260906",
+      "head": "960cbb899a8b0611544149f40652b70b65be974e",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-stranger-foundation-main5118-20260906",
+      "head": "43fca297071ef7d4ce3ba122c4488494752f799c",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-stranger-main327-20260906",
+      "head": "a7e4b53ce7107bccaa7a62e6e91e4ee384a38f08",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-stranger-main626-20260906",
+      "head": "dd67ca0358d6654dbec65a427e53e134fd1c7505",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-subject-purge-scope-20260906",
+      "head": "730d424b773664f5d8461cb934e503d29a4e1ec4",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-subject-roles-resume-20260905",
+      "head": "eb0a73062768c7e668477e772d09b2aef05ddde4",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-telegram-cli-20260905",
+      "head": "7c9422e019b1a34bfc0de4f510e2a07a3ced80e7",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-temporal-consistency-20260905",
+      "head": "61e33c05a4a98595d63265c440400a8e17aa0410",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-trust-integration-20260905",
+      "head": "2dc6c72061c6b1fd62943e3554b3d179370809ec",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-tui-issues-20260905",
+      "head": "3133050e060bf0fe47da64a08bed6585b6739afb",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-two-client-continuity-20260906",
+      "head": "7394b9a09112a788aaabaae0eb822a4c9240ccc1",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-whoop-budget-20260905",
+      "head": "726787b4670b3f8ddefb78f13bd4916ad6fb2201",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-whoop-budget-resume-20260905",
+      "head": "24ce3322bf640a37e8e68816abd631e3d99f46df",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-whoop-manifest-20260905",
+      "head": "d75e5af22dcabbe1337591812bd4db89385d9ec7",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-whoop-native-20260905",
+      "head": "1e8659442bf2d6955f5b767f5ec84491674e65a7",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-world-rfc0004-20260905",
+      "head": "03a84ab8d8ba30a8863068dfa17cbc7d41b83733",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-world-story-main5118-20260906",
+      "head": "342ede1053b5c67ae90485573993f2f1bd4c95cf",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-x-api-resume-20260905",
+      "head": "dd41d64f9ecdff43c597941801e18b3243bbe9c9",
+      "dirty_scope": []
+    },
+    {
+      "path": "WORKTREES/kizuki-x-archive-20260905",
+      "head": "d8b182b08e034279c230da8a99768a2612b62eec",
+      "dirty_scope": []
+    },
+    {
+      "path": "TEMP/kizuki-6e-review-snapshot-0bUqwt",
+      "head": "6e041448c5391b53dfedcf07dbe619df733ba71d",
+      "dirty_scope": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P006",
+      "head": "b1ff2d812bb3cd0384d0f0f6f98ed32704774cac",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P073",
+      "head": "1a29c7fa06dbff33e34f2b7d035a480295241c80",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/archive-P073-code1",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P103",
+      "head": "c7484874913df3ccab72a66f51310942e4daf3c5",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P102",
+      "head": "f7a797f0d5bb13b5c430f2251d96567f8950b106",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P057",
+      "head": "85778e3f343f854e227f744aff0c13a47051278f",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P105",
+      "head": "10adfb41c882b9f7bacd4c89c8510ec5307abcf0",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/archive-P069-code1",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/archive-P067-code1",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P075",
+      "head": "7df5d889b52360df879b52a63ef53205aacb1701",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P072",
+      "head": "3dd49027a764e4b5e0c73674de33fcf578bb5678",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P015",
+      "head": "34d02119014e7fd071e5ab3709fd65b7c0a5e065",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/archive-P071-code1",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/archive-P006-code1",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P053",
+      "head": "bca137d398ada6bce612d668f4377f50dc29628c",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P069",
+      "head": "a0705a0adca4ecf8f38233d873f4398812003224",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/archive-P015-code1",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P101",
+      "head": "d9b3969c7ff2d43e624094760c854456fc590cbc",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P104",
+      "head": "66040e3df3ee452c459ac1e45360efe731158715",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/archive-P075-code1",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P048",
+      "head": "771f7c774096e86c2402f7fa54635f889d5fc3aa",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P067",
+      "head": "3d76afb63af4bf112b40811e534e97d2fc0fbe9c",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/archive-P053-code1",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P004",
+      "head": "ce8395792a333ad760594f92f1198639e0936445",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    },
+    {
+      "path": "PRIVATE_FLEET/code-repos/P071",
+      "head": "a90db5339762f2436bb446b805d8fc81cdeeada8",
+      "dirty_scope": [],
+      "committed_scope_changes_from_base": []
+    }
+  ],
+  "open_pr_count": 5,
+  "open_prs": [
+    {
+      "files": [
+        {
+          "path": "docs/export-inventory.md",
+          "additions": 55,
+          "deletions": 0
+        },
+        {
+          "path": "docs/portable-connection-restore.md",
+          "additions": 35,
+          "deletions": 0
+        },
+        {
+          "path": "packages/cli/src/commands/doctor.ts",
+          "additions": 1,
+          "deletions": 1
+        },
+        {
+          "path": "packages/cli/test/doctor/liveness.test.ts",
+          "additions": 6,
+          "deletions": 5
+        },
+        {
+          "path": "packages/cli/test/doctor/page-provenance.test.ts",
+          "additions": 104,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/src/canon/apply.ts",
+          "additions": 32,
+          "deletions": 5
+        },
+        {
+          "path": "packages/core/src/canon/arbiter.ts",
+          "additions": 1,
+          "deletions": 29
+        },
+        {
+          "path": "packages/core/src/canon/io.ts",
+          "additions": 14,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/src/canon/paths.ts",
+          "additions": 60,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/src/canon/receipts.ts",
+          "additions": 6,
+          "deletions": 1
+        },
+        {
+          "path": "packages/core/src/canon/store.ts",
+          "additions": 5,
+          "deletions": 2
+        },
+        {
+          "path": "packages/core/src/canon/undo.ts",
+          "additions": 17,
+          "deletions": 5
+        },
+        {
+          "path": "packages/core/src/correction/correct.ts",
+          "additions": 33,
+          "deletions": 15
+        },
+        {
+          "path": "packages/core/src/export.ts",
+          "additions": 280,
+          "deletions": 53
+        },
+        {
+          "path": "packages/core/src/ledger/source-canon-erasure.ts",
+          "additions": 7,
+          "deletions": 22
+        },
+        {
+          "path": "packages/core/src/serving/rewrite.ts",
+          "additions": 4,
+          "deletions": 2
+        },
+        {
+          "path": "packages/core/src/vault/doctor.ts",
+          "additions": 12,
+          "deletions": 5
+        },
+        {
+          "path": "packages/core/src/vault/pages.ts",
+          "additions": 5,
+          "deletions": 5
+        },
+        {
+          "path": "packages/core/src/vault/provenance.ts",
+          "additions": 24,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/src/vault/schema.ts",
+          "additions": 21,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/src/vault/write.ts",
+          "additions": 41,
+          "deletions": 25
+        },
+        {
+          "path": "packages/core/test/canon/vault-containment.test.ts",
+          "additions": 144,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/test/canon/write-page.test.ts",
+          "additions": 23,
+          "deletions": 23
+        },
+        {
+          "path": "packages/core/test/export-connections.test.ts",
+          "additions": 212,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/test/export-inventory.test.ts",
+          "additions": 260,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/test/export.test.ts",
+          "additions": 14,
+          "deletions": 17
+        },
+        {
+          "path": "packages/core/test/loop/self-ingest.test.ts",
+          "additions": 40,
+          "deletions": 6
+        },
+        {
+          "path": "packages/core/test/page-provenance.test.ts",
+          "additions": 165,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/test/source-model-egress.test.ts",
+          "additions": 1,
+          "deletions": 0
+        }
+      ],
+      "headRefName": "agent/kizuki-storage-integration-20260906",
+      "headRefOid": "65126c8fa28b3552569c69cbb84a82302d653b08",
+      "isDraft": true,
+      "number": 537,
+      "state": "OPEN",
+      "title": "Compose canon containment with classified portable backups"
+    },
+    {
+      "files": [
+        {
+          "path": "docs/README.md",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/retrieval-engine-acceptance.md",
+          "additions": 134,
+          "deletions": 0
+        },
+        {
+          "path": "docs/retrieval-engine-integration.md",
+          "additions": 338,
+          "deletions": 0
+        },
+        {
+          "path": "docs/upstream-policy.md",
+          "additions": 62,
+          "deletions": 2
+        }
+      ],
+      "headRefName": "agent/deep-memory-integration-20260906",
+      "headRefOid": "8695c2295881c8895c0f81ca21cadf588a61a5c0",
+      "isDraft": true,
+      "number": 530,
+      "state": "OPEN",
+      "title": "Integrate deep memory adoption programme and acceptance charter"
+    },
+    {
+      "files": [
+        {
+          "path": "docs/wave1/specs/CONVENTIONS.md",
+          "additions": 20,
+          "deletions": 0
+        },
+        {
+          "path": "scripts/verify-policy.test.sh",
+          "additions": 99,
+          "deletions": 13
+        },
+        {
+          "path": "scripts/verify.sh",
+          "additions": 75,
+          "deletions": 47
+        }
+      ],
+      "headRefName": "agent/kizuki-history-policy-20260906",
+      "headRefOid": "19e0c7feac088e243c1111b027f8c53736c9f18c",
+      "isDraft": true,
+      "number": 519,
+      "state": "OPEN",
+      "title": "Restore complete history checks with pinned legacy exceptions"
+    },
+    {
+      "files": [
+        {
+          "path": "deploy/proof/bring-up-compose.sh",
+          "additions": 156,
+          "deletions": 0
+        },
+        {
+          "path": "deploy/proof/bring-up-compose.test.ts",
+          "additions": 285,
+          "deletions": 0
+        },
+        {
+          "path": "tsconfig.json",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "headRefName": "cursor/resume-dockerd-race-fd3a",
+      "headRefOid": "6eb2d262617ea65d6be56559d86ee6708b56e294",
+      "isDraft": true,
+      "number": 507,
+      "state": "OPEN",
+      "title": "Reconcile compose before create after box resume"
+    },
+    {
+      "files": [
+        {
+          "path": "packages/core/src/claims/errors.ts",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/src/claims/history.ts",
+          "additions": 98,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/src/claims/record-storage.ts",
+          "additions": 70,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/src/claims/record.ts",
+          "additions": 182,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/src/claims/schema.ts",
+          "additions": 147,
+          "deletions": 7
+        },
+        {
+          "path": "packages/core/src/claims/store.ts",
+          "additions": 57,
+          "deletions": 130
+        },
+        {
+          "path": "packages/core/src/claims/support.ts",
+          "additions": 187,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/src/contracts/claim-v2.ts",
+          "additions": 37,
+          "deletions": 8
+        },
+        {
+          "path": "packages/core/src/ledger/db.ts",
+          "additions": 3,
+          "deletions": 2
+        },
+        {
+          "path": "packages/core/src/serve/extract.ts",
+          "additions": 6,
+          "deletions": 4
+        },
+        {
+          "path": "packages/core/src/serve/schema.ts",
+          "additions": 9,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/src/serve/types.ts",
+          "additions": 1,
+          "deletions": 1
+        },
+        {
+          "path": "packages/core/test/claims/v2-fixtures.ts",
+          "additions": 124,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/test/claims/v2-migration.test.ts",
+          "additions": 85,
+          "deletions": 0
+        },
+        {
+          "path": "packages/core/test/migration.test.ts",
+          "additions": 11,
+          "deletions": 11
+        }
+      ],
+      "headRefName": "agent/kizuki-rich-durable-20260905",
+      "headRefOid": "1d106e2353da7b45d00386de1ed30b290899f386",
+      "isDraft": true,
+      "number": 500,
+      "state": "OPEN",
+      "title": "WIP: Preserve rich-claim schema and reader checkpoint"
+    }
+  ],
+  "open_pr_scope_overlap": [],
+  "held_prs_preserved": [
+    519,
+    530,
+    500
+  ],
+  "prior_service_pr": {
+    "headRefOid": "9985e95db0e09d65feb5fd8c4b04d752438daa44",
+    "mergeCommit": {
+      "oid": "93b0777d6c1fa79bd576f5a4084e2e5f5c722379"
+    },
+    "mergedAt": "2026-09-05T06:24:46Z",
+    "number": 448,
+    "state": "MERGED",
+    "title": "Make service activation and recovery reflect actual supervisor state"
+  },
+  "prior_service_base_blob_equality": {
+    "packages/core/src/serve/supervisor.ts": true,
+    "packages/core/test/serve/supervisor.test.ts": true,
+    "packages/cli/test/serve/install.test.ts": false
+  },
+  "code_worker_packet_count": 25,
+  "code_worker_packets": [
+    {
+      "worker": "P004-code1",
+      "task_id": "P004",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        "scripts/go-no-go.ts",
+        "scripts/go-no-go.test.ts",
+        "scripts/release-evidence.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "1c293997417b09ddc89d0118abb2cdb32f0a0e8fc8c92f9b9b0c12658075ed11"
+    },
+    {
+      "worker": "P004-code2",
+      "task_id": "P004",
+      "status_as_recorded": "running",
+      "write_paths": [
+        "scripts/go-no-go.ts",
+        "scripts/go-no-go.test.ts",
+        "scripts/release-evidence.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "8f12f85fc58c6e3cb163451f884465981faba55f7d59c6de25ef0cbb5f7d15b7"
+    },
+    {
+      "worker": "P006-code1",
+      "task_id": "P006",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        "README.md",
+        "SECURITY.md",
+        "docs/README.md",
+        "docs/CURRENT.md",
+        "docs/cli.md",
+        "docs/connect.md",
+        "docs/release-acceptance.md",
+        "packages/connectors/README.md",
+        "packages/cli/src/help.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "d3350687e94661610f985a07d1c10016a886fbf38a274b0ffb2ce13917768c5e"
+    },
+    {
+      "worker": "P015-code1",
+      "task_id": "P015",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        "packages/core/src/ledger/db.ts",
+        "packages/core/src/ledger/schema.ts",
+        "packages/core/src/ledger/source-canon-erasure.ts",
+        "packages/core/src/ledger/canon-source-survivor-lineage.ts",
+        "packages/core/src/canon/source-erasure-intent.ts",
+        "packages/core/src/canon/apply.ts",
+        "packages/core/src/canon/authority.ts",
+        "packages/core/src/canon/receipts.ts",
+        "packages/core/src/export.ts",
+        "packages/core/test/canon/source-survivor-lineage.test.ts",
+        "packages/core/test/canon/authority-projection.test.ts",
+        "packages/core/test/source-grants.test.ts",
+        "packages/core/test/migration.test.ts",
+        "packages/core/test/export-purge-history.test.ts",
+        "packages/core/test/export.test.ts",
+        "packages/core/test/export-connections.test.ts",
+        "packages/core/test/event-backup-v2.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "fd90782212b62e19dd6f8ad62ec6fb18e21611fb6e1c7af8dbd7988076b774bc"
+    },
+    {
+      "worker": "P015-code2",
+      "task_id": "P015",
+      "status_as_recorded": "running",
+      "write_paths": [
+        "packages/core/src/ledger/db.ts",
+        "packages/core/src/ledger/schema.ts",
+        "packages/core/src/ledger/source-canon-erasure.ts",
+        "packages/core/src/ledger/canon-source-survivor-lineage.ts",
+        "packages/core/src/canon/source-erasure-intent.ts",
+        "packages/core/src/canon/apply.ts",
+        "packages/core/src/canon/authority.ts",
+        "packages/core/src/canon/receipts.ts",
+        "packages/core/src/export.ts",
+        "packages/core/test/canon/source-survivor-lineage.test.ts",
+        "packages/core/test/canon/authority-projection.test.ts",
+        "packages/core/test/source-grants.test.ts",
+        "packages/core/test/migration.test.ts",
+        "packages/core/test/export-purge-history.test.ts",
+        "packages/core/test/export.test.ts",
+        "packages/core/test/export-connections.test.ts",
+        "packages/core/test/event-backup-v2.test.ts",
+        "packages/core/src/ledger/integrity.ts",
+        "packages/core/test/agent-enrollment-backup.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "520f7e638ed141655cbcdd8c4d4161423dc73d88fec96684bf685be164f47838"
+    },
+    {
+      "worker": "P048-code1",
+      "task_id": "P048",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        "packages/cli/src/commands/connect-telegram.ts",
+        "packages/cli/test/telegram-signin-diagnostics.test.ts",
+        "packages/cli/test/telegram-enrollment.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "f11300426ba83969c9e27386539cc3669b392bc9d9ccf9ef69b38db1d007e21f"
+    },
+    {
+      "worker": "P053-code1",
+      "task_id": "P053",
+      "status_as_recorded": "failed_or_incomplete",
+      "write_paths": [
+        "packages/connector-google-calendar/test/fleet-temporal.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "a09a1f9519cca20324bd426a687183a2b4a8c072e16ce725b8f559cf95a6cab2"
+    },
+    {
+      "worker": "P053-code2",
+      "task_id": "P053",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        "packages/connector-google-calendar/test/fleet-temporal.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "a09a1f9519cca20324bd426a687183a2b4a8c072e16ce725b8f559cf95a6cab2"
+    },
+    {
+      "worker": "P057-code1",
+      "task_id": "P057",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        "packages/connector-imap/src/mime/parse.ts",
+        "packages/connector-imap/test/mime/parse.test.ts",
+        "packages/connector-imap/test/events.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "e01ae4b1a0aa805c282436554835eeb9475588a6d64f4d66aa4d957c13b7810e"
+    },
+    {
+      "worker": "P067-code1",
+      "task_id": "P067",
+      "status_as_recorded": "failed_or_incomplete",
+      "write_paths": [
+        "packages/connectors/test/fleet-markdown-lifecycle.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "0e9ac8b4c89970e4bbb4418168d80547374e020065286372be4bdf459ae747a7"
+    },
+    {
+      "worker": "P067-code2",
+      "task_id": "P067",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        "packages/connectors/test/fleet-markdown-lifecycle.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "0e9ac8b4c89970e4bbb4418168d80547374e020065286372be4bdf459ae747a7"
+    },
+    {
+      "worker": "P069-code1",
+      "task_id": "P069",
+      "status_as_recorded": "failed_or_incomplete",
+      "write_paths": [
+        "packages/connectors/test/fleet-chatgpt-fidelity.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "23eeaf3d2ed151ee1623212248392dc7d5371a887664e76a3560456b38d26015"
+    },
+    {
+      "worker": "P069-code2",
+      "task_id": "P069",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        "packages/connectors/test/fleet-chatgpt-fidelity.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "23eeaf3d2ed151ee1623212248392dc7d5371a887664e76a3560456b38d26015"
+    },
+    {
+      "worker": "P071-code1",
+      "task_id": "P071",
+      "status_as_recorded": "failed_or_incomplete",
+      "write_paths": [
+        "packages/connectors/test/fleet-claude-fidelity.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "70c77b227866a4ae0f7450d777ee2b881397815aa04663cb2c970116d3330834"
+    },
+    {
+      "worker": "P071-code2",
+      "task_id": "P071",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        "packages/connectors/test/fleet-claude-fidelity.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "70c77b227866a4ae0f7450d777ee2b881397815aa04663cb2c970116d3330834"
+    },
+    {
+      "worker": "P072-code1",
+      "task_id": "P072",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        "packages/cli/src/commands/import.ts",
+        "packages/cli/test/import-claude-lifecycle.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "150905ec42c9acb149a5650c91b7cbab2553ff569a6b30328cf3538ce67e130d"
+    },
+    {
+      "worker": "P073-code1",
+      "task_id": "P073",
+      "status_as_recorded": "failed_or_incomplete",
+      "write_paths": [
+        "packages/connectors/test/fleet-whatsapp-fidelity.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "8b6c8553d130df9691d01660d2b022fa2b2409e5141b02f45b09599a23f29480"
+    },
+    {
+      "worker": "P073-code2",
+      "task_id": "P073",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        "packages/connectors/test/fleet-whatsapp-fidelity.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "8b6c8553d130df9691d01660d2b022fa2b2409e5141b02f45b09599a23f29480"
+    },
+    {
+      "worker": "P075-code1",
+      "task_id": "P075",
+      "status_as_recorded": "failed_or_incomplete",
+      "write_paths": [
+        "packages/connector-ics/test/fleet-calendar-fidelity.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "8f33a484e248801821136f325318cb0a5ed8709dd427e0a39e0af77b1fe7748b"
+    },
+    {
+      "worker": "P075-code2",
+      "task_id": "P075",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        "packages/connector-ics/test/fleet-calendar-fidelity.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "8f33a484e248801821136f325318cb0a5ed8709dd427e0a39e0af77b1fe7748b"
+    },
+    {
+      "worker": "P101-code1",
+      "task_id": "P101",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        "scripts/qualification.ts",
+        "scripts/qualification.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "4b820d6afea3a21635672f1bde071ca3676a25d6e204c6bbdb062ce3f5cd3399"
+    },
+    {
+      "worker": "P102-code1",
+      "task_id": "P102",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/macos-native.yml",
+        "scripts/verify-workflows.ts",
+        "scripts/verify-workflows.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "bd93ef56e0bdac810c8ce9b6965cf476f99f5526b80bc7f008c92968bbd67f2f"
+    },
+    {
+      "worker": "P103-code1",
+      "task_id": "P103",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        "packages/connectors/src/sensitivity.ts",
+        "packages/connectors/test/sensitivity.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "82cc13388b14dbac95853237cec2f92761736804e33dd9119097c05cff2fd6cc"
+    },
+    {
+      "worker": "P104-code1",
+      "task_id": "P104",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        "packages/mcp/src/schemas.ts",
+        "packages/mcp/test/schema.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "a4edc92a5dbe7a7dda192a88be066eb7b06c52cd43d42e717f810fed87ce55cf"
+    },
+    {
+      "worker": "P105-code1",
+      "task_id": "P105",
+      "status_as_recorded": "completed_unreviewed",
+      "write_paths": [
+        "packages/cli/src/commands/audit.ts",
+        "packages/cli/test/audit-undo.test.ts"
+      ],
+      "overlap": [],
+      "packet_sha256": "93bf7dfbba4acb8ed07e450c9132b1a5741ab1e5fc0efc846647bb611c064a8c"
+    }
+  ],
+  "roster_overlaps": [],
+  "process_scope": "No host process-liveness conclusion. A read-only ps observation exposed only its sandbox namespace; packet grants and repository/GitHub custody were reconciled directly. Recorded worker status is not a live-service claim.",
+  "native_qualification_dependencies": [
+    "P091",
+    "P092",
+    "GitHub #539",
+    "GitHub #339"
+  ],
+  "scope_exclusions": [
+    "existing app/browser owner and cli/src/app",
+    "service-host.ts",
+    "doctor and daemon loops",
+    "P015 source-survivor work",
+    "held PR519/530/500",
+    "native and service operation"
+  ],
+  "service_or_daemon_operations": "NONE",
+  "candidate_execution": "NONE",
+  "source_edits": "NONE",
+  "authority": "Read-only ownership reconciliation and proposed packet only; root admission required before launch."
+}

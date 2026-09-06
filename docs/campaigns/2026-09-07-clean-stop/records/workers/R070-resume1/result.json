@@ -1,0 +1,202 @@
+{
+  "task_id": "R070",
+  "packet_id": "R070",
+  "title": "Calculate Markdown normal scan budgets and coverage counters",
+  "issue": 550,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "owner": "grok-R070",
+  "readiness": "project_scope_ready_now",
+  "capability": "live local folder rescan (kizuki.markdown-folder); not export import",
+  "distinct_from": "P067 lifecycle oracle",
+  "artifacts": [
+    "/work/out/budget-counter-table.md",
+    "/work/out/budgets.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/markdown-scan-cost.test.draft.ts",
+    "/work/out/run-scan-cost.ts",
+    "/work/out/hash-scan-cost.ts",
+    "/work/out/fixtures/scan-cost/expected.json",
+    "/work/out/fixtures/scan-cost/hashes.json",
+    "/work/out/fixtures/scan-cost/connector-run.json",
+    "/work/out/fixtures/scan-cost/tree/alpha.md",
+    "/work/out/fixtures/scan-cost/tree/gamma.markdown",
+    "/work/out/fixtures/scan-cost/tree/notes/beta.md",
+    "/work/out/fixtures/scan-cost/tree/skip.txt",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/budget-counter-table.md",
+    "/work/out/budgets.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/markdown-scan-cost.test.draft.ts",
+    "/work/out/fixtures/scan-cost/expected.json",
+    "/work/out/fixtures/scan-cost/tree/alpha.md",
+    "/work/out/fixtures/scan-cost/tree/gamma.markdown",
+    "/work/out/fixtures/scan-cost/tree/notes/beta.md",
+    "/work/out/fixtures/scan-cost/tree/skip.txt"
+  ],
+  "source_references": [
+    {
+      "path": "packages/connectors/src/markdown-folder/index.ts",
+      "lines": "34-40",
+      "note": "DEFAULT_PAGE_SIZE 128, MAX_PAGE_SIZE 10000, MAX_DEPTH 16, MAX_FILES 50000, MAX_FILE_BYTES 4194304, MAX_SCAN_ENTRIES 100000, STABLE_READ_ATTEMPTS 3"
+    },
+    {
+      "path": "packages/connectors/src/markdown-folder/index.ts",
+      "lines": "134-144",
+      "note": "health() passes scan.files.length, errors, truncated to importHealthReport"
+    },
+    {
+      "path": "packages/connectors/src/markdown-folder/index.ts",
+      "lines": "201,265,275,290",
+      "note": "truncated scan suppresses tombstones and keeps exhausted false"
+    },
+    {
+      "path": "packages/connectors/src/markdown-folder/index.ts",
+      "lines": "391-486",
+      "note": "scanMarkdownFiles: considered, skip, depth, file_limit, scan_limit"
+    },
+    {
+      "path": "packages/connectors/src/markdown-folder/index.ts",
+      "lines": "509-524",
+      "note": "too_large via stat.size then readBoundedBytes(MAX_FILE_BYTES)"
+    },
+    {
+      "path": "packages/connectors/src/import-report.ts",
+      "lines": "21-67",
+      "note": "MAX_REPORTED_ERRORS 32; records=N; error summary; scan truncated"
+    },
+    {
+      "path": "packages/connectors/src/read.ts",
+      "lines": "80-105,150-191",
+      "note": "shared bounded read; markdown-folder uses readBoundedBytes not boundedFile"
+    },
+    {
+      "path": "packages/connectors/src/folder.ts",
+      "lines": "185-198",
+      "note": "snapshot folder reads under MAX_EXPORT_BYTES; unused by markdown-folder"
+    },
+    {
+      "path": "packages/connectors/src/util.ts",
+      "lines": "67",
+      "note": "MAX_EXPORT_BYTES 256 MiB"
+    },
+    {
+      "path": "packages/connectors/test/markdown-folder.test.ts",
+      "lines": "25-82,225-261,289-338,386-423",
+      "note": "existing ordinary/hidden/utf8/page_size/empty/depth coverage; not file/scan/byte caps"
+    }
+  ],
+  "checks": [
+    {
+      "name": "fixture_hashes",
+      "command": "bun /work/out/hash-scan-cost.ts",
+      "cwd": "/work",
+      "runtime": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/fixtures/scan-cost/hashes.json"
+    },
+    {
+      "name": "connector_scan_cost_runner",
+      "command": "bun /work/out/run-scan-cost.ts",
+      "cwd": "/work",
+      "runtime": "bun 1.3.14",
+      "exit_code": 2,
+      "result": "NOT_RUN",
+      "reason": "unexecuted: Cannot find module '@kizuki/core' from packages/connectors/src/markdown-folder/index.ts",
+      "evidence": "/work/out/fixtures/scan-cost/connector-run.json"
+    },
+    {
+      "name": "existing_markdown_folder_tests",
+      "command": "cd /repo && bun test packages/connectors/test/markdown-folder.test.ts packages/connectors/test/markdown-vault-boundary.test.ts packages/connectors/test/util.test.ts",
+      "cwd": "/repo",
+      "runtime": "bun test 1.3.14",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "reason": "fail-to-load: missing @kizuki/core and @kizuki/connector-beeper; 0 pass / 3 fail / 3 errors. Not a behavior failure. bun install is forbidden in this archive."
+    },
+    {
+      "name": "typecheck_and_verify",
+      "command": "bun run typecheck && bun run verify",
+      "result": "NOT_RUN",
+      "reason": "full repository gate not in scope; workspace not installed"
+    }
+  ],
+  "verification": {
+    "focused": "NOT_RUN",
+    "package_type_full_gate": "NOT_RUN",
+    "executed_local": "hash-scan-cost.ts PASS exit 0; connector and bun test unresolved workspace modules",
+    "limitation": "This container is a git archive without node_modules. Packet forbids dependency installs. Adapter assertions remain static."
+  },
+  "findings": [
+    {
+      "id": "coverage-gap-file-scan-byte",
+      "severity": "coverage",
+      "summary": "No test hits MAX_FILES, MAX_SCAN_ENTRIES, MAX_FILE_BYTES, or health phrase 'scan truncated'.",
+      "evidence": "packages/connectors/test/markdown-folder.test.ts has depth, page_size, utf-8, hidden skips only; grep of MAX_FILES/MAX_SCAN_ENTRIES/too_large in that file is empty.",
+      "action": "P068: add markdown-scan-cost.test.draft.ts. Do not create 50k/100k/4MiB trees. file_limit/scan_limit walk branches need a later test seam to lower bounds."
+    },
+    {
+      "id": "considered-not-reported",
+      "severity": "limitation",
+      "summary": "The scan-entry counter is internal. Health records= accepted markdown files only. Bytes charged are per-file metadata.size with no tree total.",
+      "evidence": "markdown-folder/index.ts:398,427 and import-report.ts:54,65"
+    },
+    {
+      "id": "page-size-not-scan-budget",
+      "severity": "limitation",
+      "summary": "page_size pages emitted events after a full walk. health() and sweep() always rescan until a scan bound trips.",
+      "evidence": "markdown-folder/index.ts:134-177,219-221"
+    },
+    {
+      "id": "folder-ts-unused-by-markdown",
+      "severity": "note",
+      "summary": "markdown-folder does not import folder.ts. Snapshot MAX_EXPORT_BYTES (256 MiB) is a different budget from markdown MAX_FILE_BYTES (4 MiB).",
+      "evidence": "markdown-folder/index.ts imports readBoundedBytes from ../read only; folder.ts:185-198"
+    },
+    {
+      "id": "too-large-vs-grown-file",
+      "severity": "note",
+      "summary": "Stat size above 4 MiB is too_large. A file that grows past the bound during readBoundedBytes is caught as unreadable with reason misconfigured, not too_large.",
+      "evidence": "markdown-folder/index.ts:509-562; read.ts:39-47,80-105; KizukiError.code is misconfigured for overLimit"
+    },
+    {
+      "id": "adapter-unexecuted",
+      "severity": "limitation",
+      "summary": "Tiny-tree expected events/health were not observed through createMarkdownFolderConnector in this archive.",
+      "evidence": "fixtures/scan-cost/connector-run.json status unexecuted"
+    }
+  ],
+  "blockers": [
+    "Workspace package links are absent (@kizuki/core). Installing them is out of scope for this read-only archive."
+  ],
+  "downstream_handoff": {
+    "feeds": "P068",
+    "copy_test_to": "packages/connectors/test/markdown-scan-cost.test.ts",
+    "do_not_duplicate": [
+      "packages/connectors/test/markdown-folder.test.ts:386-407 MAX_DEPTH",
+      "packages/connectors/test/markdown-folder.test.ts:289-322 page_size paging",
+      "packages/connectors/test/markdown-folder.test.ts:128-159 tombstones (P067 lifecycle)",
+      "packages/connectors/test/markdown-vault-boundary.test.ts vault boundary"
+    ],
+    "run_after_install": [
+      "bun /work/out/run-scan-cost.ts",
+      "bun test packages/connectors/test/markdown-scan-cost.test.ts packages/connectors/test/markdown-folder.test.ts"
+    ]
+  },
+  "next_step": "P068 integrates markdown-scan-cost.test.draft.ts in a writable checkout after bun install, executes the tiny-tree and importHealthReport cases, and treats file_limit/scan_limit walk coverage as a separate seam if still required.",
+  "global_limits_honored": [
+    "write_scope /work/out only",
+    "no bun install",
+    "no account/provider calls",
+    "tiny ordinary text files only",
+    "no symlink/special-file/resource-exhaustion cases",
+    "no qualification or release claim"
+  ]
+}

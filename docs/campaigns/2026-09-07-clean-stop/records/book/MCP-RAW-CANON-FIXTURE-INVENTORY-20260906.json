@@ -1,0 +1,174 @@
+{
+  "schema": "kizuki.mcp-fixture-static-inventory/v1",
+  "observed_at_utc": "2026-09-06T23:20:49.559492+00:00",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "integration_sha": "3dfefd2810cec850b110343ea2973928a0b0a823",
+  "integration_path": "WORKTREES/kizuki-grok-integration-20260906",
+  "scope": "MCP tests and the existing recordedPage helper only",
+  "source_comparison": [
+    {
+      "path": "packages/mcp/test/client.ts",
+      "base_and_integration_equal": true,
+      "working_bytes_match_integration": true,
+      "sha256": "f71d04343d4ca3dcad383440ab06b0a6f15151fad320774dc3c7d92ad5bdab3d"
+    },
+    {
+      "path": "packages/mcp/test/credential-stdio.test.ts",
+      "base_and_integration_equal": true,
+      "working_bytes_match_integration": true,
+      "sha256": "6a719b55f10e7baf7c28bb29df3a1d1ef3a3654222839675149930e4f0500a96"
+    },
+    {
+      "path": "packages/mcp/test/helpers.ts",
+      "base_and_integration_equal": true,
+      "working_bytes_match_integration": true,
+      "sha256": "5c00ba24e0f0c49b4238e7200a74314f1b1cb950d93487c7f62d0b5d9ec0d761"
+    },
+    {
+      "path": "packages/mcp/test/principal.test.ts",
+      "base_and_integration_equal": true,
+      "working_bytes_match_integration": true,
+      "sha256": "10be84b92bb4ff69916b2a000752cabaa6bde4f50aa9ff90bdaf7397548203bb"
+    },
+    {
+      "path": "packages/mcp/test/schema.test.ts",
+      "base_and_integration_equal": true,
+      "working_bytes_match_integration": true,
+      "sha256": "5bb9591a2532b8997af6bf8a2b226e2bfe7c6649508fdf0c9cb215539f7f893b"
+    },
+    {
+      "path": "packages/mcp/test/server.test.ts",
+      "base_and_integration_equal": true,
+      "working_bytes_match_integration": true,
+      "sha256": "899910610823b7112084ae4ef5a21e59d1dbb2bafa02decbcb75ae76b2367a2b"
+    },
+    {
+      "path": "packages/mcp/test/stdio.test.ts",
+      "base_and_integration_equal": true,
+      "working_bytes_match_integration": true,
+      "sha256": "773a40dfcaf5def07fd0426b65745dcc19c4a91ec5193c8c76a20859bfadef88"
+    },
+    {
+      "path": "packages/mcp/test/two-client-continuity.test.ts",
+      "base_and_integration_equal": true,
+      "working_bytes_match_integration": true,
+      "sha256": "dd8f416de3ce0fe7022b7028f88b8026160ef328193d548d24b06143b6094bc0"
+    },
+    {
+      "path": "packages/mcp/test/version.test.ts",
+      "base_and_integration_equal": true,
+      "working_bytes_match_integration": true,
+      "sha256": "5f85381e43e49f2a25d4e3dea93b6415a4f4d43ba246028cfbb374b723bc88b5"
+    },
+    {
+      "path": "packages/core/test/helpers/recorded-page.ts",
+      "base_and_integration_equal": true,
+      "working_bytes_match_integration": true,
+      "sha256": "4bf5a14d5e9a1dc47d19f3426c791bc6c9c95992c1a196a0b97d7b00a43a6ec5"
+    }
+  ],
+  "positive_expectations": [
+    {
+      "path": "packages/mcp/test/server.test.ts",
+      "test_line": 43,
+      "assertion_line": 53,
+      "fixture": "fact:kettle",
+      "issue": "Privileged search positively requires the raw private page; no source-backed recorded revision exists."
+    },
+    {
+      "path": "packages/mcp/test/server.test.ts",
+      "test_line": 87,
+      "assertion_line": 92,
+      "fixture": "person:ada",
+      "issue": "Canon/quoted separation positively requires raw Ada as canon; the unrelated accepted event does not record that page."
+    },
+    {
+      "path": "packages/mcp/test/credential-stdio.test.ts",
+      "test_line": 145,
+      "assertion_line": 162,
+      "fixture": "person:ada",
+      "issue": "The qualified positive process path requires Ada prose, then its absence after narrowing. The raw fixture cannot establish initial positive canon access.",
+      "conditional": "test.if(qualified); no platform admission change proposed"
+    },
+    {
+      "path": "packages/mcp/test/stdio.test.ts",
+      "test_line": 219,
+      "assertion_line": 262,
+      "fixture": "fact:long",
+      "issue": "A separately written raw page has no sources or recorded revision despite a positive canon excerpt assertion.",
+      "boundary": "Inventory only; no transport, timing or resource exercise proposed or executed."
+    }
+  ],
+  "vacuous_premise_risks": [
+    {
+      "path": "packages/mcp/test/stdio.test.ts",
+      "test_line": 173,
+      "fixture": "fact:wide",
+      "issue": "The raw page is unrecorded and the test checks termination only, so it does not establish that a positive canon response was exercised.",
+      "boundary": "Separate root transport-review scope before any repair or execution."
+    },
+    {
+      "path": "packages/mcp/test/schema.test.ts",
+      "test_line": 35,
+      "issue": "isError-only checks permit empty canon envelopes; active P104 ownership excludes repair assignment here."
+    }
+  ],
+  "intentional_negative_cases": [
+    {
+      "path": "packages/mcp/test/helpers.ts",
+      "fixture_line": 94,
+      "fixture": "fact:unlabeled",
+      "consumer": "packages/mcp/test/server.test.ts:50,54",
+      "intent": "Remain excluded for both personal and private readers. Do not stamp this malformed negative control into a valid positive page.",
+      "limit": "Current test asserts absence only, not an explicit revision-unrecorded denial."
+    },
+    {
+      "path": "packages/mcp/test/server.test.ts",
+      "lines": [
+        49,
+        93,
+        100,
+        103,
+        168,
+        169
+      ],
+      "intent": "Preserve sensitivity exclusions, quoted/canon separation, the single-event timeline, and no-materialized-rewrite expectations."
+    },
+    {
+      "path": "packages/mcp/test/credential-stdio.test.ts",
+      "lines": [
+        163,
+        165,
+        169,
+        172,
+        175,
+        180,
+        185
+      ],
+      "intent": "Preserve private-content exclusion, tool/scope narrowing, revocation, reconnect and redaction controls."
+    }
+  ],
+  "explicit_raw_owner_revision_withholding_test_found": false,
+  "not_caused_by_raw_canon": [
+    "packages/mcp/test/principal.test.ts:20-51 tests principals, not positive page output.",
+    "packages/mcp/test/version.test.ts tests version metadata.",
+    "packages/mcp/test/stdio.test.ts:113-150 positive public-kettle assertion targets the accepted ledger event; its private-page exclusions are negative controls.",
+    "packages/mcp/test/two-client-continuity.test.ts uses imported source files and claim-only context; it is not a shared raw-canon fixture consumer.",
+    "Server metadata, startup/auth, input validation, rate, grant and claim tests do not require positive canon just because they call mcpFixture."
+  ],
+  "recommendations": [
+    "Wait for root full-suite failure receipts before assigning repairs; these are static fixture findings, not reported execution failures.",
+    "Use opt-in positive fixture construction in the affected tests with the existing recordedPage helper and ordinary neutral evidence; leave unrelated mcpFixture consumers unchanged.",
+    "Create fresh, distinct positive page paths/IDs rather than overwriting existing unrecorded owner files; preserve explicit positive and negative expectations when selecting fixture IDs.",
+    "For search consumers, rebuild the existing derived indexes after the positive write. Direct get_page does not require that rebuild.",
+    "Reuse the appropriate existing event as explicit sourceIds when preserving the separation test single-event timeline; verify effective sensitivity rather than weakening grants or source floors.",
+    "Do not add positive writer claims globally: server proposal/correction cases assert exact claim counts and no materialized rewrite.",
+    "Keep P104 schema.test.ts and schemas.ts under their active owner; coordinate after its accepted correction, without editing or copying its work.",
+    "Transport cases remain separately scoped; do not expand or execute timing/resource scenarios in a fixture inventory lane.",
+    "Never loosen serving admission, fabricate receipt rows, remove chunk/trust assertions, or relabel deliberately invalid controls as valid canon."
+  ],
+  "execution": "NONE",
+  "source_edits": "NONE",
+  "assignments_created": "NONE",
+  "p104_active_files_modified": false
+}

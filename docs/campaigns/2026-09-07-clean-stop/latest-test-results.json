@@ -1,0 +1,158 @@
+[
+  {
+    "worker": "P004-code2",
+    "candidate_head": "78574f47b3c123f11e28fb43ad063340260b0607",
+    "status": "failed",
+    "run_id": "b0cbb6e581d34a07ab25cec3274a1f5e",
+    "counts": {
+      "pass": 58,
+      "fail": 1,
+      "assertions": 383
+    },
+    "test_paths": [
+      "scripts/go-no-go.test.ts"
+    ],
+    "stale": false,
+    "exit_code": 1,
+    "cleanup_confirmed": true,
+    "receipt_sha256": "2ec0d2223c6055f57e201d087f552439b444c25a14b35b4391d9c0cdb285bb25",
+    "stdout_sha256": "d6684989b8dd63b37d2f1954270826fbe1bd89a8debd12bcacf03ed1c6140ef6",
+    "stderr_sha256": "b5bfa2f6864fbb2547b6a6c09a0ce1f4d18a21096be3079ff9f65728c53b9ef0",
+    "scope": "base plus all exact owned files only; candidate HEAD is context, not whole-commit proof"
+  },
+  {
+    "worker": "P015-code2",
+    "candidate_head": "5d21ed6eea9f7f9bc93ca288096b59c7201f1397",
+    "status": "failed",
+    "run_id": "a698c8e1630e4b7cb43e76753e716759",
+    "counts": {
+      "pass": 230,
+      "fail": 6,
+      "assertions": 1213
+    },
+    "test_paths": [
+      "packages/core/test/canon/source-survivor-lineage.test.ts",
+      "packages/core/test/canon/authority-projection.test.ts",
+      "packages/core/test/source-grants.test.ts",
+      "packages/core/test/migration.test.ts",
+      "packages/core/test/export-purge-history.test.ts",
+      "packages/core/test/export.test.ts",
+      "packages/core/test/export-connections.test.ts",
+      "packages/core/test/event-backup-v2.test.ts",
+      "packages/core/test/agent-enrollment-backup.test.ts"
+    ],
+    "stale": false,
+    "exit_code": 1,
+    "cleanup_confirmed": true,
+    "receipt_sha256": "f14290955496fbcd3f321aecfca6e5997383d00718541a4fc4826dfd4fb1fdfa",
+    "stdout_sha256": "d6684989b8dd63b37d2f1954270826fbe1bd89a8debd12bcacf03ed1c6140ef6",
+    "stderr_sha256": "1c4cf98483dad21c2012c23c136d96ef65c214cabea103687d639b6ef158228a",
+    "scope": "base plus all exact owned files only; candidate HEAD is context, not whole-commit proof"
+  },
+  {
+    "worker": "P048-code1",
+    "candidate_head": "771f7c774096e86c2402f7fa54635f889d5fc3aa",
+    "status": "passed",
+    "run_id": "a2c7c97257de48e493ee34bbfbb76e87",
+    "counts": {
+      "pass": 18,
+      "fail": 0,
+      "assertions": 114
+    },
+    "test_paths": [
+      "packages/cli/test/telegram-signin-diagnostics.test.ts",
+      "packages/cli/test/telegram-enrollment.test.ts"
+    ],
+    "stale": false,
+    "exit_code": 0,
+    "cleanup_confirmed": true,
+    "receipt_sha256": "23ecff759e53898b62c12e39e1e77764417fa256be5ff629578373e0cd1b896c",
+    "stdout_sha256": "d6684989b8dd63b37d2f1954270826fbe1bd89a8debd12bcacf03ed1c6140ef6",
+    "stderr_sha256": "a8d85da9c02d1ce0f6d56758d6548e3bbdd2fe2464f8e9a7cc6702e0c387790a",
+    "scope": "base plus all exact owned files only; candidate HEAD is context, not whole-commit proof"
+  },
+  {
+    "worker": "P072-code1",
+    "candidate_head": "3dd49027a764e4b5e0c73674de33fcf578bb5678",
+    "status": "passed",
+    "run_id": "0b8cc5b9e9674f88aea3ff88f0a16128",
+    "counts": {
+      "pass": 4,
+      "fail": 0,
+      "assertions": 54
+    },
+    "test_paths": [
+      "packages/cli/test/import-claude-lifecycle.test.ts"
+    ],
+    "stale": false,
+    "exit_code": 0,
+    "cleanup_confirmed": true,
+    "receipt_sha256": "a80e9e2f21954e339bab48c9c72d379cdde83fb561b56083276c6f38f0211e94",
+    "stdout_sha256": "d6684989b8dd63b37d2f1954270826fbe1bd89a8debd12bcacf03ed1c6140ef6",
+    "stderr_sha256": "77fcb3e6de4acaa4360ddb0a98b7c08a9b38e9bb29d69fe3cccbe96c3a2f16cf",
+    "scope": "base plus all exact owned files only; candidate HEAD is context, not whole-commit proof"
+  },
+  {
+    "worker": "P101-code2",
+    "candidate_head": "7a217b3f274068b8bdb4b471811692622fcccf85",
+    "status": "passed",
+    "run_id": "893bbc0ef9874ff88979b5f227e3419f",
+    "counts": {
+      "pass": 39,
+      "fail": 0,
+      "assertions": 207
+    },
+    "test_paths": [
+      "scripts/qualification.test.ts"
+    ],
+    "stale": false,
+    "exit_code": 0,
+    "cleanup_confirmed": true,
+    "receipt_sha256": "6d0efcbdb6552d60bc2d084996e3fdc9e1085a595d9f3b054471a7b427b1c476",
+    "stdout_sha256": "d6684989b8dd63b37d2f1954270826fbe1bd89a8debd12bcacf03ed1c6140ef6",
+    "stderr_sha256": "3ecc5d255e9c1db0e0b15926b6bfab8dc8b3875feadd86bbddc4b940f79a61f3",
+    "scope": "base plus all exact owned files only; candidate HEAD is context, not whole-commit proof"
+  },
+  {
+    "worker": "P102-code2",
+    "candidate_head": "96539a8a2a978ff4a1b174148098c3ecd3190309",
+    "status": "passed",
+    "run_id": "8b85c5ffd85c43ce9ea2e1d07208d525",
+    "counts": {
+      "pass": 16,
+      "fail": 0,
+      "assertions": 74
+    },
+    "test_paths": [
+      "scripts/verify-workflows.test.ts"
+    ],
+    "stale": false,
+    "exit_code": 0,
+    "cleanup_confirmed": true,
+    "receipt_sha256": "57a02c40897e45cba7e5a3c4cee02c8c7f94ae24a031553b5e3a1b91432e9f07",
+    "stdout_sha256": "d6684989b8dd63b37d2f1954270826fbe1bd89a8debd12bcacf03ed1c6140ef6",
+    "stderr_sha256": "314b6827a158decad00c5959b2df631cb90890dc01a0f2771c7531ce40b3ad64",
+    "scope": "base plus all exact owned files only; candidate HEAD is context, not whole-commit proof; synthetic workflow index only; no exact-HEAD or package credit"
+  },
+  {
+    "worker": "P104-code2",
+    "candidate_head": "5241086864fb23c2153693be94e20087ddb982be",
+    "status": "passed",
+    "run_id": "ef4df5cceb994b82a864cbd10b9768ec",
+    "counts": {
+      "pass": 7,
+      "fail": 0,
+      "assertions": 71
+    },
+    "test_paths": [
+      "packages/mcp/test/schema.test.ts"
+    ],
+    "stale": false,
+    "exit_code": 0,
+    "cleanup_confirmed": true,
+    "receipt_sha256": "7d00a8c8798e3295a572ea81b76c4d437b03d325808426413cdaf392990b0cdc",
+    "stdout_sha256": "d6684989b8dd63b37d2f1954270826fbe1bd89a8debd12bcacf03ed1c6140ef6",
+    "stderr_sha256": "7d4a9da55bba4b6873f9fed330e1f3c93c0813bd7a91cf4d9bed002c00a5232e",
+    "scope": "base plus all exact owned files only; candidate HEAD is context, not whole-commit proof"
+  }
+]

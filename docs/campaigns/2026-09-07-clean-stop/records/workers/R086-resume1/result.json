@@ -1,0 +1,155 @@
+{
+  "task_id": "R086",
+  "packet_id": "R086",
+  "title": "Draft correction-to-query public transcript adapter",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "issue": 542,
+  "feeds_packets": ["P084", "P099"],
+  "owner": "grok-R086",
+  "write_scope": "/work/out only",
+  "identity": {
+    "source_kind": "git archive of exact commit; no Git metadata or runtime data",
+    "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+    "read_root": "/repo",
+    "remote_verified": false,
+    "git_commands": "not run; archive has no Git metadata; vps-nav/git fetch forbidden in this container"
+  },
+  "findings": [
+    {
+      "severity": "contract",
+      "id": "dual-correction-engines",
+      "location": "packages/cli/src/commands/tell.ts:39 vs packages/core/src/serving/dispatch.ts:48-49",
+      "fact": "CLI tell calls packages/core/src/correction/correct.ts. MCP/HTTP correct calls serveCorrect in packages/core/src/serving/correct.ts. Result shapes, targeting, and polarity rules differ. RFC 0002 §6.1 still says both call one correct(io, input).",
+      "adapter_rule": "Do not unify CLI CorrectResult with MCP CorrectData."
+    },
+    {
+      "severity": "public-seam",
+      "id": "tell-about-page-parsed-not-targeting",
+      "location": "packages/cli/src/commands/tell.ts:15-35; packages/core/src/correction/parse.ts:44-50",
+      "fact": "tell parses --about and --page but hasExactTarget only accepts claim_id or claim_key. docs/cli.md:249 and tell.test.ts:139-148 require --claim. RFC 0002 §6.1 still lists --about/--page as CLI surfaces.",
+      "adapter_rule": "Label --about/--page unsupported as a correction target. Do not invent subject resolution for tell."
+    },
+    {
+      "severity": "coverage-gap-not-a-new-test",
+      "id": "mcp-search-after-correct-untested",
+      "location": "no packages/mcp/test asserting search after correct",
+      "fact": "Closest MCP follow-up is context_packet containing owner_correction (packages/mcp/test/two-client-continuity.test.ts:164-168). CLI tell→query is already tested for embedded-pg retrieval.",
+      "adapter_rule": "Do not duplicate tell.test.ts:109-137. Do not claim MCP search-after-correct is proven."
+    }
+  ],
+  "deliverables": [
+    "/work/out/transcript-template.json",
+    "/work/out/transcript-template.md",
+    "/work/out/field-observations.json",
+    "/work/out/route-availability.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/unexecuted-checks.json",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/transcript-template.json",
+    "/work/out/transcript-template.md",
+    "/work/out/field-observations.json",
+    "/work/out/route-availability.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/unexecuted-checks.json"
+  ],
+  "source_references": [
+    "packages/cli/src/commands/tell.ts:8-78",
+    "packages/cli/src/commands/query.ts:21-99",
+    "packages/cli/src/commands/doctor.ts:353-457",
+    "packages/cli/src/output.ts:24-42",
+    "packages/cli/src/commands/index.ts:40-61",
+    "packages/core/src/correction/correct.ts:283-320,495-522",
+    "packages/core/src/correction/parse.ts:10-50",
+    "packages/core/src/correction/types.ts:11-45",
+    "packages/core/src/serving/correct.ts:31-59,129-150,158-391",
+    "packages/core/src/serving/target.ts:53-115",
+    "packages/core/src/serving/search.ts:111-121",
+    "packages/core/src/serving/dispatch.ts:26-49",
+    "packages/core/src/search/query.ts:22-36",
+    "packages/mcp/src/server.ts:104-209",
+    "packages/mcp/src/schemas.ts:58-66,147-158",
+    "packages/cli/test/tell.test.ts:89-148",
+    "docs/cli.md:217-252",
+    "docs/CURRENT.md:31-32,48-50",
+    "rfcs/0002-autonomous-canon.md:1310-1403",
+    "FLEET-SOURCE-IDENTITY.json"
+  ],
+  "checks": [
+    {
+      "id": "static-source-trace",
+      "result": "PASS",
+      "command": "read bounded source, tests, cli.md, RFC 0002 §6, CURRENT.md",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "note": "Read-only archive inspection."
+    },
+    {
+      "id": "existing-coverage-inventory",
+      "result": "PASS",
+      "command": "static read of packages/cli/test/tell.test.ts and related correct/query tests",
+      "note": "Exact tell→query case exists at tell.test.ts:109-137. No new test drafted."
+    },
+    {
+      "id": "existing.cli.tell-query",
+      "result": "NOT_RUN",
+      "command": "bun test packages/cli/test/tell.test.ts",
+      "expected_exit_if_run": 0,
+      "reason": "No /repo/node_modules; repo read-only; bun install forbidden; existing tests write os.tmpdir() not /work/out."
+    },
+    {
+      "id": "draft-transcript-execution",
+      "result": "NOT_RUN",
+      "command": "kizuki query / tell / query against a synthetic vault under /work/out",
+      "reason": "Workspace packages unavailable; no public seed verb to mint the Grace page without installing the tree."
+    },
+    {
+      "id": "auth-or-model-probe",
+      "result": "NOT_RUN",
+      "reason": "Controller already verified Grok Build subscription. Packet forbids retesting auth or invoking another model."
+    },
+    {
+      "id": "full-repository-gate",
+      "result": "NOT_RUN",
+      "reason": "Read-only preparation packet; no source edits; no test slot claimed."
+    }
+  ],
+  "verification": {
+    "implementation": "not_applicable_read_only_preparation",
+    "focused": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "retained_artifact_proof": "NOT_RUN",
+    "unfamiliar_user_acceptance": "NOT_RUN",
+    "static_trace": "PASS",
+    "limitations_preserved": [
+      "unexecuted local checks",
+      "no native/account/model/human qualification claim",
+      "journey.correct-belief remains NOT_IMPLEMENTED",
+      "P003/P015/P006 ownership untouched"
+    ]
+  },
+  "blockers": [],
+  "execution_limitations": [
+    "Bun 1.3.14 present at /usr/local/bin/bun; workspace node_modules absent.",
+    "Draft transcript unexecuted; expectations are static plus existing-test citations, not a passing run here."
+  ],
+  "downstream_handoff": {
+    "to": ["P084", "P099"],
+    "use": [
+      "/work/out/transcript-template.json as the before/correction/after command template",
+      "/work/out/field-observations.json as field-level expected observations on existing public routes",
+      "/work/out/route-availability.json for supported vs unavailable paths"
+    ],
+    "do_not": [
+      "duplicate packages/cli/test/tell.test.ts:109-137",
+      "treat --about/--page or implicit NLP targeting as supported tell paths",
+      "assume CLI tell and MCP correct share one result schema or polarity rule",
+      "claim MCP search-after-correct is already proven",
+      "replace P003 evidence design, P015 source-B schema, P006 docs, or the journey.correct-belief adapter"
+    ],
+    "rebase_required_before_production_use": true
+  },
+  "next_step": "P084/P099 consume this adapter against a checkout that can run bun test packages/cli/test/tell.test.ts on exact head f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7 (or a rebased head) rather than adding a second tell→query test."
+}

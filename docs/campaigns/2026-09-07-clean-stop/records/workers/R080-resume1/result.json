@@ -1,0 +1,135 @@
+{
+  "task_id": "R080",
+  "packet_id": "R080",
+  "issue": 550,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "finding",
+  "title": "Map Pocket enrollment/report schema and archived-input limits",
+  "owner": "grok-R080",
+  "capability": "export import (snapshot importer) for kizuki.import-pocket",
+  "artifacts": [
+    "/work/out/pocket-enrollment-report-map.md",
+    "/work/out/pocket-enrollment-report-map.json",
+    "/work/out/pocket-compiled-run-input-checklist.md",
+    "/work/out/evidence/existing-coverage.json",
+    "/work/out/evidence/local-checks.json",
+    "/work/out/evidence/pocket-export-docs-fetch.json",
+    "/work/out/evidence/pocket-export-docs-fetch-2.json",
+    "/work/out/evidence/getpocket-home-visible.json"
+  ],
+  "deliverables": [
+    "/work/out/pocket-enrollment-report-map.md",
+    "/work/out/pocket-enrollment-report-map.json",
+    "/work/out/pocket-compiled-run-input-checklist.md",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    "packages/connectors/src/import-pocket/index.ts:43-333",
+    "packages/connectors/src/import-pocket/rows.ts:6-104",
+    "packages/connectors/src/import-pocket/csv.ts:1-84",
+    "packages/connectors/src/util.ts:6-24,67-69,160-172,256-269",
+    "packages/connectors/src/read.ts:39-48,123-243",
+    "packages/connectors/src/registry.ts:266-271,403-408",
+    "packages/connectors/README.md:35-36,144-172,227-230",
+    "packages/cli/src/connect-catalog.ts:16,29-37,61-80",
+    "packages/cli/src/commands/connect.ts:247-326",
+    "packages/cli/src/commands/import.ts:42-141",
+    "packages/cli/src/commands/doctor.ts:38-51,114-118,223-266,430-432",
+    "packages/cli/src/connections.ts:29-36,113-149,365-380",
+    "packages/cli/src/output.ts:66-75",
+    "packages/cli/src/source-consent.ts:8-69",
+    "packages/core/src/contracts/connector.ts:8-13,121-128",
+    "packages/core/src/ingest/run.ts:121-128,456-489",
+    "packages/core/src/sensitivity/policy.ts:39,52",
+    "docs/cli.md:62-72,104-130",
+    "docs/export-inventory.md:1-123",
+    "docs/connect.md:1-9",
+    "scripts/go-no-go.ts:37"
+  ],
+  "checks": [
+    {
+      "name": "static enrollment/report trace",
+      "result": "PASS",
+      "command": "read-only inspection of assigned /repo paths"
+    },
+    {
+      "name": "existing coverage inventory",
+      "result": "PASS",
+      "command": "catalogued existing Pocket tests; no new test drafted"
+    },
+    {
+      "name": "focused bun test",
+      "result": "NOT_RUN",
+      "command": "bun test packages/connectors/test/pocket.test.ts … packages/cli/test/connect-catalog.test.ts",
+      "exit": 1,
+      "missing": "workspace node_modules (@kizuki/core, @kizuki/tui, connector packages)"
+    },
+    {
+      "name": "full repository gate",
+      "result": "NOT_RUN",
+      "command": "bun run verify",
+      "missing": "workspace install and root test slot"
+    },
+    {
+      "name": "public provider docs fetch",
+      "result": "PASS",
+      "command": "Bun.fetch https://getpocket.com/home and related URLs on 2026-09-06",
+      "limitation": "support.mozilla.org returned Client Challenge HTML; export-how-to body unread"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "NOT_RUN",
+    "package_type_full_gate": "NOT_RUN",
+    "privacy_diff_integrity": "PASS (read-only /work/out writes; no vault/credentials)",
+    "independent_review": "NOT_RUN",
+    "live_account": "NOT_RUN (forbidden)",
+    "provider_export_availability": "UNVERIFIED"
+  },
+  "findings": [
+    {
+      "severity": "contract",
+      "id": "host-batch-cap-below-importer-row-cap",
+      "evidence": "packages/connectors/src/import-pocket/index.ts:292-326 returns one SyncBatch of every row (MAX_RECORDS=1000000). packages/core/src/ingest/run.ts:121-124,486-489 refuses batches with more than MAX_SYNC_BATCH_EVENTS=1000 or MAX_SYNC_BATCH_BYTES=4MiB. Health/enrollment only reads the first CSV header line (index.ts:260-278).",
+      "expected": "Public enrollment reports, or the importer itself, must not imply that a legal whole-export parse will capture. Independently: a 1001-row well-formed Pocket CSV enrolls with health=ok and then capture errors with 'sync batch exceeds 1000 events'.",
+      "affected": "P078 capture/docs must state the host 1000-event/4MiB/60s bounds; catalog/doctor currently omit them."
+    },
+    {
+      "severity": "docs-honesty",
+      "id": "catalog-ready-to-connect-omits-archived-caveat",
+      "evidence": "packages/cli/src/connect-catalog.ts:16,33-37 labels Pocket 'export import' / 'ready to connect' with available=true.",
+      "expected": "Catalog truthfully names a local archived CSV import, not a live Pocket service.",
+      "affected": "P006 canonical docs; do not treat catalog copy as export-availability proof."
+    },
+    {
+      "severity": "provider-limit",
+      "id": "current-pocket-export-unverified",
+      "evidence": "Bun.fetch 2026-09-06: https://getpocket.com/home and https://getpocket.com/export (redirects to /home) show a shutdown page with no export/csv/download text. Mozilla support/help Pocket articles returned Client Challenge HTML. Guessed blog URLs 404.",
+      "expected": "Do not claim the service can supply a fresh export. Repository-declared support is import of an already-on-disk CSV.",
+      "affected": "P078/P006 must keep live export issuance unverified."
+    },
+    {
+      "severity": "coverage-gap",
+      "id": "no-cli-pocket-enrollment-test",
+      "evidence": "No packages/cli/test/*pocket*. Sibling pattern exists at packages/cli/test/x-archive-import.test.ts:12-47.",
+      "expected": "Optional later CLI proof using the compiled-run checklist; not duplicated here.",
+      "affected": "P078 may add a focused CLI test after workspace install; do not redesign parser tests."
+    }
+  ],
+  "blockers": [
+    "Workspace node_modules absent in this git-archive container; focused and full tests remain NOT_RUN.",
+    "Mozilla support article bodies unread (Client Challenge); live export-how-to therefore unavailable as evidence."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P078", "P006"],
+    "use": "Pocket public enrollment stores only absolute config.path; reports catalog/status/doctor/run-counts as mapped. Capture is local CSV snapshot import. Host ingest caps (1000 events / 4 MiB / 60 s) sit below importer parse caps. Do not document a live Pocket export. P077 keeps item fidelity. P006 owns docs wording. P003/P015/Astra/doctor owners unchanged.",
+    "next_smallest_dependency": "Owner workspace with bun install so P078 can execute the existing Pocket unit tests and, if assigned, one CLI enrollment check from the checklist."
+  },
+  "next_step": "P078 should consume the map: keep Pocket as archived CSV import, surface the host 1000-event batch cap in any capture docs, and not instruct users to download a fresh Pocket export.",
+  "limitations": [
+    "Read-only preparation; no source edits, commits, or registry changes.",
+    "No native/account/model/human qualification or release-acceptance claim.",
+    "Item-level CSV-to-event fidelity left to P077.",
+    "docs/export-inventory.md is Kizuki vault backup v3, not Pocket.",
+    "Public-doc fetch is not a complete Mozilla knowledge-base read."
+  ]
+}

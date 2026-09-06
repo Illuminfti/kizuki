@@ -1,0 +1,427 @@
+{
+  "schema": "kizuki.fleet-readonly-first-wave/v1",
+  "created_at": "2026-09-06T20:30:00Z",
+  "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+  "dispatch_status": "not_dispatched",
+  "capacity_status": "not_verified_here",
+  "packet_count": 10,
+  "packets": [
+    {
+      "id": "P003",
+      "title": "Define missing release receipt contracts",
+      "issue": 541,
+      "kind": "independent_preparation",
+      "readiness": "project_scope_ready_now",
+      "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+      "write_scope": "book only",
+      "read_paths": [
+        "scripts/go-no-go.ts",
+        "scripts/go-no-go.test.ts",
+        "scripts/qualification.ts",
+        "scripts/artifact-proof.ts",
+        "docs/release-acceptance.md"
+      ],
+      "write_paths": [
+        "CHECKPOINT_BOOK/fleet-packets/P003/"
+      ],
+      "scope": "Specify required gate receipt shapes, trustworthy source/actor classes, candidate/artifact/producer identity, bounds, freshness and invalidation; map each NOT_IMPLEMENTED producer to an owned follow-on. No validator or shared-code changes yet.",
+      "dependencies": [],
+      "acceptance": [
+        "A concrete bounded JSON schema and valid/invalid synthetic examples for every missing gate family.",
+        "An integration map naming existing code seams, current operator trust limits and no mock-to-real promotion.",
+        "Identify the smallest first producer/validator code packet; root freezes shared contract before parallel producers."
+      ],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "api-contract-design",
+        "release-readiness"
+      ],
+      "owner": "unassigned; root allocates after live collision check",
+      "execution_blockers": [
+        "Grok Build subscription authentication/model identity/capacity must be verified by root; this inventory did not test them"
+      ],
+      "global_limits": [
+        "No code or remote mutation in this first wave.",
+        "No held-branch resumption, account calls, credential access, spending, live services or private vaults.",
+        "Do not run vulnerability reproductions; use static review and neutral contract fixtures.",
+        "Report exact immutable base and limitations; no release or semantic-quality claim."
+      ]
+    },
+    {
+      "id": "P034",
+      "title": "Freeze rich-subject independent semantic oracle",
+      "issue": 472,
+      "kind": "independent_preparation",
+      "readiness": "project_scope_ready_now",
+      "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+      "write_scope": "book only",
+      "read_paths": [
+        "packages/core/src/contracts/claim-v2.ts",
+        "packages/core/src/contracts/producer-v2.ts",
+        "scripts/fixtures/extraction-quality-v1.json",
+        "docs/extraction-quality.md"
+      ],
+      "write_paths": [
+        "CHECKPOINT_BOOK/fleet-packets/P034/"
+      ],
+      "scope": "Create a neutral held-out corpus and independent expected outcomes for subject/category discovery, homonyms, attribution, temporal perspectives, abstention and copied support. Preserve Astra ownership and held PR500; no model/provider calls.",
+      "dependencies": [],
+      "acceptance": [
+        "Versioned synthetic corpus and golden outcomes with support anchors and allowed abstention.",
+        "Metrics defined independently for discovery, false merges, class precision/recall, relation direction and speaker/quote attribution.",
+        "No semantic quality score or real-model qualification claim."
+      ],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "test-strategy",
+        "epistemic-integrity",
+        "longitudinal-evaluation"
+      ],
+      "owner": "unassigned; root allocates after live collision check",
+      "execution_blockers": [
+        "Grok Build subscription authentication/model identity/capacity must be verified by root; this inventory did not test them"
+      ],
+      "global_limits": [
+        "No code or remote mutation in this first wave.",
+        "No held-branch resumption, account calls, credential access, spending, live services or private vaults.",
+        "Do not run vulnerability reproductions; use static review and neutral contract fixtures.",
+        "Report exact immutable base and limitations; no release or semantic-quality claim."
+      ]
+    },
+    {
+      "id": "P044",
+      "title": "Freeze local-app public-journey acceptance oracle",
+      "issue": 458,
+      "kind": "independent_preparation",
+      "readiness": "project_scope_ready_now",
+      "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+      "write_scope": "book only",
+      "read_paths": [
+        "packages/cli/src/app/protocol.ts",
+        "packages/cli/src/app/host.ts",
+        "packages/cli/src/app/ui/client.js",
+        "docs/local-app.md"
+      ],
+      "write_paths": [
+        "CHECKPOINT_BOOK/fleet-packets/P044/"
+      ],
+      "scope": "Specify observable workspace/source/import/recall/correct/audit/undo/revoke/reload outcomes from the current public seams. Keep Astra browser/host ownership; no UI/source edits and no real account or private browser state.",
+      "dependencies": [],
+      "acceptance": [
+        "Deterministic test plan with positive controls, current-result invalidation, standing-token preservation, empty/unavailable distinction and restart cases.",
+        "Current implementation versus planned capability matrix with file references.",
+        "Separate browser automation from native/account/human qualification."
+      ],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "test-strategy",
+        "ux-dx-ax-parity",
+        "security-privacy-review"
+      ],
+      "owner": "unassigned; root allocates after live collision check",
+      "execution_blockers": [
+        "Grok Build subscription authentication/model identity/capacity must be verified by root; this inventory did not test them"
+      ],
+      "global_limits": [
+        "No code or remote mutation in this first wave.",
+        "No held-branch resumption, account calls, credential access, spending, live services or private vaults.",
+        "Do not run vulnerability reproductions; use static review and neutral contract fixtures.",
+        "Report exact immutable base and limitations; no release or semantic-quality claim."
+      ]
+    },
+    {
+      "id": "P047",
+      "title": "Telegram sanctioned-flow and fixture preflight",
+      "issue": 544,
+      "kind": "independent_preparation",
+      "readiness": "project_scope_ready_now",
+      "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+      "write_scope": "book only",
+      "read_paths": [
+        "packages/connector-telegram/src/",
+        "packages/cli/src/commands/connect-telegram.ts",
+        "docs/connect.md"
+      ],
+      "write_paths": [
+        "CHECKPOINT_BOOK/fleet-packets/P047/"
+      ],
+      "scope": "Reconcile native sign-in, project configuration, session custody, history/Secret Chat limits and provider requirements using current official docs; inventory existing conformance gaps. No Telegram/API/account/auth calls.",
+      "dependencies": [],
+      "acceptance": [
+        "Primary-source URLs and check date for current auth/distribution/coverage constraints.",
+        "Exact missing-vs-implemented cases with owned package paths.",
+        "Synthetic allowed-flow fixture plan and explicit project/account/platform blockers."
+      ],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "connector-work",
+        "documentation-accuracy"
+      ],
+      "owner": "unassigned; root allocates after live collision check",
+      "execution_blockers": [
+        "Grok Build subscription authentication/model identity/capacity must be verified by root; this inventory did not test them"
+      ],
+      "global_limits": [
+        "No code or remote mutation in this first wave.",
+        "No held-branch resumption, account calls, credential access, spending, live services or private vaults.",
+        "Do not run vulnerability reproductions; use static review and neutral contract fixtures.",
+        "Report exact immutable base and limitations; no release or semantic-quality claim."
+      ]
+    },
+    {
+      "id": "P050",
+      "title": "Google shared OAuth and Gmail preflight",
+      "issue": 545,
+      "kind": "independent_preparation",
+      "readiness": "project_scope_ready_now",
+      "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+      "write_scope": "book only",
+      "read_paths": [
+        "packages/core/src/auth/oauth.ts",
+        "packages/cli/src/google-browser.ts",
+        "packages/cli/src/commands/connect-gmail.ts",
+        "packages/connector-gmail/src/",
+        "docs/gmail.md"
+      ],
+      "write_paths": [
+        "CHECKPOINT_BOOK/fleet-packets/P050/"
+      ],
+      "scope": "Own the shared Google-auth design report for Gmail and Calendar, with separate consent. Verify official scopes, desktop-client/project setup, verification/admin limits and Gmail cursor/re-authentication obligations; no real sign-in or token access.",
+      "dependencies": [],
+      "acceptance": [
+        "One shared-auth owner map and exact files; Calendar-specific work consumes this contract.",
+        "Current primary-source requirements and operator-versus-end-user setup distinction.",
+        "Gmail history, stale cursor, account continuity, cancellation and custody oracle with no new account authority."
+      ],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "connector-work",
+        "api-contract-design",
+        "security-privacy-review"
+      ],
+      "owner": "unassigned; root allocates after live collision check",
+      "execution_blockers": [
+        "Grok Build subscription authentication/model identity/capacity must be verified by root; this inventory did not test them"
+      ],
+      "global_limits": [
+        "No code or remote mutation in this first wave.",
+        "No held-branch resumption, account calls, credential access, spending, live services or private vaults.",
+        "Do not run vulnerability reproductions; use static review and neutral contract fixtures.",
+        "Report exact immutable base and limitations; no release or semantic-quality claim."
+      ]
+    },
+    {
+      "id": "P056",
+      "title": "IMAP read-only protocol and MIME oracle",
+      "issue": 547,
+      "kind": "independent_preparation",
+      "readiness": "project_scope_ready_now",
+      "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+      "write_scope": "book only",
+      "read_paths": [
+        "packages/connector-imap/src/",
+        "packages/cli/src/commands/connect.ts",
+        "docs/connect.md"
+      ],
+      "write_paths": [
+        "CHECKPOINT_BOOK/fleet-packets/P056/"
+      ],
+      "scope": "Inspect sanctioned read-only mailbox operation and existing parser/UID fixtures; define synthetic expected records for MIME/encoding and UIDVALIDITY/restart cases. No mailbox connection, credential reads or remote writes.",
+      "dependencies": [],
+      "acceptance": [
+        "Exact protocol commands exercised by implementation and proof plan that flags/messages are not mutated.",
+        "Bounded neutral MIME/encoding/UID fixtures with expected records and checkpoint outcomes.",
+        "Supported auth/server matrix and concrete remaining live-account qualification blockers."
+      ],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "connector-work",
+        "test-strategy"
+      ],
+      "owner": "unassigned; root allocates after live collision check",
+      "execution_blockers": [
+        "Grok Build subscription authentication/model identity/capacity must be verified by root; this inventory did not test them"
+      ],
+      "global_limits": [
+        "No code or remote mutation in this first wave.",
+        "No held-branch resumption, account calls, credential access, spending, live services or private vaults.",
+        "Do not run vulnerability reproductions; use static review and neutral contract fixtures.",
+        "Report exact immutable base and limitations; no release or semantic-quality claim."
+      ]
+    },
+    {
+      "id": "P059",
+      "title": "WHOOP confidentiality and sign-in feasibility decision",
+      "issue": 548,
+      "kind": "independent_preparation",
+      "readiness": "project_scope_ready_now",
+      "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+      "write_scope": "book only",
+      "read_paths": [
+        "packages/connector-whoop/src/",
+        "docs/whoop.md",
+        "scripts/go-no-go.ts"
+      ],
+      "write_paths": [
+        "CHECKPOINT_BOOK/fleet-packets/P059/"
+      ],
+      "scope": "Verify current official auth/redirect/client confidentiality/app/scopes requirements against local-only custody and C4. Produce a decision draft; do not register apps, obtain tokens, contact health accounts or implement a broker.",
+      "dependencies": [],
+      "acceptance": [
+        "Dated primary-source constraints and exact implementation/enrollment gap map.",
+        "Sanctioned feasible flow or precise owner architecture/scope decision needed.",
+        "Bounded live-trial prerequisites and an explicit unresolved status when app/account access is missing."
+      ],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "connector-work",
+        "architecture-design"
+      ],
+      "owner": "unassigned; root allocates after live collision check",
+      "execution_blockers": [
+        "Grok Build subscription authentication/model identity/capacity must be verified by root; this inventory did not test them"
+      ],
+      "global_limits": [
+        "No code or remote mutation in this first wave.",
+        "No held-branch resumption, account calls, credential access, spending, live services or private vaults.",
+        "Do not run vulnerability reproductions; use static review and neutral contract fixtures.",
+        "Report exact immutable base and limitations; no release or semantic-quality claim."
+      ]
+    },
+    {
+      "id": "P062",
+      "title": "X API access, acceptance-ID and lineage preflight",
+      "issue": 549,
+      "kind": "independent_preparation",
+      "readiness": "project_scope_ready_now",
+      "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+      "write_scope": "book only",
+      "read_paths": [
+        "packages/connector-x/src/api/",
+        "packages/connector-x/src/index.ts",
+        "packages/connectors/src/registry.ts",
+        "scripts/go-no-go.ts"
+      ],
+      "write_paths": [
+        "CHECKPOINT_BOOK/fleet-packets/P062/"
+      ],
+      "scope": "Reconcile existing API connector, registry/enrollment and null acceptance-ID mapping with current official read/auth/quota/history requirements. Separate API and archive lineage. No paid API call, new funding or credential access.",
+      "dependencies": [],
+      "acceptance": [
+        "Official current requirements with links/date and bounded cost/rate policy proposal.",
+        "Existing-versus-missing ID/enrollment paths and one canonical owner for shared registry wiring.",
+        "Explicit account/funding/approval blockers; archive evidence cannot certify API sync."
+      ],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "connector-work",
+        "api-contract-design"
+      ],
+      "owner": "unassigned; root allocates after live collision check",
+      "execution_blockers": [
+        "Grok Build subscription authentication/model identity/capacity must be verified by root; this inventory did not test them"
+      ],
+      "global_limits": [
+        "No code or remote mutation in this first wave.",
+        "No held-branch resumption, account calls, credential access, spending, live services or private vaults.",
+        "Do not run vulnerability reproductions; use static review and neutral contract fixtures.",
+        "Report exact immutable base and limitations; no release or semantic-quality claim."
+      ]
+    },
+    {
+      "id": "P065",
+      "title": "X archive independent conformance fixture pack",
+      "issue": 549,
+      "kind": "independent_preparation",
+      "readiness": "project_scope_ready_now",
+      "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+      "write_scope": "book only",
+      "read_paths": [
+        "packages/connector-x/src/archive.ts",
+        "packages/connector-x/src/map.ts",
+        "packages/connector-x/src/ytd.ts",
+        "packages/connector-x/src/testkit.ts"
+      ],
+      "write_paths": [
+        "CHECKPOINT_BOOK/fleet-packets/P065/"
+      ],
+      "scope": "Freeze a representative synthetic supported export fixture pack and expected events covering timestamps, identity, reordered/duplicate records, media exclusions and API/archive lineage. No owner archives, API calls or source changes.",
+      "dependencies": [],
+      "acceptance": [
+        "Fixture versions/hashes and independently specified expected records.",
+        "Bounded repeat-import/coverage/checkpoint oracle that uses documented supported formats.",
+        "Source-only synthetic evidence kept separate from final packaged import qualification."
+      ],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "connector-work",
+        "test-strategy"
+      ],
+      "owner": "unassigned; root allocates after live collision check",
+      "execution_blockers": [
+        "Grok Build subscription authentication/model identity/capacity must be verified by root; this inventory did not test them"
+      ],
+      "global_limits": [
+        "No code or remote mutation in this first wave.",
+        "No held-branch resumption, account calls, credential access, spending, live services or private vaults.",
+        "Do not run vulnerability reproductions; use static review and neutral contract fixtures.",
+        "Report exact immutable base and limitations; no release or semantic-quality claim."
+      ]
+    },
+    {
+      "id": "P095",
+      "title": "Generate exact-base capability and documentation gap inventory",
+      "issue": 349,
+      "kind": "independent_preparation",
+      "readiness": "project_scope_ready_now",
+      "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+      "write_scope": "book only",
+      "read_paths": [
+        "README.md",
+        "SECURITY.md",
+        "docs/",
+        "packages/cli/src/commands/index.ts",
+        "packages/core/src/index.ts",
+        "packages/connectors/src/registry.ts",
+        "packages/mcp/src/",
+        "scripts/go-no-go.ts"
+      ],
+      "write_paths": [
+        "CHECKPOINT_BOOK/fleet-packets/P095/"
+      ],
+      "scope": "Build a machine-readable inventory mapping advertised commands, contracts, registry/enrollment modes, package assets, platforms and security claims to code and proof. Do not rewrite shared documentation in this first pass.",
+      "dependencies": [],
+      "acceptance": [
+        "JSON mapping implemented/bound/enrollable/qualified/planned states to file+symbol and existing proof.",
+        "Concrete contradictions and the sole canonical docs/manifest integration owner.",
+        "D19 retained; no stale seven/fourteen-day or cutover readiness gate; held519/530 remain untouched."
+      ],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "documentation-accuracy",
+        "ux-dx-ax-parity",
+        "release-readiness"
+      ],
+      "owner": "unassigned; root allocates after live collision check",
+      "execution_blockers": [
+        "Grok Build subscription authentication/model identity/capacity must be verified by root; this inventory did not test them"
+      ],
+      "global_limits": [
+        "No code or remote mutation in this first wave.",
+        "No held-branch resumption, account calls, credential access, spending, live services or private vaults.",
+        "Do not run vulnerability reproductions; use static review and neutral contract fixtures.",
+        "Report exact immutable base and limitations; no release or semantic-quality claim."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,126 @@
+{
+  "task_id": "R026",
+  "packet_id": "R026",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "findings": [
+    {
+      "severity": "characterization",
+      "location": "packages/core/src/ledger/connection-state-journal.ts:30-74",
+      "fact": "decodeSwapJournal ignores unknown keys and accepts backup_name '{final_name}.' + '*.rollback' without requiring a ULID infix. The writer always emits eight fields and '{final_name}.{ulid}.rollback'.",
+      "invariant": "On-disk journals from current save() are a subset of what decode accepts."
+    },
+    {
+      "severity": "characterization",
+      "location": "packages/core/src/ledger/connection-state.ts:507-509",
+      "fact": "rewrite advances connected_at on every successful state write, so the column means state-last-written-at after the first refresh.",
+      "invariant": "Enrollment, sync, and re-auth all mint a new connected_at via nextConnectedAt."
+    },
+    {
+      "severity": "characterization",
+      "location": "packages/cli/src/connect-catalog.ts:71-81",
+      "fact": "List connect status --json always uses envelope status ok. Host-visible state enrolled|disconnected|needs attention lives in data.connections[].state. Envelope status degraded is used by connect status --source resume-revocation, not by the swap journal.",
+      "invariant": "CLI envelope status and connection_runs.status are distinct enumerations."
+    },
+    {
+      "severity": "characterization",
+      "location": "packages/core/src/ledger/connection-state-rows.ts:140-157",
+      "fact": "CAS UPDATE does not write consent_required. First INSERT sets consent_required=1.",
+      "invariant": "State swaps do not grant or revoke source consent."
+    }
+  ],
+  "deliverables": [
+    "/work/out/connection-state-transitions.md",
+    "/work/out/coverage-existing.md",
+    "/work/out/fixtures/swap-journals.json",
+    "/work/out/fixtures/status-serialization.json",
+    "/work/out/fixtures/persisted-fields.json",
+    "/work/out/validate-fixtures.ts",
+    "/work/out/validation-receipt.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/connection-state-transitions.md",
+    "/work/out/coverage-existing.md",
+    "/work/out/fixtures/swap-journals.json",
+    "/work/out/fixtures/status-serialization.json",
+    "/work/out/fixtures/persisted-fields.json",
+    "/work/out/validate-fixtures.ts",
+    "/work/out/validation-receipt.json",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/core/src/ledger/connection-state-journal.ts:17-74,108-151",
+    "packages/core/src/ledger/connection-state-rows.ts:6-21,44-74,77-98,100-161",
+    "packages/core/src/ledger/connection-state.ts:53-57,102-155,174-206,213-359,377-394,401-521",
+    "packages/core/src/ledger/connection-state-files.ts:19-20,32-70,126-218,249-269",
+    "packages/core/src/ledger/enroll.ts:8-30",
+    "packages/core/src/ledger/state-persister.ts:25-42",
+    "packages/core/src/ledger/connections.ts:7-48,225-269,340-379",
+    "packages/core/src/ingest/run.ts:266-294,335-509",
+    "packages/cli/src/connect-catalog.ts:61-94",
+    "packages/cli/src/output.ts:4-42",
+    "packages/cli/src/commands/connect-consent.ts:43-46",
+    "packages/core/test/connections.test.ts:54-81,193-226,420-495",
+    "packages/core/test/connections-state-rewrite.test.ts:26-128",
+    "packages/core/test/connections-p1.test.ts:130-223,441-538"
+  ],
+  "checks": [
+    {
+      "name": "local decodeSwapJournal fixtures",
+      "command": "bun /work/out/validate-fixtures.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T22:00:21.261Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/validation-receipt.json",
+      "detail": "31 independent checks: payload hashes, config literals, four valid journals including extra-key omission, ten invalid refusals, run/envelope/row shapes"
+    },
+    {
+      "name": "existing core connection tests",
+      "command": "cd /repo && bun test packages/core/test/connections.test.ts packages/core/test/connections-state-rewrite.test.ts packages/core/test/connections-state-persister.test.ts packages/core/test/connections-p1.test.ts packages/core/test/connections-state-recovery.test.ts packages/core/test/connections-new-enrollment.test.ts packages/core/test/connections-sign-in-context.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "missing": "writable installed checkout; suite temps use os.tmpdir() which is outside /work/out; /repo has no node_modules and is not writable"
+    },
+    {
+      "name": "full repository gate",
+      "command": "bun test && bunx tsc --noEmit && bash scripts/verify.sh",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "missing": "same as existing core tests; packet is read-only preparation"
+    }
+  ],
+  "verification": {
+    "focused": "PASS bun /work/out/validate-fixtures.ts exit 0 (31 checks)",
+    "existing_tests": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "limitations": [
+      "No repository source edits.",
+      "No crash simulation added (existing recovery tests cited, not re-run).",
+      "No source-B / canon migration design.",
+      "No live provider, account, model, native, or unfamiliar-user qualification.",
+      "Existing bun test suites unexecuted in this archive container."
+    ]
+  },
+  "blockers": [],
+  "next_step": "P018 and P083 consume connection-state-transitions.md plus fixtures/swap-journals.json and fixtures/status-serialization.json after review/rebase. Do not implement from this packet. Existing repository tests remain the production proof and must be run on a writable installed checkout.",
+  "downstream_handoff": {
+    "feeds": ["P018", "P083"],
+    "use": [
+      "/work/out/connection-state-transitions.md",
+      "/work/out/fixtures/swap-journals.json",
+      "/work/out/fixtures/status-serialization.json",
+      "/work/out/fixtures/persisted-fields.json"
+    ],
+    "do_not": [
+      "redesign kizuki.connection-state-swap/v1",
+      "duplicate connections.test.ts / connections-state-rewrite.test.ts / connections-p1.test.ts cases",
+      "treat list connect status envelope ok as a claim that every source is healthy",
+      "claim P015 source-B recovery, P003 evidence, or P006 docs ownership"
+    ]
+  }
+}

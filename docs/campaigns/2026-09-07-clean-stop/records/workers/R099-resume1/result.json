@@ -1,0 +1,207 @@
+{
+  "packet_id": "R099",
+  "task_id": "R099",
+  "title": "Prepare unfamiliar-human observation capture form",
+  "issue": 543,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "owner": "grok-R099",
+  "write_scope": "/work/out only",
+  "checkout": {
+    "read_root": "/repo",
+    "source_kind": "git archive of exact commit; no Git metadata or runtime data",
+    "remote_verified": false,
+    "git_commands": "not run; archive has no Git metadata; vps-nav/host fetch forbidden in this container"
+  },
+  "artifacts": [
+    "/work/out/unfamiliar-human-observation-form.md",
+    "/work/out/unfamiliar-human-observation-form.blank.json",
+    "/work/out/stranger-proof-adapter-field-map.json",
+    "/work/out/stranger-proof-adapter-field-map.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/verify-existing-gates.ts",
+    "/work/out/verify-existing-gates.receipt.json",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/unfamiliar-human-observation-form.md",
+    "/work/out/unfamiliar-human-observation-form.blank.json",
+    "/work/out/stranger-proof-adapter-field-map.json",
+    "/work/out/stranger-proof-adapter-field-map.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    {
+      "path": "scripts/stranger-proof.ts",
+      "lines": "13,17,26-32,61-84,119-128,183-193,244,250-272",
+      "fact": "kizuki.artifact-proof/v2 producer; CLI --artifact/--report only; StepReceipt; KIZUKI_SUPERVISOR=none; init --no-service; Ada fixture; 30000 ms child timeout"
+    },
+    {
+      "path": "scripts/artifact-proof.ts",
+      "lines": "86-113,146-154",
+      "fact": "ordered v2 steps; substituted or failed steps rejected"
+    },
+    {
+      "path": "scripts/go-no-go.ts",
+      "lines": "16,41,99-114,148-166,171-195",
+      "fact": "acceptance-evidence/v2 four keys; unfamiliar_user_ms 900000; human.unfamiliar-user NOT_IMPLEMENTED; no human observation loader"
+    },
+    {
+      "path": "scripts/stranger-proof.test.ts",
+      "lines": "20-81",
+      "fact": "existing proof CLI/env/fixture-failure coverage; executed 5/5 in this container"
+    },
+    {
+      "path": "scripts/go-no-go.test.ts",
+      "lines": "139-166,261-268",
+      "fact": "existing human-gate required/not-PASS, fixture-never-grants-human, waive-key refusal; test file NOT_RUN here"
+    },
+    {
+      "path": "docs/unfamiliar-user-proof.md",
+      "lines": "1-68,90-112",
+      "fact": "human protocol; template cannot pass the gate; intervention fails zero-coaching; blank collection table"
+    },
+    {
+      "path": "docs/release-acceptance.md",
+      "lines": "5-6,146,196-197",
+      "fact": "human.unfamiliar-user adapter NOT_IMPLEMENTED; protocol is not a trusted passing receipt"
+    },
+    {
+      "path": "docs/CURRENT.md",
+      "lines": "10-17,51-53",
+      "fact": "D19 readiness; automated stranger-proof is not human stranger proof"
+    },
+    {
+      "path": "docs/decision-log.md",
+      "lines": "27,89-91,105-126",
+      "fact": "D19: stranger can install and use; calendar gates optional post-ready"
+    },
+    {
+      "path": "package.json",
+      "lines": "13-14",
+      "fact": "proof:artifact and release:acceptance scripts"
+    },
+    {
+      "path": "FLEET-SOURCE-IDENTITY.json",
+      "lines": "1-5",
+      "fact": "pinned base_sha f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7"
+    }
+  ],
+  "checks": [
+    {
+      "name": "existing-stranger-proof-tests",
+      "command": "bun test /repo/scripts/stranger-proof.test.ts /repo/scripts/go-no-go.test.ts",
+      "cwd": "/work",
+      "toolchain": "bun 1.3.14 /usr/local/bin/bun",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7 (archive, no Git HEAD)",
+      "time_utc": "2026-09-06T21:47:41Z",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "detail": "stranger-proof.test.ts 5 pass; go-no-go.test.ts failed to load (missing js-tiktoken/lite). Combined bun test exit 1. Do not treat as a green suite."
+    },
+    {
+      "name": "stranger-proof-test-file",
+      "command": "bun test /repo/scripts/stranger-proof.test.ts /repo/scripts/go-no-go.test.ts",
+      "result": "PASS",
+      "exit_code": 1,
+      "detail": "The stranger-proof file itself reported 5 pass / 0 fail before the other file's load error."
+    },
+    {
+      "name": "proof-public-seams",
+      "command": "bun -e import parseProofArgs/proofEnvironment/requireFixture from /repo/scripts/stranger-proof.ts; artifactProofSteps from /repo/scripts/artifact-proof.ts",
+      "result": "PASS",
+      "exit_code": 0,
+      "time_utc": "2026-09-06T22:00:25Z",
+      "detail": "empty args throw requires --report; supervisor none; Ada miss is failed step; v2 init is --no-service timeout 30000; 16 steps"
+    },
+    {
+      "name": "evaluateRelease-empty-index",
+      "command": "bun /work/out/verify-existing-gates.ts",
+      "result": "PASS",
+      "exit_code": 0,
+      "time_utc": "2026-09-06T22:01:18.064Z",
+      "evidence": "/work/out/verify-existing-gates.receipt.json",
+      "detail": "Synthetic empty v2 index → NO-GO; human.unfamiliar-user NOT_IMPLEMENTED required; waive extra key fails index; 41 gates. HOME cache resolve of js-tiktoken was deleted; do not treat as a dependency install or human run.",
+      "limitation": "Re-running this helper with writable HOME may cause Bun to fetch js-tiktoken. Missing tool for the canonical test file is repo node_modules."
+    },
+    {
+      "name": "full-artifact-proof",
+      "command": "bun run proof:artifact -- --report DIR",
+      "result": "NOT_RUN",
+      "detail": "No native package in this archive; compile/download forbidden. Unexecuted."
+    },
+    {
+      "name": "unfamiliar-human-session",
+      "command": "authorized participant run per docs/unfamiliar-user-proof.md",
+      "result": "NOT_RUN",
+      "detail": "No consenting unfamiliar person. Form left unfilled. Unexecuted."
+    },
+    {
+      "name": "typecheck-and-verify",
+      "command": "bun run typecheck; bun run verify",
+      "result": "NOT_RUN",
+      "detail": "No node_modules; not a source-change packet; full gate not claimed."
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS for proof CLI/helpers and empty-index human-gate status; NOT_RUN for go-no-go.test.ts file and native proof",
+    "package_type_full_gate": "NOT_RUN",
+    "privacy_diff_integrity": "NOT_RUN (no source diff)",
+    "independent_review": "NOT_RUN",
+    "retained_package_consumer": "NOT_RUN",
+    "human_unfamiliar_user": "NOT_IMPLEMENTED on this revision; this packet does not claim otherwise"
+  },
+  "findings": [
+    {
+      "severity": "info",
+      "status": "confirmed",
+      "location": "scripts/go-no-go.ts:163 and :99-114",
+      "fact": "human.unfamiliar-user has no evidence adapter and the v2 index has no human-observation key",
+      "invariant": "Completing a capture form cannot produce GO or PASS for this gate",
+      "correction": "P098/P009 must add a reviewed producer; do not inject extra index keys"
+    },
+    {
+      "severity": "info",
+      "status": "confirmed",
+      "location": "scripts/stranger-proof.ts:251 vs docs/unfamiliar-user-proof.md:45-47",
+      "fact": "Automated init is --no-service; human init must observe a supervisor",
+      "invariant": "Do not substitute artifact-proof steps for human task completion",
+      "correction": "Keep the do-not-substitute rows in the adapter map"
+    },
+    {
+      "severity": "info",
+      "status": "confirmed",
+      "location": "this container",
+      "fact": "scripts/go-no-go.test.ts cannot load without js-tiktoken/lite",
+      "invariant": "Missing platform/dependency is NOT_RUN, not PASS",
+      "correction": "Run that file on a workspace with bun install --frozen-lockfile when a full-suite slot exists"
+    }
+  ],
+  "blockers": [
+    "Canonical go-no-go.test.ts execution needs workspace node_modules (js-tiktoken/lite); not installed here by policy.",
+    "Native bun run proof:artifact needs a built package; compile forbidden in this packet.",
+    "No authorized consenting unfamiliar person; human gate remains unobserved.",
+    "Trusted human-evidence producer is NOT_IMPLEMENTED; P003 owns shared evidence design and is not this lane."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P098", "P009"],
+    "use": "Fillable form plus adapter map. Treat as collection aid and current-code map only.",
+    "do_not": [
+      "Treat filled or blank forms as kizuki.artifact-proof/v2, kizuki.acceptance-evidence/v2, or a human receipt schema",
+      "Duplicate P003 shared evidence design",
+      "Edit canonical docs (P006) or source-B implementation (P015) from this prep",
+      "Claim native/account/model/human qualification or release GO"
+    ],
+    "next_implementation_hint": "If a producer is later designed, it needs a reviewed index slot and authority binding. Extra keys on the current four-key index fail closed. Map human init/query/canon/coaching as new fields, not as --no-service Ada steps."
+  },
+  "next_step": "P098/P009 rebase on the live base and consume the adapter map; do not treat R099 files as a passing human producer. Run scripts/go-no-go.test.ts on a checkout with frozen-lockfile dependencies when a test slot exists.",
+  "limitations": [
+    "No Git metadata in /repo; remote/PR/issue state not refreshed.",
+    "No fictional participant results; blank JSON is unfilled.",
+    "No source edits.",
+    "Wave1 stranger-proof spec is VOID; current producer is artifact isolation, not the VOID shell loop.",
+    "Evaluator helper briefly resolved js-tiktoken into /work/out/home; cache deleted; not retained."
+  ]
+}

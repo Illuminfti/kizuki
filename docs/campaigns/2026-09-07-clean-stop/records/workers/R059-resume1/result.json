@@ -1,0 +1,196 @@
+{
+  "task_id": "R059",
+  "packet_id": "R059",
+  "title": "Draft IMAP international mailbox-name round-trip fixtures",
+  "issue": 547,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "owner": "grok-R059",
+  "read_root": "/repo",
+  "write_scope": "/work/out only",
+  "kind": "independent_preparation",
+  "artifacts": [
+    "/work/out/mailbox-name-roundtrip-fixtures.json",
+    "/work/out/encode-modified-utf7.ts",
+    "/work/out/roundtrip.ts",
+    "/work/out/roundtrip-results.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/source-evidence.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/mailbox-name-roundtrip-fixtures.json",
+    "/work/out/encode-modified-utf7.ts",
+    "/work/out/roundtrip.ts",
+    "/work/out/roundtrip-results.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/source-evidence.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    {
+      "path": "packages/connector-imap/src/imap/utf7.ts",
+      "lines": "1-48",
+      "symbol": "decodeModifiedUtf7",
+      "note": "Only product encoder/decoder surface; decode-only. Malformed runs left verbatim."
+    },
+    {
+      "path": "packages/connector-imap/src/events.ts",
+      "lines": "34-36",
+      "symbol": "folderLabel",
+      "note": "stripControls(decodeModifiedUtf7(wire), 255); production display path."
+    },
+    {
+      "path": "packages/connector-imap/src/mailbox.ts",
+      "lines": "148-149,221",
+      "symbol": "walkMailboxes",
+      "note": "Uses folderLabel for display; cursor and EXAMINE stay on the wire name."
+    },
+    {
+      "path": "packages/connector-imap/src/imap/session.ts",
+      "lines": "190-194",
+      "symbol": "ImapSession.list",
+      "note": "LIST token is wire; display is folderLabel(wire)."
+    },
+    {
+      "path": "packages/connector-imap/src/sign-in.ts",
+      "lines": "54-59,130-147",
+      "symbol": "matches / signInImap",
+      "note": "Owner types display; persisted folders are wires."
+    },
+    {
+      "path": "packages/connector-imap/test/utf7.test.ts",
+      "lines": "4-19",
+      "symbol": "modified UTF-7 mailbox names",
+      "note": "Decode-only; seven legitimate vectors plus three malformed-verbatim cases."
+    },
+    {
+      "path": "packages/connector-imap/src/testing/index.ts",
+      "lines": "75",
+      "symbol": "fixtureMailbox",
+      "note": "Wire &AOk-quipe (équipe) is \\Noselect and never decoded in tests."
+    },
+    {
+      "url": "https://www.rfc-editor.org/rfc/rfc3501.txt",
+      "section": "5.1.3",
+      "fetched": "2026-09-06",
+      "http_status": 200
+    },
+    {
+      "url": "https://www.rfc-editor.org/rfc/rfc2152.txt",
+      "section": "Modified Base64 / UTF-16BE",
+      "fetched": "2026-09-06",
+      "http_status": 200
+    }
+  ],
+  "checks": [
+    {
+      "name": "existing utf7 decode tests",
+      "command": "bun test packages/connector-imap/test/utf7.test.ts",
+      "cwd": "/repo",
+      "bun": "1.3.14",
+      "time_utc": "2026-09-06T22:02:00Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "summary": "10 pass, 0 fail, 10 expect() calls, 1 file"
+    },
+    {
+      "name": "draft encode/decode round-trip",
+      "command": "bun /work/out/roundtrip.ts",
+      "cwd": "/work",
+      "bun": "1.3.14",
+      "time_utc": "2026-09-06T22:02:50Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "summary": "17/17 fixtures: encode matches specified wire; product decode matches display; both directions round-trip",
+      "evidence": "/work/out/roundtrip-results.json"
+    },
+    {
+      "name": "package typecheck / full repository gate",
+      "command": "bun run typecheck / bun run verify",
+      "result": "NOT_RUN",
+      "reason": "Read-only preparation; no repository source change. Full gate remains with P057/P058 on an implementation head."
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": {
+      "result": "PASS",
+      "command": "bun /work/out/roundtrip.ts",
+      "exit_code": 0,
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time_utc": "2026-09-06T22:02:50Z",
+      "evidence": "/work/out/roundtrip-results.json"
+    },
+    "existing_decoder_characterization": {
+      "result": "PASS",
+      "command": "bun test packages/connector-imap/test/utf7.test.ts",
+      "exit_code": 0,
+      "runtime": "bun 1.3.14"
+    },
+    "package_type_full_gate": {
+      "result": "NOT_RUN",
+      "reason": "No source edits; preparation packet only."
+    },
+    "privacy_diff_integrity": {
+      "result": "PASS",
+      "note": "Synthetic folder names only. No credentials, vault paths, or live provider payloads. Repository tree untouched."
+    },
+    "independent_review": {
+      "result": "NOT_RUN"
+    },
+    "live_imap": {
+      "result": "NOT_RUN",
+      "reason": "Forbidden by packet; no account calls."
+    }
+  },
+  "findings": [
+    {
+      "severity": "info",
+      "id": "decode-only-product",
+      "summary": "The connector has no modified-UTF-7 encoder.",
+      "evidence": "packages/connector-imap/src/imap/utf7.ts exports only decodeModifiedUtf7; grep of packages/connector-imap found no encodeModifiedUtf7.",
+      "invariant": "Read-only IMAP stores LIST wires and reuses them for EXAMINE and cursor keys (mailbox.ts:148-221, sign-in.ts:130-147).",
+      "required_fix": "None for production. P057/P058 may keep the draft encoder as a test helper; do not add a product encoder unless a later packet creates mailboxes."
+    },
+    {
+      "severity": "info",
+      "id": "existing-decode-coverage",
+      "summary": "Seven legitimate decode vectors already exist; do not duplicate them as decode-only tests.",
+      "evidence": "packages/connector-imap/test/utf7.test.ts:6-15 executed PASS (10 pass / 0 fail).",
+      "required_fix": "Reuse those rows for round-trip only; add the ten new corpus ids."
+    },
+    {
+      "severity": "info",
+      "id": "display-path-untested-for-unicode",
+      "summary": "folderLabel and sign-in/mailbox walks never exercise an international wire in tests.",
+      "evidence": "No test imports folderLabel. mailbox.test.ts uses INBOX/Archive. Fixture wire &AOk-quipe at testing/index.ts:75 is \\Noselect and skipped by list().",
+      "required_fix": "Optional later: one LIST/sign-in fixture using a corpus wire. Out of R059 (encoding round-trip only)."
+    }
+  ],
+  "blockers": [],
+  "downstream_handoff": {
+    "feeds": ["P057", "P058"],
+    "consume": "/work/out/mailbox-name-roundtrip-fixtures.json",
+    "helper": "/work/out/encode-modified-utf7.ts",
+    "do_not_duplicate": "packages/connector-imap/test/utf7.test.ts:6-15 decode-only cases",
+    "add": "Table-driven round trip: encode(display)===wire and decode(wire)===display for all 17 ids, or at least the 10 new ids plus round-trip on the 7 existing vectors.",
+    "do_not": "Copy malformed-run tests, hostile control-character names, or a production encoder. Do not wait on unpublished sibling output.",
+    "limitations_to_preserve": [
+      "No live IMAP qualification.",
+      "Draft encoder is not in the product.",
+      "folderLabel control stripping is a separate contract (MAX_FOLDER_NAME_CHARS=255).",
+      "Artifacts must be reviewed/rebased before production use."
+    ]
+  },
+  "next_step": "P057/P058 land a table-driven round-trip test from mailbox-name-roundtrip-fixtures.json without duplicating utf7.test.ts decode-only rows, then run the package tests on their implementation head.",
+  "limitations": [
+    "Read-only /repo archive; no Git metadata; no source edits.",
+    "No live provider, account, native, or release qualification.",
+    "Full repository verify/typecheck NOT_RUN (no production change).",
+    "Independent review NOT_RUN.",
+    "Public RFC text fetched 2026-09-06; Côte d'Ivoire / Entwürfe wires are RFC-algorithm results, not RFC 3501 worked examples."
+  ]
+}

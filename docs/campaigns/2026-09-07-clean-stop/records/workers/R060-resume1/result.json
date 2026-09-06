@@ -1,0 +1,135 @@
+{
+  "task_id": "R060",
+  "packet_id": "R060",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "issue": 547,
+  "feeds_packets": ["P057", "P058"],
+  "findings": [
+    {
+      "severity": "low",
+      "id": "leading-zero-rfc-divergence",
+      "where": "packages/connector-imap/src/uidset.ts:16-18 parseNumber",
+      "evidence": "Executed parseSet(\"01\") => [{first:1,last:1}]. RFC 3501 nz-number is digit-nz *DIGIT (https://www.rfc-editor.org/rfc/rfc3501.txt fetched 2026-09-06).",
+      "invariant": "Wire parse either matches IMAP nz-number or is documented as a canonicalising superset.",
+      "required_fix": "P057/P058 choose reject leading zeros or keep characterization; do not silently treat this as RFC-strict."
+    },
+    {
+      "severity": "info",
+      "id": "coverage-gaps-not-defects",
+      "where": "packages/connector-imap/test/uidset.test.ts:13-76 versus uidset.ts normalize/chunk/countUids",
+      "evidence": "Independent oracle matched source on 31 small rows (execution-receipt.json). Gaps listed in existing-coverage.json.",
+      "invariant": "Empty/single/range/mixed have one wire form; chunk pieces reconstruct the sorted union and stay <= k.",
+      "required_fix": "Land uidset-bounded.test.ts gap cases only. Do not duplicate uidset.test.ts, including 1:1000000 lazy chunk."
+    },
+    {
+      "severity": "info",
+      "id": "normalize-does-not-clamp-uid-max",
+      "where": "packages/connector-imap/src/uidset.ts:26-45",
+      "evidence": "Comment says clamps; body swaps reversed bounds and coalesces. isUid is used by parseSet/addUid only.",
+      "invariant": "Invalid endpoints must not enter persisted known/pending.",
+      "required_fix": "Keep callers on parseSet/addUid (mailbox/cursor already do). Optional comment fix under P006/docs owner, not here."
+    }
+  ],
+  "deliverables": [
+    "/work/out/set-to-range-equivalence.json",
+    "/work/out/set-to-range-equivalence.md",
+    "/work/out/uidset-bounded.test.ts",
+    "/work/out/existing-coverage.json",
+    "/work/out/run-uidset-table.ts",
+    "/work/out/execution-receipt.json",
+    "/work/out/table-run.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/set-to-range-equivalence.json",
+    "/work/out/set-to-range-equivalence.md",
+    "/work/out/uidset-bounded.test.ts",
+    "/work/out/existing-coverage.json",
+    "/work/out/run-uidset-table.ts",
+    "/work/out/materialize-source.ts",
+    "/work/out/kizuki-core-stub.ts",
+    "/work/out/execution-receipt.json",
+    "/work/out/table-run.json",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/connector-imap/src/uidset.ts:3-141",
+    "packages/connector-imap/src/cursor.ts:84-85",
+    "packages/connector-imap/src/mailbox.ts:24-30,251,299-300,392",
+    "packages/connector-imap/test/uidset.test.ts:13-76",
+    "packages/connector-imap/test/cursor.test.ts:21-24",
+    "https://www.rfc-editor.org/rfc/rfc3501.txt (2026-09-06, seq-range/sequence-set/nz-number)"
+  ],
+  "checks": [
+    {
+      "name": "bun-version",
+      "command": "bun --version",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "PASS",
+      "exit_code": 0,
+      "detail": "1.3.14"
+    },
+    {
+      "name": "existing-uidset-package-test",
+      "command": "cd /repo && bun test packages/connector-imap/test/uidset.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "exit_code": 1,
+      "detail": "0 pass, 1 fail, 1 error: Cannot find module '@kizuki/core'. Missing workspace install. Not a product assertion failure."
+    },
+    {
+      "name": "existing-cursor-package-test",
+      "command": "cd /repo && bun test packages/connector-imap/test/cursor.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "exit_code": 1,
+      "detail": "Cannot find module '@kizuki/core'."
+    },
+    {
+      "name": "independent-table-vs-source",
+      "command": "bun /work/out/materialize-source.ts && bun /work/out/run-uidset-table.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "PASS",
+      "exit_code": 0,
+      "detail": "PASS 31/31 bun=1.3.14 at 2026-09-06T22:03:49.405Z. First attempt exited 1 on oracle cardinality typo (7 members asserted as 8); source already correct; re-run passed."
+    },
+    {
+      "name": "in-repo-draft-file",
+      "command": "bun test packages/connector-imap/test/uidset-bounded.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "exit_code": null,
+      "detail": "Draft is /work/out/uidset-bounded.test.ts. Unexecuted in-repo: file not in package and @kizuki/core unresolved. Equivalent gap vectors executed by the table runner."
+    },
+    {
+      "name": "full-repository-gate",
+      "command": "bash scripts/verify.sh",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "exit_code": null,
+      "detail": "Read-only preparation; no source change; no authority to install or claim the gate."
+    }
+  ],
+  "verification": {
+    "focused": "PASS independent table vs source, 31/31, exit 0",
+    "existing_package_tests": "NOT_RUN (missing @kizuki/core / node_modules)",
+    "draft_in_repo": "unexecuted",
+    "typecheck_and_full_gate": "NOT_RUN",
+    "live_imap": "not attempted",
+    "large_payloads": "not used; existing 1:1000000 lazy test cited not re-expanded"
+  },
+  "blockers": [
+    "Workspace node_modules is absent, so in-repo bun test cannot resolve @kizuki/core. Packet forbids bun install."
+  ],
+  "next_step": "P057/P058 land only the gap cases in uidset-bounded.test.ts (cursor case into cursor.test.ts) after workspace install on this base or a rebased head; re-run bun test packages/connector-imap/test/uidset.test.ts and the new file; decide leading-zero reject vs characterize.",
+  "downstream_handoff": {
+    "to": ["P057", "P058"],
+    "land": "/work/out/uidset-bounded.test.ts",
+    "do_not_duplicate": "packages/connector-imap/test/uidset.test.ts:13-76",
+    "math_status": "compression, union count, and bounded chunk matched the independent oracle on small examples",
+    "open_policy": "leading zeros",
+    "not_claimed": ["integration", "release", "live-account", "unfamiliar-user", "full gate"]
+  }
+}

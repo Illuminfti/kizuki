@@ -1,0 +1,112 @@
+{
+  "task_id": "P059",
+  "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+  "status": "FINDINGS",
+  "findings": [
+    {
+      "severity": "high",
+      "id": "c4-confidential-secret-conflict",
+      "summary": "C4 compiled-in project credentials are incompatible with WHOOP's confidential-client rule that the Client Secret must stay server-side and must never be exposed in a client, web, or mobile application.",
+      "evidence": "https://developer.whoop.com/docs/developing/getting-started/ checked 2026-09-06; docs/decision-log.md C4",
+      "invariant": "C4 sign-in-not-setup; secret custody; no fake surface",
+      "confirmed": true
+    },
+    {
+      "severity": "high",
+      "id": "no-native-enrollment",
+      "summary": "Shipped @kizuki/connector-whoop is secret_ref protected-state capture only: no signIn, not in connectors registry, not CLI-enrollable. Official OAuth requires a registered app, exact redirect, and Client Secret.",
+      "evidence": "packages/connector-whoop/src/connector.ts auth_modes; packages/cli/src/connections.ts listEnrollableConnectorIds; https://developer.whoop.com/docs/developing/oauth/",
+      "invariant": "C3 WHOOP inventory vs honest capability naming",
+      "confirmed": true
+    },
+    {
+      "severity": "high",
+      "id": "core-oauth-whoop-unproven",
+      "summary": "Core browser sign-in uses ephemeral http://127.0.0.1 loopback, ~43-character state, and mandatory PKCE. WHOOP documents https or whoop:// redirects, an eight-character state, and no PKCE. Compatibility is unproven; live app access is missing.",
+      "evidence": "packages/core/src/auth/loopback.ts port 0; packages/core/src/auth/oauth.ts STATE_BYTES=32; WHOOP OAuth page 2026-09-06",
+      "invariant": "Reuse Core OAuth without weakening CSRF/PKCE",
+      "confirmed": true
+    },
+    {
+      "severity": "high",
+      "id": "broker-out-of-bounds",
+      "summary": "A hosted HTTPS callback would match WHOOP's documented redirect form and secret-custody rule but is a hosted service. RFC 0000 §3 and this packet forbid implementing a broker.",
+      "evidence": "rfcs/0000-constraints.md §3; packet scope",
+      "invariant": "No hosted service; zero phone-home",
+      "confirmed": true
+    },
+    {
+      "severity": "medium",
+      "id": "refresh-scope-offline",
+      "summary": "WHOOP refresh sample includes scope=offline; Core refreshTokens does not post scope. Live requirement unknown.",
+      "evidence": "https://developer.whoop.com/docs/developing/oauth/ sample POST; packages/core/src/auth/oauth.ts refreshTokens",
+      "invariant": "Honest token lifecycle",
+      "confirmed": false,
+      "hypothesis": true
+    },
+    {
+      "severity": "medium",
+      "id": "live-account-unresolved",
+      "summary": "go-no-go whoop evidence is live-account. No WHOOP membership, dashboard app, or tokens exist here. Status UNRESOLVED, not PASS.",
+      "evidence": "scripts/go-no-go.ts CONNECTORS whoop; docs/whoop.md",
+      "invariant": "Fixture proof is not live-account proof",
+      "confirmed": true
+    }
+  ],
+  "deliverables": [
+    "orientation.md",
+    "whoop-primary-source-packet.md",
+    "whoop-gap-map.md",
+    "whoop-decision-draft.md",
+    "whoop-live-trial-prerequisites.md",
+    "RESULT.md",
+    "result.json",
+    "primary-sources/fetch-index.json",
+    "primary-sources/fetch-index-2.json",
+    "evidence/primary-source-hashes.json"
+  ],
+  "verification": {
+    "focused_public_behavior": {
+      "result": "PASS",
+      "command": "bun fetch GET public developer.whoop.com docs and api.prod.whoop.com/developer/doc/openapi.json",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T20:52:18.867Z",
+      "head": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+      "evidence": "primary-sources/fetch-index.json, primary-sources/fetch-index-2.json, evidence/primary-source-hashes.json"
+    },
+    "package_type_full_gate": {
+      "result": "NOT_RUN",
+      "reason": "Read-only preparation packet; no source edits; no test slot"
+    },
+    "privacy_diff_integrity": {
+      "result": "PASS",
+      "reason": "No repository diff; no dashboard login, tokens, or health payloads"
+    },
+    "independent_review": {
+      "result": "NOT_RUN"
+    },
+    "retained_artifact": {
+      "result": "NOT_RUN"
+    },
+    "live_account": {
+      "result": "NOT_RUN",
+      "status": "UNRESOLVED",
+      "reason": "WHOOP app and account access missing; registration and token calls forbidden"
+    }
+  },
+  "blockers": [
+    "Owner architecture/scope decision: except WHOOP from C4 compiled-in stranger credentials, keep secret_ref-only, or (not recommended) authorize compiled-in secret or a broker RFC.",
+    "No WHOOP membership, Developer Dashboard app, Client Secret, or test member in this environment.",
+    "Loopback redirect, state length, PKCE, and refresh-scope compatibility remain unproven pending a human live trial.",
+    "GitHub issue 548 live body and remotes were not retrieved (archive has no Git; controller owns fetch).",
+    "Full repository verify not run."
+  ],
+  "next_step": "Owner chooses decision 1 (C4 exception: operator-registered confidential client after live trial) or 4 (keep secret_ref capture, WHOOP not CLI-enrollable). A human with a WHOOP membership then runs whoop-live-trial-prerequisites.md. Do not register apps, compile a Client Secret, or implement a broker from this packet.",
+  "limitations": [
+    "Documentation-only plus static code read; no live WHOOP API.",
+    "Dashboard URI acceptance unknown because no app was registered.",
+    "Wave 1 connector-whoop spec is historical and does not describe the shipped package.",
+    "Gmail operator-desktop-client pattern is not transferable (Google installed apps are not confidential).",
+    "No release, integration, or semantic-quality claim."
+  ]
+}

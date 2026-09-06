@@ -1,0 +1,144 @@
+{
+  "task_id": "R054",
+  "packet_id": "R054",
+  "title": "Inspect Gmail history cursor serialization and ID precision",
+  "issue": 545,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "owner": "grok-R054",
+  "write_scope": "/work/out only",
+  "findings": [
+    {
+      "severity": "coverage",
+      "id": "cursor-anchor-precision-untested",
+      "summary": "Existing test only asserts message metadata.history_id, not cursor.anchor encode/decode.",
+      "evidence": "packages/connector-gmail/test/boundaries.test.ts:117-122; packages/connector-gmail/src/testing.ts:15,44; packages/connector-gmail/src/events.ts:23; packages/connector-gmail/src/connector.ts:241-243",
+      "affected": "P051/P052 must not treat uint64 cursor round-trip as already proved",
+      "action": "Reuse /work/out/fixtures/gmail-cursor-neutral.json; do not duplicate the metadata test"
+    },
+    {
+      "severity": "contract-mismatch",
+      "id": "historyId-not-uint64",
+      "summary": "Local historyId() refuses 0 and allows 21-40 digit strings; Google discovery types these fields as string uint64 (0..2^64-1).",
+      "evidence": "packages/connector-gmail/src/state.ts:64-68; Gmail discovery revision 20260903; executed identifier cases history-zero, history-2-pow-64, local-21-digit-anchor",
+      "affected": "Accepted non-uint64 anchors still round-trip as strings and compare via BigInt",
+      "action": "P051/P052 decide whether to clamp to uint64 or keep the local bound"
+    },
+    {
+      "severity": "behavior",
+      "id": "empty-page-token-refused",
+      "summary": "pageToken empty string is source_schema, not null.",
+      "evidence": "packages/connector-gmail/src/state.ts:69-75; fixture page-empty-string PASS",
+      "affected": "A provider empty nextPageToken would refuse the batch rather than end pagination",
+      "action": "Keep documented; Gmail docs describe omitted nextPageToken"
+    },
+    {
+      "severity": "positive",
+      "id": "string-history-preserves-precision",
+      "summary": "JSON string history IDs beyond MAX_SAFE_INTEGER round-trip; JSON numbers are refused; sync ordering uses BigInt.",
+      "evidence": "roundtrip-report.json precision and cases sync-uint64-max-anchor, sync-beyond-safe-integer, history-json-number; connector.ts:278,292"
+    }
+  ],
+  "deliverables": [
+    "/work/out/cursor-field-roundtrip-table.md",
+    "/work/out/cursor-field-roundtrip-table.json",
+    "/work/out/fixtures/gmail-cursor-neutral.json",
+    "/work/out/gmail-cursor-roundtrip.ts",
+    "/work/out/roundtrip-report.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/provider-history-id-notes.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/cursor-field-roundtrip-table.md",
+    "/work/out/cursor-field-roundtrip-table.json",
+    "/work/out/fixtures/gmail-cursor-neutral.json",
+    "/work/out/gmail-cursor-roundtrip.ts",
+    "/work/out/roundtrip-report.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/provider-history-id-notes.md",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/connector-gmail/src/state.ts:4,9-21,45-75,87-112,139",
+    "packages/connector-gmail/src/connector.ts:241-295,300-370",
+    "packages/connector-gmail/src/events.ts:23",
+    "packages/connector-gmail/src/api.ts",
+    "packages/connector-gmail/src/index.ts",
+    "packages/connector-gmail/src/testing.ts:15,28,44-55",
+    "packages/connector-gmail/test/boundaries.test.ts:55-67,117-122",
+    "packages/connector-gmail/test/connector.test.ts:23,74-83",
+    "packages/core/src/contracts/connector.ts:7,35-38",
+    "packages/connector-gmail/README.md:21-36",
+    "docs/gmail.md:24",
+    "https://gmail.googleapis.com/$discovery/rest?version=v1 (revision 20260903, fetched 2026-09-06)"
+  ],
+  "checks": [
+    {
+      "name": "pure-cursor-roundtrip",
+      "command": "bun /work/out/gmail-cursor-roundtrip.ts",
+      "bun": "1.3.14",
+      "at": "2026-09-06T22:02:03.424Z",
+      "exit": 0,
+      "result": "PASS",
+      "evidence": "/work/out/roundtrip-report.json",
+      "detail": "failed=0 cases=32 source_sha256=4646e58bfd10aa51cd00ec8bf92e183d92cd63b3effb5646161a158979727535"
+    },
+    {
+      "name": "existing-gmail-package-tests",
+      "command": "cd /repo && bun test packages/connector-gmail/test/boundaries.test.ts packages/connector-gmail/test/connector.test.ts packages/connector-gmail/test/live-retry.test.ts",
+      "exit": 1,
+      "result": "NOT_RUN",
+      "detail": "Cannot find module '@kizuki/core'; /repo/node_modules absent in git archive; not recorded as PASS"
+    },
+    {
+      "name": "full-repository-gate",
+      "command": "bun test && bunx tsc --noEmit && bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "detail": "No workspace install; packet forbids dependency installs"
+    },
+    {
+      "name": "provider-discovery",
+      "command": "bun fetch https://gmail.googleapis.com/$discovery/rest?version=v1",
+      "at": "2026-09-06T21:45:52.147Z",
+      "result": "PASS",
+      "detail": "HTTP 200 revision 20260903; historyId type string format uint64; pageToken type string"
+    }
+  ],
+  "verification": {
+    "focused": "PASS",
+    "existing_package_tests": "NOT_RUN",
+    "typecheck": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "live_account": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "notes": "Focused PASS is the pure encode/decode runner over current state.ts bytes with a local KizukiError/MAX_CURSOR_BYTES stand-in. It is not the in-tree bun test file and not live Gmail."
+  },
+  "blockers": [],
+  "limitations": [
+    "Git archive has no Git metadata and no node_modules; in-tree connector tests and full gate are NOT_RUN.",
+    "GitHub issue 545 / PR / remote refs were not live-verified.",
+    "No live Gmail account, no OAuth, no mailbox history.",
+    "No native/account/model/human qualification or release acceptance.",
+    "encodeCursor/decodeCursor are not public package exports; the runner extracts state.ts lines 4,45-75,87-112."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P051", "P052"],
+    "do_not_duplicate": "packages/connector-gmail/test/boundaries.test.ts:117-122",
+    "reuse": [
+      "/work/out/fixtures/gmail-cursor-neutral.json",
+      "/work/out/cursor-field-roundtrip-table.md",
+      "/work/out/cursor-field-roundtrip-table.json"
+    ],
+    "decisions_for_downstream": [
+      "Keep history IDs as decimal strings; never Number().",
+      "Compare history with BigInt, as connector.ts:278,292 already does.",
+      "Choose uint64 clamp vs current 1-40 digit local regex.",
+      "If adding tests, add pure encode/decode cases from the fixture pack."
+    ],
+    "not_owned_here": ["shared OAuth", "registry", "lockfiles", "P003 evidence", "P006 docs", "P015 source-B"]
+  },
+  "next_step": "P051/P052 consume the fixture pack and field table; decide whether historyId() should match Google uint64; add a pure encode/decode test only if they own packages/connector-gmail/test and do not clone boundaries.test.ts:117-122."
+}

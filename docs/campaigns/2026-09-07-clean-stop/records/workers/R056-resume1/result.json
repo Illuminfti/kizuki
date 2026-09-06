@@ -1,0 +1,123 @@
+{
+  "task_id": "R056",
+  "packet_id": "R056",
+  "issue": 545,
+  "title": "Trace Gmail ordinary API error classes to recovery advice",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "findings": [
+    "Capture wraps KizukiError as 'Gmail ${code}; check enrollment, permissions or bounded source coverage' (packages/connector-gmail/src/state.ts:45-46, connector.ts:372-374). timeout, unreachable, rate_limited, and provider_error therefore share one non-actionable sentence.",
+    "Non-200 statuses other than 403/429 become HttpFailure and collapse to 'Gmail unavailable; check permissions or source coverage', losing HTTP status (api.ts:84-87, connector.ts:374). Residual 401 after the existing one refresh takes this path.",
+    "HTTP 403 reason domainPolicy is documented by Google as an admin/policy refusal and is currently provider_error (api.ts:82). User-visible text cannot name 'contact the domain administrator'.",
+    "HTTP 403 with a non-object error field is source_schema, not provider_error (api.ts:77-79 + state.ts:48-51). GmailFixture.failStatus=403 would take this path; only 429 is tested.",
+    "packages/cli/src/connections.ts:405-412 swallows every Gmail connect() failure into 'Gmail connection unavailable; check operator configuration and reauthorize the existing source.', so timeout and unauthenticated are indistinguishable at loadConnector.",
+    "History list 404 and message GET 404 already return success batches with history_gap_deletions_unreconciled / message_unavailable_no_deletion_inferred. They must not be converted into errors.",
+    "Existing tests already cover 429, 403 userRateLimitExceeded, history 404, message 404, timeout, misconfigured URL, 26th request, oversized JSON, missing KIZUKI_GMAIL_CLIENT_ID, and snapshot_gap. Do not duplicate those.",
+    "Live bun test of those files is NOT_RUN in this archive: @kizuki/core cannot be resolved and bun install is forbidden."
+  ],
+  "deliverables": [
+    "/work/out/gmail-error-recovery-table.md",
+    "/work/out/gmail-error-recovery-map.json",
+    "/work/out/gmail-synthetic-error-fixtures.json",
+    "/work/out/gmail-error-classifier.ts",
+    "/work/out/draft-gmail-error-recovery.test.ts",
+    "/work/out/provider-docs.json",
+    "/work/out/evidence/classifier-run.json",
+    "/work/out/evidence/bun-test-missing-modules.txt",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/gmail-error-recovery-table.md",
+    "/work/out/gmail-error-recovery-map.json",
+    "/work/out/gmail-synthetic-error-fixtures.json",
+    "/work/out/gmail-error-classifier.ts",
+    "/work/out/draft-gmail-error-recovery.test.ts",
+    "/work/out/provider-docs.json",
+    "/work/out/evidence/classifier-run.json",
+    "/work/out/evidence/bun-test-missing-modules.txt",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/connector-gmail/src/api.ts:6-95",
+    "packages/connector-gmail/src/state.ts:45-51",
+    "packages/connector-gmail/src/connector.ts:56,223-232,266-268,347-350,368,372-374",
+    "packages/cli/src/gmail.ts:5-25",
+    "packages/cli/src/commands/connect-gmail.ts:19-48",
+    "packages/cli/src/connections.ts:389-412",
+    "packages/cli/src/commands/backfill.ts:41-43",
+    "packages/cli/src/commands/sync.ts:85-98",
+    "packages/cli/src/main.ts:216-224",
+    "packages/core/src/ingest/run.ts:266-287,471-476",
+    "packages/connector-gmail/test/http.test.ts",
+    "packages/connector-gmail/test/boundaries.test.ts",
+    "packages/connector-gmail/test/connector.test.ts",
+    "packages/connector-gmail/test/live-retry.test.ts",
+    "packages/cli/test/gmail-enrollment.test.ts",
+    "packages/connector-gmail/README.md:27-38",
+    "https://developers.google.com/workspace/gmail/api/guides/handle-errors (200, 2026-09-06)",
+    "https://developers.google.com/workspace/gmail/api/guides/sync (200, 2026-09-06)",
+    "https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.history/list (200, 2026-09-06)"
+  ],
+  "checks": [
+    {
+      "name": "existing_gmail_error_tests",
+      "command": "TMPDIR=/work/out/tmp bun test --cwd /repo packages/connector-gmail/test/http.test.ts packages/connector-gmail/test/boundaries.test.ts packages/connector-gmail/test/connector.test.ts packages/cli/test/gmail-enrollment.test.ts",
+      "result": "NOT_RUN",
+      "exit_code": 1,
+      "reason": "Cannot find module '@kizuki/core'. Git archive has no node_modules. bun install forbidden. Assertions were statically read; not claimed PASS.",
+      "evidence": "/work/out/evidence/bun-test-missing-modules.txt"
+    },
+    {
+      "name": "local_classifier_replica",
+      "command": "bun /work/out/gmail-error-classifier.ts",
+      "result": "PASS",
+      "exit_code": 0,
+      "stdout": "{\"ok\":true,\"objects\":20,\"mismatches\":0,\"evidence\":\"evidence/classifier-run.json\"}",
+      "limitation": "Replicas api.ts:76-95 and capture detail wrapping. Does not import live @kizuki/connector-gmail.",
+      "evidence": "/work/out/evidence/classifier-run.json"
+    },
+    {
+      "name": "provider_docs_fetch",
+      "command": "bun /work/out/_extract_gmail_docs.ts",
+      "result": "PASS",
+      "http_status": 200,
+      "dated": "2026-09-06",
+      "evidence": "/work/out/provider-docs.json"
+    },
+    {
+      "name": "draft_gmail_error_recovery_test",
+      "command": "bun test /work/out/draft-gmail-error-recovery.test.ts",
+      "result": "NOT_RUN",
+      "reason": "Unexecuted draft. Imports live connector packages; workspace modules absent. Covers only untested classes."
+    },
+    {
+      "name": "full_repository_gate",
+      "result": "NOT_RUN",
+      "reason": "Read-only preparation packet; no source change; no test slot requested."
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "NOT_RUN",
+    "local_classifier": "PASS",
+    "package_type_full_gate": "NOT_RUN",
+    "live_account": "NOT_RUN",
+    "independent_review": "NOT_RUN"
+  },
+  "blockers": [
+    "Workspace node_modules / @kizuki/core (js-tiktoken) unavailable in this git archive; live package tests and the draft test remain unexecuted.",
+    "No authority to edit packages/connector-gmail or packages/cli. P051/P052 own implementation."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P051", "P052"],
+    "use": "gmail-error-recovery-table.md and gmail-error-recovery-map.json as the code-class/recovery-message contract. Apply class-specific stderr/detail. Keep the single 401 refresh. Do not duplicate existing tests listed in the table. History 404 and message 404 stay success+gap. Canonical docs remain P006.",
+    "fixture": "gmail-synthetic-error-fixtures.json plus draft-gmail-error-recovery.test.ts",
+    "do_not": [
+      "redesign shared Google OAuth/PKCE/refresh",
+      "echo provider JSON or tokens",
+      "infer deletion from 404",
+      "claim live-account or stranger qualification"
+    ]
+  },
+  "next_step": "P051/P052 implement user-visible recovery sentences from gmail-error-recovery-map.json at capture detail and CLI loadConnector, with tests only for the uncovered classes in draft-gmail-error-recovery.test.ts, on a checkout that can resolve @kizuki/core."
+}

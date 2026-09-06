@@ -1,0 +1,161 @@
+{
+  "task_id": "R029",
+  "packet_id": "R029",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Map source-grant projection through serving arguments",
+  "issue": 53,
+  "findings": [
+    {
+      "severity": "coverage",
+      "id": "ordinary-tools-epoch0-only",
+      "location": "packages/core/test/serving/helpers.ts:274-428",
+      "failure": "serveFixture never calls setSourceGrant, so sourcePolicyEpoch is 0 and sourceEventsAllowed is a no-op for search/get_page/query_entities/graph_neighbors/system_health/propose serving tests.",
+      "affected_invariant": "Fail closed on missing source grant/purpose/fields once a vault has any source policy receipts.",
+      "evidence": "static test helper read; contrast packages/core/test/source-grants.test.ts:341-397 which does grant and assert timeline/packet.",
+      "confirmed": false,
+      "kind": "untested_concern",
+      "required_fix": "P029: extend source-grants.test.ts; do not duplicate the existing timeline/packet/correct cases."
+    },
+    {
+      "severity": "coverage",
+      "id": "retrieval-source-egress-denied-untested",
+      "location": "packages/core/src/serving/retrieval.ts:19",
+      "failure": "No test asserts degraded token retrieval-source-egress-denied.",
+      "affected_invariant": "Epoch > 0 retrieval nomination requires a host-bound local source port.",
+      "evidence": "grep of packages/**/*.ts; retrieval-consumer.test.ts:54-64 covers retrieval-unavailable only.",
+      "confirmed": false,
+      "kind": "untested_concern"
+    },
+    {
+      "severity": "compatibility",
+      "id": "mcp-envelope-omits-source-policy",
+      "location": "packages/mcp/src/schemas.ts:47-56 vs packages/core/src/serving/gate.ts:328",
+      "failure": "Engine emits source_policy when epoch > 0; MCP ENVELOPE_SHAPE does not declare it. Artifact engine already lists it as optional extra (scripts/artifact-engine.ts:54).",
+      "affected_invariant": "Advertised MCP output matches the serving envelope.",
+      "evidence": "static schema vs envelopeOf; Zod 4 z.object() may strip unknown keys rather than reject. Runtime effect NOT_RUN.",
+      "confirmed": false,
+      "kind": "untested_concern",
+      "required_fix": "P037/MCP schema; P006 if docs mention the field. Not this packet."
+    },
+    {
+      "severity": "mapping",
+      "id": "requireSourceEvents-generic-error",
+      "location": "packages/core/src/serving/gate.ts:275-300; packages/core/src/ledger/source-grants.ts:797-803",
+      "failure": "SourceGrantError is not ServeError; failed() records reason error and throws serving failed.",
+      "affected_invariant": "Stable, specific denial codes at the serving seam.",
+      "evidence": "static; ordinary propose/correct convert via eventDecision/claimReader first (held). Confirmed leak not executed.",
+      "confirmed": false,
+      "kind": "untested_concern"
+    }
+  ],
+  "deliverables": [
+    "/work/out/parameter-to-check-map.json",
+    "/work/out/parameter-to-check-map.md",
+    "/work/out/fixtures/permitted-api.json",
+    "/work/out/fixtures/missing-configuration-api.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/static-line-check.ts",
+    "/work/out/checks.json",
+    "/work/out/draft-checks.md",
+    "/work/out/orientation.md",
+    "/work/out/handoff.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/parameter-to-check-map.json",
+    "/work/out/parameter-to-check-map.md",
+    "/work/out/fixtures/permitted-api.json",
+    "/work/out/fixtures/missing-configuration-api.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/static-line-check.ts",
+    "/work/out/checks.json",
+    "/work/out/draft-checks.md",
+    "/work/out/orientation.md",
+    "/work/out/handoff.md",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/core/src/ledger/source-grants.ts:28-48,211-218,733-827",
+    "packages/core/src/serving/arguments.ts:23-191",
+    "packages/core/src/serving/gate.ts:204-208,240-385",
+    "packages/core/src/serving/dispatch.ts:26-54",
+    "packages/core/src/serving/types.ts:9-23,61-71",
+    "packages/core/src/serving/packet.ts:93-96,153-171",
+    "packages/core/src/serving/sections.ts:6-12",
+    "packages/core/src/serving/search.ts:111-184",
+    "packages/core/src/serving/timeline.ts:37-96",
+    "packages/core/src/serving/page.ts:19-65",
+    "packages/core/src/serving/entities.ts:44-99",
+    "packages/core/src/serving/graph.ts:132-212",
+    "packages/core/src/serving/health.ts:61-142",
+    "packages/core/src/serving/propose.ts:239-316",
+    "packages/core/src/serving/correct.ts:159-305",
+    "packages/core/src/serving/canon.ts:127-166",
+    "packages/core/src/serving/ledger.ts:101-116",
+    "packages/core/src/serving/claims.ts:29-50",
+    "packages/core/src/serving/candidates.ts:148-288",
+    "packages/core/src/serving/retrieval.ts:13-19",
+    "packages/core/src/serving/epoch.ts:16-18",
+    "packages/core/src/agents/identity.ts:396-437",
+    "packages/core/src/agents/authorization.ts:24-87",
+    "packages/core/src/serve/http.ts:59-67,164-167",
+    "packages/mcp/src/schemas.ts:47-118",
+    "packages/mcp/src/principal.ts:6-15",
+    "packages/core/test/source-grants.test.ts:341-397,192-198,399-438,879-965",
+    "packages/core/test/serving/arguments.test.ts:131-175",
+    "packages/core/test/serving/gate.test.ts:46-56",
+    "packages/core/test/serving/helpers.ts:306-428",
+    "scripts/artifact-engine.ts:54",
+    "docs/CURRENT.md",
+    "docs/decision-log.md D14 D18 D19",
+    "rfcs/0002-autonomous-canon.md §10.6"
+  ],
+  "checks": [
+    {
+      "name": "static-line-needles",
+      "command": "bun /work/out/static-line-check.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "existing-source-grants-serving-test",
+      "command": "bun test packages/core/test/source-grants.test.ts -t \"native serving denies legacy agent access\"",
+      "result": "NOT_RUN",
+      "reason": "Missing /repo/node_modules; install forbidden"
+    },
+    {
+      "name": "full-gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "reason": "No source change; no workspace install; no full-suite slot"
+    }
+  ],
+  "verification": {
+    "focused": "PASS static needle script exit 0",
+    "existing_tests": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "limitations": [
+      "Git archive has no metadata or node_modules.",
+      "Existing tests statically cited, not executed.",
+      "No live serving, vault, account, or model use.",
+      "No native/account/model/human qualification or release acceptance."
+    ]
+  },
+  "blockers": [],
+  "next_step": "P029 add focused enforced-epoch cases to packages/core/test/source-grants.test.ts for search/get_page/propose, packet purpose=audit, and retrieval-source-egress-denied; do not duplicate timeline/packet/correct tests at source-grants.test.ts:341-397 and :879-965. P037 may declare source_policy on MCP ENVELOPE_SHAPE.",
+  "downstream_handoff": {
+    "feeds": ["P029", "P037"],
+    "do_not_duplicate": [
+      "packages/core/test/source-grants.test.ts:341-397",
+      "packages/core/test/source-grants.test.ts:192-198",
+      "packages/core/test/source-grants.test.ts:879-965"
+    ],
+    "reserved": ["P003 evidence design", "P015 source-B schema/recovery", "P006 docs", "Astra", "doctor"],
+    "rebase_before_production": true
+  }
+}

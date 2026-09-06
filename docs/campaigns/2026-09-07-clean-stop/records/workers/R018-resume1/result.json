@@ -1,0 +1,113 @@
+{
+  "task_id": "R018",
+  "packet_id": "R018",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "findings": [
+    {
+      "severity": "observation",
+      "location": "packages/core/src/canon/source-erasure-intent.ts:15-24; packages/core/src/canon/schema.ts:41-43; packages/core/src/canon/apply.ts:947-953",
+      "claim": "Current SourceErasureIntent has no phase or write_state field. Per-page replay is classified by intent-row presence plus live page hash compared to receipt.before_hash and receipt.after_hash.",
+      "expected_behavior": "recoverSourceErasureIntents continues when hash equals before_hash, finishes when hash equals after_hash (missing page uses ABSENT_PAGE_HASH), and returns false on any other hash.",
+      "kind": "current-contract map, not a defect"
+    },
+    {
+      "severity": "observation",
+      "location": "rfcs/0004-world-storage.md status Proposed; consumer table citing apply.ts:843-900",
+      "claim": "RFC 0004 write_state names staged/admitted/receipted are not current and were excluded. Line citations in that proposed RFC do not match this base (finishSourceErasure is apply.ts:896-928).",
+      "kind": "non-binding design; P015 owns any later schema"
+    },
+    {
+      "severity": "coverage",
+      "location": "packages/core/test/source-grants.test.ts:1586-1669; packages/core/test/canon/write-page.test.ts:332-371; packages/core/test/canon/receipt-stream.test.ts:68-91",
+      "claim": "Exact interruption, same-ID temp, and JSONL same-ID retry cases already exist. No duplicate product test was drafted.",
+      "kind": "test-strategy"
+    }
+  ],
+  "deliverables": [
+    "/work/out/source-erasure-intent-transitions.md",
+    "/work/out/source-erasure-intent-transitions.json",
+    "/work/out/source-erasure-intent-state-machine.md",
+    "/work/out/source-erasure-intent-state-machine.ts",
+    "/work/out/classifier-check.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/ORIENTATION.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/source-erasure-intent-transitions.md",
+    "/work/out/source-erasure-intent-transitions.json",
+    "/work/out/source-erasure-intent-state-machine.md",
+    "/work/out/source-erasure-intent-state-machine.ts",
+    "/work/out/classifier-check.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/ORIENTATION.md",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/core/src/canon/source-erasure-intent.ts:15-135",
+    "packages/core/src/canon/apply.ts:713-801,896-1004",
+    "packages/core/src/canon/schema.ts:41-43",
+    "packages/core/src/ledger/source-erasure.ts:19-27,69-73,132-282",
+    "packages/core/src/ledger/source-canon-erasure.ts:102-296",
+    "packages/core/src/ledger/source-grants.ts:444-592,830-884",
+    "packages/core/src/ledger/source-stores.ts:92-178",
+    "packages/core/src/ledger/event-origin.ts:52-71",
+    "packages/core/src/vault/write.ts:132-133,253-323",
+    "packages/core/src/vault/canon-files.ts:262-278",
+    "packages/core/src/export.ts:2747-2749",
+    "packages/cli/src/commands/connect-consent.ts:27-43",
+    "packages/cli/src/app/host.ts:200-221"
+  ],
+  "checks": [
+    {
+      "name": "pure classifier draft",
+      "command": "bun /work/out/source-erasure-intent-state-machine.ts /work/out/classifier-check.json",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/classifier-check.json"
+    },
+    {
+      "name": "existing write-page same-ID temp test",
+      "command": "TMPDIR=/work/out/tmp bun test /repo/packages/core/test/canon/write-page.test.ts --test-name-pattern \"source erasure resumes its exact same-ID\"",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit_code": 1,
+      "result": "FAIL",
+      "error": "CanonFilesError: canon_files_unsafe at packages/core/src/vault/init.ts:790",
+      "missing_input": "native-trusted temporary directory ancestry for initVault; this worker tmp is not that directory",
+      "note": "Not a source-erasure contract verdict. Temp trees were removed after the run."
+    },
+    {
+      "name": "full repository gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "reason": "preparation packet; no test slot; vault init unsafe in this tmp; no dependency installs"
+    }
+  ],
+  "verification": {
+    "focused": "PASS exit 0 on pure classifier (10 name-only checks)",
+    "existing_vault_test": "FAIL exit 1 canon_files_unsafe; not used as contract proof",
+    "typecheck": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN"
+  },
+  "blockers": [
+    "GitHub issue 48 body not retrieved (no gh; account/API calls not sanctioned).",
+    "Remote/PR/worktree state not refreshed (read-only archive, no git metadata).",
+    "Existing vault/native tests require a trusted directory; /work/out/tmp is not one."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P015", "P018"],
+    "reserved_owners": {
+      "P015": "source-B schema/recovery/authority/export implementation",
+      "P003": "shared evidence design",
+      "P006": "canonical docs"
+    },
+    "instruction": "Use the transition JSON and state-machine draft as current-code input. Do not treat RFC 0004 write_state names as implemented. Rebase and review before production use. No native/account/human qualification is claimed."
+  },
+  "next_step": "P015 consumes this current-code map for source-B recovery/schema work; independent review of /work/out artifacts; do not wait on unpublished P output."
+}

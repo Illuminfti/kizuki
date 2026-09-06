@@ -1,0 +1,178 @@
+{
+  "task_id": "R074",
+  "packet_id": "R074",
+  "title": "Map Claude snapshot import state and public completion reporting",
+  "issue": 550,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "finding",
+  "owner": "grok-R074",
+  "readiness": "project_scope_ready_now",
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "high",
+      "title": "Completed import CLI totals disagree with doctor/status stored",
+      "evidence": [
+        "packages/cli/src/commands/import.ts:128-141 runToCompletion then formatRunCounts(result)",
+        "packages/core/src/ingest/run.ts:542-587 drained empty batch; persistRun overwrites last_result",
+        "packages/connectors/src/import-snapshot.ts:133-139 identity match returns events [] with the same cursor",
+        "packages/cli/src/commands/doctor.ts:234-235 stored from checkpoint.last_result.stored",
+        "packages/cli/src/connect-catalog.ts:76-78",
+        "packages/core/src/serving/health.ts:93-104"
+      ],
+      "affected_invariant": "Public completion reporting for a snapshot import",
+      "expected": "After a completed two-message Claude import, CLI events_stored=2 while doctor and connect status stored=0 (last empty batch).",
+      "kind": "confirmed_static_trace",
+      "required_fix_owner": "P072/P087 after review; this packet does not change code"
+    },
+    {
+      "id": "F2",
+      "severity": "medium",
+      "title": "Partial parse does not appear as import errors",
+      "evidence": [
+        "packages/connectors/src/import-report.ts:24-66",
+        "packages/cli/src/commands/import.ts:137-141",
+        "packages/cli/src/connections.ts:365-368 blocksEnrollment allows degraded"
+      ],
+      "affected_invariant": "Operator-visible completion vs skipped records",
+      "expected": "Partial fixture CLI stdout errors=0 exit 0; health degraded with records=1; 2 record errors (empty_content=1 unsupported_sender=1).",
+      "kind": "confirmed_static_trace"
+    },
+    {
+      "id": "F3",
+      "severity": "medium",
+      "title": "README snapshot non-tombstone claim disagrees with Claude importer",
+      "evidence": [
+        "packages/connectors/README.md:17-20,50-57",
+        "packages/connectors/src/import-claude/index.ts:71-76 tombstones true",
+        "packages/connectors/src/import-snapshot.ts:177-183",
+        "packages/connectors/test/claude.test.ts:227-254"
+      ],
+      "affected_invariant": "Honest export-import documentation (P006)",
+      "kind": "confirmed_static_trace",
+      "required_fix_owner": "P006"
+    },
+    {
+      "id": "F4",
+      "severity": "medium",
+      "title": "Snapshot cursor stores every record hash under 8 KiB",
+      "evidence": [
+        "packages/core/src/contracts/connector.ts:7 MAX_CURSOR_BYTES = 8 * 1024",
+        "packages/connectors/src/import-snapshot.ts:186-195",
+        "packages/core/src/ingest/run.ts:479-483 assertCursorSize refuses persist"
+      ],
+      "affected_invariant": "Checkpoint durability after a successful parse",
+      "kind": "confirmed_static_trace",
+      "limitation": "No large-export execution; packet forbids resource-exhaustion tests."
+    }
+  ],
+  "deliverables": [
+    "/work/out/lineage-map.md",
+    "/work/out/fixtures/completed-summary.json",
+    "/work/out/fixtures/partial-summary.json",
+    "/work/out/fixtures/exports/completed.json",
+    "/work/out/fixtures/exports/partial.json",
+    "/work/out/fixtures/computed-summaries.json",
+    "/work/out/verify-report-fields.ts",
+    "/work/out/existing-coverage.md",
+    "/work/out/unexecuted-cli-checks.md",
+    "/work/out/checks.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/lineage-map.md",
+    "/work/out/fixtures/completed-summary.json",
+    "/work/out/fixtures/partial-summary.json",
+    "/work/out/fixtures/exports/completed.json",
+    "/work/out/fixtures/exports/partial.json",
+    "/work/out/fixtures/computed-summaries.json",
+    "/work/out/verify-report-fields.ts",
+    "/work/out/existing-coverage.md",
+    "/work/out/unexecuted-cli-checks.md",
+    "/work/out/checks.json",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/connectors/src/import-claude/index.ts",
+    "packages/connectors/src/import-snapshot.ts",
+    "packages/connectors/src/import-report.ts",
+    "packages/connectors/src/source-id.ts",
+    "packages/cli/src/commands/import.ts",
+    "packages/cli/src/output.ts",
+    "packages/cli/src/commands/doctor.ts",
+    "packages/cli/src/connect-catalog.ts",
+    "packages/cli/src/connections.ts",
+    "packages/core/src/ingest/run.ts",
+    "packages/core/src/serving/health.ts",
+    "packages/core/src/ledger/connections.ts",
+    "packages/core/src/staging/producers.ts",
+    "packages/core/src/contracts/connector.ts",
+    "packages/connectors/test/claude.test.ts",
+    "packages/connectors/README.md",
+    "FLEET-SOURCE-IDENTITY.json"
+  ],
+  "checks": [
+    {
+      "name": "report_field_formulas",
+      "command": "bun /work/out/verify-report-fields.ts",
+      "exit": 0,
+      "result": "PASS",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T22:02:00Z"
+    },
+    {
+      "name": "workspace_import_parseClaudeExport",
+      "command": "bun -e 'import { parseClaudeExport } from \"/repo/packages/connectors/src/import-claude/index.ts\"'",
+      "exit": 1,
+      "result": "FAIL",
+      "note": "missing @kizuki/core; not a product failure"
+    },
+    {
+      "name": "claude_package_tests",
+      "command": "bun test packages/connectors/test/claude.test.ts",
+      "result": "NOT_RUN"
+    },
+    {
+      "name": "full_repository_gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS formulas via bun /work/out/verify-report-fields.ts exit 0; parse/ingest/CLI UNEXECUTED",
+    "package_type_full_gate": "NOT_RUN",
+    "privacy": "static PASS; fixtures are synthetic; error reasons are codes not captured text",
+    "independent_review": "NOT_RUN",
+    "limitations": [
+      "Could not import @kizuki/core from the archive (no node_modules; no installs).",
+      "proposals_created 4/2 is from proposalsForEvent static reading, not fileProposal execution.",
+      "No live Anthropic or owner-export data.",
+      "No native/account/model/human qualification claim."
+    ]
+  },
+  "blockers": [
+    "Workspace package resolution (@kizuki/core) is absent in this archive container; parser and CLI remain unexecuted."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P072", "P087"],
+    "do_not_duplicate": "P071 semantic or repeated-message goldens; existing claude.test.ts parser and tombstone cases",
+    "use": [
+      "/work/out/lineage-map.md",
+      "/work/out/fixtures/completed-summary.json",
+      "/work/out/fixtures/partial-summary.json"
+    ],
+    "p072": "Bind public import completion reporting to formatRunCounts vs health records vs last_result.stored. Add CLI/doctor assertions from the fixtures; do not re-golden parse text.",
+    "p087": "Do not invent a second count contract. Reuse RunResult / last_result / health.detail as mapped. Coordinate any last_result semantics change with ingest persistRun.",
+    "reserved": "P003 evidence design, P015 source-B, P006 canonical docs, Astra and external doctor owners"
+  },
+  "next_step": "P072 implements public Claude import completion reporting against these fixtures on a workspace checkout of f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7; rebase before production use.",
+  "limitations_preserved": [
+    "Read-only /work/out writes only",
+    "No account/provider calls",
+    "No vulnerability or exhaustion testing",
+    "No qualification or release-acceptance claim",
+    "Formula verifier reimplements helpers; it is not a substitute for bun test"
+  ]
+}

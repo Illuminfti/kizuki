@@ -1,0 +1,183 @@
+{
+  "task_id": "R015",
+  "packet_id": "R015",
+  "title": "Describe undo public preconditions and result shapes",
+  "issue": 49,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "owner": "grok-R015",
+  "write_scope": "/work/out only",
+  "feeds_packets": ["P023", "P043"],
+  "findings": [
+    {
+      "severity": "integration",
+      "id": "undo-stdout-has-no-json",
+      "location": "packages/cli/src/commands/undo.ts:12-27",
+      "fact": "kizuki undo has no --json envelope. Unknown --json is a usage error (exit 2).",
+      "invariant": "docs/cli.md describes --json as a general CLI envelope; undo does not implement it."
+    },
+    {
+      "severity": "integration",
+      "id": "purge-warning-is-on-purge-not-undo",
+      "location": "packages/cli/src/commands/purge.ts:14-15 vs packages/cli/src/commands/undo.ts:23-35 vs rfcs/0002-autonomous-canon.md:2596-2598",
+      "fact": "RFC 0002 §16.4 says the undo result states that purged events are not resurrected. Current undo stdout is only the five key=value lines. The sentence lives on kizuki purge.",
+      "invariant": "P023/P043 must not invent an undo resurrection line."
+    },
+    {
+      "severity": "integration",
+      "id": "retry-when-hash-already-before",
+      "location": "packages/core/src/canon/undo.ts:244-265,361-377",
+      "fact": "If current hash equals before_hash/ABSENT and differs from after_hash, undo completes instead of page_changed. RFC §7.2 step 2 does not describe this interrupted-retry path; tests 316-428 do.",
+      "invariant": "Integrate against current code."
+    },
+    {
+      "severity": "integration",
+      "id": "non-undoerror-prefix",
+      "location": "packages/cli/src/main.ts:223-224",
+      "fact": "SourceGrantError, CanonWriteError (erased page_path), and missing vault use stderr prefix `error:`. UndoError does not.",
+      "invariant": "Callers must branch on prefix and exit, not on a printed code."
+    },
+    {
+      "severity": "integration",
+      "id": "app-undo-collapses-codes",
+      "location": "packages/cli/src/app/host.ts:50-54,224-230",
+      "fact": "App undo success is {receipt_id, message:'Receipt undone.'}. UndoError codes are absent from the AppError allow-list, so failures become unavailable/retryable.",
+      "invariant": "P043 must not assume CLI UndoError text on the app route."
+    },
+    {
+      "severity": "coverage",
+      "id": "cli-gaps-not-duplicated",
+      "location": "packages/cli/test/audit-undo.test.ts",
+      "fact": "CLI already covers success undo, unknown, already-reverted, and help. It does not cover cascade, page_changed, not_undoable, or undo arity. Core already covers the engine. This packet does not add tests.",
+      "invariant": "Do not duplicate packages/core/test/canon/undo.test.ts."
+    }
+  ],
+  "deliverables": [
+    "/work/out/receipt-state-to-result.json",
+    "/work/out/receipt-state-to-result.md",
+    "/work/out/fixtures/cli-response-fixtures.json",
+    "/work/out/fixtures/cli/",
+    "/work/out/fixtures/synthetic-pages.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/orientation.md",
+    "/work/out/handoff.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/receipt-state-to-result.json",
+    "/work/out/receipt-state-to-result.md",
+    "/work/out/fixtures/cli-response-fixtures.json",
+    "/work/out/fixtures/cli/",
+    "/work/out/fixtures/synthetic-pages.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/scripts/undo-cli-usage-shape.ts",
+    "/work/out/scripts/static-verify-undo-shapes.ts",
+    "/work/out/scripts/emit-undo-artifacts.ts",
+    "/work/out/checks/usage-shape.json",
+    "/work/out/checks/static-verify.json",
+    "/work/out/checks/live-cli-attempt.json"
+  ],
+  "source_references": [
+    { "file": "packages/core/src/canon/undo.ts", "lines": "323-440", "symbol": "undoReceipt" },
+    { "file": "packages/core/src/canon/errors.ts", "lines": "22-51", "symbol": "UndoError / UndoErrorCode" },
+    { "file": "packages/cli/src/commands/undo.ts", "lines": "7-39", "symbol": "undoCommand" },
+    { "file": "packages/cli/src/main.ts", "lines": "211-224", "symbol": "help and error exits" },
+    { "file": "packages/cli/src/args.ts", "lines": "16-105", "symbol": "parseArguments / requirePositional" },
+    { "file": "packages/cli/src/help.ts", "lines": "47,124-150", "symbol": "printCommandHelp / usageLines" },
+    { "file": "packages/core/src/canon/receipts.ts", "lines": "17-62,262-278", "symbol": "CanonReceipt / laterReceiptsForPage" },
+    { "file": "packages/cli/src/commands/purge.ts", "lines": "14-15", "symbol": "PURGE_IRREVERSIBLE" },
+    { "file": "rfcs/0002-autonomous-canon.md", "lines": "1450-1482,2579-2600,2725-2728", "symbol": "§7.2 §16.4 §18.1" },
+    { "file": "packages/cli/test/audit-undo.test.ts", "lines": "121-199", "symbol": "existing CLI coverage" },
+    { "file": "packages/core/test/canon/undo.test.ts", "lines": "52-505", "symbol": "existing core coverage" }
+  ],
+  "checks": [
+    {
+      "name": "bun_version",
+      "command": "bun --version",
+      "result": "PASS",
+      "exit": 0,
+      "detail": "1.3.14"
+    },
+    {
+      "name": "absent_page_hash",
+      "command": "bun -e sha256 empty bytes",
+      "result": "PASS",
+      "exit": 0,
+      "detail": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "static_source_scan",
+      "command": "bun /work/out/scripts/static-verify-undo-shapes.ts",
+      "result": "PASS",
+      "exit": 0,
+      "detail": "43/43 message and mapping strings present",
+      "evidence": "/work/out/checks/static-verify.json"
+    },
+    {
+      "name": "isolated_usage_parser",
+      "command": "bun /work/out/scripts/undo-cli-usage-shape.ts",
+      "result": "PASS",
+      "exit": 0,
+      "detail": "Real packages/cli/src/args.ts and UndoError class. No vault.",
+      "evidence": "/work/out/checks/usage-shape.json"
+    },
+    {
+      "name": "live_cli_help_undo",
+      "command": "bun packages/cli/src/main.ts help undo",
+      "result": "NOT_RUN",
+      "exit": 1,
+      "detail": "Cannot find module '@kizuki/tui' from /repo/packages/cli/src/output.ts. Workspace packages are not installed in this git archive. bun install is forbidden.",
+      "evidence": "/work/out/checks/live-cli-attempt.json"
+    },
+    {
+      "name": "existing_cli_audit_undo_tests",
+      "command": "bun test packages/cli/test/audit-undo.test.ts",
+      "result": "NOT_RUN",
+      "detail": "Same missing workspace modules. Tests statically verified from source."
+    },
+    {
+      "name": "existing_core_undo_tests",
+      "command": "bun test packages/core/test/canon/undo.test.ts",
+      "result": "NOT_RUN",
+      "detail": "Same missing workspace modules. Tests statically verified from source."
+    },
+    {
+      "name": "full_repository_gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "detail": "No source change; archive has no installed modules; root owns full-suite slots."
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS isolated parser + static source scan; NOT_RUN live CLI and existing vault tests",
+    "package_type_full_gate": "NOT_RUN",
+    "privacy_diff_integrity": "PASS synthetic Ada page bytes only; no owner vault or credentials",
+    "independent_review": "NOT_RUN",
+    "retained_package": "NOT_RUN"
+  },
+  "blockers": [
+    "Live `kizuki undo` against a vault cannot run here: /repo is a git archive without installed workspace modules, and this packet forbids bun install. Vault success/failure fixtures are therefore labeled unexecuted."
+  ],
+  "next_step": "P023/P043 rebase onto live base, install the revision's workspace, and consume /work/out/receipt-state-to-result.json plus /work/out/fixtures/cli-response-fixtures.json. Add CLI-seam tests only for uncovered public shapes; do not duplicate packages/core/test/canon/undo.test.ts.",
+  "downstream_handoff": {
+    "for": ["P023", "P043"],
+    "consume": [
+      "/work/out/receipt-state-to-result.json",
+      "/work/out/fixtures/cli-response-fixtures.json"
+    ],
+    "do_not": [
+      "Treat RFC 0002 §16.4 undo-result prose as current CLI stdout",
+      "Add --json to undo without a separate contract change",
+      "Assume AppError codes match UndoErrorCode",
+      "Duplicate existing core undo tests"
+    ]
+  },
+  "limitations": [
+    "Read-only preparation. No source edits, commits, PRs, or qualification claims.",
+    "Git, curl, and Python are absent. No vps-nav, no fetch, no live remote.",
+    "Existing focused tests and full verify were not run.",
+    "Synthetic hashes are sha256 of documented fixture bytes, not a live vault.",
+    "No native/account/model/human qualification or release acceptance."
+  ]
+}

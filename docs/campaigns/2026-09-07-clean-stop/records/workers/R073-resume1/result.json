@@ -1,0 +1,170 @@
+{
+  "task_id": "R073",
+  "packet_id": "R073",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Inventory Claude format detection and parse-count bounds",
+  "issue": 550,
+  "capability": "export import",
+  "findings": [
+    {
+      "severity": "contract",
+      "id": "conversation-only-MAX_RECORDS",
+      "file": "packages/connectors/src/util.ts",
+      "lines": "67-69,116-145",
+      "also": "packages/connectors/src/import-claude/index.ts:142",
+      "invariant": "parseJsonArray refuses arrays longer than MAX_RECORDS=1000000",
+      "observed": "Claude applies that ceiling to the top-level conversations array only. chat_messages length is not capped.",
+      "required_fix": "P072 must decide whether to count messages, keep the conversation ceiling, or both — without a million-row fixture."
+    },
+    {
+      "severity": "contract",
+      "id": "MAX_RECORD_BYTES-unapplied",
+      "file": "packages/connectors/src/util.ts",
+      "lines": "62-69",
+      "also": "packages/core/src/contracts/event.ts:14-36",
+      "invariant": "Comment claims every snapshot parser applies MAX_EXPORT_BYTES, MAX_RECORDS, MAX_RECORD_BYTES, MAX_JSON_DEPTH",
+      "observed": "parseClaudeExport never consults MAX_RECORD_BYTES. Oversize text can parse and then fail validateEventInput (textBytes 1048576).",
+      "required_fix": "P072 should state the intended bound. Do not paper over by weakening EVENT_LIMITS."
+    },
+    {
+      "severity": "coverage",
+      "id": "claude-diagnostics-untested",
+      "file": "packages/connectors/test/claude.test.ts",
+      "lines": "38-290",
+      "invariant": "Each diagnostic code in parseClaudeExport should have a Claude-labeled case or an explicit shared-test citation",
+      "observed": "missing_messages, malformed_messages, malformed_content, invalid_timestamp, duplicate_id, conflicting_id, image/document blocks, thinking/tool_result, quote join, ChatGPT-shaped non-detection are absent from claude.test.ts. ChatGPT already covers dup/conflict/time on a different schema.",
+      "required_fix": "P072 adds only the missing Claude cases using /work/out/fixtures and coverage-map.md. Do not retest tool_use+attachments or non-array health."
+    },
+    {
+      "severity": "docs-mismatch",
+      "id": "readme-tombstone-sentence",
+      "file": "packages/connectors/README.md",
+      "lines": "50-57",
+      "also": "packages/connectors/src/import-claude/index.ts:71-77",
+      "invariant": "Registry/README claims must match implemented capabilities",
+      "observed": "README says snapshot importers never emit tombstones; Claude manifest tombstones:true and tests emit them.",
+      "required_fix": "P006 docs lane; not this packet."
+    },
+    {
+      "severity": "provider-limit",
+      "id": "unpublished-export-schema",
+      "file": "https://support.claude.com/en/articles/9450526-export-your-claude-data.json",
+      "lines": "fetched 2026-09-06 HTTP 200",
+      "invariant": "Connector research records official format",
+      "observed": "Official article describes Settings → Privacy export of conversation data and account user data, email link, 24h expiry. It does not name conversations.json, chat_messages, sender, or content blocks.",
+      "required_fix": "Keep recognition keys as in-tree behavior. Do not cite an invented Anthropic schema."
+    }
+  ],
+  "deliverables": [
+    "/work/out/claude-format-inventory.md",
+    "/work/out/coverage-map.md",
+    "/work/out/expected-results.json",
+    "/work/out/fixtures/01-accepted-text-roles.json",
+    "/work/out/fixtures/02-accepted-content-and-quote.json",
+    "/work/out/fixtures/03-ordinary-exclusions.json",
+    "/work/out/fixtures/04-diagnostics.json",
+    "/work/out/fixtures/05-not-array.json",
+    "/work/out/fixtures/06-chatgpt-shaped.json",
+    "/work/out/fixtures/07-three-conversations.json",
+    "/work/out/verify-claude-fixtures.ts",
+    "/work/out/provider-docs.md",
+    "/work/out/provider-export-article-2026-09-06.json",
+    "/work/out/checks.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/claude-format-inventory.md",
+    "/work/out/coverage-map.md",
+    "/work/out/expected-results.json",
+    "/work/out/fixtures/01-accepted-text-roles.json",
+    "/work/out/fixtures/02-accepted-content-and-quote.json",
+    "/work/out/fixtures/03-ordinary-exclusions.json",
+    "/work/out/fixtures/04-diagnostics.json",
+    "/work/out/fixtures/05-not-array.json",
+    "/work/out/fixtures/06-chatgpt-shaped.json",
+    "/work/out/fixtures/07-three-conversations.json",
+    "/work/out/verify-claude-fixtures.ts",
+    "/work/out/provider-docs.md",
+    "/work/out/provider-export-article-2026-09-06.json",
+    "/work/out/checks.json",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/connectors/src/import-claude/index.ts:32-418",
+    "packages/connectors/src/import-snapshot.ts:17-237",
+    "packages/connectors/src/util.ts:62-145,175-179",
+    "packages/connectors/src/read.ts:123-211",
+    "packages/connectors/src/import-report.ts:9-67",
+    "packages/connectors/src/source-id.ts:9-29",
+    "packages/connectors/src/registry.ts:329-335",
+    "packages/connectors/test/claude.test.ts:1-291",
+    "packages/connectors/test/chatgpt.test.ts:123-385",
+    "packages/connectors/test/source-id.test.ts:15-27",
+    "packages/connectors/test/util.test.ts:90-128",
+    "packages/connectors/test/conformance.test.ts:203-225",
+    "packages/connectors/README.md:32-33,50-57",
+    "packages/core/src/contracts/event.ts:14-36",
+    "packages/core/src/sensitivity/policy.ts:47-50",
+    "packages/cli/src/commands/import.ts:79-103",
+    "packages/cli/src/connections.ts:143-170,366-368",
+    "packages/cli/src/connect-catalog.ts:14"
+  ],
+  "checks": [
+    {
+      "name": "verify-claude-fixtures",
+      "command": "bun /work/out/verify-claude-fixtures.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T22:07:34Z",
+      "exit_code": 2,
+      "result": "NOT_RUN",
+      "evidence": "fixtures_json_ok count=7; parser_import_unexecuted; missing @kizuki/core"
+    },
+    {
+      "name": "existing-claude-tests",
+      "command": "cd /repo && bun test packages/connectors/test/claude.test.ts packages/connectors/test/source-id.test.ts packages/connectors/test/util.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T22:07:34Z",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "evidence": "Cannot find module '@kizuki/core' / '@kizuki/connector-beeper'; 0 pass 3 fail 3 errors; loader failure, not assertion results"
+    },
+    {
+      "name": "full-repository-gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "evidence": "same missing workspace install"
+    },
+    {
+      "name": "provider-export-article",
+      "command": "fetch https://support.claude.com/en/articles/9450526-export-your-claude-data.json",
+      "result": "PASS",
+      "http_status": 200,
+      "checked": "2026-09-06"
+    }
+  ],
+  "verification": {
+    "focused": "NOT_RUN",
+    "package_type_full_gate": "NOT_RUN",
+    "privacy": "static_pass_synthetic_fixtures",
+    "independent_review": "NOT_RUN",
+    "limitation": "This git archive has no node_modules. bun install is forbidden. Existing test bodies were not run. Expected fixture outcomes are static traces of cited source lines."
+  },
+  "blockers": [],
+  "execution_limitations": [
+    "No workspace node_modules in /repo; cannot import @kizuki/core or run bun test bodies.",
+    "No live Claude account or real export.",
+    "Official help article does not publish the JSON schema the importer implements.",
+    "P071 unpublished output was not read, per packet."
+  ],
+  "downstream_handoff": {
+    "feeds": "P072",
+    "keep": "P071 content/role/quote fidelity as stated in claude-format-inventory.md section 3 and fixtures 01-02. human→claude:self, assistant→claude:assistant, exact text plus unique content text blocks joined by newline, markdown quote characters retained, duplicate exact content block skipped.",
+    "do_not": "Do not duplicate claude.test.ts cases already listed in coverage-map.md. Do not generate MAX_RECORDS- or MAX_EXPORT_BYTES-sized files. Do not treat ChatGPT mapping as Claude. Do not call this live sync. Do not claim live-account or release acceptance.",
+    "implement": "Missing Claude-labeled diagnostics and bounds stand-ins from coverage-map.md, after rebase on the live base. Shared parseJsonArray maxRecords override is the permitted bound proof."
+  },
+  "next_step": "P072: add the missing Claude cases from coverage-map.md on a live worktree with workspace install; run bun test packages/connectors/test/claude.test.ts and bun /work/out/verify-claude-fixtures.ts on that head; keep P071 fidelity; leave README tombstone wording to P006."
+}

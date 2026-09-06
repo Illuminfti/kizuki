@@ -1,0 +1,156 @@
+{
+  "task_id": "R091",
+  "packet_id": "R091",
+  "title": "Draft useful-insight evidence-link observation adapter",
+  "issue": 542,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "owner": "grok-R091",
+  "write_scope": "/work/out only",
+  "repository_edits": false,
+  "findings": [
+    {
+      "severity": "gap",
+      "id": "named-insight-contract-absent",
+      "location": "docs/release-acceptance.md:143; scripts/go-no-go.ts:21,161; packages/core/src/serving/sections.ts:6-11",
+      "observation": "journey.useful-insight requires named question/insight contracts. Implemented briefs are purpose-scoped context packets only (session/recall/correction/audit). The go-no-go journey adapter remains NOT_IMPLEMENTED.",
+      "invariant": "No fake surface; do not treat context_packet as a named insight contract.",
+      "confirmed": true
+    },
+    {
+      "severity": "limitation",
+      "id": "claim-line-omits-event-ids",
+      "location": "packages/core/src/serving/candidates.ts:292-295; packages/core/src/serving/claims.ts:72-76",
+      "observation": "Working-knowledge lines stamp claim_id, confidence, sensitivity, taint, authority, and status. Provenance event ids are required to serve but are not printed. Envelope has no structured claims array.",
+      "invariant": "Packet text is not a complete evidence citation.",
+      "confirmed": true
+    },
+    {
+      "severity": "mismatch",
+      "id": "rfc-sketch-vs-implemented-packet-grammar",
+      "location": "rfcs/0002-autonomous-canon.md:1976-1993 vs packages/core/src/serving/candidates.ts:45-60,212-318 and packet.ts:39-41,227-231",
+      "observation": "RFC sketch uses CANON/QUOTED headings and c= on canon lines. Implementation uses ## headings; canon stamps are s=/taint=/auth=/origin=; confidence is on claims only; header includes principal= and at=.",
+      "invariant": "Observers must use the implemented grammar.",
+      "confirmed": true
+    },
+    {
+      "severity": "classification",
+      "id": "identity-authority-flag-is-not-insufficiency",
+      "location": "packages/core/src/serving/candidates.ts:323; packages/core/test/serving/packet-claim-boundaries.test.ts:125-131",
+      "observation": "identity-authority-unavailable is always appended when claims are included and does not withhold packed model-free claims.",
+      "invariant": "Unavailable identity authority is distinct from missing claim evidence.",
+      "confirmed": true
+    },
+    {
+      "severity": "classification",
+      "id": "empty-extract-is-ok-not-unavailable",
+      "location": "packages/core/src/producer/prompt.ts:32; packages/core/test/producer/schema.test.ts:24-26; packages/core/test/producer/model.test.ts:73-84; packages/core/test/loop/tri-state.test.ts:48-80",
+      "observation": "{\"claims\":[]} is valid ok emptiness and may advance the extract cursor. unavailable must not be treated as emptiness.",
+      "invariant": "Failure is never representable as empty success.",
+      "confirmed": true
+    }
+  ],
+  "deliverables": [
+    "/work/out/field-to-observation-map.json",
+    "/work/out/fixtures/supported-evidence.json",
+    "/work/out/fixtures/insufficient-evidence.json",
+    "/work/out/observation-adapter.ts",
+    "/work/out/validate-observation-adapter.ts",
+    "/work/out/existing-coverage.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/field-to-observation-map.json",
+    "/work/out/fixtures/supported-evidence.json",
+    "/work/out/fixtures/insufficient-evidence.json",
+    "/work/out/observation-adapter.ts",
+    "/work/out/validate-observation-adapter.ts",
+    "/work/out/existing-coverage.json",
+    "/work/out/expected-behavior.md"
+  ],
+  "source_references": [
+    "packages/core/src/serving/packet.ts:39-86,153-341",
+    "packages/core/src/serving/sections.ts:1-47",
+    "packages/core/src/serving/candidates.ts:45-69,148-327",
+    "packages/core/src/serving/types.ts:25-71",
+    "packages/core/src/serving/claims.ts:72-76",
+    "packages/core/src/serving/canon.ts:154-179",
+    "packages/core/src/serving/gate.ts:179-187",
+    "packages/core/src/serving/retrieval.ts:12-51",
+    "packages/core/src/producer/result.ts:85-191",
+    "packages/core/src/producer/schema.ts:24-36,82-97,153-168",
+    "packages/core/src/producer/prompt.ts:13-33",
+    "packages/cli/src/commands/context.ts:22-71",
+    "packages/cli/src/commands/tell.ts:8-78",
+    "packages/mcp/src/server.ts:23-32,152-162",
+    "packages/core/test/serving/packet.test.ts",
+    "packages/core/test/serving/packet-claim-boundaries.test.ts",
+    "packages/cli/test/context.test.ts",
+    "docs/release-acceptance.md:143",
+    "docs/context-privacy.md",
+    "rfcs/0002-autonomous-canon.md:1976-1993",
+    "scripts/go-no-go.ts:21,161"
+  ],
+  "checks": [
+    {
+      "name": "local-fixture-adapter",
+      "command": "bun /work/out/validate-observation-adapter.ts",
+      "cwd": "/work/out",
+      "toolchain": "bun 1.3.14",
+      "at": "2026-09-06T22:05:54Z",
+      "exit_code": 0,
+      "stdout": "R091 observation adapter fixtures: PASS",
+      "result": "PASS"
+    },
+    {
+      "name": "bun-version",
+      "command": "bun --version",
+      "exit_code": 0,
+      "stdout": "1.3.14",
+      "result": "PASS"
+    },
+    {
+      "name": "existing-packet-tests",
+      "command": "bun test packages/core/test/serving/packet.test.ts packages/core/test/serving/packet-claim-boundaries.test.ts packages/cli/test/context.test.ts packages/core/test/producer/schema.test.ts",
+      "result": "NOT_RUN",
+      "reason": "/repo/node_modules is absent; no dependency installs permitted. Existing cases inventoried and statically verified in existing-coverage.json."
+    },
+    {
+      "name": "repository-verify",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "reason": "Read-only preparation packet; no source edits; node_modules absent."
+    }
+  ],
+  "verification": {
+    "focused": "PASS",
+    "package_type_full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "human_usefulness": "not_observed",
+    "native_or_account_or_model": "not_claimed"
+  },
+  "blockers": [],
+  "limitations": [
+    "Product tests were not executed because node_modules is missing.",
+    "Remote git/issue/PR state was not refreshed; /repo is a git archive without metadata.",
+    "No named insight contract, human usefulness, or journey.useful-insight GO is claimed.",
+    "P034/P036 retain semantic quality and real-model qualification.",
+    "Fixtures are synthetic Ada/Acme/kettle ordinary-contract examples, not owner data."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P089", "P099"],
+    "use": "Consume field-to-observation-map.json and the two fixture files as the observation grammar for useful-insight evidence links.",
+    "do_not": [
+      "Treat context_packet purposes as named insight contracts",
+      "Treat identity-authority-unavailable as claim insufficiency",
+      "Treat producer unavailable as empty success",
+      "Duplicate existing packet/producer tests listed in existing-coverage.json",
+      "Claim human usefulness or release acceptance"
+    ],
+    "next_smallest_dependency": "P089/P099 review and rebase these artifacts onto the live integration branch before production use."
+  },
+  "next_step": "P089/P099 consume the map and fixtures; keep journey.useful-insight NOT_IMPLEMENTED until a named insight contract and independent qualification exist."
+}

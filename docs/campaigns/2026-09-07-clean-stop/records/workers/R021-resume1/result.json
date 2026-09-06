@@ -1,0 +1,145 @@
+{
+  "task_id": "R021",
+  "packet_id": "R021",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "finding",
+  "findings": [
+    {
+      "severity": "medium",
+      "id": "I4",
+      "title": "Verify-only accepts a future serve schema that restore-into refuses",
+      "location": "packages/core/src/export.ts:2308-2316 and :2335-2336; packages/cli/src/commands/restore.ts:20-29",
+      "evidence": "Handler fixture I4_verify exit 0 with schema=kizuki.backup/v3 complete=true; I4_restore exit 1 error: backup serve schema 9 is newer than 8. invocation-receipts.json.",
+      "invariant": "Public verify should not report success for a backup the same binary cannot restore.",
+      "fix": "Apply the running serve (and any live ledger) ceiling in verifyBackup, or document verify as hash/completeness only. P015 owns export/restore implementation."
+    },
+    {
+      "severity": "low",
+      "id": "A9",
+      "title": "--verify does not prevent writes when --into is present",
+      "location": "packages/cli/src/commands/restore.ts:13,19-29",
+      "evidence": "Flag parsed and never read. A9 restored into /work/out/run/verify-into with vault= and count lines.",
+      "invariant": "Dry/preview vs write should be one obvious dispatch.",
+      "fix": "Either ignore --verify in usage when --into is set, or refuse the combination. Docs (P006) currently treat --verify as equivalent to omitted --into."
+    },
+    {
+      "severity": "low",
+      "id": "A6",
+      "title": "restore --json is an unknown option",
+      "location": "packages/cli/src/commands/restore.ts:11-13; packages/cli/src/args.ts:57; docs/cli.md:22-23",
+      "evidence": "A6 exit 2, stderr error: unknown option --json.",
+      "invariant": "Documented JSON envelope must match implemented verbs.",
+      "fix": "P006: limit the intro to verbs that implement --json, or P028 adds restore JSON if that contract is wanted."
+    },
+    {
+      "severity": "low",
+      "id": "P3",
+      "title": "Occupied restore target uses export error wording",
+      "location": "packages/core/src/export.ts:599-606",
+      "evidence": "P3 stderr error: export output directory is not empty: /work/out/run/occupied",
+      "invariant": "Failure text should name the restore destination.",
+      "fix": "P015: restore-specific message. Core occupied-target test already exists; do not duplicate."
+    },
+    {
+      "severity": "coverage",
+      "id": "CLI-GAP",
+      "title": "CLI public restore outcomes are mostly untested",
+      "location": "packages/cli/test/e2e.test.ts:123-130 vs restore.ts:10-42",
+      "evidence": "e2e asserts only verified= and vault= plus .kizuki exists. No CLI test for usage, incompatible envelopes, counts, or warning= lines. Core library tests already cover ledger allowlist and occupied targets.",
+      "invariant": "Public command stdout/stderr/exit codes need CLI-seam tests.",
+      "fix": "P028: add CLI tests from /work/out fixtures; do not retest agent-enrollment-backup ledger allowlist."
+    }
+  ],
+  "deliverables": [
+    "/work/out/restore-cli-precondition-outcome-table.md",
+    "/work/out/restore-cli-precondition-outcome-table.json",
+    "/work/out/fixtures/",
+    "/work/out/invoke-restore-fixtures.ts",
+    "/work/out/invocation-receipts.md",
+    "/work/out/invocation-receipts.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/orientation.md",
+    "/work/out/HANDOFF.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/restore-cli-precondition-outcome-table.md",
+    "/work/out/restore-cli-precondition-outcome-table.json",
+    "/work/out/fixtures/README.md",
+    "/work/out/fixtures/unsupported-schema/manifest.json",
+    "/work/out/fixtures/invalid-v3-ledger/manifest.json",
+    "/work/out/fixtures/invalid-v1-ledger/manifest.json",
+    "/work/out/fixtures/missing-manifest/README.md",
+    "/work/out/fixtures/supported-current-v3/",
+    "/work/out/fixtures/future-serve-schema/",
+    "/work/out/invoke-restore-fixtures.ts",
+    "/work/out/invocation-receipts.md",
+    "/work/out/invocation-receipts.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/orientation.md",
+    "/work/out/HANDOFF.md",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/cli/src/commands/restore.ts:6-44",
+    "packages/cli/src/args.ts:16-61",
+    "packages/cli/src/main.ts:170-225",
+    "packages/cli/src/help.ts:64-67,138-150",
+    "packages/cli/src/output.ts:77-79",
+    "packages/core/src/export.ts:68-70,96,599-606,824-832,1201,1845-1871,2308-2339,2498-2508",
+    "packages/core/src/ledger/db.ts:188",
+    "packages/core/src/serve/types.ts:9",
+    "docs/cli.md:22-26,361-376",
+    "packages/cli/test/e2e.test.ts:123-130",
+    "packages/core/test/agent-enrollment-backup.test.ts:207-272",
+    "packages/core/test/source-model-egress.test.ts:949-971",
+    "packages/core/test/export.test.ts:668-710"
+  ],
+  "checks": [
+    {
+      "name": "cli-process-restore",
+      "command": "bun /repo/packages/cli/src/main.ts restore",
+      "result": "NOT_RUN",
+      "reason": "workspace node_modules absent; Cannot find module '@kizuki/tui' from packages/cli/src/output.ts. bun install not permitted."
+    },
+    {
+      "name": "handler-core-fixtures",
+      "command": "bun /work/out/invoke-restore-fixtures.ts",
+      "result": "PASS",
+      "matched": "21/21",
+      "runtime": "bun 1.3.14",
+      "started": "2026-09-06T22:02:05.690Z",
+      "finished": "2026-09-06T22:02:07.856Z",
+      "evidence": "/work/out/invocation-receipts.json"
+    },
+    {
+      "name": "existing-cli-e2e-restore",
+      "command": "bun test packages/cli/test/e2e.test.ts",
+      "result": "NOT_RUN",
+      "reason": "same missing node_modules; statically cited at packages/cli/test/e2e.test.ts:123-130"
+    },
+    {
+      "name": "full-repository-gate",
+      "result": "NOT_RUN",
+      "reason": "not assigned; no source change"
+    }
+  ],
+  "verification": {
+    "focused": "PASS handler+core 21/21; CLI process NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "native_or_stranger": "NOT_RUN"
+  },
+  "blockers": [
+    "Workspace node_modules are not present in the git archive, so bun packages/cli/src/main.ts cannot be spawned without bun install (forbidden here)."
+  ],
+  "next_step": "P028 should add CLI public-seam tests from these fixtures (usage, I1, I4 verify/restore split, P1-P3, A9) without duplicating core ledger allowlist tests. P015 should decide whether verifyBackup applies the serve ceiling. P090 consumes the outcome table. P006 owns any docs/JSON wording.",
+  "downstream_handoff": {
+    "P028": "CLI tests and any restore flag/dispatch fix. Use /work/out/restore-cli-precondition-outcome-table.md and fixtures. Do not duplicate packages/core/test/agent-enrollment-backup.test.ts ledger cases.",
+    "P090": "Public outcome map for restore reporting; include I4 verify vs restore split and unused --verify.",
+    "P015": "Optional: same schema ceiling in verifyBackup and restoreVault; restore-specific not-empty error text.",
+    "P006": "Optional: --json verb list; --verify/--into combination.",
+    "not_this_lane": "P003 evidence design, Astra, doctor, native qualification, source edits, bun install."
+  }
+}

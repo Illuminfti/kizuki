@@ -1,0 +1,195 @@
+{
+  "task_id": "R001",
+  "packet_id": "R001",
+  "issue": 541,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "title": "Trace release acceptance shell and exit-code propagation",
+  "findings": [
+    {
+      "severity": "coverage-gap",
+      "id": "process-exit-2-untested",
+      "location": "scripts/go-no-go.test.ts:297-308 vs scripts/go-no-go.ts:241-249",
+      "confirmed": true,
+      "summary": "The only CLI process spawn asserts exit 1 on a complete NO-GO. parseAcceptanceArgs extra/duplicate flags throw at function level (lines 299-300) and never observe process.exitCode 2, usage stderr, empty stdout, or absent --out. Missing-input and publication-failure process rows are absent.",
+      "affected_invariant": "Documented exit 2 for invalid arguments or failure to retain output (docs/release-acceptance.md:38-40).",
+      "smallest_correction": "P004: spawn go-no-go.ts for the missing-input matrix in /work/out/command-to-exit-truth-table.json. Do not add duplicate evaluateRelease empty-index tests (already at go-no-go.test.ts:138-156,294)."
+    },
+    {
+      "severity": "coverage-gap",
+      "id": "package-script-untested",
+      "location": "package.json:14; docs/release-acceptance.md:26-27; scripts/go-no-go.test.ts:301",
+      "confirmed": true,
+      "summary": "Documented command is bun run release:acceptance. The process test invokes the file path directly and requires empty stderr. bun run prefixes `$ bun scripts/go-no-go.ts …` and, when Bun fails to start the script, reports `error: script \"release:acceptance\" exited with code 1`.",
+      "affected_invariant": "Callers of the documented package script must not treat wrapper or runtime exit 1 as a produced NO-GO.",
+      "smallest_correction": "P011: assert argument forwarding and distinguish runner_blocked from script 0/1/2. P004: optional package-script spawn alongside the direct script."
+    },
+    {
+      "severity": "integration-limitation",
+      "id": "bun-runtime-masks-script-exit",
+      "location": "scripts/go-no-go.ts static import of ./qualification → packages/core/src/serving/packet-tokenizer.ts; packages/core/package.json js-tiktoken@1.0.21",
+      "confirmed": true,
+      "summary": "On this read-only archive, bun without a writable transpiler cache exits 1 with ReadOnlyFileSystem. bun --no-install exits 1 with missing js-tiktoken/lite before parseAcceptanceArgs. Missing CLI args still require a successful module load.",
+      "affected_invariant": "Shell exit 1 is overloaded: produced NO-GO versus Bun cannot run the checker.",
+      "smallest_correction": "P011 harness must classify runner_blocked separately. Operators need bun@1.3.14, installed workspace deps, and a writable transpiler cache if the tree is read-only."
+    },
+    {
+      "severity": "specified-unreachable",
+      "id": "go-exit-0-unreachable",
+      "location": "scripts/go-no-go.ts:1,148-168,198-199,244",
+      "confirmed": true,
+      "summary": "process.exitCode 0 is implemented for decision GO. gates() hardcodes required UNVERIFIABLE/NOT_IMPLEMENTED rows, so accepted cannot be true. Documented; tests already assert NO-GO. Not a parser bug.",
+      "affected_invariant": "No native/account/human/release GO claim.",
+      "smallest_correction": "Do not invent a GO fixture. Leave exit 0 mapping as specified until producers exist (outside this packet)."
+    }
+  ],
+  "deliverables": [
+    "/work/out/ORIENTATION.md",
+    "/work/out/invocation-trace.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/command-to-exit-truth-table.md",
+    "/work/out/command-to-exit-truth-table.json",
+    "/work/out/fixtures/empty-index.json",
+    "/work/out/fixtures/torn-index.json",
+    "/work/out/fixtures/README.md",
+    "/work/out/harness/acceptance-exit-harness.ts",
+    "/work/out/harness/run.sh",
+    "/work/out/checks/executed-probes.md",
+    "/work/out/checks/pkg-no-args.summary.json",
+    "/work/out/checks/pkg-empty-index-rc.summary.json",
+    "/work/out/checks/pkg-empty-index-rc.report.json",
+    "/work/out/checks/harness-run/harness-results.json",
+    "/work/out/HANDOFF.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/command-to-exit-truth-table.md",
+    "/work/out/command-to-exit-truth-table.json",
+    "/work/out/harness/acceptance-exit-harness.ts",
+    "/work/out/harness/run.sh",
+    "/work/out/fixtures/empty-index.json",
+    "/work/out/fixtures/torn-index.json",
+    "/work/out/invocation-trace.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/checks/executed-probes.md",
+    "/work/out/checks/pkg-no-args.summary.json",
+    "/work/out/checks/pkg-empty-index-rc.summary.json",
+    "/work/out/checks/harness-run/harness-results.json"
+  ],
+  "source_references": [
+    { "path": "package.json", "lines": [14], "claim": "release:acceptance runs bun scripts/go-no-go.ts" },
+    { "path": "scripts/go-no-go.ts", "lines": [205, 215], "claim": "parseAcceptanceArgs requires exactly --profile rc|1.0, --evidence ABS, --out ABS" },
+    { "path": "scripts/go-no-go.ts", "lines": [171, 203], "claim": "evaluateRelease returns a full report; missing/corrupt index fails evidence.index inside try/catch" },
+    { "path": "scripts/go-no-go.ts", "lines": [216, 240], "claim": "writeAcceptanceReport exclusive hard-link publish; refuses existing destination" },
+    { "path": "scripts/go-no-go.ts", "lines": [241, 251], "claim": "stdout JSON only after publish; exit 0/1 from decision; catch exit 2" },
+    { "path": "docs/release-acceptance.md", "lines": [26, 27, 38, 39, 40], "claim": "documented bun run command and exit 0/1/2" },
+    { "path": "scripts/go-no-go.test.ts", "lines": [297, 308], "claim": "only process-level CLI test: NO-GO exit 1, empty stderr" },
+    { "path": "scripts/go-no-go.test.ts", "lines": [138, 156], "claim": "in-process empty inventory is NO-GO for rc and 1.0" },
+    { "path": ".github/workflows/ci.yml", "lines": [26, 32], "claim": "CI runs bun run verify, not release:acceptance" },
+    { "path": "packages/core/package.json", "lines": [11, 13], "claim": "js-tiktoken@1.0.21 is required to load the checker module graph" }
+  ],
+  "checks": [
+    {
+      "name": "static-source-trace",
+      "command": "read package.json scripts/go-no-go.ts scripts/go-no-go.test.ts docs/release-acceptance.md .github/workflows/ci.yml",
+      "result": "PASS",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "read-only archive",
+      "notes": "Line-level invocation and exit mapping recorded in invocation-trace.md"
+    },
+    {
+      "name": "direct-no-args-script-exit",
+      "command": "BUN_RUNTIME_TRANSPILER_CACHE_PATH=/work/outTEMP/bun-transpiler bun /repo/scripts/go-no-go.ts",
+      "result": "PASS",
+      "exit": 2,
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06",
+      "evidence": "/work/outTEMP/cache-direct.stderr",
+      "notes": "Matches expected missing-input exit 2 and usage stderr. Limitation: ran without --no-install once."
+    },
+    {
+      "name": "bun-readonly-without-cache",
+      "command": "bun /repo/scripts/go-no-go.ts",
+      "result": "NOT_SCRIPT",
+      "exit": 1,
+      "notes": "Bun ReadOnlyFileSystem; not a checker NO-GO"
+    },
+    {
+      "name": "bun-no-install-missing-js-tiktoken",
+      "command": "bun --no-install /repo/scripts/go-no-go.ts",
+      "result": "NOT_RUN",
+      "exit": 1,
+      "notes": "Cannot find module js-tiktoken/lite. Remaining harness rows unexecuted."
+    },
+    {
+      "name": "harness-pkg-no-args",
+      "command": "bun --no-install run --cwd /repo release:acceptance",
+      "result": "PASS",
+      "exit": 2,
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T21:50:18Z",
+      "evidence": "/work/out/checks/pkg-no-args.summary.json",
+      "notes": "Documented package script, missing input. Wrapper stderr plus usage line. Matches expected exit 2."
+    },
+    {
+      "name": "harness-pkg-empty-index-rc",
+      "command": "bun --no-install run --cwd /repo release:acceptance --profile rc --evidence ABS/empty-index.json --out ABS/new-rc.json",
+      "result": "PASS",
+      "exit": 1,
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T21:50:18Z",
+      "evidence": "/work/out/checks/pkg-empty-index-rc.summary.json",
+      "notes": "Ordinary produced NO-GO, 41 gates, evidence.index PASS, out mode 0600. bun run also prints script-exited-with-code-1 wrapper text."
+    },
+    {
+      "name": "harness-direct-rows",
+      "command": "/work/out/harness/run.sh /work/out/checks/harness-run",
+      "result": "NOT_RUN",
+      "notes": "Harness ran. Direct bun --no-install file.ts rows (18) are runner_blocked on js-tiktoken/lite, not script results. GO row unexecuted by design. Totals: executed 2, matched 2, runner_blocked 18, unexecuted 1."
+    },
+    {
+      "name": "focused-go-no-go-test",
+      "command": "bun test /repo/scripts/go-no-go.test.ts",
+      "result": "NOT_RUN",
+      "notes": "Test file cannot load without workspace node_modules. Coverage taken from static read."
+    },
+    {
+      "name": "full-verify",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "notes": "Archive lacks Git metadata and node_modules; verify.sh also needs git ls-files."
+    }
+  ],
+  "verification": {
+    "implementation": "read-only trace; no source change",
+    "focused": "package-script missing-args exit 2 and empty-index NO-GO exit 1 executed and matched; 18 direct-file rows runner_blocked; GO unexecuted",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN (this packet is preparation; C2 independent-model lens is root's)",
+    "retained_artifact": "not applicable",
+    "unfamiliar_user": "not applicable"
+  },
+  "blockers": [
+    "This container's /repo has no node_modules; bun --no-install cannot load go-no-go.ts (js-tiktoken/lite). Packet forbids dependency installs.",
+    "Read-only archive: bun run --cwd /repo hits ReadOnlyFileSystem unless a writable transpiler cache is used, and bun run still may try to write in the checkout.",
+    "Git is absent; live issue/PR/CI association for #541 was not refreshed.",
+    "Exit 0 GO cannot be exercised on this revision by any honest inventory."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P004", "P011"],
+    "do_not_take": ["P003 evidence schema", "P015 source-B", "P006 canonical docs", "Astra/doctor"],
+    "p004": "Add process-level exit-2 tests for missing-input rows. Reuse fixtures/empty-index.json only at the CLI seam if a process test is still missing; do not duplicate in-process evaluateRelease cases.",
+    "p011": "Wire release:acceptance using the truth table. Treat Bun runtime exit 1 (ReadOnlyFileSystem, missing module) as runner failure, not NO-GO. Document bun run wrapper stderr.",
+    "next_smallest_action": "On a checkout with bun@1.3.14 and installed lockfile deps, run /work/out/harness/run.sh /abs/out and land P004 process tests for unmatched missing-input rows."
+  },
+  "next_step": "P004: process-level tests for documented missing-input exit 2 on a dependency-installed checkout, using /work/out/harness without changing P003 schema.",
+  "limitations": [
+    "No release GO/NO-GO claim about the product.",
+    "No native, account, model, or unfamiliar-user qualification.",
+    "Wave 1 stranger-proof go-no-go CLI is VOID; current checker is scripts/go-no-go.ts as traced.",
+    "One probe without --no-install populated a local bun cache under /work/out/tmp; not an artifact for production use."
+  ]
+}

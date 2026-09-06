@@ -1,0 +1,135 @@
+{
+  "task_id": "R014",
+  "packet_id": "R014",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "finding",
+  "findings": [
+    {
+      "severity": "medium",
+      "location": "packages/core/src/canon/apply.ts:478-493",
+      "invariant": "RFC 0002 §4.4: edit|merge|deletion require an existing page; refusals happen before mutation",
+      "expected": "a live deletion claim with a caller-built create decision and no page refuses with page_required or page_missing and writes no file",
+      "actual": "applyCanonWrite created page_action=create, status=active, and bound claims.receipt_id",
+      "evidence": "static trace of prepareCreate ignoring kind; bun /work/out/observe-deletion-create.ts; bun test /work/out/apply-rfc-gaps.draft.test.ts FAIL",
+      "smallest_correction": "refuse non-create kinds before prepareCreate when decision.action is create; do not add a delete page_action or change schema (P015)"
+    },
+    {
+      "severity": "low",
+      "location": "packages/core/src/canon/apply.ts:643 and packages/core/src/vault/write.ts:242",
+      "invariant": "writer refusals stay CanonWriteError",
+      "expected": "missing-page revert delete is CanonWriteError page_missing before any byte change",
+      "actual": "expected_hash=null already throws CanonWriteError; a named hash on a missing file throws CanonWriteRefused page_missing from writePage",
+      "evidence": "bun test /work/out/apply-rfc-gaps.draft.test.ts FAIL; contrast passing delete-already-gone in apply-ordinary-preconditions.draft.test.ts",
+      "smallest_correction": "wrap that writePage refusal as CanonWriteError page_missing in applyRevertWrite"
+    }
+  ],
+  "deliverables": [
+    "/work/out/precondition-table.md",
+    "/work/out/precondition-table.json",
+    "/work/out/apply-ordinary-preconditions.draft.test.ts",
+    "/work/out/apply-rfc-gaps.draft.test.ts",
+    "/work/out/validation-order.md",
+    "/work/out/coverage-map.md",
+    "/work/out/orientation.md",
+    "/work/out/evidence/checks.md",
+    "/work/out/observe-deletion-create.ts",
+    "/work/out/RESULT.md",
+    "/work/out/handoff.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/precondition-table.md",
+    "/work/out/precondition-table.json",
+    "/work/out/apply-ordinary-preconditions.draft.test.ts",
+    "/work/out/apply-rfc-gaps.draft.test.ts",
+    "/work/out/validation-order.md",
+    "/work/out/coverage-map.md"
+  ],
+  "source_references": [
+    "packages/core/src/canon/apply.ts",
+    "packages/core/src/canon/errors.ts",
+    "packages/core/src/canon/schema.ts",
+    "packages/core/src/canon/paths.ts",
+    "packages/core/src/canon/arbiter.ts",
+    "packages/core/src/canon/receipts.ts",
+    "packages/core/src/canon/undo.ts",
+    "packages/core/src/vault/schema.ts",
+    "packages/core/src/vault/write.ts",
+    "rfcs/0002-autonomous-canon.md",
+    "packages/core/test/canon/apply.test.ts",
+    "packages/core/test/canon/receipt-totality.test.ts",
+    "packages/core/test/canon/undo.test.ts",
+    "packages/core/test/canon/arbiter.test.ts"
+  ],
+  "checks": [
+    {
+      "name": "existing applyCanonWrite tests",
+      "command": "bun test /repo/packages/core/test/canon/apply.test.ts",
+      "toolchain": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "9 pass, 0 fail, 74 expect(), 2.48s"
+    },
+    {
+      "name": "existing related canon tests",
+      "command": "bun test /repo/packages/core/test/canon/receipt-totality.test.ts /repo/packages/core/test/canon/undo.test.ts /repo/packages/core/test/canon/purge-review-retirement.test.ts /repo/packages/core/test/canon/arbiter.test.ts /repo/packages/core/test/canon/vault-containment.test.ts",
+      "toolchain": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "43 pass, 0 fail, 288 expect(), 9.02s"
+    },
+    {
+      "name": "new ordinary precondition draft",
+      "command": "bun test /work/out/apply-ordinary-preconditions.draft.test.ts",
+      "toolchain": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "9 pass, 0 fail, 80 expect(), 1.177s"
+    },
+    {
+      "name": "RFC gap draft",
+      "command": "bun test /work/out/apply-rfc-gaps.draft.test.ts",
+      "toolchain": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "exit_code": 1,
+      "result": "FAIL",
+      "detail": "0 pass, 2 fail; expected failures documenting findings"
+    },
+    {
+      "name": "full repository gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "detail": "not assigned; no full-suite slot in this container"
+    }
+  ],
+  "verification": {
+    "focused": "PASS on existing apply tests and new ordinary draft",
+    "rfc_gaps": "FAIL as documented findings",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "limitations": [
+      "Git absent; remote not verified; identity from FLEET-SOURCE-IDENTITY.json",
+      "Vault tests require ancestor directories that pass canon-files directoryStat (no group/world write except sticky root tmp)",
+      "No source edits, no schema decision, no crash/timing/custody reproduction",
+      "No native/account/model/human qualification"
+    ]
+  },
+  "blockers": [],
+  "downstream_handoff": {
+    "feeds": ["P018", "P019"],
+    "do_not_duplicate": [
+      "packages/core/test/canon/apply.test.ts",
+      "packages/core/test/canon/receipt-totality.test.ts:174-188",
+      "packages/core/test/canon/undo.test.ts:53-73"
+    ],
+    "adopt": [
+      "/work/out/apply-ordinary-preconditions.draft.test.ts NEW_CASES only",
+      "/work/out/apply-rfc-gaps.draft.test.ts as regressions, do not weaken"
+    ],
+    "reserved": "P015 schema; P006 docs; P003 evidence design; no delete page_action"
+  },
+  "next_step": "P018 integrate the uncovered ordinary table-driven rows and the two RFC-gap assertions on a named implementation lane; rebase onto live base before production use."
+}

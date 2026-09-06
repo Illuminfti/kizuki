@@ -1,0 +1,147 @@
+{
+  "task_id": "R033",
+  "packet_id": "R033",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Inspect claim-v2 optional-field serialization",
+  "issue": 472,
+  "read_root": "/repo",
+  "write_scope": "/work/out only",
+  "limitations": [
+    "Read-only git archive; no Git metadata, no remote refresh, no vps-nav.",
+    "RFC 0003 is Proposed. Parsers on this base are B1a pure validation, not a public v2 writer or stored ClaimV2 row.",
+    "Full repository gate, typecheck, and core package suite were NOT_RUN.",
+    "No native/account/model/human qualification or release-acceptance claim.",
+    "Artifacts feed P031/P032 and must be reviewed/rebased before production use.",
+    "No subject taxonomy, schema migration, or P034 semantic goldens were invented."
+  ],
+  "findings": [
+    {
+      "id": "closed-keyset-not-optional-keys",
+      "severity": "contract",
+      "summary": "Rich v2 claim and producer-response DTOs have no omittable keys. Nullable fields must be present as JSON null. Absence, null, empty string, empty array, extra keys, and JS undefined are distinct.",
+      "evidence": "packages/core/src/contracts/claim-v2.ts:97-99,165-167,226-228; producer-v2.ts:179-182,163-165,411; /work/out/roundtrip-results.json cases claim-v2/assertion/omit-* PASS"
+    },
+    {
+      "id": "producer-observed-null-is-not-durable-v2",
+      "severity": "contract-boundary",
+      "summary": "parseExtractResponseV2 accepts temporal_basis=observed with valid_from=null. validateClaimV2Semantic rejects that combination. Naive JSON copy of a producer draft is not a claim/v2 semantic. RFC 0003 says Core fills observed time at admission.",
+      "evidence": "producer-v2.ts:444-452; claim-v2.ts:188-190; claim-v2.test.ts:101; rfcs/0003-rich-subject-foundation.md:227-229; roundtrip cases producer-v2/observed-null-valid_from (accept) and boundary/producer-observed-null-as-claim-v2 (reject)"
+    },
+    {
+      "id": "v1-v2-no-dispatcher",
+      "severity": "compatibility",
+      "summary": "There is no shared ClaimRecord dispatcher. Cross-schema payloads reject. Durable v1 validateClaim ignores extra keys and requires RFC3339 valid_from; producer v1 rejects extra keys and allows null valid_from which admission later fills.",
+      "evidence": "proposal.ts:149-344,258-260; producer/schema.ts:34-48,78-79; serve/extract.ts:186; claims/store.ts:1088; result.test.ts:77-81; RFC 0003:223-225"
+    },
+    {
+      "id": "json-undefined-becomes-absent",
+      "severity": "serialization",
+      "summary": "JSON.stringify omits undefined object keys. cloneExactJson rejects a present undefined. Serializers must emit explicit null for nullable v2 fields.",
+      "evidence": "packages/core/src/util/validate.ts:172-174; roundtrip cases claim-v2/assertion/valid_from-undefined-js and valid_from-undefined-stringified"
+    },
+    {
+      "id": "storage-defaults-are-not-json-optionality",
+      "severity": "note",
+      "summary": "claims.valid_from TEXT NOT NULL DEFAULT '' and nullable SQL columns describe v1 storage plus backfillTemporal. They are not a v2 JSON optional-field rule. No v2 semantic table is installed.",
+      "evidence": "packages/core/src/claims/schema.ts:7-40,140-150,268-286"
+    }
+  ],
+  "deliverables": [
+    "/work/out/claim-v2-field-presence-matrix.json",
+    "/work/out/claim-v2-field-presence-matrix.md",
+    "/work/out/fixtures/claim-v2/assertion-unknown.json",
+    "/work/out/fixtures/claim-v2/assertion-explicit.json",
+    "/work/out/fixtures/claim-v2/assertion-observed.json",
+    "/work/out/fixtures/claim-v2/assertion-perspective.json",
+    "/work/out/fixtures/claim-v2/assertion-literal.json",
+    "/work/out/fixtures/claim-v2/assertion-subject-object.json",
+    "/work/out/fixtures/claim-v2/identity-merge.json",
+    "/work/out/fixtures/claim-v2/identity-separate.json",
+    "/work/out/fixtures/claim-v2/identity-undo.json",
+    "/work/out/fixtures/producer-v2/parse-input.json",
+    "/work/out/fixtures/producer-v2/response-ok.json",
+    "/work/out/fixtures/producer-v2/response-observed-null.json",
+    "/work/out/fixtures/compat/claim-v1.json",
+    "/work/out/fixtures/compat/producer-v1.json",
+    "/work/out/roundtrip-claim-v2.ts",
+    "/work/out/roundtrip-results.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/orientation.md",
+    "/work/out/checks.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/claim-v2-field-presence-matrix.json",
+    "/work/out/claim-v2-field-presence-matrix.md",
+    "/work/out/fixtures/",
+    "/work/out/roundtrip-claim-v2.ts",
+    "/work/out/roundtrip-results.json",
+    "/work/out/existing-coverage.json"
+  ],
+  "source_references": [
+    "packages/core/src/contracts/claim-v2.ts",
+    "packages/core/src/contracts/producer-v2.ts",
+    "packages/core/src/contracts/proposal.ts",
+    "packages/core/src/producer/schema.ts",
+    "packages/core/src/producer/result.ts",
+    "packages/core/src/claims/schema.ts",
+    "packages/core/src/claims/store.ts:1088",
+    "packages/core/src/serve/extract.ts:186",
+    "packages/core/src/util/validate.ts",
+    "packages/core/test/contracts/claim-v2.test.ts",
+    "packages/core/test/contracts/producer-v2.test.ts",
+    "packages/core/test/proposal.test.ts",
+    "packages/core/test/producer/schema.test.ts",
+    "packages/core/test/producer/result.test.ts",
+    "rfcs/0003-rich-subject-foundation.md",
+    "docs/CURRENT.md",
+    "docs/decision-log.md"
+  ],
+  "checks": [
+    {
+      "name": "existing_contract_tests",
+      "command": "bun test /repo/packages/core/test/contracts/claim-v2.test.ts /repo/packages/core/test/contracts/producer-v2.test.ts /repo/packages/core/test/proposal.test.ts /repo/packages/core/test/producer/schema.test.ts /repo/packages/core/test/producer/result.test.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "78 pass, 0 fail, 237 expect() calls, 5 files, 75.00ms, bun 1.3.14"
+    },
+    {
+      "name": "local_roundtrip_field_presence",
+      "command": "bun /work/out/roundtrip-claim-v2.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "84/84 cases; results in /work/out/roundtrip-results.json"
+    },
+    {
+      "name": "full_repository_gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "detail": "Not assigned; read-only preparation packet"
+    }
+  ],
+  "verification": {
+    "focused_existing": "PASS 78/78 on cited contract tests at archive base f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+    "focused_draft": "PASS 84/84 local round-trip/presence cases",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "auth_retest": "NOT_RUN (controller already verified)"
+  },
+  "blockers": [],
+  "next_step": "P031/P032 should consume the matrix and fixtures: emit explicit nulls, reject absent/empty aliases, keep producer observed+null off the durable v2 seam until admission fills time, and not treat validateClaim extra-key ignoring as a v2 rule.",
+  "downstream_handoff": {
+    "feeds": ["P031", "P032"],
+    "must": [
+      "Treat absent, null, empty string, empty array, extra keys, and undefined as distinct.",
+      "Serialize nullable v2 fields as explicit JSON null; never omit them.",
+      "Do not JSON-identity round-trip producer-response/v2 drafts through validateClaimV2Semantic.",
+      "Keep v1 and v2 schemas on separate parsers; no silent upgrade.",
+      "Reuse existing bun tests listed in existing-coverage.json; the /work/out script covers the gap only as a preparation draft."
+    ],
+    "must_not": [
+      "Invent subject taxonomy, schema migration, or P034 semantic goldens.",
+      "Install RFC 0003 B1b claim_v2_semantics tables from this packet.",
+      "Claim native/account/model/human qualification from these artifacts."
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "observed_at": "2026-09-06T22:03:38.904556+00:00",
+  "cause": "R045 compiled 93685888-byte local probe exceeding per-file cap; Docker missing object stderr was lowercase; parser misclassified confirmed absence; one worker stop_failed raised and stopped the 84-task batch",
+  "original_receipts_preserved": true,
+  "original_outputs_preserved": true,
+  "all_84_original_containers_absent_verified": true,
+  "actual_docker_absence_recheck": "PASS",
+  "resume_canary": {
+    "task_id": "R017",
+    "worker_key": "R017-resume2",
+    "session_id": "3e0dee3b-d10b-451b-a09d-112af609480d",
+    "same_prior_session_verified": true
+  },
+  "controller_sha256": "1d03f1f66c827b0b16c9248c713d8be5a705a5a1767d50a7baec378c203e9f48",
+  "fixes": [
+    "lowercase exact missing-object/container handling",
+    "retain ACTIVE monitoring on true stop_failed",
+    "resume saved session context and bounded outputs",
+    "no compilation in research retry prompt"
+  ],
+  "remaining_limit": "already-running controller copies retain their launch-version code; root supervises them"
+}

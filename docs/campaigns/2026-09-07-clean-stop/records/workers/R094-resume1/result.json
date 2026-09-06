@@ -1,0 +1,167 @@
+{
+  "task_id": "R094",
+  "packet_id": "R094",
+  "title": "Prepare macOS launchd lifecycle observation script",
+  "issue": 539,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "owner": "grok-R094",
+  "write_scope": "/work/out only",
+  "feeds_packets": ["P092"],
+  "artifacts": [
+    "/work/out/macos-launchd-lifecycle.sh",
+    "/work/out/observation-schema.json",
+    "/work/out/launchd-assumptions-map.json",
+    "/work/out/launchd-query-parser-cases.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/launchd-observation.json",
+    "/work/out/orientation.md",
+    "/work/out/citations.md",
+    "/work/out/handoff.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "macos-launchd-lifecycle.sh",
+    "observation-schema.json",
+    "launchd-assumptions-map.json",
+    "launchd-query-parser-cases.json",
+    "expected-behavior.md",
+    "existing-coverage.md",
+    "launchd-observation.json",
+    "orientation.md",
+    "citations.md",
+    "handoff.md",
+    "RESULT.md",
+    "result.json"
+  ],
+  "source_references": [
+    "packages/core/src/serve/units.ts:14-24,63-96",
+    "packages/core/src/serve/supervisor.ts:38-48,51-62,108-168,188-310",
+    "packages/core/src/serve/service-files.ts:1-60",
+    "packages/core/src/serve/intent.ts:1-20",
+    "packages/core/src/serve/types.ts:44-58,185-191",
+    "packages/core/src/serve/doctor.ts:356-414",
+    "packages/cli/src/service-host.ts:6-11",
+    "packages/cli/src/runtime.ts:16-20",
+    "packages/cli/src/commands/init.ts:87-106",
+    "packages/cli/src/commands/serve.ts:38-90",
+    "packages/core/test/serve/units.test.ts:35-41",
+    "packages/core/test/serve/service-arguments.test.ts:20-36",
+    "packages/core/test/serve/supervisor.test.ts:13-27",
+    "packages/cli/test/serve/install.test.ts",
+    "packages/cli/test/serve/supervisor-fixture.ts:4",
+    "scripts/native-platform.test.ts:19-27",
+    ".github/workflows/macos-native.yml:43-45",
+    "docs/service-lifecycle.md:4-47",
+    "docs/native-build.md:65-91",
+    "rfcs/0002-autonomous-canon.md:2014-2027"
+  ],
+  "checks": [
+    {
+      "name": "platform_gate_of_draft_script",
+      "command": "OUT=/work/out /bin/bash /work/out/macos-launchd-lifecycle.sh",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "Linux x86_64 Bun 1.3.14 uid=1000",
+      "time": "2026-09-06T22:03:00Z",
+      "expected_exit": 78,
+      "observed_exit": 78,
+      "result": "PASS",
+      "evidence": "/work/out/launchd-observation.json",
+      "note": "Proves only the refusal path. Does not load launchd."
+    },
+    {
+      "name": "existing_render_and_fake_supervisor_tests",
+      "command": "bun test packages/core/test/serve/units.test.ts packages/core/test/serve/service-arguments.test.ts packages/core/test/serve/supervisor.test.ts packages/cli/test/serve/install.test.ts scripts/native-platform.test.ts",
+      "result": "NOT_RUN",
+      "reason": "/repo/node_modules absent; packet forbids dependency installs. Coverage read statically from test source."
+    },
+    {
+      "name": "typecheck_and_repository_gate",
+      "command": "bun run typecheck; bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "reason": "no node_modules; not a source-change packet"
+    },
+    {
+      "name": "darwin_launchd_lifecycle",
+      "command": "KIZUKI_BIN=<bun-darwin-arm64/kizuki> OUT=<evidence> bash macos-launchd-lifecycle.sh",
+      "result": "NOT_RUN",
+      "reason": "host is Linux x86_64; launchctl, plutil, Darwin, arm64, and KIZUKI_BIN missing"
+    }
+  ],
+  "verification": {
+    "focused": {
+      "command": "OUT=/work/out /bin/bash /work/out/macos-launchd-lifecycle.sh",
+      "result": "PASS",
+      "exit_code": 78,
+      "claim": "unexecuted refusal on Linux; not macOS proof"
+    },
+    "package_type_full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "native_launchd": "NOT_RUN"
+  },
+  "findings": [
+    {
+      "severity": "coverage_gap",
+      "confirmed": true,
+      "location": "packages/core/test/serve/supervisor.test.ts:13-27 and packages/cli/test/serve/supervisor-fixture.ts:4",
+      "failure": "No test loads a real launchd job. Lifecycle tests use kind systemd and a fake systemctl. macos-native.yml and native-platform.test.ts:19-27 lint a plist without bootstrap.",
+      "affected_invariant": "RFC 0002 §11 / docs/service-lifecycle.md: liveness and install/uninstall must be confirmed against the supervisor; synthetic adapters are not installed-service proof",
+      "required_fix": "P092 run /work/out/macos-launchd-lifecycle.sh on Darwin arm64 with KIZUKI_BIN. Do not duplicate systemd fakes."
+    },
+    {
+      "severity": "untested_concern",
+      "confirmed": false,
+      "location": "packages/core/src/serve/supervisor.ts:111-113",
+      "failure": "Query classifies state=disabled if stdout+stderr lowercased includes substring 'disabled' before checking state = running and pid.",
+      "affected_invariant": "confirmedActive requires state=active; a false disabled classification would fail install confirmation",
+      "required_fix": "On Darwin, record whether launchctl print of a running job contains 'disabled'. If yes, parser must be tightened. Do not change source in this packet."
+    },
+    {
+      "severity": "residual_risk",
+      "confirmed": false,
+      "location": "packages/core/src/serve/supervisor.ts:108-114 vs launchctl(1) print",
+      "failure": "Product treats launchctl print as the production source of truth. Public man-page text says print is for debugging and should not be relied upon in production.",
+      "affected_invariant": "honest supervisor confirmation",
+      "required_fix": "Retain as residual risk; native observation should copy raw print text. Citation: https://keith.github.io/xcode-man-pages/launchctl.1.html fetched 2026-09-06 (mirror, not Apple-hosted)."
+    },
+    {
+      "severity": "contract_note",
+      "confirmed": true,
+      "location": "packages/core/src/serve/units.ts:84-87 and packages/cli/src/commands/serve.ts:76-90",
+      "failure": "KeepAlive is true; serve stop only SIGTERMs the pid file. Supervisor may restart. Uninstall is bootout plus plist delete.",
+      "affected_invariant": "docs/service-lifecycle.md:45-47",
+      "required_fix": "Observation script already separates stop from uninstall. Do not treat stop as removal."
+    }
+  ],
+  "blockers": [
+    "Darwin arm64 host with launchctl, plutil, non-root gui/<uid> domain, and bun-darwin-arm64 kizuki binary",
+    "macos-native.yml remains cost-gated; this packet did not start a runner"
+  ],
+  "next_step": "P092: on authorized macos-15 arm64, set KIZUKI_BIN to the native kizuki, OUT to an evidence directory, run macos-launchd-lifecycle.sh, retain independent launchctl print fields and vault snapshots. Rebase before production use.",
+  "downstream_handoff": {
+    "packet": "P092",
+    "use": [
+      "/work/out/macos-launchd-lifecycle.sh",
+      "/work/out/observation-schema.json",
+      "/work/out/launchd-assumptions-map.json",
+      "/work/out/expected-behavior.md"
+    ],
+    "do_not": [
+      "Treat Linux exit 78, plist rendering, or plutil -lint as launchd proof",
+      "Duplicate systemd fake-host tests",
+      "Claim native/human/release qualification",
+      "Edit P006 canonical docs from this draft"
+    ]
+  },
+  "limitations": [
+    "This container is Linux x86_64. launchd lifecycle is unexecuted.",
+    "GitHub issue 539, live PRs, and CI were not fetched.",
+    "node_modules absent; existing tests statically read, not executed.",
+    "No native package built or downloaded.",
+    "launchctl(1) facts used a public man-page mirror dated 2026-09-06, not man launchctl on Darwin.",
+    "No source edits. Artifacts must be reviewed/rebased before production use."
+  ]
+}

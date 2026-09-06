@@ -1,0 +1,49 @@
+{
+  "task_id": "P057",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "85778e3f343f854e227f744aff0c13a47051278f",
+  "status": "awaiting_root_test",
+  "changed_files": [
+    "packages/connector-imap/src/mime/parse.ts",
+    "packages/connector-imap/test/mime/parse.test.ts",
+    "packages/connector-imap/test/events.test.ts"
+  ],
+  "findings": [
+    {
+      "id": "continued-filename-charset",
+      "severity": "resolved_in_candidate",
+      "summary": "normalizeParams decoded each RFC 2231 continuation independently, so a later ISO-8859-1 octet lost the first segment charset and a UTF-8 character split across segments became replacement characters.",
+      "fix": "Reassemble continuation octets in numeric order and decode the complete value once using the charset declared on the first encoded segment. Unencoded pieces stay literal."
+    }
+  ],
+  "deliverables": [
+    "Candidate commit 85778e3f343f854e227f744aff0c13a47051278f on agent/grok-p057",
+    "MIME parameter tests for latin-1 later segment, split UTF-8, mixed encoded/plain, literal unencoded percent, parameter order, and Content-Type name",
+    "Event test for an ordinary multipart attachment named café.txt with existing record id and MIME section id contracts",
+    "test-request.json for root's network-disabled runner"
+  ],
+  "verification": {
+    "focused_public_behavior": {
+      "status": "NOT_RUN",
+      "reason": "Root owns network-disabled test execution. Requested bun test of packet.test_paths on this head.",
+      "request_id": "p057-mime-continued-charset",
+      "command": "bun test packages/connector-imap/test/mime/parse.test.ts packages/connector-imap/test/events.test.ts",
+      "runtime": "Bun 1.3.14",
+      "head_sha": "85778e3f343f854e227f744aff0c13a47051278f"
+    },
+    "package_type_full_gate": {
+      "status": "NOT_RUN",
+      "reason": "Agent container must not install dependencies or run tests."
+    },
+    "independent_review": {
+      "status": "NOT_RUN",
+      "reason": "Required after focused tests pass on this exact head."
+    },
+    "real_imap_qualification": {
+      "status": "NOT_RUN",
+      "reason": "P058 remains separate; this change does not qualify mailbox flags, UIDVALIDITY, or provider authentication."
+    }
+  },
+  "blockers": [],
+  "next_step": "Root runs the focused MIME parameter and event tests on 85778e3f343f854e227f744aff0c13a47051278f, then independent review of that exact head before integration."
+}

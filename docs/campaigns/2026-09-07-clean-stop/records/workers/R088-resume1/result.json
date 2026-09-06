@@ -1,0 +1,131 @@
+{
+  "task_id": "R088",
+  "packet_id": "R088",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "findings": [
+    {
+      "severity": "join_hazard",
+      "location": "packages/cli/src/commands/query.ts:63-75",
+      "summary": "CLI query SearchHit omits CanonChunk.sources and truncated; canon authority defaults to model_inference; quoted authority is hardcoded connector_evidence. Packet markdown uses auth=none for null.",
+      "invariant": "Source references must not be invented from an omitted field.",
+      "confirmed": true
+    },
+    {
+      "severity": "join_hazard",
+      "location": "packages/cli/src/commands/query.ts:41 vs packages/core/src/serving/search.ts:118-121",
+      "summary": "CLI query default scope is all; serveSearch default is canon. Context --query nominates canon only (candidates.ts:154-160); timeline is a window, not FTS.",
+      "invariant": "Set inequality across surfaces is not a query miss.",
+      "confirmed": true
+    },
+    {
+      "severity": "docs_mismatch",
+      "location": "docs/cli.md:223-226 vs packages/cli/src/commands/query.ts:79",
+      "summary": "Docs say withheld=N (no sensitivity label); code prints excluded by access policy. P006 owns docs.",
+      "invariant": "Public CLI diagnostics should match shipped text.",
+      "confirmed": true
+    }
+  ],
+  "deliverables": [
+    "/work/out/field-join.md",
+    "/work/out/field-join.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/fixtures/comparison-cases.json",
+    "/work/out/adapter/compare-context-query.ts",
+    "/work/out/adapter/compare-context-query.test.ts",
+    "/work/out/coverage-inventory.md",
+    "/work/out/orientation.md",
+    "/work/out/adapter/README.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/field-join.md",
+    "/work/out/field-join.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/fixtures/comparison-cases.json",
+    "/work/out/adapter/compare-context-query.ts",
+    "/work/out/adapter/compare-context-query.test.ts",
+    "/work/out/coverage-inventory.md",
+    "/work/out/orientation.md",
+    "/work/out/adapter/README.md",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/cli/src/commands/context.ts:22-69",
+    "packages/cli/src/commands/query.ts:41-95",
+    "packages/core/src/serving/retrieval.ts:12-51",
+    "packages/core/src/serving/types.ts:25-71",
+    "packages/core/src/serving/packet.ts:66-87,245-264",
+    "packages/core/src/serving/search.ts:72-184",
+    "packages/core/src/serving/candidates.ts:45-60,154-160,286-325",
+    "packages/core/src/serving/canon.ts:154-179",
+    "packages/core/src/serving/ledger.ts:118-132",
+    "packages/core/src/serving/gate.ts:210-226",
+    "packages/core/src/retrieval/ids.ts:10-36",
+    "packages/core/src/search/query.ts:22-36,154-155",
+    "packages/cli/src/output.ts:24-42",
+    "packages/cli/src/derived.ts:212-227",
+    "packages/cli/test/context.test.ts:35-52",
+    "packages/cli/test/query.test.ts:108-233",
+    "packages/core/test/serving/search.test.ts:45-209",
+    "packages/core/test/serving/packet.test.ts:134-255",
+    "packages/core/test/serving/retrieval-consumer.test.ts:29-64",
+    "packages/core/test/serving/packet-claim-boundaries.test.ts:101-131"
+  ],
+  "checks": [
+    {
+      "name": "draft adapter assertions",
+      "command": "bun test /work/out/adapter/compare-context-query.test.ts",
+      "cwd": "/work",
+      "toolchain": "bun 1.3.14",
+      "at": "2026-09-06T22:04:00Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "11 pass, 0 fail, 47 expect() calls"
+    },
+    {
+      "name": "repository focused tests",
+      "command": "bun test packages/cli/test/context.test.ts packages/cli/test/query.test.ts packages/core/test/serving/search.test.ts packages/core/test/serving/packet.test.ts packages/core/test/serving/retrieval-consumer.test.ts",
+      "result": "NOT_RUN",
+      "detail": "Read-only git archive; no test slot; existing cases inventoried by path/line, not re-executed"
+    },
+    {
+      "name": "full repository gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "detail": "Not assigned; no source edits"
+    }
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun test /work/out/adapter/compare-context-query.test.ts",
+      "result": "PASS",
+      "exit_code": 0,
+      "toolchain": "bun 1.3.14",
+      "at": "2026-09-06T22:04:00Z"
+    },
+    "package_type_full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "limitations": [
+      "Adapter runs on synthetic already-served JSON only.",
+      "No vault, provider, or retrieval engine was opened.",
+      "Existing single-surface tests were not re-executed on this archive.",
+      "Remote/issue/PR state was not refreshed; root owns host git.",
+      "No native/account/model/human qualification or release claim."
+    ]
+  },
+  "blockers": [],
+  "next_step": "P086/P099 consume /work/out/field-join.json and the adapter without treating CLI source omission as empty sources, without scoring retrieval hits, and after rebasing onto the live head.",
+  "downstream_handoff": {
+    "feeds": ["P086", "P099"],
+    "do_not": [
+      "Call retrieval or use RetrievalHit.score",
+      "Treat query_cli_omits_sources as sources=[]",
+      "Treat unjoined_source as unavailable evidence",
+      "Treat identity-authority-unavailable as whole-packet failure",
+      "Replace P003/P015/P006 contracts or docs"
+    ],
+    "empty_vs_unavailable": "See expected-behavior.md E1-E4 and U1-U6"
+  }
+}

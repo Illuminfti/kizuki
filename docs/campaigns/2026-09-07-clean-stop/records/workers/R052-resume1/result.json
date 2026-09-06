@@ -1,0 +1,179 @@
+{
+  "task_id": "R052",
+  "packet_id": "R052",
+  "issue": 544,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Inspect Telegram media exclusions and coverage reporting",
+  "owner": "grok-R052",
+  "write_scope": "/work/out only",
+  "identity": {
+    "read_root": "/repo",
+    "source_kind": "git archive of exact commit; no Git metadata",
+    "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+    "remote_verified": false,
+    "reason_remote_unverified": "Controller owns host git/fetch; this container is a read-only archive."
+  },
+  "findings": [
+    {
+      "severity": "contract",
+      "id": "two-coverage-channels",
+      "where": "packages/connector-telegram/src/map.ts:175; packages/connector-telegram/src/degraded.ts:13-16; packages/connector-telegram/src/connector.ts:227-236",
+      "fact": "Excluded media is reported per event as metadata.media_kind. Health degraded is only dialog listing at MAX_DIALOGS=5000. Media never sets HealthReport.state or detail.",
+      "expected": "Implementation owners must not treat doctor/health degraded as a media-coverage signal."
+    },
+    {
+      "severity": "contract",
+      "id": "empty-text-still-emitted",
+      "where": "packages/connector-telegram/src/map.ts:128-177; test/map.test.ts:185-192",
+      "fact": "A poll or other unreferenced class still becomes a message event with text \"\" and attachments []. It is not dropped the way a service message is.",
+      "expected": "Downstream extractors will see empty-text events whose only coverage marker is metadata.media_kind."
+    },
+    {
+      "severity": "limitation",
+      "id": "no-nested-extended-media",
+      "where": "packages/connector-telegram/src/media.ts:11-50",
+      "fact": "describeMedia reads only record.photo.id and record.document.id. Official messageMediaPaidMedia.extended_media, messageMediaInvoice.extended_media, and messageMediaDocument.video_cover are not referenced.",
+      "expected": "Those constructors name className only, unless a numeric photo/document id happens to sit on the top-level fields."
+    },
+    {
+      "severity": "docs-drift",
+      "id": "stale-wave1-spec",
+      "where": "docs/wave1/specs/connector-telegram.md §6.4 vs map.ts:56,154 and packages/core/src/util/hash.ts:57-63",
+      "fact": "The wave1 spec still tables per-dialog sensitivity hints and says attachments are excluded from content_hash. Current code labels every Telegram event private and hash v2 includes attachments plus metadata.",
+      "expected": "P006 owns canonical docs; do not treat the wave1 table as the live contract."
+    }
+  ],
+  "deliverables": [
+    "/work/out/media-kind-coverage-map.md",
+    "/work/out/media-kind-coverage-map.json",
+    "/work/out/fixtures/neutral-representations.json",
+    "/work/out/fixtures/expected-events.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/verify-media-coverage.ts",
+    "/work/out/provider-docs-message-media.json",
+    "/work/out/checks/commands.json",
+    "/work/out/checks/describe-media-receipt.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/media-kind-coverage-map.md",
+    "/work/out/media-kind-coverage-map.json",
+    "/work/out/fixtures/neutral-representations.json",
+    "/work/out/fixtures/expected-events.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/verify-media-coverage.ts",
+    "/work/out/provider-docs-message-media.json",
+    "/work/out/checks/commands.json",
+    "/work/out/checks/describe-media-receipt.json",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/connector-telegram/src/media.ts:3-71",
+    "packages/connector-telegram/src/map.ts:49-178",
+    "packages/connector-telegram/src/degraded.ts:13-16",
+    "packages/connector-telegram/src/client.ts:305-328",
+    "packages/connector-telegram/src/connector.ts:143-237,308-335",
+    "packages/connector-telegram/src/walk.ts:52-60,297-350",
+    "packages/connector-telegram/src/cursor.ts:10",
+    "packages/connector-telegram/src/api.ts:26-47",
+    "packages/connector-telegram/src/fixture.ts:51-140",
+    "packages/connector-telegram/test/media.test.ts:9-127",
+    "packages/connector-telegram/test/map.test.ts:147-229",
+    "packages/connector-telegram/test/client.test.ts:53-143",
+    "packages/connector-telegram/test/health.test.ts:85-123",
+    "packages/core/src/util/hash.ts:8-63",
+    "packages/core/src/contracts/connector.ts:17-25",
+    "packages/connector-telegram/README.md:100-147",
+    "https://core.telegram.org/type/MessageMedia (HTTP 200, 2026-09-06)"
+  ],
+  "checks": [
+    {
+      "name": "describeMedia fixtures",
+      "command": "bun /work/out/verify-media-coverage.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/checks/describe-media-receipt.json"
+    },
+    {
+      "name": "existing media.test.ts",
+      "command": "bun test packages/connector-telegram/test/media.test.ts",
+      "cwd": "/repo",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "summary": "8 pass, 0 fail, 27 expects"
+    },
+    {
+      "name": "existing map.test.ts",
+      "command": "bun test packages/connector-telegram/test/map.test.ts",
+      "cwd": "/repo",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "missing": "@kizuki/core (no node_modules; installs forbidden)",
+      "static": "map.test.ts:147-192 already covers media-only, photo, and poll media_kind"
+    },
+    {
+      "name": "existing health.test.ts",
+      "command": "bun test packages/connector-telegram/test/health.test.ts",
+      "cwd": "/repo",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "missing": "@kizuki/core (no node_modules; installs forbidden)",
+      "static": "health.test.ts:85-123 already covers dialog-limit degraded and hidden chat not degraded"
+    },
+    {
+      "name": "full repository gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "reason": "No source change; no test slot; archive lacks node_modules."
+    },
+    {
+      "name": "live Telegram account",
+      "result": "NOT_RUN",
+      "reason": "Packet forbids provider/account calls. README already records qualification unrun."
+    }
+  ],
+  "verification": {
+    "focused": "PASS (describeMedia local seam + existing media.test.ts)",
+    "map_and_health_package_tests": "NOT_RUN (missing @kizuki/core)",
+    "typecheck_full_gate": "NOT_RUN",
+    "live_account": "NOT_RUN",
+    "independent_review": "NOT_RUN"
+  },
+  "blockers": [],
+  "limitations": [
+    "Read-only archive; no Git, no node_modules, no installs.",
+    "map.test.ts and health.test.ts not executed here.",
+    "No live Telegram qualification.",
+    "No bytes downloaded; attachment ids only.",
+    "Wave1 spec is stale on sensitivity and hash; current source wins.",
+    "These artifacts feed P048/P049 and must be reviewed/rebased before production use."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P048", "P049"],
+    "use": [
+      "/work/out/media-kind-coverage-map.json",
+      "/work/out/fixtures/neutral-representations.json",
+      "/work/out/fixtures/expected-events.json"
+    ],
+    "do_not": [
+      "Duplicate media.test.ts photo/document/poll/geo/contact/webpage/empty-document cases",
+      "Duplicate health.test.ts dialog-limit degraded case",
+      "Add per-constructor tests for dice/game/invoice unless describeMedia fallback changes",
+      "Treat health.degraded as media-exclusion coverage",
+      "Claim live-account or stranger-proof credit from this packet"
+    ],
+    "new_contract_only_if_product_wants_it": "An account-level excluded-media count in health or doctor does not exist and would be a new owned change, not a missing test for the current contract."
+  },
+  "next_step": "P048/P049 should consume the coverage map and fixtures; keep existing tests; do not wait on further R052 work.",
+  "actions_not_taken": [
+    "No repository edits, commits, pushes, merges, or PR comments",
+    "No credential, account, or model use",
+    "No vps-nav / git fetch"
+  ]
+}

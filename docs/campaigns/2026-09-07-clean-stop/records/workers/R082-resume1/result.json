@@ -1,0 +1,141 @@
+{
+  "task_id": "R082",
+  "packet_id": "R082",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "finding",
+  "title": "Map Omnivore source layout and public import accounting",
+  "capability": "export_import",
+  "provider_availability": "not_claimed; in-tree docs state Omnivore closed in 2024",
+  "artifacts": [
+    "/work/out/omnivore-layout-count-report-map.md",
+    "/work/out/omnivore-compiled-command-manifest.json",
+    "/work/out/omnivore-coverage-matrix.json",
+    "/work/out/draft-omnivore-accounting.ts",
+    "/work/out/accounting-result.json",
+    "/work/out/fixtures/omnivore-layout/",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md"
+  ],
+  "deliverables": [
+    "/work/out/omnivore-layout-count-report-map.md",
+    "/work/out/omnivore-compiled-command-manifest.json",
+    "/work/out/draft-omnivore-accounting.ts",
+    "/work/out/accounting-result.json",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    "packages/connectors/src/import-omnivore/index.ts",
+    "packages/connectors/src/import-omnivore/parse.ts",
+    "packages/connectors/src/import-omnivore/metadata.ts",
+    "packages/connectors/src/import-report.ts",
+    "packages/connectors/src/import-snapshot.ts",
+    "packages/connectors/src/folder.ts",
+    "packages/connectors/src/util.ts",
+    "packages/connectors/README.md",
+    "packages/connectors/test/omnivore.test.ts",
+    "packages/connectors/test/omnivore-export.test.ts",
+    "packages/connectors/test/importers-tombstones.test.ts",
+    "packages/core/src/util/hash.ts",
+    "packages/cli/src/commands/import.ts",
+    "docs/export-inventory.md",
+    "docs/wave1/specs/importers-exports.md"
+  ],
+  "findings": [
+    {
+      "severity": "contract",
+      "id": "omnivore-health-has-no-import-report",
+      "where": "packages/connectors/src/import-omnivore/index.ts:126-140",
+      "evidence": "health() calls probeOmnivoreExport (parse.ts:234-249, 64 opening bytes). import-report.ts is unused. ChatGPT/Claude use snapshotHealth → importHealthReport (import-snapshot.ts:222-237).",
+      "invariant": "public import accounting (records=, exclusion codes, degraded vs ok)",
+      "independently_expected": "A clean import that reported through importHealthReport would show detail records=N. Shipped Omnivore ok health has no detail.",
+      "required_fix": "P080/P087: wire ImportParseResult+importHealthReport or document that doctor/health will not show item/exclusion counts."
+    },
+    {
+      "severity": "docs-vs-code",
+      "id": "content-attachment-identity",
+      "where": "packages/connectors/README.md:194-197 vs packages/core/src/util/hash.ts:57-63 and packages/connectors/test/importers-tombstones.test.ts:269-307",
+      "evidence": "v2 content_hash binds attachments; test stores a new revision when content/one.html appears after first import.",
+      "invariant": "snapshot identity / re-import accounting",
+      "independently_expected": "Code/test: later content file creates a stored row. README: it re-stores nothing.",
+      "required_fix": "P006 docs vs P080 identity; do not copy the README sentence as the contract."
+    },
+    {
+      "severity": "accounting-gap",
+      "id": "silent-not-object-skip-uncounted",
+      "where": "packages/connectors/src/import-omnivore/metadata.ts:95",
+      "evidence": "if (!isPlainObject(element)) return; no ImportRecordError. No omnivore test covers this. Draft observed silent_not_object=1.",
+      "invariant": "exclusions are counted at the walk point (docs/export-inventory.md:24-25 analog) and public reports do not echo captured text",
+      "independently_expected": "ChatGPT-shaped: code not_object in importHealthReport. Current: drop with no count.",
+      "required_fix": "If P080 adds accounting, reuse not_object rather than a new code; do not duplicate fixture goldens."
+    },
+    {
+      "severity": "stale-spec",
+      "id": "wave1-health-vs-probe",
+      "where": "docs/wave1/specs/importers-exports.md:861 vs parse.ts:234-249",
+      "evidence": "Spec: health ok when fsOmnivoreFiles resolves. Code: probeOmnivoreExport. Test omnivore-export.test.ts:355-381: health ok while backfill parse_error.",
+      "required_fix": "P006; this packet does not rewrite docs."
+    }
+  ],
+  "checks": [
+    {
+      "id": "layout-accounting-draft",
+      "command": "bun /work/out/draft-omnivore-accounting.ts",
+      "cwd": "/work/out",
+      "runtime": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/accounting-result.json"
+    },
+    {
+      "id": "existing-omnivore-unit",
+      "command": "bun test packages/connectors/test/omnivore.test.ts",
+      "cwd": "/repo",
+      "runtime": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "reason": "Cannot find module '@kizuki/core'; workspace node_modules absent; bun install forbidden"
+    },
+    {
+      "id": "full-repo-gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "reason": "no workspace install; full-suite slot not owned by this read-only packet"
+    }
+  ],
+  "verification": {
+    "focused": "PASS — layout/count/report draft under /work/out",
+    "existing_package_tests": "NOT_RUN — missing @kizuki/core",
+    "typecheck_full_gate": "NOT_RUN",
+    "live_account": "NOT_RUN — not authorized; importer is file-import only",
+    "independent_review": "NOT_RUN"
+  },
+  "blockers": [
+    "Workspace node_modules / bun install required to execute existing connector tests on this archive; install is forbidden here.",
+    "P006 owns README/spec reconciliation for content identity and health probe.",
+    "Shared import-report wiring is a P080/P087 product change, not authorized in this write scope."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P080", "P087"],
+    "capability": "kizuki.import-omnivore is an unzipped-folder snapshot importer (auth_modes none, cursor null, tombstones false, kinds bookmark).",
+    "selected_layout": "top-level metadata_<digits>_to_<digits>.json plus optional named lookups highlights/<slug>.md and content/<slug>.html; slug /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/",
+    "exclusion_rule": "Count at the root walk point; do not enumerate descendants of skipped directories (export-inventory.md:24-25).",
+    "public_report": "Reuse import-report.ts (MAX_REPORTED_ERRORS=32, records=, sorted code=count). Do not invent a parallel Omnivore report. Today health never emits records=.",
+    "do_not": [
+      "claim live Omnivore availability or add a live API",
+      "duplicate OMNIVORE_FIXTURE_FILES / omnivore.test.ts:38 goldens (P079)",
+      "copy README:194-197 as identity until reconciled with hash v2",
+      "treat a smaller later export as deletion"
+    ],
+    "next_smallest": "P080: decide whether Omnivore health/backfill should emit ImportParseResult into importHealthReport; if yes, add a test for metadata.ts:95 not_object accounting without restating fixture text."
+  },
+  "next_step": "P080 consume /work/out/omnivore-layout-count-report-map.md and the compiled-command manifest; rebase onto a workspace with node_modules before running existing bun tests.",
+  "limitations": [
+    "Read-only archive; no Git metadata; remote/worktree ownership not re-verified here.",
+    "No live provider, account, or model calls.",
+    "Existing package tests and scripts/verify.sh were not executed to completion.",
+    "Accounting draft re-applies cited regexes and import-report detail format; it is not the product importer.",
+    "No native/account/human qualification or release-acceptance claim."
+  ]
+}

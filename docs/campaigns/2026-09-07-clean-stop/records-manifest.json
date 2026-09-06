@@ -1,0 +1,2822 @@
+{
+  "schema": "kizuki.campaign-record-archive/v1",
+  "scope": "Preserved packet and review records; historical status within each record is not the clean-stop disposition. Worker outputs remain unreviewed unless a separate exact-head review accepts them.",
+  "files": [
+    {
+      "source": "book/P006-b1ff2d8-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P006-b1ff2d8-INDEPENDENT-REVIEW.md",
+      "original_sha256": "00505b45aa30e3c94c55b826dba5b5866cbe0eb207accfc59afd18bc785e8029",
+      "copy_sha256": "00505b45aa30e3c94c55b826dba5b5866cbe0eb207accfc59afd18bc785e8029",
+      "bytes": 3080,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P067-P069-FAILED-TEST-REVIEW.json",
+      "copy": "records/book/P067-P069-FAILED-TEST-REVIEW.json",
+      "original_sha256": "47e4bb963668587e079c596d3dfa61be7cb1b1671c25d0fd522a14729e379369",
+      "copy_sha256": "d02dc365ef01b50723b4ab5a82a6e0a2f3dd7f54a9d73b60f3cebc231e5c0aee",
+      "bytes": 3585,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-PRODUCTION-P106-20260906.json",
+      "copy": "records/book/GROK-FLEET-PRODUCTION-P106-20260906.json",
+      "original_sha256": "da861eabb32f2a4640719fc5618ff4d8a227f9e1a802d48454c1b8dd0cbc6c6d",
+      "copy_sha256": "b28ec2bd1f0f1d20d6f7a03c1632d1a7c82e633a211a34c69e1b83c8cc84401f",
+      "bytes": 4785,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P102-F7A797F-INDEPENDENT-REVIEW.json",
+      "copy": "records/book/P102-F7A797F-INDEPENDENT-REVIEW.json",
+      "original_sha256": "85d065eeba54712863dd2c150657af256f14ce1c86803344d844f381d0956b88",
+      "copy_sha256": "58554d2e7462a23cbe43cd51bf80a9edcfaf0bca0b70c9f1f3a7113d554d529e",
+      "bytes": 4348,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P103-C748487-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P103-C748487-INDEPENDENT-REVIEW.md",
+      "original_sha256": "aac59de873255255ebc287a94a92d1422d0dd529b38da5c65aa5a8d701542480",
+      "copy_sha256": "aceb5c3e78862ecad2ef6c035490cb3bd286dc0e2078fde70e7c6039b4a65012",
+      "bytes": 4335,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P004-WORKER-HANDOFF.md",
+      "copy": "records/book/P004-WORKER-HANDOFF.md",
+      "original_sha256": "e62ce7b02fb2a6afca7602913a256f7acde9f690f6bfb71dc0becaf2caaa26dc",
+      "copy_sha256": "2cf50bd1811a94338678d3e4d0d1de71b2f391a962c8ad821d08c7a26b906959",
+      "bytes": 10750,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P015-STATIC-REVIEW-20260906.md",
+      "copy": "records/book/GROK-P015-STATIC-REVIEW-20260906.md",
+      "original_sha256": "cbff5535312c32817a3f9dc49ce2511a184ef173e107e06e5943793fde7d3f94",
+      "copy_sha256": "f23815c1b83c2a33420e687c597361704bfcc552073f6e387b54d36cf9fdf926",
+      "bytes": 8453,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-IMMEDIATE-R100-20260906.json",
+      "copy": "records/book/GROK-FLEET-IMMEDIATE-R100-20260906.json",
+      "original_sha256": "93a9b899f0443d3167175c2e87f730a657087e072cf2eb6844de332338731d7f",
+      "copy_sha256": "93a9b899f0443d3167175c2e87f730a657087e072cf2eb6844de332338731d7f",
+      "bytes": 359503,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P102-96539A8-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P102-96539A8-INDEPENDENT-REVIEW.md",
+      "original_sha256": "97f07452d1b88ddefd3092d2c1de4e3df8ee58f60ab8fc7b857bd5c062a2b8a6",
+      "copy_sha256": "e374095ec2575ff0774bff498b5ef2c5f9890b7250b5f7828f6331efa8b91b61",
+      "bytes": 6018,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P0-57-58-RETRIEVAL-CEILING-DESIGN.md",
+      "copy": "records/book/P0-57-58-RETRIEVAL-CEILING-DESIGN.md",
+      "original_sha256": "d184887045e113fee420c2a21fc8d67b63727a5615736400b9cf93fcf9101b37",
+      "copy_sha256": "d33a0e86a727a031e10d5aa5dd723a36590306e1e8195aa12c55c1ed5f2c6826",
+      "bytes": 13847,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-FIRST-10-20260906.json",
+      "copy": "records/book/GROK-FLEET-FIRST-10-20260906.json",
+      "original_sha256": "44c72738855f44958e58c578f18354b3996201d4d9d1395ce9fd6d57ac55b176",
+      "copy_sha256": "0dabf43dd4cd20b8319d586c9880fd0eeeb51708048c45b858c039024777d269",
+      "bytes": 20214,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P101-7A217B3-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P101-7A217B3-INDEPENDENT-REVIEW.md",
+      "original_sha256": "214daefd396d250146bcba971a8129bdd0bcdcc46d06a8734e18b0edd728c624",
+      "copy_sha256": "a7c54d8bbfccb995e94eba25de3db0bdc829883034096345aee12a76ebedb7d4",
+      "bytes": 5068,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-CORRECTIONS-P004-P015-20260906.json",
+      "copy": "records/book/GROK-FLEET-CORRECTIONS-P004-P015-20260906.json",
+      "original_sha256": "5b1bd3b773a93df418fa2bc43f37446842b65401c66c2853737c7d504b6c82c0",
+      "copy_sha256": "5b1bd3b773a93df418fa2bc43f37446842b65401c66c2853737c7d504b6c82c0",
+      "bytes": 6569,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P072-3DD4902-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P072-3DD4902-INDEPENDENT-REVIEW.md",
+      "original_sha256": "df76bb90748090ea1aa0b5d7ae5f476c3780ae3e093724fd396d2b04b779a017",
+      "copy_sha256": "df76bb90748090ea1aa0b5d7ae5f476c3780ae3e093724fd396d2b04b779a017",
+      "bytes": 4401,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-NEXT-6-20260906.json",
+      "copy": "records/book/GROK-FLEET-NEXT-6-20260906.json",
+      "original_sha256": "ee328a7f362f648930753f38d323a917e6208e4a4079d15373b84c68e9ae4f0a",
+      "copy_sha256": "0a8079a5d84e563ef0415c8fd4c1190e94da109092545353021b688cec16925e",
+      "bytes": 14772,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P048-771F7C7-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P048-771F7C7-INDEPENDENT-REVIEW.md",
+      "original_sha256": "c94cc28d2db18f60b401944c8f337c68f531563185cb0f187aeaa74db7aeae3f",
+      "copy_sha256": "c94cc28d2db18f60b401944c8f337c68f531563185cb0f187aeaa74db7aeae3f",
+      "bytes": 4844,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-PRODUCTION-P048-P072-20260906.json",
+      "copy": "records/book/GROK-FLEET-PRODUCTION-P048-P072-20260906.json",
+      "original_sha256": "39f08b8b28e5381af761ab128fa3c1d52e013c9614b10f87064d8b4147636d3f",
+      "copy_sha256": "39f08b8b28e5381af761ab128fa3c1d52e013c9614b10f87064d8b4147636d3f",
+      "bytes": 6900,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P004-CE83957-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P004-CE83957-INDEPENDENT-REVIEW.md",
+      "original_sha256": "cfe4cb4fa32034ec92d6988b702d230f00701ec9fb2de9619eb87f0f60c5b34d",
+      "copy_sha256": "dfcaaf1ee72ed8587175e922981949c8c9d58e003bd0e814ca257c335bd5ab44",
+      "bytes": 6023,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P102-F7A797F-CORRECTIVE-HANDOFF.md",
+      "copy": "records/book/P102-F7A797F-CORRECTIVE-HANDOFF.md",
+      "original_sha256": "e757117024d86277009b6a59175e551bbdcba9872a4f5cea5bb179581d416aad",
+      "copy_sha256": "e757117024d86277009b6a59175e551bbdcba9872a4f5cea5bb179581d416aad",
+      "bytes": 2704,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-P-OUTPUT-QUEUE-20260906.md",
+      "copy": "records/book/GROK-FLEET-P-OUTPUT-QUEUE-20260906.md",
+      "original_sha256": "16e2ba2283996a1d4ae072277820425a444a59831827f5dba297c5b41dbf2c73",
+      "copy_sha256": "9e8d6ff2811f7075a251ec42ed14654b1d27b402bc33189c3391751b179a278e",
+      "bytes": 5477,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-IMMEDIATE-R100-20260906.md",
+      "copy": "records/book/GROK-FLEET-IMMEDIATE-R100-20260906.md",
+      "original_sha256": "ff1753d94c7a0c64074b5ede1c518e995cb1fc62163453b79abbb2e7d6e40ca6",
+      "copy_sha256": "eb047c90fe0156b59390a5a8ea1094ca3581741d09f058bdbc9232336d426a4f",
+      "bytes": 2518,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P015-5D21ED6-CORRECTION-HANDOFF-STOPPED-20260907.md",
+      "copy": "records/book/GROK-P015-5D21ED6-CORRECTION-HANDOFF-STOPPED-20260907.md",
+      "original_sha256": "e145e6b5df64e9cf7d8cd66dce55cb4ed7cb28818dcd5d8ce707b266cc045271",
+      "copy_sha256": "db3de72595432513f936149aa0d13c71a182247a561e2e2adb7b91c21babc440",
+      "bytes": 2634,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P106-SUPERVISOR-CONTRACT-20260906.md",
+      "copy": "records/book/GROK-P106-SUPERVISOR-CONTRACT-20260906.md",
+      "original_sha256": "649161babc566120ed5415ed989966cf70017c04ecbc77f43fd218e684abbaf3",
+      "copy_sha256": "649161babc566120ed5415ed989966cf70017c04ecbc77f43fd218e684abbaf3",
+      "bytes": 9455,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FIRST10-3DFEFD2-INTEGRATION-STATIC-REVIEW.md",
+      "copy": "records/book/GROK-FIRST10-3DFEFD2-INTEGRATION-STATIC-REVIEW.md",
+      "original_sha256": "6bded0015c2fc28e2ca43f26189e9e5e4d6c4f5454f56bacf98f0e549a5aa906",
+      "copy_sha256": "6bded0015c2fc28e2ca43f26189e9e5e4d6c4f5454f56bacf98f0e549a5aa906",
+      "bytes": 4618,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P069-A0705A0-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P069-A0705A0-INDEPENDENT-REVIEW.md",
+      "original_sha256": "3eaf6de219107996a3c8341c15730129e1a14528a275a0393a6378c39cd0a51c",
+      "copy_sha256": "8c919449c8ec5f86050f076029aedf10e77b1951d0cb5ca3f6ae3459043b58ee",
+      "bytes": 4906,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P057-85778E3-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P057-85778E3-INDEPENDENT-REVIEW.md",
+      "original_sha256": "7b47799df95f071dd751a741b36829995d7b7b655173c9673e03b03c9fa90ef9",
+      "copy_sha256": "9d6c334ff1f8815d347612be2d1d8e68a8e3cbb1706db233ac6a558b791b3931",
+      "bytes": 6276,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-ISSUE-SNAPSHOT-20260906.json",
+      "copy": "records/book/GROK-FLEET-ISSUE-SNAPSHOT-20260906.json",
+      "original_sha256": "229e12a887e7d234c5ffb2e0b17a008ae34ed0d6cfc835430e7fa8d1f28a1f04",
+      "copy_sha256": "229e12a887e7d234c5ffb2e0b17a008ae34ed0d6cfc835430e7fa8d1f28a1f04",
+      "bytes": 139949,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P015-5D21ED6-STATIC-REVIEW-STOPPED-20260907.md",
+      "copy": "records/book/GROK-P015-5D21ED6-STATIC-REVIEW-STOPPED-20260907.md",
+      "original_sha256": "d7f1693502b6c76e00898eaad986dc5d65e016b6e4966579edcf3981e63aeec4",
+      "copy_sha256": "6736400525d575ce84895d7ca296078930d577ca518aee8243d8bb68a2ac073d",
+      "bytes": 5626,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-PRODUCTION-20260906.json",
+      "copy": "records/book/GROK-FLEET-PRODUCTION-20260906.json",
+      "original_sha256": "0d3a4aa98747810d75a305097578e7eef5a8a86465a0a65574f54639e5f94248",
+      "copy_sha256": "0d3a4aa98747810d75a305097578e7eef5a8a86465a0a65574f54639e5f94248",
+      "bytes": 10694,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-PRODUCTION-FIRST3-20260906.json",
+      "copy": "records/book/GROK-FLEET-PRODUCTION-FIRST3-20260906.json",
+      "original_sha256": "69e408d29da61a0e4f59bb952a2e3d6d48c1fface8804a2bc815f7fb55b45d19",
+      "copy_sha256": "69e408d29da61a0e4f59bb952a2e3d6d48c1fface8804a2bc815f7fb55b45d19",
+      "bytes": 7677,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-STATUS-LATEST.md",
+      "copy": "records/book/GROK-FLEET-STATUS-LATEST.md",
+      "original_sha256": "c92548cb97d47f01cefd45d202d5edcbb63d1ded69afb7baae67e4dbd285c0fa",
+      "copy_sha256": "c92548cb97d47f01cefd45d202d5edcbb63d1ded69afb7baae67e4dbd285c0fa",
+      "bytes": 3385,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P0-70-CURRENT-RECONCILIATION.md",
+      "copy": "records/book/P0-70-CURRENT-RECONCILIATION.md",
+      "original_sha256": "b37318e8443789eefe03b8c9a6d15fbccc52695bee2636ef0404d85253eca137",
+      "copy_sha256": "5f89ac1918136b0301ca6be1bbda883cdc3f05256c9929373cb51bcc0a2b3c63",
+      "bytes": 8309,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-SUPERVISOR-OWNERSHIP-20260906.json",
+      "copy": "records/book/GROK-SUPERVISOR-OWNERSHIP-20260906.json",
+      "original_sha256": "d8f88080f6be745354ea582863766fd1db430f0b38ac000230ea734d955fcad7",
+      "copy_sha256": "a42f8d228f58ae2ea9c1c491edc6a82b677ba0159710108776b2e7a36e040b0e",
+      "bytes": 51977,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P004-CE83957-CORRECTIVE-HANDOFF.md",
+      "copy": "records/book/P004-CE83957-CORRECTIVE-HANDOFF.md",
+      "original_sha256": "6b71dfa3190e0b5f1f4ebffcd739e2e1197b718f8fa8e54673e8730dfadcb6b9",
+      "copy_sha256": "6b71dfa3190e0b5f1f4ebffcd739e2e1197b718f8fa8e54673e8730dfadcb6b9",
+      "bytes": 5132,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/FULL-SUITE-HARNESS-PLANNING-STOP-20260907.md",
+      "copy": "records/book/FULL-SUITE-HARNESS-PLANNING-STOP-20260907.md",
+      "original_sha256": "eb7fadc4311b53728fcd8a245da6070609e611238ecb72128a3b7c2a2db1a207",
+      "copy_sha256": "afa2c72e26f50ac5df92c04bea57813704e0ec6ed6eb733f5c06e6ce17decde3",
+      "bytes": 6621,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P053-BCA137D-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P053-BCA137D-INDEPENDENT-REVIEW.md",
+      "original_sha256": "6a10eb4b2e11c840388246db32bbf9c3d7b939f4c901e7f3bb2f823722ddb490",
+      "copy_sha256": "05246029a68b488e6caf8a1c78b02964b5e13f5d4718fe827e40faac84a0e32f",
+      "bytes": 5132,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/MCP-RAW-CANON-FIXTURE-INVENTORY-20260906.json",
+      "copy": "records/book/MCP-RAW-CANON-FIXTURE-INVENTORY-20260906.json",
+      "original_sha256": "8d85cc217c188503c4f9041734e54d7078911ab1076dc3a1b5f7772942178cf1",
+      "copy_sha256": "0d43f82c0cf03fe9061d523275fffa6e43aa9813033ca446cef0d6b501661f3a",
+      "bytes": 8128,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-100-FLEET-EXECUTION-CONTROL-REVIEW.md",
+      "copy": "records/book/GROK-100-FLEET-EXECUTION-CONTROL-REVIEW.md",
+      "original_sha256": "e13b1c18599f5247a8ae74d7621166455a421cec3dbf42f6a87c9f81ac8e5a52",
+      "copy_sha256": "b1ab38d5dc5dc9a621c75fdcbd552f40ef9cfb42891de6df1a4ebda00263c7a3",
+      "bytes": 16520,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P104-66040E3-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P104-66040E3-INDEPENDENT-REVIEW.md",
+      "original_sha256": "c470a2a5394335a7fb920d7c71663063af67dcb39927a8ac99ead22c4c627266",
+      "copy_sha256": "c470a2a5394335a7fb920d7c71663063af67dcb39927a8ac99ead22c4c627266",
+      "bytes": 4972,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P015-STATIC-REVIEW-20260906.json",
+      "copy": "records/book/GROK-P015-STATIC-REVIEW-20260906.json",
+      "original_sha256": "75c1f70534df4281a012fd52e70f92eb60a3c48802bbac9bc249b2b291f802e6",
+      "copy_sha256": "ca823e7f696f490b423043eb00675103c9c286cec4ce5b70091b18b035008847",
+      "bytes": 4612,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P067-P069-FAILED-TEST-REVIEW.md",
+      "copy": "records/book/P067-P069-FAILED-TEST-REVIEW.md",
+      "original_sha256": "2756fd2b33023a342d1620ea8cefa7066690a68fa7a6ad9791afe10c0498cd27",
+      "copy_sha256": "2756fd2b33023a342d1620ea8cefa7066690a68fa7a6ad9791afe10c0498cd27",
+      "bytes": 4523,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-WAVE-80280B-OWNER-REVIEW.md",
+      "copy": "records/book/GROK-FLEET-WAVE-80280B-OWNER-REVIEW.md",
+      "original_sha256": "18b85b1a841fd33b95632617de4525b4b24d12f2ba09cccb82b4c4420ed0fb67",
+      "copy_sha256": "18b85b1a841fd33b95632617de4525b4b24d12f2ba09cccb82b4c4420ed0fb67",
+      "bytes": 13653,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/MCP-RAW-CANON-FIXTURE-INVENTORY-20260906.md",
+      "copy": "records/book/MCP-RAW-CANON-FIXTURE-INVENTORY-20260906.md",
+      "original_sha256": "13273ef05704926c2f6b4d9ff8099378965b558ac4ba5b6b02c801e2a23905f8",
+      "copy_sha256": "0ab34995bdfdfa3e8cd2970f50977c6761b75bba0487dad3eba7b6bbfe193c0d",
+      "bytes": 4328,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P004-CE83957-INDEPENDENT-REVIEW.json",
+      "copy": "records/book/P004-CE83957-INDEPENDENT-REVIEW.json",
+      "original_sha256": "e106925ef576ef72ea3564662976ab0b941133bc19a933057d0337145aa326c6",
+      "copy_sha256": "186d9b60349bfd3bffa94d86507f9e453cf3ca6eb115a837945d247312b579ae",
+      "bytes": 4653,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-100-20260906.md",
+      "copy": "records/book/GROK-FLEET-100-20260906.md",
+      "original_sha256": "c8a85a1b773ce3bcd12107a274b0c38cd4a2bc9c01daa8bc16b11ea52016ef80",
+      "copy_sha256": "c817b796599c20e02369f30138cd7952e17d792ca75d0c2b76d6d1d6737f1415",
+      "bytes": 7630,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-IMMEDIATE-R100-20260906.validation.json",
+      "copy": "records/book/GROK-FLEET-IMMEDIATE-R100-20260906.validation.json",
+      "original_sha256": "c245912820c63d81b40a4ca2d9e4afd4e2fa7cf777053d6ecab51d2e1971f6f4",
+      "copy_sha256": "c245912820c63d81b40a4ca2d9e4afd4e2fa7cf777053d6ecab51d2e1971f6f4",
+      "bytes": 1184,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-100-20260906.json",
+      "copy": "records/book/GROK-FLEET-100-20260906.json",
+      "original_sha256": "1d5bf97b89ca8ba0310d693f67ca72f93391d31c8b0a6fbaa831f3b2e36b6b0b",
+      "copy_sha256": "c959504735e1157b7e7e4a0017898f0540c46dec1206d9362812719cb5297a87",
+      "bytes": 365111,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P106-PACKET-VALIDATION-20260906.json",
+      "copy": "records/book/GROK-P106-PACKET-VALIDATION-20260906.json",
+      "original_sha256": "63d5ebdaebb9def14c4b824a166496592e14f8fcee409a5eaffdb2d8b74bccc9",
+      "copy_sha256": "d9b090585e7cf5d1aab459ffe51a1090feb64de62105e56f86baeff8e96b3994",
+      "bytes": 1015,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P104-5241086-INDEPENDENT-REVIEW-PENDING.md",
+      "copy": "records/book/P104-5241086-INDEPENDENT-REVIEW-PENDING.md",
+      "original_sha256": "6105d619e637a1720efe510ad1ae73d0a75516fb865dd5e66a12fa62f2f02395",
+      "copy_sha256": "3421307fac1c3d5ff6d0da88aa348d7eaf3c6b68b705d5696e81a6eb2d319e17",
+      "bytes": 1351,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FIRST-RESULTS-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/GROK-FIRST-RESULTS-INDEPENDENT-REVIEW.md",
+      "original_sha256": "8e5306c39c27efe0fa2766d34176e3875f79b791f97ef6ecf92f2f6066d68bf4",
+      "copy_sha256": "fb165fca858fb19097fc46a98f15df5425b4e768c0a4ff4bc5a23601ab7ac4aa",
+      "bytes": 6105,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-CORRECTION-ROOT-AMENDMENTS-20260906.md",
+      "copy": "records/book/GROK-CORRECTION-ROOT-AMENDMENTS-20260906.md",
+      "original_sha256": "6dec2122ead373e7dd3fa0c1363654f5b86b94f9f4ae5f551831b0c0afaaba0a",
+      "copy_sha256": "6dec2122ead373e7dd3fa0c1363654f5b86b94f9f4ae5f551831b0c0afaaba0a",
+      "bytes": 2238,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P006-b1ff2d8-INDEPENDENT-REVIEW.json",
+      "copy": "records/book/P006-b1ff2d8-INDEPENDENT-REVIEW.json",
+      "original_sha256": "6a71f139e8db39349a5279d39884c0f97d4febd8769e1053930ab0ab5aced09e",
+      "copy_sha256": "6a71f139e8db39349a5279d39884c0f97d4febd8769e1053930ab0ab5aced09e",
+      "bytes": 2304,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-100-ADMISSION-RECEIPT.json",
+      "copy": "records/book/GROK-FLEET-100-ADMISSION-RECEIPT.json",
+      "original_sha256": "486803a776bee080121f3ca8ee49e5d3ba93161d380c9c98fe807bff0eeacd50",
+      "copy_sha256": "486803a776bee080121f3ca8ee49e5d3ba93161d380c9c98fe807bff0eeacd50",
+      "bytes": 53720,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P071-A90DB53-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P071-A90DB53-INDEPENDENT-REVIEW.md",
+      "original_sha256": "689ef1f72f51bc60ce0eb9b817a8ecb5020ff59b9faa739cc32bb1456a7d11e1",
+      "copy_sha256": "db42a0040c59c7c9875ec5d0258f4ae90693a89696b8e7e36718682a19a03a1f",
+      "bytes": 5929,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-CLEAN-STOP-CANDIDATE-MANIFEST-20260907.json",
+      "copy": "records/book/GROK-CLEAN-STOP-CANDIDATE-MANIFEST-20260907.json",
+      "original_sha256": "a7148d5abf77378077f344ddf6466e0fc145fab60aecf39cd194bc59d9f14490",
+      "copy_sha256": "a7148d5abf77378077f344ddf6466e0fc145fab60aecf39cd194bc59d9f14490",
+      "bytes": 10843,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-CONTROLLER-CLEANUP-CHECKS.json",
+      "copy": "records/book/GROK-FLEET-CONTROLLER-CLEANUP-CHECKS.json",
+      "original_sha256": "9d71045f7fd34af5eda370f7becbc016cccfa585c51a08303d1d889119922ac9",
+      "copy_sha256": "9d71045f7fd34af5eda370f7becbc016cccfa585c51a08303d1d889119922ac9",
+      "bytes": 476,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P104-66040E3-INDEPENDENT-REVIEW.json",
+      "copy": "records/book/P104-66040E3-INDEPENDENT-REVIEW.json",
+      "original_sha256": "36afbd3d3e41ec76ac222945ec5b79c17a55e5efdd8c59b3312f3618ec17c8e2",
+      "copy_sha256": "45d09b5ed8dfeb106349371132579941551570c49d2a4b2b120a73e84c351c28",
+      "bytes": 5421,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-100-RESULT-MANIFEST.json",
+      "copy": "records/book/GROK-FLEET-100-RESULT-MANIFEST.json",
+      "original_sha256": "97c873058da97ccd6e2d6330e6fbc5dba43bd13782082ffda9064ba90ad14eed",
+      "copy_sha256": "1b242a65fb129649a2a11ba590bd6d5a521169e55967fae2b83e835cc50468e1",
+      "bytes": 65639,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P006-DOCS-PHASE-HANDOFF.md",
+      "copy": "records/book/P006-DOCS-PHASE-HANDOFF.md",
+      "original_sha256": "6aea75a6bc85c3864766104a36534462d51a3be82ec9074e726dbfd4ca89fd63",
+      "copy_sha256": "6aea75a6bc85c3864766104a36534462d51a3be82ec9074e726dbfd4ca89fd63",
+      "bytes": 1938,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P067-3D76AFB-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P067-3D76AFB-INDEPENDENT-REVIEW.md",
+      "original_sha256": "b82a37a2915c6aa96d1ee57874e6c8e421229d5bc1de115ebad3ad11166833c0",
+      "copy_sha256": "1d6a2d0239d80f2d16baaefbba7ea6d73651ac39e85889683e7f6b4bc42fc2cb",
+      "bytes": 5077,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FIRST10-INTEGRATION-MANIFEST.json",
+      "copy": "records/book/GROK-FIRST10-INTEGRATION-MANIFEST.json",
+      "original_sha256": "b13fe0f61cfcca62cb87e12ab5a70d780bfc9b7cffe65024d9d8b5c96acd9d33",
+      "copy_sha256": "3dbaaa5070510320daade13fc79d522b47f29817d604119ce18397a27297e47e",
+      "bytes": 9459,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P0-57-58-RETRIEVAL-CEILING-REVIEW.md",
+      "copy": "records/book/P0-57-58-RETRIEVAL-CEILING-REVIEW.md",
+      "original_sha256": "e24644de36ef1a70271ec8af272025edd9bdf3ef6089ff79aaa9521440701cc1",
+      "copy_sha256": "52a6b436bec21797ea5b6552536aeccecdee990bdaf653a5c80f511f91dce495",
+      "bytes": 7327,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-CONTROLLER-INCIDENT-20260906.json",
+      "copy": "records/book/GROK-FLEET-CONTROLLER-INCIDENT-20260906.json",
+      "original_sha256": "007fbfe5baecaf95e5dfbed1967dae8db269161ffa4ad00652c56a67e15efdc7",
+      "copy_sha256": "007fbfe5baecaf95e5dfbed1967dae8db269161ffa4ad00652c56a67e15efdc7",
+      "bytes": 1066,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P003-RELEASE-CONTRACT-OWNER-REVIEW.md",
+      "copy": "records/book/P003-RELEASE-CONTRACT-OWNER-REVIEW.md",
+      "original_sha256": "fe26f5596027c47bd24d3c00a807cf68717119a7c7b1ef98f5177eecdc4c348e",
+      "copy_sha256": "70d34d06d563b5bbc46f3fe6906bbd4a14eb36cd1a165b6452ce9096a4b340f0",
+      "bytes": 5135,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P102-F7A797F-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P102-F7A797F-INDEPENDENT-REVIEW.md",
+      "original_sha256": "d3a2ad7bbc4f839569ba51ed3914974212f84bb63fef8fe663a08f4509799efc",
+      "copy_sha256": "d3a2ad7bbc4f839569ba51ed3914974212f84bb63fef8fe663a08f4509799efc",
+      "bytes": 4480,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P014-SOURCE-SURVIVOR-LINEAGE-CONTRACT.md",
+      "copy": "records/book/P014-SOURCE-SURVIVOR-LINEAGE-CONTRACT.md",
+      "original_sha256": "0d2f1d547a8b7a92354c4fc8ee34b6f18f70fb9e91db1bf0efb0c539e626bfaf",
+      "copy_sha256": "1db54abdd1349c43654dae083b59d3b16dfb417718ef7014789ba0774c5cd6c2",
+      "bytes": 15837,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P048-P072-WORKER-HANDOFF.md",
+      "copy": "records/book/P048-P072-WORKER-HANDOFF.md",
+      "original_sha256": "df6cbdfa03eec0daf52133225c1a653ab0a869cb10c26072db0afbf7d74325ac",
+      "copy_sha256": "df6cbdfa03eec0daf52133225c1a653ab0a869cb10c26072db0afbf7d74325ac",
+      "bytes": 4386,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P105-10ADFB4-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P105-10ADFB4-INDEPENDENT-REVIEW.md",
+      "original_sha256": "ba02e11816362f6bfa9c0a02175ecb75532740a6375654ec3091b69de419d888",
+      "copy_sha256": "0fe0fd8dd9694efbab2bcea1788b5a662b81289f1b691dfe71cad19657daab0c",
+      "bytes": 4952,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P015-CORRECTION-HANDOFF-20260906.md",
+      "copy": "records/book/GROK-P015-CORRECTION-HANDOFF-20260906.md",
+      "original_sha256": "adcb8fff42109707b2ac449e4f73f99ff439c4d71dcc6338dab356658b1dc276",
+      "copy_sha256": "adcb8fff42109707b2ac449e4f73f99ff439c4d71dcc6338dab356658b1dc276",
+      "bytes": 2656,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P073-1A29C7F-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P073-1A29C7F-INDEPENDENT-REVIEW.md",
+      "original_sha256": "c7779e19a821a01d3ddcdff901fc9922bb919406702df377a193e1134033cd25",
+      "copy_sha256": "62888b97d8b2aa0f4b2e94d2ba81d933858a9a0465b12e322b7ae2f4c7118966",
+      "bytes": 5224,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/P075-7DF5D88-INDEPENDENT-REVIEW.md",
+      "copy": "records/book/P075-7DF5D88-INDEPENDENT-REVIEW.md",
+      "original_sha256": "50f9399d5ab6ec888b7fa0daeb42d340b05a21ef8ca6ed8ff3e815e8bc57a8c9",
+      "copy_sha256": "e39e952bddd76f97f24665b712906e6bd3cb58d92235eec1bccf5d786f7ffff2",
+      "bytes": 5736,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-STATUS-LATEST.json",
+      "copy": "records/book/GROK-FLEET-STATUS-LATEST.json",
+      "original_sha256": "084925b0901b73876798009fe6a1e0df9fb8342c8e8b0af182b1e44b68376062",
+      "copy_sha256": "64b07595c6f671ebf8272165f84ac75730a1e0d5c756a134e37396babdac8ed4",
+      "bytes": 1769588,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-R053-R093-R074-REVIEW/status-with-production.json",
+      "copy": "records/book/GROK-R053-R093-R074-REVIEW/status-with-production.json",
+      "original_sha256": "55b8f716a6f195a9229002bc825d91eedb093c951134529ee5077a02cd5f30fd",
+      "copy_sha256": "39f2116c934d1532d1ab334d3317004d3154fbbd8253557ed93d05b302363372",
+      "bytes": 1813183,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-R053-R093-R074-REVIEW/REVIEW.md",
+      "copy": "records/book/GROK-R053-R093-R074-REVIEW/REVIEW.md",
+      "original_sha256": "a92328b89c68d0ded7d911d9a572d57b846a89da1b475fcf587ef8b6dbf26648",
+      "copy_sha256": "a92328b89c68d0ded7d911d9a572d57b846a89da1b475fcf587ef8b6dbf26648",
+      "bytes": 10280,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-R053-R093-R074-REVIEW/artifact-validation.json",
+      "copy": "records/book/GROK-R053-R093-R074-REVIEW/artifact-validation.json",
+      "original_sha256": "47d84f1625c3caeef73e89ab07cdda6f82b360fae97640a81d222f09fe93f792",
+      "copy_sha256": "a8788ff93f3d5a32f174759507734e7e802d954a8c58f90027188529934950bf",
+      "bytes": 2719,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-R053-R093-R074-REVIEW/implementation-packets.json",
+      "copy": "records/book/GROK-R053-R093-R074-REVIEW/implementation-packets.json",
+      "original_sha256": "53632115ab619dcda3dc14dea3700d91bd844cdb725380ac8070ab85e4ef566b",
+      "copy_sha256": "ce774842956d46643d28ba3c9a7497c04ad39952fa0a68fa5393a532b9d1c760",
+      "bytes": 15021,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P101-P105-CODE-PACKETS/P101-P104-CORRECTION-VALIDATION.json",
+      "copy": "records/book/GROK-P101-P105-CODE-PACKETS/P101-P104-CORRECTION-VALIDATION.json",
+      "original_sha256": "75af761551e44abd9dd96c5ba0e084d37b8f741b288b7d48d7ebccef68a30d5e",
+      "copy_sha256": "65d24c5015247625a4233f97be3c2f7e2c0797811e2e21596d11e8fde5e68d2f",
+      "bytes": 2404,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P101-P105-CODE-PACKETS/P105-HANDOFF.md",
+      "copy": "records/book/GROK-P101-P105-CODE-PACKETS/P105-HANDOFF.md",
+      "original_sha256": "3a1d11a303d0f4968aed1acf9deef1eae205f491d0975681424e757d0df1c916",
+      "copy_sha256": "3a1d11a303d0f4968aed1acf9deef1eae205f491d0975681424e757d0df1c916",
+      "bytes": 1843,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P101-P105-CODE-PACKETS/SOURCE-VERIFICATION.json",
+      "copy": "records/book/GROK-P101-P105-CODE-PACKETS/SOURCE-VERIFICATION.json",
+      "original_sha256": "677b91838836c62f7c361693ace740651beb3d65b8d134f8e8c3a7123ae2b776",
+      "copy_sha256": "4f4b54581e36cb6d040b12d01f387deb2c68dd84b41a9211db30b1de8685313c",
+      "bytes": 4601,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P101-P105-CODE-PACKETS/GROK-FLEET-P101-P102-P104-CORRECTIVE-20260906.json",
+      "copy": "records/book/GROK-P101-P105-CODE-PACKETS/GROK-FLEET-P101-P102-P104-CORRECTIVE-20260906.json",
+      "original_sha256": "54aeace99c19c56234b4790495bd67466f0aa9480c037392f1628576b34699c4",
+      "copy_sha256": "6d8cca30fa666997a12e67f7f7323a2d6e45df80f044a954aa759ae12d751910",
+      "bytes": 13265,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P101-P105-CODE-PACKETS/GROK-FLEET-P101-P104-CORRECTIVE-20260906.json",
+      "copy": "records/book/GROK-P101-P105-CODE-PACKETS/GROK-FLEET-P101-P104-CORRECTIVE-20260906.json",
+      "original_sha256": "b93ddfa36acb6ae296a8f753974dc724a2c9cdd3bd9189b76486e567432b2f5f",
+      "copy_sha256": "1b203261937d420da2fa5a763f7d3449fdfb2839f5bb10e0ef72752947c2b9af",
+      "bytes": 8648,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P101-P105-CODE-PACKETS/P101-HANDOFF.md",
+      "copy": "records/book/GROK-P101-P105-CODE-PACKETS/P101-HANDOFF.md",
+      "original_sha256": "352719e89cc7c54c7e02f05a349027781f7b1092a8412d59e55af5c97fe3a9bd",
+      "copy_sha256": "352719e89cc7c54c7e02f05a349027781f7b1092a8412d59e55af5c97fe3a9bd",
+      "bytes": 2134,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P101-P105-CODE-PACKETS/P104-HANDOFF.md",
+      "copy": "records/book/GROK-P101-P105-CODE-PACKETS/P104-HANDOFF.md",
+      "original_sha256": "2a643722e409f05fb33fcffd9369c009fd294f7e830c270fff4346a34f7c92af",
+      "copy_sha256": "2a643722e409f05fb33fcffd9369c009fd294f7e830c270fff4346a34f7c92af",
+      "bytes": 1824,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P101-P105-CODE-PACKETS/P101-P102-P104-CORRECTION-VALIDATION.json",
+      "copy": "records/book/GROK-P101-P105-CODE-PACKETS/P101-P102-P104-CORRECTION-VALIDATION.json",
+      "original_sha256": "b89b624dcb1ea94c7b0d9f31d8432d6db8eeb6bbff8cb427b2e9d8f5cb161dd5",
+      "copy_sha256": "cadbc3b53d2ac55889388dcf93dbc9a9155c4c3d1c9992ebe59fbd1cc3295a71",
+      "bytes": 3058,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P101-P105-CODE-PACKETS/PACKET-VALIDATION.json",
+      "copy": "records/book/GROK-P101-P105-CODE-PACKETS/PACKET-VALIDATION.json",
+      "original_sha256": "7e4fd4dbf55ee1a1bd2a400bfb15b7475dedd46853f82645282c2532b7efdc79",
+      "copy_sha256": "e5caa30341f00b131964adeaec5c0ac74e60ea313b5ee842b9bb5a663df0e5b7",
+      "bytes": 2582,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P101-P105-CODE-PACKETS/P102-HANDOFF.md",
+      "copy": "records/book/GROK-P101-P105-CODE-PACKETS/P102-HANDOFF.md",
+      "original_sha256": "f7aa0b342235e5fbc627f063a3461890446a1412b1494e6a2c8c13df545aba99",
+      "copy_sha256": "f7aa0b342235e5fbc627f063a3461890446a1412b1494e6a2c8c13df545aba99",
+      "bytes": 1940,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P101-P105-CODE-PACKETS/P103-HANDOFF.md",
+      "copy": "records/book/GROK-P101-P105-CODE-PACKETS/P103-HANDOFF.md",
+      "original_sha256": "c0e976eb0160d0ad9fd212e5039bea766961aa64cc434b27856988abc181e002",
+      "copy_sha256": "c0e976eb0160d0ad9fd212e5039bea766961aa64cc434b27856988abc181e002",
+      "bytes": 1930,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P101-P105-CODE-PACKETS/P101-CORRECTION-HANDOFF.md",
+      "copy": "records/book/GROK-P101-P105-CODE-PACKETS/P101-CORRECTION-HANDOFF.md",
+      "original_sha256": "ee987899e839293fd4296f9ababccf27331a70aea929630c3e1d6519fb143173",
+      "copy_sha256": "ee987899e839293fd4296f9ababccf27331a70aea929630c3e1d6519fb143173",
+      "bytes": 4435,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P101-P105-CODE-PACKETS/P104-CORRECTION-HANDOFF.md",
+      "copy": "records/book/GROK-P101-P105-CODE-PACKETS/P104-CORRECTION-HANDOFF.md",
+      "original_sha256": "30482672fb841d02d73434c758457ae00c4b29554a1e30d9ba2301a43210429e",
+      "copy_sha256": "30482672fb841d02d73434c758457ae00c4b29554a1e30d9ba2301a43210429e",
+      "bytes": 4537,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P101-P105-CODE-PACKETS/GROK-FLEET-P101-P105.json",
+      "copy": "records/book/GROK-P101-P105-CODE-PACKETS/GROK-FLEET-P101-P105.json",
+      "original_sha256": "4421f5d2829c00bc1c8d591837e495cb0b0d61a06f767a26237456c8a909e193",
+      "copy_sha256": "12ec67fdd2704eb3d52c5fd6670fa387273d97e831c86dc17cde8562a573282b",
+      "bytes": 16668,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-SKILLS/TASK-PACKET.template.md",
+      "copy": "records/book/GROK-FLEET-SKILLS/TASK-PACKET.template.md",
+      "original_sha256": "3aac04c17516e63c8e118708d276fa87e7dd8295ce1cf6e98a93cb725dbdd782",
+      "copy_sha256": "3aac04c17516e63c8e118708d276fa87e7dd8295ce1cf6e98a93cb725dbdd782",
+      "bytes": 1754,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-SKILLS/COMMON-WORKER.md",
+      "copy": "records/book/GROK-FLEET-SKILLS/COMMON-WORKER.md",
+      "original_sha256": "91d7e99d900bf981f73372deea36cdf1e26df97208c25be22220430439028f64",
+      "copy_sha256": "419de3488fc3cccae77ae3cafdad8051ee1bc0d9d448546e3b9839911044fce4",
+      "bytes": 5215,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-SKILLS/RESULT.template.md",
+      "copy": "records/book/GROK-FLEET-SKILLS/RESULT.template.md",
+      "original_sha256": "be9d492b6bc494268b614810fa76fa401023b4aca811d12490431e575e7d27f1",
+      "copy_sha256": "be9d492b6bc494268b614810fa76fa401023b4aca811d12490431e575e7d27f1",
+      "bytes": 1461,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-SKILLS/SKILL-MANIFEST.md",
+      "copy": "records/book/GROK-FLEET-SKILLS/SKILL-MANIFEST.md",
+      "original_sha256": "9d2b5b5955b06264a2728d0af9b7346d34c46500a65d815627496677815ea52d",
+      "copy_sha256": "9badc78b82fb1655afd2615f5dd691447b4b80a33aef65fad96d6bfcec979be3",
+      "bytes": 9581,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-SKILLS/README.md",
+      "copy": "records/book/GROK-FLEET-SKILLS/README.md",
+      "original_sha256": "a9d1cd66244a9af0ae1505813a761e7fe834cce06e627c9ab1681b718a069fbb",
+      "copy_sha256": "3c8997c0223acba5b79018c0bff85ad2ad24c3fc6f86fbe75d0a95798beb2a38",
+      "bytes": 4470,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-SKILLS/VERIFICATION.json",
+      "copy": "records/book/GROK-FLEET-SKILLS/VERIFICATION.json",
+      "original_sha256": "78e9c935c79cc1dfec6dc7d1e088e0b8a893561cf7a9bfe494af8c5ad8e6fb4e",
+      "copy_sha256": "88b789b2dab409b0ab8c01c067599ab0fb0a60d041040f277ef32c6c2ef9304d",
+      "bytes": 2457,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-SKILLS/sources.json",
+      "copy": "records/book/GROK-FLEET-SKILLS/sources.json",
+      "original_sha256": "215d05fdd73344d5ff621d4574dac9de885107cf74a87a7b5a716f9c391b0752",
+      "copy_sha256": "95331e87e118ab4859afed592b31c77d6156e427deff7ce09b2fcd382e470ea5",
+      "bytes": 18817,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P050-P056-REVIEW/REVIEW.md",
+      "copy": "records/book/GROK-P050-P056-REVIEW/REVIEW.md",
+      "original_sha256": "1098ab82c74cdbd016af2d75c10c21c8b5d7af71b62d50db5ca2118b9af09164",
+      "copy_sha256": "1098ab82c74cdbd016af2d75c10c21c8b5d7af71b62d50db5ca2118b9af09164",
+      "bytes": 9072,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P050-P056-REVIEW/artifact-validation.json",
+      "copy": "records/book/GROK-P050-P056-REVIEW/artifact-validation.json",
+      "original_sha256": "84f598e0bef96764a7f05a329534639b11b79aea311e82ee75d3d7f90bb76b1b",
+      "copy_sha256": "84f598e0bef96764a7f05a329534639b11b79aea311e82ee75d3d7f90bb76b1b",
+      "bytes": 1624,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P050-P056-REVIEW/implementation-packets.json",
+      "copy": "records/book/GROK-P050-P056-REVIEW/implementation-packets.json",
+      "original_sha256": "14029565b74802215d0303012a80c4a0fffa4850f9472e24468ed854cb1dcac6",
+      "copy_sha256": "b1542400b83fc8e1416d9966b59d675d4fcde44a0188569a25cdacad81111483",
+      "bytes": 14275,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-P050-P056-REVIEW/imap-filename-check.json",
+      "copy": "records/book/GROK-P050-P056-REVIEW/imap-filename-check.json",
+      "original_sha256": "574893234a8e7c0b3aab1b6459de1f06139516839c54651ef4a417c8a164ee89",
+      "copy_sha256": "574893234a8e7c0b3aab1b6459de1f06139516839c54651ef4a417c8a164ee89",
+      "bytes": 1120,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-CODE-INPUTS/kizuki.surface-inventory.v1.schema.json",
+      "copy": "records/book/GROK-CODE-INPUTS/kizuki.surface-inventory.v1.schema.json",
+      "original_sha256": "2acb9cc0dcd53e9f809651bbc59fd14340ca9da9d012701e85ea489c42e5e5e5",
+      "copy_sha256": "2acb9cc0dcd53e9f809651bbc59fd14340ca9da9d012701e85ea489c42e5e5e5",
+      "bytes": 5078,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-CODE-INPUTS/kizuki.gate-receipt-identity.v1.schema.json",
+      "copy": "records/book/GROK-CODE-INPUTS/kizuki.gate-receipt-identity.v1.schema.json",
+      "original_sha256": "81ea7db4bd49d863250108012b087010eda3554aba1ad5d3dee246ab78e3fec7",
+      "copy_sha256": "81ea7db4bd49d863250108012b087010eda3554aba1ad5d3dee246ab78e3fec7",
+      "bytes": 2027,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-CODE-INPUTS/kizuki.acceptance-evidence.v3.schema.json",
+      "copy": "records/book/GROK-CODE-INPUTS/kizuki.acceptance-evidence.v3.schema.json",
+      "original_sha256": "5782294eb2b42122041cfa4581b0bb73d4fb00fca5006b64bb7be60b204747ce",
+      "copy_sha256": "5782294eb2b42122041cfa4581b0bb73d4fb00fca5006b64bb7be60b204747ce",
+      "bytes": 4218,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-CODE-INPUTS/01-shared-identity.md",
+      "copy": "records/book/GROK-CODE-INPUTS/01-shared-identity.md",
+      "original_sha256": "be2b9a2d3df2b898360a0b226649f84e1f656dcb3fe573bc1e6cdeb57f21fe22",
+      "copy_sha256": "be2b9a2d3df2b898360a0b226649f84e1f656dcb3fe573bc1e6cdeb57f21fe22",
+      "bytes": 8903,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-CODE-INPUTS/P095-capability-inventory.json",
+      "copy": "records/book/GROK-CODE-INPUTS/P095-capability-inventory.json",
+      "original_sha256": "632a65d4b08490f6fe25ce339fc6aa2ccbfb8d30511cbb217eba3fa1e44b9c17",
+      "copy_sha256": "632a65d4b08490f6fe25ce339fc6aa2ccbfb8d30511cbb217eba3fa1e44b9c17",
+      "bytes": 39763,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-CODE-INPUTS/P095-contradictions.json",
+      "copy": "records/book/GROK-CODE-INPUTS/P095-contradictions.json",
+      "original_sha256": "099ecf1818251cfdcc374f24077c81b4b7e17372b9198a8425af218920762692",
+      "copy_sha256": "099ecf1818251cfdcc374f24077c81b4b7e17372b9198a8425af218920762692",
+      "bytes": 12961,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-CODE-INPUTS/P095-d19-readiness.json",
+      "copy": "records/book/GROK-CODE-INPUTS/P095-d19-readiness.json",
+      "original_sha256": "2d61bde8aaad2326ad5213c2e037b6ce0c2ed087347e1916eef5c730de1b47b7",
+      "copy_sha256": "9f53268cc6aef2c24e4e3e14e818d79c94e8f9ded1ed973ccf62ac4d7f17b615",
+      "bytes": 3359,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FIRST10-QUALIFICATION/typecheck-4decb0cc3f4c48329de6965eb4570ead/receipt.json",
+      "copy": "records/book/GROK-FIRST10-QUALIFICATION/typecheck-4decb0cc3f4c48329de6965eb4570ead/receipt.json",
+      "original_sha256": "a84c56a8971f14d37ef8fc6ddecceeac735f51384f542acec39d2241d26a24a5",
+      "copy_sha256": "b0a4ab1ccaa18cb66e1dfb3c957fc4e0c37ab84d26f2004b4ad55b66d60d4bec",
+      "bytes": 4151,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-SKILLS/roles/backend-storage.md",
+      "copy": "records/book/GROK-FLEET-SKILLS/roles/backend-storage.md",
+      "original_sha256": "a30477b7b1dcc59deb70f5850ba8e4253a78784cf8bd5b2cc93a858bb7049853",
+      "copy_sha256": "a30477b7b1dcc59deb70f5850ba8e4253a78784cf8bd5b2cc93a858bb7049853",
+      "bytes": 1770,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-SKILLS/roles/connectors.md",
+      "copy": "records/book/GROK-FLEET-SKILLS/roles/connectors.md",
+      "original_sha256": "f6c79c95b5e685055680963a5aff3db2237c21ba106dc7dd08d130f0623de244",
+      "copy_sha256": "f6c79c95b5e685055680963a5aff3db2237c21ba106dc7dd08d130f0623de244",
+      "bytes": 1698,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-SKILLS/roles/frontend-onboarding.md",
+      "copy": "records/book/GROK-FLEET-SKILLS/roles/frontend-onboarding.md",
+      "original_sha256": "a7bd5b42210a2c2ef140aeff128e7e2bc2c3c61732a1a780af170734769378b1",
+      "copy_sha256": "a7bd5b42210a2c2ef140aeff128e7e2bc2c3c61732a1a780af170734769378b1",
+      "bytes": 1971,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-SKILLS/roles/qa-reviewer.md",
+      "copy": "records/book/GROK-FLEET-SKILLS/roles/qa-reviewer.md",
+      "original_sha256": "c8768aa0aca671ccc317e6a65fd8473455b1539f94d932c4d6a4bda74a9a788a",
+      "copy_sha256": "c8768aa0aca671ccc317e6a65fd8473455b1539f94d932c4d6a4bda74a9a788a",
+      "bytes": 1828,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "book/GROK-FLEET-SKILLS/roles/packaging-evidence.md",
+      "copy": "records/book/GROK-FLEET-SKILLS/roles/packaging-evidence.md",
+      "original_sha256": "3f21cbbec421a92db34605f3d8696e7935493979f4eb848c7ef2c230cbc5878d",
+      "copy_sha256": "3f21cbbec421a92db34605f3d8696e7935493979f4eb848c7ef2c230cbc5878d",
+      "bytes": 1883,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R080-resume1/out/result.json",
+      "copy": "records/workers/R080-resume1/result.json",
+      "original_sha256": "b18ee7f5fe3205bb612fe29201888cb7d5df85b26e689c7e2173113ee07a6219",
+      "copy_sha256": "b18ee7f5fe3205bb612fe29201888cb7d5df85b26e689c7e2173113ee07a6219",
+      "bytes": 7210,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R080-resume1/out/RESULT.md",
+      "copy": "records/workers/R080-resume1/RESULT.md",
+      "original_sha256": "938d2703bd9818855298d9f41b1deb128c5f9120306aa30dc352e654d81f83a9",
+      "copy_sha256": "938d2703bd9818855298d9f41b1deb128c5f9120306aa30dc352e654d81f83a9",
+      "bytes": 1993,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R074-resume1/out/result.json",
+      "copy": "records/workers/R074-resume1/result.json",
+      "original_sha256": "d175fba2cd1a424e4454c9570117defad3f428241439ab5e5bf7a580cce26034",
+      "copy_sha256": "d175fba2cd1a424e4454c9570117defad3f428241439ab5e5bf7a580cce26034",
+      "bytes": 7845,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R074-resume1/out/RESULT.md",
+      "copy": "records/workers/R074-resume1/RESULT.md",
+      "original_sha256": "8c5894e5586469358321b4863bd035fc41eb72533b7afb4675e718fa225c9b2b",
+      "copy_sha256": "8c5894e5586469358321b4863bd035fc41eb72533b7afb4675e718fa225c9b2b",
+      "bytes": 2786,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R089-resume1/out/result.json",
+      "copy": "records/workers/R089-resume1/result.json",
+      "original_sha256": "2061ce69a78a6b670990f11f13cd187be5311f62fdea10ce101bb7fa14b308d4",
+      "copy_sha256": "2061ce69a78a6b670990f11f13cd187be5311f62fdea10ce101bb7fa14b308d4",
+      "bytes": 7472,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R089-resume1/out/RESULT.md",
+      "copy": "records/workers/R089-resume1/RESULT.md",
+      "original_sha256": "602d1c48a2d2e236ceb6ac23ae015c29802146cd68a74c9b09dbeea66da7a00e",
+      "copy_sha256": "602d1c48a2d2e236ceb6ac23ae015c29802146cd68a74c9b09dbeea66da7a00e",
+      "bytes": 1944,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R047-resume1/out/result.json",
+      "copy": "records/workers/R047-resume1/result.json",
+      "original_sha256": "ef21863b5fb68052db680dfc424974e285557985134905b49cefb036e9f8e07d",
+      "copy_sha256": "ef21863b5fb68052db680dfc424974e285557985134905b49cefb036e9f8e07d",
+      "bytes": 5617,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R047-resume1/out/RESULT.md",
+      "copy": "records/workers/R047-resume1/RESULT.md",
+      "original_sha256": "bee55ddf1b8647f7b319ebd2d030e1d442f916d84427524d641a69d6471d0440",
+      "copy_sha256": "bee55ddf1b8647f7b319ebd2d030e1d442f916d84427524d641a69d6471d0440",
+      "bytes": 3376,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P047/out/result.json",
+      "copy": "records/workers/P047/result.json",
+      "original_sha256": "89e0b41d55ff98284513f5b9946e7ebbfc53d9e647023688c55af60eb326a541",
+      "copy_sha256": "89e0b41d55ff98284513f5b9946e7ebbfc53d9e647023688c55af60eb326a541",
+      "bytes": 5820,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P047/out/RESULT.md",
+      "copy": "records/workers/P047/RESULT.md",
+      "original_sha256": "08a5c041d2369bb9fd14c819014993265a0b05a627cf581030e3b2c852614496",
+      "copy_sha256": "08a5c041d2369bb9fd14c819014993265a0b05a627cf581030e3b2c852614496",
+      "bytes": 3881,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R005-attempt1/out/result.json",
+      "copy": "records/workers/R005-attempt1/result.json",
+      "original_sha256": "fa8723d3c49f555fcbe789b9d14b144d63de322da0b2d0347a96d3611d664f27",
+      "copy_sha256": "fa8723d3c49f555fcbe789b9d14b144d63de322da0b2d0347a96d3611d664f27",
+      "bytes": 10507,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R005-attempt1/out/RESULT.md",
+      "copy": "records/workers/R005-attempt1/RESULT.md",
+      "original_sha256": "9467a8e6710ee6b9aa806b6cc76d8a0bbebbe49e6cae038beb2d8a1bbeabc678",
+      "copy_sha256": "9467a8e6710ee6b9aa806b6cc76d8a0bbebbe49e6cae038beb2d8a1bbeabc678",
+      "bytes": 4747,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R091-resume1/out/result.json",
+      "copy": "records/workers/R091-resume1/result.json",
+      "original_sha256": "4dc2ffa732f462fcdb36f153556c6103ff666ae6ae8471c4aa8907cc6c2e94b1",
+      "copy_sha256": "4dc2ffa732f462fcdb36f153556c6103ff666ae6ae8471c4aa8907cc6c2e94b1",
+      "bytes": 7555,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R091-resume1/out/RESULT.md",
+      "copy": "records/workers/R091-resume1/RESULT.md",
+      "original_sha256": "064cde2616be2abd8c0303cdea3847ddcf3e68b56025ce693663c18c2c8fce67",
+      "copy_sha256": "064cde2616be2abd8c0303cdea3847ddcf3e68b56025ce693663c18c2c8fce67",
+      "bytes": 3788,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R078-resume1/out/result.json",
+      "copy": "records/workers/R078-resume1/result.json",
+      "original_sha256": "8e80ea6f289a7b78526a0be36d0b6b96bbb61e0178aa9ac76011e79985c57908",
+      "copy_sha256": "8e80ea6f289a7b78526a0be36d0b6b96bbb61e0178aa9ac76011e79985c57908",
+      "bytes": 9847,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R078-resume1/out/RESULT.md",
+      "copy": "records/workers/R078-resume1/RESULT.md",
+      "original_sha256": "e64ead7d821680fd1a912b78a21730b6efe7386612fd61730481a15b2c926cbf",
+      "copy_sha256": "e64ead7d821680fd1a912b78a21730b6efe7386612fd61730481a15b2c926cbf",
+      "bytes": 3201,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R034-resume1/out/result.json",
+      "copy": "records/workers/R034-resume1/result.json",
+      "original_sha256": "985d67956b8948635d81f106a4ff3bf8566e6b1151f92879697d404daa27ab8f",
+      "copy_sha256": "985d67956b8948635d81f106a4ff3bf8566e6b1151f92879697d404daa27ab8f",
+      "bytes": 7342,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R055-resume1/out/result.json",
+      "copy": "records/workers/R055-resume1/result.json",
+      "original_sha256": "0cf9a9ef743bb05add53fcafc74b6cffb3fd712c2ca28d82282a1838bfec1219",
+      "copy_sha256": "0cf9a9ef743bb05add53fcafc74b6cffb3fd712c2ca28d82282a1838bfec1219",
+      "bytes": 6965,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R055-resume1/out/RESULT.md",
+      "copy": "records/workers/R055-resume1/RESULT.md",
+      "original_sha256": "2b64db3f72fc40b4d101328eabc5575a6f88a93b74b46945c832b37d62e221cd",
+      "copy_sha256": "2b64db3f72fc40b4d101328eabc5575a6f88a93b74b46945c832b37d62e221cd",
+      "bytes": 3048,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R053-resume1/out/result.json",
+      "copy": "records/workers/R053-resume1/result.json",
+      "original_sha256": "5b14a225b375fa0e814f06f431d1657c8a7f39f6c800bdf61fcfee7f60755b32",
+      "copy_sha256": "5b14a225b375fa0e814f06f431d1657c8a7f39f6c800bdf61fcfee7f60755b32",
+      "bytes": 8353,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R053-resume1/out/RESULT.md",
+      "copy": "records/workers/R053-resume1/RESULT.md",
+      "original_sha256": "95172bbe1d072db8b4fab64806b3d5ccf7dee9abd1c368b5a4966102e2359f43",
+      "copy_sha256": "95172bbe1d072db8b4fab64806b3d5ccf7dee9abd1c368b5a4966102e2359f43",
+      "bytes": 3468,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R097-resume1/out/result.json",
+      "copy": "records/workers/R097-resume1/result.json",
+      "original_sha256": "5db33eebf85b1491944dcfb5d8400ab5f30ccb69ac85426b7734e4f2e785f380",
+      "copy_sha256": "5db33eebf85b1491944dcfb5d8400ab5f30ccb69ac85426b7734e4f2e785f380",
+      "bytes": 6398,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R097-resume1/out/RESULT.md",
+      "copy": "records/workers/R097-resume1/RESULT.md",
+      "original_sha256": "4d9cc78921fc310957880e576e326c713c6f1193bbe5983c84bb6ad4a4735422",
+      "copy_sha256": "4d9cc78921fc310957880e576e326c713c6f1193bbe5983c84bb6ad4a4735422",
+      "bytes": 4200,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R031-resume1/out/result.json",
+      "copy": "records/workers/R031-resume1/result.json",
+      "original_sha256": "65df7c0805071bc8bc9685259d80e84589351c36a19821b22803769a507143f6",
+      "copy_sha256": "65df7c0805071bc8bc9685259d80e84589351c36a19821b22803769a507143f6",
+      "bytes": 8339,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R031-resume1/out/RESULT.md",
+      "copy": "records/workers/R031-resume1/RESULT.md",
+      "original_sha256": "f2dff095c09958bde285d2d4eb6a382abf13e7e4a5e2d680106d325d35731bcd",
+      "copy_sha256": "f2dff095c09958bde285d2d4eb6a382abf13e7e4a5e2d680106d325d35731bcd",
+      "bytes": 4309,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P102-code2/out/result.json",
+      "copy": "records/workers/P102-code2/result.json",
+      "original_sha256": "3197dfbb088c754664575b33ed9d162881d049ff0dc967b7f7e2cf32f0f753ad",
+      "copy_sha256": "3197dfbb088c754664575b33ed9d162881d049ff0dc967b7f7e2cf32f0f753ad",
+      "bytes": 3398,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P102-code2/out/RESULT.md",
+      "copy": "records/workers/P102-code2/RESULT.md",
+      "original_sha256": "5ce79e52ac4573061ae3965fc2229c0725099cbe40626c649522c818e429a597",
+      "copy_sha256": "5ce79e52ac4573061ae3965fc2229c0725099cbe40626c649522c818e429a597",
+      "bytes": 2776,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R100-resume1/out/result.json",
+      "copy": "records/workers/R100-resume1/result.json",
+      "original_sha256": "6284c3cbe7b4534f5c7573fe283efaa2d10306550cf2ae67b337c08b6ad6c436",
+      "copy_sha256": "6284c3cbe7b4534f5c7573fe283efaa2d10306550cf2ae67b337c08b6ad6c436",
+      "bytes": 7805,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R037-resume1/out/result.json",
+      "copy": "records/workers/R037-resume1/result.json",
+      "original_sha256": "3c1dda2d927cbca6695ad960cf84a4d1a4ca2f5ffce6c43c82e99c10a6a82374",
+      "copy_sha256": "3c1dda2d927cbca6695ad960cf84a4d1a4ca2f5ffce6c43c82e99c10a6a82374",
+      "bytes": 7822,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R037-resume1/out/RESULT.md",
+      "copy": "records/workers/R037-resume1/RESULT.md",
+      "original_sha256": "cfb080d92b04c703c326a8b02dcb017888c38f4e228960c513a11ef92cafcc82",
+      "copy_sha256": "cfb080d92b04c703c326a8b02dcb017888c38f4e228960c513a11ef92cafcc82",
+      "bytes": 3691,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R083-resume1/out/result.json",
+      "copy": "records/workers/R083-resume1/result.json",
+      "original_sha256": "e7cc9dfcda7e5a5c450d2a94e149c545b2f78d57b3581bf653c91781d0b457f8",
+      "copy_sha256": "e7cc9dfcda7e5a5c450d2a94e149c545b2f78d57b3581bf653c91781d0b457f8",
+      "bytes": 7490,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R083-resume1/out/RESULT.md",
+      "copy": "records/workers/R083-resume1/RESULT.md",
+      "original_sha256": "a2136035b215a79036085246d4d1c8b66328cd2918e57731598ef11fe87dadbf",
+      "copy_sha256": "a2136035b215a79036085246d4d1c8b66328cd2918e57731598ef11fe87dadbf",
+      "bytes": 3008,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R090-resume1/out/result.json",
+      "copy": "records/workers/R090-resume1/result.json",
+      "original_sha256": "aaf35d8b0f289396f2134d59b09a140f60c1606caa5649d9e6895954fa61a376",
+      "copy_sha256": "aaf35d8b0f289396f2134d59b09a140f60c1606caa5649d9e6895954fa61a376",
+      "bytes": 8064,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R090-resume1/out/RESULT.md",
+      "copy": "records/workers/R090-resume1/RESULT.md",
+      "original_sha256": "58d6ac7f72c68f314c41c1780e55fa3fbb91717bf55fe70a0b4bc8ea913d8b2a",
+      "copy_sha256": "58d6ac7f72c68f314c41c1780e55fa3fbb91717bf55fe70a0b4bc8ea913d8b2a",
+      "bytes": 3422,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R003-attempt1/out/result.json",
+      "copy": "records/workers/R003-attempt1/result.json",
+      "original_sha256": "f1df9b1704a6baea1d8a47f2b161d87b372f7a02118bd258167203e0910ebd15",
+      "copy_sha256": "f1df9b1704a6baea1d8a47f2b161d87b372f7a02118bd258167203e0910ebd15",
+      "bytes": 10634,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R003-attempt1/out/RESULT.md",
+      "copy": "records/workers/R003-attempt1/RESULT.md",
+      "original_sha256": "b4b8170bff4a98c21d0ce0e4e20a3a6b29e22ab0214c962e3fbcf4005136c3fd",
+      "copy_sha256": "b4b8170bff4a98c21d0ce0e4e20a3a6b29e22ab0214c962e3fbcf4005136c3fd",
+      "bytes": 5454,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R024-resume1/out/result.json",
+      "copy": "records/workers/R024-resume1/result.json",
+      "original_sha256": "4be37aac6632d29660bfc2b0e1448ce73425ed91c803661dfa9c5bad779340fd",
+      "copy_sha256": "4be37aac6632d29660bfc2b0e1448ce73425ed91c803661dfa9c5bad779340fd",
+      "bytes": 7082,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R024-resume1/out/RESULT.md",
+      "copy": "records/workers/R024-resume1/RESULT.md",
+      "original_sha256": "279d2cea943db633029c36bdbb77df04785c94b5fbdfface5b24822b00be9065",
+      "copy_sha256": "279d2cea943db633029c36bdbb77df04785c94b5fbdfface5b24822b00be9065",
+      "bytes": 2052,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R088-resume1/out/result.json",
+      "copy": "records/workers/R088-resume1/result.json",
+      "original_sha256": "1bc48c907d9723f9b10ea66dab0f7a9edc419c4047b3b40606e70a059139c9b0",
+      "copy_sha256": "1bc48c907d9723f9b10ea66dab0f7a9edc419c4047b3b40606e70a059139c9b0",
+      "bytes": 5555,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R088-resume1/out/RESULT.md",
+      "copy": "records/workers/R088-resume1/RESULT.md",
+      "original_sha256": "f7a865f2c5d0ea8af0d92f72f0b5f58f3a4dadaac88c224179274b4adcad4b0c",
+      "copy_sha256": "f7a865f2c5d0ea8af0d92f72f0b5f58f3a4dadaac88c224179274b4adcad4b0c",
+      "bytes": 2508,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R016-attempt1/out/result.json",
+      "copy": "records/workers/R016-attempt1/result.json",
+      "original_sha256": "56f4a85aedf95c93bcf9fbeec71610a55a8a22e3b2ec1a31dca76f161a865ee7",
+      "copy_sha256": "56f4a85aedf95c93bcf9fbeec71610a55a8a22e3b2ec1a31dca76f161a865ee7",
+      "bytes": 8753,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R016-attempt1/out/RESULT.md",
+      "copy": "records/workers/R016-attempt1/RESULT.md",
+      "original_sha256": "750078d315e682c62bf9b943ce7dfe7c6c0d69045a5331e5c618fcaed0534a5d",
+      "copy_sha256": "750078d315e682c62bf9b943ce7dfe7c6c0d69045a5331e5c618fcaed0534a5d",
+      "bytes": 3236,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R052-resume1/out/result.json",
+      "copy": "records/workers/R052-resume1/result.json",
+      "original_sha256": "ba1ff39d0a5fe2b5c29b34d6297a9f78a2e519a7de5d1ce7865c8c6eb0387884",
+      "copy_sha256": "ba1ff39d0a5fe2b5c29b34d6297a9f78a2e519a7de5d1ce7865c8c6eb0387884",
+      "bytes": 8214,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R052-resume1/out/RESULT.md",
+      "copy": "records/workers/R052-resume1/RESULT.md",
+      "original_sha256": "fa06d20e7417cec8a385e891536adb9501da4c27a5ac9fabed0eecbd21bfcfd2",
+      "copy_sha256": "fa06d20e7417cec8a385e891536adb9501da4c27a5ac9fabed0eecbd21bfcfd2",
+      "bytes": 2804,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R068-resume1/out/result.json",
+      "copy": "records/workers/R068-resume1/result.json",
+      "original_sha256": "a7d4718dc1e49e3d935e9e9758a3d9ebc814521ccf8652b8adfdc23f57a15e78",
+      "copy_sha256": "a7d4718dc1e49e3d935e9e9758a3d9ebc814521ccf8652b8adfdc23f57a15e78",
+      "bytes": 6640,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R068-resume1/out/RESULT.md",
+      "copy": "records/workers/R068-resume1/RESULT.md",
+      "original_sha256": "8d80f2f53ab0eaa2bd6f09aa1e9c61ada8fa93a22a12176f678c49ebb239d3de",
+      "copy_sha256": "8d80f2f53ab0eaa2bd6f09aa1e9c61ada8fa93a22a12176f678c49ebb239d3de",
+      "bytes": 3949,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R015-attempt1/out/result.json",
+      "copy": "records/workers/R015-attempt1/result.json",
+      "original_sha256": "2242795217266501194debabb4ed4a0d1d043fa30723e9bb17ffff99231ddbaf",
+      "copy_sha256": "2242795217266501194debabb4ed4a0d1d043fa30723e9bb17ffff99231ddbaf",
+      "bytes": 8816,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R036-resume1/out/result.json",
+      "copy": "records/workers/R036-resume1/result.json",
+      "original_sha256": "d824e1fa73fdc031063d909a3606d219b878b64c9373ba87357d7841239ae951",
+      "copy_sha256": "d824e1fa73fdc031063d909a3606d219b878b64c9373ba87357d7841239ae951",
+      "bytes": 8008,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R036-resume1/out/RESULT.md",
+      "copy": "records/workers/R036-resume1/RESULT.md",
+      "original_sha256": "7b744739f4f27bc91f5a69ca4d9ad9aea8981b75e5e610e8dffcc3b0d5c030b7",
+      "copy_sha256": "7b744739f4f27bc91f5a69ca4d9ad9aea8981b75e5e610e8dffcc3b0d5c030b7",
+      "bytes": 4028,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P104-code2/out/result.json",
+      "copy": "records/workers/P104-code2/result.json",
+      "original_sha256": "003542904fe84b65ea2327dbebac21a1f5fb009dcbe9085438264564b45c5be6",
+      "copy_sha256": "003542904fe84b65ea2327dbebac21a1f5fb009dcbe9085438264564b45c5be6",
+      "bytes": 4612,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R081-resume1/out/result.json",
+      "copy": "records/workers/R081-resume1/result.json",
+      "original_sha256": "47b95ff9443ecd2e1cc6c36d1f7f2540603756ec83f50a912d322d262d88ac4c",
+      "copy_sha256": "47b95ff9443ecd2e1cc6c36d1f7f2540603756ec83f50a912d322d262d88ac4c",
+      "bytes": 8292,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R081-resume1/out/RESULT.md",
+      "copy": "records/workers/R081-resume1/RESULT.md",
+      "original_sha256": "1d3e97defebe12cc32f23a7b1ecb1122f97f54a5e6e470eb5b57f359bc64c6bf",
+      "copy_sha256": "1d3e97defebe12cc32f23a7b1ecb1122f97f54a5e6e470eb5b57f359bc64c6bf",
+      "bytes": 3146,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R050-resume1/out/result.json",
+      "copy": "records/workers/R050-resume1/result.json",
+      "original_sha256": "d20d213ed381650d6f2bac791c3920759ecbb2dce25627ca3882430fc886e70c",
+      "copy_sha256": "d20d213ed381650d6f2bac791c3920759ecbb2dce25627ca3882430fc886e70c",
+      "bytes": 6381,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R079-resume1/out/result.json",
+      "copy": "records/workers/R079-resume1/result.json",
+      "original_sha256": "01e8c48441220721ef776bc3958ea162d90021fb14c9e02fbc105d00f310e6cf",
+      "copy_sha256": "01e8c48441220721ef776bc3958ea162d90021fb14c9e02fbc105d00f310e6cf",
+      "bytes": 8539,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R079-resume1/out/RESULT.md",
+      "copy": "records/workers/R079-resume1/RESULT.md",
+      "original_sha256": "e6f7092455eef9ad367e7c208aded455782e5be7a5cebbb30e22eb45aa9f8680",
+      "copy_sha256": "e6f7092455eef9ad367e7c208aded455782e5be7a5cebbb30e22eb45aa9f8680",
+      "bytes": 2262,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P075-code2/out/result.json",
+      "copy": "records/workers/P075-code2/result.json",
+      "original_sha256": "8eadcdab04af0c2fd3faa9ff2c56f13a4dc327eaf2adb272a8ec39c73977cca3",
+      "copy_sha256": "8eadcdab04af0c2fd3faa9ff2c56f13a4dc327eaf2adb272a8ec39c73977cca3",
+      "bytes": 2881,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P075-code2/out/RESULT.md",
+      "copy": "records/workers/P075-code2/RESULT.md",
+      "original_sha256": "143f96217d0db948f89330fb62259d2c2366baf724127ac2cd2f319b7ed003bd",
+      "copy_sha256": "143f96217d0db948f89330fb62259d2c2366baf724127ac2cd2f319b7ed003bd",
+      "bytes": 2332,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R008-attempt1/out/result.json",
+      "copy": "records/workers/R008-attempt1/result.json",
+      "original_sha256": "b6200e51f5b5975cf0e98fbf9a89e2e41eee322a87ee8b17cf1c6ad36ba38a0a",
+      "copy_sha256": "b6200e51f5b5975cf0e98fbf9a89e2e41eee322a87ee8b17cf1c6ad36ba38a0a",
+      "bytes": 6812,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R008-attempt1/out/RESULT.md",
+      "copy": "records/workers/R008-attempt1/RESULT.md",
+      "original_sha256": "d4aa8c658246986c8b93efc8dae9b901d386ac8e713ca87ad0bc56633b67a091",
+      "copy_sha256": "d4aa8c658246986c8b93efc8dae9b901d386ac8e713ca87ad0bc56633b67a091",
+      "bytes": 2620,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P062/out/result.json",
+      "copy": "records/workers/P062/result.json",
+      "original_sha256": "ccae8c5e3d6748fd8b996f89eb06149ae9bdcaef0d24f610b3c024c2e58fb18f",
+      "copy_sha256": "ccae8c5e3d6748fd8b996f89eb06149ae9bdcaef0d24f610b3c024c2e58fb18f",
+      "bytes": 5265,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P062/out/RESULT.md",
+      "copy": "records/workers/P062/RESULT.md",
+      "original_sha256": "d549520bce8d2d139edab94dfeb3babcda1fdac1f29d4a879dd07f9a6f8c9b23",
+      "copy_sha256": "d549520bce8d2d139edab94dfeb3babcda1fdac1f29d4a879dd07f9a6f8c9b23",
+      "bytes": 4006,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P056/out/result.json",
+      "copy": "records/workers/P056/result.json",
+      "original_sha256": "56e53bceb6b3de7d8253358a5f716f1dbc6b234b3abd9cc86c6e2a4dc919e131",
+      "copy_sha256": "56e53bceb6b3de7d8253358a5f716f1dbc6b234b3abd9cc86c6e2a4dc919e131",
+      "bytes": 3008,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P056/out/RESULT.md",
+      "copy": "records/workers/P056/RESULT.md",
+      "original_sha256": "3d064dc37baea894c8fcc342a7e837fefa2e1b38baefef064abdf0f9a888590f",
+      "copy_sha256": "a8cbeee61374fdc49a00c141811a93e93292ac8135351d63da391902fe0e2536",
+      "bytes": 3672,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R040-resume1/out/result.json",
+      "copy": "records/workers/R040-resume1/result.json",
+      "original_sha256": "e6cf3935479ca102a4ae1677f01cfe506f73c2bc88710bbf53831f8ba4e9299b",
+      "copy_sha256": "e6cf3935479ca102a4ae1677f01cfe506f73c2bc88710bbf53831f8ba4e9299b",
+      "bytes": 5989,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R040-resume1/out/RESULT.md",
+      "copy": "records/workers/R040-resume1/RESULT.md",
+      "original_sha256": "cc3b6878b1af8eef90ac3adac3acd67cdca37c0dac452aa796067f822a35c6de",
+      "copy_sha256": "cc3b6878b1af8eef90ac3adac3acd67cdca37c0dac452aa796067f822a35c6de",
+      "bytes": 3077,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P004-code2/out/result.json",
+      "copy": "records/workers/P004-code2/result.json",
+      "original_sha256": "d2d8f97450c7c5ad64ec60e17d181394f59417958403ec74c345fd1637305715",
+      "copy_sha256": "d2d8f97450c7c5ad64ec60e17d181394f59417958403ec74c345fd1637305715",
+      "bytes": 2957,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P004-code2/out/RESULT.md",
+      "copy": "records/workers/P004-code2/RESULT.md",
+      "original_sha256": "00f41a9a265f8b32b6f3afd80b2fa0ca8a4b99ae50b532fee01e6ecae14893dc",
+      "copy_sha256": "00f41a9a265f8b32b6f3afd80b2fa0ca8a4b99ae50b532fee01e6ecae14893dc",
+      "bytes": 2449,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P072-code1/out/result.json",
+      "copy": "records/workers/P072-code1/result.json",
+      "original_sha256": "95090a0065a73301b068159e7416d60b32a6cc7a75231fe463b3f76988427771",
+      "copy_sha256": "95090a0065a73301b068159e7416d60b32a6cc7a75231fe463b3f76988427771",
+      "bytes": 1741,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P072-code1/out/RESULT.md",
+      "copy": "records/workers/P072-code1/RESULT.md",
+      "original_sha256": "6b68eee8f78147f35401fa07c9bcd50b11e74e20a3751f1c3cef6df6fce574e8",
+      "copy_sha256": "6b68eee8f78147f35401fa07c9bcd50b11e74e20a3751f1c3cef6df6fce574e8",
+      "bytes": 2164,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R021-resume1/out/result.json",
+      "copy": "records/workers/R021-resume1/result.json",
+      "original_sha256": "a97aa7e24005b4f4225560b1179ed5c6b4da155e308c95d561863a058b7da5d0",
+      "copy_sha256": "a97aa7e24005b4f4225560b1179ed5c6b4da155e308c95d561863a058b7da5d0",
+      "bytes": 7235,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R021-resume1/out/RESULT.md",
+      "copy": "records/workers/R021-resume1/RESULT.md",
+      "original_sha256": "0eb4a64933ae4b291d40c663feb91e1ed4abf811c677a5f3c28f4455ceefeca6",
+      "copy_sha256": "0eb4a64933ae4b291d40c663feb91e1ed4abf811c677a5f3c28f4455ceefeca6",
+      "bytes": 1832,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R094-resume1/out/result.json",
+      "copy": "records/workers/R094-resume1/result.json",
+      "original_sha256": "7cb8cd5cc6f022bb4459b83fd6287ca99915cae79fe1680557792712de31e5e6",
+      "copy_sha256": "7cb8cd5cc6f022bb4459b83fd6287ca99915cae79fe1680557792712de31e5e6",
+      "bytes": 7899,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R094-resume1/out/RESULT.md",
+      "copy": "records/workers/R094-resume1/RESULT.md",
+      "original_sha256": "cdab578c63927511fdd82831683951acf34be123581f053dc0aa0d875c809451",
+      "copy_sha256": "cdab578c63927511fdd82831683951acf34be123581f053dc0aa0d875c809451",
+      "bytes": 2484,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R069-resume1/out/result.json",
+      "copy": "records/workers/R069-resume1/result.json",
+      "original_sha256": "add6e661a4fa2b4c965ddf5ed61b9852559a971bdf3c094577f6c56e027b1dd9",
+      "copy_sha256": "add6e661a4fa2b4c965ddf5ed61b9852559a971bdf3c094577f6c56e027b1dd9",
+      "bytes": 6195,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R069-resume1/out/RESULT.md",
+      "copy": "records/workers/R069-resume1/RESULT.md",
+      "original_sha256": "ff81d5761fc8173a22bb3b320add4f901d50cd32af450a7e96b3b02a09e5b286",
+      "copy_sha256": "ff81d5761fc8173a22bb3b320add4f901d50cd32af450a7e96b3b02a09e5b286",
+      "bytes": 3189,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R072-resume1/out/result.json",
+      "copy": "records/workers/R072-resume1/result.json",
+      "original_sha256": "347add28c4ad7302ebf50a07df3fc45a447f9e192e7eaf21134c424b9f95f167",
+      "copy_sha256": "347add28c4ad7302ebf50a07df3fc45a447f9e192e7eaf21134c424b9f95f167",
+      "bytes": 8852,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R072-resume1/out/RESULT.md",
+      "copy": "records/workers/R072-resume1/RESULT.md",
+      "original_sha256": "d5eda0e15636cb5e01312946e3fce2ebffb886ec2f4eb22c2859c7a946728408",
+      "copy_sha256": "d5eda0e15636cb5e01312946e3fce2ebffb886ec2f4eb22c2859c7a946728408",
+      "bytes": 2291,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R063-resume1/out/result.json",
+      "copy": "records/workers/R063-resume1/result.json",
+      "original_sha256": "8bb2b7fa68ee5b943320c941eb0d547a669fe3f53a9191d634b1825d2fef36ac",
+      "copy_sha256": "8bb2b7fa68ee5b943320c941eb0d547a669fe3f53a9191d634b1825d2fef36ac",
+      "bytes": 8091,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R063-resume1/out/RESULT.md",
+      "copy": "records/workers/R063-resume1/RESULT.md",
+      "original_sha256": "8ee8d6c2d670a7824f512074e0620d8d2ed82975e35812a4afdef1e0f0167d3e",
+      "copy_sha256": "8ee8d6c2d670a7824f512074e0620d8d2ed82975e35812a4afdef1e0f0167d3e",
+      "bytes": 4177,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R064-resume1/out/result.json",
+      "copy": "records/workers/R064-resume1/result.json",
+      "original_sha256": "76e07f8f7d02fb99ca8ccf06c05f64a92c15d3671e0b626878c25f71c9651035",
+      "copy_sha256": "76e07f8f7d02fb99ca8ccf06c05f64a92c15d3671e0b626878c25f71c9651035",
+      "bytes": 9976,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R064-resume1/out/RESULT.md",
+      "copy": "records/workers/R064-resume1/RESULT.md",
+      "original_sha256": "aa65fae07ea13728ccc07627ced31d4007e54abd2f4a5a83bc12ebd1b474b472",
+      "copy_sha256": "aa65fae07ea13728ccc07627ced31d4007e54abd2f4a5a83bc12ebd1b474b472",
+      "bytes": 3678,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R077-resume1/out/result.json",
+      "copy": "records/workers/R077-resume1/result.json",
+      "original_sha256": "1c279e58a92ae5ae53de52aeb88e65bdafad34c95fac787fff01d945bb2fd037",
+      "copy_sha256": "1c279e58a92ae5ae53de52aeb88e65bdafad34c95fac787fff01d945bb2fd037",
+      "bytes": 7679,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R077-resume1/out/RESULT.md",
+      "copy": "records/workers/R077-resume1/RESULT.md",
+      "original_sha256": "0201239a3cc48d3e03fa0ccc32ab50070a6067c2da0d13355b35b6c2dc391d55",
+      "copy_sha256": "0201239a3cc48d3e03fa0ccc32ab50070a6067c2da0d13355b35b6c2dc391d55",
+      "bytes": 1919,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P015-code1/out/result.json",
+      "copy": "records/workers/P015-code1/result.json",
+      "original_sha256": "7d0ecc2c5bc9052f5f3db5d7db806f6e059cec5c0e65e0af49e38e2fe4637d98",
+      "copy_sha256": "7d0ecc2c5bc9052f5f3db5d7db806f6e059cec5c0e65e0af49e38e2fe4637d98",
+      "bytes": 2979,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P101-code2/out/result.json",
+      "copy": "records/workers/P101-code2/result.json",
+      "original_sha256": "3e8c5e3246281f0f56dffbd12d13af0c5371ceb44161224afa2c7da4f06a4584",
+      "copy_sha256": "3e8c5e3246281f0f56dffbd12d13af0c5371ceb44161224afa2c7da4f06a4584",
+      "bytes": 3346,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P101-code2/out/RESULT.md",
+      "copy": "records/workers/P101-code2/RESULT.md",
+      "original_sha256": "e121d37e7a689c4c28bb53e353a4b2bd34b58262b01faa14f976f71d6ab9b68a",
+      "copy_sha256": "e121d37e7a689c4c28bb53e353a4b2bd34b58262b01faa14f976f71d6ab9b68a",
+      "bytes": 2761,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R011-attempt1/out/result.json",
+      "copy": "records/workers/R011-attempt1/result.json",
+      "original_sha256": "b78719e52d8cbd63517cff6bacfc9524dabde8a1fb83cf37ad617895f730ac2f",
+      "copy_sha256": "b78719e52d8cbd63517cff6bacfc9524dabde8a1fb83cf37ad617895f730ac2f",
+      "bytes": 7260,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R011-attempt1/out/RESULT.md",
+      "copy": "records/workers/R011-attempt1/RESULT.md",
+      "original_sha256": "6e7b5e0a506b98a8389b7a3a8e5ef9eca1ccb656ff262fb6c3d7183ecde54cb1",
+      "copy_sha256": "6e7b5e0a506b98a8389b7a3a8e5ef9eca1ccb656ff262fb6c3d7183ecde54cb1",
+      "bytes": 3062,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R086-resume1/out/result.json",
+      "copy": "records/workers/R086-resume1/result.json",
+      "original_sha256": "81489eb77bf19f2d09372e581d5929cc0b589a7880cd705be555beb57bbe32e8",
+      "copy_sha256": "81489eb77bf19f2d09372e581d5929cc0b589a7880cd705be555beb57bbe32e8",
+      "bytes": 7122,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P095/out/result.json",
+      "copy": "records/workers/P095/result.json",
+      "original_sha256": "9aee3bc004ecb309bffd656ba0057cd2cf79ca76f3b32faf5bc3022fe8f57e3c",
+      "copy_sha256": "9aee3bc004ecb309bffd656ba0057cd2cf79ca76f3b32faf5bc3022fe8f57e3c",
+      "bytes": 3196,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P095/out/RESULT.md",
+      "copy": "records/workers/P095/RESULT.md",
+      "original_sha256": "74b7d122883df99b3f44e8942ebddf74dad5dbd630df3ec95272d84ee441f23b",
+      "copy_sha256": "b4743bc3866c8f4e1dc793062924ca38a50a64f8d954bbc2d5f4d4a03b281d3d",
+      "bytes": 4499,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R030-resume1/out/result.json",
+      "copy": "records/workers/R030-resume1/result.json",
+      "original_sha256": "bfa49503adcf6a834db0e4f4955f21c634a1e26c012c9fefc6294ed4ef786ce1",
+      "copy_sha256": "bfa49503adcf6a834db0e4f4955f21c634a1e26c012c9fefc6294ed4ef786ce1",
+      "bytes": 5808,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R030-resume1/out/RESULT.md",
+      "copy": "records/workers/R030-resume1/RESULT.md",
+      "original_sha256": "5bfbd8e8898eef713371fb0bb7f275ce76db3f7e564e322a140510f50d65f7aa",
+      "copy_sha256": "5bfbd8e8898eef713371fb0bb7f275ce76db3f7e564e322a140510f50d65f7aa",
+      "bytes": 5079,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P067-code2/out/result.json",
+      "copy": "records/workers/P067-code2/result.json",
+      "original_sha256": "e9f7106e055f67790e1b208033533a178a1ddfbe91acc52d8817e1bbaa94541b",
+      "copy_sha256": "e9f7106e055f67790e1b208033533a178a1ddfbe91acc52d8817e1bbaa94541b",
+      "bytes": 3492,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P067-code2/out/RESULT.md",
+      "copy": "records/workers/P067-code2/RESULT.md",
+      "original_sha256": "aa8b125b8dabf8e36903608ecdbf53f309f0cbd066ef7a3a5b2dfd5817041177",
+      "copy_sha256": "aa8b125b8dabf8e36903608ecdbf53f309f0cbd066ef7a3a5b2dfd5817041177",
+      "bytes": 2754,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R044-resume1/out/result.json",
+      "copy": "records/workers/R044-resume1/result.json",
+      "original_sha256": "0c3258e757595b88e77caa691979dc5e5b2d6c738b264bc930ddaa08a9d52794",
+      "copy_sha256": "0c3258e757595b88e77caa691979dc5e5b2d6c738b264bc930ddaa08a9d52794",
+      "bytes": 10531,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R044-resume1/out/RESULT.md",
+      "copy": "records/workers/R044-resume1/RESULT.md",
+      "original_sha256": "b217487514df34742572ca3313cbf9185fcf93154f04e54707b63db2a3cac82e",
+      "copy_sha256": "b217487514df34742572ca3313cbf9185fcf93154f04e54707b63db2a3cac82e",
+      "bytes": 4883,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R058-resume1/out/result.json",
+      "copy": "records/workers/R058-resume1/result.json",
+      "original_sha256": "ccfde32bce8f9eb96f4057470fbe6d99a3e404c0d73b244b8ad3901edcf2ae57",
+      "copy_sha256": "ccfde32bce8f9eb96f4057470fbe6d99a3e404c0d73b244b8ad3901edcf2ae57",
+      "bytes": 6200,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R058-resume1/out/RESULT.md",
+      "copy": "records/workers/R058-resume1/RESULT.md",
+      "original_sha256": "4ea194c26b4619b37b383a54d3a6534ee0bd7b1eaca07b9979acb157545d9612",
+      "copy_sha256": "4ea194c26b4619b37b383a54d3a6534ee0bd7b1eaca07b9979acb157545d9612",
+      "bytes": 3436,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R056-resume1/out/result.json",
+      "copy": "records/workers/R056-resume1/result.json",
+      "original_sha256": "7bae09504b3ff51a91f8372cebe15786795e24a63f38ded4096a6352c5a8087a",
+      "copy_sha256": "7bae09504b3ff51a91f8372cebe15786795e24a63f38ded4096a6352c5a8087a",
+      "bytes": 7165,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R056-resume1/out/RESULT.md",
+      "copy": "records/workers/R056-resume1/RESULT.md",
+      "original_sha256": "2d84bbfb1570196740f52658e22376be5bc93140b8588a62b767563b3679c37c",
+      "copy_sha256": "2d84bbfb1570196740f52658e22376be5bc93140b8588a62b767563b3679c37c",
+      "bytes": 2160,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R027-resume1/out/result.json",
+      "copy": "records/workers/R027-resume1/result.json",
+      "original_sha256": "afdc1711287345542f2b284ae0e6d76f301acadc99179af6dd2f36b549727ab0",
+      "copy_sha256": "afdc1711287345542f2b284ae0e6d76f301acadc99179af6dd2f36b549727ab0",
+      "bytes": 8740,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R095-resume1/out/result.json",
+      "copy": "records/workers/R095-resume1/result.json",
+      "original_sha256": "feecb3af62b90f860ea8f16b5552c03fd3a4053f4f785ba5265374b89ce4fc01",
+      "copy_sha256": "d914c3ee863c7bed878530e5217e206897c0a7f6730c58fe684f0977984c9a99",
+      "bytes": 7901,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R095-resume1/out/RESULT.md",
+      "copy": "records/workers/R095-resume1/RESULT.md",
+      "original_sha256": "f4b1e5cf664617c444e32ec949a9d87a2c4481b529094594e23d6d0fd17a9763",
+      "copy_sha256": "f4b1e5cf664617c444e32ec949a9d87a2c4481b529094594e23d6d0fd17a9763",
+      "bytes": 2393,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P065/out/result.json",
+      "copy": "records/workers/P065/result.json",
+      "original_sha256": "325ab4bc66e8675f557e4444a230160fb6beaccad7af5e17318a5e5796ece956",
+      "copy_sha256": "325ab4bc66e8675f557e4444a230160fb6beaccad7af5e17318a5e5796ece956",
+      "bytes": 3186,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P065/out/RESULT.md",
+      "copy": "records/workers/P065/RESULT.md",
+      "original_sha256": "3a42492afd1d2a4db95de2b5df223ecc19eaab2fa0e5fce8dad6b7b1a24bc8de",
+      "copy_sha256": "3a42492afd1d2a4db95de2b5df223ecc19eaab2fa0e5fce8dad6b7b1a24bc8de",
+      "bytes": 2516,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R066-resume1/out/result.json",
+      "copy": "records/workers/R066-resume1/result.json",
+      "original_sha256": "bce6b764696a3c8f86c5ca071185e0faa6a8015f5d2ac6471ca5eaa46c7e6348",
+      "copy_sha256": "bce6b764696a3c8f86c5ca071185e0faa6a8015f5d2ac6471ca5eaa46c7e6348",
+      "bytes": 7793,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R035-resume1/out/result.json",
+      "copy": "records/workers/R035-resume1/result.json",
+      "original_sha256": "2308383d4490a9fe8ed9003f7ca9d8805123e850aeb028f0e8d10aafc3c274f2",
+      "copy_sha256": "2308383d4490a9fe8ed9003f7ca9d8805123e850aeb028f0e8d10aafc3c274f2",
+      "bytes": 6750,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R035-resume1/out/RESULT.md",
+      "copy": "records/workers/R035-resume1/RESULT.md",
+      "original_sha256": "8ef5000a8f56a85601ad529f26ecf41b9ea819bad5390d9c8d48eff16060ed78",
+      "copy_sha256": "8ef5000a8f56a85601ad529f26ecf41b9ea819bad5390d9c8d48eff16060ed78",
+      "bytes": 3493,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R022-resume1/out/result.json",
+      "copy": "records/workers/R022-resume1/result.json",
+      "original_sha256": "634c8ad4d19ba1b2e5a9400f02dab028fb9c9240adadc94e56f71f766da5a76c",
+      "copy_sha256": "634c8ad4d19ba1b2e5a9400f02dab028fb9c9240adadc94e56f71f766da5a76c",
+      "bytes": 7362,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R009-attempt1/out/result.json",
+      "copy": "records/workers/R009-attempt1/result.json",
+      "original_sha256": "bc51902bb31c2227cda566248015253af1ac04b9fa5dd198ade940060707cfbb",
+      "copy_sha256": "bc51902bb31c2227cda566248015253af1ac04b9fa5dd198ade940060707cfbb",
+      "bytes": 7960,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R009-attempt1/out/RESULT.md",
+      "copy": "records/workers/R009-attempt1/RESULT.md",
+      "original_sha256": "a6627c761f5fa51ecdcba0ecbb75d38eb82f77185f45459a6fdfe7d21fd8e404",
+      "copy_sha256": "a6627c761f5fa51ecdcba0ecbb75d38eb82f77185f45459a6fdfe7d21fd8e404",
+      "bytes": 3783,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P103-code1/out/result.json",
+      "copy": "records/workers/P103-code1/result.json",
+      "original_sha256": "1278db66a7c99fc72be7bff0a448d31594fe1480acf91a9f43611c5187ae1e07",
+      "copy_sha256": "1278db66a7c99fc72be7bff0a448d31594fe1480acf91a9f43611c5187ae1e07",
+      "bytes": 2731,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P103-code1/out/RESULT.md",
+      "copy": "records/workers/P103-code1/RESULT.md",
+      "original_sha256": "fff3af1c26545a588fe9f21be6c5cd0e173d768586e9e8d4cd93b056316987f3",
+      "copy_sha256": "fff3af1c26545a588fe9f21be6c5cd0e173d768586e9e8d4cd93b056316987f3",
+      "bytes": 2562,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P034/out/result.json",
+      "copy": "records/workers/P034/result.json",
+      "original_sha256": "31b6a11b06992beb0d1efcb2f649ce77cc991e3b56e751f5785f69ec0f81a5d3",
+      "copy_sha256": "31b6a11b06992beb0d1efcb2f649ce77cc991e3b56e751f5785f69ec0f81a5d3",
+      "bytes": 3397,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P034/out/RESULT.md",
+      "copy": "records/workers/P034/RESULT.md",
+      "original_sha256": "8712f89b96f7c596259271f9ab2343df0bf557acad69dbec83326f066e7aa4f5",
+      "copy_sha256": "8712f89b96f7c596259271f9ab2343df0bf557acad69dbec83326f066e7aa4f5",
+      "bytes": 4260,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R013-attempt1/out/result.json",
+      "copy": "records/workers/R013-attempt1/result.json",
+      "original_sha256": "7ef70fb8040dcc03ff10783685d6ddbc9762177e29ba9ab1e23d81c2990ee14a",
+      "copy_sha256": "7ef70fb8040dcc03ff10783685d6ddbc9762177e29ba9ab1e23d81c2990ee14a",
+      "bytes": 8089,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R023-resume1/out/result.json",
+      "copy": "records/workers/R023-resume1/result.json",
+      "original_sha256": "2099e0e9d9360d60e83a688e23542a7188470896224b346a18df2944cf302e95",
+      "copy_sha256": "2099e0e9d9360d60e83a688e23542a7188470896224b346a18df2944cf302e95",
+      "bytes": 9022,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R059-resume1/out/result.json",
+      "copy": "records/workers/R059-resume1/result.json",
+      "original_sha256": "516766d162d4cbc2847d53456592aab8f72ec8ecf9557d3ea00dad09981782d7",
+      "copy_sha256": "516766d162d4cbc2847d53456592aab8f72ec8ecf9557d3ea00dad09981782d7",
+      "bytes": 7914,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R059-resume1/out/RESULT.md",
+      "copy": "records/workers/R059-resume1/RESULT.md",
+      "original_sha256": "7e5a4d58d7639b7a272c0797f0e8e8cc44467b7d58f26b2b6be3a7a758b5f91c",
+      "copy_sha256": "7e5a4d58d7639b7a272c0797f0e8e8cc44467b7d58f26b2b6be3a7a758b5f91c",
+      "bytes": 2940,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R046-resume1/out/result.json",
+      "copy": "records/workers/R046-resume1/result.json",
+      "original_sha256": "33078a336e15a6a73b4f5b9f3e5d77022f1de9284e3256c6ccb9a0d87273d643",
+      "copy_sha256": "33078a336e15a6a73b4f5b9f3e5d77022f1de9284e3256c6ccb9a0d87273d643",
+      "bytes": 8764,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R046-resume1/out/RESULT.md",
+      "copy": "records/workers/R046-resume1/RESULT.md",
+      "original_sha256": "6f985125eff6073097a286ca5fe7fa0978a233e5b20dbd3e20b2d22ef7075a55",
+      "copy_sha256": "6f985125eff6073097a286ca5fe7fa0978a233e5b20dbd3e20b2d22ef7075a55",
+      "bytes": 4267,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R067-resume1/out/result.json",
+      "copy": "records/workers/R067-resume1/result.json",
+      "original_sha256": "6ec67f1e55f3ff32c451d64624ef52ea7a2b808c0e6563b1fd168ed68689ec9c",
+      "copy_sha256": "6ec67f1e55f3ff32c451d64624ef52ea7a2b808c0e6563b1fd168ed68689ec9c",
+      "bytes": 7978,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P004-code1/out/result.json",
+      "copy": "records/workers/P004-code1/result.json",
+      "original_sha256": "e5d6a176c4b72847be5ede3bdc652070523dcf69ca5c43e3724325cd0c2713a9",
+      "copy_sha256": "e5d6a176c4b72847be5ede3bdc652070523dcf69ca5c43e3724325cd0c2713a9",
+      "bytes": 2537,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P004-code1/out/RESULT.md",
+      "copy": "records/workers/P004-code1/RESULT.md",
+      "original_sha256": "e5ffe48e87bbb2c945c6ae64bb869461bd1de0a320abfb575016d28d6d0d6c32",
+      "copy_sha256": "e5ffe48e87bbb2c945c6ae64bb869461bd1de0a320abfb575016d28d6d0d6c32",
+      "bytes": 2111,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R043-resume1/out/result.json",
+      "copy": "records/workers/R043-resume1/result.json",
+      "original_sha256": "dc9a3808cebf8795197a4c9d97ea181f885b0d6caee0c0ab5879e54e4f46d65e",
+      "copy_sha256": "dc9a3808cebf8795197a4c9d97ea181f885b0d6caee0c0ab5879e54e4f46d65e",
+      "bytes": 7513,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R043-resume1/out/RESULT.md",
+      "copy": "records/workers/R043-resume1/RESULT.md",
+      "original_sha256": "4ff830e35c262269fd44f55de922e293179b9bf5a9ab398d04f19e2d3db7124d",
+      "copy_sha256": "4ff830e35c262269fd44f55de922e293179b9bf5a9ab398d04f19e2d3db7124d",
+      "bytes": 3122,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R007-attempt1/out/result.json",
+      "copy": "records/workers/R007-attempt1/result.json",
+      "original_sha256": "951e5968c8204bb90cd698606a90bc33c5bf86dac1642a0f26d8cd1781b01c3c",
+      "copy_sha256": "951e5968c8204bb90cd698606a90bc33c5bf86dac1642a0f26d8cd1781b01c3c",
+      "bytes": 9497,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R007-attempt1/out/RESULT.md",
+      "copy": "records/workers/R007-attempt1/RESULT.md",
+      "original_sha256": "bf1bf968629f72b4f68739a015742c4e22c3ce2ba0e490460e777ba93c737efe",
+      "copy_sha256": "bf1bf968629f72b4f68739a015742c4e22c3ce2ba0e490460e777ba93c737efe",
+      "bytes": 3928,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R082-resume1/out/result.json",
+      "copy": "records/workers/R082-resume1/result.json",
+      "original_sha256": "c8aab7889a6e5ee11f41c6d877607901817333f51ee50845d0b9caee53d65b12",
+      "copy_sha256": "c8aab7889a6e5ee11f41c6d877607901817333f51ee50845d0b9caee53d65b12",
+      "bytes": 7668,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R082-resume1/out/RESULT.md",
+      "copy": "records/workers/R082-resume1/RESULT.md",
+      "original_sha256": "fc79a581e97b9c1faecffa6b716b2553332000813e86e832f49a1f61be5e8d17",
+      "copy_sha256": "fc79a581e97b9c1faecffa6b716b2553332000813e86e832f49a1f61be5e8d17",
+      "bytes": 3562,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R093-resume1/out/result.json",
+      "copy": "records/workers/R093-resume1/result.json",
+      "original_sha256": "23fca2e898dd4d9bd148a290a5918b633e3758b12683762df9e2aa2f0b0c7fd9",
+      "copy_sha256": "23fca2e898dd4d9bd148a290a5918b633e3758b12683762df9e2aa2f0b0c7fd9",
+      "bytes": 7507,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R093-resume1/out/RESULT.md",
+      "copy": "records/workers/R093-resume1/RESULT.md",
+      "original_sha256": "6a9dc0a8ed8bd87d6675d7d5920c71044ad49ed60545c0a97b4b202b258d7b9c",
+      "copy_sha256": "6a9dc0a8ed8bd87d6675d7d5920c71044ad49ed60545c0a97b4b202b258d7b9c",
+      "bytes": 2814,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R010-attempt1/out/result.json",
+      "copy": "records/workers/R010-attempt1/result.json",
+      "original_sha256": "91054655eb7f7eca94d95749da2c44c0a0d5ae5070c58717d9d7f1a93d28e232",
+      "copy_sha256": "91054655eb7f7eca94d95749da2c44c0a0d5ae5070c58717d9d7f1a93d28e232",
+      "bytes": 7692,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R010-attempt1/out/RESULT.md",
+      "copy": "records/workers/R010-attempt1/RESULT.md",
+      "original_sha256": "84ff84668f89952771fbb6df145bf71ddd2d9ac1d3775341773f9785f28f8442",
+      "copy_sha256": "84ff84668f89952771fbb6df145bf71ddd2d9ac1d3775341773f9785f28f8442",
+      "bytes": 2662,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R045-resume1/out/result.json",
+      "copy": "records/workers/R045-resume1/result.json",
+      "original_sha256": "a0d33d1c3c007931b47801c7ac7383adbcc408dad63179f7f6b2b6f0931f203d",
+      "copy_sha256": "a0d33d1c3c007931b47801c7ac7383adbcc408dad63179f7f6b2b6f0931f203d",
+      "bytes": 7209,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R045-resume1/out/RESULT.md",
+      "copy": "records/workers/R045-resume1/RESULT.md",
+      "original_sha256": "88cdc12b6992544c241317e5fc9eac232e4b3b1e871148bdeacf1e7842d18821",
+      "copy_sha256": "88cdc12b6992544c241317e5fc9eac232e4b3b1e871148bdeacf1e7842d18821",
+      "bytes": 3085,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P003-attempt2/out/result.json",
+      "copy": "records/workers/P003-attempt2/result.json",
+      "original_sha256": "84d97e40ceb1608a8d9c4a1cb2c064ba855676b176e1f5a2417b0d1d5447a212",
+      "copy_sha256": "84d97e40ceb1608a8d9c4a1cb2c064ba855676b176e1f5a2417b0d1d5447a212",
+      "bytes": 4153,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P003-attempt2/out/RESULT.md",
+      "copy": "records/workers/P003-attempt2/RESULT.md",
+      "original_sha256": "520b3e908d97fe63c65ae9ba4c2487d5a8055b030063aa11a922acb9b0c38725",
+      "copy_sha256": "520b3e908d97fe63c65ae9ba4c2487d5a8055b030063aa11a922acb9b0c38725",
+      "bytes": 3617,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R070-resume1/out/result.json",
+      "copy": "records/workers/R070-resume1/result.json",
+      "original_sha256": "d4d7a0098155c35329adcc3f30c73ded729ba22e4535b9a888f3402c98b02570",
+      "copy_sha256": "d4d7a0098155c35329adcc3f30c73ded729ba22e4535b9a888f3402c98b02570",
+      "bytes": 8919,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R070-resume1/out/RESULT.md",
+      "copy": "records/workers/R070-resume1/RESULT.md",
+      "original_sha256": "4c5b2b3ab1b37b7e7058bb517c46d498a5aa5e9f29e4ce1766556a0a53a45abe",
+      "copy_sha256": "4c5b2b3ab1b37b7e7058bb517c46d498a5aa5e9f29e4ce1766556a0a53a45abe",
+      "bytes": 2959,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R087-resume1/out/result.json",
+      "copy": "records/workers/R087-resume1/result.json",
+      "original_sha256": "bbcb763a432ad129e73b1438f0d7919ffb446397b77803481e16020e84186b14",
+      "copy_sha256": "bbcb763a432ad129e73b1438f0d7919ffb446397b77803481e16020e84186b14",
+      "bytes": 8063,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R087-resume1/out/RESULT.md",
+      "copy": "records/workers/R087-resume1/RESULT.md",
+      "original_sha256": "16f9508cc2267b2506537496c1ef6c3847fa22a6641c307fc7bc1018b563f56f",
+      "copy_sha256": "16f9508cc2267b2506537496c1ef6c3847fa22a6641c307fc7bc1018b563f56f",
+      "bytes": 3414,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P050/out/result.json",
+      "copy": "records/workers/P050/result.json",
+      "original_sha256": "542b005f1a581f44de7fec212a71f2406b0c3e9c915ed6ef293d705994199780",
+      "copy_sha256": "542b005f1a581f44de7fec212a71f2406b0c3e9c915ed6ef293d705994199780",
+      "bytes": 5427,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P050/out/RESULT.md",
+      "copy": "records/workers/P050/RESULT.md",
+      "original_sha256": "7b4ca60c466c97ae67bc527c8c9f8e8d6b6d765a062568650b1637a8d68c51ba",
+      "copy_sha256": "7b4ca60c466c97ae67bc527c8c9f8e8d6b6d765a062568650b1637a8d68c51ba",
+      "bytes": 4048,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P015-code2/out/result.json",
+      "copy": "records/workers/P015-code2/result.json",
+      "original_sha256": "2156ecf5fbf905c1b80b43a36c2bf5f261e147324434e47d9669ed80dbd94944",
+      "copy_sha256": "2156ecf5fbf905c1b80b43a36c2bf5f261e147324434e47d9669ed80dbd94944",
+      "bytes": 3433,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R057-resume1/out/result.json",
+      "copy": "records/workers/R057-resume1/result.json",
+      "original_sha256": "985d8dececd0c4a514ed4bb787ec0ccb0893399501e9e8199686173ae1d948f1",
+      "copy_sha256": "985d8dececd0c4a514ed4bb787ec0ccb0893399501e9e8199686173ae1d948f1",
+      "bytes": 9209,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R057-resume1/out/RESULT.md",
+      "copy": "records/workers/R057-resume1/RESULT.md",
+      "original_sha256": "5405872ebce01dc9c17034ffa57b596b2051e6b3a73190305952a148a837ae10",
+      "copy_sha256": "5405872ebce01dc9c17034ffa57b596b2051e6b3a73190305952a148a837ae10",
+      "bytes": 3753,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R061-resume1/out/result.json",
+      "copy": "records/workers/R061-resume1/result.json",
+      "original_sha256": "cda05ad7962541167278c710ce0649374dfbda6ed42431413356e321cfd30c3c",
+      "copy_sha256": "cda05ad7962541167278c710ce0649374dfbda6ed42431413356e321cfd30c3c",
+      "bytes": 7511,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R061-resume1/out/RESULT.md",
+      "copy": "records/workers/R061-resume1/RESULT.md",
+      "original_sha256": "817078fbd25b3b450dda2fa172e19e37d4ecd5f4bc58b828a8f06295fe0bb742",
+      "copy_sha256": "817078fbd25b3b450dda2fa172e19e37d4ecd5f4bc58b828a8f06295fe0bb742",
+      "bytes": 3673,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R032-resume1/out/result.json",
+      "copy": "records/workers/R032-resume1/result.json",
+      "original_sha256": "a2bdad1d6566ee12e6d50fbe28b8946ce4d14c9d3a952f44cb2db753d31dc1df",
+      "copy_sha256": "a2bdad1d6566ee12e6d50fbe28b8946ce4d14c9d3a952f44cb2db753d31dc1df",
+      "bytes": 7363,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R032-resume1/out/RESULT.md",
+      "copy": "records/workers/R032-resume1/RESULT.md",
+      "original_sha256": "39a4926383b8c29e3406523131d919652876a5ca7c6b0c34bb0bc92524e09187",
+      "copy_sha256": "39a4926383b8c29e3406523131d919652876a5ca7c6b0c34bb0bc92524e09187",
+      "bytes": 3010,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P069-code2/out/result.json",
+      "copy": "records/workers/P069-code2/result.json",
+      "original_sha256": "8f21c485d78c4afc5e9d98db79c75bc6050c7745aedce63b9b7dffc1177ee41e",
+      "copy_sha256": "8f21c485d78c4afc5e9d98db79c75bc6050c7745aedce63b9b7dffc1177ee41e",
+      "bytes": 6943,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P069-code2/out/RESULT.md",
+      "copy": "records/workers/P069-code2/RESULT.md",
+      "original_sha256": "dda53e3f551defa6a1577eeef986312e579e17dbdf917159a419463ca93f50d6",
+      "copy_sha256": "dda53e3f551defa6a1577eeef986312e579e17dbdf917159a419463ca93f50d6",
+      "bytes": 3392,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R049-resume1/out/result.json",
+      "copy": "records/workers/R049-resume1/result.json",
+      "original_sha256": "bccff23b939336673991703c85a1683cccee87e8348a28c4cc6daa71726c0f31",
+      "copy_sha256": "bccff23b939336673991703c85a1683cccee87e8348a28c4cc6daa71726c0f31",
+      "bytes": 8581,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R049-resume1/out/RESULT.md",
+      "copy": "records/workers/R049-resume1/RESULT.md",
+      "original_sha256": "438b4881a57c901c8c5bb732a2053d381e699bf412d54fc37ec19d49c073cf96",
+      "copy_sha256": "438b4881a57c901c8c5bb732a2053d381e699bf412d54fc37ec19d49c073cf96",
+      "bytes": 3122,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R033-resume1/out/result.json",
+      "copy": "records/workers/R033-resume1/result.json",
+      "original_sha256": "880475ead550c1029b1b22ec9de07116c3ca7d7e2461ab1ca521fec1b160b1be",
+      "copy_sha256": "880475ead550c1029b1b22ec9de07116c3ca7d7e2461ab1ca521fec1b160b1be",
+      "bytes": 7767,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R073-resume1/out/result.json",
+      "copy": "records/workers/R073-resume1/result.json",
+      "original_sha256": "6c387a812e1c36eca5ad7425fcb5d8dad858189487a817e478889b83393c86c6",
+      "copy_sha256": "6c387a812e1c36eca5ad7425fcb5d8dad858189487a817e478889b83393c86c6",
+      "bytes": 8906,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R073-resume1/out/RESULT.md",
+      "copy": "records/workers/R073-resume1/RESULT.md",
+      "original_sha256": "150cd399a4f8072de1753b94b04eab94f50c7ad1f11b8c7da95fdb3b996a08ac",
+      "copy_sha256": "150cd399a4f8072de1753b94b04eab94f50c7ad1f11b8c7da95fdb3b996a08ac",
+      "bytes": 3426,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R048-resume1/out/result.json",
+      "copy": "records/workers/R048-resume1/result.json",
+      "original_sha256": "c822786735c11d298664e8162b117a32da7b7bcfddbc12d3c97e06667f86cbda",
+      "copy_sha256": "c822786735c11d298664e8162b117a32da7b7bcfddbc12d3c97e06667f86cbda",
+      "bytes": 7625,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R048-resume1/out/RESULT.md",
+      "copy": "records/workers/R048-resume1/RESULT.md",
+      "original_sha256": "7bdad6901e7a04c0b012452b03d3a8cf122ec5a88889451ee3e4beaec394045e",
+      "copy_sha256": "7bdad6901e7a04c0b012452b03d3a8cf122ec5a88889451ee3e4beaec394045e",
+      "bytes": 3719,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R076-resume1/out/result.json",
+      "copy": "records/workers/R076-resume1/result.json",
+      "original_sha256": "dc57497620a19aa1a56b44a4345d8c813b45331d332f729feca600581cf18b6d",
+      "copy_sha256": "dc57497620a19aa1a56b44a4345d8c813b45331d332f729feca600581cf18b6d",
+      "bytes": 8141,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R076-resume1/out/RESULT.md",
+      "copy": "records/workers/R076-resume1/RESULT.md",
+      "original_sha256": "a9ee01262816bfa93903e7c7203a865322c3d150f6b673676a26cb73471c0cb9",
+      "copy_sha256": "a9ee01262816bfa93903e7c7203a865322c3d150f6b673676a26cb73471c0cb9",
+      "bytes": 3472,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P048-code1/out/result.json",
+      "copy": "records/workers/P048-code1/result.json",
+      "original_sha256": "4979c95402e71daf2616c6b735ce5460e264393f673c14dee5fd14cdae51999a",
+      "copy_sha256": "4979c95402e71daf2616c6b735ce5460e264393f673c14dee5fd14cdae51999a",
+      "bytes": 2539,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R014-attempt1/out/result.json",
+      "copy": "records/workers/R014-attempt1/result.json",
+      "original_sha256": "229924d26fa1c7da500ea3f4354a506982758d9ffa1713586be0e484a11445b7",
+      "copy_sha256": "229924d26fa1c7da500ea3f4354a506982758d9ffa1713586be0e484a11445b7",
+      "bytes": 6100,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R014-attempt1/out/RESULT.md",
+      "copy": "records/workers/R014-attempt1/RESULT.md",
+      "original_sha256": "b844370d1fe56562de3ec4709262759b17ccbb2fc4df41548b9361f64077093d",
+      "copy_sha256": "b844370d1fe56562de3ec4709262759b17ccbb2fc4df41548b9361f64077093d",
+      "bytes": 3590,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R001-attempt1/out/result.json",
+      "copy": "records/workers/R001-attempt1/result.json",
+      "original_sha256": "a7ed8dcefc7c71f11b540302f6da9768ed12695451051a1fbac273325265de73",
+      "copy_sha256": "73a1ff467f63aba8374d16ba5dcf1b61f0d5632cb74bd40e56b22f88208baad0",
+      "bytes": 11710,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R041-resume1/out/result.json",
+      "copy": "records/workers/R041-resume1/result.json",
+      "original_sha256": "ee2b8b489dec4e6de2e71c51fee451e56497ebd2e6e365addd0a252950f69174",
+      "copy_sha256": "ee2b8b489dec4e6de2e71c51fee451e56497ebd2e6e365addd0a252950f69174",
+      "bytes": 8903,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R041-resume1/out/RESULT.md",
+      "copy": "records/workers/R041-resume1/RESULT.md",
+      "original_sha256": "e36540f5404360ac4cfae8653d19681b1da7d76cc00e5aee199e72245ba50da5",
+      "copy_sha256": "e36540f5404360ac4cfae8653d19681b1da7d76cc00e5aee199e72245ba50da5",
+      "bytes": 3528,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R026-resume1/out/result.json",
+      "copy": "records/workers/R026-resume1/result.json",
+      "original_sha256": "26ffa95d93f5a7204328d27bea02c0c421ee5866e101a4c946a73955e12d312a",
+      "copy_sha256": "26ffa95d93f5a7204328d27bea02c0c421ee5866e101a4c946a73955e12d312a",
+      "bytes": 6449,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R026-resume1/out/RESULT.md",
+      "copy": "records/workers/R026-resume1/RESULT.md",
+      "original_sha256": "5c01b632f0f7ff7ccfb64eaa17a1bd2d767938fe3150e12888ccd70dd103bf96",
+      "copy_sha256": "5c01b632f0f7ff7ccfb64eaa17a1bd2d767938fe3150e12888ccd70dd103bf96",
+      "bytes": 3304,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P057-code1/out/result.json",
+      "copy": "records/workers/P057-code1/result.json",
+      "original_sha256": "af71c092a447305c3a6039dea30b60aade179da49388e0fc01fca0f8cca63e21",
+      "copy_sha256": "af71c092a447305c3a6039dea30b60aade179da49388e0fc01fca0f8cca63e21",
+      "bytes": 2465,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P057-code1/out/RESULT.md",
+      "copy": "records/workers/P057-code1/RESULT.md",
+      "original_sha256": "1a43ba07460b100baebbc64f9ee3690357585e758021fbe757d82c3a2b61321d",
+      "copy_sha256": "1a43ba07460b100baebbc64f9ee3690357585e758021fbe757d82c3a2b61321d",
+      "bytes": 2497,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R019-resume1/out/result.json",
+      "copy": "records/workers/R019-resume1/result.json",
+      "original_sha256": "7a5770c03ebe166bf88767d83085164179ce993ccace362ff750b284735e3add",
+      "copy_sha256": "7a5770c03ebe166bf88767d83085164179ce993ccace362ff750b284735e3add",
+      "bytes": 5334,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R019-resume1/out/RESULT.md",
+      "copy": "records/workers/R019-resume1/RESULT.md",
+      "original_sha256": "f58a969d6eb428c892579a5466add841640c7956bf20cc85938d9bbe3833104c",
+      "copy_sha256": "f58a969d6eb428c892579a5466add841640c7956bf20cc85938d9bbe3833104c",
+      "bytes": 3160,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R018-resume1/out/result.json",
+      "copy": "records/workers/R018-resume1/result.json",
+      "original_sha256": "60fc093b78c14421111e43ab4ef82ca48e81326f88a584115a911de48a7805c8",
+      "copy_sha256": "60fc093b78c14421111e43ab4ef82ca48e81326f88a584115a911de48a7805c8",
+      "bytes": 5657,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R018-resume1/out/RESULT.md",
+      "copy": "records/workers/R018-resume1/RESULT.md",
+      "original_sha256": "0aef06482ee077b5ec4349f4abbe7a938be7ae2e274142568c4becf14be2cb74",
+      "copy_sha256": "0aef06482ee077b5ec4349f4abbe7a938be7ae2e274142568c4becf14be2cb74",
+      "bytes": 3833,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R042-resume1/out/result.json",
+      "copy": "records/workers/R042-resume1/result.json",
+      "original_sha256": "9e68c54ccdd9868ac95a88603064dbd7b44f2cb92ad98a2bd856af2815f41627",
+      "copy_sha256": "68fa2888059059b0c599786aa4ea1feb78161a5c8d94c52bbe244e1aa89ae6dd",
+      "bytes": 6386,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P006-code1/out/result.json",
+      "copy": "records/workers/P006-code1/result.json",
+      "original_sha256": "a496813e93018b1e3a256e255b6f6a082e9aa8ca6a3ad2ef5a2f02a45de52413",
+      "copy_sha256": "a496813e93018b1e3a256e255b6f6a082e9aa8ca6a3ad2ef5a2f02a45de52413",
+      "bytes": 4109,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P006-code1/out/RESULT.md",
+      "copy": "records/workers/P006-code1/RESULT.md",
+      "original_sha256": "d0dac0359a415162795cfbaff985bd0cbc907bb535b327b0f4e16d5177c4ad84",
+      "copy_sha256": "d0dac0359a415162795cfbaff985bd0cbc907bb535b327b0f4e16d5177c4ad84",
+      "bytes": 2349,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R096-resume1/out/result.json",
+      "copy": "records/workers/R096-resume1/result.json",
+      "original_sha256": "110daf4a80a7d1b288bfeb7f9b516f00550910214d88cd520677da8a8eda2295",
+      "copy_sha256": "cedde05c18a88b33d448f49fda89de92c0e6c3bfe13813bb1692c4e00a6e69a8",
+      "bytes": 6602,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R096-resume1/out/RESULT.md",
+      "copy": "records/workers/R096-resume1/RESULT.md",
+      "original_sha256": "b4dafdc50ea7663b362f34e1fa71539591a45ea8b4d88edd2b220d32b7ddf3d7",
+      "copy_sha256": "2e25aefa7ecf57b9c3085e3615c3a6bd9a03ff47a6eb31e404fdf4ad5747fa76",
+      "bytes": 3318,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R065-resume1/out/result.json",
+      "copy": "records/workers/R065-resume1/result.json",
+      "original_sha256": "b4b9273184b33981c72e788cd57dd20e367faf410a49edc5f1b91c0ed883d071",
+      "copy_sha256": "b4b9273184b33981c72e788cd57dd20e367faf410a49edc5f1b91c0ed883d071",
+      "bytes": 9170,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R065-resume1/out/RESULT.md",
+      "copy": "records/workers/R065-resume1/RESULT.md",
+      "original_sha256": "2fa9c334c26d6df7ec7c1bc68582ab17c19cd213f25d869b2b938c8548359482",
+      "copy_sha256": "2fa9c334c26d6df7ec7c1bc68582ab17c19cd213f25d869b2b938c8548359482",
+      "bytes": 4676,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P102-code1/out/result.json",
+      "copy": "records/workers/P102-code1/result.json",
+      "original_sha256": "8a0fa783948e8ed2f4c6cc0b73efc0d89cf90f8b5de31631ade4f5adafa89cca",
+      "copy_sha256": "8a0fa783948e8ed2f4c6cc0b73efc0d89cf90f8b5de31631ade4f5adafa89cca",
+      "bytes": 3212,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P101-code1/out/result.json",
+      "copy": "records/workers/P101-code1/result.json",
+      "original_sha256": "f2658f5e4036375b919fa22fa19e5bed512345f15031f92f4f83907dadb5df9c",
+      "copy_sha256": "f2658f5e4036375b919fa22fa19e5bed512345f15031f92f4f83907dadb5df9c",
+      "bytes": 2897,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P101-code1/out/RESULT.md",
+      "copy": "records/workers/P101-code1/RESULT.md",
+      "original_sha256": "5f34db59ad957ef9147574d177825dd422bd39c0044a7dc06d50fa8de226e257",
+      "copy_sha256": "5f34db59ad957ef9147574d177825dd422bd39c0044a7dc06d50fa8de226e257",
+      "bytes": 2021,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P071-code2/out/result.json",
+      "copy": "records/workers/P071-code2/result.json",
+      "original_sha256": "e186de7980677919b511ea1d9c06d98eafb7c076f7bf41514cf7248ec1c5d91a",
+      "copy_sha256": "e186de7980677919b511ea1d9c06d98eafb7c076f7bf41514cf7248ec1c5d91a",
+      "bytes": 4065,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P053-code2/out/result.json",
+      "copy": "records/workers/P053-code2/result.json",
+      "original_sha256": "3486a866dccf8622c04ab919b016d68e6622e5c3e38afb5305661c4063ca8b01",
+      "copy_sha256": "3486a866dccf8622c04ab919b016d68e6622e5c3e38afb5305661c4063ca8b01",
+      "bytes": 3265,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P053-code2/out/RESULT.md",
+      "copy": "records/workers/P053-code2/RESULT.md",
+      "original_sha256": "75ba23a2230105991c4285f1de25e9d3ff238103b9fce077f8b1663a41071807",
+      "copy_sha256": "75ba23a2230105991c4285f1de25e9d3ff238103b9fce077f8b1663a41071807",
+      "bytes": 3037,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P044/out/result.json",
+      "copy": "records/workers/P044/result.json",
+      "original_sha256": "f759c79868e53d6568b3d30b690b35f94fb9bdf0a9847cb2de57fe23129ea6f5",
+      "copy_sha256": "f759c79868e53d6568b3d30b690b35f94fb9bdf0a9847cb2de57fe23129ea6f5",
+      "bytes": 4917,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P044/out/RESULT.md",
+      "copy": "records/workers/P044/RESULT.md",
+      "original_sha256": "5e29e253f45df36d8729310d5087b263ace800722c4171869f5c87a2d19559f8",
+      "copy_sha256": "5e29e253f45df36d8729310d5087b263ace800722c4171869f5c87a2d19559f8",
+      "bytes": 4350,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R038-resume1/out/result.json",
+      "copy": "records/workers/R038-resume1/result.json",
+      "original_sha256": "ece7497d9ab3a42429470394e24b7b2291b4a9e33182af229d64132b4b3067b6",
+      "copy_sha256": "ece7497d9ab3a42429470394e24b7b2291b4a9e33182af229d64132b4b3067b6",
+      "bytes": 7689,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R038-resume1/out/RESULT.md",
+      "copy": "records/workers/R038-resume1/RESULT.md",
+      "original_sha256": "c642cf77de8bc94712b1bb3b99f3d1b0fe5ba44ea26b27932b7ce5ac65451f37",
+      "copy_sha256": "c642cf77de8bc94712b1bb3b99f3d1b0fe5ba44ea26b27932b7ce5ac65451f37",
+      "bytes": 3379,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R051-resume1/out/result.json",
+      "copy": "records/workers/R051-resume1/result.json",
+      "original_sha256": "771c4ec87a53b286fd7313ba0226a3bb18838cb0adc7ea460f92850c3bef92a1",
+      "copy_sha256": "771c4ec87a53b286fd7313ba0226a3bb18838cb0adc7ea460f92850c3bef92a1",
+      "bytes": 6204,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R051-resume1/out/RESULT.md",
+      "copy": "records/workers/R051-resume1/RESULT.md",
+      "original_sha256": "3eeb38b7acd096139dd9680369a705d7800b1e73f4487789c270d17ca761d0eb",
+      "copy_sha256": "3eeb38b7acd096139dd9680369a705d7800b1e73f4487789c270d17ca761d0eb",
+      "bytes": 2335,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R092-resume1/out/result.json",
+      "copy": "records/workers/R092-resume1/result.json",
+      "original_sha256": "b62f96779ba6cce038e2dbb50036c62028ff1e614328fd749ab89ade3295008e",
+      "copy_sha256": "b62f96779ba6cce038e2dbb50036c62028ff1e614328fd749ab89ade3295008e",
+      "bytes": 6662,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R092-resume1/out/RESULT.md",
+      "copy": "records/workers/R092-resume1/RESULT.md",
+      "original_sha256": "40588937a239e90daa410878c7479bdfa93ebf56d5774d4e629394a441e0c670",
+      "copy_sha256": "40588937a239e90daa410878c7479bdfa93ebf56d5774d4e629394a441e0c670",
+      "bytes": 3300,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R017-resume2/out/result.json",
+      "copy": "records/workers/R017-resume2/result.json",
+      "original_sha256": "dd4721e28f3dec00a57c2525459e96b3e79803a42ea74d3a301da70246a61a0c",
+      "copy_sha256": "dd4721e28f3dec00a57c2525459e96b3e79803a42ea74d3a301da70246a61a0c",
+      "bytes": 7998,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R017-resume2/out/RESULT.md",
+      "copy": "records/workers/R017-resume2/RESULT.md",
+      "original_sha256": "70a6a6f4afbd0aaa042f58f7b2bcca37d322ffaf98369633c449824b9548e5e4",
+      "copy_sha256": "70a6a6f4afbd0aaa042f58f7b2bcca37d322ffaf98369633c449824b9548e5e4",
+      "bytes": 4582,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R060-resume1/out/result.json",
+      "copy": "records/workers/R060-resume1/result.json",
+      "original_sha256": "a25185cbc116990d19a6e4ea762cde3f4a9fc99f2c5b9ef26ec1ff2bf1a464e9",
+      "copy_sha256": "a25185cbc116990d19a6e4ea762cde3f4a9fc99f2c5b9ef26ec1ff2bf1a464e9",
+      "bytes": 6330,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R060-resume1/out/RESULT.md",
+      "copy": "records/workers/R060-resume1/RESULT.md",
+      "original_sha256": "2a1d16a8770fc5dd12adf5161e3114c8eda9b967c209bafdece85fdc1ab7147a",
+      "copy_sha256": "2a1d16a8770fc5dd12adf5161e3114c8eda9b967c209bafdece85fdc1ab7147a",
+      "bytes": 3474,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R006-attempt1/out/result.json",
+      "copy": "records/workers/R006-attempt1/result.json",
+      "original_sha256": "c7a92f5f7f56071ad178736cbfba70be8fcd38e0d69893b34219e68bcedf26b6",
+      "copy_sha256": "ddc94f39ca3da711fb304e265a6b5feb7f19b7e157e1a99c1cf3cdd992c6db3f",
+      "bytes": 5328,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R006-attempt1/out/RESULT.md",
+      "copy": "records/workers/R006-attempt1/RESULT.md",
+      "original_sha256": "438cdbedbb348de0961172e990c4270e69f4033c89a6635c3bc3dfc13f0247cf",
+      "copy_sha256": "438cdbedbb348de0961172e990c4270e69f4033c89a6635c3bc3dfc13f0247cf",
+      "bytes": 2736,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R075-resume1/out/result.json",
+      "copy": "records/workers/R075-resume1/result.json",
+      "original_sha256": "ca493681d114673f409860a424b1638586373c832d1c37377f012e426be62689",
+      "copy_sha256": "ca493681d114673f409860a424b1638586373c832d1c37377f012e426be62689",
+      "bytes": 6641,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R075-resume1/out/RESULT.md",
+      "copy": "records/workers/R075-resume1/RESULT.md",
+      "original_sha256": "a6140bc9d983779b4d604d005f756d69d545c11d3d57e70f0f4a8868cf1c7f1c",
+      "copy_sha256": "a6140bc9d983779b4d604d005f756d69d545c11d3d57e70f0f4a8868cf1c7f1c",
+      "bytes": 2585,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P105-code1/out/result.json",
+      "copy": "records/workers/P105-code1/result.json",
+      "original_sha256": "31b1c124e96d0c6b8bf1679cec8e6691e99da103b5e5a7de04010fc67ce6fcaf",
+      "copy_sha256": "31b1c124e96d0c6b8bf1679cec8e6691e99da103b5e5a7de04010fc67ce6fcaf",
+      "bytes": 2037,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P105-code1/out/RESULT.md",
+      "copy": "records/workers/P105-code1/RESULT.md",
+      "original_sha256": "0e95b0044eb2513a91680481348b8e9302d17208256030389f0b6e60fc21d560",
+      "copy_sha256": "0e95b0044eb2513a91680481348b8e9302d17208256030389f0b6e60fc21d560",
+      "bytes": 2422,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R039-resume1/out/result.json",
+      "copy": "records/workers/R039-resume1/result.json",
+      "original_sha256": "62ff25b0e437b189aa7aae28759cca2f3e0397065d95d5a9cc245a09248189ad",
+      "copy_sha256": "62ff25b0e437b189aa7aae28759cca2f3e0397065d95d5a9cc245a09248189ad",
+      "bytes": 10688,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R062-resume1/out/result.json",
+      "copy": "records/workers/R062-resume1/result.json",
+      "original_sha256": "aeea5b416eb73b4b1c345fbce10e457715dbfac2e12de8ad0c1769d7d37a423f",
+      "copy_sha256": "aeea5b416eb73b4b1c345fbce10e457715dbfac2e12de8ad0c1769d7d37a423f",
+      "bytes": 8505,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R062-resume1/out/RESULT.md",
+      "copy": "records/workers/R062-resume1/RESULT.md",
+      "original_sha256": "4ee920e04ce39db77f3c46087d23a2fc2f73d3c6bd3ef34b94b2cd6be723a585",
+      "copy_sha256": "4ee920e04ce39db77f3c46087d23a2fc2f73d3c6bd3ef34b94b2cd6be723a585",
+      "bytes": 2091,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R029-resume1/out/result.json",
+      "copy": "records/workers/R029-resume1/result.json",
+      "original_sha256": "339954bd068e3938b6853bf2a7851c0a9d760da027d7162dd10d6bb74800e294",
+      "copy_sha256": "339954bd068e3938b6853bf2a7851c0a9d760da027d7162dd10d6bb74800e294",
+      "bytes": 7511,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R029-resume1/out/RESULT.md",
+      "copy": "records/workers/R029-resume1/RESULT.md",
+      "original_sha256": "ea6cb7c7de1a777c58d5ba8c280d08248e4bfcab718fe6430c0aac0c829e2ccb",
+      "copy_sha256": "ea6cb7c7de1a777c58d5ba8c280d08248e4bfcab718fe6430c0aac0c829e2ccb",
+      "bytes": 3190,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P073-code2/out/result.json",
+      "copy": "records/workers/P073-code2/result.json",
+      "original_sha256": "01e84f687a4005e1b880e25cb486817033b055d630112a86679f7a8855c1873a",
+      "copy_sha256": "01e84f687a4005e1b880e25cb486817033b055d630112a86679f7a8855c1873a",
+      "bytes": 2723,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R099-resume1/out/result.json",
+      "copy": "records/workers/R099-resume1/result.json",
+      "original_sha256": "7b06c01590ec148b3a9d6d6e04b085e6c132f407f49ca198e2e62c60759011f7",
+      "copy_sha256": "7b06c01590ec148b3a9d6d6e04b085e6c132f407f49ca198e2e62c60759011f7",
+      "bytes": 9690,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R025-resume1/out/result.json",
+      "copy": "records/workers/R025-resume1/result.json",
+      "original_sha256": "e6fc6e4af973eb857c5852f46c094c5c86b8bc7eb473f066350a3166be90bd91",
+      "copy_sha256": "e6fc6e4af973eb857c5852f46c094c5c86b8bc7eb473f066350a3166be90bd91",
+      "bytes": 9560,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R025-resume1/out/RESULT.md",
+      "copy": "records/workers/R025-resume1/RESULT.md",
+      "original_sha256": "bec32c44cef152b43e3d9a00c73a80b6eb7fb2403eed459bafcec1e1423802ec",
+      "copy_sha256": "bec32c44cef152b43e3d9a00c73a80b6eb7fb2403eed459bafcec1e1423802ec",
+      "bytes": 3170,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P104-code1/out/result.json",
+      "copy": "records/workers/P104-code1/result.json",
+      "original_sha256": "26381ce6cd65138507593fc2271279fb79fb1cd8aee8dd262dea4f098c2f6a1a",
+      "copy_sha256": "26381ce6cd65138507593fc2271279fb79fb1cd8aee8dd262dea4f098c2f6a1a",
+      "bytes": 2131,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R054-resume1/out/result.json",
+      "copy": "records/workers/R054-resume1/result.json",
+      "original_sha256": "8bbfe7dc19f59aa94be8357e02e5a2c163b2dfa52ad62e29556273f22fd0b2d3",
+      "copy_sha256": "8bbfe7dc19f59aa94be8357e02e5a2c163b2dfa52ad62e29556273f22fd0b2d3",
+      "bytes": 7121,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R054-resume1/out/RESULT.md",
+      "copy": "records/workers/R054-resume1/RESULT.md",
+      "original_sha256": "27613bcf40aa5683dc24d7e89422f921c4fbc7bfbdf284b7ebe18e35d58bf58c",
+      "copy_sha256": "27613bcf40aa5683dc24d7e89422f921c4fbc7bfbdf284b7ebe18e35d58bf58c",
+      "bytes": 4774,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R084-resume1/out/result.json",
+      "copy": "records/workers/R084-resume1/result.json",
+      "original_sha256": "fdb50ab0fbe2b6d6b6f81b665e314018ed51eba7ad8eb553a7fc021e5b8edc4d",
+      "copy_sha256": "fdb50ab0fbe2b6d6b6f81b665e314018ed51eba7ad8eb553a7fc021e5b8edc4d",
+      "bytes": 10762,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R084-resume1/out/RESULT.md",
+      "copy": "records/workers/R084-resume1/RESULT.md",
+      "original_sha256": "398fcf6f4c6e6ac0806902c382c7827424e2fc6f08774a49e33ff6cb2d86a85e",
+      "copy_sha256": "398fcf6f4c6e6ac0806902c382c7827424e2fc6f08774a49e33ff6cb2d86a85e",
+      "bytes": 3615,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P059/out/result.json",
+      "copy": "records/workers/P059/result.json",
+      "original_sha256": "ae5cf58759ea041818f88ab3c20e0d2d0885f655b1dc55f7e4319e98e0ae53e4",
+      "copy_sha256": "ae5cf58759ea041818f88ab3c20e0d2d0885f655b1dc55f7e4319e98e0ae53e4",
+      "bytes": 5799,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/P059/out/RESULT.md",
+      "copy": "records/workers/P059/RESULT.md",
+      "original_sha256": "55919ad23bf83cf6792ffa873c9c2b8e1e8029882b8d830220686c0a4d7b0462",
+      "copy_sha256": "55919ad23bf83cf6792ffa873c9c2b8e1e8029882b8d830220686c0a4d7b0462",
+      "bytes": 4790,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R020-resume1/out/result.json",
+      "copy": "records/workers/R020-resume1/result.json",
+      "original_sha256": "1f2a1bdc4470c7848eaa4ef8684ef91782646bd7917339a6efd18768161dd869",
+      "copy_sha256": "1f2a1bdc4470c7848eaa4ef8684ef91782646bd7917339a6efd18768161dd869",
+      "bytes": 8962,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R020-resume1/out/RESULT.md",
+      "copy": "records/workers/R020-resume1/RESULT.md",
+      "original_sha256": "2ca9e424cc8d61157bf75550cdd6ecdfce763374c34bee00af612f5ab37445c7",
+      "copy_sha256": "2ca9e424cc8d61157bf75550cdd6ecdfce763374c34bee00af612f5ab37445c7",
+      "bytes": 2560,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R028-resume1/out/result.json",
+      "copy": "records/workers/R028-resume1/result.json",
+      "original_sha256": "b7e714cfedb5b018e30f5c5576f011d36bf87bda14dd76bf4a18670d3a37eefe",
+      "copy_sha256": "b7e714cfedb5b018e30f5c5576f011d36bf87bda14dd76bf4a18670d3a37eefe",
+      "bytes": 9914,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R028-resume1/out/RESULT.md",
+      "copy": "records/workers/R028-resume1/RESULT.md",
+      "original_sha256": "df08cdb8ae4b3917422ff174b041ccd88bfe7fd28fa25f42d118596f0dc01a4c",
+      "copy_sha256": "df08cdb8ae4b3917422ff174b041ccd88bfe7fd28fa25f42d118596f0dc01a4c",
+      "bytes": 3914,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R012-attempt1/out/result.json",
+      "copy": "records/workers/R012-attempt1/result.json",
+      "original_sha256": "956696554e4e154b648ddaaccb9294a57e37c05bdceefb694fa4f79a0966728a",
+      "copy_sha256": "956696554e4e154b648ddaaccb9294a57e37c05bdceefb694fa4f79a0966728a",
+      "bytes": 10323,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R002-attempt1/out/result.json",
+      "copy": "records/workers/R002-attempt1/result.json",
+      "original_sha256": "d435adc6fafe9d9024005d4c7d1cf194c8e68070790218226290a7a5ed626f91",
+      "copy_sha256": "d435adc6fafe9d9024005d4c7d1cf194c8e68070790218226290a7a5ed626f91",
+      "bytes": 7216,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R002-attempt1/out/RESULT.md",
+      "copy": "records/workers/R002-attempt1/RESULT.md",
+      "original_sha256": "3e7cf88742fc4e228d60c965f0af4788c7734df6f532128ef14d354961a7456c",
+      "copy_sha256": "3e7cf88742fc4e228d60c965f0af4788c7734df6f532128ef14d354961a7456c",
+      "bytes": 2531,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R004-attempt1/out/result.json",
+      "copy": "records/workers/R004-attempt1/result.json",
+      "original_sha256": "e0f02b91ba8a3680d9d3be154f1d4b6732d2b10b429d430327fa0ee17e27030f",
+      "copy_sha256": "e0f02b91ba8a3680d9d3be154f1d4b6732d2b10b429d430327fa0ee17e27030f",
+      "bytes": 9536,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R004-attempt1/out/RESULT.md",
+      "copy": "records/workers/R004-attempt1/RESULT.md",
+      "original_sha256": "b889d5ecdd0a885b9d78f34686c08fbef3d059c924e7f689fffe9a38c5a5a3d1",
+      "copy_sha256": "b889d5ecdd0a885b9d78f34686c08fbef3d059c924e7f689fffe9a38c5a5a3d1",
+      "bytes": 3670,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R098-resume1/out/result.json",
+      "copy": "records/workers/R098-resume1/result.json",
+      "original_sha256": "aecbe42c01f2bf2ce0d116b9b94b69dbc23a4bf3f5503d4b8f6a17d9787aac4f",
+      "copy_sha256": "aecbe42c01f2bf2ce0d116b9b94b69dbc23a4bf3f5503d4b8f6a17d9787aac4f",
+      "bytes": 6666,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R098-resume1/out/RESULT.md",
+      "copy": "records/workers/R098-resume1/RESULT.md",
+      "original_sha256": "9e417308ccb51836212041aebb4291240b06b1c17b7d499c4e20e9f2dc25ed7e",
+      "copy_sha256": "9e417308ccb51836212041aebb4291240b06b1c17b7d499c4e20e9f2dc25ed7e",
+      "bytes": 3511,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R085-resume1/out/result.json",
+      "copy": "records/workers/R085-resume1/result.json",
+      "original_sha256": "99ad08752ce35c70cb356c5156f9d751b0e87c114f31a67f284d0ee0b43c967e",
+      "copy_sha256": "99ad08752ce35c70cb356c5156f9d751b0e87c114f31a67f284d0ee0b43c967e",
+      "bytes": 6530,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R085-resume1/out/RESULT.md",
+      "copy": "records/workers/R085-resume1/RESULT.md",
+      "original_sha256": "11c43606d86dea7decbf5ddc69b9da3053cb121a0ba7efe8932a76b57d3d21b7",
+      "copy_sha256": "11c43606d86dea7decbf5ddc69b9da3053cb121a0ba7efe8932a76b57d3d21b7",
+      "bytes": 2427,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    },
+    {
+      "source": "workers/R071-resume1/out/result.json",
+      "copy": "records/workers/R071-resume1/result.json",
+      "original_sha256": "1f7326e646e973b41319a7bbc9224546ad429785701a93620404b424de32d655",
+      "copy_sha256": "1f7326e646e973b41319a7bbc9224546ad429785701a93620404b424de32d655",
+      "bytes": 5659,
+      "normalization": "operator paths, credential-shaped literals and presentation trailing whitespace normalized in archival copy"
+    }
+  ]
+}

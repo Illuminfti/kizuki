@@ -1,0 +1,153 @@
+{
+  "task_id": "R098",
+  "packet_id": "R098",
+  "title": "Inventory signing and platform-trust claims from build outputs",
+  "issue": 540,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "findings": [
+    {
+      "severity": "low",
+      "kind": "coverage_gap",
+      "location": "scripts/build-release.ts:75",
+      "claim": "Package README.txt says the package is unsigned and unpublished.",
+      "evidence": "Writer exists. No test asserts the sentence. Closed four-key BUILD.json extra-field rejection already exists at scripts/stranger-proof.test.ts:26-38 and was executed PASS.",
+      "required_fix": "None in this packet. Do not duplicate tests. P006/P094 may add an assertion only if they own that sentence."
+    },
+    {
+      "severity": "low",
+      "kind": "docs_tension",
+      "location": "CONTRIBUTING.md:89 vs scripts/build-release.ts and docs/native-build.md",
+      "claim": "Contributor text forbids inventing a packaged binary; current tree already builds a local unsigned native package.",
+      "evidence": "Static. P006 owns canonical docs; not rewritten here.",
+      "required_fix": "P006 wording alignment only; not a signing-status defect."
+    },
+    {
+      "severity": "info",
+      "kind": "unimplemented_historical_spec",
+      "location": "docs/wave1/specs/packaging-release.md:616,813-814",
+      "claim": "Wave1 spec describes gh attestation verify and Sigstore workflow permissions.",
+      "evidence": "scripts/release/, packaging/, .github/workflows/release.yml absent. Current workflows permissions contents: read only.",
+      "required_fix": "Do not cite as shipped. P006/P094 keep current unsigned producer."
+    }
+  ],
+  "deliverables": [
+    "/work/out/claim-to-evidence-map.md",
+    "/work/out/unsigned-metadata-fields.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/citations.md",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json",
+    "/work/out/checks/closed-build-schema-probe.json"
+  ],
+  "artifacts": [
+    "/work/out/claim-to-evidence-map.md",
+    "/work/out/unsigned-metadata-fields.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/citations.md",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/checks/closed-build-schema-probe.json"
+  ],
+  "source_references": [
+    "scripts/build-release.ts:52-61,68-107",
+    "scripts/release-artifacts.ts:35-50",
+    "scripts/stranger-proof.ts:19-24,109-116",
+    "scripts/stranger-proof.test.ts:26-38",
+    "scripts/artifact-proof.ts:6-7,115-155",
+    "scripts/artifact-proof.test.ts:108-129",
+    "scripts/go-no-go.ts:129-130,155,201",
+    "scripts/go-no-go.test.ts:158-186",
+    "scripts/qualification.ts:81,120-123",
+    "docs/native-build.md:3-4,47-48,88-90",
+    "docs/CURRENT.md:65-66",
+    "docs/stranger-proof.md:58-59",
+    "docs/qualification.md:33-34",
+    "docs/release-acceptance.md:89,131,165-172",
+    "README.md:156,307",
+    "SECURITY.md:31-33",
+    "CONTRIBUTING.md:20,89",
+    ".github/workflows/ci.yml:5-6,27-42",
+    ".github/workflows/macos-native.yml:14-15,46-59",
+    "docs/wave1/specs/packaging-release.md:616,813-814,877,1023"
+  ],
+  "checks": [
+    {
+      "name": "focused closed-schema tests",
+      "command": "TMPDIR=/work/out/tmp bun test scripts/stranger-proof.test.ts scripts/release-artifacts.test.ts scripts/release-targets.test.ts scripts/artifact-proof.test.ts",
+      "runtime": "bun 1.3.14",
+      "cwd": "/repo",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "45 pass, 0 fail"
+    },
+    {
+      "name": "parseBuildInfoValue rejects signing-shaped extra keys",
+      "command": "bun -e import parseBuildInfoValue; extra signature/signed/notarized/codesign/attestation/sigstore",
+      "runtime": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/checks/closed-build-schema-probe.json"
+    },
+    {
+      "name": "go-no-go native UNVERIFIABLE tests",
+      "command": "bun test scripts/go-no-go.test.ts",
+      "result": "NOT_RUN",
+      "missing": "js-tiktoken/lite (no node_modules; install forbidden)"
+    },
+    {
+      "name": "extraction-quality extra metadata tests",
+      "command": "bun test scripts/extraction-quality-native.test.ts -t artifact",
+      "result": "NOT_RUN",
+      "missing": "js-tiktoken/lite"
+    },
+    {
+      "name": "tracked workflow git listing",
+      "command": "git ls-files .github/workflows (via validateTrackedWorkflows)",
+      "result": "NOT_RUN",
+      "missing": "Git metadata in /repo archive; git ls-files exit 128"
+    },
+    {
+      "name": "native compile and host signing tools",
+      "command": "bun run build:release; codesign; notarytool; gh attestation verify",
+      "result": "NOT_RUN",
+      "missing": "Git revision, compile permission, Darwin/Apple/gh tools, dist binaries"
+    },
+    {
+      "name": "full repository gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "missing": "Git history and frozen install"
+    }
+  ],
+  "verification": {
+    "focused_schema_tests": "PASS",
+    "signing_extra_key_probe": "PASS",
+    "go_no_go_tests": "NOT_RUN",
+    "native_compile": "NOT_RUN",
+    "codesign_notary_attestation": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "release_acceptance_claim": "not_made"
+  },
+  "blockers": [],
+  "limitations": [
+    "/repo is a git archive without Git metadata or node_modules.",
+    "Native binaries were not compiled (forbidden and git-required).",
+    "Apple codesign/notarytool/spctl and gh attestation were not executed.",
+    "go-no-go and extraction-quality-native tests were not executed due to missing js-tiktoken/lite.",
+    "No live CI, no signing keys, no release GO/NO-GO claim.",
+    "P006 owns canonical docs; this packet did not rewrite them."
+  ],
+  "downstream_handoff": {
+    "feeds_packets": ["P094", "P006", "P100"],
+    "must_keep": "kizuki.release-build/v1 closed four keys bun_version,schema,source_sha,target",
+    "must_not_add_without_receipts": ["signed", "signature", "codesign", "notarized", "attestation", "sigstore", "producer_revision as non-null", "native.<target> PASS"],
+    "unsigned_is": "closed schema plus README.txt sentence, not a signed=false extra field",
+    "native_gate": "UNVERIFIABLE until a trusted producer-revision/native-attestation adapter exists"
+  },
+  "next_step": "P094/P006/P100 consume claim-to-evidence-map.md and unsigned-metadata-fields.json; keep BUILD.json four-field and native gates UNVERIFIABLE absent receipts.",
+  "subscription_retest": false
+}

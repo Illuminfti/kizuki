@@ -1,0 +1,150 @@
+{
+  "task_id": "R075",
+  "packet_id": "R075",
+  "issue": 550,
+  "title": "Map WhatsApp locale selection from configuration to parser",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "capability": "export import",
+  "feeds_packets": ["P074"],
+  "artifacts": [
+    "/work/out/config-to-parser-selection-map.md",
+    "/work/out/config-to-parser-selection-map.json",
+    "/work/out/fixtures/ambiguity-diagnostics.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/provider-research.md",
+    "/work/out/orientation.md",
+    "/work/out/p074-handoff.md",
+    "/work/out/run-diagnostics.ts",
+    "/work/out/run-cli-probes.ts",
+    "/work/out/prepare-local-parser.ts",
+    "/work/out/local-parser/provenance.json",
+    "/work/out/evidence/diagnostic-runner.json",
+    "/work/out/evidence/cli-probes.json",
+    "/work/out/evidence/whatsapp-dates.test.meta.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/config-to-parser-selection-map.md",
+    "/work/out/config-to-parser-selection-map.json",
+    "/work/out/fixtures/ambiguity-diagnostics.json",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    "packages/connectors/src/import-whatsapp/dates.ts:9-18,89-113,137-159,194-212",
+    "packages/connectors/src/import-whatsapp/grammar.ts:50,101-104,170-178,211",
+    "packages/connectors/src/import-whatsapp/index.ts:45-58,197-208,218-238,245-256,320-327",
+    "packages/connectors/src/import-whatsapp/map.ts:24-32,94",
+    "packages/cli/src/connect-catalog.ts:15,28-37",
+    "packages/cli/src/connections.ts:31-59,444-448",
+    "packages/cli/src/commands/import.ts:47,90,111",
+    "packages/cli/src/commands/connect.ts:117-120,290,313",
+    "packages/cli/src/args.ts:57",
+    "packages/cli/src/main.ts:219-221",
+    "packages/connectors/test/whatsapp-dates.test.ts",
+    "packages/connectors/README.md:42-48,112-123"
+  ],
+  "checks": [
+    {
+      "name": "parser diagnostic fixtures",
+      "command": "bun /work/out/run-diagnostics.ts",
+      "cwd": "/work",
+      "runtime": "bun 1.3.14",
+      "exit": 0,
+      "result": "PASS",
+      "detail": "19/19 cases in fixtures/ambiguity-diagnostics.json",
+      "evidence": "/work/out/evidence/diagnostic-runner.json",
+      "limitation": "Executed remapped copies of dates.ts/grammar.ts under /work/out/local-parser because /repo has no node_modules and is not writable. Original SHA-256 in local-parser/provenance.json."
+    },
+    {
+      "name": "existing whatsapp-dates.test.ts",
+      "command": "bun test /work/out/local-parser/whatsapp-dates.test.ts",
+      "runtime": "bun 1.3.14",
+      "exit": 0,
+      "result": "PASS",
+      "detail": "18 pass, 0 fail, 242 expect(); original SHA-256 d0ba4cf8b05ce9877ef1a7a823c65d869905aa9670e580bc968697aa98f915ee",
+      "evidence": "/work/out/evidence/whatsapp-dates.test.meta.json"
+    },
+    {
+      "name": "CLI parseArguments locale flags",
+      "command": "bun /work/out/run-cli-probes.ts",
+      "runtime": "bun 1.3.14",
+      "exit": 0,
+      "result": "PASS",
+      "detail": "import/connect --date-order/--timezone/--self/--chat each throw UsageError unknown option; path-only import tokens accepted",
+      "evidence": "/work/out/evidence/cli-probes.json",
+      "limitation": "Full CLI process not executed (missing @kizuki/tui). UsageError maps to exit 2 in packages/cli/src/main.ts:219-221."
+    },
+    {
+      "name": "in-tree bun test and CLI from /repo",
+      "command": "bun test ./packages/connectors/test/whatsapp-dates.test.ts",
+      "result": "NOT_RUN",
+      "detail": "/repo has no node_modules; bun cannot resolve @kizuki/core or @kizuki/tui. Dependency install is forbidden in this packet."
+    },
+    {
+      "name": "full repository gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "detail": "Preparation packet; no source change; workspace install unavailable."
+    }
+  ],
+  "verification": {
+    "focused_parser": "PASS",
+    "existing_dates_tests": "PASS",
+    "cli_option_seam": "PASS",
+    "full_cli_process": "NOT_RUN",
+    "typecheck_and_verify_sh": "NOT_RUN",
+    "live_account": "NOT_RUN",
+    "independent_review": "NOT_RUN"
+  },
+  "findings": [
+    {
+      "severity": "product-gap",
+      "id": "cli-cannot-express-date-order",
+      "summary": "Public enrollment cannot express date_order or timezone. Parser refusals that ask the owner to set date_order are unanswerable from kizuki import/connect.",
+      "evidence": [
+        "packages/cli/src/commands/import.ts:47,90",
+        "packages/cli/src/connections.ts:31-39,52-53,444-448",
+        "packages/cli/src/connect-catalog.ts:15,28-37",
+        "/work/out/evidence/cli-probes.json"
+      ],
+      "already_documented": "packages/connectors/README.md:42-48,112-123"
+    },
+    {
+      "severity": "contract",
+      "id": "health-ignores-date-order",
+      "summary": "health() only resolveExports the path. An ambiguous export can enroll; parse_error happens at backfill.",
+      "evidence": ["packages/connectors/src/import-whatsapp/index.ts:245-256,297-327"]
+    },
+    {
+      "severity": "coverage-gap-small",
+      "id": "configured-ymd-and-contradiction",
+      "summary": "Configured ymd and configured order that contradicts field evidence were not in whatsapp-dates.test.ts. Covered here as fixtures; do not duplicate detection tests.",
+      "evidence": ["/work/out/fixtures/ambiguity-diagnostics.json"]
+    }
+  ],
+  "blockers": [
+    "In-tree workspace execution needs node_modules on a writable checkout; not installable in this container.",
+    "No live WhatsApp account (policy). Official FAQ does not specify timestamp locale."
+  ],
+  "downstream_handoff": {
+    "to": "P074",
+    "file": "/work/out/p074-handoff.md",
+    "do_not_duplicate": ["P073 message fidelity", "whatsapp-dates.test.ts detection table"],
+    "if_adding_cli_flags": [
+      "import.ts and connect.ts option specs",
+      "HostConnectionState encode/decode must persist date_order and timezone",
+      "getConnector construction must pass those keys",
+      "catalog/help/README"
+    ]
+  },
+  "next_step": "P074 either adds CLI+persisted date_order/timezone for kizuki.import-whatsapp or keeps the documented command-line limitation; run the in-tree whatsapp-dates tests on a full workspace checkout.",
+  "limitations": [
+    "Read-only /repo git archive, no Git metadata, remote/issue state not refreshed.",
+    "Parser execution used import-remapped copies hashed in local-parser/provenance.json.",
+    "Full CLI binary/process not run.",
+    "No native/account/model/human qualification claim.",
+    "No source edits."
+  ]
+}

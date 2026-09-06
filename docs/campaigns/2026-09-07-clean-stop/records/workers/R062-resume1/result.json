@@ -1,0 +1,166 @@
+{
+  "task_id": "R062",
+  "packet_id": "R062",
+  "title": "Map IMAP read-only command selection and mailbox health",
+  "issue": 547,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "checked_at": "2026-09-06T22:05:09Z",
+  "owner": "grok-R062",
+  "write_scope": "/work/out only",
+  "limitations": [
+    "Read-only git archive; no Git metadata; remote not verified from this container.",
+    "No mailbox, account, or provider calls.",
+    "Repository IMAP tests NOT_RUN: /repo has no node_modules and installs are forbidden.",
+    "No native/account/model/human qualification or release acceptance claim.",
+    "CAPABILITY is sent and its result discarded; LOGINDISABLED is not honored (static).",
+    "Live-account IMAP qualification remains unrun, as CURRENT.md already states."
+  ],
+  "findings": [
+    {
+      "id": "R062-F1",
+      "severity": "observation",
+      "symbol": "ImapSession.open CAPABILITY discard",
+      "evidence": "packages/connector-imap/src/imap/session.ts:163",
+      "invariant": "Honest auth: LOGIN should not proceed if the server advertised LOGINDISABLED (RFC 3501 §6.2.3).",
+      "note": "open() awaits client.send(\"CAPABILITY\") and ignores the untagged CAPABILITY list, then sends LOGIN unless the greeting was PREAUTH."
+    },
+    {
+      "id": "R062-F2",
+      "severity": "observation",
+      "symbol": "ImapConnector.health examine override",
+      "evidence": "packages/connector-imap/src/connector.ts:176-184; packages/connector-imap/src/imap/session.ts:210-212",
+      "invariant": "Health detail should distinguish missing mailbox from a selectable mailbox that omitted UIDVALIDITY/UIDNEXT.",
+      "note": "Any protocol or misconfigured error from examine() becomes misconfigured / folder not found: <display>."
+    },
+    {
+      "id": "R062-F3",
+      "severity": "observation",
+      "symbol": "IMAP CLOSE never sent; LOGOUT is ordinary close",
+      "evidence": "packages/connector-imap/src/imap/session.ts:323-336; RFC 3501 §6.4.2",
+      "invariant": "Mailbox close must not expunge. Production uses LOGOUT (implicit close without expunge) or TCP close. IMAP CLOSE is not a production verb.",
+      "note": "After EXAMINE, RFC CLOSE would not expunge, but the connector still never sends it. ImapClient.read treats the LOGOUT-required untagged BYE as unreachable; logout() swallows that."
+    },
+    {
+      "id": "R062-F4",
+      "severity": "observation",
+      "symbol": "MailboxStatus omits EXISTS",
+      "evidence": "packages/connector-imap/src/imap/session.ts:24-27,203-214 vs docs/wave1/specs/connector-imap-ics.md:351-352",
+      "invariant": "Spec said examine returns exists; current MailboxStatus is { uidvalidity, uidnext } only.",
+      "note": "Spec drift. P006 owns canonical docs; this packet does not rewrite them."
+    },
+    {
+      "id": "R062-F5",
+      "severity": "observation",
+      "symbol": "Unmapped RFC 5530 codes",
+      "evidence": "packages/connector-imap/src/imap/codes.ts:19-27,107-123",
+      "invariant": "NOPERM and other unmapped codes are protocol, not a dedicated health state.",
+      "note": "On EXAMINE they collapse into folder not found via F2."
+    }
+  ],
+  "artifacts": [
+    "/work/out/imap-readonly-command-inventory.md",
+    "/work/out/imap-readonly-command-map.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/primary-sources.md",
+    "/work/out/transcript-checker/check-readonly-transcript.ts",
+    "/work/out/transcript-checker/README.md",
+    "/work/out/transcript-checker/fixtures/ordinary-health.imap",
+    "/work/out/transcript-checker/fixtures/ordinary-walk-read.imap",
+    "/work/out/transcript-checker/fixtures/ordinary-walk-header-only.imap",
+    "/work/out/transcript-checker/fixtures/ordinary-signin-list.imap",
+    "/work/out/transcript-checker/fixtures/ordinary-purge-search.imap",
+    "/work/out/transcript-checker/fixtures/ordinary-connect.imap",
+    "/work/out/transcript-checker/fixtures/ordinary-preauth-health.imap",
+    "/work/out/transcript-checker/fixtures/reject-select.imap",
+    "/work/out/transcript-checker/fixtures/reject-close.imap",
+    "/work/out/transcript-checker/fixtures/reject-body-without-peek.imap",
+    "/work/out/transcript-checker/fixtures/reject-store.imap",
+    "/work/out/transcript-checker/out/last-run.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/imap-readonly-command-inventory.md",
+    "/work/out/imap-readonly-command-map.json",
+    "/work/out/transcript-checker/check-readonly-transcript.ts",
+    "/work/out/transcript-checker/fixtures/",
+    "/work/out/existing-coverage.md",
+    "/work/out/primary-sources.md",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    "packages/connector-imap/src/imap/session.ts",
+    "packages/connector-imap/src/imap/codes.ts",
+    "packages/connector-imap/src/imap/client.ts",
+    "packages/connector-imap/src/connector.ts",
+    "packages/connector-imap/src/mailbox.ts",
+    "packages/connector-imap/src/sign-in.ts",
+    "packages/connector-imap/src/testing/fake-imap.ts",
+    "packages/connector-imap/test/session.test.ts",
+    "packages/connector-imap/test/mailbox.test.ts:453-465",
+    "packages/connector-imap/test/connector.test.ts:117-214,267-285",
+    "packages/connector-imap/test/client.test.ts:306-337",
+    "packages/connector-imap/README.md",
+    "docs/wave1/specs/connector-imap-ics.md",
+    "https://www.rfc-editor.org/rfc/rfc3501.txt",
+    "https://www.rfc-editor.org/rfc/rfc5530.txt"
+  ],
+  "checks": [
+    {
+      "name": "transcript-checker",
+      "command": "bun /work/out/transcript-checker/check-readonly-transcript.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T22:05:09Z",
+      "exit": 0,
+      "result": "PASS",
+      "evidence": "/work/out/transcript-checker/out/last-run.json",
+      "summary": "11 fixtures, 0 failed"
+    },
+    {
+      "name": "static-session-send-verbs",
+      "command": "parse client.send(\"...\" ) in packages/connector-imap/src/imap/session.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T22:05:09Z",
+      "exit": 0,
+      "result": "PASS",
+      "summary": "CAPABILITY, LOGIN, LIST, EXAMINE, UID FETCH, UID FETCH, UID FETCH, UID SEARCH, LOGOUT; no mutating send in src/imap excluding testing"
+    },
+    {
+      "name": "in-tree-imap-tests",
+      "command": "bun test packages/connector-imap/test/mailbox.test.ts packages/connector-imap/test/connector.test.ts packages/connector-imap/test/client.test.ts",
+      "result": "NOT_RUN",
+      "reason": "missing /repo/node_modules; dependency installs forbidden"
+    },
+    {
+      "name": "live-mailbox",
+      "result": "NOT_RUN",
+      "reason": "packet forbids contacting a mailbox"
+    }
+  ],
+  "verification": {
+    "focused": "PASS",
+    "package_tests": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "live_account": "NOT_RUN",
+    "independent_review": "NOT_RUN"
+  },
+  "existing_coverage": {
+    "walk_readonly_substring": "packages/connector-imap/test/mailbox.test.ts:453-465 (static; not the exact CLOSE/LOGOUT allowlist)",
+    "purge_verb_allowlist": "packages/connector-imap/test/connector.test.ts:267-285 (static; purge flow only)",
+    "health_mapping": "packages/connector-imap/test/connector.test.ts:117-214 (static)",
+    "failureFor": "packages/connector-imap/test/client.test.ts:306-337 (static)",
+    "decision": "Did not duplicate those tests. Added an out-of-tree transcript checker for ordinary select/read/close plus CLOSE rejection."
+  },
+  "blockers": [],
+  "downstream_handoff": {
+    "feeds": ["P057", "P058"],
+    "use": "Line-referenced inventory and JSON map are the command/response contract. Transcript checker plus fixtures are the integration artifact for read-only verbs. Existing in-tree tests remain the product tests; do not copy them. Rebase and review before production use. P006 owns canonical docs (EXISTS spec drift is F4). Live IMAP qualification is separate.",
+    "ordinary_verbs": ["CAPABILITY", "LOGIN", "LIST", "EXAMINE", "UID FETCH", "UID SEARCH", "LOGOUT"],
+    "ordinary_close": "LOGOUT or TCP close, never IMAP CLOSE",
+    "health_path": "open + EXAMINE each folder + LOGOUT; pending walk notes degrade the next health() once"
+  },
+  "next_step": "P057/P058 consume /work/out/imap-readonly-command-inventory.md and the transcript checker; do not treat this as in-tree test coverage or live-account proof."
+}

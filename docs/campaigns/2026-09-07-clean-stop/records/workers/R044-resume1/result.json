@@ -1,0 +1,211 @@
+{
+  "task_id": "R044",
+  "packet_id": "R044",
+  "title": "Map browser keyboard and focus ownership",
+  "issue": 458,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "finding",
+  "owner": "grok-R044",
+  "write_scope": "/work/out only",
+  "head_moved": false,
+  "remote_verified": false,
+  "limitations": [
+    "Repository is a read-only git archive with no Git metadata; vps-nav/git fetch/host inspect were not run (controller-owned).",
+    "Issue #458 body was not fetched; GitHub CLI was not used.",
+    "Sequential Tab order, native <dialog> trap/restore, and skip-link fragment focus were not observed in a browser.",
+    "Owner browser-check draft is UNEXECUTED: no graphical browser, DISPLAY, xdg-open session, or Playwright/Puppeteer in this container; packet forbids private browsers and full app-journey acceptance.",
+    "Full repository gate (scripts/verify.sh), typecheck, and independent C2 review were not run.",
+    "No native/account/model/human qualification or release-acceptance claim.",
+    "Self-review is not independent acceptance."
+  ],
+  "artifacts": [
+    "/work/out/keyboard-focus-map.md",
+    "/work/out/keyboard-focus-map.json",
+    "/work/out/browser-check-keyboard-focus.draft.js",
+    "/work/out/static-keyboard-focus-inventory.ts",
+    "/work/out/static-keyboard-focus-inventory.json",
+    "/work/out/static-keyboard-focus-inventory.receipt.txt",
+    "/work/out/existing-coverage.md",
+    "/work/out/p045-handoff.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/keyboard-focus-map.md",
+    "/work/out/keyboard-focus-map.json",
+    "/work/out/browser-check-keyboard-focus.draft.js",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    "packages/cli/src/app/ui/index.html:12 (a.skip-link href=#main)",
+    "packages/cli/src/app/ui/index.html:14-28 (shell ids, aria, main tabindex=-1, dialog, notification)",
+    "packages/cli/src/app/ui/app.css:3 (skip-link:focus, focus-visible, main outline:none, search outline:none!important, search-form:focus-within)",
+    "packages/cli/src/app/ui/client.js:126-130 (navigate focuses #main)",
+    "packages/cli/src/app/ui/client.js:134-136 (nav links preventDefault + navigate)",
+    "packages/cli/src/app/ui/client.js:153-164 (welcome/setup labels #setup-path #setup-no-service)",
+    "packages/cli/src/app/ui/client.js:166-193 (#memory-query, search submit, no post-result focus restore)",
+    "packages/cli/src/app/ui/client.js:219-249 (openDialog showModal then append; validation focus)",
+    "packages/cli/src/app/ui/client.js:259-305 (consent/privacy/undo button dialogs)",
+    "packages/cli/src/app/ui/client.js:372-407 (operation dialog Close panel; Escape does not cancel)",
+    "packages/cli/src/app/ui/client.js:410-413 (refresh click; Ctrl/Cmd+K)",
+    "packages/cli/src/app/host.ts:88-90 (catalog field names for #field-*)",
+    "packages/cli/test/app-client.test.ts:35 (focus() no-op stub)",
+    "packages/cli/test/app-client.test.ts:64-69 (Gmail empty fields: copy, not focus)",
+    "packages/cli/test/app-client.test.ts:72-79 (#setup-no-service checked/disabled)",
+    "packages/cli/test/app-client.test.ts:171-182 (#memory-query identity on banner pulse)",
+    "docs/local-app.md (app client of Core; no second writer)",
+    "docs/CURRENT.md / docs/decision-log.md D19 / rfcs/0002-autonomous-canon.md (binding; not restated)"
+  ],
+  "checks": [
+    {
+      "name": "existing app-client tests",
+      "command": "cd /repo && bun test ./packages/cli/test/app-client.test.ts",
+      "bun": "1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "14 pass, 0 fail, 60 expect(), 56.00ms",
+      "exit": 0,
+      "proves": "privacy/session/setup/search-field identity contracts only; not tab/focus ownership"
+    },
+    {
+      "name": "static keyboard/focus inventory",
+      "command": "bun /work/out/static-keyboard-focus-inventory.ts",
+      "bun": "1.3.14",
+      "at": "2026-09-06T21:47:38.124Z",
+      "exit": 0,
+      "proves": "source inventory (ids, aria, focus() calls, Ctrl+K not gated on dialog.open); not browser Tab order"
+    },
+    {
+      "name": "owner browser-check draft",
+      "command": "bun /work/out/browser-check-keyboard-focus.draft.js",
+      "at": "2026-09-06T22:01:53Z",
+      "exit": 0,
+      "result": "UNEXECUTED",
+      "stdout": { "status": "UNEXECUTED", "reason": "No window/document. Missing graphical browser in the R044 container." },
+      "missing": "graphical browser, DISPLAY, xdg-open session, Playwright/Puppeteer (absent from revision; not installed)"
+    },
+    {
+      "name": "full repository gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "reason": "no source change; no assigned full-suite slot"
+    }
+  ],
+  "verification": {
+    "focused": {
+      "command": "cd /repo && bun test ./packages/cli/test/app-client.test.ts",
+      "exit": 0,
+      "status": "PASS",
+      "note": "Existing suite only; keyboard/focus cases absent"
+    },
+    "static_inventory": {
+      "command": "bun /work/out/static-keyboard-focus-inventory.ts",
+      "exit": 0,
+      "status": "PASS",
+      "note": "Inventory, not accessibility pass"
+    },
+    "browser_check": {
+      "command": "bun /work/out/browser-check-keyboard-focus.draft.js",
+      "exit": 0,
+      "status": "NOT_RUN",
+      "label": "UNEXECUTED"
+    },
+    "full_gate": { "status": "NOT_RUN" },
+    "independent_review": { "status": "NOT_RUN" }
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "medium",
+      "location": "packages/cli/src/app/ui/client.js:412-413",
+      "failure": "Ctrl/Cmd+K is not gated on dialog.open and calls navigate('memory') which render()s the page behind the modal.",
+      "invariant": "While a modal dialog is open it owns keyboard input; background view must not change.",
+      "evidence": "static: keydown handler has no dialog.open check (inventory contracts_observed.ctrl_k_gated_on_dialog_open=false)",
+      "correction": "return early when dialog.open",
+      "confirmed": true,
+      "browser_observed": false
+    },
+    {
+      "id": "F2",
+      "severity": "medium",
+      "location": "packages/cli/src/app/ui/client.js:126-130,412-413",
+      "failure": "Ctrl/Cmd+K always navigate()→render(), recreating #memory-query and #setup-path and discarding live typing.",
+      "invariant": "Search shortcut focuses the existing field without destroying in-progress input. Contrast: app-client.test.ts:171-182 already requires not replacing #memory-query on operation-banner pulse.",
+      "correction": "If already on memory and #memory-query exists, focus it; do not render(). Do not fire on welcome setup.",
+      "confirmed": true,
+      "browser_observed": false
+    },
+    {
+      "id": "F3",
+      "severity": "medium",
+      "location": "packages/cli/src/app/ui/client.js:221-222",
+      "failure": "openDialog calls showModal() before callers append fields/actions; the only focusable at showModal time is button[aria-label='Close dialog']. No autofocus.",
+      "invariant": "Initial dialog focus is the first complete meaningful control (first field or explicit cancel), not an incomplete tree.",
+      "correction": "Append the full tree then showModal(), or focus the first field after append.",
+      "confirmed": true,
+      "browser_observed": false
+    },
+    {
+      "id": "F4",
+      "severity": "medium",
+      "location": "packages/cli/src/app/ui/index.html:24; packages/cli/src/app/ui/app.css:3",
+      "failure": "Skip-link targets #main[tabindex=-1] but main{outline:none}, so skip landing has no visible focus indicator.",
+      "invariant": "Keyboard focus is visible, including skip-to-content landing.",
+      "correction": "Allow a :focus outline on #main",
+      "confirmed": true,
+      "browser_observed": false
+    },
+    {
+      "id": "F5",
+      "severity": "low",
+      "location": "packages/cli/src/app/ui/app.css:3",
+      "failure": "Search input uses outline:none!important; group .search-form:focus-within provides an alternative indicator whose contrast was not measured.",
+      "invariant": "Visible focus on the search group.",
+      "correction": "Owner browser check; do not treat as pass here.",
+      "confirmed": true,
+      "browser_observed": false
+    },
+    {
+      "id": "F9",
+      "severity": "low",
+      "location": "packages/cli/src/app/ui/client.js:412-413",
+      "failure": "Ctrl/Cmd+K preventDefault runs even when #memory-query is absent (welcome/disconnected).",
+      "invariant": "Shortcut is a no-op unless the search field exists.",
+      "correction": "Gate on the field node.",
+      "confirmed": true,
+      "browser_observed": false
+    }
+  ],
+  "hypotheses_untested_in_browser": [
+    "Native modal dialog traps Tab and restores the opener on Escape (expected HTML behavior; not observed).",
+    "Closed <details> omits #setup-path from sequential Tab (browser-dependent).",
+    "loadService()/search() render() can drop focus on the control the user was using (F11 in the map).",
+    "Focus-visible contrast on buttons/links meets WCAG against both color schemes."
+  ],
+  "existing_coverage": {
+    "exact_keyboard_focus_case": false,
+    "do_not_duplicate": [
+      "packages/cli/test/app-client.test.ts:64-69",
+      "packages/cli/test/app-client.test.ts:72-79",
+      "packages/cli/test/app-client.test.ts:171-182",
+      "packages/cli/test/app-client.test.ts:117-168"
+    ],
+    "detail": "/work/out/existing-coverage.md"
+  },
+  "blockers": [
+    "Graphical browser / Playwright absent; owner browser-check remains UNEXECUTED.",
+    "Issue #458 live body unread in this container."
+  ],
+  "downstream_handoff": {
+    "feeds": "P045",
+    "file": "/work/out/p045-handoff.md",
+    "use": [
+      "/work/out/keyboard-focus-map.md",
+      "/work/out/keyboard-focus-map.json",
+      "/work/out/browser-check-keyboard-focus.draft.js"
+    ],
+    "implement": "F1–F4 on the assigned worktree after review; extend app-client fixture to record focus() instead of adding a second client; do not duplicate existing privacy/session tests.",
+    "not_authorized": "merge, P006 docs rewrite, P003/P015 contracts, live Google sign-in, release or stranger acceptance"
+  },
+  "next_step": "P045 implements F1–F4 against keyboard-focus-map.json and adds focus-recording assertions to the existing app-client fixture; owner may run browser-check-keyboard-focus.draft.js on a throwaway vault."
+}

@@ -1,0 +1,78 @@
+{
+  "schema": "kizuki.fleet-bounded-review-validation/v1",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "method": "Static source/ownership validation; successful existing reader invocation; no product or native/service execution.",
+  "packet_count": 3,
+  "existing_owned_files": [
+    {
+      "path": "packages/cli/src/commands/connect-telegram.ts",
+      "git_blob": "b58903d7273d0f08068da04fb63ceda7d1b22990",
+      "matches_exact_base": true
+    },
+    {
+      "path": "packages/cli/test/telegram-enrollment.test.ts",
+      "git_blob": "7e56013c71212c95408fd4e57648f301eb1866d3",
+      "matches_exact_base": true
+    },
+    {
+      "path": "packages/core/src/serve/supervisor.ts",
+      "git_blob": "f091abc362b5b220c1611d43e6d9399d79dfd464",
+      "matches_exact_base": true
+    },
+    {
+      "path": "packages/core/test/serve/supervisor.test.ts",
+      "git_blob": "debafdee56cc883ffb3d7aef1ef25c9b09299ece",
+      "matches_exact_base": true
+    },
+    {
+      "path": "packages/cli/test/serve/install.test.ts",
+      "git_blob": "68047304c51fc8518b49c18480d22cd4bd214de8",
+      "matches_exact_base": true
+    },
+    {
+      "path": "packages/cli/src/commands/import.ts",
+      "git_blob": "9dedc1f46c02fe6cd900525641ca5754b3ea6cb3",
+      "matches_exact_base": true
+    }
+  ],
+  "new_owned_files": [
+    "packages/cli/test/telegram-signin-diagnostics.test.ts",
+    "packages/cli/test/import-claude-lifecycle.test.ts"
+  ],
+  "distinct_scopes": true,
+  "current_production_write_overlap": [],
+  "reader": {
+    "command": "python3 grok_fleet_status.py --roster GROK-FLEET-FIRST-10-20260906.json --roster GROK-FLEET-NEXT-6-20260906.json --roster GROK-FLEET-IMMEDIATE-R100-20260906.json --roster GROK-FLEET-PRODUCTION-20260906.json --json",
+    "cwd": "CHECKPOINT_BOOK",
+    "exit_code": 0,
+    "observed_at_utc": "2026-09-06T22:23:24.089774+00:00",
+    "selected_roster_packets": 120,
+    "production_ids_included": [
+      "P004",
+      "P006",
+      "P015",
+      "P057"
+    ],
+    "R_membership": 100,
+    "R_membership_matches_default": true,
+    "default_rosters_changed": false,
+    "source_changed": false,
+    "report_sha256": "55b8f716a6f195a9229002bc825d91eedb093c951134529ee5077a02cd5f30fd"
+  },
+  "product_runtime_checks": "NOT_RUN",
+  "artifacts": [
+    {
+      "file": "REVIEW.md",
+      "sha256": "a92328b89c68d0ded7d911d9a572d57b846a89da1b475fcf587ef8b6dbf26648"
+    },
+    {
+      "file": "implementation-packets.json",
+      "sha256": "53632115ab619dcda3dc14dea3700d91bd844cdb725380ac8070ab85e4ef566b"
+    },
+    {
+      "file": "status-with-production.json",
+      "sha256": "55b8f716a6f195a9229002bc825d91eedb093c951134529ee5077a02cd5f30fd"
+    }
+  ],
+  "release_claim": false
+}

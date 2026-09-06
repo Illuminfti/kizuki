@@ -1,0 +1,160 @@
+{
+  "task_id": "R063",
+  "packet_id": "R063",
+  "issue": 548,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Inspect WHOOP units and optional record-field representation",
+  "owner": "grok-R063",
+  "write_scope": "/work/out only",
+  "findings": [
+    {
+      "severity": "coverage_gap",
+      "id": "nested-metric-goldens-absent-in-repo",
+      "evidence": "packages/connector-whoop/test/events.test.ts:9-76 covers cycle 0/null/absent, recovery pending null, fail-closed metrics, RFC3339 order. test/provider-schema.test.ts:4-50 covers sport_name, Z, omitted cycle end, malformed workout activity. No in-repo pin of nested sleep/workout metrics, UUID lowercase, offset preservation, recovery optional spo2/skin_temp, empty score object, or distance 0 vs absent.",
+      "affected": "P060/P061 event mapping tests",
+      "action": "Reuse /work/out/fixtures/neutral-metric-golden.json. Do not duplicate the existing events.test.ts cases."
+    },
+    {
+      "severity": "spec_mismatch_historical",
+      "id": "wave1-rendertext-not-current",
+      "evidence": "docs/wave1/specs/connector-whoop.md §4.2 vs packages/connector-whoop/src/events.ts:83 and docs/whoop.md:76-81",
+      "affected": "unit conversion claims (km, rounded HR, h/mm templates)",
+      "action": "Follow current events.ts passthrough JSON.stringify(metrics). Do not revive renderText conversions."
+    },
+    {
+      "severity": "characterization",
+      "id": "openapi-required-score-keys-not-enforced",
+      "evidence": "OpenAPI CycleScore/WorkoutScore required arrays vs events.ts:9-18 numeric() only copies present keys. Golden cycle-empty-score-object passed.",
+      "affected": "downstream assumed complete score objects",
+      "action": "Treat OpenAPI required-when-scored as provider intent, not Kizuki admission. Keep zero/null/absent distinct."
+    },
+    {
+      "severity": "docs_gap_upstream",
+      "id": "heart-rate-unit-unspecified-on-cycle-recovery",
+      "evidence": "OpenAPI WorkoutScore average_heart_rate description includes beats per minute; CycleScore and RecoveryScore resting/average heart rate descriptions do not. Fetched 2026-09-06T21:47:15.751Z.",
+      "affected": "unit annotation in events",
+      "action": "Do not invent bpm on cycle/recovery fields in metadata. Passthrough numbers. Workout OpenAPI may be cited for that resource only."
+    },
+    {
+      "severity": "environment",
+      "id": "archive-missing-node-modules",
+      "evidence": "cd /repo && bun test packages/connector-whoop/test/events.test.ts packages/connector-whoop/test/provider-schema.test.ts → exit 1 Cannot find module '@kizuki/core'",
+      "affected": "direct package test / typecheck / verify",
+      "action": "On a real worktree: bun install --frozen-lockfile, then bun test packages/connector-whoop. Not a product failure."
+    }
+  ],
+  "deliverables": [
+    "/work/out/whoop-field-unit-nullability-map.json",
+    "/work/out/whoop-field-unit-nullability-map.md",
+    "/work/out/fixtures/neutral-metric-golden.json",
+    "/work/out/verify-golden-metrics.test.ts",
+    "/work/out/run-existing-events.test.ts",
+    "/work/out/kizuki-core-shim.ts",
+    "/work/out/checks-receipt.json",
+    "/work/out/research/whoop-openapi-resource-schemas.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "whoop-field-unit-nullability-map.json",
+    "whoop-field-unit-nullability-map.md",
+    "fixtures/neutral-metric-golden.json",
+    "verify-golden-metrics.test.ts",
+    "run-existing-events.test.ts",
+    "kizuki-core-shim.ts",
+    "checks-receipt.json",
+    "research/whoop-openapi-resource-schemas.json",
+    "RESULT.md"
+  ],
+  "source_references": [
+    "packages/connector-whoop/src/events.ts:3-87",
+    "packages/connector-whoop/src/state.ts:47-77",
+    "packages/connector-whoop/src/connector.ts:247-269,414-420",
+    "packages/connector-whoop/src/testing.ts:17-44",
+    "packages/connector-whoop/test/events.test.ts:9-76",
+    "packages/connector-whoop/test/provider-schema.test.ts:4-50",
+    "packages/core/src/util/time.ts:20-50",
+    "packages/core/src/contracts/event.ts:72-122",
+    "docs/whoop.md:59-81",
+    "docs/wave1/specs/connector-whoop.md:462-507 (historical; not current mapper)",
+    "https://api.prod.whoop.com/developer/doc/openapi.json fetched 2026-09-06T21:47:15.751Z HTTP 200"
+  ],
+  "checks": [
+    {
+      "name": "golden recordEvent fixtures",
+      "command": "cd /work/out && bun test verify-golden-metrics.test.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "15 pass, 0 fail, 54 expects, bun 1.3.14, 2026-09-06T22:09:03Z"
+    },
+    {
+      "name": "existing events.test.ts via shim",
+      "command": "cd /work/out && bun test run-existing-events.test.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "5 pass, 0 fail, 33 expects, bun 1.3.14, 2026-09-06T22:09:54Z"
+    },
+    {
+      "name": "direct /repo package tests",
+      "command": "cd /repo && bun test packages/connector-whoop/test/events.test.ts packages/connector-whoop/test/provider-schema.test.ts",
+      "exit_code": 1,
+      "result": "FAIL",
+      "detail": "Cannot find module '@kizuki/core'. Missing workspace install, not a mapper assertion."
+    },
+    {
+      "name": "provider-schema.test.ts",
+      "command": "cd /repo && bun test packages/connector-whoop/test/provider-schema.test.ts",
+      "exit_code": null,
+      "result": "NOT_RUN",
+      "detail": "Needs full @kizuki/core (OAuthSession/HealthReport). Static read of provider-schema.test.ts:4-50. Prerequisite: bun install --frozen-lockfile on a worktree."
+    },
+    {
+      "name": "typecheck and full verify",
+      "command": "bun run typecheck; bun run verify",
+      "exit_code": null,
+      "result": "NOT_RUN",
+      "detail": "Read-only prep; no node_modules; no full-gate slot."
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS",
+    "existing_events_tests_via_shim": "PASS",
+    "direct_package_tests": "FAIL (missing @kizuki/core workspace install)",
+    "provider_schema_tests": "NOT_RUN",
+    "typecheck_full_gate": "NOT_RUN",
+    "live_whoop_account": "NOT_RUN (forbidden)",
+    "independent_review": "NOT_RUN"
+  },
+  "downstream_handoff": {
+    "feeds": ["P060", "P061"],
+    "leave_to": {
+      "P059_P060": "WHOOP confidential-client / OAuth enrollment compatibility",
+      "P003": "shared evidence design",
+      "P006": "canonical docs",
+      "P015": "source-B schema/recovery/authority/export"
+    },
+    "must_preserve": [
+      "Units passthrough; no km/kcal/Fahrenheit conversion; suffixes encode units",
+      "Zero, JSON null, and absent keys remain distinct",
+      "occurred_at is provider updated_at, verbatim RFC3339, not activity start",
+      "metadata.metrics only when fields includes metrics AND score key is present",
+      "Recovery activity is always null when selected",
+      "Cycle end omitted/null → activity.end null; sleep/workout end required",
+      "UUID identities lowercased; sport_id and v1_id omitted",
+      "PENDING_SCORE/UNSCORABLE do not become zero scores",
+      "Do not duplicate packages/connector-whoop/test/events.test.ts:9-76"
+    ],
+    "suggested_package_test_if_owned": "Promote nested sleep/workout cases from fixtures/neutral-metric-golden.json into packages/connector-whoop/test only if P060/P061 own events.ts."
+  },
+  "blockers": [],
+  "limitations": [
+    "Read-only git archive; no Git metadata; no node_modules.",
+    "No live WHOOP account, no operator client, no CLI enrollment.",
+    "No bun install, no typecheck, no full repository verify.",
+    "provider-schema.test.ts not executed (connector graph needs full core).",
+    "No native/account/model/human qualification or release acceptance.",
+    "OpenAPI has no info.version; units taken from schema descriptions dated 2026-09-06."
+  ],
+  "next_step": "P060/P061 consume whoop-field-unit-nullability-map.json and fixtures/neutral-metric-golden.json. Confidential-client remains P059/P060. In-repo package tests require bun install --frozen-lockfile on a real worktree."
+}

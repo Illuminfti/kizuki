@@ -1,0 +1,171 @@
+{
+  "task_id": "R066",
+  "packet_id": "R066",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "finding",
+  "issue": 549,
+  "feeds_packets": ["P063", "P064"],
+  "artifacts": [
+    "/work/out/projection-map.json",
+    "/work/out/projection-map.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/official-docs-2026-09-06.json",
+    "/work/out/fixtures/minimal-page.json",
+    "/work/out/fixtures/wrapped-legacy-page.json",
+    "/work/out/fixtures/wrapped-modern-page.json",
+    "/work/out/fixtures/lookup-page.json",
+    "/work/out/fixtures/empty-continuation.json",
+    "/work/out/fixtures/selection-excludes-payload.json",
+    "/work/out/fixtures/extra-fields-silent.json",
+    "/work/out/fixtures/withheld-post.json",
+    "/work/out/fixtures/withheld-user.json",
+    "/work/out/fixtures/errors-prose.json",
+    "/work/out/verify-projection.ts",
+    "/work/out/checks/projection-verify.json"
+  ],
+  "deliverables": [
+    "/work/out/projection-map.json",
+    "/work/out/projection-map.md",
+    "/work/out/fixtures/minimal-page.json",
+    "/work/out/fixtures/wrapped-legacy-page.json",
+    "/work/out/fixtures/wrapped-modern-page.json",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    {
+      "path": "packages/connector-x/src/api/parse.ts",
+      "lines": "1-141",
+      "role": "page/post projection and refusal"
+    },
+    {
+      "path": "packages/connector-x/src/api/connector.ts",
+      "lines": "241,264,317-319",
+      "role": "timeline parsePage, lookup replay, fixture() minimal record"
+    },
+    {
+      "path": "packages/connector-x/src/api/client.ts",
+      "lines": "109-124",
+      "role": "fieldsQuery tweet-v2 request dialect"
+    },
+    {
+      "path": "packages/connector-x/src/api/state.ts",
+      "lines": "10-12,55-65",
+      "role": "OPTIONAL_FIELDS relationships|links|media, selection"
+    },
+    {
+      "path": "packages/connector-x/test/api/parse.test.ts",
+      "lines": "1-80",
+      "role": "existing parser coverage; do not duplicate"
+    },
+    {
+      "path": "packages/connector-x/test/api/client.test.ts",
+      "lines": "18-23",
+      "role": "existing fieldsQuery coverage"
+    },
+    {
+      "path": "packages/connector-x/test/api/capture.test.ts",
+      "lines": "49-62",
+      "role": "missing records never create tombstones"
+    },
+    {
+      "path": "packages/connector-x/API.md",
+      "lines": "60-88",
+      "role": "documented projection and alias dialect"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "contract",
+      "id": "no-event-unsupported-marker",
+      "summary": "Accepted API events have no unsupported-content marker. Extra documented post fields and includes.posts are silently dropped. ChatGPT/Gmail-style metadata flags are absent.",
+      "evidence": "packages/connector-x/src/api/parse.ts mapPost 78-115 never writes unsupported_parts or coverage; fixtures/extra-fields-silent.json PASS"
+    },
+    {
+      "severity": "contract",
+      "id": "withheld-refuses-page",
+      "summary": "withheld on a post or expanded user refuses the whole page as partial_response instead of emitting a redacted or marked event.",
+      "evidence": "parse.ts:41 and parse.ts:81; fixtures/withheld-post.json and withheld-user.json PASS"
+    },
+    {
+      "severity": "coverage-gap",
+      "id": "parse-test-gaps",
+      "summary": "parse.test.ts already covers wrapped note_tweet, aliases, empty continuation, fields:[], username mentions, and user withheld. It does not cover post withheld, lookup-mode omitted meta, extra-field silent drop, quoted/retweeted refs, or video preview_url. Those are fixture-only here; do not duplicate the existing cases.",
+      "evidence": "packages/connector-x/test/api/parse.test.ts 1-80; existing-coverage.md"
+    },
+    {
+      "severity": "dialect",
+      "id": "tweet-v2-vs-post-fields",
+      "summary": "In-tree tweet-v2 requests tweet.fields and legacy names. Public GET /2/users/:id/posts docs on 2026-09-06 expose post.fields and list author_id/edit_history_post_ids/referenced_posts/in_reply_to_user_id under expansions. Parser accepts both aliases when values agree and does not retry the other dialect.",
+      "evidence": "client.ts:109-124; parse.ts:23-28; official-docs-2026-09-06.json; API.md 82-88"
+    },
+    {
+      "severity": "limitation",
+      "id": "media-and-deletion",
+      "summary": "Media bytes are not fetched; attachment media_type is always application/octet-stream. deleted is always false; manifest tombstones/purge are false. Missing lookup records fail snapshot_changed at the connector, not as tombstones.",
+      "evidence": "parse.ts:102,106; connector.ts:14-16,264-266; capture.test.ts 49-62"
+    }
+  ],
+  "checks": [
+    {
+      "name": "fixture projection against parsePage",
+      "command": "cd /repo && NODE_PATH=/work/out/node_modules bun /work/out/verify-projection.ts",
+      "bun": "1.3.14",
+      "cwd": "/repo",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/checks/projection-verify.json",
+      "note": "NODE_PATH is a local remap of @kizuki/core onto /work/out/shims leaf files. No packages were downloaded."
+    },
+    {
+      "name": "in-tree parse.test.ts",
+      "command": "cd /repo && bun test packages/connector-x/test/api/parse.test.ts",
+      "bun": "1.3.14",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "missing": "workspace node_modules/@kizuki/core (git archive has no install; installs forbidden)",
+      "note": "Overlapping cases were re-executed via fixtures instead of duplicating the test file."
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": {
+      "command": "cd /repo && NODE_PATH=/work/out/node_modules bun /work/out/verify-projection.ts",
+      "result": "PASS",
+      "exit_code": 0,
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "evidence": "/work/out/checks/projection-verify.json"
+    },
+    "package_type_full_gate": {
+      "result": "NOT_RUN",
+      "reason": "read-only preparation packet; no source edits; workspace node_modules absent"
+    },
+    "in_tree_parse_tests": {
+      "command": "cd /repo && bun test packages/connector-x/test/api/parse.test.ts",
+      "result": "NOT_RUN",
+      "exit_code": 1,
+      "reason": "Cannot find module '@kizuki/core'"
+    },
+    "live_account": {
+      "result": "NOT_RUN",
+      "reason": "packet forbids provider/account calls; enrollment remains unqualified"
+    }
+  },
+  "blockers": [],
+  "downstream_handoff": {
+    "consumers": ["P063", "P064"],
+    "use": "Treat projection-map.json plus fixtures as the serialization contract for own-post API events. Reuse parse.test.ts cases by path/line; promote only the documented gaps if a parser change is assigned. Do not claim live-account qualification from these fixtures.",
+    "do_not": [
+      "duplicate parse.test.ts wrapped-note/alias/empty-continuation/mention tests",
+      "treat silent extra-field drop as an existing unsupported marker",
+      "edit shared registry, lockfiles, or connector interface from this packet"
+    ]
+  },
+  "next_step": "P063/P064 should consume /work/out/projection-map.json and the fixtures. If they add unsupported-content markers, that is a parser/metadata change on a later implementation packet; this lane did not edit source.",
+  "limitations": [
+    "Read-only git archive at f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7; no Git metadata, no workspace install.",
+    "No live X account, no paid API calls, no enrollment qualification.",
+    "Official docs check is HTML/OpenAPI extraction from docs.x.com on 2026-09-06, not a provider response.",
+    "Fixture execution used a local @kizuki/core remap; bun test of the in-tree file remains NOT_RUN without workspace node_modules.",
+    "Archive importer map.ts is out of scope."
+  ]
+}

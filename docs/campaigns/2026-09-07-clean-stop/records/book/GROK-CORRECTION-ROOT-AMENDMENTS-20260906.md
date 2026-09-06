@@ -1,0 +1,11 @@
+# Root corrective wave amendments
+
+P004 and P015 retain their original f57 integration base and exact owners. Each starts at the explicitly recorded start_head and adds normal corrective commits; preserve previous commits and failure evidence. The independent corrective handoff and this amendment supersede earlier conflicting test-shape instructions.
+
+P004: follow P004-CE83957-CORRECTIVE-HANDOFF.md in full. Preserve the original three-file scope and do not change product help or create capability-proof.ts. Tests remain root-operated. Correct repository-relative imports; the initial root run failed before tests. Candidate observation must be bound to actual committed source and its executing checkout, with honest NO-GO for unsupported families.
+
+P015: follow GROK-P015-CORRECTION-HANDOFF-20260906.md in full. Root has checked ownership and now explicitly adds packages/core/src/ledger/integrity.ts and packages/core/test/agent-enrollment-backup.test.ts to P015 only, yielding 19 exact paths. Integrate the v20 table assertion into the existing authoritative assertLedgerSchema path, including direct immutable enrollment preview callers. Avoid duplicating schema checks in a parallel wrapper. Update current-version enrollment backup assertions deliberately while preserving all historical schema-16 fixture expectations and supported compatibility matrices. Add the existing enrollment-backup test file to the root test request.
+
+The first P015 root sealed run 5836b3879c1a4faa8d78d56818cec4b2 had 174 pass and 23 fail across eight files, stable inputs and confirmed cleanup. Preserve all assertions. Most normal source erasures fail at the missing writeIntent argument. Two added backup cases also place export destinations inside their vault; correct these synthetic fixture paths to separate sibling directories using the existing ordinary temp fixture pattern. Never relax production export/vault separation to make the fixtures pass. Full original stderr is supplied as context.
+
+All new validation stays ordinary, synthetic, offline and bounded. No vulnerability reproduction, resource-bound exercise, provider/account calls, native/service actions or release credit. Root owns execution and final independent acceptance.

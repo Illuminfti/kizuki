@@ -1,0 +1,74 @@
+{
+  "task_id": "P062",
+  "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+  "status": "FINDINGS",
+  "findings": [
+    {
+      "severity": "blocker",
+      "id": "acceptance-id-null",
+      "summary": "go-no-go acceptance id x-api has connector_id null; archive file-import cannot certify live-account API sync.",
+      "evidence": "scripts/go-no-go.ts:30 CONNECTORS x-api connector_id null evidence live-account; x-archive is kizuki.import-x-archive file-import. docs/release-acceptance.md states X API has connector_id null because this candidate has no registered API connector and file importers cannot stand in for live accounts."
+    },
+    {
+      "severity": "blocker",
+      "id": "registry-and-cli-unenrolled",
+      "summary": "kizuki.x exists as @kizuki/connector-x/api but is not in defaultConnectorRegistry and is not CLI-enrollable. Canonical owner of shared registry wiring is packages/connectors (packages/connectors/src/registry.ts).",
+      "evidence": "packages/connectors/src/registry.ts enrolls X_ARCHIVE_CONNECTOR_ID only. packages/cli/src/connections.ts listEnrollableConnectorIds allows none, Beeper secret_ref, and named sign_in connectors. X API auth_modes are oauth and secret_ref. docs/CURRENT.md: other sign-in connectors are not enrollable through this CLI."
+    },
+    {
+      "severity": "blocker",
+      "id": "account-funding-approval",
+      "summary": "Official 2026-09-06 X docs require a developer account, Developer Agreement, OAuth 2.0 Native App PKCE, exact 127.0.0.1 callback, and purchased pay-per-use credits. C3 funds paid API sync by the owner. This packet made no account or paid call.",
+      "evidence": "https://docs.x.com/x-api/getting-started/getting-access.md https://docs.x.com/x-api/getting-started/pricing.md https://docs.x.com/resources/fundamentals/developer-apps.md https://docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code.md fetched 2026-09-06. Owned Reads $0.001/resource only when {id} matches authenticated user who owns the developer app; GET /2/users/me is not on that list. User Posts cap 3200 most recent (timelines integrate guide)."
+    },
+    {
+      "severity": "high",
+      "id": "lineage-split",
+      "summary": "Archive and API are separate connector identities. Same native post id yields two ledger events. Archive evidence cannot be remapped onto x-api.",
+      "evidence": "Archive map.ts connector_id kizuki.import-x-archive metadata.source x_archive sensitivity personal. API parse.ts connector_id kizuki.x metadata.source x_api sensitivity private. Shared source_record_id post:<id> is not unification."
+    },
+    {
+      "severity": "high",
+      "id": "unqualified-dialect-and-callback",
+      "summary": "tweet-v2 request profile and default loopback callback are unqualified against current OpenAPI and registered-callback rules.",
+      "evidence": "packages/connector-x/src/api/client.ts fieldsQuery uses tweet.fields and note_tweet. OpenAPI 2.168 on https://docs.x.com/x-api/users/get-posts.md uses post.fields enum including note_post. API.md and connector signIn refuse default loopbackTransport. Official apps doc: local callback http://127.0.0.1 not localhost."
+    }
+  ],
+  "deliverables": [
+    "/work/out/orientation.md",
+    "/work/out/sources.json",
+    "/work/out/x-api-research-packet.md",
+    "/work/out/enrollment-map.json",
+    "/work/out/lineage-and-blockers.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "verification": {
+    "focused": "PASS",
+    "focused_note": "Official Markdown docs fetched with Bun 1.3.14 on 2026-09-06; static read of assigned /repo paths. URLs and limitations in sources.json.",
+    "package_type_full_gate": "NOT_RUN",
+    "package_type_full_gate_note": "Book-only packet; no source change; repository verify not run.",
+    "privacy": "PASS",
+    "independent_review": "NOT_RUN",
+    "live_account": "NOT_RUN",
+    "paid_api": "NOT_RUN",
+    "auth_retest": "NOT_RUN"
+  },
+  "blockers": [
+    "Owner developer account, Developer Agreement acceptance, Native App, and exact 127.0.0.1 callback are absent from this container and were not created.",
+    "Owner funding of X API credits is required (C3). No purchase was made.",
+    "packages/connectors must own any future kizuki.x registry enrollment after host composition exists.",
+    "packages/cli must own native connect x; auth_modes oauth is not on the current enrollable allowlist.",
+    "scripts/go-no-go.ts may set x-api.connector_id to kizuki.x only after registry enrollment; never to kizuki.import-x-archive.",
+    "Live dialect, billing error shape, and registered-callback qualification remain unrun."
+  ],
+  "next_step": "Owner-funded developer app and credits, then the packages/connectors owner enrolls kizuki.x with Gmail-style host-composition fail-closed; do not treat archive fixtures as that proof.",
+  "limitations": [
+    "Frozen /repo archive; git status/fetch/remotes and live issue #549 were not available.",
+    "Developer Agreement HTML and live console rates were not fetched.",
+    "No live X API call, credential, or vault access.",
+    "No product source edits.",
+    "Wave 1 connector-x spec is historical and not the shipped adapter.",
+    "No release, semantic-quality, or live-account claim."
+  ]
+}

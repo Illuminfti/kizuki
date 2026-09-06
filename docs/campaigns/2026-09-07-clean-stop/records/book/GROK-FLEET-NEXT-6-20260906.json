@@ -1,0 +1,259 @@
+{
+  "schema": "kizuki.fleet-readonly-next-wave/v1",
+  "generated_at_utc": "2026-09-06 20:53:54 UTC",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+  "packet_count": 6,
+  "packets": [
+    {
+      "id": "P053",
+      "title": "Calendar temporal-fidelity independent tests",
+      "issue": 546,
+      "kind": "independent_fixture_code",
+      "readiness": "ready_now",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "owner": "root assigns one Grok owner to this exact new test file",
+      "write_paths": [
+        "packages/connector-google-calendar/test/fleet-temporal.test.ts",
+        "CHECKPOINT_BOOK/fleet-packets/P053/"
+      ],
+      "read_paths": [
+        "packages/connector-google-calendar/src/events.ts",
+        "packages/connector-google-calendar/src/connector.ts",
+        "packages/connector-google-calendar/test/"
+      ],
+      "scope": "Author independent neutral fixtures through the existing public connector/test transport for supported timezone/all-day/recurrence/exception/cancellation semantics; distinguish scheduled events from attendance. Exclude OAuth/enrollment, owned by P050/P054.",
+      "dependencies": [],
+      "acceptance": [
+        "Inspect existing coverage first; add only genuinely missing independent cases, never mirror implementation or duplicate existing tests.",
+        "Run the new tests and the relevant existing package/format tests on this repaired immutable base using the qualified network-disabled isolated runtime.",
+        "Keep all existing assertions; report any unexpected production failure with a static path/proposal instead of editing production or weakening tests.",
+        "Return a clean single-file test commit (or evidence-only report if coverage was already complete), exact base/head, commands, test counts, log hashes and remaining final-package qualification limits."
+      ],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "connector-work",
+        "test-strategy",
+        "elegance-review"
+      ],
+      "blockers": [
+        "Final connector release credit still requires the final compiled package and separate required evidence.",
+        "Any production repair or shared helper change needs a newly reconciled, explicitly owned scope; this packet does not take it."
+      ],
+      "limits": [
+        "No production, shared test-helper, registry, CLI, auth, schema, native, export or source-grant edits.",
+        "No predecessor or vulnerability/timing reproduction; neutral contract cases on repaired code only.",
+        "No real accounts, private data, credentials, remote writes or dispatch."
+      ]
+    },
+    {
+      "id": "P067",
+      "title": "Markdown folder lifecycle independent tests",
+      "issue": 550,
+      "kind": "independent_fixture_code",
+      "readiness": "ready_now",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "owner": "root assigns one Grok owner to this exact new test file",
+      "write_paths": [
+        "packages/connectors/test/fleet-markdown-lifecycle.test.ts",
+        "CHECKPOINT_BOOK/fleet-packets/P067/"
+      ],
+      "read_paths": [
+        "packages/connectors/src/markdown-folder/index.ts",
+        "packages/connectors/test/markdown-folder.test.ts",
+        "packages/connectors/test/markdown-vault-boundary.test.ts"
+      ],
+      "scope": "Test selected-folder positive capture, unchanged/changed/deleted ordinary files, stable event identity and repeat/resume behavior using synthetic directories. Preserve the existing vault/output exclusion contract; do not probe unrelated host paths.",
+      "dependencies": [],
+      "acceptance": [
+        "Inspect existing coverage first; add only genuinely missing independent cases, never mirror implementation or duplicate existing tests.",
+        "Run the new tests and the relevant existing package/format tests on this repaired immutable base using the qualified network-disabled isolated runtime.",
+        "Keep all existing assertions; report any unexpected production failure with a static path/proposal instead of editing production or weakening tests.",
+        "Return a clean single-file test commit (or evidence-only report if coverage was already complete), exact base/head, commands, test counts, log hashes and remaining final-package qualification limits."
+      ],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "connector-work",
+        "test-strategy",
+        "elegance-review"
+      ],
+      "blockers": [
+        "Final connector release credit still requires the final compiled package and separate required evidence.",
+        "Any production repair or shared helper change needs a newly reconciled, explicitly owned scope; this packet does not take it."
+      ],
+      "limits": [
+        "No production, shared test-helper, registry, CLI, auth, schema, native, export or source-grant edits.",
+        "No predecessor or vulnerability/timing reproduction; neutral contract cases on repaired code only.",
+        "No real accounts, private data, credentials, remote writes or dispatch."
+      ]
+    },
+    {
+      "id": "P069",
+      "title": "ChatGPT export branch and role independent tests",
+      "issue": 550,
+      "kind": "independent_fixture_code",
+      "readiness": "ready_now",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "owner": "root assigns one Grok owner to this exact new test file",
+      "write_paths": [
+        "packages/connectors/test/fleet-chatgpt-fidelity.test.ts",
+        "CHECKPOINT_BOOK/fleet-packets/P069/"
+      ],
+      "read_paths": [
+        "packages/connectors/src/import-chatgpt/index.ts",
+        "packages/connectors/test/chatgpt.test.ts"
+      ],
+      "scope": "Freeze synthetic supported export records with distinct conversation/message/branch identity, user/assistant roles, timestamps and repeat import. Assert exact expected events and honest unsupported/machine-origin coverage.",
+      "dependencies": [],
+      "acceptance": [
+        "Inspect existing coverage first; add only genuinely missing independent cases, never mirror implementation or duplicate existing tests.",
+        "Run the new tests and the relevant existing package/format tests on this repaired immutable base using the qualified network-disabled isolated runtime.",
+        "Keep all existing assertions; report any unexpected production failure with a static path/proposal instead of editing production or weakening tests.",
+        "Return a clean single-file test commit (or evidence-only report if coverage was already complete), exact base/head, commands, test counts, log hashes and remaining final-package qualification limits."
+      ],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "connector-work",
+        "test-strategy",
+        "elegance-review"
+      ],
+      "blockers": [
+        "Final connector release credit still requires the final compiled package and separate required evidence.",
+        "Any production repair or shared helper change needs a newly reconciled, explicitly owned scope; this packet does not take it."
+      ],
+      "limits": [
+        "No production, shared test-helper, registry, CLI, auth, schema, native, export or source-grant edits.",
+        "No predecessor or vulnerability/timing reproduction; neutral contract cases on repaired code only.",
+        "No real accounts, private data, credentials, remote writes or dispatch."
+      ]
+    },
+    {
+      "id": "P071",
+      "title": "Claude export attribution independent tests",
+      "issue": 550,
+      "kind": "independent_fixture_code",
+      "readiness": "ready_now",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "owner": "root assigns one Grok owner to this exact new test file",
+      "write_paths": [
+        "packages/connectors/test/fleet-claude-fidelity.test.ts",
+        "CHECKPOINT_BOOK/fleet-packets/P071/"
+      ],
+      "read_paths": [
+        "packages/connectors/src/import-claude/index.ts",
+        "packages/connectors/test/claude.test.ts"
+      ],
+      "scope": "Use neutral supported official-export shapes to test message identity, role/quoted-author retention, timestamp fidelity, duplicate/reordered inputs and repeat import. Do not invent semantics for unsupported format fields.",
+      "dependencies": [],
+      "acceptance": [
+        "Inspect existing coverage first; add only genuinely missing independent cases, never mirror implementation or duplicate existing tests.",
+        "Run the new tests and the relevant existing package/format tests on this repaired immutable base using the qualified network-disabled isolated runtime.",
+        "Keep all existing assertions; report any unexpected production failure with a static path/proposal instead of editing production or weakening tests.",
+        "Return a clean single-file test commit (or evidence-only report if coverage was already complete), exact base/head, commands, test counts, log hashes and remaining final-package qualification limits."
+      ],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "connector-work",
+        "test-strategy",
+        "elegance-review"
+      ],
+      "blockers": [
+        "Final connector release credit still requires the final compiled package and separate required evidence.",
+        "Any production repair or shared helper change needs a newly reconciled, explicitly owned scope; this packet does not take it."
+      ],
+      "limits": [
+        "No production, shared test-helper, registry, CLI, auth, schema, native, export or source-grant edits.",
+        "No predecessor or vulnerability/timing reproduction; neutral contract cases on repaired code only.",
+        "No real accounts, private data, credentials, remote writes or dispatch."
+      ]
+    },
+    {
+      "id": "P073",
+      "title": "WhatsApp export locale and sender independent tests",
+      "issue": 550,
+      "kind": "independent_fixture_code",
+      "readiness": "ready_now",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "owner": "root assigns one Grok owner to this exact new test file",
+      "write_paths": [
+        "packages/connectors/test/fleet-whatsapp-fidelity.test.ts",
+        "CHECKPOINT_BOOK/fleet-packets/P073/"
+      ],
+      "read_paths": [
+        "packages/connectors/src/import-whatsapp/",
+        "packages/connectors/test/whatsapp-dates.test.ts",
+        "packages/connectors/test/whatsapp-export.test.ts",
+        "packages/connectors/test/whatsapp-media.test.ts"
+      ],
+      "scope": "Test independently specified supported locale/date/time/sender records, continuation lines, media exclusion and stable repeated import. Use synthetic exports only; no real chat files or provider calls.",
+      "dependencies": [],
+      "acceptance": [
+        "Inspect existing coverage first; add only genuinely missing independent cases, never mirror implementation or duplicate existing tests.",
+        "Run the new tests and the relevant existing package/format tests on this repaired immutable base using the qualified network-disabled isolated runtime.",
+        "Keep all existing assertions; report any unexpected production failure with a static path/proposal instead of editing production or weakening tests.",
+        "Return a clean single-file test commit (or evidence-only report if coverage was already complete), exact base/head, commands, test counts, log hashes and remaining final-package qualification limits."
+      ],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "connector-work",
+        "test-strategy",
+        "elegance-review"
+      ],
+      "blockers": [
+        "Final connector release credit still requires the final compiled package and separate required evidence.",
+        "Any production repair or shared helper change needs a newly reconciled, explicitly owned scope; this packet does not take it."
+      ],
+      "limits": [
+        "No production, shared test-helper, registry, CLI, auth, schema, native, export or source-grant edits.",
+        "No predecessor or vulnerability/timing reproduction; neutral contract cases on repaired code only.",
+        "No real accounts, private data, credentials, remote writes or dispatch."
+      ]
+    },
+    {
+      "id": "P075",
+      "title": "ICS temporal and recurrence independent tests",
+      "issue": 550,
+      "kind": "independent_fixture_code",
+      "readiness": "ready_now",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "owner": "root assigns one Grok owner to this exact new test file",
+      "write_paths": [
+        "packages/connector-ics/test/fleet-calendar-fidelity.test.ts",
+        "CHECKPOINT_BOOK/fleet-packets/P075/"
+      ],
+      "read_paths": [
+        "packages/connector-ics/src/",
+        "packages/connector-ics/test/"
+      ],
+      "scope": "Test supported calendar timezone/all-day/recurrence/exception/cancellation and source identity semantics through existing public parse/connector seams. Freeze independent expected records and preserve scheduled-versus-observed distinction.",
+      "dependencies": [],
+      "acceptance": [
+        "Inspect existing coverage first; add only genuinely missing independent cases, never mirror implementation or duplicate existing tests.",
+        "Run the new tests and the relevant existing package/format tests on this repaired immutable base using the qualified network-disabled isolated runtime.",
+        "Keep all existing assertions; report any unexpected production failure with a static path/proposal instead of editing production or weakening tests.",
+        "Return a clean single-file test commit (or evidence-only report if coverage was already complete), exact base/head, commands, test counts, log hashes and remaining final-package qualification limits."
+      ],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "connector-work",
+        "test-strategy",
+        "elegance-review"
+      ],
+      "blockers": [
+        "Final connector release credit still requires the final compiled package and separate required evidence.",
+        "Any production repair or shared helper change needs a newly reconciled, explicitly owned scope; this packet does not take it."
+      ],
+      "limits": [
+        "No production, shared test-helper, registry, CLI, auth, schema, native, export or source-grant edits.",
+        "No predecessor or vulnerability/timing reproduction; neutral contract cases on repaired code only.",
+        "No real accounts, private data, credentials, remote writes or dispatch."
+      ]
+    }
+  ]
+}

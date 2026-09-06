@@ -1,0 +1,182 @@
+{
+  "task_id": "R020",
+  "packet_id": "R020",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Map portable manifest fields to exported tables",
+  "issue": 56,
+  "feeds_packets": ["P028", "P015"],
+  "findings": [
+    {
+      "severity": "contract_fact",
+      "id": "sensitivity-hint-omit-key",
+      "location": "packages/core/src/export.ts:846-848",
+      "invariant": "SQL NULL is not one JSON shape across streams.",
+      "evidence": "eventRecord omits sensitivity_hint when SQL NULL. validateEventInput rejects a present JSON null (packages/core/src/contracts/event.ts:399-407). Local capture nullable-row-samples.json unlabeled_omits_sensitivity_hint=true.",
+      "expected_behavior": "New event JSONL omits the key. Restore missing key -> SQL NULL. Do not emit JSON null for this field.",
+      "correction": "P015 must preserve omit-key for events.sensitivity_hint. Not a repository test gap to fill in this packet."
+    },
+    {
+      "severity": "contract_fact",
+      "id": "claims-json-null",
+      "location": "packages/core/src/export.ts:874-907,1971-2013",
+      "invariant": "Claim nullable columns round-trip as JSON null; some NOT NULL columns treat JSON null as the SQL default via ?? .",
+      "evidence": "nullable-row-samples.json json_null_fields and packages/core/test/export.test.ts:339-371,118-162.",
+      "expected_behavior": "target, subject, predicate, object, claim_key, model_ref, valid_to, retracted_at, superseded_by, receipt_id, last_confirmed_at are JSON null. polarity/authority/taint/valid_from/asserted_at/corroboration JSON null restore to defaults."
+    },
+    {
+      "severity": "contract_fact",
+      "id": "connections-synthesized-null-state",
+      "location": "packages/core/src/export.ts:1231-1240,2097-2119",
+      "invariant": "Portable backups never carry opaque connection state.",
+      "evidence": "config is always {schema:kizuki.connection-config/v1, state_ref_index:null}; secret_refs []; disconnected_at is synthesized when SQL NULL. Test export-connections.test.ts:102-130 PASS.",
+      "expected_behavior": "Restore also overwrites config/secret_refs to the null-state pair."
+    },
+    {
+      "severity": "contract_fact",
+      "id": "empty-streams-declared",
+      "location": "packages/core/src/export.ts:1614-1671",
+      "invariant": "New v3 exports always declare every selected stream, including count 0.",
+      "evidence": "empty-export-capture.json 26 files; empty JSONL sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855; event-backup-v2.test.ts empty intent stream PASS; export-purge-history source-only batch declares purge_batch_receipts count 0 PASS."
+    }
+  ],
+  "artifacts": [
+    "/work/out/export-table-column-manifest-map.json",
+    "/work/out/expected-export-manifest.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/empty-export-capture.json",
+    "/work/out/nullable-row-samples.json",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "export-table-column-manifest-map.json",
+    "expected-export-manifest.json",
+    "existing-coverage.json",
+    "empty-export-capture.json",
+    "nullable-row-samples.json",
+    "result.json"
+  ],
+  "source_references": [
+    "packages/core/src/export.ts",
+    "packages/core/src/ledger/schema.ts",
+    "packages/core/src/ledger/schema-v16.ts",
+    "packages/core/src/ledger/db.ts",
+    "packages/core/src/ledger/source-grants-schema.ts",
+    "packages/core/src/ledger/purge-schema.ts",
+    "packages/core/src/ledger/purge-batch-schema.ts",
+    "packages/core/src/ledger/event-identity-schema.ts",
+    "packages/core/src/ledger/connection-state.ts",
+    "packages/core/src/claims/schema.ts",
+    "packages/core/src/canon/schema.ts",
+    "packages/core/src/canon/receipts.ts",
+    "packages/core/src/sensitivity/schema.ts",
+    "packages/core/src/serve/schema.ts",
+    "packages/core/src/serve/types.ts",
+    "packages/core/src/contracts/event.ts",
+    "docs/export-inventory.md",
+    "docs/portable-connection-restore.md",
+    "FLEET-SOURCE-IDENTITY.json"
+  ],
+  "checks": [
+    {
+      "name": "empty init vault export capture",
+      "command": "chmod 700 /work/out && bun /work/out/generate-empty-export.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "note": "First attempt failed canon_files_unsafe because /work/out was 0775. After owner-only mode, 26 files, vault_id null, schema_versions ledger 19 / claims 3 / canon 4 / purge 5 / sensitivity 6 / serve 8."
+    },
+    {
+      "name": "ordinary nullable JSONL samples",
+      "command": "bun /work/out/generate-nullable-rows.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "note": "Unlabeled event omits sensitivity_hint; labeled includes it; claim JSON nulls present; connection disconnected_at synthesized; checkpoint cursor JSON null."
+    },
+    {
+      "name": "existing v3 complete manifest test",
+      "command": "cd /repo && bun test packages/core/test/export.test.ts --test-name-pattern \"writes a complete kizuki.backup/v3\"",
+      "exit_code": 0,
+      "result": "PASS",
+      "runtime": "bun test 1.3.14, 1 pass, 43 filtered, 179ms"
+    },
+    {
+      "name": "existing portable connection null-state test",
+      "command": "cd /repo && bun test packages/core/test/export-connections.test.ts --test-name-pattern \"exports disconnected null-state history\"",
+      "exit_code": 0,
+      "result": "PASS",
+      "runtime": "1 pass, 5 filtered, 237ms"
+    },
+    {
+      "name": "existing empty intent stream test",
+      "command": "cd /repo && bun test packages/core/test/event-backup-v2.test.ts --test-name-pattern \"required empty intent stream\"",
+      "exit_code": 0,
+      "result": "PASS",
+      "runtime": "1 pass, 40 filtered, 164ms"
+    },
+    {
+      "name": "existing purge history empty membership test",
+      "command": "cd /repo && bun test packages/core/test/export-purge-history.test.ts --test-name-pattern \"retains a source-only batch\"",
+      "exit_code": 0,
+      "result": "PASS",
+      "runtime": "1 pass, 17 filtered, 237ms"
+    },
+    {
+      "name": "existing claim restore test",
+      "command": "cd /repo && bun test packages/core/test/export.test.ts --test-name-pattern \"restores claims, bindings, supersessions\"",
+      "exit_code": 0,
+      "result": "PASS",
+      "runtime": "1 pass, 43 filtered, 229ms"
+    },
+    {
+      "name": "map vs live capture key check",
+      "command": "bun -e (compare expected-export-manifest.json, empty-export-capture.json, export-table-column-manifest-map.json file keys)",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "package typecheck and scripts/verify.sh",
+      "command": "bunx tsc --noEmit ; bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "note": "Preparation packet. No repository edit. Full gate not assigned. Waiting for a slot is NOT_RUN, not PASS."
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS (listed existing tests plus local public-seam captures)",
+    "package_type_full_gate": "NOT_RUN",
+    "privacy_diff_integrity": "NOT_RUN (no repository diff; synthetic fixtures only)",
+    "independent_review": "NOT_RUN",
+    "retained_package_consumer": "NOT_RUN"
+  },
+  "blockers": [],
+  "next_step": "P015 and P028 consume export-table-column-manifest-map.json and expected-export-manifest.json. Do not change P015 portable schema from this packet. Preserve omit-key vs json-null vs synthesized disconnected_at as current write behavior.",
+  "downstream_handoff": {
+    "owners": {
+      "P015": "source-B schema/recovery/authority/export implementation",
+      "P028": "downstream consumer of this map",
+      "P003": "shared evidence design",
+      "P006": "canonical docs"
+    },
+    "do_not": [
+      "alter P015 portable schema from R020",
+      "repeat accepted migration fixtures",
+      "treat empty-stream count 0 as omitted files",
+      "normalize events.sensitivity_hint omit-key into JSON null",
+      "claim complete runtime recovery from complete:true"
+    ],
+    "artifacts_to_read": [
+      "/work/out/export-table-column-manifest-map.json",
+      "/work/out/expected-export-manifest.json",
+      "/work/out/existing-coverage.json",
+      "/work/out/nullable-row-samples.json"
+    ]
+  },
+  "limitations": [
+    "/repo is a git archive of f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7 with no Git metadata; remote/issue/PR state was not refreshed here.",
+    "No repository source edits. P015 remains the export implementation owner.",
+    "Full repository gate, typecheck, independent review, native/account/model qualification, and unfamiliar-user acceptance were not run and are not claimed.",
+    "Live capture created_at and manifest_sha256 are instance-specific; expected-export-manifest.json pins stable hashes only.",
+    "Local captures required /work/out mode 0700 because 0775 fails vault parent safety."
+  ]
+}

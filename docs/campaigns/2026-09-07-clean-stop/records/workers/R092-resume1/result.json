@@ -1,0 +1,144 @@
+{
+  "packet_id": "R092",
+  "task_id": "R092",
+  "title": "Draft install-to-doctor recovery transcript adapter",
+  "issue": 542,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "owner": "grok-R092",
+  "write_scope": "/work/out only",
+  "artifacts": [
+    "/work/out/install-to-doctor-recovery.sh",
+    "/work/out/health-state-map.json",
+    "/work/out/coverage-inventory.json",
+    "/work/out/source-evidence.json",
+    "/work/out/execution-probe.json",
+    "/work/out/rehearsal/observations.jsonl",
+    "/work/out/rehearsal/summary.json",
+    "/work/out/rehearsal/transcript.log",
+    "/work/out/rehearsal/adapter.exit",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/install-to-doctor-recovery.sh",
+    "/work/out/health-state-map.json",
+    "/work/out/coverage-inventory.json",
+    "/work/out/source-evidence.json",
+    "/work/out/execution-probe.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    "packages/cli/src/commands/init.ts:32-33,88-112",
+    "packages/cli/src/commands/serve.ts:22-25,61-90,163",
+    "packages/cli/src/commands/doctor.ts:84-111,317-342,387-454",
+    "packages/cli/src/commands/query.ts:93-98",
+    "packages/cli/src/main.ts:216-225",
+    "packages/core/src/serve/intent.ts:9-19",
+    "packages/core/src/serve/doctor.ts:85-102,228-248,356-458,462-467",
+    "packages/core/src/serve/supervisor.ts:38-48,267-309",
+    "packages/core/src/serve/types.ts:27-35,44-45",
+    "docs/cli.md:25-26,34-52,289-302",
+    "docs/service-lifecycle.md:1-47",
+    "docs/decision-log.md:D6,D12,D15,D19",
+    "rfcs/0002-autonomous-canon.md:199-208,2014-2027",
+    "FLEET-SOURCE-IDENTITY.json"
+  ],
+  "checks": [
+    {
+      "name": "source_cli_help",
+      "command": "bun /repo/packages/cli/src/main.ts help",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T21:48:05Z",
+      "result": "NOT_RUN",
+      "exit": 1,
+      "reason": "Cannot find module '@kizuki/tui' from packages/cli/src/output.ts; /repo/node_modules absent; bun install not permitted"
+    },
+    {
+      "name": "adapter_rehearsal_and_native_draft",
+      "command": "OUT_DIR=/work/out/rehearsal sh /work/out/install-to-doctor-recovery.sh both",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "busybox/sh; bun 1.3.14 present but unused for CLI",
+      "result": "UNEXECUTED",
+      "exit": 3,
+      "executed_pass": 0,
+      "executed_fail": 0,
+      "unexecuted": 15,
+      "evidence": "/work/out/rehearsal/observations.jsonl"
+    },
+    {
+      "name": "existing_cli_tests",
+      "command": "bun test packages/cli/test/init.test.ts packages/cli/test/doctor/liveness.test.ts packages/cli/test/serve/install.test.ts",
+      "result": "NOT_RUN",
+      "reason": "same missing workspace install; contracts statically verified from source and test text"
+    },
+    {
+      "name": "full_repository_gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "reason": "no source edits; no test slot; missing node_modules"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "NOT_RUN",
+    "adapter_script": "ran; labeled UNEXECUTED; exit 3",
+    "package_type_full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "native_package": "NOT_RUN",
+    "privacy": "synthetic isolated paths under /work/out only"
+  },
+  "findings": [
+    {
+      "severity": "limitation",
+      "id": "rehearsal-missing-workspace",
+      "location": "/repo/packages/cli/src/output.ts (import @kizuki/tui)",
+      "confirmed": true,
+      "invariant": "Do not invent a passing CLI result",
+      "evidence": "/work/out/execution-probe.json",
+      "detail": "Safe local rehearsal commands are drafted and expected exits/strings are pinned from source, but were not executed. Missing input: workspace node_modules. bun 1.3.14 is present. bun install is forbidden."
+    },
+    {
+      "severity": "limitation",
+      "id": "native-unexecuted",
+      "location": "docs/service-lifecycle.md; docs/native-build.md",
+      "confirmed": true,
+      "invariant": "Synthetic tests do not prove a user-machine install",
+      "evidence": "no dist/; systemctl absent; KIZUKI_ALLOW_NATIVE_SERVICE unset",
+      "detail": "Genuine native section remains a draft. Linux x64 systemd --user, compiled kizuki, and explicit service-mutation authorization are required. macOS launchd remains unqualified. No qualification or release claim."
+    },
+    {
+      "severity": "contract-note",
+      "id": "installed-doctor-is-red-until-rails",
+      "location": "packages/core/src/serve/doctor.ts:356-358; packages/cli/test/serve/install.test.ts:43-49",
+      "confirmed": true,
+      "invariant": "Absence is never health; installed+active expects rail receipts",
+      "detail": "Immediate doctor after a confirmed native install is expected exit 1 with rail <id>: no receipt. Opted-out or supervisor-none rails are idle and doctor can be ok. Downstream must not treat post-install red doctor as install failure."
+    }
+  ],
+  "blockers": [
+    "Workspace install (bun install --frozen-lockfile) required before executing section 1 against source CLI",
+    "Native binary + systemd --user + KIZUKI_ALLOW_NATIVE_SERVICE=1 required before executing section 2",
+    "P006/P015/P003/Astra doctor ownership unchanged; this packet does not replace them"
+  ],
+  "downstream_handoff": {
+    "feeds": ["P090", "P099"],
+    "use": "Execute /work/out/install-to-doctor-recovery.sh rehearsal on a dependency-installed tree; keep native gated. Consume /work/out/health-state-map.json as the expected observation matrix. Do not add duplicate CLI tests for opted-out doctor, --no-service init, canon-writing-off, or serve stop when not running — those already exist (see coverage-inventory.json).",
+    "must_not": [
+      "claim native/account/model/human qualification",
+      "treat UNEXECUTED rows as PASS",
+      "expect doctor ok immediately after native install",
+      "rewrite P003 evidence design, P015 schema/recovery, or P006 docs"
+    ]
+  },
+  "next_step": "P090/P099: run the rehearsal section on a tree that already has frozen workspace dependencies; review/rebase before any production use.",
+  "limitations_preserved": [
+    "No source edits",
+    "No bun install, no compile, no service mutation, no account/model calls",
+    "No Git metadata on /repo; remote not fetched",
+    "Existing tests statically read, not re-run",
+    "D19 readiness and stranger proof are not claimed"
+  ]
+}

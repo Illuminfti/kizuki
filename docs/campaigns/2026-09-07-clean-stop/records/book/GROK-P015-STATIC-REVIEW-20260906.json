@@ -1,0 +1,110 @@
+{
+  "schema": "kizuki.p015-static-review/v1",
+  "recorded_at": "2026-09-06T22:57:20.759818+00:00",
+  "reviewer": "purge_totality",
+  "status": "changes_required",
+  "head_sha": "34d02119014e7fd071e5ab3709fd65b7c0a5e065",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "tree_sha": "27247ce740c3473ca329727927e9f37ade34a034",
+  "checkout": "PRIVATE_FLEET/code-repos/P015",
+  "worktree_clean": true,
+  "review_mode": "static_source_and_diff_only",
+  "candidate_execution": "NOT_RUN_BY_REVIEWER",
+  "candidate_edits": false,
+  "vulnerability_or_resource_reproduction": "NOT_PERFORMED",
+  "test_execution_owner": "root",
+  "test_failure_receipts": "owned and preserved separately by root; not claimed as reviewed here",
+  "owner": "grok-P015",
+  "write_paths": [
+    "packages/core/src/ledger/db.ts",
+    "packages/core/src/ledger/schema.ts",
+    "packages/core/src/ledger/source-canon-erasure.ts",
+    "packages/core/src/ledger/canon-source-survivor-lineage.ts",
+    "packages/core/src/canon/source-erasure-intent.ts",
+    "packages/core/src/canon/apply.ts",
+    "packages/core/src/canon/authority.ts",
+    "packages/core/src/canon/receipts.ts",
+    "packages/core/src/export.ts",
+    "packages/core/test/canon/source-survivor-lineage.test.ts",
+    "packages/core/test/canon/authority-projection.test.ts",
+    "packages/core/test/source-grants.test.ts",
+    "packages/core/test/migration.test.ts",
+    "packages/core/test/export-purge-history.test.ts",
+    "packages/core/test/export.test.ts",
+    "packages/core/test/export-connections.test.ts",
+    "packages/core/test/event-backup-v2.test.ts"
+  ],
+  "changed_paths": [
+    "packages/core/src/canon/apply.ts",
+    "packages/core/src/canon/authority.ts",
+    "packages/core/src/canon/source-erasure-intent.ts",
+    "packages/core/src/export.ts",
+    "packages/core/src/ledger/canon-source-survivor-lineage.ts",
+    "packages/core/src/ledger/db.ts",
+    "packages/core/test/canon/authority-projection.test.ts",
+    "packages/core/test/canon/source-survivor-lineage.test.ts",
+    "packages/core/test/event-backup-v2.test.ts",
+    "packages/core/test/export-connections.test.ts",
+    "packages/core/test/export-purge-history.test.ts",
+    "packages/core/test/export.test.ts",
+    "packages/core/test/migration.test.ts"
+  ],
+  "test_paths": [
+    "packages/core/test/canon/source-survivor-lineage.test.ts",
+    "packages/core/test/canon/authority-projection.test.ts",
+    "packages/core/test/source-grants.test.ts",
+    "packages/core/test/migration.test.ts",
+    "packages/core/test/export-purge-history.test.ts",
+    "packages/core/test/export.test.ts",
+    "packages/core/test/export-connections.test.ts",
+    "packages/core/test/event-backup-v2.test.ts"
+  ],
+  "findings": [
+    {
+      "id": "P015-R1",
+      "priority": "P1",
+      "summary": "writeIntent calls omit required argument"
+    },
+    {
+      "id": "P015-R2",
+      "priority": "P1",
+      "summary": "shared traversal depth not enforced across checkpoint edges and validation targets"
+    },
+    {
+      "id": "P015-R3",
+      "priority": "P2",
+      "summary": "portable restore accepts identical duplicate checkpoint rows"
+    },
+    {
+      "id": "P015-R4",
+      "priority": "P1",
+      "summary": "archive survivors incorrectly require live-page positive lineage"
+    }
+  ],
+  "source_b_fixture_blob": "fe22a432244c3cf0c71d5a8327bae2f88d8817b6",
+  "source_b_fixture_unchanged": true,
+  "new_changed_fixture_suitability": "ordinary synthetic lifecycle, migration, backup compatibility, interruption recovery and negative validation; suitable for root sealed execution; no blanket ruling on unrelated existing tests",
+  "ordinary_evidence_gaps": [
+    "post-checkpoint ordinary revert and undo-of-undo",
+    "valid legacy live-preimage intent upgrade"
+  ],
+  "unowned_integration_dependencies": [
+    "packages/core/src/ledger/integrity.ts direct v20 schema assertion",
+    "packages/core/test/agent-enrollment-backup.test.ts schema-19 pin"
+  ],
+  "acceptance": "NOT_ACCEPTED; exact-head qualified tests, independent review and model lens remain separate",
+  "artifacts": [
+    {
+      "path": "CHECKPOINT_BOOK/GROK-P015-STATIC-REVIEW-20260906.md",
+      "sha256": "cbff5535312c32817a3f9dc49ce2511a184ef173e107e06e5943793fde7d3f94"
+    },
+    {
+      "path": "CHECKPOINT_BOOK/GROK-P015-CORRECTION-HANDOFF-20260906.md",
+      "sha256": "adcb8fff42109707b2ac449e4f73f99ff439c4d71dcc6338dab356658b1dc276"
+    },
+    {
+      "path": "CHECKPOINT_BOOK/P014-SOURCE-SURVIVOR-LINEAGE-CONTRACT.md",
+      "sha256": "0d2f1d547a8b7a92354c4fc8ee34b6f18f70fb9e91db1bf0efb0c539e626bfaf"
+    }
+  ]
+}

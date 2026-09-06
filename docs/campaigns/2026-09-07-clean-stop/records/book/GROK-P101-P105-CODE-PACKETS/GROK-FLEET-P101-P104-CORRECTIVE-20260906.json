@@ -1,0 +1,128 @@
+{
+  "schema": "kizuki.grok-production-wave/v1",
+  "created_at_utc": "2026-09-06T23:01:44.957620+00:00",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+  "packet_count": 2,
+  "source_roster": "CHECKPOINT_BOOK/GROK-P101-P105-CODE-PACKETS/GROK-FLEET-P101-P105.json",
+  "source_roster_sha256": "4421f5d2829c00bc1c8d591837e495cb0b0d61a06f767a26237456c8a909e193",
+  "dispatch_status": "superseded_before_dispatch",
+  "context_sha256": {
+    "GROK-P101-P105-CODE-PACKETS/P101-CORRECTION-HANDOFF.md": "ee987899e839293fd4296f9ababccf27331a70aea929630c3e1d6519fb143173",
+    "GROK-P101-P105-CODE-PACKETS/P104-CORRECTION-HANDOFF.md": "30482672fb841d02d73434c758457ae00c4b29554a1e30d9ba2301a43210429e"
+  },
+  "packets": [
+    {
+      "id": "P101",
+      "title": "Close qualification CLI diagnostics at the existing candidate",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+      "owner": "grok-P101",
+      "kind": "implementation",
+      "dependencies": [],
+      "readiness": "ready_now",
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "implement-change",
+        "test-strategy",
+        "reliability-engineering",
+        "security-privacy-review",
+        "elegance-review"
+      ],
+      "read_paths": [
+        "scripts/qualification.ts",
+        "scripts/qualification.test.ts",
+        "scripts/artifact-proof.ts",
+        "packages/core/src/serve/qualification.ts"
+      ],
+      "write_paths": [
+        "scripts/qualification.ts",
+        "scripts/qualification.test.ts"
+      ],
+      "test_paths": [
+        "scripts/qualification.test.ts"
+      ],
+      "scope": "Apply only the frozen corrective handoff from the explicit start_head, preserving prior candidate history and all existing assertions; root runs the exact original assigned tests.",
+      "acceptance": [
+        "Compare artifact identity and rail policy by canonical value or explicit fields. Reordering object keys alone passes; changing any value fails. Genesis and artifact-proof validation remain unchanged.",
+        "The CLI maps JSON, filesystem and SQLite failures to fixed content-free diagnostics. A neutral input/path sentinel never appears on stderr; exit status remains 1 and stdout remains empty on failure.",
+        "Add focused reorder, changed-value and diagnostic-redaction cases to scripts/qualification.test.ts. Do not duplicate existing projection/privacy cases.",
+        "Request through root sealed runner: bun test scripts/qualification.test.ts.",
+        "Admit only exact trusted local/proof diagnostics through a closed set or closed diagnostic code; all unknown exceptions/reasons use a fixed generic message. Preserve useful fixed usage and mapped JSON/filesystem/SQLite output.",
+        "Preserve the canonical semantic comparisons and all genesis, proof, custody and identity checks.",
+        "Add a normal corrective commit descending from start_head; do not amend, reset, rebase or rewrite the existing candidate."
+      ],
+      "context_files": [
+        "GROK-P101-P105-CODE-PACKETS/P101-CORRECTION-HANDOFF.md"
+      ],
+      "limits": [
+        "Write only the exact write_paths. Read-only inspection may use read_paths and applicable repository instructions. Do not edit P004 files scripts/go-no-go.ts, scripts/go-no-go.test.ts or scripts/release-evidence.ts; P006 docs/help; P015 source-survivor files; P057 IMAP; Astra-held doctor scopes; controller or roster files.",
+        "Use only small neutral synthetic fixtures and defensive validation. No private vaults, credentials, account/provider calls, remote writes, publication, spending, model calls, exploit reproduction, data-exposure reproduction, fault/race probing, or resource-exhaustion tests.",
+        "Preserve every pre-existing test, assertion and failure. Root alone runs the exact original test_paths with Bun 1.3.14 in the sealed runner. The worker writes a test request and reports awaiting_root_test without execution.",
+        "Completion requires a non-empty committed diff descending from the supplied base, every changed path within write_paths, exact commands/results and final SHA/tree in /work/out/result.json, and independent review before integration.",
+        "This is a corrective assignment at start_head. No candidate history rewriting, no new vulnerability/fault/timing/resource reproductions, no manual test or product execution, and no new write paths."
+      ],
+      "start_head": "d9b3969c7ff2d43e624094760c854456fc590cbc"
+    },
+    {
+      "id": "P104",
+      "title": "Repair the existing MCP positive-canon schema fixture",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+      "owner": "grok-P104",
+      "kind": "implementation",
+      "dependencies": [],
+      "readiness": "ready_now",
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "implement-change",
+        "mcp-tool-design",
+        "api-contract-design",
+        "test-strategy",
+        "reliability-engineering",
+        "security-privacy-review",
+        "elegance-review"
+      ],
+      "read_paths": [
+        "packages/mcp/src/schemas.ts",
+        "packages/mcp/test/schema.test.ts",
+        "packages/mcp/src/server.ts",
+        "packages/mcp/test/helpers.ts",
+        "packages/core/src/serving/types.ts",
+        "packages/core/src/serving/gate.ts",
+        "packages/core/src/ledger/source-grants.ts"
+      ],
+      "write_paths": [
+        "packages/mcp/src/schemas.ts",
+        "packages/mcp/test/schema.test.ts"
+      ],
+      "test_paths": [
+        "packages/mcp/test/schema.test.ts"
+      ],
+      "scope": "Apply only the frozen corrective handoff from the explicit start_head, preserving prior candidate history and all existing assertions; root runs the exact original assigned tests.",
+      "acceptance": [
+        "ENVELOPE_SHAPE contains optional source_policy with exact mode=enforced, positive integer epoch and legacy_unbound=owner_only fields.",
+        "After tools/list builds client validators, an ordinary epoch>0 response succeeds and structured/text content both contain the exact policy object. Epoch 0 omission remains valid.",
+        "A focused schema assertion rejects missing, extra, mistyped or invalid policy members without weakening any existing envelope field.",
+        "Request through root sealed runner: bun test packages/mcp/test/schema.test.ts.",
+        "Repair the inherited positive-canon fixture in schema.test.ts through the existing recordedPage helper and real writer evidence; preserve all chunk/trust/schema assertions and every new source-policy case.",
+        "The prior sealed 6-pass/1-fail result remains failed until a new root sealed receipt succeeds.",
+        "Add a normal corrective commit descending from start_head; do not amend, reset, rebase or rewrite the existing candidate."
+      ],
+      "context_files": [
+        "GROK-P101-P105-CODE-PACKETS/P104-CORRECTION-HANDOFF.md"
+      ],
+      "limits": [
+        "Write only the exact write_paths. Read-only inspection may use read_paths and applicable repository instructions. Do not edit P004 files scripts/go-no-go.ts, scripts/go-no-go.test.ts or scripts/release-evidence.ts; P006 docs/help; P015 source-survivor files; P057 IMAP; Astra-held doctor scopes; controller or roster files.",
+        "Use only small neutral synthetic fixtures and defensive validation. No private vaults, credentials, account/provider calls, remote writes, publication, spending, model calls, exploit reproduction, data-exposure reproduction, fault/race probing, or resource-exhaustion tests.",
+        "Preserve every pre-existing test, assertion and failure. Root alone runs the exact original test_paths with Bun 1.3.14 in the sealed runner. The worker writes a test request and reports awaiting_root_test without execution.",
+        "Completion requires a non-empty committed diff descending from the supplied base, every changed path within write_paths, exact commands/results and final SHA/tree in /work/out/result.json, and independent review before integration.",
+        "This is a corrective assignment at start_head. No candidate history rewriting, no new vulnerability/fault/timing/resource reproductions, no manual test or product execution, and no new write paths."
+      ],
+      "start_head": "66040e3df3ee452c459ac1e45360efe731158715"
+    }
+  ],
+  "superseded_by": "CHECKPOINT_BOOK/GROK-P101-P105-CODE-PACKETS/GROK-FLEET-P101-P102-P104-CORRECTIVE-20260906.json"
+}

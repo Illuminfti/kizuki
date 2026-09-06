@@ -1,0 +1,142 @@
+{
+  "task_id": "R050",
+  "packet_id": "R050",
+  "title": "Inspect MCP stdio framing and clean shutdown contract",
+  "issue": 542,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "owner": "grok-R050",
+  "write_scope": "/work/out only",
+  "identity": {
+    "read_root": "/repo",
+    "source_kind": "git archive of exact commit; no Git metadata or runtime data",
+    "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+    "branch_head_dirty": "unavailable in this archive; root owns live git/remote state",
+    "remote_verified": false
+  },
+  "findings": [
+    {
+      "severity": "info",
+      "kind": "coverage_gap",
+      "location": "packages/mcp/test/version.test.ts:6-12 vs packages/mcp/src/server.ts:99-101",
+      "observation": "SERVER_VERSION is asserted equal to package.json (0.1.0) but no process-stdio test asserts initialize.result.serverInfo.version on stdout.",
+      "confirmed_defect": false
+    },
+    {
+      "severity": "info",
+      "kind": "stale_lane_spec",
+      "location": "docs/wave1/specs/serving-mcp.md §2.2",
+      "observation": "Lane spec still describes tools=8 and connect+ready without the in-flight/EOF wrapper. Current code has nine tools and the wrapper in packages/mcp/src/stdio.ts. P006 owns canonical docs.",
+      "confirmed_defect": false
+    }
+  ],
+  "deliverables": [
+    "/work/out/framing-lifecycle-sequence.md",
+    "/work/out/coverage-map.md",
+    "/work/out/in-memory-transport-harness.ts",
+    "/work/out/fixtures/benign-frames.jsonl",
+    "/work/out/harness-run.json",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/framing-lifecycle-sequence.md",
+    "/work/out/coverage-map.md",
+    "/work/out/in-memory-transport-harness.ts",
+    "/work/out/fixtures/benign-frames.jsonl",
+    "/work/out/harness-run.json"
+  ],
+  "source_references": [
+    "packages/mcp/src/stdio.ts:6-12,14-19,26-86",
+    "packages/mcp/src/bin.ts:24-52,70-71,77-87,147-164",
+    "packages/mcp/src/version.ts:1",
+    "packages/mcp/src/server.ts:99-101",
+    "packages/core/src/agents/types.ts:1-11",
+    "packages/mcp/test/stdio.test.ts:30-48,50-55,58-111,173-266",
+    "packages/mcp/test/version.test.ts:6-12",
+    "packages/mcp/test/client.ts:16-32",
+    "packages/mcp/AGENTS.md:12-19",
+    "rfcs/0002-autonomous-canon.md §9.7 rule 10",
+    "https://modelcontextprotocol.io/specification/2025-06-18/basic/transports.md (fetched 2026-09-06, HTTP 200)",
+    "https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle.md (fetched 2026-09-06, HTTP 200)",
+    "https://unpkg.com/@modelcontextprotocol/sdk@1.30.0/dist/esm/server/stdio.js (fetched 2026-09-06, HTTP 200)",
+    "https://unpkg.com/@modelcontextprotocol/sdk@1.30.0/dist/esm/shared/stdio.js (fetched 2026-09-06, HTTP 200)"
+  ],
+  "checks": [
+    {
+      "name": "in-memory framing/shutdown harness",
+      "command": "bun /work/out/in-memory-transport-harness.ts",
+      "cwd": "/work",
+      "toolchain": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/harness-run.json",
+      "note": "Local model of stdio.ts wrapper and NDJSON codec. Not a live bin.ts or SDK process test."
+    },
+    {
+      "name": "packages/mcp/test/stdio.test.ts process cases",
+      "command": "bun test packages/mcp/test/stdio.test.ts",
+      "result": "NOT_RUN",
+      "missing": "/repo/node_modules (install forbidden). Live process proof remains the in-tree tests at the lines in coverage-map.md; statically verified from source, not executed on this head."
+    },
+    {
+      "name": "packages/mcp/test/version.test.ts",
+      "command": "bun test packages/mcp/test/version.test.ts",
+      "result": "NOT_RUN",
+      "missing": "/repo/node_modules"
+    },
+    {
+      "name": "live bin.ts handshake",
+      "command": "bun packages/mcp/src/bin.ts --vault PATH --owner",
+      "result": "NOT_RUN",
+      "missing": "workspace dependencies, initialized vault, and permission to spawn the adapter as a product process in this container"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": {
+      "result": "PASS",
+      "command": "bun /work/out/in-memory-transport-harness.ts",
+      "exit_code": 0,
+      "runtime": "bun 1.3.14",
+      "evidence": "/work/out/harness-run.json",
+      "scope": "in-memory model only"
+    },
+    "package_type_full_gate": {
+      "result": "NOT_RUN",
+      "reason": "read-only preparation packet; /repo/node_modules absent; bun install forbidden"
+    },
+    "independent_review": {
+      "result": "NOT_RUN",
+      "reason": "preparation artifacts only; C2 independent-model lens is root-owned"
+    },
+    "live_mcp_process": {
+      "result": "NOT_RUN",
+      "reason": "no node_modules; do not invent a passing bin.ts result"
+    }
+  },
+  "blockers": [],
+  "next_step": "P046/P091 reuse packages/mcp/test/stdio.test.ts as the process-stdio proof; optionally add a wire assertion that initialize.result.serverInfo is {name:kizuki, version:0.1.0}; do not duplicate handshake/EOF/dropped-reader tests.",
+  "downstream_handoff": {
+    "feeds_packets": ["P046", "P091"],
+    "contract": {
+      "framing": "newline-delimited JSON-RPC 2.0 UTF-8; JSON.stringify(message)+newline; not Content-Length",
+      "version": "serverInfo.name=kizuki serverInfo.version=0.1.0 protocolVersion=2025-06-18",
+      "ready_line": "stderr: kizuki-mcp ready principal=<name> tools=9",
+      "shutdown": "client closes stdin; wait inFlight==0; drain stdout; server.close; retrieval.close; db.close; exit 0",
+      "classifiers": "request=method+id; notification=method without id; answer=id without method; failed write still decrements answers"
+    },
+    "do_not_duplicate": [
+      "packages/mcp/test/stdio.test.ts:75-111 handshake+EOF",
+      "packages/mcp/test/stdio.test.ts:219-266 same-turn close complete answer",
+      "packages/mcp/test/stdio.test.ts:173-217 dropped reader does not hang",
+      "packages/mcp/test/client.ts InMemoryTransport tool tests"
+    ],
+    "optional_cheap_add": "assert initialize result serverInfo.version on the existing process handshake rather than a new test file",
+    "docs_owner": "P006 for stale serving-mcp.md eight-tools text",
+    "not_claimed": [
+      "repository tests executed on this head",
+      "native/account/model qualification",
+      "release acceptance",
+      "independent review"
+    ]
+  }
+}

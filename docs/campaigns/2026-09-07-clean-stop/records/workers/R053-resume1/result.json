@@ -1,0 +1,159 @@
+{
+  "task_id": "R053",
+  "packet_id": "R053",
+  "issue": 544,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "finding",
+  "title": "Map Telegram sign-in state to user-visible diagnostic classes",
+  "checkout": {
+    "read_root": "/repo",
+    "kind": "git archive, no Git metadata",
+    "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+    "remote_verified": false,
+    "write_scope": "/work/out only"
+  },
+  "findings": [
+    {
+      "severity": "high",
+      "id": "cancel-usageerror-rewritten",
+      "confirmed": true,
+      "file_line_symbol": "packages/cli/src/commands/connect-telegram.ts:40,67 telegramFailure catch; packages/cli/src/main.ts:76 readSecretPrompt",
+      "trace": "Ctrl-C raises UsageError('interactive sign-in cancelled'); enroll catch calls telegramFailure; non-TelegramConnectorError becomes ConnectionError('Telegram sign-in did not complete; existing source state was preserved.'); dispatch prints error: … and returns 1.",
+      "affected_invariant": "Cancel should be a distinct usage/cancel class (exit 2), as the preamble promises Ctrl-C and IMAP preserves UsageError.",
+      "current": { "class": "unavailable", "error_name": "ConnectionError", "exit": 1 },
+      "independent_expected": { "class": "cancel", "error_name": "UsageError", "exit": 2, "message": "interactive sign-in cancelled" }
+    },
+    {
+      "severity": "medium",
+      "id": "flood-wait-unspecified-as-connectivity",
+      "confirmed": true,
+      "file_line_symbol": "packages/cli/src/commands/connect-telegram.ts:29-38 telegramFailure",
+      "trace": "flood_wait is special-cased only when retry_after is a safe integer > 0; otherwise notices[flood_wait] is undefined and the connectivity fallback is used.",
+      "affected_invariant": "Unavailable-wait must keep a wait diagnosis, not invent a connectivity cause.",
+      "required_fix": "P048: map flood_wait without seconds to a wait/unavailable sentence, not connectivity."
+    },
+    {
+      "severity": "medium",
+      "id": "sign-in-aborted-collapses-distinct-stops",
+      "confirmed": true,
+      "file_line_symbol": "packages/cli/src/commands/connect-telegram.ts:32; packages/connector-telegram/src/sign-in.ts:79-84,112-116; packages/connector-telegram/src/client.ts:254-262",
+      "trace": "Blank-abandon, third refused credential, and unoccupied-number refuseRegistration all throw sign_in_aborted; CLI uses one cancel sentence.",
+      "affected_invariant": "Cancel vs unavailable (no account) are distinct owner actions.",
+      "required_fix": "P048 may keep current copy as characterization or split classes; do not silently treat no-account as owner cancel."
+    },
+    {
+      "severity": "medium",
+      "id": "inner-connectionerror-rewritten",
+      "confirmed": true,
+      "file_line_symbol": "packages/cli/src/commands/connect-telegram.ts:62,67",
+      "trace": "ConnectionError('Telegram state is missing') is thrown inside try and rewritten by telegramFailure to generic incomplete.",
+      "affected_invariant": "Host selection/state errors thrown outside try stay specific; the same class inside try does not."
+    },
+    {
+      "severity": "low",
+      "id": "unmapped-codes-share-connectivity",
+      "confirmed": true,
+      "file_line_symbol": "packages/cli/src/commands/connect-telegram.ts:38; packages/connector-telegram/src/api.ts:87-98",
+      "trace": "closed, missing_session, parse_error, unreachable all become 'Telegram sign-in failed. Check connectivity…'.",
+      "affected_invariant": "Unavailable should not claim connectivity when the session is merely missing."
+    }
+  ],
+  "deliverables": [
+    "/work/out/telegram-signin-state-table.md",
+    "/work/out/telegram-signin-state-table.json",
+    "/work/out/telegram-signin-diagnostics.fixture.ts",
+    "/work/out/existing-coverage.md",
+    "/work/out/ORIENT.md",
+    "/work/out/verify-mapping.ts",
+    "/work/out/verify-mapping.receipt.json",
+    "/work/out/fixture-execution.receipt.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/telegram-signin-state-table.md",
+    "/work/out/telegram-signin-state-table.json",
+    "/work/out/telegram-signin-diagnostics.fixture.ts",
+    "/work/out/existing-coverage.md",
+    "/work/out/verify-mapping.receipt.json"
+  ],
+  "source_references": [
+    "packages/cli/src/commands/connect-telegram.ts:16-77",
+    "packages/cli/src/main.ts:74-77,137-140,216-224",
+    "packages/cli/src/connect-catalog.ts:35-37",
+    "packages/cli/src/commands/connect.ts:89-105,143-145",
+    "packages/connector-telegram/src/sign-in.ts:14-19,58-166,135-138",
+    "packages/connector-telegram/src/refusals.ts:10-29",
+    "packages/connector-telegram/src/app-credentials.ts:13-45",
+    "packages/connector-telegram/src/guard.ts:63-107",
+    "packages/connector-telegram/src/state.ts:64-81",
+    "packages/connector-telegram/src/api.ts:87-136",
+    "packages/connector-telegram/src/client.ts:254-262",
+    "packages/cli/test/connect.test.ts:19-30",
+    "packages/cli/test/connect-catalog.test.ts:8-16",
+    "packages/cli/test/telegram-enrollment.test.ts:25-101",
+    "docs/cli.md:21-26,91-94"
+  ],
+  "checks": [
+    {
+      "name": "static-mapping-source-match",
+      "command": "bun /work/out/verify-mapping.ts",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T22:04:33.238Z",
+      "result": "PASS",
+      "evidence": "/work/out/verify-mapping.receipt.json"
+    },
+    {
+      "name": "fixture-bun-test",
+      "command": "bun test /work/out/telegram-signin-diagnostics.fixture.ts",
+      "runtime": "bun 1.3.14",
+      "result": "NOT_RUN",
+      "missing": "workspace node_modules resolving @kizuki/connector-telegram and @kizuki/core",
+      "evidence": "/work/out/fixture-execution.receipt.json"
+    },
+    {
+      "name": "existing-cli-process-tests",
+      "command": "bun test packages/cli/test/connect.test.ts packages/cli/test/connect-catalog.test.ts packages/cli/test/telegram-enrollment.test.ts",
+      "result": "NOT_RUN",
+      "missing": "/repo/node_modules",
+      "static_read": "assertions recorded in /work/out/existing-coverage.md; not claimed executed"
+    },
+    {
+      "name": "full-repository-gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "reason": "read-only preparation; no source change; no test slot"
+    }
+  ],
+  "verification": {
+    "static_source_match": "PASS",
+    "fixture": "NOT_RUN — missing workspace node_modules",
+    "existing_tests": "NOT_RUN — statically inventoried only",
+    "full_gate": "NOT_RUN",
+    "live_account": "NOT_RUN — forbidden",
+    "auth_probe": "NOT_RUN — controller already verified; not retested"
+  },
+  "downstream_handoff": {
+    "feeds": ["P048", "P049"],
+    "do_not_duplicate": [
+      "packages/cli/test/connect.test.ts:19-30 non-TTY exit 2",
+      "packages/cli/test/connect-catalog.test.ts:8-16 catalog unavailable exit 0",
+      "packages/cli/test/telegram-enrollment.test.ts enroll/resume/identity/cooldown/generic incomplete"
+    ],
+    "land_fixture_at": "packages/cli/test/telegram-signin-diagnostics.test.ts",
+    "p048": "Implement or document diagnostic classes using the table. Cheapest seam: telegramFailure + telegramSignInIo. Decide Ctrl-C UsageError preservation (IMAP already does). Do not redesign enroll, credentials, or auth.",
+    "p049": "If it owns tests/docs, consume the same table; do not add a second mapping. Keep --json failure as stderr error: today unless a separate JSON-error packet owns that contract.",
+    "reserved": "P003 evidence design, P015 source-B, P006 docs, Astra, doctor"
+  },
+  "blockers": [
+    "Workspace node_modules absent; fixture and package tests cannot execute here. Not a product blocker for P048 if they run in a full checkout."
+  ],
+  "next_step": "P048 copy /work/out/telegram-signin-diagnostics.fixture.ts into packages/cli/test/, run bun test on that file at the assigned head, and either preserve UsageError on cancel or record the collapse as accepted CLI behavior.",
+  "limitations": [
+    "No source edits.",
+    "No live Telegram, no credentials, no native qualification, no release acceptance.",
+    "Existing tests statically read, not executed.",
+    "Fixture is an unexecuted draft.",
+    "Catalog unavailable vs connect refusal remain two different exits (0 vs 1) on purpose."
+  ]
+}

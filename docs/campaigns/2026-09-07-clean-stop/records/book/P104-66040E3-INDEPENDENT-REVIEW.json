@@ -1,0 +1,139 @@
+{
+  "schema": "kizuki.p104-static-review/v1",
+  "reviewed_at_utc": "2026-09-06T22:54:11.919459+00:00",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "candidate_sha": "66040e3df3ee452c459ac1e45360efe731158715",
+  "candidate_tree": "4b33eca55ab3e6df5344595cf23fa7c37873e0e5",
+  "raw_commit_parents": [
+    "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7"
+  ],
+  "changed_paths": [
+    "packages/mcp/src/schemas.ts",
+    "packages/mcp/test/schema.test.ts"
+  ],
+  "diff_check": "PASS",
+  "sealed_run_id": "ff8c50283a8a48bba1c9ed29ad0e70c0",
+  "sealed_receipt": "PRIVATE_FLEET/test-controller/runs/ff8c50283a8a48bba1c9ed29ad0e70c0/result.json",
+  "sealed_receipt_sha256": "b81c44536915ce2847de2532e91eac92953ec548b9143dbfc8dc4289b2e9857a",
+  "sealed_execution": {
+    "bytes_observed": {
+      "stderr": 1505,
+      "stdout": 28
+    },
+    "bytes_retained": {
+      "stderr": 1505,
+      "stdout": 28
+    },
+    "cleanup_confirmed": true,
+    "deadline_seconds": 300,
+    "elapsed_seconds": 2.146,
+    "exit_code": 1,
+    "termination_reason": null
+  },
+  "sealed_test_summary": {
+    "pass": 6,
+    "fail": 1,
+    "expect_calls": 67,
+    "new_source_policy_tests": "all four passed"
+  },
+  "verified_log_sha256": {
+    "stdout": "d6684989b8dd63b37d2f1954270826fbe1bd89a8debd12bcacf03ed1c6140ef6",
+    "stderr": "0ea6ce07ba16ad074bb353b02fe669a2b8c7daada84797dc05d32ccd2560fc3a"
+  },
+  "unchanged_source_evidence": [
+    {
+      "path": "packages/mcp/test/helpers.ts",
+      "sha256": "5c00ba24e0f0c49b4238e7200a74314f1b1cb950d93487c7f62d0b5d9ec0d761",
+      "base_candidate_sealed_equal": true
+    },
+    {
+      "path": "packages/core/src/serving/canon.ts",
+      "sha256": "5e902b1fecf1d83743fd7550758e6c2fe30b4a7b4618237529ae458bc09870d8",
+      "base_candidate_sealed_equal": true
+    },
+    {
+      "path": "packages/core/src/serving/page.ts",
+      "sha256": "b2bedced742743a93d9d5bda1c5888b80828c3cac4b51335199132f15d92db08",
+      "base_candidate_sealed_equal": true
+    },
+    {
+      "path": "packages/core/src/serving/gate.ts",
+      "sha256": "d46e35f01d4a9d83cef102eb86305ff8692f975d46debf17efff599924590589",
+      "base_candidate_sealed_equal": true
+    },
+    {
+      "path": "packages/core/src/serving/types.ts",
+      "sha256": "a9755a4c698e27ca13d78b1a22a8db142dbff2afa38f3b51fc531c6f2fe6f0ba",
+      "base_candidate_sealed_equal": true
+    },
+    {
+      "path": "packages/core/src/vault/provenance.ts",
+      "sha256": "38dd23021e806fab7bbd1c8fce07c375c41e24a16ceed449590077b020b767ab",
+      "base_candidate_sealed_equal": true
+    },
+    {
+      "path": "packages/core/src/vault/schema.ts",
+      "sha256": "aaa4f50b46ef6d24996632d1f272583159118663ce6fcafde638fc36ec2510a5",
+      "base_candidate_sealed_equal": true
+    },
+    {
+      "path": "packages/core/src/canon/authority.ts",
+      "sha256": "d97e869f60bfe9299069b7a3ba39997126257a8f4a003058b1d11e8b55d76d9b",
+      "base_candidate_sealed_equal": true
+    },
+    {
+      "path": "packages/core/src/ledger/source-grants.ts",
+      "sha256": "2b819d1c30955d0a37a0a94928727f61b01f9d26432cd5d3c4273d353389fec1",
+      "base_candidate_sealed_equal": true
+    },
+    {
+      "path": "packages/mcp/src/server.ts",
+      "sha256": "68e1f56ca7e4234e1fb4f87cfe611d6cbb9129779bf3de40391fd9dd2b7e5ebd",
+      "base_candidate_sealed_equal": true
+    },
+    {
+      "path": "packages/core/test/helpers/recorded-page.ts",
+      "sha256": "4bf5a14d5e9a1dc47d19f3426c791bc6c9c95992c1a196a0b97d7b00a43a6ec5",
+      "base_candidate_sealed_equal": true
+    },
+    {
+      "path": "packages/core/test/canon/helpers.ts",
+      "sha256": "93e1b5f8e49c140a14307cafc682b24c0d2a6ce27df9dc5de372846de1722795",
+      "base_candidate_sealed_equal": true
+    }
+  ],
+  "failing_test_unchanged_from_base": true,
+  "schema_review": "ACCEPT_SOURCE_DIFF",
+  "candidate_acceptance": "NOT_ACCEPTED_PENDING_FIXTURE_CORRECTION_AND_QUALIFIED_RERUN",
+  "cause": "The inherited MCP Ada fixture lacks sources and a hash-bound recorded revision; existing f57 serving admission correctly withholds it. This is not caused by the optional source_policy schema addition.",
+  "minimal_correction": {
+    "owner_file": "packages/mcp/test/schema.test.ts",
+    "helper": "../../core/test/helpers/recorded-page",
+    "action": "Create a separate ordinary positive canon page through recordedPage using existing fixture database/vault, then target that page in the existing trust-field test. Keep all existing assertions.",
+    "required_fixture_fields": [
+      "id",
+      "title",
+      "type",
+      "status=active",
+      "sensitivity",
+      "taint",
+      "subjects"
+    ],
+    "example_page_path": "entities/schema-canon.md",
+    "example_page_id": "person:schema-canon",
+    "evidence": "Use returned sourceIds and receipted writer result; do not inject SQL receipts or bypass admission.",
+    "preserve": [
+      "chunk presence",
+      "advertised taint required",
+      "advertised authority required",
+      "exact emitted and required key equality",
+      "all new source-policy cases"
+    ]
+  },
+  "limits": [
+    "Read-only static analysis; no product or test execution performed in this review.",
+    "Base failure was inferred from identical fixture and admission sources; no base test run is claimed.",
+    "The sealed failing result remains a failure and is not replaced by static review.",
+    "No product, worker, controller, account or release files modified."
+  ]
+}

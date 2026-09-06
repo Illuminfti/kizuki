@@ -1,0 +1,158 @@
+{
+  "task_id": "R085",
+  "packet_id": "R085",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "issue": 542,
+  "feeds_packets": ["P083", "P099"],
+  "title": "Draft connect-resume CLI transcript adapter",
+  "findings": [
+    {
+      "severity": "limitation",
+      "id": "cli-unexecuted-missing-workspace",
+      "summary": "Public CLI could not be executed in this container.",
+      "evidence": "bun /repo/packages/cli/src/main.ts help connect exited 1: Cannot find module '@kizuki/tui' from packages/cli/src/output.ts. /repo/node_modules is absent. bun install is forbidden.",
+      "affected": "Live transcript of connect/grant/backfill/resume",
+      "required_fix": "Root-owned workspace install on a writable checkout. Do not invent a passing CLI result."
+    },
+    {
+      "severity": "limitation",
+      "id": "existing-test-not-run",
+      "summary": "The exact public case already exists and was not re-executed.",
+      "evidence": "packages/cli/test/connect.test.ts:106-143 statically read: connect markdown-folder, grant, backfill --source KEY events_stored=3, backfill --source PATH events_stored=0 duplicates=0.",
+      "affected": "Verification of the already-covered contract",
+      "required_fix": "Run that existing test after workspace install; do not add a duplicate packages/cli test."
+    },
+    {
+      "severity": "limitation",
+      "id": "not-journey-pass",
+      "summary": "This draft is command/result composition, not journey.connect-resume acceptance.",
+      "evidence": "scripts/go-no-go.ts:161 still emits NOT_IMPLEMENTED for journey.connect-resume; docs/release-acceptance.md:152-154 says all eight journey adapters remain NOT_IMPLEMENTED.",
+      "affected": "Release gate journey.connect-resume",
+      "required_fix": "Reserved producer work after review/rebase; P003 owns shared evidence design."
+    }
+  ],
+  "deliverables": [
+    "/work/out/connect-resume-transcript-adapter.ts",
+    "/work/out/argv-matrix.json",
+    "/work/out/expected-output-keys.json",
+    "/work/out/fixture/manifest.json",
+    "/work/out/fixture/policy.json",
+    "/work/out/fixture/notes/ada.md",
+    "/work/out/fixture/notes/grace.md",
+    "/work/out/fixture/notes/linus.md",
+    "/work/out/source-evidence.md",
+    "/work/out/existing-coverage.json",
+    "/work/out/orientation.md",
+    "/work/out/checks.json",
+    "/work/out/RESULT.md",
+    "/work/out/run/transcript.json",
+    "/work/out/run/execution.json",
+    "/work/out/run/probe.json",
+    "/work/out/run/fixture-manifest.json",
+    "/work/out/run/notes/ada.md",
+    "/work/out/run/notes/grace.md",
+    "/work/out/run/notes/linus.md",
+    "/work/out/run/policy.json"
+  ],
+  "artifacts": [
+    "connect-resume-transcript-adapter.ts",
+    "argv-matrix.json",
+    "expected-output-keys.json",
+    "fixture/manifest.json",
+    "fixture/policy.json",
+    "fixture/notes/ada.md",
+    "fixture/notes/grace.md",
+    "fixture/notes/linus.md",
+    "source-evidence.md",
+    "existing-coverage.json",
+    "orientation.md",
+    "checks.json",
+    "RESULT.md",
+    "run/transcript.json",
+    "run/execution.json",
+    "run/probe.json",
+    "run/fixture-manifest.json"
+  ],
+  "source_references": [
+    "packages/cli/src/commands/connect.ts:111-116,255-327",
+    "packages/cli/src/commands/backfill.ts:11-46",
+    "packages/cli/src/commands/sync.ts:17-99",
+    "packages/cli/src/commands/connect-consent.ts:9-56",
+    "packages/cli/src/connect-catalog.ts:28-81",
+    "packages/cli/src/output.ts:24-43,66-75",
+    "packages/cli/src/source-consent.ts:29-69",
+    "packages/core/src/ingest/run.ts:555-595",
+    "packages/core/src/ledger/source-grants.ts:50-98",
+    "packages/connectors/src/markdown-folder/index.ts:34,174-257",
+    "packages/cli/test/connect.test.ts:106-143",
+    "packages/cli/test/helpers.ts:86-97,135-141",
+    "packages/cli/test/connect-catalog.test.ts:8-31",
+    "packages/cli/test/source-consent.test.ts:22-39",
+    "packages/cli/test/e2e.test.ts:13-31",
+    "scripts/go-no-go.ts:21,161",
+    "docs/cli.md connect/backfill/consent",
+    "docs/release-acceptance.md:137,152-154"
+  ],
+  "checks": [
+    {
+      "id": "cli-probe",
+      "result": "FAIL",
+      "exit": 1,
+      "command": "/usr/local/bin/bun /repo/packages/cli/src/main.ts help connect",
+      "at": "2026-09-06T22:05:39.232Z",
+      "evidence": "run/probe.json"
+    },
+    {
+      "id": "transcript-adapter",
+      "result": "PASS_UNEXECUTED",
+      "exit": 2,
+      "command": "/usr/local/bin/bun /work/out/connect-resume-transcript-adapter.ts --repo /repo --out /work/out/run",
+      "at": "2026-09-06T22:05:39Z",
+      "evidence": "run/transcript.json"
+    },
+    {
+      "id": "existing-connect-test",
+      "result": "NOT_RUN",
+      "static_read": "packages/cli/test/connect.test.ts:106-143"
+    },
+    {
+      "id": "full-gate",
+      "result": "NOT_RUN",
+      "command": "bash scripts/verify.sh"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "NOT_RUN",
+    "adapter_self_run": "unexecuted labeled; exit 2; missing @kizuki/tui",
+    "package_type_full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "bun": "1.3.14",
+    "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7 archive; Git metadata absent"
+  },
+  "blockers": [
+    "Workspace node_modules missing; cannot resolve @kizuki/tui; bun install forbidden in this packet.",
+    "Git metadata absent; remote ownership not refreshed here.",
+    "No authority to implement the go-no-go journey.connect-resume producer."
+  ],
+  "downstream_handoff": {
+    "consumers": ["P083", "P099"],
+    "what_to_use": "argv-matrix.json, expected-output-keys.json, fixture/, connect-resume-transcript-adapter.ts, run/transcript.json",
+    "do_not": [
+      "Treat this as journey.connect-resume PASS",
+      "Duplicate packages/cli/test/connect.test.ts:106-143",
+      "Open retrieval via sync --once",
+      "Confuse capture resume with connect resume-revocation",
+      "Replace P003/P015/P006 contracts"
+    ],
+    "re_run": "bun /work/out/connect-resume-transcript-adapter.ts --repo <writable-checkout> --out <isolated-dir> after workspace install"
+  },
+  "next_step": "P083/P099 consume this adapter on a workspace-installed checkout; re-run the labeled steps; keep journey.connect-resume NOT_IMPLEMENTED until a named producer exists.",
+  "limitations": [
+    "CLI transcript steps are unexecuted.",
+    "Existing tests were statically read, not run.",
+    "No native/account/model/human qualification.",
+    "No source edits.",
+    "/repo has no Git metadata."
+  ]
+}

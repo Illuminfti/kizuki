@@ -1,0 +1,116 @@
+{
+  "schema": "kizuki.grok-production-wave/v1",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+  "packets": [
+    {
+      "id": "P048",
+      "title": "Preserve local Telegram cancellation and unspecified flood-wait diagnostics",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "owner": "grok-P048",
+      "kind": "implementation",
+      "readiness": "ready_now",
+      "dependencies": [],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "implement-change",
+        "connector-work",
+        "cli-terminal-ux",
+        "test-strategy",
+        "elegance-review"
+      ],
+      "read_paths": [
+        "packages/cli/src/commands/connect-telegram.ts",
+        "packages/cli/src/main.ts",
+        "packages/cli/src/args.ts",
+        "packages/connector-telegram/src/sign-in.ts",
+        "packages/connector-telegram/src/client.ts",
+        "packages/connector-telegram/src/guard.ts",
+        "packages/cli/test/telegram-enrollment.test.ts",
+        "packages/cli/test/terminal-prompt.test.ts"
+      ],
+      "write_paths": [
+        "packages/cli/src/commands/connect-telegram.ts",
+        "packages/cli/test/telegram-signin-diagnostics.test.ts",
+        "packages/cli/test/telegram-enrollment.test.ts"
+      ],
+      "test_paths": [
+        "packages/cli/test/telegram-signin-diagnostics.test.ts",
+        "packages/cli/test/telegram-enrollment.test.ts"
+      ],
+      "scope": "Implement only the root-approved Telegram CLI cancellation and unspecified flood-wait diagnostic correction in P048-P072-WORKER-HANDOFF.md. Preserve local prompt cancellation across adapter wrapping without forwarding arbitrary errors; keep existing credential, cooldown and source-enrollment behavior.",
+      "acceptance": [
+        "Preserve local prompt cancellation using fixed safe wording and the existing cancellation/usage classification, including when a provider adapter wraps the prompt exception.",
+        "Keep duration-specific guidance for a positive safe retry_after; retain the wait class without inventing a duration when it is absent or unusable.",
+        "Leave provider error sanitization, connector authentication, cooldown persistence, retries, app credentials and source enrollment architecture unchanged.",
+        "Retain generic fallback for unknown exceptions; do not forward all Error/ConnectionError/provider messages.",
+        "At phone, code and password prompts, ordinary local cancellation produces the fixed cancellation diagnostic and UsageError classification consumed by existing CLI dispatch; no success output or new connection is recorded and normal cleanup runs.",
+        "Map a classified flood_wait with retry_after=120 to duration-specific wait wording; map the same code without a usable duration to wait-specific wording with no fabricated count or immediate connectivity retry advice.",
+        "An ordinary unreachable error still uses the existing generic connectivity diagnostic.",
+        "Existing unknown prompt-error sanitization, missing app credentials, successful enrollment and cooldown tests retain their assertions.",
+        "Request the assigned focused tests through root's qualified runner; preserve all failures, source ownership and existing assertions."
+      ],
+      "context_files": [
+        "P048-P072-WORKER-HANDOFF.md",
+        "GROK-R053-R093-R074-REVIEW/REVIEW.md"
+      ],
+      "limits": [
+        "Only the three assigned relative write paths. No connector source/core/auth/credential/provider/account/controller/service/native changes.",
+        "No vulnerability, timing or resource reproductions; use ordinary synthetic error and enrollment cases only."
+      ]
+    },
+    {
+      "id": "P072",
+      "title": "Report a fixed pre-capture Claude health warning on initial and repeat import",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "owner": "grok-P072",
+      "kind": "implementation",
+      "readiness": "ready_now",
+      "dependencies": [],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "implement-change",
+        "connector-work",
+        "cli-terminal-ux",
+        "test-strategy",
+        "elegance-review"
+      ],
+      "read_paths": [
+        "packages/cli/src/commands/import.ts",
+        "packages/cli/src/connections.ts",
+        "packages/cli/src/output.ts",
+        "packages/cli/test/helpers.ts",
+        "packages/connectors/src/import-claude/index.ts",
+        "packages/connectors/src/import-report.ts",
+        "packages/connectors/src/import-snapshot.ts"
+      ],
+      "write_paths": [
+        "packages/cli/src/commands/import.ts",
+        "packages/cli/test/import-claude-lifecycle.test.ts"
+      ],
+      "test_paths": [
+        "packages/cli/test/import-claude-lifecycle.test.ts"
+      ],
+      "scope": "Implement only the frozen root P072 warning contract in P048-P072-WORKER-HANDOFF.md: a fresh pre-capture Claude health observation emits a fixed bounded stderr warning when degraded, labeled as health check before capture and partial/unsupported content. Apply initial/repeat imports; preserve blocked-health behavior, stdout counts and exit semantics. Never render arbitrary health.detail or claim capture-exact diagnostics.",
+      "acceptance": [
+        "For initial and repeated Claude imports, perform a fresh health observation before capture and emit a fixed bounded stderr line only for degraded health, clearly labeled as a health check before capture and partial/unsupported content.",
+        "Never print arbitrary health.detail, file/export path or message content, and never describe the observation as the exact captured snapshot.",
+        "Keep existing initial blocked-health and source-consent behavior, tolerant partial-import success, stdout counts and process exit semantics.",
+        "A clean ordinary two-message export imports normally with no new warning; unchanged repeat stores zero new events.",
+        "An ordinary export with supported text plus an unsupported content part retains supported content and emits the same fixed warning on initial and repeated import, with existing counts/exits.",
+        "Request the new public lifecycle test through root's qualified runner; preserve assertions and failures. P071's accepted attribution tests remain untouched."
+      ],
+      "context_files": [
+        "P048-P072-WORKER-HANDOFF.md",
+        "P071-A90DB53-INDEPENDENT-REVIEW.md"
+      ],
+      "limits": [
+        "Only import.ts and the new assigned lifecycle test. No parser/snapshot/shared-helper/core-ingest/doctor/status/count/schema/P071-test/docs/controller changes.",
+        "No real/private export files or account/service/native operations.",
+        "No vulnerability, timing or resource reproductions; use ordinary synthetic exports only."
+      ]
+    }
+  ]
+}

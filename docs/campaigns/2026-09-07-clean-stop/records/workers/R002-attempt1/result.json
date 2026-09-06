@@ -1,0 +1,141 @@
+{
+  "task_id": "R002",
+  "packet_id": "R002",
+  "title": "Map evidence-index input loading and bounded diagnostics",
+  "issue": 541,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "finding",
+  "findings": [
+    {
+      "severity": "contract-gap",
+      "confirmed": true,
+      "execution": "replica-only",
+      "location": "scripts/go-no-go.ts:151,176-180",
+      "failure": "Ordinary absent index.json finishes as evidence.index FAIL/evidence-unreadable-or-invalid. Template token MISSING/index-missing is never a final evaluateRelease outcome because openSync ENOENT is untyped.",
+      "affected_invariant": "Missing, empty, and invalid remain distinct; docs/release-acceptance.md:38-41 require a failed index gate for a missing file but do not name the reason.",
+      "smallest_correction": "P004/P006 pick one token: map ENOENT to index-missing, or document evidence-unreadable-or-invalid as the missing-file reason, and add the ordinary-absent test."
+    },
+    {
+      "severity": "coverage-gap",
+      "confirmed": true,
+      "execution": "replica-only",
+      "location": "scripts/go-no-go.ts:177-180 plus artifact-proof.ts:40-64",
+      "failure": "No existing evaluateRelease test for a 0-byte index. Replica: FAIL/invalid-json, index_sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, evidence_sha256 null.",
+      "affected_invariant": "Empty file is not the documented empty inventory (artifacts:[], fixture_observation:null).",
+      "smallest_correction": "P004 add the 0-byte case. Do not duplicate go-no-go.test.ts:138-156."
+    },
+    {
+      "severity": "coverage-gap",
+      "confirmed": true,
+      "execution": "replica-only",
+      "location": "scripts/go-no-go.ts:47-49,99-100",
+      "failure": "No existing test for omitting fixture_observation while keeping the other three keys. Replica: FAIL/invalid-schema. Extra-key and wrong-shape cases already exist.",
+      "affected_invariant": "docs/release-acceptance.md:45-57 require exactly four keys; null is valid, omission is not.",
+      "smallest_correction": "P004 add the omitted-key dual of the documented empty inventory."
+    }
+  ],
+  "deliverables": [
+    "/work/out/result.json",
+    "/work/out/RESULT.md",
+    "/work/out/branch-map.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/expected-typed-errors.json",
+    "/work/out/observed-matrix.md",
+    "/work/out/findings.md",
+    "/work/out/execution.md",
+    "/work/out/orientation.md",
+    "/work/out/handoff.md",
+    "/work/out/fixtures/absent/README.txt",
+    "/work/out/fixtures/absent/expected.json",
+    "/work/out/fixtures/empty/index.json",
+    "/work/out/fixtures/empty/expected.json",
+    "/work/out/fixtures/incomplete/index.json",
+    "/work/out/fixtures/incomplete/expected.json",
+    "/work/out/exec/index-load-replica.ts",
+    "/work/out/run-fixtures.ts",
+    "/work/out/runs/summary.json",
+    "/work/out/runs/absent.report.json",
+    "/work/out/runs/empty.report.json",
+    "/work/out/runs/incomplete.report.json"
+  ],
+  "artifacts": [
+    "/work/out/branch-map.md",
+    "/work/out/expected-typed-errors.json",
+    "/work/out/fixtures/absent/expected.json",
+    "/work/out/fixtures/empty/index.json",
+    "/work/out/fixtures/incomplete/index.json",
+    "/work/out/runs/summary.json"
+  ],
+  "source_references": [
+    { "path": "scripts/go-no-go.ts", "sha256": "62a5cc2d93f4e7e55bd87ebb989f750c0b35bda9549b9e939000a702056593d7", "lines": "16,20,45-114,133-203,241-250" },
+    { "path": "scripts/go-no-go.test.ts", "sha256": "26e90192329ad7dddb4dd10abc79ded2c0781a04ca7148fb2b7958160d8fd60d", "lines": "138-156,261-308,310-358" },
+    { "path": "scripts/artifact-proof.ts", "sha256": "a7116f9a6d34a0cb22f0310c5e30dfa4dafa9c5208e3870c9e3ac30b2cea32db", "lines": "34-66" },
+    { "path": "scripts/release-targets.ts", "lines": "7-10" },
+    { "path": "docs/release-acceptance.md", "sha256": "ce0f817a2a361063e379777979578f0ec61726959810126bef4575721d61ec3b", "lines": "26-41,43-117,121-128,174-178" }
+  ],
+  "checks": [
+    {
+      "name": "public-cli-evaluateRelease",
+      "command": "bun /repo/scripts/go-no-go.ts --profile rc --evidence /work/out/fixtures/empty/index.json --out /work/out/runs/empty.report.json",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "result": "NOT_RUN",
+      "exit_code": 1,
+      "missing": "Bun cannot transpile TypeScript from read-only /repo (ReadOnlyFileSystem). bun build then fails on missing js-tiktoken/lite; bun install forbidden."
+    },
+    {
+      "name": "replica-index-load-draft",
+      "command": "bun /work/out/run-fixtures.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "started": "2026-09-06T21:41:45.739Z",
+      "finished": "2026-09-06T21:41:45.742Z",
+      "result": "PASS",
+      "exit_code": 0,
+      "limitation": "Line-traced replica of read/parse/fail only. Not the public CLI. Reports include replica:true."
+    },
+    {
+      "name": "existing-go-no-go-tests",
+      "command": "bun test /repo/scripts/go-no-go.test.ts",
+      "result": "NOT_RUN",
+      "missing": "Same /repo transpile and node_modules blockers. Coverage checked by static read."
+    },
+    {
+      "name": "typecheck-and-verify",
+      "command": "bun run typecheck && bun run verify",
+      "result": "NOT_RUN",
+      "missing": "No source change; full gate not runnable in this archive container."
+    }
+  ],
+  "verification": {
+    "public_cli": "NOT_RUN",
+    "replica_draft": "PASS",
+    "existing_suite": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "limitations": [
+      "Public evaluateRelease module graph was not loaded.",
+      "CLI exit 1 for these three inputs is statically inferred from scripts/go-no-go.ts:241-244.",
+      "Live GitHub/issue/PR state was not verified.",
+      "Replica reports are not acceptance publication."
+    ]
+  },
+  "blockers": [
+    "Writable checkout with Git metadata is owned by root; this container has a read-only git archive.",
+    "Bun 1.3.14 cannot transpile /repo TypeScript (EROFS / ReadOnlyFileSystem).",
+    "Workspace node_modules are absent; bun install is forbidden, so the public script cannot be bundled (js-tiktoken/lite)."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P004", "P010"],
+    "do_not_absorb": ["P003 shared evidence design", "P006 canonical docs", "P015 source-B schema/recovery/authority/export", "Astra and external doctor"],
+    "reuse": {
+      "valid_empty_inventory": "go-no-go.test.ts:138-156 — do not duplicate",
+      "extra_or_duplicate_keys": "go-no-go.test.ts:261-271 — do not duplicate",
+      "wrong_fixture_observation_shape": "go-no-go.test.ts:273-282 — do not duplicate",
+      "torn_json": "go-no-go.test.ts:294 — not a 0-byte file"
+    },
+    "add": ["ordinary absent index file", "0-byte index file", "well-formed JSON missing fixture_observation"]
+  },
+  "next_step": "P004, on a writable checkout with node_modules, add the three ordinary cases and choose a single missing-file reason token; rebase onto current main before any production use."
+}

@@ -1,0 +1,215 @@
+{
+  "task_id": "R007",
+  "packet_id": "R007",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Trace independent review attribution into acceptance",
+  "findings": [
+    {
+      "id": "candidate-sha-only",
+      "severity": "info",
+      "attribute": "source_revision_candidate",
+      "representable": true,
+      "location": "scripts/go-no-go.ts:16,102,199",
+      "detail": "A valid index binds candidate_source_sha (40 lowercase hex). All gates share that candidate. This is not a review pin."
+    },
+    {
+      "id": "review-sha-unrepresentable",
+      "severity": "gap",
+      "attribute": "source_revision_review",
+      "representable": false,
+      "location": "scripts/go-no-go.ts:158,171-203",
+      "detail": "candidate.independent-review is never updated. evidence_sha256 stays null. Exact reviewed head cannot be represented."
+    },
+    {
+      "id": "reviewer-identity-unrepresentable",
+      "severity": "gap",
+      "attribute": "reviewer_identity",
+      "representable": false,
+      "location": "scripts/go-no-go.ts:13; docs/release-acceptance.md:41,184-186",
+      "detail": "No actor field. Extra reviewer_identity key fails invalid-schema and is not copied into the report. CLI --reviewer exits 2."
+    },
+    {
+      "id": "different-model-lens-unrepresentable",
+      "severity": "gap",
+      "attribute": "different_model_lens",
+      "representable": false,
+      "location": "docs/decision-log.md:97; docs/release-acceptance.md:134; AGENTS.md:298-304",
+      "detail": "C2 requires three lenses including an independent model. The acceptance gate and review playbooks name two axes. No model-id field exists."
+    },
+    {
+      "id": "review-supersession-unrepresentable",
+      "severity": "gap",
+      "attribute": "review_supersession",
+      "representable": false,
+      "location": "scripts/go-no-go.ts:158,164-166",
+      "detail": "Calendar/cutover rows use superseded-readiness-gate. Independent-review stays required NOT_IMPLEMENTED with trusted-producer-not-implemented. Extra supersedes key is invalid-schema."
+    },
+    {
+      "id": "existing-tests-omit-review-gate",
+      "severity": "coverage",
+      "attribute": "test_coverage",
+      "representable": false,
+      "location": "scripts/go-no-go.test.ts:138-156,261-282,297-308",
+      "detail": "Related fail-closed extra-key, unknown-producer, and no-waiver tests exist. No test names candidate.independent-review. Do not duplicate those fail-closed cases in the repository; R007 fixtures are /work/out drafts only."
+    }
+  ],
+  "deliverables": [
+    "/work/out/representation-gap-map.md",
+    "/work/out/attribution-representation-matrix.json",
+    "/work/out/expected-consumption.json",
+    "/work/out/run-review-attribution-fixtures.ts",
+    "/work/out/fixtures/accepted-empty-index.json",
+    "/work/out/fixtures/missing-extra-review-attribution-keys.json",
+    "/work/out/fixtures/missing-unknown-review-producer.json",
+    "/work/out/fixtures/missing-review-as-fixture-observation.json",
+    "/work/out/checks/consumption-check.json",
+    "/work/out/checks/commands.json",
+    "/work/out/checks/cli-report-review-rows.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/representation-gap-map.md",
+    "/work/out/attribution-representation-matrix.json",
+    "/work/out/expected-consumption.json",
+    "/work/out/run-review-attribution-fixtures.ts",
+    "/work/out/fixtures/accepted-empty-index.json",
+    "/work/out/fixtures/missing-extra-review-attribution-keys.json",
+    "/work/out/fixtures/missing-unknown-review-producer.json",
+    "/work/out/fixtures/missing-review-as-fixture-observation.json",
+    "/work/out/reports/accepted-empty-index.rc.json",
+    "/work/out/reports/accepted-empty-index.1.0.json",
+    "/work/out/reports/missing-extra-keys.rc.json",
+    "/work/out/reports/missing-unknown-producer.rc.json",
+    "/work/out/reports/missing-fixture-role.rc.json",
+    "/work/out/checks/consumption-check.json",
+    "/work/out/checks/commands.json",
+    "/work/out/checks/cli-report-review-rows.json",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "scripts/go-no-go.ts:13",
+    "scripts/go-no-go.ts:16",
+    "scripts/go-no-go.ts:40-42",
+    "scripts/go-no-go.ts:47-49",
+    "scripts/go-no-go.ts:99-114",
+    "scripts/go-no-go.ts:148-168",
+    "scripts/go-no-go.ts:158",
+    "scripts/go-no-go.ts:171-203",
+    "scripts/go-no-go.ts:205-214",
+    "scripts/go-no-go.test.ts:138-156",
+    "scripts/go-no-go.test.ts:261-282",
+    "scripts/go-no-go.test.ts:297-308",
+    "docs/release-acceptance.md:5-6",
+    "docs/release-acceptance.md:41",
+    "docs/release-acceptance.md:45-56",
+    "docs/release-acceptance.md:134",
+    "docs/release-acceptance.md:177-186",
+    "docs/decision-log.md:97",
+    "docs/decision-log.md:100",
+    "AGENTS.md:298-315",
+    ".agents/skills/review-change/SKILL.md:28-49",
+    "scripts/verify-attribution.ts"
+  ],
+  "checks": [
+    {
+      "name": "evaluateRelease fixture runner",
+      "command": "bun /work/out/run-review-attribution-fixtures.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/checks/consumption-check.json",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "recorded_at_utc": "2026-09-06T21:43:11Z"
+    },
+    {
+      "name": "go-no-go CLI accepted empty index rc",
+      "command": "bun /repo/scripts/go-no-go.ts --profile rc --evidence /work/out/fixtures/accepted-empty-index.json --out /work/out/reports/accepted-empty-index.rc.json",
+      "exit_code": 1,
+      "result": "PASS",
+      "note": "Exit 1 is expected NO-GO. Independent-review NOT_IMPLEMENTED. evidence.index PASS."
+    },
+    {
+      "name": "go-no-go CLI accepted empty index 1.0",
+      "command": "bun /repo/scripts/go-no-go.ts --profile 1.0 --evidence /work/out/fixtures/accepted-empty-index.json --out /work/out/reports/accepted-empty-index.1.0.json",
+      "exit_code": 1,
+      "result": "PASS"
+    },
+    {
+      "name": "go-no-go CLI missing extra review keys",
+      "command": "bun /repo/scripts/go-no-go.ts --profile rc --evidence /work/out/fixtures/missing-extra-review-attribution-keys.json --out /work/out/reports/missing-extra-keys.rc.json",
+      "exit_code": 1,
+      "result": "PASS",
+      "note": "evidence.index FAIL invalid-schema"
+    },
+    {
+      "name": "go-no-go CLI unknown review producer",
+      "command": "bun /repo/scripts/go-no-go.ts --profile rc --evidence /work/out/fixtures/missing-unknown-review-producer.json --out /work/out/reports/missing-unknown-producer.rc.json",
+      "exit_code": 1,
+      "result": "PASS",
+      "note": "evidence.index FAIL unknown-producer-or-duplicate-target"
+    },
+    {
+      "name": "go-no-go CLI review as fixture observation",
+      "command": "bun /repo/scripts/go-no-go.ts --profile rc --evidence /work/out/fixtures/missing-review-as-fixture-observation.json --out /work/out/reports/missing-fixture-role.rc.json",
+      "exit_code": 1,
+      "result": "PASS",
+      "note": "evidence.index FAIL unknown-producer"
+    },
+    {
+      "name": "go-no-go CLI reviewer flag refused",
+      "command": "bun /repo/scripts/go-no-go.ts --profile rc --evidence /work/out/fixtures/accepted-empty-index.json --out /work/out/reports/flag-should-not-exist.json --reviewer synthetic-reviewer",
+      "exit_code": 2,
+      "result": "PASS",
+      "evidence": "/work/out/checks/cli-reviewer-flag.stderr"
+    },
+    {
+      "name": "existing go-no-go.test.ts",
+      "command": "bun test scripts/go-no-go.test.ts",
+      "result": "NOT_RUN",
+      "note": "Missing node_modules: Cannot find module js-tiktoken/lite. Installs forbidden. Tests statically read."
+    },
+    {
+      "name": "full repository gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "note": "Missing node_modules and Git metadata in the archive."
+    }
+  ],
+  "verification": {
+    "focused": "PASS",
+    "existing_unit_tests": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "independent_review_of_this_packet": "NOT_RUN",
+    "limitations": [
+      "/repo is a git archive with no Git metadata.",
+      "node_modules absent; no installs.",
+      "Issue 538 and live CI/review were not fetched.",
+      "P003 unpublished output was not read.",
+      "No native, account, model, human, or release-acceptance claim."
+    ]
+  },
+  "blockers": [],
+  "next_step": "P003 designs the shared review-evidence producer so exact head, reviewer identity, independent-model lens, and supersession can be consumed without weakening fail-closed four-key index parsing. P005/P096 should treat candidate.independent-review as NOT_IMPLEMENTED on this base.",
+  "downstream_handoff": {
+    "feeds": ["P005", "P096"],
+    "contract_owner": "P003",
+    "docs_owner": "P006",
+    "do_not_assume": [
+      "A passing evidence.index means independent review ran.",
+      "candidate_source_sha is a reviewer or model identity.",
+      "docs/release-acceptance.md two-axis wording equals C2 three lenses.",
+      "superseded-readiness-gate applies to reviews.",
+      "scripts/verify-attribution.ts implements this gate."
+    ],
+    "fixtures": {
+      "accepted": "/work/out/fixtures/accepted-empty-index.json",
+      "missing": [
+        "/work/out/fixtures/missing-extra-review-attribution-keys.json",
+        "/work/out/fixtures/missing-unknown-review-producer.json",
+        "/work/out/fixtures/missing-review-as-fixture-observation.json"
+      ]
+    }
+  }
+}

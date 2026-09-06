@@ -1,0 +1,267 @@
+{
+  "schema": "kizuki.grok-production-wave/v1",
+  "created_at_utc": "2026-09-06T22:23:26Z",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+  "packet_count": 5,
+  "source_verification": "CHECKPOINT_BOOK/GROK-P101-P105-CODE-PACKETS/SOURCE-VERIFICATION.json",
+  "source_verification_sha256": "677b91838836c62f7c361693ace740651beb3d65b8d134f8e8c3a7123ae2b776",
+  "dispatch_status": "prepared_for_root_review_not_dispatched",
+  "packets": [
+    {
+      "id": "P101",
+      "title": "Make qualification comparisons semantic and diagnostics content-free",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+      "owner": "grok-P101",
+      "kind": "implementation",
+      "dependencies": [],
+      "readiness": "ready_now",
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "implement-change",
+        "test-strategy",
+        "reliability-engineering",
+        "security-privacy-review",
+        "elegance-review"
+      ],
+      "read_paths": [
+        "scripts/qualification.ts",
+        "scripts/qualification.test.ts",
+        "scripts/artifact-proof.ts",
+        "packages/core/src/serve/qualification.ts"
+      ],
+      "write_paths": [
+        "scripts/qualification.ts",
+        "scripts/qualification.test.ts"
+      ],
+      "test_paths": [
+        "scripts/qualification.test.ts"
+      ],
+      "scope": "Correct only order-sensitive equality and top-level CLI diagnostic forwarding in qualification. Preserve proof, genesis, identity, custody, sampling, credit, and process-binding contracts.",
+      "acceptance": [
+        "Compare artifact identity and rail policy by canonical value or explicit fields. Reordering object keys alone passes; changing any value fails. Genesis and artifact-proof validation remain unchanged.",
+        "The CLI maps JSON, filesystem and SQLite failures to fixed content-free diagnostics. A neutral input/path sentinel never appears on stderr; exit status remains 1 and stdout remains empty on failure.",
+        "Add focused reorder, changed-value and diagnostic-redaction cases to scripts/qualification.test.ts. Do not duplicate existing projection/privacy cases.",
+        "Run: bun test scripts/qualification.test.ts."
+      ],
+      "context_files": [
+        "GROK-P101-P105-CODE-PACKETS/P101-HANDOFF.md",
+        "GROK-P101-P105-CODE-PACKETS/SOURCE-VERIFICATION.json"
+      ],
+      "limits": [
+        "Write only the exact write_paths. Read-only inspection may use read_paths and applicable repository instructions. Do not edit P004 files scripts/go-no-go.ts, scripts/go-no-go.test.ts or scripts/release-evidence.ts; P006 docs/help; P015 source-survivor files; P057 IMAP; Astra-held doctor scopes; controller or roster files.",
+        "Use only small neutral synthetic fixtures and defensive validation. No private vaults, credentials, account/provider calls, remote writes, publication, spending, model calls, exploit reproduction, data-exposure reproduction, fault/race probing, or resource-exhaustion tests.",
+        "Preserve every pre-existing test and failure. Run the exact test_paths with Bun 1.3.14, then applicable repository checks. A green focused test is implementation evidence only, not release acceptance.",
+        "Completion requires a non-empty committed diff descending from the supplied base, every changed path within write_paths, exact commands/results and final SHA/tree in /work/out/result.json, and independent review before integration."
+      ]
+    },
+    {
+      "id": "P102",
+      "title": "Require a proof receipt before retaining native CI artifacts",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+      "owner": "grok-P102",
+      "kind": "implementation",
+      "dependencies": [],
+      "readiness": "ready_now",
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "implement-change",
+        "test-strategy",
+        "reliability-engineering",
+        "elegance-review"
+      ],
+      "read_paths": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/macos-native.yml",
+        "scripts/verify-workflows.ts",
+        "scripts/verify-workflows.test.ts"
+      ],
+      "write_paths": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/macos-native.yml",
+        "scripts/verify-workflows.ts",
+        "scripts/verify-workflows.test.ts"
+      ],
+      "test_paths": [
+        "scripts/verify-workflows.test.ts"
+      ],
+      "scope": "Bind Linux and macOS retained native packages to a present proof receipt and make the workflow validator enforce the complete upload contract. This is workflow integrity, not native or release qualification.",
+      "acceptance": [
+        "Both workflows explicitly verify the expected receipt file before artifact retention and retain no package-only artifact when proof or receipt production fails.",
+        "The validator pins Linux and macOS proof command, receipt check, upload action SHA, condition, artifact name, package path, receipt path, retention-days and if-no-files-found.",
+        "Mutation tests independently remove or change each receipt/retention binding on both platforms and require validation failure. Existing event-head and macOS checks remain.",
+        "Run: bun test scripts/verify-workflows.test.ts."
+      ],
+      "context_files": [
+        "GROK-P101-P105-CODE-PACKETS/P102-HANDOFF.md",
+        "GROK-P101-P105-CODE-PACKETS/SOURCE-VERIFICATION.json"
+      ],
+      "limits": [
+        "Write only the exact write_paths. Read-only inspection may use read_paths and applicable repository instructions. Do not edit P004 files scripts/go-no-go.ts, scripts/go-no-go.test.ts or scripts/release-evidence.ts; P006 docs/help; P015 source-survivor files; P057 IMAP; Astra-held doctor scopes; controller or roster files.",
+        "Use only small neutral synthetic fixtures and defensive validation. No private vaults, credentials, account/provider calls, remote writes, publication, spending, model calls, exploit reproduction, data-exposure reproduction, fault/race probing, or resource-exhaustion tests.",
+        "Preserve every pre-existing test and failure. Run the exact test_paths with Bun 1.3.14, then applicable repository checks. A green focused test is implementation evidence only, not release acceptance.",
+        "Completion requires a non-empty committed diff descending from the supplied base, every changed path within write_paths, exact commands/results and final SHA/tree in /work/out/result.json, and independent review before integration."
+      ]
+    },
+    {
+      "id": "P103",
+      "title": "Use the core sensitivity lattice for connector event hints",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+      "owner": "grok-P103",
+      "kind": "implementation",
+      "dependencies": [],
+      "readiness": "ready_now",
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "implement-change",
+        "test-strategy",
+        "security-privacy-review",
+        "elegance-review"
+      ],
+      "read_paths": [
+        "packages/connectors/src/sensitivity.ts",
+        "packages/connectors/test/sensitivity.test.ts",
+        "packages/core/src/sensitivity/resolve.ts",
+        "packages/core/test/sensitivity/resolution.test.ts",
+        "rfcs/0002-autonomous-canon.md"
+      ],
+      "write_paths": [
+        "packages/connectors/src/sensitivity.ts",
+        "packages/connectors/test/sensitivity.test.ts"
+      ],
+      "test_paths": [
+        "packages/connectors/test/sensitivity.test.ts"
+      ],
+      "scope": "Remove the connector package's divergent lattice calculation by adapting its existing helper signature to the exported core resolver. Keep callers and importer output unchanged.",
+      "acceptance": [
+        "Connector resolution delegates to the core max(floor, default, upward event hint) contract; it does not maintain a second order table or comparison algorithm.",
+        "A valid event hint can only raise the connector default. Unknown or absent policy/input remains private. Existing importer fixture labels remain unchanged.",
+        "Use small neutral lattice values only. Cover all public/personal/private default, floor and hint combinations plus absent/unknown inputs, asserting parity with core.",
+        "Run: bun test packages/connectors/test/sensitivity.test.ts."
+      ],
+      "context_files": [
+        "GROK-P101-P105-CODE-PACKETS/P103-HANDOFF.md",
+        "GROK-P101-P105-CODE-PACKETS/SOURCE-VERIFICATION.json"
+      ],
+      "limits": [
+        "Write only the exact write_paths. Read-only inspection may use read_paths and applicable repository instructions. Do not edit P004 files scripts/go-no-go.ts, scripts/go-no-go.test.ts or scripts/release-evidence.ts; P006 docs/help; P015 source-survivor files; P057 IMAP; Astra-held doctor scopes; controller or roster files.",
+        "Use only small neutral synthetic fixtures and defensive validation. No private vaults, credentials, account/provider calls, remote writes, publication, spending, model calls, exploit reproduction, data-exposure reproduction, fault/race probing, or resource-exhaustion tests.",
+        "Preserve every pre-existing test and failure. Run the exact test_paths with Bun 1.3.14, then applicable repository checks. A green focused test is implementation evidence only, not release acceptance.",
+        "Completion requires a non-empty committed diff descending from the supplied base, every changed path within write_paths, exact commands/results and final SHA/tree in /work/out/result.json, and independent review before integration.",
+        "Do not edit connector callers, conformance, manifests, core sensitivity code, RFCs, or connector fixtures. A failing parity case must be reported rather than widening scope."
+      ]
+    },
+    {
+      "id": "P104",
+      "title": "Advertise the source-policy field in every MCP output schema",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+      "owner": "grok-P104",
+      "kind": "implementation",
+      "dependencies": [],
+      "readiness": "ready_now",
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "implement-change",
+        "mcp-tool-design",
+        "api-contract-design",
+        "test-strategy",
+        "reliability-engineering",
+        "security-privacy-review",
+        "elegance-review"
+      ],
+      "read_paths": [
+        "packages/mcp/src/schemas.ts",
+        "packages/mcp/test/schema.test.ts",
+        "packages/mcp/src/server.ts",
+        "packages/mcp/test/helpers.ts",
+        "packages/core/src/serving/types.ts",
+        "packages/core/src/serving/gate.ts",
+        "packages/core/src/ledger/source-grants.ts"
+      ],
+      "write_paths": [
+        "packages/mcp/src/schemas.ts",
+        "packages/mcp/test/schema.test.ts"
+      ],
+      "test_paths": [
+        "packages/mcp/test/schema.test.ts"
+      ],
+      "scope": "Make the shared advertised MCP envelope schema match the optional source_policy object already emitted by core. Do not change core emission, tool registration, authorization or protocol transport.",
+      "acceptance": [
+        "ENVELOPE_SHAPE contains optional source_policy with exact mode=enforced, positive integer epoch and legacy_unbound=owner_only fields.",
+        "After tools/list builds client validators, an ordinary epoch>0 response succeeds and structured/text content both contain the exact policy object. Epoch 0 omission remains valid.",
+        "A focused schema assertion rejects missing, extra, mistyped or invalid policy members without weakening any existing envelope field.",
+        "Run: bun test packages/mcp/test/schema.test.ts."
+      ],
+      "context_files": [
+        "GROK-P101-P105-CODE-PACKETS/P104-HANDOFF.md",
+        "GROK-P101-P105-CODE-PACKETS/SOURCE-VERIFICATION.json"
+      ],
+      "limits": [
+        "Write only the exact write_paths. Read-only inspection may use read_paths and applicable repository instructions. Do not edit P004 files scripts/go-no-go.ts, scripts/go-no-go.test.ts or scripts/release-evidence.ts; P006 docs/help; P015 source-survivor files; P057 IMAP; Astra-held doctor scopes; controller or roster files.",
+        "Use only small neutral synthetic fixtures and defensive validation. No private vaults, credentials, account/provider calls, remote writes, publication, spending, model calls, exploit reproduction, data-exposure reproduction, fault/race probing, or resource-exhaustion tests.",
+        "Preserve every pre-existing test and failure. Run the exact test_paths with Bun 1.3.14, then applicable repository checks. A green focused test is implementation evidence only, not release acceptance.",
+        "Completion requires a non-empty committed diff descending from the supplied base, every changed path within write_paths, exact commands/results and final SHA/tree in /work/out/result.json, and independent review before integration."
+      ]
+    },
+    {
+      "id": "P105",
+      "title": "Make bounded audit pagination explicit and complete",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+      "owner": "grok-P105",
+      "kind": "implementation",
+      "dependencies": [],
+      "readiness": "ready_now",
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "implement-change",
+        "cli-terminal-ux",
+        "test-strategy",
+        "reliability-engineering",
+        "elegance-review"
+      ],
+      "read_paths": [
+        "packages/cli/src/commands/audit.ts",
+        "packages/cli/test/audit-undo.test.ts",
+        "packages/core/src/canon/audit.ts",
+        "packages/core/src/canon/receipts.ts",
+        "packages/cli/src/args.ts",
+        "packages/cli/src/output.ts"
+      ],
+      "write_paths": [
+        "packages/cli/src/commands/audit.ts",
+        "packages/cli/test/audit-undo.test.ts"
+      ],
+      "test_paths": [
+        "packages/cli/test/audit-undo.test.ts"
+      ],
+      "scope": "Expose bounded audit limit/offset pagination through the existing core offset seam and make incomplete output explicit in JSON and table modes. Do not modify core or documentation/help files.",
+      "acceptance": [
+        "Audit accepts bounded --limit and --offset values, requests one extra row to determine truncation, returns at most the requested limit, and preserves newest-first stable ordering and all filters.",
+        "JSON data retains receipts and adds explicit truncated and next_offset fields; next_offset is null when complete. Table mode emits a clear continuation notice only when truncated.",
+        "Tests use a small ordinary receipt set and a low public --limit to cover first page, next page, final page, invalid bounds and filtered ordering. Do not create a 5001-row or resource-pressure test.",
+        "Run: bun test packages/cli/test/audit-undo.test.ts."
+      ],
+      "context_files": [
+        "GROK-P101-P105-CODE-PACKETS/P105-HANDOFF.md",
+        "GROK-P101-P105-CODE-PACKETS/SOURCE-VERIFICATION.json"
+      ],
+      "limits": [
+        "Write only the exact write_paths. Read-only inspection may use read_paths and applicable repository instructions. Do not edit P004 files scripts/go-no-go.ts, scripts/go-no-go.test.ts or scripts/release-evidence.ts; P006 docs/help; P015 source-survivor files; P057 IMAP; Astra-held doctor scopes; controller or roster files.",
+        "Use only small neutral synthetic fixtures and defensive validation. No private vaults, credentials, account/provider calls, remote writes, publication, spending, model calls, exploit reproduction, data-exposure reproduction, fault/race probing, or resource-exhaustion tests.",
+        "Preserve every pre-existing test and failure. Run the exact test_paths with Bun 1.3.14, then applicable repository checks. A green focused test is implementation evidence only, not release acceptance.",
+        "Completion requires a non-empty committed diff descending from the supplied base, every changed path within write_paths, exact commands/results and final SHA/tree in /work/out/result.json, and independent review before integration.",
+        "Keep the maximum page size at 5000 or lower and ensure the internal limit+1 request stays within core's 10000-row bound. Preserve existing JSON envelope and receipt fields."
+      ]
+    }
+  ]
+}

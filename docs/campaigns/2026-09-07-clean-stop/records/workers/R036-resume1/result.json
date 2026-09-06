@@ -1,0 +1,161 @@
+{
+  "packet_id": "R036",
+  "task_id": "R036",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Review producer result validation and ordinary abstention shapes",
+  "issue": 472,
+  "owner": "grok-R036",
+  "write_scope": "/work/out only",
+  "artifacts": [
+    "/work/out/result-state-golden-table.md",
+    "/work/out/result-state-golden-table.json",
+    "/work/out/bounded-neutral-parser.test.ts",
+    "/work/out/bounded-neutral-parser-draft.md",
+    "/work/out/neutral-result-fixtures.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/result-state-golden-table.md",
+    "/work/out/result-state-golden-table.json",
+    "/work/out/bounded-neutral-parser.test.ts",
+    "/work/out/bounded-neutral-parser-draft.md",
+    "/work/out/neutral-result-fixtures.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    { "file": "packages/core/src/producer/result.ts", "lines": "27-32,85-203" },
+    { "file": "packages/core/src/producer/diagnostics.ts", "lines": "7,22-44" },
+    { "file": "packages/core/src/producer/model.ts", "lines": "340-365,373-379,456-551" },
+    { "file": "packages/core/src/producer/schema.ts", "lines": "8-11,172-207" },
+    { "file": "packages/core/src/contracts/producer.ts", "lines": "68-146" },
+    { "file": "packages/core/src/serve/extract.ts", "lines": "25-47,874-900" },
+    { "file": "packages/core/src/serve/write-pass.ts", "lines": "81-127,289-294" },
+    { "file": "packages/core/src/serve/doctor.ts", "lines": "184-192" },
+    { "file": "scripts/evaluate-extraction.ts", "lines": "11,244,252,272-274" },
+    { "file": "rfcs/0002-autonomous-canon.md", "lines": "741-803" },
+    { "file": "docs/extraction-quality.md", "lines": "9-20,54-55" },
+    { "file": "packages/llm/src/response.ts", "lines": "20-21" }
+  ],
+  "checks": [
+    {
+      "name": "focused_producer_result_shapes",
+      "command": "cd /repo && bun test ./packages/core/test/producer/result.test.ts ./packages/core/test/producer/schema.test.ts ./packages/core/test/producer/diagnostics.test.ts ./packages/core/test/producer/model.test.ts ./packages/core/test/loop/tri-state.test.ts ./packages/core/test/serve/producer-result-boundary.test.ts",
+      "runtime": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "PASS",
+      "exit_code": 0,
+      "detail": "60 pass, 0 fail, 471 expects, 901 ms"
+    },
+    {
+      "name": "write_pass_dropped_vs_rejected",
+      "command": "cd /repo && bun test ./packages/core/test/serve/write-pass.test.ts",
+      "runtime": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "PASS",
+      "exit_code": 0,
+      "detail": "13 pass, 0 fail, 53 expects, 902 ms"
+    },
+    {
+      "name": "r036_bounded_neutral_parser_draft",
+      "command": "bun test /work/out/bounded-neutral-parser.test.ts",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T21:59:48Z",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "PASS",
+      "exit_code": 0,
+      "detail": "9 pass, 0 fail, 23 expects, 17 ms"
+    },
+    {
+      "name": "evaluate_extraction_scorer",
+      "command": "cd /repo && bun test ./scripts/evaluate-extraction.test.ts",
+      "result": "NOT_RUN",
+      "missing": "js-tiktoken/lite (packages/core/src/serving/packet-tokenizer.ts); no dependency install permitted"
+    },
+    {
+      "name": "llm_unsupported_metadata",
+      "command": "cd /repo && bun test ./packages/llm/test/response-compat.test.ts",
+      "result": "NOT_RUN",
+      "missing": "@kizuki/core / node_modules; static source packages/llm/src/response.ts:20-21"
+    },
+    {
+      "name": "typecheck_and_verify",
+      "command": "bun run typecheck && bun run verify",
+      "result": "NOT_RUN",
+      "reason": "read-only preparation packet; no full-suite slot"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS",
+    "draft_parser": "PASS",
+    "package_type_full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "scorer_and_llm_package": "NOT_RUN"
+  },
+  "findings": [
+    {
+      "severity": "low",
+      "kind": "coverage_gap_filled_in_draft",
+      "location": "packages/core/test/producer/result.test.ts",
+      "evidence": "Existing validator tests use claims:[] only inside invalid envelopes (result.test.ts:31-52). Behavior of empty ok is implemented at result.ts:135-157 and already proven at schema.test.ts:24-27 and model.test.ts:73-84.",
+      "invariant": "successful-empty must remain status ok",
+      "required_action": "P033/P036 may copy the draft rows into result.test.ts; do not add a second contract file."
+    },
+    {
+      "severity": "info",
+      "kind": "preserve_dual_unknown_predicate",
+      "location": "packages/core/src/contracts/producer.ts:68-75 and packages/core/src/producer/model.ts:524-532",
+      "evidence": "unknown_predicate is both a DroppedDraft on ok and a PRODUCER_REJECT_REASONS whole-call reason. Current producer emits only the drop. Doctor omits it from modelFailure (doctor.ts:184-192).",
+      "invariant": "per-draft drop is not a whole-call rejection",
+      "required_action": "Do not collapse the two wire shapes."
+    },
+    {
+      "severity": "info",
+      "kind": "preserve_rail_empty_vs_scorer_abstention",
+      "location": "packages/core/src/serve/extract.ts:892-900; scripts/evaluate-extraction.ts:272-274",
+      "evidence": "ExtractMine maps every ok empty-claim result to empty and advances the cursor, including drop-only results counted in claims_rejected (write-pass.ts:88-93). Scorer abstention requires dropped count 0.",
+      "invariant": "dropped drafts cannot count as abstention; model failure is not emptiness",
+      "required_action": "Do not treat rail empty as proof of quality abstention."
+    },
+    {
+      "severity": "info",
+      "kind": "preserve_unsupported_vs_envelope_failure",
+      "location": "packages/core/src/producer/model.ts:373-379 vs result.ts:27-32",
+      "evidence": "unsupported_metadata is rejected schema_invalid with diagnostic.rule unsupported_metadata and usage_known true. Ordinary envelope failure is usage_known false and diagnostic.rule bad_response.",
+      "invariant": "same reject reason does not imply the same diagnostic or usage_known",
+      "required_action": "Keep diagnostic.rule and usage_known as the distinguisher."
+    }
+  ],
+  "blockers": [
+    "js-tiktoken/lite absent; evaluate-extraction.test.ts not executed",
+    "node_modules / @kizuki/core absent; packages/llm tests not executed",
+    "GitHub issue 472 body not fetched",
+    "full typecheck and bun run verify not run"
+  ],
+  "downstream_handoff": {
+    "feeds": ["P033", "P036"],
+    "must_preserve": [
+      "ok empty claims is successful-empty, not unavailable",
+      "dropped drafts are not scorer abstention",
+      "ExtractMine empty includes drop-only ok",
+      "unsupported_metadata diagnostic is not envelope bad_response",
+      "producer-internal schema_invalid keeps usage_known true",
+      "P034 corpus unchanged"
+    ],
+    "integration_hint": "If a patch lands, copy /work/out/bounded-neutral-parser.test.ts cases into packages/core/test/producer/result.test.ts. Do not duplicate schema/produce/scorer tests."
+  },
+  "next_step": "P033/P036 consume the golden table and, if they patch producer tests, copy the validator-seam empty-ok rows into packages/core/test/producer/result.test.ts without revising P034's corpus.",
+  "limitations": [
+    "Read-only /repo archive; no Git metadata; remote and issue 472 not verified.",
+    "No source edits.",
+    "No native/account/model/human qualification or release acceptance claim.",
+    "Scorer and LLM package tests NOT_RUN for missing modules; not treated as PASS.",
+    "Controller-verified Grok Build subscription was not retested."
+  ]
+}

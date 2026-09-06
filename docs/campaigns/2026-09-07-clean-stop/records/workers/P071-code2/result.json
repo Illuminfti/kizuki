@@ -1,0 +1,79 @@
+{
+  "task_id": "P071",
+  "title": "Claude export attribution independent tests",
+  "issue": 550,
+  "status": "awaiting_root_test",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "a90db5339762f2436bb446b805d8fc81cdeeada8",
+  "branch": "agent/grok-p071",
+  "worktree": "/repo",
+  "owner": "grok-P071",
+  "changed_files": [
+    "packages/connectors/test/fleet-claude-fidelity.test.ts"
+  ],
+  "commit": {
+    "sha": "a90db5339762f2436bb446b805d8fc81cdeeada8",
+    "message": "Add independent Claude export attribution fidelity tests"
+  },
+  "findings": [
+    {
+      "severity": "info",
+      "summary": "Existing claude.test.ts did not independently cover uuid identity vs title/text/time, subject role and conversation_title, millisecond occurred_at vs conversation/observed time, missing/invalid timestamps, duplicate_id/conflicting_id, true reorder, or repeat backfill.",
+      "evidence": "packages/connectors/test/claude.test.ts compared with packages/connectors/src/import-claude/index.ts",
+      "action": "Added six independent cases in the owned fleet file; existing tests and production were left unchanged."
+    },
+    {
+      "severity": "info",
+      "summary": "Official Claude conversations.json has sender human|assistant, not a quoted-author name. The new role test records that extra official fields and an unsupported message name do not invent display_name or extra subjects.",
+      "evidence": "packages/connectors/src/import-claude/index.ts SUPPORTED_SENDERS and subject mapping; fleet-claude-fidelity.test.ts human/assistant case"
+    }
+  ],
+  "deliverables": [
+    "packages/connectors/test/fleet-claude-fidelity.test.ts",
+    "/work/out/test-request.json",
+    "/work/out/coverage-inspection.md",
+    "/work/out/result.json"
+  ],
+  "verification": {
+    "focused_public_behavior": {
+      "result": "NOT_RUN",
+      "reason": "Packet assigns test execution to root's network-disabled runner only. This container must not install dependencies or launch tests.",
+      "requested": {
+        "request_id": "p071-claude-fidelity-1",
+        "path": "/work/out/test-request.json",
+        "test_paths": [
+          "packages/connectors/test/fleet-claude-fidelity.test.ts",
+          "packages/connectors/test/claude.test.ts"
+        ]
+      }
+    },
+    "package_type_full_gate": {
+      "result": "NOT_RUN",
+      "reason": "Final connector package qualification and the required repository gate belong to root; this packet does not take that scope."
+    },
+    "privacy_diff_integrity": {
+      "result": "PASS",
+      "detail": "Single owned test file committed. No production, helper, registry, credential, or existing-test edits. Fixtures are synthetic official-export shapes."
+    },
+    "independent_review": {
+      "result": "NOT_RUN",
+      "reason": "No separate reviewer assigned in this packet."
+    },
+    "retained_package_consumer": {
+      "result": "NOT_RUN",
+      "reason": "Final compiled package and separate required evidence remain a named blocker."
+    }
+  },
+  "blockers": [
+    "Focused tests and existing claude.test.ts must be executed by root's network-disabled runner on head a90db5339762f2436bb446b805d8fc81cdeeada8; this candidate is a draft until that result arrives.",
+    "Final connector release credit still requires the final compiled package and separate required evidence.",
+    "Any production repair or shared helper change needs a newly reconciled, explicitly owned scope; this packet does not take it."
+  ],
+  "next_step": "Root runs request_id p071-claude-fidelity-1 on head a90db5339762f2436bb446b805d8fc81cdeeada8 and returns /work/out/test-result.json. Do not treat this draft commit as passing until that receipt exists.",
+  "limits_honored": [
+    "No production, shared test-helper, registry, CLI, auth, schema, native, export or source-grant edits.",
+    "No predecessor or vulnerability/timing reproduction.",
+    "No real accounts, private data, credentials, remote writes or dispatch.",
+    "No fetch/push, extra agents, other models, or provider API calls."
+  ]
+}

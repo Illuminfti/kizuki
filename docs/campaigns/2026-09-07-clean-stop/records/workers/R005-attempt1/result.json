@@ -1,0 +1,236 @@
+{
+  "task_id": "R005",
+  "packet_id": "R005",
+  "issue": 540,
+  "title": "Audit CI package retention and retrieval binding",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "owner": "grok-R005",
+  "write_scope": "/work/out only",
+  "repository_edits": false,
+  "remote_state_verified": false,
+  "github_contacted": false,
+  "live_artifact_downloaded": false,
+  "findings": [
+    {
+      "severity": "high",
+      "id": "linux-upload-unpinned",
+      "location": ".github/workflows/ci.yml:34-43 vs scripts/verify-workflows.ts:128-157",
+      "failure": "Linux upload name, path, retention-days, receipt path, and if-no-files-found are not pinned by the workflow validator that does pin the macOS equivalents.",
+      "invariant": "Retained Linux package and receipt must remain the event-head named artifact with 7-day retention.",
+      "kind": "confirmed-static",
+      "correction": "If P005/P094 own CI YAML, extend hasMacNativeProof-style checks to ci.yml job test step 7; do not duplicate checksum tests."
+    },
+    {
+      "severity": "high",
+      "id": "receipt-not-independently-required",
+      "location": ".github/workflows/ci.yml:39-43 and macos-native.yml:56-60",
+      "failure": "if-no-files-found:error applies to the combined path set. A package directory without receipt.json still uploads.",
+      "invariant": "Proof identity requires receipt.json; package identity does not.",
+      "kind": "confirmed-static",
+      "correction": "Treat missing receipt as a retrieval-binding failure for proof, not as absent package. Checker already distinguishes MISSING vs FAILED_PROOF vs PASS."
+    },
+    {
+      "severity": "medium",
+      "id": "zip-layout-unspecified",
+      "location": "upload-artifact@ea165f8d README (fetched 2026-09-06) plus mixed workspace glob and runner.temp paths",
+      "failure": "Extracted paths are not uniquely determined by YAML. Wildcard flattening and least-common-ancestor interact.",
+      "invariant": "Bind BUILD.json and receipt.json by basename.",
+      "kind": "confirmed-from-docs; live-download-unobserved",
+      "correction": "Do not hard-code dist/kizuki-0.1.0/... as the only download layout."
+    },
+    {
+      "severity": "medium",
+      "id": "artifact-digest-discarded",
+      "location": "ci.yml:34-43 and macos-native.yml:51-60 (no step id)",
+      "failure": "Pinned action outputs artifact-id, artifact-url, artifact-digest are unused.",
+      "invariant": "Zip digest is not retrievable from current workflow outputs.",
+      "kind": "confirmed-static",
+      "correction": "Optional: capture outputs behind a step id. Not required to bind package identity; BUILD.json and SHA256SUMS already hash the files."
+    },
+    {
+      "severity": "low",
+      "id": "macos-name-uses-github-sha",
+      "location": "macos-native.yml:55 vs ci.yml:38",
+      "failure": "Name grammars differ. Equal on workflow_dispatch because ci-diff-check.ts requires HEAD == GITHUB_SHA. inputs.base_sha is not in the artifact name.",
+      "invariant": "Artifact name SHA must equal BUILD.json.source_sha.",
+      "kind": "confirmed-static"
+    },
+    {
+      "severity": "low",
+      "id": "execute-bits-lost",
+      "location": "upload-artifact README Permission Loss",
+      "failure": "Downloaded files are mode 644.",
+      "invariant": "Hashes, not execute bits, are the retained proof.",
+      "kind": "confirmed-from-docs"
+    }
+  ],
+  "deliverables": [
+    "/work/out/workflow-artifact-graph.md",
+    "/work/out/workflow-artifact-graph.json",
+    "/work/out/coverage-audit.md",
+    "/work/out/check-download-listing.ts",
+    "/work/out/check-download-listing.test.ts",
+    "/work/out/build-fixtures.ts",
+    "/work/out/ci-download-listing.schema.json",
+    "/work/out/docs-citations.json",
+    "/work/out/fixtures/",
+    "/work/out/verification-commands.txt",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    {
+      "path": "/work/out/workflow-artifact-graph.json",
+      "kind": "workflow-artifact-graph"
+    },
+    {
+      "path": "/work/out/check-download-listing.ts",
+      "kind": "offline-manifest-checker-draft"
+    },
+    {
+      "path": "/work/out/fixtures/",
+      "kind": "synthetic-download-listings",
+      "ids": [
+        "linux-complete",
+        "macos-complete",
+        "linux-lca-layout",
+        "name-sha-mismatch",
+        "receipt-missing",
+        "failed-receipt",
+        "checksum-mismatch",
+        "expired",
+        "linux-and-macos"
+      ]
+    }
+  ],
+  "source_references": [
+    { "path": ".github/workflows/ci.yml", "lines": "15-18,27-31,34-43", "fields": ["checkout.ref", "upload-artifact.name", "path", "retention-days", "if-no-files-found", "if"] },
+    { "path": ".github/workflows/macos-native.yml", "lines": "3-13,21,24-25,27-30,46-50,51-60", "fields": ["workflow_dispatch.inputs.base_sha", "KIZUKI_TARGET", "upload-artifact.name=macos-arm64-${{ github.sha }}"] },
+    { "path": "scripts/release-artifacts.ts", "lines": "34-50" },
+    { "path": "scripts/release-artifacts.test.ts", "lines": "23-50" },
+    { "path": "scripts/build-release.ts", "lines": "31,99-109" },
+    { "path": "scripts/stranger-proof.ts", "lines": "195-205,208-336" },
+    { "path": "scripts/artifact-proof.ts", "lines": "6,116-156" },
+    { "path": "scripts/verify-workflows.ts", "lines": "128-157" },
+    { "path": "scripts/verify-workflows.test.ts", "lines": "208-239" },
+    { "path": "scripts/ci-diff-check.ts", "lines": "39-50" },
+    { "path": "scripts/go-no-go.ts", "lines": "116-131" },
+    { "path": "packages/cli/package.json", "field": "version=0.1.0" },
+    { "path": "docs/native-build.md", "lines": "32-38" },
+    { "path": "docs/stranger-proof.md", "lines": "84-85" },
+    { "url": "https://raw.githubusercontent.com/actions/upload-artifact/ea165f8d65b6e75b540449e92b4886f43607fa02/README.md", "fetched": "2026-09-06", "status": 200 },
+    { "url": "https://raw.githubusercontent.com/actions/upload-artifact/ea165f8d65b6e75b540449e92b4886f43607fa02/action.yml", "fetched": "2026-09-06", "status": 200 }
+  ],
+  "checks": [
+    {
+      "name": "offline-checker-tests",
+      "command": "bun test /work/out/check-download-listing.test.ts",
+      "runtime": "bun 1.3.14",
+      "at": "2026-09-06T21:45:22Z",
+      "result": "PASS",
+      "detail": "12 pass / 0 fail"
+    },
+    {
+      "name": "offline-checker-cli",
+      "command": "bun /work/out/check-download-listing.ts --listing <fixture>/listing.json --root <fixture>/files",
+      "result": "PASS",
+      "exit_codes": {
+        "linux-complete": 0,
+        "receipt-missing": 1,
+        "checksum-mismatch": 1,
+        "invalid-arguments": 2,
+        "invalid-listing-schema": 2
+      }
+    },
+    {
+      "name": "existing-release-artifacts-tests",
+      "command": "bun test scripts/release-artifacts.test.ts",
+      "cwd": "/repo",
+      "result": "PASS",
+      "detail": "3 pass / 0 fail"
+    },
+    {
+      "name": "existing-release-targets-tests",
+      "command": "bun test scripts/release-targets.test.ts",
+      "cwd": "/repo",
+      "result": "PASS",
+      "detail": "2 pass / 0 fail"
+    },
+    {
+      "name": "validateWorkflowText-current-yaml",
+      "command": "bun -e validateWorkflowText on ci.yml macos-native.yml workflows.yml; validateToolchain()",
+      "cwd": "/repo",
+      "result": "PASS"
+    },
+    {
+      "name": "validateTrackedWorkflows",
+      "command": "git ls-files via scripts/verify-workflows.ts",
+      "result": "NOT_RUN",
+      "detail": "archive has no Git metadata; producer exited 128. validateWorkflowText on the three YAML files still PASS."
+    },
+    {
+      "name": "verify-workflows.test.ts",
+      "command": "bun test scripts/verify-workflows.test.ts",
+      "cwd": "/repo",
+      "result": "FAIL",
+      "detail": "14 pass, 1 fail: tracked workflow files pass the same rules CI runs — git ls-files exit 128. Not a YAML regression."
+    },
+    {
+      "name": "full-repository-gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "detail": "Git-dependent; out of this packet's authority and slot."
+    },
+    {
+      "name": "live-github-artifact-download",
+      "result": "NOT_RUN",
+      "detail": "Packet forbids contacting GitHub. Zip nesting remains unobserved."
+    }
+  ],
+  "verification": {
+    "focused": "PASS",
+    "existing_checksum_contract": "PASS",
+    "workflow_text": "PASS",
+    "tracked_workflow_git_producer": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "live_download": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "toolchain": "bun 1.3.14"
+  },
+  "blockers": [],
+  "limitations": [
+    "No Git metadata in /repo; HEAD identity is FLEET-SOURCE-IDENTITY.json only.",
+    "Remote issue/PR/CI association for issue 540 was not refreshed.",
+    "No live Actions artifact was downloaded; path layout uses documented glob/LCA rules plus a synthetic LCA fixture.",
+    "Native package was not built (build-release.ts requires git rev-parse HEAD).",
+    "upload-artifact permission loss and digest behavior cited from fetched docs, not from a run on this SHA.",
+    "Draft checker is /work/out only; it is not integrated into scripts/verify-workflows.ts.",
+    "P003/P006/P015/Astra ownership unchanged."
+  ],
+  "downstream_handoff": {
+    "feeds_packets": ["P005", "P094"],
+    "do_not_wait_on": "unpublished P-packet output",
+    "use": [
+      "workflow-artifact-graph.json as the current upload/retention map",
+      "check-download-listing.ts as the retrieval adapter in front of go-no-go.ts local evidence indexes",
+      "coverage-audit.md so Linux upload pinning is added rather than checksum tests duplicated"
+    ],
+    "retrievable_proof": [
+      "BUILD.json.source_sha, target, bun_version",
+      "SHA256SUMS over kizuki, kizuki-mcp, README.txt, BUILD.json",
+      "receipt.json source_sha, package_sha256, binary_sha256, failures, engine_observations when present",
+      "artifact name SHA for linux-x64-<sha> and macos-arm64-<sha>"
+    ],
+    "not_retrievable": [
+      "artifact-digest / artifact-id / artifact-url",
+      "execute bits",
+      "macos-native inputs.base_sha",
+      "github.run_id",
+      "tree SHA",
+      "native producer attestation"
+    ]
+  },
+  "next_step": "P005/P094 should consume the graph and checker, pin Linux ci.yml upload fields if they own that YAML, and keep go-no-go.ts as the local package+receipt verifier rather than inventing a second checksum contract."
+}

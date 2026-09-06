@@ -1,0 +1,184 @@
+{
+  "task_id": "R100",
+  "packet_id": "R100",
+  "issue": 542,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "title": "Prepare two-client version and configuration evidence checklist",
+  "feeds_packets": ["P046"],
+  "clients_selected": ["Claude Code", "Gemini CLI"],
+  "selection_reason": "Repository first-class harness entry files CLAUDE.md and GEMINI.md; both publish stdio MCP client config. kizuki-mcp is stdio-only. Cursor docs retrieved as HTML shell only and were not used as a template.",
+  "artifacts": [
+    "/work/out/client-a-claude-code.mcp.json",
+    "/work/out/client-b-gemini-cli.settings.json",
+    "/work/out/grants/client-a-grant.json",
+    "/work/out/grants/client-b-grant.json",
+    "/work/out/source-policy.json",
+    "/work/out/enrollment-field-map.json",
+    "/work/out/version-capture-commands.md",
+    "/work/out/continuation-observation-checklist.md",
+    "/work/out/existing-coverage.json",
+    "/work/out/citations.json",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/client-a-claude-code.mcp.json",
+    "/work/out/client-b-gemini-cli.settings.json",
+    "/work/out/version-capture-commands.md",
+    "/work/out/continuation-observation-checklist.md",
+    "/work/out/enrollment-field-map.json"
+  ],
+  "source_references": [
+    "packages/cli/src/commands/agent.ts:17-124",
+    "packages/mcp/src/version.ts:1",
+    "packages/mcp/src/server.ts:99-102",
+    "packages/mcp/src/bin.ts:10-51,82-126",
+    "packages/mcp/src/stdio.ts:67-71",
+    "packages/core/src/agents/types.ts:1-63",
+    "packages/core/src/agents/enrollment.ts:16-43,74-101,457-473",
+    "packages/core/src/serving/packet.ts:45-87",
+    "packages/core/src/serving/correct.ts:31-59",
+    "packages/core/src/serving/health.ts:14-21",
+    "packages/core/src/ledger/source-grants.ts:50-98",
+    "docs/agent-enrollment.md",
+    "docs/world-model-program.md:51-53",
+    "docs/cli.md:399-450",
+    "packages/mcp/test/two-client-continuity.test.ts:63",
+    "packages/mcp/test/credential-stdio.test.ts:145",
+    "packages/mcp/test/version.test.ts:7",
+    "packages/mcp/test/stdio.test.ts:50-110",
+    "packages/cli/test/agent.test.ts:119",
+    "https://code.claude.com/docs/en/mcp.md (200, 2026-09-06)",
+    "https://code.claude.com/docs/en/cli-usage.md (200, 2026-09-06)",
+    "https://raw.githubusercontent.com/google-gemini/gemini-cli/main/docs/tools/mcp-server.md (200, 2026-09-06)"
+  ],
+  "checks": [
+    {
+      "name": "bun --version",
+      "command": "bun --version",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "PASS",
+      "exit": 0,
+      "stdout": "1.3.14",
+      "at": "2026-09-06T22:01:07Z"
+    },
+    {
+      "name": "SERVER_VERSION matches @kizuki/mcp package.json",
+      "command": "static read packages/mcp/src/version.ts packages/mcp/package.json",
+      "result": "PASS",
+      "detail": "both 0.1.0"
+    },
+    {
+      "name": "@kizuki/cli package.json version",
+      "command": "static read packages/cli/package.json",
+      "result": "PASS",
+      "detail": "0.1.0"
+    },
+    {
+      "name": "existing two-client synthetic test present",
+      "command": "static read packages/mcp/test/two-client-continuity.test.ts:63",
+      "result": "PASS",
+      "detail": "InMemoryTransport; not live clients; not duplicated"
+    },
+    {
+      "name": "bun test packages/mcp/test/version.test.ts",
+      "result": "NOT_RUN",
+      "missing": "/repo/node_modules"
+    },
+    {
+      "name": "kizuki version / kizuki-mcp usage",
+      "result": "NOT_RUN",
+      "missing": "/repo/node_modules"
+    },
+    {
+      "name": "claude --version",
+      "result": "NOT_RUN",
+      "missing": "claude binary; install forbidden"
+    },
+    {
+      "name": "gemini --version",
+      "result": "NOT_RUN",
+      "missing": "gemini binary; install forbidden; public MCP page did not document a version flag"
+    },
+    {
+      "name": "live two-client continuation",
+      "result": "NOT_RUN",
+      "missing": "real Claude Code and Gemini CLI sessions, initialized vault, Linux x64 file custody"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "NOT_RUN",
+    "package_type_full_gate": "NOT_RUN",
+    "privacy_diff_integrity": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "live_clients": "NOT_RUN",
+    "reason": "Read-only preparation archive without node_modules, without client binaries, and without authority to install or mutate owner config. Static source/docs mapping only."
+  },
+  "findings": [
+    {
+      "severity": "limit",
+      "id": "synthetic-is-not-live",
+      "location": "packages/mcp/test/two-client-continuity.test.ts:63",
+      "detail": "Existing two-client proof uses SDK InMemoryTransport. It is not Claude Code or Gemini CLI continuation. P046 must not treat that test as Stage A live-client evidence."
+    },
+    {
+      "severity": "limit",
+      "id": "stderr-tools-not-grant",
+      "location": "packages/mcp/src/stdio.ts:67-71",
+      "detail": "Ready line always reports tools=9 (TOOLS.length). Observe grant.tools via enrollment JSON and system_health.principal.tools, not stderr."
+    },
+    {
+      "severity": "limit",
+      "id": "gemini-includeTools-not-core-policy",
+      "location": "Gemini CLI mcp-server.md includeTools/excludeTools",
+      "detail": "Client-side tool filters are not a substitute for the eight-field Core grant."
+    },
+    {
+      "severity": "limit",
+      "id": "stdio-only",
+      "location": "packages/mcp/AGENTS.md:19; packages/mcp/src/bin.ts:10-12",
+      "detail": "kizuki-mcp has no HTTP/SSE transport. Client templates must stay stdio. Claude Code url-without-type entries are skipped."
+    },
+    {
+      "severity": "limit",
+      "id": "file-custody-platform",
+      "location": "packages/cli/src/commands/agent.ts:24; docs/agent-enrollment.md:6-8",
+      "detail": "file: credential delivery requires qualified Linux x64 glibc. Other platforms return unsupported_platform."
+    },
+    {
+      "severity": "limit",
+      "id": "gemini-version-flag-undocumented-in-fetched-mcp-page",
+      "location": "citations.json unavailable_or_unusable",
+      "detail": "Fetched Gemini MCP/README pages did not document gemini --version. Capture whatever the installed binary prints; do not invent a version string."
+    }
+  ],
+  "blockers": [],
+  "execution_gaps": [
+    "No /repo/node_modules; bun test and kizuki-mcp process probes unexecuted.",
+    "claude and gemini binaries absent; not installed.",
+    "No live vault, no owner config mutation, no continuation claim."
+  ],
+  "downstream_handoff": {
+    "to": "P046",
+    "use": [
+      "Two redacted stdio templates (Claude Code .mcp.json, Gemini CLI settings.json)",
+      "Eight-field grants and source-policy.json",
+      "enrollment-field-map.json",
+      "version-capture-commands.md",
+      "continuation-observation-checklist.md tied to kizuki.agent-enrollment/v1 fields"
+    ],
+    "do_not": [
+      "Duplicate two-client-continuity.test.ts or credential-stdio.test.ts",
+      "Claim this packet ran live clients",
+      "Replace P006 docs, P003 evidence design, or P015 schema work",
+      "Treat green synthetic tests as unfamiliar-user or live-client qualification"
+    ]
+  },
+  "next_step": "P046 executes the checklist on a Linux x64 host with Bun 1.3.14, an initialized vault, and separately installed Claude Code plus Gemini CLI, recording real client versions and enrollment JSON without copying tokens or host paths.",
+  "limitations_preserved": [
+    "No native/account/model/human qualification or release acceptance claim.",
+    "Artifacts feed the P DAG and must be reviewed/rebased before production use.",
+    "P003/P015/P006/Astra/external doctor ownership unchanged."
+  ]
+}

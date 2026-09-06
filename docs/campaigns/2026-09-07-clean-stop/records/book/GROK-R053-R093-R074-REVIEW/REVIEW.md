@@ -1,0 +1,51 @@
+# Independent review of R053, R093 and R074
+
+Checked 2026-09-06 at 22:20 UTC against the immutable fleet source `f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7`, the latest completed `*-resume1` artifacts, P071-code2's output, and both the 100-packet ownership roster and current production roster.
+
+**Two source corrections are supported: Telegram cancellation/wait diagnostics and uninstalling an enabled but inactive systemd service.** Claude has a visible import-diagnostic omission, but its next scope should wait for P071's candidate test result and a narrow reporting contract. No product tests, native binaries, service-manager commands, accounts, or worker scripts were executed during this review. The conclusions below are independently inspected source traces, not native qualification.
+
+## R053: narrow P048 diagnostic correction
+
+The phone prompt is outside the connector's transport block (`connector-telegram/src/sign-in.ts:158`). Ctrl-C originates as `UsageError("interactive sign-in cancelled")` in `cli/src/main.ts:76`, and ledger enrollment preserves the thrown error. `runTelegramConnect` then applies `telegramFailure` to every error at `cli/src/commands/connect-telegram.ts:67`. The helper has no local-cancellation case and returns `ConnectionError` with generic incomplete wording. CLI dispatch consequently returns exit 1 instead of the existing cancellation/usage exit 2.
+
+Code and password prompts also need normal cancellation assertions: the real Telegram adapter guards its `start` call and may reclassify a prompt error. A repair that only adds an `instanceof UsageError` branch at the final catch cannot assume it covers all prompt stages. Preserve the locally observed cancellation before provider-adapter wrapping, with a fixed safe cancellation diagnostic; do not expose arbitrary error text.
+
+The `flood_wait` finding is also supported. `connector-telegram/src/guard.ts:65` preserves the wait class even when its duration is unavailable. `telegramFailure` only recognizes a positive safe duration at line 29, so a wait with no usable duration falls through to connectivity/retry wording. Give this existing class wait-specific wording without inventing a duration or changing cooldown/retry behavior.
+
+Owned correction: `packages/cli/src/commands/connect-telegram.ts`, `packages/cli/test/telegram-signin-diagnostics.test.ts` (new), and `packages/cli/test/telegram-enrollment.test.ts`. Keep P048 as the one Telegram owner; P047's accepted provider/configuration review and P049's account/native qualification remain separate.
+
+Normal acceptance: cancellation at phone/code/password yields the same fixed cancellation classification, no success output or new connection, and normal cleanup; a positive wait reports its duration, an unspecified wait reports waiting without a fabricated duration, and an ordinary transport failure retains generic connectivity wording. Existing missing-credentials, successful enrollment, and known cooldown tests remain valid.
+
+R053's other findings are not additional approved defects here. The shared `sign_in_aborted` code intentionally covers several refusal outcomes, and its current sentence acknowledges both cancellation and repeated refusal. More granular provider/registration taxonomy needs separate justification. Generic errors are also deliberately sanitized; do not start passing all `ConnectionError` or provider messages through.
+
+## R093: enabled/inactive is known, but the transaction refuses it
+
+`core/src/serve/supervisor.ts:85` queries enablement and activity independently. A successfully queried enabled unit with inactive runtime becomes `{state: "disabled", enabled: true}`. That combination satisfies neither `confirmedActive` at line 204 nor `confirmedStopped` at line 205. `changeService` therefore refuses it at line 247, before uninstall reaches its disable operation at line 299. The same admission check also prevents reinstall from that state.
+
+This is a normal reachable state. `serve stop` sends SIGTERM (`cli/src/commands/serve.ts:83`) and the generated unit uses `Restart=on-failure` (`core/src/serve/units.ts:45`). systemd documents successful termination signals including SIGTERM for this service type, and enablement is independent of starting/stopping. This supports the normal stop-to-inactive trace; the actual native transition was not observed here. [systemd service manual source](https://raw.githubusercontent.com/systemd/systemd/main/man/systemd.service.xml), [systemctl manual source](https://raw.githubusercontent.com/systemd/systemd/main/man/systemctl.xml)
+
+**Do not loosen `confirmedStopped`.** Uninstall must still perform and verify disablement before deleting the unit. Nor is widening transaction admission alone sufficient: the journal currently records only `previous_enabled`, and recovery calls `host.enable`, which restarts. A failed removal of an intentionally stopped but enabled service could then start it.
+
+The bounded correction must distinguish known pre-change activity from enablement, support uninstall from the known enabled/inactive state, and preserve that stopped state on a recoverable operation failure. Preserve existing version-2 journal recovery; any additional internal journal field/version needs explicit backward compatibility. Returning a truthful pending-recovery result is required when restoration cannot be verified. Existing strict unknown-state, owned-unit, identity and post-disable verification rules remain intact.
+
+Proposed root-owned files: `packages/core/src/serve/supervisor.ts`, `packages/core/test/serve/supervisor.test.ts`, and `packages/cli/test/serve/install.test.ts`. The current production roster has no write overlap with these files. P041–P043 reserve `packages/cli/src/app/` client/host work, and this scope excludes that directory, `service-host.ts`, the daemon loop, doctor, storage/migrations and native packaging. Root should confirm any additional held runtime reservation before assigning the new owner. P091 remains the separate real Linux service qualification lane.
+
+Normal acceptance uses an ordinary fake supervisor that represents enablement and activity independently: install; mark runtime inactive while retaining enablement; uninstall; verify disablement, unit removal, opted-out intent and untouched vault contents. Include ordinary operation failures returning unsuccessful results and verify restoration does not start the previously inactive service. Preserve existing active-service install/uninstall and version-2 recovery behavior. No forced process termination, timing experiment, service invocation or resource test is needed to implement this source correction.
+
+## R074: preserve P071 and avoid a second count contract
+
+P071-code2 now reports candidate `a90db5339762f2436bb446b805d8fc81cdeeada8`, changing only `packages/connectors/test/fleet-claude-fidelity.test.ts`. Its `result.json` says `awaiting_root_test`; `test-request.json` requests that file and `claude.test.ts`. No `test-result.json` was present in its output directory during this review. Do not equate the controller's completed state with passing tests.
+
+The reported count split is real but does not, by itself, prove corrupted totals. `runToCompletion` accumulates invocation totals (`core/src/ingest/run.ts:546`), while every batch updates the checkpoint's explicitly single-batch `last_result`. The unchanged-file terminal batch has zero events (`connectors/src/import-snapshot.ts:133`); doctor/connect status read that last batch. A change to shared checkpoint totals or connection-run accounting is outside the Claude scope and would require one shared reporting contract.
+
+The import-diagnostic omission is concrete: a Claude file containing ordinary supported messages plus an unsupported content part receives a degraded, code/count-only health summary from `import-report.ts:41`. Initial `import` checks health only for enrollment-blocking states (`cli/src/commands/import.ts:99`), discards the degraded summary, and prints only ingestion error counts at line 137. A repeat import does not run that initial health branch. Thus useful records can be imported with `errors=0` and no import-time explanation of the unsupported part. Doctor can later expose the health summary. The parser's tolerant behavior is intentional; do not silently redefine parse warnings as failed event writes.
+
+Proposed third scope is **deferred**, after P071's result and root's reporting decision: `packages/cli/src/commands/import.ts` plus a new `packages/cli/test/import-claude-lifecycle.test.ts`. The contract should expose an explicitly labeled, bounded import health warning on stderr for initial and repeated Claude imports, retain current invocation totals on stdout, and keep parse issues distinguishable from ingestion errors. Preserve existing successful partial-import exit semantics unless root separately approves a change. Do not claim that a fresh health scan describes the exact captured snapshot when the public connector seam does not establish that relationship.
+
+Normal acceptance: a clean two-message export imports successfully and repeats with zero new stored events; an ordinary export with an unsupported content part retains its supported text and emits a safe labeled health warning; re-importing it still emits the warning. No parser, shared snapshot, core ingest, doctor, status, P071 test, or journey-producer write belongs to this scope. If accurate snapshot-bound diagnostics require a new connector/core contract, stop that implementation and return the contract gap instead of silently expanding ownership.
+
+R074's tombstone-documentation discrepancy is already routed to P006. Its cursor-size finding is a resource/bounds topic and was not investigated or reproduced in this task.
+
+## Reader maintenance
+
+The reader already supports repeatable `--roster` arguments and accepts the production JSON through its existing bounded JSON reader. No code change is needed. Use all three default roster paths plus `GROK-FLEET-PRODUCTION-20260906.json` to include P004, P006, P015 and P057 explicitly. The default definition and the exact 100 R packet IDs remain unchanged. A supplemental report and its verification receipt are kept alongside this review instead of overwriting root's latest report.

@@ -1,0 +1,177 @@
+{
+  "task_id": "R027",
+  "packet_id": "R027",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Trace retrieval rebuild ownership and publication inputs",
+  "issue": 53,
+  "owner": "grok-R027",
+  "readiness": "project_scope_ready_now",
+  "identity": {
+    "read_root": "/repo",
+    "source_kind": "git archive of exact commit; no Git metadata",
+    "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+    "branch": "unavailable in this archive",
+    "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+    "remote_verified": false,
+    "write_scope": "/work/out only"
+  },
+  "findings": [
+    {
+      "severity": "info",
+      "id": "default-rebuild-does-not-write-fts5-port-store",
+      "location": "packages/cli/src/retrieval-runtime.ts:6-9; packages/core/src/retrieval/rebuild.ts:168-174; captured empty-sqlite-floor fts5_root_listing []",
+      "failure": "none; accounting trap for P029",
+      "invariant": "store=kizuki.retrieval.fts5 on sqlite-floor backend names the default engine id, not a replaced FTS5 port generation",
+      "evidence": "Empty rebuildRetrieval without a port left .kizuki/retrieval/kizuki.retrieval.fts5/ empty while still reporting store kizuki.retrieval.fts5."
+    },
+    {
+      "severity": "info",
+      "id": "floor-and-fts5-port-are-distinct-sqlite-files",
+      "location": "packages/core/src/search/schema.ts:9-44 vs packages/core/src/retrieval/schema.ts:9-40",
+      "failure": "none",
+      "invariant": "kizuki.db search_documents (scope/body, pages+events) is not the FTS5 port search_documents (kind/text, includes claims)",
+      "evidence": "Port-with-claim capture: documents=2, floor_documents=1, claim_in_floor=0"
+    },
+    {
+      "severity": "info",
+      "id": "fts5-engine-json-rebuilt-at-stays-null",
+      "location": "packages/core/src/retrieval/fts5.ts:254-271 and 537-565",
+      "failure": "none on this revision's FTS5 implementation",
+      "invariant": "RFC 0002 §9.6 lists engine.json rebuilt_at; FTS5 rebuildFromDocuments does not stamp it",
+      "evidence": "Captured engine.json after empty rebuildFromDocuments: rebuilt_at null. Embedded-pg does stamp rebuilt_at (packages/retrieval-pg/test/review-regressions.test.ts:43-60; that file was not re-run here)."
+    },
+    {
+      "severity": "info",
+      "id": "empty-vault-public-rebuild-has-no-existing-test",
+      "location": "no exact case in packages/cli/test/rebuild.test.ts or packages/core/test/retrieval/rebuild.test.ts",
+      "failure": "coverage gap, not a product defect",
+      "invariant": "empty rebuild is success with documents=0",
+      "evidence": "API capture empty-sqlite-floor documents=0 floor_documents=0. Do not duplicate the existing non-empty floor test."
+    },
+    {
+      "severity": "limitation",
+      "id": "cli-and-retrieval-pg-tests-unresolved-workspace",
+      "location": "packages/cli/src/output.ts import @kizuki/tui; packages/retrieval-pg/src/sql-store.ts import @kizuki/core",
+      "failure": "workspace node_modules absent; bun install forbidden",
+      "invariant": "do not invent a passing CLI or retrieval-pg result",
+      "evidence": "bun test packages/cli/test/rebuild.test.ts failed in tempVault init; retrieval-pg owned-erasure failed to load"
+    }
+  ],
+  "deliverables": [
+    "/work/out/derived-output-ownership-manifest.json",
+    "/work/out/rebuild-progress-result-fixtures.json",
+    "/work/out/captured-rebuild-results.json",
+    "/work/out/capture-rebuild-fixtures.ts",
+    "/work/out/existing-coverage.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/orientation.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/derived-output-ownership-manifest.json",
+    "/work/out/rebuild-progress-result-fixtures.json",
+    "/work/out/captured-rebuild-results.json",
+    "/work/out/capture-rebuild-fixtures.ts",
+    "/work/out/existing-coverage.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/orientation.md"
+  ],
+  "source_references": [
+    "packages/core/src/retrieval/rebuild.ts",
+    "packages/core/src/retrieval/ids.ts",
+    "packages/cli/src/owned-retrieval-inventory.ts",
+    "packages/cli/src/commands/rebuild.ts",
+    "packages/cli/src/retrieval-runtime.ts",
+    "packages/cli/src/output.ts",
+    "packages/core/src/derived.ts",
+    "packages/core/src/search/indexer.ts",
+    "packages/core/src/graph/graph.ts",
+    "packages/core/src/retrieval/fts5.ts",
+    "packages/core/src/retrieval/schema.ts",
+    "packages/core/src/search/schema.ts",
+    "packages/core/src/ledger/source-stores.ts",
+    "packages/core/src/claims/store.ts",
+    "packages/core/RETRIEVAL-REBUILD.md",
+    "docs/cli.md:378-397",
+    "rfcs/0002-autonomous-canon.md §9.6 §18.3",
+    "packages/core/test/retrieval/rebuild.test.ts",
+    "packages/cli/test/rebuild.test.ts"
+  ],
+  "checks": [
+    {
+      "name": "core rebuild unit tests",
+      "command": "bun test packages/core/test/retrieval/rebuild.test.ts",
+      "cwd": "/repo",
+      "toolchain": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "PASS",
+      "exit_code": 0,
+      "detail": "5 pass, including floor reconstruction and port-vs-floor claims"
+    },
+    {
+      "name": "derived, rebuild-equivalence, retrieval config, fts5-erasure",
+      "command": "bun test packages/core/test/derived.test.ts packages/core/test/derived/rebuild-equivalence.test.ts packages/core/test/retrieval/config.test.ts packages/core/test/retrieval/fts5-erasure.test.ts",
+      "cwd": "/repo",
+      "started": "2026-09-06T21:59:55Z",
+      "result": "PASS",
+      "exit_code": 0,
+      "detail": "22 pass, 0 fail"
+    },
+    {
+      "name": "settlement and doctor",
+      "command": "bun test packages/core/test/retrieval/settlement.test.ts packages/core/test/serve/doctor.test.ts packages/retrieval-pg/test/owned-erasure.test.ts",
+      "cwd": "/repo",
+      "started": "2026-09-06T22:00:36Z",
+      "result": "PARTIAL",
+      "exit_code": "bun reported 17 pass, 1 fail, 1 error",
+      "detail": "core settlement and doctor passed; retrieval-pg owned-erasure did not load (@kizuki/core unresolved)"
+    },
+    {
+      "name": "CLI rebuild tests",
+      "command": "bun test packages/cli/test/rebuild.test.ts",
+      "cwd": "/repo",
+      "result": "NOT_RUN as product evidence",
+      "detail": "tempVault init: Cannot find module '@kizuki/tui'. Workspace install forbidden."
+    },
+    {
+      "name": "local public-seam capture",
+      "command": "bun /work/out/capture-rebuild-fixtures.ts",
+      "started": "2026-09-06T22:00:57Z",
+      "result": "PASS",
+      "exit_code": 0,
+      "detail": "empty floor 0/0; event-only 1/1; port+claim documents=2 floor_documents=1; empty FTS5 health documents=0"
+    },
+    {
+      "name": "full repository gate scripts/verify.sh",
+      "result": "NOT_RUN",
+      "detail": "Root test slot / workspace install not available in this read-only preparation container. Waiting is NOT_RUN, not PASS."
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS for core rebuildRetrieval/readRetrievalDocuments and rebuildDerived. CLI public process seam NOT_RUN.",
+    "package_type_full_gate": "NOT_RUN",
+    "privacy_diff_integrity": "NOT_RUN (no repository diff; write scope /work/out only)",
+    "independent_review": "NOT_RUN",
+    "retained_package_consumer": "NOT_RUN"
+  },
+  "downstream_handoff": {
+    "feeds": ["P029", "P086"],
+    "use": "P029 should qualify rebuild ownership with rebuild-progress-result-fixtures.json and derived-output-ownership-manifest.json. Do not duplicate packages/core/test/retrieval/rebuild.test.ts port-vs-floor or floor-count cases. The empty-vault completion case is captured at the core API; a CLI process test remains the missing public-seam coverage.",
+    "do_not": [
+      "treat store=kizuki.retrieval.fts5 as proof the FTS5 port store was rebuilt",
+      "require FTS5 engine.json rebuilt_at after rebuildFromDocuments on this revision",
+      "claim CLI JSON/text was executed here",
+      "edit P006 docs or P015 source-B schema from these artifacts"
+    ]
+  },
+  "blockers": [],
+  "next_step": "P029 integrated qualification: assert empty/full rebuild completion fields and floor-vs-port ownership using these fixtures; run CLI rebuild tests after workspace install; rebase onto live base before production use.",
+  "limitations": [
+    "Git/worktree/remote/issue state not available in this archive.",
+    "No bun install; CLI and retrieval-pg package tests unresolved.",
+    "Full verify.sh not run.",
+    "No native/account/model/human qualification claim.",
+    "Capture required /work/out mode 0700; group-writable parents make initVault fail closed (canon_files_unsafe)."
+  ]
+}

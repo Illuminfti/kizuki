@@ -1,0 +1,53 @@
+{
+  "task_id": "P075",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "7df5d889b52360df879b52a63ef53205aacb1701",
+  "status": "awaiting_root_test",
+  "changed_files": [
+    "packages/connector-ics/test/fleet-calendar-fidelity.test.ts"
+  ],
+  "findings": [
+    {
+      "severity": "info",
+      "id": "missing-independent-scheduled-vs-observed",
+      "summary": "Existing ICS tests never freeze occurred_at versus a distinct observed_at, never map floating DTSTART through calendarEvents, never cancel a recurrence instance via STATUS:CANCELLED, and never tombstone STATUS:CANCELLED through the connector seam. Those independent records are now in fleet-calendar-fidelity.test.ts.",
+      "path": "packages/connector-ics/test/fleet-calendar-fidelity.test.ts"
+    }
+  ],
+  "deliverables": [
+    "packages/connector-ics/test/fleet-calendar-fidelity.test.ts",
+    "/work/out/test-request.json",
+    "/work/out/coverage-inspection.md",
+    "/work/out/result.json"
+  ],
+  "verification": {
+    "focused_public_behavior": {
+      "command": "bun test packages/connector-ics/test/fleet-calendar-fidelity.test.ts packages/connector-ics/test/events.test.ts packages/connector-ics/test/datetime.test.ts packages/connector-ics/test/rrule.test.ts packages/connector-ics/test/connector.test.ts packages/connector-ics/test/parse.test.ts packages/connector-ics/test/fetch.test.ts",
+      "head": "7df5d889b52360df879b52a63ef53205aacb1701",
+      "runtime": "root network-disabled runner",
+      "result": "NOT_RUN",
+      "request_id": "p075-ics-calendar-fidelity-7df5d88",
+      "note": "This container must not install dependencies or launch tests. Request written to /work/out/test-request.json; /work/out/test-result.json has not arrived."
+    },
+    "package_type_full_gate": {
+      "result": "NOT_RUN",
+      "note": "Final package qualification remains a root/full-suite slot. This packet does not claim PASS."
+    },
+    "privacy_diff_integrity": {
+      "result": "PASS",
+      "note": "Single owned test file. Synthetic fleet.example UIDs only. No credentials, private records, or production edits."
+    },
+    "independent_review": {
+      "result": "NOT_RUN"
+    },
+    "retained_package_consumer": {
+      "result": "NOT_RUN"
+    }
+  },
+  "blockers": [
+    "Focused and existing package tests are awaiting the root network-disabled runner (/work/out/test-result.json not present).",
+    "Final connector release credit still requires the final compiled package and separate required evidence.",
+    "Any production repair or shared helper change needs a newly reconciled, explicitly owned scope; this packet does not take it."
+  ],
+  "next_step": "Root runs request_id p075-ics-calendar-fidelity-7df5d88 on head 7df5d889b52360df879b52a63ef53205aacb1701 and returns /work/out/test-result.json. Candidate remains a draft until those tests and review pass."
+}

@@ -1,0 +1,67 @@
+{
+  "task_id": "P065",
+  "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+  "status": "FINDINGS",
+  "findings": [
+    "Shipped kizuki.import-x-archive is unzipped owner-post import only; wave1 spec likes/DM/ZIP/legacy tweet.js are not implemented on this base.",
+    "Emission order is part/record file order, not occurred_at sort.",
+    "like.js and direct-messages.js contribute booleans to snapshot_sha256, not file bytes.",
+    "help.x.com archive-download pages returned HTTP 403 Cloudflare on 2026-09-06 and were not used as format evidence.",
+    "Archive and API share post:<id> grammar but different connector_id, sensitivity, metadata.source, and attachment ids; they do not unify.",
+    "This pack is source-only synthetic evidence, not packaged import qualification, live-account proof, stranger-proof, or D19 readiness."
+  ],
+  "deliverables": [
+    "/work/out/result.json",
+    "/work/out/RESULT.md",
+    "/work/out/orientation.md",
+    "/work/out/research-packet.md",
+    "/work/out/findings.md",
+    "/work/out/qualification-boundary.md",
+    "/work/out/supported-format.md",
+    "/work/out/fixtures/pack-manifest.json",
+    "/work/out/fixtures/README.md",
+    "/work/out/fixtures/supported-v1/",
+    "/work/out/fixtures/reordered-v1/",
+    "/work/out/fixtures/duplicate-v1/",
+    "/work/out/fixtures/media-exclusion-v1/",
+    "/work/out/fixtures/in-tree-v1/",
+    "/work/out/fixtures/lineage-v1/",
+    "/work/out/expected/supported-v1.records.json",
+    "/work/out/expected/reordered-v1.records.json",
+    "/work/out/expected/duplicate-v1.refusal.json",
+    "/work/out/expected/media-exclusion-v1.records.json",
+    "/work/out/expected/in-tree-v1.records.json",
+    "/work/out/expected/lineage-v1.comparison.json",
+    "/work/out/oracle/run.ts",
+    "/work/out/oracle/oracle.ts",
+    "/work/out/oracle/pack.ts",
+    "/work/out/oracle/README.md",
+    "/work/out/verification/oracle-run.json"
+  ],
+  "verification": {
+    "focused": {
+      "result": "PASS",
+      "command": "bun /work/out/oracle/run.ts",
+      "head": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+      "runtime": "bun 1.3.14",
+      "started": "2026-09-06T21:19:26.273Z",
+      "finished": "2026-09-06T21:19:26.462Z",
+      "evidence": "/work/out/verification/oracle-run.json",
+      "passed": 53,
+      "failed": 0,
+      "network": "none"
+    },
+    "package_type_full_gate": { "result": "NOT_RUN", "reason": "read-only preparation; /repo has no node_modules" },
+    "independent_review": { "result": "NOT_RUN" },
+    "packaged_import_qualification": { "result": "NOT_RUN" },
+    "live_account": { "result": "NOT_RUN" },
+    "snapshot_sha256_sorted_media": {
+      "supported_v1": "261232e80f1b3a7ca4f0027ff7bd82cb67df38213c1ac7071d94ae33423d532d",
+      "reordered_v1": "144e99b97de3d62fc7bb53c3ff4f6e2262340c46d813f71c3fd8ef8589971dc9",
+      "media_exclusion_v1": "c204ad7013cfad2009f30d034a6a3a1e3a2cb33deee3adbe2b7baf783d8638ed",
+      "in_tree_v1": "36adecfb281c78d7210383c45ecea3ad09638a79e480b41773fc8c633c4192d8"
+    }
+  },
+  "blockers": [],
+  "next_step": "A later connector-x test lane may adopt this pack; do not treat it as packaged import qualification or live-account proof."
+}

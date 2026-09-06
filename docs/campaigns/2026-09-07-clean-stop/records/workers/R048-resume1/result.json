@@ -1,0 +1,155 @@
+{
+  "task_id": "R048",
+  "packet_id": "R048",
+  "issue": 458,
+  "title": "Map Google enrollment UI fields to source-specific commands",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "finding",
+  "owner": "grok-R048",
+  "write_scope": "/work/out only",
+  "feeds_packets": ["P042"],
+  "findings": [
+    {
+      "severity": "medium",
+      "id": "host-reauth-field-order",
+      "location": "packages/cli/src/app/host.ts:311; packages/cli/src/commands/connect-gmail.ts:37; packages/cli/src/gmail.ts:4; packages/connector-gmail/src/state.ts:8",
+      "evidence": "Host compares JSON.stringify(identity.fields) to gmailFields() without sort. CLI sorts both. CLI order is text,subjects,headers,labels,attachments; connector stored order is text,subjects,attachments,headers,labels. Replica verify-field-map.json fieldOrderMismatch.host_stringify_equal=false, cli_sorted_equal=true.",
+      "affected_invariant": "Reauthorization must preserve selected fields; order of the same set must not become identity_conflict.",
+      "required_fix": "P042/implementer: sort or canonicalize field arrays on the host identity check, matching CLI. Do not treat this as a UI default-path bug: client.js always sends new_source true.",
+      "confirmed": true
+    },
+    {
+      "severity": "low",
+      "id": "calendar-missing-id-unavailable",
+      "location": "packages/cli/src/app/host.ts:50-54,296; packages/cli/src/google-calendar.ts:39",
+      "evidence": "googleCalendarId(undefined) throws Error; failure() maps unknown Error to unavailable (retryable). Empty string fails string() as invalid_request.",
+      "affected_invariant": "Ambiguous or missing Calendar identity should refuse as invalid request, not as a retryable host outage.",
+      "required_fix": "Classify missing/primary calendar as AppFailure('invalid_request') before the generic Error path.",
+      "confirmed": true
+    },
+    {
+      "severity": "info",
+      "id": "cli-parser-exit-1",
+      "location": "packages/cli/src/gmail.ts:8; packages/cli/src/google-calendar.ts:9,39; packages/cli/src/main.ts:216-224",
+      "evidence": "Field/calendar parsers throw Error, so dispatch returns 1. UsageError (exclusive flags, wrong --calendar, TTY) returns 2.",
+      "affected_invariant": "Exit 2 is usage; callers must not assume invalid --fields is usage.",
+      "required_fix": "None required for P042 mapping; preserve the distinction.",
+      "confirmed": true
+    }
+  ],
+  "deliverables": [
+    "/work/out/command-argument-mapping.md",
+    "/work/out/fixtures/host-enroll-requests.json",
+    "/work/out/fixtures/consent-field-matrix.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/verify-field-map.ts",
+    "/work/out/verify-field-map.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/command-argument-mapping.md",
+    "/work/out/fixtures/host-enroll-requests.json",
+    "/work/out/fixtures/consent-field-matrix.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/verify-field-map.ts",
+    "/work/out/verify-field-map.json",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/cli/src/app/ui/client.js:228-263",
+    "packages/cli/src/app/protocol.ts:37-44,115-127",
+    "packages/cli/src/app/host.ts:31-54,56,86-92,164-177,272-330,343",
+    "packages/cli/src/gmail.ts:4-9,28-29",
+    "packages/cli/src/google-calendar.ts:4-10,29-30,39",
+    "packages/cli/src/commands/connect.ts:111-142",
+    "packages/cli/src/commands/connect-gmail.ts:11-37",
+    "packages/cli/src/commands/connect-google-calendar.ts:11-39",
+    "packages/cli/src/connections.ts:389-422",
+    "packages/cli/src/main.ts:216-224",
+    "packages/connector-gmail/src/state.ts:7-8,76-79",
+    "packages/cli/test/app-client.test.ts:64-70",
+    "packages/cli/test/app-service.test.ts:150-157",
+    "packages/cli/test/app-host.test.ts:149-198",
+    "packages/cli/test/gmail-enrollment.test.ts:175-177",
+    "packages/cli/test/google-calendar-enrollment.test.ts:159-163",
+    "docs/gmail.md",
+    "docs/google-calendar.md",
+    "docs/local-app.md",
+    "docs/cli.md:76-78"
+  ],
+  "checks": [
+    {
+      "name": "replica-field-map",
+      "command": "bun /work/out/verify-field-map.ts",
+      "toolchain": "bun 1.3.14",
+      "exit_code": 0,
+      "stdout": "PASS cases=17 order_mismatch=true out=/work/out/verify-field-map.json",
+      "result": "PASS",
+      "limitation": "Replica of gmailFields/googleCalendarFields/googleCalendarId/host precheck; did not load @kizuki/connector-gmail."
+    },
+    {
+      "name": "import-gmail-module",
+      "command": "cd /repo && bun -e 'import { gmailFields } from \"./packages/cli/src/gmail.ts\"'",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "limitation": "Cannot find module '@kizuki/connector-gmail'; archive has no workspace node_modules."
+    },
+    {
+      "name": "cli-package-tests",
+      "command": "bun test packages/cli/test/app-host.test.ts packages/cli/test/app-service.test.ts packages/cli/test/app-client.test.ts",
+      "result": "NOT_RUN",
+      "limitation": "Missing workspace install; test helpers write temp vaults outside /work/out."
+    },
+    {
+      "name": "full-repository-gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "limitation": "Not a source-change packet; no test slot; missing install."
+    }
+  ],
+  "verification": {
+    "focused": "PASS replica 17/17 via bun /work/out/verify-field-map.ts (Bun 1.3.14)",
+    "package_tests": "NOT_RUN",
+    "typecheck": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "auth_or_model": "NOT_RUN (controller already verified; not retested)"
+  },
+  "blockers": [
+    "Workspace packages are not installed in this archive, so live host.handle and kizuki process enroll cannot run here.",
+    "CLI helpers persist temporary vaults under os.tmpdir, which this packet may not use."
+  ],
+  "next_step": "P042 should implement against command-argument-mapping.md and fixtures/host-enroll-requests.json without duplicating app-client.test.ts:64-70 or app-service.test.ts:150-157. Decide whether host identity compare should sort fields like CLI, and whether missing calendar_id should be invalid_request.",
+  "downstream_handoff": {
+    "packet": "P042",
+    "consume": [
+      "/work/out/command-argument-mapping.md",
+      "/work/out/fixtures/host-enroll-requests.json",
+      "/work/out/fixtures/consent-field-matrix.json",
+      "/work/out/existing-coverage.md"
+    ],
+    "do_not_duplicate": [
+      "packages/cli/test/app-client.test.ts:64-70",
+      "packages/cli/test/app-service.test.ts:150-157",
+      "packages/cli/test/app-host.test.ts:169-198",
+      "packages/cli/test/google-calendar-enrollment.test.ts:159-163",
+      "packages/cli/test/gmail-enrollment.test.ts:175-177"
+    ],
+    "open_gaps": [
+      "UI default Gmail/Calendar payloads",
+      "Calendar host fields:[] → none",
+      "Gmail host calendar_id forbidden",
+      "Calendar host omitted calendar_id code",
+      "Host new_source+source_key",
+      "Host reauth field-order identity_conflict"
+    ]
+  },
+  "limitations": [
+    "Read-only archive; no Git metadata; remote not verified in this container.",
+    "No live Google, no operator client ids, no credentials.",
+    "Parser execution is a source-faithful replica, not the installed CLI module.",
+    "Catalog required_fields is the same fullFields list for both Google sources; consent distinction is sources.required_fields after enroll.",
+    "No native/account/model/human qualification or release acceptance."
+  ]
+}

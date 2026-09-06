@@ -1,0 +1,35 @@
+{
+  "task_id": "P072",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "3dd49027a764e4b5e0c73674de33fcf578bb5678",
+  "status": "awaiting_root_test",
+  "changed_files": [
+    "packages/cli/src/commands/import.ts",
+    "packages/cli/test/import-claude-lifecycle.test.ts"
+  ],
+  "findings": [],
+  "deliverables": [
+    "packages/cli/src/commands/import.ts observes Claude connector health immediately before capture on initial and repeated imports and emits the fixed stderr warning only when that observation is degraded.",
+    "packages/cli/test/import-claude-lifecycle.test.ts covers clean two-message import/repeat, partial unsupported-content import/repeat, blocked-health enrollment refusal, and source-consent capture denial without the new warning.",
+    "Commit 3dd49027a764e4b5e0c73674de33fcf578bb5678 on agent/grok-p072; parent f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7."
+  ],
+  "verification": {
+    "focused": {
+      "status": "NOT_RUN",
+      "reason": "Root owns the network-disabled runner. Wrote /work/out/test-request.json request_id=p072-claude-pre-capture-health-warning.",
+      "test_paths": [
+        "packages/cli/test/import-claude-lifecycle.test.ts"
+      ]
+    },
+    "package_type_full_gate": {
+      "status": "NOT_RUN",
+      "reason": "This agent container must not install dependencies or launch tests."
+    },
+    "independent_review": {
+      "status": "NOT_RUN",
+      "reason": "Draft candidate pending root focused tests."
+    }
+  },
+  "blockers": [],
+  "next_step": "Root should run request_id p072-claude-pre-capture-health-warning against packages/cli/test/import-claude-lifecycle.test.ts on head 3dd49027a764e4b5e0c73674de33fcf578bb5678 and return /work/out/test-result.json."
+}

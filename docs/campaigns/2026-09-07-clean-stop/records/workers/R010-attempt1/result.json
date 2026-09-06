@@ -1,0 +1,134 @@
+{
+  "task_id": "R010",
+  "packet_id": "R010",
+  "title": "Inventory release status aggregation and missing-gate semantics",
+  "issue": 541,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "owner": "grok-R010",
+  "write_scope": "/work/out only",
+  "feeds_packets": ["P004", "P010"],
+  "findings": [
+    {
+      "severity": "info",
+      "id": "combinator-untested-in-repo",
+      "location": "scripts/go-no-go.ts:198-199",
+      "claim": "The accepted predicate is not extracted or table-tested in scripts/go-no-go.test.ts. Existing tests assert assignment paths and always expect NO-GO because GO is unreachable with current producers.",
+      "kind": "coverage-gap",
+      "confirmed": true,
+      "fix": "Do not duplicate assignment tests. P004 may lift /work/out/aggregation-oracle.ts cases into the repo after review. Oracle draft already executes the combinator including counterfactual GO and optional FAIL veto."
+    },
+    {
+      "severity": "info",
+      "id": "optional-fail-vetoes-go",
+      "location": "scripts/go-no-go.ts:198; diagnostic.fixture-observation required=false",
+      "claim": "FAIL on any row, including optional diagnostic, falsifies accepted. MISSING/NOT_IMPLEMENTED/UNVERIFIABLE/PASS on optional rows do not. D19 rows cannot currently FAIL because evaluateRelease never mutates them.",
+      "kind": "stated-semantics",
+      "confirmed": true,
+      "fix": "Keep fail-closed. Repo tests never isolate this veto because other required rows are already non-PASS."
+    },
+    {
+      "severity": "info",
+      "id": "go-unreachable",
+      "location": "scripts/go-no-go.ts:1,148-169",
+      "claim": "37 required gates; 29 stay NOT_IMPLEMENTED and 3 stay UNVERIFIABLE. No current producer set can establish GO. Not a 1.0 or stranger-proof claim.",
+      "kind": "reachability",
+      "confirmed": true,
+      "fix": "None in R010. Do not design producers here."
+    }
+  ],
+  "deliverables": [
+    "/work/out/status-table.json",
+    "/work/out/status-aggregation.md",
+    "/work/out/gate-inventory.json",
+    "/work/out/aggregation-oracle.ts",
+    "/work/out/aggregation-matrix.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/orientation.md",
+    "/work/out/evidence/oracle-run.json",
+    "/work/out/evidence/checks.json",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/status-table.json",
+    "/work/out/status-aggregation.md",
+    "/work/out/gate-inventory.json",
+    "/work/out/aggregation-oracle.ts",
+    "/work/out/aggregation-matrix.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/orientation.md",
+    "/work/out/evidence/oracle-run.json",
+    "/work/out/evidence/checks.json",
+    "/work/out/evidence/characterize/empty-index.json",
+    "/work/out/evidence/characterize/rc-empty-index-report.json",
+    "/work/out/evidence/characterize/1.0-empty-index-report.json",
+    "/work/out/evidence/characterize/rc-absent-index-report.json",
+    "/work/out/evidence/characterize/cli-rc-report.json",
+    "/work/out/evidence/characterize/cli-1.0-report.json",
+    "/work/out/evidence/go-no-go-test-not-run.txt",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    { "file": "scripts/go-no-go.ts", "lines": "12", "what": "Status = PASS|FAIL|MISSING|UNVERIFIABLE|NOT_IMPLEMENTED" },
+    { "file": "scripts/go-no-go.ts", "lines": "148-169", "what": "gates() 41-row inventory; D19 required=false" },
+    { "file": "scripts/go-no-go.ts", "lines": "182-188", "what": "artifact/engine overlay including v1 engine MISSING" },
+    { "file": "scripts/go-no-go.ts", "lines": "198-199", "what": "accepted combinator and release_1_0_accepted" },
+    { "file": "scripts/go-no-go.ts", "lines": "241-250", "what": "CLI exit 0/1/2" },
+    { "file": "scripts/artifact-proof.ts", "lines": "21,128-144", "what": "EngineQualification subset PASS|MISSING|FAIL" },
+    { "file": "packages/core/src/serve/qualification.ts", "lines": "105,110", "what": "different observer enum; release_qualified always false" },
+    { "file": "scripts/go-no-go.test.ts", "lines": "138-173,175-217,273-282,297-308,310-332", "what": "existing assignment coverage; do not duplicate" },
+    { "file": "docs/release-acceptance.md", "lines": "5-7,37-41,119-150", "what": "GO unreachable; exits; optional never grant credit" },
+    { "file": "docs/decision-log.md", "lines": "27,89-91,105-126", "what": "D19 readiness without calendar gates" },
+    { "file": "docs/CURRENT.md", "lines": "10-22", "what": "D19 current readiness bar" }
+  ],
+  "checks": [
+    { "name": "aggregation-oracle-self-checks", "command": "bun /work/out/aggregation-oracle.ts --characterize", "exit_code": 0, "result": "PASS" },
+    { "name": "cli-empty-index-rc", "command": "bun scripts/go-no-go.ts --profile rc --evidence ABSOLUTE_EMPTY_INDEX --out ABSOLUTE_NEW_FILE", "exit_code": 1, "result": "PASS", "meaning": "written NO-GO" },
+    { "name": "cli-empty-index-1.0", "command": "bun scripts/go-no-go.ts --profile 1.0 --evidence ABSOLUTE_EMPTY_INDEX --out ABSOLUTE_NEW_FILE", "exit_code": 1, "result": "PASS", "meaning": "written NO-GO" },
+    { "name": "cli-retry-existing-out", "command": "same --out as an existing report", "exit_code": 2, "result": "PASS" },
+    { "name": "cli-invalid-args", "command": "bun scripts/go-no-go.ts --ignore x", "exit_code": 2, "result": "PASS" },
+    { "name": "existing-go-no-go-test", "command": "bun test scripts/go-no-go.test.ts", "exit_code": 1, "result": "NOT_RUN", "missing": "node_modules/js-tiktoken (install forbidden)" },
+    { "name": "typecheck", "command": "bun run typecheck", "result": "NOT_RUN" },
+    { "name": "full-repository-gate", "command": "bun run verify", "result": "NOT_RUN" }
+  ],
+  "verification": {
+    "oracle": "PASS",
+    "evaluateRelease_characterization": "PASS",
+    "cli_exit_codes": "PASS (0 unused: GO unreachable; 1 on written NO-GO; 2 on invalid args/retry)",
+    "existing_repo_tests": "NOT_RUN",
+    "typecheck": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "bun": "1.3.14",
+    "head": "archive of f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7; no Git metadata"
+  },
+  "blockers": [
+    "Git archive has no node_modules; bun test scripts/go-no-go.test.ts cannot load js-tiktoken/lite. Install is forbidden in this packet.",
+    "Full verify/typecheck not run; no root test slot.",
+    "Live issue/PR/remote state not verified in this container (controller-owned).",
+    "No authority to edit scripts/go-no-go.ts or add producers."
+  ],
+  "next_step": "P004/P010 consume the finite table and oracle; after review, optionally promote the combinator cases into scripts/go-no-go.test.ts without duplicating assignment tests. Do not treat this draft as production evaluator code or as release GO.",
+  "downstream_handoff": {
+    "to": ["P004", "P010"],
+    "consume": [
+      "/work/out/status-table.json",
+      "/work/out/aggregation-oracle.ts",
+      "/work/out/aggregation-matrix.json",
+      "/work/out/gate-inventory.json"
+    ],
+    "do_not": [
+      "design new producers",
+      "replace P003 evidence design, P015 source-B, P006 docs, Astra, or doctor owners",
+      "claim native/account/model/human qualification or 1.0 acceptance",
+      "treat optional D19 rows as required or as credit-granting"
+    ],
+    "combinator": "accepted = required.every(status===PASS) && !any(status===FAIL); release_1_0_accepted = profile==='1.0' && accepted"
+  },
+  "limitations": [
+    "Read-only preparation on a git archive. No source edits.",
+    "No native, account, model, or human qualification.",
+    "No release acceptance claim.",
+    "Counterfactual GO vectors are oracle-only.",
+    "Qualification observer statuses are a different enum and do not aggregate here."
+  ]
+}

@@ -1,0 +1,156 @@
+{
+  "task_id": "R038",
+  "packet_id": "R038",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "issue": 472,
+  "title": "Trace copied support references through staging",
+  "findings": [
+    {
+      "severity": "info",
+      "location": "packages/core/src/staging/producers.ts:48-174 (no role identifier in packages/core/src/staging/)",
+      "failure": "SubjectRef.role is not copied onto ProposalInput, StagedProposal, or compat claims.",
+      "invariant": "Staged support is provenance event_ids plus namespaced subject id strings.",
+      "kind": "confirmed_current_representation",
+      "evidence": "Existing exact frontmatter equality in packages/core/test/staging/producers.test.ts:35-48; grep of staging/ for role is empty; executed fixture ordinary_message."
+    },
+    {
+      "severity": "info",
+      "location": "packages/core/src/staging/producers.ts:101-103 vs packages/core/src/staging/page-candidate.ts:33-40",
+      "failure": "Capture-note subjects map one namespaced id per SubjectRef row without uniquing; page-candidate subjects unique.",
+      "invariant": "Same event can yield duplicate capture-note subject strings when one subject_id has two roles.",
+      "kind": "confirmed_current_representation",
+      "evidence": "/work/out/fixtures/executed-staged-records.json case dual_role_same_subject; not an existing exact test (producers.test.ts:58-68 only asserts entity collapse)."
+    },
+    {
+      "severity": "info",
+      "location": "packages/core/src/staging/proposals.ts:570-613 and packages/core/src/claims/hash.ts:22-26",
+      "failure": "Corroboration merges provenance only. First-writer x-display-name and subjects are retained. Signature ignores x-display-name.",
+      "invariant": "Later sightings do not rewrite staged subject support or display names.",
+      "kind": "confirmed_current_representation",
+      "evidence": "producers.test.ts:70-93 PASS for provenance merge; retained display name shown in executed later_sighting_corroboration."
+    },
+    {
+      "severity": "info",
+      "location": "packages/core/src/staging/proposals.ts:432",
+      "failure": "Compat claim.subject is subjects[0]; predicate, object, and claim_key are NULL.",
+      "invariant": "Deterministic staged rows are outside semantic claim_key conflict.",
+      "kind": "confirmed_current_representation",
+      "evidence": "Every executed compat_claim slice."
+    },
+    {
+      "severity": "info",
+      "location": "packages/core/src/serve/extract.ts:166-188 (adjacent, not assigned write)",
+      "failure": "Model extract files raw ClaimDraft.subject through insertClaim, not namespacedSubjectId / fileProposal.",
+      "invariant": "Two subject id shapes exist in core; staging namespacing is not universal.",
+      "kind": "confirmed_adjacent_handoff",
+      "evidence": "Static read; subject-roles.test.ts covers prompt roles, not staged copy."
+    }
+  ],
+  "deliverables": [
+    "/work/out/support-reference-map.md",
+    "/work/out/support-reference-map.json",
+    "/work/out/fixtures/staged-record-schema.json",
+    "/work/out/fixtures/executed-staged-records.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/emit-staged-support-fixtures.ts",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/support-reference-map.md",
+    "/work/out/support-reference-map.json",
+    "/work/out/fixtures/staged-record-schema.json",
+    "/work/out/fixtures/executed-staged-records.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/emit-staged-support-fixtures.ts",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/core/src/staging/producers.ts",
+    "packages/core/src/staging/proposals.ts",
+    "packages/core/src/staging/subjects.ts",
+    "packages/core/src/staging/page-candidate.ts",
+    "packages/core/src/staging/budget.ts",
+    "packages/core/src/claims/hash.ts",
+    "packages/core/src/claims/schema.ts",
+    "packages/core/src/contracts/event.ts",
+    "packages/core/src/ingest/run.ts",
+    "packages/core/src/serve/extract.ts",
+    "packages/core/test/staging/producers.test.ts",
+    "packages/core/test/staging/proposals.test.ts",
+    "packages/core/test/staging/page-candidate.test.ts",
+    "packages/core/test/staging/origin-guard.test.ts",
+    "packages/core/test/producer/subject-roles.test.ts",
+    "rfcs/0002-autonomous-canon.md"
+  ],
+  "checks": [
+    {
+      "name": "focused_staging_and_subject_role_tests",
+      "command": "cd /repo && bun test ./packages/core/test/staging/producers.test.ts ./packages/core/test/staging/proposals.test.ts ./packages/core/test/staging/page-candidate.test.ts ./packages/core/test/staging/origin-guard.test.ts ./packages/core/test/producer/subject-roles.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T21:46:48Z",
+      "result": "PASS",
+      "detail": "89 pass, 0 fail, 328 expect() calls, exit 0"
+    },
+    {
+      "name": "staging_no_return_test",
+      "command": "cd /repo && bun test ./packages/core/test/staging/no-return.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T21:46:30Z",
+      "result": "FAIL",
+      "detail": "Unhandled error: Cannot find module 'js-tiktoken/lite' from packages/core/src/serving/packet-tokenizer.ts. Missing runtime input in this archive; not a staging copy-contract result."
+    },
+    {
+      "name": "local_fixture_emitter",
+      "command": "bun /work/out/emit-staged-support-fixtures.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T21:59:54Z",
+      "result": "PASS",
+      "detail": "exit 0; in-memory SQLite; wrote /work/out/fixtures/executed-staged-records.json"
+    },
+    {
+      "name": "full_repository_gate",
+      "command": "bash scripts/verify.sh",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "detail": "Read-only preparation packet; no full-suite slot."
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS",
+    "package_type_full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "native_or_account_qualification": "NOT_CLAIMED"
+  },
+  "blockers": [],
+  "limitations": [
+    "/repo is a git archive of the exact base; Git remotes and live issue/PR state were not refreshed in this container.",
+    "js-tiktoken/lite is absent here, so packages/core/test/staging/no-return.test.ts could not load the core index.",
+    "Full verify.sh / typecheck / workspace test were not run.",
+    "Semantic attribution, v2 support roots, and Astra expectations are out of scope.",
+    "No native/account/model/human qualification or release acceptance."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P032", "P033"],
+    "consume": [
+      "/work/out/support-reference-map.md",
+      "/work/out/support-reference-map.json",
+      "/work/out/fixtures/staged-record-schema.json",
+      "/work/out/fixtures/executed-staged-records.json",
+      "/work/out/existing-coverage.json"
+    ],
+    "do_not_assume": [
+      "staged proposals carry SubjectRef.role",
+      "capture-note subjects are uniqued",
+      "corroboration merges subjects or display names",
+      "compat claims have predicate/object/claim_key",
+      "model extract uses namespacedSubjectId"
+    ],
+    "reserved": ["P003 evidence design", "P015 source-B schema", "P006 docs", "P034/Astra semantic attribution"]
+  },
+  "next_step": "P032/P033 should treat staged support as provenance event_ids plus namespaced subject strings, and keep role/v2 support-root work on the P034/Astra path."
+}

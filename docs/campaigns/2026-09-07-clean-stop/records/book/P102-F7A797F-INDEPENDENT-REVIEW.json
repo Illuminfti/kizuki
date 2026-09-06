@@ -1,0 +1,86 @@
+{
+  "schema": "kizuki.p102-static-review/v1",
+  "reviewed_at": "2026-09-06T23:04:38Z",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "candidate_sha": "f7a797f0d5bb13b5c430f2251d96567f8950b106",
+  "candidate_tree": "79b101a853a189fbb7d125cc8cc5f0f3d6cc0566",
+  "raw_commit_parents": [
+    "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7"
+  ],
+  "changed_paths": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/macos-native.yml",
+    "scripts/verify-workflows.test.ts",
+    "scripts/verify-workflows.ts"
+  ],
+  "outside_owned_paths": [],
+  "head_index_equal": true,
+  "tracked_worktree_changes": [],
+  "untracked_paths": [],
+  "diff_check": "PASS",
+  "file_sha256": {
+    ".github/workflows/ci.yml": "c566b0ce54c5af19edd01aa79cd3d659230fa6d8002e850fe6d53d36009f6465",
+    ".github/workflows/macos-native.yml": "df4a3806b5de5fdaa8c7f105d21a771e71d6464273f8394a861c96c6ab627796",
+    "scripts/verify-workflows.test.ts": "e63a85107a5c030770abd461cfd031fc572c13dceabada2625e59e54032eb18e",
+    "scripts/verify-workflows.ts": "e3a1bb622234809c428a21380fbc19f68194d38aaebf2655ae16cff26eb97d54"
+  },
+  "handoff_sha256": "f7aa0b342235e5fbc627f063a3461890446a1412b1494e6a2c8c13df545aba99",
+  "review_decision": "NEEDS_CORRECTION",
+  "blocking_findings": [
+    {
+      "id": "P102-R1",
+      "severity": "P1",
+      "file": "scripts/verify-workflows.ts",
+      "lines": "198-206",
+      "summary": "The Linux validator accepts arbitrary steps between the receipt check and upload and accepts required checks after upload, so package-only retention or retention before a failing exact-head check can return while validation passes.",
+      "required_correction": "Require the receipt check immediately before the sole final upload, freeze the current proof and exact-head ordering before it, and add structural mutation tests."
+    },
+    {
+      "id": "P102-R2",
+      "severity": "P1",
+      "file": "scripts/verify-workflows.ts",
+      "lines": "198-206",
+      "summary": "Unlike the macOS predicate, Linux accepts workflow and job run defaults, so changed shell failure semantics can mask an earlier command within the exact multi-line proof text.",
+      "required_correction": "Reject workflow-level and jobs.test run defaults and test both mutations without executing altered workflows."
+    }
+  ],
+  "current_workflow_behavior": {
+    "linux": "Receipt check immediately precedes an exact pinned success-gated upload with package and receipt paths.",
+    "macos": "Receipt check immediately precedes an exact pinned success-gated upload in a closed nine-step job.",
+    "assessment": "The checked-in YAML fixes the original runtime defect; the Linux validator does not preserve the invariant."
+  },
+  "root_sealed_test": {
+    "run_id": "3b823c9c19144ae9a40935b15d2c0a9d",
+    "status": "failed",
+    "stale": false,
+    "exit_code": 1,
+    "passes": 15,
+    "failures": 1,
+    "assertions": 69,
+    "candidate_fixture_failures": 0,
+    "context_failure": "validateTrackedWorkflows returned git ls-files exit 128 because the base-plus-owned-files source archive had no .git metadata",
+    "receipt": "PRIVATE_FLEET/test-controller/runs/3b823c9c19144ae9a40935b15d2c0a9d/result.json",
+    "stderr_sha256": "a9a4fd2ff0a700b6c65aa7303ab76635538f4a5a3ee94f5c7fb2b8294fd00574",
+    "input_digest_before": "6dec603ab3365f59c7f738d7a6c5d0d99dd86ece9c19e3937bb4b20f0bed4f70",
+    "input_digest_after": "6dec603ab3365f59c7f738d7a6c5d0d99dd86ece9c19e3937bb4b20f0bed4f70",
+    "credit": "No full-suite or exact-HEAD package credit; root synthetic-index rerun and real-Git integration remain required."
+  },
+  "review_artifacts": {
+    "report": {
+      "path": "P102-F7A797F-INDEPENDENT-REVIEW.md",
+      "sha256": "d3a2ad7bbc4f839569ba51ed3914974212f84bb63fef8fe663a08f4509799efc"
+    },
+    "corrective_handoff": {
+      "path": "P102-F7A797F-CORRECTIVE-HANDOFF.md",
+      "sha256": "e757117024d86277009b6a59175e551bbdcba9872a4f5cea5bb179581d416aad"
+    }
+  },
+  "execution": {
+    "reviewer_product_or_test_commands_run": false,
+    "review_mode": "static-only"
+  },
+  "limitations": [
+    "No workflow, action, build, native proof, upload, external system, or candidate mutation was executed by this reviewer.",
+    "Correction, sealed rerun, exact-head integration, merge, native qualification, and release acceptance remain separate."
+  ]
+}

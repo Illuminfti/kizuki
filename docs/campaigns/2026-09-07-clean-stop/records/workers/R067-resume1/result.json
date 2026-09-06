@@ -1,0 +1,178 @@
+{
+  "task_id": "R067",
+  "packet_id": "R067",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "issue": 549,
+  "feeds": ["P066"],
+  "capability": "export_import",
+  "findings": [
+    {
+      "id": "empty-tweets-untested",
+      "severity": "coverage",
+      "evidence": "packages/connector-x/src/archive.ts:336-392 never requires total_posts>0; writeFixtureArchive always writes two posts (src/testkit.ts:15-22)",
+      "invariant": "empty window.YTD.tweets.part0 = [] is a supported layout",
+      "required_fix": "P066: add production scanArchive test for fixtures/minimal-empty; do not treat empty posts as misconfigured"
+    },
+    {
+      "id": "missing-required-files-untested",
+      "severity": "coverage",
+      "evidence": "archive.ts:333-338 exact messages; connector.test.ts symlink path does not assert them",
+      "invariant": "missing data/account.js and missing data/tweets.js are misconfigured with those messages",
+      "required_fix": "P066: assert those two messages; do not reuse the symlink case"
+    },
+    {
+      "id": "no-nested-or-data-root-discovery",
+      "severity": "limitation",
+      "evidence": "archive.ts:292-305 only inspects <source>/data; no parent/child search",
+      "invariant": "source must be the directory that directly contains data/",
+      "required_fix": "P066: characterize data-as-root and parent-of-twitter-export as misconfigured unless product asks for discovery"
+    },
+    {
+      "id": "legacy-tweet-js-not-current",
+      "severity": "limitation",
+      "evidence": "archive.ts:78 TWEETS regex; docs/wave1/specs/connector-x.md:379-380 wanted tweet.js fallback",
+      "invariant": "current loader requires tweets.js / tweets-partN.js and window.YTD.tweets",
+      "required_fix": "Do not document wave1 tweet.js/ZIP/likes/DM as shipped; add a characterization test if P066 touches filenames"
+    },
+    {
+      "id": "wrapper-bom-whitespace-untested",
+      "severity": "coverage",
+      "evidence": "ytd.ts:6 allows BOM, surrounding whitespace, optional semicolon; ytd.test.ts:5-18 uses only canonical window.YTD…;",
+      "invariant": "whole-file wrapper; JS never executed",
+      "required_fix": "P066 may add BOM/whitespace/no-semicolon cases; do not retest prefix/likes/IIFE/object"
+    },
+    {
+      "id": "any-regular-file-reported-as-zip",
+      "severity": "limitation",
+      "evidence": "archive.ts:112-114 isFile() always throws ZIP not_supported; connector.test.ts:175-180 uses a file named archive.zip containing PK",
+      "invariant": "ZIP input is not_supported; magic bytes are not checked",
+      "required_fix": "Keep existing ZIP test; do not claim zip-magic detection"
+    },
+    {
+      "id": "production-loader-not-executed-here",
+      "severity": "verification",
+      "evidence": "bun ./probe-import.ts exit 1; bun test packages/connector-x/test/ytd.test.ts exit 1; missing @kizuki/core; bun install forbidden",
+      "invariant": "R067 must not invent a passing production result",
+      "required_fix": "P066 run scanArchive tests in a workspace with resolved @kizuki/core"
+    },
+    {
+      "id": "provider-help-unavailable",
+      "severity": "evidence",
+      "evidence": "https://help.x.com/en/managing-your-account/how-to-download-your-x-archive HTTP 403 Cloudflare challenge on 2026-09-06",
+      "invariant": "no invented provider citations; no personal archives",
+      "required_fix": "none for R067; layout taken from current source"
+    }
+  ],
+  "deliverables": [
+    "/work/out/file-layout-recognition-table.md",
+    "/work/out/layout-recognition-matrix.json",
+    "/work/out/minimal-layout-loader-draft.ts",
+    "/work/out/loader-draft-report.json",
+    "/work/out/fixtures/minimal-empty/data/account.js",
+    "/work/out/fixtures/minimal-empty/data/tweets.js",
+    "/work/out/downstream-handoff.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/file-layout-recognition-table.md",
+    "/work/out/layout-recognition-matrix.json",
+    "/work/out/minimal-layout-loader-draft.ts",
+    "/work/out/loader-draft-report.json",
+    "/work/out/fixtures/",
+    "/work/out/downstream-handoff.md",
+    "/work/out/probe-import.ts"
+  ],
+  "source_references": [
+    "packages/connector-x/src/archive.ts:78-80",
+    "packages/connector-x/src/archive.ts:102-118",
+    "packages/connector-x/src/archive.ts:197-210",
+    "packages/connector-x/src/archive.ts:292-432",
+    "packages/connector-x/src/ytd.ts:6",
+    "packages/connector-x/src/ytd.ts:32-64",
+    "packages/connector-x/src/errors.ts:3-15",
+    "packages/connector-x/src/connector.ts:137-144",
+    "packages/connector-x/src/testkit.ts:15-22",
+    "packages/connector-x/test/ytd.test.ts:5-29",
+    "packages/connector-x/test/connector.test.ts:39-209",
+    "packages/cli/test/x-archive-import.test.ts:12-70",
+    "packages/connector-x/README.md:1-30"
+  ],
+  "checks": [
+    {
+      "name": "layout-draft",
+      "command": "cd /work/out && bun ./minimal-layout-loader-draft.ts",
+      "runtime": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "exit_code": 0,
+      "result": "PASS",
+      "note": "mirrored directory+wrapper draft only; 15 synthetic cases; not production scanArchive"
+    },
+    {
+      "name": "production-scanArchive-import",
+      "command": "cd /work/out && bun ./probe-import.ts",
+      "runtime": "bun 1.3.14",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "note": "Cannot find module '@kizuki/core' from packages/connector-x/src/errors.ts; workspace install forbidden"
+    },
+    {
+      "name": "in-tree-ytd-tests",
+      "command": "cd /repo && bun test packages/connector-x/test/ytd.test.ts",
+      "runtime": "bun 1.3.14",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "note": "Cannot find module '@kizuki/core' from packages/connector-x/src/map.ts; tests statically read only"
+    },
+    {
+      "name": "x-help-center",
+      "command": "bun fetch https://help.x.com/en/managing-your-account/how-to-download-your-x-archive",
+      "date": "2026-09-06",
+      "result": "unavailable",
+      "note": "HTTP 403 Cloudflare challenge"
+    }
+  ],
+  "verification": {
+    "focused": {
+      "command": "cd /work/out && bun ./minimal-layout-loader-draft.ts",
+      "result": "PASS",
+      "exit_code": 0,
+      "scope": "layout-wrapper draft against /work/out/fixtures"
+    },
+    "package_tests": {
+      "command": "cd /repo && bun test packages/connector-x/test/ytd.test.ts",
+      "result": "NOT_RUN",
+      "reason": "missing @kizuki/core; bun install forbidden"
+    },
+    "full_gate": {
+      "result": "NOT_RUN",
+      "reason": "read-only preparation packet; no workspace install; no source edits"
+    },
+    "production_scanArchive": {
+      "result": "NOT_RUN",
+      "reason": "Cannot find module '@kizuki/core'"
+    },
+    "live_account": {
+      "result": "NOT_RUN",
+      "reason": "forbidden; no personal archives"
+    }
+  },
+  "blockers": [],
+  "downstream_handoff": {
+    "to": "P066",
+    "file": "/work/out/downstream-handoff.md",
+    "add_tests": ["L02", "L04", "L05", "L06", "L07", "L09", "L13", "L14", "L15", "L17", "L18"],
+    "do_not_duplicate": ["L01", "L10", "L11", "L12", "L16", "L19", "L20", "L21", "L22", "L23"],
+    "do_not_implement_unless_product_asks": "nested twitter-* auto-discovery or ZIP/tweet.js/likes/DM wave1 behavior"
+  },
+  "next_step": "P066 should run production scanArchive tests in a workspace with @kizuki/core for the L02 empty layout and the listed filename/wrapper gaps, without duplicating existing ZIP/symlink/gap/oversize/wrapper-mismatch or P065 post-field cases.",
+  "limitations": [
+    "Only /work/out was written.",
+    "Production scanArchive was not executed.",
+    "Package tests were not executed.",
+    "Official X Help Center was unavailable (403).",
+    "No live archive, credentials, or personal data.",
+    "Draft is layout/wrapper recognition, not a replacement loader.",
+    "No native/account/model/human qualification claim."
+  ]
+}

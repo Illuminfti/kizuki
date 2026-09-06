@@ -1,0 +1,191 @@
+{
+  "task_id": "R041",
+  "packet_id": "R041",
+  "title": "Review models configuration presence and error distinctions",
+  "issue": 473,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "finding",
+  "owner": "grok-R041",
+  "write_scope": "/work/out only",
+  "limitations": [
+    "Read-only /repo git archive; no Git metadata; remote and issue 473 not fetched.",
+    "No node_modules; bun install forbidden; existing package tests NOT_RUN.",
+    "No provider, credential, download, or endpoint calls.",
+    "No source edits. P006 owns docs. P003 owns shared evidence design.",
+    "No native/account/model/human qualification or release acceptance."
+  ],
+  "artifacts": [
+    "/work/out/config-state-to-message-map.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/findings.md",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/scripts/validate-static.ts",
+    "/work/out/checks/static-validate.json",
+    "/work/out/fixtures/configs/",
+    "/work/out/fixtures/outputs/"
+  ],
+  "deliverables": [
+    "/work/out/result.json",
+    "/work/out/RESULT.md",
+    "/work/out/config-state-to-message-map.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/findings.md",
+    "/work/out/orientation.md",
+    "/work/out/scripts/validate-static.ts",
+    "/work/out/checks/static-validate.json",
+    "/work/out/fixtures/configs/none-string.toml",
+    "/work/out/fixtures/configs/none-table.toml",
+    "/work/out/fixtures/configs/incomplete-model-only.toml",
+    "/work/out/fixtures/configs/unresolved-secret.toml",
+    "/work/out/fixtures/configs/malformed-missing-base-url.toml",
+    "/work/out/fixtures/configs/rfc-string-form.toml",
+    "/work/out/fixtures/configs/gguf-id.toml",
+    "/work/out/fixtures/configs/invalid.toml",
+    "/work/out/fixtures/configs/loopback-complete.toml",
+    "/work/out/fixtures/configs/model-named-none.toml",
+    "/work/out/fixtures/configs/cli-user-config.toml",
+    "/work/out/fixtures/outputs/doctor-off.txt",
+    "/work/out/fixtures/outputs/doctor-unverified.txt",
+    "/work/out/fixtures/outputs/doctor-on.template.txt",
+    "/work/out/fixtures/outputs/serve-malformed.stderr.txt",
+    "/work/out/fixtures/outputs/serve-unresolved-secret.stderr.txt",
+    "/work/out/fixtures/outputs/serve-string-form.stderr.txt",
+    "/work/out/fixtures/outputs/serve-gguf-id.stderr.txt",
+    "/work/out/fixtures/outputs/serve-invalid-toml.stderr.txt",
+    "/work/out/fixtures/outputs/models-pull-no-from.stderr.txt",
+    "/work/out/fixtures/outputs/models-pull-unknown-verb.stderr.txt",
+    "/work/out/fixtures/outputs/models-pull-no-vault.stderr.txt",
+    "/work/out/fixtures/outputs/models-pull-hash-mismatch.stderr.txt",
+    "/work/out/fixtures/outputs/none-llm.json",
+    "/work/out/fixtures/outputs/producer-unavailable.json"
+  ],
+  "source_references": [
+    "packages/cli/src/commands/models.ts:15-49",
+    "packages/cli/src/config.ts:41-118",
+    "packages/cli/src/context.ts:22-37",
+    "packages/cli/src/commands/doctor.ts:319-333,387-461",
+    "packages/cli/src/serve-runtime.ts:45-80,152-178",
+    "packages/cli/src/vault-config.ts:19-23,95-157",
+    "packages/cli/src/main.ts:216-224",
+    "packages/core/src/serve/config.ts:21-43",
+    "packages/core/src/serve/doctor.ts:184-249,396-399",
+    "packages/core/src/serve/rails.ts:59-66,339",
+    "packages/core/src/serve/write-pass.ts:156-163,335-347",
+    "packages/core/src/serve/types.ts:203-218",
+    "packages/core/src/producer/model.ts:373-387,414-454,474-478",
+    "packages/core/src/producer/diagnostics.ts:46-52",
+    "packages/llm/src/none.ts:29-40",
+    "packages/llm/src/config.ts:59-143",
+    "packages/llm/src/openai-compatible.ts:135-148,210-215",
+    "packages/embed-gguf/src/models.ts:83-114",
+    "docs/cli.md:228-241,290-311",
+    "docs/architecture.md:26-29",
+    "rfcs/0002-autonomous-canon.md:120-125,2098-2102,2118-2171",
+    "docs/decision-log.md D12",
+    "packages/cli/test/doctor/liveness.test.ts:95-151",
+    "packages/cli/test/models.test.ts:10-86",
+    "packages/cli/test/serve/runtime.test.ts:173-213",
+    "packages/cli/test/config.test.ts:10-16",
+    "packages/llm/test/none.test.ts:11-44",
+    "packages/llm/test/tri-state.test.ts:26-76",
+    "packages/core/test/serve/write-pass.test.ts:144-167",
+    "packages/core/test/producer/model.test.ts:418-446"
+  ],
+  "checks": [
+    {
+      "name": "static fixture parse and source-string presence",
+      "command": "bun /work/out/scripts/validate-static.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T22:04:27Z",
+      "evidence": "/work/out/checks/static-validate.json",
+      "exit": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "existing doctor/models/llm/producer tests",
+      "command": "bun test packages/cli/test/doctor/liveness.test.ts packages/cli/test/models.test.ts packages/llm/test/none.test.ts packages/core/test/producer/model.test.ts",
+      "result": "NOT_RUN",
+      "missing": "node_modules in the read-only /repo archive; bun install --frozen-lockfile is forbidden here"
+    },
+    {
+      "name": "typecheck and repository gate",
+      "command": "bun run typecheck && bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "missing": "same install prerequisite; no assigned full-suite slot"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS static only; CLI tests NOT_RUN",
+    "package_type_full_gate": "NOT_RUN",
+    "privacy_diff_integrity": "PASS fixture scan (no tokens, no live URLs)",
+    "independent_review": "NOT_RUN",
+    "existing_tests": "statically verified by reading assertions; not re-executed"
+  },
+  "findings": [
+    {
+      "severity": "doc-contract",
+      "location": "docs/cli.md:238 vs packages/core/src/serve/doctor.ts:229",
+      "failure": "Doctor CLI docs say canon writing on|off; shipped enum includes unverified.",
+      "invariant": "Honest doctor states.",
+      "confirmed": true
+    },
+    {
+      "severity": "config-distinction",
+      "location": "rfcs/0002-autonomous-canon.md:2122-2124 vs packages/cli/src/serve-runtime.ts:66-67 and packages/core/src/serve/config.ts:35-38",
+      "failure": "RFC string form is doctor off plus serve exit 1, not a configured model.",
+      "invariant": "Absent vs configured vs unavailable stay distinct.",
+      "confirmed": true
+    },
+    {
+      "severity": "named-not-bound",
+      "location": "packages/cli/src/vault-config.ts:22 vs packages/cli/src/serve-runtime.ts:72",
+      "failure": "kizuki.llm.gguf is allowed in vault-config and RFC; serve-runtime rejects it. No llm-gguf package in this archive.",
+      "confirmed": true
+    },
+    {
+      "severity": "error-distinction",
+      "location": "packages/core/src/serve/config.ts:28-31 vs packages/cli/src/serve-runtime.ts:53-56",
+      "failure": "Invalid serve.toml is doctor off (absence) and serve configuration failure.",
+      "confirmed": true
+    },
+    {
+      "severity": "diagnostics",
+      "location": "packages/cli/src/commands/doctor.ts:327-330",
+      "failure": "Doctor swallows bind errors and prints unverified with exit 0; serve prints the reason and exits 1. Locked by liveness.test.ts:112-137.",
+      "confirmed": true
+    },
+    {
+      "severity": "surface-mismatch",
+      "location": "packages/core/src/serve/rails.ts:339",
+      "failure": "Brief rail is binary on/off; doctor is tri-state.",
+      "confirmed": true
+    },
+    {
+      "severity": "untested-divergence",
+      "location": "packages/core/src/serve/config.ts:37-38 vs serve-runtime bind of openai-compatible",
+      "failure": "Wire model id none is treated as absent by loadConfiguredModelRef but can bind if id and base_url are set.",
+      "confirmed": "static only"
+    }
+  ],
+  "blockers": [
+    "Existing focused tests and the repository gate were not executed: missing node_modules on the read-only archive.",
+    "GitHub issue 473 body was not retrieved (no gh / no fetch)."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P039", "P040"],
+    "use": "/work/out/config-state-to-message-map.json and /work/out/fixtures",
+    "do_not": [
+      "Duplicate off/unverified/--from/hash-mismatch/none-llm tests already listed in existing-coverage.md",
+      "Treat RFC string-form ports.llm as configured",
+      "Call endpoints, resolve secrets, or download GGUF weights",
+      "Rewrite P006 docs or P003 evidence design from this packet"
+    ],
+    "rebase_before_production": true
+  },
+  "next_step": "P039/P040 consume the map and fixtures; if they change doctor/serve messages, add only the gap cases (RFC string form, invalid TOML, gguf id, wire model none). P006 reconciles docs. Re-run existing tests on a writable checkout after bun install --frozen-lockfile."
+}

@@ -1,0 +1,259 @@
+{
+  "schema": "kizuki.fleet-reviewed-scoped-packets/v1",
+  "reviewed_at": "2026-09-06T22:07:12Z",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "source_archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "source_snapshot": "PRIVATE_FLEET/source-f57acb3046e6",
+  "input_packets": [
+    "P050",
+    "P056"
+  ],
+  "authority": "Prepared scopes only. Root assigns an owner after current task/worktree/process reconciliation; this review starts no worker and changes no production or controller files.",
+  "report": "CHECKPOINT_BOOK/GROK-P050-P056-REVIEW/REVIEW.md",
+  "ready_now_means": "Ordinary local source/test work needs no account, provider-console operation, or architecture change. Repository environment and a distinct assigned owner are still required.",
+  "packets": [
+    {
+      "id": "P057-MIME",
+      "parent_packet": "P057",
+      "title": "Preserve the declared charset across continued IMAP attachment filenames",
+      "kind": "production_correction",
+      "readiness": "ready_for_owner_assignment",
+      "owner": "Root assigns one IMAP owner; this replaces the broad P057 MIME grant rather than creating a second package owner.",
+      "lock_groups": [
+        "imap-mime-parameters"
+      ],
+      "dependencies_satisfied": [
+        "P056 completed output reviewed for this exact MIME scope"
+      ],
+      "owned_write_paths": [
+        "packages/connector-imap/src/mime/parse.ts",
+        "packages/connector-imap/test/mime/parse.test.ts",
+        "packages/connector-imap/test/events.test.ts"
+      ],
+      "read_paths": [
+        "packages/connector-imap/src/mime/charset.ts",
+        "packages/connector-imap/src/events.ts",
+        "packages/connector-imap/src/fixture.ts",
+        "packages/connector-imap/test/mime/parse.test.ts"
+      ],
+      "existing_behavior_gap": "normalizeParams decodes each continuation separately. Later encoded segments lose the first segment's charset, and a multibyte UTF-8 character split between pieces becomes replacement characters.",
+      "evidence": {
+        "kind": "executed pure local parser check",
+        "command": "OPERATOR_HOME/.local/bin/bun GROK-P050-P056-REVIEW/imap-filename-check.ts",
+        "cwd": "CHECKPOINT_BOOK",
+        "exit_code": 1,
+        "runtime": "Bun 1.3.14",
+        "receipt": "CHECKPOINT_BOOK/GROK-P050-P056-REVIEW/imap-filename-check.json",
+        "result": "One control passes; three ordinary continued-name cases fail for both Content-Disposition filename and Content-Type name.",
+        "event_consequence": "Statically traced to src/events.ts attachmentName; event-level test is part of implementation acceptance."
+      },
+      "implementation_contract": [
+        "Reassemble ordinary RFC 2231 continuation octets in numeric order and decode the complete value once using the charset declared in the first encoded segment.",
+        "Respect encoded versus unencoded continuation pieces; an unencoded percent sign remains literal.",
+        "Retain existing simple unencoded and single extended parameter behavior, existing charset fallback behavior, limits, and attachment reference policy.",
+        "Keep expected Unicode strings authored independently from the implementation; do not regenerate goldens from messageEvent."
+      ],
+      "normal_acceptance_cases": [
+        {
+          "case": "ISO-8859-1 later segment",
+          "header": "attachment; filename*0*=iso-8859-1''caf; filename*1*=%E9.txt",
+          "expected": "café.txt"
+        },
+        {
+          "case": "UTF-8 multibyte character across segments",
+          "header": "attachment; filename*0*=utf-8''caf%C3; filename*1*=%A9.txt",
+          "expected": "café.txt"
+        },
+        {
+          "case": "Encoded and plain segments",
+          "header": "attachment; filename*0*=iso-8859-1''caf; filename*1*=%E9; filename*2=.txt",
+          "expected": "café.txt"
+        },
+        {
+          "case": "Unencoded percent remains literal",
+          "header": "attachment; filename*0*=utf-8''budget; filename*1=%20.txt",
+          "expected": "budget%20.txt"
+        },
+        {
+          "case": "Existing whole-character continuation",
+          "header": "attachment; filename*0*=utf-8''caf%C3%A9%20; filename*1*=report.pdf",
+          "expected": "café report.pdf"
+        },
+        {
+          "case": "Parameter order",
+          "expectation": "The same ordinary continued filename supplied in reversed parameter order has the same decoded name."
+        },
+        {
+          "case": "Content-Type name",
+          "expectation": "The same ordinary encoding cases work for a Content-Type name parameter through parseContentType."
+        },
+        {
+          "case": "Public attachment event",
+          "expectation": "An ordinary small multipart message produces a validated attachment reference named café.txt; message text, record ID and MIME section ID retain their existing contract."
+        }
+      ],
+      "validation_required": [
+        "Run focused MIME parameter and event tests in the qualified repository with Bun 1.3.14; save command, exit status and exact commit SHA.",
+        "Run the repository's applicable type/source/verification checks and the relevant non-live connector checks; preserve all failures and existing assertions.",
+        "Obtain independent review of the exact change before root integration; retain separate real IMAP qualification."
+      ],
+      "excluded_paths_or_work": [
+        "packages/cli/",
+        "packages/core/",
+        "packages/connector-imap/src/connector.ts",
+        "packages/connector-imap/src/cursor.ts",
+        "packages/connector-imap/src/state.ts",
+        "packages/connector-imap/src/mailbox.ts",
+        "IMAP LOGIN/XOAUTH2 or provider support expansion",
+        "Mailbox connections or real FLAGS/UIDVALIDITY qualification",
+        "Controller/roster mutations"
+      ],
+      "skills": [
+        ".agents/skills/connector-work/SKILL.md",
+        ".agents/skills/review-change/SKILL.md",
+        ".agents/skills/elegance-review/SKILL.md"
+      ],
+      "primary_sources": [
+        {
+          "url": "https://www.rfc-editor.org/rfc/rfc2231",
+          "sections": [
+            "3",
+            "4.1"
+          ],
+          "supports": "Ordered continuation, one charset for the entire value, and mixed encoded/unencoded pieces."
+        }
+      ],
+      "completion_limit": "Completes only the ordinary MIME filename correction. P058 real mailbox and release evidence remain open."
+    },
+    {
+      "id": "P051-HISTORY-QA",
+      "parent_packet": "P051",
+      "title": "Cover expired Gmail history across a full-rescan reconnect",
+      "kind": "test_only_coverage",
+      "readiness": "ready_for_owner_assignment",
+      "owner": "One named test owner under the existing P051 Gmail owner. Shared Google OAuth owner retains its reservation.",
+      "lock_groups": [
+        "gmail-fleet-history-resync-test"
+      ],
+      "dependencies_satisfied": [
+        "P050 history scope inspected against f57 and primary sync documentation"
+      ],
+      "owned_write_paths": [
+        "packages/connector-gmail/test/fleet-history-resync.test.ts"
+      ],
+      "read_paths": [
+        "packages/connector-gmail/src/connector.ts",
+        "packages/connector-gmail/src/state.ts",
+        "packages/connector-gmail/src/testing.ts",
+        "packages/connector-gmail/test/connector.test.ts",
+        "packages/connector-gmail/test/boundaries.test.ts",
+        "packages/connector-gmail/test/live-retry.test.ts"
+      ],
+      "existing_behavior_gap": "Missing composed coverage of stale history rescan >20 items, reconnect/retry, completion into normal sync, and persistent gap diagnostics. Existing code implements these mechanisms separately; no production history defect was established.",
+      "evidence": {
+        "kind": "static source and coverage inventory only",
+        "execution": "NOT_RUN",
+        "existing_coverage": [
+          "connector.test.ts:16 ordinary snapshot reconnect",
+          "connector.test.ts:50 one-message missing GET and history expiry",
+          "boundaries.test.ts:55 multi-page history anchors",
+          "live-retry.test.ts:50 one history response containing 25 items"
+        ],
+        "do_not_claim": "This task is not a source bug fix or full connector acceptance."
+      },
+      "implementation_contract": [
+        "Add only the new owned test file using the existing GmailFixture and the public connected/backfill/sync/close seams.",
+        "Use authored ordinary synthetic messages and exact event/identity/checkpoint assertions.",
+        "Exercise a full completed initial snapshot, an expired history interval, a multi-batch rescan with process reconnect, and the subsequent ordinary incremental change.",
+        "If a required benign assertion fails, preserve the failure and send the exact finding to P051; this test-only grant does not authorize a production rewrite or altered acceptance."
+      ],
+      "normal_acceptance_cases": [
+        {
+          "case": "Initial snapshot",
+          "expectation": "Capture an ordinary 26-message fixture to completion and retain its cursor and event record IDs."
+        },
+        {
+          "case": "Expired interval",
+          "expectation": "One previously seen message is absent during the gap, a surviving message has an ordinary label change, and the next history request reports expiry through the existing fixture."
+        },
+        {
+          "case": "First rescan batch",
+          "expectation": "The connector returns 20 surviving records with a new profile anchor, backfill phase, and history_gap_deletions_unreconciled; no absence-derived tombstone appears."
+        },
+        {
+          "case": "Retry and reconnect",
+          "expectation": "Close the instance, reconnect from persisted state, and retry the same input. Events and cursor match the first rescan output exactly."
+        },
+        {
+          "case": "Complete rescan",
+          "expectation": "Resume the returned cursor for the remaining five records; the accumulated rescan IDs equal the surviving fixture IDs once, phase returns to sync, and the gap diagnostic persists."
+        },
+        {
+          "case": "Incremental follow-up",
+          "expectation": "A later ordinary label change emits the expected existing record identity through a history request starting from the new anchor; the unreconciled-deletion diagnostic remains."
+        }
+      ],
+      "validation_required": [
+        "Run the new normal-behavior test file and relevant existing ordinary history/snapshot tests in the real repository package environment, not a stubbed core.",
+        "Record exact base/change SHA, commands and exit status; run the repository's applicable checks for the final test change.",
+        "Independent review confirms a useful uncovered composition rather than copied fixtures or assertions generated from current output."
+      ],
+      "excluded_paths_or_work": [
+        "All production source files",
+        "packages/connector-gmail/src/testing.ts and existing tests",
+        "packages/core/src/auth/",
+        "packages/cli/src/google-browser.ts",
+        "packages/cli/src/connections.ts",
+        "packages/cli/src/commands/connect.ts",
+        "Calendar source or test files",
+        "OAuth project registration/client embedding/consent changes",
+        "Network/account operations",
+        "Controller/roster mutations"
+      ],
+      "skills": [
+        ".agents/skills/connector-work/SKILL.md",
+        ".agents/skills/review-change/SKILL.md",
+        ".agents/skills/elegance-review/SKILL.md"
+      ],
+      "primary_sources": [
+        {
+          "url": "https://developers.google.com/workspace/gmail/api/guides/sync",
+          "supports": "HTTP 404 for an expired startHistoryId requires full synchronization."
+        },
+        {
+          "url": "https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.history/list",
+          "supports": "History ordering, noncontiguous IDs, pagination and final response anchor."
+        }
+      ],
+      "completion_limit": "Adds missing composed coverage only. It does not complete P051 shared OAuth, unlock P052/P055, or qualify real Gmail/Calendar."
+    }
+  ],
+  "roster_reconciliation": {
+    "P051": "Do not grant its current broad Gmail/core-auth/browser set to a second writer; create the test-only child above under its one owner.",
+    "P052": "External qualification remains dependent on actual accepted implementation, package and evidence.",
+    "P054": "Own only Calendar-specific paths; consume the approved shared OAuth contract. Gmail coverage is not itself an architecture prerequisite.",
+    "P055": "External account/application and compiled package qualification remain.",
+    "P057": "Replace broad package and nonexistent connect-imap.ts path for this assignment with exactly the three owned MIME files.",
+    "P058": "Retain real mailbox/server qualification.",
+    "related_R_packets": "R054/R055/R056 and R059/R060/R061/R062 are frozen-source output-only tasks, not competing production grants."
+  },
+  "provider_claim_corrections": [
+    {
+      "packet": "P050",
+      "claim": "Google incremental authorization restriction forces two desktop clients or forbids combined initial scopes",
+      "correction": "The official restriction addresses incremental authorization. Separate Kizuki product authorizations/source grants are the current product contract, not a provider-mandated two-registration architecture.",
+      "source": "https://developers.google.com/identity/protocols/oauth2/native-app"
+    },
+    {
+      "packet": "P050",
+      "claim": "Repository absence proves no registered project/client/verification exists",
+      "correction": "Only compiled-in client configuration absence is established by source. External registration and verification remain unverified."
+    },
+    {
+      "packet": "P056",
+      "claim": "Generated MIME expected JSON independently qualifies implementation fidelity",
+      "correction": "The packet generates these records from messageEvent/fixtureEvents. Treat as characterization; use independently authored normal expectations for this fix."
+    }
+  ],
+  "release_claim": false
+}

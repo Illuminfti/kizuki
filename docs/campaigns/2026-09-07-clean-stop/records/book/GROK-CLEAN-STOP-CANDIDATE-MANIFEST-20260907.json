@@ -1,0 +1,265 @@
+{
+  "schema": "kizuki.campaign-clean-stop/v1",
+  "recorded_at": "2026-09-06T23:31:44.672011+00:00",
+  "reason": "User requested clean stop and save all current work to the repository",
+  "integration_head": "3dfefd2810cec850b110343ea2973928a0b0a823",
+  "upstream_main": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+  "candidates": [
+    {
+      "packet": "P004",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "78574f47b3c123f11e28fb43ad063340260b0607",
+      "tree_sha": "01437b06e6673b09aeebbe08e07be2b42470e996",
+      "branch": "agent/checkpoint-20260907-p004",
+      "changed_paths": [
+        "scripts/go-no-go.test.ts",
+        "scripts/go-no-go.ts",
+        "scripts/release-evidence.ts"
+      ],
+      "bundle_sha256": "b8e0813ffe4a101391087322871b624f9e13e3c1ad3683075331524cd81cfb55",
+      "source_clean": true
+    },
+    {
+      "packet": "P006",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "b1ff2d812bb3cd0384d0f0f6f98ed32704774cac",
+      "tree_sha": "20fe23f62c16704abdd6a7437a49dc331a257b16",
+      "branch": "agent/checkpoint-20260907-p006",
+      "changed_paths": [
+        "README.md",
+        "SECURITY.md",
+        "docs/CURRENT.md",
+        "docs/README.md",
+        "docs/cli.md",
+        "docs/connect.md",
+        "docs/release-acceptance.md",
+        "packages/cli/src/help.ts",
+        "packages/connectors/README.md"
+      ],
+      "bundle_sha256": "bec914e08be8760ceaa48753e9280f9b15bba9377005e13216b2d8379562ea03",
+      "source_clean": true
+    },
+    {
+      "packet": "P015",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "5d21ed6eea9f7f9bc93ca288096b59c7201f1397",
+      "tree_sha": "860f59d70411250fd3c6bf8bdc9be752511e4a33",
+      "branch": "agent/checkpoint-20260907-p015",
+      "changed_paths": [
+        "packages/core/src/canon/apply.ts",
+        "packages/core/src/canon/authority.ts",
+        "packages/core/src/canon/source-erasure-intent.ts",
+        "packages/core/src/export.ts",
+        "packages/core/src/ledger/canon-source-survivor-lineage.ts",
+        "packages/core/src/ledger/db.ts",
+        "packages/core/src/ledger/integrity.ts",
+        "packages/core/test/agent-enrollment-backup.test.ts",
+        "packages/core/test/canon/authority-projection.test.ts",
+        "packages/core/test/canon/source-survivor-lineage.test.ts",
+        "packages/core/test/event-backup-v2.test.ts",
+        "packages/core/test/export-connections.test.ts",
+        "packages/core/test/export-purge-history.test.ts",
+        "packages/core/test/export.test.ts",
+        "packages/core/test/migration.test.ts"
+      ],
+      "bundle_sha256": "8788aab0b745c744fe0d212ef4332a2ad11f73482b413fcfb7bd97cbbf82ff82",
+      "source_clean": true
+    },
+    {
+      "packet": "P048",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "771f7c774096e86c2402f7fa54635f889d5fc3aa",
+      "tree_sha": "33b0027d39899d764d610543709191d1092eece7",
+      "branch": "agent/checkpoint-20260907-p048",
+      "changed_paths": [
+        "packages/cli/src/commands/connect-telegram.ts",
+        "packages/cli/test/telegram-enrollment.test.ts",
+        "packages/cli/test/telegram-signin-diagnostics.test.ts"
+      ],
+      "bundle_sha256": "c216a6b5857b0dfc5319c516d4022d62a03fc7ee265ec3ebbebc86882d45b753",
+      "source_clean": true
+    },
+    {
+      "packet": "P053",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "bca137d398ada6bce612d668f4377f50dc29628c",
+      "tree_sha": "d2c444e670ddb51a7b39a0ae56038cffe12d37e0",
+      "branch": "agent/checkpoint-20260907-p053",
+      "changed_paths": [
+        "packages/connector-google-calendar/test/fleet-temporal.test.ts"
+      ],
+      "bundle_sha256": "9787741dd60adf069f3b5211980cf50771916e77a5e07bd5ccaed1c0b07acc1f",
+      "source_clean": true
+    },
+    {
+      "packet": "P057",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "85778e3f343f854e227f744aff0c13a47051278f",
+      "tree_sha": "72b73dff3e0f692c39d5db6d8c85951758201092",
+      "branch": "agent/checkpoint-20260907-p057",
+      "changed_paths": [
+        "packages/connector-imap/src/mime/parse.ts",
+        "packages/connector-imap/test/events.test.ts",
+        "packages/connector-imap/test/mime/parse.test.ts"
+      ],
+      "bundle_sha256": "98f278ace0fe3984fe35e8b4a511b3f2f954123a4c5a3c9fed8e86350ec783a8",
+      "source_clean": true
+    },
+    {
+      "packet": "P067",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "3d76afb63af4bf112b40811e534e97d2fc0fbe9c",
+      "tree_sha": "d402ff431e595f387dbccb14eb370081e167730c",
+      "branch": "agent/checkpoint-20260907-p067",
+      "changed_paths": [
+        "packages/connectors/test/fleet-markdown-lifecycle.test.ts"
+      ],
+      "bundle_sha256": "254e379424afcb22cf0e8a9492d723a356500462b69b73382f6d9225938e7201",
+      "source_clean": true
+    },
+    {
+      "packet": "P069",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "a0705a0adca4ecf8f38233d873f4398812003224",
+      "tree_sha": "42d83673b4ae888d3abc3be61bdaa0e71b8d0cc3",
+      "branch": "agent/checkpoint-20260907-p069",
+      "changed_paths": [
+        "packages/connectors/test/fleet-chatgpt-fidelity.test.ts"
+      ],
+      "bundle_sha256": "9148171831441cccf8232d215325a703bd3b6ed25aeb9186af76613ea05e7ad9",
+      "source_clean": true
+    },
+    {
+      "packet": "P071",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "a90db5339762f2436bb446b805d8fc81cdeeada8",
+      "tree_sha": "e21037df4472a9496fc13d5bbeabd69a571a8830",
+      "branch": "agent/checkpoint-20260907-p071",
+      "changed_paths": [
+        "packages/connectors/test/fleet-claude-fidelity.test.ts"
+      ],
+      "bundle_sha256": "ccef67a7eacaee8037695423ecc16ae68be680c559d10b8ace0f9ea65f01fb98",
+      "source_clean": true
+    },
+    {
+      "packet": "P072",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "3dd49027a764e4b5e0c73674de33fcf578bb5678",
+      "tree_sha": "ac812abdd83b37ed8bce333cc234d5a9e0020834",
+      "branch": "agent/checkpoint-20260907-p072",
+      "changed_paths": [
+        "packages/cli/src/commands/import.ts",
+        "packages/cli/test/import-claude-lifecycle.test.ts"
+      ],
+      "bundle_sha256": "4678ba60507564f9ee854bc32cf4be53e120ef13514951d8827b53d31f8d2205",
+      "source_clean": true
+    },
+    {
+      "packet": "P073",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "1a29c7fa06dbff33e34f2b7d035a480295241c80",
+      "tree_sha": "b2070f3d0e7a0095d234ffae7ecfe911b135cc12",
+      "branch": "agent/checkpoint-20260907-p073",
+      "changed_paths": [
+        "packages/connectors/test/fleet-whatsapp-fidelity.test.ts"
+      ],
+      "bundle_sha256": "8812d1dc9dee45a06d631d0629e32ca76222a70ab304d90cfc51dc7b7eb32132",
+      "source_clean": true
+    },
+    {
+      "packet": "P075",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "7df5d889b52360df879b52a63ef53205aacb1701",
+      "tree_sha": "ee58bf07a4a80c9a916ef2d2041707f8ec87fe56",
+      "branch": "agent/checkpoint-20260907-p075",
+      "changed_paths": [
+        "packages/connector-ics/test/fleet-calendar-fidelity.test.ts"
+      ],
+      "bundle_sha256": "99e7b76bb18225e798e7564720628de449162aa1576a0bc56124240ab698c5bd",
+      "source_clean": true
+    },
+    {
+      "packet": "P101",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "7a217b3f274068b8bdb4b471811692622fcccf85",
+      "tree_sha": "bc1e0ca6c157153404e018d7d566a0f0c877f4f7",
+      "branch": "agent/checkpoint-20260907-p101",
+      "changed_paths": [
+        "scripts/qualification.test.ts",
+        "scripts/qualification.ts"
+      ],
+      "bundle_sha256": "b7a76e531d5d2465dce5b44a2e213d87a7bf7bf43456779a231e021c0ca2632f",
+      "source_clean": true
+    },
+    {
+      "packet": "P102",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "96539a8a2a978ff4a1b174148098c3ecd3190309",
+      "tree_sha": "6fed1a21c853b34adaf23c5849351212ec404c22",
+      "branch": "agent/checkpoint-20260907-p102",
+      "changed_paths": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/macos-native.yml",
+        "scripts/verify-workflows.test.ts",
+        "scripts/verify-workflows.ts"
+      ],
+      "bundle_sha256": "090dc718bdfc690e6269d12d9bb65be9d0b7a43fd5bb99c9a85ffa0de90fdedb",
+      "source_clean": true
+    },
+    {
+      "packet": "P103",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "c7484874913df3ccab72a66f51310942e4daf3c5",
+      "tree_sha": "e39c33a1d573d7d235c94f829f9be4a39266e04e",
+      "branch": "agent/checkpoint-20260907-p103",
+      "changed_paths": [
+        "packages/connectors/src/sensitivity.ts",
+        "packages/connectors/test/sensitivity.test.ts"
+      ],
+      "bundle_sha256": "bec499585f9f83bf09bf35cb53a06b66cc1cf899c4ee412e7b20a186cef72476",
+      "source_clean": true
+    },
+    {
+      "packet": "P104",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "5241086864fb23c2153693be94e20087ddb982be",
+      "tree_sha": "ae93d8809a142b60e8c6e34e24e69b58ebc2ff5d",
+      "branch": "agent/checkpoint-20260907-p104",
+      "changed_paths": [
+        "packages/mcp/src/schemas.ts",
+        "packages/mcp/test/schema.test.ts"
+      ],
+      "bundle_sha256": "55d01011005726575112ba35a27528beed83072efc8f7a15e419bf850fa00ff6",
+      "source_clean": true
+    },
+    {
+      "packet": "P105",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "10adfb41c882b9f7bacd4c89c8510ec5307abcf0",
+      "tree_sha": "73e60c60cc1c60f3c81de30b75f08addf57a74e4",
+      "branch": "agent/checkpoint-20260907-p105",
+      "changed_paths": [
+        "packages/cli/src/commands/audit.ts",
+        "packages/cli/test/audit-undo.test.ts"
+      ],
+      "bundle_sha256": "bfc82b35a123137f48a60b445bdc9a32b376a4d27380f0c12b19bc3406a17d74",
+      "source_clean": true
+    },
+    {
+      "packet": "P106",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "head_sha": "96315320fafb4645a1b96f47ee6cc469fda4d788",
+      "tree_sha": "eb6c3e81227ff404249822b983fe4861fbf898a2",
+      "branch": "agent/checkpoint-20260907-p106",
+      "changed_paths": [
+        "packages/cli/test/serve/install.test.ts",
+        "packages/core/src/serve/supervisor.ts",
+        "packages/core/test/serve/supervisor.test.ts"
+      ],
+      "bundle_sha256": "7e556df63b278c8843d2ea07c1d730a31945314ad7b1e696291ae8a7782784e7",
+      "source_clean": true
+    }
+  ],
+  "publication_status": "pending_remote_save",
+  "qualification": "Checkpoint preservation only; candidate-specific review and test states apply."
+}

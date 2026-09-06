@@ -1,0 +1,137 @@
+{
+  "task_id": "P069",
+  "title": "ChatGPT export branch and role independent tests",
+  "issue": 550,
+  "status": "awaiting_root_test",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "input_head_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "86a3c200b9eba48353fe5540cdfd4dcb50f30702",
+  "tree_sha": "dddb32fb32e2dc68dd47268a9ca4c6e05b05a951",
+  "branch": "agent/grok-p069",
+  "worktree": "/repo",
+  "owner": "grok-P069",
+  "changed_files": [
+    "packages/connectors/test/fleet-chatgpt-fidelity.test.ts"
+  ],
+  "commit": {
+    "sha": "86a3c200b9eba48353fe5540cdfd4dcb50f30702",
+    "message": "Add independent ChatGPT export branch and role fidelity tests"
+  },
+  "dirty": false,
+  "findings": [
+    {
+      "severity": "coverage_gap",
+      "status": "addressed_in_owned_test",
+      "path": "packages/connectors/test/chatgpt.test.ts",
+      "summary": "Existing ChatGPT tests cover linear node order, user/assistant handles, selected timestamps, image/unsupported mixed parts, slash-id encoding, fallback/duplicate ids, health, tombstones, dirty/missing-id snapshot behavior, and unchanged-export backfill no-op. They do not freeze a branched mapping, conversation_id versus id, same node key across conversations, full CaptureEventInput envelopes, system/tool machine-origin roles, unsupported_role, unsupported-only machine content, or the Core-only origin stamp contract."
+    },
+    {
+      "severity": "info",
+      "status": "no_production_edit",
+      "path": "packages/connectors/src/import-chatgpt/index.ts",
+      "summary": "Static read of the importer: mapping nodes are identity (conversation id or conversation_id, plus node id); current_node is unused as a filter; user maps to chatgpt:self and assistant to chatgpt:assistant; system and tool are supported machine-origin roles; unknown roles emit unsupported_role with no event; whole-content non-text types emit unsupported_part and empty_content with no event; origin/event_id/content_hash are not connector fields. No production repair is in this packet's write_paths."
+    }
+  ],
+  "deliverables": {
+    "owned_test": "packages/connectors/test/fleet-chatgpt-fidelity.test.ts",
+    "independently_specified_expectations": {
+      "observed_at": "2026-06-01T15:00:00.000Z",
+      "source_record_ids": [
+        "v1:2:12:thread-alpha:6:prompt",
+        "v1:2:12:thread-alpha:10:reply-east",
+        "v1:2:12:thread-alpha:10:reply-west",
+        "v1:2:11:thread-beta:6:prompt",
+        "v1:2:15:machine-thread:8:system-1",
+        "v1:2:15:machine-thread:6:tool-1"
+      ],
+      "occurred_at": {
+        "thread-alpha/prompt": "2024-01-01T00:00:00.000Z",
+        "thread-alpha/reply-east": "2024-01-01T00:01:00.000Z",
+        "thread-alpha/reply-west": "2024-01-01T00:02:00.000Z",
+        "thread-beta/prompt": "2024-01-02T00:00:00.000Z",
+        "machine-thread/system-1": "2024-01-01T00:00:00.000Z",
+        "machine-thread/tool-1": "2024-01-01T00:01:00.000Z"
+      },
+      "roles": {
+        "user": { "handle": "self", "subject_id": "chatgpt:self" },
+        "assistant": { "handle": "assistant", "subject_id": "chatgpt:assistant" },
+        "system": { "handle": "system", "subject_id": "chatgpt:system" },
+        "tool": { "handle": "tool", "subject_id": "chatgpt:tool" }
+      },
+      "repeat_parse": "JSON.stringify of the same branched export yields deep-equal {events, errors}",
+      "unsupported_machine_origin": [
+        {
+          "location": "machine-thread/developer-1",
+          "code": "unsupported_role",
+          "reason": "message role is not user, assistant, system, or tool"
+        },
+        {
+          "location": "machine-thread/hidden-1",
+          "code": "unsupported_part",
+          "reason": "unsupported content parts: execution_output"
+        },
+        {
+          "location": "machine-thread/hidden-1",
+          "code": "empty_content",
+          "reason": "message has no text or attachments"
+        }
+      ],
+      "origin_contract": "events must validate as kizuki.event/v1 ingress and must not carry event_id, content_hash, text_hash, origin, or origin_binding fields"
+    },
+    "not_duplicated": [
+      "malformed JSON parse_error",
+      "malformed conversation/node reporting",
+      "image_asset_pointer attachments",
+      "slash-containing id non-collision",
+      "fallback ids under reorder",
+      "duplicate_id and conflicting_id",
+      "fractional unix create_time",
+      "missing timestamp as invalid_timestamp",
+      "health of malformed file",
+      "tombstones, dirty later export, dropped conversation ids",
+      "unchanged export snapshot-cursor no-op"
+    ]
+  },
+  "verification": {
+    "focused_public_behavior": {
+      "result": "NOT_RUN",
+      "reason": "This agent container must not launch tests; root's network-disabled runner owns qualified execution.",
+      "requested": {
+        "request_id": "p069-fleet-chatgpt-fidelity",
+        "path": "/work/out/test-request.json",
+        "test_paths": [
+          "packages/connectors/test/fleet-chatgpt-fidelity.test.ts",
+          "packages/connectors/test/chatgpt.test.ts"
+        ],
+        "head_sha": "86a3c200b9eba48353fe5540cdfd4dcb50f30702"
+      }
+    },
+    "package_type_full_gate": {
+      "result": "NOT_RUN",
+      "reason": "Final package, typecheck, and repository gate belong to root's isolated runner and remain separate from this draft candidate."
+    },
+    "privacy_diff_integrity": {
+      "result": "PASS",
+      "evidence": "Diff is a single owned synthetic test file. No credentials, private records, owner-vault paths, or production edits."
+    },
+    "independent_review": {
+      "result": "NOT_RUN",
+      "reason": "Author-side elegance pass only; no independent reviewer SHA."
+    },
+    "retained_package_consumer": {
+      "result": "NOT_RUN",
+      "reason": "Final compiled package and consumer evidence are out of this packet."
+    }
+  },
+  "blockers": [
+    "Focused and existing ChatGPT tests have been requested from root and have not returned /work/out/test-result.json; this head is a draft candidate until that run and review pass.",
+    "Final connector release credit still requires the final compiled package and separate required evidence.",
+    "Any production repair or shared helper change needs a newly reconciled, explicitly owned scope; this packet does not take it."
+  ],
+  "next_step": "Root executes request_id p069-fleet-chatgpt-fidelity on head 86a3c200b9eba48353fe5540cdfd4dcb50f30702 in the network-disabled runner, writes /work/out/test-result.json, and returns pass/fail counts without weakening assertions.",
+  "limits_honored": [
+    "No production, shared test-helper, registry, CLI, auth, schema, native, export or source-grant edits.",
+    "No account/provider calls, extra agents, other models, downloads, credential inspection, exploit reproduction, or offensive workflows.",
+    "No fetch/push; ordinary commit of the owned file only."
+  ]
+}

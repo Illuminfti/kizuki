@@ -1,0 +1,146 @@
+{
+  "task_id": "R034",
+  "packet_id": "R034",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Map producer-v2 capability negotiation and diagnostics",
+  "issue": 472,
+  "findings": [
+    {
+      "severity": "info",
+      "id": "compiled-v1-explicit-v2",
+      "location": "packages/core/src/contracts/ports.ts:230-249",
+      "fact": "PORT_CONTRACTS.producer remains kizuki.producer/v1. v2 binds only when expectedContract is explicitly kizuki.producer/v2. Default bind of a v2 descriptor is contract_mismatch before factory I/O.",
+      "confirmed": true
+    },
+    {
+      "severity": "info",
+      "id": "model-capability-only",
+      "location": "packages/core/src/producer/model.ts:37-47",
+      "fact": "Shipped kizuki.producer.model declares supports [model] on v1 minor 3. requirePortCapability(..., \"model\") succeeds; deterministic and unknown ids throw not_supported retryable=false.",
+      "confirmed": true
+    },
+    {
+      "severity": "info",
+      "id": "deterministic-not-a-port",
+      "location": "packages/core/src/staging/producers.ts:18-22",
+      "fact": "RFC 0002 §3.7 names kizuki.producer.deterministic as an in-tree producer port. On this base it is the staging model-free floor, not a PortDescriptor a v2 consumer can negotiate.",
+      "confirmed": true
+    },
+    {
+      "severity": "info",
+      "id": "invoke-producer-v1-only",
+      "location": "packages/core/src/producer/result.ts:192-204",
+      "fact": "invokeProducer asserts the compiled v1 contract. A v2 descriptor becomes usage_known=false unavailable/unavailable with transport diagnostic unavailable; produce() is not called. RFC 0003 B2 still owns runtime v2 emission.",
+      "confirmed": true
+    },
+    {
+      "severity": "info",
+      "id": "v2-closed-unavailable-vs-current-model-reasons",
+      "location": "packages/core/src/contracts/producer-v2.ts:141-143",
+      "fact": "V2 unavailable reasons are unavailable|timeout|network|credentials|http. Current model-producer strings llm unavailable|llm timeout|llm error fail v2 validateProduceResult as rejected/schema_invalid. B2 cannot reuse those reason strings.",
+      "confirmed": true
+    },
+    {
+      "severity": "info",
+      "id": "unsupported-metadata-is-response-stage",
+      "location": "packages/llm/src/response.ts:20-22",
+      "fact": "unsupported_metadata is an LLM-adapter rejection of malformed named passive metadata, mapped by createModelProducerPort to rejected/schema_invalid with diagnostic {stage:response,rule:unsupported_metadata}. It is not a missing descriptor.supports bit.",
+      "confirmed": true
+    },
+    {
+      "severity": "info",
+      "id": "v2-constants-not-on-core-index",
+      "location": "packages/core/src/index.ts:264-268",
+      "fact": "PRODUCER_V2_CONTRACT is exported from packages/core/src/contracts/index.ts but not from the main @kizuki/core index. validateProduceResult and invokeProducer are not public index exports. No PRODUCER_V2_CAPABILITIES constant exists.",
+      "confirmed": true
+    }
+  ],
+  "deliverables": [
+    "/work/out/producer-v2-capability-table.md",
+    "/work/out/producer-v2-capability-matrix.json",
+    "/work/out/producer-v2-adapter-fixture.ts",
+    "/work/out/fixture-run.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/orientation.md",
+    "/work/out/HANDOFF.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/producer-v2-capability-table.md",
+    "/work/out/producer-v2-capability-matrix.json",
+    "/work/out/producer-v2-adapter-fixture.ts",
+    "/work/out/fixture-run.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/orientation.md",
+    "/work/out/HANDOFF.md"
+  ],
+  "source_references": [
+    "packages/core/src/contracts/producer.ts:5-10",
+    "packages/core/src/contracts/producer-v2.ts:9-11,141-159",
+    "packages/core/src/contracts/ports.ts:22,230-262",
+    "packages/core/src/contracts/registry.ts:156,194",
+    "packages/core/src/producer/model.ts:37-47,373-388",
+    "packages/core/src/producer/result.ts:81-204",
+    "packages/core/src/producer/diagnostics.ts:6-44",
+    "packages/core/src/producer/schema.ts:7-21",
+    "packages/llm/src/response.ts:20-22",
+    "packages/cli/src/serve-runtime.ts:178-184",
+    "packages/core/test/contracts/producer-major.test.ts:6-36",
+    "packages/core/test/producer/result.test.ts:25-100",
+    "packages/core/test/producer/diagnostics.test.ts:27-44",
+    "packages/core/test/producer/model.test.ts:47-57",
+    "rfcs/0002-autonomous-canon.md:638-761",
+    "rfcs/0003-rich-subject-foundation.md:119-160"
+  ],
+  "checks": [
+    {
+      "name": "focused producer tests",
+      "command": "cd /repo && bun test packages/core/test/contracts/producer-major.test.ts packages/core/test/contracts/producer-v2.test.ts packages/core/test/producer/result.test.ts packages/core/test/producer/diagnostics.test.ts packages/core/test/producer/model.test.ts packages/core/test/producer/conformance.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "result": "PASS",
+      "exit_code": 0,
+      "detail": "55 pass, 0 fail"
+    },
+    {
+      "name": "pure adapter fixture",
+      "command": "bun /work/out/producer-v2-adapter-fixture.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "result": "PASS",
+      "exit_code": 0,
+      "detail": "28 pass, 0 fail; receipt /work/out/fixture-run.json"
+    },
+    {
+      "name": "public core index / public.test.ts",
+      "command": "cd /repo && bun test packages/core/test/contracts/public.test.ts",
+      "result": "NOT_RUN",
+      "detail": "Cannot find module js-tiktoken/lite from packages/core/src/serving/packet-tokenizer.ts. Static read still shows PORT_CONTRACTS.producer = kizuki.producer/v1."
+    },
+    {
+      "name": "full repository gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "detail": "Not assigned; archive has no workspace install. Waiting or missing platform is NOT_RUN, not PASS."
+    }
+  ],
+  "verification": {
+    "focused": "PASS 55 producer tests exit 0; fixture 28/0 exit 0",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "model_calls": "none",
+    "limitations": [
+      "Git metadata, remotes, live issue/PR, and CI are unavailable in this archive container.",
+      "js-tiktoken is absent; full @kizuki/core index import fails.",
+      "No native/account/model/human qualification or release claim."
+    ]
+  },
+  "blockers": [],
+  "downstream_handoff": {
+    "feeds": ["P033", "P036"],
+    "use": "Consume producer-v2-capability-table.md and producer-v2-adapter-fixture.ts. Bind v2 only with explicit expectedContract. Do not inherit v1 capabilities onto a v2 descriptor. Map unavailable through the closed v2 reason vocabulary, not llm-prefixed v1 strings. Keep unsupported_metadata as a response-stage rejection. B2 still owns the real v2 factory and invoke path.",
+    "do_not": "Replace P003/P015/P006, Astra, or doctor. Do not treat this preparation as merge or production authority."
+  },
+  "next_step": "P033/P036 review these artifacts on base f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7 and implement against the explicit v2 expected-major bind plus closed unavailable vocabulary; do not register kizuki.producer.model.v2 from R034."
+}

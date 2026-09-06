@@ -1,0 +1,165 @@
+{
+  "task_id": "R009",
+  "packet_id": "R009",
+  "title": "Separate journey rehearsal from real product observations",
+  "issue": 542,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "owner": "grok-R009",
+  "write_scope": "/work/out only",
+  "findings": [
+    {
+      "severity": "confusion-risk",
+      "id": "stranger-filename",
+      "location": "scripts/stranger-proof.ts; docs/stranger-proof.md; package.json:13",
+      "invariant": "human.unfamiliar-user is a distinct non-author adapter",
+      "evidence": "CURRENT.md:52-53 already states the automated artifact isolation check is not a human stranger proof. Empty-inventory report keeps human.unfamiliar-user NOT_IMPLEMENTED / non-author-zero-coaching.",
+      "required_fix": "Downstream journey/human producers must not consume kizuki.artifact-proof/v2. Optional later rename is P006-owned docs/code naming, not this lane."
+    },
+    {
+      "severity": "confusion-risk",
+      "id": "recorded-journey-comment",
+      "location": "scripts/artifact-proof.ts:115",
+      "invariant": "journey.* scope is complete-product-journey and currently has no producer",
+      "evidence": "artifactProofSteps are init --no-service, synthetic-import, query Ada, export/restore. evaluateRelease credits only automated-fixture-integrity / effective-sqlite-runtime.",
+      "required_fix": "P007/P009/P099 must not treat those steps as journey adapters."
+    },
+    {
+      "severity": "coverage-gap",
+      "id": "journey-rows-after-artifact-pass",
+      "location": "scripts/go-no-go.test.ts:158-173 versus :138-156",
+      "invariant": "artifact PASS must not change journey.* or connector.*",
+      "evidence": "Existing test asserts human/native/release are not granted. It does not enumerate journey.* after artifact PASS. Static evaluateRelease body contains no journey lookups. go-no-go.test.ts was NOT_RUN here (missing js-tiktoken/lite).",
+      "required_fix": "If a journey producer is added, test that new seam. Do not duplicate the empty-inventory case already in go-no-go.test.ts:138-156."
+    },
+    {
+      "severity": "confirmed-isolation",
+      "id": "evaluateRelease-does-not-credit-journeys",
+      "location": "scripts/go-no-go.ts:171-202",
+      "invariant": "current producers cannot establish complete-product-journey",
+      "evidence": "Empty v2 index CLI exit 1, 41 gates, eight journey rows NOT_IMPLEMENTED. Isolation script PASS. Qualification release_qualified is false as const (packages/core/src/serve/qualification.ts:110)."
+    }
+  ],
+  "deliverables": [
+    "/work/out/source-class-dataflow.md",
+    "/work/out/source-class-dataflow.json",
+    "/work/out/rehearsal-vs-observation-pairs.md",
+    "/work/out/rehearsal-vs-observation-pairs.json",
+    "/work/out/fixtures/empty-evidence-index.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/source-class-dataflow.md",
+    "/work/out/source-class-dataflow.json",
+    "/work/out/rehearsal-vs-observation-pairs.md",
+    "/work/out/rehearsal-vs-observation-pairs.json",
+    "/work/out/fixtures/empty-evidence-index.json",
+    "/work/out/scripts/check-source-class-isolation.ts",
+    "/work/out/checks/static-isolation.json",
+    "/work/out/checks/empty-rc-report.json",
+    "/work/out/checks/empty-1.0-report.json",
+    "/work/out/checks/commands.json",
+    "/work/out/checks/bun-test-passing.log",
+    "/work/out/checks/bun-test-blocked.log",
+    "/work/out/existing-coverage.md",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "scripts/go-no-go.ts:21-42,148-202",
+    "scripts/stranger-proof.ts:119-127,208-272",
+    "scripts/artifact-proof.ts:87-155",
+    "scripts/qualification.ts:151-166,310-316",
+    "packages/core/src/serve/qualification.ts:6-16,38-115",
+    "docs/CURRENT.md:52-53",
+    "docs/release-acceptance.md:126-154,160-172",
+    "docs/stranger-proof.md:1-32",
+    "docs/unfamiliar-user-proof.md:1-12,37-38,111-112",
+    "docs/qualification.md:1-24",
+    "package.json:13-14",
+    "rfcs/0002-autonomous-canon.md:83-91,1538",
+    "docs/decision-log.md D19"
+  ],
+  "checks": [
+    {
+      "name": "source-class isolation script",
+      "command": "bun /work/out/scripts/check-source-class-isolation.ts",
+      "exit": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "empty inventory rc",
+      "command": "bun /repo/scripts/go-no-go.ts --profile rc --evidence /work/out/fixtures/empty-evidence-index.json --out /work/out/checks/empty-rc-report.json",
+      "exit": 1,
+      "result": "PASS",
+      "note": "documented NO-GO"
+    },
+    {
+      "name": "empty inventory 1.0",
+      "command": "bun /repo/scripts/go-no-go.ts --profile 1.0 --evidence /work/out/fixtures/empty-evidence-index.json --out /work/out/checks/empty-1.0-report.json",
+      "exit": 1,
+      "result": "PASS",
+      "note": "documented NO-GO; release_1_0_accepted false"
+    },
+    {
+      "name": "loadable focused tests",
+      "command": "bun test scripts/stranger-proof.test.ts scripts/artifact-proof.test.ts packages/core/test/serve/qualification.test.ts",
+      "exit": 0,
+      "result": "PASS",
+      "summary": "51 pass"
+    },
+    {
+      "name": "go-no-go.test.ts and qualification.test.ts",
+      "command": "bun test scripts/go-no-go.test.ts scripts/qualification.test.ts",
+      "exit": 1,
+      "result": "NOT_RUN",
+      "missing_input": "js-tiktoken/lite; node_modules absent; install forbidden"
+    },
+    {
+      "name": "typecheck and full verify",
+      "result": "NOT_RUN"
+    }
+  ],
+  "verification": {
+    "implementation": "read-only preparation; no source edits",
+    "focused": "empty-inventory CLI plus isolation script plus 51 loadable tests",
+    "full": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "integration": "NOT_RUN",
+    "retained_artifact": "NOT_RUN; no native package in this archive",
+    "unfamiliar_user": "NOT_RUN; must not be inferred from artifact isolation"
+  },
+  "blockers": [
+    "js-tiktoken/lite missing, so scripts/go-no-go.test.ts and scripts/qualification.test.ts could not load. Static reading plus empty-inventory CLI still cover the evaluator public seam.",
+    "Git metadata, remotes, and live issue/PR state are unavailable in this archive container.",
+    "No native package, live account, model, or human attempt is present or authorized."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P007", "P009", "P099"],
+    "must_not": [
+      "credit journey.* from kizuki.artifact-proof/v1|v2",
+      "treat scripts/stranger-proof.ts as human.unfamiliar-user",
+      "treat synthetic-import Ada markdown as live-account or connector.markdown-folder credit",
+      "treat MCP system_health as an authorized agent query",
+      "treat fixture-window-complete as owner.seven-day-rails or journey.daily-loop",
+      "treat never-executed synthetic package bytes as native execution"
+    ],
+    "must_keep": [
+      "producer, gate.id, scope, connector.evidence, required, release_credit as the evidence source-class fields",
+      "RFC 0002 §8.2 sensitivity source class as a separate contract",
+      "fixture_release_credit false",
+      "new journey producers on a distinct schema with their own tests"
+    ]
+  },
+  "next_step": "P007/P009/P099 consume the dataflow map and labeled pairs; add journey producers only with a new schema and tests that keep artifact/qualification rehearsal uncredited.",
+  "limitations": [
+    "No native/account/model/human qualification or release acceptance claim.",
+    "These artifacts feed the existing P DAG and must be reviewed/rebased before production use.",
+    "P003 retains shared evidence design; P015 retains source-B; P006 owns canonical docs.",
+    "Empty-inventory execution is not a passing artifact proof and was not constructed as one."
+  ]
+}

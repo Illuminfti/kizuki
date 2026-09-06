@@ -1,0 +1,87 @@
+{
+  "schema": "kizuki.p095.d19-readiness/v1",
+  "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+  "generated_at": "2026-09-06",
+  "d19_retained": true,
+  "binding": {
+    "decision": "docs/decision-log.md#D19",
+    "current": "docs/CURRENT.md#Readiness",
+    "rfc": "rfcs/0002-autonomous-canon.md §1.3 Owner amendment (2026-09-05)",
+    "ready_means": [
+      "a stranger can install and use Kizuki",
+      "executable stranger proof",
+      "zero live P0s on the exact candidate",
+      "honest install path"
+    ],
+    "not_prerequisites": [
+      "seven-day rail observation",
+      "fourteen-day estate comparison",
+      "operational estate cutover"
+    ]
+  },
+  "acceptance_checker": {
+    "file": "scripts/go-no-go.ts",
+    "symbol": "gates / POLICY / evaluateRelease",
+    "proof": "scripts/go-no-go.test.ts readiness keeps install, stranger and P0 evidence required while calendar observation stays optional",
+    "empty_index_run": {
+      "command": "cd /tmp && BUN_INSTALL_CACHE_DIR=TEMP/bun-cache BUN_RUNTIME_TRANSPILER_CACHE_PATH=TEMP/bun-transpiler bun TEMP/p095-gating.ts",
+      "profile": "1.0",
+      "candidate_source_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+      "decision": "NO-GO",
+      "release_1_0_accepted": false,
+      "gate_count": 41,
+      "required_count": 37,
+      "supported_bun_version": "1.3.14"
+    },
+    "superseded_rows": [
+      {
+        "id": "owner.seven-day-rails",
+        "required": false,
+        "status": "NOT_IMPLEMENTED",
+        "reason": "superseded-readiness-gate",
+        "scope": "supervised-owner-observation"
+      },
+      {
+        "id": "estate.fourteen-day-parity",
+        "required": false,
+        "status": "NOT_IMPLEMENTED",
+        "reason": "superseded-readiness-gate",
+        "scope": "paired-estate-observation"
+      },
+      {
+        "id": "owner.final-cutover",
+        "required": false,
+        "status": "NOT_IMPLEMENTED",
+        "reason": "superseded-readiness-gate",
+        "scope": "owner-operational-authority"
+      }
+    ],
+    "still_required_examples": [
+      "human.unfamiliar-user",
+      "candidate.current-p0-disposition",
+      "journey.install-recover",
+      "artifact.bun-linux-x64-baseline",
+      "lifecycle.bun-linux-x64-baseline",
+      "surface.capabilities-and-docs"
+    ]
+  },
+  "stale_current_claim": {
+    "file": "docs/README.md",
+    "lines": "22-23",
+    "text": "RFC 0002 §1.3 still requires stranger proof and estate cutover.",
+    "why": "RFC 0002 §1.3 was amended 2026-09-05: stranger proof remains; estate cutover is not a readiness or 1.0 tag prerequisite. D19 supersedes C1 cutover as a gate.",
+    "severity": "docs_contradiction",
+    "this_inventory_action": "recorded only; shared docs not rewritten"
+  },
+  "historical_not_current": [
+    "docs/wave1/plan/ROADMAP.md",
+    "docs/wave1/plan/MIGRATION.md",
+    "docs/decision-log.md C1/C7 rows retained as historical answers under D19 supersession"
+  ],
+  "held_untouched": {
+    "ids": ["519", "530"],
+    "status": "untouched",
+    "evidence": "This read-only /work/out inventory did not inspect, resume, comment on, rebase, or edit held issues or branches 519 and 530. GitHub remote state was not fetched. No source path was modified."
+  },
+  "release_claim": "none. Empty-index evaluation is NO-GO. This packet makes no 1.0, RC, or semantic-quality claim."
+}

@@ -1,0 +1,48 @@
+{
+  "task_id": "P015",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "34d02119014e7fd071e5ab3709fd65b7c0a5e065",
+  "status": "awaiting_root_test",
+  "changed_files": [
+    "packages/core/src/canon/apply.ts",
+    "packages/core/src/canon/authority.ts",
+    "packages/core/src/canon/source-erasure-intent.ts",
+    "packages/core/src/export.ts",
+    "packages/core/src/ledger/canon-source-survivor-lineage.ts",
+    "packages/core/src/ledger/db.ts",
+    "packages/core/test/canon/authority-projection.test.ts",
+    "packages/core/test/canon/source-survivor-lineage.test.ts",
+    "packages/core/test/event-backup-v2.test.ts",
+    "packages/core/test/export-connections.test.ts",
+    "packages/core/test/export-purge-history.test.ts",
+    "packages/core/test/export.test.ts",
+    "packages/core/test/migration.test.ts"
+  ],
+  "findings": [
+    "Ledger schema is now 20. packages/core/test/agent-enrollment-backup.test.ts still asserts LEDGER_SCHEMA_VERSION === 19 and is outside this lane; full-suite integration needs that assertion updated by its owner or by root.",
+    "integrity.ts still does not call the v20 table assert; openLedger and inspectOpenLedgerHealth do, which covers migrate and doctor health without editing the unowned integrity module."
+  ],
+  "deliverables": [
+    "Migration 20 creates STRICT canon_source_survivor_lineage with the eight frozen fields, RESTRICT foreign keys, and immutable insert.",
+    "New source-erasure intents are version 2 with lineage for live survivors and null for archive/deletion. Version 1 intents are preserved; live v1 preimage retries may upgrade only with a still-path-bound positive basis; live v1 postimages without a checkpoint stay incomplete.",
+    "Authority resolution treats a valid checkpoint as a positive anchor, charges PK predecessor/target loads to the 4096-row budget, and treats an invalid checkpoint as unavailable rather than raw or unrecorded fallback.",
+    "Current v3 backups always emit canon/source-survivor-lineage.v1.jsonl, restore it after receipts, refuse a required missing stream, and keep completed purge-history streams valid at ledger 19 and 20."
+  ],
+  "verification": {
+    "focused": "awaiting_root_test",
+    "full": "NOT_RUN",
+    "request_id": "p015-source-survivor-lineage",
+    "test_paths": [
+      "packages/core/test/canon/source-survivor-lineage.test.ts",
+      "packages/core/test/canon/authority-projection.test.ts",
+      "packages/core/test/source-grants.test.ts",
+      "packages/core/test/migration.test.ts",
+      "packages/core/test/export-purge-history.test.ts",
+      "packages/core/test/export.test.ts",
+      "packages/core/test/export-connections.test.ts",
+      "packages/core/test/event-backup-v2.test.ts"
+    ]
+  },
+  "blockers": [],
+  "next_step": "Root should run the focused test-request on this head in the network-disabled runner, then independent review. Full suite will also need the unowned LEDGER_SCHEMA_VERSION===19 pin updated."
+}

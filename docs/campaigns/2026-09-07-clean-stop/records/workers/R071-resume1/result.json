@@ -1,0 +1,107 @@
+{
+  "task_id": "R071",
+  "packet_id": "R071",
+  "issue": 550,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "finding",
+  "title": "Inventory ChatGPT importer parse limits and format detection",
+  "capability": "export_import",
+  "findings": [
+    "Top-level detection is a UTF-8 JSON array only. Filename conversations.json is not sniffed. Official OpenAI help (2026-09-06) documents a ZIP of chat history and does not name conversations.json or a schema.",
+    "missing_mapping, missing_content, malformed_author, malformed_content, and node not_object have no dedicated chatgpt.test.ts cases. Drafts are in /work/out/fixtures/.",
+    "MAX_RECORD_BYTES (1 MiB) is unused by parseChatGptExport. MAX_RECORDS counts conversations, not messages/nodes. A 256 MiB file with one huge mapping is currently accepted.",
+    "Empty array [] is health ok records=0 and enrollable. ZIP bytes are misconfigured malformed JSON, not unzip the export first. A directory is not a regular file: export.",
+    "mapping that is an array uses missing_mapping rather than a distinct malformed_mapping code. Non-object author uses malformed_author with reason 'message author is missing'.",
+    "bun test of packages/connectors/test/chatgpt.test.ts is NOT_RUN in this archive (missing @kizuki/connector-beeper / node_modules). Do not treat that as PASS."
+  ],
+  "deliverables": [
+    "/work/out/format-detection-error-budget-map.md",
+    "/work/out/format-detection-error-budget-map.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/provider-research.md",
+    "/work/out/openai-export-help-excerpt.txt",
+    "/work/out/p070-handoff.md",
+    "/work/out/orientation.md",
+    "/work/out/fixtures/expected.json",
+    "/work/out/fixtures/top-level-empty-array.json",
+    "/work/out/fixtures/top-level-object.json",
+    "/work/out/fixtures/wrapped-conversations.json",
+    "/work/out/fixtures/missing-mapping.json",
+    "/work/out/fixtures/mapping-array.json",
+    "/work/out/fixtures/empty-mapping.json",
+    "/work/out/fixtures/root-null-message.json",
+    "/work/out/fixtures/missing-content.json",
+    "/work/out/fixtures/malformed-author.json",
+    "/work/out/fixtures/malformed-content.json",
+    "/work/out/fixtures/node-not-object.json",
+    "/work/out/fixtures/empty-id-strings.json",
+    "/work/out/fixtures/conversation-id-only-empty-mapping.json",
+    "/work/out/fixtures/malformed-json.txt",
+    "/work/out/check-structural-fixtures.ts",
+    "/work/out/check-results.json"
+  ],
+  "artifacts": [
+    "/work/out/format-detection-error-budget-map.md",
+    "/work/out/format-detection-error-budget-map.json",
+    "/work/out/fixtures/expected.json",
+    "/work/out/check-structural-fixtures.ts",
+    "/work/out/check-results.json",
+    "/work/out/p070-handoff.md"
+  ],
+  "source_references": [
+    "packages/connectors/src/import-chatgpt/index.ts:159-469",
+    "packages/connectors/src/import-chatgpt/index.ts:68-82",
+    "packages/connectors/src/import-report.ts:21-67",
+    "packages/connectors/src/util.ts:62-173",
+    "packages/connectors/src/read.ts:39-211",
+    "packages/connectors/src/import-snapshot.ts:164-237",
+    "packages/connectors/test/chatgpt.test.ts:83-399",
+    "packages/connectors/test/source-id.test.ts:15-27",
+    "packages/connectors/README.md:32",
+    "packages/cli/src/commands/import.ts:97-102",
+    "packages/cli/src/connections.ts:366-368",
+    "https://help.openai.com/en/articles/7260999-how-do-i-export-my-chatgpt-history-and-data (fetched 2026-09-06, HTTP 200)"
+  ],
+  "checks": [
+    {
+      "name": "repository_chatgpt_unit_tests",
+      "command": "cd /repo && bun test packages/connectors/test/chatgpt.test.ts packages/connectors/test/source-id.test.ts",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "detail": "Cannot find module '@kizuki/connector-beeper' from '/repo/packages/connectors/src/index.ts'. Archive has no node_modules."
+    },
+    {
+      "name": "structural_fixture_runner",
+      "command": "NODE_PATH=/work/out/module-path bun /work/out/check-structural-fixtures.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "bun": "1.3.14",
+      "matched": 18,
+      "mismatched": [],
+      "evidence": "/work/out/check-results.json",
+      "ran_at": "2026-09-06T22:03:35.894Z"
+    }
+  ],
+  "verification": {
+    "focused": "PASS (18/18 structural cases at parseChatGptExport/health via local core shim)",
+    "package_type_full_gate": "NOT_RUN (no workspace install; not claimed)",
+    "live_account": "NOT_RUN (forbidden; no ChatGPT export downloaded)",
+    "independent_review": "NOT_RUN",
+    "limitations": [
+      "Core shim used only to resolve @kizuki/core without js-tiktoken; parser source is the archive file.",
+      "MAX_RECORDS and MAX_EXPORT_BYTES over-limit paths unexecuted (size/count probes forbidden).",
+      "Repository bun test barrel NOT_RUN."
+    ]
+  },
+  "blockers": [],
+  "downstream_handoff": {
+    "feeds": ["P070"],
+    "note": "See /work/out/p070-handoff.md. Add uncovered missing-field tests from /work/out/fixtures without duplicating chatgpt.test.ts cases or P069 content/role/branch work. Decide ZIP/directory/empty-array and MAX_RECORD_BYTES policy before coding."
+  },
+  "next_step": "P070 on a writable checkout: add the uncovered missing-field tests from /work/out/fixtures, then decide ZIP/directory/empty-array detection and whether MAX_RECORD_BYTES / node counts bind the ChatGPT parser.",
+  "limitations": [
+    "Read-only /work/out preparation. No source edits, no registry claim, no live export.",
+    "Official docs do not specify conversations.json schema.",
+    "No native/account/model/human qualification or release acceptance."
+  ]
+}

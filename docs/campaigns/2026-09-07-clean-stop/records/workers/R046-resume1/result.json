@@ -1,0 +1,179 @@
+{
+  "task_id": "R046",
+  "packet_id": "R046",
+  "issue": 458,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "finding",
+  "owner": "grok-R046",
+  "write_scope": "/work/out only",
+  "findings": [
+    {
+      "severity": "high",
+      "id": "withheld_shown_as_empty",
+      "location": "packages/cli/src/app/ui/client.js:173,191",
+      "evidence": "probe id query.empty_with_withheld; protocol.ts:176 withheld unused; query.ts:77-95 reports withheld separately",
+      "affected_invariant": "RFC 0000 §4 unavailable/denied/empty stay distinct; CLI query withheld is not '0 hits'",
+      "observed": "ok:true hits=[] withheld=3 renders heading 'Nothing matched this search.'",
+      "required_fix": "Show withheld/policy exclusion distinctly; never reuse empty-success copy",
+      "confirmed": true
+    },
+    {
+      "severity": "high",
+      "id": "activity_failure_looks_empty",
+      "location": "packages/cli/src/app/ui/client.js:287,301",
+      "evidence": "probe id activity.load_failure_looks_empty",
+      "affected_invariant": "RFC 0002 E11 failure must never be representable as emptiness",
+      "observed": "ok:false activity keeps 'No receipted changes yet.' plus setup-copy toast",
+      "required_fix": "Failed activity load must replace empty-success main copy",
+      "confirmed": true
+    },
+    {
+      "severity": "medium",
+      "id": "unavailable_uses_setup_copy",
+      "location": "packages/cli/src/app/ui/client.js:92",
+      "evidence": "probe humanError.code_map and query.ordinary_failure_unavailable; host.ts:54 maps unknown errors to unavailable",
+      "affected_invariant": "unrecorded, unavailable, denied, and empty are distinct; no fake surface",
+      "observed": "humanError('unavailable') === humanError('misconfigured') setup copy",
+      "required_fix": "Exact-code mapping; keep generic unavailable off the misconfigured string",
+      "confirmed": true
+    },
+    {
+      "severity": "medium",
+      "id": "identity_conflict_matches_conflict_regex",
+      "location": "packages/cli/src/app/ui/client.js:89-91",
+      "evidence": "probe humanError.code_map identity_conflict",
+      "affected_invariant": "identity mismatch is not a mid-edit revision conflict",
+      "observed": "identity_conflict uses 'Something changed while you were working…' because /conflict/ matches first",
+      "required_fix": "Match identity_conflict with duplicate_identity, or exact-code table before regex",
+      "confirmed": true
+    },
+    {
+      "severity": "low",
+      "id": "source_field_denied_and_no_vault_generic",
+      "location": "packages/cli/src/app/ui/client.js:85-94",
+      "evidence": "probe humanError.code_map",
+      "affected_invariant": "denied field access and missing vault are not generic completion failure",
+      "observed": "source_field_denied and no_vault use default 'This step could not be completed…'",
+      "required_fix": "Named copy per host allowed code",
+      "confirmed": true
+    },
+    {
+      "severity": "low",
+      "id": "failed_query_main_area_idle_empty",
+      "location": "packages/cli/src/app/ui/client.js:172,188-193",
+      "evidence": "probe query.ordinary_failure_unavailable and query.transport_failure",
+      "affected_invariant": "failure is not emptiness; idle copy is still an empty-state",
+      "observed": "Failed query leaves hits=null so main shows 'A place to find things again.' plus toast. Distinct from 'Nothing matched' but not a failure main state.",
+      "required_fix": "Keep a failed-search main state or bind the toast to the attempted query",
+      "confirmed": true
+    }
+  ],
+  "deliverables": [
+    "/work/out/response-kind-visible-text-map.json",
+    "/work/out/dom-state-fixtures.json",
+    "/work/out/probe-dom-states.mjs",
+    "/work/out/probe-observed.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/response-kind-visible-text-map.json",
+    "/work/out/dom-state-fixtures.json",
+    "/work/out/probe-dom-states.mjs",
+    "/work/out/probe-observed.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    { "path": "packages/cli/src/app/ui/client.js", "lines": "8,44-53,57,75-94,96-124,139,157,166-193,204,215,228-230,285-301,320-334,339,347,370,387-396,436" },
+    { "path": "packages/cli/src/app/protocol.ts", "lines": "12-22,48-61,77-90,107,169-187,197-202" },
+    { "path": "packages/cli/src/app/host.ts", "lines": "50-54,86-129,140-154,181-192" },
+    { "path": "packages/cli/src/app/ui/index.html", "lines": "24,27,29" },
+    { "path": "packages/core/src/serve/http.ts", "lines": "195-229" },
+    { "path": "packages/cli/src/commands/query.ts", "lines": "77-95" },
+    { "path": "packages/cli/test/app-client.test.ts", "lines": "64-225" },
+    { "path": "docs/local-app.md", "lines": "7,15" },
+    { "path": "rfcs/0000-constraints.md", "section": "§4" },
+    { "path": "rfcs/0002-autonomous-canon.md", "section": "E11" }
+  ],
+  "checks": [
+    {
+      "name": "app-client existing tests",
+      "command": "bun test packages/cli/test/app-client.test.ts",
+      "cwd": "/repo",
+      "runtime": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "14 pass, 0 fail, 60 expect(), 90ms"
+    },
+    {
+      "name": "synthetic DOM probe",
+      "command": "bun /work/out/probe-dom-states.mjs",
+      "runtime": "bun 1.3.14",
+      "started": "2026-09-06T22:01:40.287Z",
+      "finished": "2026-09-06T22:01:40.309Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "25 cases; outputs /work/out/probe-observed.json"
+    },
+    {
+      "name": "app-host and app-service tests",
+      "command": "bun test packages/cli/test/app-service.test.ts packages/cli/test/app-host.test.ts",
+      "cwd": "/repo",
+      "runtime": "bun 1.3.14",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "detail": "Cannot find module '@kizuki/core' / '@kizuki/connector-gmail'. Archive has no node_modules. Static coverage recorded in existing-coverage.json."
+    },
+    {
+      "name": "full repository gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "detail": "Read-only preparation packet; no full-suite slot; workspace install absent."
+    }
+  ],
+  "verification": {
+    "focused": "PASS app-client.test.ts and probe-dom-states.mjs",
+    "host_integration": "NOT_RUN missing workspace modules",
+    "full_gate": "NOT_RUN",
+    "browser": "NOT_RUN synthetic DOM only",
+    "independent_review": "NOT_RUN",
+    "payloads": "neutral ordinary-contract examples only; no XSS/malicious content"
+  },
+  "blockers": [
+    "Workspace package install is absent in this git archive, so app-host.test.ts and app-service.test.ts cannot execute here.",
+    "Full verify.sh / typecheck were not run; waiting for a slot is NOT_RUN, not PASS."
+  ],
+  "next_step": "P043/P045 consume response-kind-visible-text-map.json and dom-state-fixtures.json. Do not duplicate already-passing app-client.test.ts cases. Close withheld-as-empty and activity-failure-as-empty if those packets own client copy. Review/rebase before production use.",
+  "downstream_handoff": {
+    "feeds": ["P043", "P045"],
+    "use": [
+      "/work/out/response-kind-visible-text-map.json",
+      "/work/out/dom-state-fixtures.json"
+    ],
+    "do_not_duplicate_tests": [
+      "packages/cli/test/app-client.test.ts:82-87 setup supervisor none",
+      "packages/cli/test/app-client.test.ts:89-104 initialize service_unavailable",
+      "packages/cli/test/app-client.test.ts:208-216 failed refresh fence",
+      "packages/cli/test/app-client.test.ts:218-225 failed operation banner"
+    ],
+    "gaps_for_implementers": [
+      "withheld vs empty search copy",
+      "activity load failure vs empty receipts copy",
+      "humanError unavailable vs misconfigured",
+      "identity_conflict regex order"
+    ],
+    "reserved": ["P003 evidence design", "P015 source-B schema", "P006 canonical docs", "Astra", "external doctor"]
+  },
+  "limitations": [
+    "/repo is a git archive of f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7 with no Git metadata and no node_modules.",
+    "vps-nav, git fetch, and host navigation were not run; controller certificate forbids them here.",
+    "No live account, provider, native supervisor, or browser.",
+    "Probe DateTimeFormat uses the container locale (observed 'Sep 5, 2026, 12:00 AM' for a Z timestamp).",
+    "Probe Element.hidden defaults false until the client sets it; HTML notification starts hidden.",
+    "No native/account/model/human qualification or release-acceptance claim."
+  ]
+}

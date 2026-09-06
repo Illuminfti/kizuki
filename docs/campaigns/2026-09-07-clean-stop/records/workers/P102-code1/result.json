@@ -1,0 +1,55 @@
+{
+  "task_id": "P102",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "f7a797f0d5bb13b5c430f2251d96567f8950b106",
+  "tree_sha": "79b101a853a189fbb7d125cc8cc5f0f3d6cc0566",
+  "status": "awaiting_root_test",
+  "branch": "agent/grok-p102",
+  "changed_files": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/macos-native.yml",
+    "scripts/verify-workflows.ts",
+    "scripts/verify-workflows.test.ts"
+  ],
+  "findings": [
+    {
+      "severity": "fixed",
+      "location": ".github/workflows/ci.yml and .github/workflows/macos-native.yml upload-artifact steps",
+      "summary": "always() retention could keep a built package without receipt.json after proof failure because if-no-files-found: error only fails when every path matches nothing.",
+      "fix": "Both workflows now require test -f on the expected receipt before upload, and upload runs only under success(). The validator pins proof command, receipt check, upload action SHA, success condition, artifact name, package path, receipt path, retention-days 7, and if-no-files-found: error on Linux and macOS."
+    }
+  ],
+  "deliverables": {
+    "implementation": "Linux and macOS native jobs verify the expected receipt.json, then retain package plus receipt only when prior steps succeeded. Pinned upload action SHA and repository-only seven-day retention are unchanged.",
+    "validator": "scripts/verify-workflows.ts binds the complete Linux and macOS proof/receipt/upload contract. Linux is scanned inside job test; macOS remains an ordered closed nine-step job.",
+    "tests": "Existing event-head, checkout, Bun, host, cost, and macOS proof mutations remain. New independent mutations on both platforms cover missing/renamed receipt check, package-only path, wrong receipt path, always() retention, action SHA drift, name/path/retention/if-no-files-found changes, and proof-command removal."
+  },
+  "verification": {
+    "focused": {
+      "command": "bun test scripts/verify-workflows.test.ts",
+      "result": "NOT_RUN",
+      "reason": "Root owns the network-disabled runner. Request p102-verify-workflows-f7a797f written to /work/out/test-request.json."
+    },
+    "package_type_full_gate": {
+      "result": "NOT_RUN",
+      "reason": "Not assigned to this container. Awaiting root qualification after focused tests."
+    },
+    "static_inspection": {
+      "result": "PASS",
+      "notes": "Owned paths only. Checkout ref, Bun pin, origin-ref restriction, diff-integrity, host assertions, and macOS allowance/cost gates are unchanged. No tests were weakened."
+    },
+    "independent_review": {
+      "result": "NOT_RUN",
+      "reason": "Self-review only. Independent review is a later gate."
+    }
+  },
+  "blockers": [],
+  "next_step": "Root runs bun test scripts/verify-workflows.test.ts on head f7a797f0d5bb13b5c430f2251d96567f8950b106, then independent review. Do not treat upload success as native or release acceptance.",
+  "limits_honored": [
+    "Edited only packet write_paths",
+    "No P004/P006/P015/P057/Astra/controller/roster edits",
+    "No dependency install or tests in this container",
+    "No fetch/push/remote operations",
+    "No claim that this is native or release qualification"
+  ]
+}

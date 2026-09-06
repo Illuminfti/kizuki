@@ -1,0 +1,84 @@
+{
+  "schema": "kizuki.fleet-test-failure-review/v1",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "checked_at": "2026-09-06T22:33:29Z",
+  "method": "Static adjudication and artifact hashing; no product execution or source/test edits.",
+  "results": [
+    {
+      "worker": "P067-code2",
+      "candidate_head": "b82dbcbb8d390e3e315d2dbea335f93ef57d0954",
+      "run_id": "ff6f91e6d65a4702ada8887aa06c66b9",
+      "test_result": "PRIVATE_FLEET/workers/P067-code2/workspace/out/test-result.json",
+      "test_result_sha256": "15775a8e273fae381cab8f1835d4036ce29a3f723ff5b7b92c2b654cf7d88b90",
+      "classification": "incorrect_single_batch_completion_expectation",
+      "production_change_warranted": false,
+      "original_failed_evidence_preserved": true,
+      "owned_file": "packages/connectors/test/fleet-markdown-lifecycle.test.ts",
+      "owned_file_sha256": "3fd7cc485ac1c7bb85c56ab9d65a05e04e30360288273a4033c00c3bd92c159b",
+      "stderr_sha256": "fa97ba435cd3c244f9857ddaab21ade9e1e2cecc091699955db6e521b6b1dd49",
+      "input_digest": "277ae103b9879ffbe9bfa897e5540f39bc03bbdc83f9a14b2e1fc7337ce8b612",
+      "fresh_test_run_required": true
+    },
+    {
+      "worker": "P069-code2",
+      "candidate_head": "86a3c200b9eba48353fe5540cdfd4dcb50f30702",
+      "run_id": "7ae9c21119054c90853265c17947a873",
+      "test_result": "PRIVATE_FLEET/workers/P069-code2/workspace/out/test-result.json",
+      "test_result_sha256": "b96dbfefbeb35630030c57af18fa7aac173465b1d467db8fb46697dcc080770a",
+      "classification": "incorrect_literal_identity_length",
+      "production_change_warranted": false,
+      "original_failed_evidence_preserved": true,
+      "owned_file": "packages/connectors/test/fleet-chatgpt-fidelity.test.ts",
+      "owned_file_sha256": "80652019676829906a29ea9028b5156d619a02aae0a2211f1955b085d8c9a188",
+      "stderr_sha256": "bf27394473498e0de720e49bbfd4444d89154b357f5b47e37890569dfd551f96",
+      "input_digest": "1fbf8ba017e34ce5b761ca2a82823b2cc83871d171ddf67df9785d070fde9a92",
+      "fresh_test_run_required": true
+    }
+  ],
+  "source_checks": [
+    {
+      "path": "packages/connectors/src/markdown-folder/index.ts",
+      "git_blob": "8a026ca8ac9b159b8f41719d45b2a8490974a213",
+      "matches_f57": true
+    },
+    {
+      "path": "packages/connectors/src/source-id.ts",
+      "git_blob": "a3df8c3b7628d62954d4d4890526ead52bcb09b8",
+      "matches_f57": true
+    },
+    {
+      "path": "packages/connectors/test/markdown-folder.test.ts",
+      "git_blob": "64d7181039ed1ad1a401b70d8aa81b2ccaaea895",
+      "matches_f57": true
+    },
+    {
+      "path": "packages/connectors/test/source-id.test.ts",
+      "git_blob": "d5ed4b1140ebbdcb84bca336bb04a69c34132fd3",
+      "matches_f57": true
+    }
+  ],
+  "approved_production_packet": {
+    "path": "CHECKPOINT_BOOK/GROK-FLEET-PRODUCTION-P048-P072-20260906.json",
+    "sha256": "39f08b8b28e5381af761ab128fa3c1d52e013c9614b10f87064d8b4147636d3f",
+    "ids": [
+      "P048",
+      "P072"
+    ],
+    "kind": "implementation",
+    "schema": "kizuki.grok-production-wave/v1",
+    "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+    "tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+    "relative_paths_and_canonical_skills_validated": true
+  },
+  "book_artifacts": [
+    {
+      "file": "P048-P072-WORKER-HANDOFF.md",
+      "sha256": "df6cbdfa03eec0daf52133225c1a653ab0a869cb10c26072db0afbf7d74325ac"
+    },
+    {
+      "file": "P067-P069-FAILED-TEST-REVIEW.md",
+      "sha256": "2756fd2b33023a342d1620ea8cefa7066690a68fa7a6ad9791afe10c0498cd27"
+    }
+  ],
+  "release_claim": false
+}

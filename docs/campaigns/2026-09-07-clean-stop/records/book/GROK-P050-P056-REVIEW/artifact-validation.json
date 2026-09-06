@@ -1,0 +1,52 @@
+{
+  "schema": "kizuki.fleet-review-artifact-validation/v1",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "packet_count": 2,
+  "distinct_owned_paths": true,
+  "snapshot_files": [
+    {
+      "path": "packages/connector-imap/src/mime/parse.ts",
+      "git_blob": "89ef35ebccab153ceef725a35566fbde307608f6",
+      "matches_exact_base": true
+    },
+    {
+      "path": "packages/connector-imap/test/mime/parse.test.ts",
+      "git_blob": "163d2688bc9cdd829b736156f8837425e8328e4e",
+      "matches_exact_base": true
+    },
+    {
+      "path": "packages/connector-imap/test/events.test.ts",
+      "git_blob": "a5d417d189cbdef3b8867c1016efe66f555754a2",
+      "matches_exact_base": true
+    },
+    {
+      "path": "packages/connector-gmail/src/connector.ts",
+      "git_blob": "1ba83cbf9c67495e15df94208b7437d8f238bacb",
+      "matches_exact_base": true
+    },
+    {
+      "path": "packages/connector-gmail/src/testing.ts",
+      "git_blob": "b7463e21c66d973ed099d652095c1ada27ef45fb",
+      "matches_exact_base": true
+    }
+  ],
+  "artifacts": [
+    {
+      "file": "REVIEW.md",
+      "sha256": "1098ab82c74cdbd016af2d75c10c21c8b5d7af71b62d50db5ca2118b9af09164"
+    },
+    {
+      "file": "imap-filename-check.json",
+      "sha256": "574893234a8e7c0b3aab1b6459de1f06139516839c54651ef4a417c8a164ee89"
+    },
+    {
+      "file": "imap-filename-check.ts",
+      "sha256": "8c59d1ae2877fc720676f8049ad08430fa515d677ac1ae2b9a1ee5e2e2ee7dd4"
+    },
+    {
+      "file": "implementation-packets.json",
+      "sha256": "14029565b74802215d0303012a80c4a0fffa4850f9472e24468ed854cb1dcac6"
+    }
+  ],
+  "release_claim": false
+}

@@ -1,0 +1,147 @@
+{
+  "task_id": "R097",
+  "packet_id": "R097",
+  "issue": 206,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Map upgrade compatibility and recovery fixture obligations",
+  "findings": [
+    {
+      "severity": "verification-gap",
+      "id": "compiled-native-upgrade-unexecuted",
+      "summary": "Prior-schema upgrade on the compiled native package was not run. smoke-release and artifact-proof only init a fresh vault. lifecycle.<target> is NOT_IMPLEMENTED.",
+      "evidence": [
+        "scripts/smoke-release.ts:81",
+        "scripts/artifact-proof.ts:87-112",
+        "scripts/go-no-go.ts:156",
+        "local-check-receipt.json native_binary_present=false"
+      ]
+    },
+    {
+      "severity": "platform-limit",
+      "id": "restore-canon-files-unsafe-in-sandbox",
+      "summary": "Library restoreVault of the genuine ledger16 backup-v3 threw CanonFilesError canon_files_unsafe. Not a rewrite of the restore contract; this sandbox is not a qualified native canon ancestry.",
+      "evidence": [
+        "/work/out/local-check-receipt.json ledger16-backup-restore",
+        "packages/core/test/agent-enrollment-backup.test.ts:144"
+      ]
+    },
+    {
+      "severity": "coverage-gap",
+      "id": "genuine-dumps-only-15-and-16",
+      "summary": "Genuine historical writer dumps exist only for ledger 15 (SQL) and 16 (SQL and backup-v3). v1-v14/v17/v18 are reconstructed; v5/v6/v11-v14 have no start-version fixture.",
+      "evidence": [
+        "packages/core/test/fixtures/",
+        "packages/core/test/migration.test.ts"
+      ]
+    },
+    {
+      "severity": "docs-stale",
+      "id": "rfc0002-schema-version-2",
+      "summary": "RFC 0002 §18.1 still says current schema_version is 2; LEDGER_SCHEMA_VERSION is 19. P006 owns docs; this packet does not edit the RFC.",
+      "evidence": [
+        "rfcs/0002-autonomous-canon.md:2667",
+        "packages/core/src/ledger/db.ts:188"
+      ]
+    }
+  ],
+  "deliverables": [
+    "/work/out/upgrade-compatibility-matrix.json",
+    "/work/out/upgrade-compatibility-matrix.md",
+    "/work/out/upgrade-fixture-manifest.json",
+    "/work/out/native-owner-upgrade-observations.md",
+    "/work/out/existing-coverage.json",
+    "/work/out/local-check-upgrade.ts",
+    "/work/out/local-check-receipt.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/upgrade-compatibility-matrix.json",
+    "/work/out/upgrade-compatibility-matrix.md",
+    "/work/out/upgrade-fixture-manifest.json",
+    "/work/out/native-owner-upgrade-observations.md",
+    "/work/out/existing-coverage.json",
+    "/work/out/local-check-upgrade.ts",
+    "/work/out/local-check-receipt.json",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/core/src/ledger/db.ts:31-284 LEDGER_SCHEMA_VERSION=19 MIGRATIONS 1-19 openLedger migrate",
+    "packages/core/src/ledger/schema.ts helpers",
+    "packages/core/src/ledger/schema-v16.ts:202-208 applyLedgerV16 is ledger v17",
+    "packages/core/src/ledger/event-identity-schema.ts:13 applyEventIdentityV16",
+    "packages/core/src/ledger/source-grants-schema.ts:3-63 v11-v15",
+    "packages/core/src/ledger/purge-batch-schema.ts:16 applyPurgeBatchesV19",
+    "packages/core/src/agents/enrollment.ts:157,335-339 openLedger vs migration_required",
+    "packages/core/src/export.ts:68-70,1865-1870,2319-2516 backup v1/v2/v3 and restoreVault",
+    "packages/cli/src/commands/init.ts:69-71",
+    "packages/cli/src/commands/doctor.ts:84-111",
+    "packages/cli/src/commands/restore.ts:6-44",
+    "packages/cli/src/commands/agent.ts:29,102-122",
+    "packages/cli/src/context.ts:85-114",
+    "scripts/smoke-release.ts:81",
+    "scripts/artifact-proof.ts:87-112",
+    "docs/native-build.md",
+    "docs/release-acceptance.md:132-133"
+  ],
+  "checks": [
+    {
+      "name": "local-check-upgrade",
+      "command": "bun /work/out/local-check-upgrade.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "started_at": "2026-09-06T22:01:44.785Z",
+      "evidence": "/work/out/local-check-receipt.json",
+      "result": "PARTIAL",
+      "detail": "PASS: ledger version 19, ledger15/16 in-place, future-schema refuse, backup verify. FAIL/NOT-COMPLETE: restoreVault canon_files_unsafe. exit 1 from the helper because all_ok was false."
+    },
+    {
+      "name": "compiled-native-cli",
+      "command": "./kizuki doctor --json --integrity --vault PATH",
+      "result": "NOT_RUN",
+      "missing": "dist/ native package for this SHA"
+    },
+    {
+      "name": "full-repository-gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "reason": "not assigned; temporary test outputs would leave /work/out"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PARTIAL",
+    "package_type_full_gate": "NOT_RUN",
+    "privacy_diff_integrity": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "retained_native_package": "NOT_RUN",
+    "existing_tests_duplicated": false
+  },
+  "blockers": [
+    "No compiled native package in this archive (dist/ missing).",
+    "This sandbox is not a qualified native canon/credential ancestry (restoreVault canon_files_unsafe).",
+    "lifecycle.<target> producer is NOT_IMPLEMENTED in-tree."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P028", "P091", "P092"],
+    "must_not": [
+      "treat these artifacts as release GO",
+      "duplicate migration.test.ts / ledger-health / agent-enrollment-backup / legacy-ledger tests",
+      "implement a new schema (P015)",
+      "rewrite canonical docs (P006)"
+    ],
+    "use": [
+      "/work/out/upgrade-compatibility-matrix.json",
+      "/work/out/upgrade-fixture-manifest.json",
+      "/work/out/native-owner-upgrade-observations.md"
+    ]
+  },
+  "next_step": "P028: on a qualified Linux x64 host with a retained native package of this SHA, wrap the in-tree ledger15 SQL and ledger16 backup-v3 fixtures per upgrade-fixture-manifest.json and run native-owner-upgrade-observations.md; record exit codes without adding core tests.",
+  "limitations": [
+    "Read-only /repo archive; no Git metadata; remote not fetched.",
+    "No dist/ binaries; no account/provider calls; no model invocation.",
+    "Local restore check refused by canon_files_unsafe.",
+    "Existing test suite not re-executed.",
+    "No native/account/model/human qualification or release acceptance claim."
+  ]
+}

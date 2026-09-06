@@ -1,0 +1,40 @@
+{
+  "task_id": "P105",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "10adfb41c882b9f7bacd4c89c8510ec5307abcf0",
+  "tree_sha": "73e60c60cc1c60f3c81de30b75f08addf57a74e4",
+  "status": "awaiting_root_test",
+  "branch": "agent/grok-p105",
+  "changed_files": [
+    "packages/cli/src/commands/audit.ts",
+    "packages/cli/test/audit-undo.test.ts"
+  ],
+  "findings": [
+    "Noninteractive kizuki audit previously hard-coded limit 5000 with no offset and no truncation signal, so a larger matching history looked complete.",
+    "Owned CLI seam now accepts --limit 1..5000 and --offset >= 0, requests limit+1 through listAuditReceipts, returns at most the requested page, and sets data.truncated plus data.next_offset (null when complete).",
+    "Table mode prints 'truncated  next_offset=N' only when another page exists. Invalid missing/non-integer/zero/negative/over-bound values take the existing UsageError path (exit 2).",
+    "docs/cli.md and RFC 0002 still show the pre-pagination usage string; those files are outside this lane (P006 / docs)."
+  ],
+  "deliverables": [
+    "packages/cli/src/commands/audit.ts",
+    "packages/cli/test/audit-undo.test.ts",
+    "commit 10adfb41c882b9f7bacd4c89c8510ec5307abcf0"
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun test packages/cli/test/audit-undo.test.ts",
+      "result": "NOT_RUN",
+      "reason": "Root owns network-disabled test execution; requested via /work/out/test-request.json request_id p105-audit-pagination-1"
+    },
+    "package_type_full_gate": {
+      "result": "NOT_RUN",
+      "reason": "Not assigned to this network-enabled agent container"
+    },
+    "independent_review": {
+      "result": "NOT_RUN",
+      "reason": "Draft candidate pending root focused tests then independent review"
+    }
+  },
+  "blockers": [],
+  "next_step": "Root runs bun test packages/cli/test/audit-undo.test.ts on head 10adfb41c882b9f7bacd4c89c8510ec5307abcf0 and returns /work/out/test-result.json; independent review follows a passing focused run."
+}

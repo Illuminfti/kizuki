@@ -1,0 +1,161 @@
+{
+  "task_id": "R017",
+  "packet_id": "R017",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "findings": [
+    {
+      "severity": "observation",
+      "id": "dual-authority-read",
+      "location": "packages/core/src/canon/authority.ts:67-73",
+      "evidence": "static trace plus positive-provenance.test.ts executed PASS: resolve() unrecorded -> owner_authored; basis() unrecorded -> null",
+      "affected_invariant": "positive serving requires a recorded receipt basis; owner_authored is a protective fallback, not admission",
+      "required_fix": "none in this packet; P015 must not collapse resolve and basis"
+    },
+    {
+      "severity": "unresolved_field",
+      "id": "event-id-prefix",
+      "location": "packages/core/src/vault/provenance.ts:22 vs packages/core/src/ledger/source-canon-erasure.ts:168",
+      "evidence": "static: eventIdFromReference vs stringArray raw membership",
+      "affected_invariant": "source ID identity across admission, erasure, search, graph",
+      "required_fix": "P015 keeps the existing ID strings; no competing prefix schema from this packet"
+    },
+    {
+      "severity": "unresolved_field",
+      "id": "binding-grant-pair-unused-at-admission",
+      "location": "packages/core/src/ledger/source-grants-schema.ts:18-23",
+      "evidence": "static: assessLivePageEvidence does not read source_event_bindings",
+      "affected_invariant": "grant_revision/policy_digest are capture facts, not the live-page admission predicate",
+      "required_fix": "none here; do not invent an admission checkpoint on those columns"
+    },
+    {
+      "severity": "unresolved_field",
+      "id": "sanitization-residue",
+      "location": "packages/core/src/ledger/source-canon-erasure.ts:239-293",
+      "evidence": "static: JSONL keeps authority and provenance; SQLite UPDATE does not clear them",
+      "affected_invariant": "path sanitization vs authority/provenance remaining on selected receipts",
+      "required_fix": "P015 owns whether export/recovery may still read those residual fields"
+    },
+    {
+      "severity": "coverage_gap_this_container",
+      "id": "packet-import-missing-tokenizer",
+      "location": "packages/core/src/serving/packet-tokenizer.ts via authority-projection.test.ts and source-grants.test.ts",
+      "evidence": "bun test load error Cannot find module js-tiktoken/lite; /repo/node_modules absent",
+      "affected_invariant": "none proven in product; mixed A/B erasure tests exist but were not executed here",
+      "required_fix": "none for R017; P015 reruns those existing tests with a complete toolchain"
+    }
+  ],
+  "deliverables": [
+    "/work/out/source-b-authority-read-map.md",
+    "/work/out/source-b-authority-read-map.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/source-b-authority-read-map.md",
+    "/work/out/source-b-authority-read-map.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/checks/focused-authority-provenance.log",
+    "/work/out/checks/claims-authority-apply.log",
+    "/work/out/checks/write-page-source-erasure.log",
+    "/work/out/checks/mixed-source-b.log"
+  ],
+  "source_references": [
+    "packages/core/src/canon/authority.ts",
+    "packages/core/src/canon/receipts.ts",
+    "packages/core/src/canon/schema.ts",
+    "packages/core/src/canon/apply.ts",
+    "packages/core/src/canon/undo.ts",
+    "packages/core/src/canon/source-erasure-intent.ts",
+    "packages/core/src/ledger/source-canon-erasure.ts",
+    "packages/core/src/ledger/source-erasure.ts",
+    "packages/core/src/ledger/source-grants.ts",
+    "packages/core/src/ledger/source-grants-schema.ts",
+    "packages/core/src/ledger/ledger.ts",
+    "packages/core/src/vault/provenance.ts",
+    "packages/core/src/vault/schema.ts",
+    "packages/core/src/vault/pages.ts",
+    "packages/core/src/serving/canon.ts",
+    "packages/core/src/search/indexer.ts",
+    "packages/core/src/graph/graph.ts",
+    "packages/core/src/retrieval/rebuild.ts",
+    "packages/core/src/retrieval/ids.ts",
+    "packages/core/src/contracts/proposal.ts",
+    "packages/core/AUTHORITY.md",
+    "docs/provenance-admission.md",
+    "docs/CURRENT.md",
+    "rfcs/0002-autonomous-canon.md"
+  ],
+  "checks": [
+    {
+      "name": "positive-provenance and page-provenance",
+      "command": "bun test packages/core/test/positive-provenance.test.ts packages/core/test/page-provenance.test.ts packages/core/test/canon/authority-projection.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T21:46:59Z",
+      "evidence": "/work/out/checks/focused-authority-provenance.log",
+      "result": "PARTIAL",
+      "detail": "19 pass; 1 fail/error loading authority-projection.test.ts because js-tiktoken/lite is missing. positive-provenance 12 pass; page-provenance 7 pass."
+    },
+    {
+      "name": "mixed source-B serving test",
+      "command": "bun test packages/core/test/source-grants.test.ts -t \"receipted mixed canon preserves independently supported B text\"",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "evidence": "/work/out/checks/mixed-source-b.log",
+      "result": "NOT_RUN",
+      "detail": "File failed to load: Cannot find module js-tiktoken/lite. Missing /repo/node_modules. Existing tests at source-grants.test.ts:1336-1584 must not be duplicated."
+    },
+    {
+      "name": "write-page source erasure",
+      "command": "bun test packages/core/test/canon/write-page.test.ts -t \"source erasure\"",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "evidence": "/work/out/checks/write-page-source-erasure.log",
+      "result": "PASS",
+      "detail": "3 pass, 0 fail, exit 0"
+    },
+    {
+      "name": "claims authority and applyCanonWrite",
+      "command": "bun test packages/core/test/claims/authority.test.ts packages/core/test/canon/apply.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "evidence": "/work/out/checks/claims-authority-apply.log",
+      "result": "PASS",
+      "detail": "17 pass, 0 fail, exit 0"
+    },
+    {
+      "name": "full repository gate",
+      "command": "bun test && bun run typecheck && bash scripts/verify.sh",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "detail": "Read-only preparation packet; root owns the full-suite slot; node_modules absent."
+    }
+  ],
+  "verification": {
+    "focused": "PARTIAL: admission/doctor/write-page/claim-authority tests passed; packet-importing files did not load",
+    "package_type_full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "limitations": [
+      "Git metadata absent in /repo",
+      "Remote state not verified",
+      "node_modules absent; js-tiktoken/lite missing",
+      "No source edits",
+      "No live-account, native, or unfamiliar-user proof"
+    ]
+  },
+  "blockers": [
+    "Complete node_modules (js-tiktoken/lite) required to execute authority-projection.test.ts and source-grants mixed A/B tests in this archive",
+    "Full gate slot is root-owned"
+  ],
+  "next_step": "P015 implements source-B schema/recovery/authority/export against /work/out/source-b-authority-read-map.md and the existing tests in existing-coverage.md; rebase on the live base; do not add a competing admission schema or duplicate those tests.",
+  "downstream_handoff": {
+    "P015": "Sole contract owner. Use the line-referenced map; preserve resolve vs basis; treat unresolved fields as labeled current-code, not as a new schema.",
+    "P016": "May consume the same read map for recovery/export sequencing after P015; do not wait on unpublished P015 output from this packet.",
+    "not_owned": ["P003 shared evidence", "P006 docs", "Astra", "external doctor"]
+  }
+}

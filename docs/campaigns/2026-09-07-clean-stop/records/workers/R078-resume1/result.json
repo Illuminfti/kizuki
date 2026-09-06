@@ -1,0 +1,263 @@
+{
+  "task_id": "R078",
+  "packet_id": "R078",
+  "title": "Inspect ICS unfolding and ordinary parser diagnostics",
+  "issue": 550,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "kind": "independent_preparation",
+  "owner": "grok-R078",
+  "write_scope": "/work/out only",
+  "feeds_packets": ["P076"],
+  "excludes": [
+    "datetime fidelity (P075)",
+    "recurrence expansion (P075)",
+    "cancellation and tombstone mapping (P075)"
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "contract-gap",
+      "confirmed": true,
+      "file": "packages/connector-ics/src/parse.ts",
+      "lines": "182-183",
+      "symbol": "parseIcs",
+      "evidence": "if (line === null) continue; local check CAL-INCOMPLETE-SUMMARY exit 0: VEVENT kept, SUMMARY absent, no parse_error",
+      "invariant": "Does not invent a property; does not fail a balanced calendar; emits no diagnostic or skipped-line count. Unreadable dates already count skipped in events.ts:175-181.",
+      "required_fix": "P076 may add a skipped incomplete-line count without failing a balanced calendar. Do not reuse parse_error for ordinary incomplete properties."
+    },
+    {
+      "id": "F2",
+      "severity": "coverage-gap",
+      "confirmed": true,
+      "file": "packages/connector-ics/test/parse.test.ts",
+      "lines": "17-22",
+      "evidence": "Existing fold test joins one WSP; RFC 5545 §3.1 two-space continuation leftover space is untested. NEW-U-RFC-EXAMPLE characterized against unfold.ts:21-24.",
+      "required_fix": "Add the RFC worked example and ATTENDEE mailto fold. Do not replace parse.test.ts:17-22."
+    },
+    {
+      "id": "F3",
+      "severity": "limitation",
+      "confirmed": true,
+      "file": "packages/connector-ics/src/unfold.ts",
+      "lines": "19",
+      "evidence": "split(\"\\n\") only. NEW-U-CR-ONLY actual [\"BEGIN:VCALENDAR\\rEND:VCALENDAR\"]. RFC 5545 delimits content lines with CRLF.",
+      "required_fix": "Document LF/CRLF acceptance and CR-only limitation. Optional later split on CR. Not a bound or security issue."
+    },
+    {
+      "id": "F4",
+      "severity": "limitation",
+      "confirmed": true,
+      "file": "packages/connector-ics/src/parse.ts",
+      "lines": "67-69",
+      "symbol": "unescapeText",
+      "evidence": "unknown escape drops backslash; trailing backslash eaten. NEW-T-UNKNOWN-ESCAPE \"a\\\\:b\\\\\" → \"a:b\". Existing test parse.test.ts:77-79 covers only \\n \\N \\, \\; \\\\.",
+      "required_fix": "Optional characterization. Do not expand into datetime."
+    }
+  ],
+  "deliverables": [
+    "/work/out/fixtures/unfold-tokenize.json",
+    "/work/out/fixtures/folded-standup.ics",
+    "/work/out/fixtures/incomplete-summary.ics",
+    "/work/out/fixtures/incomplete-begin.ics",
+    "/work/out/fixtures/fold-repairs-begin.ics",
+    "/work/out/incomplete-property-diagnostics.md",
+    "/work/out/incomplete-property-diagnostics.json",
+    "/work/out/coverage-existing.md",
+    "/work/out/rfc-excerpts/rfc5545-citations.md",
+    "/work/out/run-local-check.ts",
+    "/work/out/shims/kizuki-core.ts",
+    "/work/out/checks/local-unfold-tokenize.json",
+    "/work/out/downstream-handoff.md",
+    "/work/out/ORIENT.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    {
+      "path": "/work/out/fixtures/unfold-tokenize.json",
+      "role": "folding/tokenization fixture set (existing cases cited, new cases drafted, not duplicated)"
+    },
+    {
+      "path": "/work/out/incomplete-property-diagnostics.md",
+      "role": "ordinary incomplete-property diagnostic table"
+    },
+    {
+      "path": "/work/out/incomplete-property-diagnostics.json",
+      "role": "machine-readable diagnostic table"
+    },
+    {
+      "path": "/work/out/fixtures/folded-standup.ics",
+      "role": "tiny legitimate folded calendar (RFC §3.1 / §3.1.1)"
+    },
+    {
+      "path": "/work/out/fixtures/incomplete-summary.ics",
+      "role": "ordinary incomplete SUMMARY line inside an otherwise valid VEVENT"
+    },
+    {
+      "path": "/work/out/fixtures/incomplete-begin.ics",
+      "role": "incomplete BEGIN without fold WSP → structural parse_error"
+    },
+    {
+      "path": "/work/out/fixtures/fold-repairs-begin.ics",
+      "role": "BEGIN plus folded :VEVENT repairs to BEGIN:VEVENT"
+    },
+    {
+      "path": "/work/out/run-local-check.ts",
+      "role": "permitted local characterization runner"
+    },
+    {
+      "path": "/work/out/checks/local-unfold-tokenize.json",
+      "role": "executed receipt, exit 0, 26/26"
+    },
+    {
+      "path": "/work/out/downstream-handoff.md",
+      "role": "P076 integration notes"
+    }
+  ],
+  "source_references": [
+    {
+      "path": "packages/connector-ics/src/unfold.ts",
+      "lines": "10-36",
+      "note": "RFC 5545 unfolding; BOM; LF split; WSP continuation; empty skip; bounds"
+    },
+    {
+      "path": "packages/connector-ics/src/parse.ts",
+      "lines": "57-72",
+      "note": "unescapeText"
+    },
+    {
+      "path": "packages/connector-ics/src/parse.ts",
+      "lines": "123-138",
+      "note": "parseContentLine; null when colon<=0 or empty name"
+    },
+    {
+      "path": "packages/connector-ics/src/parse.ts",
+      "lines": "181-183",
+      "note": "incomplete content lines silently skipped"
+    },
+    {
+      "path": "packages/connector-ics/src/parse.ts",
+      "lines": "225-234",
+      "note": "unbalanced END is parse_error"
+    },
+    {
+      "path": "packages/connector-ics/src/state.ts",
+      "lines": "1-70",
+      "note": "URL custody; out of unfolding/tokenization seam"
+    },
+    {
+      "path": "packages/connector-ics/test/parse.test.ts",
+      "lines": "16-80",
+      "note": "existing unfolding and content-line tests; do not duplicate"
+    },
+    {
+      "path": "packages/connector-ics/src/events.ts",
+      "lines": "175-181",
+      "note": "unreadable-date skipped count; analogue for incomplete lines"
+    },
+    {
+      "url": "https://www.rfc-editor.org/rfc/rfc5545.txt",
+      "retrieved": "2026-09-06",
+      "http_status": 200,
+      "bytes": 345537,
+      "sections": ["3.1", "3.1.1", "3.2", "3.3.11"]
+    }
+  ],
+  "checks": [
+    {
+      "name": "local unfold/tokenize characterization",
+      "command": "bun /work/out/run-local-check.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T22:05:42.689Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "passed": 26,
+      "failed": 0,
+      "evidence": "/work/out/checks/local-unfold-tokenize.json"
+    },
+    {
+      "name": "existing parse.test.ts",
+      "command": "bun test /repo/packages/connector-ics/test/parse.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "time": "2026-09-06T22:05:50Z",
+      "exit_code": 1,
+      "result": "FAIL",
+      "reason": "Cannot find module '@kizuki/core'. Workspace node_modules absent; installs forbidden. Not a parser assertion failure.",
+      "evidence": "/work/out/checks/parse-test-attempt.json"
+    },
+    {
+      "name": "typecheck",
+      "command": "bun run typecheck",
+      "result": "NOT_RUN",
+      "reason": "no node_modules; typescript not runnable without install"
+    },
+    {
+      "name": "full repository gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "reason": "read-only preparation packet; no workspace install; not an implementation lane"
+    },
+    {
+      "name": "RFC 5545 primary fetch",
+      "command": "bun fetch https://www.rfc-editor.org/rfc/rfc5545.txt",
+      "time": "2026-09-06",
+      "http_status": 200,
+      "result": "PASS",
+      "evidence": "/work/out/rfc-excerpts/rfc5545-citations.md"
+    }
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun /work/out/run-local-check.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/checks/local-unfold-tokenize.json"
+    },
+    "package_test": {
+      "command": "bun test /repo/packages/connector-ics/test/parse.test.ts",
+      "exit_code": 1,
+      "result": "FAIL",
+      "reason": "missing @kizuki/core"
+    },
+    "typecheck": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "live_account": "NOT_RUN",
+    "stranger_proof": "NOT_CLAIMED"
+  },
+  "blockers": [
+    "Workspace node_modules / @kizuki/core not present; existing parse.test.ts and full verify cannot run without an install, which this packet forbids.",
+    "GitHub issue #550 body was not fetched (no gh in this container).",
+    "Remote git state not verified; /repo has no Git metadata."
+  ],
+  "next_step": "P076 should add the new RFC fold fixtures and, if adopting a diagnostic, a skipped incomplete-line count on balanced calendars—without duplicating parse.test.ts:17-79 or touching P075 datetime/recurrence/cancellation.",
+  "downstream_handoff": {
+    "to": "P076",
+    "path": "/work/out/downstream-handoff.md",
+    "do_not_duplicate": [
+      "packages/connector-ics/test/parse.test.ts:17-22",
+      "packages/connector-ics/test/parse.test.ts:24-29",
+      "packages/connector-ics/test/parse.test.ts:45-80",
+      "packages/connector-ics/test/parse.test.ts:31-41"
+    ],
+    "add": [
+      "NEW-U-RFC-EXAMPLE",
+      "NEW-U-RFC-ATTENDEE-FOLD",
+      "CAL-INCOMPLETE-SUMMARY",
+      "CAL-INCOMPLETE-BEGIN",
+      "CAL-FOLD-REPAIRS-BEGIN",
+      "NEW-T-EMPTY-VALUE"
+    ]
+  },
+  "limitations": [
+    "No source edits.",
+    "No native/account/model/human qualification or release acceptance.",
+    "No 8 MiB or 50 000-line bound re-run (existing tests; resource-exhaustion avoided).",
+    "RFC 5545 UTF-8 mid-sequence fold note is not exercised (parser receives a JS string, not raw octets).",
+    "state.ts URL custody was read and is out of this seam."
+  ]
+}

@@ -1,0 +1,147 @@
+{
+  "task_id": "R072",
+  "packet_id": "R072",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Map ChatGPT public import progress and report projection",
+  "issue": 550,
+  "feeds_packets": ["P070", "P087"],
+  "artifacts": [
+    "/work/out/chatgpt-import-projection.md",
+    "/work/out/chatgpt-source-to-summary.json",
+    "/work/out/expected-counts-status.json",
+    "/work/out/coverage-existing.json",
+    "/work/out/fixtures/clean-ok.json",
+    "/work/out/fixtures/empty-array.json",
+    "/work/out/fixtures/not-array.json",
+    "/work/out/fixtures/malformed.json",
+    "/work/out/fixtures/unsupported-part.json",
+    "/work/out/fixtures/empty-content.json",
+    "/work/out/fixtures/missing-id.json",
+    "/work/out/fixtures/invalid-timestamp.json",
+    "/work/out/fixtures/duplicate-id.json",
+    "/work/out/fixtures/mixed-degraded.json",
+    "/work/out/harness/project-report.ts",
+    "/work/out/harness/kizuki-core-shim.ts",
+    "/work/out/harness/cli-chatgpt-progress.ts",
+    "/work/out/checks/project-report.json",
+    "/work/out/checks/cli-process-seam.json",
+    "/work/out/RESULT.md"
+  ],
+  "deliverables": [
+    "/work/out/chatgpt-import-projection.md",
+    "/work/out/chatgpt-source-to-summary.json",
+    "/work/out/expected-counts-status.json",
+    "/work/out/fixtures/",
+    "/work/out/checks/project-report.json",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    { "path": "packages/cli/src/commands/import.ts", "lines": "42-144", "role": "CLI source selection, health gate, formatRunCounts stdout" },
+    { "path": "packages/cli/src/connections.ts", "lines": "158-170,365-368", "role": "resolveConnectorId; blocksEnrollment allows degraded" },
+    { "path": "packages/cli/src/output.ts", "lines": "66-75", "role": "public progress line" },
+    { "path": "packages/cli/src/connect-catalog.ts", "lines": "10-37,61-90", "role": "catalog title ChatGPT export; status Stored/Errors from last_result" },
+    { "path": "packages/cli/src/commands/connect.ts", "lines": "263-327", "role": "connect health=state; blocked detail on stderr" },
+    { "path": "packages/cli/src/commands/doctor.ts", "lines": "39,114-117,247-256,430-432", "role": "doctor health + scrubbed import-report detail, DETAIL_CAP=160" },
+    { "path": "packages/cli/src/commands/backfill.ts", "lines": "39-43", "role": "same formatRunCounts as import" },
+    { "path": "packages/cli/src/commands/sync.ts", "lines": "82-84", "role": "sync prefixes connector and source_key before formatRunCounts" },
+    { "path": "packages/cli/src/main.ts", "lines": "216-224", "role": "UsageError exit 2; other errors exit 1" },
+    { "path": "packages/connectors/src/import-chatgpt/index.ts", "lines": "32-105,159-349", "role": "connector id, manifest, parseChatGptExport" },
+    { "path": "packages/connectors/src/import-report.ts", "lines": "21-78", "role": "summarizeImportErrors, importHealthReport, misconfiguredHealth" },
+    { "path": "packages/connectors/src/import-snapshot.ts", "lines": "123-237,164-166", "role": "drain; dirty unless only unsupported_part; snapshotHealth" },
+    { "path": "packages/core/src/ingest/run.ts", "lines": "40-48,220-229,564-595", "role": "RunResult; parse errors are not run errors" },
+    { "path": "packages/core/src/staging/producers.ts", "lines": "146-174", "role": "proposals_created arithmetic" },
+    { "path": "packages/core/src/sensitivity/policy.ts", "lines": "34-49", "role": "agent_session private/personal" },
+    { "path": "packages/connectors/test/chatgpt.test.ts", "lines": "45-538", "role": "existing parser/snapshot coverage; do not duplicate" },
+    { "path": "packages/cli/test/e2e.test.ts", "lines": "20-31", "role": "existing formatRunCounts exact string for markdown-folder" }
+  ],
+  "checks": [
+    {
+      "name": "pure parse+health+formatRunCounts projection",
+      "command": "bun /work/out/harness/project-report.ts",
+      "bun": "1.3.14",
+      "exit": 0,
+      "result": "PASS",
+      "evidence": "/work/out/checks/project-report.json",
+      "note": "11 fixture cases plus truncation summary. Parser loaded via a local patched copy because the archive has no node_modules."
+    },
+    {
+      "name": "CLI connect --json catalog",
+      "command": "cd /repo && bun packages/cli/src/main.ts connect --json",
+      "exit": 1,
+      "result": "NOT_RUN",
+      "reason": "Cannot find module '@kizuki/tui'. Workspace install absent; bun install forbidden.",
+      "evidence": "/work/out/checks/cli-process-seam.json"
+    },
+    {
+      "name": "packages/connectors/test/chatgpt.test.ts",
+      "result": "NOT_RUN",
+      "reason": "Same missing node_modules. Statically mapped in coverage-existing.json; do not treat as PASS."
+    },
+    {
+      "name": "full repository gate scripts/verify.sh",
+      "result": "NOT_RUN",
+      "reason": "Preparation packet; no workspace install; no full-suite slot."
+    }
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun /work/out/harness/project-report.ts",
+      "result": "PASS",
+      "exit": 0
+    },
+    "cli_process_seam": { "result": "NOT_RUN", "missing": "workspace node_modules" },
+    "package_tests": { "result": "NOT_RUN", "missing": "workspace node_modules" },
+    "full_gate": { "result": "NOT_RUN" }
+  },
+  "findings": [
+    {
+      "severity": "contract-gap",
+      "id": "parse-errors-not-in-import-progress",
+      "evidence": "import.ts:137 prints formatRunCounts(RunResult); import-snapshot.ts drain does not copy ImportParseResult.errors into SyncBatch. Executed unsupported-part: health.detail records=1; 1 record errors (unsupported_part=1) while formatRunCounts errors=0.",
+      "invariant": "Public import/backfill progress counts ledger/run failures, not ChatGPT record errors.",
+      "required_for": "P070/P087 must not assume import stdout lists unsupported_part. Doctor/connect health is the import-report surface."
+    },
+    {
+      "severity": "contract-gap",
+      "id": "degraded-still-enrolls",
+      "evidence": "connections.ts:365-368 blocksEnrollment only for states other than ok|degraded. import.ts:98-102.",
+      "invariant": "A degraded ChatGPT export enrolls and can store events with CLI exit 0."
+    },
+    {
+      "severity": "coverage-gap",
+      "id": "no-cli-chatgpt-progress-test",
+      "evidence": "packages/cli/test has no chatgpt import case. Closest: e2e.test.ts:20-31 markdown-folder; x-archive-import.test.ts:12-47. import-report.ts has no unit test.",
+      "action": "P070 should add CLI assertions from expected-counts-status.json, not a second parser suite."
+    },
+    {
+      "severity": "docs-mismatch",
+      "id": "snapshot-tombstone-readme",
+      "evidence": "connectors/README.md:50-57 says snapshot importers never emit tombstones; import-chatgpt/index.ts:94-100 sets tombstones:true and import-snapshot.ts:177-183 emits them. P006 owns canonical docs.",
+      "action": "Do not rewrite docs in this packet."
+    },
+    {
+      "severity": "note",
+      "id": "max-reported-errors-does-not-drop-codes",
+      "evidence": "Executed summarizeImportErrors on 33 empty_content rows: '33 record errors (empty_content=33; truncated=1)'. Codes are not truncated; only a remainder count is appended. Doctor then caps at 160 chars."
+    }
+  ],
+  "blockers": [
+    "CLI process-seam execution requires a bun@1.3.14 workspace install (node_modules). Not present in this read-only archive; install is out of scope."
+  ],
+  "next_step": "P070: add a CLI ChatGPT progress/health harness using /work/out/fixtures and expected-counts-status.json on a workspace-installed checkout. Do not duplicate chatgpt.test.ts mapper cases. P087: consume the source-to-summary map. P006 if README tombstone sentence is in scope.",
+  "downstream_handoff": {
+    "P070": "CLI public-summary tests and any progress-line change. Fixtures and expected stdout/exit codes are in expected-counts-status.json. Treat parse-error omission from formatRunCounts as current behavior unless that packet is assigned to surface it.",
+    "P087": "Use chatgpt-source-to-summary.json for report projection. Import-report fields appear on connect health= and doctor problem text, not on import stdout.",
+    "P006": "Optional: README snapshot-importer tombstone sentence vs ChatGPT tombstones:true.",
+    "not_claimed": ["P003 evidence design", "P015 source-B", "native/account qualification", "release acceptance"]
+  },
+  "limitations": [
+    "No source edits.",
+    "No real ChatGPT export or account.",
+    "No mapper-fidelity assertions added.",
+    "formatRunCounts in the executed harness is an independent copy of output.ts:66-75 because @kizuki/tui cannot resolve here.",
+    "Parser execution used a /work/out/tmp patched copy of connector files with @kizuki/core pointed at harness/kizuki-core-shim.ts.",
+    "No native, live-account, stranger, or D19 readiness claim."
+  ]
+}

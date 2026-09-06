@@ -1,0 +1,806 @@
+{
+  "schema": "kizuki.capability-inventory/p095-v1",
+  "task_id": "P095",
+  "issue": 349,
+  "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+  "archive_sha256": "939850c9ca71fae8242a8e7783e8bab3afdd35e1c30410ece36cb03fbecad052",
+  "generated_at": "2026-09-06",
+  "write_scope": "book only",
+  "state_vocabulary": {
+    "implemented": "Working code exists on this exact base at file+symbol. Not inferred from RFC, directory, TODO, issue, or branch name.",
+    "bound": "Wired into a public host: CLI COMMANDS, MCP/HTTP TOOLS, defaultConnectorRegistry, native package, or port selection.",
+    "enrollable": "CLI listEnrollableConnectorIds admits it, or a non-connector surface is directly invocable. Null when not a source.",
+    "qualified": "Trusted acceptance proof of the required evidence class exists on this base (live-account, copied-artifact, unfamiliar-user, native attestation). Synthetic tests are not qualification.",
+    "planned": "Accepted design or C3/C4/RFC obligation without the public surface, or an unimplemented apply/journey adapter."
+  },
+  "canonical_manifests": {
+    "cli_verbs": "packages/cli/src/commands/index.ts#COMMANDS",
+    "retired_verbs": "packages/cli/src/retired.ts#RETIRED_OWNER_GATE_VERBS",
+    "connector_registry": "packages/connectors/src/registry.ts#defaultConnectorRegistry",
+    "enrollment": "packages/cli/src/connections.ts#listEnrollableConnectorIds",
+    "mcp_tools": "packages/core/src/agents/types.ts#TOOLS",
+    "port_contracts": "packages/core/src/contracts/ports.ts#PORT_CONTRACTS",
+    "acceptance": "scripts/go-no-go.ts#POLICY",
+    "binding_claims": "docs/CURRENT.md"
+  },
+  "commands": [
+    {
+      "id": "cli.app",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/app.ts",
+      "symbol": "appCommand",
+      "usage": "app [--no-open] [--no-service]",
+      "advertised_in": ["packages/cli/src/help.ts GROUPS", "docs/local-app.md"],
+      "missing_from": ["docs/cli.md"],
+      "proof": ["packages/cli/test/app-host.test.ts", "packages/cli/test/app-client.test.ts", "packages/cli/test/app-browser.test.ts", "packages/cli/test/app-service.test.ts"]
+    },
+    {
+      "id": "cli.agent",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/agent.ts",
+      "symbol": "agentCommand",
+      "usage": "agent add NAME --grant FILE --token-ref file:/absolute/path --operation-id ID [--dry-run] [--json] | agent revoke NAME [--json]",
+      "advertised_in": ["docs/cli.md", "docs/agent-enrollment.md"],
+      "limits": "Credential file delivery currently requires qualified Linux x64 glibc.",
+      "proof": ["packages/cli/test/agent.test.ts", "packages/mcp/test/credential-stdio.test.ts"]
+    },
+    {
+      "id": "cli.init",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/init.ts",
+      "symbol": "initCommand",
+      "advertised_in": ["README.md", "docs/cli.md"],
+      "proof": ["packages/cli/test/init.test.ts"]
+    },
+    {
+      "id": "cli.connect",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/connect.ts",
+      "symbol": "connectCommand",
+      "advertised_in": ["docs/cli.md", "docs/connect.md", "README.md"],
+      "proof": ["packages/cli/test/connect.test.ts", "packages/cli/test/connect-catalog.test.ts", "packages/cli/test/source-consent.test.ts"]
+    },
+    {
+      "id": "cli.backfill",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/backfill.ts",
+      "symbol": "backfillCommand",
+      "advertised_in": ["docs/cli.md"],
+      "proof": ["packages/cli/test/sync.test.ts"]
+    },
+    {
+      "id": "cli.sync",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/sync.ts",
+      "symbol": "syncCommand",
+      "advertised_in": ["docs/cli.md"],
+      "proof": ["packages/cli/test/sync.test.ts", "packages/cli/test/e2e.test.ts"]
+    },
+    {
+      "id": "cli.import",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/import.ts",
+      "symbol": "importCommand",
+      "advertised_in": ["README.md", "docs/cli.md"],
+      "proof": ["packages/cli/test/mapped-import.test.ts", "packages/cli/test/estate-import.test.ts"]
+    },
+    {
+      "id": "cli.models",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/models.ts",
+      "symbol": "modelsCommand",
+      "limits": "Copies a local GGUF. Does not download weights. No native local model capability in the CLI for extraction.",
+      "advertised_in": ["docs/cli.md"],
+      "proof": ["packages/cli/test/models.test.ts"]
+    },
+    {
+      "id": "cli.audit",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/audit.ts",
+      "symbol": "auditCommand",
+      "core": "packages/core/src/canon/audit.ts#listAuditReceipts",
+      "tui": "packages/tui/src/app.ts#runAudit",
+      "advertised_in": ["docs/cli.md"],
+      "proof": ["packages/cli/test/audit-undo.test.ts"]
+    },
+    {
+      "id": "cli.tell",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/tell.ts",
+      "symbol": "tellCommand",
+      "core": "packages/core/src/correction/correct.ts#correct",
+      "advertised_in": ["docs/cli.md", "docs/CURRENT.md"],
+      "proof": ["packages/cli/test/tell.test.ts"]
+    },
+    {
+      "id": "cli.undo",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/undo.ts",
+      "symbol": "undoCommand",
+      "advertised_in": ["docs/cli.md"],
+      "proof": ["packages/cli/test/audit-undo.test.ts"]
+    },
+    {
+      "id": "cli.query",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/query.ts",
+      "symbol": "queryCommand",
+      "advertised_in": ["README.md", "docs/cli.md"],
+      "proof": ["packages/cli/test/query.test.ts"]
+    },
+    {
+      "id": "cli.context",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/context.ts",
+      "symbol": "contextCommand",
+      "core": "packages/core/src/serving/packet.ts",
+      "advertised_in": ["README.md", "docs/cli.md"],
+      "proof": ["packages/cli/test/context.test.ts"]
+    },
+    {
+      "id": "cli.doctor",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/doctor.ts",
+      "symbol": "doctorCommand",
+      "usage": "doctor [--json] [--integrity]",
+      "docs_cli_usage_omits": "--integrity",
+      "core": "packages/core/src/serve/doctor.ts",
+      "advertised_in": ["README.md", "docs/cli.md"],
+      "proof": ["packages/cli/test/doctor/liveness.test.ts", "packages/cli/test/doctor/page-provenance.test.ts"]
+    },
+    {
+      "id": "cli.serve",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/serve.ts",
+      "symbol": "serveCommand",
+      "advertised_in": ["docs/cli.md", "docs/service-lifecycle.md"],
+      "proof": ["packages/cli/test/serve/cli.test.ts", "packages/cli/test/serve/install.test.ts", "packages/cli/test/serve/runtime.test.ts"]
+    },
+    {
+      "id": "cli.purge",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/purge.ts",
+      "symbol": "purgeCommand",
+      "advertised_in": ["docs/cli.md", "SECURITY.md"],
+      "proof": ["packages/cli/test/purge.test.ts", "packages/cli/test/purge-subject-scope.test.ts", "packages/cli/test/purge-recovery.test.ts"]
+    },
+    {
+      "id": "cli.export",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/export.ts",
+      "symbol": "exportCommand",
+      "core": "packages/core/src/export.ts#exportVault",
+      "advertised_in": ["docs/cli.md"],
+      "proof": ["packages/cli/test/e2e.test.ts"]
+    },
+    {
+      "id": "cli.restore",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/restore.ts",
+      "symbol": "restoreCommand",
+      "advertised_in": ["docs/cli.md"],
+      "proof": ["packages/cli/test/e2e.test.ts"]
+    },
+    {
+      "id": "cli.rebuild",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/rebuild.ts",
+      "symbol": "rebuildCommand",
+      "limits": "Only --layer all is implemented.",
+      "advertised_in": ["docs/cli.md", "packages/core/RETRIEVAL-REBUILD.md"],
+      "proof": ["packages/cli/test/rebuild.test.ts"]
+    },
+    {
+      "id": "cli.version",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/version.ts",
+      "symbol": "versionCommand",
+      "advertised_in": ["docs/cli.md"],
+      "proof": ["packages/cli/test/help.test.ts"]
+    },
+    {
+      "id": "cli.retired.review-promote-reject",
+      "kind": "command",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": null, "planned": false },
+      "file": "packages/cli/src/retired.ts",
+      "symbol": "RETIRED_OWNER_GATE_VERBS",
+      "behavior": "exit 2; point at audit, undo, tell. Not live product.",
+      "advertised_in": ["docs/cli.md", "packages/cli/src/help.ts"],
+      "proof": ["packages/cli/test/help.test.ts"]
+    }
+  ],
+  "mcp_tools": [
+    {
+      "id": "mcp.search",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/serving/search.ts",
+      "symbol": "serveSearch",
+      "adapter": "packages/mcp/src/server.ts#createServer",
+      "proof": ["packages/mcp/test/server.test.ts"]
+    },
+    {
+      "id": "mcp.get_page",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/serving/page.ts",
+      "symbol": "serveGetPage"
+    },
+    {
+      "id": "mcp.query_entities",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/serving/entities.ts",
+      "symbol": "serveEntities"
+    },
+    {
+      "id": "mcp.timeline",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/serving/timeline.ts",
+      "symbol": "serveTimeline",
+      "note": "Not a CLI verb. docs/cli.md Not CLI verbs is accurate."
+    },
+    {
+      "id": "mcp.context_packet",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/serving/packet.ts",
+      "symbol": "serveContextPacket",
+      "cli_projection": "cli.context"
+    },
+    {
+      "id": "mcp.graph_neighbors",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/serving/graph.ts",
+      "symbol": "serveGraph"
+    },
+    {
+      "id": "mcp.system_health",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/serving/health.ts",
+      "symbol": "serveHealth"
+    },
+    {
+      "id": "mcp.propose",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/serving/propose.ts",
+      "symbol": "servePropose"
+    },
+    {
+      "id": "mcp.correct",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/serving/correct.ts",
+      "symbol": "serveCorrect",
+      "cli_projection": "cli.tell"
+    }
+  ],
+  "connectors": [
+    {
+      "id": "kizuki.markdown-folder",
+      "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false },
+      "file": "packages/connectors/src/markdown-folder/index.ts",
+      "symbol": "MARKDOWN_FOLDER_CONNECTOR_ID / createMarkdownFolderConnector",
+      "registry": "packages/connectors/src/registry.ts#enroll",
+      "auth_modes": ["none"],
+      "c3": true,
+      "acceptance_gate": "connector.markdown-folder",
+      "acceptance_evidence": "file-import",
+      "acceptance_status": "NOT_IMPLEMENTED",
+      "proof": ["packages/cli/test/markdown-vault-boundary.test.ts", "packages/connectors/test"]
+    },
+    {
+      "id": "kizuki.import-chatgpt",
+      "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false },
+      "file": "packages/connectors/src/import-chatgpt/index.ts",
+      "symbol": "CHATGPT_IMPORT_CONNECTOR_ID",
+      "auth_modes": ["none"],
+      "c3": true,
+      "acceptance_gate": "connector.chatgpt-export",
+      "acceptance_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "kizuki.import-claude",
+      "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false },
+      "file": "packages/connectors/src/import-claude/index.ts",
+      "symbol": "CLAUDE_IMPORT_CONNECTOR_ID",
+      "auth_modes": ["none"],
+      "c3": true,
+      "acceptance_gate": "connector.claude-export",
+      "acceptance_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "kizuki.import-whatsapp",
+      "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false },
+      "file": "packages/connectors/src/import-whatsapp/index.ts",
+      "symbol": "WHATSAPP_IMPORT_CONNECTOR_ID",
+      "auth_modes": ["none"],
+      "c3": true,
+      "acceptance_gate": "connector.whatsapp-export",
+      "acceptance_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "kizuki.import-pocket",
+      "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false },
+      "file": "packages/connectors/src/import-pocket/index.ts",
+      "symbol": "POCKET_IMPORT_CONNECTOR_ID",
+      "auth_modes": ["none"],
+      "c3": true,
+      "acceptance_gate": "connector.pocket",
+      "acceptance_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "kizuki.import-omnivore",
+      "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false },
+      "file": "packages/connectors/src/import-omnivore/index.ts",
+      "symbol": "OMNIVORE_IMPORT_CONNECTOR_ID",
+      "auth_modes": ["none"],
+      "c3": true,
+      "acceptance_gate": "connector.omnivore",
+      "acceptance_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "kizuki.import-x-archive",
+      "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false },
+      "file": "packages/connector-x/src/connector.ts",
+      "symbol": "X_ARCHIVE_CONNECTOR_ID",
+      "auth_modes": ["none"],
+      "c3": true,
+      "catalog_title": "missing; falls back to raw id",
+      "acceptance_gate": "connector.x-archive",
+      "acceptance_status": "NOT_IMPLEMENTED",
+      "proof": ["packages/cli/test/x-archive-import.test.ts"]
+    },
+    {
+      "id": "kizuki.import-legacy-wiki",
+      "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false },
+      "file": "packages/connectors/src/import-legacy-wiki/index.ts",
+      "symbol": "LEGACY_WIKI_CONNECTOR_ID",
+      "c3": false,
+      "advertised_in": ["docs/legacy-import.md"],
+      "proof": ["packages/cli/test/mapped-import.test.ts"]
+    },
+    {
+      "id": "kizuki.import-legacy-events",
+      "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false },
+      "file": "packages/connectors/src/import-legacy-events/index.ts",
+      "symbol": "LEGACY_EVENTS_CONNECTOR_ID",
+      "c3": false,
+      "advertised_in": ["docs/legacy-import.md"]
+    },
+    {
+      "id": "kizuki.screenpipe",
+      "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false },
+      "file": "packages/connector-screenpipe/src/connector.ts",
+      "symbol": "SCREENPIPE_CONNECTOR_ID",
+      "auth_modes": ["none"],
+      "c3": true,
+      "acceptance_gate": "connector.screenpipe",
+      "acceptance_evidence": "local-source",
+      "acceptance_status": "NOT_IMPLEMENTED",
+      "limits": "Offline read of a stopped screenpipe SQLite database. Not live HTTP."
+    },
+    {
+      "id": "kizuki.ics",
+      "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false },
+      "file": "packages/connector-ics/src/connector.ts",
+      "symbol": "ICS_CONNECTOR_ID",
+      "auth_modes": ["none", "sign_in"],
+      "cli_enrollment": "none-mode --source PATH only",
+      "unbound": "packages/connector-ics/src/sign-in.ts#signInIcs URL flow is not a CLI verb",
+      "c3": true,
+      "acceptance_gate": "connector.ics",
+      "acceptance_evidence": "file-import",
+      "acceptance_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "kizuki.beeper",
+      "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false },
+      "file": "packages/connector-beeper/src/connector.ts",
+      "symbol": "BEEPER_CONNECTOR_ID",
+      "auth_modes": ["secret_ref"],
+      "c3": false,
+      "limits": "Synthetic coverage only. CURRENT.md: no live account claim. Loopback HTTP + token reference.",
+      "advertised_in": ["docs/connect.md", "docs/CURRENT.md", "README.md"],
+      "proof": ["packages/cli/test/beeper-flow.test.ts", "packages/connector-beeper/test/connector.test.ts"],
+      "provider_docs_checked": "2026-09-06 https://developers.beeper.com/desktop-api/index.md"
+    },
+    {
+      "id": "kizuki.imap",
+      "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false },
+      "file": "packages/connector-imap/src/connector.ts",
+      "symbol": "IMAP_CONNECTOR_ID",
+      "auth_modes": ["sign_in"],
+      "cli": "packages/cli/src/commands/connect.ts imap branch",
+      "c3": true,
+      "acceptance_gate": "connector.imap",
+      "acceptance_evidence": "live-account",
+      "acceptance_status": "NOT_IMPLEMENTED",
+      "contradicts": "SECURITY.md sign-in denial",
+      "proof": ["packages/cli/test/imap-enrollment.test.ts"]
+    },
+    {
+      "id": "kizuki.telegram",
+      "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false },
+      "file": "packages/connector-telegram/src/connector.ts",
+      "symbol": "TELEGRAM_CONNECTOR_ID",
+      "auth_modes": ["sign_in"],
+      "cli": "packages/cli/src/commands/connect-telegram.ts",
+      "available_when": "appCredentials() !== null",
+      "c3": true,
+      "acceptance_gate": "connector.telegram",
+      "acceptance_evidence": "live-account",
+      "acceptance_status": "NOT_IMPLEMENTED",
+      "limits": "CURRENT.md: actual account qualification remains unrun. Project app credentials required.",
+      "proof": ["packages/cli/test/telegram-enrollment.test.ts", "packages/cli/test/connect-catalog.test.ts"]
+    },
+    {
+      "id": "kizuki.gmail",
+      "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false },
+      "file": "packages/connector-gmail/src/connector.ts",
+      "symbol": "GMAIL_CONNECTOR_ID",
+      "auth_modes": ["oauth", "sign_in"],
+      "cli": "packages/cli/src/commands/connect-gmail.ts",
+      "available_when": "KIZUKI_GMAIL_CLIENT_ID configured",
+      "c3": true,
+      "acceptance_gate": "connector.gmail",
+      "acceptance_evidence": "live-account",
+      "acceptance_status": "NOT_IMPLEMENTED",
+      "limits": "Synthetic-qualified native wiring. No registered Google application or live-account qualification.",
+      "advertised_in": ["docs/gmail.md", "docs/CURRENT.md", "docs/cli.md"],
+      "proof": ["packages/cli/test/gmail-enrollment.test.ts", "packages/cli/test/gmail-browser.test.ts"]
+    },
+    {
+      "id": "kizuki.google-calendar",
+      "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false },
+      "file": "packages/connector-google-calendar/src/connector.ts",
+      "symbol": "ID / createGoogleCalendarConnector",
+      "auth_modes": ["oauth", "sign_in"],
+      "cli": "packages/cli/src/commands/connect-google-calendar.ts",
+      "available_when": "KIZUKI_GOOGLE_CALENDAR_CLIENT_ID configured",
+      "c3": true,
+      "acceptance_gate": "connector.google-calendar",
+      "acceptance_evidence": "live-account",
+      "acceptance_status": "NOT_IMPLEMENTED",
+      "limits": "Canonical calendar and explicit fields required. primary refused. Account/artifact qualification remain separate.",
+      "advertised_in": ["docs/google-calendar.md", "docs/CURRENT.md"],
+      "proof": ["packages/cli/test/google-calendar-enrollment.test.ts"]
+    },
+    {
+      "id": "kizuki.whoop",
+      "states": { "implemented": true, "bound": false, "enrollable": false, "qualified": false, "planned": true },
+      "file": "packages/connector-whoop/src/connector.ts",
+      "symbol": "WHOOP_ID",
+      "auth_modes": ["secret_ref"],
+      "registered": false,
+      "c3": true,
+      "acceptance_gate": "connector.whoop",
+      "acceptance_evidence": "live-account",
+      "acceptance_status": "NOT_IMPLEMENTED",
+      "limits": "docs/whoop.md: not registered in CLI; native enrollment unqualified; OAuth compatibility unproven.",
+      "planned_by": "docs/decision-log.md C3"
+    },
+    {
+      "id": "kizuki.x",
+      "states": { "implemented": true, "bound": false, "enrollable": false, "qualified": false, "planned": true },
+      "file": "packages/connector-x/src/api/state.ts",
+      "symbol": "X_API_CONNECTOR_ID",
+      "auth_modes": ["oauth", "secret_ref"],
+      "registered": false,
+      "c3": true,
+      "acceptance_gate": "connector.x-api",
+      "acceptance_connector_id": null,
+      "acceptance_evidence": "live-account",
+      "acceptance_status": "NOT_IMPLEMENTED",
+      "limits": "packages/connector-x/API.md: package subpath only; not registered in the native CLI.",
+      "planned_by": "docs/decision-log.md C3"
+    },
+    {
+      "id": "composio",
+      "states": { "implemented": false, "bound": false, "enrollable": false, "qualified": false, "planned": true },
+      "planned_by": "docs/decision-log.md C3 deferred",
+      "acceptance": "scripts/go-no-go.ts#POLICY.deferred_connectors"
+    },
+    {
+      "id": "whatsapp-business-api",
+      "states": { "implemented": false, "bound": false, "enrollable": false, "qualified": false, "planned": true },
+      "planned_by": "docs/decision-log.md C3 deferred",
+      "acceptance": "scripts/go-no-go.ts#POLICY.deferred_connectors"
+    }
+  ],
+  "contracts": [
+    {
+      "id": "kizuki.event/v1",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": null, "planned": false },
+      "file": "packages/core/src/contracts/event.ts",
+      "symbol": "EVENT_SCHEMA",
+      "advertised_in": ["docs/architecture.md", "docs/CURRENT.md"]
+    },
+    {
+      "id": "kizuki.claim/v1",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": null, "planned": false },
+      "file": "packages/core/src/contracts/proposal.ts",
+      "symbol": "CLAIM_SCHEMA"
+    },
+    {
+      "id": "kizuki.connector/v1",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": null, "planned": false },
+      "file": "packages/core/src/contracts/connector.ts",
+      "symbol": "CONNECTOR_SCHEMA / AUTH_MODES"
+    },
+    {
+      "id": "kizuki.retrieval/v1",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/contracts/retrieval.ts",
+      "symbol": "RETRIEVAL_CONTRACT",
+      "implementations": [
+        { "id": "kizuki.retrieval.fts5", "file": "packages/core/src/retrieval/fts5.ts", "symbol": "registerFts5RetrievalPort" },
+        { "id": "kizuki.retrieval.embedded-pg", "file": "packages/retrieval-pg/src/index.ts", "symbol": "registerEmbeddedRetrieval" }
+      ]
+    },
+    {
+      "id": "kizuki.embedding/v1",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/contracts/embedding.ts",
+      "symbol": "EMBEDDING_CONTRACT",
+      "implementation": { "id": "gguf", "file": "packages/embed-gguf/src/port.ts", "symbol": "createGgufEmbeddingPort" }
+    },
+    {
+      "id": "kizuki.llm/v1",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/contracts/llm.ts",
+      "symbol": "LLM_CONTRACT",
+      "implementations": [
+        { "id": "none", "file": "packages/llm/src/none.ts", "symbol": "createNoneLlmPort" },
+        { "id": "openai-compatible", "file": "packages/llm/src/openai-compatible.ts", "symbol": "createOpenAiCompatibleLlmPort" }
+      ]
+    },
+    {
+      "id": "kizuki.producer/v1",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/contracts/producer.ts",
+      "symbol": "PRODUCER_CONTRACT",
+      "implementation": { "file": "packages/core/src/producer/model.ts", "symbol": "createModelProducerPort" }
+    },
+    {
+      "id": "kizuki.notifier/v1",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/contracts/notifier.ts",
+      "symbol": "NOTIFIER_CONTRACT",
+      "implementation": { "id": "kizuki.notifier.file", "file": "packages/core/src/serve/notifier-file.ts", "symbol": "createFileNotifier" }
+    },
+    {
+      "id": "kizuki.surface/v1",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/contracts/surface.ts",
+      "symbol": "SURFACE_CONTRACT"
+    },
+    {
+      "id": "kizuki.backup/v3",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/export.ts",
+      "cli": ["cli.export", "cli.restore"],
+      "advertised_in": ["docs/cli.md"]
+    },
+    {
+      "id": "kizuki.cli.<verb>/v1",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/output.ts",
+      "symbol": "jsonEnvelope",
+      "advertised_in": ["docs/cli.md"]
+    },
+    {
+      "id": "world-slice",
+      "states": { "implemented": false, "bound": false, "enrollable": null, "qualified": false, "planned": true },
+      "advertised_in": ["README.md World Slices", "docs/world-model-program.md", "rfcs/0004-living-epistemic-world-model.md"],
+      "note": "README correctly labels this as direction, not a shipped world.diff API."
+    }
+  ],
+  "packages": [
+    { "name": "@kizuki/core", "path": "packages/core", "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false } },
+    { "name": "@kizuki/cli", "path": "packages/cli", "version": "0.1.0", "bin": "kizuki", "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false } },
+    { "name": "@kizuki/mcp", "path": "packages/mcp", "bin": "kizuki-mcp", "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false } },
+    { "name": "@kizuki/tui", "path": "packages/tui", "role": "audit and undo only", "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false } },
+    { "name": "@kizuki/connectors", "path": "packages/connectors", "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false } },
+    { "name": "@kizuki/connector-beeper", "path": "packages/connector-beeper", "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false } },
+    { "name": "@kizuki/connector-gmail", "path": "packages/connector-gmail", "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false } },
+    { "name": "@kizuki/connector-google-calendar", "path": "packages/connector-google-calendar", "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false } },
+    { "name": "@kizuki/connector-ics", "path": "packages/connector-ics", "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false } },
+    { "name": "@kizuki/connector-imap", "path": "packages/connector-imap", "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false } },
+    { "name": "@kizuki/connector-screenpipe", "path": "packages/connector-screenpipe", "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false } },
+    { "name": "@kizuki/connector-telegram", "path": "packages/connector-telegram", "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": false } },
+    { "name": "@kizuki/connector-whoop", "path": "packages/connector-whoop", "states": { "implemented": true, "bound": false, "enrollable": false, "qualified": false, "planned": true } },
+    { "name": "@kizuki/connector-x", "path": "packages/connector-x", "note": "Archive connector registered and enrollable; API subpath implemented but not registered", "states": { "implemented": true, "bound": true, "enrollable": true, "qualified": false, "planned": true } },
+    { "name": "@kizuki/llm", "path": "packages/llm", "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false } },
+    { "name": "@kizuki/embed-gguf", "path": "packages/embed-gguf", "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false } },
+    { "name": "@kizuki/retrieval-pg", "path": "packages/retrieval-pg", "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false } }
+  ],
+  "native_package_assets": {
+    "files": ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json", "SHA256SUMS"],
+    "file": "scripts/artifact-proof.ts",
+    "symbol": "ARTIFACT_PACKAGE_FILES",
+    "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+    "limits": "Local Linux x64 baseline build exists as tooling. Not a signed or published installer. CURRENT.md: implementation facts do not establish stranger installation/use."
+  },
+  "platforms": [
+    {
+      "id": "bun-linux-x64-baseline",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "scripts/release-targets.ts",
+      "symbol": "TARGETS",
+      "advertised_in": ["docs/native-build.md", "docs/CURRENT.md"],
+      "acceptance_gates": ["artifact.bun-linux-x64-baseline", "engine.bun-linux-x64-baseline", "native.bun-linux-x64-baseline", "lifecycle.bun-linux-x64-baseline"],
+      "empty_index_status": ["MISSING", "MISSING", "UNVERIFIABLE", "NOT_IMPLEMENTED"],
+      "note": "docs/native-build.md says Linux x64 has local qualification evidence. That is not copied-artifact release qualification or human stranger proof."
+    },
+    {
+      "id": "bun-darwin-arm64",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "scripts/release-targets.ts",
+      "symbol": "TARGETS",
+      "limits": "Unqualified candidate until an actual native receipt exists. macos-native.yml is manual-only."
+    },
+    {
+      "id": "darwin-amd64",
+      "states": { "implemented": false, "bound": false, "enrollable": null, "qualified": false, "planned": false },
+      "limits": "Intel macOS unsupported."
+    },
+    {
+      "id": "windows",
+      "states": { "implemented": false, "bound": false, "enrollable": null, "qualified": false, "planned": false },
+      "limits": "Unsupported."
+    },
+    {
+      "id": "agent-credential-delivery",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "limits": "docs/agent-enrollment.md: Linux x64 glibc only; other platforms refuse unsupported_platform."
+    }
+  ],
+  "security_claims": [
+    {
+      "id": "zero-phone-home",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": null, "planned": false },
+      "file": "SECURITY.md",
+      "code": "scripts/network-allowlist.txt",
+      "proof": ["scripts/verify-network.ts", "package.json verify:network"]
+    },
+    {
+      "id": "fail-closed",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": null, "planned": false },
+      "file": "SECURITY.md",
+      "code": "packages/core/src/agents/authorization.ts#authorize"
+    },
+    {
+      "id": "captured-text-is-data",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": null, "planned": false },
+      "file": "SECURITY.md",
+      "code": "packages/mcp/src/server.ts INSTRUCTIONS / TOOL_DESCRIPTIONS"
+    },
+    {
+      "id": "owner-correction-outranks",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": null, "planned": false },
+      "file": "SECURITY.md",
+      "code": "packages/core/src/correction/correct.ts#correct",
+      "cli": "cli.tell",
+      "mcp": "mcp.correct"
+    },
+    {
+      "id": "capture-never-writes-canon",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": null, "planned": false },
+      "file": "SECURITY.md",
+      "code": "packages/core/src/canon/apply.ts#applyCanonWrite"
+    },
+    {
+      "id": "secrets-behind-refs",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": null, "planned": false },
+      "file": "SECURITY.md",
+      "code": "packages/core/src/contracts/secret-ref.ts"
+    },
+    {
+      "id": "purge-physical-deletion",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "SECURITY.md",
+      "cli": "cli.purge",
+      "proof": ["packages/cli/test/purge.test.ts"]
+    },
+    {
+      "id": "no-disk-encryption",
+      "states": { "implemented": false, "bound": false, "enrollable": null, "qualified": null, "planned": true },
+      "file": "SECURITY.md",
+      "claim": "Honest non-claim. Host-trust interim."
+    },
+    {
+      "id": "no-signed-installer",
+      "states": { "implemented": false, "bound": false, "enrollable": null, "qualified": false, "planned": true },
+      "file": "SECURITY.md",
+      "matches": "docs/CURRENT.md / docs/native-build.md"
+    },
+    {
+      "id": "no-cli-signin-enrollment",
+      "states": { "implemented": false, "bound": false, "enrollable": null, "qualified": null, "planned": false },
+      "file": "SECURITY.md",
+      "claim": "STALE. CLI does enroll IMAP/Telegram/Gmail/Calendar. See contradictions.json signin-enrollment-security-vs-code."
+    },
+    {
+      "id": "no-multi-tenant-isolation",
+      "states": { "implemented": false, "bound": false, "enrollable": null, "qualified": null, "planned": false },
+      "file": "SECURITY.md",
+      "claim": "Honest non-claim."
+    }
+  ],
+  "other_surfaces": [
+    {
+      "id": "mcp-stdio-adapter",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/mcp/src/bin.ts",
+      "advertised_in": ["README.md", "docs/cli.md"]
+    },
+    {
+      "id": "loopback-http-serve",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/serve/http.ts",
+      "advertised_in": ["docs/CURRENT.md", "docs/cli.md"]
+    },
+    {
+      "id": "local-app",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/cli/src/commands/app.ts",
+      "docs": "docs/local-app.md"
+    },
+    {
+      "id": "tui-audit-undo",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/tui/src/app.ts",
+      "symbol": "runAudit",
+      "effect": "undo only"
+    },
+    {
+      "id": "estate-slice-apply",
+      "states": { "implemented": false, "bound": false, "enrollable": null, "qualified": false, "planned": true },
+      "file": "packages/cli/src/commands/import.ts",
+      "symbol": "importCommand estate-slice",
+      "dry_run": true,
+      "apply": "not implemented"
+    },
+    {
+      "id": "autonomous-canon-writer",
+      "states": { "implemented": true, "bound": true, "enrollable": null, "qualified": false, "planned": false },
+      "file": "packages/core/src/canon/apply.ts",
+      "symbol": "applyCanonWrite",
+      "requires": "configured model; doctor reports off when missing",
+      "proof_class": "synthetic; no live-model qualification claimed"
+    }
+  ],
+  "acceptance_surface_gap": {
+    "id": "surface.capabilities-and-docs",
+    "file": "scripts/go-no-go.ts",
+    "symbol": "gates",
+    "status": "NOT_IMPLEMENTED",
+    "scope": "product-surface-inventory",
+    "this_packet": "Preparation inventory only. Not the executable adapter and not release GO."
+  },
+  "limitations": [
+    "/repo is a git archive of 32713ad98899a8d1e8ac21a2ebbe3170f6af51a0 with no Git metadata.",
+    "Remote GitHub state, issue 349 body, and held 519/530 branches were not fetched.",
+    "Workspace node_modules are absent; live import of COMMANDS/registry failed. Inventory is static plus go-no-go evaluateRelease.",
+    "bun install, typecheck, bun test, and bun run verify were NOT_RUN.",
+    "No live accounts, no copied native artifacts, no unfamiliar-user run.",
+    "No source edits. Held 519/530 untouched.",
+    "No release or semantic-quality claim."
+  ]
+}

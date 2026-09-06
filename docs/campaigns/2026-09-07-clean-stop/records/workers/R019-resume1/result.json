@@ -1,0 +1,113 @@
+{
+  "task_id": "R019",
+  "packet_id": "R019",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "findings": [
+    {
+      "severity": "limitation",
+      "id": "js-tiktoken-absent",
+      "summary": "packet-claim-boundaries and source-grants tests did not execute: js-tiktoken/lite is not present in this archive.",
+      "evidence": "Cannot find module 'js-tiktoken/lite' from '/repo/packages/core/src/serving/packet-tokenizer.ts'",
+      "confirmed": true,
+      "product_defect": false
+    },
+    {
+      "severity": "note",
+      "id": "internal-timeline-predicate",
+      "summary": "query/timeline excludes deleted=1 only; public serving applies LIVE_PREDICATE. Not a confirmed public-contract failure.",
+      "location": "packages/core/src/query/timeline.ts:78 vs packages/core/src/serving/timeline.ts:73-77",
+      "confirmed": false,
+      "product_defect": false
+    }
+  ],
+  "deliverables": [
+    "/work/out/source-tombstone-consumers.md",
+    "/work/out/source-tombstone-consumer-map.json",
+    "/work/out/source-tombstone-state-labels.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/source-tombstone-consumers.md",
+    "/work/out/source-tombstone-consumer-map.json",
+    "/work/out/source-tombstone-state-labels.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/checks/focused-tests.stderr",
+    "/work/out/checks/focused-tests.exit"
+  ],
+  "source_references": [
+    "packages/core/src/canon/source-tombstone.ts:36-123",
+    "packages/core/src/ledger/source-grants.ts:57-83,261-304,444-592,598-661,739-803,829-884",
+    "packages/core/src/ledger/purge.ts:1052-1085",
+    "packages/core/src/staging/producers.ts:146-275",
+    "packages/core/src/ingest/run.ts:68-109",
+    "packages/core/src/ledger/ledger.ts:273-286,372-387,448-461",
+    "packages/core/src/canon/apply.ts:334-338,516-524",
+    "packages/core/src/serving/timeline.ts:73-77",
+    "packages/core/src/vault/provenance.ts:14-47",
+    "packages/cli/src/commands/connect-consent.ts:43-54",
+    "docs/event-identity-origin.md:91-135",
+    "docs/provenance-admission.md:1-16",
+    "docs/architecture.md:86-101"
+  ],
+  "checks": [
+    {
+      "name": "focused_existing_tombstone_tests",
+      "command": "bun test --cwd /repo ./packages/core/test/staging/source-tombstone-binding.test.ts ./packages/core/test/staging/tombstone.test.ts ./packages/core/test/staging/producers.test.ts ./packages/core/test/staging/origin-guard.test.ts ./packages/core/test/query/timeline.test.ts ./packages/core/test/ledger.test.ts ./packages/core/test/ingest.test.ts ./packages/core/test/positive-provenance.test.ts ./packages/core/test/serving/timeline.test.ts ./packages/core/test/serving/search.test.ts ./packages/core/test/search/search.test.ts ./packages/core/test/serve/source-control-composition.test.ts ./packages/core/test/retrieval/settlement.test.ts ./packages/core/test/serving/packet-claim-boundaries.test.ts ./packages/core/test/loop/tri-state.test.ts",
+      "bun": "1.3.14",
+      "started": "2026-09-06T21:59:57Z",
+      "ended": "2026-09-06T22:00:49Z",
+      "exit_code": 1,
+      "result": "230 pass, 1 fail, 1 error across 15 files; packet-claim-boundaries failed to load js-tiktoken/lite",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "evidence": "/work/out/checks/focused-tests.stderr"
+    },
+    {
+      "name": "source_grants_filtered",
+      "command": "bun test --cwd /repo ./packages/core/test/source-grants.test.ts -t 'revok|denied|purged|purge_complete|resume'",
+      "started": "2026-09-06T22:01:16Z",
+      "ended": "2026-09-06T22:01:16Z",
+      "exit_code": 1,
+      "result": "NOT executed; file load error js-tiktoken/lite",
+      "evidence": "/work/out/checks/grant-tests.stderr"
+    },
+    {
+      "name": "full_verify",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN"
+    },
+    {
+      "name": "typecheck",
+      "command": "bunx tsc --noEmit",
+      "result": "NOT_RUN"
+    }
+  ],
+  "verification": {
+    "focused": "230 pass on existing tombstone/live-replay/serving/search/ingest tests; 1 load failure without js-tiktoken",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "auth_or_model_probe": "not repeated; controller already verified"
+  },
+  "blockers": [],
+  "next_step": "P029 and P030 should use /work/out/source-tombstone-consumers.md and source-tombstone-state-labels.json. Do not duplicate existing tests. Do not treat grant denied as purged_complete or capture tombstones as physical deletion.",
+  "downstream_handoff": {
+    "feeds": ["P029", "P030"],
+    "artifact": "/work/out/source-tombstone-consumers.md",
+    "labels": "/work/out/source-tombstone-state-labels.json",
+    "map": "/work/out/source-tombstone-consumer-map.json",
+    "coverage": "/work/out/existing-coverage.md",
+    "reserved": ["P003", "P015", "P006", "Astra", "doctor"],
+    "must_not": [
+      "collapse capture tombstones with source-grant purge",
+      "treat status=denied as complete",
+      "treat status=purged with blockers as complete",
+      "add a new test for an already-covered exact case",
+      "claim native/account/model/human qualification"
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "schema": "kizuki.user-requested-stop/v1",
+  "recorded_at": "2026-09-06T23:37:35.753755+00:00",
+  "reason": "explicit user clean stop",
+  "grok_worker": "P106-code1",
+  "stop_command": [
+    "docker",
+    "stop",
+    "--time",
+    "10",
+    "kizuki-grok-p106-code1"
+  ],
+  "stop_exit": 0,
+  "controller_exit": 137,
+  "controller_terminal_status": "failed_or_incomplete",
+  "snapshot_head": "96315320fafb4645a1b96f47ee6cc469fda4d788",
+  "remaining_campaign_containers": 0,
+  "independent_reviewers_stopped": 4,
+  "resumption_requires_new_user_instruction": true
+}

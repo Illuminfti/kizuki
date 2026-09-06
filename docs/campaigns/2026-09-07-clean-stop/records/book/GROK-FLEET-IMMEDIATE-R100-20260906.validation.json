@@ -1,0 +1,23 @@
+{
+  "packet_count": 100,
+  "unique_ids": 100,
+  "all_expected_ids_present": true,
+  "all_independent": true,
+  "all_write_out_only": true,
+  "unique_titles": 100,
+  "unique_scope_descriptions": 100,
+  "missing_read_paths": [],
+  "missing_skill_paths": [],
+  "missing_downstream_ids": [],
+  "all_required_artifacts": true,
+  "payload_status_note": "Payload is frozen with validation_pending label to avoid changing a launcher input after handoff. This separate receipt records completed static validation.",
+  "status": "PASS_STATIC_ROSTER_VALIDATION",
+  "validated_at_utc": "2026-09-06 21:34:20 UTC",
+  "payload": "GROK-FLEET-IMMEDIATE-R100-20260906.json",
+  "payload_sha256": "93a9b899f0443d3167175c2e87f730a657087e072cf2eb6844de332338731d7f",
+  "limitations": [
+    "Static roster validation only: no task dispatch, runtime/artifact review or live concurrency has been certified.",
+    "Distinct code perspectives and artifact specifications were manually partitioned; root should merge overlapping findings once, not accept duplicate implementation ownership.",
+    "The original P integration DAG and existing owners retain all production changes and acceptance authority."
+  ]
+}

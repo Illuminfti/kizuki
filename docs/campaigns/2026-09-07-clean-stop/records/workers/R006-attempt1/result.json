@@ -1,0 +1,120 @@
+{
+  "task_id": "R006",
+  "packet_id": "R006",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Draft a check-run conclusion normalization oracle",
+  "findings": [
+    {
+      "severity": "note",
+      "location": "scripts/go-no-go.test.ts",
+      "claim": "No existing test names candidate.required-checks or maps check-run conclusions.",
+      "evidence": "Static probe on this archive: needle candidate.required-checks has zero line hits in scripts/go-no-go.test.ts. Gate stub is scripts/go-no-go.ts:158 with default NOT_IMPLEMENTED from add() at :150.",
+      "invariant": "Do not duplicate YAML/checkout tests; do not invent a PASS receipt.",
+      "correction": "Use the new /work/out fixture as the conclusion/exact-head contract. P005 must still keep the go-no-go gate NOT_IMPLEMENTED until a trusted producer exists."
+    }
+  ],
+  "deliverables": [
+    "/work/out/check-conclusion-oracle.fixture.json",
+    "/work/out/check-conclusion-adapter.ts",
+    "/work/out/check-conclusion-law.md",
+    "/work/out/oracle-execution.json",
+    "/work/out/source-citations.json",
+    "/work/out/source-probe.json",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    {
+      "path": "/work/out/check-conclusion-oracle.fixture.json",
+      "kind": "pure_input_output_fixture",
+      "cases": { "observation": 34, "aggregate": 11 },
+      "release_credit": false
+    },
+    {
+      "path": "/work/out/check-conclusion-adapter.ts",
+      "kind": "adapter_sketch",
+      "release_credit": false,
+      "granted_gate_status": null
+    },
+    {
+      "path": "/work/out/check-conclusion-law.md",
+      "kind": "source_evidence_and_expected_behavior"
+    },
+    {
+      "path": "/work/out/oracle-execution.json",
+      "kind": "local_execution_receipt"
+    }
+  ],
+  "source_references": [
+    "scripts/go-no-go.ts:12,150,158,198",
+    "docs/release-acceptance.md:133,184-188",
+    "scripts/verify-workflows.ts:106,116-120",
+    ".github/workflows/ci.yml:1,7-9,11,16-18,44",
+    "scripts/ci-diff-check.ts:31-34,48-49",
+    "scripts/go-no-go.test.ts (no candidate.required-checks cases)",
+    "https://docs.github.com/en/rest/checks/runs.md (2026-09-06)",
+    "https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows.md (2026-09-06)",
+    "https://unpkg.com/@octokit/openapi@19.0.0/generated/api.github.com.json (2026-09-06)"
+  ],
+  "checks": [
+    {
+      "name": "oracle_fixture",
+      "command": "bun /work/out/check-conclusion-adapter.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/oracle-execution.json",
+      "notes": "34 observation cases and 11 aggregate cases; release_credit false; granted_gate_status null"
+    },
+    {
+      "name": "static_source_probe",
+      "command": "bun /work/outTEMP/source-probe.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "notes": "Confirmed stub and identity lines; go-no-go.test.ts has no required-checks cases"
+    },
+    {
+      "name": "repository_gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "reason": "Git is absent; /repo is a git archive without metadata; packet write scope is /work/out only"
+    },
+    {
+      "name": "go-no-go.test.ts",
+      "command": "bun test scripts/go-no-go.test.ts",
+      "result": "NOT_RUN",
+      "reason": "Existing tests do not cover conclusion normalization; Git/temp vault harness not required for this /work/out oracle"
+    }
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun /work/out/check-conclusion-adapter.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/oracle-execution.json"
+    },
+    "full_gate": { "command": "bun run verify", "result": "NOT_RUN" },
+    "independent_review": { "result": "NOT_RUN" },
+    "live_github": { "result": "NOT_RUN", "reason": "No account or Checks API calls; synthetic metadata only" }
+  },
+  "blockers": [],
+  "limitations": [
+    "Remote git state was not verified; /repo has no Git metadata.",
+    "bun run verify was not run.",
+    "No live GitHub check snapshot was fetched.",
+    "Success observations never grant candidate.required-checks PASS or release GO.",
+    "Complete required-check identity set beyond the frozen ci / test string is left to P005/P097.",
+    "GitHub docs markdown URLs that 404'd on 2026-09-06 are listed in source-citations.json and were not used as evidence."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P005", "P097"],
+    "contract": "Consume check-conclusion-oracle.fixture.json plus check-conclusion-adapter.ts. Preserve unknown GitHub conclusions. Do not treat merge-commit checks as exact-head without checkout attestation. Do not hide failed attempts with a later green rerun. Keep go-no-go candidate.required-checks NOT_IMPLEMENTED until a trusted producer exists. Do not invent a passing receipt.",
+    "do_not_take": ["P002", "P003", "P006", "P015"]
+  },
+  "next_step": "P005 should wire a retained-metadata producer onto this normalizer without granting PASS, then rebase on live main before any repository implementation."
+}

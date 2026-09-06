@@ -1,0 +1,156 @@
+{
+  "task_id": "R023",
+  "packet_id": "R023",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "finding",
+  "title": "Audit claim identity versus dedup representation",
+  "findings": [
+    {
+      "id": "I5",
+      "severity": "confirmed",
+      "location": "packages/core/src/claims/store.ts:409-422,1102-1112; packages/core/src/claims/schema.ts:500-505",
+      "failure": "Same body_hash under a different predicate is an exact duplicate of the first live row.",
+      "invariant": "Structured claim identity is claim_key + polarity + normalized object; body prose is representation.",
+      "evidence": "verify-claim-identity.ts I5: employment.works_at then employment.role with identical body → outcome duplicate, same claim_id. RFC 0002 §4.3.1 states body_hash exact-dup; that collides with a different claim_key. Not covered by schema.test.ts:32-35 (different body).",
+      "smallest_correction": "P022/P032: exact occupancy should include claim_key (or refuse exact-dup when claim_key differs). Do not reuse Grace fixtures."
+    },
+    {
+      "id": "I6",
+      "severity": "confirmed",
+      "location": "packages/core/src/claims/store.ts:433-440 vs packages/core/src/claims/conflict.ts:34-49 and RFC 0002 §4.3.2",
+      "failure": "structuralMatch ignores validity overlap. Disjoint Northwind intervals corroborated as one row.",
+      "invariant": "Structural duplicate requires overlapping validity; disjoint intervals are two facts.",
+      "evidence": "I6 second insert outcome duplicate. claimsConflict already uses validityOverlaps and C2 passed.",
+      "smallest_correction": "Add validityOverlaps to structuralMatch; keep conflict path unchanged."
+    },
+    {
+      "id": "I8",
+      "severity": "confirmed",
+      "location": "packages/core/src/claims/store.ts:417-419 (findExact has no status predicate) vs schema.ts:501-504 (live-only unique index)",
+      "failure": "Re-extracting the original body after R3 supersession returns outcome duplicate of the superseded row (status=superseded).",
+      "invariant": "Exact identity must not occupy the live fact with a superseded/purged/skipped row.",
+      "evidence": "I8: third insert duplicate of 01CLAIMLINUS0000000000000E status superseded, object Northwind, after winner 01CLAIMLINUS0000000000000F rule R3.",
+      "smallest_correction": "Restrict findExact to status='live' (and matching origin checks), consistent with the unique index."
+    },
+    {
+      "id": "I2-corroboration",
+      "severity": "confirmed",
+      "location": "packages/core/src/claims/store.ts:1102-1128 vs 442-451",
+      "failure": "Same-event paraphrase increments corroboration; identical same-event refile does not.",
+      "invariant": "Re-extracting one event is duplicate observation, not independent support. Epistemic-integrity: confidence/corroboration must not rise from paraphrase of the same evidence.",
+      "evidence": "I1 corroboration stays 1 (exact path skips corroborate). I2 corroboration becomes 2 and original body is retained. Already asserted for Grace at packages/core/test/loop/dedup-threshold.test.ts:33-65. Two-event corroboration without supersession is already at provenance.test.ts:48-92.",
+      "smallest_correction": "Do not count structural matches that share the incoming event id as new corroboration. Do not duplicate the Grace test; add a same-event vs two-event matrix if P022 changes the rule."
+    },
+    {
+      "id": "semantic-not-identity",
+      "severity": "confirmed",
+      "location": "packages/core/src/claims/dedup.ts:46-62; store.ts:470-501,1114-1119",
+      "failure": "Vector nomination cannot merge a different claim_key because structuralMatch requires the same key; liveByKey already loads that set.",
+      "invariant": "RFC 0002 §4.3.3: vector score nominates only. Semantic score is not an identity key.",
+      "evidence": "Static trace plus D3 score 0.8461538461538461 ≥ 0.82 on an independent 12-token pair. Existing Grace threshold tests remain the fixture-space proof (dedup-threshold.test.ts:21-31).",
+      "smallest_correction": "Keep scorer as nomination; do not treat Jaccard/hardcoded pairs as claim identity."
+    },
+    {
+      "id": "two-duplicate-seams",
+      "severity": "confirmed",
+      "location": "store.ts corroborate vs staging/proposals.ts:546-614",
+      "failure": "insertClaim duplicate does not union provenance; fileProposal does.",
+      "invariant": "One duplicate representation for ordinary claims.",
+      "evidence": "packages/core/test/retrieval/settlement.test.ts:149-167 (insertClaim provenance stays original). packages/core/test/staging/proposals.test.ts:216-237 (staging merges provenance).",
+      "smallest_correction": "P022/P032 pick one rule and document the other seam; do not assume they match."
+    }
+  ],
+  "deliverables": [
+    "/work/out/claim-identity-recipe.md",
+    "/work/out/identity-equivalence-matrix.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/verify-claim-identity.ts",
+    "/work/out/verify-claim-identity-results.json",
+    "/work/out/orientation.md",
+    "/work/out/checks.log",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/claim-identity-recipe.md",
+    "/work/out/identity-equivalence-matrix.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/verify-claim-identity.ts",
+    "/work/out/verify-claim-identity-results.json",
+    "/work/out/orientation.md",
+    "/work/out/checks.log"
+  ],
+  "source_references": [
+    "packages/core/src/claims/hash.ts:3-73",
+    "packages/core/src/claims/dedup.ts:6-75",
+    "packages/core/src/claims/identity.ts:203-347",
+    "packages/core/src/claims/store.ts:373-452,409-422,433-440,470-501,1010-1011,1102-1198",
+    "packages/core/src/claims/conflict.ts:34-59",
+    "packages/core/src/claims/schema.ts:500-510",
+    "packages/core/src/staging/proposals.ts:390-405,546-614",
+    "rfcs/0002-autonomous-canon.md:882-907,1273-1279",
+    "packages/core/test/loop/dedup-threshold.test.ts:21-90",
+    "packages/core/test/claims/schema.test.ts:13-42",
+    "packages/core/test/claims/provenance.test.ts:48-92",
+    "packages/core/test/claims/identity.test.ts:15-81",
+    "packages/core/test/claims/authority.test.ts:32-141",
+    "packages/core/test/staging/proposals.test.ts:45-68,93-113,216-237",
+    "packages/core/test/retrieval/settlement.test.ts:149-167"
+  ],
+  "checks": [
+    {
+      "name": "existing_focused_tests",
+      "command": "bun test packages/core/test/loop/dedup-threshold.test.ts packages/core/test/claims/schema.test.ts packages/core/test/claims/provenance.test.ts packages/core/test/claims/identity.test.ts",
+      "cwd": "/repo",
+      "bun": "1.3.14",
+      "exit": 0,
+      "result": "PASS",
+      "detail": "13 pass, 0 fail, 48 expects"
+    },
+    {
+      "name": "independent_linus_northwind_characterization",
+      "command": "bun /work/out/verify-claim-identity.ts",
+      "cwd": "/repo",
+      "bun": "1.3.14",
+      "exit": 2,
+      "result": "FINDING",
+      "detail": "30/33 independently expected classes held; I5 I6 I8 failed as designed characterization findings. Output: /work/out/verify-claim-identity-results.json"
+    },
+    {
+      "name": "typecheck",
+      "command": "bun run typecheck",
+      "result": "NOT_RUN",
+      "detail": "No source edits; full package typecheck not in this preparation slot"
+    },
+    {
+      "name": "full_repository_gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "detail": "Not assigned; waiting for a slot is NOT_RUN, not PASS"
+    }
+  ],
+  "verification": {
+    "focused_existing": "PASS",
+    "characterization_draft": "FINDING (exit 2; I5/I6/I8)",
+    "typecheck": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "auth_model_probe": "not retested; controller already verified"
+  },
+  "blockers": [],
+  "next_step": "P022/P032 should consume claim-identity-recipe.md and identity-equivalence-matrix.json, keep existing Grace tests, and decide whether exact identity becomes claim-shaped (I5), whether structuralMatch gains validityOverlaps (I6), and whether findExact is live-only (I8). Same-event corroboration (I2) is a policy choice against RFC §4.3.2 vs epistemic-integrity.",
+  "downstream_handoff": {
+    "feeds": ["P022", "P032"],
+    "do_not_touch": ["P003 shared evidence design", "P015 source-B schema/recovery/authority/export", "P006 canonical docs", "Astra/external doctor"],
+    "do_not_duplicate_tests": [
+      "packages/core/test/loop/dedup-threshold.test.ts",
+      "packages/core/test/claims/provenance.test.ts",
+      "packages/core/test/claims/schema.test.ts"
+    ],
+    "independent_pairs": "Linus/Northwind matrix N1–N7, B1–B3, K1–K3, S1–S4, D1–D4, I1–I8",
+    "limitations": [
+      "Read-only /repo git archive; remote issue/PR state not refreshed here",
+      "No source edits, no full verify.sh, no native/account/model/human qualification",
+      "identity.ts subject-merge remains retired; this packet does not restore it",
+      "No rich-subject corpus or identity-exploit inputs"
+    ]
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "verified_at": "2026-09-06T20:40:13.202753+00:00",
+  "result": "PASS",
+  "scope": "Instruction pack static integrity only; no runtime/product qualification",
+  "selected_skill_sources_checked": 22,
+  "policy_source_hashes_checked": 13,
+  "role_templates_checked": 5,
+  "markdown_files_checked": 11,
+  "local_links_checked": 28,
+  "inspection_head": "a7e4b53ce7107bccaa7a62e6e91e4ee384a38f08",
+  "inspection_checkout_clean": true,
+  "grok_discovery_verified": false,
+  "workers_launched": 0,
+  "production_changes": false,
+  "errors": [],
+  "files": [
+    {
+      "path": "COMMON-WORKER.md",
+      "bytes": 5214,
+      "sha256": "91d7e99d900bf981f73372deea36cdf1e26df97208c25be22220430439028f64"
+    },
+    {
+      "path": "README.md",
+      "bytes": 4490,
+      "sha256": "a9d1cd66244a9af0ae1505813a761e7fe834cce06e627c9ab1681b718a069fbb"
+    },
+    {
+      "path": "RESULT.template.md",
+      "bytes": 1461,
+      "sha256": "be9d492b6bc494268b614810fa76fa401023b4aca811d12490431e575e7d27f1"
+    },
+    {
+      "path": "SKILL-MANIFEST.md",
+      "bytes": 9957,
+      "sha256": "9d2b5b5955b06264a2728d0af9b7346d34c46500a65d815627496677815ea52d"
+    },
+    {
+      "path": "TASK-PACKET.template.md",
+      "bytes": 1754,
+      "sha256": "3aac04c17516e63c8e118708d276fa87e7dd8295ce1cf6e98a93cb725dbdd782"
+    },
+    {
+      "path": "roles/backend-storage.md",
+      "bytes": 1770,
+      "sha256": "a30477b7b1dcc59deb70f5850ba8e4253a78784cf8bd5b2cc93a858bb7049853"
+    },
+    {
+      "path": "roles/connectors.md",
+      "bytes": 1698,
+      "sha256": "f6c79c95b5e685055680963a5aff3db2237c21ba106dc7dd08d130f0623de244"
+    },
+    {
+      "path": "roles/frontend-onboarding.md",
+      "bytes": 1971,
+      "sha256": "a7bd5b42210a2c2ef140aeff128e7e2bc2c3c61732a1a780af170734769378b1"
+    },
+    {
+      "path": "roles/packaging-evidence.md",
+      "bytes": 1883,
+      "sha256": "3f21cbbec421a92db34605f3d8696e7935493979f4eb848c7ef2c230cbc5878d"
+    },
+    {
+      "path": "roles/qa-reviewer.md",
+      "bytes": 1828,
+      "sha256": "c8768aa0aca671ccc317e6a65fd8473455b1539f94d932c4d6a4bda74a9a788a"
+    },
+    {
+      "path": "sources.json",
+      "bytes": 19408,
+      "sha256": "215d05fdd73344d5ff621d4574dac9de885107cf74a87a7b5a716f9c391b0752"
+    }
+  ],
+  "lineage_note": {
+    "path": "CHECKPOINT_BOOK/SOURCE-SURVIVOR-LINEAGE-A7E4B53-DESIGN.md",
+    "sha256": "f1ac736b071ec8b0818311f845563a05906dd969b02aa2784d4d4d6c9ead1e23",
+    "bytes": 5089
+  }
+}

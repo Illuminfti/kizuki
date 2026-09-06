@@ -1,0 +1,10 @@
+{
+  "schema": "kizuki.checkpoint-preservation-checks/v1",
+  "records_rehashed": 352,
+  "candidate_refs_verified": 18,
+  "candidate_file_blobs_scanned": 56,
+  "candidate_secret_pattern_findings": [],
+  "checkpoint_tracked_secret_scan": "bun scripts/verify-secrets.ts: exit 0",
+  "product_verification": "No additional product tests or full verify; user requested stop.",
+  "scope": "Preservation and defined secret-pattern checks only; not candidate acceptance."
+}

@@ -1,0 +1,218 @@
+{
+  "task_id": "R003",
+  "packet_id": "R003",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "finding",
+  "title": "Check artifact manifest BUILD identity consistency",
+  "owner": "grok-R003",
+  "read_root": "/repo",
+  "write_scope": "/work/out only",
+  "orientation": {
+    "kind": "frozen git archive; no Git metadata, worktree, branch, or remotes",
+    "remote_verified": false,
+    "controller_owned": true,
+    "checkout_moved": false,
+    "node_modules": false
+  },
+  "findings": [
+    {
+      "id": "qualification-bun-drop",
+      "severity": "contract",
+      "confirmed": true,
+      "location": "scripts/qualification.ts:81,104,120-123",
+      "failure": "Stored qualification identity omits BUILD bun_version and schema; comparable keys are source_sha, binary_sha256, build_sha256, proof_sha256, target.",
+      "affected_invariant": "source SHA, target, and toolchain identity from BUILD production must remain comparable at proof consumption",
+      "evidence": "identity-fixture case qualification-identity-drops-bun-and-schema; contrast scripts/artifact-proof.ts:18-20,96-97",
+      "smallest_correction": "P008/P094: add bun_version to stored identity, or document that build_sha256 is the only toolchain binding and every re-read uses parseProofJson"
+    },
+    {
+      "id": "decoder-split",
+      "severity": "contract",
+      "confirmed": true,
+      "location": "scripts/stranger-proof.ts:98-105 vs scripts/qualification.ts:94 and scripts/go-no-go.ts:118",
+      "failure": "parseBuildInfo uses JSON.parse (duplicate source_sha last-wins); qualification/go-no-go use parseProofJson (duplicate-json-key).",
+      "affected_invariant": "hashed BUILD bytes must decode to one identity everywhere",
+      "evidence": "identity-fixture cases json-parse-duplicate-source-sha-last-wins, parseBuildInfoValue-after-json-parse-keeps-last-sha, parseProofJson-duplicate-source-sha; fixtures/build.duplicate-source-sha.json",
+      "limitation": "production JSON.stringify cannot emit duplicate keys; this is a consumer inconsistency on non-canonical bytes",
+      "smallest_correction": "parseBuildInfo should decode with parseProofJson"
+    },
+    {
+      "id": "bun-validation-uneven",
+      "severity": "contract",
+      "confirmed": true,
+      "location": "scripts/stranger-proof.ts:109-116; scripts/artifact-proof.ts:74-77,122; scripts/go-no-go.ts:119-120",
+      "failure": "Empty bun_version is accepted by parseBuildInfoValue, rejected as invalid-proof-string by validateArtifactProof, and rejected by go-no-go semver regex.",
+      "affected_invariant": "toolchain string identity has one grammar",
+      "evidence": "identity-fixture cases empty-bun-parses-as-string, empty-bun-fails-go-no-go-semver, empty-bun-proof-text",
+      "limitation": "production Bun.version is nonempty; parser-floor gap, not observed on a produced package"
+    },
+    {
+      "id": "checksum-trim",
+      "severity": "contract",
+      "confirmed": true,
+      "location": "scripts/release-artifacts.ts:47-49 vs scripts/qualification.ts:92-93 and scripts/go-no-go.ts:121-122",
+      "failure": "Extra trailing newline in SHA256SUMS passes verifyChecksumManifest (trim) and fails qualification/go-no-go exact reconstruction.",
+      "affected_invariant": "checksum manifest bytes that cover BUILD.json must verify the same way in every consumer",
+      "evidence": "identity-fixture checksum-extra-newline-trim-verifier and checksum-extra-newline-qualification-exact"
+    },
+    {
+      "id": "proof-bun-from-runner",
+      "severity": "lineage",
+      "confirmed": true,
+      "kind": "static",
+      "location": "scripts/stranger-proof.ts:152,283,291,307",
+      "failure": "Proof receipt bun_version is the runner Bun.version, compared to BUILD bun_version rather than copied from it.",
+      "affected_invariant": "field lineage is must-match, not echo"
+    },
+    {
+      "id": "pretty-vs-compact-bytes",
+      "severity": "lineage",
+      "confirmed": true,
+      "location": "scripts/build-release.ts:99-107",
+      "failure": "Production pretty-prints BUILD.json; compact JSON with the same fields has a different SHA-256.",
+      "evidence": "pretty_sha256=125a885d0daa2be7da3c6ad7ec1bab0dd62f9b206b1772ad9c9a3dfe30f6d1e0 compact_sha256=a97eff15cca2b927d20a5c18d21358138ea7096c100477fde3b9b363fa804c9c"
+    },
+    {
+      "id": "smoke-ignores-source-sha",
+      "severity": "lineage",
+      "confirmed": true,
+      "kind": "static",
+      "location": "scripts/smoke-release.ts:22-24",
+      "failure": "Smoke checks target and bun_version only; source_sha is unused."
+    }
+  ],
+  "deliverables": [
+    "/work/out/field-lineage.md",
+    "/work/out/field-lineage.json",
+    "/work/out/identity-fixture.ts",
+    "/work/out/identity-fixture.report.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/fixtures/build.matching.json",
+    "/work/out/fixtures/build.mismatch-source.json",
+    "/work/out/fixtures/build.mismatch-target.json",
+    "/work/out/fixtures/build.mismatch-bun.json",
+    "/work/out/fixtures/build.duplicate-source-sha.json",
+    "/work/out/fixtures/build.empty-bun.json",
+    "/work/out/checks.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/field-lineage.md",
+    "/work/out/field-lineage.json",
+    "/work/out/identity-fixture.ts",
+    "/work/out/identity-fixture.report.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/fixtures/build.matching.json",
+    "/work/out/fixtures/build.mismatch-source.json",
+    "/work/out/fixtures/build.mismatch-target.json",
+    "/work/out/fixtures/build.mismatch-bun.json",
+    "/work/out/fixtures/build.duplicate-source-sha.json",
+    "/work/out/fixtures/build.empty-bun.json",
+    "/work/out/checks.md",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "scripts/build-release.ts:8-11,31-40,99-109",
+    "scripts/stranger-proof.ts:19-24,98-116,143-154,215-216,277-307",
+    "scripts/artifact-proof.ts:6,18-20,39-65,74-81,116-124,139",
+    "scripts/qualification.ts:81-104,120-123,294,312",
+    "scripts/go-no-go.ts:118-126",
+    "scripts/release-artifacts.ts:35-50",
+    "scripts/release-targets.ts:2-24",
+    "scripts/smoke-release.ts:22-24",
+    "scripts/extraction-quality-native.ts:65-81",
+    "packages/core/src/ledger/runtime.ts:11-34",
+    "docs/native-build.md:23-26",
+    "docs/stranger-proof.md:58-59",
+    "docs/qualification.md:25-33",
+    ".bun-version"
+  ],
+  "checks": [
+    {
+      "name": "identity-fixture",
+      "command": "bun /work/out/identity-fixture.ts",
+      "runtime": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/identity-fixture.report.json",
+      "detail": "22 cases: matching identities pass; ordinary source/target/bun mismatches throw proof-identity-mismatch"
+    },
+    {
+      "name": "existing-proof-build-unit-tests",
+      "command": "cd /repo && bun test ./scripts/artifact-proof.test.ts ./scripts/stranger-proof.test.ts ./scripts/release-artifacts.test.ts ./scripts/release-targets.test.ts",
+      "runtime": "bun 1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "45 pass, 0 fail, 83 expect() calls"
+    },
+    {
+      "name": "qualification-identity-tests",
+      "command": "cd /repo && bun test ./scripts/qualification.test.ts -t \"init binds|cannot select another Bun|mismatched proof\"",
+      "result": "NOT_RUN",
+      "reason": "Cannot find module 'js-tiktoken/lite'; node_modules absent; install forbidden"
+    },
+    {
+      "name": "go-no-go-identity-tests",
+      "command": "cd /repo && bun test ./scripts/go-no-go.test.ts -t \"wrong candidate|self-consistent packages with Bun\"",
+      "result": "NOT_RUN",
+      "reason": "Cannot find module 'js-tiktoken/lite'; node_modules absent; install forbidden"
+    },
+    {
+      "name": "native-quality-build-tests",
+      "command": "cd /repo && bun test ./scripts/extraction-quality-native.test.ts -t \"artifact metadata binds|malformed or incompatible|matching-looking source SHA\"",
+      "result": "NOT_RUN",
+      "reason": "Cannot find module 'js-tiktoken/lite'; node_modules absent; install forbidden"
+    },
+    {
+      "name": "build-release-production",
+      "command": "bun scripts/build-release.ts",
+      "result": "NOT_RUN",
+      "reason": "native builds require a Git revision; archive has no Git metadata"
+    },
+    {
+      "name": "full-repository-gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "reason": "no full-suite slot; verify.sh needs bash; node_modules absent"
+    }
+  ],
+  "verification": {
+    "fixture": "PASS",
+    "existing_unit_tests": "PASS",
+    "qualification_go_no_go_native_quality": "NOT_RUN",
+    "production_build": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN"
+  },
+  "blockers": [
+    "Git absent: cannot regenerate production BUILD.json source_sha from this archive",
+    "node_modules absent and install forbidden: qualification, go-no-go, and extraction-quality-native tests not executed",
+    "P003 retains shared evidence design; this packet does not change scripts/ or docs/"
+  ],
+  "downstream_handoff": {
+    "feeds": ["P008", "P094"],
+    "use": [
+      "/work/out/field-lineage.md",
+      "/work/out/field-lineage.json",
+      "/work/out/identity-fixture.ts",
+      "/work/out/identity-fixture.report.json",
+      "/work/out/existing-coverage.md"
+    ],
+    "do_not": [
+      "duplicate tests listed in existing-coverage.md",
+      "replace P003 shared evidence design, P015 source-B, P006 docs, or Astra/doctor owners",
+      "treat these artifacts as native qualification, release GO, or unfamiliar-user acceptance"
+    ],
+    "rebase_before_production_use": true
+  },
+  "next_step": "P008/P094 consume the field-lineage table and identity fixture after rebase; decide whether parseBuildInfo should use parseProofJson and whether qualification identity should retain bun_version. Do not add duplicate scripts/ tests for cases already named in existing-coverage.md.",
+  "limitations": [
+    "No native package, artifact proof journey, qualification window, or release acceptance was produced.",
+    "Matching/mismatching examples are synthetic 40-hex SHAs and closed registry targets, not a built dist/ tree.",
+    "Qualification identity projection in the fixture mirrors scripts/qualification.ts:81,104 and does not call verifyArtifact (would pull js-tiktoken).",
+    "Duplicate-key BUILD bytes are a consumer-robustness example; production stringify cannot emit them."
+  ]
+}

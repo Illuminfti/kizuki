@@ -1,0 +1,74 @@
+{
+  "schema": "kizuki.corrective-packet-validation/v1",
+  "verified_at_utc": "2026-09-06T23:07:22.665396+00:00",
+  "packet_path": "CHECKPOINT_BOOK/GROK-P101-P105-CODE-PACKETS/GROK-FLEET-P101-P102-P104-CORRECTIVE-20260906.json",
+  "packet_sha256": "54aeace99c19c56234b4790495bd67466f0aa9480c037392f1628576b34699c4",
+  "context_sha256": {
+    "GROK-P101-P105-CODE-PACKETS/P101-CORRECTION-HANDOFF.md": "ee987899e839293fd4296f9ababccf27331a70aea929630c3e1d6519fb143173",
+    "P102-F7A797F-CORRECTIVE-HANDOFF.md": "e757117024d86277009b6a59175e551bbdcba9872a4f5cea5bb179581d416aad",
+    "GROK-P101-P105-CODE-PACKETS/P104-CORRECTION-HANDOFF.md": "30482672fb841d02d73434c758457ae00c4b29554a1e30d9ba2301a43210429e"
+  },
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "base_tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+  "source_roster_sha256": "4421f5d2829c00bc1c8d591837e495cb0b0d61a06f767a26237456c8a909e193",
+  "packets": [
+    {
+      "id": "P101",
+      "clone_path": "PRIVATE_FLEET/code-repos/P101",
+      "verified_start_head": "d9b3969c7ff2d43e624094760c854456fc590cbc",
+      "start_tree": "fe66865186ca452058f5593c8627ae280f3fe720",
+      "base_ancestor": true,
+      "existing_diff_paths": [
+        "scripts/qualification.test.ts",
+        "scripts/qualification.ts"
+      ],
+      "existing_diff_owned": true,
+      "raw_worktree_and_index_clean": true,
+      "tracked_files_checked": 1228,
+      "alternates_absent": true,
+      "original_read_write_test_paths_and_skills_preserved": true,
+      "new_handoff_only": true
+    },
+    {
+      "id": "P102",
+      "clone_path": "PRIVATE_FLEET/code-repos/P102",
+      "verified_start_head": "f7a797f0d5bb13b5c430f2251d96567f8950b106",
+      "start_tree": "79b101a853a189fbb7d125cc8cc5f0f3d6cc0566",
+      "base_ancestor": true,
+      "existing_diff_paths": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/macos-native.yml",
+        "scripts/verify-workflows.test.ts",
+        "scripts/verify-workflows.ts"
+      ],
+      "existing_diff_owned": true,
+      "raw_worktree_and_index_clean": true,
+      "tracked_files_checked": 1228,
+      "alternates_absent": true,
+      "original_read_write_test_paths_and_skills_preserved": true,
+      "new_handoff_only": true
+    },
+    {
+      "id": "P104",
+      "clone_path": "PRIVATE_FLEET/code-repos/P104",
+      "verified_start_head": "66040e3df3ee452c459ac1e45360efe731158715",
+      "start_tree": "4b33eca55ab3e6df5344595cf23fa7c37873e0e5",
+      "base_ancestor": true,
+      "existing_diff_paths": [
+        "packages/mcp/src/schemas.ts",
+        "packages/mcp/test/schema.test.ts"
+      ],
+      "existing_diff_owned": true,
+      "raw_worktree_and_index_clean": true,
+      "tracked_files_checked": 1228,
+      "alternates_absent": true,
+      "original_read_write_test_paths_and_skills_preserved": true,
+      "new_handoff_only": true
+    }
+  ],
+  "write_paths_pairwise_disjoint": true,
+  "candidate_files_changed": false,
+  "worker_launch_performed": false,
+  "tests_executed": false,
+  "status": "READY_FOR_ROOT_REVIEW"
+}

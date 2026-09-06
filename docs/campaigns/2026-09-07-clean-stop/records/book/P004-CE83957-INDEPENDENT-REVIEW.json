@@ -1,0 +1,93 @@
+{
+  "schema": "kizuki.p004-static-review/v1",
+  "reviewed_at": "2026-09-06T22:51:14Z",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "candidate_sha": "ce8395792a333ad760594f92f1198639e0936445",
+  "candidate_tree": "40e3d68d494d5922c88a21f67a1e3f6e1a7747e2",
+  "raw_commit_parents": [
+    "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7"
+  ],
+  "changed_paths": [
+    "scripts/go-no-go.test.ts",
+    "scripts/go-no-go.ts",
+    "scripts/release-evidence.ts"
+  ],
+  "outside_owned_paths": [],
+  "head_index_equal": true,
+  "tracked_worktree_changes": [],
+  "untracked_paths": [],
+  "file_sha256": {
+    "scripts/go-no-go.test.ts": "e347b2df2a500c74c5642dc41e7e1bfe425156be0cd6dbe8aed3e9c03d13542b",
+    "scripts/go-no-go.ts": "395ac8e4b3847f7c5324ba236b7cde4ec0e34a7770ed8de611c3581785f708c5",
+    "scripts/release-evidence.ts": "c8f225866a1e86b14fe84bb5b815f9ccf31a8b703930f6a9149e724d35cf6319"
+  },
+  "handoff_sha256": "e62ce7b02fb2a6afca7602913a256f7acde9f690f6bfb71dc0becaf2caaa26dc",
+  "review_decision": "NEEDS_CORRECTION",
+  "blocking_findings": [
+    {
+      "id": "P004-R1",
+      "severity": "P1",
+      "file": "scripts/release-evidence.ts",
+      "lines": "221-234,266-284,344-384",
+      "summary": "Surface expectations read live worktree and imported module state while candidate binding checks only git rev-parse HEAD; dirty, staged, untracked, symlink-backed, or foreign-resolved product bytes can agree with a receipt under the old commit SHA.",
+      "required_correction": "Bind the executing repository, index, raw tracked bytes, modes, untracked state, relevant module resolution, and bounded stable candidate reads to the claimed commit before and after inventory derivation."
+    },
+    {
+      "id": "P004-R2",
+      "severity": "P1",
+      "file": "scripts/release-evidence.ts",
+      "lines": "57-61,237-244",
+      "summary": "CLI order is recomputed from a copied private help-group list, so producer and validator can agree while the public help order differs.",
+      "required_correction": "Remove the duplicate and derive the exact unique command-row order from bounded printRootHelp(COMMANDS) output."
+    },
+    {
+      "id": "P004-R3",
+      "severity": "P1",
+      "file": "scripts/release-evidence.ts",
+      "lines": "7-8",
+      "summary": "The new root script imports workspace aliases that the sealed root package cannot resolve; exact run cb9fb1aa075e41698864945a4cc02685 failed before tests with 0 pass and exit 1.",
+      "required_correction": "Use repository-relative connector, MCP, and CLI source imports; do not add harness aliases or root dependencies to mask the source defect."
+    }
+  ],
+  "completion_hygiene": {
+    "git_diff_check": "FAIL",
+    "detail": "scripts/go-no-go.test.ts:586 adds a blank line at EOF"
+  },
+  "positive_findings": [
+    "The diff is confined to the three owned files and directly descends from the frozen base.",
+    "The v3 reference map is closed and implemented receipt consumption remains limited to the surface family.",
+    "Absent capability producer and all other unimplemented families retain no credit; the report remains NO-GO.",
+    "Added fixtures are ordinary bounded local validator cases suitable for sealed execution."
+  ],
+  "review_artifacts": {
+    "report": {
+      "path": "P004-CE83957-INDEPENDENT-REVIEW.md",
+      "sha256": "cfe4cb4fa32034ec92d6988b702d230f00701ec9fb2de9619eb87f0f60c5b34d"
+    },
+    "corrective_handoff": {
+      "path": "P004-CE83957-CORRECTIVE-HANDOFF.md",
+      "sha256": "6b71dfa3190e0b5f1f4ebffcd739e2e1197b718f8fa8e54673e8730dfadcb6b9"
+    }
+  },
+  "execution": {
+    "reviewer_product_or_test_commands_run": false,
+    "review_mode": "static-only",
+    "root_sealed_test": {
+      "run_id": "cb9fb1aa075e41698864945a4cc02685",
+      "status": "failed",
+      "stale": false,
+      "exit_code": 1,
+      "passes": 0,
+      "failure_stage": "module-load-before-tests",
+      "error": "Cannot find module '@kizuki/connectors' from '/repo/scripts/release-evidence.ts'",
+      "receipt": "PRIVATE_FLEET/test-controller/runs/cb9fb1aa075e41698864945a4cc02685/result.json",
+      "stderr_sha256": "26ff22b71b358ae565544a694de61f83dec12233291430790a6a1f8ea724ef66",
+      "input_digest_before": "b47877c0f2547369f797213c8424b67c814d868bff0e8019ecfdd8fd13d3bf31",
+      "input_digest_after": "b47877c0f2547369f797213c8424b67c814d868bff0e8019ecfdd8fd13d3bf31"
+    }
+  },
+  "limitations": [
+    "This review does not grant merge, capability-producer, release, account, native artifact, or unfamiliar-human acceptance.",
+    "Typecheck, focused tests, full verification, and root runner receipt remain separate evidence."
+  ]
+}

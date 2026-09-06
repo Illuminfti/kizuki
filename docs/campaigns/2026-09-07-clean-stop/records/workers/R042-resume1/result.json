@@ -1,0 +1,138 @@
+{
+  "task_id": "R042",
+  "packet_id": "R042",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Map service health probes versus model health probes",
+  "issue": 473,
+  "findings": [
+    {
+      "severity": "composition",
+      "id": "thin-ok-tokens",
+      "summary": "HTTP GET /health, surface health, and MCP system_health each have an ok/ready token that does not inspect model capability, rails, or ledger integrity.",
+      "evidence": "packages/core/src/serve/http.ts:131-133; packages/core/src/serve/surface.ts:36-38; packages/core/src/serving/health.ts:14-59,61-142; executed MH1/MH2"
+    },
+    {
+      "severity": "composition",
+      "id": "serve-doctor-omits-ledger",
+      "summary": "inspectServeDoctor.ok is independent of inspectLedgerHealth.ok. CLI doctor ANDs both; serve status uses only inspectServeDoctor.",
+      "evidence": "executed MH4 serve_ok=true ledger_ok=false; packages/cli/src/commands/doctor.ts:335-383; packages/cli/src/commands/serve.ts:61-73"
+    },
+    {
+      "severity": "composition",
+      "id": "rail-ok-not-model-ready",
+      "summary": "A degraded current-model receipt fails serve doctor while rail sync remains ok. Rails down with no model is the inverse.",
+      "evidence": "executed MH3 and MH6; packages/core/src/serve/doctor.ts:65-111,195-249,403-418"
+    },
+    {
+      "severity": "composition",
+      "id": "unverified-vs-on",
+      "summary": "Configured [ports.llm] without a bound model_ref is canon_writing unverified, not on. loadConfiguredModelRef is port:model without the bound @host suffix, so serve status cannot attribute receipt history the way a bound doctor can.",
+      "evidence": "executed MH5; packages/core/src/serve/config.ts:24-43; packages/llm/src/config.ts:59-61; packages/cli/src/commands/serve.ts:63"
+    },
+    {
+      "severity": "note",
+      "id": "identity-authority-standing-degrade",
+      "summary": "stores.degraded always includes identity-authority-unavailable and that string is not a serve.failures entry.",
+      "evidence": "packages/core/src/serve/doctor.ts:331; executed MH1; packages/core/test/serve/doctor.test.ts:52-58"
+    },
+    {
+      "severity": "note",
+      "id": "cli-idle-comment-drift",
+      "summary": "packages/cli/test/doctor/liveness.test.ts:80 comments that opted-out empty rails are idle. Current railDoctor returns ok when a receipt exists and liveness is not expected. idle means last===null.",
+      "evidence": "executed MH7; packages/core/src/serve/doctor.ts:100-101"
+    }
+  ],
+  "deliverables": [
+    "/work/out/probe-source-result-table.md",
+    "/work/out/mixed-health-expected-outputs.json",
+    "/work/out/mixed-health-check.ts",
+    "/work/out/mixed-health-observed.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/unexecuted-checks.md",
+    "/work/out/orientation.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/probe-source-result-table.md",
+    "/work/out/mixed-health-expected-outputs.json",
+    "/work/out/mixed-health-check.ts",
+    "/work/out/mixed-health-observed.json",
+    "/work/out/existing-coverage.md",
+    "/work/out/unexecuted-checks.md",
+    "/work/out/orientation.md"
+  ],
+  "source_references": [
+    "packages/core/src/serve/doctor.ts:65-111,185-250,294-354,356-358,360-459",
+    "packages/core/src/serve/types.ts:203-262",
+    "packages/core/src/serve/config.ts:20-43",
+    "packages/core/src/serve/http.ts:131-133",
+    "packages/core/src/serve/surface.ts:36-38",
+    "packages/core/src/serve/rails.ts:266-271",
+    "packages/core/src/serving/health.ts:14-142",
+    "packages/core/src/ledger/integrity.ts:195-262",
+    "packages/cli/src/commands/doctor.ts:88-110,209-384",
+    "packages/cli/src/commands/serve.ts:61-73",
+    "packages/cli/src/serve-runtime.ts:152-192",
+    "packages/llm/src/none.ts:35-36",
+    "packages/llm/src/openai-compatible.ts:210-214",
+    "docs/decision-log.md D12 D15",
+    "rfcs/0002-autonomous-canon.md §11.4"
+  ],
+  "checks": [
+    {
+      "name": "mixed-health composition MH1-MH7",
+      "command": "bun /work/out/mixed-health-check.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/mixed-health-observed.json"
+    },
+    {
+      "name": "repository focused tests / typecheck / verify.sh",
+      "command": "bun test packages/core/test/serve/doctor.test.ts (and CLI/core suites)",
+      "result": "NOT_RUN",
+      "reason": "/repo/node_modules absent; dependency install forbidden"
+    },
+    {
+      "name": "HTTP /health paired with failing doctor",
+      "result": "NOT_RUN",
+      "reason": "serve/http.ts import graph loads js-tiktoken; further HTTP imports skipped after an accidental cache resolve under /work/outTEMP/bun-cache"
+    }
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun /work/out/mixed-health-check.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "cases": ["MH1", "MH2", "MH3", "MH4", "MH5", "MH6", "MH7"]
+    },
+    "package_type_full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "limitations": [
+      "Read-only git archive; no Git metadata; remote/PR state not verified.",
+      "No workspace install; repository tests not executed.",
+      "No live provider or model calls.",
+      "No native/account/human qualification claim."
+    ]
+  },
+  "blockers": [],
+  "downstream_handoff": {
+    "feeds": ["P040", "P091"],
+    "must_keep_separate": [
+      "process bind (GET /health)",
+      "supervisor/intent/rails (inspectServeDoctor service slice)",
+      "ledger integrity (inspectLedgerHealth)",
+      "model capability (canon_writing on|off|unverified + current_failure + history_unverified)",
+      "live connector health (CLI doctor only)",
+      "CLI overall ok (AND of the above plus vault/pages/purge/freshness)"
+    ],
+    "do_not": [
+      "Treat any single ok/ready as vault readiness.",
+      "Duplicate existing doctor/liveness/model-diagnostics/legacy-ledger tests.",
+      "Replace P003 evidence design, P006 docs, P015 source-B, or Astra/external doctor owners."
+    ]
+  },
+  "next_step": "P040/P091 should consume probe-source-result-table.md and mixed-health-expected-outputs.json as the current-code contract: keep service, ledger, and model bits distinct; rebase onto live HEAD before any production test or docs change."
+}

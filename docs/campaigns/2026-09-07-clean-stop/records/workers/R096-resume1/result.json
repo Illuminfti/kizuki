@@ -1,0 +1,165 @@
+{
+  "task_id": "R096",
+  "packet_id": "R096",
+  "title": "Draft download/checksum/extraction verification helper",
+  "issue": 540,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "owner": "grok-R096",
+  "write_scope": "/work/out only",
+  "identity": {
+    "read_root": "/repo",
+    "source_kind": "git archive of exact commit; no Git metadata or runtime data",
+    "branch": "unavailable in this container",
+    "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+    "remote_verified": false,
+    "dirty": "not applicable; repository is a read-only archive"
+  },
+  "findings": [
+    {
+      "severity": "info",
+      "id": "archive-seam-absent-on-base",
+      "location": "scripts/release-artifacts.ts:35-50; scripts/smoke-release.ts:18-24; docs/native-build.md:16-26",
+      "confirmed": true,
+      "summary": "Current tree verifies already-extracted native package directories. It does not ship tar.gz archives or a local archive hash/extract/required-file checker.",
+      "affected_invariant": "honest install path / no fake surface: wave1 install.sh and scripts/release/ are specified but absent",
+      "required_fix": "none in this packet; P094/P100 may adopt the draft after review. Do not replace directory checksum helpers."
+    }
+  ],
+  "deliverables": [
+    "/work/out/verify-local-archive.ts",
+    "/work/out/fixtures/01-correct/",
+    "/work/out/fixtures/02-hash-mismatch/",
+    "/work/out/fixtures/03-architecture-mismatch/",
+    "/work/out/fixtures/04-missing-required-file/",
+    "/work/out/fixtures/05-inner-checksum-mismatch/",
+    "/work/out/fixtures/06-offline-foreign-target/",
+    "/work/out/fixtures/matrix.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/coverage-map.json",
+    "/work/out/source-references.json",
+    "/work/out/execution-receipt.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    {
+      "path": "/work/out/verify-local-archive.ts",
+      "kind": "runnable local-only checker draft"
+    },
+    {
+      "path": "/work/out/fixtures/matrix.json",
+      "kind": "correct and mismatched example index"
+    },
+    {
+      "path": "/work/out/expected-behavior.md",
+      "kind": "independently stated expected behavior with source/line evidence"
+    },
+    {
+      "path": "/work/out/coverage-map.json",
+      "kind": "existing coverage vs gap; no duplicated directory-checksum tests"
+    },
+    {
+      "path": "/work/out/execution-receipt.json",
+      "kind": "exact commands and exit codes"
+    }
+  ],
+  "source_references": [
+    "scripts/release-artifacts.ts:27-54",
+    "scripts/release-artifacts.test.ts:23-50",
+    "scripts/release-targets.ts:1-24",
+    "scripts/release-targets.test.ts:3-16",
+    "scripts/smoke-release.ts:18-24",
+    "scripts/build-release.ts:99-113",
+    "scripts/stranger-proof.ts:109-154",
+    "scripts/artifact-proof.ts:6",
+    "scripts/extraction-quality-native.ts:65-80",
+    "scripts/extraction-quality-native.test.ts:34-102",
+    "scripts/go-no-go.ts:116-122",
+    "scripts/ci-gitleaks.sh:6-36",
+    "packages/cli/src/commands/models.ts:10-43",
+    "docs/native-build.md:8-75",
+    "docs/release-acceptance.md:22-23,71-73,165-172"
+  ],
+  "checks": [
+    {
+      "name": "existing directory checksum and target registry tests",
+      "command": "TMPDIR=/work/outTEMP/repo-tests bun test scripts/release-artifacts.test.ts scripts/release-targets.test.ts",
+      "cwd": "/repo",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "at": "2026-09-06T22:05:22Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/execution-receipt.json"
+    },
+    {
+      "name": "draft fixture matrix",
+      "command": "bun /work/out/verify-local-archive.ts --run-matrix /work/out/fixtures --work /work/outTEMP/matrix",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14 linux/x64",
+      "at": "2026-09-06T22:05:22Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/outTEMP/matrix/receipt.json"
+    },
+    {
+      "name": "per-case CLI exit codes",
+      "command": "bun /work/out/verify-local-archive.ts --request <fixture>/request.json --extract-to /work/outTEMP/cli/<id>",
+      "at": "2026-09-06T22:05:33Z",
+      "result": "PASS",
+      "exit_codes": {
+        "01-correct": 0,
+        "02-hash-mismatch": 1,
+        "03-architecture-mismatch": 1,
+        "04-missing-required-file": 1,
+        "05-inner-checksum-mismatch": 1,
+        "06-offline-foreign-target": 0,
+        "usage": 2
+      }
+    },
+    {
+      "name": "full repository gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "reason": "read-only preparation packet; no source edit"
+    },
+    {
+      "name": "independent review",
+      "result": "NOT_RUN",
+      "reason": "self-preparation is not C2 independent-model review"
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS",
+    "package_type_full_gate": "NOT_RUN",
+    "privacy_diff_integrity": "PASS (synthetic fixtures only; repository untouched)",
+    "independent_review": "NOT_RUN",
+    "retained_package_consumer": "NOT_RUN (no native product package built or executed)",
+    "limitations": [
+      "Hashes prove local byte consistency only; they are not native execution, account, model, human, or release acceptance.",
+      "Fixtures are tiny synthetic text files labeled never-executed, not compiled Kizuki binaries.",
+      "require_host_match was exercised on linux/x64 only. darwin/arm64 execution was not run; 06 is offline inspection.",
+      "P003/P015/P006/Astra ownership unchanged. Draft must be reviewed and rebased before production use."
+    ]
+  },
+  "blockers": [],
+  "next_step": "P094/P100 should consume verify-local-archive.ts as a local pre-proof check for already-supplied archives, without replacing scripts/release-artifacts.ts directory verification or claiming install/release acceptance.",
+  "downstream_handoff": {
+    "feeds": ["P094", "P100"],
+    "do_not_replace": [
+      "P003 shared evidence design",
+      "P015 source-B schema/recovery/authority/export",
+      "P006 canonical docs",
+      "Astra and external doctor owners",
+      "scripts/release-artifacts.ts directory checksum helper"
+    ],
+    "adopt": {
+      "script": "/work/out/verify-local-archive.ts",
+      "examples": "/work/out/fixtures/",
+      "exit_codes": { "pass": 0, "verification_fail": 1, "usage_or_invalid": 2 }
+    },
+    "rebase_before_production": true
+  }
+}

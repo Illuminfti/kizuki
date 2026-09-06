@@ -1,0 +1,148 @@
+{
+  "task_id": "R043",
+  "packet_id": "R043",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "finding",
+  "issue": 458,
+  "kind": "independent_preparation",
+  "identity": {
+    "read_root": "/repo",
+    "source_kind": "git archive of exact commit; no Git metadata",
+    "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+    "write_scope": "/work/out only",
+    "remote_verified": false,
+    "git_commands_not_run": ["vps-nav orient", "git fetch", "git status"],
+    "reason": "Controller certificate: /repo is a read-only archive; root owns host navigation."
+  },
+  "findings": [
+    {
+      "severity": "contract",
+      "id": "execute-not-exhaustive",
+      "location": "packages/cli/src/app/host.ts:93-332",
+      "evidence": "async function execute returns Promise<unknown>; 15 if (route === ...) arms; fallback throw AppFailure('invalid_request') at line 332. ROUTES at lines 31-35 is Record<AppRoute, ...> and is key-exhaustive. Static check: /work/out/static-join-check.json execute_uses_if_chain_fallback true.",
+      "invariant": "A discriminated AppRoute must have a compile-time handler and typed AppProtocol[R].response.",
+      "required_fix": "P041: replace the if-chain with a switch/handlers record plus assertNever, type the return as AppDataOf<R>, derive ROUTE_KEYS from request keys. Draft: /work/out/compile-time-adapter.draft.ts"
+    },
+    {
+      "severity": "behavior",
+      "id": "source-purge-pending-collapsed",
+      "location": "packages/cli/src/app/host.ts:50-55; packages/core/src/ledger/source-grants.ts:413,573",
+      "evidence": "SourceGrantError.code source_purge_pending is not in failure() passthrough_codes, so host serializes it as unavailable. invalid_source_policy at source-grants.ts:120 is the same collapse.",
+      "invariant": "Stable, actionable error codes at the app envelope; unknown must not hide a distinct core refusal.",
+      "required_fix": "P041 decide whether to pass source_purge_pending through or document unavailable as the app-level mapping. Do not weaken core fail-closed."
+    },
+    {
+      "severity": "drift",
+      "id": "prefix-constant-unused",
+      "location": "packages/cli/src/app/protocol.ts:11",
+      "evidence": "APP_API_PREFIX is defined and never imported. host.ts:339, client.js:102, and serve/http.ts:210 each hardcode /app/v1/. static-join-check prefix.imported_by_host_client_or_http false.",
+      "invariant": "One prefix constant for path kind.",
+      "required_fix": "Use APP_API_PREFIX in host slice and keep http regex aligned. Client is untyped JS; do not invent a second client protocol."
+    },
+    {
+      "severity": "coverage",
+      "id": "untested-host-arms",
+      "location": "packages/cli/src/app/host.ts catalog:94 enroll google-calendar:272 capture sync:232-235 query withheld:186 undo cascade:225",
+      "evidence": "Existing tests cover markdown/gmail journeys, initialize/service, activity/undo, extra-key refuse on query. See /work/out/coverage-inventory.json. These arms exist in source and are not asserted at createAppHost.",
+      "invariant": "Public seam tests for each serialized kind, without duplicating the existing folder-consent-capture journey.",
+      "required_fix": "If P041/P043 need proof, add only the uncovered host cases. Do not duplicate app-host.test.ts:10 or replace a P044 oracle."
+    }
+  ],
+  "deliverables": [
+    "/work/out/protocol-join.json",
+    "/work/out/compile-time-adapter.draft.ts",
+    "/work/out/static-join-check.ts",
+    "/work/out/static-join-check.json",
+    "/work/out/coverage-inventory.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/checks.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/protocol-join.json",
+    "/work/out/compile-time-adapter.draft.ts",
+    "/work/out/static-join-check.ts",
+    "/work/out/static-join-check.json",
+    "/work/out/coverage-inventory.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/checks.json",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/cli/src/app/protocol.ts",
+    "packages/cli/src/app/host.ts",
+    "packages/cli/src/app/ui/client.js",
+    "packages/cli/src/commands/app.ts",
+    "packages/core/src/serve/http.ts",
+    "packages/core/src/ledger/source-grants.ts",
+    "packages/cli/test/app-host.test.ts",
+    "packages/cli/test/app-service.test.ts",
+    "packages/cli/test/app-client.test.ts",
+    "docs/local-app.md",
+    "docs/CURRENT.md",
+    "docs/decision-log.md",
+    "rfcs/0002-autonomous-canon.md"
+  ],
+  "checks": [
+    {
+      "name": "static-join-check",
+      "command": "bun /work/out/static-join-check.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/static-join-check.json"
+    },
+    {
+      "name": "adapter-draft-load",
+      "command": "bun -e 'await import(\"/work/out/compile-time-adapter.draft.ts\")'",
+      "exit_code": 0,
+      "result": "PASS",
+      "limitation": "parse/load only, not tsc exhaustiveness"
+    },
+    {
+      "name": "adapter-draft-tsc",
+      "command": "tsc --noEmit --strict /work/out/compile-time-adapter.draft.ts",
+      "result": "NOT_RUN",
+      "missing": "TypeScript binary and workspace node_modules absent; installs forbidden"
+    },
+    {
+      "name": "existing-app-tests",
+      "command": "bun test packages/cli/test/app-host.test.ts packages/cli/test/app-service.test.ts packages/cli/test/app-client.test.ts",
+      "result": "NOT_RUN",
+      "static_verification": "/work/out/coverage-inventory.json"
+    },
+    {
+      "name": "full-repository-gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN"
+    }
+  ],
+  "verification": {
+    "focused": "PASS bun /work/out/static-join-check.ts exit 0; 15 protocol keys, 15 execute arms, 0 request-key drift",
+    "adapter_load": "PASS parse/load",
+    "adapter_tsc": "NOT_RUN missing tsc",
+    "existing_tests": "NOT_RUN; statically verified by reading app-host/app-service/app-client tests",
+    "full_gate": "NOT_RUN",
+    "limitations": [
+      "No invented passing bun test or tsc result.",
+      "No live account, supervisor, or browser qualification.",
+      "Not a P044 journey oracle.",
+      "Auth/model probe not retested."
+    ]
+  },
+  "blockers": [],
+  "downstream_handoff": {
+    "feeds": ["P041", "P043"],
+    "do_not_touch": ["P044 journey oracle", "P006 canonical docs", "P003 evidence design", "app source edits from this packet"],
+    "smallest_P041_change": "In packages/cli/src/app/host.ts, derive ROUTES from AppProtocol request keys and replace execute if-chain with switch/handlers plus assertNever; keep path-kind wire and extra-key refusal. Use /work/out/compile-time-adapter.draft.ts as the pattern, not a new package.",
+    "smallest_P043_proof": "If tests are required, add only uncovered host cases listed in coverage-inventory.json. Do not duplicate packages/cli/test/app-host.test.ts:10.",
+    "rebase": "Review and rebase on live main before production use."
+  },
+  "next_step": "P041 fold compile-time exhaustiveness into host.ts execute using compile-time-adapter.draft.ts; optionally pass source_purge_pending through failure(); do not edit docs or add a second dispatcher.",
+  "limitations": [
+    "Read-only git archive; remote/GitHub/issue #458 live state not fetched.",
+    "Existing app tests and full verify.sh not executed.",
+    "Adapter never-check unexecuted without tsc.",
+    "No native, account, model, or unfamiliar-user acceptance claim."
+  ]
+}

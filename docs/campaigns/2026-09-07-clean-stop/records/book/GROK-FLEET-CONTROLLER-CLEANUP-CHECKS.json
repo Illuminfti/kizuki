@@ -1,0 +1,12 @@
+{
+  "controller_sha256": "64a4ee1c811725a62277d976294eaddad53dbf1759a0c9687d72fd4567e81534",
+  "checks": {
+    "stop_failure_fallback": "PASS",
+    "daemon_unavailable_no_false_stop_claim": "PASS",
+    "timeout_force_removal_and_verification": "PASS",
+    "memory_swap_equals_memory": "PASS",
+    "verified_default_image": "PASS"
+  },
+  "checks_kind": "mocked subprocess branches; existing first16 supervised separately",
+  "recorded_at": "2026-09-06T21:43:28.371267+00:00"
+}

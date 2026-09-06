@@ -1,0 +1,55 @@
+{
+  "task_id": "P102",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "start_head": "f7a797f0d5bb13b5c430f2251d96567f8950b106",
+  "head_sha": "96539a8a2a978ff4a1b174148098c3ecd3190309",
+  "tree_sha": "6fed1a21c853b34adaf23c5849351212ec404c22",
+  "status": "awaiting_root_test",
+  "branch": "agent/grok-p102",
+  "changed_files": [
+    "scripts/verify-workflows.ts",
+    "scripts/verify-workflows.test.ts"
+  ],
+  "owned_paths_unchanged_this_commit": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/macos-native.yml"
+  ],
+  "findings": [
+    "Prior candidate f7a797f already required a receipt check and success-gated pinned upload on Linux and macOS, but Linux validation only searched for those steps and allowed gaps, trailing steps, and workflow/job run defaults.",
+    "Workflow YAML at start_head already had the intended closed Linux suffix and macOS bindings; no artifact format, action pin, path, name, retention, or upload-system change was required.",
+    "The separate git ls-files exit 128 / missing .git harness failure from retained run 3b823c9c19144ae9a40935b15d2c0a9d is unchanged product behavior and is not masked."
+  ],
+  "deliverables": {
+    "commit": "96539a8a2a978ff4a1b174148098c3ecd3190309",
+    "parent": "f7a797f0d5bb13b5c430f2251d96567f8950b106",
+    "message": "Close the Linux proof and retention suffix",
+    "implementation": "hasLinuxNativeProof now takes the workflow document, rejects workflow-level defaults and jobs.test.defaults, and requires the last four test-job steps to be exact proof, unconditional exact-head check, receipt check, and the sole recognized pinned upload.",
+    "tests": "Existing Linux/macOS/event-head assertions preserved. Synthetic ci fixture suffix aligned to the real Linux order. Five in-memory structural mutations added: insert between receipt and upload, move exact-head after upload, append after upload, workflow run defaults, jobs.test run defaults."
+  },
+  "verification": {
+    "focused": {
+      "command": "bun test scripts/verify-workflows.test.ts",
+      "head": "96539a8a2a978ff4a1b174148098c3ecd3190309",
+      "result": "NOT_RUN",
+      "reason": "Root network-disabled runner owns execution. Request p102-linux-suffix-96539a8 written to /work/out/test-request.json."
+    },
+    "package_type_full_gate": {
+      "result": "NOT_RUN",
+      "reason": "Assigned execution is root sealed runner only."
+    },
+    "prior_retained_run": {
+      "id": "3b823c9c19144ae9a40935b15d2c0a9d",
+      "result": "15 pass, 1 fail, 69 assertions",
+      "note": "Sole failure was git ls-files exit 128 from missing .git in the sealed archive. Separate harness context; not treated as suite credit; product code not changed to accommodate it."
+    },
+    "independent_review": "NOT_RUN",
+    "native_artifact_upload": "NOT_CLAIMED"
+  },
+  "blockers": [],
+  "next_step": "Root runs bun test scripts/verify-workflows.test.ts on 96539a8a2a978ff4a1b174148098c3ecd3190309 in the sealed runner (synthetic tracked-index fixture, later real-Git checks), then independent review before integration.",
+  "limits_honored": [
+    "Wrote only packet write_paths; YAML files inspected and left unchanged in this commit.",
+    "No amend/reset/rebase/history rewrite; one normal follow-on commit from start_head.",
+    "No test execution, dependency install, fetch, push, upload, or exploit reproduction in this container."
+  ]
+}

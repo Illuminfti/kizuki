@@ -1,0 +1,56 @@
+{
+  "task_id": "P095",
+  "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+  "status": "FINDINGS",
+  "findings": [
+    "SECURITY.md still says the CLI will not enroll Telegram/IMAP; listEnrollableConnectorIds and connectCommand enroll IMAP, Telegram, Gmail, and Google Calendar on this base.",
+    "packages/cli/src/help.ts root help says direct account sign-in is not available; connect usage and CURRENT.md contradict that.",
+    "docs/README.md still treats estate cutover as an RFC 0002 §1.3 requirement; D19 and the amended RFC retain stranger proof and drop cutover as a readiness gate.",
+    "packages/connectors/README.md registry table omits registered beeper, telegram, gmail, imap, ics, and estate importers.",
+    "docs/cli.md omits the app verb and doctor --integrity; docs/connect.md documents only Beeper and IMAP.",
+    "ICS URL signIn exists but is not CLI-bound; WHOOP and X API packages exist and are not registered; estate-slice apply is not implemented.",
+    "D19 is retained in scripts/go-no-go.ts: owner.seven-day-rails, estate.fourteen-day-parity, and owner.final-cutover are required:false superseded-readiness-gate. Held 519/530 were not touched.",
+    "Sole canonical docs/manifest integration owner is one root-assigned follow-on lane for issue 349; P095 owns /work/out only."
+  ],
+  "deliverables": [
+    "/work/out/capability-inventory.json",
+    "/work/out/contradictions.json",
+    "/work/out/canonical-owner.json",
+    "/work/out/d19-readiness.json",
+    "/work/out/provider-docs.json",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "verification": {
+    "focused": {
+      "result": "PASS",
+      "command": "evaluateRelease('1.0') on empty kizuki.acceptance-evidence/v2 index",
+      "runtime": "bun 1.3.14",
+      "decision": "NO-GO",
+      "gate_count": 41,
+      "required_count": 37,
+      "superseded": ["owner.seven-day-rails", "estate.fourteen-day-parity", "owner.final-cutover"],
+      "note": "Inventory evidence only; not product GO"
+    },
+    "provider_docs": {
+      "result": "PASS",
+      "date": "2026-09-06",
+      "limit": "X historical OAuth URL redirected to https://docs.x.com/overview"
+    },
+    "live_registry_import": {
+      "result": "FAIL",
+      "reason": "no workspace node_modules; static source used"
+    },
+    "full_gate": "NOT_RUN",
+    "typecheck": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "release_claim": "none"
+  },
+  "blockers": [
+    "Shared README/SECURITY/help/cli.md/connect.md rewrite is unassigned; AGENTS.md requires one named owner.",
+    "surface.capabilities-and-docs adapter remains NOT_IMPLEMENTED.",
+    "GitHub issue 349 body and held 519/530 remote state were not fetched in this archive container."
+  ],
+  "next_step": "Root assigns one issue-349 docs/manifest integration lane with exclusive write over README.md, SECURITY.md, packages/cli/src/help.ts, packages/connectors/README.md, docs/README.md, docs/cli.md, docs/connect.md, and packages/cli/src/connect-catalog.ts, following COMMANDS, defaultConnectorRegistry, listEnrollableConnectorIds, TOOLS, PORT_CONTRACTS, go-no-go POLICY, and docs/CURRENT.md. Do not resume held 519/530."
+}

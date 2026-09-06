@@ -1,0 +1,413 @@
+{
+  "schema": "grok-fleet-skill-manifest/v1",
+  "prepared_at": "2026-09-06T20:38:20.938815+00:00",
+  "status": "reviewable_pack_only",
+  "requested_fleet": {
+    "workers": 100,
+    "window_hours": 12,
+    "engine": "Grok 4.6 subscription; effective identity requires root verification"
+  },
+  "inspected_repository": "WORKTREES/kizuki-stranger-main327-20260906",
+  "inspected_head": "a7e4b53ce7107bccaa7a62e6e91e4ee384a38f08",
+  "inspected_tree": "d342460db16297ba1deba1127a4b6e2fba9b4e70",
+  "discovery_verified": false,
+  "launch_performed": false,
+  "source_files": [
+    {
+      "path": "OPERATOR_HOME/AGENTS.md",
+      "sha256": "9839027def6df68092e457b626b79548b34dc8c60b45c1ac1885891e964970a2",
+      "bytes": 3311
+    },
+    {
+      "path": "OPERATOR_HOME/LifeOS/AGENTS.md",
+      "sha256": "c67d2287e56ea96b45edd9389e29d25f157cd91fecab8a0f8b5a78b2db593f6d",
+      "bytes": 1310
+    },
+    {
+      "path": "WORKTREES/kizuki-stranger-main327-20260906/AGENTS.md",
+      "sha256": "099d328190e55b8f146151868ac6f6a7b9ea87bb304af36732ad17cdb37ca22f",
+      "bytes": 17934
+    },
+    {
+      "path": "WORKTREES/kizuki-stranger-main327-20260906/packages/core/AGENTS.md",
+      "sha256": "233156881769e1e036eed4ff12631fdddfcccb4228ef00fee2878def89ae7ccf",
+      "bytes": 4328
+    },
+    {
+      "path": "WORKTREES/kizuki-stranger-main327-20260906/packages/connectors/AGENTS.md",
+      "sha256": "9639924ccc7e9e26da088389631a5a9b812bce75d94af99896af9f436a607564",
+      "bytes": 3630
+    },
+    {
+      "path": "WORKTREES/kizuki-stranger-main327-20260906/packages/cli/AGENTS.md",
+      "sha256": "61c7830a7fcff8c3d3ca3beb513788dd61d0e2d1ad5541a2dc8ec430476bc22f",
+      "bytes": 3258
+    },
+    {
+      "path": "WORKTREES/kizuki-stranger-main327-20260906/packages/tui/AGENTS.md",
+      "sha256": "cd20e08a5d9c92527afef4c1630b1556855f47fa9df36f864ed2ac63878181ba",
+      "bytes": 2357
+    },
+    {
+      "path": "WORKTREES/kizuki-stranger-main327-20260906/docs/CURRENT.md",
+      "sha256": "3d2bb0fb0bcb6d73b6841b0619249cf934f87a0e858b1af9957b97ab0a3a3ea1",
+      "bytes": 3830
+    },
+    {
+      "path": "WORKTREES/kizuki-stranger-main327-20260906/docs/decision-log.md",
+      "sha256": "ad00868147f737459788546b56d200c0fe53bba71a1c362ee446c3df75c36127",
+      "bytes": 11493
+    },
+    {
+      "path": "WORKTREES/kizuki-stranger-main327-20260906/rfcs/0002-autonomous-canon.md",
+      "sha256": "c072ea8f46879ea633da61d9ab3a10c9971acab78e68e77c7a77b261f1b3028a",
+      "bytes": 149243
+    },
+    {
+      "path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/README.md",
+      "sha256": "95259fe7dd95b05893eaabd468b35db59a4e495c0e23e8a40c955fb797c25674",
+      "bytes": 7172
+    },
+    {
+      "path": "WORKTREES/kizuki-stranger-main327-20260906/.claude/skills/connector-work/SKILL.md",
+      "sha256": "e12568f0738125bcfd83d0e71344751dfc99a8c02284356e3a0f91270d0a928f",
+      "bytes": 1045
+    },
+    {
+      "path": "OPERATOR_HOME/.codex/skills/writing-great-skills/SKILL.md",
+      "sha256": "96f8598cabc37e33705ea4f557091a79e9342ff63578ca000d4a1660fc4c105f",
+      "bytes": 9490
+    }
+  ],
+  "skills": [
+    {
+      "id": "orient-repository",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/orient-repository/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/orient-repository/SKILL.md",
+      "roles": [
+        "backend-storage",
+        "connectors",
+        "frontend-onboarding",
+        "qa-reviewer",
+        "packaging-evidence"
+      ],
+      "when_required": "Required at each non-trivial task start or handoff recovery",
+      "why_useful": "Establishes exact revision, governing decisions, public seams, and collision risk.",
+      "sha256": "0733d0612028d1bd8e8c853b5db00c3fd2653f74a6cef90052a01e2a6cc5b08c",
+      "bytes": 2976
+    },
+    {
+      "id": "implement-change",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/implement-change/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/implement-change/SKILL.md",
+      "roles": [
+        "backend-storage",
+        "connectors",
+        "frontend-onboarding",
+        "packaging-evidence"
+      ],
+      "when_required": "Required for assigned implementation or behavior-changing documentation",
+      "why_useful": "Turns a bounded contract into public behavior with exact-head verification.",
+      "sha256": "b8a3ed142117b03f341c01e582ccaeb239049dce53ce1d943a6a101ef8e054f8",
+      "bytes": 3129
+    },
+    {
+      "id": "review-change",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/review-change/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/review-change/SKILL.md",
+      "roles": [
+        "qa-reviewer"
+      ],
+      "when_required": "Required for branch/PR review; implementation self-review uses it before handoff",
+      "why_useful": "Separates specification/security from correctness/regression at a pinned head.",
+      "sha256": "e20e71bd6f0a465bf8aab1169234dc5e65ef61afef93b658eb5ff1c256d2ea14",
+      "bytes": 3100
+    },
+    {
+      "id": "elegance-review",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/elegance-review/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/elegance-review/SKILL.md",
+      "roles": [
+        "backend-storage",
+        "connectors",
+        "frontend-onboarding",
+        "qa-reviewer",
+        "packaging-evidence"
+      ],
+      "when_required": "Required for every code change, refactor, or PR review",
+      "why_useful": "Keeps one coherent path, honest surfaces, and minimal abstractions; reviewers report without mutating.",
+      "sha256": "44b51b7c027b59e2c5c21e1cd3854ab3360759bcaf2660de29776d9484108ff7",
+      "bytes": 2753
+    },
+    {
+      "id": "handoff-work",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/handoff-work/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/handoff-work/SKILL.md",
+      "roles": [
+        "backend-storage",
+        "connectors",
+        "frontend-onboarding",
+        "qa-reviewer",
+        "packaging-evidence"
+      ],
+      "when_required": "Required when finishing, transferring, or stopping a lane",
+      "why_useful": "Preserves exact Git/test evidence, dependencies, local-only work, and uncertainty.",
+      "sha256": "72c189143093fb6e8fcbf1d86cefeccedf782f79a440814260cc7bc1fc77e7fd",
+      "bytes": 2616
+    },
+    {
+      "id": "test-strategy",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/test-strategy/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/test-strategy/SKILL.md",
+      "roles": [
+        "backend-storage",
+        "connectors",
+        "frontend-onboarding",
+        "qa-reviewer"
+      ],
+      "when_required": "Required when defining or reviewing behavioral acceptance tests",
+      "why_useful": "Selects public seams and meaningful success/failure/recovery proof.",
+      "sha256": "ed97bfce54560dab05f2c4cefded7c02e55bdd4f20e96755e350d025fdf2b150",
+      "bytes": 1760
+    },
+    {
+      "id": "security-privacy-review",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/security-privacy-review/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/security-privacy-review/SKILL.md",
+      "roles": [
+        "backend-storage",
+        "connectors",
+        "frontend-onboarding",
+        "qa-reviewer",
+        "packaging-evidence"
+      ],
+      "when_required": "Required when crossing identity, data, auth, filesystem, network, serving, import, export, or release boundaries",
+      "why_useful": "Checks fail-closed authorization, secret custody, provenance, erasure, and bounds under inherited safe-validation restrictions.",
+      "sha256": "375823b18c8087866b5914c641839842101cabb6756034874713a8f5de91951b",
+      "bytes": 3219
+    },
+    {
+      "id": "diagnose-failure",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/diagnose-failure/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/diagnose-failure/SKILL.md",
+      "roles": [
+        "backend-storage",
+        "connectors",
+        "frontend-onboarding",
+        "qa-reviewer",
+        "packaging-evidence"
+      ],
+      "when_required": "Required when a failing check or runtime path has an uncertain cause",
+      "why_useful": "Pins the failing revision and tests one hypothesis without shotgun edits or weakened gates.",
+      "sha256": "6dd98988070aa3042aa16586357fa7eef6aee922dfc7c84bdbd767a29d52f948",
+      "bytes": 1502
+    },
+    {
+      "id": "sqlite-data-modeling",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/sqlite-data-modeling/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/sqlite-data-modeling/SKILL.md",
+      "roles": [
+        "backend-storage",
+        "qa-reviewer"
+      ],
+      "when_required": "Required for SQLite schema, index, or query changes/review",
+      "why_useful": "Makes identity, constraints, transactions, query bounds, and migration proof explicit.",
+      "sha256": "76222373f169c6bcd8e98e1c9120ac0f5c79c970ef02815550b4ba27ae4b13c7",
+      "bytes": 1673
+    },
+    {
+      "id": "migration-work",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/migration-work/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/migration-work/SKILL.md",
+      "roles": [
+        "backend-storage",
+        "qa-reviewer",
+        "packaging-evidence"
+      ],
+      "when_required": "Required for persisted schema/file formats or transformations across supported versions",
+      "why_useful": "Inventories readers/writers and interruption, idempotency, and compatibility behavior.",
+      "sha256": "d5fefedb3739a2fc14541897b5f80bde32aaaf6bd26b5052359b3bf36b306e8f",
+      "bytes": 1558
+    },
+    {
+      "id": "concurrency-race-analysis",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/concurrency-race-analysis/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/concurrency-race-analysis/SKILL.md",
+      "roles": [
+        "backend-storage",
+        "qa-reviewer"
+      ],
+      "when_required": "Required for shared mutable state, async/process coordination, or capability lifetime changes",
+      "why_useful": "Maps commit points, ownership, SQLite/file durability, and safe deterministic lifecycle checks.",
+      "sha256": "67647e03fc2557124dc35bcd536e0d09e969a62280b039c16c271734614dd77b",
+      "bytes": 1402
+    },
+    {
+      "id": "provenance-invalidation",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/provenance-invalidation/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/provenance-invalidation/SKILL.md",
+      "roles": [
+        "backend-storage",
+        "connectors",
+        "qa-reviewer"
+      ],
+      "when_required": "Required for correction, supersession, source deletion, purge, projections, or rebuild changes",
+      "why_useful": "Preserves complete support and scoped observable semantics when evidence changes.",
+      "sha256": "f836dfc3614c6942741dea8c8563b5da39ccdda18d5ae3d7cf69e17d79a3f898",
+      "bytes": 2653
+    },
+    {
+      "id": "backup-restore",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/backup-restore/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/backup-restore/SKILL.md",
+      "roles": [
+        "backend-storage",
+        "qa-reviewer",
+        "packaging-evidence"
+      ],
+      "when_required": "Required for backup/export/restore or portable durable-state changes",
+      "why_useful": "Requires consistent versioned manifests and exercised clean-target recovery.",
+      "sha256": "910021aa0cba0d019927da06e22f1adc75ab5c4f2502c70c71913062816d8cea",
+      "bytes": 1381
+    },
+    {
+      "id": "performance-engineering",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/performance-engineering/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/performance-engineering/SKILL.md",
+      "roles": [
+        "backend-storage",
+        "qa-reviewer"
+      ],
+      "when_required": "Required only for an assigned performance claim or optimization",
+      "why_useful": "Demands an equivalent-state measured baseline, useful metrics, and unchanged correctness.",
+      "sha256": "a6dd998169eca8cffa7819c1c53422f670d519805ef4cfab2fecca66d3c8b1af",
+      "bytes": 1677
+    },
+    {
+      "id": "connector-work",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/connector-work/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/connector-work/SKILL.md",
+      "roles": [
+        "connectors",
+        "qa-reviewer"
+      ],
+      "when_required": "Required for provider connector/importer research, implementation, or review",
+      "why_useful": "Uses sanctioned auth and honest limits with offline conformance and durable resume behavior.",
+      "sha256": "e8cd731a05dacb3e182751b76877afb0e4392a936a5b74cf428c5c7dd96e4e7c",
+      "bytes": 2899
+    },
+    {
+      "id": "ux-dx-ax-parity",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/ux-dx-ax-parity/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/ux-dx-ax-parity/SKILL.md",
+      "roles": [
+        "frontend-onboarding",
+        "qa-reviewer"
+      ],
+      "when_required": "Required for public capability, CLI/MCP/API, error model, or product-surface changes",
+      "why_useful": "Preserves one semantic core operation across human, developer, and agent surfaces.",
+      "sha256": "21102f0299ee57e0f8411ce377f468ea2d981f4cfe6e4e22a0440080954b6fa9",
+      "bytes": 1871
+    },
+    {
+      "id": "cli-terminal-ux",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/cli-terminal-ux/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/cli-terminal-ux/SKILL.md",
+      "roles": [
+        "frontend-onboarding",
+        "qa-reviewer"
+      ],
+      "when_required": "Required for CLI/TUI command or rendering work",
+      "why_useful": "Covers composable output, hostile text, recovery, non-TTY use, and the audit/undo boundary.",
+      "sha256": "399bde1953a7bf631dcbd70ac52ac2790151ea18bb2fe7883e2e09fd530d49bd",
+      "bytes": 1382
+    },
+    {
+      "id": "release-readiness",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/release-readiness/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/release-readiness/SKILL.md",
+      "roles": [
+        "packaging-evidence",
+        "qa-reviewer"
+      ],
+      "when_required": "Required for an exact-candidate readiness assessment",
+      "why_useful": "Separates full checks, migration/recovery, packaging, documentation, and release authority.",
+      "sha256": "473a4b46d188130f3e361b96cac6bc3d444faeb60c519ef2e391a52b859ad9b8",
+      "bytes": 2643
+    },
+    {
+      "id": "documentation-accuracy",
+      "origin": "canonical_repository",
+      "inspected_absolute_path": "WORKTREES/kizuki-stranger-main327-20260906/.agents/skills/documentation-accuracy/SKILL.md",
+      "worker_path": "{{WORKTREE}}/.agents/skills/documentation-accuracy/SKILL.md",
+      "roles": [
+        "frontend-onboarding",
+        "packaging-evidence",
+        "qa-reviewer"
+      ],
+      "when_required": "Required when changing or assessing commands, capabilities, install instructions, or acceptance claims",
+      "why_useful": "Checks the exact implementation and clearly labels shipped behavior versus design.",
+      "sha256": "72d2ac01fe9fd3b5e47eaa05153f4dffe07f60e3230a6ae4c76c137ac80c8fe7",
+      "bytes": 2286
+    },
+    {
+      "id": "frontend-design",
+      "origin": "conditional_local_reference",
+      "inspected_absolute_path": "OPERATOR_HOME/.codex/skills/frontend-design/SKILL.md",
+      "worker_path": "OPERATOR_HOME/.codex/skills/frontend-design/SKILL.md",
+      "roles": [
+        "frontend-onboarding"
+      ],
+      "when_required": "Conditional: assigned browser visual-design work with an explicit product direction",
+      "why_useful": "Provides deliberate visual hierarchy and cohesive style; existing brand/accessibility/privacy and approved dependency rules win.",
+      "sha256": "b81e2ff87ed8fa4d6c377ccb127a7254c9e6a77e3ae94f21e6b514f7bb2945a0",
+      "bytes": 4440
+    },
+    {
+      "id": "touch-and-accessibility",
+      "origin": "conditional_local_reference",
+      "inspected_absolute_path": "OPERATOR_HOME/.codex/skills/touch-and-accessibility/SKILL.md",
+      "worker_path": "OPERATOR_HOME/.codex/skills/touch-and-accessibility/SKILL.md",
+      "roles": [
+        "frontend-onboarding",
+        "qa-reviewer"
+      ],
+      "when_required": "Required for assigned interactive browser UI work; not loaded for terminal-only tasks",
+      "why_useful": "Provides touch reachability, keyboard focus, labels, and reduced motion. Preserve real security expiry and existing semantic constraints.",
+      "sha256": "24226a43e9d49fc3c7e9c6f6e93f1feb90d34f25056f644c5aee0d78af7c03fc",
+      "bytes": 8221
+    },
+    {
+      "id": "vercel-react-best-practices",
+      "origin": "conditional_local_reference",
+      "inspected_absolute_path": "OPERATOR_HOME/.codex/skills/vercel-react-best-practices/SKILL.md",
+      "worker_path": "OPERATOR_HOME/.codex/skills/vercel-react-best-practices/SKILL.md",
+      "roles": [
+        "frontend-onboarding",
+        "qa-reviewer"
+      ],
+      "when_required": "Conditional: actual React/Next.js code or a measured React performance problem",
+      "why_useful": "Prioritizes waterfalls, bundle size, rendering and state costs. Read relevant rule files only; this does not authorize libraries, analytics, caching private data, or suppressing real faults.",
+      "sha256": "71ed7794962fa6e803ee83030517b5b93a9f70fbfeb431ec4535c5480a8d8355",
+      "bytes": 7251
+    }
+  ]
+}

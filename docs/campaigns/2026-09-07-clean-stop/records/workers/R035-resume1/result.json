@@ -1,0 +1,128 @@
+{
+  "task_id": "R035",
+  "packet_id": "R035",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "findings": [
+    {
+      "severity": "contract_gap",
+      "id": "working-knowledge-omits-valid-time",
+      "location": "packages/core/src/serving/candidates.ts:292-295",
+      "confirmed": true,
+      "evidence": "executed-examples.json owner_projection.working_knowledge",
+      "invariant": "Stored valid_from/valid_to/asserted_at/retracted_at/last_confirmed_at/created_at are not serialized on the only agent-facing claim line.",
+      "detail": "Historical closed interval Orchard Library 2020-01-01/2021-06-01 and current open Lighthouse Lab 2022-01-01 both print as status=live working knowledge with no timestamps. A reader cannot tell past from current."
+    },
+    {
+      "severity": "projection_fidelity",
+      "id": "conflict-group-includes-non-overlapping-history",
+      "location": "packages/core/src/claims/identity.ts:334-342 and packages/core/src/serving/candidates.ts:309-310",
+      "confirmed": true,
+      "evidence": "executed-examples.json conflicts and owner_projection.counterevidence",
+      "invariant": "Conflict detection uses validity overlap internally, but the served line has no interval and lists every live peer on the key.",
+      "detail": "live=3 included the 2020-2021 Orchard Library row that does not overlap the 2022-open and 2026-open peers."
+    },
+    {
+      "severity": "unavailable_on_main",
+      "id": "no-query-claims-or-as-of",
+      "location": "packages/core/src/agents/types.ts:1-11; rfcs/0002-autonomous-canon.md:2649-2650",
+      "confirmed": true,
+      "evidence": "static TOOLS list; RFC 0002 deferred as_of_valid/as_of_transaction",
+      "invariant": "There is no query_claims tool and no as-of read surface.",
+      "detail": "Claims reach agents only as context_packet markdown plus propose/correct receipts. ClaimV2 temporal_basis is validator-only (claim-v2.ts), not stored."
+    },
+    {
+      "severity": "gate_vs_output",
+      "id": "valid_from-is-occurred_at-for-grants-only",
+      "location": "packages/core/src/serving/claims.ts:64; packages/core/src/serving/candidates.ts:91-109",
+      "confirmed": true,
+      "evidence": "executed-examples.json can_read.windowed_grant and windowed_projection",
+      "invariant": "Grant since/until filters claims by valid_from. Packet since/until does not.",
+      "detail": "Windowed agent (2026-02-28T10:30Z..13:30Z) served only Harbor Desk (valid_from 2026-02-28T11:00:00Z) and omitted the gap that requires unread historical rows."
+    }
+  ],
+  "deliverables": [
+    "/work/out/store-to-projection-field-map.json",
+    "/work/out/store-to-projection-field-map.md",
+    "/work/out/historical-current-examples.json",
+    "/work/out/executed-examples.json",
+    "/work/out/project-temporal-examples.ts",
+    "/work/out/coverage-inventory.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/store-to-projection-field-map.json",
+    "/work/out/store-to-projection-field-map.md",
+    "/work/out/historical-current-examples.json",
+    "/work/out/executed-examples.json",
+    "/work/out/project-temporal-examples.ts",
+    "/work/out/coverage-inventory.md",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/core/src/claims/store.ts:123-207,504-517,1088-1098",
+    "packages/core/src/claims/schema.ts:9-39,50-58,140-149",
+    "packages/core/src/claims/gaps.ts:67-73",
+    "packages/core/src/claims/identity.ts:272-342",
+    "packages/core/src/claims/conflict.ts:34-49",
+    "packages/core/src/serving/candidates.ts:91-109,286-324",
+    "packages/core/src/serving/claims.ts:19-71,86-91",
+    "packages/core/src/serving/target.ts:122-133",
+    "packages/core/src/serving/entities.ts",
+    "packages/core/src/serving/types.ts:41-71",
+    "packages/core/src/agents/types.ts:1-11",
+    "packages/core/src/contracts/claim-v2.ts:40-53",
+    "packages/core/src/graph/schema.ts:15-16",
+    "packages/core/src/graph/graph.ts:274-276,597-598",
+    "rfcs/0002-autonomous-canon.md:2275,2649-2650",
+    "rfcs/0003-rich-subject-foundation.md:72-76,221-241"
+  ],
+  "checks": [
+    {
+      "name": "claim-v2-and-gaps",
+      "command": "bun test packages/core/test/contracts/claim-v2.test.ts packages/core/test/claims/gaps.test.ts",
+      "cwd": "/repo",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "13 pass, 0 fail"
+    },
+    {
+      "name": "packet-tests",
+      "command": "bun test packages/core/test/serving/packet-claim-boundaries.test.ts packages/core/test/serving/packet.test.ts",
+      "cwd": "/repo",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "detail": "Cannot find module js-tiktoken/lite from packet-tokenizer.ts. No dependency install permitted."
+    },
+    {
+      "name": "collectPieces-temporal-examples",
+      "command": "chmod 700 /work/out && TMPDIR=/work/out/tmp R035_OUT=/work/out bun /work/out/project-temporal-examples.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "Wrote executed-examples.json. Prerequisite: /work/out must be mode 0700; 0775 is refused by the vault helper."
+    }
+  ],
+  "verification": {
+    "focused": "PASS (gaps, claim-v2, collectPieces characterization)",
+    "packet_suite": "NOT_RUN (missing js-tiktoken/lite)",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN"
+  },
+  "blockers": [
+    "js-tiktoken is not installed in this container; serveContextPacket packing/budget tests cannot run without a dependency install, which is forbidden here."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P035", "P037"],
+    "do_not_duplicate": "packages/core/test/serving/packet-claim-boundaries.test.ts already covers grant-window valid_from, gap authorization, and lifecycle fail-closed. Do not rewrite those contracts.",
+    "missing_test_for_P035": "Assert working-knowledge omits valid_from/valid_to/asserted_at/created_at while gap after/before equal those stored values. Decide whether conflict live=N should drop non-overlapping members or print intervals.",
+    "limitations": "No native/account/model/human qualification. Artifacts must be reviewed and rebased before production use. P003/P015/P006/Astra/doctor owners remain reserved."
+  },
+  "next_step": "P035: add the missing working-knowledge/gap field-fidelity characterization on a rebased main, then project stored valid_from/valid_to (and optionally asserted_at) into serving output without inventing ClaimV2 storage."
+}

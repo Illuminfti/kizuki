@@ -1,0 +1,77 @@
+{
+  "schema": "kizuki.grok-production-wave/v1",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+  "prepared_at": "2026-09-06T23:07:52.827451+00:00",
+  "execution_status": "NOT_LAUNCHED",
+  "authority": "Proposed bounded source/test packet after read-only ownership reconciliation. Root alone assigns/admit/launches.",
+  "ownership_receipt": {
+    "path": "CHECKPOINT_BOOK/GROK-SUPERVISOR-OWNERSHIP-20260906.json",
+    "sha256": "d8f88080f6be745354ea582863766fd1db430f0b38ac000230ea734d955fcad7"
+  },
+  "packets": [
+    {
+      "id": "P106",
+      "title": "Preserve inactive service state while uninstalling an enabled systemd unit",
+      "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "owner": "grok-P106",
+      "kind": "implementation",
+      "readiness": "ready_now",
+      "dependencies": [],
+      "skills": [
+        "orient-repository",
+        "issue-pickup-execution",
+        "implement-change",
+        "reliability-engineering",
+        "review-change",
+        "elegance-review"
+      ],
+      "read_paths": [
+        "packages/core/src/serve/supervisor.ts",
+        "packages/core/test/serve/supervisor.test.ts",
+        "packages/cli/test/serve/install.test.ts",
+        "packages/core/src/serve/types.ts",
+        "packages/core/src/serve/intent.ts",
+        "packages/core/src/serve/service-files.ts",
+        "packages/core/src/serve/units.ts",
+        "packages/cli/src/commands/serve.ts",
+        "packages/cli/src/service-host.ts",
+        "packages/cli/test/serve/supervisor-fixture.ts",
+        "docs/service-lifecycle.md"
+      ],
+      "write_paths": [
+        "packages/core/src/serve/supervisor.ts",
+        "packages/core/test/serve/supervisor.test.ts",
+        "packages/cli/test/serve/install.test.ts"
+      ],
+      "test_paths": [
+        "packages/core/test/serve/supervisor.test.ts",
+        "packages/cli/test/serve/install.test.ts"
+      ],
+      "context_files": [
+        "GROK-P106-SUPERVISOR-CONTRACT-20260906.md"
+      ],
+      "scope": "Implement only the known systemd inactive+enabled uninstall/reinstall admission and correct prior-activity rollback. Preserve strict confirmedStopped, ordinary activation contract, identity/owned-definition checks, launchd semantics, and exact journal-v2 reading. Adopt the bounded journal-v3 previous_active and optional enablement-only host capability contract in the attached source/test design.",
+      "acceptance": [
+        "Public uninstall from owned systemd inactive+enabled confirms disable/inactivity before removal, reloads, records opted-out and preserves ordinary vault bytes.",
+        "Ordinary failure recovery restores the prior unit, intent, enablement and inactivity without rollback activation; unverified recovery stays pending and retry converges.",
+        "Explicit reinstall still activates the new definition; failed activation rolls back to the original independent activity/enablement state.",
+        "Valid version-2 journals retain historical meaning and recover; version-3 inactive+enabled snapshots preserve original activity.",
+        "Existing active/disabled and launchd fixtures retain assertions; hosts without the new optional capability refuse only unsupported new transitions before mutation.",
+        "Root sealed exact-head focused tests, typecheck and required verification plus independent correctness/security and elegance review remain required; no native or release PASS follows from fixture tests."
+      ],
+      "limits": [
+        "Edit only the three owned files. No service/systemd/launchd/daemon operations, real account calls, native qualification, vulnerability/timing/resource reproductions, dependency installation or product test execution by the worker. Submit tests to the existing qualified root runner.",
+        "Do not loosen confirmedStopped or remap public supervisor states. Do not broaden unknown/deactivating/inconsistent admission or modify launchd behavior.",
+        "Do not edit shared CLI fixtures, service-host.ts, app/client/host, doctor, daemon rails, vault files, core ledger/canon/export, held lanes, native packaging or P015.",
+        "Preserve journal identity/location checks, original definition and intent, rollback/pending errors and all existing assertions. No blanket error success or fallback activation for an inactive snapshot.",
+        "No launch is performed by this packet author. Reconcile any newly overlapping owner before root admission."
+      ],
+      "lock_groups": [
+        "core-supervisor-transaction"
+      ],
+      "source_design_sha256": "649161babc566120ed5415ed989966cf70017c04ecbc77f43fd218e684abbaf3",
+      "verification_status": "NOT_RUN; awaiting future root exact-head candidate execution"
+    }
+  ]
+}

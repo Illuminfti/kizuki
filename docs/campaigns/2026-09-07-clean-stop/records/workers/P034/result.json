@@ -1,0 +1,46 @@
+{
+  "task_id": "P034",
+  "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+  "status": "FINDINGS",
+  "findings": [
+    "Frozen kizuki.rich-subject-holdout-oracle/v1 (synthetic-holdout-20-v1) with 20 closed-world cases covering subject/category discovery, homonyms, attribution, temporal perspectives, abstention, and copied support.",
+    "Gold outcomes include UTF-16 support anchors, required/allowed/forbidden claims, must-not-merge pairs, and explicit allowed abstention. Required empty extraction: h09, h14, h16. Identity-only abstention: h10. Copied support keeps one independent root: h08.",
+    "Independent metrics defined for discovery, false merges, class precision/recall, relation direction, and speaker/quote attribution, plus copied-support independence, abstention, and temporal interval. composite_score is forbidden; semantic_quality_score is null; model_quality_claim is false; qualification is none; evaluation_state is not_run.",
+    "Development corpus scripts/fixtures/extraction-quality-v1.json is excluded. Astra held PR 500 / RFC 0003 B1b-d was not touched. No source, lockfile, migration, or public-type edits.",
+    "Limitations preserved: RFC 0003 remains Proposed; B2 catalog is fixture-proposed not installed; gold is authored not unfamiliar-human judgment; no model/provider/account calls; fixture record ids are not ledger ULIDs; copied-support independence is an oracle expectation not an A1 implementation."
+  ],
+  "deliverables": [
+    "/work/out/rich-subject-holdout-oracle-v1.json",
+    "/work/out/rich-subject-holdout-oracle-v1.sha256",
+    "/work/out/rich-subject-holdout-oracle-v1.md",
+    "/work/out/rich-subject-holdout-metrics-v1.md",
+    "/work/out/build-rich-subject-holdout.ts",
+    "/work/out/validate-rich-subject-holdout.ts",
+    "/work/out/validation-receipt.json",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "verification": {
+    "focused_fixture_integrity": {
+      "command": "bun /work/out/validate-rich-subject-holdout.ts /work/out/rich-subject-holdout-oracle-v1.json",
+      "head": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+      "runtime": "bun 1.3.14",
+      "date": "2026-09-06",
+      "result": "PASS",
+      "corpus_sha256": "3dc4675cb77fee464481b3a14b0d573de6c7b54ed52b9da954dc1316bb662246",
+      "evidence": "/work/out/validation-receipt.json",
+      "scored_a_model": false
+    },
+    "package_typecheck": { "result": "NOT_RUN", "reason": "no product change" },
+    "full_repository_gate": { "result": "NOT_RUN", "reason": "no product change; no test slot; archive has no Git metadata" },
+    "independent_review": { "result": "NOT_RUN", "reason": "not assigned; authored gold is not C2" },
+    "auth_or_other_model": { "result": "NOT_RUN", "reason": "controller already verified subscription; packet forbids retest" }
+  },
+  "blockers": [
+    "Reviewed B2 directional predicate catalog is not installed on this base.",
+    "Real v2 producer and durable claim writer are unavailable (RFC 0003 B1b-d held by Astra PR 500; B2/C remain proposed).",
+    "Independent unfamiliar-human judgment required for full discovery acceptance has not been collected."
+  ],
+  "next_step": "Keep synthetic-holdout-20-v1 isolated from prompt tuning. After Astra's shared-writer lane and a reviewed B2 catalog exist, bind a later runner to this digest without feeding gold to the model."
+}

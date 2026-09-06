@@ -1,0 +1,157 @@
+{
+  "task_id": "R037",
+  "packet_id": "R037",
+  "title": "Map extraction batch accounting and partial outcomes",
+  "issue": 472,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "owner": "grok-R037",
+  "write_scope": "/work/out only",
+  "identity": {
+    "read_root": "/repo",
+    "source_kind": "git archive of exact commit; no Git metadata",
+    "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+    "branch": null,
+    "head": null,
+    "remote_verified": false,
+    "worktree_dirty": "source_read_only"
+  },
+  "findings": [
+    {
+      "severity": "contract_trap",
+      "confirmed": true,
+      "location": "packages/core/src/serve/rails.ts:355-359 overlay of packages/core/src/serve/write-pass.ts:277",
+      "invariant": "Public claims_extracted is not filed admitted output whenever extract_usage exists.",
+      "evidence": "Fixture case F_partial_then_replay, observed 2026-09-06T22:02:47Z: failed receipt claims_extracted=2, model.calls=1, live_model_claims=0, extract_batches=1, checkpoint=null. Replay write-pass claims_extracted=0, model.calls=0, live_model_claims=2, checkpoint at event 2.",
+      "required_fix": "None in this prep lane. Downstream must not treat RunReceipt.claims_extracted as stored claims on failed/partial runs. WritePassResult.claims_extracted is the filed-new-mine counter."
+    },
+    {
+      "severity": "info",
+      "confirmed": true,
+      "location": "packages/core/src/serve/extract.ts:892-899, write-pass.ts:89, extract-checkpoint.ts:9-19",
+      "invariant": "model.calls counts produce/LLM attempts; claims_extracted counts drafts at a specific seam; the extract cursor is an event boundary.",
+      "evidence": "Fixture A: 2 events, produce_input_event_count=2, produce_invocations=1, model.calls=1, claims_extracted=2, checkpoint at event 2. B: extracted=1 with unknown_predicate=1 still advances. C empty-ok advances with extracted=0. D/E do not advance."
+    },
+    {
+      "severity": "info",
+      "confirmed": true,
+      "location": "packages/core/src/serve/write-pass.ts:77-98, doctor.ts:184-191",
+      "invariant": "claims_rejected mixes whole-call RejectReason and per-draft DroppedDraftReason.",
+      "evidence": "D_rejected schema_invalid=1 is a model failure; B_one_drop unknown_predicate=1 is a counted drop on an ok call."
+    }
+  ],
+  "deliverables": [
+    "/work/out/counter-semantics-dictionary.json",
+    "/work/out/counter-semantics.md",
+    "/work/out/two-event-accounting-fixture.ts",
+    "/work/out/two-event-accounting-expected.json",
+    "/work/out/two-event-accounting-observed.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/orientation.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/counter-semantics-dictionary.json",
+    "/work/out/counter-semantics.md",
+    "/work/out/two-event-accounting-fixture.ts",
+    "/work/out/two-event-accounting-expected.json",
+    "/work/out/two-event-accounting-observed.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/orientation.md",
+    "/work/out/logs/fixture-stdout.txt",
+    "/work/out/logs/fixture-stderr.txt",
+    "/work/out/logs/fixture-unsafe-first-run.txt",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/core/src/serve/extract.ts:25-47",
+    "packages/core/src/serve/extract.ts:376-401",
+    "packages/core/src/serve/extract.ts:587-590",
+    "packages/core/src/serve/extract.ts:711-735",
+    "packages/core/src/serve/extract.ts:741-909",
+    "packages/core/src/serve/extract.ts:810-812",
+    "packages/core/src/serve/extract.ts:892-899",
+    "packages/core/src/serve/extract-checkpoint.ts:6-19",
+    "packages/core/src/serve/write-pass.ts:81-127",
+    "packages/core/src/serve/write-pass.ts:266-277",
+    "packages/core/src/serve/write-pass.ts:299-320",
+    "packages/core/src/serve/rails.ts:133",
+    "packages/core/src/serve/rails.ts:310-315",
+    "packages/core/src/serve/rails.ts:355-359",
+    "packages/core/src/serve/types.ts:95-157",
+    "packages/core/src/serve/schema.ts:32-38",
+    "packages/core/src/serve/doctor.ts:135-191",
+    "packages/core/src/producer/index.ts:23-36",
+    "packages/core/src/producer/model.ts:49-54",
+    "packages/core/src/producer/model.ts:339-365",
+    "packages/core/src/producer/model.ts:458-551",
+    "packages/core/src/contracts/producer.ts:45-146",
+    "rfcs/0002-autonomous-canon.md:765-802",
+    "rfcs/0002-autonomous-canon.md:1109-1160",
+    "docs/extraction-budgets.md",
+    "packages/core/test/serve/write-pass.test.ts:344-512",
+    "packages/core/test/serve/durability.test.ts:34-45",
+    "packages/core/test/serve/extract-legacy.test.ts"
+  ],
+  "checks": [
+    {
+      "name": "two-event accounting fixture",
+      "command": "TMPDIR=/work/out/tmp bun /work/out/two-event-accounting-fixture.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "started_at": "2026-09-06T22:02:41.625Z",
+      "finished_at": "2026-09-06T22:02:47.778Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/two-event-accounting-observed.json",
+      "notes": "59/59 checks. Local stub producer; no network. Prerequisite: /work/out mode 0755 (group-writable ancestors fail canon-files)."
+    },
+    {
+      "name": "shouldAdvanceExtractCursor static",
+      "command": "included in fixture (ok/empty/deferred true; unavailable/rejected false)",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "existing exact two-event joint test",
+      "command": "static read of packages/core/test/serve/*.ts and producer tests",
+      "result": "ABSENT",
+      "evidence": "/work/out/existing-coverage.json"
+    },
+    {
+      "name": "existing write-pass / durability / extract-legacy tests",
+      "command": "bun test packages/core/test/serve/write-pass.test.ts",
+      "result": "NOT_RUN",
+      "reason": "Those tests write vaults via os.tmpdir() outside /work/out. Packet requires draft temps under /work/out. Coverage assessed by static path/line read."
+    },
+    {
+      "name": "packages/core test, typecheck, verify",
+      "command": "bun test packages/core/test && bun run typecheck && bun run verify",
+      "result": "NOT_RUN",
+      "reason": "Read-only preparation; no source change; full gate not assigned."
+    }
+  ],
+  "verification": {
+    "focused": "PASS",
+    "package_type_full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "live_account": "NOT_RUN",
+    "unfamiliar_user": "NOT_RUN",
+    "limitations": [
+      "Git branch/HEAD/dirty/CI not available on the archive.",
+      "No live provider, account, or native qualification.",
+      "First fixture run failed because /work/out was 0775; remediated with chmod 0755; that failure is not an extraction-accounting miss.",
+      "Historical legacy batch rejection tests were not re-run (P015)."
+    ]
+  },
+  "blockers": [],
+  "next_step": "P033/P036 should consume counter-semantics-dictionary.json and two-event-accounting-observed.json, observe the intended seam (WritePassResult vs RunReceipt vs extract_usage), and if adding a repo test, port the fixture beside write-pass.test.ts without duplicating durability replay or extract-legacy.",
+  "downstream_handoff": {
+    "feeds": ["P033", "P036"],
+    "do_not_wait_for": "other P packet unpublished output",
+    "reserved_owners": ["P003 evidence design", "P015 source-B/legacy extraction", "P006 canonical docs"],
+    "use": "Ordinary two-event batch is one model call, two admitted drafts, one cursor advance to event 2. Public receipt.claims_extracted follows producer claims.length when extract_usage exists, including failed partial files. Replay is not another extraction.",
+    "production_use": "Review and rebase before production. No release-acceptance claim."
+  }
+}

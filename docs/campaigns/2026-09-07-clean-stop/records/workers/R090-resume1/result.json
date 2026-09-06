@@ -1,0 +1,172 @@
+{
+  "task_id": "R090",
+  "packet_id": "R090",
+  "issue": 542,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "title": "Draft daily-loop observable action trace",
+  "claim": "Mapped existing public review/context/record seams for a short daily loop, with expected result fields, missing product steps, and a fixture-driven adapter draft. No source edits. No human-usability, P044, native, account, or readiness claim.",
+  "findings": [
+    {
+      "severity": "contract",
+      "id": "cli-tell-vs-mcp-correct-shape",
+      "location": "packages/cli/src/commands/tell.ts:39-48; packages/core/src/correction/types.ts:26-45; packages/core/src/serving/correct.ts:46-58",
+      "failure": "CLI tell --json returns CorrectResult (claim_ids[], event_id string). MCP correct returns Envelope<CorrectData> (claim_id nullable, event_id nullable, different rewritten/ambiguous fields).",
+      "invariant": "UX/DX/AX should project one semantic capability; result bytes are not the same object.",
+      "correction": "P088/P099 must observe each surface separately. Unifying the objects is a named contract change, not this packet."
+    },
+    {
+      "severity": "docs-vs-code",
+      "id": "audit-corrections-flag-unshipped",
+      "location": "rfcs/0002-autonomous-canon.md:1420; packages/cli/src/commands/audit.ts:16-21",
+      "failure": "RFC names kizuki audit --corrections. The shipped verb has no such flag.",
+      "invariant": "No advertised capability without an implementation (architecture invariant 10).",
+      "correction": "Treat as unshipped. P006 owns canonical docs."
+    },
+    {
+      "severity": "dead-parse",
+      "id": "tell-about-page-not-exact-targets",
+      "location": "packages/cli/src/commands/tell.ts:15; packages/core/src/correction/parse.ts:44-49",
+      "failure": "--about and --page are parsed but cannot satisfy hasExactTarget.",
+      "invariant": "Fail closed on unnamed correction targets.",
+      "correction": "Already asserted by packages/cli/test/tell.test.ts:139-148. Do not duplicate."
+    },
+    {
+      "severity": "missing-step",
+      "id": "app-missing-context-and-tell",
+      "location": "packages/cli/src/app/protocol.ts:160-196",
+      "failure": "App exposes query, activity, undo, capture. No context packet. No tell/correct.",
+      "invariant": "Daily loop is CLI/MCP; app is not a substitute oracle.",
+      "correction": "Expose as missing. Do not replace P044."
+    },
+    {
+      "severity": "bound",
+      "id": "doctor-live-claims-cap-8",
+      "location": "packages/cli/src/commands/doctor.ts:353-358",
+      "failure": "tell --claim discovery via doctor lists at most eight live claims.",
+      "invariant": "Record targeting must name a live claim.",
+      "correction": "Document the cap. Expanding the list is out of this packet."
+    }
+  ],
+  "deliverables": [
+    "/work/out/daily-loop-action-trace.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/missing-product-steps.md",
+    "/work/out/parity-matrix.md",
+    "/work/out/fixtures/observations.json",
+    "/work/out/adapter/daily-loop-adapter.ts",
+    "/work/out/adapter/README.md",
+    "/work/out/adapter/last-run.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/daily-loop-action-trace.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/missing-product-steps.md",
+    "/work/out/parity-matrix.md",
+    "/work/out/fixtures/observations.json",
+    "/work/out/adapter/daily-loop-adapter.ts",
+    "/work/out/adapter/README.md",
+    "/work/out/adapter/last-run.json",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/cli/src/commands/review.ts:1-6",
+    "packages/cli/src/retired.ts:1-25",
+    "packages/cli/src/main.ts:185-201",
+    "packages/cli/src/commands/index.ts:40-61",
+    "packages/cli/src/commands/context.ts:22-71",
+    "packages/cli/src/commands/tell.ts:8-79",
+    "packages/cli/src/commands/audit.ts:13-78",
+    "packages/cli/src/commands/undo.ts:7-39",
+    "packages/cli/src/commands/query.ts:29-99",
+    "packages/cli/src/commands/doctor.ts:353-461",
+    "packages/cli/src/app/protocol.ts:77-204",
+    "packages/cli/src/app/host.ts:181-230",
+    "packages/cli/src/output.ts:11-18",
+    "packages/cli/src/help.ts:7-15",
+    "packages/core/src/serving/packet.ts:45-87,153-341",
+    "packages/core/src/serving/sections.ts:6-48",
+    "packages/core/src/serving/types.ts:61-71",
+    "packages/core/src/serving/correct.ts:31-58",
+    "packages/core/src/serving/dispatch.ts:26-49",
+    "packages/core/src/correction/types.ts:11-45",
+    "packages/core/src/correction/correct.ts:32-33,495-522",
+    "packages/core/src/correction/parse.ts:44-49",
+    "packages/core/src/canon/receipts.ts:39-62",
+    "packages/core/src/canon/audit.ts:6-20,56",
+    "packages/mcp/src/schemas.ts:103-158",
+    "packages/mcp/src/server.ts:21-33",
+    "packages/cli/test/help.test.ts:120-131",
+    "packages/cli/test/context.test.ts:10-51",
+    "packages/cli/test/tell.test.ts:89-181",
+    "packages/cli/test/audit-undo.test.ts:122-175",
+    "docs/CURRENT.md:31-33,55-58",
+    "docs/cli.md:28-29,243-267",
+    "rfcs/0002-autonomous-canon.md:1428-1434,2159-2168"
+  ],
+  "checks": [
+    {
+      "name": "fixture-adapter",
+      "command": "bun /work/out/adapter/daily-loop-adapter.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "result": "PASS",
+      "evidence": "/work/out/adapter/last-run.json",
+      "detail": "11 fixture cases validated; live CLI not requested"
+    },
+    {
+      "name": "existing-cli-tests",
+      "command": "bun test packages/cli/test/help.test.ts packages/cli/test/context.test.ts packages/cli/test/tell.test.ts packages/cli/test/audit-undo.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "reason": "/repo/node_modules absent; bun install forbidden; tests import @kizuki/core"
+    },
+    {
+      "name": "repository-gate",
+      "command": "bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "reason": "read-only preparation packet; no workspace install; no assigned full-suite slot"
+    }
+  ],
+  "verification": {
+    "focused": "PASS fixtures-only adapter",
+    "existing_tests": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "limitations": [
+      "Git archive has no metadata; remote refs were not verified.",
+      "Live CLI, MCP, and app routes were not executed.",
+      "Existing tests were statically cited, not re-run.",
+      "Synthetic fixture envelopes are shape contracts, not captured stdout from this head."
+    ]
+  },
+  "blockers": [],
+  "next_step": "P088/P099 consume daily-loop-action-trace.json and fixtures/observations.json; keep CLI tell and MCP correct as distinct result objects; do not duplicate existing CLI tests; rebase before production use.",
+  "downstream_handoff": {
+    "feeds": ["P088", "P099"],
+    "use": [
+      "/work/out/daily-loop-action-trace.json",
+      "/work/out/fixtures/observations.json",
+      "/work/out/adapter/daily-loop-adapter.ts",
+      "/work/out/missing-product-steps.md"
+    ],
+    "do_not": [
+      "treat kizuki review as live",
+      "treat the local app as the daily loop or a P044 oracle",
+      "assert CLI tell JSON equals MCP correct data",
+      "add duplicate tests for help.retired, context.header/empty/budget, tell.success/target_required/json, audit-undo",
+      "claim human usability, native qualification, or readiness"
+    ],
+    "live_execution_prerequisite": "workspace node_modules plus a synthetic vault; tell still needs a live claim_id from import/producer or the existing test helper path"
+  },
+  "limitations": [
+    "Read-only /repo archive; no source edits.",
+    "No account, provider, or model calls.",
+    "Adapter live CLI path unexecuted.",
+    "Doctor live_claims listing is capped at 8.",
+    "CLI context omits MCP packet args (subjects, window, include, delta/epoch)."
+  ]
+}

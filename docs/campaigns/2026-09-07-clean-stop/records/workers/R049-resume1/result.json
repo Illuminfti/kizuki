@@ -1,0 +1,169 @@
+{
+  "task_id": "R049",
+  "packet_id": "R049",
+  "title": "Cross-check MCP input schemas with serving argument types",
+  "issue": 542,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "findings": [
+    {
+      "id": "get_page_xor",
+      "severity": "schema_optional_engine_required",
+      "location": "packages/mcp/src/schemas.ts:68-71; packages/core/src/serving/page.ts:24-28",
+      "invariant": "exactly one of id or path",
+      "evidence": "GET_PAGE_INPUT leaves both optional. serveGetPage throws invalid_arguments when wantsId === wantsPath. Covered by packages/core/test/serving/page.test.ts:45 and packages/mcp/test/server.test.ts:249 (both-present). {} is schema-valid; engine-invalid.",
+      "correction": "Do not redesign the XOR into zod unless a P packet owns it. Optional schema-seam assert of GET_PAGE_INPUT.safeParse({}).success === true is enough."
+    },
+    {
+      "id": "correct_target_required_in_engine",
+      "severity": "schema_optional_engine_required",
+      "location": "packages/mcp/src/schemas.ts:149; packages/core/src/serving/target.ts:57-59",
+      "invariant": "a correction names a claim, claim key, or subject",
+      "evidence": "CORRECT_INPUT.target is optional. resolve() refuses an unnamed target. Covered by packages/mcp/test/server.test.ts:191 and packages/core/test/serving/correct.test.ts:230. Do not duplicate.",
+      "correction": "None for this packet. Current serving binds no model to infer a target."
+    },
+    {
+      "id": "mcp_required_schema_seam_untested",
+      "severity": "coverage_gap",
+      "location": "packages/mcp/src/schemas.ts SEARCH_INPUT.query, GRAPH_INPUT.id, PROPOSE_INPUT.kind/body/provenance, CORRECT_INPUT.statement",
+      "invariant": "SDK rejects missing advertised required fields before the engine; not audited",
+      "evidence": "No existing test omits those keys at the advertised schema. Distinct from empty-string search query (packages/core/test/serving/dispatch.test.ts:61).",
+      "correction": "Use fixtures/mcp-serving-input-contract.test.ts draft only; do not add vault tests."
+    },
+    {
+      "id": "defaults_not_advertised",
+      "severity": "observation",
+      "location": "packages/mcp/src/schemas.ts (no z.default); serving search.ts:118-122, entities.ts:58, timeline.ts:57, packet.ts:163-170, graph.ts:32, propose.ts:81-82",
+      "invariant": "omitted optionals stay omitted until the engine applies fallbacks",
+      "evidence": "Serving defaults: search scope=canon limit=20; entities limit=20; timeline limit=50; packet budget_tokens=450 purpose=session; graph depth=1; propose confidence=0.5.",
+      "correction": "Do not add z.default() without reviewing auditArguments."
+    },
+    {
+      "id": "schema_looser_than_engine_on_id_time_text",
+      "severity": "observation",
+      "location": "packages/mcp/src/schemas.ts:10-11 vs packages/core/src/serving/arguments.ts:10,23-40,80-83",
+      "invariant": "advertised bounds are a convenience; engine re-validates",
+      "evidence": "packages/mcp/AGENTS.md:40-47. Ordinary kettle / person:ada / 2026-02-28T10:30:00Z match both sides.",
+      "correction": "None required for ordinary supported examples."
+    }
+  ],
+  "deliverables": [
+    "/work/out/schema-field-join.json",
+    "/work/out/schema-field-join.md",
+    "/work/out/fixtures/mcp-serving-input-contract.json",
+    "/work/out/fixtures/mcp-serving-input-contract.test.ts",
+    "/work/out/existing-coverage.json",
+    "/work/out/scripts/verify-schema-field-join.ts",
+    "/work/out/downstream-handoff.md",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/schema-field-join.json",
+    "/work/out/schema-field-join.md",
+    "/work/out/fixtures/mcp-serving-input-contract.json",
+    "/work/out/fixtures/mcp-serving-input-contract.test.ts",
+    "/work/out/existing-coverage.json",
+    "/work/out/scripts/verify-schema-field-join.ts",
+    "/work/out/downstream-handoff.md",
+    "/work/out/checks/schema-field-join-verify.json",
+    "/work/out/checks/mcp-serving-input-contract.test.json",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/mcp/src/schemas.ts",
+    "packages/mcp/src/server.ts",
+    "packages/mcp/AGENTS.md",
+    "packages/core/src/serving/arguments.ts",
+    "packages/core/src/serving/dispatch.ts",
+    "packages/core/src/serving/search.ts",
+    "packages/core/src/serving/page.ts",
+    "packages/core/src/serving/entities.ts",
+    "packages/core/src/serving/timeline.ts",
+    "packages/core/src/serving/packet.ts",
+    "packages/core/src/serving/graph.ts",
+    "packages/core/src/serving/health.ts",
+    "packages/core/src/serving/propose.ts",
+    "packages/core/src/serving/correct.ts",
+    "packages/core/src/serving/target.ts",
+    "packages/core/src/agents/types.ts",
+    "packages/mcp/test/schema.test.ts",
+    "packages/mcp/test/server.test.ts",
+    "packages/core/test/serving/dispatch.test.ts",
+    "packages/core/test/serving/page.test.ts",
+    "packages/core/test/serving/correct.test.ts",
+    "packages/core/test/serving/graph.test.ts"
+  ],
+  "checks": [
+    {
+      "name": "source-text schema-field join",
+      "command": "bun /work/out/scripts/verify-schema-field-join.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "at": "2026-09-06T22:04:44.328Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/checks/schema-field-join-verify.json"
+    },
+    {
+      "name": "pure zod contract draft",
+      "command": "bun test /work/out/fixtures/mcp-serving-input-contract.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "at": "2026-09-06T22:04:48Z",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "reason": "Cannot find module '@kizuki/core' from packages/mcp/src/schemas.ts; /repo has no node_modules; bun install forbidden",
+      "evidence": "/work/out/checks/mcp-serving-input-contract.test.json"
+    },
+    {
+      "name": "existing MCP/core argument tests",
+      "command": "bun test packages/mcp/test/schema.test.ts packages/mcp/test/server.test.ts packages/core/test/serving/page.test.ts packages/core/test/serving/dispatch.test.ts packages/core/test/serving/correct.test.ts",
+      "result": "NOT_RUN",
+      "reason": "same missing node_modules. Cited needles were statically present (21 coverage rows in the join verifier).",
+      "static_verification": "PASS"
+    },
+    {
+      "name": "full repository gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "reason": "no source change; no assigned full-suite slot; missing node_modules"
+    }
+  ],
+  "verification": {
+    "focused_join": "PASS",
+    "contract_draft": "NOT_RUN",
+    "existing_tests": "NOT_RUN (needles statically verified)",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "auth_or_model_probe": "not repeated (controller already verified)"
+  },
+  "blockers": [],
+  "limitations": [
+    "Read-only git archive; remote/PR/issue live state not refreshed.",
+    "No node_modules; zod/MCP runtime tests and existing bun test files were not executed.",
+    "No live MCP client, vault, or provider calls.",
+    "UTF-16 vs code-point max was not probed; ordinary ASCII examples only.",
+    "These artifacts feed P037/P046 and must be reviewed/rebased before production use. No native/account/human qualification claim."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P037", "P046"],
+    "file": "/work/out/downstream-handoff.md",
+    "do_not_duplicate": "ordinary valid MCP calls and engine XOR/missing correct.target tests already exist",
+    "smallest_follow_up": "If a P packet adds a test, add only draft_new_test advertised-schema safeParse cases under packages/mcp/test after bun install. Do not add z.default() without auditArguments review. P006 still owns docs."
+  },
+  "next_step": "P037/P046 consume schema-field-join.json and the contract fixture. If they add a test, use only the seven draft_new_test schema.safeParse cases; do not duplicate existing vault tests.",
+  "name_alignment": "every MCP input field name matches the serving *Args field of the same tool; registerTool names match TOOLS",
+  "mcp_required_fields": {
+    "search": ["query"],
+    "get_page": [],
+    "query_entities": [],
+    "timeline": [],
+    "context_packet": [],
+    "graph_neighbors": ["id"],
+    "system_health": [],
+    "propose": ["kind", "body", "provenance"],
+    "correct": ["statement"]
+  }
+}

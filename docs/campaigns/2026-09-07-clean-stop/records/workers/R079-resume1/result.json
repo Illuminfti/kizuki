@@ -1,0 +1,191 @@
+{
+  "task_id": "R079",
+  "packet_id": "R079",
+  "title": "Draft Pocket CSV reader quoting and empty-field fixtures",
+  "issue": 550,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "owner": "grok-R079",
+  "capability": "export import (kizuki.import-pocket); this packet is the pure CSV-cell reader only",
+  "findings": [
+    {
+      "severity": "limitation",
+      "id": "quoted-crlf-normalized",
+      "summary": "RFC 4180 §2.6 would keep CR and LF as distinct bytes inside a quoted field. csv.ts:31 rewrites the whole buffer with /\\r\\n?/g before scanning, so a quoted CRLF becomes one LF (golden Q14).",
+      "source": "packages/connectors/src/import-pocket/csv.ts:31",
+      "kind": "documented_deviation",
+      "action": "preserve; do not treat as a new defect in P078 unless the owner wants CRLF preserved inside quotes"
+    },
+    {
+      "severity": "limitation",
+      "id": "blank-line-skipped",
+      "summary": "RFC 4180 ABNF would treat a blank line as a record of one empty field. csv.ts:20-22 and :72-85 skip a line that never started a row. Quoted empty \"\" is kept as [\"\"] (E7, E13, E15).",
+      "source": "packages/connectors/src/import-pocket/csv.ts:72-85",
+      "kind": "documented_deviation",
+      "action": "preserve; existing csv.test.ts:38-42 already asserts the skip"
+    },
+    {
+      "severity": "coverage_gap_filled",
+      "id": "empty-field-shapes",
+      "summary": "csv.test.ts covers trailing empty a,b, and a,\"\", but not leading empty, consecutive middle empty, quoted-empty first/last/middle, empty file, newline-only, space-as-content, trailing empty at EOF, or Pocket-shaped five-cell empty tags at the parseCsv layer.",
+      "source": "packages/connectors/test/csv.test.ts:38-44",
+      "kind": "gap",
+      "action": "P078 add cases from csv-reader.test.ts; do not duplicate csv.test.ts"
+    },
+    {
+      "severity": "verification_limit",
+      "id": "in-tree-tests-not-run",
+      "summary": "This archive has no node_modules. cd /repo && bun test packages/connectors/test/csv.test.ts exits 1 with Cannot find module '@kizuki/core' from packages/connectors/src/errors.ts. Existing csv.test.ts assertions were re-checked only via the import-rewritten parseCsv golden runner, not as a bun test of the in-tree file.",
+      "kind": "missing_input",
+      "action": "P078 re-run bun test packages/connectors/test/csv.test.ts on a workspace with @kizuki/core"
+    }
+  ],
+  "deliverables": [
+    "/work/out/csv-cell-golden.json",
+    "/work/out/csv-cell-golden.md",
+    "/work/out/csv-reader.test.ts",
+    "/work/out/run-csv-golden.ts",
+    "/work/out/generated/kizuki-error.ts",
+    "/work/out/generated/csv.ts",
+    "/work/out/run-receipt.json",
+    "/work/out/notes.md",
+    "/work/out/orientation.md",
+    "/work/out/source-hashes.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    {
+      "path": "/work/out/csv-cell-golden.json",
+      "role": "independent CSV-cell golden table (41 cases)"
+    },
+    {
+      "path": "/work/out/csv-cell-golden.md",
+      "role": "human table of the same cases with existing-coverage citations"
+    },
+    {
+      "path": "/work/out/csv-reader.test.ts",
+      "role": "pure reader test draft; new cases only"
+    },
+    {
+      "path": "/work/out/run-csv-golden.ts",
+      "role": "local runner; rewrites only csv.ts imports"
+    },
+    {
+      "path": "/work/out/run-receipt.json",
+      "role": "per-case actuals, src sha256, exit 0"
+    },
+    {
+      "path": "/work/out/notes.md",
+      "role": "RFC 4180 evidence, source/line contract, overlap"
+    }
+  ],
+  "source_references": [
+    {
+      "path": "packages/connectors/src/import-pocket/csv.ts",
+      "sha256": "ae017e90a0d5614f437fb69a1652074c1caac4969a4d116e226f857bafc80ea7",
+      "lines": "parseCsvRows 24-135; CRLF rewrite 31; empty cell push 62-70; skip blank 72-85; doubled quote 89-94; quoted newline 100-102; comma 117-120; EOF 132-133"
+    },
+    {
+      "path": "packages/connectors/src/import-pocket/rows.ts",
+      "sha256": "22da731698897de12579c5981dfe3e441ca52238482dceb7dcc9b330a79aeee8",
+      "lines": "column count 72-76; empty url refusal 79-81; tags split 97-100; status verbatim 101 — identity/lifecycle left to P077"
+    },
+    {
+      "path": "packages/connectors/test/csv.test.ts",
+      "sha256": "65b4c4cf53c52538a4c570e710068fb7500571821eb52b6cbaf1b5b6d80ab8a5",
+      "lines": "quoted comma/quotes/newline 15-24; CRLF/LF 27-35; blank+trailing empty 38-44; errors/bounds 47-94; line numbers 96-106"
+    },
+    {
+      "path": "packages/connectors/src/import-pocket/index.ts",
+      "sha256": "4d0501845fa1eae34943acddd1cd0157cc9084f6c267ad52e924ef5953a4156c",
+      "lines": "POCKET_FIXTURE_EXPORT empty tags 68"
+    },
+    {
+      "path": "packages/connectors/test/pocket.test.ts",
+      "sha256": "927780de353ace78229b0475042768562b18d7c7b5a6e0d892ba8098cbc7215e",
+      "lines": "fixture empty tags [] 50-51; status padding 111-123 — mapping, not parseCsv"
+    },
+    {
+      "path": "packages/connectors/src/read.ts",
+      "sha256": "078ae75c25b0ca780598cd8f9086108737056d07b9cac8ccfe301d702aafb3d5",
+      "lines": "BOM strip 186 — upstream of parseCsv"
+    },
+    {
+      "path": "packages/connectors/src/util.ts",
+      "lines": "MAX_RECORDS 1_000_000 and MAX_RECORD_BYTES 1024*1024 at 68-69; inlined only so the local runner can load"
+    },
+    {
+      "path": "docs/wave1/specs/importers-exports.md",
+      "lines": "§3.2 CSV reader 703-724"
+    },
+    {
+      "path": "https://www.rfc-editor.org/rfc/rfc4180.txt",
+      "fetched_at": "2026-09-06",
+      "http_status": 200
+    }
+  ],
+  "checks": [
+    {
+      "name": "csv-cell golden runner",
+      "command": "bun /work/out/run-csv-golden.ts",
+      "bun": "1.3.14",
+      "started": "2026-09-06T22:05:22.883Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "41/41 cases; archive csv.ts sha256 ae017e90a0d5614f437fb69a1652074c1caac4969a4d116e226f857bafc80ea7; evidence /work/out/run-receipt.json"
+    },
+    {
+      "name": "pure reader test draft",
+      "command": "bun test /work/out/csv-reader.test.ts",
+      "bun": "1.3.14",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "13 pass, 0 fail, 34 expect() calls, ~13ms"
+    },
+    {
+      "name": "in-tree csv.test.ts",
+      "command": "cd /repo && bun test packages/connectors/test/csv.test.ts",
+      "bun": "1.3.14",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "detail": "Cannot find module '@kizuki/core' from /repo/packages/connectors/src/errors.ts. Archive has no node_modules. Not a parser pass and not treated as a csv.test.ts failure."
+    },
+    {
+      "name": "repository full gate / typecheck",
+      "command": "bun test / bunx tsc --noEmit / bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "detail": "not assigned; missing workspace install"
+    }
+  ],
+  "verification": {
+    "focused": "PASS",
+    "in_tree_csv_test": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "live_account": "NOT_RUN",
+    "qualification": "NOT_CLAIMED"
+  },
+  "blockers": [],
+  "limitations": [
+    "No source edits. Artifacts feed P078 and must be reviewed/rebased before production use.",
+    "No native/account/model/human qualification or release acceptance.",
+    "Pocket service availability not researched (assigned out of scope).",
+    "Item identity/lifecycle not inspected beyond citing existing pocket.test.ts mapping so it is not duplicated.",
+    "Local runner is not the in-tree module graph: only csv.ts imports were rewritten to a local KizukiError and inlined MAX_* from util.ts.",
+    "In-tree bun test cannot run here without @kizuki/core."
+  ],
+  "downstream_handoff": {
+    "feeds": "P078",
+    "do_not_duplicate": [
+      "packages/connectors/test/csv.test.ts:15-44,67-71,96-101"
+    ],
+    "add": "Copy /work/out/csv-reader.test.ts into packages/connectors/test (suggested csv-empty-quoting.test.ts) and switch the import from ./generated/csv.ts to ../src/import-pocket/csv.",
+    "then_run": [
+      "bun test packages/connectors/test/csv.test.ts",
+      "bun test packages/connectors/test/csv-empty-quoting.test.ts"
+    ],
+    "leave_to_P077": "source_record_id, url required, time_added, tombstones, repeats",
+    "do_not": "change registry, lockfiles, canonical docs, or claim live Pocket access"
+  },
+  "next_step": "P078 lands the new parseCsv cases from csv-reader.test.ts on a workspace with @kizuki/core, without copying csv.test.ts inputs, and re-runs the in-tree csv tests on that head."
+}

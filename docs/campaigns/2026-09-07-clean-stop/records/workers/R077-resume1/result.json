@@ -1,0 +1,164 @@
+{
+  "task_id": "R077",
+  "packet_id": "R077",
+  "title": "Map ICS file versus network mode configuration and limits",
+  "issue": 550,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "owner": "grok-R077",
+  "write_scope": "/work/out only",
+  "feeds_packets": ["P076"],
+  "artifacts": [
+    "/work/out/ics-mode-config-limit-map.md",
+    "/work/out/ics-mode-config-limit-map.json",
+    "/work/out/fixtures/file-mode-team.ics",
+    "/work/out/fixtures/configurations.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/orientation.md",
+    "/work/out/research/citations.md",
+    "/work/out/research/primary-docs-extracts.json",
+    "/work/out/research/primary-docs.json",
+    "/work/out/checks/static-source-check.ts",
+    "/work/out/checks/static-source-check.json",
+    "/work/out/checks/fixture-check.ts",
+    "/work/out/checks/fixture-check.json",
+    "/work/out/checks/package-tests.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/ics-mode-config-limit-map.md",
+    "/work/out/ics-mode-config-limit-map.json",
+    "/work/out/fixtures/file-mode-team.ics",
+    "/work/out/fixtures/configurations.json",
+    "/work/out/existing-coverage.json",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    "packages/connector-ics/src/connector.ts:45-73,128-298",
+    "packages/connector-ics/src/sign-in.ts:13-35",
+    "packages/connector-ics/src/state.ts:10-63",
+    "packages/connector-ics/src/fetch.ts:1-189",
+    "packages/connector-ics/src/unfold.ts:3-31",
+    "packages/connector-ics/src/parse.ts:4-5,188-213",
+    "packages/connector-ics/src/index.ts",
+    "packages/cli/src/connect-catalog.ts:21,33-37",
+    "packages/cli/src/connections.ts:113-148",
+    "packages/cli/src/commands/connect.ts:247-314",
+    "packages/cli/src/commands/import.ts:78-112",
+    "packages/connectors/src/registry.ts:382-395",
+    "packages/connector-ics/test/fetch.test.ts",
+    "packages/connector-ics/test/connector.test.ts",
+    "packages/connector-ics/test/parse.test.ts",
+    "packages/connectors/test/conformance.test.ts:315-343",
+    "scripts/network-allowlist.txt:8",
+    "scripts/go-no-go.ts:28",
+    "https://www.rfc-editor.org/rfc/rfc5545.txt (200, 2026-09-06)",
+    "https://www.iana.org/assignments/media-types/text/calendar (200, 2026-09-06)",
+    "https://www.rfc-editor.org/rfc/rfc4791.txt (200, 2026-09-06, CalDAV unsupported)"
+  ],
+  "checks": [
+    {
+      "name": "static-source-check",
+      "command": "bun /work/out/checks/static-source-check.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/checks/static-source-check.json",
+      "bun": "1.3.14",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7"
+    },
+    {
+      "name": "fixture-check",
+      "command": "bun /work/out/checks/fixture-check.ts",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/checks/fixture-check.json",
+      "bun": "1.3.14"
+    },
+    {
+      "name": "connector-and-catalog-package-tests",
+      "command": "cd /repo && bun test packages/connector-ics/test/fetch.test.ts packages/connector-ics/test/connector.test.ts packages/connector-ics/test/parse.test.ts packages/cli/test/connect-catalog.test.ts",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "evidence": "/work/out/checks/package-tests.json",
+      "reason": "Cannot find module '@kizuki/core'; git archive has no node_modules; bun install forbidden"
+    }
+  ],
+  "verification": {
+    "focused": "PASS (static source + fixture checks)",
+    "package_tests": "NOT_RUN",
+    "typecheck": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "live_account": "not attempted; not authorized",
+    "limitation": "Missing workspace install in this read-only archive. Do not invent a passing package-test result."
+  },
+  "findings": [
+    {
+      "severity": "product-honesty",
+      "id": "cli-url-mode-unwired",
+      "summary": "URL/sign_in mode is implemented on the connector and is not enrollable through this CLI. Catalog still labels kizuki.ics as local source / ready to connect.",
+      "evidence": "packages/cli/src/connections.ts:143-148; packages/cli/src/connect-catalog.ts:33-37; packages/cli/src/commands/connect.ts has no ICS sign-in branch"
+    },
+    {
+      "severity": "limit-asymmetry",
+      "id": "file-read-unbounded-bytes",
+      "summary": "File mode loads the whole file with Bun.file().text() then applies the 8 MiB character bound. The 16 MiB byte cap is network-only.",
+      "evidence": "packages/connector-ics/src/connector.ts:234-244; packages/connector-ics/src/fetch.ts:3,96-101; packages/connector-ics/src/unfold.ts:3,11-16"
+    },
+    {
+      "severity": "coverage-gap",
+      "id": "credentials-omit-untested",
+      "summary": "Fetcher sets credentials: omit. fetch.test.ts does not assert it. Do not treat the gap as a license to add cookies.",
+      "evidence": "packages/connector-ics/src/fetch.ts:141; packages/connector-ics/test/fetch.test.ts Call stub"
+    },
+    {
+      "severity": "coverage-gap",
+      "id": "no-cli-ics-tests",
+      "summary": "packages/cli/test contains no kizuki.ics cases. Existing connector tests already cover file and in-memory URL modes; do not duplicate those.",
+      "evidence": "/work/out/existing-coverage.json"
+    },
+    {
+      "severity": "contract-clarity",
+      "id": "source-flag-is-path",
+      "summary": "kizuki connect ics --source https://… is a filesystem path, not URL mode.",
+      "evidence": "packages/cli/src/commands/connect.ts:251-252,290"
+    },
+    {
+      "severity": "advertising",
+      "id": "allowed-egress-empty",
+      "summary": "Manifest allowed_egress is []. URL mode still GETs an owner-configured https URL. Network gate allowlists fetch.ts. Do not claim zero network for URL mode.",
+      "evidence": "packages/connector-ics/src/connector.ts:59; scripts/network-allowlist.txt:8"
+    }
+  ],
+  "downstream_handoff": {
+    "consumer": "P076",
+    "must_preserve": [
+      "https-only URLs; refuse http before fetch",
+      "manual redirects, max 3, re-check https each hop",
+      "16 MiB network body cap, 30s timeout, credentials omit",
+      "calendar URL never in SQLite, errors, or event metadata",
+      "file mode as the CLI-enrollable path",
+      "existing connector/fetch/parse tests listed in existing-coverage.json"
+    ],
+    "must_not": [
+      "duplicate P075 calendar event mapping",
+      "design URL or HTTP bypasses",
+      "advertise CLI URL enrollment until CLI actually wires sign_in",
+      "treat package tests in this container as PASS",
+      "claim live-account or release qualification"
+    ],
+    "smallest_next_implementation": "If P076 is CLI honesty: label catalog URL/sign_in as not available from this CLI, or wire enrollSignedInConnection for ICS using opaque kizuki.ics-state/v1 (not host {path}). If P076 is connector-only, keep file fixtures and do not add CalDAV."
+  },
+  "blockers": [
+    "Package tests, typecheck, and bun run verify are NOT_RUN here: missing node_modules in the git archive and install is forbidden."
+  ],
+  "next_step": "P076 consumes /work/out/ics-mode-config-limit-map.md and fixtures/configurations.json. Re-run connector tests in a worktree after bun install --frozen-lockfile. Do not fetch live calendar URLs from those tests.",
+  "limitations": [
+    "Read-only archive; no Git metadata; remote/issue/PR state not refreshed",
+    "No bun install; package tests NOT_RUN",
+    "No live calendar, CalDAV, or Google account calls",
+    "No CLI authentication/model retest",
+    "P075 calendar semantics intentionally omitted",
+    "webcal:// has no IETF RFC in this check; code rewrites it to https://"
+  ]
+}

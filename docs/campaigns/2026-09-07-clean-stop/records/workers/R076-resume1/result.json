@@ -1,0 +1,161 @@
+{
+  "packet_id": "R076",
+  "task_id": "R076",
+  "title": "Inventory WhatsApp media-reference reporting and source coverage",
+  "issue": 550,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "owner": "grok-R076",
+  "feeds_packets": ["P074"],
+  "capability": "export import (kizuki.import-whatsapp); not live sync",
+  "findings": [
+    {
+      "severity": "gap",
+      "id": "no-aggregate-report",
+      "evidence": "packages/connectors/src/import-whatsapp/index.ts:245-256 health() only resolveExport; import-report.ts:41-67 has records/errors only; parseWhatsAppExport returns CaptureEventInput[] (map.ts:90-93) with no ImportParseResult",
+      "invariant": "Available/unavailable/omitted media reference counts are not projected onto any report surface.",
+      "required_fix": "P074: local mediaCoverageFromEvents plus HealthReport.detail tokens. Do not use ImportRecordError."
+    },
+    {
+      "severity": "limitation",
+      "id": "deleted-bracket-counts-as-omitted",
+      "evidence": "media.ts:22,33-35 OMITTED_BRACKETED; packages/connectors/README.md:104-108",
+      "invariant": "Unrecorded vs omitted must stay honest: a deleted-message bracket is counted as media_omitted.",
+      "required_fix": "Preserve as documented limitation. Phrase matching would be P073."
+    },
+    {
+      "severity": "doc-mismatch",
+      "id": "readme-vs-v2-attachment-hash",
+      "evidence": "packages/connectors/README.md:126-130 vs packages/connectors/test/importers-tombstones.test.ts:224-261 and packages/core/src/util/hash.ts:57-63",
+      "invariant": "README says copying media in after import re-stores nothing; v2 content_hash binds attachments and the test stores a new revision.",
+      "required_fix": "P074 counts the current batch. P006 owns the README sentence. Not a P074 redesign of identity (P073)."
+    },
+    {
+      "severity": "operator-visibility",
+      "id": "doctor-hides-ok-detail",
+      "evidence": "packages/cli/src/commands/doctor.ts:255 problem is null when health.state === ok",
+      "invariant": "Counts on an ok HealthReport are invisible on doctor.",
+      "required_fix": "Do not degrade without-media exports to force printing. Doctor owners reserved."
+    },
+    {
+      "severity": "classification",
+      "id": "shape-invalid-is-none",
+      "evidence": "media.ts:21 ANDROID_ATTACHED forbids slash; whatsapp-media.test.ts:44-63 asserts attachments.length only",
+      "invariant": "a/b.jpg (file attached) is none, not unavailable.",
+      "required_fix": "Do not recategorize in P074."
+    }
+  ],
+  "deliverables": [
+    "/work/out/media-status-count-report-field-table.md",
+    "/work/out/neutral-attachment-descriptor-fixtures.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/project-media-coverage.ts",
+    "/work/out/projection-receipt.json",
+    "/work/out/P074-handoff.md",
+    "/work/out/checks.md",
+    "/work/out/whatsapp-package-tests.log",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/media-status-count-report-field-table.md",
+    "/work/out/neutral-attachment-descriptor-fixtures.json",
+    "/work/out/expected-behavior.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/project-media-coverage.ts",
+    "/work/out/projection-receipt.json",
+    "/work/out/P074-handoff.md",
+    "/work/out/checks.md",
+    "/work/out/whatsapp-package-tests.log",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    "packages/connectors/src/import-whatsapp/media.ts:4-6,15-64",
+    "packages/connectors/src/import-whatsapp/map.ts:74-88,104-142",
+    "packages/connectors/src/import-whatsapp/index.ts:64-82,245-256,288-295",
+    "packages/connectors/src/import-report.ts:8-67",
+    "packages/connectors/src/folder.ts:137-154",
+    "packages/connectors/src/read.ts:319-333",
+    "packages/connectors/src/util.ts:190-199,294-299",
+    "packages/connectors/src/import-snapshot.ts:164-166,222-233",
+    "packages/core/src/contracts/event.ts:88-93",
+    "packages/core/src/contracts/connector.ts:175-226",
+    "packages/core/src/util/hash.ts:57-63",
+    "packages/core/src/ingest/run.ts:471-474",
+    "packages/cli/src/commands/doctor.ts:255",
+    "packages/cli/src/output.ts:66-75",
+    "packages/connectors/test/whatsapp.test.ts:61-95,153-199",
+    "packages/connectors/test/whatsapp-media.test.ts:44-107",
+    "packages/connectors/test/whatsapp-export.test.ts:117-123",
+    "packages/connectors/test/importers-tombstones.test.ts:224-261",
+    "packages/connectors/test/util.test.ts:236-243",
+    "packages/connectors/README.md:76-130",
+    "docs/wave1/specs/importers-exports.md:540-576"
+  ],
+  "checks": [
+    {
+      "name": "placeholder_projection",
+      "command": "HOME=/work/out/home TMPDIR=/work/out/tmp bun /work/out/project-media-coverage.ts",
+      "cwd": "/work",
+      "runtime": "bun 1.3.14",
+      "ran_at": "2026-09-06T22:07:26Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "notes": "Replica of detectMedia (media.ts:15-37). stdout: records=6; media_available=1; media_unavailable=2; media_omitted=2 and shipped records=8; media_available=1; media_unavailable=0; media_omitted=1. Receipt /work/out/projection-receipt.json ok=true."
+    },
+    {
+      "name": "existing_whatsapp_package_tests",
+      "command": "cd /repo && bun test --no-install packages/connectors/test/whatsapp-media.test.ts packages/connectors/test/whatsapp.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "ran_at": "2026-09-06T22:07:32Z",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "notes": "0 pass, 2 fail, 2 errors. Cannot find module '@kizuki/core'. Missing /repo/node_modules. bun install forbidden. Log: /work/out/whatsapp-package-tests.log. Existing cases still cited by path/line and statically traced."
+    },
+    {
+      "name": "package_typecheck_full_gate",
+      "command": "bunx tsc --noEmit ; bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "notes": "Same missing workspace install."
+    },
+    {
+      "name": "live_whatsapp_account",
+      "result": "NOT_RUN",
+      "notes": "Export importer; no provider/account calls."
+    }
+  ],
+  "verification": {
+    "focused_public_behavior": "PASS on detectMedia replica vs fixtures; package tests NOT_RUN (missing @kizuki/core)",
+    "package_type_full_gate": "NOT_RUN",
+    "privacy_diff_integrity": "PASS static: reports must not quote filenames; lookup is lstat/byteLength only; accidental js-tiktoken cache deleted",
+    "independent_review": "NOT_RUN",
+    "live_account": "NOT_RUN"
+  },
+  "blockers": [
+    "Workspace node_modules is absent in this git archive; package tests and parseWhatsAppExport cannot execute without bun install, which this packet forbids."
+  ],
+  "downstream_handoff": {
+    "packet": "P074",
+    "file": "/work/out/P074-handoff.md",
+    "smallest_change": "Add mediaCoverageFromEvents and put records/media_* tokens on WhatsApp health detail after parse. Reuse fixtures. Do not duplicate existing per-event tests. Do not change detectMedia (P073). Do not extend ImportRecordError. P003 retains shared import-report design; P006 owns README hash wording.",
+    "expected_report_tokens": "records=N; media_available=A; media_unavailable=U; media_omitted=O",
+    "shipped_fixture_counts": {
+      "records": 8,
+      "media_available": 1,
+      "media_unavailable": 0,
+      "media_omitted": 1,
+      "media_none": 6
+    }
+  },
+  "next_step": "P074 implements the health/detail coverage tokens from /work/out/media-status-count-report-field-table.md and /work/out/neutral-attachment-descriptor-fixtures.json on a checkout with workspace dependencies installed, without touching P073 message fidelity.",
+  "limitations": [
+    "No live WhatsApp account, Business API, or media-byte inspection.",
+    "No native/account/model/human qualification or release claim.",
+    "Package tests unexecuted in this archive (no node_modules).",
+    "Doctor will not show ok health detail; reserved owners.",
+    "Deleted-message brackets inflate media_omitted.",
+    "Shape-invalid attached names count as none."
+  ]
+}

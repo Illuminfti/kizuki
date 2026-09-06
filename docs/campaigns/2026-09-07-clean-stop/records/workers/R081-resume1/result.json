@@ -1,0 +1,178 @@
+{
+  "task_id": "R081",
+  "packet_id": "R081",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "prepared",
+  "issue": 550,
+  "owner": "grok-R081",
+  "feeds_packets": ["P080"],
+  "capability": "export import",
+  "connector_id": "kizuki.import-omnivore",
+  "artifacts": [
+    "/work/out/omnivore-metadata-diagnostics.md",
+    "/work/out/fixtures/omnivore-metadata-structural-cases.json",
+    "/work/out/fixtures/omnivore-metadata-structural.json",
+    "/work/out/run-omnivore-metadata-structural.ts",
+    "/work/out/omnivore-metadata-structural-run.json",
+    "/work/out/RESULT.md"
+  ],
+  "deliverables": [
+    "/work/out/omnivore-metadata-diagnostics.md",
+    "/work/out/fixtures/omnivore-metadata-structural-cases.json",
+    "/work/out/fixtures/omnivore-metadata-structural.json",
+    "/work/out/run-omnivore-metadata-structural.ts",
+    "/work/out/omnivore-metadata-structural-run.json",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    {
+      "path": "packages/connectors/src/import-omnivore/metadata.ts",
+      "sha256": "9f1b90bb6e92dd4deaeec113e834450fc6458d78f4f0b969ba255b7ba18fa6f9",
+      "lines": "10-21,28-40,48-70,72-80,82-124",
+      "symbols": ["OmnivoreItem", "parseOmnivoreMetadata", "stringOr", "labelsOf", "optionalTimestamp", "bounded"]
+    },
+    {
+      "path": "packages/connectors/src/import-omnivore/parse.ts",
+      "sha256": "bc6b0c01fc4e7719c83b989ccc29b9d88502db290200eb8509ca6a4d638524f1",
+      "lines": "45,97-175,234-261",
+      "symbols": ["omnivoreEvents", "probeOmnivoreExport", "opensAnArray", "METADATA_FILE"]
+    },
+    {
+      "path": "packages/connectors/src/util.ts",
+      "sha256": "942d0bc9050e59b2b401697ba88039a12b66ffb66d0d7ee6e7fb30c7164b1a75",
+      "lines": "67-71,116-145,175-180",
+      "symbols": ["MAX_RECORDS", "MAX_RECORD_BYTES", "parseJsonArray", "isoToRfc3339"]
+    },
+    {
+      "path": "packages/connectors/test/omnivore.test.ts",
+      "lines": "38-114,169-233",
+      "note": "Existing coverage; do not duplicate missing id/slug/savedAt or oversize-field tests"
+    },
+    {
+      "path": "packages/connectors/test/omnivore-export.test.ts",
+      "lines": "383-388",
+      "note": "Health object-root is a different seam from parseOmnivoreMetadata"
+    },
+    {
+      "path": "docs/wave1/specs/importers-exports.md",
+      "lines": "762-853"
+    }
+  ],
+  "checks": [
+    {
+      "name": "structural_fixture_draft",
+      "command": "bun /work/out/run-omnivore-metadata-structural.ts",
+      "cwd": "/work/out",
+      "bun": "1.3.14",
+      "time": "2026-09-06T22:05:05.465Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "detail": "20/20 cases. Executed a path-rewritten copy of current metadata.ts/util.ts/errors.ts because /repo/node_modules/@kizuki/core is absent. Evidence: /work/out/omnivore-metadata-structural-run.json"
+    },
+    {
+      "name": "existing_omnivore_unit_tests",
+      "command": "bun test packages/connectors/test/omnivore.test.ts",
+      "cwd": "/repo",
+      "bun": "1.3.14",
+      "time": "2026-09-06T22:04:45Z",
+      "exit_code": 1,
+      "result": "NOT_RUN",
+      "detail": "0 pass / 1 fail / 1 error: Cannot find module '@kizuki/core'. Workspace install forbidden. Existing cases statically verified only. Log: /work/out/omnivore-test-attempt.log"
+    },
+    {
+      "name": "repository_verify_gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "detail": "Read-only preparation packet; no source edits; workspace install forbidden"
+    }
+  ],
+  "verification": {
+    "focused": "PASS with limitation (path-rewritten source copy, exit 0, 20/20)",
+    "existing_tests": "NOT_RUN (exit 1, missing @kizuki/core)",
+    "full_gate": "NOT_RUN",
+    "live_account": "NOT_RUN (export importer; Omnivore closed 2024; no account calls authorized)"
+  },
+  "findings": [
+    {
+      "severity": "coverage",
+      "id": "silent-skip-non-objects",
+      "file": "packages/connectors/src/import-omnivore/metadata.ts",
+      "line": 95,
+      "invariant": "Non-plain-object array elements are skipped with no diagnostic; a file of only nulls becomes zero events.",
+      "expected_behavior": "Keep current skip rule unless product intent changes; P080 should add the mixed-list case from the fixture. Spec docs/wave1/specs/importers-exports.md:832-833 already states skip.",
+      "already_tested": false
+    },
+    {
+      "severity": "contract-gap",
+      "id": "whitespace-id-slug",
+      "file": "packages/connectors/src/import-omnivore/metadata.ts",
+      "line": 99,
+      "invariant": "id and slug must be non-empty strings; length===0 is refused, whitespace-only is accepted.",
+      "expected_behavior": "Independently: a required identifier should not be only spaces. Current code accepts ' '. Draft case whitespace_id_accepted documents current behavior. P080 may tighten or lock it with a characterization test.",
+      "already_tested": false
+    },
+    {
+      "severity": "diagnostic",
+      "id": "undifferentiated-id-slug-error",
+      "file": "packages/connectors/src/import-omnivore/metadata.ts",
+      "line": 105,
+      "invariant": "Missing, empty, and non-string id/slug share parse_error 'id and slug are required'.",
+      "expected_behavior": "Do not quote captured values. Splitting the message is optional for P080; empty-string and wrong-type cases are new relative to omnivore.test.ts:169-190 (which omits the key).",
+      "already_tested": false
+    },
+    {
+      "severity": "dead-code",
+      "id": "duplicate-max-records-check",
+      "file": "packages/connectors/src/import-omnivore/metadata.ts",
+      "line": 87,
+      "invariant": "parseJsonArray already refuses length > MAX_RECORDS with a different sentence; metadata.ts:87-92 cannot fire.",
+      "expected_behavior": "Cross-file bound in parse.ts:109-114 is the live export-wide check. Do not add a 1_000_000-item fixture.",
+      "already_tested": false
+    }
+  ],
+  "already_covered_do_not_duplicate": [
+    {
+      "case": "missing id, missing slug, savedAt 'never', missing savedAt",
+      "path": "packages/connectors/test/omnivore.test.ts",
+      "lines": "169-190"
+    },
+    {
+      "case": "oversize title/description/url/labels",
+      "path": "packages/connectors/test/omnivore.test.ts",
+      "lines": "192-210"
+    },
+    {
+      "case": "labels list byte bound",
+      "path": "packages/connectors/test/omnivore.test.ts",
+      "lines": "212-233",
+      "owner": "P079 for label-name fidelity"
+    },
+    {
+      "case": "health probe object-root not JSON array",
+      "path": "packages/connectors/test/omnivore-export.test.ts",
+      "lines": "383-388"
+    }
+  ],
+  "blockers": [],
+  "limitations": [
+    "Existing connector tests and full verify were not executed as PASS: /repo/node_modules is absent and bun install is forbidden.",
+    "Focused draft PASS used a path-rewritten copy of current parser sources, not the workspace module graph.",
+    "No live Omnivore account, no official-docs fetch (service closed 2024); in-tree spec is the format authority.",
+    "No native/account/model/human qualification or release acceptance claim.",
+    "Content/labels/highlight fidelity left to P079."
+  ],
+  "downstream_handoff": {
+    "to": "P080",
+    "add_tests_from": "/work/out/fixtures/omnivore-metadata-structural-cases.json",
+    "do_not_add": "missing id/slug/savedAt, oversize fields, labels byte budget, health object-root",
+    "leave_to_P079": "content HTML, label-name object/string fidelity, highlight text",
+    "optional_product_decisions": [
+      "Whether whitespace-only id/slug should refuse",
+      "Whether to split the id/slug error message",
+      "Whether to remove the dead MAX_RECORDS check in parseOmnivoreMetadata"
+    ],
+    "public_behavior_to_preserve": "Non-objects in the metadata array are skipped; optional strings default to empty; publishedAt invalid is null not fatal; savedAt is required; refusals name file/index/field and never quote titles."
+  },
+  "next_step": "P080 implements the new structural cases from /work/out/fixtures/omnivore-metadata-structural-cases.json next to existing omnivore.test.ts coverage after rebase onto the live base; do not duplicate already-covered tests or P079 fidelity work."
+}

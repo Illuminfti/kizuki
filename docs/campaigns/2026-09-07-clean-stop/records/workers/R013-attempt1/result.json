@@ -1,0 +1,178 @@
+{
+  "task_id": "R013",
+  "packet_id": "R013",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "title": "Measure receipt-stream budget boundaries statically",
+  "issue": 53,
+  "feeds_packets": ["P030"],
+  "identity": {
+    "read_root": "/repo",
+    "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+    "source_kind": "git archive of exact commit; no Git metadata or runtime data",
+    "remote_verified": false,
+    "git": "unavailable_in_container",
+    "vps_nav": "not_run_container_adaptation",
+    "issue_53_body": "not_fetched"
+  },
+  "findings": [
+    {
+      "severity": "observation",
+      "id": "independent-budgets",
+      "location": "packages/core/src/canon/receipt-stream.ts:77,153,219; packages/core/src/canon/budget.ts:57-65",
+      "claim": "Write-count and source-stream byte budgets are independent. Ordinary JSONL has no total-size cap. Source-erasure uses expectedSize > 33554432 (equality completes). At default 32/run and 256/day, write-count binds first.",
+      "confirmed": true,
+      "evidence": "static source plus executed createBudgetTracker and JSONL byte arithmetic in /work/out/boundary-fixture.ts"
+    },
+    {
+      "severity": "observation",
+      "id": "existing-exact-cases",
+      "location": "packages/core/test/canon/receipt-stream.test.ts:60-66,104-123; packages/core/test/canon/apply.test.ts:65-128",
+      "claim": "Exact 32 MiB complete/too-large and ordinary no-cap cases already exist. Exact write-count complete/too-large at the writer seam already exists. Do not duplicate those tests.",
+      "confirmed": true,
+      "evidence": "static test/source agreement; tests themselves NOT_RUN in this container"
+    },
+    {
+      "severity": "observation",
+      "id": "fresh-tracker-day-first",
+      "location": "packages/core/src/canon/budget.ts:52-62",
+      "claim": "A fresh in-memory tracker starts runUsed at 0, so a supplied day used==limit throws budget:canon_writes_per_day even when the run limit is 1. Run-first only after the run counter has already reached its cap.",
+      "confirmed": true,
+      "evidence": "executed createBudgetTracker probes in /work/out/boundary-matrix.json tracker_probes"
+    },
+    {
+      "severity": "limitation",
+      "id": "shared-jsonl-later-source-open",
+      "location": "packages/core/src/canon/receipts.ts:182-189; packages/core/src/serve/budget-ledger.ts:87-94; docs/canon-byte-custody.md:60-62",
+      "claim": "Ordinary append can grow promotions.jsonl past 32 MiB. A later source-erasure open of the same file is then too-large. Daily budget accounting reads that log unbounded. Docs already call those readers separate work.",
+      "confirmed": true,
+      "evidence": "static; 100000 * 611-byte ordinary receipts = 61100000 > 33554432. Not reproduced."
+    },
+    {
+      "severity": "limitation",
+      "id": "rfc-budget-test-filename-absent",
+      "location": "rfcs/0002-autonomous-canon.md:2347-2352",
+      "claim": "RFC 0002 names packages/core/test/loop/budget.test.ts, which is absent on this base. Current coverage is apply.test.ts and serve rail tests.",
+      "confirmed": true,
+      "evidence": "packages/core/test/loop contains dedup-threshold.test.ts, self-ingest.test.ts, tri-state.test.ts only"
+    }
+  ],
+  "artifacts": [
+    "/work/out/budget-worksheet.md",
+    "/work/out/boundary-fixture.ts",
+    "/work/out/boundary-matrix.json",
+    "/work/out/record-sizes.json",
+    "/work/out/coverage-map.json",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/budget-worksheet.md",
+    "/work/out/boundary-fixture.ts",
+    "/work/out/boundary-matrix.json",
+    "/work/out/record-sizes.json",
+    "/work/out/coverage-map.json",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    "packages/core/src/canon/receipt-stream.ts:12",
+    "packages/core/src/canon/receipt-stream.ts:77",
+    "packages/core/src/canon/receipt-stream.ts:152-153",
+    "packages/core/src/canon/receipt-stream.ts:219-220",
+    "packages/core/src/canon/store.ts:108-118",
+    "packages/core/src/canon/budget.ts:6-74",
+    "packages/core/src/canon/apply.ts:473",
+    "packages/core/src/canon/apply.ts:539-564",
+    "packages/core/src/canon/receipts.ts:15",
+    "packages/core/src/canon/receipts.ts:182-189",
+    "packages/core/src/canon/source-erasure-intent.ts:109-125",
+    "packages/core/src/serve/types.ts:172-183",
+    "packages/core/src/serve/config.ts:67-78",
+    "packages/core/src/serve/budget-ledger.ts:57-94",
+    "packages/core/src/vault/canon-files.ts:9",
+    "packages/core/src/vault/write.ts:143-145",
+    "packages/core/test/canon/receipt-stream.test.ts:23-28",
+    "packages/core/test/canon/receipt-stream.test.ts:60-66",
+    "packages/core/test/canon/receipt-stream.test.ts:104-123",
+    "packages/core/test/canon/apply.test.ts:65-128",
+    "docs/canon-byte-custody.md:21-62",
+    "rfcs/0002-autonomous-canon.md:1090-1094",
+    "docs/decision-log.md:D9",
+    "docs/CURRENT.md"
+  ],
+  "checks": [
+    {
+      "name": "bun_version",
+      "command": "bun --version",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14 at /usr/local/bin/bun",
+      "result": "PASS",
+      "exit_code": 0,
+      "stdout": "1.3.14"
+    },
+    {
+      "name": "pure_boundary_fixture",
+      "command": "bun /work/out/boundary-fixture.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "result": "PASS",
+      "exit_code": 0,
+      "summary": "test receipt 531 bytes; ordinary write 611 bytes; 63191 complete 531-byte source lines then too-large; createBudgetTracker default 32 complete / 33rd too-large"
+    },
+    {
+      "name": "receipt-stream.test.ts",
+      "command": "bun test packages/core/test/canon/receipt-stream.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "reason": "Would truncate/read 32 MiB logs and write temp vaults outside /work/out. Packet forbids reproducing the previously fixed stream defect and resource-exhaustion testing."
+    },
+    {
+      "name": "apply.test.ts write-count cases",
+      "command": "bun test packages/core/test/canon/apply.test.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "result": "NOT_RUN",
+      "reason": "Temp vault/ledger outputs would leave /work/out. Statically verified against budget.ts and apply.ts."
+    },
+    {
+      "name": "full_repository_gate",
+      "command": "bun run verify",
+      "result": "NOT_RUN",
+      "reason": "Read-only preparation packet; no source edits; no test-slot claim."
+    }
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun /work/out/boundary-fixture.ts",
+      "result": "PASS",
+      "exit_code": 0
+    },
+    "package_type_full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "native_receipt_stream_tests": "NOT_RUN",
+    "limitations": [
+      "Git metadata absent; base is archive SHA only",
+      "Issue 53 not fetched",
+      "No 32 MiB allocation or native stream open",
+      "No production-acceptance or native-qualification claim"
+    ]
+  },
+  "blockers": [],
+  "downstream_handoff": {
+    "feeds": "P030",
+    "use": [
+      "/work/out/budget-worksheet.md",
+      "/work/out/boundary-fixture.ts",
+      "/work/out/boundary-matrix.json",
+      "/work/out/coverage-map.json"
+    ],
+    "do_not": [
+      "Duplicate receipt-stream.test.ts 32 MiB sparse-truncate cases",
+      "Duplicate apply.test.ts writer budget exhaustion cases",
+      "Rewrite sqlite receipt rows as the stream leaf",
+      "Allocate or fill 32 MiB payloads",
+      "Replace P003 evidence design, P015 source-B schema, or P006 docs"
+    ],
+    "optional_new_test": "Only if P030 needs a named public contract for N small JSONL lines then one too-large; otherwise keep this worksheet. Prefer arithmetic or existing sparse truncate over filled logs.",
+    "must_review_rebase_before_production": true
+  },
+  "next_step": "P030 consumes this worksheet and fixture; do not add a duplicate 32 MiB stream test. Review/rebase before any production use."
+}

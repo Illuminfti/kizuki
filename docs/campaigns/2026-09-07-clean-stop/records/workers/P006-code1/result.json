@@ -1,0 +1,115 @@
+{
+  "task_id": "P006",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "head_sha": "b1ff2d812bb3cd0384d0f0f6f98ed32704774cac",
+  "status": "awaiting_root_test",
+  "changed_files": [
+    "README.md",
+    "SECURITY.md",
+    "docs/CURRENT.md",
+    "docs/README.md",
+    "docs/cli.md",
+    "docs/connect.md",
+    "docs/release-acceptance.md",
+    "packages/cli/src/help.ts",
+    "packages/connectors/README.md"
+  ],
+  "findings": [
+    {
+      "id": "signin-enrollment-security-vs-code",
+      "severity": "high",
+      "status": "fixed_in_candidate",
+      "location": "SECURITY.md",
+      "source": "packages/cli/src/connections.ts#listEnrollableConnectorIds admits kizuki.imap, kizuki.telegram, kizuki.gmail, kizuki.google-calendar"
+    },
+    {
+      "id": "signin-help-front-door",
+      "severity": "high",
+      "status": "fixed_in_candidate",
+      "location": "packages/cli/src/help.ts printRootHelp",
+      "source": "packages/cli/src/commands/connect.ts#connectCommand.usage"
+    },
+    {
+      "id": "docs-readme-cutover-gate",
+      "severity": "high",
+      "status": "fixed_in_candidate",
+      "location": "docs/README.md, docs/release-acceptance.md",
+      "source": "docs/decision-log.md#D19 and rfcs/0002-autonomous-canon.md §1.3 owner amendment 2026-09-05"
+    },
+    {
+      "id": "connectors-readme-incomplete-registry",
+      "severity": "medium",
+      "status": "fixed_in_candidate",
+      "location": "packages/connectors/README.md",
+      "source": "packages/connectors/src/registry.ts enroll() 16 ids"
+    },
+    {
+      "id": "readme-connect-sources-underclaim",
+      "severity": "medium",
+      "status": "fixed_in_candidate",
+      "location": "README.md Connect sources"
+    },
+    {
+      "id": "connect-md-missing-wired-providers",
+      "severity": "medium",
+      "status": "fixed_in_candidate",
+      "location": "docs/connect.md"
+    },
+    {
+      "id": "cli-md-missing-app-and-doctor-integrity",
+      "severity": "medium",
+      "status": "fixed_in_candidate",
+      "location": "docs/cli.md",
+      "source": "packages/cli/src/commands/app.ts appCommand; packages/cli/src/commands/doctor.ts usage doctor [--json] [--integrity]"
+    },
+    {
+      "id": "catalog-titles-omit-x-archive",
+      "severity": "low",
+      "status": "out_of_scope",
+      "location": "packages/cli/src/connect-catalog.ts TITLES",
+      "note": "Independent review removed connect-catalog from this docs lane."
+    },
+    {
+      "id": "screenpipe-readme-host-hedge",
+      "severity": "low",
+      "status": "out_of_scope",
+      "location": "packages/connector-screenpipe/README.md"
+    },
+    {
+      "id": "lifeos-gap-matrix-stale",
+      "severity": "medium",
+      "status": "out_of_scope",
+      "location": "docs/lifeos-capability-gap.md"
+    }
+  ],
+  "deliverables": [
+    "commit b1ff2d812bb3cd0384d0f0f6f98ed32704774cac on agent/grok-p006",
+    "/work/out/corrections.md",
+    "/work/out/test-request.json"
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun test packages/cli/test/help.test.ts",
+      "result": "NOT_RUN",
+      "reason": "Root owns network-disabled test execution. Request p006-docs-help-20260906 submitted."
+    },
+    "package_type_full_gate": {
+      "result": "NOT_RUN",
+      "reason": "This agent container must not install dependencies or launch tests."
+    },
+    "privacy_diff_integrity": {
+      "result": "PASS",
+      "note": "Owned write_paths only. No credentials, vault paths, or live-account claims added. Synthetic-qualification limits retained."
+    },
+    "independent_review": {
+      "result": "NOT_RUN",
+      "note": "Self-review against P095/P047/P059 independent review; C2 independent-model lens is root's."
+    },
+    "capability_producer": {
+      "result": "NOT_IN_SCOPE",
+      "note": "Producer remains a later P006 phase dependent on P004."
+    }
+  },
+  "blockers": [],
+  "next_step": "Root runs p006-docs-help-20260906 (packages/cli/test/help.test.ts) on exact head b1ff2d812bb3cd0384d0f0f6f98ed32704774cac, then independent review of the docs candidate. Do not treat this commit as release acceptance."
+}

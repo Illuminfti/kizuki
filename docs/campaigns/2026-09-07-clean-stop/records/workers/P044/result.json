@@ -1,0 +1,103 @@
+{
+  "task_id": "P044",
+  "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+  "status": "FINDINGS",
+  "title": "Freeze local-app public-journey acceptance oracle",
+  "recorded_at": "2026-09-06T21:15:04Z",
+  "archive_sha256": "939850c9ca71fae8242a8e7783e8bab3afdd35e1c30410ece36cb03fbecad052",
+  "write_scope": "book only",
+  "limitations": [
+    "Read-only git archive; no Git metadata, remotes, node_modules, live issue/PR/CI, owner vaults, or accounts.",
+    "Focused tests and repository gate NOT_RUN.",
+    "No source edits. Astra owns browser.ts and host implementation.",
+    "No release, semantic-quality, live-account, unfamiliar-user, or OS-lifecycle claim.",
+    "Controller forbade other-model review and auth retest."
+  ],
+  "findings": [
+    {
+      "severity": "medium",
+      "id": "SP-1",
+      "location": "packages/cli/src/app/host.ts query max 2000; packages/core/src/serving/search.ts MAX_QUERY_CHARS 512; packages/cli/src/app/ui/client.js humanError",
+      "failure": "Oversized search is ok:false unavailable, then UX copy claims device setup.",
+      "invariant": "unavailable is not empty and not misconfigured",
+      "fix": "Align app query cap with serveSearch 512 and stop mapping generic unavailable to setup prose.",
+      "confirmed": true
+    },
+    {
+      "severity": "medium",
+      "id": "SP-2",
+      "location": "packages/cli/src/app/ui/client.js renderMemory; protocol.ts query.withheld",
+      "failure": "withheld is dropped; policy-hidden rows look like no match.",
+      "invariant": "empty, withheld, unavailable, unknown are distinct",
+      "fix": "Render withheld separately; keep host withheld count as the AX field.",
+      "confirmed": true
+    },
+    {
+      "severity": "low",
+      "id": "SP-3",
+      "location": "packages/cli/src/app/host.ts failure() allow-list",
+      "failure": "Advertised misconfigured/consent_required/revision_conflict are unused; several Core grant codes collapse to unavailable.",
+      "invariant": "honest error codes",
+      "fix": "Pass through Core grant codes; do not advertise unused ones.",
+      "confirmed": true
+    },
+    {
+      "severity": "low",
+      "id": "REL-GAPS",
+      "location": "packages/cli/test/app-client.test.ts fixture sessionStorage getItem null; no new-host token test",
+      "failure": "Same-host sessionStorage boot and new-host 401 rotation are unspecified by tests.",
+      "invariant": "reload resumes same host; new process requires new launch",
+      "fix": "Add REL-SESSIONSTORAGE-BOOT and REL-NEW-HOST from oracle-cases.json.",
+      "confirmed": true
+    },
+    {
+      "severity": "low",
+      "id": "RECALL-FLOOR",
+      "location": "packages/cli/src/app/host.ts context retrieval none vs packages/cli/src/commands/query.ts retrieval optional",
+      "failure": "App recall is lexical-only; CLI may use retrieval. Not a GUI hybrid claim, but withheld/degraded parity is incomplete.",
+      "invariant": "one semantic recall; degraded must be explicit",
+      "fix": "Keep lexical-only until degraded is honest; prove sentinel presence on both lexical floors.",
+      "confirmed": true
+    }
+  ],
+  "hypotheses_untested": [
+    "App enroll of google-calendar calendar_id primary refuses before browser.",
+    "Pre-grant capture error code is exactly source_capture_denied.",
+    "Capture stops at ten batches.",
+    "host.close during capture yields custody_unknown."
+  ],
+  "deliverables": [
+    "/work/out/result.json",
+    "/work/out/RESULT.md",
+    "/work/out/orientation.md",
+    "/work/out/public-journey-oracle.md",
+    "/work/out/test-plan.md",
+    "/work/out/oracle-cases.json",
+    "/work/out/capability-matrix.md",
+    "/work/out/qualification-lanes.md",
+    "/work/out/security-privacy-review.md",
+    "/work/out/ux-dx-ax-parity.md",
+    "/work/out/seam-hashes.json"
+  ],
+  "acceptance": {
+    "deterministic_test_plan": "/work/out/test-plan.md",
+    "positive_controls_invalidation_standing_token_empty_unavailable_restart": true,
+    "capability_matrix_with_file_refs": "/work/out/capability-matrix.md",
+    "browser_automation_separated": "/work/out/qualification-lanes.md"
+  },
+  "verification": {
+    "bun": "1.3.14",
+    "focused_app_tests": "NOT_RUN",
+    "typecheck": "NOT_RUN",
+    "full_gate": "NOT_RUN",
+    "privacy_static": "PASS",
+    "independent_model_review": "NOT_RUN",
+    "reason": "node_modules absent; no test slot; packet forbids other models and source mutation"
+  },
+  "blockers": [
+    "Exact-head test slot and installed toolchain (bun install --frozen-lockfile) required before any PASS on app tests.",
+    "Astra retains browser/host write ownership.",
+    "Live GitHub issue 458 body unread in this archive."
+  ],
+  "next_step": "On an assigned write lane, add the gap cases in oracle-cases.json to existing app-*.test.ts files; do not take browser.ts/host.ts unless root reassigns Astra; do not treat L4/L7-live/L8/L9 as filled by L0–L3."
+}

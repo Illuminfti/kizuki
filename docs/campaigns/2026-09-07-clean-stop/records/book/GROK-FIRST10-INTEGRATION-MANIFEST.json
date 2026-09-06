@@ -1,0 +1,188 @@
+{
+  "schema": "kizuki.grok-reviewed-integration/v1",
+  "observed_at": "2026-09-06T23:11:58.358223+00:00",
+  "scope": "local composition of ten independently reviewed candidates; full integration checks pending",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "observed_main_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+  "worktree": "WORKTREES/kizuki-grok-integration-20260906",
+  "head": "d0daf14024748dad39ddda4fbe1bbe7b0d655e56",
+  "tree": "f9a097239e9449272d850d88f873a9f8c84aec63",
+  "clean": true,
+  "exact_owned_blobs_preserved": true,
+  "paths": [
+    "README.md",
+    "SECURITY.md",
+    "docs/CURRENT.md",
+    "docs/README.md",
+    "docs/cli.md",
+    "docs/connect.md",
+    "docs/release-acceptance.md",
+    "packages/cli/src/commands/audit.ts",
+    "packages/cli/src/help.ts",
+    "packages/cli/test/audit-undo.test.ts",
+    "packages/connector-google-calendar/test/fleet-temporal.test.ts",
+    "packages/connector-ics/test/fleet-calendar-fidelity.test.ts",
+    "packages/connector-imap/src/mime/parse.ts",
+    "packages/connector-imap/test/events.test.ts",
+    "packages/connector-imap/test/mime/parse.test.ts",
+    "packages/connectors/README.md",
+    "packages/connectors/src/sensitivity.ts",
+    "packages/connectors/test/fleet-chatgpt-fidelity.test.ts",
+    "packages/connectors/test/fleet-claude-fidelity.test.ts",
+    "packages/connectors/test/fleet-markdown-lifecycle.test.ts",
+    "packages/connectors/test/fleet-whatsapp-fidelity.test.ts",
+    "packages/connectors/test/sensitivity.test.ts"
+  ],
+  "candidates": [
+    {
+      "id": "P006",
+      "head": "b1ff2d812bb3cd0384d0f0f6f98ed32704774cac",
+      "paths": [
+        "README.md",
+        "SECURITY.md",
+        "docs/CURRENT.md",
+        "docs/README.md",
+        "docs/cli.md",
+        "docs/connect.md",
+        "docs/release-acceptance.md",
+        "packages/cli/src/help.ts",
+        "packages/connectors/README.md"
+      ],
+      "review": "CHECKPOINT_BOOK/P006-b1ff2d8-INDEPENDENT-REVIEW.md",
+      "review_sha256": "00505b45aa30e3c94c55b826dba5b5866cbe0eb207accfc59afd18bc785e8029",
+      "bundle": "PRIVATE_FLEET/integration-bundles/P006-b1ff2d8.bundle",
+      "bundle_sha256": "bec914e08be8760ceaa48753e9280f9b15bba9377005e13216b2d8379562ea03",
+      "merge_head": "b0e87a66f2ee3dd7c6f6729cebf088c1058e356e"
+    },
+    {
+      "id": "P053",
+      "head": "bca137d398ada6bce612d668f4377f50dc29628c",
+      "paths": [
+        "packages/connector-google-calendar/test/fleet-temporal.test.ts"
+      ],
+      "review": "CHECKPOINT_BOOK/P053-BCA137D-INDEPENDENT-REVIEW.md",
+      "review_sha256": "6a10eb4b2e11c840388246db32bbf9c3d7b939f4c901e7f3bb2f823722ddb490",
+      "test_receipt": "PRIVATE_FLEET/test-controller/runs/3ecfa298ca764b0b8df66f43c924bca8/result.json",
+      "test_receipt_sha256": "501eeeafc29e846c3eb41b250d73c304a4163225adca7eb653afa73fa4ed45eb",
+      "bundle": "PRIVATE_FLEET/integration-bundles/P053-bca137d.bundle",
+      "bundle_sha256": "9787741dd60adf069f3b5211980cf50771916e77a5e07bd5ccaed1c0b07acc1f",
+      "merge_head": "8399c44006f494269c05ecb042803c78f16c8369"
+    },
+    {
+      "id": "P057",
+      "head": "85778e3f343f854e227f744aff0c13a47051278f",
+      "paths": [
+        "packages/connector-imap/src/mime/parse.ts",
+        "packages/connector-imap/test/events.test.ts",
+        "packages/connector-imap/test/mime/parse.test.ts"
+      ],
+      "review": "CHECKPOINT_BOOK/P057-85778E3-INDEPENDENT-REVIEW.md",
+      "review_sha256": "7b47799df95f071dd751a741b36829995d7b7b655173c9673e03b03c9fa90ef9",
+      "test_receipt": "PRIVATE_FLEET/test-controller/runs/1f059846c9eb45ee9433a52d0854f6cc/result.json",
+      "test_receipt_sha256": "bae65c0e8e5ed12a2f504e44411748141cf7b5f79a81a6247d06b0c51ea077d2",
+      "bundle": "PRIVATE_FLEET/integration-bundles/P057-85778e3.bundle",
+      "bundle_sha256": "98f278ace0fe3984fe35e8b4a511b3f2f954123a4c5a3c9fed8e86350ec783a8",
+      "merge_head": "b4211b9ef5edb523b7629adae1e1b0fc18d30e1a"
+    },
+    {
+      "id": "P067",
+      "head": "3d76afb63af4bf112b40811e534e97d2fc0fbe9c",
+      "paths": [
+        "packages/connectors/test/fleet-markdown-lifecycle.test.ts"
+      ],
+      "review": "CHECKPOINT_BOOK/P067-3D76AFB-INDEPENDENT-REVIEW.md",
+      "review_sha256": "b82a37a2915c6aa96d1ee57874e6c8e421229d5bc1de115ebad3ad11166833c0",
+      "test_receipt": "PRIVATE_FLEET/test-controller/runs/0926db08d9c74fda8b5c4bccce5103a6/result.json",
+      "test_receipt_sha256": "f8ce2f121603e8d497c149547c8f5dba78928c6d5c93c7bcfea91b7afb511a1a",
+      "bundle": "PRIVATE_FLEET/integration-bundles/P067-3d76afb.bundle",
+      "bundle_sha256": "254e379424afcb22cf0e8a9492d723a356500462b69b73382f6d9225938e7201",
+      "merge_head": "ce47fc8766d414bc53732fe4e02bcf826eb6b0b7"
+    },
+    {
+      "id": "P069",
+      "head": "a0705a0adca4ecf8f38233d873f4398812003224",
+      "paths": [
+        "packages/connectors/test/fleet-chatgpt-fidelity.test.ts"
+      ],
+      "review": "CHECKPOINT_BOOK/P069-A0705A0-INDEPENDENT-REVIEW.md",
+      "review_sha256": "3eaf6de219107996a3c8341c15730129e1a14528a275a0393a6378c39cd0a51c",
+      "test_receipt": "PRIVATE_FLEET/test-controller/runs/9f55338db641479f820d1beeab3d3b4a/result.json",
+      "test_receipt_sha256": "27030ba3a2c138bdc3c6f09cc8a07a6c8a1ed710fe691c34a4c65b174ce7823c",
+      "bundle": "PRIVATE_FLEET/integration-bundles/P069-a0705a0.bundle",
+      "bundle_sha256": "9148171831441cccf8232d215325a703bd3b6ed25aeb9186af76613ea05e7ad9",
+      "merge_head": "835cefdad4739dedc8a059feaf82d4e54cb650c9"
+    },
+    {
+      "id": "P071",
+      "head": "a90db5339762f2436bb446b805d8fc81cdeeada8",
+      "paths": [
+        "packages/connectors/test/fleet-claude-fidelity.test.ts"
+      ],
+      "review": "CHECKPOINT_BOOK/P071-A90DB53-INDEPENDENT-REVIEW.md",
+      "review_sha256": "689ef1f72f51bc60ce0eb9b817a8ecb5020ff59b9faa739cc32bb1456a7d11e1",
+      "test_receipt": "PRIVATE_FLEET/test-controller/runs/eaccfb055cfc488b97143ff397427c0e/result.json",
+      "test_receipt_sha256": "77d7a1dfa7cd68f9c7d547bd99a5a63054dbe44062b4fa8f4a79a5ee89ba78ae",
+      "bundle": "PRIVATE_FLEET/integration-bundles/P071-a90db53.bundle",
+      "bundle_sha256": "ccef67a7eacaee8037695423ecc16ae68be680c559d10b8ace0f9ea65f01fb98",
+      "merge_head": "aeb1f7127fac6796b2c0bbb9662f040810a4e75c"
+    },
+    {
+      "id": "P073",
+      "head": "1a29c7fa06dbff33e34f2b7d035a480295241c80",
+      "paths": [
+        "packages/connectors/test/fleet-whatsapp-fidelity.test.ts"
+      ],
+      "review": "CHECKPOINT_BOOK/P073-1A29C7F-INDEPENDENT-REVIEW.md",
+      "review_sha256": "c7779e19a821a01d3ddcdff901fc9922bb919406702df377a193e1134033cd25",
+      "test_receipt": "PRIVATE_FLEET/test-controller/runs/aa11fb54683e44aaab71f94f9f6ccc3e/result.json",
+      "test_receipt_sha256": "2020373755e053549fd2f44f4d8427c01952b2a40c3f7c58a5609fed96c5acba",
+      "bundle": "PRIVATE_FLEET/integration-bundles/P073-1a29c7f.bundle",
+      "bundle_sha256": "8812d1dc9dee45a06d631d0629e32ca76222a70ab304d90cfc51dc7b7eb32132",
+      "merge_head": "a31cb0d532ada1d4339a4c88b9a80f4db289d2a4"
+    },
+    {
+      "id": "P075",
+      "head": "7df5d889b52360df879b52a63ef53205aacb1701",
+      "paths": [
+        "packages/connector-ics/test/fleet-calendar-fidelity.test.ts"
+      ],
+      "review": "CHECKPOINT_BOOK/P075-7DF5D88-INDEPENDENT-REVIEW.md",
+      "review_sha256": "50f9399d5ab6ec888b7fa0daeb42d340b05a21ef8ca6ed8ff3e815e8bc57a8c9",
+      "test_receipt": "PRIVATE_FLEET/test-controller/runs/d07e5375a5704c0d865e44bab42490b4/result.json",
+      "test_receipt_sha256": "9e00395aea7321986567aaa9e968dd4fe6a2b20d1cc1c497e329e7cf33e26989",
+      "bundle": "PRIVATE_FLEET/integration-bundles/P075-7df5d88.bundle",
+      "bundle_sha256": "99e7b76bb18225e798e7564720628de449162aa1576a0bc56124240ab698c5bd",
+      "merge_head": "bc3d5d91e106c578928601c394f5855428742fff"
+    },
+    {
+      "id": "P103",
+      "head": "c7484874913df3ccab72a66f51310942e4daf3c5",
+      "paths": [
+        "packages/connectors/src/sensitivity.ts",
+        "packages/connectors/test/sensitivity.test.ts"
+      ],
+      "review": "CHECKPOINT_BOOK/P103-C748487-INDEPENDENT-REVIEW.md",
+      "review_sha256": "aac59de873255255ebc287a94a92d1422d0dd529b38da5c65aa5a8d701542480",
+      "test_receipt": "PRIVATE_FLEET/test-controller/runs/f4035b1ac7ca49c5b43948bb89556923/result.json",
+      "test_receipt_sha256": "939abae6604a598b3d105b380924edbf24c40bffe25d82ddee75250ae8944f97",
+      "bundle": "PRIVATE_FLEET/integration-bundles/P103-c748487.bundle",
+      "bundle_sha256": "bec499585f9f83bf09bf35cb53a06b66cc1cf899c4ee412e7b20a186cef72476",
+      "merge_head": "28ff20d89b84e012b33c3cc80185db453d60a382"
+    },
+    {
+      "id": "P105",
+      "head": "10adfb41c882b9f7bacd4c89c8510ec5307abcf0",
+      "paths": [
+        "packages/cli/src/commands/audit.ts",
+        "packages/cli/test/audit-undo.test.ts"
+      ],
+      "review": "CHECKPOINT_BOOK/P105-10ADFB4-INDEPENDENT-REVIEW.md",
+      "review_sha256": "ba02e11816362f6bfa9c0a02175ecb75532740a6375654ec3091b69de419d888",
+      "test_receipt": "PRIVATE_FLEET/test-controller/runs/31bc6e135b9a497eaf80ed8d502420a4/result.json",
+      "test_receipt_sha256": "c55cc93ffb53039eff4e4a0863f554e12e2ae04ed0a17c359d86542cbf2bdde1",
+      "bundle": "PRIVATE_FLEET/integration-bundles/P105-10adfb4.bundle",
+      "bundle_sha256": "bfc82b35a123137f48a60b445bdc9a32b376a4d27380f0c12b19bc3406a17d74",
+      "merge_head": "d0daf14024748dad39ddda4fbe1bbe7b0d655e56"
+    }
+  ]
+}

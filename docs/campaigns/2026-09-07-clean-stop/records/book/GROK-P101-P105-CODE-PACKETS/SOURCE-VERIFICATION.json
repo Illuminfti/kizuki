@@ -1,0 +1,103 @@
+{
+  "schema": "kizuki.production-packet-source-verification/v1",
+  "verified_at": "2026-09-06T22:23:26Z",
+  "packet_base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "packet_tree": "8ec4dd36ba80041c13cdf75f09fc17fa8e0e25c0",
+  "source_snapshot": "WORKTREES/kizuki-fleet-base-20260906",
+  "source_snapshot_status": "clean",
+  "source_archive": "PRIVATE_FLEET/source-f57acb3046e6",
+  "source_archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "observed_origin_main": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+  "observed_origin_tree": "3d13c8e4ae27f0f147f5e61145edb2b551b6f325",
+  "scope_identity": "Every P101-P105 owned source/test path has the same Git blob at packet base and observed origin/main. Global trees differ, so this is path-scoped freshness evidence only.",
+  "commands": [
+    "git rev-parse f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7^{tree}",
+    "git status --porcelain",
+    "git diff --quiet f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7..origin/main -- .github/workflows/ci.yml .github/workflows/macos-native.yml packages/cli/src/commands/audit.ts packages/cli/test/audit-undo.test.ts packages/connectors/src/sensitivity.ts packages/connectors/test/sensitivity.test.ts packages/mcp/src/schemas.ts packages/mcp/test/schema.test.ts scripts/qualification.ts scripts/qualification.test.ts scripts/verify-workflows.ts scripts/verify-workflows.test.ts",
+    "git rev-parse <revision>:<path> for each verified path"
+  ],
+  "results": {
+    "base_tree_match": true,
+    "snapshot_clean": true,
+    "path_scoped_diff_empty": true,
+    "all_path_blobs_equal": true
+  },
+  "files": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "git_blob_sha1": "18c529a0c5b20f3c3f7b222d6393812d7d06b12f",
+      "sha256": "504275470dd0bc31bb6c179aca5df1ce0d0391a86a38097b19f0827bd8787890",
+      "bytes": 2211
+    },
+    {
+      "path": ".github/workflows/macos-native.yml",
+      "git_blob_sha1": "e5c9655034754a58d0e5be574fa86530532e6196",
+      "sha256": "a5a8e99bbdac42a95335e84c053fca9c51567c33d260d2cd991f65ef35510b62",
+      "bytes": 2614
+    },
+    {
+      "path": "packages/cli/src/commands/audit.ts",
+      "git_blob_sha1": "3160cb24e407cf26b4e3c84e319461f4f316f489",
+      "sha256": "84cfd88013db74f5f54fd24533b345f0453b899b4d5a88938743141cbd5d33e5",
+      "bytes": 2589
+    },
+    {
+      "path": "packages/cli/test/audit-undo.test.ts",
+      "git_blob_sha1": "4f764114f912de06a12bcc7327e87ad1dfa0d70a",
+      "sha256": "4ab253f962619ec2af7ad1a867c2526a30f1fb4ce2e6fb757d3a5d599066aeb0",
+      "bytes": 7071
+    },
+    {
+      "path": "packages/connectors/src/sensitivity.ts",
+      "git_blob_sha1": "6c5d6801f6483f3c1361ca74b2d5e50b7d710af9",
+      "sha256": "ae444e8b10b6332a01993ed1ec111e604d0f027acbc5badf8f7c2aec12ea7f16",
+      "bytes": 1760
+    },
+    {
+      "path": "packages/connectors/test/sensitivity.test.ts",
+      "git_blob_sha1": "26165b31e33174053ed4de256d6c52832599c715",
+      "sha256": "e1af0075326787b686aad56a97340d938fcd4796997a2c386c75d4eb9796a5f8",
+      "bytes": 2290
+    },
+    {
+      "path": "packages/mcp/src/schemas.ts",
+      "git_blob_sha1": "b5b4d4be261281cf0d15184502f0d39215cbbea6",
+      "sha256": "15abef892202ee259bdba3154e76bcbf7d7e1d9c4c2efdf5d26691e08f021761",
+      "bytes": 5582
+    },
+    {
+      "path": "packages/mcp/test/schema.test.ts",
+      "git_blob_sha1": "1fb1ed6da1947fbebd20661a387cf8c8c479aac9",
+      "sha256": "5bb9591a2532b8997af6bf8a2b226e2bfe7c6649508fdf0c9cb215539f7f893b",
+      "bytes": 3102
+    },
+    {
+      "path": "scripts/qualification.ts",
+      "git_blob_sha1": "07eb1f2992abbd34883f8a5c5dcdd69599bf313d",
+      "sha256": "0126a8ba22eaf6a2a2acdcdbcc660700c2eede5def17340ba4cd9ea2b66ea5e0",
+      "bytes": 25644
+    },
+    {
+      "path": "scripts/qualification.test.ts",
+      "git_blob_sha1": "5b64645c6901a55bd85c02c6ac734c3410c6c89d",
+      "sha256": "5fd802f6c3cac33e10b573ddec2d0ad76209e6e932c49b334f3e904add379022",
+      "bytes": 24971
+    },
+    {
+      "path": "scripts/verify-workflows.ts",
+      "git_blob_sha1": "a50821502b707cadb6827e51492745089eabf8a5",
+      "sha256": "c3fd24c45f5d895ce33ec340a4f9f42ed8311b6782c0cd4573a580abd8c4f0d6",
+      "bytes": 14533
+    },
+    {
+      "path": "scripts/verify-workflows.test.ts",
+      "git_blob_sha1": "cc5a89d48dafaac03dba5caa15c9575081dce860",
+      "sha256": "dc241e009f56b4a83eb2464889011997c092eae96c39fec9ff14d3e46c997811",
+      "bytes": 10543
+    }
+  ],
+  "claim_limits": [
+    "No tests were run by this proof.",
+    "No implementation, CI, account, native, release, or qualification result is asserted."
+  ]
+}

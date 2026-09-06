@@ -1,0 +1,189 @@
+{
+  "task_id": "R025",
+  "packet_id": "R025",
+  "title": "Inspect audit pagination and empty-state distinctions",
+  "issue": 458,
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "archive_sha256": "187e004334b2aa998dd3ac9d29057e1725d635a00faab24d75bf092eef8b8f36",
+  "status": "finding",
+  "owner": "grok-R025",
+  "write_scope": "/work/out only",
+  "source_kind": "git archive of exact commit; no Git metadata or runtime data",
+  "remote_verified": false,
+  "findings": [
+    {
+      "severity": "contract",
+      "id": "cli-silent-truncation",
+      "location": "packages/cli/src/commands/audit.ts:53-76",
+      "confirmed": true,
+      "evidence": "CLI --json/--list always calls listAuditReceipts with limit 5000 and no offset. TUI loadItems uses PAGE_SIZE+1 and truncated (packages/tui/src/app.ts:31,154-169). App activity limit 1-50 with no truncated flag (packages/cli/src/app/host.ts:43-45,189-191).",
+      "invariant": "A page that is not the last page must not look complete.",
+      "current": "Older canon receipts beyond 5000 (CLI) or 50 (app) disappear with status ok and no next/truncated field.",
+      "smallest_correction": "P043/P045: expose truncated or next for CLI JSON and app activity, or document the cap as a hard window. Do not reuse agent cursors on canon receipts."
+    },
+    {
+      "severity": "contract",
+      "id": "empty-vs-unavailable-collapsed",
+      "location": "packages/core/src/canon/receipts.ts:216,238-240; packages/core/src/agents/audit.ts:723-732; packages/cli/src/commands/audit.ts:58-60",
+      "confirmed": true,
+      "evidence": "Executed goldens: missing canon_receipts table returns []; only_contested without claims returns [] while writes exist; unknown agent name, known empty access page, and limit=0 share {rows:[], next_cursor:null}. CLI JSON filter miss equals empty vault (ok + receipts=[]). Vault-unavailable remains distinct (withVault throw, exit 1; app no_vault).",
+      "invariant": "Unrecorded, unavailable, denied, and empty are distinct (root AGENTS.md).",
+      "current": "Several unrecorded/unavailable cases present as empty success lists. TUI already distinguishes no-writes copy from filter-miss copy.",
+      "smallest_correction": "Keep CLI empty-vault success. Do not turn unknown agent or missing schema into ok-empty without a distinct code. Do not merge agent identity misses into user kizuki audit."
+    },
+    {
+      "severity": "contract",
+      "id": "limit-zero-incoherent",
+      "location": "packages/core/src/canon/receipts.ts:217 vs packages/core/src/agents/audit.ts:731-732",
+      "confirmed": true,
+      "evidence": "Golden canon-limit-zero-coerced.json: limit 0 yields one newest row. Golden agent-limit-zero.json: limit 0 yields empty page and shares the unknown-name branch.",
+      "invariant": "A requested empty page is empty, not a one-row page, and is not an unknown principal.",
+      "current": "Canon clamps to 1; agent empty-page shares unknown-name control flow.",
+      "smallest_correction": "Treat limit 0 as empty page on both list seams; keep unknown agent off that branch."
+    },
+    {
+      "severity": "surface",
+      "id": "no-user-agent-audit-verb",
+      "location": "packages/cli/src/commands/agent.ts:86",
+      "confirmed": true,
+      "evidence": "agent add|revoke only. docs/wave1/plan/ARCHITECTURE.md still mentions kizuki agent audit <name>. Binding cli.md documents add/revoke only.",
+      "invariant": "No fake surface (architecture invariant 10).",
+      "current": "User audit commands are canon-only. Agent listing is a core API, not a CLI verb.",
+      "smallest_correction": "P043/P045 must not invent kizuki agent audit unless a later packet owns that verb. P006 owns canonical docs if the wave1 line is restated."
+    }
+  ],
+  "hypotheses": [
+    {
+      "id": "offset-staleness",
+      "confirmed": false,
+      "note": "Canon OFFSET pages can skip or repeat if a newer write arrives between pages. Not race-probed. Agent listing already uses a keyset cursor."
+    }
+  ],
+  "artifacts": [
+    "/work/out/row-type-ordering-table.md",
+    "/work/out/existing-coverage.md",
+    "/work/out/scripts/audit-pagination-goldens.ts",
+    "/work/out/checks.json",
+    "/work/out/goldens/canon-empty.json",
+    "/work/out/goldens/canon-multipage.json",
+    "/work/out/goldens/canon-filter-miss.json",
+    "/work/out/goldens/canon-limit-zero-coerced.json",
+    "/work/out/goldens/canon-missing-table.json",
+    "/work/out/goldens/canon-contested-without-claims.json",
+    "/work/out/goldens/canon-cli-empty-envelope.json",
+    "/work/out/goldens/canon-cli-empty-table.txt",
+    "/work/out/goldens/canon-unavailable-vault.json",
+    "/work/out/goldens/agent-multipage.json",
+    "/work/out/goldens/agent-empty-known-access.json",
+    "/work/out/goldens/agent-empty-unknown.json",
+    "/work/out/goldens/agent-limit-zero.json",
+    "/work/out/goldens/agent-invalid-cursor.json",
+    "/work/out/goldens/empty-vs-unavailable-matrix.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "deliverables": [
+    "/work/out/row-type-ordering-table.md",
+    "/work/out/goldens/",
+    "/work/out/existing-coverage.md",
+    "/work/out/scripts/audit-pagination-goldens.ts",
+    "/work/out/checks.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "source_references": [
+    "packages/core/src/canon/audit.ts:6-20,56-87",
+    "packages/core/src/canon/receipts.ts:39-62,199-259",
+    "packages/cli/src/commands/audit.ts:13-76",
+    "packages/cli/src/output.ts:24-64",
+    "packages/cli/src/context.ts:32-37,85-108",
+    "packages/cli/src/main.ts:216-224",
+    "packages/cli/src/app/host.ts:43-54,66-67,189-191,348-350",
+    "packages/cli/src/app/protocol.ts:70-76,180-186",
+    "packages/cli/src/commands/agent.ts:78-86",
+    "packages/tui/src/app.ts:31,154-169",
+    "packages/tui/src/model.ts:107-128,293-307",
+    "packages/tui/src/view.ts:53-66,87-92,213-216",
+    "packages/core/src/agents/audit.ts:694-797",
+    "packages/core/src/agents/types.ts:42-43,177-191",
+    "packages/core/src/agents/schema.ts:42-56",
+    "rfcs/0002-autonomous-canon.md:1484-1507",
+    "docs/cli.md:277-286,427-431",
+    "packages/tui/test/audit-items.test.ts:156-191",
+    "packages/tui/test/audit-filters.test.ts:59-80",
+    "packages/core/test/agents/audit.test.ts:354-380,567-599",
+    "packages/cli/test/audit-undo.test.ts:122-151",
+    "packages/cli/test/config.test.ts:10-16"
+  ],
+  "checks": [
+    {
+      "name": "core_list_goldens",
+      "command": "bun /work/out/scripts/audit-pagination-goldens.ts",
+      "head": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+      "runtime": "bun 1.3.14",
+      "result": "PASS",
+      "detail": "22 assertions; in-memory sqlite; direct file imports of listAuditReceipts and listAuditPage"
+    },
+    {
+      "name": "cli_audit_process",
+      "command": "bun packages/cli/src/main.ts audit --json",
+      "result": "NOT_RUN",
+      "missing": "/repo/node_modules workspace resolution for @kizuki/core and @kizuki/tui; installs forbidden"
+    },
+    {
+      "name": "package_tests_cited",
+      "command": "bun test packages/tui/test/audit-items.test.ts packages/core/test/agents/audit.test.ts packages/cli/test/audit-undo.test.ts",
+      "result": "NOT_RUN",
+      "missing": "/repo/node_modules (@kizuki/core); static read only"
+    },
+    {
+      "name": "typecheck_full_gate",
+      "command": "bunx tsc --noEmit ; bash scripts/verify.sh",
+      "result": "NOT_RUN",
+      "detail": "read-only preparation packet; no test slot; no source edits"
+    }
+  ],
+  "verification": {
+    "focused": {
+      "command": "bun /work/out/scripts/audit-pagination-goldens.ts",
+      "result": "PASS",
+      "assertions": 22,
+      "bun": "1.3.14"
+    },
+    "cli_process": "NOT_RUN",
+    "package_tests": "NOT_RUN_static_read",
+    "full_gate": "NOT_RUN",
+    "independent_review": "NOT_RUN",
+    "limitations": [
+      "CLI jsonEnvelope/table goldens used a local copy of packages/cli/src/output.ts because @kizuki/tui does not resolve without node_modules.",
+      "Existing package tests were not executed; coverage claims are static line citations plus the core-list re-observation.",
+      "No vault process, TTY TUI, or app HTTP host was started.",
+      "No native/account/model/human qualification or release acceptance."
+    ]
+  },
+  "blockers": [
+    "Workspace node_modules absent in this git-archive container; full CLI and package tests cannot run without an install, which is forbidden here."
+  ],
+  "downstream_handoff": {
+    "feeds": ["P043", "P045"],
+    "consume": [
+      "/work/out/row-type-ordering-table.md",
+      "/work/out/goldens/",
+      "/work/out/existing-coverage.md"
+    ],
+    "do_not": [
+      "Duplicate packages/tui/test/audit-items.test.ts:156-191 or packages/core/test/agents/audit.test.ts:567-599.",
+      "Mix canon receipts into agent_audit or add kizuki agent audit unless a named packet owns that verb.",
+      "Treat a green CLI empty list as vault-unavailable, or unknown agent as empty history, without an explicit product decision.",
+      "Replace P003 evidence design, P015 schema, or P006 docs."
+    ],
+    "must_review_rebase": true
+  },
+  "next_step": "P043/P045 implement user-audit pagination and empty-vs-unavailable labeling from these goldens, reuse the cited existing tests, and keep agent listing off the kizuki audit receipt contract.",
+  "ownership_untouched": [
+    "P003 shared evidence design",
+    "P015 source-B schema/recovery/authority/export",
+    "P006 canonical docs",
+    "Astra and external doctor owners"
+  ]
+}

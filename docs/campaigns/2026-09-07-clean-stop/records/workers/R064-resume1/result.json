@@ -1,0 +1,192 @@
+{
+  "task_id": "R064",
+  "packet_id": "R064",
+  "issue": 548,
+  "title": "Map WHOOP page budgets and ordinary API recovery states",
+  "base_sha": "f57acb3046e6bdd7cbee3b260cdfe6114b8f58c7",
+  "status": "prepared",
+  "owner": "grok-R064",
+  "read_root": "/repo",
+  "write_scope": "/work/out only",
+  "capability": "live sync (synthetic-tested WHOOP v2 component; not CLI-enrolled)",
+  "limitations": [
+    "Read-only git archive; no Git metadata; remote state not refreshed here.",
+    "No live WHOOP or account calls. No authentication or confidential-client research.",
+    "Workspace node_modules absent; connector package tests, typecheck, and full verify were not run and are not claimed.",
+    "No native/account/model/human qualification or release acceptance.",
+    "Official pagination HTML example still shows v1 URLs; machine contract is OpenAPI v2 fetched 2026-09-06.",
+    "These artifacts feed P060/P061 and must be reviewed/rebased before production use."
+  ],
+  "findings": [
+    {
+      "severity": "coverage_gap",
+      "id": "page-oversize-untested",
+      "source": "packages/connector-whoop/src/connector.ts:264-265",
+      "expected": "records.length > 25 refuses the scan as unavailable; no plan emit; checkpoint unchanged",
+      "evidence": "static trace; fixture /work/out/fixtures/http-200-page-oversize.json; no matching test name in capture.test.ts or http.test.ts",
+      "action": "optional P060/P061 test only; do not duplicate existing 25-record pagination tests"
+    },
+    {
+      "severity": "coverage_gap",
+      "id": "collection-400-500-untested",
+      "source": "packages/connector-whoop/src/connector.ts:242-243",
+      "expected": "HTTP 400/500 → provider_error → capture unavailable, original cursor",
+      "evidence": "OpenAPI collection responses list 400 and 500; capture.test.ts:98 uses 500 only on revokeProviderAccess",
+      "action": "optional capture-path tests using http-400.json and http-500.json"
+    },
+    {
+      "severity": "coverage_gap",
+      "id": "retry-header-variants-untested",
+      "source": "packages/connector-whoop/src/api.ts:31-40",
+      "expected": "retry-after wins over x-ratelimit-reset; numeric 1-10 digits; HTTP-date; fallback 60s",
+      "evidence": "WhoopFixture always sets x-ratelimit-reset; capture.test.ts 429 cases do not send retry-after",
+      "action": "optional header-order tests; official WHOOP prose documents X-RateLimit-Reset only"
+    },
+    {
+      "severity": "doc_mismatch",
+      "id": "pagination-prose-v1-and-limit-header",
+      "expected": "v2 collection paths and query parameter limit maximum 25",
+      "evidence": "OpenAPI 2026-09-06; developer.whoop.com/docs/developing/pagination/ example still uses /developer/v1/activity/sleep and says limit header",
+      "action": "connector already matches OpenAPI; no code change in this packet"
+    },
+    {
+      "severity": "doc_mismatch",
+      "id": "retry-after-not-in-whoop-prose",
+      "expected": "429 cooldown from X-RateLimit-Reset seconds",
+      "evidence": "developer.whoop.com/docs/developing/rate-limiting/ 2026-09-06 documents X-RateLimit-Limit/Remaining/Reset and 429; Retry-After not present. Connector reads retry-after first.",
+      "action": "keep current extra RFC-9110 read; do not treat as a defect"
+    }
+  ],
+  "deliverables": [
+    "/work/out/whoop-pagination-recovery-model.json",
+    "/work/out/whoop-pagination-recovery-model.md",
+    "/work/out/existing-coverage.json",
+    "/work/out/fixtures/",
+    "/work/out/check-pagination-recovery.ts",
+    "/work/out/check-pagination-recovery.receipt.json",
+    "/work/out/RESULT.md",
+    "/work/out/result.json"
+  ],
+  "artifacts": [
+    "/work/out/whoop-pagination-recovery-model.json",
+    "/work/out/whoop-pagination-recovery-model.md",
+    "/work/out/existing-coverage.json",
+    "/work/out/fixtures/http-200-page-continue.json",
+    "/work/out/fixtures/http-200-page-done-null.json",
+    "/work/out/fixtures/http-200-page-done-absent.json",
+    "/work/out/fixtures/http-200-page-done-empty-string.json",
+    "/work/out/fixtures/http-200-page-oversize.json",
+    "/work/out/fixtures/http-200-cyclic-next-token.json",
+    "/work/out/fixtures/http-200-profile.json",
+    "/work/out/fixtures/http-429-x-ratelimit-reset.json",
+    "/work/out/fixtures/http-429-retry-after-wins.json",
+    "/work/out/fixtures/http-429-missing-headers.json",
+    "/work/out/fixtures/http-401.json",
+    "/work/out/fixtures/http-404.json",
+    "/work/out/fixtures/http-400.json",
+    "/work/out/fixtures/http-500.json",
+    "/work/out/fixtures/http-503.json",
+    "/work/out/fixtures/cursor-resume-aligned.json",
+    "/work/out/fixtures/cursor-complete-rescan.json",
+    "/work/out/fixtures/cursor-unaligned-unavailable.json",
+    "/work/out/fixtures/cursor-malformed-throws.json",
+    "/work/out/fixtures/state-retry-at-blocks.json",
+    "/work/out/fixtures/budget-49th-refused.json",
+    "/work/out/check-pagination-recovery.ts",
+    "/work/out/check-pagination-recovery.receipt.json",
+    "/work/out/evidence/pagination-prose.txt",
+    "/work/out/evidence/rate-limiting-prose.txt",
+    "/work/out/evidence/openapi-collections.json",
+    "/work/out/RESULT.md"
+  ],
+  "source_references": [
+    { "path": "packages/connector-whoop/src/api.ts", "lines": "10-40,85-108", "role": "Budget 48/45s/5s; retry-after then x-ratelimit-reset; HttpFailure 429" },
+    { "path": "packages/connector-whoop/src/state.ts", "lines": "14-40,105-121,123-160", "role": "Plan.issued, retry_at, cursor offset 0..1000, failure() code mapping" },
+    { "path": "packages/connector-whoop/src/connector.ts", "lines": "63-66,221-286,294-373", "role": "health cooldown, HTTP class map, nextToken scan, cursor resume, capture unavailable" },
+    { "path": "packages/connector-whoop/src/testing.ts", "lines": "50-76", "role": "synthetic nextToken slice and x-ratelimit-reset 429" },
+    { "path": "packages/connector-whoop/test/capture.test.ts", "lines": "5-125,157-165", "role": "existing pagination, issued, 404, 429, history_limit, cyclic token" },
+    { "path": "packages/connector-whoop/test/http.test.ts", "lines": "21-52", "role": "response_limit, timeout, 49th request" },
+    { "path": "packages/connector-whoop/test/session.test.ts", "lines": "130-139", "role": "health rate_limited after persisted cooldown" },
+    { "path": "packages/connector-whoop/test/budget.test.ts", "lines": "6-40", "role": "48 charged requests including refresh" },
+    { "path": "packages/connector-whoop/test/native-recovery.test.ts", "lines": "9-75", "role": "ledger restart / snapshot_gap" },
+    { "path": "packages/core/src/contracts/connector.ts", "lines": "213-225", "role": "SyncBatchStatus ok|unavailable; unavailable must not advance checkpoint" },
+    { "path": "docs/whoop.md", "lines": "83-117", "role": "in-tree public pagination and 429 cooldown claims" }
+  ],
+  "checks": [
+    {
+      "name": "local_model_and_fixture_checker",
+      "command": "bun /work/out/check-pagination-recovery.ts",
+      "cwd": "/work/out",
+      "bun": "1.3.14",
+      "time": "2026-09-06T22:03:04Z",
+      "exit_code": 0,
+      "result": "PASS",
+      "evidence": "/work/out/check-pagination-recovery.receipt.json",
+      "detail": "21 fixtures, 15 source cites, 0 failures"
+    },
+    {
+      "name": "official_docs_fetch",
+      "command": "bun fetch of OpenAPI, pagination, rate-limiting (2026-09-06T21:45:52Z)",
+      "result": "PASS",
+      "exit_code": 0,
+      "urls": [
+        "https://api.prod.whoop.com/developer/doc/openapi.json",
+        "https://developer.whoop.com/docs/developing/pagination/",
+        "https://developer.whoop.com/docs/developing/rate-limiting/"
+      ],
+      "evidence": "/work/out/evidence/fetch-index.json"
+    },
+    {
+      "name": "existing_connector_whoop_tests",
+      "command": "bun test packages/connector-whoop/test",
+      "result": "NOT_RUN",
+      "missing": "workspace node_modules (bun install forbidden in this container)",
+      "static_verification": "/work/out/existing-coverage.json"
+    },
+    {
+      "name": "typecheck_and_full_verify",
+      "command": "bun run typecheck && bun run verify",
+      "result": "NOT_RUN",
+      "missing": "workspace node_modules; packet does not change source"
+    }
+  ],
+  "verification": {
+    "focused": { "result": "PASS", "command": "bun /work/out/check-pagination-recovery.ts", "exit_code": 0 },
+    "existing_package_tests": { "result": "NOT_RUN", "reason": "no node_modules; install forbidden" },
+    "full_gate": { "result": "NOT_RUN", "reason": "no node_modules; not a source-change packet" },
+    "live_account": { "result": "NOT_RUN", "reason": "packet forbids provider/account calls" },
+    "independent_review": { "result": "NOT_RUN" }
+  },
+  "blockers": [],
+  "next_step": "P060/P061 consume /work/out/whoop-pagination-recovery-model.json and /work/out/fixtures without duplicating capture.test.ts pagination/429/404/history_limit/cyclic-token cases; optional tests only for oversize page, capture 400/500, and retry-header variants.",
+  "downstream_handoff": {
+    "feeds": ["P060", "P061"],
+    "reuse": [
+      "/work/out/whoop-pagination-recovery-model.json",
+      "/work/out/fixtures/",
+      "/work/out/existing-coverage.json"
+    ],
+    "do_not_duplicate": [
+      "packages/connector-whoop/test/capture.test.ts:5-125",
+      "packages/connector-whoop/test/http.test.ts:21-52",
+      "packages/connector-whoop/test/session.test.ts:130-139",
+      "packages/connector-whoop/test/budget.test.ts:6-40"
+    ],
+    "do_not_touch": [
+      "authentication / confidential-client policy",
+      "shared connector registry",
+      "lockfiles",
+      "P003 evidence design",
+      "P015 source-B",
+      "P006 canonical docs"
+    ],
+    "contract_to_preserve": {
+      "yield_and_provider_page": 25,
+      "history_cap": 1000,
+      "http_calls": 48,
+      "capture_error_status": "unavailable",
+      "rate_limit_health": "rate_limited plus durable retry_at",
+      "404_not_tombstone": true
+    }
+  }
+}

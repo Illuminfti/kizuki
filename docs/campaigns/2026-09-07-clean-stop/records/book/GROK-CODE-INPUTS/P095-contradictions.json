@@ -1,0 +1,282 @@
+{
+  "schema": "kizuki.p095.contradictions/v1",
+  "base_sha": "32713ad98899a8d1e8ac21a2ebbe3170f6af51a0",
+  "generated_at": "2026-09-06",
+  "classification": {
+    "confirmed": "static mismatch between two named sources on this exact base",
+    "stale_historical": "bannered or dated snapshot that still reads as current if followed",
+    "gap": "implemented surface missing from an advertised catalog, or advertised without a public verb"
+  },
+  "confirmed": [
+    {
+      "id": "signin-enrollment-security-vs-code",
+      "severity": "high",
+      "invariant": "AGENTS.md invariant 10 / architecture invariant 10: no fake surface; every advertised capability matches implementation",
+      "left": {
+        "file": "SECURITY.md",
+        "lines": "33-35",
+        "claim": "Sign-in connector enrollment through this CLI (Telegram, IMAP packages exist; the CLI will not enroll them)."
+      },
+      "right": {
+        "files": [
+          "packages/cli/src/connections.ts#listEnrollableConnectorIds",
+          "packages/cli/src/commands/connect.ts#connectCommand",
+          "docs/CURRENT.md",
+          "docs/cli.md"
+        ],
+        "claim": "IMAP, Telegram, Gmail, and Google Calendar are CLI-enrollable via sign_in on this revision. CURRENT.md states IMAP and Telegram native sign-in and Gmail/Calendar browser sign-in."
+      },
+      "proof": [
+        "packages/cli/test/imap-enrollment.test.ts",
+        "packages/cli/test/telegram-enrollment.test.ts",
+        "packages/cli/test/gmail-enrollment.test.ts",
+        "packages/cli/test/google-calendar-enrollment.test.ts",
+        "packages/cli/test/connect-catalog.test.ts"
+      ],
+      "required_fix": "SECURITY.md must stop denying CLI sign-in enrollment. State operator-credential and qualification limits instead. One follow-on docs owner."
+    },
+    {
+      "id": "signin-help-front-door",
+      "severity": "high",
+      "invariant": "CLI root help is a product front door and must not advertise a false enrollment limit",
+      "left": {
+        "file": "packages/cli/src/help.ts",
+        "lines": "117",
+        "claim": "Use connect to browse local files, exports, and Beeper messaging. Direct account sign-in is not available here."
+      },
+      "right": {
+        "files": [
+          "packages/cli/src/commands/connect.ts",
+          "packages/cli/src/help.ts EXAMPLES.connect",
+          "docs/cli.md"
+        ],
+        "claim": "Root help examples already include connect imap. connectCommand usage includes imap, telegram, gmail, google-calendar."
+      },
+      "proof": ["packages/cli/test/help.test.ts does not lock the stale sentence; catalog tests expect telegram CLI-wired"],
+      "required_fix": "Replace the sentence with CURRENT.md honesty: sign-in exists for IMAP/Telegram/Gmail/Calendar; other account connectors are not enrollable; none are live-account qualified."
+    },
+    {
+      "id": "docs-readme-cutover-gate",
+      "severity": "high",
+      "invariant": "D19: estate cutover is not a readiness or 1.0 tag prerequisite",
+      "left": {
+        "file": "docs/README.md",
+        "lines": "22-23",
+        "claim": "RFC 0002 §1.3 still requires stranger proof and estate cutover."
+      },
+      "right": {
+        "files": [
+          "docs/decision-log.md#D19",
+          "docs/CURRENT.md#Readiness",
+          "rfcs/0002-autonomous-canon.md §1.3",
+          "scripts/go-no-go.ts#gates"
+        ],
+        "claim": "RFC 0002 §1.3 was amended 2026-09-05. owner.final-cutover is required:false superseded-readiness-gate."
+      },
+      "proof": [
+        "scripts/go-no-go.test.ts readiness keeps install, stranger and P0 evidence required while calendar observation stays optional",
+        "empty-index evaluateRelease 1.0 on this base: superseded rows required false"
+      ],
+      "required_fix": "docs/README.md must retain stranger proof and drop cutover as a current RFC requirement. Do not reintroduce a seven/fourteen-day gate."
+    },
+    {
+      "id": "connectors-readme-incomplete-registry",
+      "severity": "medium",
+      "invariant": "A registry entry is a product claim; the package README table is an advertised catalog",
+      "left": {
+        "file": "packages/connectors/README.md",
+        "claim": "The registry table lists google-calendar, markdown-folder, screenpipe, chatgpt, claude, whatsapp, pocket, omnivore, x-archive only."
+      },
+      "right": {
+        "file": "packages/connectors/src/registry.ts",
+        "symbol": "enroll / defaultConnectorRegistry",
+        "claim": "Also registered: beeper, telegram, gmail, imap, ics, import-legacy-wiki, import-legacy-events."
+      },
+      "required_fix": "Same docs owner must complete or explicitly defer the table against registry.ids()."
+    },
+    {
+      "id": "readme-connect-sources-underclaim",
+      "severity": "medium",
+      "invariant": "README Connect sources must match CURRENT.md and the CLI catalog",
+      "left": {
+        "file": "README.md",
+        "section": "Connect sources",
+        "claim": "Current entry points include local Markdown, ChatGPT/Claude exports, WhatsApp/Pocket/Omnivore exports, Beeper Desktop, read-only IMAP, ICS files, offline Screenpipe ingestion, and estate importers. Telegram/Gmail/Google Calendar omitted."
+      },
+      "right": {
+        "file": "docs/CURRENT.md",
+        "claim": "IMAP, Telegram, Gmail, and Google Calendar sign-in are shipped on this revision with qualification limits."
+      },
+      "required_fix": "README must list those CLI-enrollable sign-in paths with the same qualification caveats as CURRENT.md, or point only to connect.md once that page covers them."
+    },
+    {
+      "id": "connect-md-missing-wired-providers",
+      "severity": "medium",
+      "invariant": "docs/connect.md is linked as connection setup and limits",
+      "left": {
+        "file": "docs/connect.md",
+        "sections": ["Connection design", "Beeper Desktop", "IMAP email"],
+        "claim": "Only Beeper and IMAP have setup sections."
+      },
+      "right": {
+        "files": ["docs/gmail.md", "docs/google-calendar.md", "docs/cli.md", "packages/cli/src/commands/connect.ts"],
+        "claim": "Telegram, Gmail, Google Calendar, ICS, Screenpipe, and file imports are CLI-enrollable."
+      },
+      "required_fix": "connect.md should index every CLI-enrollable connector and link provider pages; do not leave Gmail/Telegram/Calendar only in scattered files."
+    },
+    {
+      "id": "cli-md-missing-app-and-doctor-integrity",
+      "severity": "medium",
+      "invariant": "docs/cli.md claims to document the verbs that exist on this revision",
+      "left": {
+        "file": "docs/cli.md",
+        "claim": "No ## app section. doctor usage omits --integrity."
+      },
+      "right": {
+        "files": [
+          "packages/cli/src/commands/index.ts#COMMANDS",
+          "packages/cli/src/commands/app.ts#appCommand",
+          "packages/cli/src/commands/doctor.ts#doctorCommand",
+          "docs/local-app.md"
+        ],
+        "claim": "app is a public verb. doctor usage is doctor [--json] [--integrity]."
+      },
+      "required_fix": "Add app to cli.md or explicitly point to local-app.md from the verb list. Add --integrity to doctor usage."
+    },
+    {
+      "id": "catalog-titles-omit-x-archive",
+      "severity": "low",
+      "invariant": "connect catalog is the advertised source list",
+      "left": {
+        "file": "packages/cli/src/connect-catalog.ts",
+        "symbol": "TITLES",
+        "claim": "No title for kizuki.import-x-archive; falls back to raw id."
+      },
+      "right": {
+        "file": "packages/connectors/src/registry.ts",
+        "claim": "kizuki.import-x-archive is registered and enrollable via none-mode path."
+      },
+      "required_fix": "Add a catalog title in the same follow-on lane as help/docs."
+    },
+    {
+      "id": "x-api-id-vs-acceptance-null",
+      "severity": "low",
+      "invariant": "Acceptance catalogue must not invent a registered connector_id",
+      "left": {
+        "file": "scripts/go-no-go.ts",
+        "symbol": "CONNECTORS x-api",
+        "claim": "connector_id: null because this candidate has no registered API connector."
+      },
+      "right": {
+        "file": "packages/connector-x/src/api/state.ts",
+        "symbol": "X_API_CONNECTOR_ID",
+        "claim": "Implementation id is kizuki.x. Package exists, is not in defaultConnectorRegistry, CLI will not enroll it."
+      },
+      "note": "Not a fake surface. Keep connector_id null in the acceptance catalogue until registry enrollment exists. Do not document kizuki.x as CLI-enrollable.",
+      "required_fix": "Docs owner must say package-subpath only, matching packages/connector-x/API.md."
+    },
+    {
+      "id": "lifeos-gap-matrix-stale",
+      "severity": "medium",
+      "invariant": "Do not present a 2026-09-01 audit matrix as current shipping status",
+      "left": {
+        "file": "docs/lifeos-capability-gap.md",
+        "claim": "Ranked matrix says Kizuki has no context compiler or serving package, no reversible claims, no scheduler, no backup/restore."
+      },
+      "right": {
+        "files": [
+          "docs/CURRENT.md",
+          "packages/cli/src/commands/context.ts",
+          "packages/mcp/src/server.ts",
+          "packages/core/src/claims",
+          "packages/cli/src/commands/serve.ts",
+          "packages/cli/src/commands/export.ts",
+          "packages/cli/src/commands/restore.ts"
+        ],
+        "claim": "Context packets, MCP serving, claims, serve rails, and export/restore exist on this base."
+      },
+      "required_fix": "Banner the matrix as a 2026-09-01 snapshot, or move it under docs/wave1/. Do not follow it as current gaps."
+    },
+    {
+      "id": "screenpipe-readme-host-hedge",
+      "severity": "low",
+      "left": {
+        "file": "packages/connector-screenpipe/README.md",
+        "lines": "29-31",
+        "claim": "connect, backfill, and sync are CLI verbs. Until a given host exposes them, the connector is reachable through getConnector."
+      },
+      "right": {
+        "file": "packages/cli/src/connections.ts#listEnrollableConnectorIds",
+        "claim": "screenpipe is none-mode CLI-enrollable on this revision."
+      },
+      "required_fix": "Drop the until-a-host-exposes-them hedge or scope it to non-CLI hosts."
+    }
+  ],
+  "gaps": [
+    {
+      "id": "ics-url-signin-unbound",
+      "severity": "medium",
+      "implemented": {
+        "file": "packages/connector-ics/src/sign-in.ts",
+        "symbol": "signInIcs"
+      },
+      "bound": false,
+      "enrollable_via": "none-mode file path only through connect <connector> --source PATH",
+      "note": "ICS auth_modes are none and sign_in. CLI enrolls none/path. Interactive URL sign-in is not a connect verb.",
+      "required_fix": "Either wire connect ics URL sign-in or document file-path-only enrollment and leave signIn as library surface."
+    },
+    {
+      "id": "estate-slice-apply-unimplemented",
+      "severity": "medium",
+      "implemented": {
+        "file": "packages/cli/src/commands/import.ts",
+        "symbol": "importCommand",
+        "claim": "estate-slice requires --dry-run; apply is not implemented"
+      },
+      "acceptance": {
+        "file": "scripts/go-no-go.ts",
+        "symbol": "journey.import-estate-slice",
+        "status": "NOT_IMPLEMENTED"
+      }
+    },
+    {
+      "id": "whoop-and-x-api-c3-unregistered",
+      "severity": "medium",
+      "planned": "docs/decision-log.md C3",
+      "implemented_packages": [
+        "packages/connector-whoop",
+        "packages/connector-x/src/api"
+      ],
+      "registered": false,
+      "enrollable": false,
+      "qualified": false
+    },
+    {
+      "id": "beeper-not-in-c3-acceptance-catalogue",
+      "severity": "low",
+      "note": "Beeper is CLI-enrollable with synthetic tests only, and is absent from scripts/go-no-go.ts CONNECTORS (C3 list). Do not silently add it to C3; do not hide it from the CLI catalog."
+    },
+    {
+      "id": "surface-capabilities-adapter-missing",
+      "severity": "medium",
+      "file": "scripts/go-no-go.ts",
+      "symbol": "surface.capabilities-and-docs",
+      "status": "NOT_IMPLEMENTED",
+      "note": "This P095 inventory is book-only preparation. It is not the executable acceptance adapter."
+    }
+  ],
+  "not_contradictions": [
+    {
+      "id": "wave1-historical",
+      "note": "docs/wave1/ is bannered historical. Follow CURRENT.md, not wave1 specs marked VOID."
+    },
+    {
+      "id": "qualification-false-everywhere",
+      "note": "CURRENT.md already says Telegram/Gmail/Calendar account qualification is unrun and Beeper has synthetic coverage only. That honesty is not a contradiction."
+    },
+    {
+      "id": "d19-seven-day-text-in-qualification",
+      "note": "docs/qualification.md and scripts/qualification.ts still describe a seven-day fixture window as optional diagnostic timing. That is not a readiness gate while required:false superseded-readiness-gate rows remain."
+    }
+  ]
+}
