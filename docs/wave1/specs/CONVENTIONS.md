@@ -65,6 +65,26 @@ product: "your life, queryable as a CLI and MCP". Read these first, in order:
 - Do not touch packages outside your lane's scope unless the spec says so.
 - Do not edit `docs/architecture.md` except where the spec says so.
 
+### Proposed historical policy exception (2026-09-06)
+
+This is a **policy exception proposal**, pending explicit owner acceptance
+before merge. It preserves published commit objects; it does not make history
+literally free of prohibited identifiers. The proposal permits only the six
+bytes at the specified zero-based message offset in these two commits:
+
+| Commit | SHA-256 of the complete raw message | Offset |
+| --- | --- | --- |
+| `1c919f00570c3bb70088114083d8598c01c77903` | `55b26c12cbb2bce514245e95ae7365fcc1d3287a6dbd664552f47e773cea0f6b` | 1736 |
+| `092d27bfeb9d84b21d0e843b0706273bd0314290` | `30a75bcc2c3763e04c0ea16f084a16e082d39f885c714c7ad9b299e7edeeb95c` | 140 |
+
+Both exact commits must be ancestors of the candidate and their full messages
+must match the recorded digests. Missing or changed records, invalid framing,
+and records above the 64 MiB input limit fail closed. Only those six bytes in
+each matching record are masked for scanning. Every other byte of every
+reachable message, including trailers and future commits, remains subject to
+the complete denylist. The two published messages are immutable regression
+inputs for the policy tests. The prohibition on new co-author trailers stays.
+
 ## Git
 
 - Work on the current branch of this worktree only. Never switch branches,

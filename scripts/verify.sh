@@ -137,46 +137,83 @@ reachable_commit_identifier_pattern() {
   # Bound the first denylist token with POSIX ERE delimiters so a longer
   # public GitHub owner name that only shares that prefix cannot match.
   # Remaining tokens stay unanchored substring matches. No Perl regex.
-  # Floor-guardian / agent display names stay on denylist-tracked only:
-  # reachable history already contains legitimate squash prose that names them,
-  # and force-push of main is not the fix.
-  printf '%s' '(^|[^[:alnum:]])ill''umi([^[:alnum:]]|$)|her''mes|ika-''hetzner|g''brain'
+  printf '%s' '(^|[^[:alnum:]])ill''umi([^[:alnum:]]|$)|her''mes|ika-''hetzner|alb''edo|g''brain'
 }
 
-# Drop git trailer lines from commit messages before denylist-history.
-# Subjects and bodies still scan. Authorship trailers must not wedge public
-# main after a legitimate squash; force-push of main is not the fix.
-strip_git_trailers_from_messages() {
-  local messages_file="$1"
-  local cleaned_file="$2"
-  awk '
-    BEGIN { ignore = 0 }
-    /^[Cc][Oo]-[Aa][Uu][Tt][Hh][Oo][Rr][Ee][Dd]-[Bb][Yy]:/ { ignore = 1; next }
-    /^[Ss][Ii][Gg][Nn][Ee][Dd]-[Oo][Ff][Ff]-[Bb][Yy]:/ { ignore = 1; next }
-    /^[Aa][Cc][Kk][Ee][Dd]-[Bb][Yy]:/ { ignore = 1; next }
-    /^[Rr][Ee][Vv][Ii][Ee][Ww][Ee][Dd]-[Bb][Yy]:/ { ignore = 1; next }
-    {
-      if (ignore == 1 && $0 ~ /^[[:space:]]/) { next }
-      ignore = 0
-      print
+write_reachable_commit_records() {
+  local records_file="$1"
+  local status
+
+  set +e
+  git --no-replace-objects log --all -z --encoding=none --no-show-signature --format=%H%x00%B >"$records_file"
+  status=$?
+  set -e
+  if ((status != 0)); then
+    printf 'verification failed: reachable commit-message producer exited %d\n' "$status" >&2
+    return "$status"
+  fi
+  if [[ ! -s "$records_file" ]]; then
+    printf 'verification failed: reachable commit-message scan produced no text\n' >&2
+    return 2
+  fi
+}
+
+# Published history stays immutable; each proposed exception binds one exact
+# ancestor and every message byte. No class of trailer or line is exempt.
+sanitize_historical_commit_records() {
+  bun -e '
+    const { createHash } = require("node:crypto");
+    const { readFileSync, statSync, writeFileSync } = require("node:fs");
+    const [input, output] = process.argv.slice(1);
+    const pins = new Map([
+      ["1c919f00570c3bb70088114083d8598c01c77903", {
+        digest: "55b26c12cbb2bce514245e95ae7365fcc1d3287a6dbd664552f47e773cea0f6b", offset: 1736,
+      }],
+      ["092d27bfeb9d84b21d0e843b0706273bd0314290", {
+        digest: "30a75bcc2c3763e04c0ea16f084a16e082d39f885c714c7ad9b299e7edeeb95c", offset: 140,
+      }],
+    ]);
+    try {
+      if (statSync(input).size > 64 * 1024 * 1024) throw new Error("history record limit exceeded");
+      const records = readFileSync(input), chunks = [], seen = new Set();
+      if (records.length > 64 * 1024 * 1024) throw new Error("history record limit exceeded");
+      const identifier = Buffer.from("Al" + "bedo");
+      let offset = 0;
+      while (offset < records.length) {
+        const idEnd = records.indexOf(0, offset), messageEnd = records.indexOf(0, idEnd + 1);
+        if (idEnd < offset || messageEnd < 0) throw new Error("invalid history framing");
+        const id = records.toString("utf8", offset, idEnd);
+        if (!/^[a-f0-9]{40}$/.test(id)) throw new Error("invalid history identity");
+        let message = records.subarray(idEnd + 1, messageEnd);
+        const pin = pins.get(id);
+        if (pin) {
+          if (seen.has(id) || createHash("sha256").update(message).digest("hex") !== pin.digest ||
+              !message.subarray(pin.offset, pin.offset + identifier.length).equals(identifier)) {
+            throw new Error("historical message identity mismatch");
+          }
+          const ancestor = Bun.spawnSync(["git", "--no-replace-objects", "merge-base", "--is-ancestor", id, "HEAD"], { stdout: "pipe", stderr: "pipe" });
+          if (ancestor.exitCode !== 0) throw new Error("historical ancestor missing");
+          seen.add(id);
+          message = Buffer.concat([message.subarray(0, pin.offset), Buffer.from("[historical-policy-exception]"), message.subarray(pin.offset + identifier.length)]);
+        }
+        chunks.push(message, Buffer.from("\n"));
+        offset = messageEnd + 1;
+      }
+      if (seen.size !== pins.size) throw new Error("historical ancestor missing");
+      writeFileSync(output, Buffer.concat(chunks));
+    } catch {
+      process.stderr.write("verification failed: historical commit exception validation failed\n");
+      process.exit(2);
     }
-  ' "$messages_file" >"$cleaned_file"
+  ' "$1" "$2"
 }
 
 assert_safe_reachable_commit_messages() {
   local messages_file="$1"
-  local cleaned_file
-  local status
-  cleaned_file="$(mktemp)"
-  strip_git_trailers_from_messages "$messages_file" "$cleaned_file"
-  # Capture status explicitly: under `if`, set -e does not abort on a failing
-  # assert_no_match, so a trailing `rm` would otherwise make this return 0.
-  set +e
-  assert_no_match     "forbidden identifier in reachable commit messages"     grep -I -n -i -E "$(reachable_commit_identifier_pattern)" "$cleaned_file"
-  status=$?
-  set -e
-  rm -f -- "$cleaned_file"
-  return "$status"
+
+  assert_no_match \
+    "forbidden identifier in reachable commit messages" \
+    grep -a -n -i -E "$(reachable_commit_identifier_pattern)" "$messages_file"
 }
 
 gate() {
@@ -187,13 +224,14 @@ main() {
   local dependency_re
   local forbidden_identifier_re='ill''umi|her''mes|ika-''hetzner|alb''edo'
   local attributed_identifier_re='g''brain'
+  local commit_records
   local commit_messages
   local cleanup_command
-  local log_status
 
   dependency_re="$(phone_home_dependency_pattern)"
+  commit_records="$(mktemp)"
   commit_messages="$(mktemp)"
-  printf -v cleanup_command 'rm -f -- %q' "$commit_messages"
+  printf -v cleanup_command 'rm -f -- %q %q' "$commit_records" "$commit_messages"
   trap "$cleanup_command" EXIT
 
   gate required-commands
@@ -224,18 +262,8 @@ main() {
   assert_exact_attribution_spelling README.md docs/upstream-policy.md
   gate denylist-tracked
 
-  set +e
-  git log --all --format=%B >"$commit_messages"
-  log_status=$?
-  set -e
-  if ((log_status != 0)); then
-    printf 'verification failed: reachable commit-message producer exited %d\n' "$log_status" >&2
-    return "$log_status"
-  fi
-  if [[ ! -s "$commit_messages" ]]; then
-    printf 'verification failed: reachable commit-message scan produced no text\n' >&2
-    return 2
-  fi
+  write_reachable_commit_records "$commit_records"
+  sanitize_historical_commit_records "$commit_records" "$commit_messages"
   assert_safe_reachable_commit_messages "$commit_messages"
   gate denylist-history
   bun "$verify_script_dir/verify-secrets.ts"

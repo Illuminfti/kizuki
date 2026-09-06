@@ -179,7 +179,7 @@ if ! git -C "$restrict_root" show-ref --verify --quiet refs/remotes/origin/main;
 fi
 rm -rf -- "$restrict_root"
 
-history_messages="$(mktemp)"
+history_messages="$fixture_root/history-messages"
 github_owner='Ill''uminfti'
 printf 'Merge pull request #379 from %s/cursor/llm-port-8afe\n' "$github_owner" >"$history_messages"
 assert_safe_reachable_commit_messages "$history_messages"
@@ -199,7 +199,7 @@ if assert_safe_reachable_commit_messages "$history_messages" >/dev/null 2>&1; th
   exit 1
 fi
 
-remaining_tokens=('her''mes' 'ika-''hetzner' 'g''brain')
+remaining_tokens=('her''mes' 'ika-''hetzner' 'alb''edo' 'g''brain')
 for remaining in "${remaining_tokens[@]}"; do
   printf 'review notes mention %s\n' "$remaining" >"$history_messages"
   if assert_safe_reachable_commit_messages "$history_messages" >/dev/null 2>&1; then
@@ -208,18 +208,104 @@ for remaining in "${remaining_tokens[@]}"; do
   fi
 done
 
-# Trailer lines are ignored by denylist-history.
-# Floor-guardian display names are tracked-text only (not history).
-printf 'Harden doctor\n\nCo-authored-by: Alb''edo <nazarick@agentmail.to>\n' >"$history_messages"
-assert_safe_reachable_commit_messages "$history_messages"
-printf 'Harden doctor\n\nmentions alb''edo in the body\n\nCo-authored-by: bot <bot@example.invalid>\n' >"$history_messages"
-assert_safe_reachable_commit_messages "$history_messages"
-printf 'Harden doctor\n\nmentions her''mes in the body\n\nCo-authored-by: bot <bot@example.invalid>\n' >"$history_messages"
-if assert_safe_reachable_commit_messages "$history_messages" >/dev/null 2>&1; then
-  printf 'policy test failed: body denylist token passed when trailer present\n' >&2
-  exit 1
-fi
+expect_policy_status() {
+  local expected="$1" label="$2" status=0
+  shift 2
+  ("$@") >"$fixture_root/last-policy-output" 2>&1 || status=$?
+  if ((status != expected)); then
+    printf 'policy test failed: %s returned %d, expected %d\n' "$label" "$status" "$expected" >&2
+    exit 1
+  fi
+}
 
-rm -f -- "$history_messages"
+# Every future message line remains in scope, including folded trailers.
+for label in Co-authored-by Signed-off-by Reviewed-by Acked-by; do
+  printf 'Policy fixture\n\n%s: %s <fixture@example.invalid>\n' "$label" "$remaining" >"$history_messages"
+  expect_policy_status 1 "$label history scan" assert_safe_reachable_commit_messages "$history_messages"
+done
+printf 'Policy fixture\n\nReviewed-by: fixture\n  %s\n' "$remaining" >"$history_messages"
+expect_policy_status 1 'folded trailer history scan' assert_safe_reachable_commit_messages "$history_messages"
+expect_policy_status 2 'missing message file' assert_safe_reachable_commit_messages "$fixture_root/absent"
+
+# The real Git producer must preserve message bytes and include a sibling ref.
+side_commit="$(printf 'Side subject\n\nFirst body line\nSecond body line\n\n' |
+  git -C "$fixture_root" commit-tree 'HEAD^{tree}' -p HEAD)"
+git -C "$fixture_root" update-ref refs/heads/policy-framing-side "$side_commit"
+(
+  cd "$fixture_root"
+  write_reachable_commit_records "$fixture_root/framed-records"
+  bun -e '
+    const { readFileSync } = require("node:fs");
+    const records = readFileSync(process.argv[1]), seen = new Set();
+    let offset = 0;
+    while (offset < records.length) {
+      const idEnd = records.indexOf(0, offset), end = records.indexOf(0, idEnd + 1);
+      if (idEnd < offset || end < 0) throw new Error("invalid producer framing");
+      const id = records.toString("utf8", offset, idEnd);
+      const object = Bun.spawnSync(["git", "--no-replace-objects", "cat-file", "commit", id]);
+      if (object.exitCode !== 0) throw new Error("missing produced object");
+      const message = object.stdout.subarray(object.stdout.indexOf(Buffer.from("\n\n")) + 2);
+      if (!records.subarray(idEnd + 1, end).equals(message)) throw new Error("producer changed message bytes");
+      if (seen.has(id)) throw new Error("producer repeated a commit");
+      seen.add(id);
+      offset = end + 1;
+    }
+    if (seen.size !== 2 || !seen.has(process.argv[2])) throw new Error("producer omitted sibling ref");
+  ' "$fixture_root/framed-records" "$side_commit"
+)
+mkdir "$fixture_root/empty-history"
+git -C "$fixture_root/empty-history" init -q
+expect_policy_status 2 'empty history' bash -c 'source "$1"; cd "$2"; write_reachable_commit_records "$3"' \
+  _ "$script_dir/verify.sh" "$fixture_root/empty-history" "$fixture_root/empty-records"
+mkdir "$fixture_root/no-repository"
+expect_policy_status 128 'failed history producer' bash -c 'source "$1"; GIT_DIR="$2" write_reachable_commit_records "$3"' \
+  _ "$script_dir/verify.sh" "$fixture_root/no-repository" "$fixture_root/failed-records"
+
+# These two published messages are immutable regression inputs, not new commits.
+published_records="$fixture_root/published-records"
+git -C "$script_dir/.." --no-replace-objects log --no-walk=unsorted -z --encoding=none --no-show-signature --format=%H%x00%B \
+  1c919f00570c3bb70088114083d8598c01c77903 092d27bfeb9d84b21d0e843b0706273bd0314290 >"$published_records"
+sanitize_historical_commit_records "$published_records" "$history_messages"
+assert_safe_reachable_commit_messages "$history_messages"
+bun -e '
+  const { readFileSync, writeFileSync, openSync, ftruncateSync, closeSync } = require("node:fs");
+  const [file, root, result] = process.argv.slice(1), bytes = readFileSync(file);
+  const fields = bytes.toString("utf8").split("\0");
+  if (fields.length !== 5 || fields[4] !== "") throw new Error("published records framing changed");
+  const token = "Al" + "bedo", marker = "[historical-policy-exception]";
+  if (fields[1].split(token).length !== 2 || fields[3].split(token).length !== 2) throw new Error("published token count changed");
+  const expected = fields[1].replace(token, marker) + "\n" + fields[3].replace(token, marker) + "\n";
+  if (!readFileSync(result).equals(Buffer.from(expected))) throw new Error("exception changed unapproved bytes");
+  const save = (name, value) => writeFileSync(root + "/" + name, value);
+  const changed = [...fields]; changed[1] += "Ordinary correction\n";
+  save("changed-message", changed.join("\0"));
+  const changedId = [...fields]; changedId[0] = "1".repeat(40);
+  save("changed-identity", changedId.join("\0"));
+  const extra = [...fields]; extra[1] += token + "\n";
+  save("extra-occurrence", extra.join("\0"));
+  save("missing-pin", fields.slice(0, 2).join("\0") + "\0");
+  save("duplicate-pin", Buffer.concat([bytes, bytes]));
+  save("truncated-record", bytes.subarray(0, bytes.length - 1));
+  save("copied-message", Buffer.concat([bytes, Buffer.from("1".repeat(40) + "\0" + fields[1] + "\0")]));
+  const future = "2".repeat(40) + "\0First neutral message\0" + "3".repeat(40) + "\0Second neutral message\0";
+  save("neutral-future", Buffer.concat([bytes, Buffer.from(future)]));
+  save("expected-future", expected + "First neutral message\nSecond neutral message\n");
+  const large = openSync(root + "/over-budget", "w");
+  ftruncateSync(large, 64 * 1024 * 1024 + 1); closeSync(large);
+' "$published_records" "$fixture_root" "$history_messages"
+for invalid in changed-message changed-identity extra-occurrence missing-pin duplicate-pin truncated-record over-budget; do
+  expect_policy_status 2 "$invalid exception" sanitize_historical_commit_records "$fixture_root/$invalid" "$fixture_root/rejected-output"
+  if [[ -e "$fixture_root/rejected-output" ]]; then
+    printf 'policy test failed: rejected records produced an output\n' >&2
+    exit 1
+  fi
+done
+expect_policy_status 2 'non-ancestor history' bash -c 'source "$1"; cd "$2"; sanitize_historical_commit_records "$3" "$4"' \
+  _ "$script_dir/verify.sh" "$fixture_root" "$published_records" "$fixture_root/rejected-output"
+sanitize_historical_commit_records "$fixture_root/copied-message" "$history_messages"
+expect_policy_status 1 'copied historical message' assert_safe_reachable_commit_messages "$history_messages"
+sanitize_historical_commit_records "$fixture_root/neutral-future" "$history_messages"
+assert_safe_reachable_commit_messages "$history_messages"
+cmp "$history_messages" "$fixture_root/expected-future"
 
 printf 'verification policy tests passed\n'
