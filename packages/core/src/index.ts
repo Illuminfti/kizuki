@@ -719,6 +719,7 @@ export type { DiffLine } from "./util/diff";
 
 export {
   AGENT_SCHEMA_VERSION,
+  AgentEnrollmentError,
   DEFAULT_GRANT,
   LIFECYCLE_ACTIONS,
   MAX_AUDIT_PAGE,
@@ -728,6 +729,7 @@ export {
   SENSITIVITY_ORDER,
   TOOLS,
   addAgent,
+  authenticateAgentCredential,
   applyAgentsV9,
   authenticate,
   authorize,
@@ -741,6 +743,9 @@ export {
   listAgents,
   listQuarantinedAgents,
   recordAudit,
+  enrollAgent,
+  previewAgentEnrollment,
+  revokeAgentEnrollment,
   reserveAudit,
   resolvePrincipal,
   revokeAgent,
@@ -752,6 +757,9 @@ export {
 export type {
   Agent,
   AgentFinding,
+  AgentEnrollmentRequest,
+  AgentEnrollmentErrorCode,
+  AgentEnrollmentResult,
   AuditDenial,
   AuditItem,
   AuditPage,

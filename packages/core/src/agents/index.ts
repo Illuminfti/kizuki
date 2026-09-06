@@ -39,6 +39,18 @@ export {
   rotateToken,
   setGrant,
 } from "./identity";
+export {
+  AgentEnrollmentError,
+  authenticateAgentCredential,
+  enrollAgent,
+  previewAgentEnrollment,
+  revokeAgentEnrollment,
+} from "./enrollment";
+export type {
+  AgentEnrollmentErrorCode,
+  AgentEnrollmentRequest,
+  AgentEnrollmentResult,
+} from "./enrollment";
 
 export {
   authorize,

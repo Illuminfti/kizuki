@@ -21,7 +21,7 @@ import type {
   Tool,
 } from "./types";
 
-const NAME = /^[a-z0-9][a-z0-9-]{1,63}$/;
+export const AGENT_NAME = /^[a-z0-9][a-z0-9-]{1,63}$/;
 const TOKEN_PREFIX = "kzk_";
 const TOKEN_BODY = /^[0-9A-HJKMNP-TV-Z]{52}$/;
 const TOKEN_BYTES = 32;
@@ -58,7 +58,7 @@ interface AgentGrantRow extends AgentRow {
   grant_epoch: number;
 }
 
-function hashToken(token: string): string {
+export function hashAgentToken(token: string): string {
   return sha256(token);
 }
 
@@ -81,7 +81,7 @@ function encodeCrockford(bytes: Uint8Array): string {
   return output;
 }
 
-function generateToken(): string {
+export function generateAgentToken(): string {
   const bytes = new Uint8Array(TOKEN_BYTES);
   crypto.getRandomValues(bytes);
   return `${TOKEN_PREFIX}${encodeCrockford(bytes)}`;
@@ -132,7 +132,7 @@ function validateScope(value: unknown, field: string): string[] | null {
   return unique;
 }
 
-function validateGrant(grant: Grant): Grant {
+export function validateAgentGrant(grant: Grant): Grant {
   if (!Object.prototype.hasOwnProperty.call(SENSITIVITY_ORDER, grant.ceiling)) {
     throw new TypeError("ceiling: must be public, personal, or private");
   }
@@ -184,7 +184,7 @@ function validateGrant(grant: Grant): Grant {
 }
 
 function mergeGrant(base: Grant, patch: Partial<Grant>): Grant {
-  return validateGrant({ ...base, ...patch });
+  return validateAgentGrant({ ...base, ...patch });
 }
 
 function rowAgent(row: AgentRow): Agent {
@@ -202,7 +202,7 @@ function decodeGrant(row: AgentGrantRow): Grant {
   if (!Number.isSafeInteger(row.rate_limit_per_minute)) {
     throw new TypeError("rate_limit_per_minute: stored value is not a safe integer");
   }
-  return validateGrant({
+  return validateAgentGrant({
     ceiling: row.ceiling as Grant["ceiling"],
     types: parseStringArray(row.types, "types"),
     subjects: parseStringArray(row.subjects, "subjects"),
@@ -325,7 +325,7 @@ function quarantineIfInvalid(db: Database, agentId: string, at: string): void {
   }).immediate();
 }
 
-function writeGrant(
+export function writeAgentGrant(
   db: Database,
   agentId: string,
   grant: Grant,
@@ -360,15 +360,15 @@ export function addAgent(
   name: string,
   grantPatch: Partial<Grant> = {},
 ): { agent: Agent; token: string } {
-  if (!NAME.test(name)) {
+  if (!AGENT_NAME.test(name)) {
     throw new TypeError("name: must match [a-z0-9][a-z0-9-]{1,63}");
   }
   if (name === "owner") {
     throw new TypeError("name: owner is reserved for the owner principal");
   }
   const grant = mergeGrant(DEFAULT_GRANT, grantPatch);
-  const token = generateToken();
-  const tokenHash = hashToken(token);
+  const token = generateAgentToken();
+  const tokenHash = hashAgentToken(token);
   const agent: Agent = {
     agent_id: ulid(),
     name,
@@ -384,7 +384,7 @@ export function addAgent(
       `INSERT INTO agents (agent_id, name, token_hash, created_at)
        VALUES (?, ?, ?, ?)`,
     ).run(agent.agent_id, agent.name, tokenHash, agent.created_at);
-    writeGrant(db, agent.agent_id, grant, agent.created_at, 1);
+    writeAgentGrant(db, agent.agent_id, grant, agent.created_at, 1);
     recordLifecycle(db, agent.agent_id, "agent.create", {
       after: grant,
     }, agent.created_at);
@@ -401,7 +401,7 @@ export function authenticate(db: Database, token: string): Principal | null {
   ) {
     return null;
   }
-  const candidateHash = hashToken(token);
+  const candidateHash = hashAgentToken(token);
   const rows = db
     .query<AgentGrantRow, []>(`${AGENT_GRANT_SELECT} ORDER BY a.agent_id`)
     .all();
@@ -435,6 +435,13 @@ export function resolvePrincipal(
     quarantineIfInvalid(db, row.agent_id, new Date().toISOString());
   }
   return null;
+}
+
+/** Internal shared reader for enrollment receipts; it never treats a receipt as authority. */
+export function principalForAgentId(db: Database, agentId: string): Principal | null {
+  const row = grantRowById(db, agentId);
+  if (row === null) return null;
+  return principalFromRow(row);
 }
 
 export function getAgent(db: Database, name: string): Agent | null {
@@ -554,29 +561,33 @@ export function setGrant(
   }).immediate();
 }
 
-export function revokeAgent(db: Database, name: string): void {
-  db.transaction(() => {
-    const row = grantRowByName(db, name);
-    if (row === null) throw new Error(`agent ${name} does not exist`);
-    const at = new Date().toISOString();
+export function revokeAgentInTransaction(db: Database, name: string): void {
+  const row = grantRowByName(db, name);
+  if (row === null) throw new Error(`agent ${name} does not exist`);
+  const at = new Date().toISOString();
+  if (row.revoked_at === null) {
     db.query<never, [string, string]>(
-      "UPDATE agents SET revoked_at = coalesce(revoked_at, ?) WHERE name = ?",
+      "UPDATE agents SET revoked_at = ? WHERE name = ?",
     ).run(at, name);
     db.query<never, [number, string, string]>(
       `UPDATE agent_grants
           SET grant_epoch = ?, updated_at = ?
         WHERE agent_id = ?`,
     ).run(grantEpoch(row) + 1, at, row.agent_id);
-    if (row.revoked_at === null) {
-      const before = tryDecodeGrant(row);
-      recordLifecycle(
-        db,
-        row.agent_id,
-        "agent.revoke",
-        before === null ? {} : { before },
-        at,
-      );
-    }
+    const before = tryDecodeGrant(row);
+    recordLifecycle(
+      db,
+      row.agent_id,
+      "agent.revoke",
+      before === null ? {} : { before },
+      at,
+    );
+  }
+}
+
+export function revokeAgent(db: Database, name: string): void {
+  db.transaction(() => {
+    revokeAgentInTransaction(db, name);
   }).immediate();
 }
 
@@ -585,11 +596,11 @@ export function rotateToken(db: Database, name: string): string {
     const row = grantRowByName(db, name);
     if (row === null) throw new Error(`agent ${name} does not exist`);
     if (row.revoked_at !== null) throw new Error(`agent ${name} is revoked`);
-    const token = generateToken();
+    const token = generateAgentToken();
     const at = new Date().toISOString();
     db.query<never, [string, string]>(
       "UPDATE agents SET token_hash = ? WHERE agent_id = ?",
-    ).run(hashToken(token), row.agent_id);
+    ).run(hashAgentToken(token), row.agent_id);
     db.query<never, [number, string, string]>(
       `UPDATE agent_grants
           SET grant_epoch = ?, updated_at = ?
