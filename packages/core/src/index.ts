@@ -195,9 +195,13 @@ export {
   RETRIEVAL_CAPABILITIES,
   RETRIEVAL_CONTRACT,
   RETRIEVAL_CONTRACT_MINOR,
+  PROVENANCE_ERASURE_CAPABILITY,
   RETRIEVAL_DOC_KINDS,
   requireRetrievalCapability,
   validateAbsenceProof,
+  validateProvenanceAbsenceProof,
+  validateProvenanceEventIds,
+  requireProvenanceErasure,
   validateGraphResult,
   validateRetrievalDoc,
   validateRetrievalMutationReport,
@@ -206,6 +210,7 @@ export {
 } from "./contracts/retrieval";
 export type {
   AbsenceProof,
+  ProvenanceAbsenceProof,
   EntityRef,
   GraphEdge as RetrievalGraphEdge,
   GraphQueryOptions,

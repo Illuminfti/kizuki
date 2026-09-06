@@ -16,6 +16,7 @@ import {
 import type { LedgerHealth } from "./integrity";
 import { LEDGER_BUSY_TIMEOUT_MS } from "./limits";
 import { applyPurgeV5 } from "./purge-schema";
+import { applyPurgeBatchesV19 } from "./purge-batch-schema";
 import { applyEventIdentityV16 } from "./event-identity-schema";
 import { applyAgentEnrollmentV18 } from "../agents/enrollment-schema";
 import { oneShotAll, oneShotRun, tableColumns, tableExists } from "./schema";
@@ -181,6 +182,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 16, apply: applyEventIdentityV16 },
   { version: 17, apply: applyLedgerV16 },
   { version: 18, apply: applyAgentEnrollmentV18 },
+  { version: 19, apply: applyPurgeBatchesV19 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

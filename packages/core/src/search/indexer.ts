@@ -4,7 +4,7 @@ import type { CaptureEvent } from "../contracts/event";
 import type { RetrievalAuthority } from "../contracts/retrieval";
 import { stampDerived } from "../derived-meta";
 import type { DerivedStamp } from "../derived-meta";
-import { markDerivedHeld, readDerivedHolds } from "../derived-holds";
+import { assertDerivedDiscoveryReady, markDerivedHeld, readDerivedHolds } from "../derived-holds";
 import { latestLedgerCursor, replayLive } from "../ledger/ledger";
 import { retrievalDocId } from "../retrieval/ids";
 import { ulid } from "../util/ulid";
@@ -193,6 +193,7 @@ function insertFtsRow(db: Database, doc: SearchDocument): void {
 }
 
 export function insertDoc(db: Database, doc: SearchDocument): void {
+  if (doc.scope === "canon") assertDerivedDiscoveryReady(db);
   const held = readDerivedHolds(db).paths;
   if (doc.scope === "canon" && held.has(doc.path)) {
     deleteDoc(db, doc.scope, doc.docId);
@@ -212,6 +213,7 @@ export function deleteDoc(db: Database, scope: DocScope, docId: string): void {
 }
 
 export function replacePage(db: Database, page: CanonPage, authority = canonAuthorities(db,[page]).get(page.relPath) ?? "model_inference"): void {
+  assertDerivedDiscoveryReady(db);
   deleteDoc(db, "canon", page.id);
   const held = readDerivedHolds(db).paths;
   if (!isLiveCanonPage(page) || held.has(page.relPath)) {
@@ -287,6 +289,7 @@ function stampSearch(
 
 /** FTS is a projection of search_documents. */
 export function projectSearchDocs(db: Database): void {
+  assertDerivedDiscoveryReady(db);
   const held = readDerivedHolds(db).paths;
   if (held.size > 0) {
     db.exec("DELETE FROM search_documents WHERE scope='canon' AND path IN (SELECT page_path FROM canon_holds)");
@@ -304,6 +307,7 @@ export function rebuildSearchLayer(
   db: Database,
   input: SearchRebuildInput,
 ): SearchRebuildResult {
+  assertDerivedDiscoveryReady(db);
   const held = readDerivedHolds(db).paths;
   const livePages = input.pages.filter(page => isLiveCanonPage(page) && !held.has(page.relPath));
   db.exec("DELETE FROM search_documents");

@@ -43,3 +43,11 @@ export function markDerivedHeld(db: Database, layer: "search" | "graph", count: 
     status: "degraded",
   });
 }
+
+/** A crash before discovery completes leaves the affected page set unknown. */
+export function assertDerivedDiscoveryReady(db: Database): void {
+  if (tableExists(db, "purge_batches") &&
+      db.query("SELECT 1 FROM purge_batches WHERE state!='ready' LIMIT 1").get() !== null) {
+    throw new Error("purge_discovery_pending");
+  }
+}
