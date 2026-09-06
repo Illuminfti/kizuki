@@ -3,7 +3,9 @@
 An agent connects to Kizuki with an explicit grant. Its credential stays in a
 private file; the CLI reports setup state without printing the credential or its
 path. File enrollment currently requires Linux x64 glibc with qualified local
-filesystem custody. Other platforms refuse this delivery method.
+filesystem custody. Other platforms refuse this delivery method. A failure to
+load the required native custody helper also returns `unsupported_platform`;
+changing destination permissions cannot supply missing native support.
 
 ## Choose the grant
 

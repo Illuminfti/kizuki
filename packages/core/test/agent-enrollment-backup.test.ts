@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -7,24 +8,120 @@ import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { initVault } from "../src/vault/init";
 import { authenticateAgentCredential, enrollAgent } from "../src/agents/enrollment";
 import { credentialCustodyQualified } from "./agents/custody-fixture";
+import { fileProposal, getProposal, initStaging, type ProposalInput } from "../src/staging/proposals";
 import fixture from "./fixtures/agent-enrollment-ledger16-backup.json";
+import claimFixture from "./fixtures/agent-enrollment-ledger16-claim-backup.json";
 
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function materialize(): { root: string; backup: string; manifest: ExportManifest } {
+function materialize(input: { files: Record<string, string> } = fixture): { root: string; backup: string; manifest: ExportManifest } {
   const root = mkdtempSync(join(tmpdir(), "kizuki-agent-backup-"));
   roots.push(root);
   const backup = join(root, "backup");
-  for (const [path, text] of Object.entries(fixture.files)) {
+  for (const [path, text] of Object.entries(input.files)) {
     const target = join(backup, path);
     mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
     writeFileSync(target, text, { mode: 0o600 });
   }
-  return { root, backup, manifest: JSON.parse(fixture.files["manifest.json"]) as ExportManifest };
+  return { root, backup, manifest: JSON.parse(input.files["manifest.json"]!) as ExportManifest };
 }
+
+const oldClaim = JSON.parse(claimFixture.files["claims/claims.jsonl"]) as ProposalInput & {
+  claim_id: string; target: string | null; subjects: string[];
+};
+const oldProposal: ProposalInput = {
+  kind: oldClaim.kind, target: oldClaim.target, body: oldClaim.body,
+  frontmatter: oldClaim.frontmatter, provenance: oldClaim.provenance,
+  subjects: oldClaim.subjects, producer: oldClaim.producer, confidence: oldClaim.confidence,
+};
+
+test("restores an actual ledger16 claim and preserves it when the historical write input is refused", () => {
+  expect(claimFixture.writer_commit).toBe("c5a3aa54c366c1f0f8242448732a797663fb65c1");
+  expect(claimFixture.bun_version).toBe("1.3.10");
+  expect(Object.hasOwn(oldClaim, "content_hash")).toBe(false);
+  const { root, backup, manifest } = materialize(claimFixture);
+  expect(manifest.schema_versions.ledger).toBe(16);
+  expect(verifyBackup(backup).manifest_sha256).toBe(manifest.manifest_sha256);
+  const restored = join(root, "restored");
+  expect(restoreVault(backup, restored)).toMatchObject({ events: 1, claims: 1 });
+  const db = openLedger(join(restored, ".kizuki", "kizuki.db"));
+  try {
+    initStaging(db);
+    const restoredProposal = getProposal(db, oldClaim.claim_id)!;
+    expect(restoredProposal).toMatchObject({ ...oldProposal, proposal_id: oldClaim.claim_id, sensitivity: "private" });
+    expect(restoredProposal.content_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(db.query("SELECT claim_id,content_hash FROM claims").all()).toEqual([
+      { claim_id: oldClaim.claim_id, content_hash: restoredProposal.content_hash },
+    ]);
+    // Main now accepts sensitivity as a row label, not caller frontmatter.
+    // Preserve old data; do not rewrite the fixture to manufacture retry compatibility.
+    const before = db.query("SELECT * FROM claims").all();
+    expect(() => fileProposal(db, oldProposal)).toThrow("frontmatter: sensitivity is unknown");
+    expect(db.query("SELECT * FROM claims").all()).toEqual(before);
+    expect(getProposal(db, oldClaim.claim_id)).toEqual(restoredProposal);
+    expect(db.query("SELECT count(*) AS n FROM agent_enrollments").get()).toEqual({ n: 0 });
+  } finally { db.close(); }
+});
+
+test.if(credentialCustodyQualified)("upgrades genuine ledger16 rows through enrollment, lazy signature repair and portable restore", () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-agent-legacy-claim-")); roots.push(root);
+  const vault = join(root, "vault"); initVault(vault);
+  const dbPath = join(vault, ".kizuki", "kizuki.db");
+  // Exact old writer schema and rows: no current migration is run or reversed.
+  const old = new Database(dbPath);
+  let eventsBefore: unknown[];
+  try {
+    old.exec(readFileSync(new URL("./fixtures/agent-enrollment-ledger16-claim.sql", import.meta.url), "utf8"));
+    expect(old.query("SELECT version FROM schema_version").get()).toEqual({ version: 16 });
+    expect(old.query<{ name: string }, []>("PRAGMA table_info(claims)").all().some(row => row.name === "content_hash")).toBe(false);
+    expect(old.query("SELECT name FROM sqlite_master WHERE name='agent_enrollments'").get()).toBeNull();
+    eventsBefore = old.query("SELECT * FROM events ORDER BY event_id").all();
+  } finally { old.close(true); }
+  chmodSync(dbPath, 0o600);
+  const credentials = join(vault, ".kizuki", "agent-credentials"); mkdirSync(credentials, { mode: 0o700 });
+  const tokenRef = `file:${join(credentials, "legacy-reader.credential")}`;
+  expect(enrollAgent(vault, {
+    name: "legacy-reader", operation_id: "legacy-reader-0001", token_ref: tokenRef,
+    grant: { ceiling: "public", types: [], subjects: [], since: null, until: null, tools: [], rate_limit_per_minute: 60, relay_owner_corrections: false },
+  })).toMatchObject({ status: "completed", authority: "active", credential: "ready" });
+  const db = openLedger(dbPath), backup = join(root, "current-backup");
+  let signature: string;
+  try {
+    expect(db.query("SELECT version FROM schema_version").get()).toEqual({ version: 17 });
+    expect(db.query("SELECT * FROM events ORDER BY event_id").all()).toEqual(eventsBefore);
+    expect(db.query<{ name: string }, []>("PRAGMA table_info(claims)").all().some(row => row.name === "content_hash")).toBe(false);
+    expect(authenticateAgentCredential(db, tokenRef)?.kind).toBe("agent");
+    initStaging(db);
+    const migratedProposal = getProposal(db, oldClaim.claim_id)!;
+    expect(migratedProposal).toMatchObject({ ...oldProposal, proposal_id: oldClaim.claim_id, sensitivity: "private" });
+    signature = migratedProposal.content_hash;
+    expect(signature).toMatch(/^[0-9a-f]{64}$/);
+    expect(db.query("SELECT claim_id,content_hash FROM claims").all()).toEqual([
+      { claim_id: oldClaim.claim_id, content_hash: signature },
+    ]);
+    expect(exportVault(db, vault, backup).schema_versions.ledger).toBe(17);
+  } finally { db.close(); }
+  const restored = join(root, "restored");
+  expect(restoreVault(backup, restored)).toMatchObject({ events: 1, claims: 1 });
+  const target = openLedger(join(restored, ".kizuki", "kizuki.db"));
+  try {
+    initStaging(target);
+    const restoredProposal = getProposal(target, oldClaim.claim_id)!;
+    expect(restoredProposal).toMatchObject({ ...oldProposal, proposal_id: oldClaim.claim_id, content_hash: signature, sensitivity: "private" });
+    const before = target.query("SELECT * FROM claims").all();
+    expect(() => fileProposal(target, oldProposal)).toThrow("frontmatter: sensitivity is unknown");
+    expect(target.query("SELECT * FROM claims").all()).toEqual(before);
+    expect(getProposal(target, oldClaim.claim_id)).toEqual(restoredProposal);
+    expect(target.query("SELECT * FROM events ORDER BY event_id").all()).toEqual(eventsBefore);
+    for (const table of ["agents", "agent_grants", "agent_audit", "agent_enrollments"]) {
+      expect(target.query(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
+    }
+    expect(authenticateAgentCredential(target, tokenRef)).toBeNull();
+  } finally { target.close(); }
+});
 
 function resign(backup: string, manifest: ExportManifest): void {
   const unsigned = {

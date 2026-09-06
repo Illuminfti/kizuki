@@ -30,6 +30,44 @@ function footprint(path: string): unknown {
 }
 
 describe.if(credentialCustodyQualified)("agent enrollment preview", () => {
+  for (const readFails of [false, true]) test(`normalizes real strict-close failure after ${readFails ? "a failed" : "a successful"} preview read`, () => {
+    const f = fixture();
+    try {
+      const before = [footprint(f.vault), footprint(f.credentialDir)];
+      const script = `
+        import { Database } from "bun:sqlite";
+        const { AgentEnrollmentError, previewAgentEnrollment } = await import(${JSON.stringify(join(import.meta.dir, "../../src/agents/enrollment.ts"))});
+        const originalClose = Database.prototype.close, originalPrepare = Database.prototype.prepare;
+        const retained = []; let connection, attempts = 0;
+        Database.prototype.prepare = function(sql, ...rest) {
+          if (${readFails} && sql === "SELECT version FROM schema_version LIMIT 2") throw new Error("synthetic-read-failure");
+          return originalPrepare.call(this, sql, ...rest);
+        };
+        Database.prototype.close = function(...args) {
+          attempts++; connection = this;
+          // An actual outstanding SQLite statement makes close(true) fail.
+          // Retain it through error observation; never rely on GC to release it.
+          const statement = originalPrepare.call(this, "SELECT 1 AS close_lifetime_fixture");
+          statement.get(); retained.push(statement);
+          return originalClose.apply(this, args);
+        };
+        let typed = false, fixed = false;
+        try { previewAgentEnrollment(${JSON.stringify(f.vault)}, ${JSON.stringify(request(join(f.credentialDir, "credential.json")))}); }
+        catch (error) { typed = error instanceof AgentEnrollmentError; fixed = typed && error.code === "enrollment_unavailable" && error.message === "enrollment_unavailable"; }
+        finally {
+          Database.prototype.close = originalClose; Database.prototype.prepare = originalPrepare;
+          for (const statement of retained) statement.finalize();
+          if (connection !== undefined) originalClose.call(connection, true);
+        }
+        console.log(JSON.stringify({ typed, fixed, attempts }));
+      `;
+      const child = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
+      expect(child.exitCode).toBe(0); expect(child.stderr.length).toBe(0);
+      expect(JSON.parse(child.stdout.toString())).toEqual({ typed: true, fixed: true, attempts: 1 });
+      expect([footprint(f.vault), footprint(f.credentialDir)]).toEqual(before);
+    } finally { f.clean(); }
+  });
+
   for (const destination of [
     ".", "..notes/credential", "notes/credential", ".kizuki", ".kizuki/agent-credentials",
     ".kizuki/kizuki.db", ".kizuki/kizuki.db-wal", ".kizuki/kizuki.db-shm", ".kizuki/kizuki.db-journal",
@@ -206,4 +244,29 @@ describe.if(credentialCustodyQualified)("agent enrollment preview", () => {
       } finally { f.clean(); }
     });
   }
+});
+
+test.if(process.platform === "linux" && process.arch === "x64")("reports missing native custody support independently of path safety", () => {
+  const script = `
+    import { mock } from "bun:test";
+    let loads = 0;
+    mock.module(${JSON.stringify(join(import.meta.dir, "../../src/util/owned-directory-native.ts"))}, () => ({
+      loadOwnedDirectoryNative() { loads++; throw new Error("synthetic-native-loader-failure"); },
+    }));
+    const { AgentEnrollmentError, previewAgentEnrollment, enrollAgent, revokeAgentEnrollment } = await import(${JSON.stringify(join(import.meta.dir, "../../src/agents/enrollment.ts"))});
+    const input = ${JSON.stringify(request("/synthetic/private/credential.json"))};
+    const codes = [];
+    for (const operation of [
+      () => previewAgentEnrollment("/synthetic/vault", input),
+      () => enrollAgent("/synthetic/vault", input),
+      () => revokeAgentEnrollment("/synthetic/vault", input.name),
+    ]) {
+      try { operation(); codes.push(null); }
+      catch (error) { codes.push(error instanceof AgentEnrollmentError ? error.code : null); }
+    }
+    console.log(JSON.stringify({ loads, codes }));
+  `;
+  const child = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
+  expect(child.exitCode).toBe(0); expect(child.stderr.length).toBe(0);
+  expect(JSON.parse(child.stdout.toString())).toEqual({ loads: 3, codes: ["unsupported_platform", "unsupported_platform", "unsupported_platform"] });
 });

@@ -108,7 +108,7 @@ function parseRequest(request: AgentEnrollmentRequest): RequestShape {
 function credentialDirectory(path: string): CredentialDirectory {
   try { return openCredentialDirectory(path); }
   catch (error) {
-    if (error instanceof Error && error.message === "credential_file_unsupported") fail("unsupported_platform");
+    if (error instanceof Error && (error.message === "credential_file_unsupported" || error.message === "credential_file_unavailable")) fail("unsupported_platform");
     fail("credential_unsafe");
   }
 }
@@ -128,7 +128,7 @@ function ledgerCustody(vaultPath: string) {
   let directory: CredentialDirectory;
   try { directory = openCredentialDirectory(`${root}/.kizuki`); }
   catch (error) {
-    if (error instanceof Error && error.message === "credential_file_unsupported") fail("unsupported_platform");
+    if (error instanceof Error && (error.message === "credential_file_unsupported" || error.message === "credential_file_unavailable")) fail("unsupported_platform");
     fail("vault_unavailable");
   }
   try {
@@ -320,7 +320,7 @@ function cleanupConfirmedRollback(ledger: EnrollmentLedger, directory: Credentia
 export function previewAgentEnrollment(vaultPath: string, request: AgentEnrollmentRequest): AgentEnrollmentResult {
   const shape = parseRequest(request); assertCredentialDestination(vaultPath, shape.request.token_ref.slice(5));
   const directory = credentialDirectory(shape.parent);
-  let custody: ReturnType<typeof ledgerCustody> | undefined, db: Database | undefined;
+  let custody: ReturnType<typeof ledgerCustody> | undefined;
   try {
     custody = ledgerCustody(vaultPath);
     const snapshot = () => {
@@ -334,8 +334,8 @@ export function previewAgentEnrollment(vaultPath: string, request: AgentEnrollme
     // uses an optimistic immutable read, releasing a result only if the entire
     // main/parent observation is unchanged and no journal appeared. Never read
     // a main-only view while committed WAL frames exist.
-    db = new Database(`${pathToFileURL(custody.path).href}?immutable=1&mode=ro`, constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI | constants.SQLITE_OPEN_NOFOLLOW);
-    let output: AgentEnrollmentResult | undefined, error: unknown;
+    const db = new Database(`${pathToFileURL(custody.path).href}?immutable=1&mode=ro`, constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI | constants.SQLITE_OPEN_NOFOLLOW);
+    let output: AgentEnrollmentResult | undefined;
     try {
       if (!tableExists(db, "schema_version")) fail("vault_unavailable");
       using versionQuery = db.prepare<{ version: number }, []>("SELECT version FROM schema_version LIMIT 2");
@@ -351,14 +351,14 @@ export function previewAgentEnrollment(vaultPath: string, request: AgentEnrollme
         assertRequest(existing, shape, directory.identity);
         output = result(existing, db, credentialFor(existing, db, directory, shape.filename), true);
       }
-    } catch (caught) { error = caught; }
-    db.close(true); db = undefined;
+    } finally {
+      try { db.close(true); } catch { fail("enrollment_unavailable"); }
+    }
     if (snapshot() !== before) fail("enrollment_busy");
-    if (error !== undefined) throw error;
     if (output === undefined) fail("enrollment_unavailable");
     return output;
   } catch (error) { return safeError(error); }
-  finally { try { db?.close(true); } finally { custody?.close(); directory.close(); } }
+  finally { custody?.close(); directory.close(); }
 }
 
 export function enrollAgent(vaultPath: string, request: AgentEnrollmentRequest): AgentEnrollmentResult {
