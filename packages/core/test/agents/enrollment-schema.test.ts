@@ -44,6 +44,17 @@ describe("agent enrollment migration", () => {
     } finally { db.close(); }
   });
 
+  test("enforces complete binding and terminal timestamp invariants", () => {
+    const db = openLedger(":memory:");
+    try {
+      reservation(db, "file_bound");
+      expect(() => db.query("UPDATE agent_enrollments SET credential_size = NULL WHERE operation_id = ?").run("operation-0001")).toThrow();
+      expect(() => db.query("UPDATE agent_enrollments SET state = 'completed' WHERE operation_id = ?").run("operation-0001")).toThrow();
+      expect(() => db.query("UPDATE agent_enrollments SET state = 'completed', completed_at = ? WHERE operation_id = ?").run(NOW, "operation-0001")).not.toThrow();
+      expect(() => db.query("UPDATE agent_enrollments SET operation_id = ? WHERE operation_id = ?").run("bad space", "operation-0001")).toThrow();
+    } finally { db.close(); }
+  });
+
   test("a repeated revoke leaves the terminal grant epoch unchanged", () => {
     const db = openLedger(":memory:");
     try {
