@@ -1,5 +1,9 @@
 {
   "batchId": "kizuki-waves-20260901",
+  "superseded": true,
+  "supersededBy": ".maestro/current-law.json",
+  "supersededAt": "2026-09-06T03:45:00.000Z",
+  "reason": "Wave 1-6 treated staging, promote, and the stranger review loop as completed architecture and scheduled daemon/RFC absorption after incompatible work.",
   "created": [
     {
       "name": "w1",
