@@ -112,8 +112,10 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
       if (value === null) throw new Error("synthetic principal did not authenticate");
       return value;
     };
-    // Fixture setup only: an absent token cannot construct an owner-default context.
+    // Trusted fixture setup only: absent authentication cannot construct an owner-default context.
+    const agentIdsBeforeMissingToken = listAgents(db).map((agent) => agent.agent_id);
     expect(authenticate(db, "")).toBeNull();
+    expect(listAgents(db).map((agent) => agent.agent_id)).toEqual(agentIdsBeforeMissingToken);
     const a = await client({ db, vaultPath: setup.vault, principal: principal(aToken) });
     const b = await client({ db, vaultPath: setup.vault, principal: principal(bToken) });
 
@@ -162,7 +164,10 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
     expect(forbidden.isError).toBe(true);
     expect(errorOf(forbidden).error).toBe("tool_not_granted");
     expect(JSON.parse(forbidden.content[0]!.text)).toEqual({ error: "tool_not_granted", message: "tool not granted", retry_after_seconds: null });
-    expect(JSON.stringify(envelopeOf(forbidden))).not.toContain("cause");
+    const forbiddenEnvelope = JSON.stringify(envelopeOf(forbidden));
+    expect(forbiddenEnvelope).not.toContain("cause");
+    expect(forbiddenEnvelope).not.toContain(setup.vault);
+    expect(forbiddenEnvelope).not.toContain(marker);
 
     const latestB = await call(b, "context_packet", {
       subjects: [project], include: ["claims"], purpose: "correction", budget_tokens: 500,
@@ -208,7 +213,10 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
     expect(revoked.isError).toBe(true);
     expect(errorOf(revoked).error).toBe("unknown_agent");
     expect(JSON.parse(revoked.content[0]!.text)).toEqual({ error: "unknown_agent", message: "unknown agent", retry_after_seconds: null });
-    expect(JSON.stringify(envelopeOf(revoked))).not.toContain("cause");
+    const revokedEnvelope = JSON.stringify(envelopeOf(revoked));
+    expect(revokedEnvelope).not.toContain("cause");
+    expect(revokedEnvelope).not.toContain(setup.vault);
+    expect(revokedEnvelope).not.toContain(marker);
 
     revokeSourceGrant(db, { source_key: selectedSourceKey!, expected_revision: 1, operation_id: "two-client-source-revoke" });
     const sourceDenied = await call(a, "context_packet", { subjects: [project], include: ["claims"], budget_tokens: 500 });
