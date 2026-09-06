@@ -23,6 +23,7 @@ import { labelClaimSensitivity } from "../sensitivity/store";
 import { stricter } from "../sensitivity/resolve";
 import { cloneExactJson, isNonEmptyString, isPlainObject } from "../util/validate";
 import { ulid } from "../util/ulid";
+import { NAMESPACED_SUBJECT_MAX } from "./subjects";
 
 /**
  * Compatibility seam over the claims table (RFC 0002 §4.3). New callers
@@ -41,10 +42,10 @@ export type StagingStatus = (typeof STAGING_STATUSES)[number];
 export type { FrontmatterScalar, FrontmatterValue } from "../contracts/proposal";
 
 const MAX_BODY_CHARS = 64_000;
-const MAX_TARGET_CHARS = 256;
+const MAX_TARGET_CHARS = NAMESPACED_SUBJECT_MAX;
 const MAX_FRONTMATTER_KEYS = 64;
 const MAX_SUBJECTS = 64;
-const MAX_SUBJECT_CHARS = 256;
+const MAX_SUBJECT_CHARS = NAMESPACED_SUBJECT_MAX;
 const MAX_PROVENANCE = 64;
 const FRONTMATTER_OWNED = new Set(["type", "title"]);
 
@@ -373,19 +374,27 @@ function resolveLabels(
   };
 }
 
+function lookupSignatureRow(db: Database, contentHash: string): ProposalRow | null {
+  const pending = db
+    .query(
+      `SELECT * FROM proposals
+        WHERE content_hash = ? AND status = 'pending'`,
+    )
+    .get(contentHash) as ProposalRow | null;
+  if (pending !== null) return pending;
+  return db
+    .query(
+      `SELECT * FROM proposals
+        WHERE content_hash = ? AND status = 'promoted'
+        ORDER BY created_at, proposal_id LIMIT 1`,
+    )
+    .get(contentHash) as ProposalRow | null;
+}
+
 function signatureOf(
   input: Pick<
     StagedProposal,
-    | "kind"
-    | "target"
-    | "body"
-    | "frontmatter"
-    | "subjects"
-    | "producer"
-    | "confidence"
-    | "sensitivity"
-    | "taint"
-    | "authority"
+    "kind" | "target" | "body" | "frontmatter" | "subjects" | "producer" | "confidence"
   >,
 ): string {
   return contentSignature({
@@ -396,9 +405,6 @@ function signatureOf(
     subjects: input.subjects,
     producer: canonicalizeProducer(input.producer),
     confidence: input.confidence,
-    sensitivity: input.sensitivity,
-    taint: input.taint,
-    authority: input.authority,
   });
 }
 
@@ -432,11 +438,11 @@ function insertCompatClaim(
   db.query(
     `INSERT OR IGNORE INTO claims
        (claim_id, kind, target, body, frontmatter, provenance, subjects,
-        producer, confidence, status, created_at, body_hash,
+        producer, confidence, status, created_at, body_hash, content_hash,
         subject, predicate, object, polarity, claim_key, authority,
         sensitivity, taint, model_ref, valid_from, valid_to, asserted_at,
         retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'positive', NULL,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'positive', NULL,
              ?, ?, ?, NULL, ?, NULL, ?,
              ?, NULL, NULL, 1, ?)`,
   ).run(
@@ -452,6 +458,7 @@ function insertCompatClaim(
     compatStatusToClaim(status),
     proposal.created_at,
     proposal.body_hash,
+    proposal.content_hash,
     subject,
     proposal.authority,
     proposal.sensitivity,
@@ -461,6 +468,14 @@ function insertCompatClaim(
     status === "withdrawn" ? proposal.created_at : null,
     proposal.created_at,
   );
+  if (
+    db.query("SELECT 1 FROM claims WHERE claim_id = ?").get(proposal.proposal_id) ===
+    null
+  ) {
+    throw new StagingError(
+      "claim: content signature already occupies a live row",
+    );
+  }
 }
 
 function corroborateCompatClaim(
@@ -468,6 +483,7 @@ function corroborateCompatClaim(
   proposal: StagedProposal,
   provenance: readonly string[],
   at: string,
+  bump: boolean,
 ): void {
   if (!tableExists(db, "claims")) return;
   const live = db
@@ -486,16 +502,35 @@ function corroborateCompatClaim(
     (live.sensitivity ?? "private") as Sensitivity,
     proposal.sensitivity,
   );
+  const grew = merged.length !== current.length;
+  const raised = sensitivity !== (live.sensitivity ?? "private");
+  if (!grew && !raised) return;
   db.query(
     `UPDATE claims
         SET provenance = ?, corroboration = ?, last_confirmed_at = ?, sensitivity = ?
       WHERE claim_id = ?`,
   ).run(
     JSON.stringify(merged),
-    live.corroboration + 1,
+    bump ? live.corroboration + 1 : live.corroboration,
     at,
     sensitivity,
     live.claim_id,
+  );
+}
+
+function vacateSignature(
+  db: Database,
+  proposalId: string,
+  contentHash: string,
+): void {
+  db.query("UPDATE proposals SET content_hash = ? WHERE proposal_id = ?").run(
+    contentHash,
+    proposalId,
+  );
+  if (!tableExists(db, "claims")) return;
+  db.query("UPDATE claims SET content_hash = ? WHERE claim_id = ?").run(
+    contentHash,
+    proposalId,
   );
 }
 
@@ -553,33 +588,30 @@ export function fileProposal(
     subjects,
     producer: input.producer,
     confidence: input.confidence,
-    ...labels,
   });
 
   const file = db.transaction((): FileProposalResult => {
     const sourceDeletion = requiresSourceTombstoneBinding(db, input);
     if (sourceDeletion) requireSourceTombstoneProposal(db, input, context);
     else requireExternalEvents(db, provenance);
-    const existing = db
-      .query(
-        `SELECT * FROM proposals
-          WHERE content_hash = ? AND status = 'pending'`,
-      )
-      .get(contentHash) as ProposalRow | null;
+    const existing = lookupSignatureRow(db, contentHash);
     if (existing !== null) {
       const current = rowToProposal(db, existing);
       if (signatureOf(current) === contentHash) {
         if (sourceDeletion) requireSourceTombstoneProposal(db, current, context);
         const merged = uniqueStrings([...current.provenance, ...provenance]);
-        if (merged.length === current.provenance.length) {
-          return { outcome: "duplicate", proposal: current };
+        const grew = merged.length !== current.provenance.length;
+        if (grew) {
+          db.query(
+            "UPDATE proposals SET provenance = ? WHERE proposal_id = ?",
+          ).run(JSON.stringify(merged), current.proposal_id);
         }
-        const at = nowRfc3339();
-        db.query(
-          "UPDATE proposals SET provenance = ? WHERE proposal_id = ?",
-        ).run(JSON.stringify(merged), current.proposal_id);
-        const updated: StagedProposal = { ...current, provenance: merged };
-        corroborateCompatClaim(db, updated, provenance, at);
+        const updated: StagedProposal = {
+          ...current,
+          provenance: merged,
+          sensitivity: labels.sensitivity,
+        };
+        corroborateCompatClaim(db, updated, provenance, nowRfc3339(), grew);
         return { outcome: "duplicate", proposal: rowToProposal(db, {
           ...existing,
           provenance: JSON.stringify(merged),
@@ -587,10 +619,7 @@ export function fileProposal(
       }
       // The unique slot is the live signature. A pending row whose stored
       // fields no longer hash to this content_hash does not occupy it.
-      db.query("UPDATE proposals SET content_hash = ? WHERE proposal_id = ?").run(
-        signatureOf(current),
-        current.proposal_id,
-      );
+      vacateSignature(db, current.proposal_id, signatureOf(current));
     }
 
     const proposal: StagedProposal = {

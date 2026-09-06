@@ -4,6 +4,9 @@
  */
 
 const SEGMENT_MAX = 64;
+const SEGMENT_COUNT = 8;
+/** Longest `namespacedSubjectId`: eight path-safe segments plus slashes. */
+export const NAMESPACED_SUBJECT_MAX = SEGMENT_COUNT * SEGMENT_MAX + (SEGMENT_COUNT - 1);
 const UNSAFE = /[^A-Za-z0-9._-]+/g;
 
 /** Path-safe segment for a connector- or source-local id. */
@@ -26,5 +29,7 @@ export function namespacedSubjectId(
     .split(/[:/]/)
     .filter((part) => part.length > 0)
     .map(encodeSubjectSegment);
-  return [encodeSubjectSegment(connectorId), ...locals].slice(0, 8).join("/");
+  return [encodeSubjectSegment(connectorId), ...locals]
+    .slice(0, SEGMENT_COUNT)
+    .join("/");
 }

@@ -6,8 +6,8 @@ import {
   withdrawForTombstone,
 } from "../../src/staging/producers";
 import { fileProposal, getProposal } from "../../src/staging/proposals";
-import { namespacedSubjectId } from "../../src/staging/subjects";
-import { event, memoryDb } from "./helpers";
+import { NAMESPACED_SUBJECT_MAX, namespacedSubjectId } from "../../src/staging/subjects";
+import { event, memoryDb, proposalInput } from "./helpers";
 
 describe("proposalsForEvent", () => {
   test("emits an entity candidate per subject plus one capture note", () => {
@@ -212,6 +212,22 @@ describe("deterministic subject identity and capture bounds", () => {
     expect(gmail?.target).toBe("gmail/42");
     expect(telegram?.target).toBe("telegram/42");
     expect(gmail?.target).not.toBe(telegram?.target);
+  });
+
+  test("a max-length namespaced subject still files", () => {
+    const local = `${"a".repeat(80)}:${"b".repeat(80)}:${"c".repeat(80)}:${"d".repeat(80)}`;
+    const id = namespacedSubjectId("connector-fixture", local);
+    expect(id.length).toBeGreaterThan(256);
+    expect(id.length).toBeLessThanOrEqual(NAMESPACED_SUBJECT_MAX);
+    const db = memoryDb();
+    const filed = fileProposal(
+      db,
+      proposalInput({ target: id, subjects: [id] }),
+    );
+    expect(filed.outcome).toBe("stored");
+    if (filed.outcome !== "stored") return;
+    expect(filed.proposal.target).toBe(id);
+    expect(getClaim(db, filed.proposal.proposal_id)?.status).toBe("live");
   });
 
   test("does not label a calendar or chat as a person", () => {

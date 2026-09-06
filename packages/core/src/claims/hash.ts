@@ -16,8 +16,8 @@ export function hashBody(body: string): string {
 /**
  * RFC claim content signature (issues #167/#168). Provenance is not in the
  * key: a later sighting with the same semantic fields corroborates the live
- * row instead of forking it or being discarded. Floor stamps on frontmatter
- * ride on the row, not the identity key.
+ * row instead of forking it or being discarded. Sensitivity, taint, and
+ * authority ride on the row and refine upward; they are not identity.
  */
 const SIGNATURE_IGNORE_FRONTMATTER = new Set([
   "x-source-record-id",
@@ -33,9 +33,6 @@ export function contentSignature(parts: {
   subjects: readonly string[];
   producer: string;
   confidence: number;
-  sensitivity?: string | null;
-  taint?: string | null;
-  authority?: string | null;
 }): string {
   const frontmatter = Object.fromEntries(
     Object.entries(parts.frontmatter)
@@ -51,9 +48,6 @@ export function contentSignature(parts: {
       [...parts.subjects].sort(),
       parts.producer,
       parts.confidence,
-      parts.sensitivity ?? "",
-      parts.taint ?? "",
-      parts.authority ?? "",
     ]),
   );
 }

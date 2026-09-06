@@ -29,4 +29,4 @@ export {
 } from "./producers";
 export type { ProducerGrants, TombstoneCascade } from "./producers";
 export type { SourceTombstoneContext } from "../canon/source-tombstone";
-export { encodeSubjectSegment, namespacedSubjectId } from "./subjects";
+export { NAMESPACED_SUBJECT_MAX, encodeSubjectSegment, namespacedSubjectId } from "./subjects";
