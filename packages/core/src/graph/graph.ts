@@ -351,7 +351,8 @@ function restoreGraphStamp(db: Database, pages: readonly CanonPage[]): void {
 
 /**
  * Incremental graph write. A complete walk projects the live set; a skipped
- * page keeps its edges until the next complete walk.
+ * page keeps its edges until the next complete walk, except relations to a
+ * page explicitly known to be inactive.
  */
 export function refreshPageEdges(
   db: Database,
@@ -369,17 +370,19 @@ export function refreshPageEdges(
   const byId = new Map(
     pages.filter(isLiveCanonPage).map((candidate) => [candidate.id, candidate]),
   );
-  db.query("DELETE FROM graph_edges WHERE src = ?").run(page.id);
   if (isLiveCanonPage(page)) {
+    db.query("DELETE FROM graph_edges WHERE src = ?").run(page.id);
     const eventHints = eventSensitivityHints(db, sourceEventIds([page]));
     for (const edge of pageEdges(page, index, byId, eventHints, authorities.get(page.relPath)??"model_inference")) {
       insertEdge(db, edge);
     }
+  } else {
+    db.query("DELETE FROM graph_edges WHERE src = ? OR dst = ?").run(page.id, page.id);
   }
   stampGraphIncomplete(db, skipped);
 }
 
-/** Incremental delete. Incomplete walks only drop this page's outgoing edges. */
+/** Incremental delete. Incomplete walks drop all relations to this page. */
 export function removePageEdges(
   db: Database,
   pageId: string,
@@ -391,7 +394,7 @@ export function removePageEdges(
     restoreGraphStamp(db, pages);
     return;
   }
-  db.query("DELETE FROM graph_edges WHERE src = ?").run(pageId);
+  db.query("DELETE FROM graph_edges WHERE src = ? OR dst = ?").run(pageId, pageId);
   stampGraphIncomplete(db, skipped);
 }
 
