@@ -44,10 +44,6 @@ export interface RunResult {
   cursor: string | null;
 }
 
-export class InfrastructureError extends Error {
-  override readonly name = "InfrastructureError";
-}
-
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -176,7 +172,7 @@ export function runBatch(
       result.retractions_filed += event.retractions_filed;
     } catch (error) {
       result.errors.push(errorText(error));
-      if (error instanceof LedgerStoreError || error instanceof InfrastructureError) {
+      if (error instanceof LedgerStoreError) {
         return result;
       }
     }

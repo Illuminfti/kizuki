@@ -40,15 +40,10 @@ test("extract checkpoint advancement is transaction-owned and validates its curs
   }
 });
 
-test("only extraction owns the private checkpoint writer", () => {
+test("extract rails have one writer and no checkpoint alias", () => {
   expect(importers('from "./extract-checkpoint"')).toEqual(["serve/extract.ts"]);
-  const resumeWriterImporters = sourceFiles(sourceRoot)
-    .filter(path => readFileSync(path, "utf8").includes("writeResumeCursor"))
-    .map(path => relative(sourceRoot, path));
-  expect(resumeWriterImporters.sort()).toEqual([
-    "ledger/checkpoints.ts",
-    "ledger/connections.ts",
-    "serve/extract-checkpoint.ts",
-  ]);
+  expect(importers("writeResumeCursor")).toEqual([]);
+  expect(importers("writeCheckpoint")).toEqual([]);
   expect(readFileSync(join(sourceRoot, "index.ts"), "utf8")).not.toContain("writeCheckpoint");
+  expect(readFileSync(join(sourceRoot, "index.ts"), "utf8")).not.toContain("writeResumeCursor");
 });

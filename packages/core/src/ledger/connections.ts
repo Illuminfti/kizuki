@@ -455,25 +455,6 @@ export function saveCheckpoint(
   ).checkpoint;
 }
 
-/** Extract-rail cursor write. Not a connector checkpoint; no connections row. */
-export function writeResumeCursor(
-  db: Database,
-  connector_id: string,
-  source_key: string,
-  cursor: string,
-): void {
-  const encoded = assertCursorSize(cursor, "cursor");
-  if (encoded === null) throw new LedgerError("resume cursor must be a string");
-  const at = new Date().toISOString();
-  db.query(
-    `INSERT INTO rail_cursors (rail, source_key, cursor, updated_at)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT (rail, source_key) DO UPDATE SET
-       cursor = excluded.cursor,
-       updated_at = excluded.updated_at`,
-  ).run(connector_id, source_key, encoded, at);
-}
-
 export function getCheckpoint(
   db: Database,
   connector_id: string,
