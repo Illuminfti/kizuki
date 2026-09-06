@@ -77,4 +77,19 @@ describe("vault identity", () => {
     expect(ensureVaultId(path, null)).toBe(id);
     expect(ensureVaultId(path, "")).toBe(id);
   });
+
+  test("the host binding is only /etc/machine-id", () => {
+    let host: string | null = null;
+    try {
+      const trimmed = readFileSync("/etc/machine-id", "utf8").trim().toLowerCase();
+      if (/^[0-9a-f-]{1,128}$/.test(trimmed) && !/^0+$/.test(trimmed.replace(/-/g, ""))) host = trimmed;
+    } catch {
+      host = null;
+    }
+    const path = vault();
+    const id = ensureVaultId(path);
+    expect(ensureVaultId(path)).toBe(id);
+    if (host === null) return;
+    expect(readFileSync(join(path, ".kizuki", "vault-machine"), "utf8").trim()).toBe(host);
+  });
 });

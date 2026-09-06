@@ -41,10 +41,8 @@ function readSystemIdent(path: string): string | null {
 }
 
 function readMachineId(): string | null {
-  const parts = [readSystemIdent("/etc/machine-id"), readSystemIdent("/sys/class/dmi/id/product_uuid")].filter(
-    (part): part is string => part !== null,
-  );
-  return parts.length === 0 ? null : bindingOf(parts.join(":"));
+  // Only /etc/machine-id: it is world-readable. DMI uuid is often root-only.
+  return readSystemIdent("/etc/machine-id");
 }
 
 function writeOwnedFile(path: string, body: string, exclusive: boolean): void {
