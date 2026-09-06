@@ -22,7 +22,7 @@ import { tableExists } from "../ledger/schema";
 import { refreshDerivedPage, removeDerivedPage } from "../derived";
 import type { VaultPage } from "../vault/frontmatter";
 import type { CanonPage } from "../vault/pages";
-import { PAGE_TYPES } from "../vault/schema";
+import { PAGE_TYPES, validatePage } from "../vault/schema";
 import { grantCanonWrite, isWriter, writePage } from "../vault/write";
 import type { Writer } from "../vault/write";
 import { assertPageRelPath } from "./arbiter";
@@ -467,6 +467,10 @@ export function applyCanonWrite(
     existing === null
       ? prepareCreate(claims, pageId, provenance, decision.action === "conflict")
       : prepareRevision(io, claims, primary, existing, decision, provenance);
+  const invalid = validatePage(prepared.page.data);
+  if (invalid.length > 0) {
+    throw new CanonWriteError("frontmatter_invalid", invalid[0] ?? "invalid page");
+  }
   requireSourceEvents(io.db, Array.isArray(prepared.page.data["sources"]) ? prepared.page.data["sources"].filter((id): id is string => typeof id === "string") : [], { owner: true, purpose: "derive" });
   if (prepared.page.data["sensitivity"] === "public" || prepared.page.data["sensitivity"] === "personal" || prepared.page.data["sensitivity"] === "private") prepared.page.data["sensitivity"] = sourceSensitivity(io.db, provenance, prepared.page.data["sensitivity"]);
   const superseded = supersededRefs(io, decision);

@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { applyCanonWrite } from "../../src/canon/apply";
+import { ownerEdited } from "../../src/canon/arbiter";
 import { createBudgetTracker } from "../../src/canon/budget";
 import { initCanon } from "../../src/canon/schema";
-import { CanonPageUnreadable, inspectPageIndex, readPage } from "../../src/canon/store";
+import {
+  CanonPageUnreadable,
+  inspectPageIndex,
+  pageIndexByPath,
+  readPage,
+  rebuildPageIndex,
+} from "../../src/canon/store";
 import { serializePage } from "../../src/vault/frontmatter";
 import { hashBytes } from "../../src/vault/write";
 import { canonFixture, putEvent, storeClaim } from "./helpers";
@@ -63,5 +70,30 @@ describe("canon storage p1", () => {
       )
       .run();
     expect(inspectPageIndex(live.db)).toEqual(["page_index last_receipt missing"]);
+  });
+
+  test("rebuild keeps last_hash on the receipt so a hand edit is not index drift", async () => {
+    const live = canonFixture();
+    fixtures.push(live);
+    const eventId = putEvent(live.db);
+    const claim = await storeClaim(live.db, eventId);
+    const receipt = applyCanonWrite(
+      live.io,
+      claim,
+      { action: "create", rel_path: "people/grace.md" },
+      { writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 4 }) },
+    );
+    const path = join(live.vault, receipt.page_path);
+    writeFileSync(path, `${readFileSync(path, "utf8")}\nOwner hand edit.\n`);
+    expect(ownerEdited(live.io, receipt.page_path)).toBe(true);
+
+    const rebuilt = rebuildPageIndex(live.io);
+    expect(rebuilt.pages).toBe(1);
+    const indexed = pageIndexByPath(live.db, receipt.page_path);
+    expect(indexed?.last_receipt).toBe(receipt.receipt_id);
+    expect(indexed?.last_hash).toBe(receipt.after_hash);
+    expect(indexed?.last_hash).not.toBe(hashBytes(readFileSync(path)));
+    expect(inspectPageIndex(live.db)).toEqual([]);
+    expect(ownerEdited(live.io, receipt.page_path)).toBe(true);
   });
 });

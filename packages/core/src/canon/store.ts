@@ -268,6 +268,8 @@ function subjectKeyOf(data: Record<string, unknown>): string | null {
  * `page_index` is derived state (architecture invariant 2): it is rebuilt
  * from the vault plus the receipt rows, and a rebuild is what a vault that
  * predates v4 runs once so the arbiter can see its pages.
+ * `last_hash` is the latest receipt's `after_hash` when one exists, so
+ * doctor can distinguish receipt/index drift from a later hand edit.
  */
 export function rebuildPageIndex(io: CanonIo): { pages: number; skipped: number } {
   initCanon(io.db);
@@ -276,12 +278,13 @@ export function rebuildPageIndex(io: CanonIo): { pages: number; skipped: number 
     io.db.exec("DELETE FROM page_index");
     let count = 0;
     for (const page of report.pages) {
+      const latest = latestReceiptForPage(io.db, page.relPath);
       upsertPageIndex(io.db, {
         page_id: page.id,
         rel_path: page.relPath,
         subject_key: subjectKeyOf(page.data),
-        last_receipt: latestReceiptForPage(io.db, page.relPath)?.receipt_id ?? null,
-        last_hash: page.contentHash,
+        last_receipt: latest?.receipt_id ?? null,
+        last_hash: latest?.after_hash ?? page.contentHash,
       });
       count += 1;
     }

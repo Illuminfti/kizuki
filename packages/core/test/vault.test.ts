@@ -7,6 +7,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -494,6 +495,33 @@ describe("canon page discovery", () => {
       "facts/two.md",
     ]);
     expect(report.skipped.every((entry) => entry.code === "duplicate")).toBe(true);
+  });
+
+  test("reports a page-shaped symlink as unreadable and does not follow a linked directory", () => {
+    const vault = tempDir();
+    initVault(vault);
+    seedPage(join(vault, "facts", "good.md"), {
+      data: validData({ id: "fact:good", type: "fact", title: "Good" }),
+      body: "A good note.\n",
+    });
+    const outside = tempDir();
+    seedPage(join(outside, "escape.md"), {
+      data: validData({ id: "fact:escape", type: "fact", title: "Escape" }),
+      body: "Outside the vault.\n",
+    });
+    mkdirSync(join(outside, "nested"));
+    seedPage(join(outside, "nested", "hidden.md"), {
+      data: validData({ id: "fact:hidden", type: "fact", title: "Hidden" }),
+      body: "Inside a linked directory.\n",
+    });
+    symlinkSync(join(outside, "escape.md"), join(vault, "facts", "alias.md"));
+    symlinkSync(join(outside, "nested"), join(vault, "facts", "linked"));
+
+    const report = listCanonPagesReport(vault);
+    expect(report.pages.map((page) => page.id)).toEqual(["fact:good"]);
+    expect(report.skipped).toEqual([
+      expect.objectContaining({ relPath: "facts/alias.md", code: "unreadable" }),
+    ]);
   });
 
   test("bounds file size and traversal depth", () => {
