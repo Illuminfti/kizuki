@@ -149,6 +149,39 @@ describe("the fixture messages map to exact events", () => {
     ]);
   });
 
+  test("a continued filename keeps the charset declared on the first encoded segment", () => {
+    const event = build(
+      [
+        "From: ada@acme.example",
+        "Subject: Cafe scan",
+        "Content-Type: multipart/mixed; boundary=B",
+        "",
+        "--B",
+        "Content-Type: text/plain; charset=utf-8",
+        "",
+        "see attached",
+        "--B",
+        "Content-Type: application/pdf",
+        "Content-Disposition: attachment; filename*0*=iso-8859-1''caf; filename*1*=%E9; filename*2=.txt",
+        "",
+        "%PDF-cafe",
+        "--B--",
+        "",
+      ].join("\r\n"),
+    );
+    expect(event.source_record_id).toBe("9:4:Archive/2026");
+    expect(event.text).toBe("Cafe scan\n\nsee attached");
+    expect(event.attachments).toEqual([
+      {
+        attachment_id: "2",
+        media_type: "application/pdf",
+        filename: "café.txt",
+        byte_size: 9,
+      },
+    ]);
+    expect(validateEventInput(event).ok).toBe(true);
+  });
+
   test("an inline image is captured by its name parameter", () => {
     expect(byId().get("42:9:INBOX")?.attachments).toEqual([
       {

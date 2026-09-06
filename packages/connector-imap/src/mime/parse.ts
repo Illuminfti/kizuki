@@ -97,20 +97,56 @@ export function normalizeParams(raw: Record<string, string>): Record<string, str
     params[key] = value;
   }
   for (const [base, pieces] of continuations) {
-    pieces.sort((a, b) => a.index - b.index);
-    const joined = pieces
-      .map((piece) => (piece.extended ? decodeExtended(piece.value) : piece.value))
-      .join("");
-    params[base] = joined;
+    params[base] = decodeContinued(pieces);
   }
   return params;
 }
 
 function decodeExtended(value: string): string {
-  const parts = value.split("'");
-  const charset = parts.length >= 3 ? (parts[0] ?? "") : "";
-  const payload = parts.length >= 3 ? parts.slice(2).join("'") : value;
+  return decodeContinued([{ index: 0, value, extended: true }]);
+}
+
+/**
+ * RFC 2231: one continued value, one charset from the first encoded
+ * segment, octets reassembled before decoding. Unencoded pieces are
+ * literal, including a percent sign.
+ */
+function decodeContinued(
+  pieces: { index: number; value: string; extended: boolean }[],
+): string {
+  pieces.sort((a, b) => a.index - b.index);
+  if (!pieces.some((piece) => piece.extended)) {
+    return pieces.map((piece) => piece.value).join("");
+  }
+  let charset = "";
+  let seenExtended = false;
   const bytes: number[] = [];
+  for (const piece of pieces) {
+    if (!piece.extended) {
+      appendRawBytes(bytes, piece.value);
+      continue;
+    }
+    let payload = piece.value;
+    if (!seenExtended) {
+      const parts = piece.value.split("'");
+      if (parts.length >= 3) {
+        charset = parts[0] ?? "";
+        payload = parts.slice(2).join("'");
+      }
+      seenExtended = true;
+    }
+    appendPercentDecoded(bytes, payload);
+  }
+  return decodeCharset(Uint8Array.from(bytes), charset).text;
+}
+
+function appendRawBytes(bytes: number[], text: string): void {
+  for (let index = 0; index < text.length; index += 1) {
+    bytes.push((text[index] ?? "").charCodeAt(0) & 0xff);
+  }
+}
+
+function appendPercentDecoded(bytes: number[], payload: string): void {
   for (let index = 0; index < payload.length; index += 1) {
     const character = payload[index] ?? "";
     if (character === "%" && index + 2 < payload.length) {
@@ -123,7 +159,6 @@ function decodeExtended(value: string): string {
     }
     bytes.push(character.charCodeAt(0) & 0xff);
   }
-  return decodeCharset(Uint8Array.from(bytes), charset).text;
 }
 
 export function parseContentType(value: string | undefined): ContentType {
