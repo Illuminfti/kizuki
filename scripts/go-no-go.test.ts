@@ -1,9 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { appendFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { evaluateRelease, parseAcceptanceArgs, writeAcceptanceReport } from "./go-no-go";
+import {
+  CAPABILITY_PROOF_FILE, CONNECTORS, EVIDENCE_LIMITS, EvidenceError, JOURNEYS, SURFACE_DOC_FILES, SURFACE_GATE, SURFACE_PRODUCER, SURFACE_PRODUCER_FILES, TARGETS,
+  cliVerbSequence, evaluateSurfaceReceipt, expectedSurfaceInventory, inspectOptionalVerifier, producerRevision, read,
+} from "./release-evidence";
 import { initQualification } from "./qualification";
 import { initVault } from "../packages/core/src/vault/init";
 import { openLedger } from "../packages/core/src/ledger/db";
@@ -372,3 +376,211 @@ test.each(["1.3.10", "9.9.9"])("self-consistent packages with Bun %s are refused
   expect(result.supported_bun_version).toBe(readFileSync(join(import.meta.dir, "../.bun-version"), "utf8").trim());
   expect(result.verifier.find(item => item.file === ".bun-version")?.sha256).toBe(digest(readFileSync(join(import.meta.dir, "../.bun-version"))));
 });
+
+function asV3(f: ReturnType<typeof fixture>, receipts: unknown[] = []) {
+  Object.assign(f.index, { schema: "kizuki.acceptance-evidence/v3", gate_receipts: receipts });
+  f.save();
+  return f;
+}
+function receiptRef(producer: string, gate_id: string, target: string | null, path: string, sha256 = "a".repeat(64)) {
+  return { producer, gate_id, target, path, sha256 };
+}
+function git(cwd: string, args: string[]) {
+  const result = Bun.spawnSync(["git", "-c", "core.hooksPath=/dev/null", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  if (result.exitCode !== 0) throw new Error(result.stderr.toString() || result.stdout.toString());
+  return result.stdout.toString().trim();
+}
+function surfaceCandidate() {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-surface-candidate-")); roots.push(root);
+  const repo = resolve(import.meta.dir, "..");
+  mkdirSync(join(root, "scripts")); mkdirSync(join(root, "docs"));
+  writeFileSync(join(root, ".bun-version"), readFileSync(join(repo, ".bun-version")));
+  for (const name of SURFACE_DOC_FILES) {
+    mkdirSync(dirname(join(root, name)), { recursive: true });
+    copyFileSync(join(repo, name), join(root, name));
+  }
+  writeFileSync(join(root, SURFACE_PRODUCER_FILES[0]), "export const SYNTHETIC_SURFACE_PRODUCER = true;\n");
+  copyFileSync(join(repo, SURFACE_PRODUCER_FILES[1]), join(root, SURFACE_PRODUCER_FILES[1]));
+  git(root, ["init"]); git(root, ["config", "user.email", "surface@example.test"]); git(root, ["config", "user.name", "surface"]);
+  git(root, ["config", "commit.gpgsign", "false"]); git(root, ["add", "-A"]); git(root, ["commit", "-m", "synthetic surface candidate", "--no-gpg-sign"]);
+  const sha = git(root, ["rev-parse", "HEAD"]);
+  return { root, sha, expected: expectedSurfaceInventory(root, sha) };
+}
+function surfaceBody(expected: ReturnType<typeof expectedSurfaceInventory>, patch: Record<string, unknown> = {}) {
+  return {
+    schema: SURFACE_PRODUCER,
+    identity: {
+      candidate_source_sha: expected.head_sha, producer: SURFACE_PRODUCER, producer_revision: expected.producer_revision,
+      producer_files: expected.producer_files, source_class: "candidate-tree-inventory", actor_class: "automated-producer",
+      attempt_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", recorded_at: "2026-09-06T00:00:00.000Z",
+    },
+    outcome: "pass", failures: [] as { code: string }[],
+    head_sha: expected.head_sha, bun_version: expected.bun_version, cli_verbs: expected.cli_verbs,
+    retired_verbs: expected.retired_verbs, mcp_tools: expected.mcp_tools,
+    connectors_registered: expected.connectors_registered, connectors_c3: expected.connectors_c3, docs: expected.docs,
+    disagreements: [] as { code: string; path: string }[],
+    ...patch,
+  };
+}
+
+test("v1 and v2 indexes remain valid after the v3 reader lands", () => {
+  const v1 = fixture(), v2 = engineFixture();
+  expect(gate(evaluateRelease("rc", v1.indexPath), "evidence.index").status).toBe("PASS");
+  expect(gate(evaluateRelease("rc", v2.indexPath), `engine.${target}`).status).toBe("PASS");
+  v1.index = { ...v1.index, gate_receipts: [] }; v1.save();
+  expect(gate(evaluateRelease("rc", v1.indexPath), "evidence.index").status).toBe("FAIL");
+});
+
+test("v3 empty receipts keep artifact credit and do not implement new families", () => {
+  const f = asV3(fixture());
+  const result = evaluateRelease("rc", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, `artifact.${target}`).status).toBe("PASS");
+  expect(gate(result, SURFACE_GATE).status).toBe("NOT_IMPLEMENTED");
+  expect(result.decision).toBe("NO-GO");
+  expect(result.verifier.find(item => item.file === "scripts/release-evidence.ts")?.sha256).toBe(digest(readFileSync(join(import.meta.dir, "release-evidence.ts"))));
+  expect(result.verifier.find(item => item.file === CAPABILITY_PROOF_FILE)).toEqual({ file: CAPABILITY_PROOF_FILE, sha256: null, status: "MISSING" });
+  expect(result.verifier_sha256).toBe(digest(JSON.stringify(result.verifier)));
+});
+
+test("v3 unknown, duplicate and mismatched gate references fail the index without consuming families", () => {
+  const f = fixture(), missing = join(f.root, "absent-receipt.json");
+  asV3(f, [receiptRef("kizuki.unknown/v1", SURFACE_GATE, null, missing)]);
+  const unknown = evaluateRelease("rc", f.indexPath);
+  expect(gate(unknown, "evidence.index")).toMatchObject({ status: "FAIL", reason: "unknown-producer" });
+  expect(gate(unknown, `artifact.${target}`).status).toBe("PASS");
+  expect(gate(unknown, SURFACE_GATE).status).toBe("NOT_IMPLEMENTED");
+  asV3(f, [receiptRef(SURFACE_PRODUCER, SURFACE_GATE, null, missing), receiptRef(SURFACE_PRODUCER, SURFACE_GATE, null, join(f.root, "other.json"))]);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").reason).toBe("duplicate-gate");
+  asV3(f, [receiptRef(SURFACE_PRODUCER, SURFACE_GATE, target, missing)]);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").reason).toBe("mismatched-gate-or-target");
+  asV3(f, [receiptRef("kizuki.native-attestation/v1", `native.${target}`, null, missing)]);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").reason).toBe("mismatched-gate-or-target");
+  asV3(f, [receiptRef("kizuki.journey-proof/v1", "journey.not-a-journey", null, missing)]);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").reason).toBe("mismatched-gate-or-target");
+  asV3(f, [receiptRef("kizuki.connector-evidence/v1", "connector.beeper", null, missing)]);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").reason).toBe("mismatched-gate-or-target");
+  asV3(f, [receiptRef("kizuki.native-attestation/v1", `native.${target}`, "bun-darwin-arm64", missing)]);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").reason).toBe("mismatched-gate-or-target");
+});
+
+test("inactive producers keep default states even when v3 lists missing receipts", () => {
+  const f = fixture(), missing = join(f.root, "never-opened.json");
+  const receipts = [
+    ...TARGETS.flatMap(platform => [
+      receiptRef("kizuki.native-attestation/v1", `native.${platform}`, platform, missing),
+      receiptRef("kizuki.native-lifecycle/v1", `lifecycle.${platform}`, platform, missing),
+    ]),
+    receiptRef("kizuki.required-checks/v1", "candidate.required-checks", null, missing),
+    receiptRef("kizuki.independent-review/v1", "candidate.independent-review", null, missing),
+    receiptRef("kizuki.p0-disposition/v1", "candidate.current-p0-disposition", null, missing),
+    receiptRef(SURFACE_PRODUCER, SURFACE_GATE, null, missing),
+    ...JOURNEYS.map(id => receiptRef("kizuki.journey-proof/v1", `journey.${id}`, null, missing)),
+    ...CONNECTORS.map(item => receiptRef("kizuki.connector-evidence/v1", `connector.${item.id}`, null, missing)),
+    receiptRef("kizuki.unfamiliar-user/v1", "human.unfamiliar-user", null, missing),
+    receiptRef("kizuki.owner-rails-observation/v1", "owner.seven-day-rails", null, missing),
+    receiptRef("kizuki.estate-parity-observation/v1", "estate.fourteen-day-parity", null, missing),
+    receiptRef("kizuki.cutover-authority/v1", "owner.final-cutover", null, missing),
+  ];
+  asV3(f, receipts);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, `artifact.${target}`).status).toBe("PASS");
+  for (const platform of TARGETS) {
+    expect(gate(result, `native.${platform}`)).toMatchObject({ status: "UNVERIFIABLE", evidence_sha256: null });
+    expect(gate(result, `lifecycle.${platform}`)).toMatchObject({ status: "NOT_IMPLEMENTED", evidence_sha256: null });
+  }
+  expect(gate(result, "candidate.required-checks").status).toBe("NOT_IMPLEMENTED");
+  expect(gate(result, "candidate.independent-review").status).toBe("NOT_IMPLEMENTED");
+  expect(gate(result, "candidate.current-p0-disposition").status).toBe("UNVERIFIABLE");
+  expect(gate(result, SURFACE_GATE)).toMatchObject({ status: "NOT_IMPLEMENTED", evidence_sha256: null });
+  for (const id of JOURNEYS) expect(gate(result, `journey.${id}`).status).toBe("NOT_IMPLEMENTED");
+  for (const item of CONNECTORS) expect(gate(result, `connector.${item.id}`).status).toBe("NOT_IMPLEMENTED");
+  expect(gate(result, "human.unfamiliar-user").status).toBe("NOT_IMPLEMENTED");
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
+});
+
+test("v3 index byte cap is 32 KiB while v1 stays at 16 KiB", () => {
+  const f = asV3(fixture());
+  const raw = `${readFileSync(f.indexPath, "utf8")}${" ".repeat(20000)}`;
+  writeFileSync(f.indexPath, raw);
+  expect(raw.length).toBeGreaterThan(EVIDENCE_LIMITS.index);
+  expect(raw.length).toBeLessThanOrEqual(EVIDENCE_LIMITS.index_v3);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").status).toBe("PASS");
+  writeFileSync(f.indexPath, `${raw}${" ".repeat(EVIDENCE_LIMITS.index_v3)}`);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").status).toBe("FAIL");
+});
+
+test("optional capability verifier is MISSING until a regular file exists and other errors are fatal", () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-verifier-")); roots.push(root);
+  mkdirSync(join(root, "scripts"));
+  expect(inspectOptionalVerifier(root, CAPABILITY_PROOF_FILE)).toEqual({ file: CAPABILITY_PROOF_FILE, sha256: null, status: "MISSING" });
+  writeFileSync(join(root, CAPABILITY_PROOF_FILE), "export {}\n");
+  expect(inspectOptionalVerifier(root, CAPABILITY_PROOF_FILE)).toEqual({
+    file: CAPABILITY_PROOF_FILE, sha256: digest("export {}\n"), status: "PRESENT",
+  });
+  rmSync(join(root, CAPABILITY_PROOF_FILE));
+  mkdirSync(join(root, CAPABILITY_PROOF_FILE));
+  expect(() => inspectOptionalVerifier(root, CAPABILITY_PROOF_FILE)).toThrow(EvidenceError);
+  rmSync(join(root, CAPABILITY_PROOF_FILE), { recursive: true });
+  symlinkSync(join(root, "scripts"), join(root, "link.ts"));
+  expect(() => inspectOptionalVerifier(root, "link.ts")).toThrow(EvidenceError);
+});
+
+test("surface validator recomputes inventories and refuses a self-declared empty disagreement list", () => {
+  const tree = surfaceCandidate();
+  expect(cliVerbSequence()).toEqual([
+    "app", "init", "import", "doctor", "query", "context", "connect", "backfill", "sync",
+    "tell", "undo", "audit", "serve", "models", "agent", "purge", "export", "restore", "version", "rebuild",
+  ]);
+  expect(tree.expected.cli_verbs).toEqual(cliVerbSequence());
+  expect(tree.expected.retired_verbs).toEqual(["review", "promote", "reject"]);
+  expect(tree.expected.connectors_c3).toEqual(CONNECTORS.map(item => ({ id: item.id, connector_id: item.connector_id, evidence: item.evidence })));
+  expect(tree.expected.docs.files.map(item => item.path)).toEqual([...SURFACE_DOC_FILES]);
+  expect(tree.expected.producer_revision).toBe(producerRevision(tree.root, SURFACE_PRODUCER_FILES));
+  expect(evaluateSurfaceReceipt(surfaceBody(tree.expected), tree.root, tree.sha)).toMatchObject({ status: "PASS", reason: "surface-inventory-agrees", creditDigest: true });
+  const mismatched = surfaceBody(tree.expected, { bun_version: "0.0.0", disagreements: [] });
+  expect(() => evaluateSurfaceReceipt(mismatched, tree.root, tree.sha)).toThrow("surface-disagreement-mismatch");
+  const truthful = surfaceBody(tree.expected, {
+    bun_version: "0.0.0", outcome: "fail", failures: [{ code: "bun-version-mismatch" }],
+    disagreements: [{ code: "bun-version-mismatch", path: "bun_version" }],
+  });
+  expect(evaluateSurfaceReceipt(truthful, tree.root, tree.sha)).toMatchObject({ status: "FAIL", reason: "surface-outcome-fail", creditDigest: true });
+  expect(() => evaluateSurfaceReceipt(surfaceBody(tree.expected, {
+    bun_version: "0.0.0", disagreements: [{ code: "bun-version-mismatch", path: "bun_version" }],
+  }), tree.root, tree.sha)).toThrow("invalid-outcome");
+  const unresolved = surfaceBody(tree.expected, { outcome: "unresolved" });
+  expect(evaluateSurfaceReceipt(unresolved, tree.root, tree.sha)).toMatchObject({ status: "UNVERIFIABLE", reason: "surface-outcome-unresolved", creditDigest: true });
+});
+
+test("surface identity, revision, RFC3339 and custody failures do not credit a digest", () => {
+  const tree = surfaceCandidate();
+  const fail = (patch: Record<string, unknown>, reason: string) => {
+    try { evaluateSurfaceReceipt(surfaceBody(tree.expected, patch), tree.root, tree.sha); throw new Error("expected throw"); }
+    catch (error) { expect(error).toBeInstanceOf(EvidenceError); expect((error as EvidenceError).reason).toBe(reason); }
+  };
+  fail({ identity: { ...surfaceBody(tree.expected).identity, candidate_source_sha: "b".repeat(40) } }, "candidate-mismatch");
+  fail({ identity: { ...surfaceBody(tree.expected).identity, producer_revision: "c".repeat(64) } }, "producer-revision-mismatch");
+  fail({ identity: { ...surfaceBody(tree.expected).identity, producer_files: ["scripts/release-evidence.ts"] } }, "producer-files-mismatch");
+  fail({ identity: { ...surfaceBody(tree.expected).identity, source_class: "synthetic-fixture" } }, "invalid-identity");
+  fail({ identity: { ...surfaceBody(tree.expected).identity, recorded_at: "2026-02-30T00:00:00.000Z" } }, "invalid-recorded-at");
+  fail({ identity: { ...surfaceBody(tree.expected).identity, recorded_at: "2026-09-06T00:00:00Z" } }, "invalid-recorded-at");
+  fail({ identity: { ...surfaceBody(tree.expected).identity, attempt_id: "aaaaaaaa-bbbb-5ccc-8ddd-eeeeeeeeeeee" } }, "invalid-identity");
+  const receiptPath = join(tree.root, "surface.json");
+  writeFileSync(receiptPath, JSON.stringify(surfaceBody(tree.expected)));
+  expect(read(receiptPath, EVIDENCE_LIMITS.family_receipt).sha256).toBe(digest(readFileSync(receiptPath)));
+  truncateSync(receiptPath, EVIDENCE_LIMITS.family_receipt + 1);
+  expect(() => read(receiptPath, EVIDENCE_LIMITS.family_receipt)).toThrow("unsafe-file-or-size");
+});
+
+test("v3 refuses extra keys and more than forty gate receipts", () => {
+  const f = fixture();
+  writeFileSync(f.indexPath, `{"owner_authorized":true,${JSON.stringify({ ...f.index, schema: "kizuki.acceptance-evidence/v3", gate_receipts: [] }).slice(1)}`);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").status).toBe("FAIL");
+  asV3(f, Array.from({ length: 41 }, (_, i) => receiptRef("kizuki.required-checks/v1", "candidate.required-checks", null, join(f.root, `r${i}.json`))));
+  const overflow = evaluateRelease("rc", f.indexPath);
+  expect(gate(overflow, "evidence.index").status).toBe("FAIL");
+  expect(gate(overflow, `artifact.${target}`).status).toBe("MISSING");
+});
+

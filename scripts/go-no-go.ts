@@ -1,108 +1,45 @@
 /** Offline evidence inventory. No current producer set can establish release GO. */
-import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdtempSync, openSync, readFileSync, readSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, parse, resolve } from "node:path";
+import { closeSync, constants, fsyncSync, linkSync, mkdtempSync, openSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { parseBuildInfoValue } from "./stranger-proof";
 import { releaseTarget } from "./release-targets";
 import { statusQualification } from "./qualification";
 import { ARTIFACT_PACKAGE_FILES as PACKAGE_FILES, ArtifactProofError, PROOF_JSON_LIMITS, SQLITE_ENGINE_POLICY, parseProofJson as json, validateArtifactProof } from "./artifact-proof";
 import type { ArtifactPackageFile, ArtifactProofSchema } from "./artifact-proof";
+import {
+  CAPABILITY_PROOF_FILE, CONNECTORS, EVIDENCE_LIMITS, EvidenceError, JOURNEYS, SURFACE_GATE, SURFACE_PRODUCER, TARGETS,
+  absolute, digest, evaluateSurfaceReceipt, exact, gateReceiptMappingError, hash, inspectOptionalVerifier, parseGateReceipts, parents, read, reject, text,
+} from "./release-evidence";
+import type { GateReceiptReference } from "./release-evidence";
 
 type Profile = "rc" | "1.0";
 type Status = "PASS" | "FAIL" | "MISSING" | "UNVERIFIABLE" | "NOT_IMPLEMENTED";
 interface Gate { id: string; required: boolean; status: Status; scope: string; reason: string; target: string | null; evidence_sha256: string | null; }
 interface ArtifactReference { producer: ArtifactProofSchema; target: string; directory: string; proof: string; proof_sha256: string; }
 interface FixtureReference { producer: "kizuki.qualification/v1"; directory: string; manifest_sha256: string; genesis_sha256: string; samples_sha256: string; }
-interface EvidenceIndex { schema: "kizuki.acceptance-evidence/v1" | "kizuki.acceptance-evidence/v2"; candidate_source_sha: string; artifacts: ArtifactReference[]; fixture_observation: FixtureReference | null; }
-const hash = (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex");
-const TARGETS = ["bun-linux-x64-baseline", "bun-darwin-arm64"] as const;
+interface EvidenceIndex {
+  schema: "kizuki.acceptance-evidence/v1" | "kizuki.acceptance-evidence/v2" | "kizuki.acceptance-evidence/v3";
+  candidate_source_sha: string; artifacts: ArtifactReference[]; fixture_observation: FixtureReference | null;
+  gate_receipts: GateReceiptReference[];
+}
 const SUPPORTED_BUN_VERSION = readFileSync(resolve(import.meta.dir, "../.bun-version"), "utf8").trim();
-const LIMITS = { index: 16384, proof: PROOF_JSON_LIMITS.bytes, binary: 268435456, text: 65536, journal: 67108864, depth: PROOF_JSON_LIMITS.depth } as const;
-const JOURNEYS = ["connect-resume", "correct-belief", "revoke-purge", "retrieve-trustworthily", "import-estate-slice", "daily-loop", "useful-insight", "install-recover"] as const;
-// These are acceptance obligations, never a claim that a connector is implemented.
-const CONNECTORS = [
-  { id: "telegram", connector_id: "kizuki.telegram", evidence: "live-account" },
-  { id: "gmail", connector_id: "kizuki.gmail", evidence: "live-account" },
-  { id: "google-calendar", connector_id: "kizuki.google-calendar", evidence: "live-account" },
-  { id: "imap", connector_id: "kizuki.imap", evidence: "live-account" },
-  { id: "ics", connector_id: "kizuki.ics", evidence: "file-import" },
-  { id: "whoop", connector_id: "kizuki.whoop", evidence: "live-account" },
-  { id: "x-api", connector_id: null, evidence: "live-account" },
-  { id: "screenpipe", connector_id: "kizuki.screenpipe", evidence: "local-source" },
-  { id: "markdown-folder", connector_id: "kizuki.markdown-folder", evidence: "file-import" },
-  { id: "chatgpt-export", connector_id: "kizuki.import-chatgpt", evidence: "file-import" },
-  { id: "claude-export", connector_id: "kizuki.import-claude", evidence: "file-import" },
-  { id: "x-archive", connector_id: "kizuki.import-x-archive", evidence: "file-import" },
-  { id: "whatsapp-export", connector_id: "kizuki.import-whatsapp", evidence: "file-import" },
-  { id: "pocket", connector_id: "kizuki.import-pocket", evidence: "file-import" },
-  { id: "omnivore", connector_id: "kizuki.import-omnivore", evidence: "file-import" },
-] as const;
+const LIMITS = { index: EVIDENCE_LIMITS.index, index_v3: EVIDENCE_LIMITS.index_v3, family_receipt: EVIDENCE_LIMITS.family_receipt, journey_connector_receipt: EVIDENCE_LIMITS.journey_connector_receipt, proof: PROOF_JSON_LIMITS.bytes, binary: 268435456, text: 65536, journal: 67108864, depth: PROOF_JSON_LIMITS.depth } as const;
 const POLICY = { schema: "kizuki.acceptance-policy/v2", sqlite_engine: SQLITE_ENGINE_POLICY, supported_bun_version: SUPPORTED_BUN_VERSION, targets: TARGETS, journeys: JOURNEYS, connectors: CONNECTORS, limits: LIMITS,
   post_ready_observation_ms: { owner: 604800000, estate: 1209600000 }, unfamiliar_user_ms: 900000,
   deferred_connectors: ["composio", "whatsapp-business-api"], carry_forward: false, fixture_release_credit: false };
-const VERIFIER_FILES = [".bun-version", "scripts/go-no-go.ts", "scripts/artifact-proof.ts", "scripts/artifact-engine.ts", "packages/core/src/ledger/runtime.ts", "scripts/stranger-proof.ts", "scripts/release-targets.ts", "scripts/release-artifacts.ts", "scripts/qualification.ts", "packages/core/src/serve/qualification.ts", "packages/core/src/serve/receipts.ts", "packages/core/src/serve/types.ts"];
-
-class EvidenceError extends Error { constructor(readonly reason: string) { super(reason); } }
-function reject(reason: string): never { throw new EvidenceError(reason); }
-function exact(value: unknown, keys: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).sort().join() !== keys.split(",").sort().join()) reject("invalid-schema");
-  return value as Record<string, unknown>;
-}
-function text(value: unknown): string {
-  if (typeof value !== "string" || value.length < 1 || value.length > 4096 || /[\x00-\x1f\x7f]/.test(value)) reject("invalid-string");
-  return value;
-}
-function digest(value: unknown, length = 64): string {
-  if (typeof value !== "string" || value.length !== length || !/^[a-f0-9]+$/.test(value)) reject("invalid-digest");
-  return value;
-}
-function absolute(value: unknown): string {
-  const path = text(value);
-  if (!isAbsolute(path) || resolve(path) !== path) reject("noncanonical-path");
-  return path;
-}
-/** Reject static symlinks and detect identity changes during the read. The local
- * operator must retain exclusive custody; this is not hostile-host attestation. */
-function parents(path: string) {
-  const rows: { path: string; dev: bigint; ino: bigint }[] = [];
-  let current = parse(path).root;
-  for (const part of dirname(path).slice(current.length).split("/").filter(Boolean)) {
-    current = join(current, part); const stat = lstatSync(current, { bigint: true });
-    if (!stat.isDirectory() || stat.isSymbolicLink()) reject("unsafe-path");
-    rows.push({ path: current, dev: stat.dev, ino: stat.ino });
-  }
-  return () => { for (const row of rows) { const stat = lstatSync(row.path, { bigint: true }); if (!stat.isDirectory() || stat.isSymbolicLink() || stat.dev !== row.dev || stat.ino !== row.ino) reject("path-changed"); } };
-}
-function read(path: string, limit: number, retain = true) {
-  absolute(path); const checkParents = parents(path);
-  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  try {
-    const before = fstatSync(fd, { bigint: true });
-    if (!before.isFile() || before.nlink !== 1n || before.size > BigInt(limit)) reject("unsafe-file-or-size");
-    const size = Number(before.size), buffer = Buffer.alloc(Math.min(size + 1, 65536));
-    const chunks: Buffer[] = [], state = createHash("sha256"); let offset = 0;
-    while (offset < size) {
-      const count = readSync(fd, buffer, 0, Math.min(buffer.length, size - offset), offset);
-      if (!count) reject("file-changed");
-      const chunk = buffer.subarray(0, count); state.update(chunk); if (retain) chunks.push(Buffer.from(chunk)); offset += count;
-    }
-    if (readSync(fd, buffer, 0, 1, offset) !== 0) reject("file-changed");
-    const after = fstatSync(fd, { bigint: true }), named = lstatSync(path, { bigint: true });
-    if (after.size !== before.size || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs || after.nlink !== 1n || named.isSymbolicLink() || named.dev !== after.dev || named.ino !== after.ino) reject("file-changed");
-    const unchanged = () => {
-      checkParents(); const stat = lstatSync(path, { bigint: true });
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.dev !== before.dev || stat.ino !== before.ino || stat.size !== before.size || stat.mtimeNs !== before.mtimeNs || stat.ctimeNs !== before.ctimeNs || stat.nlink !== 1n) reject("file-changed");
-    };
-    unchanged(); return { sha256: state.digest("hex"), bytes: retain ? Buffer.concat(chunks) : Buffer.alloc(0), unchanged };
-  } finally { closeSync(fd); }
-}
-function parseIndex(value: unknown): EvidenceIndex {
-  const row = exact(value, "schema,candidate_source_sha,artifacts,fixture_observation");
-  if ((row.schema !== "kizuki.acceptance-evidence/v1" && row.schema !== "kizuki.acceptance-evidence/v2") || !Array.isArray(row.artifacts) || row.artifacts.length > TARGETS.length) reject("invalid-index");
+const VERIFIER_FILES = [".bun-version", "scripts/go-no-go.ts", "scripts/release-evidence.ts", "scripts/artifact-proof.ts", "scripts/artifact-engine.ts", "packages/core/src/ledger/runtime.ts", "scripts/stranger-proof.ts", "scripts/release-targets.ts", "scripts/release-artifacts.ts", "scripts/qualification.ts", "packages/core/src/serve/qualification.ts", "packages/core/src/serve/receipts.ts", "packages/core/src/serve/types.ts"];
+const CANDIDATE_ROOT = resolve(import.meta.dir, "..");
+function parseIndex(value: unknown, bytes: number): EvidenceIndex {
+  if (!value || typeof value !== "object" || Array.isArray(value)) reject("invalid-index");
+  const v3 = (value as { schema?: unknown }).schema === "kizuki.acceptance-evidence/v3";
+  if (bytes > (v3 ? LIMITS.index_v3 : LIMITS.index)) reject("unsafe-file-or-size");
+  const row = exact(value, v3 ? "schema,candidate_source_sha,artifacts,fixture_observation,gate_receipts" : "schema,candidate_source_sha,artifacts,fixture_observation");
+  if ((row.schema !== "kizuki.acceptance-evidence/v1" && row.schema !== "kizuki.acceptance-evidence/v2" && !v3) || !Array.isArray(row.artifacts) || row.artifacts.length > TARGETS.length) reject("invalid-index");
   digest(row.candidate_source_sha, 40); const targets = new Set<string>();
+  const allowV2 = row.schema === "kizuki.acceptance-evidence/v2" || v3;
   for (const raw of row.artifacts) {
     const ref = exact(raw, "producer,target,directory,proof,proof_sha256"), target = releaseTarget(text(ref.target));
-    if ((ref.producer !== "kizuki.artifact-proof/v1" && !(row.schema === "kizuki.acceptance-evidence/v2" && ref.producer === "kizuki.artifact-proof/v2")) || targets.has(target.target)) reject("unknown-producer-or-duplicate-target");
+    if ((ref.producer !== "kizuki.artifact-proof/v1" && !(allowV2 && ref.producer === "kizuki.artifact-proof/v2")) || targets.has(target.target)) reject("unknown-producer-or-duplicate-target");
     targets.add(target.target); absolute(ref.directory); absolute(ref.proof); digest(ref.proof_sha256);
   }
   if (row.fixture_observation !== null) {
@@ -110,7 +47,8 @@ function parseIndex(value: unknown): EvidenceIndex {
     if (fixture.producer !== "kizuki.qualification/v1") reject("unknown-producer");
     absolute(fixture.directory); for (const field of ["manifest_sha256", "genesis_sha256", "samples_sha256"]) digest(fixture[field]);
   }
-  return row as unknown as EvidenceIndex;
+  const gate_receipts = v3 ? parseGateReceipts(row.gate_receipts) : [];
+  return { ...(row as unknown as EvidenceIndex), gate_receipts };
 }
 
 function verifyArtifact(ref: ArtifactReference, candidate: string) {
@@ -175,8 +113,10 @@ export function evaluateRelease(profile: Profile, evidencePath: string) {
   let index: EvidenceIndex | null = null, indexDigest: string | null = null, fixture: ReturnType<typeof fixtureDiagnostic> | null = null;
   const fail = (gate: Gate, error: unknown) => { gate.status = "FAIL"; gate.reason = (error instanceof EvidenceError || error instanceof ArtifactProofError) ? error.reason : "evidence-unreadable-or-invalid"; };
   try {
-    const input = read(evidencePath, LIMITS.index); indexDigest = input.sha256; index = parseIndex(json(input.bytes));
-    Object.assign(row("evidence.index"), { status: "PASS", reason: "closed-index-validated", evidence_sha256: indexDigest });
+    const input = read(evidencePath, LIMITS.index_v3); indexDigest = input.sha256; index = parseIndex(json(input.bytes), input.bytes.length);
+    const mapping = index.schema === "kizuki.acceptance-evidence/v3" ? gateReceiptMappingError(index.gate_receipts) : null;
+    if (mapping) fail(row("evidence.index"), new EvidenceError(mapping));
+    else Object.assign(row("evidence.index"), { status: "PASS", reason: "closed-index-validated", evidence_sha256: indexDigest });
   } catch (error) { fail(row("evidence.index"), error); }
   if (index) {
     for (const ref of index.artifacts) {
@@ -194,7 +134,23 @@ export function evaluateRelease(profile: Profile, evidencePath: string) {
     }
   }
   // Revision hashes describe the actual local verifier files, including policy predicates.
-  const verifier = VERIFIER_FILES.map(name => ({ file: name, sha256: hash(readFileSync(resolve(import.meta.dir, "..", name))) }));
+  const capability = inspectOptionalVerifier(CANDIDATE_ROOT, CAPABILITY_PROOF_FILE);
+  const verifier = [...VERIFIER_FILES.map(name => ({ file: name, sha256: hash(readFileSync(resolve(CANDIDATE_ROOT, name))) })), capability];
+  if (index?.schema === "kizuki.acceptance-evidence/v3" && row("evidence.index").status === "PASS") {
+    const surfaceActive = capability.status === "PRESENT";
+    for (const ref of index.gate_receipts) {
+      if (ref.producer !== SURFACE_PRODUCER || ref.gate_id !== SURFACE_GATE) continue;
+      if (!surfaceActive) continue;
+      const gate = row(ref.gate_id);
+      try {
+        const file = read(ref.path, LIMITS.family_receipt);
+        if (file.sha256 !== ref.sha256) reject("receipt-digest-mismatch");
+        const evaluated = evaluateSurfaceReceipt(json(file.bytes), CANDIDATE_ROOT, index.candidate_source_sha);
+        file.unchanged();
+        gate.status = evaluated.status; gate.reason = evaluated.reason; gate.evidence_sha256 = evaluated.creditDigest ? file.sha256 : null;
+      } catch (error) { fail(gate, error); }
+    }
+  }
   const accepted = rows.filter(item => item.required).every(item => item.status === "PASS") && !rows.some(item => item.status === "FAIL");
   return { schema: "kizuki.acceptance-report/v2", profile, decision: accepted ? "GO" : "NO-GO", release_1_0_accepted: profile === "1.0" && accepted,
     candidate_source_sha: index?.candidate_source_sha ?? null, index_sha256: indexDigest, supported_bun_version: SUPPORTED_BUN_VERSION, policy_sha256: hash(JSON.stringify({ policy: POLICY, gates: { rc: gates(), "1.0": gates() } })), verifier_sha256: hash(JSON.stringify(verifier)), verifier,
