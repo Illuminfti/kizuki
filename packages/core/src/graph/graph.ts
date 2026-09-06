@@ -76,75 +76,78 @@ interface StoredEdge {
 const FRONTIER_CHUNK = 500;
 
 function withoutCodeSpans(body: string): string {
-  let result = "";
-
+  const runs: { start: number; length: number; next: number }[] = [];
   for (let index = 0; index < body.length; index += 1) {
-    if (body[index] !== "`") {
-      result += body[index] as string;
-      continue;
-    }
+    if (body[index] !== "`") continue;
+    const start = index;
+    while (body[index + 1] === "`") index += 1;
+    runs.push({ start, length: index - start + 1, next: -1 });
+  }
+  if (runs.length === 0) return body;
 
-    let run = 1;
-    while (body[index + run] === "`") run += 1;
-    let closing = index + run;
-    while (closing < body.length) {
-      if (body[closing] !== "`") {
-        closing += 1;
-        continue;
-      }
-      let closingRun = 1;
-      while (body[closing + closingRun] === "`") closingRun += 1;
-      if (closingRun === run) break;
-      closing += closingRun;
-    }
-    if (closing >= body.length) {
-      result += "`".repeat(run);
-      index += run - 1;
-      continue;
-    }
-
-    const end = closing + run;
-    for (let cursor = index; cursor < end; cursor += 1) {
-      result += body[cursor] === "\n" ? "\n" : " ";
-    }
-    index = end - 1;
+  // Index the next exact-length run once. Unmatched runs must not each
+  // rescan the rest of a hostile page looking for a closing delimiter.
+  const nextByLength = new Map<number, number>();
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    const run = runs[index]!;
+    run.next = nextByLength.get(run.length) ?? -1;
+    nextByLength.set(run.length, index);
   }
 
-  return result;
+  const parts: string[] = [];
+  let cursor = 0;
+  for (let index = 0; index < runs.length;) {
+    const run = runs[index]!;
+    if (run.next < 0) {
+      index += 1;
+      continue;
+    }
+    const closing = runs[run.next]!;
+    const end = closing.start + closing.length;
+    parts.push(body.slice(cursor, run.start));
+    parts.push(body.slice(run.start, end).replace(/[^\n]/g, " "));
+    cursor = end;
+    index = run.next + 1;
+  }
+  parts.push(body.slice(cursor));
+  return parts.join("");
 }
 
 function wikilinks(body: string): string[] {
   const source = withoutCodeSpans(body);
+  if (!source.includes("[[")) return [];
   const targets: string[] = [];
 
-  for (let index = 0; index < source.length; index += 1) {
-    if (source.slice(index, index + 2) !== "[[") continue;
-    const contentStart = index + 2;
-    let cursor = contentStart;
-    let depth = 1;
-    let nested = false;
-
-    while (cursor < source.length && depth > 0) {
-      const pair = source.slice(cursor, cursor + 2);
-      if (pair === "[[") {
-        nested = true;
-        depth += 1;
-        cursor += 2;
-      } else if (pair === "]]") {
-        depth -= 1;
-        if (depth > 0) cursor += 2;
-      } else {
-        cursor += 1;
-      }
+  // For each suffix, find the first closing pair after any balanced nested
+  // groups. Right-to-left construction makes every lookup constant-time,
+  // including an unmatched opener and overlapping delimiters such as [[[.
+  const closes = new Int32Array(source.length + 2).fill(-1);
+  const nested = new Uint8Array(source.length + 2);
+  for (let index = source.length - 2; index >= 0; index -= 1) {
+    if (source[index] === "]" && source[index + 1] === "]") {
+      closes[index] = index;
+    } else if (source[index] === "[" && source[index + 1] === "[") {
+      const innerEnd = closes[index + 2]!;
+      if (innerEnd >= 0) closes[index] = closes[innerEnd + 2]!;
+      nested[index] = 1;
+    } else {
+      closes[index] = closes[index + 1]!;
+      nested[index] = nested[index + 1]!;
     }
+  }
 
-    if (depth !== 0) continue;
-    if (!nested) {
-      const content = source.slice(contentStart, cursor);
-      const target = (content.split("|", 1)[0] ?? "").trim();
+  for (let index = 0; index < source.length - 1; index += 1) {
+    if (source[index] !== "[" || source[index + 1] !== "[") continue;
+    const contentStart = index + 2;
+    const closing = closes[contentStart]!;
+    if (closing < 0) continue;
+    if (nested[contentStart] === 0) {
+      const content = source.slice(contentStart, closing);
+      const separator = content.indexOf("|");
+      const target = (separator < 0 ? content : content.slice(0, separator)).trim();
       if (target.length > 0) targets.push(target);
     }
-    index = cursor + 1;
+    index = closing + 1;
   }
 
   return targets;
@@ -565,6 +568,7 @@ export function neighbors(
       limit + 1,
     );
     const next: string[] = [];
+    const frontierNodes = new Set(frontier);
     for (const edge of available) {
       const key = `${edge.src}\u0000${edge.dst}\u0000${edge.kind}`;
       if (seenEdges.has(key)) continue;
@@ -574,7 +578,7 @@ export function neighbors(
         break;
       }
       result.push(edge);
-      const adjacent = frontier.includes(edge.src) ? edge.dst : edge.src;
+      const adjacent = frontierNodes.has(edge.src) ? edge.dst : edge.src;
       if (!seenNodes.has(adjacent)) {
         seenNodes.add(adjacent);
         next.push(adjacent);
