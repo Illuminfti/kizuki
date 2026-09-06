@@ -115,7 +115,7 @@ describe("portable connection history", () => {
 
   for (const schema of [LEGACY_BACKUP_SCHEMA, V2_BACKUP_SCHEMA, BACKUP_SCHEMA]) {
     test(`normalizes old active ${schema} connection records and preserves inert source evidence`, async () => {
-      const { db, vault, backup, target } = fixture();
+      const { db, root, vault, backup, target } = fixture();
       const { source, checkpoint } = addHistory(db, { opaque: true, grant: true });
       const grants = db.query("SELECT * FROM source_grants ORDER BY source_key").all();
       const receipts = db.query("SELECT * FROM source_grant_receipts ORDER BY sequence").all();
@@ -145,6 +145,20 @@ describe("portable connection history", () => {
         await expect(store.rewrite(restored, history, async () => { contacted = true; })).rejects.toThrow("not eligible for state replacement");
         expect(contacted).toBe(false);
         expect(existsSync(join(target, ".kizuki", "connections", `${source}.state`))).toBe(false);
+
+        const repeatedBackup = join(root, "backup-again"), repeatedTarget = join(root, "restored-again");
+        expect(exportVault(restored, target, repeatedBackup).schema).toBe(BACKUP_SCHEMA);
+        const repeatedReport = restoreVault(repeatedBackup, repeatedTarget);
+        expect(repeatedReport.recovery_warnings.join(" ")).toContain("retained checkpoints will not resume automatically");
+        const repeated = openLedger(join(repeatedTarget, ".kizuki", "kizuki.db"));
+        try {
+          expect(getConnection(repeated, "fixture", source)).toEqual(history);
+          expect(listConnections(repeated)).toEqual([]);
+          expect(getCheckpoint(repeated, "fixture", source)).toEqual(checkpoint);
+          expect(repeated.query("SELECT * FROM source_grants ORDER BY source_key").all()).toEqual(grants);
+          expect(repeated.query("SELECT * FROM source_grant_receipts ORDER BY sequence").all()).toEqual(receipts);
+          expect(() => sourceCaptureAdmission(repeated, "fixture", source)).toThrow("source_capture_denied");
+        } finally { repeated.close(); }
       } finally { restored.close(); }
     });
   }
