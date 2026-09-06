@@ -540,11 +540,14 @@ function emptyLiveSignature(db: Database): boolean {
   if (!tableExists(db, "claims") || !columnNames(db, "claims").has("content_hash")) {
     return false;
   }
+  // Native claims use the blank-hash uniqueness index. Only a matching
+  // legacy proposal can supply a signature through the backfill above.
   const claims = db.prepare<{ ok: number }, []>(
     `SELECT 1 AS ok FROM claims
       WHERE content_hash = ''
         AND status = 'live'
         AND kind <> 'purge_review'
+        AND EXISTS (SELECT 1 FROM proposals p WHERE p.proposal_id = claims.claim_id)
       LIMIT 1`,
   );
   try {
