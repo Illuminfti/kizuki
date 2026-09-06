@@ -4,7 +4,7 @@ import { stringArray } from "../vault/pages";
 import { CanonAuthorityResolver } from "./authority";
 import { refreshDerivedPage } from "../derived";
 import { listCanonPagesReport } from "../vault/pages";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import type { Sensitivity } from "../agents/types";
 import {
@@ -19,8 +19,10 @@ import type { AuthorityTier, ClaimTaint } from "../contracts/proposal";
 import { parseFrontmatter } from "../vault/frontmatter";
 import type { VaultPage } from "../vault/frontmatter";
 import { PAGE_SENSITIVITIES } from "../vault/schema";
-import { ABSENT_PAGE_HASH, hashBytes, hashFile } from "../vault/write";
+import { ABSENT_PAGE_HASH, containedVaultFile, hashBytes, hashFile } from "../vault/write";
+import { assertArchiveRelPath, assertPageRelPath, assertReceiptPaths } from "./paths";
 import { applyRevertWrite } from "./apply";
+import { snapshotCanonIo } from "./io";
 import { UndoError } from "./errors";
 import {
   getCanonReceipt,
@@ -44,7 +46,8 @@ export interface UndoReceiptOptions {
 }
 
 function currentHash(io: CanonIo, relPath: string): string {
-  const path = join(io.vault_path, relPath);
+  assertPageRelPath(relPath);
+  const path = containedVaultFile(io.vault_path, relPath);
   if (!existsSync(path)) return ABSENT_PAGE_HASH;
   return hashFile(path);
 }
@@ -57,7 +60,8 @@ function laterIds(io: CanonIo, receipt: CanonReceipt): string[] {
 }
 
 function loadArchivePage(io: CanonIo, archivePath: string): VaultPage {
-  const path = join(io.vault_path, archivePath);
+  assertArchiveRelPath(archivePath);
+  const path = containedVaultFile(io.vault_path, archivePath);
   if (!existsSync(path)) {
     throw new UndoError("archive_missing", `undo: no archive copy exists at ${archivePath}`);
   }
@@ -120,6 +124,10 @@ function pageDoc(
 function recoverArchiveForHash(io: CanonIo, relPath: string, wantHash: string): string | null {
   const dir = join(io.vault_path, "archive");
   if (!existsSync(dir)) return null;
+  const directory = lstatSync(dir);
+  if (directory.isSymbolicLink() || !directory.isDirectory()) {
+    throw new UndoError("archive_missing", "undo archive directory is unusable");
+  }
   const encoded = `${relPath.replaceAll("/", "__")}--`;
   const legacy = `${basename(relPath, extname(relPath))}.prev-`;
   let found: string | null = null;
@@ -127,7 +135,8 @@ function recoverArchiveForHash(io: CanonIo, relPath: string, wantHash: string): 
     if (!name.endsWith(".md")) continue;
     if (!name.startsWith(encoded) && !name.startsWith(legacy)) continue;
     const rel = `archive/${name}`;
-    if (hashFile(join(io.vault_path, rel)) !== wantHash) continue;
+    assertArchiveRelPath(rel);
+    if (hashFile(containedVaultFile(io.vault_path, rel)) !== wantHash) continue;
     if (found === null || name > basename(found)) found = rel;
   }
   return found;
@@ -300,10 +309,13 @@ export async function undoReceipt(
   receiptId: string,
   opts: UndoReceiptOptions = {},
 ): Promise<CanonReceipt> {
+  io = snapshotCanonIo(io);
   const original = getCanonReceipt(io.db, receiptId);
   if (original === null) {
     throw new UndoError("receipt_unknown", `undo: receipt ${receiptId} is unknown`);
   }
+  assertReceiptPaths(original);
+  assertPageRelPath(original.page_path);
   requireSourceEvents(io.db, original.provenance, { owner: true, purpose: "derive", ...(io.retrieval === undefined ? {} : { port: io.retrieval }) });
   if (original.reverted_by !== null) {
     throw new UndoError(

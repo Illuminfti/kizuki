@@ -25,12 +25,14 @@ import type { CanonPage } from "../vault/pages";
 import { PAGE_TYPES, validatePage } from "../vault/schema";
 import { grantCanonWrite, isWriter, writePage } from "../vault/write";
 import type { Writer } from "../vault/write";
-import { assertPageRelPath } from "./arbiter";
+import { assertPageRelPath, assertReceiptPaths, assertStoredPageRelPath } from "./paths";
+import { cloneExactJson } from "../util/validate";
 import type { TargetDecision } from "./arbiter";
 import type { BudgetTracker } from "./budget";
 import { CanonWriteError } from "./errors";
 import type { CanonReceipt, PageAction, RetrievalOpRef } from "./receipts";
 import { initCanon } from "./schema";
+import { snapshotCanonIo } from "./io";
 import {
   appendReceiptLine,
   insertReceiptRow,
@@ -423,6 +425,10 @@ export function applyCanonWrite(
   decision: TargetDecision,
   opts: ApplyCanonWriteOptions,
 ): CanonReceipt {
+  io = snapshotCanonIo(io);
+  claim = snapshotByteInput(claim);
+  decision = snapshotByteInput(decision);
+  opts = Object.freeze({ writer: opts.writer, budget: opts.budget });
   if (!isWriter(opts.writer)) {
     throw new CanonWriteError("writer_invalid", "writer must be loop, correction, revert or import");
   }
@@ -475,7 +481,7 @@ export function applyCanonWrite(
       ? []
       : [{ store: io.retrieval_store, op: "upsert", doc: `page:${pageId}` }];
 
-  const cap = grantCanonWrite(opts.writer, receiptId);
+  const cap = grantCanonWrite(opts.writer, receiptId, io.vault_path);
   const path = join(io.vault_path, target.rel_path);
   const expectedAfter = hashBytes(Buffer.from(serializePage(prepared.page)));
   const admit = (): void => {
@@ -568,6 +574,16 @@ function canonPageFromWrite(
   };
 }
 
+function snapshotByteInput<T>(input: T): T {
+  const errors: string[] = [];
+  const snapshot = cloneExactJson(input, "canon byte input", {
+    maxDepth: 32, maxKeysPerObject: 1024, maxArrayLength: 1_000_000,
+    maxStringBytes: 16 * 1024 * 1024, maxKeyBytes: 1024, maxTotalBytes: 128 * 1024 * 1024,
+  }, errors);
+  if (snapshot === undefined) throw new CanonWriteError("target_invalid", "canon byte input must be stable JSON data");
+  return snapshot as T;
+}
+
 interface RevertWriteInput {
   receipt_id: string;
   rel_path: string;
@@ -589,8 +605,11 @@ export function applyRevertWrite(
   io: CanonIo,
   input: RevertWriteInput,
 ): RevertWriteOutcome {
+  io = snapshotCanonIo(io);
+  input = snapshotByteInput(input);
+  assertPageRelPath(input.rel_path);
   if (input.page !== null) requireSourceEvents(io.db, existingSources(input.page), { owner: true, purpose: "derive" });
-  const cap = grantCanonWrite("revert", input.receipt_id);
+  const cap = grantCanonWrite("revert", input.receipt_id, io.vault_path);
   const path = join(io.vault_path, input.rel_path);
   if (input.page === null) {
     if (input.expected_hash === null) {
@@ -654,6 +673,10 @@ export function applyPurgeRewrite(
   io: CanonIo,
   input: PurgeRewriteInput,
 ): CanonReceipt {
+  io = snapshotCanonIo(io);
+  input = snapshotByteInput(input);
+  if (input.source_erasure === undefined) assertPageRelPath(input.rel_path);
+  else assertStoredPageRelPath(input.rel_path);
   if (io.db.inTransaction) throw new Error("loop byte admission requires a top-level transaction");
   initCanon(io.db);
   const existing = readPage(io, input.rel_path);
@@ -750,7 +773,7 @@ export function applyPurgeRewrite(
     {...input,source_erasure:input.source_erasure},
     {existing,data,body,nothingRemains,action,authority,sensitivity,taint});
   const receiptId = mintId(io);
-  const cap = grantCanonWrite("loop", receiptId);
+  const cap = grantCanonWrite("loop", receiptId, io.vault_path);
   const path = join(io.vault_path, input.rel_path);
   const next = { data, body: body.length === 0 ? "\n" : body };
   const expectedAfter = hashBytes(Buffer.from(serializePage(next)));
@@ -877,6 +900,7 @@ function finishSourceErasure(io: CanonIo, intent: SourceErasureIntent, page: Vau
 }
 /** Called only inside the source purge's existing native writer ownership. */
 export function recoverSourceErasureIntents(io: CanonIo, source: string): boolean {
+    io = snapshotCanonIo(io);
     initCanon(io.db);
     const rows = io.db.query<{
         page_path: string;
@@ -887,7 +911,10 @@ export function recoverSourceErasureIntents(io: CanonIo, source: string): boolea
         return false;
     for (const row of rows) {
         try {
+            assertStoredPageRelPath(row.page_path);
             const intent = readSourceErasureIntent(io.db, row.page_path)!;
+            assertReceiptPaths(intent.receipt);
+            if (intent.receipt.page_path !== row.page_path) return false;
             const current = readPage(io, row.page_path);
             const hash = current?.hash ?? ABSENT_PAGE_HASH;
             if (hash === intent.receipt.before_hash)
@@ -936,7 +963,7 @@ function applySourcePurgeWrite(io: CanonIo, input: SourcePurgeInput, prepared: S
       ).get(id) === null)) throw new CanonWriteError("decision_stale", "source erasure admission changed");
       if (next !== null) requireSourceEvents(io.db, existingSources(next), { owner: true, purpose: "derive" });
     });
-    const cap = grantCanonWrite("loop", intent.receipt.receipt_id);
+    const cap = grantCanonWrite("loop", intent.receipt.receipt_id, io.vault_path);
     const outcome = writePage(cap, join(io.vault_path, input.rel_path), next ?? { data, body: "\n" }, {
         revision: true, expected_hash: existing.hash, erase_prior: true, delete: nothingRemains,
     });

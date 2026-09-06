@@ -1,14 +1,19 @@
+import { assertReceiptPaths } from "./canon/paths";
 import { isRfc3339 } from "./util/time";
 import { sourcePolicyEpoch, inspectSourceGrant, sourceEventsAllowed } from "./ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import {
+  type Stats,
   chmodSync,
   closeSync,
+  constants,
   existsSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
   openSync,
+  opendirSync,
   readSync,
   readdirSync,
   realpathSync,
@@ -40,6 +45,7 @@ import { rebuildDerived } from "./derived";
 import { EVENT_LIMITS, type CaptureEvent } from "./contracts/event";
 import { isUlid, ulid } from "./util/ulid";
 import { writeRailCursor } from "./ledger/checkpoints";
+import { NULL_CONNECTION_CONFIG } from "./ledger/connection-state";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "./ledger/db";
 import { eventFromRow, parseEventRecord, type LegacyEventRecord } from "./ledger/event-record";
 import { bindLegacyEventOrigins, installEventIdentityGuards } from "./ledger/event-identity-schema";
@@ -52,6 +58,9 @@ import { extractBatchFilingVersion, validateDurableExtractStorage } from "./serv
 import { readVaultId, vaultIdPath } from "./serve/vault-id";
 import { doctorVault } from "./vault/doctor";
 import { initVault } from "./vault/init";
+import { parseFrontmatter } from "./vault/frontmatter";
+import { MAX_CANON_DEPTH, MAX_CANON_PAGE_BYTES, MAX_CANON_PAGES, MAX_CANON_WALK_BYTES } from "./vault/pages";
+import { validatePage } from "./vault/schema";
 
 export const BACKUP_SCHEMA = "kizuki.backup/v3" as const;
 export const V2_BACKUP_SCHEMA = "kizuki.backup/v2" as const;
@@ -76,6 +85,8 @@ const IDENTITY_BACKUP = "claims/identity_links.jsonl";
 const MAX_IDENTITY_BACKUP_BYTES = 8_388_608;
 const MAX_IDENTITY_BACKUP_ROW_BYTES = 131_072;
 const SOURCE_INVENTORY_BACKUP = "ledger/source_store_inventory.jsonl";
+const EXPORT_INVENTORY = "export-inventory.json";
+const MAX_INVENTORY_ENTRIES = 100_000;
 const MAX_ERASURE_REPORT_BYTES = 2_000_000;
 const MAX_SOURCE_INVENTORY_ROW_BYTES = 6 * MAX_ERASURE_REPORT_BYTES + 1_024;
 const FORBIDDEN_KEYS = new Set([
@@ -132,7 +143,7 @@ export interface RestoreReport {
   receipts: number;
   vault_files: number;
   doctor: { total: number; valid: number; invalid: number };
-  /** Older backup formats did not preserve an interrupted model decision. */
+  /** Runtime recovery limits, including disconnected portable connection history. */
   recovery_warnings: readonly string[];
 }
 
@@ -209,11 +220,10 @@ interface ClaimRow {
 interface ConnectionRow {
   connector_id: string;
   source_key: string;
-  config: string;
-  secret_refs: string;
   connected_at: string;
   disconnected_at: string | null;
   implementation_version: string;
+  consent_required: number;
 }
 
 interface CheckpointRow {
@@ -345,29 +355,46 @@ function writePrivateFile(path: string, bytes: Uint8Array): void {
 function copyHashed(
   source: string,
   destination: string,
+  expected?: { sha256: string; size: number },
 ): { sha256: string; size: number } {
   mkdirPrivate(dirname(destination));
   const hasher = new Bun.CryptoHasher("sha256");
-  const input = openSync(source, "r");
-  const output = openSync(destination, "wx", FILE_MODE);
+  const input = openSync(source, constants.O_RDONLY | constants.O_NOFOLLOW);
+  let output: number | undefined;
   let size = 0;
   try {
+    requireSingleLinkRegularFile(input);
+    output = openSync(destination, "wx", FILE_MODE);
     const buf = Buffer.alloc(CHUNK);
     let read = readSync(input, buf);
     while (read > 0) {
       const slice = buf.subarray(0, read);
+      if (expected !== undefined && size + read > expected.size) {
+        throw new Error("export inventory file changed before copying completed");
+      }
       hasher.update(slice);
       writeAll(output, slice);
       size += read;
       read = readSync(input, buf);
     }
+    requireSingleLinkRegularFile(input);
     fsyncSync(output);
   } finally {
     closeSync(input);
-    closeSync(output);
+    if (output !== undefined) closeSync(output);
   }
   chmodSync(destination, FILE_MODE);
-  return { sha256: hasher.digest("hex"), size };
+  const result = { sha256: hasher.digest("hex"), size };
+  if (expected !== undefined && (result.sha256 !== expected.sha256 || result.size !== expected.size)) {
+    throw new Error("export inventory file changed before copying completed");
+  }
+  return result;
+}
+
+function requireSingleLinkRegularFile(fd: number): Stats {
+  const info = fstatSync(fd);
+  if (!info.isFile() || info.nlink !== 1) throw new Error("backup file must be regular and singly linked");
+  return info;
 }
 
 function hashFile(path: string): { sha256: string; size: number } {
@@ -469,17 +496,197 @@ function isControlDir(name: string): boolean {
   return name.toLowerCase() === CONTROL_DIR;
 }
 
-function vaultFiles(directory: string): string[] {
-  const files: string[] = [];
-  for (const entry of readdirSync(directory, { withFileTypes: true }).sort(
-    (left, right) => compareCodeUnits(left.name, right.name),
-  )) {
-    if (isControlDir(entry.name) || entry.isSymbolicLink()) continue;
-    const path = join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...vaultFiles(path));
-    else if (entry.isFile()) files.push(path);
+interface InventoryFile {
+  path: string;
+  kind: "doctrine" | "canon" | "archive";
+  sha256: string;
+  size: number;
+}
+
+interface VaultInventory {
+  schema: "kizuki.export-inventory/v1";
+  files: InventoryFile[];
+  excluded_entries: { hidden: number; links_or_special: number; backup_containers: number; unclassified: number };
+  unavailable_archive_references: number;
+  recovery_limits: readonly string[];
+}
+
+/** Classify bounded exact bytes before copying; directory membership alone grants no inclusion. */
+function vaultInventory(db: Database, root: string): VaultInventory {
+  const inventory: VaultInventory = {
+    schema: "kizuki.export-inventory/v1",
+    files: [],
+    excluded_entries: { hidden: 0, links_or_special: 0, backup_containers: 0, unclassified: 0 },
+    unavailable_archive_references: 0,
+    recovery_limits: [
+      "The v3 streams exclude credentials, opaque connection state and agent enrollment authority.",
+      "The v3 streams do not preserve all journals, holds, purge operations or run and audit history.",
+      "File inventory and the database streams do not yet share every canon writer's snapshot fence.",
+      "A complete manifest verifies this artifact's listed bytes; it does not assert complete runtime recovery.",
+    ],
+  };
+  let visited = 0;
+  let inspectedBytes = 0;
+  let canonCount = 0;
+  const ids = new Set<string>();
+  const archiveHashes = new Map<string, Set<string>>();
+  const legacyHashes = new Map<string, Set<string>>();
+  const SHA256 = /^[a-f0-9]{64}$/;
+  function remember(index: Map<string, Set<string>>, key: string, hash: string | null): void {
+    if (hash === null || !SHA256.test(hash)) return;
+    const hashes = index.get(key) ?? new Set<string>();
+    hashes.add(hash);
+    index.set(key, hashes);
   }
-  return files;
+  function ordinaryPath(path: string): boolean {
+    const parts = path.split("/");
+    return path.length <= 1024 && parts.length <= MAX_CANON_DEPTH &&
+      parts.every(part => part.length > 0 && !part.startsWith(".") && !part.includes("\\") && !part.includes("\0"));
+  }
+  if (tableExists(db, "canon_receipts")) {
+    let receipts = 0;
+    for (const row of db.query<{
+      page_path: string; archive_path: string | null; before_hash: string | null; after_hash: string;
+    }, []>("SELECT page_path,archive_path,before_hash,after_hash FROM canon_receipts ORDER BY receipt_id").iterate()) {
+      if (++receipts > MAX_INVENTORY_ENTRIES) throw new Error("export receipt inventory exceeds its bound");
+      // Source erasure keeps inert receipt history after clearing its file references.
+      if (row.page_path === "" && row.archive_path === null) continue;
+      if (!ordinaryPath(row.page_path)) throw new Error("export receipt names an unsupported page path");
+      if (row.archive_path !== null) {
+        if (!ordinaryPath(row.archive_path) || !row.archive_path.startsWith("archive/")) {
+          throw new Error("export receipt names an unsupported archive path");
+        }
+        // Keep an explicit reference even when a historical row has no usable hash.
+        if (!archiveHashes.has(row.archive_path)) archiveHashes.set(row.archive_path, new Set());
+        remember(archiveHashes, row.archive_path, row.before_hash);
+      }
+      if (row.page_path.startsWith("archive/")) {
+        remember(archiveHashes, row.page_path, row.after_hash);
+      } else {
+        const base = row.page_path.split("/").at(-1)!.replace(/\.md$/, "");
+        for (const prefix of [`${row.page_path.replaceAll("/", "__")}--`, `${base}.prev-`]) {
+          remember(legacyHashes, prefix, row.before_hash);
+          remember(legacyHashes, prefix, row.after_hash);
+        }
+      }
+    }
+  }
+  function readBounded(path: string): Buffer {
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const info = requireSingleLinkRegularFile(fd);
+      if (info.size > MAX_CANON_PAGE_BYTES) throw new Error("export inventory file exceeds its bound");
+      inspectedBytes += info.size;
+      if (inspectedBytes > MAX_CANON_WALK_BYTES) throw new Error("export inventory byte budget exceeded");
+      const bytes = Buffer.alloc(info.size);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const read = readSync(fd, bytes, offset, bytes.length - offset, offset);
+        if (read === 0) throw new Error("export inventory file changed while reading");
+        offset += read;
+      }
+      if (readSync(fd, Buffer.alloc(1), 0, 1, offset) !== 0) throw new Error("export inventory file changed while reading");
+      requireSingleLinkRegularFile(fd);
+      return bytes;
+    } finally { closeSync(fd); }
+  }
+  function classify(path: string, rel: string, archive: boolean): void {
+    const name = rel.split("/").at(-1)!;
+    const doctrine = rel === "CANON.md" || rel === "SCHEMA.md";
+    if (!doctrine && !name.endsWith(".md")) {
+      inventory.excluded_entries.unclassified++;
+      return;
+    }
+    const explicitHashes = archiveHashes.get(rel);
+    const matchingHashes = archive ? new Set(explicitHashes) : new Set<string>();
+    if (archive) {
+      for (const separator of ["--", ".prev-"]) {
+        const position = name.lastIndexOf(separator);
+        if (position < 0) continue;
+        const hashes = legacyHashes.get(name.slice(0, position + separator.length));
+        if (hashes !== undefined) for (const hash of hashes) matchingHashes.add(hash);
+      }
+      if (explicitHashes === undefined && matchingHashes.size === 0) {
+        inventory.excluded_entries.unclassified++;
+        return;
+      }
+    }
+    const bytes = readBounded(path);
+    const sha256 = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+    if (archive && !matchingHashes.has(sha256)) {
+      inventory.excluded_entries.unclassified++;
+      return;
+    }
+    if (!doctrine) {
+      const text = FATAL_UTF8.decode(bytes);
+      if (!archive && !text.startsWith("---\n") && !text.startsWith("---\r\n")) {
+        inventory.excluded_entries.unclassified++;
+        return;
+      }
+      const parsed = parseFrontmatter(text);
+      const errors = validatePage(parsed.data);
+      if (errors.length > 0) {
+        if (archive || Object.hasOwn(parsed.data, "id")) throw new Error("export canon inventory is incomplete: invalid page");
+        inventory.excluded_entries.unclassified++;
+        return;
+      }
+      if (!archive) {
+        const id = String(parsed.data["id"]);
+        if (ids.has(id)) throw new Error("export canon inventory is incomplete: duplicate page identity");
+        ids.add(id);
+        if (++canonCount > MAX_CANON_PAGES) throw new Error("export canon inventory exceeds its page bound");
+      }
+    }
+    inventory.files.push({ path: rel, kind: doctrine ? "doctrine" : archive ? "archive" : "canon", sha256, size: bytes.length });
+  }
+  function walk(directory: string, depth: number, archive = false): void {
+    if (depth > MAX_CANON_DEPTH) throw new Error("export inventory depth exceeds its bound");
+    const handle = opendirSync(directory);
+    const entries = [];
+    try {
+      for (let entry = handle.readSync(); entry !== null; entry = handle.readSync()) {
+        if (++visited > MAX_INVENTORY_ENTRIES) throw new Error("export inventory entry budget exceeded");
+        entries.push(entry);
+      }
+    } finally { handle.closeSync(); }
+    if (depth > 0 && entries.some(entry => entry.name === INCOMPLETE)) {
+      inventory.excluded_entries.backup_containers++;
+      return;
+    }
+    const manifest = entries.find(entry => entry.name === "manifest.json" && entry.isFile());
+    if (manifest !== undefined && depth > 0) {
+      let value: unknown;
+      try { value = JSON.parse(FATAL_UTF8.decode(readBounded(join(directory, manifest.name)))); }
+      catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+      if (isPlainObject(value) && typeof value["schema"] === "string" && value["schema"].startsWith("kizuki.backup/")) {
+        inventory.excluded_entries.backup_containers++;
+        return;
+      }
+    }
+    for (const entry of entries.sort((a, b) => compareCodeUnits(a.name, b.name))) {
+      if (entry.name.startsWith(".")) { inventory.excluded_entries.hidden++; continue; }
+      if (entry.isSymbolicLink() || (!entry.isFile() && !entry.isDirectory())) {
+        inventory.excluded_entries.links_or_special++;
+        continue;
+      }
+      const path = join(directory, entry.name);
+      const rel = posixRel(root, path);
+      if (entry.isDirectory()) walk(path, depth + 1, archive || rel === "archive");
+      else {
+        if (depth + 1 > MAX_CANON_DEPTH) throw new Error("export inventory depth exceeds its bound");
+        classify(path, rel, archive);
+      }
+    }
+  }
+  walk(root, 0);
+  const doctrine = inventory.files.filter(file => file.kind === "doctrine");
+  if (doctrine.length !== 2 || !["CANON.md", "SCHEMA.md"].every(path => doctrine.some(file => file.path === path))) {
+    throw new Error("export inventory requires regular root doctrine files CANON.md and SCHEMA.md");
+  }
+  inventory.files.sort((a, b) => compareCodeUnits(a.path, b.path));
+  const selected = new Set(inventory.files.map(file => file.path));
+  inventory.unavailable_archive_references = [...archiveHashes.keys()].filter(path => !selected.has(path)).length;
+  return inventory;
 }
 
 function ledgerSchemaVersion(db: Database): number {
@@ -863,15 +1070,18 @@ function* pageReceipts(db: Database): Generator<Record<string, unknown>> {
   }
 }
 
+const CONNECTION_RECOVERY_WARNING = "restored connection history is disconnected and has no connector state; further capture requires supported fresh enrollment with a new source key and fresh consent; retained checkpoints will not resume automatically";
+
 function* pageConnections(db: Database): Generator<Record<string, unknown>> {
+  const disconnectedAt = new Date().toISOString();
   let after: { connector_id: string; source_key: string } | null = null;
   while (true) {
     let rows: ConnectionRow[];
     if (after === null) {
       rows = db
         .query<ConnectionRow, [number]>(
-          `SELECT connector_id, source_key, config, secret_refs,
-                  connected_at, disconnected_at, implementation_version, consent_required
+          `SELECT connector_id, source_key, connected_at, disconnected_at,
+                  implementation_version, consent_required
            FROM connections
            ORDER BY connector_id, source_key LIMIT ?`,
         )
@@ -879,8 +1089,8 @@ function* pageConnections(db: Database): Generator<Record<string, unknown>> {
     } else {
       rows = db
         .query<ConnectionRow, [string, string, string, number]>(
-          `SELECT connector_id, source_key, config, secret_refs,
-                  connected_at, disconnected_at, implementation_version, consent_required
+          `SELECT connector_id, source_key, connected_at, disconnected_at,
+                  implementation_version, consent_required
            FROM connections
            WHERE connector_id > ?
               OR (connector_id = ? AND source_key > ?)
@@ -893,12 +1103,12 @@ function* pageConnections(db: Database): Generator<Record<string, unknown>> {
       yield {
         connector_id: row.connector_id,
         source_key: row.source_key,
-        config: JSON.parse(row.config) as unknown,
-        secret_refs: JSON.parse(row.secret_refs) as unknown,
+        config: JSON.parse(NULL_CONNECTION_CONFIG) as unknown,
+        secret_refs: [],
         connected_at: row.connected_at,
-        disconnected_at: row.disconnected_at,
+        disconnected_at: row.disconnected_at ?? disconnectedAt,
         implementation_version: row.implementation_version,
-        consent_required: (row as ConnectionRow & { consent_required: number }).consent_required,
+        consent_required: row.consent_required,
       };
     }
     const last: ConnectionRow | undefined = rows.at(-1);
@@ -1174,12 +1384,16 @@ export function exportVault(
     writePrivateFile(join(staging, INCOMPLETE), Buffer.from("incomplete\n"));
     options.onProgress?.("staging");
     const files: Record<string, ExportManifestEntry> = {};
-    for (const sourceFile of vaultFiles(source)) {
+    const inventory = vaultInventory(db, source);
+    const inventoryBytes = Buffer.from(`${JSON.stringify(inventory, null, 2)}\n`);
+    writePrivateFile(join(staging, EXPORT_INVENTORY), inventoryBytes);
+    trackFile(files, EXPORT_INVENTORY, 1, hashFile(join(staging, EXPORT_INVENTORY)));
+    options.onProgress?.("inventory");
+    for (const entry of inventory.files) {
       throwIfAborted(options.signal);
       options.onProgress?.("vault");
-      const rel = posixRel(source, sourceFile);
-      const destFile = join(staging, "vault", rel);
-      trackFile(files, `vault/${rel}`, 1, copyHashed(sourceFile, destFile));
+      const destFile = join(staging, "vault", entry.path);
+      trackFile(files, `vault/${entry.path}`, 1, copyHashed(join(source, entry.path), destFile, entry));
     }
 
     options.onProgress?.("ledger");
@@ -1644,16 +1858,19 @@ function insertConnectionRow(db: Database, raw: Record<string, unknown>): void {
   ).run(
     asString(raw.connector_id, "connector_id"),
     asString(raw.source_key, "source_key"),
-    JSON.stringify(raw.config),
-    JSON.stringify(refs),
+    NULL_CONNECTION_CONFIG,
+    "[]",
     asString(raw.connected_at, "connected_at"),
-    asStringOrNull(raw.disconnected_at, "disconnected_at"),
+    asStringOrNull(raw.disconnected_at, "disconnected_at") ?? new Date().toISOString(),
     asString(raw.implementation_version ?? "", "implementation_version"),
     raw.consent_required === undefined ? 0 : raw.consent_required === 0 || raw.consent_required === 1 ? raw.consent_required : (() => { throw new Error("invalid consent requirement"); })(),
   );
 }
 
 function insertReceipt(db: Database, raw: Record<string, unknown>): void {
+  const pagePath = asString(raw.page_path, "page_path");
+  const archivePath = asStringOrNull(raw.archive_path, "archive_path");
+  assertReceiptPaths({ page_path: pagePath, archive_path: archivePath });
   db.query(
     `INSERT INTO canon_receipts
        (receipt_id, claim_ids, provenance, sensitivity, page_path, kind,
@@ -1666,14 +1883,14 @@ function insertReceipt(db: Database, raw: Record<string, unknown>): void {
     JSON.stringify(raw.claim_ids ?? []),
     JSON.stringify(raw.provenance ?? []),
     asString(raw.sensitivity, "sensitivity"),
-    asString(raw.page_path, "page_path"),
+    pagePath,
     asString(raw.claim_kind ?? "claim", "claim_kind"),
     asStringOrNull(raw.before_hash, "before_hash"),
     asString(raw.after_hash, "after_hash"),
     asString(raw.at, "at"),
     asString(raw.kind ?? "write", "kind"),
     asString(raw.page_action ?? "edit", "page_action"),
-    asStringOrNull(raw.archive_path, "archive_path"),
+    archivePath,
     asString(raw.writer ?? "import", "writer"),
     asString(raw.producer ?? "deterministic", "producer"),
     asStringOrNull(raw.model_ref, "model_ref"),
@@ -1808,13 +2025,17 @@ function insertExtractBatch(db: Database, raw: Record<string, unknown>): void {
 
 function* streamRows(
   backupDir: string,
+  manifest: ExportManifest,
   relativePath: string,
   required: boolean,
 ): Generator<Record<string, unknown>> {
+  if (!Object.hasOwn(manifest.files, relativePath)) {
+    if (required) throw new Error(`backup manifest is missing ${relativePath}`);
+    return;
+  }
   const path = join(backupDir, relativePath);
   if (!existsSync(path)) {
-    if (required) throw new Error(`backup is missing ${relativePath}`);
-    return;
+    throw new Error(`backup is missing ${relativePath}`);
   }
   const maxRowBytes = relativePath === "ledger/events.jsonl" ? MAX_EVENT_BACKUP_ROW_BYTES
     : relativePath === MACHINE_BYTE_INTENTS_BACKUP ? MAX_MACHINE_BYTE_INTENT_ROW_BYTES
@@ -1900,25 +2121,25 @@ export function restoreVault(
           db.exec(`DROP TRIGGER events_identity_insert; DROP TRIGGER events_identity_update;
             DROP TRIGGER native_owner_hash_insert; DROP TRIGGER native_owner_hash_update;`);
         }
-        for (const row of streamRows(source, "ledger/events.jsonl", true)) {
+        for (const row of streamRows(source, manifest, "ledger/events.jsonl", true)) {
           throwIfAborted(options.signal);
           insertEvent(db, row, eventFormat);
         }
-        for (const row of streamRows(source, "ledger/event_purges.jsonl", true)) {
+        for (const row of streamRows(source, manifest, "ledger/event_purges.jsonl", true)) {
           insertPurge(db, row);
         }
-        for (const row of streamRows(source, "claims/claims.jsonl", false)) {
+        for (const row of streamRows(source, manifest, "claims/claims.jsonl", false)) {
           insertClaimRow(db, row);
         }
         syncCompatProposals(db);
-        for (const row of streamRows(source, "claims/supersessions.jsonl", false)) {
+        for (const row of streamRows(source, manifest, "claims/supersessions.jsonl", false)) {
           insertSupersession(db, row);
         }
-        for (const row of streamRows(source, "claims/bindings.jsonl", false)) {
+        for (const row of streamRows(source, manifest, "claims/bindings.jsonl", false)) {
           insertBinding(db, row);
         }
         let identityCount = 0;
-        for (const row of streamRows(source, IDENTITY_BACKUP, manifest.schema === BACKUP_SCHEMA)) {
+        for (const row of streamRows(source, manifest, IDENTITY_BACKUP, manifest.schema === BACKUP_SCHEMA)) {
           insertIdentityLink(db, row, manifest.schema);
           identityCount += 1;
         }
@@ -1928,18 +2149,18 @@ export function restoreVault(
         // The same raw-byte and aggregate-reference budget governs export,
         // restore and purge. Opaque malformed support remains inert history.
         scanLegacyIdentityRows(db);
-        for (const row of streamRows(source, "canon/receipts.jsonl", true)) {
+        for (const row of streamRows(source, manifest, "canon/receipts.jsonl", true)) {
           insertReceipt(db, row);
         }
-        for (const row of streamRows(source, "connections.jsonl", true)) {
+        for (const row of streamRows(source, manifest, "connections.jsonl", true)) {
           insertConnectionRow(db, row);
         }
-        for (const row of streamRows(source, "checkpoints.jsonl", true)) {
+        for (const row of streamRows(source, manifest, "checkpoints.jsonl", true)) {
           insertCheckpointRow(db, row);
         }
         const railsRequired = manifest.schema !== LEGACY_BACKUP_SCHEMA && manifest.schema_versions.ledger >= 17;
         let railCount = 0;
-        for (const row of streamRows(source, RAIL_CURSORS_BACKUP, railsRequired)) {
+        for (const row of streamRows(source, manifest, RAIL_CURSORS_BACKUP, railsRequired)) {
           writeRailCursor(
             db,
             asString(row.rail, "rail"),
@@ -1952,13 +2173,14 @@ export function restoreVault(
         if (railEntry !== undefined && railCount !== railEntry.count) {
           throw new Error("backup extract rail cursor count mismatch");
         }
-        for (const row of streamRows(source, "ledger/connector_sensitivity.jsonl", false)) {
+        for (const row of streamRows(source, manifest, "ledger/connector_sensitivity.jsonl", false)) {
           insertConnectorSensitivity(db, row);
         }
         restoreSourcePolicy(db, source, manifest);
         let intentCount = 0;
         for (const row of streamRows(
           source,
+          manifest,
           MACHINE_BYTE_INTENTS_BACKUP,
           eventFormat === "current",
         )) {
@@ -1971,7 +2193,7 @@ export function restoreVault(
         const deferredPath = "serve/extract-deferred-inputs.jsonl";
         const deferredRequired = manifest.schema_versions.serve >= 8;
         let deferredCount = 0;
-        for (const row of streamRows(source, deferredPath, deferredRequired)) {
+        for (const row of streamRows(source, manifest, deferredPath, deferredRequired)) {
           insertDeferredInput(db, row);
           deferredCount += 1;
         }
@@ -1979,7 +2201,7 @@ export function restoreVault(
           throw new Error("backup deferred extraction count mismatch");
         }
         let batchCount = 0;
-        for (const row of streamRows(source, EXTRACT_BATCH_BACKUP, deferredRequired)) {
+        for (const row of streamRows(source, manifest, EXTRACT_BATCH_BACKUP, deferredRequired)) {
           insertExtractBatch(db, row);
           batchCount += 1;
         }
@@ -2019,9 +2241,14 @@ export function restoreVault(
           key.startsWith("vault/"),
         ).length,
         doctor: doctor.counts,
-        recovery_warnings: manifest.schema_versions.serve < 8
-          ? ["backup predates durable extraction recovery; an interrupted model decision was not preserved"]
-          : [],
+        recovery_warnings: [
+          ...(manifest.schema_versions.serve < 8
+            ? ["backup predates durable extraction recovery; an interrupted model decision was not preserved"]
+            : []),
+          ...(db.query("SELECT 1 FROM connections LIMIT 1").get() !== null
+            ? [CONNECTION_RECOVERY_WARNING]
+            : []),
+        ],
       };
       db.close();
       unlinkSync(join(staging, INCOMPLETE));
@@ -2141,7 +2368,7 @@ function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManif
     const required = manifest.schema_versions.ledger >= (table === "native_owner_evidence" ? 12 : table === "source_store_inventory" ? 14 : table === "source_retrieval_stores" ? 13 : 11);
     const path = `ledger/${table}.jsonl`;
     if (required && manifest.files[path] === undefined) throw new Error("backup source policy stream missing");
-    for (const row of streamRows(backup, path, required)) {
+    for (const row of streamRows(backup, manifest, path, required)) {
       if (table === "native_owner_evidence" && manifest.schema === LEGACY_BACKUP_SCHEMA) {
         if (Object.hasOwn(row, "event_content_hash")) throw new Error("legacy native owner proof contains a current field");
         row["event_content_hash"] = db.query<{ content_hash: string }, [string]>("SELECT content_hash FROM events WHERE event_id=?")
