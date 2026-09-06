@@ -23,8 +23,8 @@ import type { Fixture } from "./helpers";
 
 let fixture: Fixture | null = null;
 
-function newFixture(): Fixture {
-  fixture = serveFixture();
+async function newFixture(): Promise<Fixture> {
+  fixture = await serveFixture();
   return fixture;
 }
 
@@ -60,6 +60,7 @@ async function fileClaim(
   predicate: string,
   object: string,
   subject = "person:ada",
+  sourceEvent = live.events["public"] as string,
 ): Promise<string> {
   const envelope = await servePropose(live.agent("reader-private"), {
     kind: "claim",
@@ -69,7 +70,7 @@ async function fileClaim(
     subject,
     predicate,
     object,
-    provenance: [live.events["public"] as string],
+    provenance: [sourceEvent],
   });
   const id = envelope.data?.claim_id;
   if (id === undefined) throw new Error("the fixture claim was not filed");
@@ -78,7 +79,7 @@ async function fileClaim(
 
 describe("serveCorrect retires what the owner says is wrong", () => {
   test("a named claim is superseded and the statement is kept verbatim", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const wrong = await fileClaim(
       live,
       "Ada works at Acme.",
@@ -112,7 +113,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   });
 
   test("the statement lands in the ledger and an exact replay reuses it", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const wrong = await fileClaim(
       live,
       "Ada is based in Lagos.",
@@ -150,7 +151,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   });
 
   test("one wording aimed at two targets is two records, not one", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const lagos = await fileClaim(
       live,
       "Ada is based in Lagos.",
@@ -183,7 +184,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   });
 
   test("a subject that names one group is corrected, several are reported", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const based = await fileClaim(
       live,
       "Ada is based in Lagos.",
@@ -222,7 +223,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   });
 
   test("an unnamed or unresolvable target fails closed", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const ctx = live.owner();
     const cases: [CorrectArgs, string][] = [
       [
@@ -271,7 +272,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   });
 
   test("a claim with no predicate cannot be corrected", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const keyless = await servePropose(live.agent("reader-private"), {
       kind: "claim",
       target: "facts:keyless",
@@ -291,7 +292,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   });
 
   test("a relayed correction is on the record and bounded by the grant", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const wrong = await fileClaim(
       live,
       "Ada works at Acme.",
@@ -326,6 +327,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
       "location.based_in",
       "Lagos",
       "person:grace",
+      live.events["private"] as string,
     );
     expect(
       (
@@ -350,7 +352,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   });
 
   test("a refile after a correction is a duplicate, never suppressed", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const ctx = live.agent("reader-private");
     const args = {
       kind: "claim" as const,
@@ -376,7 +378,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   });
 
   test("repeated denials never flip back into an assertion", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     await fileClaim(live, "Ada works at Acme.", "employment.works_at", "Acme");
     const key =
       listClaims(live.db, {
@@ -402,7 +404,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   });
 
   test("a named replacement is what the store keeps, not a bare denial", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const wrong = await fileClaim(
       live,
       "Ada is based in Lagos.",
@@ -425,7 +427,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   });
 
   test("a subject resolves past the store's default page of claims", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     // More live claims than one page of the claims table, so a resolver that
     // read a page and filtered it in memory sees none of the keyed claim
     // filed after them.
@@ -464,7 +466,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   }, 30_000);
 
   test("a grant's window and type scope bind a correction too", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const wrong = await fileClaim(
       live,
       "Ada works at Acme.",
@@ -493,7 +495,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   });
 
   test("a grant that may not speak as the owner files one tier down", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const wrong = await fileClaim(
       live,
       "Ada works at Acme.",
@@ -511,7 +513,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   });
 
   test("a relay withdrawn after the session opened files one tier down", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const wrong = await fileClaim(
       live,
       "Ada works at Acme.",
@@ -532,7 +534,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   });
 
   test("a rehearsal names what it would retire and writes nothing", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const wrong = await fileClaim(
       live,
       "Ada works at Acme.",
@@ -555,7 +557,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   });
 
   test("the page bound to a retired claim is rewritten in the same pass", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     // A claim the receipted writer materialized, which is what a correction
     // has to reach: the claim moves and the page moves with it.
     const filed = await insertClaim(
@@ -618,7 +620,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   });
 
   test("a grant without the tool cannot relay a correction", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const error = await refusal(() =>
       serveCorrect(live.agent("search-only"), {
         statement: "Anything at all.",
@@ -629,7 +631,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
   });
 
   test("the default grant does not carry the relay", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const wrong = await fileClaim(
       live,
       "Ada works at Acme.",

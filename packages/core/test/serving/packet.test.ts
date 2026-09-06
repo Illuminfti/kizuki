@@ -16,13 +16,13 @@ import { serveSearch } from "../../src/serving/search";
 import { serveTimeline } from "../../src/serving/timeline";
 import { ServeError } from "../../src/serving/types";
 import { CanonUnreadableError } from "../../src/serving/canon";
-import { page, serveFixture, storeEvent } from "./helpers";
+import { page, recordedPage, serveFixture, storeEvent } from "./helpers";
 import type { Fixture } from "./helpers";
 
 let fixture: Fixture | null = null;
 
-function newFixture(): Fixture {
-  fixture = serveFixture();
+async function newFixture(): Promise<Fixture> {
+  fixture = await serveFixture();
   return fixture;
 }
 
@@ -43,7 +43,7 @@ async function refusal(run: () => unknown): Promise<ServeError> {
 
 describe("serveContextPacket", () => {
   test("every deliverable budget is respected and the header is always present", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     for (const ctx of [live.owner(), live.agent("reader-private")]) {
       for (const budget of [80, 450, 2_000]) {
         const data = (await serveContextPacket(ctx, {
@@ -59,7 +59,7 @@ describe("serveContextPacket", () => {
   });
 
   test("the header states what the packet is and how to read it", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const envelope = (await serveContextPacket(live.owner(), {
       query: "kettle",
       budget_tokens: 450,
@@ -81,7 +81,7 @@ describe("serveContextPacket", () => {
   });
 
   test("a correction moves the epoch and answers a stale packet with a fresh one", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const filed = await servePropose(live.agent("reader-private"), {
       kind: "claim",
       target: "facts:works-at",
@@ -118,7 +118,7 @@ describe("serveContextPacket", () => {
   });
 
   test("an epoch that is not a counter is refused", async () => {
-    const ctx = newFixture().owner();
+    const ctx = (await newFixture()).owner();
     const bad: unknown[] = ["3", -1, 1.5];
     for (const value of bad) {
       expect(
@@ -132,7 +132,7 @@ describe("serveContextPacket", () => {
   });
 
   test("sections are rendered in order with provenance markers", async () => {
-    const ctx = newFixture().owner();
+    const ctx = (await newFixture()).owner();
     const envelope = (await serveContextPacket(ctx, {
       query: "kettle",
       subjects: ["person:ada"],
@@ -162,7 +162,7 @@ describe("serveContextPacket", () => {
   });
 
   test("the packet is deterministic apart from its timestamp", async () => {
-    const ctx = newFixture().owner();
+    const ctx = (await newFixture()).owner();
     const args = {
       query: "kettle",
       subjects: ["person:ada"],
@@ -178,7 +178,7 @@ describe("serveContextPacket", () => {
   });
 
   test("include narrows the packet to the named sections", async () => {
-    const ctx = newFixture().owner();
+    const ctx = (await newFixture()).owner();
     const envelope = (await serveContextPacket(ctx, {
       query: "kettle",
       include: ["canon"],
@@ -190,7 +190,7 @@ describe("serveContextPacket", () => {
   });
 
   test("a budget outside the range is refused", async () => {
-    const ctx = newFixture().owner();
+    const ctx = (await newFixture()).owner();
     expect(
       (await refusal(async () => (await serveContextPacket(ctx, { budget_tokens: 49 })))).code,
     ).toBe("invalid_arguments");
@@ -200,7 +200,7 @@ describe("serveContextPacket", () => {
   });
 
   test("an include that is not an array is a caller error, not an engine one", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const ctx = live.owner();
     const shapes: unknown[] = ["canon", 5, {}, null];
     for (const shape of shapes) {
@@ -223,7 +223,7 @@ describe("serveContextPacket", () => {
   });
 
   test("a corrupted vault page degrades the packet but fails other tools", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     writeFileSync(
       join(live.vaultPath, "facts/broken.md"),
       "no frontmatter here at all\n",
@@ -256,7 +256,7 @@ describe("serveContextPacket", () => {
   });
 
   test("a page the walk cannot use is named to the owner's own tooling", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     // A duplicate id is the case the vault walk reports rather than throws,
     // and the one a hand-authored page reaches by copying another.
     page(
@@ -293,7 +293,7 @@ describe("serveContextPacket", () => {
 
 describe("the packet is scoped by the grant, not by the request", () => {
   test("a time-scoped agent keeps its in-window records when a wider window is asked for", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     for (let index = 0; index < 25; index += 1) {
       storeEvent(
         live.db,
@@ -330,9 +330,10 @@ describe("the packet is scoped by the grant, not by the request", () => {
   });
 
   test("a type-scoped agent is not starved by candidates it may not read", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     for (let index = 0; index < 25; index += 1) {
-      page(
+      await recordedPage(
+        live.db,
         live.vaultPath,
         `facts/filler-${index}.md`,
         {
@@ -344,6 +345,7 @@ describe("the packet is scoped by the grant, not by the request", () => {
           taint: "clean",
         },
         `Filler kettle prose number ${index}.`,
+        [live.events["public"] as string],
       );
     }
     rebuildDerived(live.db, live.vaultPath);
@@ -359,14 +361,14 @@ describe("the packet is scoped by the grant, not by the request", () => {
     expect(packet.canon.every((chunk) => chunk.type === "person")).toBe(true);
     expect(packet.data?.packet_md).toContain("[page:person:ada]");
     // Flattened to text, a chunk still says what it is and where it came from.
-    expect(packet.data?.packet_md).toContain("taint=clean auth=owner_authored");
+    expect(packet.data?.packet_md).toContain("taint=clean auth=model_inference");
     expect(packet.data?.packet_md).toContain("origin=human");
   });
 
   test("the rendered header carries the envelope instant", async () => {
     // Repeated because a second clock read only strays across a millisecond
     // boundary: one call would agree by luck, a hundred will not.
-    const ctx = newFixture().owner();
+    const ctx = (await newFixture()).owner();
     const drifted: string[] = [];
     for (let index = 0; index < 100; index += 1) {
       const envelope = (await serveContextPacket(ctx, { query: "kettle" }));
@@ -381,7 +383,7 @@ describe("the packet is scoped by the grant, not by the request", () => {
 
 describe("LifeOS-calibre packet compilation", () => {
   test("purpose=correction compiles working knowledge with confidence stamps", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     await servePropose(live.agent("reader-private"), {
       kind: "claim",
       target: "facts:works-at",
@@ -408,7 +410,7 @@ describe("LifeOS-calibre packet compilation", () => {
   });
 
   test("a named subject's claims are not crowded out by older keyed rows", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const provenance = live.events["public"] as string;
     for (let index = 0; index < 21; index += 1) {
       const subject = `person:other-${String(index).padStart(2, "0")}`;
@@ -458,7 +460,7 @@ describe("LifeOS-calibre packet compilation", () => {
   });
 
   test("a delta-capable client retains the prefix when the body is unchanged", async () => {
-    const ctx = newFixture().owner();
+    const ctx = (await newFixture()).owner();
     const first = (await serveContextPacket(ctx, {
       query: "kettle",
       budget_tokens: 450,
@@ -484,7 +486,7 @@ describe("LifeOS-calibre packet compilation", () => {
   });
 
   test("delta delivery is refused without the advertised capability", async () => {
-    const ctx = newFixture().owner();
+    const ctx = (await newFixture()).owner();
     const first = (await serveContextPacket(ctx, { query: "kettle" }));
     const hash = first.data?.packet_hash;
     const epoch = first.data?.claims_epoch;
@@ -499,7 +501,7 @@ describe("LifeOS-calibre packet compilation", () => {
   });
 
   test("quoted lines carry a tainted source label", async () => {
-    const ctx = newFixture().owner();
+    const ctx = (await newFixture()).owner();
     const packet = (await serveContextPacket(ctx, {
       include: ["timeline"],
       since: "2026-02-28T00:00:00Z",
@@ -511,7 +513,7 @@ describe("LifeOS-calibre packet compilation", () => {
   });
 
   test("validity gaps appear under counterevidence", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const left = live.events["public"] as string;
     const right = live.events["personal"] as string;
     await insertClaim(

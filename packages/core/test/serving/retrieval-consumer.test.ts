@@ -10,7 +10,7 @@ import { serveFixture, type Fixture } from "./helpers";
 let fixture: Fixture | undefined;
 const cleanups: (() => void)[] = [];
 afterEach(() => { fixture?.dispose(); fixture = undefined; cleanups.splice(0).forEach((fn) => fn()); });
-function live() { return fixture = serveFixture(); }
+async function live() { return fixture = await serveFixture(); }
 function port(search: RetrievalPort["search"]): RetrievalPort {
   const temporary = temporaryPortContext(DIRECT_RETRIEVAL_DESCRIPTOR);
   cleanups.push(temporary.cleanup);
@@ -27,7 +27,7 @@ function result(ids: string[]): RetrievalResult {
 }
 
 test("search and packets consume engine nominations using current evidence and authority", async () => {
-  const f = live();
+  const f = await live();
   let calls = 0;
   const retrieval = port(async () => { calls += 1; return result(["page:person:ada"]); });
   const ctx = { ...f.owner(), retrieval };
@@ -42,7 +42,7 @@ test("search and packets consume engine nominations using current evidence and a
 });
 
 test("a lying or stale engine cannot disclose excluded canon or deleted evidence", async () => {
-  const f = live();
+  const f = await live();
   const retrieval = port(async () => result(["page:fact:kettle", `event:${f.events["tombstoned"]}`]));
   const search = await serveSearch({ ...f.agent("reader-public"), retrieval }, { query: "nomination-only", scope: "all" });
   expect(search.canon).toEqual([]);
@@ -52,7 +52,7 @@ test("a lying or stale engine cannot disclose excluded canon or deleted evidence
 });
 
 test("an unavailable engine leaves the deterministic offline consumer usable", async () => {
-  const f = live();
+  const f = await live();
   const retrieval = port(async () => { throw new Error("PRIVATE_PROVIDER_ERROR"); });
   const search = await serveSearch({ ...f.owner(), retrieval }, { query: "kettle" });
   expect(search.canon.some((chunk) => chunk.page_id === "person:ada")).toBe(true);
@@ -64,7 +64,7 @@ test("an unavailable engine leaves the deterministic offline consumer usable", a
 });
 
 test("a grant narrowed while retrieval is pending refuses the whole response", async () => {
-  const f = live();
+  const f = await live();
   const retrieval = port(async () => {
     setGrant(f.db, "reader-private", { ceiling: "public" });
     return result(["page:fact:kettle"]);
