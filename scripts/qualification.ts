@@ -3,7 +3,9 @@ import { Database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, parse } from "node:path";
-import { parseBuildInfo } from "./stranger-proof";
+import { parseBuildInfoValue } from "./stranger-proof";
+import { ARTIFACT_PACKAGE_FILES, ArtifactProofError, parseProofJson, validateArtifactProof } from "./artifact-proof";
+import type { ArtifactPackageFile } from "./artifact-proof";
 import { evaluateQualification, qualificationDate, type QualificationProfile, type QualificationReceipt, type QualificationSample } from "../packages/core/src/serve/qualification";
 import { loadServeConfig } from "../packages/core/src/serve/config";
 import { readProducerDiagnostic } from "../packages/core/src/producer/diagnostics";
@@ -20,6 +22,7 @@ function identifier(value: unknown, grammar: RegExp): string {
 }
 
 const LIMIT = 64 * 1024 * 1024;
+const SUPPORTED_BUN_VERSION = readFileSync(resolve(import.meta.dir, "../.bun-version"), "utf8").trim();
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid evidence object");
@@ -78,16 +81,27 @@ function anchor() {
 interface Identity { source_sha: string; binary_sha256: string; build_sha256: string; proof_sha256: string; target: string; }
 function verifyArtifact(artifact: string, proofPath: string): Identity {
   pathCheck(artifact);
-  const names = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"];
-  const expected = names.map((name) => `${hash(read(join(artifact, name), 256 * 1024 * 1024))}  ${name}`).join("\n") + "\n";
-  if (read(join(artifact, "SHA256SUMS")).toString() !== expected) throw new Error("artifact checksum mismatch");
-  const buildBytes = read(join(artifact, "BUILD.json"));
-  const build = parseBuildInfo(join(artifact, "BUILD.json"));
-  const proofBytes = read(proofPath, 1024 * 1024), proof = object(JSON.parse(proofBytes.toString()));
-  const digest = hash(read(join(artifact, "kizuki"), 256 * 1024 * 1024));
-  const required = ["help", "init", "import", "query", "query-result", "context", "context-result", "export", "restore-verify", "restore", "restored-query", "restored-query-result", "restored-context", "restored-context-result"].sort();
-  if (proof.schema !== "kizuki.artifact-proof/v1" || proof.source_sha !== build.source_sha || proof.target !== build.target || proof.binary_sha256 !== digest || !Array.isArray(proof.failures) || proof.failures.length || !Array.isArray(proof.steps) || proof.steps.map((s: unknown) => text(object(s).id)).sort().join() !== required.join() || proof.steps.some((s: unknown) => object(s).passed !== true || object(s).exit_code !== 0)) throw new Error("proof does not bind a passing exact artifact");
-  return { source_sha: build.source_sha, binary_sha256: digest, build_sha256: hash(buildBytes), proof_sha256: hash(proofBytes), target: build.target };
+  const buildBytes = read(join(artifact, "BUILD.json"), 65536);
+  const checksumBytes = read(join(artifact, "SHA256SUMS"), 65536);
+  const package_sha256 = {} as Record<ArtifactPackageFile, string>;
+  for (const name of ARTIFACT_PACKAGE_FILES) {
+    const bytes = name === "BUILD.json" ? buildBytes : name === "SHA256SUMS" ? checksumBytes
+      : read(join(artifact, name), name === "README.txt" ? 65536 : 256 * 1024 * 1024);
+    package_sha256[name] = hash(bytes);
+  }
+  const checksums = ARTIFACT_PACKAGE_FILES.slice(0, -1).map(name => `${package_sha256[name]}  ${name}`).join("\n") + "\n";
+  if (checksumBytes.toString() !== checksums) throw new Error("artifact checksum mismatch");
+  const build = parseBuildInfoValue(parseProofJson(buildBytes));
+  const proofBytes = read(proofPath, 1024 * 1024);
+  const validated = validateArtifactProof(parseProofJson(proofBytes), {
+    source_sha: build.source_sha, target: build.target, bun_version: build.bun_version, package_sha256,
+  });
+  // Retained v1 journals keep their original identity and fixture-only scope.
+  if (validated.schema === "kizuki.artifact-proof/v2") {
+    if (build.bun_version !== SUPPORTED_BUN_VERSION) throw new ArtifactProofError("unsupported-package-bun-version");
+    if (validated.engine.status !== "PASS") throw new ArtifactProofError(validated.engine.reason);
+  }
+  return { source_sha: build.source_sha, binary_sha256: package_sha256.kizuki, build_sha256: hash(buildBytes), proof_sha256: hash(proofBytes), target: build.target };
 }
 interface Manifest { schema: "kizuki.qualification/v1"; qualification_id: string; policy_sha256: string; artifact: string; proof: string; vault: string; identity: Identity; profile: QualificationProfile; }
 function policyDigest(profile: QualificationProfile): string {

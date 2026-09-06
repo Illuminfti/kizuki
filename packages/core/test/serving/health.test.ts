@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { OWNER, getAgent, initAgents } from "../../src/agents";
 import { openLedger } from "../../src/ledger/db";
+import { readSqliteRuntime } from "../../src/ledger/runtime";
 import { serveHealth } from "../../src/serving/health";
 import { servePropose } from "../../src/serving/propose";
 import { serveFixture } from "./helpers";
@@ -42,6 +43,7 @@ describe("serveHealth", () => {
     expect(data?.derived.search).not.toBeNull();
     expect(data?.derived.graph).not.toBeNull();
     expect(data?.agents).toEqual({ total: 11, revoked: 1, quarantined: 0 });
+    expect(data?.runtime).toEqual(readSqliteRuntime(fixture.db));
   });
 
   test("a filed claim shows up as one the writer can act on", async () => {
@@ -79,12 +81,14 @@ describe("serveHealth", () => {
   });
 
   test("the report carries no path, token or secret reference", () => {
-    const json = JSON.stringify(serveHealth(fixture.owner()).data);
+    const data = serveHealth(fixture.owner()).data;
+    const json = JSON.stringify(data);
     expect(json).not.toContain(fixture.vaultPath);
     expect(json).not.toContain("kzk_");
     expect(json).not.toContain("file:");
     expect(json).not.toContain("env:");
-    expect(json).not.toContain("/");
+    expect(data?.runtime.schema).toBe("kizuki.sqlite-runtime/v1");
+    expect(JSON.stringify({ ...data, runtime: { ...data?.runtime, schema: undefined } })).not.toContain("/");
   });
 
   test("a corrupt grant still counts and is named once found", () => {

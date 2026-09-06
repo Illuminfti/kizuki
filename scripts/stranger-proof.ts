@@ -1,13 +1,17 @@
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { release as kernelRelease, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { requireRegularFile, verifyChecksumManifest } from "./release-artifacts";
 
 import { releaseTarget, requireNativeHost, selectedReleaseTarget } from "./release-targets";
+import { ArtifactProofError, validateArtifactProof } from "./artifact-proof";
+import type { CliEngineObservation, McpEngineObservation } from "./artifact-proof";
+import { EngineProofError, collectEngineProcess, mcpObservationFromOutput, parseDoctorObservation } from "./artifact-engine";
 
 const root = resolve(import.meta.dir, "..");
-const schema = "kizuki.artifact-proof/v1" as const;
+const schema = "kizuki.artifact-proof/v2" as const;
+const supportedBunVersion = readFileSync(join(root, ".bun-version"), "utf8").trim();
 
 const packaged = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"] as const;
 const CHILD_TIMEOUT_MS = 30_000;
@@ -33,6 +37,7 @@ interface ProofReceipt {
   target: string;
   host_platform: string;
   host_arch: string;
+  host_kernel_release: string;
   binary_sha256: string;
   bun_version: string;
   package_sha256: Record<string, string>;
@@ -45,6 +50,7 @@ interface ProofReceipt {
   };
   steps: StepReceipt[];
   failures: string[];
+  engine_observations: { kizuki: CliEngineObservation | null; kizuki_mcp: McpEngineObservation | null };
 }
 
 export interface ProofArgs {
@@ -143,7 +149,7 @@ function checkedArtifact(path: string): BuildInfo {
   verifyChecksumManifest(path, packaged);
   const build = parseBuildInfo(join(path, "BUILD.json"));
   requireNativeHost(releaseTarget(build.target));
-  if (build.bun_version !== Bun.version) throw new Error("artifact Bun version mismatch");
+  if (build.bun_version !== Bun.version || Bun.version !== supportedBunVersion) throw new Error("artifact Bun version mismatch");
   return build;
 }
 
@@ -208,12 +214,24 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
   let receipt: ProofReceipt | undefined;
   let sourceSha = "unavailable";
   let artifactTarget = "unavailable";
+  const engineObservations: ProofReceipt["engine_observations"] = { kizuki: null, kizuki_mcp: null };
+  let packageHashes: Record<string, string> = {};
   try {
-    const build = checkedArtifact(args.artifact);
+    checkedArtifact(args.artifact);
+    cpSync(args.artifact, copiedArtifact, { recursive: true, dereference: false, errorOnExist: true });
+    // The copied snapshot supplies both provenance and the bytes we execute.
+    const build = checkedArtifact(copiedArtifact);
     sourceSha = build.source_sha;
     artifactTarget = build.target;
-    cpSync(args.artifact, copiedArtifact, { recursive: true, dereference: false, errorOnExist: true });
-    checkedArtifact(copiedArtifact);
+    packageHashes = Object.fromEntries([...packaged, "SHA256SUMS"].map(name => [name, sha256(join(copiedArtifact, name))]));
+    const requireUnchangedPackage = () => {
+      for (const [name, digest] of Object.entries(packageHashes)) {
+        if (sha256(join(args.artifact, name)) !== digest || sha256(join(copiedArtifact, name)) !== digest) {
+          throw new Error("artifact identity changed");
+        }
+      }
+    };
+    requireUnchangedPackage();
     const executable = join(copiedArtifact, "kizuki");
     const env = proofEnvironment(execution);
     const home = env.HOME!;
@@ -231,6 +249,18 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
 
     run(executable, execution, env, "help", ["--help"], steps);
     run(executable, execution, env, "init", ["init", vault, "--no-service"], steps);
+    for (const kind of ["cli", "mcp"] as const) {
+      const binary = kind === "cli" ? "kizuki" : "kizuki-mcp";
+      const command = kind === "cli" ? ["doctor", "--json", "--vault", vault] : ["--vault", vault, "--owner"];
+      const step: StepReceipt = { id: `${kind}-engine`, command: [binary, ...command], exit_code: -1, passed: false, timeout_ms: CHILD_TIMEOUT_MS };
+      steps.push(step);
+      const result = await collectEngineProcess(join(copiedArtifact, binary), command, execution, env, kind === "mcp");
+      step.exit_code = result.exit_code;
+      if (kind === "cli") engineObservations.kizuki = parseDoctorObservation(result.stdout, result.exit_code, packageHashes[binary]!);
+      else engineObservations.kizuki_mcp = mcpObservationFromOutput(result.stdout, packageHashes[binary]!);
+      requireUnchangedPackage();
+      step.passed = true;
+    }
     run(executable, execution, env, "import", ["import", "markdown-folder", "--source", notes, "--policy", policy, "--expected-revision", "0", "--operation-id", "synthetic-import", "--vault", vault], steps);
     requireFixture("query-result", run(executable, execution, env, "query", ["query", "Ada", "--vault", vault], steps), steps);
     requireFixture("context-result", run(executable, execution, env, "context", ["context", "--query", "Ada", "--vault", vault], steps), steps);
@@ -240,6 +270,7 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
     if (!existsSync(join(restored, ".kizuki"))) throw new Error("restore did not create a vault");
     requireFixture("restored-query-result", run(executable, execution, env, "restored-query", ["query", "Ada", "--degraded", "--vault", restored], steps), steps);
     requireFixture("restored-context-result", run(executable, execution, env, "restored-context", ["context", "--query", "Ada", "--vault", restored], steps), steps);
+    requireUnchangedPackage();
 
     receipt = {
       schema,
@@ -247,24 +278,34 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
       target: artifactTarget,
       host_platform: process.platform,
       host_arch: process.arch,
+      host_kernel_release: kernelRelease(),
       binary_sha256: sha256(executable),
       bun_version: Bun.version,
-      package_sha256: Object.fromEntries([...packaged, "SHA256SUMS"].map(name => [name, sha256(join(copiedArtifact, name))])),
+      package_sha256: packageHashes,
       paths: { executable, home, config, vault, restored_vault: restored },
       steps,
       failures,
+      engine_observations: engineObservations,
     };
+    const checked = validateArtifactProof(receipt, {
+      source_sha: sourceSha, target: artifactTarget, bun_version: build.bun_version,
+      package_sha256: packageHashes as Record<(typeof packaged)[number] | "SHA256SUMS", string>,
+    });
+    if (checked.engine.status !== "PASS") throw new ArtifactProofError(checked.engine.reason);
   } catch (error) {
-    failures.push(error instanceof Error ? error.message : "artifact proof failed");
+    const last = steps.at(-1);
+    failures.push(error instanceof EngineProofError ? error.message : error instanceof ArtifactProofError ? error.reason :
+      last?.passed === false ? `${last.id}-failed` : "artifact-proof-failed");
     receipt = {
       schema,
       source_sha: sourceSha,
       target: artifactTarget,
       host_platform: process.platform,
       host_arch: process.arch,
+      host_kernel_release: kernelRelease(),
       binary_sha256: safeSha256(join(copiedArtifact, "kizuki")),
       bun_version: Bun.version,
-      package_sha256: {},
+      package_sha256: packageHashes,
       paths: {
         executable: join(copiedArtifact, "kizuki"),
         home: join(execution, "home"),
@@ -274,6 +315,7 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
       },
       steps,
       failures,
+      engine_observations: engineObservations,
     };
   }
 
