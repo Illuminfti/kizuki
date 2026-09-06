@@ -58,6 +58,17 @@ test.if(canExerciseCustody)("creates, writes, syncs, and cleans up only a live c
   } finally { directory.close(); }
 });
 
+test.if(canExerciseCustody)("inspects a large qualified file by metadata without reading credential bytes", () => {
+  const root = temporary(), directory = openCredentialDirectory(root), file = join(root, "kizuki.db");
+  try {
+    writeFileSync(file, new Uint8Array(1025)); chmodSync(file, 0o600);
+    const found = directory.inspectFileIdentity("kizuki.db");
+    expect(found).not.toBeNull(); expect(found?.ino).toMatch(/^[0-9]+$/);
+    symlinkSync(file, join(root, "link")); expect(() => directory.inspectFileIdentity("link")).toThrow("credential_file_unsafe");
+    linkSync(file, join(root, "alias")); expect(() => directory.inspectFileIdentity("kizuki.db")).toThrow("credential_file_identity_changed");
+  } finally { directory.close(); }
+});
+
 test.if(canExerciseCustody)("refuses forged, closed, cross-directory, unsafe-name, and pre-existing-file effects", () => {
   const one = temporary(), two = temporary(), first = openCredentialDirectory(one), second = openCredentialDirectory(two);
   try {

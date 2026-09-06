@@ -210,6 +210,22 @@ export class CredentialDirectory {
     }
   }
 
+  /** Bounded metadata check for qualified non-credential control files. */
+  inspectFileIdentity(name: string): CredentialFileIdentity | null {
+    this.assertCurrent();
+    const fd = this.openExisting(name);
+    if (fd === null) return null;
+    try {
+      const before = call(() => fstatSync(fd, { bigint: true }));
+      fileIsSafe(fd);
+      const after = call(() => fstatSync(fd, { bigint: true }));
+      if (!sameBigStat(before, after)) fail("changed");
+      const found = Object.freeze({ dev: before.dev.toString(), ino: before.ino.toString() });
+      this.assertCurrent();
+      return found;
+    } finally { call(() => closeSync(fd)); }
+  }
+
   create(name: string): CredentialFileInspection {
     this.assertCurrent();
     const result = nativeResult(api().symbols.createCredentialChild(this.#fd, ptr(validName(name))));
