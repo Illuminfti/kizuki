@@ -172,14 +172,14 @@ const EXPECTED_BRANCHED_EVENTS: CaptureEventInput[] = [
 
 const EXPECTED_MACHINE_EVENTS: CaptureEventInput[] = [
   chatgptMessage({
-    source_record_id: "v1:2:15:machine-thread:8:system-1",
+    source_record_id: "v1:2:14:machine-thread:8:system-1",
     occurred_at: "2024-01-01T00:00:00.000Z",
     text: "You are a helpful assistant.",
     handle: "system",
     conversation_title: "Machine origin",
   }),
   chatgptMessage({
-    source_record_id: "v1:2:15:machine-thread:6:tool-1",
+    source_record_id: "v1:2:14:machine-thread:6:tool-1",
     occurred_at: "2024-01-01T00:01:00.000Z",
     text: "lookup result",
     handle: "tool",
