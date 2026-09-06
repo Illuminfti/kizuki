@@ -361,6 +361,11 @@ all non-trivial work; `handoff-work` comes last when work continues elsewhere.
 Every skill is subordinate to `docs/CURRENT.md`, `docs/decision-log.md` and
 `rfcs/0002-autonomous-canon.md`; see `.agents/skills/README.md`.
 
+For narrow evidence, projection, World Slice, or GitHub-pickup questions, use
+the subordinate `.agents/OPERATING_SYSTEM.md` index and its catalogued domain
+skills. They supplement this workflow; generic work still uses the canonical
+orientation, implementation, review, and handoff skills above.
+
 ### Elegance
 
 House default for code work. The standing review bar:
