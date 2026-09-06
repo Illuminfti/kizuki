@@ -316,7 +316,7 @@ function prepareRevision(
 
   let body: string;
   let taint: ClaimTaint = incomingTaint;
-  let sources: string[] = union([prior, provenance]);
+  const sources: string[] = union([prior, provenance]);
   let action: PageAction = "edit";
 
   switch (primary.kind) {
@@ -334,10 +334,7 @@ function prepareRevision(
       action = "archive";
       break;
     case "purge_review":
-      body = existing.page.body;
-      taint = priorTaint;
-      sources = prior.filter((source) => !provenance.includes(source));
-      break;
+      throw new CanonWriteError("claim_kind_retired", "purge_review cannot authorize an ordinary canon write");
     default: {
       const exclude = new Set<string>([
         ...claims.map((claim) => claim.claim_id),
@@ -412,11 +409,6 @@ function recordRow(
         .query(`UPDATE proposals SET status = 'promoted' WHERE proposal_id IN (${placeholders})`)
         .run(...ids);
     }
-    if (primary.kind === "purge_review" && tableExists(io.db, "canon_holds")) {
-      io.db
-        .query(`DELETE FROM canon_holds WHERE page_path = ? AND proposal_id IN (${placeholders})`)
-        .run(receipt.page_path, ...ids);
-    }
   })();
 }
 
@@ -439,6 +431,10 @@ export function applyCanonWrite(
   }
   const supplied: Claim[] = Array.isArray(claim) ? [...(claim as readonly Claim[])] : [claim as Claim];
   assertBatch(supplied);
+  // Historical rows remain readable, but only the dedicated purge pipeline can rewrite holds.
+  if (supplied.some((item) => item.kind === "purge_review")) {
+    throw new CanonWriteError("claim_kind_retired", "purge_review cannot authorize an ordinary canon write");
+  }
   const target = targetOf(decision);
   const claims = persistedClaims(io, supplied);
   const primary = assertBatch(claims);
