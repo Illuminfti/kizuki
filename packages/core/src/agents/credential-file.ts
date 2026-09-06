@@ -141,24 +141,29 @@ function makeHandle(state: HandleState, bytes: Uint8Array): CredentialFileInspec
 
 /** Descriptor-rooted custody for one already-existing, private credential directory. */
 export class CredentialDirectory {
-  readonly identity: CredentialFileIdentity;
-  private closed = false;
+  readonly #identity: CredentialFileIdentity;
+  readonly #path: string;
+  readonly #fd: number;
+  #closed = false;
 
-  private constructor(token: object, private readonly path: string, private readonly fd: number) {
+  private constructor(token: object, path: string, fd: number) {
     if (token !== directoryToken) fail("handle");
-    this.identity = Object.freeze(identity(fd));
+    this.#path = path;
+    this.#fd = fd;
+    this.#identity = Object.freeze(identity(fd));
     directories.add(this);
   }
+  get identity(): CredentialFileIdentity { return this.#identity; }
 
   private assertCurrent(): void {
-    if (!directories.has(this) || this.closed) fail("closed");
-    const current = openQualifiedParent(this.path);
-    try { if (!same(identity(current), this.identity)) fail("identity_changed"); }
+    if (!directories.has(this) || this.#closed) fail("closed");
+    const current = openQualifiedParent(this.#path);
+    try { if (!same(identity(current), this.#identity)) fail("identity_changed"); }
     finally { call(() => closeSync(current)); }
   }
 
   private openExisting(name: string): number | null {
-    const result = nativeResult(api().symbols.openChild(this.fd, ptr(validName(name)), 0));
+    const result = nativeResult(api().symbols.openChild(this.#fd, ptr(validName(name)), 0));
     if (result === -2) return null;
     if (result < 0) fail();
     return result;
@@ -207,7 +212,7 @@ export class CredentialDirectory {
 
   create(name: string): CredentialFileInspection {
     this.assertCurrent();
-    const result = nativeResult(api().symbols.createCredentialChild(this.fd, ptr(validName(name))));
+    const result = nativeResult(api().symbols.createCredentialChild(this.#fd, ptr(validName(name))));
     if (result === -17) fail("conflict");
     if (result < 0) fail();
     const fd = result;
@@ -216,7 +221,7 @@ export class CredentialDirectory {
       fileIsSafe(fd);
       const created = identity(fd), creation = call(() => fstatSync(fd, { bigint: true }));
       call(() => fsyncSync(fd));
-      call(() => fsyncSync(this.fd));
+      call(() => fsyncSync(this.#fd));
       this.assertCurrent();
       const bytes = this.verifyName(name, created);
       if (bytes.length !== 0) fail("changed");
@@ -234,7 +239,7 @@ export class CredentialDirectory {
     this.assertCurrent();
     fileIsSafe(state.fd, state.identity);
     call(() => fsyncSync(state.fd));
-    call(() => fsyncSync(this.fd));
+    call(() => fsyncSync(this.#fd));
     const actual = this.verifyName(state.name, state.identity);
     if (!Buffer.from(actual).equals(Buffer.from(expectedBytes))) fail("changed");
     this.assertCurrent();
@@ -266,8 +271,8 @@ export class CredentialDirectory {
       fileIsSafe(state.fd, state.identity);
       fileIsSafe(fd, state.identity);
       this.assertCurrent();
-      if (api().symbols.unlinkat(this.fd, ptr(validName(state.name)), 0) !== 0) fail();
-      call(() => fsyncSync(this.fd));
+      if (api().symbols.unlinkat(this.#fd, ptr(validName(state.name)), 0) !== 0) fail();
+      call(() => fsyncSync(this.#fd));
       const residual = this.openExisting(state.name);
       if (residual !== null) { call(() => closeSync(residual)); fail("identity_changed"); }
       this.assertCurrent();
@@ -276,9 +281,9 @@ export class CredentialDirectory {
   }
 
   close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    try { closeSync(this.fd); } catch { /* closed capabilities have no effects */ }
+    if (this.#closed) return;
+    this.#closed = true;
+    try { closeSync(this.#fd); } catch { /* closed capabilities have no effects */ }
   }
 
   static open(path: string): CredentialDirectory {
