@@ -1,11 +1,12 @@
 /** Shared v3 evidence reader, receipt identity, and the surface-inventory family. */
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { COMMANDS } from "../packages/cli/src/commands/index";
+import { printRootHelp } from "../packages/cli/src/help";
 import { RETIRED_OWNER_GATE_VERBS } from "../packages/cli/src/retired";
-import { defaultConnectorRegistry } from "@kizuki/connectors";
-import { TOOL_DESCRIPTIONS } from "@kizuki/mcp";
+import { defaultConnectorRegistry } from "../packages/connectors/src/index";
+import { TOOL_DESCRIPTIONS } from "../packages/mcp/src/index";
 
 export type GateStatus = "PASS" | "FAIL" | "MISSING" | "UNVERIFIABLE" | "NOT_IMPLEMENTED";
 export class EvidenceError extends Error { constructor(readonly reason: string) { super(reason); } }
@@ -33,11 +34,19 @@ export const CONNECTORS = [
   { id: "omnivore", connector_id: "kizuki.import-omnivore", evidence: "file-import" },
 ] as const;
 export const EVIDENCE_LIMITS = { index: 16384, index_v3: 32768, family_receipt: 65536, journey_connector_receipt: 262144, depth: 32 } as const;
+export const CHECKOUT_LIMITS = { files: 32, file_bytes: 1_048_576, total_bytes: 4_194_304, help_lines: 256, help_line_chars: 4096 } as const;
 export const SURFACE_PRODUCER = "kizuki.surface-inventory/v1";
 export const SURFACE_GATE = "surface.capabilities-and-docs";
 export const SURFACE_PRODUCER_FILES = ["scripts/capability-proof.ts", "scripts/release-evidence.ts"] as const;
 export const CAPABILITY_PROOF_FILE = "scripts/capability-proof.ts";
 export const SURFACE_DOC_FILES = ["README.md", "SECURITY.md", "docs/CURRENT.md", "docs/cli.md"] as const;
+export const SURFACE_OBSERVED_FILES = [
+  ".bun-version", ...SURFACE_DOC_FILES, "scripts/release-evidence.ts",
+  "packages/cli/src/commands/index.ts", "packages/cli/src/help.ts", "packages/cli/src/retired.ts",
+  "packages/mcp/src/index.ts", "packages/mcp/src/server.ts",
+  "packages/connectors/src/index.ts", "packages/connectors/src/registry.ts",
+] as const;
+export const EVALUATOR_ROOT = realpathSync(resolve(import.meta.dir, ".."));
 export const SOURCE_CLASSES = [
   "synthetic-fixture", "local-operator-custody", "native-host-attestation", "candidate-tree-inventory",
   "exact-candidate-ci-snapshot", "independent-reviewer", "findings-snapshot", "live-account-operator",
@@ -54,11 +63,6 @@ const PRODUCERS = [
   "kizuki.connector-evidence/v1", "kizuki.unfamiliar-user/v1", "kizuki.owner-rails-observation/v1",
   "kizuki.estate-parity-observation/v1", "kizuki.cutover-authority/v1",
 ] as const;
-/** Help group order from packages/cli/src/help.ts, then live COMMANDS not listed there. */
-const CLI_HELP_GROUPS = [
-  ["app", "init", "import", "doctor"], ["query", "context"], ["connect", "backfill", "sync"],
-  ["tell", "undo", "audit"], ["serve", "models", "agent"], ["purge", "export", "restore"], ["version"],
-] as const;
 
 export interface GateReceiptReference {
   producer: string; gate_id: string; target: string | null; path: string; sha256: string;
@@ -67,6 +71,17 @@ export interface VerifierEntry { file: string; sha256: string | null; status?: "
 export interface SurfaceDisagreement { code: string; path: string }
 export interface SurfaceEvaluation {
   status: "PASS" | "FAIL" | "UNVERIFIABLE"; reason: string; creditDigest: boolean;
+}
+export interface CheckoutFileBinding {
+  path: string; mode: "100644" | "100755"; oid: string; sha256: string; bytes: Buffer;
+}
+export interface CheckoutCustodyFrame {
+  root: string; head: string; files: readonly CheckoutFileBinding[]; unchanged: () => void;
+}
+export interface ExpectedSurfaceInventory {
+  head_sha: string; checkout_sha: string; bun_version: string; cli_verbs: string[]; retired_verbs: string[];
+  mcp_tools: string[]; connectors_registered: Record<string, unknown>[]; connectors_c3: { id: string; connector_id: string | null; evidence: string }[];
+  docs: { files: { path: string; sha256: string }[] }; producer_files: string[]; producer_revision: string;
 }
 
 export function exact(value: unknown, keys: string): Record<string, unknown> {
@@ -116,6 +131,10 @@ function strictlySorted(items: readonly string[]): boolean {
 }
 function equalJson(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+function canonicalRoot(root: string): string {
+  try { return realpathSync(absolute(resolve(root))); }
+  catch (error) { if (error instanceof EvidenceError) throw error; reject("candidate-checkout-unreadable"); }
 }
 
 /** Reject static symlinks and detect identity changes during the read. The local
@@ -218,30 +237,147 @@ export function inspectOptionalVerifier(root: string, file: string): VerifierEnt
   return { file, sha256: hash(readFileSync(path)), status: "PRESENT" };
 }
 
-export function producerRevision(root: string, files: readonly string[]): string {
-  const entries = files.map(path => ({ path, sha256: hash(readFileSync(resolve(root, path))) }));
-  return hash(JSON.stringify({ files: entries }));
+export function surfaceProducerActive(root: string): boolean {
+  if (inspectOptionalVerifier(root, CAPABILITY_PROOF_FILE).status !== "PRESENT") return false;
+  const proc = Bun.spawnSync(
+    ["git", "-c", "core.hooksPath=/dev/null", "-C", root, "ls-files", "--error-unmatch", "--", CAPABILITY_PROOF_FILE],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  return proc.exitCode === 0;
 }
 
-export function checkoutSha(root: string): string {
-  const proc = Bun.spawnSync(["git", "-C", root, "rev-parse", "HEAD"], { stdout: "pipe", stderr: "pipe" });
-  if (proc.exitCode !== 0) reject("candidate-sha-unreadable");
-  return digest(proc.stdout.toString().trim(), 40);
+export function producerRevision(files: readonly { path: string; sha256: string }[]): string {
+  return hash(JSON.stringify({ files: files.map(item => ({ path: item.path, sha256: item.sha256 })) }));
 }
 
-function readCandidateBytes(root: string, relative: string): Buffer {
-  try { return readFileSync(resolve(root, relative)); }
-  catch { reject("surface-unenumerable"); }
+function git(root: string, args: readonly string[]) {
+  const proc = Bun.spawnSync(["git", "-c", "core.hooksPath=/dev/null", "-C", root, ...args], { stdout: "pipe", stderr: "pipe" });
+  if (proc.exitCode !== 0) reject("candidate-checkout-unreadable");
+  return proc.stdout.toString();
+}
+function nulRecords(raw: string): string[] {
+  if (raw === "") return [];
+  const records = raw.split("\0");
+  if (records.at(-1) === "") records.pop();
+  return records;
+}
+function gitBlobOid(bytes: Uint8Array): string {
+  return createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+}
+
+function parseTree(raw: string): Map<string, { mode: string; oid: string }> {
+  const rows = new Map<string, { mode: string; oid: string }>();
+  for (const record of nulRecords(raw)) {
+    const match = record.match(/^([0-7]{6}) blob ([a-f0-9]{40})\t(.+)$/);
+    if (!match) reject("candidate-file-symlink-or-mode");
+    if (rows.has(match[3]!)) reject("candidate-file-missing");
+    rows.set(match[3]!, { mode: match[1]!, oid: match[2]! });
+  }
+  return rows;
+}
+function parseIndex(raw: string): Map<string, { mode: string; oid: string }> {
+  const rows = new Map<string, { mode: string; oid: string }>();
+  for (const record of nulRecords(raw)) {
+    const match = record.match(/^([0-7]{6}) ([a-f0-9]{40}) ([0-3])\t(.+)$/);
+    if (!match || match[3] !== "0") reject("candidate-index-dirty");
+    if (rows.has(match[4]!)) reject("candidate-index-dirty");
+    rows.set(match[4]!, { mode: match[1]!, oid: match[2]! });
+  }
+  return rows;
+}
+
+function snapshotCheckout(root: string, candidateSha: string, files: readonly string[]): { head: string; files: CheckoutFileBinding[] } {
+  const toplevel = git(root, ["rev-parse", "--show-toplevel"]).trim();
+  if (toplevel !== root) reject("candidate-root-mismatch");
+  const head = git(root, ["rev-parse", "HEAD"]).trim();
+  if (head !== candidateSha) reject("candidate-head-mismatch");
+  const porcelain = git(root, ["status", "--porcelain=v1", "--untracked-files=all"]);
+  if (porcelain.trim() !== "") {
+    const lines = porcelain.split("\n").filter(Boolean);
+    if (lines.some(line => line.startsWith("??"))) reject("candidate-untracked");
+    if (lines.some(line => line[0] !== " " && line[0] !== "?")) reject("candidate-index-dirty");
+    reject("candidate-worktree-dirty");
+  }
+  const tree = parseTree(git(root, ["ls-tree", "-z", "HEAD", "--", ...files]));
+  const index = parseIndex(git(root, ["ls-files", "--stage", "-z", "--", ...files]));
+  if (tree.size !== files.length || index.size !== files.length) reject("candidate-file-missing");
+  const bindings: CheckoutFileBinding[] = [];
+  let total = 0;
+  for (const file of files) {
+    const entry = tree.get(file), staged = index.get(file);
+    if (!entry || !staged) reject("candidate-file-missing");
+    if (entry.mode !== staged.mode || entry.oid !== staged.oid) reject("candidate-index-dirty");
+    if (entry.mode !== "100644" && entry.mode !== "100755") reject("candidate-file-symlink-or-mode");
+    const full = resolve(root, file);
+    if (!full.startsWith(`${root}/`) || full.slice(root.length + 1) !== file) reject("unsafe-path");
+    let named;
+    try { named = lstatSync(full, { bigint: true }); }
+    catch { reject("candidate-file-missing"); }
+    if (named.isSymbolicLink() || !named.isFile()) reject("candidate-file-symlink-or-mode");
+    const body = read(full, CHECKOUT_LIMITS.file_bytes);
+    total += body.bytes.length;
+    if (total > CHECKOUT_LIMITS.total_bytes) reject("checkout-byte-bound");
+    if (gitBlobOid(body.bytes) !== entry.oid) reject("candidate-byte-mismatch");
+    if (((named.mode & 0o111n) !== 0n) !== (entry.mode === "100755")) reject("candidate-mode-mismatch");
+    bindings.push({ path: file, mode: entry.mode, oid: entry.oid, sha256: body.sha256, bytes: body.bytes });
+  }
+  return { head, files: bindings };
+}
+
+export function assertCheckoutCustody(root: string, candidateSha: string, files: readonly string[]): CheckoutCustodyFrame {
+  const canonical = canonicalRoot(root);
+  if (files.length < 1 || files.length > CHECKOUT_LIMITS.files || new Set(files).size !== files.length) reject("checkout-file-bound");
+  for (const file of files) relativePosix(file);
+  digest(candidateSha, 40);
+  const first = snapshotCheckout(canonical, candidateSha, files);
+  return {
+    root: canonical, head: first.head, files: first.files,
+    unchanged: () => {
+      const second = snapshotCheckout(canonical, candidateSha, files);
+      if (second.head !== first.head) reject("candidate-head-mismatch");
+      if (second.files.length !== first.files.length) reject("file-changed");
+      for (let i = 0; i < first.files.length; i++) {
+        const left = first.files[i]!, right = second.files[i]!;
+        if (left.path !== right.path || left.mode !== right.mode || left.oid !== right.oid || left.sha256 !== right.sha256) reject("file-changed");
+      }
+    },
+  };
+}
+
+export function bindEvaluatorCheckout(root: string, candidateSha: string, files: readonly string[]): CheckoutCustodyFrame {
+  if (canonicalRoot(root) !== EVALUATOR_ROOT) reject("candidate-root-mismatch");
+  return assertCheckoutCustody(EVALUATOR_ROOT, candidateSha, files);
 }
 
 export function cliVerbSequence(): string[] {
   const live = COMMANDS.map(command => command.name);
   if (live.length < 1 || live.length > 64 || new Set(live).size !== live.length) reject("surface-unenumerable");
-  const known = new Set(live), grouped: string[] = [];
-  for (const group of CLI_HELP_GROUPS) for (const name of group) if (known.has(name)) grouped.push(name);
-  const listed = new Set(grouped);
-  for (const name of live) if (!listed.has(name)) grouped.push(name);
-  return grouped;
+  const width = Math.max(...COMMANDS.map(command => command.name.length));
+  const rows = new Map<string, string>();
+  for (const command of COMMANDS) {
+    const row = `  ${command.name.padEnd(width)}  ${command.summary}`;
+    if (rows.has(row)) reject("surface-unenumerable");
+    rows.set(row, command.name);
+  }
+  if (rows.size !== COMMANDS.length) reject("surface-unenumerable");
+  const lines: string[] = [];
+  const write = (line: string) => {
+    if (lines.length >= CHECKOUT_LIMITS.help_lines || line.length > CHECKOUT_LIMITS.help_line_chars) reject("surface-unenumerable");
+    lines.push(line);
+  };
+  try { printRootHelp(write, COMMANDS); }
+  catch (error) { if (error instanceof EvidenceError) throw error; reject("surface-unenumerable"); }
+  const sequence: string[] = [];
+  const seen = new Set<string>();
+  for (const line of lines) {
+    const name = rows.get(line);
+    if (name === undefined) continue;
+    if (seen.has(name)) reject("surface-unenumerable");
+    seen.add(name);
+    sequence.push(name);
+  }
+  if (sequence.length !== COMMANDS.length) reject("surface-unenumerable");
+  return sequence;
 }
 
 function connectorsRegistered(): Record<string, unknown>[] {
@@ -263,25 +399,41 @@ export function connectorsC3(): { id: string; connector_id: string | null; evide
   return CONNECTORS.map(item => ({ id: item.id, connector_id: item.connector_id, evidence: item.evidence }));
 }
 
-export function expectedSurfaceInventory(candidateRoot: string, candidateSha: string) {
-  const bun_version = readCandidateBytes(candidateRoot, ".bun-version").toString("utf8").trim();
+function frameFile(frame: CheckoutCustodyFrame, path: string): CheckoutFileBinding {
+  const row = frame.files.find(item => item.path === path);
+  if (!row) reject("surface-unenumerable");
+  return row;
+}
+
+export function expectedSurfaceInventory(frame: CheckoutCustodyFrame): ExpectedSurfaceInventory {
+  if (frame.root !== EVALUATOR_ROOT) reject("candidate-root-mismatch");
+  const bun_version = frameFile(frame, ".bun-version").bytes.toString("utf8").trim();
   if (!bun_version) reject("surface-unenumerable");
-  const docs = SURFACE_DOC_FILES.map(path => ({ path, sha256: hash(readCandidateBytes(candidateRoot, path)) }));
   const mcp_tools = Object.keys(TOOL_DESCRIPTIONS);
   if (mcp_tools.length < 1 || mcp_tools.length > 64 || new Set(mcp_tools).size !== mcp_tools.length) reject("surface-unenumerable");
+  const producer_files = [...SURFACE_PRODUCER_FILES];
   return {
-    head_sha: digest(candidateSha, 40),
+    head_sha: digest(frame.head, 40),
+    checkout_sha: frame.head,
     bun_version,
     cli_verbs: cliVerbSequence(),
     retired_verbs: [...RETIRED_OWNER_GATE_VERBS],
     mcp_tools,
     connectors_registered: connectorsRegistered(),
     connectors_c3: connectorsC3(),
-    docs: { files: docs },
-    producer_files: [...SURFACE_PRODUCER_FILES],
-    producer_revision: producerRevision(candidateRoot, SURFACE_PRODUCER_FILES),
-    checkout_sha: checkoutSha(candidateRoot),
+    docs: { files: SURFACE_DOC_FILES.map(path => ({ path, sha256: frameFile(frame, path).sha256 })) },
+    producer_files,
+    producer_revision: producerRevision(producer_files.map(path => ({ path, sha256: frameFile(frame, path).sha256 }))),
   };
+}
+
+export function consumeSurfaceReceipt(value: unknown, root: string, candidateSha: string): SurfaceEvaluation {
+  const frame = bindEvaluatorCheckout(root, candidateSha, [...SURFACE_OBSERVED_FILES, CAPABILITY_PROOF_FILE]);
+  const expected = expectedSurfaceInventory(frame);
+  frame.unchanged();
+  const evaluated = evaluateSurfaceReceipt(value, expected);
+  frame.unchanged();
+  return evaluated;
 }
 
 function stringList(value: unknown, bound: number, limit = 256): string[] {
@@ -341,13 +493,12 @@ function sortDisagreements(rows: SurfaceDisagreement[]): SurfaceDisagreement[] {
   return [...rows].sort((left, right) => left.code < right.code ? -1 : left.code > right.code ? 1 : left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
 }
 
-export function evaluateSurfaceReceipt(value: unknown, candidateRoot: string, candidateSha: string): SurfaceEvaluation {
+export function evaluateSurfaceReceipt(value: unknown, expected: ExpectedSurfaceInventory): SurfaceEvaluation {
   const row = exact(value, "schema,identity,outcome,failures,head_sha,bun_version,cli_verbs,retired_verbs,mcp_tools,connectors_registered,connectors_c3,docs,disagreements");
   if (row.schema !== SURFACE_PRODUCER) reject("invalid-schema");
-  const identity = parseSharedIdentity(row.identity, SURFACE_PRODUCER, candidateSha);
+  const identity = parseSharedIdentity(row.identity, SURFACE_PRODUCER, expected.head_sha);
   if (identity.source_class !== "candidate-tree-inventory" || identity.actor_class !== "automated-producer") reject("invalid-identity");
   if (!equalJson(identity.producer_files, [...SURFACE_PRODUCER_FILES])) reject("producer-files-mismatch");
-  const expected = expectedSurfaceInventory(candidateRoot, candidateSha);
   if (identity.producer_revision !== expected.producer_revision) reject("producer-revision-mismatch");
   const outcome = text(row.outcome, 16);
   if (outcome !== "pass" && outcome !== "fail" && outcome !== "unresolved") reject("invalid-outcome");
