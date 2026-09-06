@@ -65,11 +65,11 @@ jobs:
     timeout-minutes: 10
     steps:
 ${testSteps}
-      - run: bun scripts/ci-diff-check.ts
       - run: |
           bun run build:release
           bun run smoke:release
           bun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-artifact-proof"
+      - run: bun scripts/ci-diff-check.ts
       - run: test -f "$RUNNER_TEMP/kizuki-artifact-proof/receipt.json"
       - if: ${successIf}
         uses: ${pinnedUpload}
@@ -298,6 +298,21 @@ test("Linux validator rejects removal or bypass of each native receipt retention
           "if-no-files-found": "error",
         },
       });
+    }],
+    ["insert a benign run step between the receipt check and upload", d => {
+      d.jobs.test.steps.splice(8, 0, { run: "true" });
+    }],
+    ["move the exact-head check after upload", d => {
+      d.jobs.test.steps.push(d.jobs.test.steps.splice(6, 1)[0]);
+    }],
+    ["append a benign step after upload", d => {
+      d.jobs.test.steps.push({ run: "true" });
+    }],
+    ["add workflow-level run defaults", d => {
+      d.defaults = { run: { shell: "bash" } };
+    }],
+    ["add jobs.test run defaults", d => {
+      d.jobs.test.defaults = { run: { shell: "bash" } };
     }],
   ];
   for (const [name, mutate] of mutations) {
