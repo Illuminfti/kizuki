@@ -80,6 +80,12 @@ function historicalConnection(backup: string, manifest: ExportManifest, source: 
     count: 1, sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"), size: Buffer.byteLength(bytes), mode: 0o600,
   };
   manifest.schema = schema;
+  if (schema !== BACKUP_SCHEMA) {
+    for (const table of ["purge_batches", "purge_batch_receipts", "purge_ops"]) {
+      delete manifest.files[`ledger/${table}.jsonl`];
+      unlinkSync(join(backup, "ledger", `${table}.jsonl`));
+    }
+  }
   if (schema === LEGACY_BACKUP_SCHEMA) {
     manifest.schema_versions.ledger = 15;
     delete manifest.files["ledger/canon-machine-byte-intents.jsonl"];
@@ -132,6 +138,7 @@ describe("portable connection history", () => {
       historicalConnection(backup, exportVault(db, vault, backup), source, schema);
       const report = restoreVault(backup, target);
       expect(report.recovery_warnings.join(" ")).toContain("retained checkpoints will not resume automatically");
+      if (schema !== BACKUP_SCHEMA) expect(report.recovery_warnings.join(" ")).toContain("historical purge");
       const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
       try {
         const history = getConnection(restored, "fixture", source)!;
