@@ -165,7 +165,7 @@ function convertRejections(db: Database): void {
     .all();
 
   const insert = db.query(
-    `INSERT OR IGNORE INTO claims
+    `INSERT INTO claims
        (claim_id, kind, target, body, frontmatter, provenance, subjects,
         producer, confidence, status, created_at, body_hash,
         subject, predicate, object, polarity, claim_key, authority,
@@ -176,17 +176,24 @@ function convertRejections(db: Database): void {
              'private', 'clean', NULL, ?, NULL, ?, NULL, NULL, NULL, 1, ?)`,
   );
 
+  type RejectedSource = { subjects: string; body: string; body_hash: string };
+  const byId = db.query<RejectedSource, [string]>(
+    "SELECT subjects, body, body_hash FROM claims WHERE claim_id = ?",
+  );
+  const byBody = db.query<RejectedSource, [string]>(
+    "SELECT subjects, body, body_hash FROM claims WHERE body_hash = ? LIMIT 2",
+  );
   for (const row of rows) {
-    const source = tableExists(db, "claims")
-      ? db
-          .query<
-            { subjects: string; body: string; created_at: string },
-            [string, string]
-          >(
-            "SELECT subjects, body, created_at FROM claims WHERE claim_id = ? OR body_hash = ? LIMIT 1",
-          )
-          .get(row.proposal_id, row.body_hash)
-      : null;
+    const exact = byId.get(row.proposal_id);
+    // Infer a subject only from the named unchanged proposal, or one unique
+    // body match when the named proposal is missing. Ambiguity stays skipped.
+    let source = exact;
+    if (exact === null) {
+      const matches = byBody.all(row.body_hash);
+      source = matches.length === 1 ? matches[0] ?? null : null;
+    } else if (exact.body_hash !== row.body_hash) {
+      source = null;
+    }
     const subjectsRaw = source?.subjects ?? "[]";
     let subject: string | null = null;
     try {
@@ -208,7 +215,7 @@ function convertRejections(db: Database): void {
       .update(`rejection:${row.body_hash}:${row.proposal_id}`)
       .digest("hex");
     insert.run(
-      `rej-${row.proposal_id}`,
+      `rej-${convertedHash}`,
       source?.body ?? row.reason,
       frontmatter,
       JSON.stringify(["migrated-rejection"]),
