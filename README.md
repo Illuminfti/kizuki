@@ -4,7 +4,7 @@
 
 ### The world model for your AI.
 
-**Every AI starts from zero. Kizuki gives every authorized agent the same continuously updated model of you and your world.**
+**Every AI starts from zero. Kizuki gives each authorized agent its permitted view of a continuously updated model of you and your world.**
 
 Local-first. Source-linked. Reversible. Harness-neutral.<br />
 Your context should outlive the tool that learned it.
@@ -50,12 +50,12 @@ knowledge · skills · curiosity · goals · situations · commitments
     ↓
 procedures · outcomes · uncertainty · hypotheses
     ↓
-world slices for authorized agents
-    ↓
-readable Markdown canon
+task-bounded World Slices for authorized agents
 ```
 
 Every higher-level understanding must retain a path back to evidence. A model inference is not silently promoted into fact. A correction can supersede what Kizuki believed. A purge remains computable. Canon remains readable on your disk.
+
+The existing receipted writer independently materializes eligible claims as Markdown canon. World Slices are rebuildable reads of permitted evidence, claims, canon and derived views; they do not write canon.
 
 ### What a fresh agent should be able to understand
 
@@ -102,7 +102,7 @@ projects
   status changed: active → blocked
 
 knowledge
-  concept state changed: encountered → applied
+  concept evidence added: independent application
 
 decisions
   prior choice superseded
@@ -158,6 +158,8 @@ The richer world-model architecture above is the direction being built on top of
 ## Quick start
 
 Requires **Bun 1.3.14**, the version pinned by CI, and Git.
+
+Clone this repository using GitHub’s Code button, then run these commands from the checkout root.
 
 ```bash
 bun install --frozen-lockfile
@@ -273,31 +275,11 @@ A capability is not finished if one surface is excellent and the other two are a
 
 ## Roadmap
 
-The world-model implementation program is tracked in GitHub:
+The [world-model program guide](docs/world-model-program.md) connects the accepted contracts, staged delivery and proof requirements. GitHub **#497** is the single authority for live packet dependencies, ownership and progress; **#480** holds the architecture direction and **#476** the Situation and UX/DX/AX direction. The program includes **#481–#496**, **#502** two-client continuity and **#503** bounded consolidation.
 
-- **#480** Living Epistemic World Model architecture
-- **#476** Situation Intelligence + UX/DX/AX product law
-- **#497** execution epic
-- **#481–#496** bounded implementation packets
+Prove a small Concept with useful human and agent views, then expand through shared contracts. Grow Knowledge Atlas views incrementally. Present-day **#502 Stage A** uses existing capture, context, correction and MCP seams; later semantic views and scoped diffs have their own proof.
 
-The build order is deliberately staged:
-
-1. bind the world-model RFC without weakening RFC 0002;
-2. add observations and semantic primitives;
-3. add provenance dependency tracking, world revisions and invalidation;
-4. prove an end-to-end Concept slice;
-5. add questions, curiosity, knowledge gaps and personal epistemic state;
-6. add perspective-aware people and relationship state;
-7. add demonstrated skills, frameworks and procedures;
-8. add dynamic situations, goals, commitments, decisions and dependencies;
-9. compile task-aware World Slices;
-10. add World Diffs and agent freshness;
-11. add goal-aware attention and outcome learning;
-12. only then add bounded hypotheses, forecasts and counterfactual world states;
-13. expose the same semantics through the Knowledge Atlas human experience;
-14. finish with a cross-cutting UX/DX/AX, privacy, purge and performance gauntlet.
-
-Each slice must preserve provenance, temporal correctness, purge, sensitivity, correction and reversibility.
+**#496 verification starts with the first slice** and grows with every packet. Each slice preserves provenance, temporal correctness, purge, sensitivity, correction and reversibility.
 
 ## Your data, your boundaries
 
