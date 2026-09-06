@@ -388,35 +388,68 @@ function backfillProposalContentHash(db: Database): void {
   }
 }
 
-function withdrawDuplicatePendingSignatures(db: Database): void {
+/**
+ * One occupant per signature, matching lookup: pending first, then
+ * oldest promoted. The same id stays pending/promoted and live.
+ */
+function keepSignatureOccupant(db: Database): void {
   db.exec(`
-    UPDATE proposals
-       SET status = 'withdrawn'
-     WHERE status = 'pending'
-       AND rowid NOT IN (
-         SELECT MIN(rowid) FROM proposals
-          WHERE status = 'pending'
-          GROUP BY content_hash
-       );
+    CREATE TEMP TABLE signature_keepers (
+      content_hash TEXT PRIMARY KEY,
+      keeper_id TEXT NOT NULL
+    );
   `);
-}
-
-function skipDuplicateLiveSignatures(db: Database): void {
-  db.exec(`
-    UPDATE claims
-       SET status = 'skipped',
-           retracted_at = COALESCE(retracted_at, created_at)
-     WHERE status = 'live'
-       AND kind <> 'purge_review'
-       AND content_hash <> ''
-       AND rowid NOT IN (
-         SELECT MIN(rowid) FROM claims
-          WHERE status = 'live'
-            AND kind <> 'purge_review'
-            AND content_hash <> ''
-          GROUP BY content_hash
-       );
-  `);
+  try {
+    db.exec(`
+      INSERT INTO signature_keepers
+      SELECT content_hash, proposal_id FROM (
+        SELECT content_hash, proposal_id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY content_hash
+                 ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'promoted' THEN 1 ELSE 2 END,
+                          created_at, proposal_id
+               ) AS rn
+          FROM proposals
+         WHERE content_hash <> '' AND status IN ('pending', 'promoted')
+      )
+      WHERE rn = 1;
+    `);
+    db.exec(`
+      UPDATE proposals
+         SET status = 'withdrawn'
+       WHERE status = 'pending'
+         AND content_hash <> ''
+         AND proposal_id NOT IN (SELECT keeper_id FROM signature_keepers);
+    `);
+    if (tableExists(db, "claims")) {
+      db.exec(`
+        INSERT OR IGNORE INTO signature_keepers
+        SELECT content_hash, claim_id FROM (
+          SELECT content_hash, claim_id,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY content_hash
+                   ORDER BY created_at, claim_id
+                 ) AS rn
+            FROM claims
+           WHERE status = 'live'
+             AND kind <> 'purge_review'
+             AND content_hash <> ''
+        )
+        WHERE rn = 1;
+      `);
+      db.exec(`
+        UPDATE claims
+           SET status = 'skipped',
+               retracted_at = COALESCE(retracted_at, created_at)
+         WHERE status = 'live'
+           AND kind <> 'purge_review'
+           AND content_hash <> ''
+           AND claim_id NOT IN (SELECT keeper_id FROM signature_keepers);
+      `);
+    }
+  } finally {
+    db.exec("DROP TABLE signature_keepers");
+  }
 }
 
 /**
@@ -431,28 +464,29 @@ export function applyLegacyStagingIdempotency(db: Database): void {
   db.exec("DROP INDEX IF EXISTS proposals_idempotency");
   db.exec("DROP INDEX IF EXISTS proposals_signature");
   backfillProposalContentHash(db);
-  withdrawDuplicatePendingSignatures(db);
+  if (tableExists(db, "claims")) {
+    addColumn(db, "claims", "content_hash TEXT NOT NULL DEFAULT ''");
+    db.exec("DROP INDEX IF EXISTS claims_idempotency");
+    db.exec("DROP INDEX IF EXISTS claims_signature_idempotency");
+    db.exec(
+      `UPDATE claims
+          SET content_hash = (
+            SELECT p.content_hash FROM proposals p
+             WHERE p.proposal_id = claims.claim_id
+          )
+        WHERE EXISTS (
+            SELECT 1 FROM proposals p
+             WHERE p.proposal_id = claims.claim_id AND p.content_hash <> ''
+          )`,
+    );
+  }
+  keepSignatureOccupant(db);
   db.exec(
     `CREATE UNIQUE INDEX proposals_signature
        ON proposals (content_hash)
        WHERE status = 'pending'`,
   );
   if (!tableExists(db, "claims")) return;
-  addColumn(db, "claims", "content_hash TEXT NOT NULL DEFAULT ''");
-  db.exec("DROP INDEX IF EXISTS claims_idempotency");
-  db.exec("DROP INDEX IF EXISTS claims_signature_idempotency");
-  db.exec(
-    `UPDATE claims
-        SET content_hash = (
-          SELECT p.content_hash FROM proposals p
-           WHERE p.proposal_id = claims.claim_id
-        )
-      WHERE EXISTS (
-          SELECT 1 FROM proposals p
-           WHERE p.proposal_id = claims.claim_id AND p.content_hash <> ''
-        )`,
-  );
-  skipDuplicateLiveSignatures(db);
   db.exec(
     `CREATE UNIQUE INDEX claims_idempotency
        ON claims (kind, coalesce(target, ''), body_hash)

@@ -298,7 +298,7 @@ describe("legacy staging p1 holes", () => {
     expect(getClaim(db, first.proposal.proposal_id)?.corroboration).toBe(2);
   });
 
-  test("remigration does not abort when pending hashes collapse", () => {
+  test("remigration collapse keeps one pending occupant with a live claim", () => {
     const db = memoryDb();
     const first = fileProposal(
       db,
@@ -317,9 +317,9 @@ describe("legacy staging p1 holes", () => {
          producer, confidence, status, created_at, body_hash, content_hash
        )
        SELECT ?, kind, target, body, frontmatter, provenance, subjects,
-              producer, confidence, status, created_at, body_hash, ?
+              producer, confidence, status, ?, body_hash, ?
          FROM proposals WHERE proposal_id = ?`,
-    ).run(cloneId, staleHash, first.proposal.proposal_id);
+    ).run(cloneId, "2099-01-01T00:00:00Z", staleHash, first.proposal.proposal_id);
     db.query(
       `INSERT INTO claims (
          claim_id, kind, target, body, frontmatter, provenance, subjects,
@@ -335,6 +335,22 @@ describe("legacy staging p1 holes", () => {
               retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at
          FROM claims WHERE claim_id = ?`,
     ).run(cloneId, staleHash, first.proposal.proposal_id);
+    db.query("DELETE FROM claims WHERE claim_id = ?").run(first.proposal.proposal_id);
+    db.query(
+      `INSERT INTO claims (
+         claim_id, kind, target, body, frontmatter, provenance, subjects,
+         producer, confidence, status, created_at, body_hash, content_hash,
+         subject, predicate, object, polarity, claim_key, authority,
+         sensitivity, taint, model_ref, valid_from, valid_to, asserted_at,
+         retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at
+       )
+       SELECT ?, kind, target, body, frontmatter, provenance, subjects,
+              producer, confidence, status, created_at, body_hash, ?,
+              subject, predicate, object, polarity, claim_key, authority,
+              sensitivity, taint, model_ref, valid_from, valid_to, asserted_at,
+              retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at
+         FROM claims WHERE claim_id = ?`,
+    ).run(first.proposal.proposal_id, first.proposal.content_hash, cloneId);
     db.exec(
       `CREATE UNIQUE INDEX proposals_signature
          ON proposals (content_hash) WHERE status = 'pending'`,
