@@ -42,10 +42,8 @@ export type StagingStatus = (typeof STAGING_STATUSES)[number];
 export type { FrontmatterScalar, FrontmatterValue } from "../contracts/proposal";
 
 const MAX_BODY_CHARS = 64_000;
-const MAX_TARGET_CHARS = NAMESPACED_SUBJECT_MAX;
 const MAX_FRONTMATTER_KEYS = 64;
 const MAX_SUBJECTS = 64;
-const MAX_SUBJECT_CHARS = NAMESPACED_SUBJECT_MAX;
 const MAX_PROVENANCE = 64;
 const FRONTMATTER_OWNED = new Set(["type", "title"]);
 
@@ -265,9 +263,9 @@ function validateInput(input: ProposalInput): void {
     if (typeof input.target !== "string" || input.target.length === 0) {
       throw new StagingError("target: must be null or a non-empty string");
     }
-    if (input.target.length > MAX_TARGET_CHARS) {
+    if (input.target.length > NAMESPACED_SUBJECT_MAX) {
       throw new StagingError(
-        `target: must be at most ${MAX_TARGET_CHARS} characters`,
+        `target: must be at most ${NAMESPACED_SUBJECT_MAX} characters`,
       );
     }
   }
@@ -299,9 +297,9 @@ function validateInput(input: ProposalInput): void {
   if (subjects.length > MAX_SUBJECTS) {
     throw new StagingError(`subjects: must name at most ${MAX_SUBJECTS} ids`);
   }
-  if (!subjects.every((id) => isNonEmptyString(id) && id.length <= MAX_SUBJECT_CHARS)) {
+  if (!subjects.every((id) => isNonEmptyString(id) && id.length <= NAMESPACED_SUBJECT_MAX)) {
     throw new StagingError(
-      `subjects: every entry must be a non-empty string of at most ${MAX_SUBJECT_CHARS} characters`,
+      `subjects: every entry must be a non-empty string of at most ${NAMESPACED_SUBJECT_MAX} characters`,
     );
   }
   if (input.taint !== undefined && input.taint !== "clean" && input.taint !== "quoted") {
@@ -375,18 +373,13 @@ function resolveLabels(
 }
 
 function lookupSignatureRow(db: Database, contentHash: string): ProposalRow | null {
-  const pending = db
-    .query(
-      `SELECT * FROM proposals
-        WHERE content_hash = ? AND status = 'pending'`,
-    )
-    .get(contentHash) as ProposalRow | null;
-  if (pending !== null) return pending;
   return db
     .query(
       `SELECT * FROM proposals
-        WHERE content_hash = ? AND status = 'promoted'
-        ORDER BY created_at, proposal_id LIMIT 1`,
+        WHERE content_hash = ? AND status IN ('pending', 'promoted')
+        ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END,
+                 created_at, proposal_id
+        LIMIT 1`,
     )
     .get(contentHash) as ProposalRow | null;
 }
@@ -502,9 +495,6 @@ function corroborateCompatClaim(
     (live.sensitivity ?? "private") as Sensitivity,
     proposal.sensitivity,
   );
-  const grew = merged.length !== current.length;
-  const raised = sensitivity !== (live.sensitivity ?? "private");
-  if (!grew && !raised) return;
   db.query(
     `UPDATE claims
         SET provenance = ?, corroboration = ?, last_confirmed_at = ?, sensitivity = ?
@@ -601,17 +591,21 @@ export function fileProposal(
         if (sourceDeletion) requireSourceTombstoneProposal(db, current, context);
         const merged = uniqueStrings([...current.provenance, ...provenance]);
         const grew = merged.length !== current.provenance.length;
+        const sensitivity = stricter(current.sensitivity, labels.sensitivity);
         if (grew) {
           db.query(
             "UPDATE proposals SET provenance = ? WHERE proposal_id = ?",
           ).run(JSON.stringify(merged), current.proposal_id);
         }
-        const updated: StagedProposal = {
-          ...current,
-          provenance: merged,
-          sensitivity: labels.sensitivity,
-        };
-        corroborateCompatClaim(db, updated, provenance, nowRfc3339(), grew);
+        if (grew || sensitivity !== current.sensitivity) {
+          corroborateCompatClaim(
+            db,
+            { ...current, provenance: merged, sensitivity },
+            provenance,
+            nowRfc3339(),
+            grew,
+          );
+        }
         return { outcome: "duplicate", proposal: rowToProposal(db, {
           ...existing,
           provenance: JSON.stringify(merged),

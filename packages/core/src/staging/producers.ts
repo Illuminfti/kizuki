@@ -51,16 +51,12 @@ function blockquote(text: string): string {
     .join("\n");
 }
 
-function namespaced(event: CaptureEvent, subject: SubjectRef): string {
-  return namespacedSubjectId(event.connector_id, subject.subject_id);
-}
-
 function entityProposal(
   event: CaptureEvent,
   subject: SubjectRef,
 ): ProposalInput {
   const handle = handleOf(subject.subject_id);
-  const subjectRef = namespaced(event, subject);
+  const subjectRef = namespacedSubjectId(event.connector_id, subject.subject_id);
   return {
     kind: "entity",
     target: subjectRef,
@@ -110,7 +106,7 @@ function captureNoteProposal(event: CaptureEvent): ProposalInput {
   const header = `Captured from \`${event.connector_id}\` (${event.kind}) at ${event.occurred_at}.${truncated}`;
   const subjects = event.subjects
     .slice(0, DETERMINISTIC_PRODUCER_BUDGET.maxSubjectsPerEvent)
-    .map((subject) => namespaced(event, subject));
+    .map((subject) => namespacedSubjectId(event.connector_id, subject.subject_id));
   return {
     kind: "claim",
     target: captureNoteTarget(event),
@@ -166,7 +162,7 @@ export function proposalsForEvent(
     DETERMINISTIC_PRODUCER_BUDGET.maxSubjectsPerEvent,
   );
   for (const subject of subjects) {
-    const key = namespaced(event, subject);
+    const key = namespacedSubjectId(event.connector_id, subject.subject_id);
     if (seen.has(key)) continue;
     seen.add(key);
     proposals.push(entityProposal(event, subject));

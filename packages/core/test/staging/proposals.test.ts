@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { applyLegacyStagingIdempotency } from "../../src/claims/schema";
 import { getClaim } from "../../src/claims/store";
 import {
   StagingError,
@@ -291,6 +292,32 @@ describe("legacy staging p1 holes", () => {
       later.event_id,
     ]);
     expect(getClaim(db, first.proposal.proposal_id)?.corroboration).toBe(2);
+  });
+
+  test("an upgraded empty signature still occupies the live slot", () => {
+    const db = memoryDb();
+    const first = fileProposal(db, proposalInput());
+    if (first.outcome !== "stored") throw new Error("expected stored");
+    db.query("UPDATE proposals SET content_hash = ''").run();
+    db.query("UPDATE claims SET content_hash = ''").run();
+    db.exec("DROP INDEX IF EXISTS proposals_signature");
+    db.exec("DROP INDEX IF EXISTS claims_signature_idempotency");
+    db.exec("DROP INDEX IF EXISTS claims_idempotency");
+    applyLegacyStagingIdempotency(db);
+    const again = fileProposal(db, proposalInput());
+    expect(again.outcome).toBe("duplicate");
+    if (again.outcome !== "duplicate") return;
+    expect(again.proposal.proposal_id).toBe(first.proposal.proposal_id);
+    expect(listProposals(db)).toHaveLength(1);
+    expect(getClaim(db, first.proposal.proposal_id)?.status).toBe("live");
+    expect(again.proposal.content_hash).toBe(first.proposal.content_hash);
+    expect(
+      db
+        .query<{ content_hash: string }, [string]>(
+          "SELECT content_hash FROM claims WHERE claim_id = ?",
+        )
+        .get(first.proposal.proposal_id)?.content_hash,
+    ).toBe(first.proposal.content_hash);
   });
 
   test("a later sighting may raise the stored sensitivity floor", () => {
