@@ -18,6 +18,7 @@ export async function recordedPage(
   data: Record<string, FrontmatterValue>,
   body: string,
   sourceIds?: readonly string[],
+  options: { now?: () => string } = {},
 ) {
   const { id, status, sensitivity, taint, sources, ...frontmatter } = data;
   if (typeof id !== "string" || status !== "active" || !isSensitivity(sensitivity) ||
@@ -47,7 +48,7 @@ export async function recordedPage(
     if (result.status !== "stored") throw new Error(`recorded page capture: ${result.status}`);
     provenance = [result.event.event_id];
   }
-  const filed = await insertClaim({ db }, {
+  const filed = await insertClaim({ db, ...options }, {
     kind: existing === null ? "entity" : "edit", target: relPath.slice(0, -3), body, frontmatter,
     // Page scope belongs in frontmatter; no primary-subject target binding is requested.
     provenance, subjects: [], producer: "model", model_ref: "fixture:synthetic",
@@ -55,7 +56,7 @@ export async function recordedPage(
   });
   if (filed.outcome !== "stored") throw new Error(`recorded page claim: ${filed.outcome}`);
   let firstId = existing === null;
-  const receipt = write({ db, vault_path: vaultPath, ids: () => {
+  const receipt = write({ db, vault_path: vaultPath, ...options, ids: () => {
     if (firstId) { firstId = false; return id; }
     return ulid();
   } }, filed.claim);
