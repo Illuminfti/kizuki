@@ -80,6 +80,7 @@ describe("Maestro current-law ledger", () => {
   const waveIds = waveBatch.created.map((row) => row.id);
   const candidate = readJson<{
     id: string;
+    reason: string;
     superseded?: boolean;
     supersededBy?: string;
   }>(WAVE_CANDIDATE_PATH);
@@ -144,7 +145,9 @@ describe("Maestro current-law ledger", () => {
     expect(waveBatch.superseded).toBe(true);
     expect(waveBatch.supersededBy).toBe(CURRENT_LAW_PATH);
     expect(candidate.id).toBe("tsk-0970f3");
+    expect(candidate.reason).toContain("Wave 1 spine merged on main");
     expect(candidate.superseded).toBe(true);
     expect(candidate.supersededBy).toBe(CURRENT_LAW_PATH);
+    expect(readText(WAVE_CANDIDATE_PATH).match(/"reason":/g)?.length).toBe(1);
   });
 });
