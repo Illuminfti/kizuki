@@ -260,15 +260,16 @@ function reconstruct(
   const receipts = winner.receipt_id === null ? [] : [getCanonReceipt(io.db, winner.receipt_id)].filter(
     (row) => row !== null,
   );
-  const rewritten = receipts.map((receipt) => {
+  const rewritten = receipts.flatMap((receipt) => {
+    if (activePagePath(receipt.page_path) === null) return [];
     const page = readVaultPage(io.vault_path, receipt.page_path);
-    return {
+    return [{
       page_path: receipt.page_path,
       before_hash: receipt.before_hash ?? "",
       after_hash: receipt.after_hash,
       receipt_id: receipt.receipt_id,
       diff: page === null ? "" : unifiedDiff("", page.content, receipt.page_path),
-    };
+    }];
   });
   return {
     receipt_id: winner.receipt_id,
@@ -277,7 +278,7 @@ function reconstruct(
     superseded,
     rewritten,
     ambiguous: [],
-    answer: formatAnswer(winner, superseded, rewritten, winner.receipt_id, 0),
+    answer: formatAnswer(winner, superseded, rewritten, rewritten.length === 0 ? null : winner.receipt_id, 0),
   };
 }
 
