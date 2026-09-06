@@ -119,7 +119,9 @@ describe("initVault", () => {
     initVault(vault);
 
     for (const [file, content] of replacements) {
-      expect(readFileSync(join(vault, file), "utf8")).toBe(content);
+      expect(readFileSync(join(vault, file), "utf8")).toBe(
+        file === ".gitignore" ? `${content}/.kizuki/\n` : content,
+      );
     }
   });
 

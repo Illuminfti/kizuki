@@ -51,6 +51,14 @@ directory that is not a Kizuki vault. Control paths are created owner-only
 `kizuki.doctrine/v2`; untouched historical templates are upgraded, and
 owner edits are left in place.
 
+Init ensures the vault's root `.gitignore` contains an effective
+`/.kizuki/` exclusion, preserving owner entries and adding the rule after
+later inclusion rules when needed. Repeated init keeps it idempotent.
+In an enclosing Git repository, init and dry runs refuse already tracked
+`.kizuki` entries or an unreadable Git index before writing vault files.
+The owner must resolve tracked control files before retrying; init never
+changes Git's index or history. Git must be available for this check.
+
 ## import
 
 ```text
