@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import {
   ConnectionStateStore,
   assertVaultControl,
+  ensureVaultId,
   initSearch,
   openLedger,
   PortError,
@@ -102,6 +103,8 @@ export function assertVault(path: string): string {
   }
   peekLedgerIdentity(dbPath);
   assertVaultControl(absolutePath);
+  // Remint a snapshot-cloned identity once this volume lands on a new machine.
+  ensureVaultId(absolutePath);
   return absolutePath;
 }
 
