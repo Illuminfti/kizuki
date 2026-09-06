@@ -5,6 +5,7 @@ import type { FrontmatterValue } from "../../src/contracts/proposal";
 import { insertClaim } from "../../src/claims/store";
 import { accept } from "../../src/ledger/ledger";
 import { eventIdFromReference } from "../../src/retrieval/ids";
+import { seedConnectorSensitivity } from "../../src/sensitivity/store";
 import { ulid } from "../../src/util/ulid";
 import { validEvent } from "../fixtures";
 import { write } from "../canon/helpers";
@@ -27,6 +28,10 @@ export async function recordedPage(
   if (existing !== null && existing.page.data["id"] !== id) {
     throw new Error("recorded page fixture must preserve the existing page ID");
   }
+  // Declare the synthetic connector's policy; existing stricter floors still win.
+  seedConnectorSensitivity(db, { connector_id: "fixture", source_key: "recorded-page-fixture" }, {
+    default_sensitivity: "public", sensitivity_floor: "public",
+  });
   const supplied = sourceIds ?? (Array.isArray(sources) ? sources : undefined);
   let provenance: string[];
   if (supplied !== undefined) {
