@@ -1,13 +1,16 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { appendFileSync, copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
+import { COMMANDS } from "../packages/cli/src/commands/index";
+import { printRootHelp } from "../packages/cli/src/help";
 import { evaluateRelease, parseAcceptanceArgs, writeAcceptanceReport } from "./go-no-go";
 import {
-  CAPABILITY_PROOF_FILE, CONNECTORS, EVIDENCE_LIMITS, EvidenceError, JOURNEYS, SURFACE_DOC_FILES, SURFACE_GATE, SURFACE_PRODUCER, SURFACE_PRODUCER_FILES, TARGETS,
-  cliVerbSequence, evaluateSurfaceReceipt, expectedSurfaceInventory, inspectOptionalVerifier, producerRevision, read,
+  CAPABILITY_PROOF_FILE, CONNECTORS, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, SURFACE_DOC_FILES, SURFACE_GATE, SURFACE_OBSERVED_FILES, SURFACE_PRODUCER, SURFACE_PRODUCER_FILES, TARGETS,
+  assertCheckoutCustody, bindEvaluatorCheckout, cliVerbSequence, consumeSurfaceReceipt, evaluateSurfaceReceipt, inspectOptionalVerifier, read, surfaceProducerActive,
 } from "./release-evidence";
+import type { ExpectedSurfaceInventory } from "./release-evidence";
 import { initQualification } from "./qualification";
 import { initVault } from "../packages/core/src/vault/init";
 import { openLedger } from "../packages/core/src/ledger/db";
@@ -390,23 +393,46 @@ function git(cwd: string, args: string[]) {
   if (result.exitCode !== 0) throw new Error(result.stderr.toString() || result.stdout.toString());
   return result.stdout.toString().trim();
 }
-function surfaceCandidate() {
-  const root = mkdtempSync(join(tmpdir(), "kizuki-surface-candidate-")); roots.push(root);
-  const repo = resolve(import.meta.dir, "..");
-  mkdirSync(join(root, "scripts")); mkdirSync(join(root, "docs"));
-  writeFileSync(join(root, ".bun-version"), readFileSync(join(repo, ".bun-version")));
-  for (const name of SURFACE_DOC_FILES) {
-    mkdirSync(dirname(join(root, name)), { recursive: true });
-    copyFileSync(join(repo, name), join(root, name));
+function custodyRepo(extra: Record<string, string> = {}) {
+  const created = mkdtempSync(join(tmpdir(), "kizuki-custody-")); roots.push(created);
+  const root = realpathSync(created);
+  const files = { ...Object.fromEntries(SURFACE_OBSERVED_FILES.map(path => [path, `${path}\n`])), ...extra };
+  for (const [path, body] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), body);
   }
-  writeFileSync(join(root, SURFACE_PRODUCER_FILES[0]), "export const SYNTHETIC_SURFACE_PRODUCER = true;\n");
-  copyFileSync(join(repo, SURFACE_PRODUCER_FILES[1]), join(root, SURFACE_PRODUCER_FILES[1]));
-  git(root, ["init"]); git(root, ["config", "user.email", "surface@example.test"]); git(root, ["config", "user.name", "surface"]);
-  git(root, ["config", "commit.gpgsign", "false"]); git(root, ["add", "-A"]); git(root, ["commit", "-m", "synthetic surface candidate", "--no-gpg-sign"]);
-  const sha = git(root, ["rev-parse", "HEAD"]);
-  return { root, sha, expected: expectedSurfaceInventory(root, sha) };
+  git(root, ["-c", "init.defaultBranch=main", "init"]);
+  git(root, ["config", "user.email", "custody@example.test"]);
+  git(root, ["config", "user.name", "custody"]);
+  git(root, ["config", "commit.gpgsign", "false"]);
+  git(root, ["config", "core.excludesFile", "/dev/null"]);
+  git(root, ["config", "core.autocrlf", "false"]);
+  git(root, ["add", "-f", "--", ...Object.keys(files)]);
+  git(root, ["commit", "-m", "synthetic custody candidate", "--no-gpg-sign"]);
+  return { root, sha: git(root, ["rev-parse", "HEAD"]) };
 }
-function surfaceBody(expected: ReturnType<typeof expectedSurfaceInventory>, patch: Record<string, unknown> = {}) {
+function reasonOf(run: () => unknown): string {
+  try { run(); throw new Error("expected throw"); }
+  catch (error) {
+    expect(error).toBeInstanceOf(EvidenceError);
+    return (error as EvidenceError).reason;
+  }
+}
+function neutralExpected(): ExpectedSurfaceInventory {
+  return {
+    head_sha: source, checkout_sha: source, bun_version: "1.3.14",
+    cli_verbs: ["app", "init", "version"], retired_verbs: ["review", "promote", "reject"],
+    mcp_tools: ["correct", "search"],
+    connectors_registered: [{
+      connector_id: "kizuki.markdown-folder", port_id: "kizuki.connector.markdown-folder", kind: "connector",
+      contract: "kizuki.port.connector/v1", contract_minor: 1, supports: ["backfill"], requires_lease: false, optional_package: null,
+    }],
+    connectors_c3: CONNECTORS.map(item => ({ id: item.id, connector_id: item.connector_id, evidence: item.evidence })),
+    docs: { files: SURFACE_DOC_FILES.map(path => ({ path, sha256: digest(path) })) },
+    producer_files: [...SURFACE_PRODUCER_FILES], producer_revision: digest("producer-revision"),
+  };
+}
+function surfaceBody(expected: ExpectedSurfaceInventory, patch: Record<string, unknown> = {}) {
   return {
     schema: SURFACE_PRODUCER,
     identity: {
@@ -528,50 +554,120 @@ test("optional capability verifier is MISSING until a regular file exists and ot
   expect(() => inspectOptionalVerifier(root, "link.ts")).toThrow(EvidenceError);
 });
 
+test("cli verb sequence follows the unique printRootHelp command-row order", () => {
+  const width = Math.max(...COMMANDS.map(command => command.name.length));
+  const lines: string[] = [];
+  printRootHelp(line => lines.push(line), COMMANDS);
+  const order: string[] = [];
+  for (const line of lines) {
+    const matched = COMMANDS.filter(command => line === `  ${command.name.padEnd(width)}  ${command.summary}`);
+    expect(matched.length).toBeLessThanOrEqual(1);
+    if (matched[0]) order.push(matched[0].name);
+  }
+  expect(new Set(order).size).toBe(COMMANDS.length);
+  expect(order).toHaveLength(COMMANDS.length);
+  expect(cliVerbSequence()).toEqual(order);
+});
+
 test("surface validator recomputes inventories and refuses a self-declared empty disagreement list", () => {
-  const tree = surfaceCandidate();
-  expect(cliVerbSequence()).toEqual([
-    "app", "init", "import", "doctor", "query", "context", "connect", "backfill", "sync",
-    "tell", "undo", "audit", "serve", "models", "agent", "purge", "export", "restore", "version", "rebuild",
-  ]);
-  expect(tree.expected.cli_verbs).toEqual(cliVerbSequence());
-  expect(tree.expected.retired_verbs).toEqual(["review", "promote", "reject"]);
-  expect(tree.expected.connectors_c3).toEqual(CONNECTORS.map(item => ({ id: item.id, connector_id: item.connector_id, evidence: item.evidence })));
-  expect(tree.expected.docs.files.map(item => item.path)).toEqual([...SURFACE_DOC_FILES]);
-  expect(tree.expected.producer_revision).toBe(producerRevision(tree.root, SURFACE_PRODUCER_FILES));
-  expect(evaluateSurfaceReceipt(surfaceBody(tree.expected), tree.root, tree.sha)).toMatchObject({ status: "PASS", reason: "surface-inventory-agrees", creditDigest: true });
-  const mismatched = surfaceBody(tree.expected, { bun_version: "0.0.0", disagreements: [] });
-  expect(() => evaluateSurfaceReceipt(mismatched, tree.root, tree.sha)).toThrow("surface-disagreement-mismatch");
-  const truthful = surfaceBody(tree.expected, {
+  const expected = neutralExpected();
+  expect(evaluateSurfaceReceipt(surfaceBody(expected), expected)).toMatchObject({ status: "PASS", reason: "surface-inventory-agrees", creditDigest: true });
+  expect(() => evaluateSurfaceReceipt(surfaceBody(expected, { bun_version: "0.0.0", disagreements: [] }), expected)).toThrow("surface-disagreement-mismatch");
+  const truthful = surfaceBody(expected, {
     bun_version: "0.0.0", outcome: "fail", failures: [{ code: "bun-version-mismatch" }],
     disagreements: [{ code: "bun-version-mismatch", path: "bun_version" }],
   });
-  expect(evaluateSurfaceReceipt(truthful, tree.root, tree.sha)).toMatchObject({ status: "FAIL", reason: "surface-outcome-fail", creditDigest: true });
-  expect(() => evaluateSurfaceReceipt(surfaceBody(tree.expected, {
+  expect(evaluateSurfaceReceipt(truthful, expected)).toMatchObject({ status: "FAIL", reason: "surface-outcome-fail", creditDigest: true });
+  expect(() => evaluateSurfaceReceipt(surfaceBody(expected, {
     bun_version: "0.0.0", disagreements: [{ code: "bun-version-mismatch", path: "bun_version" }],
-  }), tree.root, tree.sha)).toThrow("invalid-outcome");
-  const unresolved = surfaceBody(tree.expected, { outcome: "unresolved" });
-  expect(evaluateSurfaceReceipt(unresolved, tree.root, tree.sha)).toMatchObject({ status: "UNVERIFIABLE", reason: "surface-outcome-unresolved", creditDigest: true });
+  }), expected)).toThrow("invalid-outcome");
+  expect(evaluateSurfaceReceipt(surfaceBody(expected, { outcome: "unresolved" }), expected)).toMatchObject({
+    status: "UNVERIFIABLE", reason: "surface-outcome-unresolved", creditDigest: true,
+  });
 });
 
-test("surface identity, revision, RFC3339 and custody failures do not credit a digest", () => {
-  const tree = surfaceCandidate();
+test("surface identity, revision, RFC3339 and receipt custody failures do not credit a digest", () => {
+  const expected = neutralExpected();
   const fail = (patch: Record<string, unknown>, reason: string) => {
-    try { evaluateSurfaceReceipt(surfaceBody(tree.expected, patch), tree.root, tree.sha); throw new Error("expected throw"); }
-    catch (error) { expect(error).toBeInstanceOf(EvidenceError); expect((error as EvidenceError).reason).toBe(reason); }
+    expect(reasonOf(() => evaluateSurfaceReceipt(surfaceBody(expected, patch), expected))).toBe(reason);
   };
-  fail({ identity: { ...surfaceBody(tree.expected).identity, candidate_source_sha: "b".repeat(40) } }, "candidate-mismatch");
-  fail({ identity: { ...surfaceBody(tree.expected).identity, producer_revision: "c".repeat(64) } }, "producer-revision-mismatch");
-  fail({ identity: { ...surfaceBody(tree.expected).identity, producer_files: ["scripts/release-evidence.ts"] } }, "producer-files-mismatch");
-  fail({ identity: { ...surfaceBody(tree.expected).identity, source_class: "synthetic-fixture" } }, "invalid-identity");
-  fail({ identity: { ...surfaceBody(tree.expected).identity, recorded_at: "2026-02-30T00:00:00.000Z" } }, "invalid-recorded-at");
-  fail({ identity: { ...surfaceBody(tree.expected).identity, recorded_at: "2026-09-06T00:00:00Z" } }, "invalid-recorded-at");
-  fail({ identity: { ...surfaceBody(tree.expected).identity, attempt_id: "aaaaaaaa-bbbb-5ccc-8ddd-eeeeeeeeeeee" } }, "invalid-identity");
-  const receiptPath = join(tree.root, "surface.json");
-  writeFileSync(receiptPath, JSON.stringify(surfaceBody(tree.expected)));
+  fail({ identity: { ...surfaceBody(expected).identity, candidate_source_sha: "b".repeat(40) } }, "candidate-mismatch");
+  fail({ identity: { ...surfaceBody(expected).identity, producer_revision: "c".repeat(64) } }, "producer-revision-mismatch");
+  fail({ identity: { ...surfaceBody(expected).identity, producer_files: ["scripts/release-evidence.ts"] } }, "producer-files-mismatch");
+  fail({ identity: { ...surfaceBody(expected).identity, source_class: "synthetic-fixture" } }, "invalid-identity");
+  fail({ identity: { ...surfaceBody(expected).identity, recorded_at: "2026-02-30T00:00:00.000Z" } }, "invalid-recorded-at");
+  fail({ identity: { ...surfaceBody(expected).identity, recorded_at: "2026-09-06T00:00:00Z" } }, "invalid-recorded-at");
+  fail({ identity: { ...surfaceBody(expected).identity, attempt_id: "aaaaaaaa-bbbb-5ccc-8ddd-eeeeeeeeeeee" } }, "invalid-identity");
+  const receiptPath = join(mkdtempSync(join(tmpdir(), "kizuki-surface-receipt-")), "surface.json");
+  roots.push(dirname(receiptPath));
+  writeFileSync(receiptPath, JSON.stringify(surfaceBody(expected)));
   expect(read(receiptPath, EVIDENCE_LIMITS.family_receipt).sha256).toBe(digest(readFileSync(receiptPath)));
   truncateSync(receiptPath, EVIDENCE_LIMITS.family_receipt + 1);
   expect(() => read(receiptPath, EVIDENCE_LIMITS.family_receipt)).toThrow("unsafe-file-or-size");
+});
+
+test("checkout custody accepts a clean exact-head candidate and refuses later drift", () => {
+  const repo = custodyRepo();
+  const frame = assertCheckoutCustody(repo.root, repo.sha, SURFACE_OBSERVED_FILES);
+  expect(frame.head).toBe(repo.sha);
+  expect(frame.root).toBe(repo.root);
+  expect(frame.files.map(item => item.path)).toEqual([...SURFACE_OBSERVED_FILES]);
+  frame.unchanged();
+  appendFileSync(join(repo.root, ".bun-version"), "later");
+  expect(reasonOf(() => frame.unchanged())).toBe("candidate-worktree-dirty");
+});
+
+test("checkout custody refuses the wrong HEAD", () => {
+  const repo = custodyRepo();
+  expect(reasonOf(() => assertCheckoutCustody(repo.root, "a".repeat(40), SURFACE_OBSERVED_FILES))).toBe("candidate-head-mismatch");
+});
+
+test("checkout custody refuses unstaged bytes", () => {
+  const repo = custodyRepo();
+  appendFileSync(join(repo.root, ".bun-version"), "dirty");
+  expect(reasonOf(() => assertCheckoutCustody(repo.root, repo.sha, SURFACE_OBSERVED_FILES))).toBe("candidate-worktree-dirty");
+});
+
+test("checkout custody refuses staged bytes", () => {
+  const repo = custodyRepo();
+  writeFileSync(join(repo.root, ".bun-version"), "staged\n");
+  git(repo.root, ["add", ".bun-version"]);
+  expect(reasonOf(() => assertCheckoutCustody(repo.root, repo.sha, SURFACE_OBSERVED_FILES))).toBe("candidate-index-dirty");
+});
+
+test("checkout custody refuses an executable-mode change", () => {
+  const repo = custodyRepo();
+  git(repo.root, ["config", "core.filemode", "false"]);
+  chmodSync(join(repo.root, "scripts/release-evidence.ts"), 0o755);
+  expect(reasonOf(() => assertCheckoutCustody(repo.root, repo.sha, SURFACE_OBSERVED_FILES))).toBe("candidate-mode-mismatch");
+});
+
+test("checkout custody refuses an untracked source or capability producer", () => {
+  const repo = custodyRepo();
+  writeFileSync(join(repo.root, CAPABILITY_PROOF_FILE), "export const SYNTHETIC_SURFACE_PRODUCER = true;\n");
+  expect(inspectOptionalVerifier(repo.root, CAPABILITY_PROOF_FILE).status).toBe("PRESENT");
+  expect(surfaceProducerActive(repo.root)).toBe(false);
+  expect(reasonOf(() => assertCheckoutCustody(repo.root, repo.sha, SURFACE_OBSERVED_FILES))).toBe("candidate-untracked");
+  expect(reasonOf(() => assertCheckoutCustody(repo.root, repo.sha, [...SURFACE_OBSERVED_FILES, CAPABILITY_PROOF_FILE]))).toBe("candidate-untracked");
+});
+
+test("checkout custody refuses a required-path symlink", () => {
+  const repo = custodyRepo();
+  const targetPath = join(repo.root, "docs/CURRENT.md");
+  rmSync(join(repo.root, "README.md"));
+  symlinkSync(targetPath, join(repo.root, "README.md"));
+  git(repo.root, ["add", "-A"]);
+  git(repo.root, ["commit", "-m", "symlink observed path", "--no-gpg-sign"]);
+  const sha = git(repo.root, ["rev-parse", "HEAD"]);
+  expect(reasonOf(() => assertCheckoutCustody(repo.root, sha, SURFACE_OBSERVED_FILES))).toBe("candidate-file-symlink-or-mode");
+});
+
+test("surface inventory derivation rejects product modules resolved outside the candidate", () => {
+  const repo = custodyRepo({ [CAPABILITY_PROOF_FILE]: "export {}\n" });
+  expect(surfaceProducerActive(repo.root)).toBe(true);
+  expect(reasonOf(() => bindEvaluatorCheckout(repo.root, repo.sha, [...SURFACE_OBSERVED_FILES, CAPABILITY_PROOF_FILE]))).toBe("candidate-root-mismatch");
+  expect(reasonOf(() => consumeSurfaceReceipt({ schema: SURFACE_PRODUCER }, repo.root, repo.sha))).toBe("candidate-root-mismatch");
+  expect(EVALUATOR_ROOT).not.toBe(repo.root);
 });
 
 test("v3 refuses extra keys and more than forty gate receipts", () => {
@@ -583,4 +679,3 @@ test("v3 refuses extra keys and more than forty gate receipts", () => {
   expect(gate(overflow, "evidence.index").status).toBe("FAIL");
   expect(gate(overflow, `artifact.${target}`).status).toBe("MISSING");
 });
-

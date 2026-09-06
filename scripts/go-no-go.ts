@@ -7,8 +7,8 @@ import { statusQualification } from "./qualification";
 import { ARTIFACT_PACKAGE_FILES as PACKAGE_FILES, ArtifactProofError, PROOF_JSON_LIMITS, SQLITE_ENGINE_POLICY, parseProofJson as json, validateArtifactProof } from "./artifact-proof";
 import type { ArtifactPackageFile, ArtifactProofSchema } from "./artifact-proof";
 import {
-  CAPABILITY_PROOF_FILE, CONNECTORS, EVIDENCE_LIMITS, EvidenceError, JOURNEYS, SURFACE_GATE, SURFACE_PRODUCER, TARGETS,
-  absolute, digest, evaluateSurfaceReceipt, exact, gateReceiptMappingError, hash, inspectOptionalVerifier, parseGateReceipts, parents, read, reject, text,
+  CAPABILITY_PROOF_FILE, CONNECTORS, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, SURFACE_GATE, SURFACE_PRODUCER, TARGETS,
+  absolute, consumeSurfaceReceipt, digest, exact, gateReceiptMappingError, hash, inspectOptionalVerifier, parseGateReceipts, parents, read, reject, surfaceProducerActive, text,
 } from "./release-evidence";
 import type { GateReceiptReference } from "./release-evidence";
 
@@ -28,7 +28,7 @@ const POLICY = { schema: "kizuki.acceptance-policy/v2", sqlite_engine: SQLITE_EN
   post_ready_observation_ms: { owner: 604800000, estate: 1209600000 }, unfamiliar_user_ms: 900000,
   deferred_connectors: ["composio", "whatsapp-business-api"], carry_forward: false, fixture_release_credit: false };
 const VERIFIER_FILES = [".bun-version", "scripts/go-no-go.ts", "scripts/release-evidence.ts", "scripts/artifact-proof.ts", "scripts/artifact-engine.ts", "packages/core/src/ledger/runtime.ts", "scripts/stranger-proof.ts", "scripts/release-targets.ts", "scripts/release-artifacts.ts", "scripts/qualification.ts", "packages/core/src/serve/qualification.ts", "packages/core/src/serve/receipts.ts", "packages/core/src/serve/types.ts"];
-const CANDIDATE_ROOT = resolve(import.meta.dir, "..");
+
 function parseIndex(value: unknown, bytes: number): EvidenceIndex {
   if (!value || typeof value !== "object" || Array.isArray(value)) reject("invalid-index");
   const v3 = (value as { schema?: unknown }).schema === "kizuki.acceptance-evidence/v3";
@@ -134,10 +134,10 @@ export function evaluateRelease(profile: Profile, evidencePath: string) {
     }
   }
   // Revision hashes describe the actual local verifier files, including policy predicates.
-  const capability = inspectOptionalVerifier(CANDIDATE_ROOT, CAPABILITY_PROOF_FILE);
-  const verifier = [...VERIFIER_FILES.map(name => ({ file: name, sha256: hash(readFileSync(resolve(CANDIDATE_ROOT, name))) })), capability];
+  const capability = inspectOptionalVerifier(EVALUATOR_ROOT, CAPABILITY_PROOF_FILE);
+  const verifier = [...VERIFIER_FILES.map(name => ({ file: name, sha256: hash(readFileSync(resolve(EVALUATOR_ROOT, name))) })), capability];
   if (index?.schema === "kizuki.acceptance-evidence/v3" && row("evidence.index").status === "PASS") {
-    const surfaceActive = capability.status === "PRESENT";
+    const surfaceActive = surfaceProducerActive(EVALUATOR_ROOT);
     for (const ref of index.gate_receipts) {
       if (ref.producer !== SURFACE_PRODUCER || ref.gate_id !== SURFACE_GATE) continue;
       if (!surfaceActive) continue;
@@ -145,7 +145,7 @@ export function evaluateRelease(profile: Profile, evidencePath: string) {
       try {
         const file = read(ref.path, LIMITS.family_receipt);
         if (file.sha256 !== ref.sha256) reject("receipt-digest-mismatch");
-        const evaluated = evaluateSurfaceReceipt(json(file.bytes), CANDIDATE_ROOT, index.candidate_source_sha);
+        const evaluated = consumeSurfaceReceipt(json(file.bytes), EVALUATOR_ROOT, index.candidate_source_sha);
         file.unchanged();
         gate.status = evaluated.status; gate.reason = evaluated.reason; gate.evidence_sha256 = evaluated.creditDigest ? file.sha256 : null;
       } catch (error) { fail(gate, error); }
