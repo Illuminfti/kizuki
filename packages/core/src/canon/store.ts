@@ -20,6 +20,8 @@ import { RECEIPTS_PATH, getCanonReceipt, latestReceiptForPage } from "./receipts
 import type { CanonReceipt } from "./receipts";
 import { initCanon } from "./schema";
 import type { MachineByteIntent } from "../ledger/event-origin";
+import { canonFilesFor } from "./io";
+import { assertVaultMutationScope, type VaultMutationScope } from "../vault/mutation-scope";
 
 /**
  * The canon store as the writer sees it: the SQLite ledger that holds
@@ -87,8 +89,17 @@ export function readPage(io: CanonIo, relPath: string): ExistingPage | null {
   let path: string;
   let bytes: Buffer;
   try {
-    path = containedVaultFile(io.vault_path, relPath);
-    bytes = readFileSync(path);
+    const files = canonFilesFor(io);
+    if (files === undefined) {
+      path = containedVaultFile(io.vault_path, relPath);
+      bytes = readFileSync(path);
+    } else {
+      path = join(io.vault_path, relPath);
+      const snapshot = files.read(relPath);
+      if (snapshot === null) return null;
+      try { bytes = Buffer.from(snapshot.bytes); }
+      finally { snapshot.close(); }
+    }
   } catch (error) {
     if (fsCode(error) === "ENOENT") return null;
     throw new CanonPageUnreadable(relPath, fsCode(error));
@@ -103,7 +114,8 @@ export function readPage(io: CanonIo, relPath: string): ExistingPage | null {
   };
 }
 
-export function appendReceiptLine(io: CanonIo, receipt: CanonReceipt): void {
+export function appendReceiptLine(scope: VaultMutationScope, io: CanonIo, receipt: CanonReceipt): void {
+  assertVaultMutationScope(scope, io);
   const receiptsPath = join(io.vault_path, RECEIPTS_PATH);
   mkdirSync(dirname(receiptsPath), { recursive: true });
   appendFileSync(receiptsPath, `${JSON.stringify(receipt)}\n`, {encoding:"utf8",mode:0o600});

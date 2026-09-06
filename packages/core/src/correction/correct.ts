@@ -1,10 +1,10 @@
 import type { Database } from "bun:sqlite";
-import { existsSync, readFileSync } from "node:fs";
 import { assertStoredPageRelPath } from "../canon/paths";
-import { snapshotCanonIo } from "../canon/io";
-import { containedVaultFile } from "../vault/write";
+import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
+import { readOwnedCanonPage } from "../canon/io";
+import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { toolAllowed } from "../agents/authorization";
-import { applyCanonWrite } from "../canon/apply";
+import { applyCanonWriteOwned } from "../canon/apply";
 import { resolveTarget } from "../canon/arbiter";
 import { BudgetExhausted, createBudgetTracker } from "../canon/budget";
 import { CanonWriteError } from "../canon/errors";
@@ -18,7 +18,6 @@ import type { CaptureEventInput, SubjectRef } from "../contracts/event";
 import { tableExists } from "../ledger/schema";
 import { isRfc3339 } from "../util/time";
 import { ulid } from "../util/ulid";
-import { parseFrontmatter } from "../vault/frontmatter";
 import { unifiedDiff } from "./diff";
 import { bumpClaimsEpoch, initClaimsEpoch } from "./epoch";
 import { CorrectError } from "./errors";
@@ -69,15 +68,14 @@ function activePagePath(relPath: string): string | null {
   return relPath.startsWith("archive/") ? null : relPath;
 }
 
-function readVaultPage(vaultPath: string, relPath: string): VaultPageBytes | null {
+function readVaultPage(io: CanonIo, relPath: string): VaultPageBytes | null {
   if (activePagePath(relPath) === null) return null;
-  const path = containedVaultFile(vaultPath, relPath);
-  if (!existsSync(path)) return null;
-  const content = readFileSync(path, "utf8");
+  const page = readOwnedCanonPage(io, relPath);
+  if (page === null) return null;
   return {
-    content,
-    hash: new Bun.CryptoHasher("sha256").update(content).digest("hex"),
-    data: parseFrontmatter(content).data,
+    content: page.content,
+    hash: page.hash,
+    data: page.page.data,
   };
 }
 
@@ -262,7 +260,7 @@ function reconstruct(
   );
   const rewritten = receipts.flatMap((receipt) => {
     if (activePagePath(receipt.page_path) === null) return [];
-    const page = readVaultPage(io.vault_path, receipt.page_path);
+    const page = readVaultPage(io, receipt.page_path);
     return [{
       page_path: receipt.page_path,
       before_hash: receipt.before_hash ?? "",
@@ -427,7 +425,7 @@ function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPa
     if (claim.claim_key !== null) keys.add(claim.claim_key);
     const path = pagePathForClaim(io.db, claim);
     if (path !== null) {
-      const page = readVaultPage(io.vault_path, path);
+      const page = readVaultPage(io, path);
       const id = page?.data["id"];
       if (typeof id === "string") add(id, path, 1);
     }
@@ -465,7 +463,7 @@ function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPa
       if (!Array.isArray(sources) || !sources.some((id) => typeof id === "string" && provenance.has(id))) {
         continue;
       }
-      const page = readVaultPage(io.vault_path, row.page_path);
+      const page = readVaultPage(io, row.page_path);
       const id = page?.data["id"];
       if (typeof id === "string") add(id, row.page_path, 0.8);
     }
@@ -496,6 +494,24 @@ function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPa
  */
 export async function correct(io: CorrectIo, input: CorrectInput): Promise<CorrectResult> {
   io = snapshotCorrectIo(io);
+  const { statement, target, scope, dry_run } = input;
+  input = Object.freeze({ statement,
+    ...(target === undefined ? {} : { target: Object.freeze({ ...target }) }),
+    ...(scope === undefined ? {} : { scope: Object.freeze({ ...scope }) }),
+    ...(dry_run === undefined ? {} : { dry_run }),
+  });
+  try {
+    return await withCanonMutationAsync(io, (owner, owned) => correctOwned(owner, owned, input));
+  } catch (error) {
+    if (error instanceof VaultMutationError && error.code === "writer_busy") {
+      throw new CorrectError("writer_busy", "canon writer is busy; retry the correction");
+    }
+    throw error;
+  }
+}
+
+async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: CorrectInput): Promise<CorrectResult> {
+  requireCanonFiles(scope, io);
   assertStatement(input.statement);
   assertScope(input.scope);
   assertGrant(io);
@@ -532,7 +548,7 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
     }));
     const previewPages = affectedPages(io, group, seed).slice(0, CORRECTION_MAX_PAGES);
     const rewritten = previewPages.flatMap((page) => {
-      const existing = readVaultPage(io.vault_path, page.rel_path);
+      const existing = readVaultPage(io, page.rel_path);
       if (existing === null) return [];
       const after = existing.content.replace(seed.body, input.statement);
       return [
@@ -592,7 +608,7 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
   let receiptId: string | null = null;
 
   for (const [index, page] of chosen.entries()) {
-    const existing = readVaultPage(io.vault_path, page.rel_path);
+    const existing = readVaultPage(io, page.rel_path);
     if (existing === null) continue;
     const before = existing.content;
     let claim = winner;
@@ -645,9 +661,9 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
             rel_path: page.rel_path,
             superseded: superseded.map((row) => row.claim_id),
           };
-    let receipt: ReturnType<typeof applyCanonWrite>;
+    let receipt: ReturnType<typeof applyCanonWriteOwned>;
     try {
-      receipt = applyCanonWrite(canon, stored, writeDecision, {
+      receipt = applyCanonWriteOwned(scope, canon, stored, writeDecision, {
         writer: "correction",
         budget,
       });
@@ -658,7 +674,7 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
       throw error;
     }
     if (receiptId === null) receiptId = receipt.receipt_id;
-    const after = readVaultPage(io.vault_path, receipt.page_path);
+    const after = readVaultPage(io, receipt.page_path);
     rewritten.push({
       page_path: receipt.page_path,
       before_hash: receipt.before_hash ?? "",

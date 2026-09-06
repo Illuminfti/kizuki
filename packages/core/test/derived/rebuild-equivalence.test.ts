@@ -1,3 +1,4 @@
+import { snapshotCanonIo, withCanonMutationSync } from "../../src/canon/io";
 import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -308,15 +309,15 @@ describe("derived rebuild equivalence", () => {
       "fact:tea|event:purge|source",
     ]);
 
-    applyPurgeRewrite(
-      { db, vault_path: vault.path },
+    withCanonMutationSync(snapshotCanonIo({ db, vault_path: vault.path }), (scope, io) => applyPurgeRewrite(
+      scope, io,
       {
         rel_path: "facts/tea.md",
         purged_event_ids: ["event:purge"],
         purged_claim_ids: ["claim:purged"],
         purged_claim_bodies: ["secretword"],
       },
-    );
+    ));
     expect(search(db, "secretword", { ceiling: "private" })).toEqual([]);
     expect(search(db, "keepword", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([
       "page:fact:tea",
@@ -328,15 +329,15 @@ describe("derived rebuild equivalence", () => {
       "fact:tea|event:keep|source",
     ]);
 
-    applyPurgeRewrite(
-      { db, vault_path: vault.path },
+    withCanonMutationSync(snapshotCanonIo({ db, vault_path: vault.path }), (scope, io) => applyPurgeRewrite(
+      scope, io,
       {
         rel_path: "facts/tea.md",
         purged_event_ids: ["event:keep"],
         purged_claim_ids: ["claim:rest"],
         purged_claim_bodies: ["keepword"],
       },
-    );
+    ));
     expect(search(db, "keepword", { ceiling: "private" })).toEqual([]);
     expect(neighbors(db, "fact:tea").edges).toEqual([]);
     expect(

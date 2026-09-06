@@ -33,7 +33,8 @@ import type { BudgetTracker } from "./budget";
 import { CanonWriteError } from "./errors";
 import type { CanonReceipt, PageAction, RetrievalOpRef } from "./receipts";
 import { initCanon } from "./schema";
-import { snapshotCanonIo } from "./io";
+import { requireCanonFiles, snapshotCanonIo, withCanonMutationSync } from "./io";
+import { assertVaultMutationScope, VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import {
   appendReceiptLine,
   insertReceiptRow,
@@ -427,6 +428,26 @@ export function applyCanonWrite(
   opts: ApplyCanonWriteOptions,
 ): CanonReceipt {
   io = snapshotCanonIo(io);
+  try {
+    return withCanonMutationSync(io, (scope, owned) => applyCanonWriteOwned(scope, owned, claim, decision, opts));
+  } catch (error) {
+    if (error instanceof VaultMutationError && error.code === "writer_busy") {
+      throw new CanonWriteError("writer_busy", "canon writer is busy; retry the write");
+    }
+    throw error;
+  }
+}
+
+/** Internal nested entry: the enclosing operation owns files through receipt completion. */
+export function applyCanonWriteOwned(
+  scope: VaultMutationScope,
+  io: CanonIo,
+  claim: Claim | readonly Claim[],
+  decision: TargetDecision,
+  opts: ApplyCanonWriteOptions,
+): CanonReceipt {
+  io = snapshotCanonIo(io);
+  const files = requireCanonFiles(scope, io);
   claim = snapshotByteInput(claim);
   decision = snapshotByteInput(decision);
   opts = Object.freeze({ writer: opts.writer, budget: opts.budget });
@@ -482,7 +503,7 @@ export function applyCanonWrite(
       ? []
       : [{ store: io.retrieval_store, op: "upsert", doc: `page:${pageId}` }];
 
-  const cap = grantCanonWrite(opts.writer, receiptId, io.vault_path);
+  const cap = grantCanonWrite(opts.writer, receiptId, io.vault_path, files);
   const path = join(io.vault_path, target.rel_path);
   const expectedAfter = hashBytes(Buffer.from(serializePage(prepared.page)));
   const admit = (): void => {
@@ -540,7 +561,7 @@ export function applyCanonWrite(
     at: nowOf(io),
   };
 
-  appendReceiptLine(io, receipt);
+  appendReceiptLine(scope, io, receipt);
   const priorSubject = existing?.page.data["x-subject-id"];
   recordRow(
     io,
@@ -603,14 +624,16 @@ interface RevertWriteOutcome {
  * holds. `page === null` deletes (undo of a create).
  */
 export function applyRevertWrite(
+  scope: VaultMutationScope,
   io: CanonIo,
   input: RevertWriteInput,
 ): RevertWriteOutcome {
   io = snapshotCanonIo(io);
+  const files = requireCanonFiles(scope, io);
   input = snapshotByteInput(input);
   assertPageRelPath(input.rel_path);
   if (input.page !== null) requireSourceEvents(io.db, existingSources(input.page), { owner: true, purpose: "derive" });
-  const cap = grantCanonWrite("revert", input.receipt_id, io.vault_path);
+  const cap = grantCanonWrite("revert", input.receipt_id, io.vault_path, files);
   const path = join(io.vault_path, input.rel_path);
   if (input.page === null) {
     if (input.expected_hash === null) {
@@ -671,10 +694,12 @@ function redactBody(body: string, fragments: readonly string[]): string {
  * owner review queue: the hold lifts when this receipt lands.
  */
 export function applyPurgeRewrite(
+  scope: VaultMutationScope,
   io: CanonIo,
   input: PurgeRewriteInput,
 ): CanonReceipt {
   io = snapshotCanonIo(io);
+  const files = requireCanonFiles(scope, io);
   input = snapshotByteInput(input);
   if (input.source_erasure === undefined) assertPageRelPath(input.rel_path);
   else assertStoredPageRelPath(input.rel_path);
@@ -771,11 +796,11 @@ export function applyPurgeRewrite(
   data["sensitivity"] = sensitivity;
   data["taint"] = taint;
 
-  if (input.source_erasure !== undefined) return applySourcePurgeWrite(io,
+  if (input.source_erasure !== undefined) return applySourcePurgeWrite(scope, io,
     {...input,source_erasure:input.source_erasure},
     {existing,data,body,nothingRemains,action,authority,sensitivity,taint});
   const receiptId = mintId(io);
-  const cap = grantCanonWrite("loop", receiptId, io.vault_path);
+  const cap = grantCanonWrite("loop", receiptId, io.vault_path, files);
   const path = join(io.vault_path, input.rel_path);
   const next = { data, body: body.length === 0 ? "\n" : body };
   const expectedAfter = hashBytes(Buffer.from(serializePage(next)));
@@ -826,7 +851,7 @@ export function applyPurgeRewrite(
     at: nowOf(io),
   };
 
-  appendReceiptLine(io, receipt);
+  appendReceiptLine(scope, io, receipt);
   const retainedSubject = data["x-subject-id"];
   io.db.transaction((): void => {
     insertReceiptRow(io.db, receipt, "purge_review");
@@ -868,9 +893,10 @@ export function applyPurgeRewrite(
   return receipt;
 }
 
-function finishSourceErasure(io: CanonIo, intent: SourceErasureIntent, page: VaultPage | null): void {
+function finishSourceErasure(scope: VaultMutationScope, io: CanonIo, intent: SourceErasureIntent, page: VaultPage | null): void {
+    assertVaultMutationScope(scope, io);
     const receipt = intent.receipt;
-    const stream = appendSourceErasureReceipt(io, receipt);
+    const stream = appendSourceErasureReceipt(scope, io, receipt);
     try {
         io.db.transaction(() => {
             stream.verifyBinding();
@@ -901,8 +927,9 @@ function finishSourceErasure(io: CanonIo, intent: SourceErasureIntent, page: Vau
     }
 }
 /** Called only inside the source purge's existing native writer ownership. */
-export function recoverSourceErasureIntents(io: CanonIo, source: string): boolean {
+export function recoverSourceErasureIntents(scope: VaultMutationScope, io: CanonIo, source: string): boolean {
     io = snapshotCanonIo(io);
+    requireCanonFiles(scope, io);
     initCanon(io.db);
     const rows = io.db.query<{
         page_path: string;
@@ -923,7 +950,7 @@ export function recoverSourceErasureIntents(io: CanonIo, source: string): boolea
                 continue;
             if (hash !== intent.receipt.after_hash)
                 return false;
-            finishSourceErasure(io, intent, current?.page ?? null);
+            finishSourceErasure(scope, io, intent, current?.page ?? null);
         }
         catch {
             return false;
@@ -944,7 +971,8 @@ interface SourcePurgePrepared {
     sensitivity: Sensitivity;
     taint: ClaimTaint;
 }
-function applySourcePurgeWrite(io: CanonIo, input: SourcePurgeInput, prepared: SourcePurgePrepared): CanonReceipt {
+function applySourcePurgeWrite(scope: VaultMutationScope, io: CanonIo, input: SourcePurgeInput, prepared: SourcePurgePrepared): CanonReceipt {
+    const files = requireCanonFiles(scope, io);
     const { existing, data, body, nothingRemains, action, authority, sensitivity, taint } = prepared;
     const pageId = typeof existing.page.data["id"] === "string" ? existing.page.data["id"] : null;
     const next = nothingRemains ? null : { data, body: body.length === 0 ? "\n" : body };
@@ -965,12 +993,12 @@ function applySourcePurgeWrite(io: CanonIo, input: SourcePurgeInput, prepared: S
       ).get(id) === null)) throw new CanonWriteError("decision_stale", "source erasure admission changed");
       if (next !== null) requireSourceEvents(io.db, existingSources(next), { owner: true, purpose: "derive" });
     });
-    const cap = grantCanonWrite("loop", intent.receipt.receipt_id, io.vault_path);
+    const cap = grantCanonWrite("loop", intent.receipt.receipt_id, io.vault_path, files);
     const outcome = writePage(cap, join(io.vault_path, input.rel_path), next ?? { data, body: "\n" }, {
         revision: true, expected_hash: existing.hash, erase_prior: true, delete: nothingRemains,
     });
     if (outcome.after_hash !== intent.receipt.after_hash)
         throw new CanonWriteError("decision_stale", "source erasure postimage changed");
-    finishSourceErasure(io, intent, next);
+    finishSourceErasure(scope, io, intent, next);
     return intent.receipt;
 }

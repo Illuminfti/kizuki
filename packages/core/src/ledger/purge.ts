@@ -1,5 +1,6 @@
 import { invalidateLocalSourcePort } from "./source-grants";
-import { tryWriteFlock } from "../serve/flock";
+import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
+import { bindCanonFiles, requireCanonFiles, snapshotCanonIo, withCanonMutationAsync, withCanonMutationSync } from "../canon/io";
 import { settleWriteReservations } from "../serve/budget-ledger";
 import { purgeExtractInputs } from "../serve/extract";
 import type { Database } from "bun:sqlite";
@@ -943,21 +944,31 @@ export function purgeEvents(
   reason: string,
   options: PurgePhaseOptions = {},
 ): PurgeOutcome {
-  const lock = tryWriteFlock(vaultPath);
-  if (lock === null) throw new PurgeError("canon_changed", "canon writer is busy; retry purge", filter);
+  const io = snapshotCanonIo({ db, vault_path: vaultPath });
+  filter = Object.freeze({ ...filter });
+  options = Object.freeze({ ...options });
   try {
-    if (tableExists(db, "canon_write_reservations")) settleWriteReservations(db, vaultPath);
-    return purgeEventsLocked(db, vaultPath, filter, reason, options);
-  } finally { lock.release(); }
+    return withCanonMutationSync(io, (scope, owned) => {
+      if (tableExists(owned.db, "canon_write_reservations")) settleWriteReservations(owned.db, owned.vault_path);
+      return purgeEventsOwned(scope, owned, filter, reason, options);
+    });
+  } catch (error) {
+    if (error instanceof VaultMutationError && error.code === "writer_busy") {
+      throw new PurgeError("canon_changed", "canon writer is busy; retry purge", filter);
+    }
+    throw error;
+  }
 }
 
-function purgeEventsLocked(
-  db: Database,
-  vaultPath: string,
+function purgeEventsOwned(
+  scope: VaultMutationScope,
+  io: CanonIo,
   filter: PurgeFilter,
   reason: string,
   options: PurgePhaseOptions = {},
 ): PurgeOutcome {
+  requireCanonFiles(scope, io);
+  const { db, vault_path: vaultPath } = io;
   initPurgeOps(db);
   const recordedReason = normalizePurgeReason(reason);
   const includeAliases = options.include_aliases === true;
@@ -1321,10 +1332,12 @@ function catchUpHolds(db: Database, vaultPath: string, batchId: string): {
 }
 
 function rewriteHolds(
-  db: Database,
-  vaultPath: string,
+  scope: VaultMutationScope,
+  ownerIo: CanonIo,
   options: PurgeRunOptions,
 ): PurgeRewriteRef[] {
+  const files = requireCanonFiles(scope, ownerIo);
+  const { db, vault_path: vaultPath } = ownerIo;
   const rewritten: PurgeRewriteRef[] = [];
   const holds = readHolds(db);
   const unprovedReceipts = new Set(holds.filter(hold => readBatch(db, hold.proposal_id)?.state !== "ready").map(hold => hold.proposal_id));
@@ -1336,14 +1349,14 @@ function rewriteHolds(
   const unprovedPages = new Set(holds.filter(hold => unprovedReceipts.has(hold.proposal_id)).map(hold => hold.page_path));
   if (holds.length === 0) return rewritten;
   const matchable = matchablePagePaths(vaultPath);
-  const io: CanonIo = {
+  const io = bindCanonFiles(scope, snapshotCanonIo({
     db,
     vault_path: vaultPath,
     retrieval_store: FTS5_RETRIEVAL_ID,
     ...(options.now !== undefined ? { now: options.now } : {}),
     ...(options.ids !== undefined ? { ids: options.ids } : {}),
     ...(options.retrieval !== undefined ? { retrieval: options.retrieval } : {}),
-  };
+  }), files);
   for (const hold of holds) {
     // A held page cannot be republished until the complete store closure has
     // an exact, validated absence proof. Legacy malformed receipts stay held.
@@ -1374,7 +1387,7 @@ function rewriteHolds(
     });
     let receipt;
     try {
-      receipt = applyPurgeRewrite(io, {
+      receipt = applyPurgeRewrite(scope, io, {
         rel_path: hold.page_path,
         purged_event_ids: toRemove,
         purged_claim_ids: purgedClaims.map((claim) => claim.claim_id),
@@ -1400,14 +1413,17 @@ export async function runPurge(
   reason: string,
   options: PurgeRunOptions = {},
 ): Promise<PurgeOutcome> {
-  return underPurgeFence(vaultPath, options, async () => {
-    if (tableExists(db, "canon_write_reservations")) settleWriteReservations(db, vaultPath);
+  vaultPath = resolve(vaultPath);
+  filter = Object.freeze({ ...filter });
+  options = Object.freeze({ ...options });
+  return underPurgeFence(db, vaultPath, options, async (scope, io) => {
+    if (tableExists(io.db, "canon_write_reservations")) settleWriteReservations(io.db, io.vault_path);
   const clock = options.now ?? (() => new Date().toISOString());
   const binding = bindRetrieval(vaultPath, options.retrieval, clock);
   try {
   const retrievalStore =
     binding.status === "not_configured" ? null : binding.port?.descriptor.id ?? FTS5_RETRIEVAL_ID;
-  const phase1 = purgeEventsLocked(db, vaultPath, filter, reason, {
+  const phase1 = purgeEventsOwned(scope, io, filter, reason, {
     ...options,
     retrieval_store: retrievalStore,
   });
@@ -1416,7 +1432,7 @@ export async function runPurge(
   if (receiptId !== undefined) {
     phase1.purge_ops = await reconcileOps(db, receiptId, binding, clock);
   }
-  phase1.rewritten = rewriteHolds(db, vaultPath, options);
+  phase1.rewritten = rewriteHolds(scope, io, options);
   return phase1;
   } finally { if (binding.owned) await binding.port?.close(); }
   }, filter);
@@ -1428,6 +1444,18 @@ export async function verifyPurge(
   receiptId: string,
   options: { retrieval?: RetrievalPort; now?: () => string } = {},
 ): Promise<PurgeVerifyReport> {
+  options = Object.freeze({ ...options });
+  return underPurgeFence(db, vaultPath, options, (scope, io) => verifyPurgeOwned(scope, io, receiptId, options));
+}
+
+async function verifyPurgeOwned(
+  scope: VaultMutationScope,
+  io: CanonIo,
+  receiptId: string,
+  options: { retrieval?: RetrievalPort; now?: () => string },
+): Promise<PurgeVerifyReport> {
+  requireCanonFiles(scope, io);
+  const { db, vault_path: vaultPath } = io;
   initPurgeOps(db);
   const clock = options.now ?? (() => new Date().toISOString());
   const batch = readBatch(db, receiptId);
@@ -1501,7 +1529,9 @@ export async function verifyPurge(
 
 /** Resume existing persisted purge work without creating another deletion path. */
 export async function resumePurge(db: Database, vaultPath: string, receiptId: string, options: PurgeRunOptions = {}): Promise<PurgeVerifyReport> {
-  return underPurgeFence(vaultPath, options, async () => {
+  vaultPath = resolve(vaultPath);
+  options = Object.freeze({ ...options });
+  return underPurgeFence(db, vaultPath, options, async (scope, io) => {
   const clock = options.now ?? (() => new Date().toISOString());
   ensureSourceBatch(db, receiptId);
   const batch = readBatch(db, receiptId);
@@ -1513,19 +1543,24 @@ export async function resumePurge(db: Database, vaultPath: string, receiptId: st
   try {
     await reconcileOps(db, batch.batch_id, binding, clock);
     // Revalidate old done rows before a resumed rewrite can lift their holds.
-    await verifyPurge(db, vaultPath, receiptId, {...options,...(binding.port === null ? {} : {retrieval:binding.port})});
-    rewriteHolds(db, vaultPath, options);
-    return await verifyPurge(db, vaultPath, receiptId, {...options,...(binding.port === null ? {} : {retrieval:binding.port})});
+    await verifyPurgeOwned(scope, io, receiptId, {...options,...(binding.port === null ? {} : {retrieval:binding.port})});
+    rewriteHolds(scope, io, options);
+    return await verifyPurgeOwned(scope, io, receiptId, {...options,...(binding.port === null ? {} : {retrieval:binding.port})});
   } finally { if (binding.owned) await binding.port?.close(); }
   });
 }
 
 /** A timeout bounds the caller, not ownership of an unsettled external operation. */
-export async function underPurgeFence<T>(vaultPath: string, options: PurgeRunOptions, work: () => Promise<T>, filter?: PurgeFilter): Promise<T> {
-  const lock = tryWriteFlock(vaultPath);
-  if (lock === null) throw new PurgeError("canon_changed", "canon writer is busy; retry purge", filter);
+export async function underPurgeFence<T>(db: Database, vaultPath: string, options: PurgeRunOptions, work: (scope: VaultMutationScope, io: CanonIo) => Promise<T>, filter?: PurgeFilter): Promise<T> {
+  const io = snapshotCanonIo({ db, vault_path: vaultPath });
+  options = Object.freeze({ ...options });
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const operation = work().finally(() => { lock.release(); if (timer !== undefined) clearTimeout(timer); });
+  const operation = withCanonMutationAsync(io, work).catch(error => {
+    if (error instanceof VaultMutationError && error.code === "writer_busy") {
+      throw new PurgeError("canon_changed", "canon writer is busy; retry purge", filter);
+    }
+    throw error;
+  }).finally(() => { if (timer !== undefined) clearTimeout(timer); });
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       if (options.retrieval !== undefined) invalidateLocalSourcePort(options.retrieval);

@@ -1,3 +1,4 @@
+import { snapshotCanonIo, withCanonMutationSync } from "../../src/canon/io";
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
@@ -64,7 +65,7 @@ test("revert captures stable input before consulting page fields", () => {
   const input = { receipt_id: "unused", rel_path: "people/sample.md", expected_hash: null,
     get page() { reads += 1; return null; },
   };
-  expect(() => applyRevertWrite(io, input)).toThrow("stable JSON data");
+  expect(() => withCanonMutationSync(snapshotCanonIo(io), (scope, owned) => applyRevertWrite(scope, owned, input))).toThrow("stable JSON data");
   expect(reads).toBe(0);
   expect(existsSync(join(vault, "people/sample.md"))).toBe(false);
   expect(db.query<{ n: number }, []>("SELECT count(*) AS n FROM canon_receipts").get()?.n).toBe(0);

@@ -1,5 +1,9 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
+import { PortError } from "../contracts/ports";
+import { withMutationFilesSync } from "../vault/mutation-files";
+import { assertVaultMutationScope, VaultMutationError, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "../vault/mutation-scope";
+import { assertCanonFiles, type CanonFiles } from "../vault/canon-files";
+import { ulid } from "../util/ulid";
 import {
   NOTIFIER_CAPABILITIES,
   NOTIFIER_CONTRACT,
@@ -29,6 +33,7 @@ export function briefPath(vaultPath: string, day: string): string {
 }
 
 export function createFileNotifier(vaultPath: string): NotifierPort {
+  const target = Object.freeze({ vault_path: resolve(vaultPath) });
   return {
     descriptor: DESCRIPTOR,
     async health() {
@@ -36,18 +41,48 @@ export function createFileNotifier(vaultPath: string): NotifierPort {
     },
     async close() {},
     async notify(notification: Notification): Promise<NotificationReceipt> {
-      const day = notification.notification_id.slice(0, 10);
-      const path = notification.title.startsWith("brief:")
-        ? briefPath(vaultPath, day)
-        : join(vaultPath, "dashboards", `${notification.notification_id}.md`);
-      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-      writeFileSync(path, notification.body, { mode: 0o600 });
-      return {
-        notification_id: notification.notification_id,
-        delivered_at: new Date().toISOString(),
-        destination: "dashboards/",
-        duplicate: false,
-      };
+      const { notification_id, title, body } = notification;
+      try {
+        return withVaultMutationSync(target, scope => withMutationFilesSync(scope, target, files =>
+          notifyOwned(scope, target, files, { notification_id, title, body })));
+      } catch (error) {
+        if (error instanceof VaultMutationError && error.code === "writer_busy") {
+          throw new PortError("unavailable", "canon writer is busy; retry notification", true);
+        }
+        throw error;
+      }
     },
   };
+}
+
+function notifyOwned(
+  scope: VaultMutationScope,
+  target: VaultMutationTarget,
+  files: CanonFiles,
+  notification: Pick<Notification, "notification_id" | "title" | "body">,
+): NotificationReceipt {
+  assertVaultMutationScope(scope, target);
+  assertCanonFiles(files, target.vault_path);
+  const day = notification.notification_id.slice(0, 10);
+  const path = notification.title.startsWith("brief:")
+    ? briefPath(target.vault_path, day)
+    : join(target.vault_path, "dashboards", `${notification.notification_id}.md`);
+  const name = relative(target.vault_path, path).split("\\").join("/");
+  files.ensureDirectory("dashboards");
+  const prior = files.read(name);
+  const bytes = Buffer.from(notification.body);
+  if (prior === null) files.create(name, bytes).close();
+  else {
+    const temporary = `${dirname(name)}/.${basename(name)}.${ulid()}.tmp`;
+    try {
+      const created = files.create(temporary, bytes);
+      try { files.replace(created, prior).close(); }
+      catch (error) {
+        try { files.remove(created); } catch { /* Preserve a changed temporary and the original failure. */ }
+        throw error;
+      }
+      finally { created.close(); }
+    } finally { prior.close(); }
+  }
+  return { notification_id: notification.notification_id, delivered_at: new Date().toISOString(), destination: "dashboards/", duplicate: false };
 }

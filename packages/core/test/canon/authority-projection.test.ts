@@ -1,3 +1,4 @@
+import { snapshotCanonIo, withCanonMutationSync } from "../../src/canon/io";
 import { search } from "../../src/search/query";
 import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -73,7 +74,7 @@ test("purge cannot elevate a model page and hand edits do not inherit its receip
   const f = fixture();
   const event = putEvent(f.db);
   const receipt = write(f.io, await storeClaim(f.db, event, { producer: "model", model_ref: "fixture:model", body: "A model note. Grace retained context." }));
-  const purged = applyPurgeRewrite(f.io, { rel_path: receipt.page_path, purged_event_ids: [], purged_claim_ids: [], purged_claim_bodies: ["A model note."] });
+  const purged = withCanonMutationSync(snapshotCanonIo(f.io), (scope, io) => applyPurgeRewrite(scope, io, { rel_path: receipt.page_path, purged_event_ids: [], purged_claim_ids: [], purged_claim_bodies: ["A model note."] }));
   expect(purged.authority).toBe("model_inference");
   expectAuthority(f, receipt.page_path, "model_inference");
   f.db.query("UPDATE canon_receipts SET authority='owner_correction' WHERE receipt_id=?").run(purged.receipt_id);
@@ -94,7 +95,7 @@ test("public correction, page and context preserve owner correction through purg
   const ctx = { db: f.db, vaultPath: f.vault, principal: OWNER };
   expect(serveGetPage(ctx, { path: receipt.page_path }).canon[0]?.authority).toBe("owner_correction");
   expect((await serveContextPacket(ctx, { query: "Grace", budget_tokens: 1000 })).canon.find(page => page.path === receipt.page_path)?.authority).toBe("owner_correction");
-  const purge = applyPurgeRewrite(f.io, { rel_path: receipt.page_path, purged_event_ids: [], purged_claim_ids: [], purged_claim_bodies: ["Northwind"] });
+  const purge = withCanonMutationSync(snapshotCanonIo(f.io), (scope, io) => applyPurgeRewrite(scope, io, { rel_path: receipt.page_path, purged_event_ids: [], purged_claim_ids: [], purged_claim_bodies: ["Northwind"] }));
   expect(purge.authority).toBe("owner_correction");
   rebuildDerived(f.db, f.vault);
   expectAuthority(f, receipt.page_path, "owner_correction");

@@ -7,11 +7,14 @@ import { ulid } from "../util/ulid";
 import type { Database } from "bun:sqlite";
 import {
   BudgetExhausted,
-  applyCanonWrite,
   resolveTarget,
   type BudgetTracker,
   type TargetDecision,
 } from "../canon";
+import type { CanonIo } from "../canon";
+import { applyCanonWriteOwned } from "../canon/apply";
+import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
+import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { machineOriginPath } from "../canon/origin";
 import type { Claim } from "../contracts/proposal";
 import type { ProduceResult, ProducerDiagnostic, ProducerPort } from "../contracts/producer";
@@ -36,7 +39,6 @@ import {
   requireAtomicExtractReplay,
   type DurableExtractBatch,
 } from "./extract";
-import { tryWriteFlock } from "./flock";
 import { redactReceiptError } from "./receipts";
 
 /** One sync pass never materializes more than this many unwritten claims. */
@@ -187,10 +189,37 @@ export async function runWritePass(
   vaultPath: string,
   options: WritePassOptions,
 ): Promise<WritePassResult> {
+  const { budget, run_id, model_ref, producer, claims } = options;
+  let capturedClaims: ClaimsIo | undefined;
+  if (claims !== undefined) {
+    const { db: claimsDb, retrieval, vault_path, now, historical_source_write } = claims;
+    capturedClaims = Object.freeze({ db: claimsDb,
+      ...(retrieval === undefined ? {} : { retrieval }),
+      ...(vault_path === undefined ? {} : { vault_path }),
+      ...(now === undefined ? {} : { now }),
+      ...(historical_source_write === undefined ? {} : { historical_source_write }),
+    });
+  }
+  options = Object.freeze({ budget,
+    ...(run_id === undefined ? {} : { run_id }),
+    ...(model_ref === undefined ? {} : { model_ref }),
+    ...(producer === undefined ? {} : { producer }),
+    ...(capturedClaims === undefined ? {} : { claims: capturedClaims }),
+  });
   if (options.claims !== undefined && options.claims.db !== db) throw new Error("claims ledger does not match write pass");
   requireAtomicExtractReplay(db);
-  const lock = tryWriteFlock(vaultPath);
-  if (lock === null) {
+  const io = snapshotCanonIo({ db, vault_path: vaultPath });
+  try {
+    return await withCanonMutationAsync(io, async (scope, owned) => {
+      try {
+        settleWriteReservations(owned.db, owned.vault_path);
+        return await runWritePassOwned(scope, owned, options);
+      } finally {
+        settleWriteReservations(owned.db, owned.vault_path);
+      }
+    });
+  } catch (error) {
+    if (!(error instanceof VaultMutationError) || error.code !== "writer_busy") throw error;
     return {
       revived: 0,
       claims_extracted: 0,
@@ -203,20 +232,15 @@ export async function runWritePass(
       errors: [],
     };
   }
-  try {
-    settleWriteReservations(db, vaultPath);
-    return await runWritePassLocked(db, vaultPath, options);
-  } finally {
-    try { settleWriteReservations(db, vaultPath); }
-    finally { lock.release(); }
-  }
 }
 
-async function runWritePassLocked(
-  db: Database,
-  vaultPath: string,
+async function runWritePassOwned(
+  scope: VaultMutationScope,
+  io: CanonIo,
   options: WritePassOptions,
 ): Promise<WritePassResult> {
+  requireCanonFiles(scope, io);
+  const { db, vault_path: vaultPath } = io;
   const revived = reviveUncontestedSkipped(db);
   let extracted = 0;
   let written = 0;
@@ -322,7 +346,6 @@ async function runWritePassLocked(
     };
   }
 
-  const io = { db, vault_path: vaultPath };
   const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN);
   for (const claim of pending) {
     if (canonWrites >= WRITE_PASS_LIMIT) break;
@@ -332,7 +355,7 @@ async function runWritePassLocked(
       else requireExternalEvents(db, claim.provenance);
       const decision = segregateLoopDecision(resolveTarget(io, claim));
       if (decision.action === "skip") continue;
-      applyCanonWrite(io, claim, decision, {
+      applyCanonWriteOwned(scope, io, claim, decision, {
         writer: "loop",
         budget: options.budget,
       });

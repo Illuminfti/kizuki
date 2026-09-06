@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite";
 import {
   closeSync,
   existsSync,
@@ -14,11 +13,14 @@ import { assertReceiptPaths } from "../canon/paths";
 import { containedVaultFile } from "../vault/write";
 import { isDeepStrictEqual } from "node:util";
 import { applyPurgeRewrite, recoverSourceErasureIntents } from "../canon/apply";
+import { requireCanonFiles } from "../canon/io";
+import { readOwnedCanonPage } from "../canon/io";
+import type { CanonIo } from "../canon";
+import type { VaultMutationScope } from "../vault/mutation-scope";
 import { getClaim } from "../claims/store";
 import type { Claim } from "../contracts/proposal";
-import { parseFrontmatter, type VaultPage } from "../vault/frontmatter";
+import type { VaultPage } from "../vault/frontmatter";
 import { stringArray } from "../vault/pages";
-import { sha256Hex } from "../util/hash";
 import { ulid } from "../util/ulid";
 
 interface Receipt {
@@ -98,11 +100,13 @@ function replacement(
 }
 /** All writes use the native canon capability; no payload preimage is made. */
 export function eraseSourceCanon(
-  db: Database,
-  vault: string,
+  scope: VaultMutationScope,
+  io: CanonIo,
   source: string,
 ): boolean {
-  if (!recoverSourceErasureIntents({db,vault_path:vault},source)) return false;
+  requireCanonFiles(scope, io);
+  const { db, vault_path: vault } = io;
+  if (!recoverSourceErasureIntents(scope, io, source)) return false;
   const affected = new Set(
     db
       .query<{ claim_id: string }, [string]>(
@@ -151,25 +155,16 @@ export function eraseSourceCanon(
       safe = false;
       continue;
     }
-    if (!existsSync(path)) continue;
-    const stat = lstatSync(path);
-    if (stat.size > 1024 * 1024) {
-      safe = false;
-      continue;
-    }
-    const bytes = readFileSync(path);
-    const hash = sha256Hex(bytes);
+    let current;
+    try { current = readOwnedCanonPage(io, relative); }
+    catch { safe = false; continue; }
+    if (current === null) continue;
+    const hash = current.hash;
     if (!entry.hashes.has(hash)) {
       safe = false;
       continue;
     }
-    let page: VaultPage;
-    try {
-      page = parseFrontmatter(bytes.toString("utf8"));
-    } catch {
-      safe = false;
-      continue;
-    }
+    const page = current.page;
     if (!stringArray(page.data["sources"]).some((id) => eventIds.has(id)))
       continue;
     const claimRows = db
@@ -191,7 +186,8 @@ export function eraseSourceCanon(
     }
     try {
       applyPurgeRewrite(
-        { db, vault_path: vault },
+        scope,
+        io,
         {
           rel_path: relative,
           purged_event_ids: [...eventIds],

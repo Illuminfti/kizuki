@@ -22,7 +22,8 @@ import { PAGE_SENSITIVITIES } from "../vault/schema";
 import { ABSENT_PAGE_HASH, containedVaultFile, hashBytes, hashFile } from "../vault/write";
 import { assertArchiveRelPath, assertPageRelPath, assertReceiptPaths } from "./paths";
 import { applyRevertWrite } from "./apply";
-import { snapshotCanonIo } from "./io";
+import { canonFilesFor, requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "./io";
+import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { UndoError } from "./errors";
 import {
   getCanonReceipt,
@@ -47,6 +48,13 @@ export interface UndoReceiptOptions {
 
 function currentHash(io: CanonIo, relPath: string): string {
   assertPageRelPath(relPath);
+  const files = canonFilesFor(io);
+  if (files !== undefined) {
+    const snapshot = files.read(relPath);
+    if (snapshot === null) return ABSENT_PAGE_HASH;
+    try { return hashBytes(snapshot.bytes); }
+    finally { snapshot.close(); }
+  }
   const path = containedVaultFile(io.vault_path, relPath);
   if (!existsSync(path)) return ABSENT_PAGE_HASH;
   return hashFile(path);
@@ -61,11 +69,13 @@ function laterIds(io: CanonIo, receipt: CanonReceipt): string[] {
 
 function loadArchivePage(io: CanonIo, archivePath: string): VaultPage {
   assertArchiveRelPath(archivePath);
-  const path = containedVaultFile(io.vault_path, archivePath);
-  if (!existsSync(path)) {
+  const snapshot = canonFilesFor(io)?.read(archivePath);
+  if (snapshot === undefined || snapshot === null) {
     throw new UndoError("archive_missing", `undo: no archive copy exists at ${archivePath}`);
   }
-  const page = parseFrontmatter(readFileSync(path, "utf8"));
+  let page: VaultPage;
+  try { page = parseFrontmatter(Buffer.from(snapshot.bytes).toString("utf8")); }
+  finally { snapshot.close(); }
   requireSourceEvents(io.db, stringArray(page.data["sources"]), { owner: true, purpose: "derive" });
   return page;
 }
@@ -136,7 +146,12 @@ function recoverArchiveForHash(io: CanonIo, relPath: string, wantHash: string): 
     if (!name.startsWith(encoded) && !name.startsWith(legacy)) continue;
     const rel = `archive/${name}`;
     assertArchiveRelPath(rel);
-    if (hashFile(containedVaultFile(io.vault_path, rel)) !== wantHash) continue;
+    const snapshot = canonFilesFor(io)?.read(rel);
+    if (snapshot === undefined || snapshot === null) continue;
+    let matches: boolean;
+    try { matches = hashBytes(snapshot.bytes) === wantHash; }
+    finally { snapshot.close(); }
+    if (!matches) continue;
     if (found === null || name > basename(found)) found = rel;
   }
   return found;
@@ -220,6 +235,7 @@ function restoreClaims(io: CanonIo, original: CanonReceipt, at: string): void {
 }
 
 function restoreBytes(
+  scope: VaultMutationScope,
   io: CanonIo,
   original: CanonReceipt,
   revertId: string,
@@ -249,7 +265,7 @@ function restoreBytes(
   }
 
   if (original.page_action === "create" && original.kind !== "revert") {
-    const outcome = applyRevertWrite(io, {
+    const outcome = applyRevertWrite(scope, io, {
       receipt_id: revertId,
       rel_path: original.page_path,
       expected_hash: current,
@@ -266,7 +282,7 @@ function restoreBytes(
   }
   const page = loadArchivePage(io, original.archive_path);
   const expected = current === ABSENT_PAGE_HASH ? null : current;
-  const outcome = applyRevertWrite(io, {
+  const outcome = applyRevertWrite(scope, io, {
     receipt_id: revertId,
     rel_path: original.page_path,
     expected_hash: expected,
@@ -310,6 +326,24 @@ export async function undoReceipt(
   opts: UndoReceiptOptions = {},
 ): Promise<CanonReceipt> {
   io = snapshotCanonIo(io);
+  opts = Object.freeze({ ...(opts.cascade === undefined ? {} : { cascade: opts.cascade }) });
+  try {
+    return await withCanonMutationAsync(io, (scope, owned) => undoReceiptOwned(scope, owned, receiptId, opts));
+  } catch (error) {
+    if (error instanceof VaultMutationError && error.code === "writer_busy") {
+      throw new UndoError("writer_busy", "canon writer is busy; retry undo");
+    }
+    throw error;
+  }
+}
+
+async function undoReceiptOwned(
+  scope: VaultMutationScope,
+  io: CanonIo,
+  receiptId: string,
+  opts: UndoReceiptOptions,
+): Promise<CanonReceipt> {
+  requireCanonFiles(scope, io);
   const original = getCanonReceipt(io.db, receiptId);
   if (original === null) {
     throw new UndoError("receipt_unknown", `undo: receipt ${receiptId} is unknown`);
@@ -330,9 +364,9 @@ export async function undoReceipt(
   if (current !== original.after_hash) {
     if (opts.cascade === true && later.length > 0) {
       for (const id of later) {
-        await undoReceipt(io, id, { cascade: false });
+        await undoReceiptOwned(scope, io, id, { cascade: false });
       }
-      return undoReceipt(io, receiptId, { cascade: false });
+      return undoReceiptOwned(scope, io, receiptId, { cascade: false });
     }
     if (current !== undoTarget) {
       throw new UndoError(
@@ -347,13 +381,14 @@ export async function undoReceipt(
   }
   reversing.add(receiptId);
   try {
-    return await applyUndo(io, original, current);
+    return await applyUndo(scope, io, original, current);
   } finally {
     reversing.delete(receiptId);
   }
 }
 
 async function applyUndo(
+  scope: VaultMutationScope,
   io: CanonIo,
   original: CanonReceipt,
   current: string,
@@ -361,7 +396,7 @@ async function applyUndo(
   const revertId = mintId(io);
   const at = nowOf(io);
   const authority = new CanonAuthorityResolver(io.db, [original.page_path]).before(original.receipt_id);
-  const restored = restoreBytes(io, original, revertId, current);
+  const restored = restoreBytes(scope, io, original, revertId, current);
   restoreClaims(io, original, at);
   const retrievalOps = await reverseRetrieval(io, original, restored.page, authority, at);
 
@@ -390,7 +425,7 @@ async function applyUndo(
     at,
   };
 
-  appendReceiptLine(io, revert);
+  appendReceiptLine(scope, io, revert);
   io.db.transaction((): void => {
     insertReceiptRow(io.db, revert, "revert");
     markReceiptReverted(io.db, original.receipt_id, revert.receipt_id);

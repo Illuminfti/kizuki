@@ -158,7 +158,11 @@ describe("durable purge discovery", () => {
     expect(isHeld(f.db, "facts/atlas.md")).toBe(true);
     f.port.verifyProvenanceAbsent = verify;
     expect((await resumePurge(f.db, f.vaultPath, outcome.receipts[1]!.receipt_id, { retrieval: f.port, now: () => AT })).ok).toBe(true);
-    const reports = await Promise.all(outcome.receipts.map(receipt => verifyPurge(f.db, f.vaultPath, receipt.receipt_id, { retrieval: f.port, now: () => AT })));
+    const first = verifyPurge(f.db, f.vaultPath, outcome.receipts[0]!.receipt_id, { retrieval: f.port, now: () => AT });
+    const contended = verifyPurge(f.db, f.vaultPath, outcome.receipts[1]!.receipt_id, { retrieval: f.port, now: () => AT })
+      .then(() => null, error => error);
+    expect(await contended).toMatchObject({ code: "canon_changed" });
+    const reports = [await first, await verifyPurge(f.db, f.vaultPath, outcome.receipts[1]!.receipt_id, { retrieval: f.port, now: () => AT })];
     expect(reports.every(report => report.ok)).toBe(true);
     expect(reports[0]!.proofs).toEqual(reports[1]!.proofs);
     expect(JSON.parse(operation(f.db).proof!)).toMatchObject({ schema: "kizuki.purge-proof/v1", provenance: { scope: "event-provenance/v1", checked: 2, found: [] } });
@@ -178,19 +182,25 @@ describe("durable purge discovery", () => {
     expect((await resumePurge(f.db, f.vaultPath, outcome.receipts[0]!.receipt_id, { retrieval: f.port, now: () => AT })).ok).toBe(true);
   });
 
-  test("export refuses publication when purge becomes pending after canon was copied", async () => {
+  test("export retains its writer while a progress callback receives bounded purge contention", async () => {
     const f = await fixture();
     const target = exportTarget();
     let cut = false;
-    expect(() => exportVault(f.db, f.vaultPath, target.backup, {
+    const before = f.db.query("SELECT * FROM event_purges").all();
+    const manifest = exportVault(f.db, f.vaultPath, target.backup, {
       onProgress: label => {
         if (label !== "ledger" || cut) return;
         cut = true;
-        purgeEvents(f.db, f.vaultPath, { event_id: f.erased.event_id }, "retire fixture", { retrieval_store: f.port.descriptor.id, now: () => AT });
+        try {
+          purgeEvents(f.db, f.vaultPath, { event_id: f.erased.event_id }, "retire fixture", { retrieval_store: f.port.descriptor.id, now: () => AT });
+          throw new Error("nested public purge unexpectedly acquired the exporter writer");
+        } catch (error) { expect(error).toMatchObject({ code: "canon_changed" }); }
       },
-    })).toThrow("purge_recovery_pending");
+    });
     expect(cut).toBe(true);
-    expect(existsSync(target.backup)).toBe(false);
+    expect(manifest.complete).toBe(true);
+    expect(f.db.query("SELECT * FROM event_purges").all()).toEqual(before);
+    expect(existsSync(target.backup)).toBe(true);
   });
 });
 

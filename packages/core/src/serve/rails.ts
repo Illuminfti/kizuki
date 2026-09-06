@@ -1,4 +1,4 @@
-import { tryWriteFlock } from "./flock";
+import { VaultMutationError, withVaultMutationSync } from "../vault/mutation-scope";
 import { pidAlive, readBootId } from "./leases";
 import type { Database } from "bun:sqlite";
 import { pendingRetrievalOps, retryRetrievalOps } from "../claims/store";
@@ -305,9 +305,8 @@ export async function runRail(
       if (rail === "sync") requireAtomicExtractReplay(db);
       initServe(db);
       recoverRunJournal(db, vaultPath);
-      const recoveryLock = tryWriteFlock(vaultPath);
-      if (recoveryLock !== null) {
-        try {
+      try {
+        withVaultMutationSync({ db, vault_path: vaultPath }, () => {
           for (const orphan of db.query<{ run_id: string; holder_pid: number; model_ref: string | null; metrics: string; created_at: string }, []>("SELECT * FROM extract_usage").all()) {
             if (activeRuns.has(orphan.run_id) || (orphan.holder_pid !== process.pid && pidAlive(orphan.holder_pid))) continue;
             const usage = JSON.parse(orphan.metrics) as Pick<RunReceipt, "model" | "claims_rejected" | "claims_extracted">;
@@ -315,7 +314,9 @@ export async function runRail(
               started_at: orphan.created_at, finished_at: orphan.created_at, status: "failed", stopped: null,
               model: { ...usage.model, model_ref: orphan.model_ref }, errors: [usage.model.usage_unknown === true ? "model attempt interrupted; token usage unknown" : "extraction interrupted after model decision"] });
           }
-        } finally { recoveryLock.release(); }
+        });
+      } catch (error) {
+        if (!(error instanceof VaultMutationError) || error.code !== "writer_busy") throw error;
       }
       hooks = withResolvedModel(options.hooks);
       const config = loadServeConfig(vaultPath);

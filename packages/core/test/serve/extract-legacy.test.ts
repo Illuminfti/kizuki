@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -399,6 +400,7 @@ test("metadata admission and payload fetch use one SQLite snapshot", async () =>
 
 test("a 128 MiB stored text refuses with bounded memory through guard, writer and sync rail", async () => {
   const f = fixture();
+  const writerBefore = statSync(join(f.vault, ".kizuki", "write-pass.flock"));
   try {
     journalExtractBatch(f.db, await mineLiveDrafts(f.db, f.model), "fixture:resource-bound", f.model);
     // Construct hostile bytes inside SQLite, avoiding a giant JS fixture string.
@@ -442,7 +444,10 @@ test("a 128 MiB stored text refuses with bounded memory through guard, writer an
       // Pinned Bun reports subprocess maxRSS in KiB on the Linux test runner.
       expect(measured.maxRssKiB).toBeLessThan(192 * 1024);
     }
-    expect(existsSync(join(f.vault, ".kizuki", "write-pass.flock"))).toBe(false);
+    const writerAfter = statSync(join(f.vault, ".kizuki", "write-pass.flock"));
+    expect([writerAfter.dev, writerAfter.ino, writerAfter.mtimeMs, writerAfter.ctimeMs])
+      .toEqual([writerBefore.dev, writerBefore.ino, writerBefore.mtimeMs, writerBefore.ctimeMs]);
+    expect(existsSync(join(f.vault, ".kizuki", "write-pass.lock"))).toBe(false);
     expect(f.calls.count).toBe(1);
   } finally { f.close(); }
 }, 45_000);

@@ -1,7 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
 import { assertPageRelPath } from "../canon/paths";
-import { containedVaultFile } from "../vault/write";
-import { applyCanonWrite, createBudgetTracker, resolveTarget } from "../canon";
+import { createBudgetTracker, resolveTarget } from "../canon";
+import { applyCanonWriteOwned } from "../canon/apply";
+import { requireCanonFiles } from "../canon/io";
+import { readOwnedCanonPage } from "../canon/io";
+import { assertVaultMutationScope, type VaultMutationScope } from "../vault/mutation-scope";
 import type { CanonIo, PageAction } from "../canon";
 import type { Claim } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
@@ -43,14 +45,9 @@ const NOTHING: CanonRewrite = {
   failed: false,
 };
 
-function canonIo(ctx: ServeContext): CanonIo {
-  return { db: ctx.db, vault_path: ctx.vaultPath };
-}
-
-function pageText(ctx: ServeContext, relPath: string): string {
+function pageText(io: CanonIo, relPath: string): string {
   assertPageRelPath(relPath);
-  const path = containedVaultFile(ctx.vaultPath, relPath);
-  return existsSync(path) ? readFileSync(path, "utf8") : "";
+  return readOwnedCanonPage(io, relPath)?.content ?? "";
 }
 
 /** A unified body, truncated by line count so one page cannot flood a reply. */
@@ -88,11 +85,14 @@ function boundPages(ctx: ServeContext, claimKeys: string[]): string[] {
  * step would lose the owner's own words.
  */
 export function rewriteCanon(
+  scope: VaultMutationScope,
+  io: CanonIo,
   ctx: ServeContext,
   claim: Claim,
   supersededKeys: string[],
 ): CanonRewrite {
-  const io = canonIo(ctx);
+  requireCanonFiles(scope, io);
+  assertVaultMutationScope(scope, { db: ctx.db, vault_path: ctx.vaultPath });
   const budget = createBudgetTracker({
     canon_writes_per_run: CORRECTION_MAX_PAGES,
   });
@@ -109,12 +109,12 @@ export function rewriteCanon(
       decision.action === "conflict"
         ? decision.chosen.rel_path
         : decision.rel_path;
-    const before = pageText(ctx, relPath);
-    const receipt = applyCanonWrite(io, claim, decision, {
+    const before = pageText(io, relPath);
+    const receipt = applyCanonWriteOwned(scope, io, claim, decision, {
       writer: "correction",
       budget,
     });
-    const after = pageText(ctx, receipt.page_path);
+    const after = pageText(io, receipt.page_path);
     return {
       receipt_id: receipt.receipt_id,
       rewritten: [

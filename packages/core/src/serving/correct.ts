@@ -1,4 +1,6 @@
 import { sha256Hex } from "../util/hash";
+import { snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
+import { VaultMutationError } from "../vault/mutation-scope";
 import {
   sourcePolicyEpoch,
   requireSourceEvents,
@@ -157,11 +159,21 @@ export async function serveCorrect(
   ctx: ServeContext,
   args: CorrectArgs,
 ): Promise<Envelope<CorrectData>> {
+  const { statement, target, object, dry_run } = args;
+  args = Object.freeze({ statement,
+    ...(target === undefined ? {} : { target: Object.freeze({ ...target }) }),
+    ...(object === undefined ? {} : { object }),
+    ...(dry_run === undefined ? {} : { dry_run }),
+  });
   return gateAsync(
     ctx,
     "correct",
     auditArguments(args),
     async ({ ctx, at }): Promise<Served<CorrectData>> => {
+      const io = snapshotCanonIo({ db: ctx.db, vault_path: ctx.vaultPath });
+      ctx = Object.freeze({ ...ctx, db: io.db, vaultPath: io.vault_path });
+      try {
+        return await withCanonMutationAsync(io, async (scope, canon) => {
       const grant = ctx.principal.grant;
       const statement = text("statement", args.statement, MAX_STATEMENT_CHARS);
       const replacement =
@@ -355,7 +367,7 @@ export async function serveCorrect(
           : [];
       const rewrite =
         filed.outcome === "stored"
-          ? rewriteCanon(ctx, claim, [claimKeyValue])
+          ? rewriteCanon(scope, canon, ctx, claim, [claimKeyValue])
           : { receipt_id: null, rewritten: [], unreached: [], failed: false };
 
       const answer =
@@ -385,6 +397,13 @@ export async function serveCorrect(
           ],
         },
       };
+        });
+      } catch (error) {
+        if (error instanceof VaultMutationError && error.code === "writer_busy") {
+          throw new ServeError("error", "canon writer is busy; retry correction", { retry_after_seconds: 1 });
+        }
+        throw error;
+      }
     },
   );
 }

@@ -6,6 +6,7 @@ import { requireSourceEvents } from "../ledger/source-grants";
 import type { CanonReceipt } from "./receipts";
 import { RECEIPTS_PATH } from "./receipts";
 import type { CanonIo } from "./store";
+import { assertVaultMutationScope, type VaultMutationScope } from "../vault/mutation-scope";
 interface PolicyBinding {
     source_key: string;
     status: string;
@@ -107,7 +108,8 @@ export interface SourceErasureReceiptStream {
 }
 
 /** The existing receipt stream remains authoritative; retry never adds a second same-ID line. */
-export function appendSourceErasureReceipt(io: CanonIo, receipt: CanonReceipt): SourceErasureReceiptStream {
+export function appendSourceErasureReceipt(scope: VaultMutationScope, io: CanonIo, receipt: CanonReceipt): SourceErasureReceiptStream {
+    assertVaultMutationScope(scope, io);
     const path = join(io.vault_path, RECEIPTS_PATH);
     const directory = dirname(path);
     const limit = 32 * 1024 * 1024;
@@ -143,6 +145,7 @@ export function appendSourceErasureReceipt(io: CanonIo, receipt: CanonReceipt): 
         fsyncSync(fd);
         let expectedSize = held.size;
         const verifyBinding = (): void => {
+            assertVaultMutationScope(scope, io);
             if (fd === undefined || parentFd === undefined) throw Error("source erasure receipt stream closed");
             const current = fstatSync(fd), named = lstatSync(path), namedParent = lstatSync(directory);
             if (!named.isFile() || named.isSymbolicLink() || named.nlink !== 1 || current.nlink !== 1 ||

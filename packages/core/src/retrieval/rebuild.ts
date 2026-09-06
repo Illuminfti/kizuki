@@ -1,9 +1,9 @@
 import { recordSourceStoreWrite } from "../ledger/source-stores";
-import { tryWriteFlock } from "../serve/flock";
+import { assertVaultMutationScope, VaultMutationError, withVaultMutationAsync, type VaultMutationScope } from "../vault/mutation-scope";
 import { sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity, requireSourceEvents, sourceEventsAllowed, invalidateLocalSourcePort } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import { lstatSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { OWNER, sensitivity } from "../agents";
 import { claimRetrievalDoc, listClaims } from "../claims/store";
 import { PortError } from "../contracts/ports";
@@ -100,7 +100,8 @@ export function readRetrievalDocuments(db: Database, vaultPath: string): Retriev
 }
 
 /** Atomic inside each derived store; the stores do not share a distributed transaction. */
-async function rebuildUnderFence(db: Database, vaultPath: string, port: RetrievalPort | undefined, expired: () => boolean) {
+async function rebuildUnderFence(scope: VaultMutationScope, db: Database, vaultPath: string, port: RetrievalPort | undefined, expired: () => boolean) {
+  assertVaultMutationScope(scope, { db, vault_path: vaultPath });
   if (port !== undefined && sourcePolicyEpoch(db) > 0 && !isLocalSourcePort(port)) throw new PortError("unavailable", "source egress authorization unavailable", false);
   const epoch = sourcePolicyEpoch(db);
   const docs = readRetrievalDocuments(db, vaultPath);
@@ -137,13 +138,18 @@ async function rebuildUnderFence(db: Database, vaultPath: string, port: Retrieva
 
 /** The bounded caller response may expire, but the writer fence remains until the late write and cleanup settle. */
 export async function rebuildRetrieval(db: Database, vaultPath: string, port?: RetrievalPort) {
-  const lock = tryWriteFlock(vaultPath);
-  if (lock === null) throw new PortError("unavailable", "canon writer is busy; retry rebuild", true);
+  vaultPath = resolve(vaultPath);
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const configured = port?.descriptor?.method_timeouts_ms?.["rebuildFromDocuments"];
   const deadline = typeof configured === "number" && Number.isFinite(configured) && configured > 0 ? Math.min(configured, 30_000) : 30_000;
-  const operation = rebuildUnderFence(db, vaultPath, port, () => timedOut).finally(() => { lock.release(); if (timer !== undefined) clearTimeout(timer); });
+  const operation = withVaultMutationAsync({ db, vault_path: vaultPath }, scope => rebuildUnderFence(scope, db, vaultPath, port, () => timedOut))
+    .catch(error => {
+      if (error instanceof VaultMutationError && error.code === "writer_busy") {
+        throw new PortError("unavailable", "canon writer is busy; retry rebuild", true);
+      }
+      throw error;
+    }).finally(() => { if (timer !== undefined) clearTimeout(timer); });
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       timedOut = true;

@@ -489,6 +489,7 @@ export async function resumeSourceRevocation(
     ownedRetrieval?: OwnedSourceRetrievalInventory;
   } = {},
 ): Promise<SourceGrant> {
+  options = Object.freeze({ ...options });
   if (options.retrieval !== undefined && !isLocalSourcePort(options.retrieval))
     fail("source_egress_denied");
   const row = db
@@ -533,8 +534,8 @@ export async function resumeSourceRevocation(
         },
       );
     }
-    await underPurgeFence(vaultPath, options, async () => {
-      eraseSourcePayload(db, vaultPath, grant.source_key);
+    await underPurgeFence(db, vaultPath, options, async (scope, io) => {
+      eraseSourcePayload(scope, io, grant.source_key);
       await eraseOwnedSourceStores(
         db,
         grant.source_key,

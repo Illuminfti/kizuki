@@ -1,3 +1,4 @@
+import { assertVaultMutationScope, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "./vault/mutation-scope";
 import { assertReceiptPaths } from "./canon/paths";
 import { isRfc3339 } from "./util/time";
 import { sourcePolicyEpoch, inspectSourceGrant, sourceEventsAllowed } from "./ledger/source-grants";
@@ -1367,6 +1368,21 @@ export function exportVault(
   outDir: string,
   options: ExportOptions = {},
 ): ExportManifest {
+  const target = Object.freeze({ db, vault_path: resolve(vaultPath) });
+  const destination = resolve(outDir);
+  const { signal, onProgress } = options;
+  const captured = Object.freeze({ ...(signal === undefined ? {} : { signal }), ...(onProgress === undefined ? {} : { onProgress }) });
+  return withVaultMutationSync(target, scope => exportVaultOwned(scope, target, destination, captured));
+}
+
+function exportVaultOwned(
+  scope: VaultMutationScope,
+  target: VaultMutationTarget & { readonly db: Database },
+  outDir: string,
+  options: ExportOptions,
+): ExportManifest {
+  assertVaultMutationScope(scope, target);
+  const { db, vault_path: vaultPath } = target;
   throwIfAborted(options.signal);
   const sourceEpoch = sourcePolicyEpoch(db);
   assertSourceExport(db);
