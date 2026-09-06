@@ -11,6 +11,7 @@ import {
   doctorVault,
   getCanonReceipt,
   getCheckpoint,
+  inspectLedgerHealth,
   inspectPurgeHealth,
   inspectServeDoctor,
   latestReceiptForPage,
@@ -73,19 +74,26 @@ interface DoctorReport {
   problems: { page: string; error: string }[];
   serve: ReturnType<typeof inspectServeDoctor>;
   doctrine: { file: string; state: string }[];
+  ledger: ReturnType<typeof inspectLedgerHealth>;
   ok: boolean;
 }
 
 export const doctorCommand: Command = {
   name: "doctor",
-  usage: "doctor [--json]",
+  usage: "doctor [--json] [--integrity]",
   summary: "verify vault identity, receipts, indexes, rails, and connection health",
   async run(io: CliIo, args: string[]): Promise<number> {
-    const parsed = parseArguments(args, { flags: ["--json"] });
+    const parsed = parseArguments(args, { flags: ["--json", "--integrity"] });
     if (parsed.positionals.length !== 0) throw new UsageError(this.usage);
 
     return withVault(io, async (ctx) => {
-      const report = await collect(ctx.configPath, ctx.vaultPath, ctx, io.env);
+      const report = await collect(
+        ctx.configPath,
+        ctx.vaultPath,
+        ctx,
+        io.env,
+        parsed.flags.has("--integrity"),
+      );
       if (parsed.flags.has("--json")) {
         io.out(
           jsonEnvelope("doctor", report.ok ? "ok" : "error", report, {
@@ -200,6 +208,7 @@ async function collect(
   vaultPath: string,
   ctx: VaultContext,
   env: Record<string, string | undefined>,
+  fullIntegrity = false,
 ): Promise<DoctorReport> {
   const claims = Object.fromEntries(
     CLAIM_STATUSES.map((status) => [
@@ -261,6 +270,7 @@ async function collect(
   }));
 
   const vault = doctorVault(vaultPath);
+  const ledger = inspectLedgerHealth(ctx.db, { full: fullIntegrity });
   const problems = vault.pages.flatMap((page) =>
     page.errors.map((error) => ({ page: page.page, error })),
   );
@@ -270,6 +280,12 @@ async function collect(
   }
   for (const item of vault.control) {
     problems.push({ page: item.path, error: item.problem });
+  }
+  for (const failure of ledger.failures) {
+    problems.push({
+      page: "-",
+      error: `ledger ${failure.kind} ${failure.table}: ${failure.detail}`,
+    });
   }
   const purge = inspectPurgeHealth(ctx.db);
   for (const failure of purge.failures) {
@@ -359,7 +375,8 @@ async function collect(
     problems,
     serve,
     doctrine: vault.doctrine,
-    ok,
+    ledger,
+    ok: ok && ledger.ok,
   };
 }
 
@@ -369,6 +386,9 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(`vault=${report.vault}`);
   if (report.vault_id !== null) io.out(`vault_id=${report.vault_id}`);
   io.out(`events=${report.events}`);
+  io.out(
+    `ledger schema=${report.ledger.schema_version ?? "-"} quick_check=${report.ledger.quick_check} sampled=${report.ledger.sampled_events}`,
+  );
   io.out(
     `claims live=${report.claims.live} filed=${report.claims.filed} written=${report.claims.written} unwritten=${report.claims.unwritten} superseded=${report.claims.superseded} skipped=${report.claims.skipped} purged=${report.claims.purged}`,
   );

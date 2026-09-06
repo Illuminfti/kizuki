@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
 import { appendFileSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { listConnections, openLedger, readSince, setSourceGrant } from "@kizuki/core";
+import { listConnections, readSince, setSourceGrant } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "./helpers";
 
 const h = createHelpers();

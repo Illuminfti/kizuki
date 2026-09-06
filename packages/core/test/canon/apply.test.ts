@@ -344,7 +344,7 @@ describe("applyCanonWrite", () => {
     }
     expect(entityInput.frontmatter["type"]).toBe(expectedType);
     expect(noteInput.frontmatter["type"]).toBe("source");
-    expect(noteInput.target).toBeNull();
+    expect(noteInput.target).toBe("captures/kizuki.google-calendar/2026-02-28");
 
     const eventId = putEvent(db);
     const created = write(

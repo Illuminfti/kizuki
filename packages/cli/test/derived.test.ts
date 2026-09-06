@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { openLedger } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { walkCanonReceipts } from "../src/derived";
 import { createHelpers } from "./helpers";
 

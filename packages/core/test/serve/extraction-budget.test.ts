@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   accept, bindSourceModelPort, createModelProducerPort, initVault, insertClaim, listClaims,
-  MODEL_PRODUCER_DESCRIPTOR, MODEL_PRODUCER_ID, openLedger, readCheckpoint,
+  MODEL_PRODUCER_DESCRIPTOR, MODEL_PRODUCER_ID, readRailCursor,
   registerConnection, runRail, setSourceGrant,
 } from "../../src/index";
 import type { CaptureEvent, ClaimDraft, LlmPort, LlmRequest, ProduceInput, ProducerPort } from "../../src/index";
+import { openLedger } from "../../src/ledger/db";
 import { ulid } from "../../src/util/ulid";
 import { mineLiveDrafts } from "../../src/serve/extract";
 
@@ -57,9 +58,9 @@ function capture(f: Fixture, sourceKey: string, chars = 3_000, subjects = 16, di
 }
 
 function reopen(f: Fixture) { f.db.close(); f.db = openLedger(f.database); }
-const cursor = (f: Fixture) => readCheckpoint(f.db, MODEL_PRODUCER_ID, "extract");
+const cursor = (f: Fixture) => readRailCursor(f.db, MODEL_PRODUCER_ID, "extract");
 const deferred = (f: Fixture) => f.db.query<{ event_id: string }, []>("SELECT event_id FROM extract_deferred_inputs ORDER BY event_id").all().map(row => row.event_id);
-const scan = (f: Fixture) => readCheckpoint(f.db, MODEL_PRODUCER_ID, "extract-deferred-scan");
+const scan = (f: Fixture) => readRailCursor(f.db, MODEL_PRODUCER_ID, "extract-deferred-scan");
 
 function model(f: Fixture, options: { abstain?: boolean; beforeComplete?: () => void; malformed?: boolean } = {}) {
   const requests: { ids: string[]; input_tokens: number; output_tokens: number; content: string }[] = [];

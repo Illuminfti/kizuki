@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { openLedger, setSourceGrant, registerConnection, runBackfill, runToCompletion } from "@kizuki/core";
+import { setSourceGrant, registerConnection, runBackfill, runToCompletion } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { parseCursor } from "../src/cursor";
 import { fixtureAccount } from "../src/fixture";
 import type { TelegramMessage } from "../src/api";

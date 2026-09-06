@@ -8,13 +8,13 @@ import {
   listConnections,
   readSince,
   listAgents,
-  openLedger,
   revokeAgent,
   revokeSourceGrant,
   setGrant,
   setSourceGrant,
 } from "@kizuki/core";
 import type { Grant, Principal, ServeContext } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "../../cli/test/helpers";
 import { call, connectClient, envelopeOf, errorOf } from "./client";
 

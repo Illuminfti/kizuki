@@ -581,12 +581,30 @@ export { isUlid, ulid } from "./util/ulid";
 export { isNonEmptyString, isPlainObject } from "./util/validate";
 export type { ValidationResult } from "./util/validate";
 
-export { openLedger } from "./ledger/db";
-export { readCheckpoint } from "./ledger/checkpoints";
+export { inspectOpenLedgerHealth as inspectLedgerHealth } from "./ledger/db";
+export {
+  LEDGER_BUSY_TIMEOUT_MS,
+  LEDGER_DOCTOR_ROW_CAP,
+  LEDGER_ID_MAX,
+  LEDGER_KIND_MAX,
+  MAX_READ_SINCE,
+  REPLAY_PAGE_SIZE,
+} from "./ledger/limits";
+export {
+  LEDGER_STORE_ERROR_CODES,
+  LedgerStoreError,
+  isLedgerStoreError,
+} from "./ledger/errors";
+export {
+  readCheckpoint,
+  readRailCursor,
+  writeRailCursor,
+} from "./ledger/checkpoints";
 export {
   accept,
   count,
   latestLedgerCursor,
+  normalizeReplayFilter,
   readSince,
   replay,
   replayLive,
@@ -596,8 +614,10 @@ export type {
   AcceptErrorKind,
   AcceptResult,
   LedgerCursor,
+  LedgerPage,
   ReplayFilter,
 } from "./ledger/ledger";
+export type { LedgerHealth, LedgerHealthFailure } from "./ledger/integrity";
 export {
   PURGE_CONNECTOR_ID_MAX,
   PURGE_ERROR_CODES,

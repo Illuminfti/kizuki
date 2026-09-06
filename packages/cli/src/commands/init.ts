@@ -7,10 +7,10 @@ import {
   hardenLedgerFile,
   initVault,
   installServeService,
-  openLedger,
   serveExecHint,
   writeServeIntent,
 } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/internal";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
   type KizukiConfig,

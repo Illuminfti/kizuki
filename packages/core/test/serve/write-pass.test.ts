@@ -468,7 +468,7 @@ describe("write pass", () => {
         ? "BEFORE INSERT ON claims WHEN NEW.subject = 'person:grace'"
         : point === "between"
           ? "BEFORE INSERT ON claims WHEN NEW.subject = 'person:ada'"
-          : "BEFORE UPDATE ON checkpoints WHEN NEW.connector_id = 'kizuki.producer.model' AND NEW.source_key = 'extract'";
+          : "BEFORE INSERT ON rail_cursors WHEN NEW.rail = 'kizuki.producer.model' AND NEW.source_key = 'extract'";
       db.exec(`CREATE TRIGGER fail_${point} ${trigger} BEGIN SELECT RAISE(ABORT, 'injected'); END`);
       await expect(runWritePass(db, path, options)).rejects.toThrow("injected");
       expect(readExtractCursor(db)).toBe(before);

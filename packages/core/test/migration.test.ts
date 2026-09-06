@@ -10,7 +10,7 @@ import { applyClaimsV3, initClaims } from "../src/claims/schema";
 import { neighbors } from "../src/graph/graph";
 import { initGraph } from "../src/graph/schema";
 import { applyConnectionsV8 } from "../src/ledger/connections-schema";
-import { openLedger } from "../src/ledger/db";
+import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { tableExists } from "../src/ledger/schema";
 import { initSearch } from "../src/search/schema";
 import { searchResult } from "../src/search/query";
@@ -135,6 +135,7 @@ describe("openLedger migrations", () => {
     ).toEqual(expect.arrayContaining([
       "canon_holds",
       "checkpoints",
+      "rail_cursors",
       "claim_bindings",
       "claim_supersessions",
       "claims",
@@ -323,7 +324,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(16);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
       const tables = upgraded
         .query<{ name: string }, []>(
           "SELECT name FROM sqlite_master WHERE type = 'table'",
@@ -456,7 +457,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(16);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
       const receipts = upgraded
         .query<
           {
@@ -582,8 +583,8 @@ describe("openLedger migrations", () => {
       legacy.close();
       const upgraded = openLedger(path);
       expect(columns(upgraded, "canon_receipts")).toEqual(freshColumns);
-      expect(schemaVersion(fresh)).toBe(16);
-      expect(schemaVersion(upgraded)).toBe(16);
+      expect(schemaVersion(fresh)).toBe(LEDGER_SCHEMA_VERSION);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
       expect(columns(fresh, "connector_sensitivity")).toEqual([
         "at",
         "connector_id",
@@ -621,7 +622,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(16);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
       expect(
         upgraded
           .query<{ name: string }, []>(
@@ -709,7 +710,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(16);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
       const grant = upgraded
         .query<
           { relay_owner_corrections: number; grant_epoch: number },
@@ -739,7 +740,7 @@ describe("openLedger migrations", () => {
       leftover.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(16);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
       const tables = upgraded
         .query<{ name: string }, []>(
           "SELECT name FROM sqlite_master WHERE type = 'table'",
@@ -782,7 +783,7 @@ describe("openLedger migrations", () => {
       leftover.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(16);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
       expect(
         upgraded
           .query<{ name: string }, [string]>("SELECT name FROM pragma_table_info(?)")
@@ -855,7 +856,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(16);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
       expect(
         upgraded
           .query<{ name: string }, [string]>("SELECT name FROM pragma_table_info(?)")
@@ -936,7 +937,7 @@ describe("openLedger migrations", () => {
       first.close();
 
       const reopened = openLedger(path);
-      expect(schemaVersion(reopened)).toBe(16);
+      expect(schemaVersion(reopened)).toBe(LEDGER_SCHEMA_VERSION);
       expect(searchResult(reopened, "kettleword", { ceiling: "private" })).toEqual({
         hits: [
           expect.objectContaining({
@@ -1020,7 +1021,7 @@ describe("openLedger migrations", () => {
       first.close();
 
       const reopened = openLedger(path);
-      expect(schemaVersion(reopened)).toBe(16);
+      expect(schemaVersion(reopened)).toBe(LEDGER_SCHEMA_VERSION);
       expect(
         reopened
           .query<{ name: string }, [string]>(

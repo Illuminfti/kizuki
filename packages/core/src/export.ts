@@ -39,9 +39,11 @@ import {
 import { rebuildDerived } from "./derived";
 import { EVENT_LIMITS, type CaptureEvent } from "./contracts/event";
 import { isUlid, ulid } from "./util/ulid";
+import { writeRailCursor } from "./ledger/checkpoints";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "./ledger/db";
 import { eventFromRow, parseEventRecord, type LegacyEventRecord } from "./ledger/event-record";
 import { bindLegacyEventOrigins, installEventIdentityGuards } from "./ledger/event-identity-schema";
+import { readSchemaVersion } from "./ledger/integrity";
 import { PURGE_SCHEMA_VERSION } from "./ledger/purge-schema";
 import { tableExists } from "./ledger/schema";
 import { SENSITIVITY_SCHEMA_VERSION } from "./sensitivity/schema";
@@ -64,6 +66,7 @@ const STAGING_MARK = ".kizuki-backup-";
 const INCOMPLETE = ".kizuki-backup-incomplete";
 const CONTROL_DIR = ".kizuki";
 const EXTRACT_BATCH_BACKUP = "serve/extract-batches.jsonl";
+const RAIL_CURSORS_BACKUP = "rail_cursors.jsonl";
 const MACHINE_BYTE_INTENTS_BACKUP = "ledger/canon-machine-byte-intents.jsonl";
 const MAX_EXTRACT_BATCH_BACKUP_BYTES = 2_000_000;
 const MAX_EVENT_BACKUP_ROW_BYTES = EVENT_LIMITS.eventBytes + 2_048;
@@ -221,6 +224,13 @@ interface CheckpointRow {
   updated_at: string;
   last_run_at: string;
   last_result: string;
+}
+
+interface RailCursorRow {
+  rail: string;
+  source_key: string;
+  cursor: string;
+  updated_at: string;
 }
 
 interface DeferredInputRow {
@@ -473,11 +483,7 @@ function vaultFiles(directory: string): string[] {
 }
 
 function ledgerSchemaVersion(db: Database): number {
-  return (
-    db
-      .query<{ version: number }, []>("SELECT version FROM schema_version LIMIT 1")
-      .get()?.version ?? 0
-  );
+  return readSchemaVersion(db);
 }
 
 function supportedSchemaVersions(ledgerVersion = LEDGER_SCHEMA_VERSION): BackupSchemaVersions {
@@ -940,6 +946,35 @@ function* pageCheckpoints(db: Database): Generator<Record<string, unknown>> {
   }
 }
 
+function* pageRailCursors(db: Database): Generator<RailCursorRow> {
+  let after: { rail: string; source_key: string } | null = null;
+  while (true) {
+    let rows: RailCursorRow[];
+    if (after === null) {
+      rows = db
+        .query<RailCursorRow, [number]>(
+          `SELECT rail, source_key, cursor, updated_at FROM rail_cursors
+           ORDER BY rail, source_key LIMIT ?`,
+        )
+        .all(PAGE);
+    } else {
+      rows = db
+        .query<RailCursorRow, [string, string, string, number]>(
+          `SELECT rail, source_key, cursor, updated_at FROM rail_cursors
+           WHERE rail > ?
+              OR (rail = ? AND source_key > ?)
+           ORDER BY rail, source_key LIMIT ?`,
+        )
+        .all(after.rail, after.rail, after.source_key, PAGE);
+    }
+    if (rows.length === 0) break;
+    yield* rows;
+    const last: RailCursorRow | undefined = rows.at(-1);
+    if (last === undefined || rows.length < PAGE) break;
+    after = { rail: last.rail, source_key: last.source_key };
+  }
+}
+
 function* pageDeferredInputs(db: Database): Generator<DeferredInputRow> {
   if (!tableExists(db, "extract_deferred_inputs")) return;
   let after = "";
@@ -1211,6 +1246,7 @@ export function exportVault(
         files,
         options.signal,
       );
+      writeStream(staging, RAIL_CURSORS_BACKUP, pageRailCursors(db), files, options.signal);
       writeStream(staging, "serve/extract-deferred-inputs.jsonl", pageDeferredInputs(db), files, options.signal);
       writeStream(staging, EXTRACT_BATCH_BACKUP, pendingExtractBatch(db), files, options.signal);
 
@@ -1290,6 +1326,9 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && intents !== undefined) {
     throw new Error("legacy backup must not include machine-byte intents");
+  }
+  if (manifest.schema !== LEGACY_BACKUP_SCHEMA && manifest.files[RAIL_CURSORS_BACKUP] === undefined) {
+    throw new Error("backup extract rail cursor stream is missing");
   }
   for (const key of Object.keys(manifest.files).sort(compareCodeUnits)) {
     const entry = manifest.files[key];
@@ -1679,14 +1718,24 @@ function validateRestoredEventOrigins(db: Database): void {
 }
 
 function insertCheckpointRow(db: Database, raw: Record<string, unknown>): void {
+  const connectorId = asString(raw.connector_id, "connector_id");
+  const sourceKey = asString(raw.source_key, "source_key");
+  const cursor = asStringOrNull(raw.cursor, "cursor");
+  if (
+    connectorId === "kizuki.producer.model" &&
+    (sourceKey === "extract" || sourceKey === "extract-deferred-scan")
+  ) {
+    if (cursor !== null) writeRailCursor(db, connectorId, sourceKey, cursor);
+    return;
+  }
   db.query(
     `INSERT INTO checkpoints
        (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    asString(raw.connector_id, "connector_id"),
-    asString(raw.source_key, "source_key"),
-    asStringOrNull(raw.cursor, "cursor"),
+    connectorId,
+    sourceKey,
+    cursor,
     asString(raw.mode, "mode"),
     asString(raw.updated_at, "updated_at"),
     asString(raw.last_run_at, "last_run_at"),
@@ -1882,6 +1931,20 @@ export function restoreVault(
         }
         for (const row of streamRows(source, "checkpoints.jsonl", true)) {
           insertCheckpointRow(db, row);
+        }
+        const railsRequired = manifest.schema !== LEGACY_BACKUP_SCHEMA;
+        let railCount = 0;
+        for (const row of streamRows(source, RAIL_CURSORS_BACKUP, railsRequired)) {
+          writeRailCursor(
+            db,
+            asString(row.rail, "rail"),
+            asString(row.source_key, "source_key"),
+            asString(row.cursor, "cursor"),
+          );
+          railCount += 1;
+        }
+        if (railsRequired && railCount !== manifest.files[RAIL_CURSORS_BACKUP]!.count) {
+          throw new Error("backup extract rail cursor count mismatch");
         }
         for (const row of streamRows(source, "ledger/connector_sensitivity.jsonl", false)) {
           insertConnectorSensitivity(db, row);

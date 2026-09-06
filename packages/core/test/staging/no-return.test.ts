@@ -50,7 +50,12 @@ describe("no-return owner-gate surfaces", () => {
       exports: Record<string, string>;
     };
     expect(pkg.exports).not.toHaveProperty("./staging");
-    expect(Object.keys(pkg.exports).sort()).toEqual([".", "./contracts"]);
+    expect(Object.keys(pkg.exports).sort()).toEqual([
+      ".",
+      "./contracts",
+      "./internal",
+      "./testing",
+    ]);
   });
 
   test("the public core surface does not export owner-gate write functions", () => {

@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { accept, openLedger, readSince, planEstateImport, initVault, runPurge, verifyPurge, createVaultFts5Port } from "../src/index";
+import { accept, readSince, planEstateImport, initVault, runPurge, verifyPurge, createVaultFts5Port } from "../src/index";
+import { openLedger } from "../src/ledger/db";
 import { buildEstatePlan } from "../src/import/estate";
 import { sha256Hex } from "../src/util/hash";
 

@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { listCanonReceipts, listClaims, listRunReceipts, openLedger, setSourceGrant, sourcePolicyEpoch } from "@kizuki/core";
+import { listCanonReceipts, listClaims, listRunReceipts, setSourceGrant, sourcePolicyEpoch } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "../helpers";
 
 const { cleanup, runCli, tempVault } = createHelpers();
