@@ -265,12 +265,19 @@ function validPurgePredecessor(row: LineageReceipt): boolean {
 }
 
 function validRevertPredecessor(db: Database, row: LineageReceipt, childPath: string, seen: Set<string>): boolean {
-  if (row.receipt_kind !== "revert" || row.reverts === null || !isLineageId(row.reverts) || seen.has(row.reverts)) {
+  if (
+    row.receipt_kind !== "revert" ||
+    row.reverts === null ||
+    !isLineageId(row.reverts) ||
+    seen.has(row.reverts) ||
+    seen.size >= MAX_CHAIN_DEPTH
+  ) {
     return false;
   }
   const target = readLineageReceipt(db, row.reverts);
   if (
     target === null ||
+    seen.has(target.receipt_id) ||
     !lineageReceiptEarlier(target, row) ||
     target.before_hash === null ||
     !isLineageHash(target.before_hash) ||
@@ -283,6 +290,7 @@ function validRevertPredecessor(db: Database, row: LineageReceipt, childPath: st
   }
   if (target.page_path !== "" && childPath !== "" && target.page_path !== childPath) return false;
   if (row.page_path !== "" && childPath !== "" && row.page_path !== childPath) return false;
+  seen.add(target.receipt_id);
   return true;
 }
 
@@ -355,20 +363,16 @@ export function assertSourceSurvivorLineageBinding(
     }
     return;
   }
+  if (seen.size >= MAX_CHAIN_DEPTH || seen.has(predecessor.receipt_id)) {
+    throw new Error("source-survivor lineage chain is invalid");
+  }
+  seen.add(predecessor.receipt_id);
   if (validWritePredecessor(predecessor) && predecessor.authority !== lineage.predecessor_effective_authority) {
     throw new Error("source-survivor predecessor authority is inconsistent");
   }
 }
 
-export function insertSourceSurvivorLineage(db: Database, value: SourceSurvivorLineage): void {
-  const lineage = parseSourceSurvivorLineage(value);
-  const existing = getSourceSurvivorLineage(db, lineage.child_receipt_id);
-  if (existing !== null) {
-    if (JSON.stringify(lineageRecord(existing)) !== JSON.stringify(lineageRecord(lineage))) {
-      throw new Error("source-survivor lineage conflict");
-    }
-    return;
-  }
+function insertNewSourceSurvivorLineage(db: Database, lineage: SourceSurvivorLineage): void {
   assertSourceSurvivorLineageBinding(db, lineage);
   db.query(
     `INSERT INTO ${SOURCE_SURVIVOR_LINEAGE_TABLE} (
@@ -385,6 +389,18 @@ export function insertSourceSurvivorLineage(db: Database, value: SourceSurvivorL
     lineage.predecessor_effective_authority,
     lineage.result_authority,
   );
+}
+
+export function insertSourceSurvivorLineage(db: Database, value: SourceSurvivorLineage): void {
+  const lineage = parseSourceSurvivorLineage(value);
+  const existing = getSourceSurvivorLineage(db, lineage.child_receipt_id);
+  if (existing !== null) {
+    if (JSON.stringify(lineageRecord(existing)) !== JSON.stringify(lineageRecord(lineage))) {
+      throw new Error("source-survivor lineage conflict");
+    }
+    return;
+  }
+  insertNewSourceSurvivorLineage(db, lineage);
 }
 
 export function assertSourceSurvivorLineageGraph(db: Database): void {
@@ -423,6 +439,7 @@ export function* sourceSurvivorLineageExportRows(db: Database): Generator<Source
     return `CASE WHEN typeof(${column})='text' AND length(CAST(${column} AS BLOB))<=${MAX_SOURCE_SURVIVOR_LINEAGE_ROW_BYTES} THEN CAST(${column} AS BLOB) ELSE NULL END AS ${column}`;
   });
   let rows = 0;
+  const seen = new Set<string>();
   for (const stored of db
     .query<Record<string, unknown>, []>(
       `SELECT ${fields.join(",")} FROM ${SOURCE_SURVIVOR_LINEAGE_TABLE} ORDER BY child_receipt_id COLLATE BINARY`,
@@ -444,17 +461,21 @@ export function* sourceSurvivorLineageExportRows(db: Database): Generator<Source
     if (encoded > MAX_SOURCE_SURVIVOR_LINEAGE_ROW_BYTES) {
       throw new Error("source-survivor lineage row exceeds its bound");
     }
+    if (seen.has(row.child_receipt_id)) {
+      throw new Error("source-survivor lineage duplicate");
+    }
+    seen.add(row.child_receipt_id);
     rows += 1;
     if (rows > MAX_SOURCE_SURVIVOR_LINEAGE_ROWS) {
       throw new Error("source-survivor lineage exceeds its bound");
     }
     yield row;
   }
-  if (rows !== count) throw new Error("source-survivor lineage export drifted");
+  if (rows !== count || rows !== seen.size) throw new Error("source-survivor lineage export drifted");
 }
 
 export function restoreSourceSurvivorLineageRow(db: Database, raw: Record<string, unknown>): void {
-  insertSourceSurvivorLineage(db, parseSourceSurvivorLineage(raw));
+  insertNewSourceSurvivorLineage(db, parseSourceSurvivorLineage(raw));
 }
 
 /** Test helper: never used as a serving repair. */

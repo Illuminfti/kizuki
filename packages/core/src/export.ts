@@ -55,7 +55,9 @@ import {
   MAX_SOURCE_SURVIVOR_LINEAGE_ROW_BYTES,
   MAX_SOURCE_SURVIVOR_LINEAGE_ROWS,
   SOURCE_SURVIVOR_LINEAGE_BACKUP,
+  SOURCE_SURVIVOR_LINEAGE_TABLE,
   assertSourceSurvivorLineageGraph,
+  parseSourceSurvivorLineage,
   restoreSourceSurvivorLineageRow,
   sourceSurvivorLineageExportRows,
 } from "./ledger/canon-source-survivor-lineage";
@@ -2656,13 +2658,22 @@ function hasSourceSurvivorLineage(manifest: ExportManifest): boolean {
 function restoreSourceSurvivorLineage(db: Database, backup: string, manifest: ExportManifest): void {
   if (!hasSourceSurvivorLineage(manifest)) return;
   const path = SOURCE_SURVIVOR_LINEAGE_BACKUP;
+  const seen = new Set<string>();
   let count = 0;
   for (const row of streamRows(backup, manifest, path, true)) {
+    const lineage = parseSourceSurvivorLineage(row);
+    if (seen.has(lineage.child_receipt_id)) throw new Error("backup source-survivor lineage duplicate");
+    seen.add(lineage.child_receipt_id);
     restoreSourceSurvivorLineageRow(db, row);
     count += 1;
     if (count > MAX_SOURCE_SURVIVOR_LINEAGE_ROWS) throw new Error("backup source-survivor lineage exceeds its bound");
   }
-  if (count !== manifest.files[path]!.count) throw new Error("backup source-survivor lineage count mismatch");
+  const stored = db.query<{ n: number }, []>(
+    `SELECT COUNT(*) AS n FROM ${SOURCE_SURVIVOR_LINEAGE_TABLE}`,
+  ).get()?.n ?? 0;
+  if (count !== manifest.files[path]!.count || count !== seen.size || count !== stored) {
+    throw new Error("backup source-survivor lineage count mismatch");
+  }
   assertSourceSurvivorLineageGraph(db);
 }
 

@@ -266,6 +266,9 @@ export class CanonAuthorityResolver {
       return UNAVAILABLE;
     }
     if (child.page_path !== "" && child.page_path !== path) return UNAVAILABLE;
+    if (seen.size >= MAX_CHAIN_DEPTH || seen.has(checkpoint.predecessor_receipt_id)) {
+      return UNAVAILABLE;
+    }
     const predecessor = this.lookup(checkpoint.predecessor_receipt_id, path);
     if (
       predecessor === undefined ||
@@ -312,7 +315,13 @@ export class CanonAuthorityResolver {
       case "purge_rewrite":
         return predecessor.before_hash !== null && HASH.test(predecessor.before_hash) && predecessor.reverts === null;
       case "revert": {
-        if (predecessor.reverts === null || seen.has(predecessor.reverts)) return false;
+        if (
+          predecessor.reverts === null ||
+          seen.has(predecessor.reverts) ||
+          seen.size >= MAX_CHAIN_DEPTH
+        ) {
+          return false;
+        }
         const target = this.lookup(predecessor.reverts, path);
         if (
           target === undefined ||

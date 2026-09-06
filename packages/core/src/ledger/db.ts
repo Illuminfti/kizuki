@@ -19,7 +19,7 @@ import { applyPurgeV5 } from "./purge-schema";
 import { applyPurgeBatchesV19 } from "./purge-batch-schema";
 import { applyEventIdentityV16 } from "./event-identity-schema";
 import { applyAgentEnrollmentV18 } from "../agents/enrollment-schema";
-import { applySourceSurvivorLineageV20, assertSourceSurvivorLineageSchema } from "./canon-source-survivor-lineage";
+import { applySourceSurvivorLineageV20 } from "./canon-source-survivor-lineage";
 import { oneShotAll, oneShotRun, tableColumns, tableExists } from "./schema";
 import { applyLedgerV16 } from "./schema-v16";
 
@@ -252,7 +252,7 @@ function migrate(db: Database): void {
     db.transaction(() => {
       applyDerivedV10(db);
     }).immediate();
-    assertCurrentLedgerSchema(db, latest);
+    assertLedgerSchema(db, latest);
     return;
   }
 
@@ -263,12 +263,7 @@ function migrate(db: Database): void {
       writeSchemaVersion(db, migration.version);
     }
   }).immediate();
-  assertCurrentLedgerSchema(db, latest);
-}
-
-function assertCurrentLedgerSchema(db: Database, expectedVersion: number): void {
-  assertLedgerSchema(db, expectedVersion);
-  if (expectedVersion >= 20) assertSourceSurvivorLineageSchema(db);
+  assertLedgerSchema(db, latest);
 }
 
 export function openLedger(dbPath: string, options: { busyTimeoutMs?: number } = {}): Database {
@@ -294,26 +289,8 @@ export function inspectOpenLedgerHealth(
   db: Database,
   opts: { full?: boolean } = {},
 ): LedgerHealth {
-  const health = inspectLedgerHealth(db, {
+  return inspectLedgerHealth(db, {
     ...(opts.full === undefined ? {} : { full: opts.full }),
     expectedVersion: LEDGER_SCHEMA_VERSION,
   });
-  if (LEDGER_SCHEMA_VERSION < 20) return health;
-  try {
-    assertSourceSurvivorLineageSchema(db);
-    return health;
-  } catch (error) {
-    return {
-      ...health,
-      ok: false,
-      failures: [
-        ...health.failures,
-        {
-          kind: "schema",
-          table: "canon_source_survivor_lineage",
-          detail: error instanceof Error ? error.message : "schema mismatch",
-        },
-      ],
-    };
-  }
 }
