@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { readSqliteRuntime } from "@kizuki/core/internal";
+import type { SqliteRuntime } from "@kizuki/core/internal";
 import { TOOLS, listAudit, revokeAgent, setGrant } from "@kizuki/core";
 import type { RetrievalPort, ServeContext } from "@kizuki/core";
 import { listClaims } from "@kizuki/core";
@@ -58,6 +60,28 @@ describe("the stdio MCP server over a real client", () => {
     const envelope = envelopeOf(result);
     expect(envelope["schema"]).toBe("kizuki.envelope/v1");
     expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual(envelope);
+  });
+
+  test("system_health observes its connection through the existing authorization gate", async () => {
+    const running = live();
+    const expected = readSqliteRuntime(running.db);
+    const prepare = spyOn(running.db, "prepare");
+    const observations = () => prepare.mock.calls.filter(([sql]) => sql.includes("sqlite_source_id()")).length;
+    try {
+      const denied = await call(await connect(running.agent("search-only")), "system_health", {});
+      expect(denied.isError).toBe(true);
+      expect(errorOf(denied).error).toBe("tool_not_granted");
+      expect(denied.structuredContent).toBeUndefined();
+      expect(observations()).toBe(0);
+
+      const result = await call(await connect(running.owner()), "system_health", {});
+      expect(result.isError).toBeUndefined();
+      const envelope = envelopeOf(result);
+      expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual(envelope);
+      const data = envelope["data"] as { runtime: SqliteRuntime };
+      expect(data.runtime).toEqual(expected);
+      expect(observations()).toBe(1);
+    } finally { prepare.mockRestore(); }
   });
 
   test("reviewed prose and captured text stay in separate fields", async () => {
