@@ -31,17 +31,24 @@ function run(command: string, args: string[], env: Record<string, string>): stri
   return `${result.stdout}${result.stderr}`;
 }
 
-async function mcpSession(env: Record<string, string>, args: string[], requests: string[]): Promise<{ code: number; output: string }> {
+async function mcpSession(env: Record<string, string>, args: string[], requests: string[]): Promise<{ code: number; output: string; diagnostics: string }> {
   const child = Bun.spawn([mcp, ...args], { env, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
   for (const request of requests) child.stdin.write(`${request}\n`);
   child.stdin.end();
   const output = new Response(child.stdout).text();
   const stderr = new Response(child.stderr).text();
-  const timeout = new Promise<never>((_, reject) => setTimeout(() => { child.kill("SIGKILL"); reject(new Error("MCP smoke timed out")); }, 15_000));
-  const code = await Promise.race([child.exited, timeout]);
-  const [stdout, diagnostics] = await Promise.all([output, stderr]);
-  if (diagnostics.length > 16_384) throw new Error("MCP smoke diagnostics overflow");
-  return { code, output: stdout };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("MCP smoke timed out")); }, 15_000); });
+    const code = await Promise.race([child.exited, timeout]);
+    const [stdout, diagnostics] = await Promise.all([output, stderr]);
+    if (diagnostics.length > 16_384) throw new Error("MCP smoke diagnostics overflow");
+    return { code, output: stdout, diagnostics };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    await child.exited;
+  }
 }
 
 const rootTemp = mkdtempSync(join(tmpdir(), "kizuki-release-smoke-"));
@@ -93,15 +100,21 @@ try {
   if (typeof envelope.token !== "string" || added.includes(envelope.token) || replayed.includes(envelope.token)) throw new Error("agent credential leaked");
   const agentRequests = [
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"release-smoke","version":"0"}}}',
+    '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}',
     '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"query":"Ada"}}}',
-    '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"correct","arguments":{}}}',
+    '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_page","arguments":{"path":"missing.md"}}}',
   ];
   const agentSession = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], agentRequests);
-  if (agentSession.code !== 0 || !agentSession.output.includes("Ada") || !agentSession.output.includes("tool_not_granted") || agentSession.output.includes(envelope.token)) throw new Error("agent MCP authorization smoke failed");
+  const responses = agentSession.output.trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as { id?: number; result?: unknown });
+  if (agentSession.code !== 0 || !responses.some(response => response.id === 2 && JSON.stringify(response.result).includes("Ada")) ||
+      !responses.some(response => response.id === 3 && JSON.stringify(response.result).includes("tool_not_granted")) ||
+      `${agentSession.output}${agentSession.diagnostics}`.includes(envelope.token)) throw new Error("agent MCP authorization smoke failed");
+  const secondSession = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], agentRequests.slice(0, 3));
+  if (secondSession.code !== 0 || !secondSession.output.includes("Ada") || `${secondSession.output}${secondSession.diagnostics}`.includes(envelope.token)) throw new Error("second agent MCP session failed");
   const revoked = run(cli, ["agent", "revoke", "reader-private", "--vault", vault, "--json"], env);
   if (revoked.includes(envelope.token)) throw new Error("agent revocation leaked credential");
   const rejected = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], [agentRequests[0]!]);
-  if (rejected.code === 0 || rejected.output.includes(envelope.token)) throw new Error("revoked credential reconnected");
+  if (rejected.code === 0 || `${rejected.output}${rejected.diagnostics}`.includes(envelope.token)) throw new Error("revoked credential reconnected");
 
   const session = Bun.spawn([mcp, "--vault", vault, "--owner"], {
     env,
