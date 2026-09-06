@@ -14,6 +14,7 @@ import { computeOriginBinding, nativeRequestDigest } from "./event-origin-bindin
 import { classifySqliteFailure, LedgerStoreError } from "./errors";
 import { LEDGER_ID_MAX, LEDGER_KIND_MAX, MAX_READ_SINCE, REPLAY_PAGE_SIZE } from "./limits";
 import { tableExists } from "./schema";
+import { placeholders } from "../util/sql";
 
 export type AcceptErrorKind = "validation" | "infrastructure";
 
@@ -282,6 +283,19 @@ export function readLiveEvent(db: Database, eventId: string): CaptureEvent | nul
     `SELECT ${EVENT_COLUMNS} FROM events WHERE event_id=? AND ${LIVE_PREDICATE}`,
   ).get(eventId);
   return row === null ? null : decodeStored(row, db);
+}
+
+/** Metadata-only batches use the same accepted-at/event-id order as live replay. */
+export function liveEventIds(db: Database, ids: readonly string[]): Set<string> {
+  const live = new Set<string>();
+  for (let offset = 0; offset < ids.length; offset += 500) {
+    const group = ids.slice(offset, offset + 500);
+    const rows = db.query<{ event_id: string }, string[]>(
+      `SELECT event_id FROM events WHERE event_id IN (${placeholders(group.length)}) AND ${LIVE_PREDICATE}`,
+    ).all(...group);
+    for (const row of rows) live.add(row.event_id);
+  }
+  return live;
 }
 
 export function readSince(

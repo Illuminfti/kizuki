@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { liveEventIds } from "../ledger/ledger";
 import { sourceEventsAllowed, sourceSensitivity } from "../ledger/source-grants";
 import type { ServeContext } from "./types";
 import { authorize } from "../agents";
@@ -48,28 +49,7 @@ function subjectIds(raw: string): string[] {
   );
 }
 
-/**
- * An event is live when it exists, is not itself a tombstone, and its source
- * record carries no tombstone row. `timeline()` only filters the row itself,
- * so the record-level check has to happen here.
- */
-export function liveEventIds(db: Database, ids: string[]): Set<string> {
-  const live = new Set<string>();
-  for (const group of chunks(ids)) {
-    const rows = db
-      .query<{ event_id: string }, string[]>(
-        `SELECT e.event_id FROM events e
-          WHERE e.event_id IN (${placeholders(group.length)}) AND e.deleted = 0
-            AND NOT EXISTS (SELECT 1 FROM events t
-                             WHERE t.deleted = 1
-                               AND t.connector_id = e.connector_id
-                               AND t.source_record_id = e.source_record_id)`,
-      )
-      .all(...group);
-    for (const row of rows) live.add(row.event_id);
-  }
-  return live;
-}
+export { liveEventIds };
 
 /** Metadata only: the captured text stays out of authorization decisions. */
 export function readServableEvents(
