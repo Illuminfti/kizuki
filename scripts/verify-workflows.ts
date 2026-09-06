@@ -195,15 +195,16 @@ function hasMacNativeProof(document: Record<string, unknown>, job: Record<string
     isNativeArtifactUpload(steps[8], MACOS_ARTIFACT_NAME, MACOS_ARTIFACT_PATH);
 }
 
-function hasLinuxNativeProof(job: Record<string, unknown>): boolean {
+function hasLinuxNativeProof(document: Record<string, unknown>, job: Record<string, unknown>): boolean {
   const steps = job["steps"];
-  if (!Array.isArray(steps)) return false;
-  const proofIndex = steps.findIndex(step => isBareCommand(step, LINUX_PROOF_COMMAND));
-  const receiptIndex = steps.findIndex(step => isBareCommand(step, LINUX_RECEIPT_CHECK));
-  const uploads = steps.map((step, index) => ({ step, index })).filter(({ step }) => isUploadArtifactStep(step));
-  return proofIndex >= 0 && receiptIndex > proofIndex && uploads.length === 1 &&
-    uploads[0].index > receiptIndex &&
-    isNativeArtifactUpload(uploads[0].step, LINUX_ARTIFACT_NAME, LINUX_ARTIFACT_PATH);
+  if (!Array.isArray(steps) || steps.length < 4 || document["defaults"] !== undefined ||
+      job["defaults"] !== undefined) return false;
+  const suffix = steps.length - 4;
+  return isBareCommand(steps[suffix], LINUX_PROOF_COMMAND) &&
+    isBareCommand(steps[suffix + 1], "bun scripts/ci-diff-check.ts") &&
+    isBareCommand(steps[suffix + 2], LINUX_RECEIPT_CHECK) &&
+    steps.filter(isUploadArtifactStep).length === 1 &&
+    isNativeArtifactUpload(steps[steps.length - 1], LINUX_ARTIFACT_NAME, LINUX_ARTIFACT_PATH);
 }
 
 export function validateWorkflowText(path: string, text: string): WorkflowFailure[] {
@@ -233,7 +234,7 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
     }
     const jobs = document["jobs"];
     const job = isRecord(jobs) ? jobs["test"] : undefined;
-    if (isRecord(job) && !hasLinuxNativeProof(job)) {
+    if (isRecord(job) && !hasLinuxNativeProof(document, job)) {
       failures.push({
         path,
         reason: "ci test must verify the native proof receipt before retaining the Linux package",
