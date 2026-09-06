@@ -560,9 +560,19 @@ describe("exportVault", () => {
   test("does not chmod an existing parent directory", () => {
     const { db, vaultPath } = populated();
     const parent = temporary("kizuki-export-parent-");
-    chmodSync(parent, 0o777);
+    chmodSync(parent, 0o755);
     exportVault(db, vaultPath, join(parent, "dump"));
+    expect(lstatSync(parent).mode & 0o777).toBe(0o755);
+    db.close();
+  });
+
+  test("refuses an unsafe shared parent without changing its permissions", () => {
+    const { db, vaultPath } = populated();
+    const parent = temporary("kizuki-export-parent-");
+    chmodSync(parent, 0o777);
+    expect(() => exportVault(db, vaultPath, join(parent, "dump"))).toThrow("owned_directory_publication_unsafe");
     expect(lstatSync(parent).mode & 0o777).toBe(0o777);
+    expect(readdirSync(parent)).toEqual([]);
     db.close();
   });
 

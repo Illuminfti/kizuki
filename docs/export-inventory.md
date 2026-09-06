@@ -28,7 +28,48 @@ copied as arbitrary filesystem metadata.
 
 Inspected candidates and payload copies require a regular file with one hard
 link, checked on the opened descriptor before and after reading. This does not
-claim a complete snapshot or protection against every filesystem ancestor race.
+protect against arbitrary manual filesystem edits or every filesystem ancestor
+race.
+
+Export holds the cooperating vault writer from staging through publication and
+cleanup. A top-level immediate SQLite transaction begins before the authoritative
+inventory, selected file copies, database metadata, and every supported database
+stream. All these bytes describe that capture. A database-only writer must wait
+until the capture finishes; its later commits do not enter earlier backup streams.
+Existing caller transactions are refused before callbacks or output effects.
+
+For file-backed databases, export checks the engine's main database path and
+opened-file status against the selected vault ledger, with retained descriptor
+identities checked again before publication. It uses SQLite's
+[`SQLITE_FCNTL_HAS_MOVED`](https://www.sqlite.org/c3ref/c_fcntl_begin_atomic_write.html)
+through Bun's [`fileControl`](https://bun.com/docs/runtime/sqlite) API. An
+engine-confirmed unnamed database remains supported without a physical-file
+affinity claim. SQLite uses an empty engine filename for both
+[memory and private temporary databases](https://www.sqlite.org/c3ref/db_filename.html);
+export does not label all unnamed databases as memory-only. An unavailable
+named file-backed identity check refuses export.
+
+Synchronous progress runs outside SQLite transactions while the cooperating
+writer stays held. The `inventory` notification exposes a pre-copy inventory;
+capture repeats and checks that inventory before copying. Later notifications
+describe the sealed capture. Source policy and its epoch, purge discovery and
+holds, vault/database identity, schema identity, and the staged artifact are
+checked again in a fresh immediate transaction directly before publication.
+There is no intervening progress callback. Options are captured once before
+ownership, and cancellation reads the native `AbortSignal` state.
+Existing source-erasure and purge-recovery refusals also run as an early
+read-only preflight before callbacks, path access or staging.
+
+Publication uses the owned destination parent and a no-replace rename. An absent
+destination or the same owner-only empty directory can receive the export.
+The parent must be owned by the current user without group/other write access,
+or a root-owned sticky directory such as ordinary `/tmp`. Unsafe shared parents
+are refused without changing their permissions.
+Refusal and cancellation clean only the identified staging directory. Native
+publication errors retain their explicit publication, durability and cleanup
+state; uncertain entries remain for inspection. If publication and directory
+sync complete but a later transaction or ownership cleanup fails, the error
+reports `publication: "published"` and `durability: "synced"`.
 
 Classification is bounded by 100,000 inspected directory entries and receipt
 rows, 10,000 canon pages, eight path segments, 1 MiB per inspected candidate file,
@@ -46,10 +87,9 @@ does not reinterpret their existing manifests.
 
 `complete: true` retains its existing artifact meaning: the listed files were
 copied and verified. It does not assert complete runtime recovery or a coherent
-snapshot across every writer. The current v3 streams still exclude credentials,
+snapshot across manual filesystem writers. The current v3 streams still exclude credentials,
 opaque connection state and agent enrollment authority; they do not preserve
 all recovery journals, holds, purge operations, or run/access-audit history.
-Connection re-enrollment semantics and a shared canon/database snapshot fence
-remain separate work. Existing durable extraction streams are preserved without
+Connection re-enrollment semantics remain separate work. Existing durable extraction streams are preserved without
 another model call. Review the inventory's limits and unavailable archive count
 before relying on an export for recovery.

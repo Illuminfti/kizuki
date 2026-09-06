@@ -2,7 +2,8 @@ import { assertVaultMutationScope, withVaultMutationSync, type VaultMutationScop
 import { assertReceiptPaths } from "./canon/paths";
 import { isRfc3339 } from "./util/time";
 import { sourcePolicyEpoch, inspectSourceGrant, sourceEventsAllowed } from "./ledger/source-grants";
-import type { Database } from "bun:sqlite";
+import { Database, constants as SQLITE_CONSTANTS } from "bun:sqlite";
+import { openOwnedDirectory, OwnedDirectoryPublicationError, type OwnedDirectory, type OwnedDirectoryIdentity } from "./util/owned-directory";
 import {
   type Stats,
   chmodSync,
@@ -134,7 +135,20 @@ export interface ExportManifest {
 
 export interface ExportOptions {
   signal?: AbortSignal;
+  /** Synchronous notifications run outside SQLite transactions while the writer
+   * remains owned. Inventory is a pre-copy preview; later phases describe the
+   * sealed capture and cannot alter its database cut. */
   onProgress?: (label: string) => void;
+}
+
+/** Publication succeeded even though a later transaction/ownership cleanup failed. */
+class ExportPublicationError extends Error {
+  readonly publication = "published" as const;
+  readonly durability = "synced" as const;
+  constructor(cause: unknown) {
+    super("export was published and synced; subsequent cleanup failed", { cause });
+    this.name = "ExportPublicationError";
+  }
 }
 
 export interface RestoreReport {
@@ -304,10 +318,109 @@ function posixRel(from: string, to: string): string {
   return relative(from, to).split(sep).join("/");
 }
 
+const SIGNAL_ABORTED = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!;
+const DATABASE_IN_TRANSACTION = Object.getOwnPropertyDescriptor(Database.prototype, "inTransaction")!.get!;
+const DATABASE_QUERY = Database.prototype.query;
+const DATABASE_FILE_CONTROL = Database.prototype.fileControl;
+
 function throwIfAborted(signal: AbortSignal | undefined): void {
-  if (signal?.aborted === true) {
-    throw new Error("export cancelled");
+  // Invoke the native brand-checked getter, never a caller-defined accessor.
+  if (signal !== undefined && SIGNAL_ABORTED.call(signal) === true) throw new Error("export cancelled");
+}
+
+function assertExportTransactionAvailable(db: Database): void {
+  if (!(db instanceof Database)) throw new TypeError("export requires an actual SQLite database");
+  if (DATABASE_IN_TRANSACTION.call(db) !== false) throw new Error("export requires a top-level SQLite transaction");
+}
+
+function nativeMainFilename(db: Database): string {
+  const rows = DATABASE_QUERY.call(db, "PRAGMA database_list").all() as { name: string; file: string }[];
+  const main = rows.find(row => row.name === "main");
+  if (main === undefined || typeof main.file !== "string") throw new Error("export database affinity unavailable");
+  return main.file;
+}
+
+interface ExportSource {
+  readonly control: OwnedDirectory;
+  assertCurrent(): void;
+  close(): void;
+}
+
+/** The file-control query validates SQLite's opened inode, not db.filename. */
+function openExportSource(db: Database, vaultPath: string): ExportSource {
+  assertExportTransactionAvailable(db);
+  const mainFile = nativeMainFilename(db);
+  const expected = join(vaultPath, ".kizuki", "kizuki.db");
+  if (mainFile !== "" && resolveExisting(mainFile) !== resolveExisting(expected)) {
+    throw new Error("export database does not belong to the selected vault");
   }
+  let root: OwnedDirectory | undefined;
+  let control: OwnedDirectory | undefined;
+  let ledgerFd: number | null = null;
+  try {
+    root = openOwnedDirectory(vaultPath);
+    control = openOwnedDirectory(join(vaultPath, ".kizuki"));
+    let ledgerIdentity: { dev: number; ino: number } | null = null;
+    if (mainFile !== "") {
+      ledgerFd = openSync(expected, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const stat = requireSingleLinkRegularFile(ledgerFd);
+      if (!Number.isSafeInteger(stat.dev) || !Number.isSafeInteger(stat.ino)) throw new Error("export database identity unavailable");
+      ledgerIdentity = { dev: stat.dev, ino: stat.ino };
+    }
+    const capturedRoot = root, capturedControl = control, capturedFd = ledgerFd;
+    let closed = false;
+    const source: ExportSource = {
+      control: capturedControl,
+      assertCurrent() {
+        capturedRoot.assertCurrent(); capturedControl.assertCurrent();
+        if (nativeMainFilename(db) !== mainFile) throw new Error("export database affinity changed");
+        // Engine-confirmed unnamed databases have no physical-file affinity.
+        if (capturedFd === null || ledgerIdentity === null) return;
+        const opened = requireSingleLinkRegularFile(capturedFd);
+        const current = capturedControl.inspect(["kizuki.db"]);
+        if (current === null || !current.isFile() || current.nlink !== 1 ||
+            opened.dev !== ledgerIdentity.dev || opened.ino !== ledgerIdentity.ino ||
+            current.dev !== ledgerIdentity.dev || current.ino !== ledgerIdentity.ino) {
+          throw new Error("export database affinity changed");
+        }
+        const moved = new Int32Array([-1]);
+        const result = DATABASE_FILE_CONTROL.call(db, "main", SQLITE_CONSTANTS.SQLITE_FCNTL_HAS_MOVED, moved);
+        if (result !== 0 /* SQLITE_OK */ || moved[0] !== 0) throw new Error("export database affinity unavailable or changed");
+      },
+      close() {
+        if (closed) return;
+        closed = true;
+        const errors: unknown[] = [];
+        for (const close of [() => { if (capturedFd !== null) closeSync(capturedFd); },
+          () => capturedControl.close(), () => capturedRoot.close()]) {
+          try { close(); } catch (error) { errors.push(error); }
+        }
+        if (errors.length !== 0) throw new AggregateError(errors, "export source descriptor cleanup failed");
+      },
+    };
+    source.assertCurrent();
+    return source;
+  } catch (error) {
+    if (ledgerFd !== null) closeSync(ledgerFd);
+    control?.close(); root?.close();
+    throw error;
+  }
+}
+
+function vaultIdentity(source: ExportSource): { value: string | null; bytes: Uint8Array | null } {
+  const bytes = source.control.readFile(["vault-id"], MAX_CANON_PAGE_BYTES);
+  const text = bytes === null ? "" : Buffer.from(bytes).toString("utf8").split("\n")[0]?.trim() ?? "";
+  return { value: text.length === 0 ? null : text, bytes };
+}
+
+function sameBytes(left: Uint8Array | null, right: Uint8Array | null): boolean {
+  return left === null ? right === null : right !== null && Buffer.from(left).equals(right);
+}
+
+function sqliteSchemaCookie(db: Database): number {
+  const row = DATABASE_QUERY.call(db, "PRAGMA main.schema_version").get() as { schema_version: number } | null;
+  if (row === null || !Number.isSafeInteger(row.schema_version)) throw new Error("export schema identity unavailable");
+  return row.schema_version;
 }
 
 function writeAll(fd: number, bytes: Uint8Array): void {
@@ -522,7 +635,7 @@ function vaultInventory(db: Database, root: string): VaultInventory {
     recovery_limits: [
       "The v3 streams exclude credentials, opaque connection state and agent enrollment authority.",
       "The v3 streams do not preserve all journals, holds, purge operations or run and audit history.",
-      "File inventory and the database streams do not yet share every canon writer's snapshot fence.",
+      "Selected files and database streams share one SQLite capture and the cooperating writer fence; manual edits and complete runtime recovery remain outside this guarantee.",
       "A complete manifest verifies this artifact's listed bytes; it does not assert complete runtime recovery.",
     ],
   };
@@ -1368,58 +1481,121 @@ export function exportVault(
   outDir: string,
   options: ExportOptions = {},
 ): ExportManifest {
+  assertExportTransactionAvailable(db);
   const target = Object.freeze({ db, vault_path: resolve(vaultPath) });
   const destination = resolve(outDir);
   const { signal, onProgress } = options;
+  if (onProgress !== undefined && typeof onProgress !== "function") throw new TypeError("export progress listener must be a function");
   const captured = Object.freeze({ ...(signal === undefined ? {} : { signal }), ...(onProgress === undefined ? {} : { onProgress }) });
-  return withVaultMutationSync(target, scope => exportVaultOwned(scope, target, destination, captured));
+  throwIfAborted(signal);
+  assertExportTransactionAvailable(db);
+  // Preserve early recovery refusals before callbacks, path access or staging.
+  // Authoritative admission is repeated inside both owned transactions below.
+  assertSourceExport(db); assertNoPendingPurgeExport(db);
+  assertSeparated(target.vault_path, destination);
+  const source = openExportSource(db, target.vault_path);
+  const publication: { synced: boolean; error: OwnedDirectoryPublicationError | null } = { synced: false, error: null };
+  let result: ExportManifest | undefined;
+  let failed = false;
+  let failure: unknown;
+  try {
+    result = withVaultMutationSync(target, scope => {
+      try { return exportVaultOwned(scope, target, destination, captured, source, publication); }
+      finally { source.close(); }
+    });
+  } catch (error) { failed = true; failure = error; }
+  try { source.close(); }
+  catch (error) { failure = failed ? new AggregateError([failure, error], "export ownership cleanup failed") : error; failed = true; }
+  if (failed) {
+    if (publication.synced) throw new ExportPublicationError(failure);
+    if (publication.error !== null && failure !== publication.error) {
+      const prior = publication.error;
+      const error = new OwnedDirectoryPublicationError(prior.reason, {
+        publication: prior.publication, durability: prior.durability, cleanup_safe: false, parked: prior.parked,
+      });
+      Object.defineProperty(error, "cause", { value: new AggregateError([prior, failure], "export ownership cleanup failed") });
+      throw error;
+    }
+    throw failure;
+  }
+  return result!;
 }
 
 function exportVaultOwned(
   scope: VaultMutationScope,
   target: VaultMutationTarget & { readonly db: Database },
-  outDir: string,
-  options: ExportOptions,
+  destination: string,
+  options: Readonly<ExportOptions>,
+  source: ExportSource,
+  publication: { synced: boolean; error: OwnedDirectoryPublicationError | null },
 ): ExportManifest {
   assertVaultMutationScope(scope, target);
   const { db, vault_path: vaultPath } = target;
+  assertExportTransactionAvailable(db);
+  source.assertCurrent();
   throwIfAborted(options.signal);
-  const sourceEpoch = sourcePolicyEpoch(db);
-  assertSourceExport(db);
-  assertNoPendingPurgeExport(db);
-  const source = resolve(vaultPath);
-  const destination = resolve(outDir);
-  assertSeparated(source, destination);
   prepareDestination(destination);
   const parent = dirname(destination);
   mkdirPrivate(parent);
-
-  const staging = join(parent, `${basenameSafe(destination)}${STAGING_MARK}${ulid()}.partial`);
-
+  const directory = openOwnedDirectory(parent);
+  const destinationName = basenameSafe(destination);
+  const stagingName = `${destinationName}${STAGING_MARK}${ulid()}.partial`;
+  const staging = join(parent, stagingName);
+  let stagingIdentity: OwnedDirectoryIdentity | undefined;
+  let staged: OwnedDirectory | undefined;
+  let published = false;
+  let publicationUncertain = false;
   try {
-    mkdirPrivate(staging);
+    const destinationIdentity = directory.childIdentity(destinationName);
+    stagingIdentity = directory.createStaging(stagingName);
+    staged = openOwnedDirectory(staging);
     writePrivateFile(join(staging, INCOMPLETE), Buffer.from("incomplete\n"));
-    options.onProgress?.("staging");
-    const files: Record<string, ExportManifestEntry> = {};
-    const inventory = vaultInventory(db, source);
-    const inventoryBytes = Buffer.from(`${JSON.stringify(inventory, null, 2)}\n`);
-    writePrivateFile(join(staging, EXPORT_INVENTORY), inventoryBytes);
-    trackFile(files, EXPORT_INVENTORY, 1, hashFile(join(staging, EXPORT_INVENTORY)));
-    options.onProgress?.("inventory");
-    for (const entry of inventory.files) {
+    const marker = staged.inspect([INCOMPLETE]);
+    if (marker === null || !Number.isSafeInteger(marker.dev) || !Number.isSafeInteger(marker.ino)) throw new Error("export staging identity unavailable");
+    const markerIdentity = { dev: BigInt(marker.dev), ino: BigInt(marker.ino) };
+
+    const notify = (label: string): void => {
+      assertExportTransactionAvailable(db);
+      options.onProgress?.(label);
+      // A listener may leave a transaction open; never inherit it as a savepoint.
+      assertExportTransactionAvailable(db);
       throwIfAborted(options.signal);
-      options.onProgress?.("vault");
-      const destFile = join(staging, "vault", entry.path);
-      trackFile(files, `vault/${entry.path}`, 1, copyHashed(join(source, entry.path), destFile, entry));
+      source.assertCurrent(); staged!.assertCurrent(); directory.assertCurrent();
+    };
+    notify("staging");
+    let preview: { bytes: Buffer; epoch: number } | undefined;
+    if (options.onProgress !== undefined) {
+      assertExportTransactionAvailable(db);
+      preview = db.transaction(() => {
+        source.assertCurrent(); assertSourceExport(db); assertNoPendingPurgeExport(db);
+        return { bytes: Buffer.from(`${JSON.stringify(vaultInventory(db, vaultPath), null, 2)}\n`), epoch: sourcePolicyEpoch(db) };
+      }).immediate();
+      writePrivateFile(join(staging, EXPORT_INVENTORY), preview.bytes);
+      notify("inventory");
     }
 
-    options.onProgress?.("ledger");
-    let snapshot!: BackupSnapshot;
-    // Keep ledger, authority, queue, checkpoint, and pending-decision streams
-    // on one SQLite snapshot. A concurrent completion must not produce a
-    // backup whose checkpoint and journal describe different moments.
-    db.transaction(() => {
-      snapshot = snapshotOf(db);
+    assertExportTransactionAvailable(db);
+    const capture = db.transaction(() => {
+      source.assertCurrent(); staged!.assertCurrent();
+      throwIfAborted(options.signal);
+      assertSourceExport(db); assertNoPendingPurgeExport(db);
+      const sourceEpoch = sourcePolicyEpoch(db);
+      if (preview !== undefined && preview.epoch !== sourceEpoch) throw new Error("source authorization changed during export");
+      const identity = vaultIdentity(source);
+      const schema = supportedSchemaVersions(ledgerSchemaVersion(db));
+      const schemaCookie = sqliteSchemaCookie(db);
+      const inventory = vaultInventory(db, vaultPath);
+      const inventoryBytes = Buffer.from(`${JSON.stringify(inventory, null, 2)}\n`);
+      if (preview !== undefined && !preview.bytes.equals(inventoryBytes)) throw new Error("export inventory file changed before capture");
+      const files: Record<string, ExportManifestEntry> = {};
+      if (preview === undefined) writePrivateFile(join(staging, EXPORT_INVENTORY), inventoryBytes);
+      trackFile(files, EXPORT_INVENTORY, 1, hashFile(join(staging, EXPORT_INVENTORY)));
+      for (const entry of inventory.files) {
+        throwIfAborted(options.signal);
+        const destFile = join(staging, "vault", entry.path);
+        trackFile(files, `vault/${entry.path}`, 1, copyHashed(join(vaultPath, entry.path), destFile, entry));
+      }
+      const snapshot = snapshotOf(db);
       validateExportEventOrigins(db, snapshot);
       writeStream(
         staging,
@@ -1430,7 +1606,6 @@ function exportVaultOwned(
       );
       writeStream(staging, "ledger/event_purges.jsonl", pagePurges(db), files, options.signal);
       for (const table of SOURCE_BACKUP_TABLES) writeStream(staging, `ledger/${table}.jsonl`, sourcePolicyRows(db, table), files, options.signal);
-      options.onProgress?.("claims");
       writeStream(staging, "claims/claims.jsonl", pageClaims(db), files, options.signal);
       writeStream(
         staging,
@@ -1454,7 +1629,6 @@ function exportVaultOwned(
         files,
         options.signal,
       );
-      options.onProgress?.("receipts");
       writeStream(staging, "canon/receipts.jsonl", pageReceipts(db), files, options.signal);
       writeStream(
         staging,
@@ -1484,33 +1658,76 @@ function exportVaultOwned(
       if ((files["ledger/events.jsonl"]?.count ?? 0) !== snapshot.event_count) {
         throw new Error("export event stream drifted from the snapshot");
       }
-      assertSourceExport(db);
+      source.assertCurrent();
+      assertSourceExport(db); assertNoPendingPurgeExport(db);
       if (sourcePolicyEpoch(db) !== sourceEpoch) throw new Error("source authorization changed during export");
-    })();
-    assertSourceExport(db);
-    if (sourcePolicyEpoch(db) !== sourceEpoch) throw new Error("source authorization changed during export");
-    const manifest = signManifest({
-      schema: BACKUP_SCHEMA,
-      vault_id: readVaultId(source),
-      created_at: new Date().toISOString(),
-      schema_versions: supportedSchemaVersions(ledgerSchemaVersion(db)),
-      snapshot,
-      complete: true,
-      files: sortedFiles(files),
-    });
-    writePrivateFile(join(staging, "manifest.json"), Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));
-    verifyFiles(staging, manifest);
-    assertSourceExport(db);
-    assertNoPendingPurgeExport(db);
-    unlinkSync(join(staging, INCOMPLETE));
-    fsyncDirectory(staging);
-    installStaging(staging, destination);
-    fsyncDirectory(parent);
-    return manifest;
+      const manifest = signManifest({
+        schema: BACKUP_SCHEMA, vault_id: identity.value, created_at: new Date().toISOString(),
+        schema_versions: schema, snapshot, complete: true, files: sortedFiles(files),
+      });
+      return { manifest, sourceEpoch, identity, schemaCookie, vaultFiles: inventory.files.length };
+    }).immediate();
+    const manifest = capture.manifest;
+    const manifestContent = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
+    writePrivateFile(join(staging, "manifest.json"), manifestContent);
+    // Bound progress bookkeeping by a count, rather than retaining a label per file.
+    for (let file = 0; file < capture.vaultFiles; file += 1) notify("vault");
+    for (const phase of ["ledger", "claims", "receipts"]) notify(phase);
+
+    assertExportTransactionAvailable(db);
+    return db.transaction(() => {
+      staged!.assertCurrent(); directory.assertCurrent();
+      verifyFiles(staging, manifest);
+      const stagedManifest = readFileSyncNoFollow(join(staging, "manifest.json"), manifestContent.length);
+      if (!manifestContent.equals(stagedManifest)) throw new Error("export staged manifest changed");
+      throwIfAborted(options.signal);
+      source.assertCurrent();
+      assertSourceExport(db); assertNoPendingPurgeExport(db);
+      if (sourcePolicyEpoch(db) !== capture.sourceEpoch) throw new Error("source authorization changed during export");
+      if (ledgerSchemaVersion(db) !== manifest.schema_versions.ledger || sqliteSchemaCookie(db) !== capture.schemaCookie) throw new Error("export schema identity changed");
+      if (!sameBytes(vaultIdentity(source).bytes, capture.identity.bytes)) throw new Error("export vault identity changed");
+      prepareDestination(destination);
+      staged!.removeTree(INCOMPLETE, markerIdentity);
+      // No callback separates the fresh admission/identity checks and publication.
+      try {
+        directory.publishStaging(stagingName, stagingIdentity!, destinationName, destinationIdentity);
+        published = true;
+        publication.synced = true;
+      } catch (error) {
+        if (error instanceof OwnedDirectoryPublicationError) {
+          published = error.publication === "published";
+          publicationUncertain = !error.cleanup_safe;
+        } else publicationUncertain = true;
+        throw error;
+      }
+      return manifest;
+    }).immediate();
   } catch (error) {
-    rmSync(staging, { recursive: true, force: true });
+    if (error instanceof OwnedDirectoryPublicationError) publication.error = error;
+    if (!published && !publicationUncertain && stagingIdentity !== undefined) {
+      try { directory.removeTree(stagingName, stagingIdentity); }
+      catch (cleanup) { throw new AggregateError([error, cleanup], "export failed; owned staging cleanup is incomplete"); }
+    }
     throw error;
-  }
+  } finally { staged?.close(); directory.close(); }
+}
+
+function readFileSyncNoFollow(path: string, maxBytes: number): Buffer {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const info = requireSingleLinkRegularFile(fd);
+    if (info.size !== maxBytes || (info.mode & 0o777) !== FILE_MODE) throw new Error("export staged manifest changed");
+    const bytes = Buffer.alloc(maxBytes);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = readSync(fd, bytes, offset, bytes.length - offset, offset);
+      if (count === 0) throw new Error("export staged manifest changed");
+      offset += count;
+    }
+    const after = requireSingleLinkRegularFile(fd);
+    if (after.size !== info.size || after.mtimeMs !== info.mtimeMs || after.ctimeMs !== info.ctimeMs) throw new Error("export staged manifest changed");
+    return bytes;
+  } finally { closeSync(fd); }
 }
 
 function basenameSafe(path: string): string {
