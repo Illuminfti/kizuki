@@ -14,7 +14,7 @@ import {
   readFileSync,
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { assertCanonFiles, type CanonFiles } from "./canon-files";
+import { assertCanonFiles, type CanonFiles, type CanonFileSnapshot } from "./canon-files";
 import { withMutationFilesSync } from "./mutation-files";
 import { assertVaultMutationScope, VaultMutationError, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "./mutation-scope";
 import { sha256Hex } from "../util/hash";
@@ -387,23 +387,27 @@ function chmodPrivateFile(path: string): boolean {
   return true;
 }
 
-function writeAtomicFile(files: CanonFiles, path: string, content: string | Uint8Array): void {
+function writeAtomicFile(
+  files: CanonFiles,
+  path: string,
+  content: string | Uint8Array,
+  prior: CanonFileSnapshot | null,
+): CanonFileSnapshot {
   const parent = dirname(path);
   if (parent !== ".") files.ensureDirectory(parent);
   const bytes = Buffer.from(content);
-  const prior = files.read(path);
-  if (prior === null) { files.create(path, bytes).close(); return; }
-  try {
-    const temporary = files.create(`${path}.${crypto.randomUUID()}.tmp`, bytes);
-    try { files.replace(temporary, prior).close(); }
-    catch (error) {
-      try { files.remove(temporary); } catch { /* Preserve a changed temporary and the original failure. */ }
-      throw error;
-    } finally { temporary.close(); }
-  } finally { prior.close(); }
+  if (prior === null) return files.create(path, bytes);
+  // Validate the same snapshot that supplied the decision and output bytes.
+  const temporary = files.create(`${path}.${crypto.randomUUID()}.tmp`, bytes);
+  try { return files.replace(temporary, prior); }
+  catch (error) {
+    try { files.remove(temporary); } catch { /* Preserve a changed temporary and the original failure. */ }
+    throw error;
+  } finally { temporary.close(); }
 }
 
-function ensureRootGitIgnore(files: CanonFiles, path: string, existing: Buffer): boolean {
+function ensureRootGitIgnore(files: CanonFiles, prior: CanonFileSnapshot): boolean {
+  const existing = Buffer.from(prior.bytes);
   const text = existing.toString("utf8");
   let protectedControl = false;
   for (const line of text.split(/\r?\n/)) {
@@ -415,10 +419,10 @@ function ensureRootGitIgnore(files: CanonFiles, path: string, existing: Buffer):
   if (protectedControl) return false;
   const newline = text.includes("\r\n") ? "\r\n" : "\n";
   const separator = existing.length === 0 || text.endsWith("\n") ? "" : newline;
-  writeAtomicFile(files, path, Buffer.concat([
+  writeAtomicFile(files, prior.path, Buffer.concat([
     existing,
     Buffer.from(`${separator}${ROOT_GITIGNORE_RULE}${newline}`),
-  ]));
+  ]), prior).close();
   return true;
 }
 
@@ -641,8 +645,8 @@ export function readInitJournal(root: string): InitJournal | null {
   return parseJournal(readFileSync(path, "utf8"));
 }
 
-function writeJournal(files: CanonFiles, journal: InitJournal): void {
-  writeAtomicFile(files, `.kizuki/${JOURNAL_NAME}`, `${JSON.stringify(journal, null, 2)}\n`);
+function writeJournal(files: CanonFiles, journal: InitJournal, prior: CanonFileSnapshot | null): CanonFileSnapshot {
+  return writeAtomicFile(files, `.kizuki/${JOURNAL_NAME}`, `${JSON.stringify(journal, null, 2)}\n`, prior);
 }
 
 function hardenControlTree(root: string, repaired: string[]): void {
@@ -818,39 +822,39 @@ function initVaultOwned(
   return withMutationFilesSync(scope, target, files => {
     assertVaultMutationScope(scope, target);
     assertCanonFiles(files, path);
-    const journal = files.read(`.kizuki/${JOURNAL_NAME}`);
-    let previous: InitJournal | null;
-    try { previous = journal === null ? null : parseJournal(Buffer.from(journal.bytes).toString("utf8")); }
-    finally { journal?.close(); }
-    writeJournal(files, { schema: INIT_JOURNAL_SCHEMA, status: "in_progress", doctrine_version: DOCTRINE_VERSION, adopt: adopt ?? previous?.adopt ?? null });
-    const entries: ReadonlyArray<readonly [string, string]> = [
-      ["CANON.md", CANON_DOCTRINE], ["SCHEMA.md", SCHEMA_DOCTRINE],
-      [".gitignore", ROOT_GITIGNORE], [".kizuki/.gitignore", CONTROL_GITIGNORE],
-    ];
-    for (const [relativePath, content] of entries) {
-      const leftover = files.read(`${relativePath}.tmp`);
-      if (leftover !== null) {
-        try { files.remove(leftover); } finally { leftover.close(); }
-      }
-      const prior = files.read(relativePath);
-      if (prior === null) {
-        writeAtomicFile(files, relativePath, content);
-        created.push(relativePath);
-        continue;
-      }
-      try {
-        if (relativePath === ".gitignore") {
-          if (ensureRootGitIgnore(files, relativePath, Buffer.from(prior.bytes)) && !repaired.includes(relativePath)) repaired.push(relativePath);
+    let journal = files.read(`.kizuki/${JOURNAL_NAME}`);
+    try {
+      const previous = journal === null ? null : parseJournal(Buffer.from(journal.bytes).toString("utf8"));
+      journal = writeJournal(files, { schema: INIT_JOURNAL_SCHEMA, status: "in_progress", doctrine_version: DOCTRINE_VERSION, adopt: adopt ?? previous?.adopt ?? null }, journal);
+      const entries: ReadonlyArray<readonly [string, string]> = [
+        ["CANON.md", CANON_DOCTRINE], ["SCHEMA.md", SCHEMA_DOCTRINE],
+        [".gitignore", ROOT_GITIGNORE], [".kizuki/.gitignore", CONTROL_GITIGNORE],
+      ];
+      for (const [relativePath, content] of entries) {
+        const leftover = files.read(`${relativePath}.tmp`);
+        if (leftover !== null) {
+          try { files.remove(leftover); } finally { leftover.close(); }
+        }
+        const prior = files.read(relativePath);
+        if (prior === null) {
+          writeAtomicFile(files, relativePath, content, null).close();
+          created.push(relativePath);
           continue;
         }
-        if ((relativePath === "CANON.md" || relativePath === "SCHEMA.md") &&
-            classifyDoctrine(Buffer.from(prior.bytes).toString("utf8"), relativePath) === "upgradeable") {
-          writeAtomicFile(files, relativePath, content);
-          upgraded.push(relativePath);
-        }
-      } finally { prior.close(); }
-    }
-    writeJournal(files, { schema: INIT_JOURNAL_SCHEMA, status: "ready", doctrine_version: DOCTRINE_VERSION, adopt: adopt ?? previous?.adopt ?? null });
-    return { created, repaired, upgraded, dry_run: false, status: "ready" as const, inventory };
+        try {
+          if (relativePath === ".gitignore") {
+            if (ensureRootGitIgnore(files, prior) && !repaired.includes(relativePath)) repaired.push(relativePath);
+            continue;
+          }
+          if ((relativePath === "CANON.md" || relativePath === "SCHEMA.md") &&
+              classifyDoctrine(Buffer.from(prior.bytes).toString("utf8"), relativePath) === "upgradeable") {
+            writeAtomicFile(files, relativePath, content, prior).close();
+            upgraded.push(relativePath);
+          }
+        } finally { prior.close(); }
+      }
+      journal = writeJournal(files, { schema: INIT_JOURNAL_SCHEMA, status: "ready", doctrine_version: DOCTRINE_VERSION, adopt: adopt ?? previous?.adopt ?? null }, journal);
+      return { created, repaired, upgraded, dry_run: false, status: "ready" as const, inventory };
+    } finally { journal?.close(); }
   });
 }
