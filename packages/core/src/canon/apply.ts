@@ -32,6 +32,7 @@ import type { BudgetTracker } from "./budget";
 import { CanonWriteError } from "./errors";
 import type { CanonReceipt, PageAction, RetrievalOpRef } from "./receipts";
 import { initCanon } from "./schema";
+import { snapshotCanonIo } from "./io";
 import {
   appendReceiptLine,
   insertReceiptRow,
@@ -424,6 +425,10 @@ export function applyCanonWrite(
   decision: TargetDecision,
   opts: ApplyCanonWriteOptions,
 ): CanonReceipt {
+  io = snapshotCanonIo(io);
+  claim = snapshotByteInput(claim);
+  decision = snapshotByteInput(decision);
+  opts = Object.freeze({ writer: opts.writer, budget: opts.budget });
   if (!isWriter(opts.writer)) {
     throw new CanonWriteError("writer_invalid", "writer must be loop, correction, revert or import");
   }
@@ -600,6 +605,7 @@ export function applyRevertWrite(
   io: CanonIo,
   input: RevertWriteInput,
 ): RevertWriteOutcome {
+  io = snapshotCanonIo(io);
   input = snapshotByteInput(input);
   assertPageRelPath(input.rel_path);
   if (input.page !== null) requireSourceEvents(io.db, existingSources(input.page), { owner: true, purpose: "derive" });
@@ -667,6 +673,7 @@ export function applyPurgeRewrite(
   io: CanonIo,
   input: PurgeRewriteInput,
 ): CanonReceipt {
+  io = snapshotCanonIo(io);
   input = snapshotByteInput(input);
   if (input.source_erasure === undefined) assertPageRelPath(input.rel_path);
   else assertStoredPageRelPath(input.rel_path);
@@ -893,6 +900,7 @@ function finishSourceErasure(io: CanonIo, intent: SourceErasureIntent, page: Vau
 }
 /** Called only inside the source purge's existing native writer ownership. */
 export function recoverSourceErasureIntents(io: CanonIo, source: string): boolean {
+    io = snapshotCanonIo(io);
     initCanon(io.db);
     const rows = io.db.query<{
         page_path: string;
