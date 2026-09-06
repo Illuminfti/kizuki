@@ -35,6 +35,7 @@ function page(
       type: "fact",
       status: "active",
       sensitivity: "personal",
+      taint: "clean",
       ...overrides,
     },
     body,
@@ -214,6 +215,7 @@ describe("search rebuild", () => {
         type: "fact",
         status: "active",
         sensitivity: "personal",
+        taint: "clean",
       },
       "A copper kettle whistles.",
     );
@@ -247,6 +249,7 @@ describe("search rebuild", () => {
         type: "fact",
         status: "active",
         sensitivity: "public",
+        taint: "clean",
       },
       "repeatable",
     );
@@ -504,6 +507,7 @@ describe("search live eligibility and identity", () => {
         type: "fact",
         status: "active",
         sensitivity: "public",
+        taint: "clean",
       },
       "liveword",
     );
@@ -516,6 +520,7 @@ describe("search live eligibility and identity", () => {
         type: "fact",
         status: "archived",
         sensitivity: "public",
+        taint: "clean",
       },
       "liveword archived",
     );
@@ -554,6 +559,7 @@ describe("search live eligibility and identity", () => {
         type: "fact",
         status: "active",
         sensitivity: "public",
+        taint: "clean",
       },
       "okword",
     );

@@ -140,7 +140,7 @@ function vaultHealth(vaultPath: string): Notice | null {
     const extra = report.skipped.length - 1;
     const detail = extra > 0 ? `${first.relPath} (+${extra} more)` : first.relPath;
     return {
-      text: `${report.skipped.length} unreadable or duplicate canon page(s) (${detail}); run kizuki doctor`,
+      text: `${report.skipped.length} unusable canon page(s) (${first.code}: ${detail}); run kizuki doctor`,
       tone: "error",
     };
   } catch (error) {

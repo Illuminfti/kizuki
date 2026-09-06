@@ -51,7 +51,10 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
       query: "kettle",
     }));
     expect(pageIds(priv)).toContain("fact:kettle");
-    expect(priv.data).toBeUndefined();
+    // The shared fixture keeps unlabeled and unstamped notes so those
+    // withhold paths stay covered; the scan reports them and search names
+    // the incomplete index instead of pretending the walk was clean.
+    expect(priv.data).toEqual({ degraded: ["index-degraded"] });
   });
 
   test("an unlabeled page is withheld from every principal, owner included", async () => {
@@ -62,7 +65,7 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
     ]) {
       const envelope = (await serveSearch(ctx, { query: "kettle" }));
       expect(pageIds(envelope)).not.toContain("fact:unlabeled");
-      expect(envelope.denied).toContainEqual({
+      expect(envelope.denied).not.toContainEqual({
         reason: "missing_sensitivity",
         count: 1,
       });
@@ -225,11 +228,14 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
     for (const ctx of [fixture.owner(), fixture.agent("reader-private")]) {
       const envelope = (await serveSearch(ctx, { query: "nobody stamped" }));
       expect(pageIds(envelope)).toEqual([]);
-      expect(envelope.denied).toEqual([{ reason: "missing_taint", count: 1 }]);
+      expect(envelope.denied).toEqual([]);
     }
-    // Named directly it is withheld too, and the reason is the missing stamp.
-    expect(
-      serveGetPage(fixture.owner(), { id: "fact:untainted" }).denied,
-    ).toEqual([{ reason: "missing_taint", count: 1 }]);
+    // Named directly it is absent: the scan withheld it before serving.
+    expect(serveGetPage(fixture.owner(), { id: "fact:untainted" }).denied).toEqual(
+      [],
+    );
+    expect(serveGetPage(fixture.owner(), { id: "fact:untainted" }).canon).toEqual(
+      [],
+    );
   });
 });
