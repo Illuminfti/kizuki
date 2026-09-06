@@ -1,4 +1,3 @@
-import { canonAuthorities } from "../canon/authority";
 import type { Database } from "bun:sqlite";
 import { SENSITIVITY_ORDER } from "../agents/types";
 import type { Sensitivity } from "../agents/types";
@@ -20,6 +19,7 @@ import {
   stringArray,
 } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
+import { projectablePageEvidence } from "../vault/provenance";
 import { linkIndexFromPages, resolveWikilink } from "./resolve";
 import type { LinkIndex } from "./resolve";
 import { initGraph } from "./schema";
@@ -33,7 +33,6 @@ export interface GraphEdge {
 }
 
 export interface GraphRebuildInput {
-  authorities?: ReadonlyMap<string,RetrievalAuthority>;
   generation: string;
   pages: readonly CanonPage[];
   skipped: readonly SkippedPage[];
@@ -287,22 +286,32 @@ function insertEdge(db: Database, edge: StoredEdge): void {
   );
 }
 
-function graphHoldSnapshot(db: Database, pages: readonly CanonPage[]) {
+function graphExclusions(db: Database, pages: readonly CanonPage[]) {
   const held = readDerivedHolds(db, pages);
+  const evidence = projectablePageEvidence(db, pages);
   const missing = new Set(held.paths);
   const aliases = new Set<string>();
+  let withheldCount = held.paths.size;
   for (const page of pages) {
-    if (!held.paths.has(page.relPath)) continue;
     missing.delete(page.relPath);
+    if (!held.paths.has(page.relPath) && evidence.has(page.relPath)) continue;
+    if (!held.paths.has(page.relPath) && isLiveCanonPage(page)) withheldCount += 1;
+    held.paths.add(page.relPath);
+    held.pageIds.add(page.id);
     const base = page.relPath.split("/").pop()!;
     for (const alias of [page.id, page.relPath, page.relPath.replace(/\.md$/i, ""), base, base.replace(/\.md$/i, ""), page.data["title"]]) {
       if (typeof alias === "string") aliases.add(alias.toLowerCase());
     }
   }
-  return { ...held, aliases, complete: missing.size === 0 };
+  if (held.paths.size > 0 && tableExists(db, "page_index")) {
+    for (const row of db.query<{ page_id: string }, [string]>(
+      "SELECT page_id FROM page_index WHERE rel_path IN (SELECT value FROM json_each(?))",
+    ).all(JSON.stringify([...held.paths]))) held.pageIds.add(row.page_id);
+  }
+  return { ...held, aliases, complete: missing.size === 0, evidence, withheldCount };
 }
 
-function isHeldEdge(edge: StoredEdge, held: ReturnType<typeof graphHoldSnapshot>): boolean {
+function isHeldEdge(edge: StoredEdge, held: ReturnType<typeof graphExclusions>): boolean {
   return held.pageIds.has(edge.dst) || (edge.kind === "wikilink" && held.aliases.has(edge.dst.toLowerCase()));
 }
 
@@ -310,15 +319,14 @@ function isHeldEdge(edge: StoredEdge, held: ReturnType<typeof graphHoldSnapshot>
 export function replacePageEdges(
   db: Database,
   pages: readonly CanonPage[],
-  authorities = canonAuthorities(db,pages),
 ): void {
   assertDerivedDiscoveryReady(db);
-  const held = graphHoldSnapshot(db, pages);
+  const held = graphExclusions(db, pages);
   db.exec("DELETE FROM graph_edges");
   // A missing held page leaves its title aliases unknown. Withhold this
   // projection until a complete page snapshot can exclude those relations.
   if (!held.complete) {
-    markDerivedHeld(db, "graph", held.paths.size);
+    markDerivedHeld(db, "graph", held.withheldCount);
     return;
   }
   const live = pages.filter(page => isLiveCanonPage(page) && !held.paths.has(page.relPath));
@@ -328,15 +336,15 @@ export function replacePageEdges(
   const byId = new Map(live.map((page) => [page.id, page]));
   const eventHints = eventSensitivityHints(db, sourceEventIds(live));
   for (const page of live) {
-    for (const edge of pageEdges(page, index, byId, eventHints, authorities.get(page.relPath)??"model_inference")) {
+    for (const edge of pageEdges(page, index, byId, eventHints, held.evidence.get(page.relPath)!.revision.authority)) {
       if (isHeldEdge(edge, held)) continue;
       insertEdge(db, edge);
     }
   }
-  markDerivedHeld(db, "graph", held.paths.size);
+  markDerivedHeld(db, "graph", held.withheldCount);
 }
 
-function removeHeldEdges(db: Database, held: ReturnType<typeof graphHoldSnapshot>): void {
+function removeHeldEdges(db: Database, held: ReturnType<typeof graphExclusions>): void {
   if (held.paths.size === 0) return;
   if (!held.complete) {
     db.exec("DELETE FROM graph_edges");
@@ -352,9 +360,9 @@ function removeHeldEdges(db: Database, held: ReturnType<typeof graphHoldSnapshot
 
 /** Remove existing held relations without projecting any new page content. */
 export function removeHeldPageEdges(db: Database, pages: readonly CanonPage[]): void {
-  const held = graphHoldSnapshot(db, pages);
+  const held = graphExclusions(db, pages);
   removeHeldEdges(db, held);
-  markDerivedHeld(db, "graph", held.paths.size);
+  markDerivedHeld(db, "graph", held.withheldCount);
 }
 
 function stampGraphIncomplete(db: Database, skippedCount: number): void {
@@ -377,14 +385,14 @@ function stampGraphIncomplete(db: Database, skippedCount: number): void {
 }
 
 function restoreGraphStamp(db: Database, pages: readonly CanonPage[]): void {
-  const held = readDerivedHolds(db).paths.size;
-  if (held > 0) {
-    stampGraphIncomplete(db, 0);
+  const excluded = graphExclusions(db, pages);
+  if (excluded.withheldCount > 0) {
+    stampGraphIncomplete(db, excluded.withheldCount);
     return;
   }
   const existing = readDerivedMeta(db, "graph");
   if (existing === null || existing.status === "ok") return;
-  const live = pages.filter(isLiveCanonPage);
+  const live = pages.filter(page => excluded.evidence.has(page.relPath) && !excluded.paths.has(page.relPath));
   const edges =
     db
       .query<{ count: number }, []>(
@@ -418,10 +426,9 @@ export function refreshPageEdges(
   page: CanonPage,
   pages: readonly CanonPage[],
   skipped: number,
-  authorities = canonAuthorities(db,pages),
 ): void {
   assertDerivedDiscoveryReady(db);
-  const held = graphHoldSnapshot(db, [page, ...pages]);
+  const held = graphExclusions(db, [...pages.filter(candidate => candidate.relPath !== page.relPath), page]);
   if (!held.complete) {
     db.exec("DELETE FROM graph_edges");
     stampGraphIncomplete(db, skipped);
@@ -429,18 +436,18 @@ export function refreshPageEdges(
   }
   removeHeldEdges(db, held);
   if (skipped === 0) {
-    replacePageEdges(db, pages,authorities);
+    replacePageEdges(db, pages);
     restoreGraphStamp(db, pages);
     return;
   }
   const index = linkIndexFromPages(pages);
   const byId = new Map(
-    pages.filter(isLiveCanonPage).map((candidate) => [candidate.id, candidate]),
+    pages.filter(candidate => held.evidence.has(candidate.relPath) && !held.paths.has(candidate.relPath)).map((candidate) => [candidate.id, candidate]),
   );
   if (isLiveCanonPage(page) && !held.paths.has(page.relPath)) {
     db.query("DELETE FROM graph_edges WHERE src = ?").run(page.id);
     const eventHints = eventSensitivityHints(db, sourceEventIds([page]));
-    for (const edge of pageEdges(page, index, byId, eventHints, authorities.get(page.relPath)??"model_inference")) {
+    for (const edge of pageEdges(page, index, byId, eventHints, held.evidence.get(page.relPath)!.revision.authority)) {
       if (isHeldEdge(edge, held)) continue;
       insertEdge(db, edge);
     }
@@ -458,7 +465,7 @@ export function removePageEdges(
   skipped: number,
 ): void {
   assertDerivedDiscoveryReady(db);
-  const held = graphHoldSnapshot(db, pages);
+  const held = graphExclusions(db, pages);
   if (!held.complete) {
     db.exec("DELETE FROM graph_edges");
     stampGraphIncomplete(db, skipped);
@@ -479,22 +486,22 @@ function stampGraph(
   input: GraphRebuildInput,
   pages: number,
   edges: number,
+  withheld = readDerivedHolds(db).paths.size,
 ): DerivedStamp {
   const watermark = latestLedgerCursor(db);
-  const held = readDerivedHolds(db).paths.size;
   return {
     layer: "graph",
     generation: input.generation,
     rebuilt_at: input.rebuilt_at,
     doc_count: edges,
     source_count: pages,
-    skipped_count: input.skipped.length + held,
-    status: input.skipped.length + held > 0 ? "degraded" : "ok",
+    skipped_count: input.skipped.length + withheld,
+    status: input.skipped.length + withheld > 0 ? "degraded" : "ok",
     ledger_watermark:
       watermark === null
         ? null
         : `${watermark.accepted_at}\t${watermark.event_id}`,
-    canon_hash: held > 0 ? null : input.canon_hash,
+    canon_hash: withheld > 0 ? null : input.canon_hash,
     port_id: null,
     contract: "kizuki.retrieval/v1",
     space: null,
@@ -519,23 +526,23 @@ export function rebuildGraphLayer(
   input: GraphRebuildInput,
 ): GraphRebuildResult {
   assertDerivedDiscoveryReady(db);
-  const held = readDerivedHolds(db, input.pages);
-  const live = input.pages.filter(page => isLiveCanonPage(page) && !held.paths.has(page.relPath));
-  replacePageEdges(db, input.pages,input.authorities===undefined?canonAuthorities(db,live):new Map(input.authorities));
+  const held = graphExclusions(db, input.pages);
+  const live = input.pages.filter(page => held.evidence.has(page.relPath) && !held.paths.has(page.relPath));
+  replacePageEdges(db, input.pages);
   const edges =
     db
       .query<{ count: number }, []>(
         "SELECT count(*) AS count FROM graph_edges",
       )
       .get()?.count ?? 0;
-  stampDerived(db, stampGraph(db, input, live.length, edges));
+  stampDerived(db, stampGraph(db, input, live.length, edges, held.withheldCount));
   return {
     pages: live.length,
     edges,
     skipped: [...input.skipped],
     rebuilt_at: input.rebuilt_at,
     generation: input.generation,
-    status: input.skipped.length + held.paths.size > 0 ? "degraded" : "ok",
+    status: input.skipped.length + held.withheldCount > 0 ? "degraded" : "ok",
   };
 }
 

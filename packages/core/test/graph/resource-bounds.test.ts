@@ -33,7 +33,6 @@ function graph(pages: CanonPage[]): Database {
     skipped: [],
     rebuilt_at: "2026-01-01T00:00:00.000Z",
     canon_hash: null,
-    authorities: new Map(pages.map((item) => [item.relPath, "owner_authored" as const])),
   });
   return db;
 }
