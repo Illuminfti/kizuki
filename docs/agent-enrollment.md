@@ -7,6 +7,23 @@ filesystem custody. Other platforms refuse this delivery method. A failure to
 load the required native custody helper also returns `unsupported_platform`;
 changing destination permissions cannot supply missing native support.
 
+## Run from a package or source checkout
+
+The examples below use the package executables `kizuki` and `kizuki-mcp`.
+If you followed the [source quick start](../README.md#quick-start), run them
+from the checkout root after `bun install --frozen-lockfile`, replacing only
+the command prefix:
+
+| In the examples | From the source checkout root |
+| --- | --- |
+| `kizuki` | `bun packages/cli/src/main.ts` |
+| `kizuki-mcp` | `bun packages/mcp/src/bin.ts` |
+
+Keep the same arguments, including the absolute vault and `file:` credential
+paths. When configuring an MCP client's launch command, use the absolute Bun
+executable path and the checkout's absolute `packages/mcp/src/bin.ts` path as
+its first argument, followed by the documented vault and authentication flags.
+
 ## Choose the grant
 
 Save a complete grant as `agent-grant.json`. This example allows personal-or-lower
