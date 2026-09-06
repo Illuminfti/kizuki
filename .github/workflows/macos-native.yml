@@ -48,8 +48,10 @@ jobs:
           bun run build:release
           bun run smoke:release
           bun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-macos-artifact-proof"
+      - name: require artifact proof receipt
+        run: test -f "$RUNNER_TEMP/kizuki-macos-artifact-proof/receipt.json"
       - name: retain native package and receipt in this repository only
-        if: ${{ always() }}
+        if: ${{ success() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: macos-arm64-${{ github.sha }}

@@ -36,6 +36,10 @@ test("runtime, package metadata and resolved types share the checked-in Bun pin"
 const pinnedRef = '${{ github.event.pull_request.head.sha || github.sha }}';
 const pinnedCheckout = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262";
 const pinnedBun = "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6";
+const pinnedUpload = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02";
+const successIf = '${{ success() }}';
+const linuxArtifactName = 'linux-x64-${{ github.event.pull_request.head.sha || github.sha }}';
+const linuxReceiptPath = '${{ runner.temp }}/kizuki-artifact-proof/receipt.json';
 
 function ciWorkflow(overrides?: {
   name?: string;
@@ -62,6 +66,20 @@ jobs:
     steps:
 ${testSteps}
       - run: bun scripts/ci-diff-check.ts
+      - run: |
+          bun run build:release
+          bun run smoke:release
+          bun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-artifact-proof"
+      - run: test -f "$RUNNER_TEMP/kizuki-artifact-proof/receipt.json"
+      - if: ${successIf}
+        uses: ${pinnedUpload}
+        with:
+          name: ${linuxArtifactName}
+          path: |
+            dist/kizuki-*/bun-linux-x64-baseline/
+            ${linuxReceiptPath}
+          retention-days: 7
+          if-no-files-found: error
 ${overrides?.extraJob ?? ""}`;
 }
 
@@ -224,13 +242,63 @@ test("macOS validator rejects removal or bypass of each native proof obligation"
     ["wrong target", d => { d.jobs["native-arm64"].env.KIZUKI_TARGET = "bun-linux-x64-baseline"; }],
     ["host assertions removed", d => { d.jobs["native-arm64"].steps[4].run = "bun install --frozen-lockfile"; }],
     ["upload removed", d => { d.jobs["native-arm64"].steps.pop(); }],
-    ["retention removed", d => { delete d.jobs["native-arm64"].steps[7].with["retention-days"]; }],
-    ["receipt omitted", d => { d.jobs["native-arm64"].steps[7].with.path = "dist/kizuki-*/bun-darwin-arm64/"; }],
+    ["retention removed", d => { delete d.jobs["native-arm64"].steps[8].with["retention-days"]; }],
+    ["receipt omitted", d => { d.jobs["native-arm64"].steps[8].with.path = "dist/kizuki-*/bun-darwin-arm64/"; }],
     ["Bun setup removed", d => { d.jobs["native-arm64"].steps.splice(2, 1); }],
     ["conditional tests", d => { d.jobs["native-arm64"].steps[5].if = "false"; }],
     ["conditional build", d => { d.jobs["native-arm64"].steps[6].if = "false"; }],
     ["masked proof failure", d => { d.jobs["native-arm64"].steps[6].run += "\ntrue"; }],
     ["target overridden in step", d => { d.jobs["native-arm64"].steps[6].env = { KIZUKI_TARGET: "bun-linux-x64-baseline" }; }],
+    ["receipt check removed", d => { d.jobs["native-arm64"].steps.splice(7, 1); }],
+    ["renamed receipt check", d => { d.jobs["native-arm64"].steps[7].run = 'test -f "$RUNNER_TEMP/kizuki-macos-artifact-proof/missing.json"'; }],
+    ["wrong receipt path", d => { d.jobs["native-arm64"].steps[8].with.path = "dist/kizuki-*/bun-darwin-arm64/\n${{ runner.temp }}/wrong/receipt.json"; }],
+    ["always() retention", d => { d.jobs["native-arm64"].steps[8].if = "${{ always() }}"; }],
+    ["action SHA drift", d => { d.jobs["native-arm64"].steps[8].uses = "actions/upload-artifact@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; }],
+    ["artifact name change", d => { d.jobs["native-arm64"].steps[8].with.name = "macos-arm64-latest"; }],
+    ["package path change", d => { d.jobs["native-arm64"].steps[8].with.path = "dist/\n${{ runner.temp }}/kizuki-macos-artifact-proof/receipt.json"; }],
+    ["retention-days change", d => { d.jobs["native-arm64"].steps[8].with["retention-days"] = 90; }],
+    ["if-no-files-found change", d => { d.jobs["native-arm64"].steps[8].with["if-no-files-found"] = "warn"; }],
+    ["proof-command removal", d => { d.jobs["native-arm64"].steps[6].run = "bun run build:release\nbun run smoke:release"; }],
+    ["conditional receipt check", d => { d.jobs["native-arm64"].steps[7].if = "false"; }],
+  ];
+  for (const [name, mutate] of mutations) {
+    const doc = Bun.YAML.parse(text); mutate(doc);
+    expect(validateWorkflowText(path, JSON.stringify(doc)).length, name).toBeGreaterThan(0);
+  }
+});
+
+test("Linux validator rejects removal or bypass of each native receipt retention binding", () => {
+  const path = ".github/workflows/ci.yml";
+  const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  expect(validateWorkflowText(path, text)).toEqual([]);
+  const mutations: [string, (doc: any) => void][] = [
+    ["proof-command removal", d => { d.jobs.test.steps.splice(5, 1); }],
+    ["receipt check removed", d => { d.jobs.test.steps.splice(7, 1); }],
+    ["renamed receipt check", d => { d.jobs.test.steps[7].run = 'test -f "$RUNNER_TEMP/kizuki-artifact-proof/missing.json"'; }],
+    ["package-only upload path", d => { d.jobs.test.steps[8].with.path = "dist/kizuki-*/bun-linux-x64-baseline/"; }],
+    ["wrong receipt path", d => { d.jobs.test.steps[8].with.path = "dist/kizuki-*/bun-linux-x64-baseline/\n${{ runner.temp }}/wrong/receipt.json"; }],
+    ["always() retention", d => { d.jobs.test.steps[8].if = "${{ always() }}"; }],
+    ["action SHA drift", d => { d.jobs.test.steps[8].uses = "actions/upload-artifact@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; }],
+    ["artifact name change", d => { d.jobs.test.steps[8].with.name = "linux-x64-latest"; }],
+    ["package path change", d => { d.jobs.test.steps[8].with.path = "dist/\n${{ runner.temp }}/kizuki-artifact-proof/receipt.json"; }],
+    ["retention-days change", d => { d.jobs.test.steps[8].with["retention-days"] = 90; }],
+    ["if-no-files-found change", d => { d.jobs.test.steps[8].with["if-no-files-found"] = "warn"; }],
+    ["upload removed", d => { d.jobs.test.steps.pop(); }],
+    ["conditional receipt check", d => { d.jobs.test.steps[7].if = "false"; }],
+    ["masked proof failure", d => { d.jobs.test.steps[5].run += "\ntrue"; }],
+    ["second package-only upload", d => {
+      d.jobs.test.steps.push({
+        name: "retain package only",
+        if: "${{ always() }}",
+        uses: pinnedUpload,
+        with: {
+          name: "linux-x64-extra",
+          path: "dist/kizuki-*/bun-linux-x64-baseline/",
+          "retention-days": 7,
+          "if-no-files-found": "error",
+        },
+      });
+    }],
   ];
   for (const [name, mutate] of mutations) {
     const doc = Bun.YAML.parse(text); mutate(doc);
