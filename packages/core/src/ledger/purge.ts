@@ -572,11 +572,53 @@ function claimsCiting(
 ): Claim[] {
   if (!tableExists(db, "claims") || eventIds.length === 0) return [];
   const wanted = new Set(eventIds);
-  return [
-    ...listClaims(db, { status: "live", limit: 10_000 }),
-    ...listClaims(db, { status: "provenance_reduced", limit: 10_000 }),
-    ...listClaims(db, { status: "purged", limit: 10_000 }),
-  ].filter((claim) => claim.provenance.some((id) => wanted.has(id)));
+  // Exhaust the existing streamed predicate; a browsing limit is not a purge
+  // boundary. Historical statuses may still have a pending derived removal.
+  return listClaims(db, {
+    limit: -1,
+    filter: (claim) => claim.provenance.some((id) => wanted.has(id)),
+  });
+}
+
+/** Remove every local projection supported by erased evidence before rewriting. */
+function removeDerivedForPurge(
+  db: Database,
+  eventIds: readonly string[],
+  pageIds: readonly string[],
+): string[] {
+  const events = JSON.stringify(eventIds);
+  const documents = JSON.stringify(retrievalIds(eventIds, pageIds, []));
+  const removed = new Map<string, "canon" | "ledger">();
+  // Inspect both copies so an interrupted prior projection cannot hide a row.
+  for (const table of ["search_documents", "search_docs"] as const) {
+    if (!tableExists(db, table)) continue;
+    const rows = db.query<{ doc_id: string; scope: "canon" | "ledger" }, [string, string]>(
+      `SELECT doc_id, scope FROM ${table}
+        WHERE doc_id IN (SELECT value FROM json_each(?))
+           OR EXISTS (
+             SELECT 1 FROM json_each(${table}.provenance) AS p
+             JOIN json_each(?) AS e
+               ON p.value = e.value OR p.value = 'event:' || e.value
+           )`,
+    ).all(documents, events);
+    for (const row of rows) removed.set(row.doc_id, row.scope);
+  }
+  for (const [id, scope] of removed) removeDoc(db, scope, id);
+  if (tableExists(db, "graph_edges")) {
+    db.query<never, [string, string, string]>(
+      `WITH erased(id) AS (SELECT value FROM json_each(?))
+       DELETE FROM graph_edges
+        WHERE src IN (SELECT id FROM erased UNION ALL SELECT 'event:' || id FROM erased)
+           OR dst IN (SELECT id FROM erased UNION ALL SELECT 'event:' || id FROM erased)
+           OR src IN (SELECT value FROM json_each(?))
+           OR dst IN (SELECT value FROM json_each(?))
+           OR EXISTS (
+             SELECT 1 FROM json_each(graph_edges.provenance) AS p
+             JOIN erased AS e ON p.value = e.id OR p.value = 'event:' || e.id
+           )`,
+    ).run(events, JSON.stringify(pageIds), JSON.stringify(pageIds));
+  }
+  return [...removed.keys()];
 }
 
 function rowToOp(row: {
@@ -930,19 +972,10 @@ function purgeEventsLocked(
     }
 
     const eventIds = candidates.map(({ event_id }) => event_id);
-    if (tableExists(db, "search_docs")) {
-      for (const eventId of eventIds) {
-        removeDoc(db, "ledger", eventId);
-      }
-    }
-    if (tableExists(db, "graph_edges")) {
-      const removeGraphEdges = db.query<never, [string, string]>(
-        "DELETE FROM graph_edges WHERE src = ? OR dst = ?",
-      );
-      for (const eventId of eventIds) {
-        removeGraphEdges.run(eventId, eventId);
-      }
-    }
+    const pageIds = matched.affected
+      .map((page) => page.id)
+      .filter((id) => id.length > 0);
+    const derivedDocIds = removeDerivedForPurge(db, eventIds, pageIds);
 
     const citing = claimsCiting(db, eventIds);
     const claimIds = [...new Set(citing.map((claim) => claim.claim_id))].sort();
@@ -969,9 +1002,6 @@ function purgeEventsLocked(
       }
     }
 
-    const pageIds = matched.affected
-      .map((page) => page.id)
-      .filter((id) => id.length > 0);
     const retrievalClaimIds = citing.map((claim) => claim.claim_id);
     const ops: PurgeOp[] = [];
     if (retrievalStore !== null) {
@@ -979,7 +1009,7 @@ function purgeEventsLocked(
         op_id: mint(options.ids),
         receipt_id: batchReceipt,
         store: retrievalStore,
-        ids: retrievalIds(eventIds, pageIds, retrievalClaimIds),
+        ids: [...new Set([...retrievalIds(eventIds, pageIds, retrievalClaimIds), ...derivedDocIds])],
         state: "pending",
         proof: null,
         created_at: purgedAt,

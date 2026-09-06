@@ -893,22 +893,32 @@ export function markClaimsAfterPurge(
   at: string,
 ): { purged: string[]; reduced: string[] } {
   if (!tableExists(db, "claims")) return { purged: [], reduced: [] };
-  const candidates = [
-    ...listClaims(db, { status: "live" }),
-    ...listClaims(db, { status: "provenance_reduced" }),
-  ];
   const purged: string[] = [];
   const reduced: string[] = [];
-  for (const claim of candidates) {
-    const remaining = remainingProvenanceCount(db, claim);
-    if (remaining === 0) {
-      persistClaim(db, { ...claim, status: "purged", retracted_at: at });
-      purged.push(claim.claim_id);
-      continue;
-    }
-    if (remaining < claim.provenance.length && claim.status === "live") {
-      persistClaim(db, { ...claim, status: "provenance_reduced" });
-      reduced.push(claim.claim_id);
+  let after: string | null = null;
+  // Status changes while walking. Advance by immutable identity, never by an
+  // offset into the shrinking live set, and finish only after an empty batch.
+  for (;;) {
+    const rows: ClaimRow[] = db.query<ClaimRow, string[]>(
+      `SELECT * FROM claims
+        WHERE status IN ('live', 'provenance_reduced')
+          ${after === null ? "" : "AND claim_id > ?"}
+        ORDER BY claim_id LIMIT 500`,
+    ).all(...(after === null ? [] : [after]));
+    if (rows.length === 0) break;
+    after = rows[rows.length - 1]!.claim_id;
+    for (const row of rows) {
+      const claim = rowToClaim(row);
+      const remaining = remainingProvenanceCount(db, claim);
+      if (remaining === 0) {
+        persistClaim(db, { ...claim, status: "purged", retracted_at: at });
+        purged.push(claim.claim_id);
+        continue;
+      }
+      if (remaining < claim.provenance.length && claim.status === "live") {
+        persistClaim(db, { ...claim, status: "provenance_reduced" });
+        reduced.push(claim.claim_id);
+      }
     }
   }
   return { purged, reduced };
