@@ -50,8 +50,9 @@ function euid(): bigint {
   return BigInt(process.geteuid());
 }
 function validName(name: string): Buffer {
+  if (typeof name !== "string" || name.length > 255 || Buffer.byteLength(name) > 255) fail();
   const bytes = Buffer.from(name);
-  if (!bytes.length || bytes.length > 255 || bytes.includes(0) || bytes.includes(47) ||
+  if (bytes.toString() !== name || !bytes.length || bytes.includes(0) || bytes.includes(47) ||
       bytes.equals(Buffer.from(".")) || bytes.equals(Buffer.from(".."))) fail();
   return Buffer.concat([bytes, Buffer.from([0])]);
 }
@@ -102,7 +103,8 @@ function openChild(parent: number, name: string, directory: boolean): number {
   return result;
 }
 function openQualifiedParent(path: string): number {
-  if (!isAbsolute(path) || resolve(path) !== path || path.split("/").length > 257) fail();
+  if (typeof path !== "string" || path.length > 4096 || Buffer.byteLength(path) > 4096 || Buffer.from(path).toString() !== path ||
+      !isAbsolute(path) || resolve(path) !== path || path.split("/").length > 257) fail();
   const owner = euid();
   let fd = call(() => openSync("/", constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | 0x80000));
   try {
@@ -240,16 +242,17 @@ export class CredentialDirectory {
 
   writeComplete(handle: CredentialFileInspection, bytes: Uint8Array): void {
     if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_CREDENTIAL_BYTES) fail("bounds");
+    const expected = Buffer.from(bytes);
     const state = this.state(handle);
     if (!state.writable) fail("handle");
     this.assertCurrent();
     this.verifyCreatedEmpty(state);
-    for (let offset = 0; offset < bytes.byteLength;) {
-      const count = call(() => writeSync(state.fd, bytes, offset, bytes.byteLength - offset, offset));
+    for (let offset = 0; offset < expected.byteLength;) {
+      const count = call(() => writeSync(state.fd, expected, offset, expected.byteLength - offset, offset));
       if (count <= 0) fail("write");
       offset += count;
     }
-    this.syncAndVerify(handle, bytes);
+    this.syncAndVerify(handle, expected);
   }
 
   /** Same-process cleanup only. Restarted files are intentionally retained. */
