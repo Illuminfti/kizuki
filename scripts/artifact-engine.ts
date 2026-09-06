@@ -53,7 +53,8 @@ export function parseMcpObservation(value: unknown, executableSha256: string): M
     const envelope = object(parseProofJson(text.text));
     keys(envelope, ["schema", "tool", "principal", "at", "canon", "quoted", "denied", "data"], ["source_policy"]);
     if (envelope.schema !== "kizuki.envelope/v1" || envelope.tool !== "system_health" || envelope.principal !== "owner" ||
-        typeof envelope.at !== "string" || !Number.isFinite(Date.parse(envelope.at)) ||
+        typeof envelope.at !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(envelope.at) ||
+        !Number.isFinite(Date.parse(envelope.at)) || new Date(envelope.at).toISOString() !== envelope.at ||
         ![envelope.canon, envelope.quoted, envelope.denied].every(item => Array.isArray(item) && item.length === 0) ||
         (result.structuredContent !== undefined && canonical(result.structuredContent) !== canonical(envelope))) invalid();
     return { executable_sha256: executableSha256, runtime: parseSqliteRuntime(object(envelope.data).runtime), exit_code: 0, mcp_is_error: false };
@@ -65,6 +66,12 @@ function response(line: string, id: number): Record<string, unknown> {
   keys(row, ["jsonrpc", "id", "result"]);
   if (row.jsonrpc !== "2.0" || row.id !== id) invalid();
   return object(row.result);
+}
+
+function validateInitialize(line: string): void {
+  const init = response(line, 1);
+  if (init.protocolVersion !== PROTOCOL_VERSION) invalid();
+  object(init.capabilities); object(init.serverInfo);
 }
 
 /** Two bounded pipes and one deadline cover startup, protocol and final exit.
@@ -85,9 +92,7 @@ export async function collectEngineProcess(
   let phase = 0, pending = "";
   const onLine = (line: string) => {
     if (phase === 0) {
-      const init = response(line, 1);
-      if (init.protocolVersion !== PROTOCOL_VERSION || !init.capabilities || !init.serverInfo) invalid();
-      object(init.capabilities); object(init.serverInfo);
+      validateInitialize(line);
       phase = 1;
       send({ jsonrpc: "2.0", method: "notifications/initialized" });
       send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "system_health", arguments: {} } });
@@ -150,7 +155,7 @@ export function mcpObservationFromOutput(stdout: string, executableSha256: strin
   try {
     const lines = stdout.split("\n");
     if (lines.length !== 3 || lines[2] !== "") invalid();
-    response(lines[0]!, 1);
+    validateInitialize(lines[0]!);
     return parseMcpObservation(response(lines[1]!, 2), executableSha256);
   } catch { return invalid(); }
 }
