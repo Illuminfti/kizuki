@@ -4,11 +4,11 @@ import type { Database } from "bun:sqlite";
 export function applyAgentEnrollmentV17(db: Database): void {
   db.exec(`
     CREATE TABLE agent_enrollments (
-      operation_id TEXT PRIMARY KEY CHECK (length(operation_id) BETWEEN 8 AND 64),
+      operation_id TEXT PRIMARY KEY CHECK (length(operation_id) BETWEEN 8 AND 64 AND substr(operation_id,1,1) GLOB '[A-Za-z0-9]' AND operation_id NOT GLOB '*[^A-Za-z0-9_-]*'),
       request_digest TEXT NOT NULL CHECK (length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*'),
       destination_digest TEXT NOT NULL CHECK (length(destination_digest) = 64 AND destination_digest NOT GLOB '*[^0-9a-f]*'),
       agent_id TEXT NOT NULL UNIQUE,
-      name TEXT NOT NULL CHECK (length(name) BETWEEN 2 AND 64 AND name GLOB '[a-z0-9][a-z0-9-]*'),
+      name TEXT NOT NULL CHECK (length(name) BETWEEN 2 AND 64 AND substr(name,1,1) GLOB '[a-z0-9]' AND name NOT GLOB '*[^a-z0-9-]*'),
       grant_json TEXT NOT NULL CHECK (length(grant_json) <= 32768),
       state TEXT NOT NULL CHECK (state IN ('reserved', 'file_bound', 'completed', 'cancelled')),
       parent_dev TEXT NOT NULL CHECK (length(parent_dev) > 0 AND parent_dev NOT GLOB '*[^0-9]*'),
@@ -19,20 +19,25 @@ export function applyAgentEnrollmentV17(db: Database): void {
       credential_size INTEGER,
       file_dev TEXT CHECK (file_dev IS NULL OR (length(file_dev) > 0 AND file_dev NOT GLOB '*[^0-9]*')),
       file_ino TEXT CHECK (file_ino IS NULL OR (length(file_ino) > 0 AND file_ino NOT GLOB '*[^0-9]*')),
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      completed_at TEXT,
-      cancelled_at TEXT,
+      created_at TEXT NOT NULL CHECK (created_at GLOB '????-??-??T??:??:??.???Z'),
+      updated_at TEXT NOT NULL CHECK (updated_at GLOB '????-??-??T??:??:??.???Z'),
+      completed_at TEXT CHECK (completed_at IS NULL OR completed_at GLOB '????-??-??T??:??:??.???Z'),
+      cancelled_at TEXT CHECK (cancelled_at IS NULL OR cancelled_at GLOB '????-??-??T??:??:??.???Z'),
       CHECK (
         (state = 'reserved' AND generation IS NULL AND token_hash IS NULL AND credential_digest IS NULL
           AND credential_size IS NULL AND file_dev IS NULL AND file_ino IS NULL)
         OR
-        (state IN ('file_bound', 'completed', 'cancelled') AND
+        (state = 'cancelled' AND
           ((generation IS NULL AND token_hash IS NULL AND credential_digest IS NULL AND credential_size IS NULL AND file_dev IS NULL AND file_ino IS NULL)
            OR (generation IS NOT NULL AND length(generation) = 32 AND generation NOT GLOB '*[^0-9a-f]*'
              AND token_hash IS NOT NULL AND length(token_hash) = 64 AND token_hash NOT GLOB '*[^0-9a-f]*'
              AND credential_digest IS NOT NULL AND length(credential_digest) = 64 AND credential_digest NOT GLOB '*[^0-9a-f]*'
              AND credential_size BETWEEN 1 AND 1024 AND file_dev IS NOT NULL AND file_ino IS NOT NULL)))
+        OR
+        (state IN ('file_bound', 'completed') AND generation IS NOT NULL AND length(generation) = 32 AND generation NOT GLOB '*[^0-9a-f]*'
+          AND token_hash IS NOT NULL AND length(token_hash) = 64 AND token_hash NOT GLOB '*[^0-9a-f]*'
+          AND credential_digest IS NOT NULL AND length(credential_digest) = 64 AND credential_digest NOT GLOB '*[^0-9a-f]*'
+          AND credential_size BETWEEN 1 AND 1024 AND file_dev IS NOT NULL AND file_ino IS NOT NULL)
       )
     ) STRICT;
     CREATE UNIQUE INDEX agent_enrollments_live_name
