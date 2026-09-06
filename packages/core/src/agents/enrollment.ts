@@ -112,9 +112,15 @@ function vaultDatabase(vaultPath: string): string {
       const parent = dirname(cursor); if (parent === cursor) break; cursor = parent;
     }
     const controlStat = lstatSync(control), dbStat = lstatSync(path);
-    if (!controlStat.isDirectory() || !dbStat.isFile() || controlStat.isSymbolicLink() || dbStat.isSymbolicLink() || dbStat.nlink !== 1) fail("vault_unavailable");
+    if (!controlStat.isDirectory() || controlStat.isSymbolicLink() || dbStat.isSymbolicLink()) fail("vault_unavailable");
     if ((controlStat.mode & 0o077) !== 0 || (dbStat.mode & 0o077) !== 0) fail("vault_unavailable");
     if (uid !== undefined && (controlStat.uid !== uid || dbStat.uid !== uid)) fail("vault_unavailable");
+    // The descriptor-rooted observation prevents a path-only DB custody check.
+    const custody = openCredentialDirectory(control);
+    try {
+      const identity = custody.inspectFileIdentity("kizuki.db");
+      if (identity === null || identity.dev !== dbStat.dev.toString() || identity.ino !== dbStat.ino.toString()) fail("vault_unavailable");
+    } finally { custody.close(); }
     return path;
   } catch (error) { if (error instanceof AgentEnrollmentError) throw error; fail("vault_unavailable"); }
 }
@@ -259,7 +265,7 @@ function cleanupAfterConfirmedActivationRollback(db: DatabaseType, directory: Cr
 
 function openForPreview(vaultPath: string): DatabaseType {
   const path = vaultDatabase(vaultPath);
-  try { return new Database(path, { readonly: true }); } catch { fail("vault_unavailable"); }
+  try { const db = new Database(path, { readonly: true }); vaultDatabase(vaultPath); return db; } catch { fail("vault_unavailable"); }
 }
 
 export function previewAgentEnrollment(vaultPath: string, request: AgentEnrollmentRequest): AgentEnrollmentResult {
@@ -293,6 +299,7 @@ export function enrollAgent(vaultPath: string, request: AgentEnrollmentRequest):
     try { directory = openCredentialDirectory(shape.parent); } catch (error) { if (error instanceof Error && error.message.includes("unsupported")) fail("unsupported_platform"); fail("credential_unsafe"); }
     if (directory === undefined) fail("credential_unsafe");
     db = openLedger(dbPath);
+    vaultDatabase(vaultPath);
     db.exec("PRAGMA busy_timeout = 5000; PRAGMA synchronous = FULL");
     const journal = db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode;
     const synchronous = db.query<{ synchronous: number }, []>("PRAGMA synchronous").get()?.synchronous;
