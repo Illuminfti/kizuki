@@ -87,7 +87,7 @@ function processEvent(
       if (accepted.status === "error") {
         switch (accepted.kind) {
           case "infrastructure":
-            throw new LedgerStoreError("corrupt", accepted.error);
+            throw new LedgerStoreError("infrastructure", accepted.error);
           case "validation":
             result.errors.push(accepted.error);
             return result;

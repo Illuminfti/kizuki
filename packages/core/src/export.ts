@@ -946,8 +946,7 @@ function* pageCheckpoints(db: Database): Generator<Record<string, unknown>> {
   }
 }
 
-function* pageRailCursors(db: Database): Generator<Record<string, unknown>> {
-  if (!tableExists(db, "rail_cursors")) return;
+function* pageRailCursors(db: Database): Generator<RailCursorRow> {
   let after: { rail: string; source_key: string } | null = null;
   while (true) {
     let rows: RailCursorRow[];
@@ -969,14 +968,7 @@ function* pageRailCursors(db: Database): Generator<Record<string, unknown>> {
         .all(after.rail, after.rail, after.source_key, PAGE);
     }
     if (rows.length === 0) break;
-    for (const row of rows) {
-      yield {
-        rail: row.rail,
-        source_key: row.source_key,
-        cursor: row.cursor,
-        updated_at: row.updated_at,
-      };
-    }
+    yield* rows;
     const last: RailCursorRow | undefined = rows.at(-1);
     if (last === undefined || rows.length < PAGE) break;
     after = { rail: last.rail, source_key: last.source_key };
@@ -1725,15 +1717,6 @@ function validateRestoredEventOrigins(db: Database): void {
   }
 }
 
-function insertRailCursorRow(db: Database, raw: Record<string, unknown>): void {
-  writeRailCursor(
-    db,
-    asString(raw.rail, "rail"),
-    asString(raw.source_key, "source_key"),
-    asString(raw.cursor, "cursor"),
-  );
-}
-
 function insertCheckpointRow(db: Database, raw: Record<string, unknown>): void {
   const connectorId = asString(raw.connector_id, "connector_id");
   const sourceKey = asString(raw.source_key, "source_key");
@@ -1952,7 +1935,12 @@ export function restoreVault(
         const railsRequired = manifest.schema !== LEGACY_BACKUP_SCHEMA;
         let railCount = 0;
         for (const row of streamRows(source, RAIL_CURSORS_BACKUP, railsRequired)) {
-          insertRailCursorRow(db, row);
+          writeRailCursor(
+            db,
+            asString(row.rail, "rail"),
+            asString(row.source_key, "source_key"),
+            asString(row.cursor, "cursor"),
+          );
           railCount += 1;
         }
         if (railsRequired && railCount !== manifest.files[RAIL_CURSORS_BACKUP]!.count) {
