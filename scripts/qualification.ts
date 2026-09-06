@@ -315,12 +315,45 @@ export function statusQualification(run: string) {
   const age = latest ? qualificationDate(now.at) - qualificationDate(latest.at) : null;
   return {...evaluateQualification(manifest.profile,entries.map((e)=>e.sample)), qualification_id:manifest.qualification_id,policy_sha256:manifest.policy_sha256,identity:manifest.identity, samples:entries.length, last_observed_at:latest?.at ?? null, observation_age_ms:age, continuity_current:latest !== undefined && latest.boot_id === now.boot_id && age !== null && age >= 0 && age <= manifest.profile.max_gap_ms};
 }
-function cliDiagnostic(error: unknown): string {
-  if (error instanceof ArtifactProofError) return error.reason;
+/** Exact local throw literals and reviewed proof reasons. Unknown values stay generic. */
+const QUALIFICATION_CLI_DIAGNOSTICS = new Set([
+  "invalid evidence identifier","invalid evidence object","invalid evidence schema keys","unknown receipt fields",
+  "invalid receipt counter","invalid evidence string","symlink evidence path refused",
+  "evidence file is unsafe or exceeds byte limit","evidence exceeds byte limit",
+  "qualification currently requires Linux boot and process anchors","artifact checksum mismatch",
+  "unsafe manifest identity","invalid qualification manifest","invalid manifest source identity",
+  "invalid manifest digest","invalid manifest rails","manifest policy digest mismatch",
+  "unsafe observation database","unsafe database sidecar","all seven initialized enabled rails are required",
+  "only explicit UTC fixture scope {scope,vault,brief_hour,timezone,supervisor:none} is supported",
+  "scope brief_hour does not match configured morning hour","qualification manifest genesis mismatch",
+  "torn qualification journal","qualification journal row limit","qualification hash chain mismatch",
+  "oversized or torn run journal","run journal row limit","invalid receipt stop reason",
+  "unknown run rail or status","invalid run execution identity fields","invalid run execution identity",
+  "invalid run errors","invalid receipt model identity","invalid receipt model diagnostic",
+  "invalid receipt model reference","invalid run health","conflicting run evidence",
+  "invalid process start identity","process image exceeds limit","artifact or proof identity changed",
+  "qualification journal byte limit","collection rejected; durable interruption recorded",
+  "invalid qualification arguments",
+  "usage: qualification.ts init --artifact DIR --proof FILE --scope FILE --out NEWDIR | sample --run DIR | status --run DIR",
+  "invalid evidence timestamp","unsupported observation scope",
+  "only UTC fixture timing and supervisor-none policy are supported","invalid qualification profile","invalid rail profile",
+]);
+const ARTIFACT_PROOF_CLI_REASONS = new Set([
+  "json-byte-limit","json-depth-limit","duplicate-json-key","invalid-json","invalid-proof-schema",
+  "invalid-proof-string","invalid-proof-digest","invalid-runtime-observation","unknown-proof-schema",
+  "noncanonical-proof-path","proof-isolation-mismatch","proof-identity-mismatch","proof-package-mismatch",
+  "proof-has-failures","invalid-kernel-release","missing-engine-observation","invalid-engine-outcome",
+  "engine-executable-mismatch","engine-bun-mismatch","engine-sqlite-mismatch","proof-step-set-mismatch",
+  "proof-step-failed-or-substituted","missing-engine-proof","effective-sqlite-identity-qualified",
+  "unqualified-sqlite-identity","unsupported-package-bun-version",
+]);
+export function cliDiagnostic(error: unknown): string {
+  if (error instanceof ArtifactProofError) return ARTIFACT_PROOF_CLI_REASONS.has(error.reason) ? error.reason : "qualification failed";
   if (error instanceof SyntaxError) return "qualification json unreadable";
   if (error instanceof SQLiteError) return "qualification sqlite unreadable";
   if (error instanceof Error && typeof (error as NodeJS.ErrnoException).syscall === "string") return "qualification filesystem unreadable";
-  return error instanceof Error ? error.message : "qualification failed";
+  if (error instanceof Error && QUALIFICATION_CLI_DIAGNOSTICS.has(error.message)) return error.message;
+  return "qualification failed";
 }
 if (import.meta.main) {
   try {
