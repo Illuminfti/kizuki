@@ -8,6 +8,8 @@ import { initQualification } from "./qualification";
 import { initVault } from "../packages/core/src/vault/init";
 import { openLedger } from "../packages/core/src/ledger/db";
 import { initServe } from "../packages/core/src/serve/schema";
+import { artifactProofSteps, SQLITE_ENGINE_POLICY } from "./artifact-proof";
+import type { SqliteRuntime } from "../packages/core/src/ledger/runtime";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -18,7 +20,7 @@ function fixture(platform = target) {
   const root = mkdtempSync(join(tmpdir(), "kizuki-acceptance-fixture-")); roots.push(root);
   const artifact = join(root, "artifact"); mkdirSync(artifact);
   const names = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"];
-  for (const name of names.slice(0, 3)) writeFileSync(join(artifact, name), "Synthetic evaluator fixture. Never executed.");
+  for (const name of names.slice(0, 3)) writeFileSync(join(artifact, name), `Synthetic ${name} evaluator fixture. Never executed.`);
   writeFileSync(join(artifact, "BUILD.json"), JSON.stringify({ schema: "kizuki.release-build/v1", source_sha: source, target: platform, bun_version: "1.3.14" }));
   writeFileSync(join(artifact, "SHA256SUMS"), names.map(name => `${digest(readFileSync(join(artifact, name)))}  ${name}`).join("\n") + "\n");
   const execution = "/tmp/kizuki-artifact-proof-synthetic/execution", vault = `${execution}/vault`, restored = `${execution}/restored`, exported = `${execution}/export`;
@@ -45,6 +47,20 @@ function fixture(platform = target) {
   const index = { schema: "kizuki.acceptance-evidence/v1", candidate_source_sha: source, artifacts: [ref], fixture_observation: null as unknown };
   const save = () => { writeFileSync(proof, JSON.stringify(receipt)); ref.proof_sha256 = digest(readFileSync(proof)); writeFileSync(indexPath, JSON.stringify(index)); };
   save(); return { root, artifact, proof, indexPath, index, receipt, ref, save };
+}
+function engineFixture(exit = 0, platform = target) {
+  const f = fixture(platform), entry = SQLITE_ENGINE_POLICY.accepted[0];
+  const runtime: SqliteRuntime = { schema: "kizuki.sqlite-runtime/v1", bun_version: "1.3.14",
+    sqlite_version: entry.sqlite_version, sqlite_source_id: entry.sqlite_source_id };
+  const receipt = Object.assign(f.receipt, { schema: "kizuki.artifact-proof/v2", host_kernel_release: "synthetic-kernel",
+    engine_observations: {
+      kizuki: { executable_sha256: f.receipt.package_sha256.kizuki!, runtime: { ...runtime }, exit_code: exit, doctor_status: exit === 0 ? "ok" : "error" },
+      kizuki_mcp: { executable_sha256: f.receipt.package_sha256["kizuki-mcp"]!, runtime: { ...runtime }, exit_code: 0, mcp_is_error: false },
+    },
+  });
+  receipt.steps = artifactProofSteps("kizuki.artifact-proof/v2", receipt.paths).map(step => ({ ...step, passed: true, exit_code: step.id === "cli-engine" ? exit : 0 }));
+  f.ref.producer = receipt.schema; f.index.schema = "kizuki.acceptance-evidence/v2"; f.save();
+  return { ...f, receipt };
 }
 const gate = (result: ReturnType<typeof evaluateRelease>, id: string) => result.gates.find(row => row.id === id)!;
 
@@ -119,7 +135,7 @@ test.each(["unlink", "rmdir", "directory-sync"])("report publication identifies 
   expect(result.reason).toBe(mode === "directory-sync" ? "published-report-durability-unconfirmed" : "published-report-cleanup-failed");
 });
 
-test("all fixed journeys, C3 connectors and separate 1.0 gates remain visible without evidence", () => {
+test("readiness keeps install, stranger and P0 evidence required while calendar observation stays optional", () => {
   const f = fixture(); f.index.artifacts = []; f.save();
   for (const profile of ["rc", "1.0"] as const) {
     const result = evaluateRelease(profile, f.indexPath);
@@ -129,8 +145,13 @@ test("all fixed journeys, C3 connectors and separate 1.0 gates remain visible wi
     ]);
     expect(result.connectors).toHaveLength(15);
     expect(gate(result, `artifact.${target}`).status).toBe("MISSING");
-    expect(gate(result, "owner.seven-day-rails").required).toBe(profile === "1.0");
-    expect(gate(result, "estate.fourteen-day-parity").status).toBe("NOT_IMPLEMENTED");
+    for (const id of ["owner.seven-day-rails", "estate.fourteen-day-parity", "owner.final-cutover"]) {
+      expect(gate(result, id)).toMatchObject({ required: false, status: "NOT_IMPLEMENTED", reason: "superseded-readiness-gate" });
+    }
+    for (const id of [`artifact.${target}`, `lifecycle.${target}`, "journey.install-recover", "human.unfamiliar-user", "candidate.current-p0-disposition"]) {
+      expect(gate(result, id).required).toBe(true);
+      expect(gate(result, id).status).not.toBe("PASS");
+    }
   }
 });
 
@@ -140,6 +161,7 @@ test("consistent fixture bytes receive only local integrity credit, never native
   expect(gate(result, `artifact.${target}`).status).toBe("PASS");
   expect(gate(result, "artifact.bun-darwin-arm64").status).toBe("PASS");
   expect(gate(result, `artifact.${target}`).scope).toBe("automated-fixture-integrity");
+  expect(gate(result, `engine.${target}`)).toMatchObject({ required: true, status: "MISSING", reason: "missing-engine-proof" });
   expect(gate(result, `native.${target}`).status).toBe("UNVERIFIABLE");
   expect(gate(result, "human.unfamiliar-user").status).toBe("NOT_IMPLEMENTED");
   expect(result.decision).toBe("NO-GO");
@@ -148,6 +170,73 @@ test("consistent fixture bytes receive only local integrity credit, never native
   expect(result.verifier_sha256).toMatch(/^[a-f0-9]{64}$/);
   const output = JSON.stringify(result);
   expect(output).not.toContain(f.root); expect(output).not.toContain(f.receipt.paths.vault);
+});
+
+test.each([0, 1])("v2 engine records preserve doctor exit %d without granting native or release credit", exit => {
+  const f = engineFixture(exit), mac = engineFixture(exit, "bun-darwin-arm64");
+  f.index.artifacts.push(mac.ref); f.save();
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(result.schema).toBe("kizuki.acceptance-report/v2");
+  for (const platform of [target, "bun-darwin-arm64"]) {
+    expect(gate(result, `artifact.${platform}`).status).toBe("PASS");
+    expect(gate(result, `engine.${platform}`)).toMatchObject({ required: true, status: "PASS", scope: "effective-sqlite-runtime" });
+    expect(gate(result, `native.${platform}`).status).toBe("UNVERIFIABLE");
+  }
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
+  for (const file of ["scripts/artifact-proof.ts", "packages/core/src/ledger/runtime.ts"]) {
+    expect(result.verifier.find(entry => entry.file === file)?.sha256).toBe(digest(readFileSync(join(import.meta.dir, "..", file))));
+  }
+});
+
+test("v2 indexes may inventory v1 receipts without adding engine credit", () => {
+  const f = fixture(); f.index.schema = "kizuki.acceptance-evidence/v2"; f.save();
+  const result = evaluateRelease("rc", f.indexPath);
+  expect(gate(result, `artifact.${target}`).status).toBe("PASS");
+  expect(gate(result, `engine.${target}`).reason).toBe("missing-engine-proof");
+  expect(gate(result, `engine.${target}`).status).toBe("MISSING");
+});
+
+test("producer versions must match their index and actual receipt", () => {
+  const f = engineFixture(); f.index.schema = "kizuki.acceptance-evidence/v1"; f.save();
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").status).toBe("FAIL");
+  f.index.schema = "kizuki.acceptance-evidence/v2"; f.ref.producer = "kizuki.artifact-proof/v1"; f.save();
+  const result = evaluateRelease("rc", f.indexPath);
+  expect(gate(result, `artifact.${target}`).status).toBe("FAIL");
+  expect(gate(result, `engine.${target}`).status).toBe("FAIL");
+});
+
+test("matching unknown engines retain fixture consistency with a failing engine gate", () => {
+  const f = engineFixture();
+  for (const observation of Object.values(f.receipt.engine_observations)) observation.runtime.sqlite_source_id = "synthetic unqualified source";
+  f.save();
+  const result = evaluateRelease("rc", f.indexPath);
+  expect(gate(result, `artifact.${target}`).status).toBe("PASS");
+  expect(gate(result, `engine.${target}`)).toMatchObject({ status: "FAIL", reason: "unqualified-sqlite-identity" });
+  expect(result.decision).toBe("NO-GO");
+});
+
+for (const [label, mutate] of [
+  ["missing MCP observation", (f) => Object.assign(f.receipt.engine_observations, { kizuki_mcp: null })],
+  ["wrong MCP executable", (f) => { f.receipt.engine_observations.kizuki_mcp.executable_sha256 = f.receipt.binary_sha256; }],
+  ["different child Bun", (f) => { f.receipt.engine_observations.kizuki.runtime.bun_version = "9.9.9"; }],
+  ["different child SQLite", (f) => { f.receipt.engine_observations.kizuki_mcp.runtime.sqlite_version = "3.53.1"; }],
+  ["doctor outcome mismatch", (f) => { f.receipt.engine_observations.kizuki.doctor_status = "error"; }],
+  ["engine step reordered", (f) => { [f.receipt.steps[2], f.receipt.steps[3]] = [f.receipt.steps[3]!, f.receipt.steps[2]!]; }],
+] satisfies [string, (f: ReturnType<typeof engineFixture>) => unknown][]) test(`v2 artifact refuses ${label}`, () => {
+  const f = engineFixture(); mutate(f); f.save();
+  const result = evaluateRelease("rc", f.indexPath);
+  expect(gate(result, `artifact.${target}`).status).toBe("FAIL");
+  expect(gate(result, `engine.${target}`).status).toBe("FAIL");
+});
+
+test("duplicate receipt keys cannot establish either fixture or engine credit", () => {
+  const f = engineFixture();
+  const raw = `{"schema":"kizuki.artifact-proof/v2",${JSON.stringify(f.receipt).slice(1)}`;
+  writeFileSync(f.proof, raw); f.ref.proof_sha256 = digest(raw); writeFileSync(f.indexPath, JSON.stringify(f.index));
+  const result = evaluateRelease("rc", f.indexPath);
+  expect(gate(result, `artifact.${target}`).reason).toBe("duplicate-json-key");
+  expect(gate(result, `engine.${target}`).status).toBe("FAIL");
 });
 
 for (const [label, mutate] of [
