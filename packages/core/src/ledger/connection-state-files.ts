@@ -200,7 +200,8 @@ export interface StagedSwap {
 /**
  * The caller owns a durable journal before entering this swap. Flush its
  * directory entry before moving bytes so recovery can identify an interrupted
- * swap even when the first rename fails.
+ * swap even when the first rename fails. The caller records the completed
+ * swap before flushing the renamed directory entries.
  */
 export function swapStateFile(directory: string, swap: StagedSwap): void {
   fsyncDirectory(directory);
@@ -215,7 +216,6 @@ export function swapStateFile(directory: string, swap: StagedSwap): void {
       cause: error,
     });
   }
-  fsyncDirectory(directory);
 }
 
 /** Puts back whatever a swap moved, however far through it got. */

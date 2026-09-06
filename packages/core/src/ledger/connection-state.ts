@@ -323,6 +323,9 @@ export class ConnectionStateStore implements ConnectionStateReader {
           this.staging.delete(staging);
           pending.temporaryPath = null;
           swapped = true;
+          // Record the rename before this fallible flush so locked rollback
+          // removes a new final file even when directory durability fails.
+          fsyncDirectory(this.directory);
         }
         commitConnectionRow(db, {
           connectorId,

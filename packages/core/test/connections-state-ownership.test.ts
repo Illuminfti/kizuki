@@ -130,4 +130,74 @@ describe("connection state creation ownership", () => {
       `);
     });
   }
+
+  for (const operation of ["enrollment", "replacement"] as const) {
+    test(`${operation} rolls back a directory flush failure after the final rename`, () => {
+      const directory = temporary();
+      isolated(`
+        import { mock } from "bun:test";
+        import * as fs from "node:fs";
+        import { strict as assert } from "node:assert";
+        import { join } from "node:path";
+        const operation = ${JSON.stringify(operation)};
+        const oldBytes = new TextEncoder().encode("previous fixture bytes");
+        const newBytes = new TextEncoder().encode("replacement fixture bytes");
+        const realRename = fs.renameSync, realSync = fs.fsyncSync;
+        let armed = false, renamedPath = null, failures = 0;
+        mock.module("node:fs", () => ({ ...fs,
+          renameSync(from, to) {
+            realRename(from, to);
+            if (armed && String(from).endsWith(".tmp") && String(to).endsWith(".state")) {
+              renamedPath = String(to);
+            }
+          },
+          fsyncSync(fd) {
+            if (armed && renamedPath !== null && fs.fstatSync(fd).isDirectory()) {
+              armed = false;
+              failures++;
+              assert.deepEqual(fs.readFileSync(renamedPath), Buffer.from(newBytes));
+              throw new Error("synthetic postrename directory flush failure");
+            }
+            return realSync(fd);
+          },
+        }));
+        const { ConnectionStateStore } = await import(${JSON.stringify(join(import.meta.dir, "../src/ledger/connection-state.ts"))});
+        const { openLedger } = await import(${JSON.stringify(join(import.meta.dir, "../src/ledger/db.ts"))});
+        const { listConnections } = await import(${JSON.stringify(join(import.meta.dir, "../src/ledger/connections.ts"))});
+        const { enrollConnection } = await import(${JSON.stringify(join(import.meta.dir, "../src/ledger/enroll.ts"))});
+        const { connector, io } = await import(${JSON.stringify(join(import.meta.dir, "connections-helpers.ts"))});
+        const db = openLedger(":memory:"), store = new ConnectionStateStore(${JSON.stringify(directory)});
+        const fixture = bytes => connector(async (_io, writer) => {
+          await writer.write(bytes);
+          return { display: "fixture" };
+        });
+        try {
+          const previous = operation === "replacement"
+            ? await enrollConnection(db, store, fixture(oldBytes), io)
+            : null;
+          const rowsBefore = db.query("SELECT * FROM connections ORDER BY source_key").all();
+          const filesBefore = fs.readdirSync(store.directory);
+          armed = true;
+          await assert.rejects(
+            () => previous === null
+              ? enrollConnection(db, store, fixture(newBytes), io)
+              : store.replace(db, previous, fixture(newBytes), io),
+            /synthetic postrename directory flush failure/,
+          );
+          assert.equal(failures, 1);
+          assert.deepEqual(db.query("SELECT * FROM connections ORDER BY source_key").all(), rowsBefore);
+          assert.deepEqual(listConnections(db), previous === null ? [] : [previous]);
+          assert.deepEqual(fs.readdirSync(store.directory), filesBefore);
+          if (previous === null) {
+            assert.equal(fs.existsSync(renamedPath), false);
+            assert.deepEqual(filesBefore, []);
+          } else {
+            assert.deepEqual(store.read(previous), oldBytes);
+            assert.deepEqual(fs.readFileSync(join(store.directory, filesBefore[0])), Buffer.from(oldBytes));
+            assert.deepEqual(filesBefore, [previous.source_key + ".state"]);
+          }
+        } finally { db.close(); }
+      `);
+    });
+  }
 });
