@@ -32,7 +32,7 @@ export function readRailCursor(
 
 /**
  * Extract-rail resume write. This is not a connector ingest receipt and does
- * not require a connections row; connector runs go through recordConnectorRun.
+ * not require a connections row; connector checkpoints are private to ingest.
  */
 export function writeRailCursor(
   db: Database,

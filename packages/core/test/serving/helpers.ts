@@ -15,7 +15,6 @@ import type { Grant, Principal, Tool } from "../../src/agents";
 import { getClaim } from "../../src/claims/store";
 import { rebuildDerived } from "../../src/derived";
 import { initGraph } from "../../src/graph/schema";
-import { saveCheckpoint } from "../../src/ledger/connections";
 import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
 import { purgeEvents } from "../../src/ledger/purge";
@@ -287,7 +286,9 @@ function enrollFixtureConnection(db: Database): string {
              '{"schema":"kizuki.connection-config/v1","state_ref_index":null}',
              '[]', ?)`,
   ).run(sourceKey, "2026-02-27T08:00:00Z");
-  saveCheckpoint(db, "fixture", sourceKey, "cursor-1", "sync", {
+  // Seed an archived checkpoint/run snapshot for read and round-trip tests.
+  const checkpointAt = new Date().toISOString();
+  const checkpointResult = {
     stored: 6,
     duplicates: 0,
     errors: [],
@@ -295,7 +296,16 @@ function enrollFixtureConnection(db: Database): string {
     withdrawn: 0,
     retractions_filed: 0,
     cursor: "cursor-1",
-  });
+  };
+  db.query(`INSERT INTO checkpoints
+    (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result)
+    VALUES ('fixture', ?, ?, 'sync', ?, ?, ?)`)
+    .run(sourceKey, "cursor-1", checkpointAt, checkpointAt, JSON.stringify(checkpointResult));
+  db.query(`INSERT INTO connection_runs
+    (run_id, connector_id, source_key, mode, started_at, finished_at,
+     previous_cursor, attempted_cursor, committed_cursor, stored, duplicates, errors, status)
+    VALUES (?, 'fixture', ?, 'sync', ?, ?, NULL, ?, ?, ?, 0, '[]', 'ok')`)
+    .run(sourceKey, sourceKey, checkpointAt, checkpointAt, "cursor-1", "cursor-1", checkpointResult.stored);
   return sourceKey;
 }
 

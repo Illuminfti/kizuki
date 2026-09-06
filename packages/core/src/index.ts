@@ -665,10 +665,8 @@ export {
   listCheckpoints,
   listConnectionRuns,
   listConnections,
-  recordConnectorRun,
   registerConnection,
   requireActiveConnection,
-  saveCheckpoint,
 } from "./ledger/connections";
 export type {
   Checkpoint,
