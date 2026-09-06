@@ -11,9 +11,10 @@ import { exportVault, restoreVault } from "../src/export";
 import { openLedger } from "../src/ledger/db";
 import { registerConnection } from "../src/ledger/connections";
 import { accept, readEvent, readLiveEvent } from "../src/ledger/ledger";
-import { runPurge } from "../src/ledger/purge";
+import { createVaultFts5Port, isHeld, purgeEvents, runPurge } from "../src/ledger/purge";
 import { setSourceGrant } from "../src/ledger/source-grants";
-import { refreshPageEdges } from "../src/graph/graph";
+import { refreshPageEdges, removePageEdges } from "../src/graph/graph";
+import { readDerivedMeta } from "../src/derived-meta";
 import { readRetrievalDocuments } from "../src/retrieval/rebuild";
 import { indexPage, projectSearchDocs } from "../src/search/indexer";
 import { serveGetPage } from "../src/serving/page";
@@ -277,4 +278,50 @@ test("a later source tombstone withdraws canon even while the original event row
   rebuildDerived(f.db, f.vault);
   expect(rows(f)).toEqual({ search: [], graph: [] });
   expect(readRetrievalDocuments(f.db, f.vault).some(doc => doc.kind === "page")).toBe(false);
+});
+
+test("graph metadata counts each held or unrecorded page once across full and incomplete maintenance", async () => {
+  const f = fixture();
+  const held = await recorded(f, "Held", "Held observes a marker.");
+  const unrecorded = await recorded(f, "Unrecorded", "Unrecorded observes a marker.");
+  const live = await recorded(f, "Live", "Live observes [[Held]], [[Unrecorded]], and [[Elsewhere]].");
+  writeFileSync(join(f.vault, unrecorded.page.relPath),
+    readFileSync(join(f.vault, unrecorded.page.relPath), "utf8") + "\nAn ordinary owner note.\n");
+  rebuildDerived(f.db, f.vault);
+  const port = createVaultFts5Port(f.vault);
+  try {
+    purgeEvents(f.db, f.vault, { event_id: held.event }, "retire held synthetic evidence", {
+      retrieval_store: port.descriptor.id,
+    });
+    expect(isHeld(f.db, held.page.relPath)).toBe(true);
+    const pages = listCanonPages(f.vault);
+    const metadata = () => {
+      const meta = readDerivedMeta(f.db, "graph")!;
+      return { doc_count: meta.doc_count, source_count: meta.source_count,
+        skipped_count: meta.skipped_count, status: meta.status,
+        canon_hash: meta.canon_hash, ledger_watermark: meta.ledger_watermark };
+    };
+    refreshDerivedPage(f.db, live.page, f.vault);
+    const incremental = metadata();
+    expect(incremental).toMatchObject({ doc_count: 2, source_count: 1,
+      skipped_count: 2, status: "degraded", canon_hash: null });
+    rebuildDerived(f.db, f.vault);
+    expect(metadata()).toEqual(incremental);
+
+    for (const snapshot of [pages, pages.filter(page => page.id !== held.page.id)]) {
+      for (const maintain of [
+        () => refreshPageEdges(f.db, live.page, snapshot, 1),
+        () => removePageEdges(f.db, held.page.id, snapshot, 1),
+      ]) {
+        maintain();
+        expect(metadata()).toMatchObject({ skipped_count: 3, status: "degraded", canon_hash: null });
+        maintain();
+        expect(metadata().skipped_count).toBe(3);
+      }
+    }
+    refreshDerivedPage(f.db, live.page, f.vault);
+    expect(metadata()).toEqual(incremental);
+  } finally {
+    await port.close();
+  }
 });

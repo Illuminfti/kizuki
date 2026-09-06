@@ -366,19 +366,18 @@ export function removeHeldPageEdges(db: Database, pages: readonly CanonPage[]): 
   markDerivedHeld(db, "graph", held.withheldCount);
 }
 
-function stampGraphIncomplete(db: Database, skippedCount: number): void {
+function stampGraphIncomplete(db: Database, skippedCount: number, withheldCount: number): void {
   const existing = readDerivedMeta(db, "graph");
-  const held = readDerivedHolds(db).paths.size;
   stampDerived(db, {
     layer: "graph",
     generation: existing?.generation ?? ulid(),
     rebuilt_at: new Date().toISOString(),
     doc_count: existing?.doc_count ?? 0,
     source_count: existing?.source_count ?? 0,
-    skipped_count: skippedCount + held,
+    skipped_count: skippedCount + withheldCount,
     status: "degraded",
     ledger_watermark: existing?.ledger_watermark ?? null,
-    canon_hash: held > 0 ? null : existing?.canon_hash ?? null,
+    canon_hash: withheldCount > 0 ? null : existing?.canon_hash ?? null,
     port_id: existing?.port_id ?? null,
     contract: existing?.contract ?? null,
     space: existing?.space ?? null,
@@ -387,12 +386,8 @@ function stampGraphIncomplete(db: Database, skippedCount: number): void {
 
 function restoreGraphStamp(db: Database, pages: readonly CanonPage[]): void {
   const excluded = graphExclusions(db, pages);
-  if (excluded.withheldCount > 0) {
-    stampGraphIncomplete(db, excluded.withheldCount);
-    return;
-  }
   const existing = readDerivedMeta(db, "graph");
-  if (existing === null || existing.status === "ok") return;
+  if (excluded.withheldCount === 0 && (existing === null || existing.status === "ok")) return;
   const live = pages.filter(page => excluded.evidence.has(page.relPath) && !excluded.paths.has(page.relPath));
   const edges =
     db
@@ -413,6 +408,7 @@ function restoreGraphStamp(db: Database, pages: readonly CanonPage[]): void {
       },
       live.length,
       edges,
+      excluded.withheldCount,
     ),
   );
 }
@@ -432,7 +428,7 @@ export function refreshPageEdges(
   const held = graphExclusions(db, [...pages.filter(candidate => candidate.relPath !== page.relPath), page]);
   if (!held.complete) {
     db.exec("DELETE FROM graph_edges");
-    stampGraphIncomplete(db, skipped);
+    stampGraphIncomplete(db, skipped, held.withheldCount);
     return;
   }
   removeHeldEdges(db, held);
@@ -455,7 +451,7 @@ export function refreshPageEdges(
   } else {
     db.query("DELETE FROM graph_edges WHERE src = ? OR dst = ?").run(page.id, page.id);
   }
-  stampGraphIncomplete(db, skipped);
+  stampGraphIncomplete(db, skipped, held.withheldCount);
 }
 
 /** Incremental delete. Incomplete walks drop all relations to this page. */
@@ -469,7 +465,7 @@ export function removePageEdges(
   const held = graphExclusions(db, pages);
   if (!held.complete) {
     db.exec("DELETE FROM graph_edges");
-    stampGraphIncomplete(db, skipped);
+    stampGraphIncomplete(db, skipped, held.withheldCount);
     return;
   }
   removeHeldEdges(db, held);
@@ -479,7 +475,7 @@ export function removePageEdges(
     return;
   }
   db.query("DELETE FROM graph_edges WHERE src = ? OR dst = ?").run(pageId, pageId);
-  stampGraphIncomplete(db, skipped);
+  stampGraphIncomplete(db, skipped, held.withheldCount);
 }
 
 function stampGraph(
