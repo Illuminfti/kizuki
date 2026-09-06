@@ -47,11 +47,10 @@ export async function recordedPage(
     if (result.status !== "stored") throw new Error(`recorded page capture: ${result.status}`);
     provenance = [result.event.event_id];
   }
-  const subjects = Array.isArray(frontmatter["subjects"]) ? frontmatter["subjects"] : [];
-  if (!subjects.every(subject => typeof subject === "string")) throw new Error("invalid fixture subjects");
   const filed = await insertClaim({ db }, {
     kind: existing === null ? "entity" : "edit", target: relPath.slice(0, -3), body, frontmatter,
-    provenance, subjects: subjects as string[], producer: "model", model_ref: "fixture:synthetic",
+    // Page scope belongs in frontmatter; no primary-subject target binding is requested.
+    provenance, subjects: [], producer: "model", model_ref: "fixture:synthetic",
     confidence: 1, sensitivity, taint,
   });
   if (filed.outcome !== "stored") throw new Error(`recorded page claim: ${filed.outcome}`);
