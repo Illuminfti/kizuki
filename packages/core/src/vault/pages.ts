@@ -76,11 +76,31 @@ function isCanonPageName(name: string): boolean {
 interface WalkState {
   pages: CanonPage[];
   skipped: SkippedPage[];
-  seen: Map<string, CanonPage>;
-  duplicates: Set<string>;
+  /** First path that claimed this frontmatter id, valid or not. */
+  seen: Map<string, string>;
   files: number;
   bytes: number;
   truncated: boolean;
+}
+
+function withholdDuplicate(
+  state: WalkState,
+  id: string,
+  firstPath: string,
+  relPath: string,
+): void {
+  state.pages = state.pages.filter((entry) => entry.id !== id);
+  state.skipped = state.skipped.filter(
+    (entry) => !(entry.relPath === firstPath && entry.code === "invalid"),
+  );
+  if (!state.skipped.some((entry) => entry.relPath === firstPath && entry.code === "duplicate")) {
+    state.skipped.push(
+      skip(firstPath, "duplicate", `duplicate id "${id}"; also at ${relPath}`),
+    );
+  }
+  state.skipped.push(
+    skip(relPath, "duplicate", `duplicate id "${id}"; first seen at ${firstPath}`),
+  );
 }
 
 function considerFile(state: WalkState, path: string, relPath: string): void {
@@ -137,42 +157,35 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
     return;
   }
 
+  const rawId = parsed.data["id"];
+  const id = typeof rawId === "string" && rawId.length > 0 ? rawId : null;
+  if (id !== null) {
+    const firstPath = state.seen.get(id);
+    if (firstPath !== undefined) {
+      withholdDuplicate(state, id, firstPath, relPath);
+      return;
+    }
+    state.seen.set(id, relPath);
+  }
+
   const errors = validatePage(parsed.data);
   if (errors.length > 0) {
     state.skipped.push(skip(relPath, "invalid", errors[0] ?? "invalid page"));
     return;
   }
-
-  const id = parsed.data["id"];
-  if (typeof id !== "string" || id.length === 0) {
+  if (id === null) {
     state.skipped.push(skip(relPath, "invalid", "id: must be a non-empty string"));
     return;
   }
 
-  const page: CanonPage = {
+  state.pages.push({
     id,
     path,
     relPath,
     data: parsed.data,
     body: parsed.body,
     contentHash,
-  };
-  const first = state.seen.get(id);
-  if (first !== undefined) {
-    state.duplicates.add(id);
-    if (!state.skipped.some((entry) => entry.relPath === first.relPath && entry.code === "duplicate")) {
-      state.skipped.push(
-        skip(first.relPath, "duplicate", `duplicate id "${id}"; also at ${relPath}`),
-      );
-    }
-    state.skipped.push(
-      skip(relPath, "duplicate", `duplicate id "${id}"; first seen at ${first.relPath}`),
-    );
-    state.pages = state.pages.filter((entry) => entry.id !== id);
-    return;
-  }
-  state.seen.set(id, page);
-  state.pages.push(page);
+  });
 }
 
 function walk(state: WalkState, directory: string, vaultPath: string, depth: number): void {
@@ -233,7 +246,6 @@ export function listCanonPagesReport(vaultPath: string): CanonPageReport {
     pages: [],
     skipped: [],
     seen: new Map(),
-    duplicates: new Set(),
     files: 0,
     bytes: 0,
     truncated: false,

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { applyCanonWrite } from "../../src/canon/apply";
-import { ownerEdited } from "../../src/canon/arbiter";
+import { ownerEdited, resolveTarget } from "../../src/canon/arbiter";
 import { createBudgetTracker } from "../../src/canon/budget";
 import { initCanon } from "../../src/canon/schema";
 import {
@@ -13,6 +13,7 @@ import {
   rebuildPageIndex,
 } from "../../src/canon/store";
 import { serializePage } from "../../src/vault/frontmatter";
+import { listCanonPages } from "../../src/vault/pages";
 import { hashBytes } from "../../src/vault/write";
 import { canonFixture, putEvent, storeClaim } from "./helpers";
 import type { CanonFixture } from "./helpers";
@@ -95,5 +96,93 @@ describe("canon storage p1", () => {
     expect(indexed?.last_hash).not.toBe(hashBytes(readFileSync(path)));
     expect(inspectPageIndex(live.db)).toEqual([]);
     expect(ownerEdited(live.io, receipt.page_path)).toBe(true);
+  });
+
+  test("rebuild keeps a schema-invalid page so the arbiter cannot fork it", async () => {
+    const live = canonFixture();
+    fixtures.push(live);
+    mkdirSync(join(live.vault, "people"));
+    writeFileSync(
+      join(live.vault, "people", "grace.md"),
+      serializePage({
+        data: {
+          id: "hand:grace",
+          title: "Grace",
+          type: "person",
+          status: "active",
+          sensitivity: "personal",
+          "x-subject-id": "person:grace",
+        },
+        body: "Hand-written page missing taint.\n",
+      }),
+    );
+
+    const rebuilt = rebuildPageIndex(live.io);
+    expect(rebuilt.pages).toBe(1);
+    expect(listCanonPages(live.vault)).toEqual([]);
+    const indexed = pageIndexByPath(live.db, "people/grace.md");
+    expect(indexed?.page_id).toBe("hand:grace");
+    expect(indexed?.subject_key).toBe("person:grace");
+    expect(ownerEdited(live.io, "people/grace.md")).toBe(true);
+
+    const claim = await storeClaim(live.db, putEvent(live.db), {
+      target: "people/grace-alias",
+    });
+    expect(resolveTarget(live.io, claim)).toEqual({ action: "skip", reason: "owner_edited_body" });
+  });
+
+  test("rebuild refuses an incomplete walk and leaves the existing index", async () => {
+    const live = canonFixture();
+    fixtures.push(live);
+    const eventId = putEvent(live.db);
+    const claim = await storeClaim(live.db, eventId);
+    const receipt = applyCanonWrite(
+      live.io,
+      claim,
+      { action: "create", rel_path: "people/grace.md" },
+      { writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 4 }) },
+    );
+    expect(rebuildPageIndex(live.io).pages).toBe(1);
+
+    symlinkSync(join(live.vault, "people", "grace.md"), join(live.vault, "people", "alias.md"));
+    expect(() => rebuildPageIndex(live.io)).toThrow(/page index rebuild refused/);
+    const onDiskId = readPage(live.io, receipt.page_path)?.page.data["id"];
+    expect(typeof onDiskId).toBe("string");
+    if (typeof onDiskId !== "string") return;
+    expect(pageIndexByPath(live.db, receipt.page_path)?.page_id).toBe(onDiskId);
+  });
+
+  test("rebuild refuses when a schema-invalid copy shares a live page id", async () => {
+    const live = canonFixture();
+    fixtures.push(live);
+    const receipt = applyCanonWrite(
+      live.io,
+      await storeClaim(live.db, putEvent(live.db)),
+      { action: "create", rel_path: "people/grace.md" },
+      { writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 4 }) },
+    );
+    const existing = readPage(live.io, receipt.page_path);
+    const id = existing?.page.data["id"];
+    expect(typeof id).toBe("string");
+    if (typeof id !== "string") return;
+    expect(rebuildPageIndex(live.io).pages).toBe(1);
+
+    writeFileSync(
+      join(live.vault, "people", "fork.md"),
+      serializePage({
+        data: {
+          id,
+          title: "Fork",
+          type: "person",
+          status: "active",
+          sensitivity: "personal",
+          "x-subject-id": "person:grace",
+        },
+        body: "Invalid duplicate.\n",
+      }),
+    );
+
+    expect(() => rebuildPageIndex(live.io)).toThrow(/page index rebuild refused/);
+    expect(pageIndexByPath(live.db, receipt.page_path)?.page_id).toBe(id);
   });
 });

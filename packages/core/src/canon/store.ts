@@ -12,7 +12,7 @@ import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import { parseFrontmatter } from "../vault/frontmatter";
 import type { VaultPage } from "../vault/frontmatter";
-import { listCanonPagesReport } from "../vault/pages";
+import { fatalCanonSkips, listCanonPagesReport } from "../vault/pages";
 import type { RetrievalPort } from "../contracts/retrieval";
 import { hashBytes } from "../vault/write";
 import { RECEIPTS_PATH, getCanonReceipt, latestReceiptForPage } from "./receipts";
@@ -268,25 +268,50 @@ function subjectKeyOf(data: Record<string, unknown>): string | null {
  * `page_index` is derived state (architecture invariant 2): it is rebuilt
  * from the vault plus the receipt rows, and a rebuild is what a vault that
  * predates v4 runs once so the arbiter can see its pages.
+ * A named schema-invalid page stays in the index so the arbiter cannot fork
+ * its subject; serving still withholds it. A truncated or fatal walk refuses
+ * without wiping the existing index.
  * `last_hash` is the latest receipt's `after_hash` when one exists, so
  * doctor can distinguish receipt/index drift from a later hand edit.
  */
 export function rebuildPageIndex(io: CanonIo): { pages: number; skipped: number } {
   initCanon(io.db);
   const report = listCanonPagesReport(io.vault_path);
+  if (report.truncated || fatalCanonSkips(report.skipped).length > 0) {
+    throw new Error("canon is unreadable; page index rebuild refused");
+  }
   const rebuild = io.db.transaction((): number => {
     io.db.exec("DELETE FROM page_index");
     let count = 0;
-    for (const page of report.pages) {
-      const latest = latestReceiptForPage(io.db, page.relPath);
+    const indexed = new Set<string>();
+    const put = (
+      pageId: string,
+      relPath: string,
+      data: Record<string, unknown>,
+      contentHash: string,
+    ): void => {
+      if (indexed.has(pageId)) return;
+      const latest = latestReceiptForPage(io.db, relPath);
       upsertPageIndex(io.db, {
-        page_id: page.id,
-        rel_path: page.relPath,
-        subject_key: subjectKeyOf(page.data),
+        page_id: pageId,
+        rel_path: relPath,
+        subject_key: subjectKeyOf(data),
         last_receipt: latest?.receipt_id ?? null,
-        last_hash: latest?.after_hash ?? page.contentHash,
+        last_hash: latest?.after_hash ?? contentHash,
       });
+      indexed.add(pageId);
       count += 1;
+    };
+    for (const page of report.pages) {
+      put(page.id, page.relPath, page.data, page.contentHash);
+    }
+    for (const entry of report.skipped) {
+      if (entry.code !== "invalid") continue;
+      const existing = readPage(io, entry.relPath);
+      if (existing === null) continue;
+      const id = existing.page.data["id"];
+      if (typeof id !== "string" || id.length === 0) continue;
+      put(id, entry.relPath, existing.page.data, existing.hash);
     }
     return count;
   });

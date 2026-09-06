@@ -497,6 +497,32 @@ describe("canon page discovery", () => {
     expect(report.skipped.every((entry) => entry.code === "duplicate")).toBe(true);
   });
 
+  test("a named schema-invalid page occupies its id so a later copy is withheld", () => {
+    const vault = tempDir();
+    initVault(vault);
+    seedPage(join(vault, "facts", "broken.md"), {
+      data: {
+        id: "fact:dup",
+        title: "Broken",
+        type: "fact",
+        status: "active",
+        sensitivity: "public",
+      },
+      body: "Missing taint.\n",
+    });
+    seedPage(join(vault, "facts", "copy.md"), {
+      data: validData({ id: "fact:dup", type: "fact", title: "Copy" }),
+      body: "Valid copy.\n",
+    });
+
+    const report = listCanonPagesReport(vault);
+    expect(report.pages).toEqual([]);
+    expect(report.skipped.map(({ relPath, code }) => ({ relPath, code }))).toEqual([
+      { relPath: "facts/broken.md", code: "duplicate" },
+      { relPath: "facts/copy.md", code: "duplicate" },
+    ]);
+  });
+
   test("reports a page-shaped symlink as unreadable and does not follow a linked directory", () => {
     const vault = tempDir();
     initVault(vault);
