@@ -506,7 +506,7 @@ function snapshotGraphInput(vaultPath: string): GraphRebuildInput {
   const live = report.pages.filter(isLiveCanonPage);
   return {
     generation: ulid(),
-    pages: live,
+    pages: report.pages,
     skipped: report.skipped,
     rebuilt_at: new Date().toISOString(),
     canon_hash: canonPagesHash(live),

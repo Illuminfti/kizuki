@@ -641,6 +641,7 @@ export {
   purgeEvents,
   readHolds,
   resolvePurgeConnectorId,
+  resumePurge,
   runPurge,
   verifyPurge,
 } from "./ledger/purge";
@@ -654,6 +655,7 @@ export type {
   PurgeOutcome,
   PurgePhaseOptions,
   PurgePreview,
+  PurgeProof,
   PurgeReceipt,
   PurgeRewriteRef,
   PurgeRunOptions,

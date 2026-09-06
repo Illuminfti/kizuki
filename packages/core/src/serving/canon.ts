@@ -3,7 +3,9 @@ import { authorize, sensitivity } from "../agents";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import type { AuthorityTier } from "../contracts/proposal";
 import { canonAuthorities } from "../canon/authority";
-import { readHolds } from "../ledger/purge";
+import { purgeDiscoveryPending } from "../derived-holds";
+import { eventIdFromReference } from "../retrieval/ids";
+import { isHeld, readHolds } from "../ledger/purge";
 import {
   fatalCanonSkips,
   isLiveCanonPage,
@@ -13,6 +15,7 @@ import {
 import type { CanonPage, SkippedPage } from "../vault/pages";
 import { PAGE_TAINTS } from "../vault/schema";
 import type { PageTaint } from "../vault/schema";
+import { ServeError } from "./types";
 import type { CanonChunk, ServeContext } from "./types";
 
 export interface CanonIndex {
@@ -64,6 +67,7 @@ export class CanonUnreadableError extends Error {
  * Schema-invalid and oversized files are withheld and reported by doctor.
  */
 export function loadCanon(ctx: ServeContext): CanonIndex {
+  assertCanonReadAdmission(ctx);
   const report = listCanonPagesReport(ctx.vaultPath);
   const fatal = fatalCanonSkips(report.skipped);
   if (fatal.length > 0) {
@@ -75,6 +79,7 @@ export function loadCanon(ctx: ServeContext): CanonIndex {
     byId.set(page.id, page);
     byPath.set(page.relPath, page);
   }
+  assertCanonReadAdmission(ctx);
   return {
     sourceContext: ctx,
     pages: report.pages,
@@ -83,6 +88,23 @@ export function loadCanon(ctx: ServeContext): CanonIndex {
     holds: new Set(readHolds(ctx.db).map((hold) => hold.page_path)),
     authority: canonAuthorities(ctx.db, report.pages),
   };
+}
+
+/** Recheck durable admission even for a canon snapshot loaded before recovery. */
+function canonReadHeld(ctx: ServeContext, page?: CanonPage): boolean {
+  if (purgeDiscoveryPending(ctx.db)) return true;
+  if (page === undefined) return false;
+  if (isHeld(ctx.db, page.relPath)) return true;
+  const sources = stringArray(page.data["sources"]).map(eventIdFromReference);
+  // A completed rewrite can lift the current hold while an older in-memory
+  // page still carries erased evidence. Such a snapshot must never revive.
+  return sources.length > 0 && ctx.db.query(
+    "SELECT 1 FROM event_purges WHERE event_id IN (SELECT value FROM json_each(?)) LIMIT 1",
+  ).get(JSON.stringify(sources)) !== null;
+}
+
+function assertCanonReadAdmission(ctx: ServeContext, page?: CanonPage): void {
+  if (canonReadHeld(ctx, page)) throw new ServeError("held", "canon unavailable during purge recovery");
 }
 
 /** A retracted page is absent, not a policy denial: `draft` and `archived` never count. */
@@ -97,7 +119,7 @@ export function pageServable(index: CanonIndex, page: CanonPage): Servable {
     sensitivity: stringField(page, "sensitivity"),
     ...(type === null ? {} : { type }),
     subjects: stringArray(page.data["subjects"]),
-    held: index.holds.has(page.relPath),
+    held: index.holds.has(page.relPath) || canonReadHeld(index.sourceContext, page),
   };
 }
 
@@ -113,6 +135,7 @@ export function pageDecision(
   // owner included: an unstamped page may be verbatim capture, and serving
   // it as canon would hand a reader capture dressed as produced prose.
   const sourceCtx = index.sourceContext;
+  if (canonReadHeld(sourceCtx, page)) return { allow: false, reason: "held" };
   if (!sourceEventsAllowed(sourceCtx.db, stringArray(page.data["sources"]), { owner: sourceCtx.principal.kind === "owner", purpose: sourceCtx.sourcePurpose ?? "recall" })) return { allow: false, reason: "held" };
   const original = sensitivity(page.data["sensitivity"]);
   const label = original === null ? null : sourceSensitivity(sourceCtx.db, stringArray(page.data["sources"]), original);
@@ -132,6 +155,7 @@ export function canonChunk(
   excerpt: string,
   truncated: boolean,
 ): CanonChunk {
+  assertCanonReadAdmission(index.sourceContext, page);
   return {
     page_id: page.id,
     path: page.relPath,

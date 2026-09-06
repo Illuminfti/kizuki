@@ -164,7 +164,7 @@ export interface PurgeRunOptions extends PurgePhaseOptions {
 
 export interface PurgeVerifyReport {
   receipt_id: string;
-  proofs: AbsenceProof[];
+  proofs: PurgeProof[];
   pages_rewritten: number;
   hold_lifted: boolean;
   ok: boolean;
@@ -896,6 +896,21 @@ function readBatch(db: Database, receiptId: string): PurgeBatch | null {
   ).get(receiptId, receiptId);
 }
 
+/** Pending store work and discovery/holds share one canonical recovery entry. */
+export function listPurgeRecoveryReceipts(db: Database): string[] {
+  const receipts = new Set<string>();
+  if (tableExists(db, "purge_batches")) {
+    for (const row of db.query<{ batch_id: string }, []>(
+      "SELECT batch_id FROM purge_batches WHERE state!='ready'",
+    ).all()) receipts.add(row.batch_id);
+  }
+  for (const op of listOps(db)) {
+    if (op.state === "pending") receipts.add(readBatch(db, op.receipt_id)?.batch_id ?? op.receipt_id);
+  }
+  for (const hold of readHolds(db)) receipts.add(readBatch(db, hold.proposal_id)?.batch_id ?? hold.proposal_id);
+  return [...receipts].sort();
+}
+
 function batchEventIds(db: Database, batchId: string): string[] {
   return db.query<{ event_id: string }, [string, string]>(
     `SELECT DISTINCT event_id FROM (
@@ -1425,7 +1440,7 @@ export async function verifyPurge(
   let closePending = binding.owned;
   try {
   const ops = listOps(db, batchId);
-  const proofs: AbsenceProof[] = [];
+  const proofs: PurgeProof[] = [];
   let ok = true;
   for (const op of ops) {
     try {

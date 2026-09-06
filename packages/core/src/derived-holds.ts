@@ -45,9 +45,18 @@ export function markDerivedHeld(db: Database, layer: "search" | "graph", count: 
 }
 
 /** A crash before discovery completes leaves the affected page set unknown. */
+export function purgeDiscoveryPending(db: Database): boolean {
+  return tableExists(db, "purge_batches") &&
+    db.query("SELECT 1 FROM purge_batches WHERE state!='ready' LIMIT 1").get() !== null;
+}
+
 export function assertDerivedDiscoveryReady(db: Database): void {
-  if (tableExists(db, "purge_batches") &&
-      db.query("SELECT 1 FROM purge_batches WHERE state!='ready' LIMIT 1").get() !== null) {
-    throw new Error("purge_discovery_pending");
-  }
+  if (purgeDiscoveryPending(db)) throw new Error("purge_discovery_pending");
+}
+
+/** Batch rows are retained: a new purge invalidates an in-flight read snapshot. */
+export function purgeReadEpoch(db: Database): number {
+  return tableExists(db, "purge_batches")
+    ? db.query<{ count: number }, []>("SELECT count(*) AS count FROM purge_batches").get()!.count
+    : 0;
 }
