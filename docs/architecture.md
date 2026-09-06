@@ -173,14 +173,17 @@ Implemented on this revision:
 - **CLI query.** `kizuki query` is the public read verb. Timeline, entity
   listing, and context packets are core serving functions exposed over MCP,
   not CLI verbs.
-- **MCP stdio.** `bun packages/mcp/src/bin.ts --vault PATH (--owner | --token-env VAR)`.
+- **MCP stdio.** `bun packages/mcp/src/bin.ts --vault PATH (--owner | --token-env VAR | --token-ref file:/absolute/path)`.
   Read tools: `search`, `get_page`, `query_entities`, `timeline`,
   `context_packet`, `graph_neighbors`, `system_health`. Write tools:
   `propose` and `correct`. There is no `put_page`.
 - **Loopback HTTP.** `kizuki serve` binds loopback unless `--no-http`.
 - **Agent identity in core.** Grants, sensitivity ceilings, tool allowlists,
-  rate limits, and audit live in `@kizuki/core`. There is no
-  `kizuki agent add` CLI verb on this revision.
+  rate limits, and audit live in `@kizuki/core`. `kizuki agent add` delivers an
+  explicit scoped grant through a private credential file before activating its
+  identity; `kizuki agent revoke` revokes active access or cancels pending setup.
+  The CLI and MCP project the same Core enrollment and authorization contract.
+  See [agent enrollment and recovery](agent-enrollment.md).
 
 Enforcement happens in the query engine, below the prompt layer.
 The public core search and timeline APIs require an explicit validated

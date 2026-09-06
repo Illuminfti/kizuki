@@ -9,7 +9,7 @@ const GROUPS: readonly { title: string; names: readonly string[] }[] = [
   { title: "Recall", names: ["query", "context"] },
   { title: "Sources", names: ["connect", "backfill", "sync"] },
   { title: "Correct", names: ["tell", "undo", "audit"] },
-  { title: "Run", names: ["serve", "models"] },
+  { title: "Run", names: ["serve", "models", "agent"] },
   { title: "Custody", names: ["purge", "export", "restore"] },
   { title: "Meta", names: ["version"] },
 ];
@@ -51,6 +51,11 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
     `${INVOCATION} serve status`,
   ],
   models: [`${INVOCATION} models pull --from ./model.gguf`],
+  agent: [
+    `${INVOCATION} agent add assistant --grant GRANT.json --token-ref file:/absolute/private/credential --operation-id assistant-setup-1 --dry-run`,
+    `${INVOCATION} agent add assistant --grant GRANT.json --token-ref file:/absolute/private/credential --operation-id assistant-setup-1`,
+    `${INVOCATION} agent revoke assistant`,
+  ],
   purge: [
     `${INVOCATION} purge --event EVENT_ID --reason "owner request"`,
     `${INVOCATION} purge --verify RECEIPT_ID`,

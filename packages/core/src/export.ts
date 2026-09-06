@@ -1327,7 +1327,8 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && intents !== undefined) {
     throw new Error("legacy backup must not include machine-byte intents");
   }
-  if (manifest.schema !== LEGACY_BACKUP_SCHEMA && manifest.files[RAIL_CURSORS_BACKUP] === undefined) {
+  if (manifest.schema !== LEGACY_BACKUP_SCHEMA && manifest.schema_versions.ledger >= 17 &&
+      manifest.files[RAIL_CURSORS_BACKUP] === undefined) {
     throw new Error("backup extract rail cursor stream is missing");
   }
   for (const key of Object.keys(manifest.files).sort(compareCodeUnits)) {
@@ -1392,7 +1393,11 @@ function assertBackupFormat(manifest: ExportManifest): void {
   if (typeof versions !== "object" || versions === null || !Number.isSafeInteger(versions.ledger)) {
     throw new Error("backup schema versions are invalid");
   }
-  if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) && versions.ledger !== LEDGER_SCHEMA_VERSION) {
+  // Ledger17 adds explicit rail cursors; ledger16 keeps them in checkpoints.
+  // Ledger18 adds only local agent enrollment custody, outside these streams.
+  // Future migrations must make their own explicit compatibility decision.
+  if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
+      versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -1932,7 +1937,7 @@ export function restoreVault(
         for (const row of streamRows(source, "checkpoints.jsonl", true)) {
           insertCheckpointRow(db, row);
         }
-        const railsRequired = manifest.schema !== LEGACY_BACKUP_SCHEMA;
+        const railsRequired = manifest.schema !== LEGACY_BACKUP_SCHEMA && manifest.schema_versions.ledger >= 17;
         let railCount = 0;
         for (const row of streamRows(source, RAIL_CURSORS_BACKUP, railsRequired)) {
           writeRailCursor(
@@ -1943,7 +1948,8 @@ export function restoreVault(
           );
           railCount += 1;
         }
-        if (railsRequired && railCount !== manifest.files[RAIL_CURSORS_BACKUP]!.count) {
+        const railEntry = manifest.files[RAIL_CURSORS_BACKUP];
+        if (railEntry !== undefined && railCount !== railEntry.count) {
           throw new Error("backup extract rail cursor count mismatch");
         }
         for (const row of streamRows(source, "ledger/connector_sensitivity.jsonl", false)) {

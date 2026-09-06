@@ -26,7 +26,7 @@ cases contain 11 required tuples; five cases require successful abstention.
 
 ## Run the scorer
 
-Use the repository's pinned Bun 1.3.10. From the checkout root:
+Use the repository's pinned Bun 1.3.14. From the checkout root:
 
 ```bash
 bun scripts/evaluate-extraction.ts \

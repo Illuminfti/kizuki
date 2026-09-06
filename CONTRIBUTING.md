@@ -14,7 +14,7 @@ SQLite-only rule for derived retrieval.
 
 | Requirement | Notes |
 | --- | --- |
-| [Bun](https://bun.sh) **1.3.10** | The version CI pins in `.github/workflows/ci.yml` |
+| [Bun](https://bun.sh) **1.3.14** | The version CI pins in `.github/workflows/ci.yml` |
 | Git | Full history; `bun run verify` refuses a shallow clone |
 
 There is no packaged installer and no `npm i -g kizuki`. Work from a clone.

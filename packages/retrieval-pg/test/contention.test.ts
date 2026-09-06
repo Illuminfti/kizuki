@@ -154,23 +154,26 @@ describe("embedded retrieval contention", () => {
         logger: () => {},
       },
       { acquire_timeout_ms: 80, holder_id: "waiter" },
+    ).then(
+      (opened) => { disposers.push(() => opened.close()); return null; },
+      (error: unknown) => error,
     );
-    await sleep(20);
+    // Enqueue is synchronous. Full health awaits store reads and can observe
+    // an expired waiter, so inspect it after settlement for cleanup instead.
+    expect(port.queueDepth()).toBe(1);
+    const error = await waiting;
+    expect(error).toBeInstanceOf(PortError);
+    if (!(error instanceof PortError)) throw new Error("expected waiter timeout");
+    expect(error.code).toBe("timeout");
+    expect(error.retryable).toBe(true);
+    expect(error.message).toContain("queue_depth=1");
     const health = await port.health();
     if (health.status === "ready" || health.status === "degraded") {
-      expect(Number(health.detail["queue_depth"])).toBeGreaterThan(0);
+      expect(Number(health.detail["queue_depth"])).toBe(0);
     } else {
       throw new Error("holder health should remain ready");
     }
-    try {
-      await waiting;
-      throw new Error("expected waiter timeout");
-    } catch (error) {
-      expect(error).toBeInstanceOf(PortError);
-      expect((error as PortError).code).toBe("timeout");
-      expect((error as PortError).retryable).toBe(true);
-      expect((error as PortError).message).toContain("queue_depth=");
-    }
+    expect(port.queueDepth()).toBe(0);
   });
 
   test("no txn spans an embed call", async () => {

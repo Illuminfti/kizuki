@@ -96,7 +96,7 @@ legacy prefix is claimed.
 
 ## Verification
 
-With the repository-pinned Bun 1.3.10, run:
+With the repository-pinned Bun 1.3.14, run:
 
 ```bash
 bun test packages/core/test/serve/extract-legacy.test.ts \

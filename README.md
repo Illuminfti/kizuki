@@ -13,7 +13,7 @@ Your context should outlive the tool that learned it.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-2563eb)](LICENSE)
 [![Stage: pre-alpha](https://img.shields.io/badge/stage-pre--alpha-64748b)](#status)
-[![Bun: 1.3.10](https://img.shields.io/badge/Bun-1.3.10-fbf0df?logo=bun)](https://bun.sh)
+[![Bun: 1.3.14](https://img.shields.io/badge/Bun-1.3.14-fbf0df?logo=bun)](https://bun.sh)
 
 </div>
 
@@ -157,7 +157,7 @@ The richer world-model architecture above is the direction being built on top of
 
 ## Quick start
 
-Requires **Bun 1.3.10**, the version pinned by CI, and Git.
+Requires **Bun 1.3.14**, the version pinned by CI, and Git.
 
 ```bash
 bun install --frozen-lockfile
