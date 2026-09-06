@@ -159,7 +159,11 @@ describe("a page candidate on an event", () => {
     }));
     const ev = event({ subjects, metadata: candidateMetadata() });
     const parsed = validatePageCandidate(ev.metadata);
-    if (!parsed.ok) throw new Error(parsed.errors.join("; "));
+    if (parsed === null || !parsed.ok) {
+      throw new Error(
+        parsed === null ? "expected a page candidate" : parsed.errors.join("; "),
+      );
+    }
     const direct = pageCandidateProposal(ev, parsed.value);
     expect(direct.subjects).toHaveLength(DETERMINISTIC_PRODUCER_BUDGET.maxSubjectsPerEvent);
 
