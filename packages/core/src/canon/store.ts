@@ -14,7 +14,8 @@ import { parseFrontmatter } from "../vault/frontmatter";
 import type { VaultPage } from "../vault/frontmatter";
 import { fatalCanonSkips, listCanonPagesReport } from "../vault/pages";
 import type { RetrievalPort } from "../contracts/retrieval";
-import { hashBytes } from "../vault/write";
+import { containedVaultFile, hashBytes } from "../vault/write";
+import { assertStoredPageRelPath } from "./paths";
 import { RECEIPTS_PATH, getCanonReceipt, latestReceiptForPage } from "./receipts";
 import type { CanonReceipt } from "./receipts";
 import { initCanon } from "./schema";
@@ -82,9 +83,11 @@ function fsCode(error: unknown): string {
 
 
 export function readPage(io: CanonIo, relPath: string): ExistingPage | null {
-  const path = join(io.vault_path, relPath);
+  assertStoredPageRelPath(relPath);
+  let path: string;
   let bytes: Buffer;
   try {
+    path = containedVaultFile(io.vault_path, relPath);
     bytes = readFileSync(path);
   } catch (error) {
     if (fsCode(error) === "ENOENT") return null;
