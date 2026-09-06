@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { authenticateAgentCredential, enrollAgent, previewAgentEnrollment } from "../../src/agents/enrollment";
@@ -31,6 +31,20 @@ describe("agent enrollment flow", () => {
       db.query("UPDATE agent_enrollments SET state = 'file_bound', completed_at = NULL WHERE operation_id = ?").run(f.request.operation_id);
       db.close();
       expect(enrollAgent(f.vault, f.request)).toMatchObject({ status: "completed", credential: "ready", replayed: true });
+    } finally { f.clean(); }
+  });
+
+  test("refuses partial credential recovery before activating an agent", () => {
+    const f = fixture(); try {
+      const first = enrollAgent(f.vault, f.request);
+      const db = openLedger(f.dbPath);
+      db.query("DELETE FROM agent_grants WHERE agent_id = ?").run(first.agent_id);
+      db.query("DELETE FROM agents WHERE agent_id = ?").run(first.agent_id);
+      db.query("UPDATE agent_enrollments SET state = 'file_bound', completed_at = NULL WHERE operation_id = ?").run(f.request.operation_id);
+      db.close();
+      writeFileSync(f.request.token_ref.slice(5), "{\n"); chmodSync(f.request.token_ref.slice(5), 0o600);
+      expect(() => enrollAgent(f.vault, f.request)).toThrow("recovery_required");
+      const reopened = openLedger(f.dbPath); expect(reopened.query("SELECT 1 FROM agents WHERE agent_id = ?").get(first.agent_id)).toBeNull(); reopened.close();
     } finally { f.clean(); }
   });
 
