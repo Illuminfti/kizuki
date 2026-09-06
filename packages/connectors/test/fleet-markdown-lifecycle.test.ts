@@ -111,13 +111,13 @@ test("resume reports one mixed ordinary-file lifecycle without repeating identit
     requireCursor(unchanged.cursor),
   );
   const mixedEvents = [...mixed.events];
-  for (let page = 0; !mixed.exhausted && page < 4; page += 1) {
+  for (let page = 0; mixed.events.length > 0 && page < 4; page += 1) {
     mixed = await createMarkdownFolderConnector({ path: selected }).sync(
       requireCursor(mixed.cursor),
     );
     mixedEvents.push(...mixed.events);
   }
-  expect(mixed.exhausted).toBe(true);
+  expect(mixed.events).toEqual([]);
   expect(idsOf(mixedEvents)).toEqual(["edited.md", "removed.md"]);
 
   const editedAgain = named(mixedEvents, "edited.md");
