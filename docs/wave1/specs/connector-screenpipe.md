@@ -728,10 +728,11 @@ audio_transcriptions`, match by `slug()`, page by `device IN (…)`.
   arrays empty.
 
 The plan is informational: ledger purge is subject-keyed on its own
-(`purgeEvents(db, vaultPath, { subject_handle: "screenpipe:app:acme-mail" }, reason)`
+(`purgeEvents(db, vaultPath, { connector_id: "kizuki.screenpipe", subject_handle: "screenpipe:app:acme-mail", source_key }, reason)`
 and `{ connector_id: "kizuki.screenpipe" }`, both in
 `packages/core/src/ledger/purge.ts` on main) and complete regardless of the
-cap. Never touches the network, never writes.
+cap. Subject selection requires the source key for source-bound evidence.
+The connector plan never touches the network and never writes.
 
 ## 9. Fixture database (`src/fixture.ts`)
 
@@ -843,7 +844,7 @@ Sections, in order, each claiming only what this package does:
    media are not captured; the screenpipe HTTP API is never used; a
    read-only WAL reader needs the `-shm` file, so the database directory
    must be writable by your user; facts checked 2026-09-02.
-5. **Purge** — `kizuki purge --subject screenpipe:app:<slug> --reason …`,
+5. **Purge** — `kizuki purge --connector screenpipe --source KEY --subject screenpipe:app:<slug> --reason …`,
    `--subject screenpipe:site:<host>`, `--subject screenpipe:speaker:<id>`,
    `--subject screenpipe:audio-device:<slug>`, and
    `--connector screenpipe`; what the plan lists and that screenpipe's own

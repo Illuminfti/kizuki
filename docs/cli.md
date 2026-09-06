@@ -313,7 +313,7 @@ weights.
 ## purge
 
 ```text
-usage: kizuki purge (--event ID | --subject ID [--include-aliases] | --connector ID [--record ID] | --verify RECEIPT) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json]
+usage: kizuki purge (--event ID | --connector ID [--record ID | --subject ID [--source KEY] [--include-aliases]] | --verify RECEIPT) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json]
 ```
 
 Physical deletion plus a receipt. `--reason` is required except `--verify`,
@@ -328,6 +328,24 @@ retired and refuses before planning or deletion. `--verify` prints per-store
 absence proofs and `pending`/`done`/`failed` operation state. While any inert
 legacy identity row remains, identity absence is unprovable rather than
 successful.
+
+Subject purges use an exact raw `subject_id` in its emitting connector's
+namespace: `--subject ID --connector ID`. Bare subject IDs are refused,
+even when only one connector currently matches. For source-bound events,
+also supply `--source KEY` with the enrolled source key shown by
+`kizuki connect status`. Connector, raw subject and source filters are
+intersected; role and display name do not expand the subject's identity.
+Without `--source`, connector-plus-subject selection is allowed only when
+all matching events are legacy unbound evidence. Any matching source-bound
+event causes refusal, including matches beyond the printed preview limit.
+The same scope check runs again inside the deletion transaction.
+
+`--dry-run` displays the complete selector and bounded matched event IDs;
+`--json` retains the scope in `data.filter`. The Core `PurgeFilter` uses
+`{ connector_id, subject_handle, source_key? }` for this operation and reports
+`PurgeError` codes `subject_namespace_required` or `subject_source_required`
+for incomplete scope. `--source` is a subject qualifier, not a source-wide
+purge command. `--subject` cannot be combined with `--event` or `--record`.
 
 ## export
 
