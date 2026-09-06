@@ -15,6 +15,15 @@ long kizuki_open_owned_child(int parent, const char *name, int directory) {
     : "rcx", "r11", "memory", "cc");
   return result;
 }
+long kizuki_create_credential_child(int parent, const char *name) {
+  long result;
+  long flags = 0x40L | 0x80L | 0x2L | 0x20000L | 0x80000L;
+  register long mode __asm__("r10") = 0600;
+  __asm__ volatile ("syscall" : "=a"(result)
+    : "a"(257L), "D"((long)parent), "S"(name), "d"(flags), "r"(mode)
+    : "rcx", "r11", "memory", "cc");
+  return result;
+}
 `;
 
 /** Fixed, sealed source needs no compiler executable, headers or writable path.
@@ -40,9 +49,20 @@ export function loadOwnedDirectoryNative() {
       const compiled = cc({
         flags: ["-nostdlib", "-x", "c"],
         source: `/proc/self/fd/${fd}`,
-        symbols: { kizuki_open_owned_child: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i64_fast } },
+        symbols: {
+          kizuki_open_owned_child: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i64_fast },
+          kizuki_create_credential_child: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
+        },
       });
-      return { libc, compiled, symbols: { ...libc.symbols, openChild: compiled.symbols.kizuki_open_owned_child } };
+      return {
+        libc,
+        compiled,
+        symbols: {
+          ...libc.symbols,
+          openChild: compiled.symbols.kizuki_open_owned_child,
+          createCredentialChild: compiled.symbols.kizuki_create_credential_child,
+        },
+      };
     } finally { closeSync(fd); }
   } catch {
     libc.close();
