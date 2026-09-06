@@ -426,7 +426,7 @@ describe("RFC 0002 purge totality", () => {
     const without = purgeEvents(
       db,
       vaultPath,
-      { subject_handle: "person:grace" },
+      { connector_id: "fixture", subject_handle: "person:grace" },
       "subject request",
       { include_aliases: false, now: () => AT },
     );
@@ -444,7 +444,7 @@ describe("RFC 0002 purge totality", () => {
     expect(() => purgeEvents(
       db,
       vaultPath,
-      { subject_handle: "person:grace" },
+      { connector_id: "fixture", subject_handle: "person:grace" },
       "subject request",
       { include_aliases: true, now: () => AT },
     )).toThrow("identity authority unavailable");

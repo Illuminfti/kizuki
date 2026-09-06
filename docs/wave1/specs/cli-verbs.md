@@ -61,7 +61,8 @@ Promise<{ promoted, rejected }>`; it throws when stdin is not a TTY.
 proposals_created, withdrawn, retractions_filed, cursor }`; the runner runs
   `cascadeTombstone` itself.
 - `purgeEvents(db, vaultPath, filter, reason) → PurgeOutcome` with
-  `PurgeFilter = { event_id } | { connector_id } | { subject_handle }`, plus
+  `PurgeFilter = { event_id } | { connector_id } | { connector_id, subject_handle, source_key? }`, plus
+  explicit `source_key` for source-bound subject matches (see [current purge syntax](../../cli.md#purge)),
   `readHolds`, `isHeld`; purge already removes `search_docs` and `graph_edges`.
 - `exportVault(db, vaultPath, outDir) → ExportManifest { files: { [rel]:
 { count, sha256 } } }`; refuses a non-empty `outDir`.
@@ -422,10 +423,11 @@ row)` for a JSONL receipt whose `readPromotion(db, proposal_id)` is null
   decisions, not failures. `--json`: one object `{ config, vault, events,
 proposals, connections, receipts, orphans, holds, retractions, problems,
 ok }`.
-- `purge (--event ID | --subject ID | --connector ID) --reason TEXT` —
-  exactly one selector else `UsageError`; `--connector` accepts the short
+- `purge (--event ID | --connector ID [--subject ID [--source KEY]]) --reason TEXT` —
+  exactly one selector group else `UsageError`; `--connector` accepts the short
   alias; `purgeEvents(db, vaultPath, filter, reason)` with `{ event_id }`,
-  `{ subject_handle }` or `{ connector_id }`. Prints `purged=N withdrawn=N
+  `{ connector_id, subject_handle, source_key? }` or `{ connector_id }`.
+  Source-bound subject matches require the explicit source key. Prints `purged=N withdrawn=N
 holds=N`, then `receipt <receipt_id> event=<event_id>` per receipt and
   `hold <page_path> proposal=<id>` per hold.
 - `export --out DIR` — `exportVault(db, vaultPath, resolve(DIR))`; prints
