@@ -159,6 +159,8 @@ The richer world-model architecture above is the direction being built on top of
 
 Requires **Bun 1.3.14**, the version pinned by CI, and Git.
 
+Clone this repository using GitHub’s Code button, then run these commands from the checkout root.
+
 ```bash
 bun install --frozen-lockfile
 

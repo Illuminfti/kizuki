@@ -1,61 +1,59 @@
 # Kizuki world model implementation program
 
-Status: planning document. This document does not make unimplemented surfaces public.
+Status: planning guide. Public capability and acceptance claims require implementation and exact-head evidence.
 
-Parent architecture: GitHub #480. Situation program: GitHub #476. Binding product law remains RFC 0002 until a later RFC is merged.
+GitHub issue #497 is the single authority for live packet dependencies, ownership and progress. This guide connects that program to the repository; it is not a second completion tracker. Architecture direction is #480; Situation and UX/DX/AX direction is #476.
 
-## Mission
+## Purpose and governing contracts
 
-Build Kizuki into the local-first world model for a person's AI life: a continuously updated, evidence-backed representation of the owner, the people and organisations around them, concepts and frameworks they know, their active situations and commitments, their skills and knowledge gaps, and how all of that state changes over time.
+Help a person resume real work with another authorized client using current, evidence-backed context, without reconstructing the project's history.
 
-Any authorized agent should be able to enter a task and obtain the minimum sufficient current world state without requiring the owner to reconstruct their context.
+[RFC 0002](../rfcs/0002-autonomous-canon.md), [RFC 0000](../rfcs/0000-constraints.md), the [current direction](CURRENT.md) and [decision log](decision-log.md) govern until an accepted amendment explicitly changes a named contract. [RFC 0003](../rfcs/0003-rich-subject-foundation.md) proposes the rich-subject/shared-support foundation; [RFC 0004](../rfcs/0004-living-epistemic-world-model.md) proposes the broader claim-backed world model and scoped views. Both remain proposals. Merging a planning document does not itself bind its schema or implement its surfaces.
 
-## Non-negotiable invariants
+## Invariants and shared product law
 
-Every work packet must preserve frozen `kizuki.event/v1`, local-first zero-phone-home, authoritative SQLite + readable Markdown canon, rebuildable derived stores, append-only evidence, the single receipted canon writer, owner correction as highest authority, purge/provenance/reversibility, fail-closed sensitivity and grants, captured text as untrusted data, Kizuki remaining not an agent harness, and the no-fake-surface rule.
+- Preserve frozen `kizuki.event/v1`, the append-only event ledger except receipted purge, authoritative SQLite claims and readable Markdown canon. Derived stores remain rebuildable behind their existing ports.
+- Eligible claims reach canon only through the existing receipted writer. World Slices independently project permitted evidence, claims, canon and derived views; they confer neither canon-writing nor external-action authority. Kizuki hosts no agent loop.
+- Preserve source support, perspective, valid and recorded time, correction authority, supersession, purge, recovery and reversibility. Copies and generated summaries do not become independent witnesses.
+- Enforce source consent, grants and sensitivity before candidate discovery and through traversal, ranking, dependency closure, counts, compression and model use. Externally visible IDs, revisions, hashes and change signals belong to the principal's permitted view; changed grants require a new view.
+- Captured text stays untrusted data. Network access stays limited to explicitly configured connectors and model endpoints. Capture and permitted recall remain useful without a model; autonomous canon requires one.
+- Record learning and skill as independently evidenced, contextual facets. Exposure, assisted work, independent application and unknown competence retain their distinct meanings.
 
-## Product law
+Every capability has one canonical Core implementation and one versioned semantic contract. Human, developer and agent surfaces project that contract within each principal's current grant. UX, DX and AX must agree on meaning, provenance, uncertainty, freshness, errors and correction; different grants can legitimately produce different data.
 
-Every public capability has one canonical core implementation and one versioned semantic contract. CLI, MCP, HTTP, TUI and future SDK/GUI surfaces are projections of the same semantics. A capability is incomplete until UX, DX and AX behavior is specified and tested.
+## Delivery map
 
-## Program order
+Follow issue #497 for the current dependency graph. The groups below explain the sequence without maintaining another exhaustive task list.
 
-1. RFC 0003: exact world-model primitives and compatibility.
-2. Observation + semantic primitive substrate.
-3. Provenance dependency graph, world revisions and invalidation.
-4. Concept vertical slice and personal epistemic state.
-5. Knowledge frontier: questions, curiosity, gaps and misconceptions.
-6. Perspective-aware social model.
-7. Skills, frameworks and procedures backed by outcomes.
-8. Dynamic situations, goals, commitments, decisions and dependencies.
-9. World Slice compiler and task-aware context.
-10. World Diff and freshness protocol for agents.
-11. Goal-aware attention engine.
-12. Execution receipts and outcome-learning loop.
-13. Hypotheses, bounded forecasts and counterfactual projections.
-14. Knowledge Atlas human experience.
-15. Cross-cutting performance, privacy, purge and parity gauntlet.
+| Work | Dependency and delivery boundary |
+| --- | --- |
+| Foundation and first Concept | #481 reconciles RFC 0003/0004; #482 supplies typed observations and shared outcome-evidence contracts; #483 supplies temporal support, revision and invalidation contracts; #484 proves a small Concept with useful human and agent views. |
+| Bounded consolidation | #503 builds on #482/#483. The first Concept may honestly report pending or unavailable richer processing while consolidation develops; stale understanding cannot silently appear current. |
+| Present-day continuity | #502 Stage A uses existing verified capture, context, correction and MCP seams with #458 onboarding. It can proceed without the full ontology, Atlas, forecasts or a new World Slice API. |
+| Domain expansion | Questions and learning (#485), perspectives (#486), skills/frameworks/procedures (#487), situations and independent commitments (#488), and exact-version artifacts/exemplars (#494) reuse merged shared contracts. Skills use the early outcome-evidence contract rather than waiting for the entire later feedback loop. |
+| Semantic continuity and human views | #489 starts from Concept/Situation views and adds providers as they land. #490 follows the implemented scoped view/revision contracts; #502 Stage B consumes those views and diffs. #495 composes Atlas views incrementally; small Concept/Situation cards accompany #484/#488. |
+| Outcomes and prospective analysis | #491 adds goal-aware attention after situation/freshness support. The full #492 feedback loop follows skills, situations and slices. #493 follows dependable state, freshness and outcome resolution; it does not block early continuity. |
 
-## Definition of done for every packet
+#496 fixtures and resource, privacy, purge, recovery and UX/DX/AX checks start with the first slice and grow with each packet. There is no final-only verification phase. Shared schema changes are serialized; independent domain work starts only on accepted shared contracts.
 
-- exact contract and lifecycle semantics;
-- authoritative storage or explicit derived-state rationale;
-- provenance and temporal behavior;
-- owner-correction behavior;
-- purge and source-deletion behavior;
-- sensitivity/grant enforcement below prompts;
-- deterministic errors and retry semantics;
-- migration and rollback safety;
-- focused fixtures and adversarial tests;
-- public-seam tests where a public surface is introduced;
-- no README/public claim before the surface is real;
-- `bun run verify` green at exact head;
-- documentation updated only to the level implementation proves.
+## Definition of done for each packet
 
-## Parallelism rules
+- One explicit versioned contract, lifecycle, authority boundary and storage/rebuild rationale, shared by its applicable UX/DX/AX surfaces.
+- Provenance, temporal correctness, owner correction, source deletion, purge, revocation and recovery demonstrated through public seams.
+- Permission checks below prompts, deterministic errors, retry/idempotency semantics, migration and rollback safety, and measured resource bounds.
+- Focused synthetic fixtures, relevant denial/recovery cases and public-surface conformance; exact-head `bun run verify` and independent review.
+- Honest documentation of implemented coverage, unsupported cases and evidence limits. Fixtures, a transport demo or a planning document do not establish human, live-client, account or release qualification.
 
-Agents may work in parallel only when their packets do not alter the same authoritative schema or shared contract. Schema/RFC work lands before dependent surface work. Public surfaces must consume merged core contracts rather than invent local DTOs. If a packet discovers a required invariant change, stop implementation and amend the RFC first.
+Preserve existing worktree and packet ownership. Public adapters consume accepted Core contracts instead of local substitutes. A needed invariant change goes through the accepted RFC process before incompatible implementation; no packet gains merge or deployment authority from this guide.
 
-## Golden demo
+## Staged acceptance journey
 
-A fresh authorized agent that has never met the owner asks Kizuki for the current world state for a task. Kizuki returns the relevant owner knowledge, active situation, people, constraints, prior decisions, procedures, uncertainties and evidence. Another agent receives the same semantic state through a different surface. The owner corrects one assumption. Both clients can detect the new world revision and receive a bounded diff without the owner repeating the story.
+**Stage A:** select one source with explicit consent, enroll two independently scoped clients, retrieve useful project context, have the owner correct one precise assertion through the existing authorized path, and have both clients retrieve the corrected context. Record the actual clients/versions and distinguish synthetic transport checks from unfamiliar-user and live-client trials.
+
+**Stage B:** once the semantic contracts are implemented, each client obtains its permitted Concept/Situation context and relevant scoped diff. Narrow or revoke a grant and verify subsequent calls and retained-view validation against current policy. Keep Stage A and Stage B receipts separate; independently retained external text cannot be erased by revoking access.
+
+Both stages preserve evidence, important constraints and correction history. Measure re-explanation burden, obsolete-assumption reuse, interventions and failures; do not infer success from a screenshot or a test count.
+
+## Readiness
+
+The owner's 5 September 2026 amendment at the top of issue #403 defines readiness as stranger installation/use, executable stranger proof, zero live P0s on the exact candidate and an honest install path. Seven-/fourteen-day observation is optional after readiness. Operational cutover requires separate authorization. Remaining product, connector, security, recovery, platform, review and verification requirements remain; historical timestamps and failed receipts receive no new credit.
