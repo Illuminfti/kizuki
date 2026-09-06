@@ -22,7 +22,7 @@ import { mineLiveDrafts } from "../src/serve/extract";
 import { claimInput, FixtureVectorPort } from "./claims/helpers";
 import type { ProducerPort, ProduceInput } from "../src/contracts/producer";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -548,7 +548,7 @@ test("source completion stays retryable when identity residue appears after publ
   }
 });
 
-test("native resume cannot drop a revoked citation and expose surviving mixed canon text", async () => {
+test("unrecorded mixed canon remains withheld before and after source revocation", async () => {
   const { db, dir, a, b } = setup();
   try {
     grant(db, a);
@@ -583,7 +583,9 @@ test("native resume cannot drop a revoked citation and expose surviving mixed ca
       "Synthetic mixed source text.",
     );
     const owner = { db, vaultPath: dir, principal: OWNER };
-    expect(serveGetPage(owner, { id: "fact:mixed" }).canon).toHaveLength(1);
+    const original = readFileSync(join(dir, "facts/mixed.md"), "utf8");
+    // A raw page has no recorded revision even while both sources are live.
+    expect(serveGetPage(owner, { id: "fact:mixed" }).canon).toHaveLength(0);
     revokeSourceGrant(db, {
       source_key: a,
       expected_revision: 1,
@@ -596,6 +598,7 @@ test("native resume cannot drop a revoked citation and expose surviving mixed ca
     expect(inspectSourceGrant(db, a)?.purge_blockers).toContain(
       "canon_rewrite_pending",
     );
+    expect(readFileSync(join(dir, "facts/mixed.md"), "utf8")).toBe(original);
   } finally {
     db.close();
   }
