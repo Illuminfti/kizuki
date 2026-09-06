@@ -141,18 +141,14 @@ export class ConnectionStateStore implements ConnectionStateReader {
           if (state.byteLength > MAX_CONNECTION_STATE_BYTES) {
             throw new LedgerError("connection state exceeds maximum size");
           }
+          const digest = sha256Hex(state);
           const temporary = `${pending.finalPath}.${ulid()}.tmp`;
-          try {
-            writeDurableFile(temporary, state);
-            pending.temporaryPath = temporary;
-            pending.written = true;
-            pending.digest = sha256Hex(state);
-            pending.byteLength = state.byteLength;
-            this.staging.add(temporary);
-          } catch (error) {
-            rmSync(temporary, { force: true });
-            throw error;
-          }
+          writeDurableFile(temporary, state);
+          pending.temporaryPath = temporary;
+          pending.written = true;
+          pending.digest = digest;
+          pending.byteLength = state.byteLength;
+          this.staging.add(temporary);
         },
       },
     };
@@ -303,7 +299,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
           if (staging === null) {
             throw new LedgerError("connection state staging is missing");
           }
-          journalPath = `${pending.finalPath}.${ulid()}.journal`;
+          const nextJournalPath = `${pending.finalPath}.${ulid()}.journal`;
           if (pending.digest === null) {
             throw new LedgerError("connection state digest is missing");
           }
@@ -317,12 +313,12 @@ export class ConnectionStateStore implements ConnectionStateReader {
             final_sha256: pending.digest,
             final_bytes: pending.byteLength,
           };
+          writeDurableFile(nextJournalPath, new TextEncoder().encode(JSON.stringify(journal)));
+          journalPath = nextJournalPath;
           swapStateFile(this.directory, {
             finalPath: pending.finalPath,
             stagingPath: staging,
             backupPath,
-            journalPath,
-            journalBytes: new TextEncoder().encode(JSON.stringify(journal)),
           });
           this.staging.delete(staging);
           pending.temporaryPath = null;
