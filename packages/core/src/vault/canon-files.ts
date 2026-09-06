@@ -4,9 +4,9 @@ import { closeSync, constants, fstatSync, fsyncSync, openSync, readSync, writeSy
 import { isAbsolute, resolve } from "node:path";
 import { loadOwnedDirectoryNative } from "../util/owned-directory-native";
 
-// Internal, currently unwired adapter. The writer's authorization, mutation
-// scope and receipt protocol must surround this capability when integrated.
-const MAX_BYTES = 1_048_576;
+// Internal byte adapter. Writer authorization, mutation scope and the receipt
+// protocol surround this capability; it does not confer ledger authority.
+export const MAX_CANON_FILE_BYTES = 1_048_576;
 const MAX_DEPTH = 64;
 export type CanonFilesFailure = "unsupported" | "native_unavailable" | "invalid_path" | "bounds" |
   "unsafe" | "changed" | "conflict" | "closed" | "handle" | "io";
@@ -73,7 +73,7 @@ function openRoot(path: string): number {
 function readSnapshot(fd: number): { stat: BigIntStats; bytes: Buffer } {
   const before = fstatSync(fd, { bigint: true });
   if (!before.isFile() || before.nlink !== 1n || before.uid !== BigInt(process.geteuid!()) || (before.mode & 0o022n) !== 0n) fail("unsafe");
-  if (before.size < 0n || before.size > BigInt(MAX_BYTES)) fail("bounds");
+  if (before.size < 0n || before.size > BigInt(MAX_CANON_FILE_BYTES)) fail("bounds");
   const bytes = Buffer.alloc(Number(before.size));
   for (let offset = 0; offset < bytes.length;) {
     const count = readSync(fd, bytes, offset, bytes.length - offset, offset);
@@ -97,6 +97,8 @@ export interface CanonFiles {
   read(path: string): CanonFileSnapshot | null;
   ensureDirectory(path: string): void;
   create(path: string, bytes: Uint8Array): CanonFileSnapshot;
+  /** Recover only the exact receipt temp beside this live expected target. */
+  resumeExactTemporary(target: CanonFileSnapshot, receiptId: string, bytes: Uint8Array): CanonFileSnapshot | null;
   replace(created: CanonFileSnapshot, expected: CanonFileSnapshot): CanonFileSnapshot;
   remove(expected: CanonFileSnapshot): void;
   close(): void;
@@ -108,6 +110,19 @@ interface FileRecord {
   stat: BigIntStats;
   bytes: Buffer;
   created: boolean;
+  resumeTarget?: CanonFileSnapshot;
+}
+
+const ROOT_TOKEN = Symbol("canon-files-root");
+const SCOPES = new WeakMap<CanonFiles, { path: string; assertCurrent(): void }>();
+
+/** Validate a borrowed internal scope without exposing its root or descriptors. */
+export function assertCanonFiles(files: CanonFiles, vaultPath: string): void {
+  guarded(() => {
+    const scope = SCOPES.get(files);
+    if (!scope || typeof vaultPath !== "string" || scope.path !== resolve(vaultPath)) fail("handle");
+    scope.assertCurrent();
+  });
 }
 
 class NativeCanonFiles implements CanonFiles {
@@ -116,7 +131,11 @@ class NativeCanonFiles implements CanonFiles {
   readonly #path: string;
   readonly #fd: number;
   #closed = false;
-  constructor(path: string, fd: number) { this.#path = path; this.#fd = fd; this.#identity = directoryStat(fd); }
+  constructor(token: symbol, path: string, fd: number) {
+    if (token !== ROOT_TOKEN) fail("handle");
+    this.#path = path; this.#fd = fd; this.#identity = directoryStat(fd);
+    SCOPES.set(this, { path, assertCurrent: () => this.#assertCurrent() });
+  }
   #assertCurrent(): void {
     if (this.#closed) fail("closed");
     const current = openRoot(this.#path);
@@ -198,7 +217,7 @@ class NativeCanonFiles implements CanonFiles {
   create(path: string, input: Uint8Array): CanonFileSnapshot {
     return guarded(() => {
       const components = parts(path), name = components.pop()!;
-      if (!(input instanceof Uint8Array) || input.byteLength > MAX_BYTES) fail("bounds");
+      if (!(input instanceof Uint8Array) || input.byteLength > MAX_CANON_FILE_BYTES) fail("bounds");
       const bytes = Buffer.from(input), encoded = nameBytes(name);
       const parent = this.#directory(components); if (parent === null) fail("changed");
       let fd = -1, written = 0, opened: BigIntStats | undefined;
@@ -239,10 +258,29 @@ class NativeCanonFiles implements CanonFiles {
       }
     });
   }
+  resumeExactTemporary(target: CanonFileSnapshot, receiptId: string, input: Uint8Array): CanonFileSnapshot | null {
+    return guarded(() => {
+      const expected = this.#record(target); this.#verify(expected);
+      if (typeof receiptId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(receiptId)) fail("handle");
+      if (!(input instanceof Uint8Array) || input.byteLength > MAX_CANON_FILE_BYTES) fail("bounds");
+      const bytes = Buffer.from(input), components = parts(expected.path), name = components.pop()!;
+      const temporary = [...components, `.${name}.${receiptId}.tmp`].join("/");
+      const recovered = this.read(temporary); if (recovered === null) return null;
+      try {
+        const state = this.#record(recovered);
+        if ((state.stat.mode & 0o077n) !== 0n || !state.bytes.equals(bytes)) fail("changed");
+        fsyncSync(state.fd); this.#verify(state); this.#verify(expected);
+        // This token can only replace this exact retained target. It gains no
+        // creation or removal authority and makes no ledger-intent assertion.
+        state.resumeTarget = target;
+        return recovered;
+      } catch (error) { recovered.close(); throw error; }
+    });
+  }
   replace(created: CanonFileSnapshot, expected: CanonFileSnapshot): CanonFileSnapshot {
     return guarded(() => {
       const source = this.#record(created), target = this.#record(expected);
-      if (!source.created || created === expected || source.path === target.path) fail("handle");
+      if ((!source.created && source.resumeTarget !== expected) || created === expected || source.path === target.path) fail("handle");
       this.#verify(source); this.#verify(target);
       const from = nameBytes(parts(source.path).at(-1)!), to = nameBytes(parts(target.path).at(-1)!);
       if (result(api().symbols.renameChild(source.parent, ptr(from), target.parent, ptr(to))) !== 0) fail("io");
@@ -260,7 +298,9 @@ class NativeCanonFiles implements CanonFiles {
   }
   remove(expected: CanonFileSnapshot): void {
     guarded(() => {
-      const state = this.#record(expected); this.#verify(state);
+      const state = this.#record(expected);
+      if (state.resumeTarget !== undefined) fail("handle");
+      this.#verify(state);
       const bytes = nameBytes(parts(state.path).at(-1)!);
       if (result(api().symbols.unlinkChild(state.parent, ptr(bytes))) !== 0) fail("io");
       try {
@@ -290,6 +330,6 @@ export function openCanonFiles(vaultPath: string): CanonFiles {
     const absolute = resolve(vaultPath);
     if (absolute === "/" || absolute.split("/").length > 257) fail("bounds");
     const fd = openRoot(absolute);
-    try { return new NativeCanonFiles(absolute, fd); } catch (error) { closeSync(fd); throw error; }
+    try { return new NativeCanonFiles(ROOT_TOKEN, absolute, fd); } catch (error) { closeSync(fd); throw error; }
   });
 }

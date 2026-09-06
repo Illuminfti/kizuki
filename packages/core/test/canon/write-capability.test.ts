@@ -196,6 +196,8 @@ describe("canon write capability", () => {
     expect(Object.keys(core)).toContain("undoReceipt");
     expect(Object.keys(core)).not.toContain("writePage");
     expect(Object.keys(core)).not.toContain("grantCanonWrite");
+    expect(Object.keys(core)).not.toContain("openCanonFiles");
+    expect(Object.keys(core)).not.toContain("assertCanonFiles");
     expect(Object.keys(core)).not.toContain("applyRevertWrite");
     expect(Object.keys(core)).not.toContain("ownerPromote");
     expect(Object.keys(core)).not.toContain("promote");

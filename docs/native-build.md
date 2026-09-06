@@ -44,6 +44,12 @@ targets are unsupported. Each executable bundles Kizuki code, workspace
 dependencies and the Bun runtime. It is not statically linked, signed, published
 or qualified by an unfamiliar human.
 
+Canon byte writes require the Linux x64/glibc descriptor backend. The writer
+returns a typed refusal on macOS and other unsupported native backends, with
+no pathname fallback. The macOS build target therefore does not currently
+qualify canon-writing workflows. A macOS implementation and copied-executable
+proof remain required; the build registry alone does not establish support.
+
 The binaries do not automatically load `.env` or `bunfig.toml`. They do not
 contact a network endpoint by themselves. Network access remains limited to
 explicitly configured connectors and model endpoints. Local GGUF model files

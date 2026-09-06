@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -22,6 +24,7 @@ import {
   writePage,
 } from "../../src/vault/write";
 import type { CanonWriteCapability } from "../../src/vault/write";
+import { assertCanonFiles, openCanonFiles, type CanonFiles } from "../../src/vault/canon-files";
 
 const tempDirs: string[] = [];
 
@@ -270,5 +273,185 @@ describe("writePage", () => {
         { revision: true, expected_hash: "0".repeat(64) },
       ),
     ).toThrow(/missing page/);
+  });
+
+  test("writes ordinary nested doctrine and archive names while reserving only root policy paths", () => {
+    const root = vault(), doctrine = readFileSync(join(root, "CANON.md"));
+    const page = { data: validData(), body: "Synthetic nested canon.\n" };
+    for (const rel of ["facts/CANON.md", "facts/SCHEMA.md", "facts/archive/item.md"]) {
+      const created = writePage(cap(root), join(root, rel), page);
+      const revised = writePage(cap(root), join(root, rel), { ...page, body: "Synthetic revision.\n" }, {
+        revision: true, expected_hash: created.after_hash,
+      });
+      expect(readFileSync(join(root, revised.archive_path!), "utf8")).toBe(serializePage(page));
+      expect(revised.archive_path).toContain(rel.replaceAll("/", "__"));
+    }
+    for (const rel of ["CANON.md", "SCHEMA.md", "archive/page.md", ".kizuki/page.md"]) {
+      expect(() => writePage(cap(root), join(root, rel), page)).toThrow("unusable canon page path");
+    }
+    expect(readFileSync(join(root, "CANON.md"))).toEqual(doctrine);
+    expect(existsSync(join(root, "archive/page.md"))).toBe(false);
+    expect(existsSync(join(root, ".kizuki/page.md"))).toBe(false);
+  });
+
+  test("keeps a borrowed descriptor scope live while consuming each writer capability", () => {
+    const root = vault(), files = openCanonFiles(root), path = join(root, "facts/borrowed.md");
+    try {
+      const first = grantCanonWrite("loop", "borrowed-create", root, files);
+      const created = writePage(first, path, { data: validData(), body: "Synthetic first.\n" });
+      expect(() => assertCanonFiles(files, root)).not.toThrow();
+      const retained = files.read("facts/borrowed.md")!;
+      const before = retained.bytes;
+      expect(() => writePage(first, path, { data: validData(), body: "Unused.\n" })).toThrow("already used");
+      const revised = writePage(grantCanonWrite("correction", "borrowed-revise", root, files), path,
+        { data: validData(), body: "Synthetic revised.\n" }, { revision: true, expected_hash: created.after_hash });
+      expect(retained.bytes).toEqual(before);
+      expect(readFileSync(join(root, revised.archive_path!))).toEqual(Buffer.from(before));
+      retained.close();
+      const current = files.read("facts/borrowed.md")!;
+      expect(Buffer.from(current.bytes).toString()).toContain("Synthetic revised."); current.close();
+      expect(() => assertCanonFiles(files, root)).not.toThrow();
+    } finally { files.close(); }
+  });
+
+  test("refuses a forged, foreign-root or closed borrowed file scope", () => {
+    const root = vault(), other = vault(), files = openCanonFiles(root);
+    try {
+      expect(() => grantCanonWrite("loop", "foreign", other, files)).toThrow(CanonWriteRefused);
+      expect(() => grantCanonWrite("loop", "forged", root, {} as CanonFiles)).toThrow(CanonWriteRefused);
+      const issued = grantCanonWrite("loop", "closed-after-grant", root, files);
+      files.close();
+      expect(() => grantCanonWrite("loop", "closed-before-grant", root, files)).toThrow(CanonWriteRefused);
+      expect(() => writePage(issued, join(root, "facts/closed.md"), { data: validData(), body: "Unused.\n" })).toThrow(CanonWriteRefused);
+      expect(() => writePage(issued, join(root, "facts/closed.md"), { data: validData(), body: "Unused.\n" })).toThrow("already used");
+      expect(existsSync(join(root, "facts/closed.md"))).toBe(false);
+      expect(existsSync(join(other, "facts/closed.md"))).toBe(false);
+    } finally { files.close(); }
+  });
+
+  test("source erasure resumes its exact same-ID private temp and never creates an archive", () => {
+    const root = vault(), path = join(root, "facts/retained.md");
+    const first = { data: validData(), body: "Synthetic removed evidence and independent evidence.\n" };
+    const next = { data: validData(), body: "Synthetic independent evidence.\n" };
+    const created = writePage(cap(root), path, first);
+    const temp = join(root, "facts/.retained.md.erase-same-id.tmp");
+    writeFileSync(temp, serializePage(next), { mode: 0o600 });
+    const revised = writePage(grantCanonWrite("loop", "erase-same-id", root), path, next,
+      { revision: true, expected_hash: created.after_hash, erase_prior: true });
+    expect(revised.archive_path).toBeNull();
+    expect(revised.after_hash).toBe(hashFile(path));
+    expect(readFileSync(path, "utf8")).toBe(serializePage(next));
+    expect(existsSync(temp)).toBe(false);
+    expect(readdirSync(join(root, "archive"))).toEqual([]);
+    const removed = writePage(grantCanonWrite("loop", "erase-delete", root), path, next,
+      { delete: true, expected_hash: revised.after_hash, erase_prior: true });
+    expect(removed).toEqual({ archive_path: null, after_hash: ABSENT_PAGE_HASH });
+    expect(existsSync(path)).toBe(false);
+    expect(readdirSync(join(root, "archive"))).toEqual([]);
+  });
+
+  test("source erasure refuses changed or non-private retained temps without changing the target", () => {
+    const root = vault(), path = join(root, "facts/retained.md");
+    const first = { data: validData(), body: "Synthetic prior.\n" }, next = { data: validData(), body: "Synthetic postimage.\n" };
+    const created = writePage(cap(root), path, first), prior = readFileSync(path);
+    for (const [id, text, mode] of [
+      ["changed-temp", "Different synthetic bytes", 0o600],
+      ["shared-temp", serializePage(next), 0o644],
+    ] as const) {
+      const temp = join(root, `facts/.retained.md.${id}.tmp`);
+      writeFileSync(temp, text, { mode }); chmodSync(temp, mode);
+      expect(() => writePage(grantCanonWrite("loop", id, root), path, next,
+        { revision: true, expected_hash: created.after_hash, erase_prior: true })).toThrow(CanonWriteRefused);
+      expect(readFileSync(path)).toEqual(prior);
+      expect(readFileSync(temp, "utf8")).toBe(text);
+      expect(readdirSync(join(root, "archive"))).toEqual([]);
+    }
+  });
+
+  test("source erasure rewrites and removes an existing archive without creating another preimage", () => {
+    const root = vault(), path = join(root, "facts/archived.md");
+    const first = { data: validData(), body: "Synthetic historical source and independent evidence.\n" };
+    const current = { data: validData(), body: "Synthetic current page.\n" };
+    const created = writePage(cap(root), path, first);
+    const revision = writePage(cap(root), path, current, { revision: true, expected_hash: created.after_hash });
+    const archivePath = join(root, revision.archive_path!), retained = { data: validData(), body: "Synthetic independent evidence.\n" };
+    const erased = writePage(grantCanonWrite("loop", "erase-history", root), archivePath, retained,
+      { revision: true, expected_hash: hashFile(archivePath), erase_prior: true });
+    expect(erased.archive_path).toBeNull();
+    expect(readFileSync(archivePath, "utf8")).toBe(serializePage(retained));
+    expect(readdirSync(join(root, "archive"))).toHaveLength(1);
+    const removed = writePage(grantCanonWrite("loop", "delete-history", root), archivePath, retained,
+      { delete: true, expected_hash: erased.after_hash, erase_prior: true });
+    expect(removed).toEqual({ archive_path: null, after_hash: ABSENT_PAGE_HASH });
+    expect(readdirSync(join(root, "archive"))).toEqual([]);
+    expect(readFileSync(path, "utf8")).toBe(serializePage(current));
+    expect(() => writePage(cap(root), join(root, "archive/missing.md"), retained, { erase_prior: true })).toThrow(CanonWriteRefused);
+    expect(() => writePage(cap(root), join(root, "archive/missing.md"), retained,
+      { revision: true, erase_prior: true, expected_hash: ABSENT_PAGE_HASH })).toThrow("missing page");
+    expect(existsSync(join(root, "archive/missing.md"))).toBe(false);
+  });
+
+  test("a recovered temp token can replace only its expected target and cannot authorize deletion", () => {
+    const root = vault(), files = openCanonFiles(root), first = { data: validData(), body: "Synthetic prior.\n" };
+    try {
+      writePage(cap(root), join(root, "facts/a.md"), first);
+      writePage(cap(root), join(root, "facts/b.md"), first);
+      const a = files.read("facts/a.md")!, b = files.read("facts/b.md")!, bytes = Buffer.from(serializePage({ ...first, body: "Synthetic resumed.\n" }));
+      expect(files.resumeExactTemporary(a, "missing-id", bytes)).toBeNull();
+      writeFileSync(join(root, "facts/.a.md.resume-id.tmp"), bytes, { mode: 0o600 });
+      const resumed = files.resumeExactTemporary(a, "resume-id", bytes)!;
+      expect(() => files.replace(resumed, b)).toThrow("canon_files_handle");
+      expect(() => files.remove(resumed)).toThrow("canon_files_handle");
+      const published = files.replace(resumed, a);
+      expect(published.bytes).toEqual(Uint8Array.from(bytes)); published.close();
+      expect(Buffer.from(b.bytes).toString()).toBe(serializePage(first)); b.close();
+      expect(existsSync(join(root, "facts/.a.md.resume-id.tmp"))).toBe(false);
+    } finally { files.close(); }
+  });
+
+  test("an ordinary revision refuses an existing temp even when its bytes match", () => {
+    const root = vault(), path = join(root, "facts/ordinary.md");
+    const first = { data: validData(), body: "Synthetic prior.\n" }, next = { data: validData(), body: "Synthetic postimage.\n" };
+    const created = writePage(cap(root), path, first);
+    const temp = join(root, "facts/.ordinary.md.ordinary-revise.tmp");
+    writeFileSync(temp, serializePage(next), { mode: 0o600 });
+    expect(() => writePage(grantCanonWrite("loop", "ordinary-revise", root), path, next,
+      { revision: true, expected_hash: created.after_hash })).toThrow("existing temporary revision");
+    expect(readFileSync(path, "utf8")).toBe(serializePage(first));
+    expect(readFileSync(temp, "utf8")).toBe(serializePage(next));
+  });
+
+  test("accepts the page byte limit and refuses larger revisions before creating an archive", () => {
+    const root = vault(), path = join(root, "facts/bounded.md"), data = validData();
+    const headerBytes = Buffer.byteLength(serializePage({ data, body: "" }));
+    const page = { data, body: "x".repeat(1_048_576 - headerBytes) };
+    const created = writePage(cap(root), path, page);
+    expect(statSync(path).size).toBe(1_048_576);
+    expect(created.after_hash).toBe(hashFile(path));
+    expect(() => writePage(cap(root), path, { data, body: page.body + "x" },
+      { revision: true, expected_hash: created.after_hash })).toThrow("supported byte limit");
+    expect(hashFile(path)).toBe(created.after_hash);
+    expect(readdirSync(join(root, "archive"))).toEqual([]);
+  });
+
+  for (const mode of ["unsupported", "unavailable"] as const) test(`native ${mode} refuses before canon mutation and spends the capability`, () => {
+    const root = vault();
+    const script = `
+      import {mock} from 'bun:test';
+      import {strict as assert} from 'node:assert';
+      const mode = ${JSON.stringify(mode)};
+      if (mode === 'unsupported') Object.defineProperty(process, 'platform', {value: 'darwin'});
+      else mock.module(${JSON.stringify(join(import.meta.dir, "../../src/util/owned-directory-native.ts"))}, () => ({loadOwnedDirectoryNative() {throw new Error('synthetic private detail');}}));
+      const {grantCanonWrite,writePage,CanonWriteRefused} = await import(${JSON.stringify(join(import.meta.dir, "../../src/vault/write.ts"))});
+      const cap = grantCanonWrite('loop', 'native-refusal', ${JSON.stringify(root)});
+      const run = () => writePage(cap, ${JSON.stringify(join(root, "facts/refused.md"))}, ${JSON.stringify({ data: validData(), body: "Synthetic.\n" })});
+      assert.throws(run, error => error instanceof CanonWriteRefused && error.reason === 'native_' + mode && !error.message.includes('synthetic private detail'));
+      assert.throws(run, error => error instanceof CanonWriteRefused && error.reason === 'capability_spent');
+      process.stdout.write('passed');
+    `;
+    const child = spawnSync(process.execPath, ["--eval", script], { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024 });
+    expect(child.error).toBeUndefined(); expect(child.stderr).toBe(""); expect(child.status).toBe(0); expect(child.stdout).toBe("passed");
+    expect(existsSync(join(root, "facts/refused.md"))).toBe(false);
+    expect(readdirSync(join(root, "archive"))).toEqual([]);
   });
 });

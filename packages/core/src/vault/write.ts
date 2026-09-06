@@ -1,22 +1,10 @@
-import {
-  closeSync,
-  constants,
-  existsSync,
-  fstatSync,
-  fsyncSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeSync,
-} from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { serializePage } from "./frontmatter";
 import type { VaultPage } from "./frontmatter";
 import { validatePage } from "./schema";
+import { assertPageRelPath, assertStoredPageRelPath } from "../canon/paths";
+import { assertCanonFiles, CanonFilesError, MAX_CANON_FILE_BYTES, openCanonFiles, type CanonFiles, type CanonFileSnapshot } from "./canon-files";
 
 /**
  * RFC 0002 §4.5. There is no "owner" writer: the owner corrects or edits the
@@ -38,6 +26,7 @@ export function isWriter(value: unknown): value is Writer {
  */
 const CAPABILITY: unique symbol = Symbol("kizuki.canon-write-capability");
 const MINTED = new WeakSet<CanonWriteCapability>();
+const BORROWED_FILES = new WeakMap<CanonWriteCapability, CanonFiles>();
 
 export interface CanonWriteCapability {
   readonly [CAPABILITY]: true;
@@ -61,7 +50,9 @@ export class CanonWriteRefused extends Error {
       | "expected_hash_required"
       | "write_verify_failed"
       | "archive_exists"
-      | "parent_invalid",
+      | "parent_invalid"
+      | "native_unsupported"
+      | "native_unavailable",
     message: string,
     readonly code?: string,
   ) {
@@ -77,6 +68,7 @@ export function grantCanonWrite(
   writer: Writer,
   receipt_id: string,
   vault_path: string,
+  files?: CanonFiles,
 ): CanonWriteCapability {
   if (!isWriter(writer)) {
     throw new CanonWriteRefused(
@@ -90,18 +82,23 @@ export function grantCanonWrite(
       "a canon write capability requires a safe receipt identifier",
     );
   }
+  const vault = resolve(vault_path);
+  if (files !== undefined) {
+    try { assertCanonFiles(files, vault); } catch (error) { refuseNative(error); }
+  }
   const cap: CanonWriteCapability = Object.freeze({
     [CAPABILITY]: true as const,
     writer,
     receipt_id,
-    vault_path: resolve(vault_path),
+    vault_path: vault,
   });
   MINTED.add(cap);
+  if (files !== undefined) BORROWED_FILES.set(cap, files);
   return cap;
 }
 
 /** One capability, one write. Retained references are refused afterwards. */
-function consume(cap: CanonWriteCapability): void {
+function consume(cap: CanonWriteCapability): CanonFiles | undefined {
   if (typeof cap !== "object" || cap === null || !MINTED.has(cap)) {
     const branded =
       typeof cap === "object" && cap !== null && cap[CAPABILITY] === true;
@@ -113,6 +110,9 @@ function consume(cap: CanonWriteCapability): void {
     );
   }
   MINTED.delete(cap);
+  const files = BORROWED_FILES.get(cap);
+  BORROWED_FILES.delete(cap);
+  return files;
 }
 
 export interface WritePageOptions {
@@ -151,23 +151,6 @@ export function hashFile(path: string): string {
   return hashBytes(readFileSync(path));
 }
 
-function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-function isSymlink(path: string): boolean {
-  try {
-    return lstatSync(path).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
-
 /**
  * Exclusive archive name: vault-relative path plus the receipt id. Two
  * pages that share a basename cannot collide, and a second writer with a
@@ -175,22 +158,6 @@ function isSymlink(path: string): boolean {
  */
 export function archiveRelPath(relPath: string, receiptId: string): string {
   return `archive/${relPath.replaceAll("/", "__")}--${receiptId}.md`;
-}
-
-function writeDurably(
-  path: string,
-  content: string | Uint8Array,
-  flag: "wx" | "w",
-  mode?: number,
-): void {
-  const fd = openSync(path, flag, mode);
-  try {
-    if (typeof content === "string") writeSync(fd, content);
-    else writeSync(fd, content);
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
 }
 
 function vaultRelPath(vault: string, path: string): string {
@@ -225,163 +192,142 @@ export function containedVaultFile(vaultPath: string, filePath: string): string 
   return path;
 }
 
-function ensureCanonParents(vault: string, filePath: string): void {
-  const rel = vaultRelPath(vault, filePath);
-  const parent = dirname(rel);
-  if (parent === "." || parent === "") return;
-  const segments = parent.split("/").filter((segment) => segment.length > 0);
-  let current = vault;
-  for (const segment of segments) {
-    if (segment === ".." || segment === ".kizuki" || segment === "archive") {
-      throw new CanonWriteRefused(
-        "parent_invalid",
-        "Refusing to create an unusable parent directory",
-      );
-    }
-    current = join(current, segment);
-    if (isSymlink(current)) {
-      throw new CanonWriteRefused("symlink", `Refusing to write through a symlink: ${current}`);
-    }
-    if (!existsSync(current)) {
-      mkdirSync(current, { mode: 0o700 });
-      continue;
-    }
-    if (!isDirectory(current)) {
-      throw new CanonWriteRefused(
-        "parent_invalid",
-        "Refusing to create a page under a non-directory",
-      );
-    }
-  }
+/** Native errors cross the writer boundary without paths or captured bytes. */
+function refuseNative(error: unknown): never {
+  if (!(error instanceof CanonFilesError)) throw error;
+  const reasons = {
+    unsupported: "native_unsupported", native_unavailable: "native_unavailable",
+    invalid_path: "parent_invalid", bounds: "parent_invalid", unsafe: "parent_invalid",
+    changed: "page_changed", conflict: "page_exists", closed: "capability_invalid",
+    handle: "capability_invalid", io: "write_verify_failed",
+  } as const;
+  const message = error.reason === "unsafe"
+    ? "canon file has unsafe ownership, type, or a symlink component"
+    : `canon byte operation refused: ${error.reason}`;
+  throw new CanonWriteRefused(reasons[error.reason], message);
 }
 
-function archiveExclusively(source: string, dest: string): void {
-  const prior = readFileSync(source);
+function pageRelPath(vault: string, path: string, opts: WritePageOptions): string {
+  const rel = vaultRelPath(vault, resolve(vault, path));
   try {
-    writeDurably(dest, prior, "wx");
-  } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "EEXIST"
-    ) {
+    // Source erasure must purge existing historical copies as well as live
+    // pages. Explicit revision/delete cannot create a missing archive entry.
+    if (opts.erase_prior === true && (opts.revision === true || opts.delete === true)) assertStoredPageRelPath(rel);
+    else assertPageRelPath(rel);
+  }
+  catch { throw new CanonWriteRefused("parent_invalid", "Refusing to write an unusable canon page path"); }
+  return rel;
+}
+
+function ensureCanonParents(files: CanonFiles, rel: string): void {
+  const parent = dirname(rel);
+  if (parent !== ".") files.ensureDirectory(parent);
+}
+
+function archiveSnapshot(files: CanonFiles, prior: CanonFileSnapshot, receiptId: string): string {
+  const rel = archiveRelPath(prior.path, receiptId);
+  files.ensureDirectory("archive");
+  try { files.create(rel, prior.bytes).close(); }
+  catch (error) {
+    if (error instanceof CanonFilesError && error.reason === "conflict") {
       throw new CanonWriteRefused("archive_exists", "Refusing to overwrite an archive copy");
     }
     throw error;
   }
+  return rel;
 }
 
-function hashOnDisk(path: string, expected: string): string {
-  const written = readFileSync(path);
-  const afterHash = hashBytes(written);
-  if (afterHash !== expected) {
-    throw new CanonWriteRefused(
-      "write_verify_failed",
-      "bytes on disk do not match the bytes just written",
-    );
-  }
-  return afterHash;
-}
-
-function replaceAtomically(
-  vault: string,
-  path: string,
-  content: string,
-  stamp: string,
-  resumeExact = false,
-): void {
-  const temp = containedVaultFile(vault, join(dirname(path), `.${basename(path)}.${stamp}.tmp`));
-  if (resumeExact && existsSync(temp)) {
-    const before = lstatSync(temp);
-    const fd = openSync(temp, constants.O_RDONLY | constants.O_NOFOLLOW);
-    try {
-      const stat = fstatSync(fd);
-      if (
-        !stat.isFile() ||
-        before.isSymbolicLink() ||
-        stat.nlink !== 1 ||
-        stat.ino !== before.ino ||
-        stat.dev !== before.dev ||
-        stat.uid !== process.geteuid?.() ||
-        (stat.mode & 0o077) !== 0 ||
-        stat.size !== Buffer.byteLength(content) ||
-        readFileSync(fd, "utf8") !== content
-      ) {
-        throw new CanonWriteRefused("page_changed", "source erasure temporary revision changed");
-      }
-      fsyncSync(fd);
-      const current = lstatSync(temp);
-      if (current.ino !== stat.ino || current.dev !== stat.dev || current.isSymbolicLink()) {
-        throw new CanonWriteRefused("page_changed", "source erasure temporary revision changed");
-      }
-    } finally {
-      closeSync(fd);
-    }
-  } else {
-    writeDurably(temp, content, "wx", resumeExact ? 0o600 : undefined);
-  }
-  try {
-    renameSync(temp, path);
-  } catch (error) {
-    unlinkSync(temp);
-    throw error;
-  }
-}
-
-function deleteExistingPage(
-  vault: string,
-  path: string,
-  expectedHash: string | undefined,
-  receiptId: string,
-  erasePrior = false,
-): WriteOutcome {
-  if (!existsSync(path)) {
-    throw new CanonWriteRefused(
-      "page_missing",
-      `Refusing to delete a missing page: ${path}`,
-    );
+function expectedPrior(prior: CanonFileSnapshot | null, expectedHash: string | undefined, deleting: boolean): CanonFileSnapshot {
+  if (prior === null) {
+    throw new CanonWriteRefused("page_missing", deleting ? "Refusing to delete a missing page" : "Refusing to revise a missing page");
   }
   if (expectedHash === undefined) {
-    throw new CanonWriteRefused(
-      "expected_hash_required",
-      "deleting a page must name the hash of the bytes it read",
-    );
+    throw new CanonWriteRefused("expected_hash_required", "a revision or deletion must name the hash of the bytes it read");
   }
-  if (hashFile(path) !== expectedHash) {
-    throw new CanonWriteRefused(
-      "page_changed",
-      `Refusing to delete a page that changed since it was read: ${path}`,
-    );
+  if (hashBytes(prior.bytes) !== expectedHash) {
+    throw new CanonWriteRefused("page_changed", "Refusing to change a page that changed since it was read");
   }
-  if (erasePrior) {
-    unlinkSync(path);
-    const fd = openSync(dirname(path), "r");
-    try {
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
+  return prior;
+}
+
+function replaceSnapshot(
+  files: CanonFiles,
+  prior: CanonFileSnapshot,
+  bytes: Uint8Array,
+  receiptId: string,
+  erasePrior: boolean,
+): string {
+  const tempPath = join(dirname(prior.path), `.${basename(prior.path)}.${receiptId}.tmp`);
+  let temp = erasePrior ? files.resumeExactTemporary(prior, receiptId, bytes) : null;
+  if (temp === null) {
+    try { temp = files.create(tempPath, bytes); }
+    catch (error) {
+      if (error instanceof CanonFilesError && error.reason === "conflict") {
+        throw new CanonWriteRefused("page_changed", "Refusing an existing temporary revision");
+      }
+      throw error;
     }
-    return { archive_path: null, after_hash: ABSENT_PAGE_HASH };
   }
-  mkdirSync(join(vault, "archive"), { recursive: true, mode: 0o700 });
-  const archiveRel = archiveRelPath(vaultRelPath(vault, path), receiptId);
-  const archive = containedVaultFile(vault, archiveRel);
-  archiveExclusively(path, archive);
-  unlinkSync(path);
-  if (existsSync(path)) {
-    throw new CanonWriteRefused(
-      "write_verify_failed",
-      "bytes on disk do not match the bytes just written",
-    );
-  }
-  return { archive_path: archiveRel, after_hash: ABSENT_PAGE_HASH };
+  try {
+    const published = files.replace(temp, prior);
+    try { return hashBytes(published.bytes); }
+    finally { published.close(); }
+  } catch (error) {
+    // Ordinary cleanup only removes the identified creation if still live.
+    // Source erasure preserves its exact receipt temp for a same-ID retry.
+    if (!erasePrior) { try { files.remove(temp); } catch { /* Preserve the original failure. */ } }
+    throw error;
+  } finally { temp.close(); }
+}
+
+function writeWithFiles(
+  cap: CanonWriteCapability,
+  files: CanonFiles,
+  rel: string,
+  page: VaultPage,
+  opts: WritePageOptions,
+): WriteOutcome {
+  const prior = files.read(rel);
+  try {
+    if (opts.delete === true) {
+      const expected = expectedPrior(prior, opts.expected_hash, true);
+      const archive = opts.erase_prior === true ? null : archiveSnapshot(files, expected, cap.receipt_id);
+      files.remove(expected);
+      return { archive_path: archive, after_hash: ABSENT_PAGE_HASH };
+    }
+
+    const errors = validatePage(page.data);
+    if (errors.length > 0) {
+      throw new CanonWriteRefused("invalid_page", `Invalid page:\n${errors.map(error => `- ${error}`).join("\n")}`);
+    }
+    const bytes = Buffer.from(serializePage(page), "utf8");
+    if (bytes.byteLength > MAX_CANON_FILE_BYTES) {
+      throw new CanonWriteRefused("invalid_page", "canon page exceeds the supported byte limit");
+    }
+    if (prior !== null && opts.revision !== true) {
+      throw new CanonWriteRefused("page_exists", "Refusing to overwrite an existing page");
+    }
+    if (prior === null) {
+      if (opts.revision === true) throw new CanonWriteRefused("page_missing", "Refusing to revise a missing page");
+      ensureCanonParents(files, rel);
+      const created = files.create(rel, bytes);
+      try { return { archive_path: null, after_hash: hashBytes(created.bytes) }; }
+      finally { created.close(); }
+    }
+
+    const expected = expectedPrior(prior, opts.expected_hash, false);
+    const archive = opts.erase_prior === true ? null : archiveSnapshot(files, expected, cap.receipt_id);
+    return {
+      archive_path: archive,
+      after_hash: replaceSnapshot(files, expected, bytes, cap.receipt_id, opts.erase_prior === true),
+    };
+  } finally { prior?.close(); }
 }
 
 /**
- * The single byte path into canon. Everything above it goes through
- * `applyCanonWrite`, which mints the capability, and every write is
- * described by the hash of what is actually on disk afterwards.
+ * The single byte path into canon. apply.ts mints the one-use capability.
+ * An optional borrowed file scope remains owned by its enclosing operation;
+ * otherwise this synchronous write closes its own scope before returning.
  */
 export function writePage(
   cap: CanonWriteCapability,
@@ -389,87 +335,13 @@ export function writePage(
   page: VaultPage,
   opts: WritePageOptions = {},
 ): WriteOutcome {
-  consume(cap);
-  const vault = cap.vault_path;
-  path = containedVaultFile(vault, path);
-
-  if (isSymlink(path)) {
-    throw new CanonWriteRefused(
-      "symlink",
-      `Refusing to write through a symlink: ${path}`,
-    );
-  }
-
-  if (opts.delete === true) {
-    return deleteExistingPage(
-      vault,
-      path,
-      opts.expected_hash,
-      cap.receipt_id,
-      opts.erase_prior === true,
-    );
-  }
-
-  const errors = validatePage(page.data);
-  if (errors.length > 0) {
-    throw new CanonWriteRefused(
-      "invalid_page",
-      `Invalid page:\n${errors.map((error) => `- ${error}`).join("\n")}`,
-    );
-  }
-  const content = serializePage(page);
-  const expectedHash = hashBytes(Buffer.from(content, "utf8"));
-  const exists = existsSync(path);
-
-  if (exists && opts.revision !== true) {
-    throw new CanonWriteRefused(
-      "page_exists",
-      `Refusing to overwrite existing page: ${path}`,
-    );
-  }
-  if (!exists) {
-    if (opts.revision === true) {
-      throw new CanonWriteRefused(
-        "page_missing",
-        `Refusing to revise a missing page: ${path}`,
-      );
-    }
-    ensureCanonParents(vault, path);
-    writeDurably(path, content, "wx");
-    return { archive_path: null, after_hash: hashOnDisk(path, expectedHash) };
-  }
-
-  if (opts.expected_hash === undefined) {
-    throw new CanonWriteRefused(
-      "expected_hash_required",
-      "a revision must name the hash of the bytes it read",
-    );
-  }
-  if (hashFile(path) !== opts.expected_hash) {
-    throw new CanonWriteRefused(
-      "page_changed",
-      `Refusing to revise a page that changed since it was read: ${path}`,
-    );
-  }
-
-  if (opts.erase_prior === true) {
-    replaceAtomically(vault, path, content, cap.receipt_id, true);
-    const fd = openSync(dirname(path), "r");
+  const borrowed = consume(cap);
+  try {
+    const rel = pageRelPath(cap.vault_path, path, opts);
+    const files = borrowed ?? openCanonFiles(cap.vault_path);
     try {
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    return { archive_path: null, after_hash: hashOnDisk(path, expectedHash) };
-  }
-
-  mkdirSync(join(vault, "archive"), { recursive: true, mode: 0o700 });
-  const archiveRel = archiveRelPath(vaultRelPath(vault, path), cap.receipt_id);
-  const archive = containedVaultFile(vault, archiveRel);
-  archiveExclusively(path, archive);
-  replaceAtomically(vault, path, content, cap.receipt_id);
-  return {
-    archive_path: archiveRel,
-    after_hash: hashOnDisk(path, expectedHash),
-  };
+      assertCanonFiles(files, cap.vault_path);
+      return writeWithFiles(cap, files, rel, page, opts);
+    } finally { if (borrowed === undefined) files.close(); }
+  } catch (error) { refuseNative(error); }
 }
