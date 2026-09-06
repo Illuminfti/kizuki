@@ -79,7 +79,7 @@ function same(left: CredentialFileIdentity, right: CredentialFileIdentity): bool
 }
 function sameBigStat(before: BigIntStats, after: BigIntStats): boolean {
   return before.dev === after.dev && before.ino === after.ino && before.size === after.size &&
-    before.mode === after.mode && before.uid === after.uid && before.nlink === after.nlink &&
+    before.mode === after.mode && before.uid === after.uid && before.gid === after.gid && before.nlink === after.nlink &&
     before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
 }
 function observation(stat: BigIntStats): CredentialFileObservation {
@@ -306,9 +306,11 @@ export class CredentialDirectory {
   }
 
   /** Same-process cleanup only. Restarted files are intentionally retained. */
-  removeCreated(handle: CredentialFileInspection): void {
+  removeCreated(handle: CredentialFileInspection, expectedBytes: Uint8Array): void {
     const state = this.state(handle);
     if (!state.writable) fail("handle");
+    if (!(expectedBytes instanceof Uint8Array) || expectedBytes.byteLength > MAX_CREDENTIAL_BYTES) fail("bounds");
+    const expected = Buffer.from(expectedBytes);
     this.assertCurrent();
     const fd = this.openExisting(state.name);
     if (fd === null) fail("identity_changed");
@@ -316,6 +318,9 @@ export class CredentialDirectory {
       fileIsSafe(state.fd, state.identity);
       fileIsSafe(fd, state.identity);
       this.assertCurrent();
+      // Keep this named descriptor open through unlink. A prior Core inspection
+      // cannot authorize cleanup of bytes changed in the intervening interval.
+      if (!Buffer.from(readBounded(fd, state.identity)).equals(expected)) fail("changed");
       if (api().symbols.unlinkat(this.#fd, ptr(validName(state.name)), 0) !== 0) fail();
       call(() => fsyncSync(this.#fd));
       const residual = this.openExisting(state.name);

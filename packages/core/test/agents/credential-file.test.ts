@@ -53,9 +53,20 @@ test.if(canExerciseCustody)("creates, writes, syncs, and cleans up only a live c
     expect(created.identity.dev).toMatch(/^[0-9]+$/); expect(created.identity.ino).toMatch(/^[0-9]+$/);
     directory.writeComplete(created, bytes); directory.syncAndVerify(created, bytes);
     const inspected = directory.inspect("credential"); if (inspected === null) throw new Error("fixture");
-    expect(inspected.bytes).toEqual(bytes); expect(() => directory.removeCreated(inspected)).toThrow("credential_file_handle"); inspected.close();
-    directory.removeCreated(created); expect(directory.inspect("credential")).toBeNull();
+    expect(inspected.bytes).toEqual(bytes); expect(() => directory.removeCreated(inspected, bytes)).toThrow("credential_file_handle"); inspected.close();
+    directory.removeCreated(created, bytes); expect(directory.inspect("credential")).toBeNull();
   } finally { directory.close(); }
+});
+
+test.if(canExerciseCustody)("cleanup preserves a changed inode until its own expected-byte verification succeeds", () => {
+  const root = temporary(), directory = openCredentialDirectory(root), bytes = new Uint8Array([7, 23, 91, 4]);
+  const created = directory.create("credential");
+  try {
+    directory.writeComplete(created, bytes);
+    writeFileSync(join(root, "credential"), new Uint8Array([7, 23, 91, 5]));
+    expect(() => directory.removeCreated(created, bytes)).toThrow("credential_file_changed");
+    expect(readFileSync(join(root, "credential")).equals(Buffer.from([7, 23, 91, 5]))).toBe(true);
+  } finally { created.close(); directory.close(); }
 });
 
 test.if(canExerciseCustody)("inspects a large qualified file by metadata without reading credential bytes", () => {
@@ -78,9 +89,9 @@ test.if(canExerciseCustody)("inspects a large qualified file by metadata without
 test.if(canExerciseCustody)("refuses forged, closed, cross-directory, unsafe-name, and pre-existing-file effects", () => {
   const one = temporary(), two = temporary(), first = openCredentialDirectory(one), second = openCredentialDirectory(two);
   try {
-    expect(() => first.removeCreated({} as CredentialFileInspection)).toThrow("credential_file_handle");
-    const created = first.create("credential"); expect(() => second.removeCreated(created)).toThrow("credential_file_handle");
-    created.close(); expect(() => first.removeCreated(created)).toThrow("credential_file_handle");
+    expect(() => first.removeCreated({} as CredentialFileInspection, new Uint8Array())).toThrow("credential_file_handle");
+    const created = first.create("credential"); expect(() => second.removeCreated(created, new Uint8Array())).toThrow("credential_file_handle");
+    created.close(); expect(() => first.removeCreated(created, new Uint8Array())).toThrow("credential_file_handle");
     for (const name of ["", ".", "..", "a/b", "a\0b", "x".repeat(256)]) expect(() => first.inspect(name)).toThrow("credential_file_unsafe");
     writeFileSync(join(one, "existing"), "synthetic", { mode: 0o600 });
     expect(() => first.create("existing")).toThrow("credential_file_conflict"); expect(lstatSync(join(one, "existing")).isFile()).toBe(true);
@@ -99,7 +110,7 @@ test.if(canExerciseCustody)("creates exact mode despite a restrictive process um
       const { openCredentialDirectory } = await import(${source});
       const root = fs.mkdtempSync(join(tmpdir(), "kizuki-credential-umask-")); fs.chmodSync(root, 0o700);
       const directory = openCredentialDirectory(root), handle = directory.create("credential");
-      try { if ((fs.statSync(join(root, "credential")).mode & 0o777) !== 0o600) process.exit(2); directory.removeCreated(handle); }
+      try { if ((fs.statSync(join(root, "credential")).mode & 0o777) !== 0o600) process.exit(2); directory.removeCreated(handle, new Uint8Array()); }
       finally { directory.close(); fs.rmSync(root, { recursive: true, force: true }); }
     } finally { process.umask(prior); }
   `;
@@ -116,11 +127,11 @@ test.if(canExerciseCustody)("refuses symlink, hard-link, changed creation metada
     const held = directory.create("held"); held.close(); linkSync(join(root, "held"), join(root, "alias"));
     expect(() => directory.inspect("held")).toThrow("credential_file_identity_changed"); rmSync(join(root, "held")); rmSync(join(root, "alias"));
     const changed = directory.create("changed"); writeFileSync(join(root, "changed"), new Uint8Array([9]));
-    expect(() => directory.writeComplete(changed, new Uint8Array([1]))).toThrow("credential_file_changed"); directory.removeCreated(changed);
+    expect(() => directory.writeComplete(changed, new Uint8Array([1]))).toThrow("credential_file_changed"); changed.close();
     const restored = directory.create("restored"), restoredPath = join(root, "restored");
     writeFileSync(restoredPath, new Uint8Array([9])); truncateSync(restoredPath, 0);
     const shifted = new Date(Date.now() + 10_000); utimesSync(restoredPath, shifted, shifted);
-    expect(() => directory.writeComplete(restored, new Uint8Array([1]))).toThrow("credential_file_changed"); directory.removeCreated(restored);
+    expect(() => directory.writeComplete(restored, new Uint8Array([1]))).toThrow("credential_file_changed"); restored.close();
     const moved = `${root}-moved`; roots.push(moved); renameSync(root, moved); symlinkSync(moved, root);
     expect(() => directory.create("after-move")).toThrow(/credential_file_(identity_changed|unsafe)/);
   } finally { directory.close(); }
@@ -154,8 +165,9 @@ for (const mode of ["short", "zero", "throw", "fd-sync", "directory-sync"] as co
     const root = fs.mkdtempSync(join(tmpdir(), "kizuki-credential-fault-")); fs.chmodSync(root, 0o700);
     const directory = openCredentialDirectory(root), handle = directory.create("credential"), bytes = new Uint8Array([1, 2, 3]);
     try {
-      if (mode === "short") { directory.writeComplete(handle, bytes); directory.syncAndVerify(handle, bytes); directory.removeCreated(handle); }
-      else { assert.throws(() => directory.writeComplete(handle, bytes), /credential_file_(write|unsafe)/); directory.removeCreated(handle); }
+      if (mode === "short") { directory.writeComplete(handle, bytes); directory.syncAndVerify(handle, bytes); directory.removeCreated(handle, bytes); }
+      else { assert.throws(() => directory.writeComplete(handle, bytes), /credential_file_(write|unsafe)/);
+        directory.removeCreated(handle, mode === "zero" || mode === "throw" ? new Uint8Array() : bytes); }
       assert.equal(fs.existsSync(join(root, "credential")), false);
     } finally { directory.close(); fs.rmSync(root, { recursive: true, force: true }); }
   `;

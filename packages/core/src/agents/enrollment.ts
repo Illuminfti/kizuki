@@ -18,6 +18,7 @@ const GENERATION = /^[0-9a-f]{32}$/;
 const TOKEN = /^kzk_[0-9A-HJKMNP-TV-Z]{52}$/;
 const MAX_GRANT_BYTES = 32 * 1024;
 const SIDECARS = ["kizuki.db-wal", "kizuki.db-shm", "kizuki.db-journal"] as const;
+const SQLITE_FILENAMES: ReadonlySet<string> = new Set(["kizuki.db", ...SIDECARS]);
 
 export interface AgentEnrollmentRequest {
   operation_id: string;
@@ -65,6 +66,12 @@ function safeError(error: unknown): never {
 function digestBytes(value: Uint8Array): string { return new Bun.CryptoHasher("sha256").update(value).digest("hex"); }
 function sameIdentity(left: CredentialFileIdentity, right: CredentialFileIdentity): boolean { return left.dev === right.dev && left.ino === right.ino; }
 function boundIdentity(left: CredentialFileIdentity, dev: string | null, ino: string | null): boolean { return left.dev === dev && left.ino === ino; }
+function readOne<T>(db: Database, sql: string, ...bindings: (string | number | null)[]): T | null {
+  // Bun's query cache does not own statements beyond its capacity. Explicit
+  // statement lifetime is required before a close/reopen can release SQLite.
+  using statement = db.prepare<T, (string | number | null)[]>(sql);
+  return statement.get(...bindings);
+}
 function absolutePath(value: unknown): value is string {
   return typeof value === "string" && value.length <= 4096 && Buffer.byteLength(value) <= 4096 &&
     Buffer.from(value).toString() === value && !value.includes("\0") && isAbsolute(value) && resolve(value) === value && value.split("/").length <= 257;
@@ -105,10 +112,12 @@ function credentialDirectory(path: string): CredentialDirectory {
     fail("credential_unsafe");
   }
 }
-function assertDestinationOutsideExportedVault(vaultPath: string, destination: string): void {
+function assertCredentialDestination(vaultPath: string, destination: string): void {
   if (typeof vaultPath !== "string" || vaultPath.length > 4096) fail("vault_unavailable");
-  const rel = relative(resolve(vaultPath), destination);
-  if (rel === "" || ((rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel)) && rel.split("/")[0] !== ".kizuki")) fail("credential_unsafe");
+  if (SQLITE_FILENAMES.has(basename(destination))) fail("credential_unsafe");
+  const root = resolve(vaultPath), rel = relative(root, destination);
+  const outside = rel === ".." || rel.startsWith("../") || isAbsolute(rel);
+  if (!outside && dirname(destination) !== `${root}/.kizuki/agent-credentials`) fail("credential_unsafe");
 }
 
 /** Hold one qualified control directory and the original ledger identity. */
@@ -147,18 +156,18 @@ class EnrollmentLedger {
   }
   get db(): Database { if (this.#db === undefined) fail("enrollment_unavailable"); return this.#db; }
   reopen(): void {
-    const previous = this.#db; this.#db = undefined;
-    try { previous?.close(); } catch { fail("enrollment_unavailable"); }
+    try { this.#db?.close(true); } catch { fail("enrollment_unavailable"); }
+    this.#db = undefined;
     this.custody.check();
     const db = openLedger(this.custody.path, { busyTimeoutMs: 5000 });
     try {
       this.custody.check();
       db.exec("PRAGMA busy_timeout = 5000; PRAGMA synchronous = FULL");
-      const journal = db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode;
-      const synchronous = db.query<{ synchronous: number }, []>("PRAGMA synchronous").get()?.synchronous;
+      const journal = readOne<{ journal_mode: string }>(db, "PRAGMA journal_mode")?.journal_mode;
+      const synchronous = readOne<{ synchronous: number }>(db, "PRAGMA synchronous")?.synchronous;
       if (journal !== "wal" || synchronous === undefined || synchronous < 2) fail("enrollment_unavailable");
       this.#db = db;
-    } catch (error) { db.close(); throw error; }
+    } catch (error) { db.close(true); throw error; }
   }
   write<T>(work: (db: Database) => T): T {
     if (this.db.inTransaction) fail("enrollment_unavailable");
@@ -171,26 +180,26 @@ class EnrollmentLedger {
   }
   close(): void {
     const previous = this.#db; this.#db = undefined;
-    try { previous?.close(); } catch { fail("enrollment_unavailable"); } finally { this.custody.close(); }
+    try { previous?.close(true); } catch { fail("enrollment_unavailable"); } finally { this.custody.close(); }
   }
 }
 function readRow(db: Database, operationId: string): EnrollmentRow | null {
-  return db.query<EnrollmentRow, [string]>("SELECT * FROM agent_enrollments WHERE operation_id = ?").get(operationId);
+  return readOne<EnrollmentRow>(db, "SELECT * FROM agent_enrollments WHERE operation_id = ?", operationId);
 }
 function assertRequest(row: EnrollmentRow, shape: RequestShape, parent: CredentialFileIdentity): void {
   if (row.request_digest !== shape.requestDigest || row.destination_digest !== shape.destinationDigest || row.name !== shape.request.name ||
     row.parent_dev !== parent.dev || row.parent_ino !== parent.ino) fail("operation_conflict");
 }
 function currentGrant(db: Database, agentId: string) {
-  const agent = db.query<{ revoked_at: string | null; quarantined_at: string | null; grant_epoch: number | null }, [string]>(
-    "SELECT a.revoked_at, a.quarantined_at, g.grant_epoch FROM agents a LEFT JOIN agent_grants g ON g.agent_id=a.agent_id WHERE a.agent_id=?").get(agentId);
+  const agent = readOne<{ revoked_at: string | null; quarantined_at: string | null; grant_epoch: number | null }>(db,
+    "SELECT a.revoked_at, a.quarantined_at, g.grant_epoch FROM agents a LEFT JOIN agent_grants g ON g.agent_id=a.agent_id WHERE a.agent_id=?", agentId);
   const epoch = agent !== null && Number.isSafeInteger(agent.grant_epoch) ? agent.grant_epoch : null;
   const absent = (authority: AgentEnrollmentResult["authority"]) => ({ authority, epoch, grant: null });
   if (agent === null) return absent("unavailable");
   if (agent.revoked_at !== null) return absent("revoked");
   if (agent.quarantined_at !== null) return absent("quarantined");
   const principal = principalForAgentId(db, agentId);
-  if (principal === null || principal.kind !== "agent") return absent("quarantined");
+  if (principal === null || principal.kind !== "agent") return absent("unavailable");
   return { authority: "active" as const, epoch: principal.grant_epoch, grant: principal.grant };
 }
 function result(row: EnrollmentRow, db: Database, credential: CredentialState, replayed: boolean): AgentEnrollmentResult {
@@ -227,15 +236,17 @@ function credentialFor(row: EnrollmentRow, db: Database, directory: CredentialDi
       if (row.file_dev === null || !boundIdentity(held.identity, row.file_dev, row.file_ino)) return "conflict";
       if (!exactDelivery(row, directory, held, held.bytes)) return row.state === "completed" ? "conflict" : "incomplete";
       if (row.state !== "completed") return row.state === "cancelled" ? "stale" : "incomplete";
-      const parsed = parseEnvelope(held.bytes)!;
-      const principal = authenticate(db, parsed.token);
-      return principal?.kind === "agent" && principal.agent.agent_id === row.agent_id ? "ready" : "stale";
+      // Result inspection is pure, including immutable preview. Authentication
+      // may persist quarantine and therefore belongs only at the auth seam.
+      const principal = principalForAgentId(db, row.agent_id);
+      const current = readOne<{ token_hash: string }>(db, "SELECT token_hash FROM agents WHERE agent_id=?", row.agent_id);
+      return principal?.kind === "agent" && principal.agent.agent_id === row.agent_id && current?.token_hash === row.token_hash ? "ready" : "stale";
     } finally { held.close(); }
   } catch { return "conflict"; }
 }
 function checkNewRequest(db: Database, shape: RequestShape, directory: CredentialDirectory): void {
-  if (db.query("SELECT 1 FROM agent_enrollments WHERE name=? AND state!='cancelled'").get(shape.request.name) !== null || getAgent(db, shape.request.name) !== null) fail("name_conflict");
-  if (db.query("SELECT 1 FROM agent_enrollments WHERE destination_digest=? AND state!='cancelled'").get(shape.destinationDigest) !== null) fail("credential_conflict");
+  if (readOne(db, "SELECT 1 FROM agent_enrollments WHERE name=? AND state!='cancelled'", shape.request.name) !== null || getAgent(db, shape.request.name) !== null) fail("name_conflict");
+  if (readOne(db, "SELECT 1 FROM agent_enrollments WHERE destination_digest=? AND state!='cancelled'", shape.destinationDigest) !== null) fail("credential_conflict");
   let held: CredentialFileInspection | null;
   try { held = directory.inspect(shape.filename); } catch { fail("credential_conflict"); }
   if (held !== null) { held.close(); fail("credential_conflict"); }
@@ -246,11 +257,11 @@ function reserve(ledger: EnrollmentLedger, shape: RequestShape, directory: Crede
     if (existing !== null) { assertRequest(existing, shape, directory.identity); return { row: existing, replayed: true }; }
     checkNewRequest(db, shape, directory);
     const agentId = ulid();
-    if (db.query("SELECT 1 FROM agents WHERE agent_id=?").get(agentId) !== null) fail("name_conflict");
+    if (readOne(db, "SELECT 1 FROM agents WHERE agent_id=?", agentId) !== null) fail("name_conflict");
     const at = new Date().toISOString();
-    db.query(`INSERT INTO agent_enrollments (operation_id,request_digest,destination_digest,agent_id,name,grant_json,state,parent_dev,parent_ino,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,'reserved',?,?,?,?)`).run(shape.request.operation_id, shape.requestDigest, shape.destinationDigest, agentId, shape.request.name,
-        JSON.stringify(shape.request.grant), directory.identity.dev, directory.identity.ino, at, at);
+    db.run(`INSERT INTO agent_enrollments (operation_id,request_digest,destination_digest,agent_id,name,grant_json,state,parent_dev,parent_ino,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,'reserved',?,?,?,?)`, [shape.request.operation_id, shape.requestDigest, shape.destinationDigest, agentId, shape.request.name,
+        JSON.stringify(shape.request.grant), directory.identity.dev, directory.identity.ino, at, at]);
     return { row: readRow(db, shape.request.operation_id)!, replayed: false };
   });
 }
@@ -266,9 +277,9 @@ function bind(ledger: EnrollmentLedger, shape: RequestShape, directory: Credenti
     const delivery: Delivery = { row: current, held, bytes: new Uint8Array() }; hold(delivery);
     const token = generateAgentToken(), generation = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString("hex");
     const bytes = envelope(current.agent_id, current.operation_id, generation, token);
-    if (db.query("SELECT 1 FROM agents WHERE name=? OR agent_id=? OR token_hash=?").get(current.name, current.agent_id, hashAgentToken(token)) !== null) fail("name_conflict");
-    db.query(`UPDATE agent_enrollments SET state='file_bound',generation=?,token_hash=?,credential_digest=?,credential_size=?,file_dev=?,file_ino=?,updated_at=? WHERE operation_id=?`)
-      .run(generation, hashAgentToken(token), digestBytes(bytes), bytes.byteLength, held.identity.dev, held.identity.ino, new Date().toISOString(), current.operation_id);
+    if (readOne(db, "SELECT 1 FROM agents WHERE name=? OR agent_id=? OR token_hash=?", current.name, current.agent_id, hashAgentToken(token)) !== null) fail("name_conflict");
+    db.run(`UPDATE agent_enrollments SET state='file_bound',generation=?,token_hash=?,credential_digest=?,credential_size=?,file_dev=?,file_ino=?,updated_at=? WHERE operation_id=?`,
+      [generation, hashAgentToken(token), digestBytes(bytes), bytes.byteLength, held.identity.dev, held.identity.ino, new Date().toISOString(), current.operation_id]);
     delivery.row = readRow(db, current.operation_id)!; delivery.bytes = bytes;
     return delivery;
   });
@@ -282,10 +293,10 @@ function activate(ledger: EnrollmentLedger, directory: CredentialDirectory, deli
     if (publish) directory.writeComplete(delivery.held, delivery.bytes);
     else directory.syncAndVerify(delivery.held, delivery.bytes);
     const at = new Date().toISOString();
-    db.query("INSERT INTO agents (agent_id,name,token_hash,created_at) VALUES (?,?,?,?)").run(current.agent_id, current.name, current.token_hash, at);
+    db.run("INSERT INTO agents (agent_id,name,token_hash,created_at) VALUES (?,?,?,?)", [current.agent_id, current.name, current.token_hash, at]);
     writeAgentGrant(db, current.agent_id, grant, at, 1);
     recordLifecycle(db, current.agent_id, "agent.create", { after: grant }, at);
-    db.query("UPDATE agent_enrollments SET state='completed',completed_at=?,updated_at=? WHERE operation_id=?").run(at, at, current.operation_id);
+    db.run("UPDATE agent_enrollments SET state='completed',completed_at=?,updated_at=? WHERE operation_id=?", [at, at, current.operation_id]);
     return readRow(db, current.operation_id)!;
   });
 }
@@ -302,12 +313,12 @@ function cleanupConfirmedRollback(ledger: EnrollmentLedger, directory: Credentia
       if (observed === null) return;
       try { if (!exactDelivery(current, directory, observed, observed.bytes)) return; }
       finally { observed.close(); }
-      directory.removeCreated(delivery.held);
+      directory.removeCreated(delivery.held, delivery.bytes);
     });
   } catch { /* Uncertain lock, custody or bytes: retain the artifact. */ }
 }
 export function previewAgentEnrollment(vaultPath: string, request: AgentEnrollmentRequest): AgentEnrollmentResult {
-  const shape = parseRequest(request); assertDestinationOutsideExportedVault(vaultPath, shape.request.token_ref.slice(5));
+  const shape = parseRequest(request); assertCredentialDestination(vaultPath, shape.request.token_ref.slice(5));
   const directory = credentialDirectory(shape.parent);
   let custody: ReturnType<typeof ledgerCustody> | undefined, db: Database | undefined;
   try {
@@ -326,7 +337,9 @@ export function previewAgentEnrollment(vaultPath: string, request: AgentEnrollme
     db = new Database(`${pathToFileURL(custody.path).href}?immutable=1&mode=ro`, constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI | constants.SQLITE_OPEN_NOFOLLOW);
     let output: AgentEnrollmentResult | undefined, error: unknown;
     try {
-      const versions = tableExists(db, "schema_version") ? db.query<{ version: number }, []>("SELECT version FROM schema_version LIMIT 2").all() : [];
+      if (!tableExists(db, "schema_version")) fail("vault_unavailable");
+      using versionQuery = db.prepare<{ version: number }, []>("SELECT version FROM schema_version LIMIT 2");
+      const versions = versionQuery.all();
       if (versions.length !== 1 || !Number.isSafeInteger(versions[0]!.version) || versions[0]!.version > LEDGER_SCHEMA_VERSION) fail("vault_unavailable");
       if (versions[0]!.version < LEDGER_SCHEMA_VERSION || !tableExists(db, "agent_enrollments")) fail("migration_required");
       const existing = readRow(db, shape.request.operation_id);
@@ -339,17 +352,17 @@ export function previewAgentEnrollment(vaultPath: string, request: AgentEnrollme
         output = result(existing, db, credentialFor(existing, db, directory, shape.filename), true);
       }
     } catch (caught) { error = caught; }
-    db.close(); db = undefined;
+    db.close(true); db = undefined;
     if (snapshot() !== before) fail("enrollment_busy");
     if (error !== undefined) throw error;
     if (output === undefined) fail("enrollment_unavailable");
     return output;
   } catch (error) { return safeError(error); }
-  finally { try { db?.close(); } finally { custody?.close(); directory.close(); } }
+  finally { try { db?.close(true); } finally { custody?.close(); directory.close(); } }
 }
 
 export function enrollAgent(vaultPath: string, request: AgentEnrollmentRequest): AgentEnrollmentResult {
-  const shape = parseRequest(request); assertDestinationOutsideExportedVault(vaultPath, shape.request.token_ref.slice(5));
+  const shape = parseRequest(request); assertCredentialDestination(vaultPath, shape.request.token_ref.slice(5));
   const directory = credentialDirectory(shape.parent);
   let ledger: EnrollmentLedger | undefined, created: Delivery | undefined, held: CredentialFileInspection | undefined;
   try {
@@ -402,7 +415,7 @@ export function revokeAgentEnrollment(vaultPath: string, name: string): AgentEnr
   let ledger: EnrollmentLedger | undefined;
   let target: { agentId: string; operationId: string | null } | undefined;
   function revokedResult(db: Database, agentId: string, replayed: boolean): AgentEnrollmentResult {
-    const row = db.query<EnrollmentRow, [string]>("SELECT * FROM agent_enrollments WHERE agent_id=? AND state='completed'").get(agentId);
+    const row = readOne<EnrollmentRow>(db, "SELECT * FROM agent_enrollments WHERE agent_id=? AND state='completed'", agentId);
     if (row !== null) return result(row, db, "unknown", replayed);
     const current = currentGrant(db, agentId);
     return { schema: SCHEMA, operation_id: null, agent_id: agentId, name, status: "completed", authority: current.authority,
@@ -419,13 +432,13 @@ export function revokeAgentEnrollment(vaultPath: string, name: string): AgentEnr
           revokeAgentInTransaction(db, name);
           return revokedResult(db, agent.agent_id, replayed);
         }
-        const row = db.query<EnrollmentRow, [string]>("SELECT * FROM agent_enrollments WHERE name=? ORDER BY (state='cancelled'),created_at DESC,operation_id DESC LIMIT 1").get(name);
+        const row = readOne<EnrollmentRow>(db, "SELECT * FROM agent_enrollments WHERE name=? ORDER BY (state='cancelled'),created_at DESC,operation_id DESC LIMIT 1", name);
         if (row === null || row.state === "completed") fail("name_conflict");
         target = { agentId: row.agent_id, operationId: row.operation_id };
         const replayed = row.state === "cancelled";
         if (!replayed) {
           const at = new Date().toISOString();
-          db.query("UPDATE agent_enrollments SET state='cancelled',cancelled_at=?,updated_at=? WHERE operation_id=?").run(at, at, row.operation_id);
+          db.run("UPDATE agent_enrollments SET state='cancelled',cancelled_at=?,updated_at=? WHERE operation_id=?", [at, at, row.operation_id]);
         }
         return result(readRow(db, row.operation_id)!, db, "unknown", replayed);
       });
@@ -448,7 +461,9 @@ export function revokeAgentEnrollment(vaultPath: string, name: string): AgentEnr
 export function authenticateAgentCredential(db: Database, tokenRef: string): Principal | null {
   try {
     if (typeof tokenRef !== "string" || !tokenRef.startsWith("file:") || !absolutePath(tokenRef.slice(5))) return null;
-    const raw = tokenRef.slice(5), directory = openCredentialDirectory(dirname(raw));
+    const raw = tokenRef.slice(5);
+    if (SQLITE_FILENAMES.has(basename(raw))) return null;
+    const directory = openCredentialDirectory(dirname(raw));
     try {
       const held = directory.inspect(basename(raw)); if (held === null) return null;
       try {

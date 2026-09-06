@@ -13,7 +13,8 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), "kizuki-enrollment-fault-")); roots.push(root);
   const vault = join(root, "vault"), control = join(vault, ".kizuki"); mkdirSync(control, { recursive: true, mode: 0o700 });
   const dbPath = join(control, "kizuki.db"), db = openLedger(dbPath); db.close(); chmodSync(dbPath, 0o600);
-  const credential = join(control, "agent.credential");
+  const credentialDir = join(control, "agent-credentials"); mkdirSync(credentialDir, { mode: 0o700 });
+  const credential = join(credentialDir, "agent.credential");
   const request = { operation_id: "fault-agent-0001", name: "fault-agent", token_ref: `file:${credential}`,
     grant: { ceiling: "public" as const, types: [], subjects: [], since: null, until: null, tools: [], rate_limit_per_minute: 60, relay_owner_corrections: false } };
   return { root, vault, dbPath, credential, request };
@@ -26,8 +27,8 @@ function childScript(f: ReturnType<typeof fixture>, mode: string): string {
     import { Database } from "bun:sqlite";
     import { strict as assert } from "node:assert";
     const mode = ${JSON.stringify(mode)}, vault = ${JSON.stringify(f.vault)}, credential = ${JSON.stringify(f.credential)}, request = ${JSON.stringify(f.request)};
-    const realWrite = fs.writeSync, realSync = fs.fsyncSync;
-    let fired = false, credentialSynced = false, activeDatabase;
+    const realWrite = fs.writeSync, realSync = fs.fsyncSync, realClose = fs.closeSync;
+    let fired = false, credentialSynced = false, activeDatabase, mutated = false;
     const ready = ${JSON.stringify(join(f.root, "ready-"))} + process.pid, release = ${JSON.stringify(join(f.root, "release"))};
     function pause() {
       fs.writeFileSync(ready, "ready", { mode: 0o600 });
@@ -44,6 +45,11 @@ function childScript(f: ReturnType<typeof fixture>, mode: string): string {
     }
     function crash() { realWrite(1, "fault reached\\n"); process.kill(process.pid, "SIGKILL"); }
     mock.module("node:fs", () => ({ ...fs,
+      closeSync(fd) {
+        const change = mode === "cleanup-change" && fired && !mutated && same(fd, credential) && fs.fstatSync(fd).size > 0;
+        realClose(fd);
+        if (change) { mutated = true; fs.writeFileSync(credential, "changed-after-inspection", { mode: 0o600 }); }
+      },
       writeSync(fd, ...args) {
         if (same(fd, credential) && !fired) {
           if (mode === "crash-bound") { fired = true; crash(); }
@@ -66,15 +72,19 @@ function childScript(f: ReturnType<typeof fixture>, mode: string): string {
         return realSync(fd);
       },
     }));
-    const originalTransaction = Database.prototype.transaction, originalQuery = Database.prototype.query, originalClose = Database.prototype.close;
+    const originalTransaction = Database.prototype.transaction, originalPrepare = Database.prototype.prepare, originalClose = Database.prototype.close;
     let faultDatabase, oldClosed = false, readNewConnection = false;
-    Database.prototype.close = function(...args) { if (this === faultDatabase) oldClosed = true; return originalClose.apply(this, args); };
-    Database.prototype.query = function(...args) {
+    Database.prototype.close = function(...args) {
+      const output = originalClose.apply(this, args);
+      if (this === faultDatabase) oldClosed = true;
+      return output;
+    };
+    Database.prototype.prepare = function(...args) {
       if (faultDatabase && fired) {
         assert.notEqual(this, faultDatabase, "uncertain connection was queried again");
         assert.equal(oldClosed, true, "old connection must close before reconciliation"); readNewConnection = true;
       }
-      const statement = originalQuery.apply(this, args);
+      const statement = originalPrepare.apply(this, args);
       if (mode === "cleanup-race" && fired && args[0].startsWith("SELECT * FROM agent_enrollments WHERE operation_id")) {
         const get = statement.get.bind(statement);
         statement.get = (...values) => {
@@ -86,15 +96,17 @@ function childScript(f: ReturnType<typeof fixture>, mode: string): string {
       return statement;
     };
     function phase(db) {
-      if (!originalQuery.call(db, "SELECT name FROM sqlite_master WHERE name='agent_enrollments'").get()) return null;
-      return originalQuery.call(db, "SELECT state FROM agent_enrollments WHERE operation_id=?").get(request.operation_id)?.state;
+      using exists = originalPrepare.call(db, "SELECT name FROM sqlite_master WHERE name='agent_enrollments'");
+      if (!exists.get()) return null;
+      using state = originalPrepare.call(db, "SELECT state FROM agent_enrollments WHERE operation_id=?");
+      return state.get(request.operation_id)?.state;
     }
     Database.prototype.transaction = function(callback) {
       const db = this;
       const transaction = originalTransaction.call(db, function(...args) {
         activeDatabase = db;
         const output = callback(...args);
-        if ((mode === "commit-before" || mode === "cleanup-race" || mode === "bind-commit-before") && !fired && phase(db) === (mode === "bind-commit-before" ? "file_bound" : "completed")) {
+        if ((mode === "commit-before" || mode === "cleanup-race" || mode === "cleanup-change" || mode === "bind-commit-before") && !fired && phase(db) === (mode === "bind-commit-before" ? "file_bound" : "completed")) {
           fired = true; faultDatabase = db; throw new Error("injected before commit");
         }
         return output;
@@ -114,10 +126,24 @@ function childScript(f: ReturnType<typeof fixture>, mode: string): string {
     if (mode === "start-barrier") { fired = true; pause(); }
     const result = enrollAgent(vault, request);
     assert.equal(fired, true, "fault or barrier must actually be reached");
+    if (mode === "cleanup-change") assert.equal(mutated, true, "late byte mutation must actually be reached");
     if (mode.includes("commit")) assert.equal(readNewConnection, true, "commit outcome must be read through a new connection");
     process.stdout.write(JSON.stringify(result) + "\\n");
   `;
 }
+
+test.if(qualified)("rollback cleanup retains a file changed after the separate Core inspection", () => {
+  const f = fixture();
+  const child = Bun.spawnSync([process.execPath, "--eval", childScript(f, "cleanup-change")], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
+  expect(child.exitCode).toBe(0); expect(child.stderr.length).toBe(0);
+  expect(existsSync(f.credential)).toBe(true);
+  expect(readFileSync(f.credential).equals(Buffer.from("changed-after-inspection"))).toBe(true);
+  expect(JSON.parse(child.stdout.toString())).toMatchObject({ status: "pending", authority: "none", credential: "incomplete" });
+  const db = openLedger(f.dbPath);
+  expect(db.query("SELECT count(*) AS n FROM agents").get()).toEqual({ n: 0 });
+  expect(db.query("SELECT count(*) AS n FROM agent_audit WHERE tool='agent.create'").get()).toEqual({ n: 0 });
+  expect(authenticateAgentCredential(db, f.request.token_ref)).toBeNull(); db.close();
+});
 
 test.if(process.env.GITHUB_ACTIONS === "true" && process.platform === "linux" && process.arch === "x64")("crash and commit proof requires qualified Linux custody", () => {
   expect(qualified).toBe(true);

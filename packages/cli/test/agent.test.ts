@@ -33,7 +33,9 @@ function fingerprint(root: string): unknown {
 }
 
 function fixture() {
-  const state = tempVault(), grantPath = join(state.root, "grant.json"), tokenPath = join(state.vault, ".kizuki", "agent.credential");
+  const state = tempVault(), grantPath = join(state.root, "grant.json"), credentialDir = join(state.vault, ".kizuki", "agent-credentials");
+  mkdirSync(credentialDir, { mode: 0o700 });
+  const tokenPath = join(credentialDir, "agent.credential");
   writeFileSync(grantPath, JSON.stringify(GRANT), { mode: 0o600 });
   const args = ["--vault", state.vault, "agent", "add", "helper", "--grant", grantPath,
     "--token-ref", `file:${tokenPath}`, "--operation-id", "helper-setup-1", "--json"];

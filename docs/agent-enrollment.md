@@ -35,14 +35,18 @@ of the existing Core `addAgent` API.
 Use an initialized vault and an absolute credential path. The destination must
 be absent. Its parent must already exist, belong to the current user and have
 mode 0700. Symlinked ancestry, unsafe writable ancestors and hard-linked files
-are refused. Credentials use mode 0600. The `.kizuki` control directory or a
-private directory outside the vault is supported; ordinary vault content is
-refused because it is included in portable backups.
+are refused. Credentials use mode 0600. Inside the vault, only direct files in
+`<vault>/.kizuki/agent-credentials` are supported. Create that private directory
+explicitly if absent; enrollment never creates or repairs its parent. A private
+directory outside the vault is also supported. Other vault paths and the exact
+basenames `kizuki.db`, `kizuki.db-wal`, `kizuki.db-shm` and `kizuki.db-journal`
+are refused, including those basenames outside the vault.
 
 ```bash
-kizuki --vault /absolute/vault agent add assistant --grant agent-grant.json --token-ref file:/absolute/vault/.kizuki/assistant.credential --operation-id assistant-setup-1 --dry-run
-kizuki --vault /absolute/vault agent add assistant --grant agent-grant.json --token-ref file:/absolute/vault/.kizuki/assistant.credential --operation-id assistant-setup-1 --json
-kizuki-mcp --vault /absolute/vault --token-ref file:/absolute/vault/.kizuki/assistant.credential
+mkdir -m 700 /absolute/vault/.kizuki/agent-credentials
+kizuki --vault /absolute/vault agent add assistant --grant agent-grant.json --token-ref file:/absolute/vault/.kizuki/agent-credentials/assistant.credential --operation-id assistant-setup-1 --dry-run
+kizuki --vault /absolute/vault agent add assistant --grant agent-grant.json --token-ref file:/absolute/vault/.kizuki/agent-credentials/assistant.credential --operation-id assistant-setup-1 --json
+kizuki-mcp --vault /absolute/vault --token-ref file:/absolute/vault/.kizuki/agent-credentials/assistant.credential
 ```
 
 Replace the paths and subject with your intended scope. The operation ID is
@@ -68,6 +72,9 @@ Repeat the exact add command after a lost response. Its identity and initial
 grant are recorded once. A completed retry returns the current grant and epoch,
 including later narrowing, rotation, quarantine or revocation. It never reapplies
 the old grant or regenerates a missing credential.
+If a stored grant is malformed but has not been quarantined, preview reports
+unavailable authority and a stale intact credential. Preview does not change
+that state or diagnose it as a file conflict.
 
 | Result | Meaning and next action |
 | --- | --- |

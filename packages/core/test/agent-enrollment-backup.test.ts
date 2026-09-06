@@ -74,7 +74,8 @@ test.if(credentialCustodyQualified)("current writer excludes completed enrollmen
   const vault = join(root, "vault"); initVault(vault);
   const dbPath = join(vault, ".kizuki", "kizuki.db");
   const initialized = openLedger(dbPath); initialized.close(); chmodSync(dbPath, 0o600);
-  const ref = `file:${join(vault, ".kizuki", "agent.credential")}`;
+  const credentialDir = join(vault, ".kizuki", "agent-credentials"); mkdirSync(credentialDir, { mode: 0o700 });
+  const ref = `file:${join(credentialDir, "agent.credential")}`;
   const created = enrollAgent(vault, { name: "backup-agent", operation_id: "backup-agent-0001", token_ref: ref,
     grant: { ceiling: "public", types: [], subjects: [], since: null, until: null, tools: [], rate_limit_per_minute: 60, relay_owner_corrections: false } });
   expect(created).toMatchObject({ status: "completed", authority: "active", credential: "ready" });
@@ -102,7 +103,7 @@ test.if(credentialCustodyQualified)("current writer excludes completed enrollmen
       expect(target.query(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
     }
     expect(authenticateAgentCredential(target, ref)).toBeNull();
-    expect(existsSync(join(restored, ".kizuki", "agent.credential"))).toBe(false);
+    expect(existsSync(join(restored, ".kizuki", "agent-credentials", "agent.credential"))).toBe(false);
   } finally { target.close(); }
 });
 

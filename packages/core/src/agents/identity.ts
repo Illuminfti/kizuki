@@ -298,15 +298,13 @@ function principalFromRow(row: AgentGrantRow): Principal | null {
 }
 
 function grantRowByName(db: Database, name: string): AgentGrantRow | null {
-  return db
-    .query<AgentGrantRow, [string]>(`${AGENT_GRANT_SELECT} WHERE a.name = ?`)
-    .get(name);
+  using statement = db.prepare<AgentGrantRow, [string]>(`${AGENT_GRANT_SELECT} WHERE a.name = ?`);
+  return statement.get(name);
 }
 
 function grantRowById(db: Database, agentId: string): AgentGrantRow | null {
-  return db
-    .query<AgentGrantRow, [string]>(`${AGENT_GRANT_SELECT} WHERE a.agent_id = ?`)
-    .get(agentId);
+  using statement = db.prepare<AgentGrantRow, [string]>(`${AGENT_GRANT_SELECT} WHERE a.agent_id = ?`);
+  return statement.get(agentId);
 }
 
 function quarantineIfInvalid(db: Database, agentId: string, at: string): void {
@@ -316,12 +314,13 @@ function quarantineIfInvalid(db: Database, agentId: string, at: string): void {
       return;
     }
     if (tryDecodeGrant(row) !== null) return;
-    db.query<never, [string, string, string]>(
+    using statement = db.prepare<never, [string, string, string]>(
       `UPDATE agents
           SET quarantined_at = coalesce(quarantined_at, ?),
               quarantine_reason = coalesce(quarantine_reason, ?)
         WHERE agent_id = ? AND quarantined_at IS NULL`,
-    ).run(at, "invalid_grant", agentId);
+    );
+    statement.run(at, "invalid_grant", agentId);
   }).immediate();
 }
 
@@ -332,7 +331,7 @@ export function writeAgentGrant(
   at: string,
   epoch: number,
 ): void {
-  db.query<
+  using statement = db.prepare<
     never,
     [string, string, string | null, string | null, string | null, string | null, string, number, number, number, string]
   >(
@@ -340,7 +339,8 @@ export function writeAgentGrant(
        (agent_id, ceiling, types, subjects, since, until, tools,
         rate_limit_per_minute, relay_owner_corrections, grant_epoch, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
+  );
+  statement.run(
     agentId,
     grant.ceiling,
     grant.types === null ? null : JSON.stringify(grant.types),
@@ -402,9 +402,8 @@ export function authenticate(db: Database, token: string): Principal | null {
     return null;
   }
   const candidateHash = hashAgentToken(token);
-  const rows = db
-    .query<AgentGrantRow, []>(`${AGENT_GRANT_SELECT} ORDER BY a.agent_id`)
-    .all();
+  using statement = db.prepare<AgentGrantRow, []>(`${AGENT_GRANT_SELECT} ORDER BY a.agent_id`);
+  const rows = statement.all();
   let match: AgentGrantRow | null = null;
   for (const row of rows) {
     if (constantTimeHashEqual(row.token_hash, candidateHash)) match = row;
@@ -445,11 +444,10 @@ export function principalForAgentId(db: Database, agentId: string): Principal | 
 }
 
 export function getAgent(db: Database, name: string): Agent | null {
-  const row = db
-    .query<AgentRow, [string]>(
-      "SELECT agent_id, name, created_at, revoked_at FROM agents WHERE name = ?",
-    )
-    .get(name);
+  using statement = db.prepare<AgentRow, [string]>(
+    "SELECT agent_id, name, created_at, revoked_at FROM agents WHERE name = ?",
+  );
+  const row = statement.get(name);
   return row === null ? null : rowAgent(row);
 }
 
@@ -566,14 +564,13 @@ export function revokeAgentInTransaction(db: Database, name: string): void {
   if (row === null) throw new Error(`agent ${name} does not exist`);
   const at = new Date().toISOString();
   if (row.revoked_at === null) {
-    db.query<never, [string, string]>(
-      "UPDATE agents SET revoked_at = ? WHERE name = ?",
-    ).run(at, name);
-    db.query<never, [number, string, string]>(
+    db.run("UPDATE agents SET revoked_at = ? WHERE name = ?", [at, name]);
+    db.run(
       `UPDATE agent_grants
           SET grant_epoch = ?, updated_at = ?
         WHERE agent_id = ?`,
-    ).run(grantEpoch(row) + 1, at, row.agent_id);
+      [grantEpoch(row) + 1, at, row.agent_id],
+    );
     const before = tryDecodeGrant(row);
     recordLifecycle(
       db,

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { enrollAgent, revokeAgentEnrollment, setGrant, type Grant } from "@kizuki/core";
@@ -144,7 +144,8 @@ test("MCP rejects ambiguous credential selectors without echoing values or falli
 
 test.if(qualified)("two live file-credential processes and reconnects use current Core grants and revocation", async () => {
   fixture = privateFixture();
-  const credential = join(fixture.vaultPath, ".kizuki", "client.credential");
+  const directory = join(fixture.vaultPath, ".kizuki", "agent-credentials"); mkdirSync(directory, { mode: 0o700 });
+  const credential = join(directory, "client.credential");
   const grant: Grant = { ceiling: "personal", types: null, subjects: ["person:ada"], since: null, until: null,
     tools: ["search"], rate_limit_per_minute: 60, relay_owner_corrections: false };
   const enrolled = enrollAgent(fixture.vaultPath, { name: "file-client", operation_id: "stdio-client-1", token_ref: `file:${credential}`, grant });
@@ -187,7 +188,8 @@ test.if(qualified)("two live file-credential processes and reconnects use curren
 
 test.if(qualified)("copied or malformed credential files refuse with one generic startup error", async () => {
   fixture = privateFixture();
-  const credential = join(fixture.vaultPath, ".kizuki", "original.credential"), copy = join(fixture.vaultPath, ".kizuki", "copy.credential");
+  const directory = join(fixture.vaultPath, ".kizuki", "agent-credentials"); mkdirSync(directory, { mode: 0o700 });
+  const credential = join(directory, "original.credential"), copy = join(directory, "copy.credential");
   const grant: Grant = { ceiling: "public", types: [], subjects: [], since: null, until: null, tools: [], rate_limit_per_minute: 1, relay_owner_corrections: false };
   enrollAgent(fixture.vaultPath, { name: "inert-file", operation_id: "stdio-copy-test", token_ref: `file:${credential}`, grant });
   copyFileSync(credential, copy);

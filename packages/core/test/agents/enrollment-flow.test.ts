@@ -1,9 +1,9 @@
 import { credentialCustodyQualified } from "./custody-fixture";
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { authenticateAgentCredential, enrollAgent, previewAgentEnrollment } from "../../src/agents/enrollment";
+import { authenticateAgentCredential, enrollAgent, previewAgentEnrollment, revokeAgentEnrollment } from "../../src/agents/enrollment";
 import { openLedger } from "../../src/ledger/db";
 
 function fixture() {
@@ -23,30 +23,47 @@ describe.if(credentialCustodyQualified)("agent enrollment flow", () => {
       expect(enrollAgent(f.vault, f.request)).toMatchObject({ status: "completed", credential: "ready", replayed: true });
     } finally { f.clean(); }
   });
-  test("recovers a durable bound credential after reopening the ledger", () => {
-    const f = fixture(); try {
-      const first = enrollAgent(f.vault, f.request);
+  test("releases the enrollment connection before the next SQLite client opens", () => {
+    const f = fixture();
+    try {
+      expect(enrollAgent(f.vault, f.request).authority).toBe("active");
+      // Changing journal mode requires the prior connection to have actually
+      // released SQLite, rather than merely marking its JS wrapper closed.
       const db = openLedger(f.dbPath);
-      db.query("DELETE FROM agent_grants WHERE agent_id = ?").run(first.agent_id);
-      db.query("DELETE FROM agents WHERE agent_id = ?").run(first.agent_id);
-      db.query("UPDATE agent_enrollments SET state = 'file_bound', completed_at = NULL WHERE operation_id = ?").run(f.request.operation_id);
-      db.close();
-      expect(enrollAgent(f.vault, f.request)).toMatchObject({ status: "completed", credential: "ready", replayed: true });
+      try { expect(db.query<{ journal_mode: string }, []>("PRAGMA journal_mode=DELETE").get()?.journal_mode).toBe("delete"); }
+      finally { db.close(true); }
+      expect(previewAgentEnrollment(f.vault, f.request)).toMatchObject({ status: "completed", authority: "active", credential: "ready" });
+      expect(revokeAgentEnrollment(f.vault, "flow-agent").authority).toBe("revoked");
+      const afterRevoke = openLedger(f.dbPath);
+      try { expect(afterRevoke.query<{ journal_mode: string }, []>("PRAGMA journal_mode=DELETE").get()?.journal_mode).toBe("delete"); }
+      finally { afterRevoke.close(true); }
     } finally { f.clean(); }
   });
-
-  test("refuses partial credential recovery before activating an agent", () => {
-    const f = fixture(); try {
-      const first = enrollAgent(f.vault, f.request);
-      const db = openLedger(f.dbPath);
-      db.query("DELETE FROM agent_grants WHERE agent_id = ?").run(first.agent_id);
-      db.query("DELETE FROM agents WHERE agent_id = ?").run(first.agent_id);
-      db.query("UPDATE agent_enrollments SET state = 'file_bound', completed_at = NULL WHERE operation_id = ?").run(f.request.operation_id);
-      db.close();
-      writeFileSync(f.request.token_ref.slice(5), "{\n"); chmodSync(f.request.token_ref.slice(5), 0o600);
-      expect(enrollAgent(f.vault, f.request)).toMatchObject({ status: "pending", authority: "none", credential: "incomplete" });
-      const reopened = openLedger(f.dbPath); expect(reopened.query("SELECT 1 FROM agents WHERE agent_id = ?").get(first.agent_id)).toBeNull(); reopened.close();
+  test("finishes its prepared statements without relying on garbage collection", () => {
+    const f = fixture();
+    try {
+      const script = `
+        import { Database } from "bun:sqlite";
+        import { strict as assert } from "node:assert";
+        const original = Database.prototype.prepare, retained = [], sql = new Set();
+        Database.prototype.prepare = function(...args) {
+          const statement = original.apply(this, args);
+          retained.push(statement); sql.add(args[0]); return statement;
+        };
+        const { enrollAgent, revokeAgentEnrollment, previewAgentEnrollment } = await import(${JSON.stringify(join(import.meta.dir, "../../src/agents/enrollment.ts"))});
+        const vault = ${JSON.stringify(f.vault)}, request = ${JSON.stringify(f.request)};
+        assert.equal(enrollAgent(vault, request).authority, "active");
+        assert.equal(previewAgentEnrollment(vault, request).credential, "ready");
+        assert.equal(enrollAgent(vault, request).credential, "ready");
+        assert.equal(revokeAgentEnrollment(vault, request.name).authority, "revoked");
+        assert.ok(sql.size > 20, "the actual path must exceed the query cache capacity");
+        assert.equal(retained.every(statement => statement.isFinalized), true);
+      `;
+      const child = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
+      expect(child.exitCode, "all retained statement capabilities must finalize").toBe(0);
+      expect(child.stdout.length).toBe(0); expect(child.stderr.length).toBe(0);
     } finally { f.clean(); }
   });
-
+  // Real recovery and partial-file refusal live in enrollment-fault.test.ts;
+  // never manufacture a crash by rewinding a completed identity and its row.
 });
