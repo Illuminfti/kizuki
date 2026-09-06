@@ -9,6 +9,7 @@ import { serveContextPacket } from "../../src/serving/packet";
 import { exportVault, restoreVault } from "../../src/export";
 import { openLedger } from "../../src/ledger/db";
 import { listCanonPages } from "../../src/vault/pages";
+import { assessLivePageEvidence } from "../../src/vault/provenance";
 import { validatePage } from "../../src/vault/schema";
 import { readPage, CanonPageUnreadable } from "../../src/canon/store";
 import { isAuthorityTier } from "../../src/contracts/proposal";
@@ -44,6 +45,11 @@ function authorities(f: CanonFixture, path: string) {
     ]>("SELECT DISTINCT authority FROM graph_edges WHERE src=(SELECT page_id FROM page_index WHERE rel_path=?)").all(path).map(r => r.authority) };
 }
 function expectAuthority(f: CanonFixture, path: string, authority: AuthorityTier) { expect(authorities(f, path)).toEqual({ serving: authority, search: authority, hit: authority, graph: [authority] }); }
+function expectWithheld(f: CanonFixture, path: string, protection: AuthorityTier = "model_inference") {
+  expect(authorities(f, path)).toEqual({ serving: protection, search: undefined, hit: undefined, graph: [] });
+  const page = listCanonPages(f.vault).find(page => page.relPath === path)!;
+  expect(assessLivePageEvidence(f.db, page).admitted).toBe(false);
+}
 test("model canon has the same authority in incremental serving/search/graph and rebuild", async () => {
   const f = fixture();
   const event = putEvent(f.db);
@@ -83,7 +89,7 @@ test("purge cannot elevate a model page and hand edits do not inherit its receip
   const path = join(f.vault, receipt.page_path);
   writeFileSync(path, readFileSync(path, "utf8") + "\nOwner hand edit.\n");
   rebuildDerived(f.db, f.vault);
-  expectAuthority(f, receipt.page_path, "owner_authored");
+  expectWithheld(f, receipt.page_path, "owner_authored");
 });
 test("public correction, page and context preserve owner correction through purge", async () => {
   const f = fixture();
@@ -111,13 +117,13 @@ test("legacy revert fields and invalid or missing references cannot inflate curr
   expectAuthority(f, first.page_path, "model_inference");
   f.db.query("UPDATE canon_receipts SET reverts=? WHERE receipt_id=?").run(revert.receipt_id, revert.receipt_id);
   rebuildDerived(f.db, f.vault);
-  expectAuthority(f, first.page_path, "model_inference");
+  expectWithheld(f, first.page_path);
   f.db.query("UPDATE canon_receipts SET reverts='missing' WHERE receipt_id=?").run(revert.receipt_id);
   rebuildDerived(f.db, f.vault);
-  expectAuthority(f, first.page_path, "model_inference");
+  expectWithheld(f, first.page_path);
   f.db.query("UPDATE canon_receipts SET receipt_kind='write',authority='invalid' WHERE receipt_id=?").run(revert.receipt_id);
   rebuildDerived(f.db, f.vault);
-  expectAuthority(f, first.page_path, "model_inference");
+  expectWithheld(f, first.page_path);
 });
 test("export, clean restore and rebuild preserve effective model authority", async () => {
   const f = fixture();
@@ -195,7 +201,7 @@ test("prototype property names are never authority tiers in any projection", asy
     f.db.query("UPDATE canon_receipts SET authority=? WHERE receipt_id=?")
       .run(authority, receipt.receipt_id);
     rebuildDerived(f.db, f.vault);
-    expectAuthority(f, receipt.page_path, "model_inference");
+    expectWithheld(f, receipt.page_path);
   }
 });
 
@@ -217,7 +223,7 @@ test("a revert must begin at the after-hash of the write it names", async () => 
     .run(target.receipt_id, first.after_hash, revert.receipt_id);
   writeFileSync(join(f.vault, first.page_path), originalBytes);
   rebuildDerived(f.db, f.vault);
-  expectAuthority(f, first.page_path, "model_inference");
+  expectWithheld(f, first.page_path);
 });
 
 
@@ -238,5 +244,5 @@ test("equal corrupt revert hashes cannot recover owner authority", async () => {
   f.db.query("UPDATE canon_receipts SET after_hash=? WHERE receipt_id=?").run("not-a-sha256", target.receipt_id);
   f.db.query("UPDATE canon_receipts SET before_hash=? WHERE receipt_id=?").run("not-a-sha256", reverted.receipt_id);
   rebuildDerived(f.db, f.vault);
-  expectAuthority(f, first.page_path, "model_inference");
+  expectWithheld(f, first.page_path);
 });

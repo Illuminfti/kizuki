@@ -1,8 +1,9 @@
 # Positive canon admission
 
 An active Markdown page qualifies for positive serving and local projections
-only when its bounded, nonempty source list resolves to validated external
+only when its bounded, nonempty source list resolves to live, validated external
 ledger events and its exact byte hash has an existing canon receipt basis.
+Source liveness uses the ledger replay predicate, including later source tombstones.
 Write, valid revert and purge-rewrite history share one receipt resolver.
 Missing receipt history retains the protective `owner_authored` fallback for
 overwrite decisions, but does not provide positive evidence.

@@ -10,7 +10,7 @@ import { rebuildDerived, refreshDerivedPage } from "../src/derived";
 import { exportVault, restoreVault } from "../src/export";
 import { openLedger } from "../src/ledger/db";
 import { registerConnection } from "../src/ledger/connections";
-import { accept } from "../src/ledger/ledger";
+import { accept, readEvent, readLiveEvent } from "../src/ledger/ledger";
 import { runPurge } from "../src/ledger/purge";
 import { setSourceGrant } from "../src/ledger/source-grants";
 import { refreshPageEdges } from "../src/graph/graph";
@@ -226,4 +226,55 @@ test("recorded evidence does not override current recall or derivation permissio
   expect(rows(f)).toEqual({ search: [], graph: [] });
   rebuildDerived(f.db, f.vault);
   expect(rows(f)).toEqual({ search: [], graph: [] });
+  expect(readRetrievalDocuments(f.db, f.vault).some(doc => doc.kind === "page")).toBe(false);
+});
+
+test("purge retains a separately recorded surviving claim with equal incremental and full projections", async () => {
+  const f = fixture();
+  const first = await recorded(f, "Atlas", "Atlas has an earlier marker.");
+  const retained = putEvent(f.db, { text: "Atlas has a retained marker and observes Meridian." });
+  const second = write(f.io, await storeClaim(f.db, retained, {
+    target: "facts/atlas", subject: "topic:atlas", subjects: [], predicate: null, object: null,
+    frontmatter: { type: "fact", title: "Atlas" }, body: "Atlas retains a marker near [[Meridian]].",
+    producer: "model", model_ref: "fixture:synthetic",
+  }));
+  const outcome = await runPurge(f.db, f.vault, { event_id: first.event }, "retire earlier synthetic capture");
+  expect(outcome.rewritten).toHaveLength(1);
+  const surviving = listCanonPages(f.vault)[0]!;
+  expect(surviving.id).toBe(first.page.id);
+  expect(surviving.body).toContain("retains a marker");
+  expect(surviving.body).not.toContain("earlier marker");
+  expect(surviving.data["sources"]).toEqual([retained]);
+  const evidence = assessLivePageEvidence(f.db, surviving);
+  expect(evidence).toMatchObject({ admitted: true, sourceIds: [retained],
+    revision: { receipt_id: outcome.rewritten[0]!.receipt_id, authority: "model_inference" } });
+  expect(surviving.contentHash).not.toBe(second.after_hash);
+  const incremental = rows(f);
+  expect(incremental.search).toHaveLength(1);
+  expect(incremental.graph).toHaveLength(2);
+  rebuildDerived(f.db, f.vault);
+  expect(rows(f)).toEqual(incremental);
+  expect(serveGetPage({ db: f.db, vaultPath: f.vault, principal: OWNER }, { path: first.receipt.page_path }).canon)
+    .toHaveLength(1);
+});
+
+test("a later source tombstone withdraws canon even while the original event row remains", async () => {
+  const f = fixture();
+  const { event, page } = await recorded(f);
+  const original = readEvent(f.db, event)!;
+  expect(readLiveEvent(f.db, event)?.event_id).toBe(event);
+  const tombstone = accept(f.db, {
+    ...validEvent(), connector_id: original.connector_id, source_record_id: original.source_record_id,
+    text: "", deleted: true,
+  });
+  expect(tombstone.status).toBe("stored");
+  expect(readEvent(f.db, event)?.deleted).toBe(false);
+  expect(readLiveEvent(f.db, event)).toBeNull();
+  expect(assessLivePageEvidence(f.db, page)).toEqual({ admitted: false, reason: "sources_unavailable" });
+  expect((await serveSearch({ db: f.db, vaultPath: f.vault, principal: OWNER }, { query: "Atlas" })).canon).toEqual([]);
+  refreshDerivedPage(f.db, page, f.vault);
+  expect(rows(f)).toEqual({ search: [], graph: [] });
+  rebuildDerived(f.db, f.vault);
+  expect(rows(f)).toEqual({ search: [], graph: [] });
+  expect(readRetrievalDocuments(f.db, f.vault).some(doc => doc.kind === "page")).toBe(false);
 });
