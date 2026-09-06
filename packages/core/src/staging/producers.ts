@@ -10,7 +10,10 @@ import { fileProposal, setProposalStatus, StagingError } from "./proposals";
 import type { ProposalInput } from "./proposals";
 import { sourceTombstoneProposal, SourceTombstoneError } from "../canon/source-tombstone";
 import type { SourceTombstoneContext } from "../canon/source-tombstone";
+import { DETERMINISTIC_PRODUCER_BUDGET } from "./budget";
 import { encodeSubjectSegment, namespacedSubjectId } from "./subjects";
+
+export { DETERMINISTIC_PRODUCER_BUDGET };
 
 /**
  * The deterministic floor: claims derivable from an event with no model.
@@ -22,15 +25,6 @@ import { encodeSubjectSegment, namespacedSubjectId } from "./subjects";
 const ENTITY_CONFIDENCE = 0.5;
 /** A verbatim quote of captured text is as certain as the ledger row it cites. */
 const CAPTURE_CONFIDENCE = 1;
-
-/**
- * Calibrated capture-note policy. Not a config flag: one named budget the
- * deterministic producer actually enforces.
- */
-export const DETERMINISTIC_PRODUCER_BUDGET = {
-  maxSubjectsPerEvent: 16,
-  maxCaptureNoteChars: 8_000,
-} as const;
 
 function handleOf(subjectId: string): string {
   const cut = subjectId.lastIndexOf(":");

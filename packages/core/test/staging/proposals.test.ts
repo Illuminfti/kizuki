@@ -428,6 +428,27 @@ describe("legacy staging p1 holes", () => {
     ).toBe(first.proposal.content_hash);
   });
 
+  test("initClaims heals empty live signatures while the unique indexes remain", () => {
+    const db = memoryDb();
+    const first = fileProposal(db, proposalInput());
+    if (first.outcome !== "stored") throw new Error("expected stored");
+    db.query("UPDATE proposals SET content_hash = ''").run();
+    db.query("UPDATE claims SET content_hash = ''").run();
+    expect(() => initClaims(db)).not.toThrow();
+    const again = fileProposal(db, proposalInput());
+    expect(again.outcome).toBe("duplicate");
+    if (again.outcome !== "duplicate") return;
+    expect(again.proposal.proposal_id).toBe(first.proposal.proposal_id);
+    expect(again.proposal.content_hash).toBe(first.proposal.content_hash);
+    expect(
+      db
+        .query<{ content_hash: string }, [string]>(
+          "SELECT content_hash FROM claims WHERE claim_id = ?",
+        )
+        .get(first.proposal.proposal_id)?.content_hash,
+    ).toBe(first.proposal.content_hash);
+  });
+
   test("a later sighting may raise the stored sensitivity floor", () => {
     const db = memoryDb();
     const first = fileProposal(db, proposalInput());

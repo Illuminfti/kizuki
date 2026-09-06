@@ -1,6 +1,7 @@
 import { ENTITY_PAGE_TYPES } from "../contracts/page-candidate";
 import type { PageCandidate } from "../contracts/page-candidate";
 import type { CaptureEvent } from "../contracts/event";
+import { DETERMINISTIC_PRODUCER_BUDGET } from "./budget";
 import type { ProposalInput } from "./proposals";
 import { namespacedSubjectId } from "./subjects";
 
@@ -30,7 +31,10 @@ export function pageCandidateProposal(
   frontmatter["x-source-record-id"] = event.source_record_id;
 
   const subjects: string[] = [];
-  for (const subject of event.subjects) {
+  for (const subject of event.subjects.slice(
+    0,
+    DETERMINISTIC_PRODUCER_BUDGET.maxSubjectsPerEvent,
+  )) {
     const namespaced = namespacedSubjectId(event.connector_id, subject.subject_id);
     if (!subjects.includes(namespaced)) subjects.push(namespaced);
   }

@@ -232,6 +232,9 @@ export function syncCompatProposals(db: Database): void {
   if (!tableExists(db, "proposals")) {
     db.exec(COMPAT_PROPOSALS);
   }
+  if (tableExists(db, "claims")) {
+    addColumn(db, "claims", "content_hash TEXT NOT NULL DEFAULT ''");
+  }
   db.exec(`
     INSERT OR IGNORE INTO proposals
       (proposal_id, kind, target, body, frontmatter, provenance, subjects,
@@ -249,9 +252,10 @@ export function syncCompatProposals(db: Database): void {
         WHEN 'reverted' THEN 'withdrawn'
         ELSE status
       END,
-      created_at, body_hash, ''
+      created_at, body_hash, content_hash
     FROM claims;
   `);
+  applyLegacyStagingIdempotency(db);
 }
 
 function widenClaims(db: Database): void {
@@ -298,7 +302,6 @@ export function applyClaimsV3(db: Database): void {
   db.exec(SUPPORTING_TABLES);
   convertRejections(db);
   syncCompatProposals(db);
-  applyLegacyStagingIdempotency(db);
 }
 
 function claimsSurfaceReady(db: Database): boolean {
@@ -510,11 +513,44 @@ function stagingIdempotencyReady(db: Database): boolean {
   const proposalsSql = indexSql(db, "proposals_signature") ?? "";
   const claimsSql = indexSql(db, "claims_idempotency") ?? "";
   const signatureSql = indexSql(db, "claims_signature_idempotency") ?? "";
+  if (
+    !(
+      proposalsSql.includes("content_hash") &&
+      proposalsSql.includes("pending") &&
+      claimsSql.includes("content_hash") &&
+      signatureSql.includes("content_hash")
+    )
+  ) {
+    return false;
+  }
+  return !emptyLiveSignature(db);
+}
+
+function emptyLiveSignature(db: Database): boolean {
+  if (
+    db
+      .query<{ ok: number }, []>(
+        `SELECT 1 AS ok FROM proposals
+          WHERE content_hash = '' AND status IN ('pending', 'promoted')
+          LIMIT 1`,
+      )
+      .get() !== null
+  ) {
+    return true;
+  }
+  if (!tableExists(db, "claims") || !columnNames(db, "claims").has("content_hash")) {
+    return false;
+  }
   return (
-    proposalsSql.includes("content_hash") &&
-    proposalsSql.includes("pending") &&
-    claimsSql.includes("content_hash") &&
-    signatureSql.includes("content_hash")
+    db
+      .query<{ ok: number }, []>(
+        `SELECT 1 AS ok FROM claims
+          WHERE content_hash = ''
+            AND status = 'live'
+            AND kind <> 'purge_review'
+          LIMIT 1`,
+      )
+      .get() !== null
   );
 }
 
