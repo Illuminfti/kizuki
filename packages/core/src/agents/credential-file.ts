@@ -95,7 +95,7 @@ function readBounded(fd: number, expected?: CredentialFileIdentity): Uint8Array 
 function ownerIsSafe(stat: BigIntStats, euid: bigint): boolean {
   if (!stat.isDirectory() || (stat.uid !== 0n && stat.uid !== euid)) return false;
   const writable = (stat.mode & 0o022n) !== 0n;
-  return !writable || (stat.mode & 0o1000n) !== 0n;
+  return !writable || (stat.uid === 0n && (stat.mode & 0o1000n) !== 0n);
 }
 function openChild(parent: number, name: string, directory: boolean): number {
   const result = nativeResult(api().symbols.openChild(parent, ptr(validName(name)), directory ? 1 : 0));
