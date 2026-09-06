@@ -1,0 +1,13 @@
+{
+  "id": "rfc-0002-current-law",
+  "binding": [
+    "rfcs/0002-autonomous-canon.md",
+    "docs/CURRENT.md",
+    "docs/decision-log.md"
+  ],
+  "laneTable": {
+    "path": "rfcs/0002-autonomous-canon.md",
+    "section": "18.4"
+  },
+  "supersedesBatch": "kizuki-waves-20260901"
+}
