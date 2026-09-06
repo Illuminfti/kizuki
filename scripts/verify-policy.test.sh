@@ -207,6 +207,16 @@ for remaining in "${remaining_tokens[@]}"; do
     exit 1
   fi
 done
+
+# Trailer lines are ignored by denylist-history; body tokens still fail.
+printf 'Harden doctor\n\nCo-authored-by: Alb''edo <nazarick@agentmail.to>\n' >"$history_messages"
+assert_safe_reachable_commit_messages "$history_messages"
+printf 'Harden doctor\n\nmentions alb''edo in the body\n\nCo-authored-by: bot <bot@example.invalid>\n' >"$history_messages"
+if assert_safe_reachable_commit_messages "$history_messages" >/dev/null 2>&1; then
+  printf 'policy test failed: body denylist token passed when trailer present\n' >&2
+  exit 1
+fi
+
 rm -f -- "$history_messages"
 
 printf 'verification policy tests passed\n'
