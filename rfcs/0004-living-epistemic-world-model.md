@@ -61,9 +61,11 @@ mutations globally, including owner correction, until its checked intent and
 maintenance finish. This preserves atomic recovery through the single writer.
 Corrections remain highest authority and receive a retryable refusal before
 mutation, with no queue or partial commit. `erasure_pending` is Core/OWNER-only;
-scoped mutation surfaces use the same fixed storage/writer-unavailable failure
-as ordinary writer contention, with no purge reason, IDs or counts and no read
-token invalidation. Shared operational availability and variable timing remain
+proposed v2 scoped mutation surfaces map it and ordinary pre-mutation writer
+contention to the fixed `WriterRefusalV2` defined below, with no purge reason,
+IDs or counts and no read token invalidation. This mapping is newly proposed;
+current correction errors do not already provide it. Shared operational
+availability and variable timing remain
 observable; they are not semantic revision signals. The parity fixture must
 compare hidden erasure-intent contention with ordinary writer contention.
 
@@ -1081,12 +1083,27 @@ type EnvelopeV2<K extends keyof V2ToolData> = {
   canon: readonly CanonChunkV2[]; quoted: readonly QuotedChunkV2[];
   data: V2ToolData[K];
 };
+// Proposed shared v2 failure for ordinary pre-mutation writer contention and
+// internal erasure_pending. Existing CorrectError is not widened by this RFC.
+type WriterRefusalV2 = {
+  ok: false;
+  error: { code: "unavailable"; message: "writer unavailable";
+           retryable: true };
+};
 type ContractRefusal = {
   ok: false;
   error: { code: "unsupported_contract"; message: "requested contract unavailable";
            retryable: false };
 };
 ```
+
+Every v2 scoped mutation adapter uses the exact `WriterRefusalV2` failure
+object for either pre-mutation contention cause, with no additional diagnostic,
+principal, timestamp, count, intent or token fields. Existing CLI/MCP/loopback
+transport framing remains its documented framing; the semantic failure bytes
+are identical for the two causes within each adapter. This refusal guarantees
+no mutation committed. It must never replace a committed correction result
+whose subsequent read/refresh failed.
 
 `system_health` remains built-in OWNER-only in this migration; all other callers
 receive the fixed contract refusal before collecting health counters/source keys.

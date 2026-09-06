@@ -2493,7 +2493,7 @@ type StoreResultV6 = {
 };
 type BatchResultV6 = {
   opId: Ulid; idOrigin: CoreAllocatedV1; receiptId: Ulid; store: 'coordinator';
-  required: RequiredOpV6[]; selectedEvents: number; pagesRewritten: number;
+  required: readonly [RequiredOpV6, ...RequiredOpV6[]]; selectedEvents: number; pagesRewritten: number;
   scope: 'owned_vault'; externalCopies: 'out_of_scope'; sensitivity: 'private';
 };
 type MaintenanceProofV6 = {
@@ -2509,7 +2509,7 @@ type PendingOpV6 = CommonOpV6 & (
   | { store: 'coordinator'; state: 'pending'; phase: 'work'; ids: [];
       workBinding: null; workRevision: 0; workDigest: null;
       proof: null; completion: null; doneAt: null }
-  | { store: 'coordinator'; state: 'pending'; phase: 'work'; ids: Ulid[];
+  | { store: 'coordinator'; state: 'pending'; phase: 'work'; ids: readonly [Ulid, ...Ulid[]];
       workBinding: WorkBindingV6; workRevision: number; workDigest: Sha256;
       proof: CoordinatorPlanV6; completion: null; doneAt: null }
   | { store: StoreV6; state: 'pending'; phase: 'work'; ids: [string, ...string[]];
@@ -2542,7 +2542,7 @@ type CoordinatorPlanV6 = {
   schema: 'kizuki.purge-plan/v1';
   opId: Ulid; receiptId: Ulid;
   workRevision: number; workDigest: Sha256;
-  required: RequiredOpV6[]; selectedEvents: number;
+  required: readonly [RequiredOpV6, ...RequiredOpV6[]]; selectedEvents: number;
 };
 type EventReceiptCommonV6 = {
   schema: 'kizuki.purge-event-receipt/v1';
@@ -2579,14 +2579,15 @@ type PurgeVerificationV6 = {
   status: 'pending'; receiptId: Ulid; phase: 'reservation' | 'work' | 'maintenance';
 } | {
   status: 'completed_at'; receiptId: Ulid; completedAt: Rfc3339;
-  completion: CompletionV6[];
+  completion: readonly [CompletionV6, CompletionV6, ...CompletionV6[]];
 } | {
   status: 'fresh_absence'; receiptId: Ulid; completedAt: Rfc3339;
-  completion: CompletionV6[]; fresh: FreshStoreAuditV6[];
+  completion: readonly [CompletionV6, CompletionV6, ...CompletionV6[]];
+  fresh: readonly [FreshStoreAuditV6, ...FreshStoreAuditV6[]];
 };
 ```
 
-`checked` is a safe integer from 0 through 10,000 for an exact-target chunk; `selectedEvents` is a safe nonnegative integer and equals actual event membership. `pagesRewritten` is the safe nonnegative count of canon pages actually rewritten by this batch, deduplicated while private work still exists; it does not require preserving their paths. `grantRevision` and `sourceReceiptSequence` are positive safe integers. `revokeOperation` obeys the existing source-operation grammar `[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}` and cannot start with `complete:`. A whole-generation verifier reports its actual bounded count or uses `inventory_absent` with zero; it cannot pretend to have checked target IDs it no longer possesses. The coordinator plan's `ids` are exactly the sorted required operation IDs. The following work-binding contract replaces implicit resolution of an operation through a currently configured adapter.
+`checked` is a safe integer from 0 through 10,000 for an exact-target chunk; `selectedEvents` is a safe nonnegative integer and equals actual event membership. `pagesRewritten` is the safe nonnegative count of canon pages actually rewritten by this batch, deduplicated while private work still exists; it does not require preserving their paths. `grantRevision` and `sourceReceiptSequence` are positive safe integers. `revokeOperation` obeys the existing source-operation grammar `[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}` and cannot start with `complete:`. A whole-generation verifier reports its actual bounded count or uses `inventory_absent` with zero; it cannot pretend to have checked target IDs it no longer possesses. The coordinator plan's `ids` are exactly the sorted required operation IDs. A planned coordinator and completed batch must contain at least one required store operation, including ledger-owned work even for a zero-event source root. Only an unplanned reservation may have an empty operation list; a non-null empty plan is invalid. The following work-binding contract replaces implicit resolution of an operation through a currently configured adapter.
 
 ### Exact work and owned-resource binding
 
@@ -2880,17 +2881,19 @@ mutations can be busy until recovery finishes. Owner correction retains highest
 authority and receives a retryable pre-mutation refusal, with no queued or
 partially committed correction and no approval/promote step. Existing holds
 withhold stale canon; capture can continue under normal source admission.
-`erasure_pending` is Core/OWNER-internal. Scoped mutation surfaces map it to
-the identical fixed retryable storage/writer-unavailable failure used for
-ordinary writer contention: no intent/purge reason, counts, IDs or token
-invalidation. Shared operational availability and variable timing remain
+`erasure_pending` is Core/OWNER-internal. Proposed v2 scoped mutation surfaces
+map it and ordinary pre-mutation writer contention to the main RFC's fixed
+`WriterRefusalV2`: no intent/purge reason, counts, IDs or token invalidation.
+This new v2 mapping is an implementation obligation; current `CorrectError`
+does not already provide it. Shared operational availability and variable
+timing remain
 observable, as already scoped in the main RFC; they carry no semantic revision.
 The acceptance fixture compares hidden-intent and ordinary writer-busy failure
 bytes across the existing interfaces, and verifies unchanged read tokens.
 
 Event receipt decoding has two outer states: pending and done. Pending work has exactly the SQL-selected event/source-root branch and its private fields; pending maintenance has those SQL fields all null and omits them from its closed object. Done has exactly eligible IDs and their declared own/copied origin fields, selection discriminator, creation/completion times, private sensitivity and fresh terminal integrity. It contains no old reason, connector, source policy, request hash or content digest. Hash the canonical terminal object without `terminalIntegrity` with `kizuki.erasure-tombstone/v1\0`, consistent with the RFC terminal rule. Hash a `CompletionV6` without `integrity` under `kizuki.purge-completion/v1\0`; both hashes are corruption checks over permitted metadata, not independent evidence that deletion occurred. The fixed component dispatcher reconstructs the object from typed columns and checks all SQL-null/object-absent correspondences; no unchecked JSON copy supplies receipt state.
 
-`PurgeVerificationV6` is the proposed existing owner-administration report, not a scoped world tool. Its arrays obey the 256-operation/64-KiB metadata bound. `fresh` names only actual newly inspected stores, may cover a strict subset of the historical batch, and never implies that unlisted stores were rechecked. Duplicate store families represent distinct configured instances validated privately against the existing owner inventory; no source name, private path or old selector enters the report. A missing adapter or failed new audit returns an explicit verification failure, retaining the historical `completed_at` evidence; it cannot fabricate a successful fresh row. `inspected` is a nonnegative safe count of the scope actually examined. The existing CLI renders the result distinction and store coverage explicitly.
+`PurgeVerificationV6` is the proposed existing owner-administration report, not a scoped world tool. Its arrays obey the 256-operation/64-KiB metadata bound. `completion` begins with exactly the checked coordinator completion followed by every required store completion exactly once, with matching receipt/root IDs, operation identities, required membership and common batch completion time. Because required work is nonempty, this array has at least two entries. `fresh_absence.fresh` must contain at least one actual current owned-generation or inventory audit; an empty request/result can yield only historical `completed_at`. `fresh` may cover a nonempty strict subset of the historical batch and never implies that unlisted stores were rechecked. Duplicate store families represent distinct configured instances validated privately against the existing owner inventory; no source name, private path or old selector enters the report. A missing adapter or failed new audit returns an explicit verification failure, retaining the historical `completed_at` evidence; it cannot fabricate a successful fresh row. `inspected` is a nonnegative safe count of the scope actually examined. The existing CLI renders the result distinction and store coverage explicitly.
 
 The same writer, migration, replay and restore validator must enforce the relationships SQL cannot express: the batch pointer names a self-root; source roots have no event ID; no cross-batch chain/cycle; every operation names that root; exactly one coordinator and, once planned, exactly its listed store operations exist; a reserved coordinator has no other operations; row fields equal codec fields; source-root reservation is checked against its existing authorized operation; event selection matches exact receipt membership; per-store exact-target proof `checked` equals the requested ID count, `found` is a subset, and store identity matches the actual binding; no duplicated, missing, unknown or late unlisted store; and all relevant pending source-erasure intents/holds participate before completion. Whole-generation/inventory coverage requires the existing owner's actual inspection, separately from an exact-document proof. Final event rows and all operation rows have one consistent batch completion time. A terminal root cannot coexist with pending work in its batch. The source-root subtype also makes the RFC's existing claim/canon/allocation and purge wire-reference foreign keys total for supported zero-event/source receipts.
 
@@ -2932,6 +2935,11 @@ Identifier-origin eligibility is a separate prerequisite to every completion cla
 Copy in bounded pages under the exclusive maintenance boundary; publish both tables and all terminal FK consumers atomically after their shared validator succeeds. Preserve the original five legacy receipt fields until exact completion eligibility is established. Legacy `purge_ops.state='done'`, an empty `found` array or receipt existence alone cannot prove the full Purge6 store closure. Validate old work/proofs against their declared adapter and exact membership; verify configured stores, owned payload/files, holds and source intent recovery. A current check gets its current timestamp; never backdate new world-store verification to an old `done_at`.
 
 Recover an old batch only from an existing exact operation/selection binding that demonstrably names all its members and the original root; the v5 op's complete validated event selectors can be such evidence, while matching time/reason cannot. An existing current source reservation can bind its old source root, with its recorded revoke authority checked; a regranted source whose reserved purge ID was lost cannot. Never fabricate an event for a zero-event root. A previously purged claim likewise needs exact receipt/selection and completion linkage before becoming a valid terminal claim. Missing or ambiguous evidence returns `repair_required` with a bounded owner-only affected count and leaves the source database untouched. It does not silently discard rows, invent singleton batches, add fake authority, or execute an irreversible new purge merely because upgrade was requested.
+
+Verification codec fixtures must reject empty planned operation sets, empty
+completed-batch membership, missing/duplicate coordinator or child completions,
+and `fresh_absence` without any new audit. A zero-event root still includes its
+ledger-owned work; genuine absent-inventory inspection is a positive control.
 
 Canon recovery fixtures must additionally cover A then B then C serial erasure
 of one shared page, both after partial A writes and after A completion; the
