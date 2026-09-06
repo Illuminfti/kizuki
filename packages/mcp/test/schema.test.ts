@@ -8,6 +8,7 @@ import {
   ulid,
 } from "@kizuki/core";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { recordedPage } from "../../core/test/helpers/recorded-page";
 import { ENVELOPE_SHAPE } from "../src/schemas";
 import { call, connectClient, envelopeOf } from "./client";
 import { mcpFixture } from "./helpers";
@@ -60,6 +61,21 @@ describe("the advertised output schema describes what the server sends", () => {
 
   test("the canon chunk schema carries the trust fields the engine emits", async () => {
     const running = live();
+    const recorded = await recordedPage(
+      running.db,
+      running.vaultPath,
+      "entities/schema-canon.md",
+      {
+        id: "person:schema-canon",
+        title: "Schema canon",
+        type: "person",
+        status: "active",
+        sensitivity: "public",
+        taint: "clean",
+        subjects: ["person:schema-canon"],
+      },
+      "Schema canon is a recorded note.",
+    );
     const client = await connectClient(running.owner(), open);
     const tools = (await client.listTools()).tools;
 
@@ -75,9 +91,9 @@ describe("the advertised output schema describes what the server sends", () => {
     expect(canon?.required).toContain("authority");
 
     const chunk = (
-      envelopeOf(await call(client, "get_page", { id: "person:ada" }))[
-        "canon"
-      ] as Record<string, unknown>[]
+      envelopeOf(
+        await call(client, "get_page", { id: "person:schema-canon" }),
+      )["canon"] as Record<string, unknown>[]
     )[0];
     expect(chunk).toBeDefined();
     // Whatever the engine puts on a chunk is described; nothing is advertised
@@ -85,6 +101,9 @@ describe("the advertised output schema describes what the server sends", () => {
     expect(Object.keys(chunk ?? {}).sort()).toEqual(
       [...(canon?.required ?? [])].sort(),
     );
+    expect(chunk?.["page_id"]).toBe("person:schema-canon");
+    expect(chunk?.["sources"]).toEqual(recorded.sourceIds);
+    expect(chunk?.["authority"]).toBe(recorded.receipt.authority);
   });
 
   test("every tool advertises an output schema", async () => {
