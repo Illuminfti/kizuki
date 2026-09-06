@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   addAgent,
@@ -62,17 +62,24 @@ async function client(ctx: ServeContext) {
 test("synthetic InMemoryTransport clients preserve scoped correction continuity and revoke live access", async () => {
   const setup = h.tempVault();
   const selectedNote = join(setup.notes, "two-client-source.md");
+  const controlNotes = h.tempDir("kizuki-independent-control-");
+  const controlNote = join(controlNotes, "independent-control.md");
   const marker = "two-client-payload-marker";
+  const controlMarker = "independent-control-marker";
   writeFileSync(selectedNote, `Project two-client-continuity is blocked. ${marker}\n`);
+  mkdirSync(controlNotes, { recursive: true });
+  writeFileSync(controlNote, `Independent control evidence. ${controlMarker}\n`);
   const original = readFileSync(selectedNote, "utf8");
   const denied = h.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes);
   expect(denied.exitCode).toBe(1);
   expect(denied.stderr).toContain("connect grant --source");
 
+  let selectedSourceKey: string | undefined;
   const consentDb = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
   try {
     const enrolled = listConnections(consentDb)[0];
     if (enrolled === undefined) throw new Error("denied import did not enroll selected source");
+    selectedSourceKey = enrolled.source_key;
     setSourceGrant(consentDb, { source_key: enrolled.source_key, expected_revision: 0,
       operation_id: "two-client-import", policy });
   } finally { consentDb.close(); }
@@ -80,24 +87,25 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
   expect(imported.exitCode, imported.stderr).toBe(0);
   expect(readFileSync(selectedNote, "utf8")).toBe(original);
 
+  const controlDenied = h.runCli(setup.env, "import", "markdown-folder", "--source", controlNotes);
+  expect(controlDenied.exitCode).toBe(1);
+  const controlDb = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+  try {
+    const control = listConnections(controlDb).find((connection) => connection.source_key !== selectedSourceKey);
+    if (control === undefined) throw new Error("denied control import did not enroll an independent source");
+    setSourceGrant(controlDb, { source_key: control.source_key, expected_revision: 0,
+      operation_id: "two-client-control-import", policy });
+  } finally { controlDb.close(); }
+  expect(h.runCli(setup.env, "import", "markdown-folder", "--source", controlNotes).exitCode).toBe(0);
+
   const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
   try {
     initAgents(db);
-    const event = db.query<{ event_id: string; subjects: string }, []>(
-      "SELECT event_id, subjects FROM events ORDER BY occurred_at LIMIT 1",
-    ).get();
-    const source = db.query<{ source_key: string }, []>(
-      "SELECT source_key FROM source_event_bindings LIMIT 1",
-    ).get();
-    if (event === null || source === null) throw new Error("import fixture missing source event");
-    const documentSubject = (JSON.parse(event.subjects) as { subject_id: string }[])[0]?.subject_id;
-    if (documentSubject === undefined) throw new Error("import fixture missing document subject");
     const project = "project:two-client-continuity";
-    const scoped = { ...readGrant, subjects: [documentSubject, project] };
     const aToken = addAgent(db, "continuity-a", {
-      ...scoped, tools: ["timeline", "context_packet", "propose", "correct"], relay_owner_corrections: true,
+      ...readGrant, subjects: null, tools: ["timeline", "context_packet", "propose", "correct"], relay_owner_corrections: true,
     }).token;
-    const bToken = addAgent(db, "continuity-b", scoped).token;
+    const bToken = addAgent(db, "continuity-b", { ...readGrant, subjects: [project] }).token;
     const principal = (token: string): Principal => {
       const value = authenticate(db, token);
       if (value === null) throw new Error("synthetic principal did not authenticate");
@@ -108,7 +116,11 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
 
     const timeline = await call(a, "timeline", {});
     sameEnvelope(timeline);
-    expect((envelopeOf(timeline).quoted as { event_id: string }[]).map((entry) => entry.event_id)).toContain(event.event_id);
+    const quoted = envelopeOf(timeline).quoted as { event_id: string; text: string }[];
+    const event = quoted.find((entry) => entry.text.includes(marker));
+    const controlEvent = quoted.find((entry) => entry.text.includes(controlMarker));
+    if (event === undefined || controlEvent === undefined) throw new Error("public timeline missing imported fixtures");
+    expect(event.text).toContain("Project two-client-continuity is blocked.");
     const filed = await call(a, "propose", {
       kind: "claim", target: "projects/two-client-continuity", body: "The project status is blocked.",
       subject: project, subjects: [project], predicate: "project.status", object: "blocked",
@@ -130,6 +142,7 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
     sameEnvelope(corrected);
     const correction = envelopeOf(corrected).data as { claim_id: string; event_id: string; superseded: { claim_id: string }[] };
     expect(correction.superseded.map((entry) => entry.claim_id)).toEqual([claimId]);
+    expect(listClaims(db, { subject: project }).find((claim) => claim.claim_id === correction.claim_id)?.authority).toBe("owner_correction");
     const retry = await call(a, "correct", correctionArgs);
     sameEnvelope(retry);
     expect(envelopeOf(retry).data).toMatchObject({ claim_id: correction.claim_id, event_id: correction.event_id });
@@ -157,7 +170,12 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
     });
     expect(outOfScope.isError).toBe(true);
     expect(errorOf(outOfScope).error).toBe("subject_out_of_scope");
-    expect(JSON.stringify(envelopeOf(outOfScope))).not.toContain(project);
+    expect(JSON.parse(outOfScope.content[0]!.text)).toEqual({ error: "subject_out_of_scope", message: "subjects outside the grant", retry_after_seconds: null });
+    const outOfScopeEnvelope = JSON.stringify(envelopeOf(outOfScope));
+    expect(outOfScopeEnvelope).not.toContain(marker);
+    expect(outOfScopeEnvelope).not.toContain(setup.vault);
+    expect(outOfScopeEnvelope).not.toContain(setup.notes);
+    expect(outOfScopeEnvelope).not.toContain("cause");
     const narrowed = await call(b, "context_packet", {
       include: ["claims"], purpose: "correction", budget_tokens: 500,
       capabilities: ["delta"], retain_prefix: true, prior_hash: beforeNarrow.packet_hash, epoch: beforeNarrow.claims_epoch,
@@ -177,10 +195,16 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
     expect(revoked.isError).toBe(true);
     expect(errorOf(revoked).error).toBe("unknown_agent");
 
-    revokeSourceGrant(db, { source_key: source.source_key, expected_revision: 1, operation_id: "two-client-source-revoke" });
+    revokeSourceGrant(db, { source_key: selectedSourceKey!, expected_revision: 1, operation_id: "two-client-source-revoke" });
     const sourceDenied = await call(a, "context_packet", { subjects: [project], include: ["claims"], budget_tokens: 500 });
     sameEnvelope(sourceDenied);
-    expect(packet(envelopeOf(sourceDenied)).packet_md).not.toContain("active");
+    const afterRevoke = JSON.stringify(envelopeOf(sourceDenied));
+    expect(afterRevoke).not.toContain("active");
+    expect(afterRevoke).not.toContain(marker);
+    expect(afterRevoke).not.toContain(event.event_id);
+    const controlTimeline = await call(a, "timeline", {});
+    expect(JSON.stringify(envelopeOf(controlTimeline))).toContain(controlMarker);
+    expect(JSON.stringify(envelopeOf(controlTimeline))).toContain(controlEvent.event_id);
     const claims = listClaims(db, { subject: project });
     expect(claims.find((claim) => claim.claim_id === correction.claim_id)?.receipt_id).toBeNull();
   } finally { db.close(); }
