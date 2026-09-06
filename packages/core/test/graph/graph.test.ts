@@ -6,6 +6,11 @@ import { removeDerivedPage } from "../../src/derived";
 import { neighbors, rebuildGraph } from "../../src/graph/graph";
 import type { GraphEdge } from "../../src/graph/graph";
 import { initGraph } from "../../src/graph/schema";
+import { openLedger } from "../../src/ledger/db";
+import { accept } from "../../src/ledger/ledger";
+import type { FrontmatterValue } from "../../src/contracts/proposal";
+import { recordedPage } from "../helpers/recorded-page";
+import { validEvent } from "../fixtures";
 import { serializePage } from "../../src/vault/frontmatter";
 import { searchDb, storedEvent, tempVault } from "../search/helpers";
 
@@ -21,42 +26,43 @@ function vault(): string {
   return created.path;
 }
 
-function writeCanon(
+async function writeCanon(
+  db: Database,
   vaultPath: string,
   name: string,
   id: string,
   body: string,
   extra: Record<string, unknown> = {},
-): void {
-  writeFileSync(
-    join(vaultPath, "facts", `${name}.md`),
-    serializePage({
-      data: {
-        id,
-        title: name,
-        type: "fact",
-        status: "active",
-        sensitivity: "personal",
-        taint: "clean",
-        ...extra,
-      },
-      body,
-    }),
-    "utf8",
-  );
+): Promise<string[]> {
+  const data = {
+    id,
+    title: name,
+    type: "fact",
+    status: "active",
+    sensitivity: "personal",
+    taint: "clean",
+    ...extra,
+  };
+  const relPath = `facts/${name}.md`;
+  if (data.status !== "active") {
+    writeFileSync(join(vaultPath, relPath), serializePage({ data, body }), "utf8");
+    return [];
+  }
+  return (await recordedPage(db, vaultPath, relPath, data as Record<string, FrontmatterValue>, body)).sourceIds;
 }
 
-function edgeRows(db: Database): GraphEdge[] {
+/** Topology assertions exclude the now-required source edge; metadata tests check it separately. */
+function edgeRows(db: Database, kind: GraphEdge["kind"] | null = "wikilink"): GraphEdge[] {
   return db
     .query<GraphEdge, []>(
       "SELECT src, dst, kind FROM graph_edges ORDER BY src, dst, kind",
     )
-    .all();
+    .all().filter(edge => kind === null || edge.kind === kind);
 }
 
 describe("graph rebuild", () => {
   test("initGraph is idempotent", () => {
-    const db = new Database(":memory:");
+    const db = openLedger(":memory:");
     initGraph(db);
     initGraph(db);
     expect(
@@ -69,10 +75,10 @@ describe("graph rebuild", () => {
     ).toEqual(["derived_meta", "graph_edges"]);
   });
 
-  test("extracts plain and aliased wikilinks", () => {
-    const db = new Database(":memory:");
+  test("extracts plain and aliased wikilinks", async () => {
+    const db = openLedger(":memory:");
     const path = vault();
-    writeCanon(path, "origin", "fact:origin", "See [[Target]] and [[Other|label]].");
+    await writeCanon(db, path, "origin", "fact:origin", "See [[Target]] and [[Other|label]].");
 
     rebuildGraph(db, path);
 
@@ -82,10 +88,11 @@ describe("graph rebuild", () => {
     ]);
   });
 
-  test("ignores wikilinks in code spans and nested brackets", () => {
-    const db = new Database(":memory:");
+  test("ignores wikilinks in code spans and nested brackets", async () => {
+    const db = openLedger(":memory:");
     const path = vault();
-    writeCanon(
+    await writeCanon(
+      db,
       path,
       "origin",
       "fact:origin",
@@ -99,10 +106,10 @@ describe("graph rebuild", () => {
     ]);
   });
 
-  test("does not treat an unmatched backtick as a code span", () => {
-    const db = new Database(":memory:");
+  test("does not treat an unmatched backtick as a code span", async () => {
+    const db = openLedger(":memory:");
     const path = vault();
-    writeCanon(path, "origin", "fact:origin", "Unmatched ` then [[Visible]].");
+    await writeCanon(db, path, "origin", "fact:origin", "Unmatched ` then [[Visible]].");
 
     rebuildGraph(db, path);
 
@@ -111,11 +118,11 @@ describe("graph rebuild", () => {
     ]);
   });
 
-  test("resolves a unique wikilink title to the page id", () => {
-    const db = new Database(":memory:");
+  test("resolves a unique wikilink title to the page id", async () => {
+    const db = openLedger(":memory:");
     const path = vault();
-    writeCanon(path, "target", "fact:target", "Destination.", { title: "Target" });
-    writeCanon(path, "origin", "fact:origin", "See [[Target]] and [[Missing]].");
+    await writeCanon(db, path, "target", "fact:target", "Destination.", { title: "Target" });
+    await writeCanon(db, path, "origin", "fact:origin", "See [[Target]] and [[Missing]].");
 
     rebuildGraph(db, path);
 
@@ -125,12 +132,12 @@ describe("graph rebuild", () => {
     ]);
   });
 
-  test("leaves an ambiguous title unresolved", () => {
-    const db = new Database(":memory:");
+  test("leaves an ambiguous title unresolved", async () => {
+    const db = openLedger(":memory:");
     const path = vault();
-    writeCanon(path, "garden", "fact:garden", "Garden.", { title: "Tea" });
-    writeCanon(path, "cupboard", "fact:cupboard", "Cupboard.", { title: "Tea" });
-    writeCanon(path, "origin", "fact:origin", "See [[Tea]].");
+    await writeCanon(db, path, "garden", "fact:garden", "Garden.", { title: "Tea" });
+    await writeCanon(db, path, "cupboard", "fact:cupboard", "Cupboard.", { title: "Tea" });
+    await writeCanon(db, path, "origin", "fact:origin", "See [[Tea]].");
 
     rebuildGraph(db, path);
 
@@ -139,28 +146,21 @@ describe("graph rebuild", () => {
     ]);
   });
 
-  test("leaves an ambiguous basename unresolved", () => {
-    const db = new Database(":memory:");
+  test("leaves an ambiguous basename unresolved", async () => {
+    const db = openLedger(":memory:");
     const path = vault();
-    writeCanon(path, "tea", "fact:garden-tea", "Garden tea.", {
+    await writeCanon(db, path, "tea", "fact:garden-tea", "Garden tea.", {
       title: "Garden tea",
     });
-    writeFileSync(
-      join(path, "entities", "tea.md"),
-      serializePage({
-        data: {
+    await recordedPage(db, path, "entities/tea.md", {
           id: "fact:cupboard-tea",
           title: "Cupboard tea",
           type: "fact",
           status: "active",
           sensitivity: "personal",
           taint: "clean",
-        },
-        body: "Cupboard tea.",
-      }),
-      "utf8",
-    );
-    writeCanon(path, "origin", "fact:origin", "See [[tea]] and [[facts/tea]].");
+        }, "Cupboard tea.");
+    await writeCanon(db, path, "origin", "fact:origin", "See [[tea]] and [[facts/tea]].");
 
     rebuildGraph(db, path);
 
@@ -170,13 +170,14 @@ describe("graph rebuild", () => {
     ]);
   });
 
-  test("stores sensitivity and provenance on every edge", () => {
-    const db = new Database(":memory:");
+  test("stores sensitivity and provenance on every edge", async () => {
+    const db = openLedger(":memory:");
     const path = vault();
-    writeCanon(path, "origin", "fact:origin", "See [[Target]].", {
+    const source = storedEvent(db, "origin-metadata", { text: "The synthetic record observes Target.", sensitivity_hint: "private" });
+    await writeCanon(db, path, "origin", "fact:origin", "See [[Target]].", {
       sensitivity: "private",
       taint: "quoted",
-      sources: ["event:one"],
+      sources: [source.event_id],
     });
     rebuildGraph(db, path);
     expect(
@@ -191,9 +192,9 @@ describe("graph rebuild", () => {
     ).toEqual({
       sensitivity: "private",
       taint: "quoted",
-      provenance: '["event:one"]',
+      provenance: JSON.stringify([source.event_id]),
     });
-    writeCanon(path, "Target", "fact:target", "Dest.", { sensitivity: "personal" });
+    await writeCanon(db, path, "Target", "fact:target", "Dest.", { sensitivity: "personal" });
     rebuildGraph(db, path);
     expect(
       db
@@ -204,12 +205,16 @@ describe("graph rebuild", () => {
     ).toBe("personal");
   });
 
-  test("stores a source dest_sensitivity from the event hint", () => {
+  test("stores a source dest_sensitivity from the event hint", async () => {
     const db = searchDb();
     const path = vault();
     const hinted = storedEvent(db, "hinted", { sensitivity_hint: "private" });
-    writeCanon(path, "origin", "fact:origin", "No links.", {
-      sources: [`event:${hinted.event_id}`, "event:missing"],
+    const input = { ...validEvent(), source_record_id: "unhinted", text: "A synthetic unhinted source record." };
+    delete input.sensitivity_hint;
+    const unhinted = accept(db, input);
+    if (unhinted.status !== "stored") throw new Error("unhinted fixture capture was not stored");
+    await writeCanon(db, path, "origin", "fact:origin", "No links.", {
+      sources: [hinted.event_id, unhinted.event.event_id],
     });
     rebuildGraph(db, path);
     expect(
@@ -220,22 +225,22 @@ describe("graph rebuild", () => {
         )
         .all(),
     ).toEqual([
-      { dst: `event:${hinted.event_id}`, dest_sensitivity: "private" },
-      { dst: "event:missing", dest_sensitivity: "unlabeled" },
+      { dst: hinted.event_id, dest_sensitivity: "private" },
+      { dst: unhinted.event.event_id, dest_sensitivity: "unlabeled" },
     ]);
   });
 
-  test("rebuild omits archived pages", () => {
-    const db = new Database(":memory:");
+  test("rebuild omits archived pages", async () => {
+    const db = openLedger(":memory:");
     const path = vault();
-    writeCanon(path, "live", "fact:live", "See [[Target]].");
-    writeCanon(path, "old", "fact:old", "See [[Target]].", { status: "archived" });
+    await writeCanon(db, path, "live", "fact:live", "See [[Target]].");
+    await writeCanon(db, path, "old", "fact:old", "See [[Target]].", { status: "archived" });
     expect(rebuildGraph(db, path).pages).toBe(1);
     expect(edgeRows(db).map(({ src }) => src)).toEqual(["fact:live"]);
   });
 
   test("hides private edges below a public ceiling", () => {
-    const db = new Database(":memory:");
+    const db = openLedger(":memory:");
     initGraph(db);
     db.exec(`
       INSERT INTO graph_edges (src, dst, kind, sensitivity, taint, authority, provenance)
@@ -249,7 +254,7 @@ describe("graph rebuild", () => {
   });
 
   test("hides a resolved dest above the ceiling without consuming the cap", () => {
-    const db = new Database(":memory:");
+    const db = openLedger(":memory:");
     initGraph(db);
     db.exec(`
       INSERT INTO graph_edges (src, dst, kind, sensitivity, dest_sensitivity, taint, authority, provenance)
@@ -263,7 +268,7 @@ describe("graph rebuild", () => {
   });
 
   test("a missing graph table is an empty walk", () => {
-    const db = new Database(":memory:");
+    const db = openLedger(":memory:");
     expect(neighbors(db, "hub")).toEqual({
       id: "hub",
       edges: [],
@@ -271,18 +276,17 @@ describe("graph rebuild", () => {
     });
   });
 
-  test("adds subject and source edges from frontmatter", () => {
-    const db = new Database(":memory:");
+  test("adds subject and source edges from frontmatter", async () => {
+    const db = openLedger(":memory:");
     const path = vault();
-    writeCanon(path, "origin", "fact:origin", "No links.", {
+    const sources = await writeCanon(db, path, "origin", "fact:origin", "No links.", {
       subjects: ["person:ada", "person:grace"],
-      sources: ["event:one"],
     });
 
     rebuildGraph(db, path);
 
-    expect(edgeRows(db)).toEqual([
-      { src: "fact:origin", dst: "event:one", kind: "source" },
+    expect(edgeRows(db, null)).toEqual([
+      { src: "fact:origin", dst: sources[0]!, kind: "source" },
       { src: "fact:origin", dst: "person:ada", kind: "subject" },
       { src: "fact:origin", dst: "person:grace", kind: "subject" },
     ]);
@@ -293,33 +297,22 @@ describe("graph rebuild", () => {
         )
         .all(),
     ).toEqual([
-      { dest_sensitivity: "unlabeled", kind: "source" },
+      { dest_sensitivity: "personal", kind: "source" },
       { dest_sensitivity: null, kind: "subject" },
       { dest_sensitivity: null, kind: "subject" },
     ]);
   });
 
   test("hidden source dests do not consume the neighbor cap", () => {
-    const db = new Database(":memory:");
-    const path = vault();
-    writeCanon(path, "open", "fact:zzz-open", "A public dest.", {
-      title: "Open",
-      sensitivity: "public",
-    });
-    writeCanon(
-      path,
-      "hub",
-      "fact:hub",
-      "See [[Open]].",
-      {
-        sensitivity: "public",
-        sources: Array.from(
-          { length: 100 },
-          (_value, index) => `event:aaa-secret-${index}`,
-        ),
-      },
-    );
-    rebuildGraph(db, path);
+    const db = openLedger(":memory:");
+    initGraph(db);
+    // This isolates the bounded query over disposable rows. Admission tests
+    // separately prove that a real page cannot lower its sources' floor.
+    const insert = db.query(`INSERT INTO graph_edges
+      (src,dst,kind,sensitivity,dest_sensitivity,taint,authority,provenance)
+      VALUES ('fact:hub',?,?,'public',?,'clean','model_inference','[]')`);
+    insert.run("fact:zzz-open", "wikilink", "public");
+    for (let index = 0; index < 100; index += 1) insert.run(`event:aaa-secret-${index}`, "source", "private");
 
     const limited = neighbors(db, "fact:hub", { ceiling: "public" });
     expect(limited.edges).toEqual([
@@ -333,15 +326,15 @@ describe("graph rebuild", () => {
     expect(uncapped.edges.every((edge) => edge.kind === "source")).toBe(true);
   });
 
-  test("is idempotent and stamps the edge count", () => {
-    const db = new Database(":memory:");
+  test("is idempotent and stamps the edge count", async () => {
+    const db = openLedger(":memory:");
     const path = vault();
-    writeCanon(path, "origin", "fact:origin", "[[Target]] [[Target]]");
+    await writeCanon(db, path, "origin", "fact:origin", "[[Target]] [[Target]]");
 
     rebuildGraph(db, path);
     const result = rebuildGraph(db, path);
 
-    expect(result).toMatchObject({ pages: 1, edges: 1 });
+    expect(result).toMatchObject({ pages: 1, edges: 2 });
     expect(edgeRows(db)).toHaveLength(1);
     expect(
       db
@@ -349,28 +342,26 @@ describe("graph rebuild", () => {
           "SELECT layer, doc_count, port_id FROM derived_meta WHERE layer = 'graph'",
         )
         .get(),
-    ).toEqual({ layer: "graph", doc_count: 1, port_id: null });
+    ).toEqual({ layer: "graph", doc_count: 2, port_id: null });
   });
 
-  test("archiving a page drops incoming edges to its id", () => {
-    const db = new Database(":memory:");
+  test("archiving a page drops incoming edges to its id", async () => {
+    const db = openLedger(":memory:");
     const path = vault();
-    writeCanon(path, "target", "fact:target", "Destination.", { title: "Target" });
-    writeCanon(path, "origin", "fact:origin", "See [[Target]].");
+    await writeCanon(db, path, "target", "fact:target", "Destination.", { title: "Target" });
+    await writeCanon(db, path, "origin", "fact:origin", "See [[Target]].");
     rebuildGraph(db, path);
     expect(edgeRows(db)).toEqual([
       { src: "fact:origin", dst: "fact:target", kind: "wikilink" },
     ]);
 
-    writeCanon(path, "target", "fact:target", "Destination.", {
+    await writeCanon(db, path, "target", "fact:target", "Destination.", {
       title: "Target",
       status: "archived",
     });
     removeDerivedPage(db, "fact:target", path);
 
-    expect(edgeRows(db)).toEqual([
-      { src: "fact:origin", dst: "Target", kind: "wikilink" },
-    ]);
+    expect(edgeRows(db)).toEqual([]);
   });
 });
 

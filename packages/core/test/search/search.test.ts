@@ -12,6 +12,9 @@ import { serializePage } from "../../src/vault/frontmatter";
 import type { CanonPage } from "../../src/vault/pages";
 import { computeOriginBinding } from "../../src/ledger/event-origin-binding";
 import { searchDb, storedEvent, tempVault } from "./helpers";
+import { recordedPage } from "../helpers/recorded-page";
+import { listCanonPages } from "../../src/vault/pages";
+import type { FrontmatterValue } from "../../src/contracts/proposal";
 
 const disposers: (() => void)[] = [];
 
@@ -19,37 +22,53 @@ afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose();
 });
 
-function page(
+const pageVaults = new WeakMap<Database, string>();
+
+async function page(
+  db: Database,
   id: string,
   body: string,
   overrides: Record<string, unknown> = {},
-): CanonPage {
+): Promise<CanonPage> {
   const relPath = `facts/${id.replace(":", "-")}.md`;
-  return {
+  const data = {
     id,
-    path: relPath,
-    relPath,
-    data: {
-      id,
-      title: `Title ${id}`,
-      type: "fact",
-      status: "active",
-      sensitivity: "personal",
-      taint: "clean",
-      ...overrides,
-    },
-    body,
-    contentHash: "0".repeat(64),
+    title: `Title ${id}`,
+    type: "fact",
+    status: "active",
+    sensitivity: "personal",
+    taint: "clean",
+    ...overrides,
   };
+  if (data["status"] !== "active" || data["sensitivity"] === undefined) {
+    return { id, path: relPath, relPath, data, body, contentHash: "0".repeat(64) };
+  }
+  let vaultPath = pageVaults.get(db);
+  if (vaultPath === undefined) {
+    const vault = tempVault();
+    disposers.push(vault.dispose);
+    vaultPath = vault.path;
+    pageVaults.set(db, vaultPath);
+  }
+  await recordedPage(db, vaultPath, relPath, data as Record<string, FrontmatterValue>, body);
+  const recorded = listCanonPages(vaultPath).find(page => page.relPath === relPath)!;
+  // Exercise indexPage itself after the writer produced the source evidence.
+  removeDoc(db, "canon", recorded.id);
+  return recorded;
 }
 
-function writeCanon(
+async function writeCanon(
+  db: Database,
   vaultPath: string,
   relPath: string,
   data: Record<string, unknown>,
   body: string,
-): void {
-  writeFileSync(join(vaultPath, relPath), serializePage({ data, body }), "utf8");
+): Promise<void> {
+  if (data["status"] !== "active") {
+    writeFileSync(join(vaultPath, relPath), serializePage({ data, body }), "utf8");
+    return;
+  }
+  await recordedPage(db, vaultPath, relPath, data as Record<string, FrontmatterValue>, body);
 }
 
 describe("toFtsQuery", () => {
@@ -88,17 +107,17 @@ describe("toFtsQuery", () => {
     expect(toFtsQuery("c++")).toBe('"c++"');
   });
 
-  test("searches a literal date the way it was typed", () => {
+  test("searches a literal date the way it was typed", async () => {
     const db = searchDb();
-    indexPage(db, page("fact:dated", "Meeting on 2026-02-03 at noon."));
+    indexPage(db, await page(db, "fact:dated", "Meeting on 2026-02-03 at noon."));
     expect(search(db, "2026-02-03", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([
       "page:fact:dated",
     ]);
   });
 
-  test("drops control characters and a NUL query does not throw", () => {
+  test("drops control characters and a NUL query does not throw", async () => {
     const db = searchDb();
-    indexPage(db, page("fact:hello", "hello world"));
+    indexPage(db, await page(db, "fact:hello", "hello world"));
     expect(toFtsQuery(`a\u0000b`)).toBe('"ab"');
     expect(search(db, `a\u0000b`, { ceiling: "private" })).toEqual([]);
   });
@@ -118,10 +137,15 @@ describe("search indexing", () => {
     ).toEqual(["derived_meta", "search_docs"]);
   });
 
-  test("indexPage replaces an existing document instead of appending", () => {
+  test("indexPage replaces an existing document instead of appending", async () => {
     const db = searchDb();
-    indexPage(db, page("fact:one", "old wording"));
-    indexPage(db, page("fact:one", "new wording"));
+    const old = await page(db, "fact:one", "old wording");
+    const updated = await page(db, "fact:one", "new wording");
+    // Install the actual old snapshot after preparing the newer receipt so
+    // this call must replace the stale projection, including its FTS row.
+    indexPage(db, old);
+    expect(search(db, "old", { ceiling: "private" })).toHaveLength(1);
+    indexPage(db, updated);
 
     expect(search(db, "old", { ceiling: "private" })).toEqual([]);
     expect(search(db, "new", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual(["page:fact:one"]);
@@ -146,32 +170,32 @@ describe("search indexing", () => {
     expect(search(db, "vanishing", { ceiling: "private" })).toEqual([]);
   });
 
-  test("prefix search works and snippets mark the match", () => {
+  test("prefix search works and snippets mark the match", async () => {
     const db = searchDb();
-    indexPage(db, page("fact:prefix", "A telescope reveals distant worlds."));
+    indexPage(db, await page(db, "fact:prefix", "A telescope reveals distant worlds."));
 
     const [hit] = search(db, "tele*", { ceiling: "private" });
     expect(hit?.doc_id).toBe("page:fact:prefix");
     expect(hit?.snippet).toContain("[telescope]");
   });
 
-  test("unicode61 matches diacritics-insensitively", () => {
+  test("unicode61 matches diacritics-insensitively", async () => {
     const db = searchDb();
-    indexPage(db, page("fact:cafe", "The café closes at dusk."));
+    indexPage(db, await page(db, "fact:cafe", "The café closes at dusk."));
     expect(search(db, "cafe", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([
       "page:fact:cafe",
     ]);
   });
 
-  test("title matches outrank body matches", () => {
+  test("title matches outrank body matches", async () => {
     const db = searchDb();
     indexPage(
       db,
-      page("fact:title", "other body words", { title: "UniqueKeyword here" }),
+      await page(db, "fact:title", "other body words", { title: "UniqueKeyword here" }),
     );
     indexPage(
       db,
-      page("fact:body", "UniqueKeyword here", { title: "Other title words" }),
+      await page(db, "fact:body", "UniqueKeyword here", { title: "Other title words" }),
     );
 
     expect(search(db, "UniqueKeyword", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([
@@ -180,11 +204,11 @@ describe("search indexing", () => {
     ]);
   });
 
-  test("indexing a canon page does not delete a ledger row with the same id", () => {
+  test("indexing a canon page does not delete a ledger row with the same id", async () => {
     const db = searchDb();
     const event = storedEvent(db, "shared-id", { text: "ledger unique phrase" });
     indexEvent(db, event);
-    indexPage(db, page(event.event_id, "canon unique phrase"));
+    indexPage(db, await page(db, event.event_id, "canon unique phrase"));
 
     expect(
       search(db, "ledger", { ceiling: "private" }).map(({ scope, doc_id }) => `${scope}:${doc_id}`),
@@ -202,11 +226,12 @@ describe("search indexing", () => {
 });
 
 describe("search rebuild", () => {
-  test("indexes canon and ledger and stamps derived_meta", () => {
+  test("indexes canon and ledger and stamps derived_meta", async () => {
     const db = searchDb();
     const vault = tempVault();
     disposers.push(vault.dispose);
-    writeCanon(
+    await writeCanon(
+      db,
       vault.path,
       "facts/tea.md",
       {
@@ -224,8 +249,8 @@ describe("search rebuild", () => {
     const result = rebuildSearch(db, vault.path);
 
     expect(result.pages).toBe(1);
-    expect(result.events).toBe(1);
-    expect(search(db, "kettle", { ceiling: "private" }).map(({ scope }) => scope)).toEqual(["canon"]);
+    expect(result.events).toBe(2);
+    expect(search(db, "kettle", { ceiling: "private" }).map(({ scope }) => scope).sort()).toEqual(["canon", "ledger"]);
     expect(search(db, "teacup", { ceiling: "private" }).map(({ scope }) => scope)).toEqual(["ledger"]);
     expect(
       db
@@ -233,14 +258,15 @@ describe("search rebuild", () => {
           "SELECT layer, doc_count FROM derived_meta WHERE layer = 'search'",
         )
         .get(),
-    ).toEqual({ layer: "search", doc_count: 2 });
+    ).toEqual({ layer: "search", doc_count: 3 });
   });
 
-  test("rebuilding twice preserves counts without duplicates", () => {
+  test("rebuilding twice preserves counts without duplicates", async () => {
     const db = searchDb();
     const vault = tempVault();
     disposers.push(vault.dispose);
-    writeCanon(
+    await writeCanon(
+      db,
       vault.path,
       "facts/one.md",
       {
@@ -258,10 +284,10 @@ describe("search rebuild", () => {
     rebuildSearch(db, vault.path);
     rebuildSearch(db, vault.path);
 
-    expect(search(db, "repeatable", { ceiling: "private" })).toHaveLength(2);
+    expect(search(db, "repeatable", { ceiling: "private" })).toHaveLength(3);
     expect(
       db.query<{ count: number }, []>("SELECT count(*) AS count FROM search_docs").get(),
-    ).toEqual({ count: 2 });
+    ).toEqual({ count: 3 });
   });
 
   test("does not index deleted ledger events", () => {
@@ -322,32 +348,32 @@ describe("search rebuild", () => {
 });
 
 describe("search policy and filters", () => {
-  function policyDb(): Database {
+  async function policyDb(): Promise<Database> {
     const db = searchDb();
-    indexPage(db, page("fact:public", "shared keyword", { sensitivity: "public" }));
+    indexPage(db, await page(db, "fact:public", "shared keyword", { sensitivity: "public" }));
     indexPage(
       db,
-      page("fact:personal", "shared keyword", { sensitivity: "personal" }),
+      await page(db, "fact:personal", "shared keyword", { sensitivity: "personal" }),
     );
     indexPage(
       db,
-      page("fact:private", "shared keyword", { sensitivity: "private" }),
+      await page(db, "fact:private", "shared keyword", { sensitivity: "private" }),
     );
-    indexPage(db, page("fact:unlabeled", "shared keyword", { sensitivity: undefined }));
+    indexPage(db, await page(db, "fact:unlabeled", "shared keyword", { sensitivity: undefined }));
     return db;
   }
 
-  test("personal ceiling hides private and unlabeled documents", () => {
+  test("personal ceiling hides private and unlabeled documents", async () => {
     expect(
-      search(policyDb(), "shared", { ceiling: "personal" }).map(
+      search(await policyDb(), "shared", { ceiling: "personal" }).map(
         ({ doc_id }) => doc_id,
       ),
     ).toEqual(["page:fact:personal", "page:fact:public"]);
   });
 
-  test("public ceiling hides personal, private, and unlabeled documents", () => {
+  test("public ceiling hides personal, private, and unlabeled documents", async () => {
     expect(
-      search(policyDb(), "shared", { ceiling: "public" }).map(
+      search(await policyDb(), "shared", { ceiling: "public" }).map(
         ({ doc_id }) => doc_id,
       ),
     ).toEqual(["page:fact:public"]);
@@ -355,18 +381,18 @@ describe("search policy and filters", () => {
 
   test(
     "an explicit owner ceiling excludes documents without sensitivity",
-    () => {
+    async () => {
       expect(
-        search(policyDb(), "shared", { ceiling: "private" }).map(({ doc_id }) => doc_id),
+        search(await policyDb(), "shared", { ceiling: "private" }).map(({ doc_id }) => doc_id),
       ).not.toContain("page:fact:unlabeled");
     },
   );
 
-  test("scope, type, and excluded-path filters compose", () => {
+  test("scope, type, and excluded-path filters compose", async () => {
     const db = searchDb();
-    const held = page("fact:held", "filterword", { type: "fact" });
+    const held = await page(db, "fact:held", "filterword", { type: "fact" });
     indexPage(db, held);
-    indexPage(db, page("topic:kept", "filterword", { type: "topic" }));
+    indexPage(db, await page(db, "topic:kept", "filterword", { type: "topic" }));
     indexEvent(db, storedEvent(db, "filtered-event", { text: "filterword" }));
 
     expect(
@@ -404,14 +430,14 @@ describe("search policy and filters", () => {
     ).toEqual([`event:${later.event_id}`]);
   });
 
-  test("compares since and until as instants, not raw strings", () => {
+  test("compares since and until as instants, not raw strings", async () => {
     const db = searchDb();
     const offset = storedEvent(db, "offset", {
       text: "windowword",
       occurred_at: "2026-02-03T00:30:00-05:00",
     });
     indexEvent(db, offset);
-    indexPage(db, page("fact:empty", "windowword"));
+    indexPage(db, await page(db, "fact:empty", "windowword"));
 
     expect(
       search(db, "windowword", { ceiling: "private",
@@ -445,9 +471,9 @@ describe("search policy and filters", () => {
     );
   });
 
-  test("ledger hits are quoted and canon hits carry taint", () => {
+  test("ledger hits are quoted and canon hits carry taint", async () => {
     const db = searchDb();
-    indexPage(db, page("fact:clean", "taintword", { taint: "clean" }));
+    indexPage(db, await page(db, "fact:clean", "taintword", { taint: "clean" }));
     const event = storedEvent(db, "quoted-src", { text: "taintword captured" });
     indexEvent(db, event);
     const hits = search(db, "taintword", { ceiling: "private" });
@@ -466,9 +492,9 @@ describe("search policy and filters", () => {
     });
   });
 
-  test("declares index-degraded when derived_meta is not ok", () => {
+  test("declares index-degraded when derived_meta is not ok", async () => {
     const db = searchDb();
-    indexPage(db, page("fact:one", "degradeword"));
+    indexPage(db, await page(db, "fact:one", "degradeword"));
     stampDerived(db, {
       layer: "search",
       generation: "gen-1",
@@ -483,22 +509,23 @@ describe("search policy and filters", () => {
 });
 
 describe("search live eligibility and identity", () => {
-  test("refuses to index an archived page and removes a stale row", () => {
+  test("refuses to index an archived page and removes a stale row", async () => {
     const db = searchDb();
-    indexPage(db, page("fact:gone", "vanishing archived"));
+    indexPage(db, await page(db, "fact:gone", "vanishing archived"));
     expect(search(db, "vanishing", { ceiling: "private" })).toHaveLength(1);
     indexPage(
       db,
-      page("fact:gone", "vanishing archived", { status: "archived" }),
+      await page(db, "fact:gone", "vanishing archived", { status: "archived" }),
     );
     expect(search(db, "vanishing", { ceiling: "private" })).toEqual([]);
   });
 
-  test("rebuild omits archived pages", () => {
+  test("rebuild omits archived pages", async () => {
     const db = searchDb();
     const vault = tempVault();
     disposers.push(vault.dispose);
-    writeCanon(
+    await writeCanon(
+      db,
       vault.path,
       "facts/live.md",
       {
@@ -511,7 +538,8 @@ describe("search live eligibility and identity", () => {
       },
       "liveword",
     );
-    writeCanon(
+    await writeCanon(
+      db,
       vault.path,
       "facts/old.md",
       {
@@ -525,14 +553,14 @@ describe("search live eligibility and identity", () => {
       "liveword archived",
     );
     expect(rebuildSearch(db, vault.path).pages).toBe(1);
-    expect(search(db, "liveword", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([
+    expect(search(db, "liveword", { ceiling: "private", scope: "canon" }).map(({ doc_id }) => doc_id)).toEqual([
       "page:fact:live",
     ]);
   });
 
-  test("search_documents enforces unique doc_id", () => {
+  test("search_documents enforces unique doc_id", async () => {
     const db = searchDb();
-    indexPage(db, page("fact:one", "once"));
+    indexPage(db, await page(db, "fact:one", "once"));
     expect(() =>
       db.exec(
         `INSERT INTO search_documents (
@@ -546,11 +574,12 @@ describe("search live eligibility and identity", () => {
     ).toThrow();
   });
 
-  test("a skipped rebuild stamps degraded, not ok", () => {
+  test("a skipped rebuild stamps degraded, not ok", async () => {
     const db = searchDb();
     const vault = tempVault();
     disposers.push(vault.dispose);
-    writeCanon(
+    await writeCanon(
+      db,
       vault.path,
       "facts/ok.md",
       {
