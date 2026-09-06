@@ -4,8 +4,10 @@
 not install, start, or schedule anything. A caller must separately authorize any
 observation and invoke each sample. Owner estate and human-use qualification are
 not implemented by this harness and are always reported `not-observed`;
-`release_qualified` is always false. Seven days of fixtures do not satisfy the
-estate shadow, owner review, normal-week usefulness, or retirement inventory gates.
+`release_qualified` is always false. Seven days of fixtures do not establish real
+estate or human-use evidence. The [current readiness decision](decision-log.md#owner-amendment-to-readiness-2026-09-05)
+supersedes seven- and fourteen-day calendar gates; this observer remains an
+optional post-readiness diagnostic with its historical timing contract unchanged.
 
 Create a scope file for a synthetic vault only:
 
@@ -21,8 +23,12 @@ from a real supervisor. Non-UTC and supervised scopes are refused. Status always
 reports `owner_morning: unqualified`, `supervised_pilot: unqualified`, and
 `rail_qualification: fixture-only`; this is not full issue #403 qualification. The artifact directory must
 contain `kizuki`, `kizuki-mcp`, `README.txt`, `BUILD.json`, and `SHA256SUMS`; the
-proof must be a passing `kizuki.artifact-proof/v1` receipt for that exact source
-SHA, target, and binary hash with all fourteen required proof steps. Artifact
+proof must be a complete, passing artifact receipt for that exact source
+SHA, target, Bun version and package hashes, with the exact ordered commands.
+Historical `kizuki.artifact-proof/v1` has fourteen steps and supplies no engine
+credit. V2 adds the copied CLI/MCP observations and two engine steps; its engine
+identities must pass the shared qualification policy. Neither version changes
+the observer's fixture-only scope. Artifact
 checksums, BUILD bytes, and proof bytes are checked and bound into the manifest.
 These are local evidence integrity checks, not independent signatures or proof
 that an operator's declaration of fixture scope is true.

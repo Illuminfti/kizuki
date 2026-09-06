@@ -4,6 +4,7 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "../helpers";
 import { fakeSystemd } from "../serve/supervisor-fixture";
+import { parseSqliteRuntime } from "@kizuki/core/internal";
 
 const { cleanup, isolatedEnv, runCli, tempVault } = createHelpers();
 function supervisedVault() {
@@ -57,6 +58,9 @@ describe("doctor liveness", () => {
     const result = runCli(setup.env, "doctor", "--json");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("opted-out");
+    expect(parseSqliteRuntime(JSON.parse(result.stdout).data.runtime)).toMatchObject({
+      schema: "kizuki.sqlite-runtime/v1", bun_version: Bun.version,
+    });
   });
 
   test("a rail with five empty runs in a row is reported down", () => {

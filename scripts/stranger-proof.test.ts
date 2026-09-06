@@ -65,13 +65,18 @@ describe("artifact proof", () => {
       const report = join(directory, name);
       await expect(runArtifactProof({ artifact, report })).rejects.toThrow("artifact proof failed");
       const receipt = JSON.parse(readFileSync(join(report, "receipt.json"), "utf8")) as {
+        schema: string;
         source_sha: string;
         binary_sha256: string;
         failures: string[];
+        engine_observations: { kizuki: null; kizuki_mcp: null };
       };
+      expect(receipt.schema).toBe("kizuki.artifact-proof/v2");
       expect(receipt.source_sha).toBe("unavailable");
       expect(receipt.binary_sha256).toBe("unavailable");
       expect(receipt.failures).toHaveLength(1);
+      expect(receipt.failures).toEqual(["artifact-proof-failed"]);
+      expect(receipt.engine_observations).toEqual({ kizuki: null, kizuki_mcp: null });
     }
   });
 });

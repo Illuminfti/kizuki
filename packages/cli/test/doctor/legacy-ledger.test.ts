@@ -4,6 +4,7 @@ import { existsSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "../helpers";
 import { LEDGER_SCHEMA_VERSION } from "../../../core/src/ledger/db";
+import { parseSqliteRuntime } from "@kizuki/core/internal";
 
 const { cleanup, runCli, tempVault } = createHelpers();
 afterEach(cleanup);
@@ -22,6 +23,9 @@ test("doctor JSON accepts a genuine migrated v1 event without hiding unrelated h
   const result = runCli(setup.env, "doctor", "--json", "--integrity");
   expect(result.stderr).toBe("");
   const envelope = JSON.parse(result.stdout);
+  expect(parseSqliteRuntime(envelope.data.runtime)).toMatchObject({
+    schema: "kizuki.sqlite-runtime/v1", bun_version: Bun.version,
+  });
   expect(envelope.data.ledger).toEqual({
     ok: true, schema_version: LEDGER_SCHEMA_VERSION, quick_check: "ok",
     integrity_check: "ok", sampled_events: 1, failures: [],
