@@ -295,6 +295,8 @@ function legacyFiles(backup: string, current: Record<string, ExportManifestEntry
     delete files[`ledger/${table}.jsonl`];
     rmSync(join(backup, "ledger", `${table}.jsonl`));
   }
+  delete files["canon/source-survivor-lineage.v1.jsonl"];
+  rmSync(join(backup, "canon", "source-survivor-lineage.v1.jsonl"), { force: true });
   return files;
 }
 
@@ -390,6 +392,8 @@ describe("exportVault", () => {
     expect(manifest.files["connections.jsonl"]?.count).toBe(1);
     expect(manifest.files["checkpoints.jsonl"]?.count).toBe(1);
     expect(manifest.files["rail_cursors.jsonl"]?.count).toBe(0);
+    expect(manifest.files["canon/source-survivor-lineage.v1.jsonl"]?.count).toBe(0);
+    expect(readFileSync(join(outDir, "canon/source-survivor-lineage.v1.jsonl"), "utf8")).toBe("");
     expect(manifest.snapshot.event_count).toBe(1);
     expect(JSON.parse(readFileSync(join(outDir, "manifest.json"), "utf8"))).toEqual(
       manifest,

@@ -1,4 +1,8 @@
 import { stageSourceErasureIntent, readSourceErasureIntent, appendSourceErasureReceipt, type SourceErasureIntent } from "./source-erasure-intent";
+import {
+  getSourceSurvivorLineage,
+  insertSourceSurvivorLineage,
+} from "../ledger/canon-source-survivor-lineage";
 import { serializePage } from "../vault/frontmatter";
 import { hashBytes, ABSENT_PAGE_HASH } from "../vault/write";
 import { requireSourceEvents, sourceSensitivity } from "../ledger/source-grants";
@@ -31,9 +35,9 @@ import { cloneExactJson } from "../util/validate";
 import type { TargetDecision } from "./arbiter";
 import type { BudgetTracker } from "./budget";
 import { CanonWriteError } from "./errors";
-import type { CanonReceipt, PageAction, RetrievalOpRef } from "./receipts";
+import { getCanonReceipt, type CanonReceipt, type PageAction, type RetrievalOpRef } from "./receipts";
 import { initCanon } from "./schema";
-import { requireCanonFiles, snapshotCanonIo, withCanonMutationSync } from "./io";
+import { readOwnedCanonPage, requireCanonFiles, snapshotCanonIo, withCanonMutationSync } from "./io";
 import { assertVaultMutationScope, VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import {
   appendReceiptLine,
@@ -711,6 +715,10 @@ export function applyPurgeRewrite(
   }
 
   if (input.source_erasure !== undefined) {
+    const owned = readOwnedCanonPage(io, input.rel_path);
+    if (owned === null || owned.hash !== existing.hash) {
+      throw new CanonWriteError("decision_stale", "source erasure preimage changed");
+    }
     if (
       existing.hash !== input.source_erasure.expected_hash ||
       input.purged_event_ids.length === 0 ||
@@ -728,10 +736,8 @@ export function applyPurgeRewrite(
         "source erasure is not authorized for this revision",
       );
   }
-  let authority = new CanonAuthorityResolver(io.db, [input.rel_path]).resolve(
-    input.rel_path,
-    existing.hash,
-  );
+  const resolver = new CanonAuthorityResolver(io.db, [input.rel_path]);
+  let authority: AuthorityTier;
   if (
     input.source_erasure?.page !== undefined &&
     input.source_erasure.page !== null
@@ -750,6 +756,12 @@ export function applyPurgeRewrite(
         "decision_stale",
         "retained source claims are unavailable",
       );
+    if (resolver.basis(input.rel_path, existing.hash) === null) {
+      throw new CanonWriteError(
+        "decision_stale",
+        "source erasure origin has no positive basis",
+      );
+    }
     authority = retained.reduce(
       (tier, claim) =>
         AUTHORITY_TIERS[claim!.authority] < AUTHORITY_TIERS[tier]
@@ -761,6 +773,8 @@ export function applyPurgeRewrite(
       owner: true,
       purpose: "derive",
     });
+  } else {
+    authority = resolver.resolve(input.rel_path, existing.hash);
   }
   const prior = existingSources(existing.page);
   const purgedEvents = new Set(input.purged_event_ids.map(eventIdFromReference));
@@ -893,14 +907,42 @@ export function applyPurgeRewrite(
   return receipt;
 }
 
+function isLiveSurvivorIntent(intent: SourceErasureIntent): boolean {
+    const receipt = intent.receipt;
+    return receipt.kind === "purge_rewrite" &&
+        receipt.page_action === "edit" &&
+        receipt.archive_path === null &&
+        receipt.reverts === null &&
+        receipt.writer === "loop" &&
+        receipt.producer === "deterministic" &&
+        receipt.model_ref === null &&
+        receipt.page_path !== "" &&
+        !receipt.page_path.startsWith("archive/");
+}
+
 function finishSourceErasure(scope: VaultMutationScope, io: CanonIo, intent: SourceErasureIntent, page: VaultPage | null): void {
     assertVaultMutationScope(scope, io);
     const receipt = intent.receipt;
+    const lineage = intent.version === 2 ? intent.lineage : null;
+    if (intent.version === 2 && isLiveSurvivorIntent(intent) !== (lineage !== null)) {
+        throw new Error("source erasure lineage invalid");
+    }
     const stream = appendSourceErasureReceipt(scope, io, receipt);
     try {
         io.db.transaction(() => {
             stream.verifyBinding();
-            insertReceiptRow(io.db, receipt, "purge_review");
+            const existingReceipt = getCanonReceipt(io.db, receipt.receipt_id);
+            const existingLineage = getSourceSurvivorLineage(io.db, receipt.receipt_id);
+            if (existingReceipt !== null && !isDeepStrictEqual(existingReceipt, receipt))
+                throw new Error("source erasure receipt conflict");
+            if (existingLineage !== null && lineage === null)
+                throw new Error("source erasure lineage conflict");
+            if (existingReceipt !== null && lineage !== null && existingLineage === null)
+                throw new Error("source erasure lineage incomplete");
+            if (existingReceipt === null && existingLineage !== null)
+                throw new Error("source erasure lineage incomplete");
+            if (existingReceipt === null) insertReceiptRow(io.db, receipt, "purge_review");
+            if (lineage !== null) insertSourceSurvivorLineage(io.db, lineage);
             if (tableExists(io.db, "canon_holds"))
                 io.db.query("DELETE FROM canon_holds WHERE page_path=?").run(receipt.page_path);
             if (intent.page_id !== null && !receipt.page_path.startsWith("archive/")) {
@@ -949,6 +991,12 @@ export function recoverSourceErasureIntents(scope: VaultMutationScope, io: Canon
             if (hash === intent.receipt.before_hash)
                 continue;
             if (hash !== intent.receipt.after_hash)
+                return false;
+            if (intent.version === 1 && isLiveSurvivorIntent(intent))
+                return false;
+            if (intent.version === 2 && isLiveSurvivorIntent(intent) &&
+                (intent.lineage === null || intent.lineage.after_hash !== hash ||
+                 intent.lineage.child_receipt_id !== intent.receipt.receipt_id))
                 return false;
             finishSourceErasure(scope, io, intent, current?.page ?? null);
         }

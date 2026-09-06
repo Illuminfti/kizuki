@@ -19,6 +19,7 @@ import { applyPurgeV5 } from "./purge-schema";
 import { applyPurgeBatchesV19 } from "./purge-batch-schema";
 import { applyEventIdentityV16 } from "./event-identity-schema";
 import { applyAgentEnrollmentV18 } from "../agents/enrollment-schema";
+import { applySourceSurvivorLineageV20, assertSourceSurvivorLineageSchema } from "./canon-source-survivor-lineage";
 import { oneShotAll, oneShotRun, tableColumns, tableExists } from "./schema";
 import { applyLedgerV16 } from "./schema-v16";
 
@@ -183,6 +184,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 17, apply: applyLedgerV16 },
   { version: 18, apply: applyAgentEnrollmentV18 },
   { version: 19, apply: applyPurgeBatchesV19 },
+  { version: 20, apply: applySourceSurvivorLineageV20 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
@@ -250,7 +252,7 @@ function migrate(db: Database): void {
     db.transaction(() => {
       applyDerivedV10(db);
     }).immediate();
-    assertLedgerSchema(db, latest);
+    assertCurrentLedgerSchema(db, latest);
     return;
   }
 
@@ -261,7 +263,12 @@ function migrate(db: Database): void {
       writeSchemaVersion(db, migration.version);
     }
   }).immediate();
-  assertLedgerSchema(db, latest);
+  assertCurrentLedgerSchema(db, latest);
+}
+
+function assertCurrentLedgerSchema(db: Database, expectedVersion: number): void {
+  assertLedgerSchema(db, expectedVersion);
+  if (expectedVersion >= 20) assertSourceSurvivorLineageSchema(db);
 }
 
 export function openLedger(dbPath: string, options: { busyTimeoutMs?: number } = {}): Database {
@@ -287,8 +294,26 @@ export function inspectOpenLedgerHealth(
   db: Database,
   opts: { full?: boolean } = {},
 ): LedgerHealth {
-  return inspectLedgerHealth(db, {
+  const health = inspectLedgerHealth(db, {
     ...(opts.full === undefined ? {} : { full: opts.full }),
     expectedVersion: LEDGER_SCHEMA_VERSION,
   });
+  if (LEDGER_SCHEMA_VERSION < 20) return health;
+  try {
+    assertSourceSurvivorLineageSchema(db);
+    return health;
+  } catch (error) {
+    return {
+      ...health,
+      ok: false,
+      failures: [
+        ...health.failures,
+        {
+          kind: "schema",
+          table: "canon_source_survivor_lineage",
+          detail: error instanceof Error ? error.message : "schema mismatch",
+        },
+      ],
+    };
+  }
 }
