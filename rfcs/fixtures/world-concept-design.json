@@ -398,9 +398,6 @@
         "available_at": "2025-01-07T09:30:00Z",
         "actor_ref": "g1",
         "principal_ref": "g1",
-        "remove_source_refs": [
-          "s4"
-        ],
         "scope": "Remove source-local raw subject scope_s4 from this client's existing subject grant. Owner source custody does not grant this client disclosure; no per-principal source allowlist is introduced.",
         "core_admission_seq": 21,
         "removed_subject_refs": [
@@ -669,22 +666,22 @@
       {
         "id": "scope_s1",
         "source_ref": "s1",
-        "raw_subject": "fixture.source/s1"
+        "raw_subject": "source:s1"
       },
       {
         "id": "scope_s2",
         "source_ref": "s2",
-        "raw_subject": "fixture.source/s2"
+        "raw_subject": "source:s2"
       },
       {
         "id": "scope_s3",
         "source_ref": "s3",
-        "raw_subject": "fixture.source/s3"
+        "raw_subject": "source:s3"
       },
       {
         "id": "scope_s4",
         "source_ref": "s4",
-        "raw_subject": "fixture.source/s4"
+        "raw_subject": "source:s4"
       }
     ]
   },
@@ -1380,7 +1377,7 @@
       "meaning": "Separate evidence events and observed outcomes; no self-report implies achieved objective."
     },
     {
-      "case": "Expired/wrong-principal/wrong-scope cursor, restore namespace and missing baseline history",
+      "case": "Expired/wrong-principal/wrong-scope cursor, restore view runtime generation and missing baseline history",
       "status": "future",
       "meaning": "Add isolated branches. Fixed new_view_required for invalid scoped baseline; no false unchanged. Restore invalidates live tokens before reads; partial pages never mix revisions."
     },
@@ -1408,7 +1405,7 @@
       },
       {
         "name": "pinned_current_kizuki",
-        "commit": "8f87c7d368227534fbba2f16b7863cc03c1178d6",
+        "commit": "a96c5f4a4455d22fb4b40537c308c6d019a36d0d",
         "status": "adapter_and_receipts_required"
       },
       {

@@ -2,6 +2,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { GRANT_SCOPE_TOKEN, MAX_GRANT_SCOPE_LENGTH } from "../../packages/core/src/agents/types";
 
 type Row = Record<string, unknown>;
 function row(value: unknown): Row {
@@ -35,11 +38,36 @@ function sameSet(actual: Iterable<string>, expected: Iterable<string>): void {
   assert.deepEqual([...actual].sort(), [...expected].sort());
 }
 function digest(bytes: Uint8Array): string { return createHash("sha256").update(bytes).digest("hex"); }
+/** Reject duplicate decoded keys before JSON.parse discards their first value. */
+function strictJson(source: string): unknown {
+  const stack: (Set<string> | null)[] = [];
+  for (const token of source.matchAll(/"(?:[^"\\]|\\.)*"|[{}\[\]]/g)) {
+    const value = token[0];
+    if (value === "{" || value === "[") {
+      stack.push(value === "{" ? new Set() : null);
+      assert(stack.length <= 32, "fixture JSON nesting exceeds 32 levels");
+    } else if (value === "}" || value === "]") stack.pop();
+    else {
+      let after = token.index + value.length;
+      while (after < source.length && /\s/.test(source[after]!)) after++;
+      if (source[after] === ":") {
+        const keys = stack.at(-1), key = text(JSON.parse(value));
+        assert(!keys?.has(key), `duplicate JSON key ${key}`);
+        keys?.add(key);
+      }
+    }
+  }
+  return JSON.parse(source) as unknown;
+}
+assert(process.argv.length <= 3, "optional argument is a fixture directory");
+const fixtureDirectory = process.argv[2] === undefined
+  ? new URL(".", import.meta.url)
+  : pathToFileURL(`${resolve(process.argv[2])}/`);
 function load(name: string, cap: number): { fixture: Row; bytes: Uint8Array; sha256: string } {
-  const bytes = readFileSync(new URL(name, import.meta.url));
+  const bytes = readFileSync(new URL(name, fixtureDirectory));
   assert(bytes.length <= cap, `${name} exceeds its design-file bound`);
   const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  const fixture = row(JSON.parse(source));
+  const fixture = row(strictJson(source));
   assert.equal(fixture.evaluation_state, "not_run");
   return { fixture, bytes, sha256: digest(bytes) };
 }
@@ -73,19 +101,30 @@ assert.equal(extension.fixture.status, "future_unimplemented");
 
 const bi = row(base.fixture.input), bo = row(base.fixture.oracle);
 const br = index(bi.records), bc = index(bi.controls), bq = index(bi.queries);
-for (const record of br.values()) assert(at(record.available_at) <= at(record.core_accepted_at));
-for (const admission of rows(bi.controlled_admission_schedule)) {
+const admissions = index(bi.controlled_admission_schedule);
+const baseOrdering: [number, number][] = [];
+for (const record of br.values()) {
+  assert(at(record.available_at) <= at(record.core_accepted_at));
+  baseOrdering.push([at(record.core_accepted_at), number(record.core_admission_seq)]);
+}
+for (const admission of admissions.values()) {
   const record = get(br, admission.record_ref);
   assert(at(record.core_accepted_at) < at(admission.admitted_at));
   assert(number(record.core_admission_seq) < number(admission.core_admission_seq));
+  baseOrdering.push([at(admission.admitted_at), number(admission.core_admission_seq)]);
 }
+sameSet([...admissions.values()].map(item => text(item.record_ref)), br.keys());
 for (const control of bc.values()) {
+  baseOrdering.push([at(control.available_at), number(control.core_admission_seq)]);
   for (const key of ["evidence_refs", "selected_record_refs"]) {
     for (const id of strings(control[key] ?? [])) assert(at(get(br, id).core_accepted_at) <= at(control.available_at));
   }
   for (const id of strings(control.depends_on_refs ?? [])) assert(at(get(bc, id).available_at) < at(control.available_at));
   if (control.prepared_job_ref) assert(at(get(bc, control.prepared_job_ref).available_at) < at(control.available_at));
 }
+assert.equal(baseOrdering.length, 21);
+assert.deepEqual(baseOrdering.sort((a,b) => a[0]-b[0] || a[1]-b[1]).map(item => item[1]),
+  Array.from({length: 21}, (_,i) => i+1), "base Core transactions must order exactly 1..21");
 function baselineTiming(query: Row, queries: Map<string, Row>, baseline: unknown): void {
   assert(at(query.known_at) <= at(query.delivery_at));
   if (baseline === undefined) return;
@@ -100,6 +139,11 @@ for (const assertion of rows(bo.assertions)) {
 }
 for (const support of rows(bo.support_expectations)) {
   const record = get(br, support.record_ref), span = row(support.span_utf16);
+  const admission = get(admissions, support.scheduled_admission_ref);
+  assert.equal(support.record_ref, admission.record_ref, "support record disagrees with schedule");
+  assert.equal(support.admitted_at, admission.admitted_at, "support time disagrees with schedule");
+  assert.equal(support.admission_seq, admission.core_admission_seq, "support sequence disagrees with schedule");
+  assert.equal(support.raw_available_at, record.core_accepted_at, "support capture time disagrees with record");
   assert.equal(span.start, 0); assert.equal(span.end, text(record.content).length);
   assert(at(support.raw_available_at) <= at(support.admitted_at));
   for (const id of strings(support.prerequisite_support_refs ?? [])) assert(at(get(bs.all, id).admitted_at) <= at(support.admitted_at));
@@ -126,14 +170,37 @@ for (const id of ["ctl_purge_s1", "ctl_purge_copy"]) {
 sameSet(remaining, ["r02", "r03", "r04", "r06"]);
 assert.equal(get(br, "r01").content, get(br, "r05").content);
 assert.deepEqual(get(br, "r03").record_occurrence, { kind: "unknown" });
-for (const source of rows(bi.sources)) assert(["public", "personal", "private"].includes(text(source.default_sensitivity)));
+const sources = index(bi.sources), sourceSubjects = index(bi.source_subjects);
+for (const source of sources.values()) assert.equal(source.default_sensitivity, "private");
+sameSet([...sourceSubjects.values()].map(item => text(item.source_ref)), sources.keys());
+for (const subject of sourceSubjects.values()) {
+  const token = text(subject.raw_subject);
+  assert(token.length <= MAX_GRANT_SCOPE_LENGTH && GRANT_SCOPE_TOKEN.test(token), "invalid current Grant.subjects token");
+  assert.equal(token, `source:${text(subject.source_ref)}`);
+}
 const principals = index(bi.principals);
+for (const principal of principals.values()) {
+  assert.equal(principal.ceiling, "private", "this fixture isolates subject denial from sensitivity denial");
+  assert.deepEqual(strings(principal.expected_visible_source_refs).sort(),
+    strings(principal.permitted_subject_refs).map(id => text(get(sourceSubjects, id).source_ref)).sort(),
+    "visible source profile disagrees with granted subjects");
+}
 assert.equal(get(principals, "g1").role, "synthetic_owner_controlled_client");
 sameSet(strings(get(principals, "g1").permitted_subject_refs), ["scope_s1", "scope_s2", "scope_s3", "scope_s4"]);
 sameSet(strings(get(principals, "g2").permitted_subject_refs), ["scope_s1", "scope_s2", "scope_s3"]);
-for (const record of br.values()) assert.deepEqual(record.raw_subject_refs, [`scope_${text(record.source_ref)}`]);
+for (const record of br.values()) {
+  const subject = [...sourceSubjects.values()].find(item => item.source_ref === record.source_ref);
+  assert(subject); assert.deepEqual(record.raw_subject_refs, [subject.id]);
+}
+assert(!Object.hasOwn(get(bc, "ctl_narrow_g1"), "remove_source_refs"), "no per-principal source ACL exists");
 assert.deepEqual(get(bc, "ctl_narrow_g1").removed_subject_refs, ["scope_s4"]);
 assert.equal(row(base.fixture.harness_contract).view_token_ttl_seconds, 900);
+const pinnedBaseline = rows(row(base.fixture.evaluation_plan).baselines)
+  .filter(item => item.name === "pinned_current_kizuki");
+assert.equal(pinnedBaseline.length, 1);
+assert.equal(row(pinnedBaseline[0]).commit, row(row(base.fixture.applicability).current_core).baseline_commit,
+  "evaluation baseline disagrees with applicability baseline");
+assert.equal(row(pinnedBaseline[0]).commit, "a96c5f4a4455d22fb4b40537c308c6d019a36d0d");
 
 const xi = row(extension.fixture.input), xo = row(extension.fixture.oracle);
 const xr = index(xi.records), xc = index(xi.controls), xq = index(xi.queries), xa = index(xi.artifacts);
@@ -191,11 +258,22 @@ const old=get(xq,"x_q_restored_old_token"), issued=get(xq,old.baseline_query_ref
 assert.equal(at(old.delivery_at)-at(issued.delivery_at),240_000);
 assert(at(issued.delivery_at) < at(get(xc,"x_ctl_restore").available_at));
 assert(at(get(xc,"x_ctl_restore").available_at) < at(old.delivery_at));
+const restoreOld = get(index(xo.assertions), "x_a_restore_old");
+assert.deepEqual(restoreOld.query_refs, ["x_q_restored_old_token"]);
+assert.equal(restoreOld.baseline_query_ref, old.baseline_query_ref);
+assert.equal(restoreOld.expected_status, "new_view_required");
+assert.equal(restoreOld.refusal_cause, "view_runtime_generation_changed");
+assert.match(text(restoreOld.expected), /^Fixed new_view_required\b/);
+assert.match(text(restoreOld.expected), /view runtime generation invalidation, not expiry/);
+for (const status of ["current", "unchanged", "empty successful diff"]) assert(strings(restoreOld.forbidden).includes(status));
+const restoreFresh = get(index(xo.assertions), "x_a_restore_fresh");
+assert.equal(restoreFresh.expected_status, "current");
+assert.match(text(restoreFresh.expected), /^Fresh current projection, if complete and supported:/);
 
 console.log(JSON.stringify({
   validation:"static_pass", product_execution:false,
   concept:{sha256:base.sha256,bytes:base.bytes.length,symbols:bs.all.size,references:bs.refs.length,records:br.size,controls:bc.size,queries:bq.size},
   extension:{sha256:extension.sha256,bytes:extension.bytes.length,symbols:xs.all.size,references:xs.refs.length,records:xr.size,controls:xc.size,queries:xq.size},
-  checked:["reference closure","chronological oracle isolation","exact purge selections","subject-scope mapping","distinct commitments","four outcome prefixes","restore within token TTL"],
+  checked:["strict JSON without duplicate keys","reference closure","complete Core transaction order","scheduled support agreement","chronological oracle isolation","exact purge selections","actual Grant.subjects grammar and visibility profiles","pinned baseline agreement","distinct commitments","four outcome prefixes","restore outcome and runtime-generation invalidation within token TTL"],
   limitation:"Design data only; no extraction, policy runtime, migration, restore, client parity or quality claim."
 },null,2));

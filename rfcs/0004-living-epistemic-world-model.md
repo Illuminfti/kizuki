@@ -42,6 +42,7 @@ skills and outcome learning reuse these contracts in subsequent bounded packets.
 | RFC 0002 / decisions D9–D16, binding | Autonomous receipted canon; highest owner correction; supersession/undo; automatic sensitivity; useful model-free capture, ledger, search, timeline, context, audit and undo | No owner review/promote queue; autonomous model interpretation and canon still need a configured model |
 | RFC 0002 §6.5, §10.6 and §17, binding legacy packet | Machine-origin marker and model-free authorized reads | Explicit envelope/surface major negotiation below replaces all global epochs and denied counts for scoped clients; conditional/diff/as-of capabilities require their own implemented consumer tests |
 | RFC 0002 §7.1–7.2 and §16.4, binding undo and irreversible purge | Exact undo of retained bytes; one receipted writer; purge already irreversible | Extend the physical-purge exception to dependent prose, archived preimages, receipt hashes and linkage; erased receipt tombstones cannot undo or restore removed content |
+| RFC 0002 §13.1 and architecture invariant 14, binding purge verification | Exact selection while work remains; honest owned-store deletion proof | After selector erasure, report recorded completion separately from any new owned-generation absence audit; repeated verification cannot reconstruct erased target IDs or manufacture a fresh empty-target proof |
 | RFC 0003 B1a, pure contracts implemented | Exact v1/v2 parsers, immutable raw refs, perspective, original validity, explicit producer-major binding, no public v2 writer | Keep anchored `kizuki.claim/v2` admission DTO unchanged; use a separately named private durable meaning codec, with explicit version dispatch |
 | RFC 0003 B1b–d, incomplete draft #500 | One shared claim writer and complete lifecycle merge group; original admission snapshots; atomic frontier/outbox effects | Resolve support-specific rendering, history erasure, dependency closure and typed readers below before exposing any durable v2 mutation |
 | RFC 0003 A1, proposed | Receipted raw-ref identity controls, bounded components, owner negative constraints, immutable assertions, undo and source fences | Add opaque handle allocation as receipted bookkeeping; never use handles to replace raw semantic keys; resolve identity separately for each permitted view |
@@ -71,7 +72,13 @@ Before the first public Concept write, complete B1b–d's migrations, common
 admission, temporal consumers, replay, backup/restore, correction and every
 source-loss path together. Then complete the required A1 identity subset and
 #483 dependency/view lifecycle. The current A0 alias refusal cannot be bypassed
-with a Concept-specific alias table.
+with a Concept-specific alias table. Here public means a callable or advertised
+product capability, including an experimental CLI/MCP command; a private test
+helper is not permission to expose the writer early. Every first Concept read and refreshed post-correction card uses the shared
+`WorldView`/`ViewResult` projector and
+final authorization fence. A view token is optional for a fresh complete read;
+the complete-view checks are mandatory even when no cache partition is reserved.
+Legacy v1 body readers never serve v2 Concept fields.
 
 ## Identity: six different things
 
@@ -126,9 +133,14 @@ authorization namespace and exact typed target. The durable mapping has uniquene
 on both its token and its namespace/kind/target tuple; lookup reuses the saved ref.
 There is no content-derived pseudonym or durable derivation key to back up. Core resolves them
 under the authenticated principal; the token itself confers no authority. The
-namespace binds principal, normalized permitted scope/purpose/ceiling and schema,
+namespace binds principal, the complete normalized grant and permitted-purpose
+policy, scope, ceiling and schema,
 remains stable through ordinary visible evidence additions, and rotates when
-that authorization namespace changes. Losing all authorized support makes a
+that authorization namespace changes. Selecting another already permitted request
+purpose does not rotate it: a ClaimRef from recall remains a valid correction
+target, while correction separately checks its own tool/relay/source authority.
+View tokens additionally bind the selected operation/purpose and exact query.
+No ref grants a purpose that the current grant does not permit. Losing all authorized support makes a
 previous object indistinguishable from an unavailable/unknown reference.
 
 ## Exact proposed semantic contracts
@@ -217,7 +229,8 @@ type Observation = {
   evidence: readonly EvidenceRef[];
   attribution: readonly {
     role: "sender" | "recipient" | "quoted_author" | "thread" | "place";
-    ref: ObjectRef; basis: "source_field"; field: string;
+    ref: CapturedSubjectRef; basis: "source_field"; field: string;
+    evidence: readonly EvidenceRef[];
   }[];
   fidelity: "verbatim_text" | "source_metadata" | "lossy_transcript";
   occurred: KnownTime; sourceObservedAt: string | null; admittedAt: string;
@@ -276,10 +289,13 @@ type SnapshotRef = Ref<"snapshot">;
 type KnownAt = { kind: "current" }
   | { kind: "time"; at: string }
   | { kind: "snapshot"; ref: SnapshotRef };
+type ValidQuery = { kind: "all" } | { kind: "at"; at: string }
+  | { kind: "overlap"; from: string; until: string }
+  | { kind: "unknown_only" };
 type Coverage = {
   status: "complete_for_query" | "partial";
   gaps: readonly ViewGap[];
-  validWindow: KnownTime;
+  validWindow: ValidQuery;
   history: "retained_for_query" | "baseline_only" | "unavailable";
 };
 type ConceptCard = {
@@ -302,17 +318,60 @@ type HistoryPage = {
   snapshot: SnapshotRef; transitions: readonly StateTransition[];
   coverage: Coverage;
 };
-type WorldView = {
-  schema: "kizuki.world-view/v1";
-  result: ViewResult<ConceptCard | HistoryPage>;
+type ConceptMatches = {
+  schema: "kizuki.concept-matches/v1";
+  candidates: readonly KnowledgeNode[]; coverage: Coverage;
 };
+type WorldReadInput = {
+  operation: "find_concepts"; label: string;
+  valid: ValidQuery; knownAt: KnownAt; priorView?: ViewToken;
+} | {
+  operation: "concept" | "history"; concept: ObjectRef;
+  valid: ValidQuery; knownAt: KnownAt; priorView?: ViewToken;
+};
+type WorldView = {
+  schema: "kizuki.world-view/v1"; operation: "concept";
+  result: ViewResult<ConceptCard>;
+} | {
+  schema: "kizuki.world-view/v1"; operation: "history";
+  result: ViewResult<HistoryPage>;
+} | {
+  schema: "kizuki.world-view/v1"; operation: "find_concepts";
+  result: ViewResult<ConceptMatches>;
+};
+type WorldReadResult = WorldView | { status: "not_found" };
 ```
+
+The proposed public Core operation is `readWorldView(context, input)` with exactly
+`WorldReadInput -> WorldReadResult`. It owns authorization, bounded discovery,
+identity, history and the final view state machine. `find_concepts` uses a bounded
+label (at most 512 UTF-8 bytes) as a search query, never as identity; it returns
+permitted candidates, including an empty complete result. It never silently
+selects one ambiguous match. Exact `concept`/`history` lookup requires `ObjectRef`
+and returns the same `not_found` for absent, erased or inaccessible anchors.
+Its discriminated output operation must match the request.
+
+`ValidQuery.at` is an exact instant; `overlap` is a half-open interval with a
+strictly later end; both use Core's exact RFC 3339 comparison. Unknown validity
+cannot satisfy either filter. `unknown_only` selects explicitly unknown validity;
+`all` applies no valid-time filter and retains each assertion's stated time.
+`Coverage.validWindow` echoes this normalized request, not an invented interval
+around a point. History uses the same bounded result/coverage rules; it offers
+no unimplemented page cursor. Narrow the query after overflow until a reviewed
+pagination consumer exists.
 
 Every array consumes the common claim/ref/edge/byte/token budget. Duplicate
 Relations refer to one claim and do not count as independent support. Empty
 arrays state absence within permitted coverage; `partial` coverage requires
 `incomplete`, never current/unchanged. Assistance defaults to unknown unless
-separate complete claims establish it in the exact actor/task/context. No prose
+separate complete claims establish it in the exact actor/task/context. `KnowledgeNode.resolution` describes permitted **identity resolution**, not
+agreement with a definition: `distinct` has one resolved anchor and no supported
+same-as component, `resolved` has one consistent permitted component, and
+`ambiguous` preserves multiple permitted candidates or conflicting identity
+controls. A node-level field never supersedes an assertion. Definition conflicts
+remain attributed multi-valued Relations until an ordinary authorized correction
+names the selected claim (or a bounded ambiguous target is resolved through the
+existing correction flow). No prose
 classifier or numeric confidence can invent assistance. The initial registry
 includes `learning.assistance` on the supported task-context raw ref, with only
 trusted vocabulary values `learning/assisted` and `learning/unassisted`; the
@@ -326,7 +385,9 @@ successful outcome.
 
 
 An Observation preserves source assertions about attribution; a source's sender
-field does not prove real-world authorship, endorsement or identity. Model
+field does not prove real-world authorship, endorsement or identity. Its wire
+attribution uses an exact event-bound `CapturedSubjectRef`, not a semantic object
+ref; merely preserving a sender/thread/place field allocates no semantic handle. Model
 interpretations of actors/intent become ordinary claims with their own support,
 never edits to Observation metadata. Unknown roles remain absent. An event with
 no usable span can still be retrieved as evidence but cannot satisfy a claim
@@ -573,12 +634,18 @@ Purge-journal opaque linkage validates tombstone integrity without retaining an
 old content digest as evidence. A1's similarly proposed receipt tombstone is
 extended consistently; it is not an already implemented protocol.
 
+The appendix defines the complete Purge6 replacement of the existing `event_purges` and `purge_ops` tables and their closed codecs. It persists exact batch membership, including the already-authorized source-root receipt for a zero-event revocation, before that source can later be regranted. One coordinator operation in the existing journal records every required store operation; receipt existence alone is only a reservation, never completion. After logical deletion and exact-target verification, the whole batch enters selector-free **pending maintenance** before owned SQLite/WAL/file maintenance; only then can it publish completion. All stores, holds, intents, backup/restore, rails and CLI consumers must adopt that protocol together.
+
+This explicitly amends RFC 0002 §13.1 and architecture invariant 14: `verifyPurge` distinguishes `pending`, historical `completed_at`, and genuinely newly observed `fresh_absence`. Completed exact-target operations cannot call `verifyAbsent([])` and present that as renewed deletion proof. A new full-owned-generation audit is valid only where the actual adapter proves that scope; it does not recover erased selectors.
+
+The retained event-purge journal is an explicit metadata exception: Core-generated event ULIDs preserve creation time and stable linkage, plus receipt/batch/completion metadata, without captured content or content fingerprints. It prevents replay of that exact event identity; equal content captured under a new ID is a separate record, with future ingress governed by source consent. The exception is not a claim that all IDs are random or unlinkable.
+
 A generalized erasure intent references the existing exact-selection purge
 receipt and records bounded phases: hold/fence; erase dependent authority and
 jobs; recompose survivor canon through the same writer without archive; rewrite
 sensitive JSONL entries and rows; remove archive/preimage/replay/cache material;
-rebuild/verify derived stores; compact/checkpoint affected SQLite; verify and
-complete. Crashes replay the same planned IDs and phases idempotently. Holds stay
+rebuild/verify derived stores; transfer to selector-free pending maintenance; compact/checkpoint affected SQLite; verify and
+complete. Work-phase crashes replay the same planned IDs; maintenance-phase crashes repeat owned-store maintenance without recovering old selectors. Holds stay
 until both file/log and SQLite erasure are durable; backup/restore/read barriers
 refuse a partially scrubbed view. The complete storage map must enumerate every
 payload/hash column, FTS/shadow table, sidecar and retained inverse that changes.
@@ -600,9 +667,10 @@ never claim a phrase has vanished from the vault while an unselected copy remain
 
 ### Allocation receipt and binding after erasure
 
-`kizuki.semantic-allocation/v1` is a closed union: `kind:"allocated"` holds opaque
-receipt ID, exact raw-ref/handle pair, qualifying admission, Core stamp and
-integrity; `kind:"erased"` holds only opaque receipt/purge IDs, erasure time,
+`kizuki.semantic-allocation/v1` is the appendix's closed `AllocationV1` union:
+`state:"retained"` holds opaque receipt ID, exact raw-ref/handle pair, qualifying
+admission, Core stamp and integrity; `state:"erased"` wraps a terminal object
+with only opaque receipt/purge IDs, erasure time,
 private sensitivity and fresh tombstone integrity. Both are in the same
 allocation-receipt table; composite constraints and transaction validation bind
 the live record to its raw-ref, handle and qualifying admission. On erasure,
@@ -612,13 +680,15 @@ variant. No inverse or original raw/source hash survives in the tombstone.
 For each binding the erasure transaction re-evaluates complete surviving
 admissions. If raw occurrence A/H-A merged with independent B/H-B, purging A
 removes A's binding and unsupported identity decisions; B/H-B survives. Delete
-H-A when it has no admissible binding. If independent complete admission B still
+H-A after no current binding or retained historical revalidation references it.
+Its old external ref returns `not_found`; a former same-as edge never redirects
+that missing anchor to B or recreates A's erased binding. If independent complete admission B still
 supports the **same** retained supplied raw ref, its existing handle remains.
 The binding remains `state:"active"`; only `allocationReceiptState:"erased"`
 marks unavailable original provenance. In the same fenced erasure transaction,
 Core writes a binding revalidation record over the unchanged raw-ref/handle,
-complete surviving B admission, Core recorded stamp, current policy and purge
-receipt. It references the original allocation's opaque tombstone ID only as
+complete surviving B admission, Core recorded stamp and purge receipt, after
+rechecking current source policy and support eligibility. It references the original allocation's opaque tombstone ID only as
 unavailable history, never as proof of the old raw-ref association. The current
 revalidation is the retained authority for that active binding, not an invented
 reassignment of allocation history to B. Restore validates its exact raw-ref,
@@ -648,7 +718,7 @@ lock. External clients retain their own execution checks.
 type ViewToken = Ref<"view">; // random opaque wire value, no readable metadata
 type ViewResult<T> =
   | { status: "current"; view: ViewToken; data: T; validUntil: string }
-  | { status: "current"; view: { status: "not_issued" }; data: T; validUntil: string }
+  | { status: "current"; view: { status: "not_issued" }; data: T }
   | { status: "unchanged"; view: ViewToken; validUntil: string }
   | { status: "incomplete"; data: T; reasons: readonly ViewGap[] }
   | { status: "new_view_required" }
@@ -657,6 +727,11 @@ type ViewResult<T> =
 type ViewGap = "coverage" | "pending_consolidation" | "stale_dependencies"
   | "required_context_overflow" | "traversal_limit";
 ```
+
+`validUntil` is only the maximum acceptance time of an **issued token**. Policy,
+erasure, eviction and runtime changes may invalidate it earlier. It promises no
+continued authorization or real-world freshness; every use checks current policy.
+The `not_issued` branch has no cache lifetime and contains no `validUntil`.
 
 Server-side token records bind random ID, principal, normalized query, purpose,
 effective scope/ceiling, relevant authorization namespace, view schema, fixed
@@ -694,8 +769,10 @@ vary normally; hidden state cannot alter token status or eviction order.
 2. Build under one consistent authority snapshot. Validate dependency completeness
    and materialization freshness; a timestamp alone proves neither.
 3. Before serializing any payload, revalidate relevant authorization and invalidation
-   fences. A race retries at most once within budget or returns a fixed unavailable
-   result. Do not stream bytes before that check. A later external revocation
+   fences. A relevant race restarts discovery, dependency closure and projection from a
+   fresh snapshot at most once within budget or returns a fixed unavailable
+   result. An unrelated/denied-only global epoch change alone cannot trigger that
+   response; revalidate the permitted dependencies and current grant first. Do not stream bytes before that check. A later external revocation
    cannot recall bytes already delivered; record that boundary honestly.
 4. Issue a current token only for a complete result under the stated query and
    budget contract. Unknown domain facts may be honestly represented in a complete
@@ -704,6 +781,27 @@ vary normally; hidden state cannot alter token status or eviction order.
    and compare it with the retained complete baseline under the same namespace.
    Denied-only changes must produce the same semantic result and unchanged decision.
    A global counter or a changed hidden cache cannot force a visible stale signal.
+   The fingerprint only accelerates comparison: full canonical projection bytes
+   must agree before `unchanged`. Exclude response request time, cache expiry and
+   runtime view/snapshot tokens from this semantic comparison, while retaining
+   normalized requested valid/known time, every visible qualified assertion,
+   stable object ref, coverage and pending-work state. Neither a partial rebuild
+   nor a saved hash can substitute for the complete fresh authorized build.
+
+| Prior baseline and current build | Result |
+| --- | --- |
+| Valid complete baseline; new complete authorized bytes equal | `unchanged` with the retained unexpired token |
+| Valid complete baseline; new complete bytes differ | `current` with a fresh complete projection and token when capacity permits |
+| Valid complete baseline; required consolidation/closure now incomplete | `incomplete` with permitted partial data and exact visible gap; no replacement complete token and never `unchanged` |
+| Build cannot produce safe bounded partial data | Fixed `unavailable` reason; never a success cached from the old baseline |
+| Prior token unknown, expired, evicted, erased, wrong-principal/namespace or old runtime generation | `new_view_required` without old data or a reason that reveals existence |
+| No prior token; new complete build | `current`, including the explicit `not_issued` token alternative when capacity is unreserved |
+
+An old complete token can remain cached after a newly incomplete build, but its
+next use repeats this matrix against a fresh build; cached completeness is not
+current authority. Ranking and tie-breaks use only permitted candidate attributes
+and stable refs, never denied competition, a global representative or hidden
+counts.
 
 World Diff compares the permitted baseline with a newly validated view for the
 same principal/query/namespace. Return bounded additions, changed qualified
@@ -716,7 +814,11 @@ never means no change. A diff does not infer what an external client retained.
 
 Pagination binds to one immutable authorized snapshot and query, with fixed
 expiry and current-policy validation on every page. Do not silently mix revisions
-or expose hidden total/remaining counts. If required dependency closure exceeds
+or expose hidden total/remaining counts. A paginated result is complete only
+after closure for the whole declared query has been verified within its bounds.
+If a later page discovers incomplete closure, invalidate that pagination result
+and its sibling-page cursors; earlier partial pages cannot establish a complete
+view baseline or justify `unchanged`. If required dependency closure exceeds
 the bound, return incomplete/unavailable rather than a complete partial graph.
 Budget omissions describe only authorized work and state whether essential
 context is missing. Essential short constraints are selected before optional
@@ -820,7 +922,7 @@ These adapter changes and their concrete stdout/HTTP/MCP conformance tests must
 land together before advertising any selector or capability.
 
 Every v2 tool uses the following nested codecs. `SourceRef`, `PageRef`,
-`CapturedSubjectRef`, `ClaimRef`, `EventVersionRef` and `ReceiptRef` are distinct
+`RawSubjectWireRef`, `CapturedSubjectRef`, `ClaimRef`, `EventVersionRef` and `ReceiptRef` are distinct
 random principal-namespace references. Captured-subject refs resolve retained raw source
 subjects; they require no model-produced semantic handle, preserving model-free
 raw capture/reads. They are not interchangeable with semantic `ObjectRef`.
@@ -831,27 +933,28 @@ links, summaries, diffs or errors.
 ```ts
 type SourceRef = Ref<"source">;
 type PageRef = Ref<"page">;
-type CapturedSubjectRef = Ref<"captured_subject">;
+type CapturedSubjectRef = Ref<"captured_subject">; // exact event-bound attribution
+type RawSubjectWireRef = Ref<"raw_subject">; // immutable raw ref with retained memberships
 type CanonChunkV2 = {
   page: PageRef; title: string; type: string;
   sensitivity: "public" | "personal" | "private";
   taint: "clean" | "quoted";
   authority: AuthorityTier | null;
-  subjects: readonly CapturedSubjectRef[];
+  subjects: readonly RawSubjectWireRef[];
   sources: readonly EventVersionRef[];
   excerpt: string; truncated: boolean;
 };
 type QuotedChunkV2 = {
   eventVersion: EventVersionRef; source: SourceRef; kind: string;
   occurred: KnownTime; sensitivity: "public" | "personal" | "private";
-  subjects: readonly CapturedSubjectRef[]; text: string; tainted: true;
+  subjects: readonly RawSubjectWireRef[]; text: string; tainted: true;
 };
 type ReadGap = "retrieval_unavailable" | "coverage" | "budget";
-type GraphAnchorV2 = CapturedSubjectRef | PageRef | EventVersionRef;
+type GraphAnchorV2 = RawSubjectWireRef | PageRef | EventVersionRef;
 type GraphEdgeV2 =
   | { kind: "wikilink"; from: PageRef;
       to: PageRef | { kind: "unresolved"; text: string; quoted: true } }
-  | { kind: "subject"; from: PageRef; to: CapturedSubjectRef }
+  | { kind: "subject"; from: PageRef; to: RawSubjectWireRef }
   | { kind: "source"; from: PageRef; to: EventVersionRef };
 type GraphDataV2 = {
   anchor: GraphAnchorV2; edges: readonly GraphEdgeV2[]; truncated: boolean;
@@ -873,27 +976,32 @@ type CorrectDataV2 = {
   rewritten: readonly { page: PageRef; diff: { status: "unavailable" } }[];
   ambiguous: readonly { candidate: Ref<"claim_group">; claims: readonly ClaimRef[] }[];
   message: "correction_recorded" | "ambiguous" | "dry_run" | "no_change";
+  refreshedWorld: WorldReadResult | null;
 };
 // Existing scalar types/limits come from these baseline serving argument types.
 // These are closed parsed objects, not arbitrary intersections at the boundary.
 type V2ToolInput = {
-  search: Omit<SearchArgs, "subjects"> & { subjects?: CapturedSubjectRef[] };
+  search: Omit<SearchArgs, "subjects"> & { subjects?: RawSubjectWireRef[] };
   get_page: { page: PageRef };
   query_entities: EntitiesArgs;
   timeline: Omit<TimelineArgs, "subject" | "connector_id"> & {
-    subject?: CapturedSubjectRef; source?: SourceRef;
+    subject?: RawSubjectWireRef; source?: SourceRef;
   };
   graph_neighbors: Omit<GraphArgs, "id"> & { anchor: GraphAnchorV2 };
   context_packet: Omit<ContextPacketArgs,
     "subjects" | "capabilities" | "retain_prefix" | "prior_hash" | "epoch"> & {
-      subjects?: CapturedSubjectRef[]; priorView?: ViewToken;
+      subjects?: RawSubjectWireRef[]; priorView?: ViewToken;
     };
-  propose: Omit<ProposeArgs, "target" | "subject" | "subjects" | "provenance"> & {
-    target?: PageRef | null; subject?: CapturedSubjectRef;
-    subjects?: CapturedSubjectRef[]; provenance: EventVersionRef[];
+  world_view: WorldReadInput;
+  propose: Omit<ProposeArgs, "target" | "subject" | "subjects" | "provenance" | "object"> & {
+    target?: PageRef | null; subject?: RawSubjectWireRef | ObjectRef;
+    subjects?: RawSubjectWireRef[]; provenance: EventVersionRef[];
+    object?: Relation["object"];
   };
-  correct: Omit<CorrectArgs, "target"> & {
-    target?: ClaimRef | Ref<"claim_group"> | CapturedSubjectRef;
+  correct: Omit<CorrectArgs, "target" | "object"> & {
+    target?: ClaimRef | Ref<"claim_group"> | RawSubjectWireRef;
+    object?: Relation["object"];
+    refreshWorld?: Extract<WorldReadInput, { operation: "concept" | "history" }>;
   };
 };
 type V2ToolData = {
@@ -903,6 +1011,7 @@ type V2ToolData = {
   timeline: null;
   graph_neighbors: GraphDataV2;
   context_packet: PacketDataV2;
+  world_view: WorldReadResult;
   propose: ProposeDataV2;
   correct: CorrectDataV2;
 };
@@ -924,6 +1033,62 @@ receive the fixed contract refusal before collecting health counters/source keys
 A separate scoped operational-health proposal may follow, but v2 does not spread
 legacy `HealthData`. This exception is an explicit part of the compatibility
 amendment. CLI doctor and the existing internal surface remain owner operations.
+
+`world_view` is a proposed extension of the existing Core/MCP/loopback tool
+registry. The CLI keeps its existing `context` command: proposed
+`--concept-label TEXT` selects `find_concepts`, `--concept-ref TOKEN` selects
+`concept`, and `--concept-history-ref TOKEN` selects `history`, all requiring
+`--response-contract kizuki.envelope/v2`. These mutually exclusive modes route
+to `readWorldView` and return the `context` CLI result wrapper containing the
+`world_view` envelope. Ordinary `context` continues through `context_packet`.
+The existing stdio MCP server declares the same `world_view` input/output;
+Core loopback accepts the same versioned body at `/v1/world_view` (and its existing
+`/v1/mcp/world_view` alias). No new transport or separate world editor is added.
+The tool, flags and `world-view-v1` advertisement exist only in the implementation
+packet that delivers their shared consumer and conformance tests. Prior binaries
+return unsupported, and stored client grants are never silently expanded to the
+new tool. The caller must possess the explicit implemented `world_view` grant. All three
+read operations use the existing source `recall` permission; history is a query
+shape, not a new or stronger source-use grant. A post-correction refresh applies
+this read authority independently of the correction mutation authority.
+
+`correct.refreshWorld` is optional. When present it requires the same independent
+world-read grant, and the Core operation projects it after the correction commit.
+The response carries both the mutation result and `refreshedWorld`. A subsequent
+projection failure is an unavailable view; it never says an already committed
+correction failed or automatically retries that mutation. Without the option,
+`refreshedWorld` is null and the caller can use `world_view` separately. CLI `tell`
+uses proposed `--refresh-concept-ref TOKEN` for this same option. A Concept UI
+uses the refreshed view or this explicit follow-up; no adapter invents Concept
+fields from legacy body/diff strings.
+
+V2 mutation objects are the closed `Relation.object` union. Node refs resolve to
+their exact supported raw anchor under the operation's current authority;
+vocabulary IDs require the selected predicate's registered value. Literal values
+remain text even if they resemble IDs. Correcting a selected claim preserves
+its original perspective/context/time unless the existing explicit correction
+semantics deliberately change them through a newly supported assertion. A type
+or predicate that needs the rich writer returns unsupported until that complete
+writer is enabled; converting a node into a display string is forbidden.
+
+`RawSubjectWireRef` selects the immutable occurrence or supplied raw ref,
+independent of any one event that mentions it. One namespace/raw-ref mapping
+survives while at least one exact retained membership supports it; every lookup
+rechecks currently permitted membership. Supplied filters select all currently
+permitted events with that exact namespaced raw subject. Occurrence filters
+select only their exact occurrence/event. They never traverse semantic same-as.
+Chunks and raw graph nodes use this stable ref without choosing one source
+representative. Its membership rows are exact event/source tuples, canonically
+ordered by event identity, and their selection uses only permitted members.
+Purging one member preserves the mapping through an independent surviving member;
+purging the last custody member deletes the mapping. A custody-retained but
+currently denied member cannot make the ref resolve.
+
+`CapturedSubjectRef` is restricted to exact-event attribution. Its deletion may
+invalidate that exact attribution ref; it does not rename the stable raw subject.
+Each wire Observation attribution carries its own complete `EvidenceRef[]`,
+translated from the durable evidence IDs of that Observation. No field name alone
+stands for ambiguous evidence across several events.
 
 Every identifier-bearing argument is closed by `V2ToolInput`, including search
 and context subjects, timeline subject/source, graph reverse event roots, propose
@@ -1039,7 +1204,7 @@ implemented subset; later domain examples remain explicit design cases.
 | --- | --- | --- |
 | 1 | Ada Vale and Ben Reed discuss Concept “Bayesian updating”; another record names “A. Vale” without enough attribution | Distinct source records and explicit ambiguous identity; no name-only merge |
 | 2 | An independent note describes the same Concept; a forwarded copy repeats the first note; another “Bayes” is a project codename | Qualified accepted identity may unite genuine Concept mentions; copy adds no independent root; homonym stays separate |
-| 3 | Ada can explain a worked example but reports needing assistance to apply it; asks whether dependent observations should count twice | Independent explanation/application-assistance facets and durable open Question; no mastery rank or curiosity from frequency |
+| 3 | Ada can explain a worked example but reports needing assistance to apply it; asks whether dependent observations should count twice | First Concept: independent explanation/application-assistance facets; no mastery rank or curiosity from frequency. Durable Question is a later #485 registry/consumer oracle, not part of Concept v1. |
 | 4 | One project goal has commitment C1 to send a draft and separate C2 to review it; Ada reports Friday for C1 while Ben reports Thursday | Preserve two commitments and conflicting perspectives; never invent agreement or change C2's date |
 | 5 | A role changed Monday but its evidence arrives Wednesday | Valid-at Tuesday/known-at Tuesday differs from valid-at Tuesday/known-at Thursday; replay before Wednesday cannot see the role update |
 | 6 | Owner corrects the exact tentative C1 date interpretation to Monday; a previously started consolidation later returns Friday | Immediate authoritative correction; stale worker commit refuses; C2 and unrelated Concept evidence remain intact |
