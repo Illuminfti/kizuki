@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { applyLegacyStagingIdempotency } from "../../src/claims/schema";
+import {
+  applyClaimsV3,
+  applyLegacyStagingIdempotency,
+  initClaims,
+} from "../../src/claims/schema";
 import { getClaim } from "../../src/claims/store";
 import {
   StagingError,
@@ -292,6 +296,94 @@ describe("legacy staging p1 holes", () => {
       later.event_id,
     ]);
     expect(getClaim(db, first.proposal.proposal_id)?.corroboration).toBe(2);
+  });
+
+  test("remigration does not abort when pending hashes collapse", () => {
+    const db = memoryDb();
+    const first = fileProposal(
+      db,
+      proposalInput({
+        frontmatter: { type: "fact", title: "Ada", "x-display-name": "Ada" },
+      }),
+    );
+    if (first.outcome !== "stored") throw new Error("expected stored");
+    const cloneId = "01ARZ3NDEKTSV4RRFFQ69G5CLN";
+    const staleHash = "a".repeat(64);
+    db.exec("DROP INDEX IF EXISTS proposals_signature");
+    db.exec("DROP INDEX IF EXISTS claims_signature_idempotency");
+    db.query(
+      `INSERT INTO proposals (
+         proposal_id, kind, target, body, frontmatter, provenance, subjects,
+         producer, confidence, status, created_at, body_hash, content_hash
+       )
+       SELECT ?, kind, target, body, frontmatter, provenance, subjects,
+              producer, confidence, status, created_at, body_hash, ?
+         FROM proposals WHERE proposal_id = ?`,
+    ).run(cloneId, staleHash, first.proposal.proposal_id);
+    db.query(
+      `INSERT INTO claims (
+         claim_id, kind, target, body, frontmatter, provenance, subjects,
+         producer, confidence, status, created_at, body_hash, content_hash,
+         subject, predicate, object, polarity, claim_key, authority,
+         sensitivity, taint, model_ref, valid_from, valid_to, asserted_at,
+         retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at
+       )
+       SELECT ?, kind, target, body, frontmatter, provenance, subjects,
+              producer, confidence, status, created_at, body_hash, ?,
+              subject, predicate, object, polarity, claim_key, authority,
+              sensitivity, taint, model_ref, valid_from, valid_to, asserted_at,
+              retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at
+         FROM claims WHERE claim_id = ?`,
+    ).run(cloneId, staleHash, first.proposal.proposal_id);
+    db.exec(
+      `CREATE UNIQUE INDEX proposals_signature
+         ON proposals (content_hash) WHERE status = 'pending'`,
+    );
+    db.exec(
+      `CREATE UNIQUE INDEX claims_signature_idempotency
+         ON claims (content_hash)
+         WHERE status = 'live' AND kind <> 'purge_review' AND content_hash <> ''`,
+    );
+    expect(() => applyLegacyStagingIdempotency(db)).not.toThrow();
+    expect(listProposals(db, { status: "pending" })).toHaveLength(1);
+    expect(getProposal(db, cloneId)?.status).toBe("withdrawn");
+    expect(getClaim(db, cloneId)?.status).toBe("skipped");
+    const again = fileProposal(
+      db,
+      proposalInput({
+        frontmatter: { type: "fact", title: "Ada", "x-display-name": "Ada" },
+      }),
+    );
+    expect(again.outcome).toBe("duplicate");
+    if (again.outcome !== "duplicate") return;
+    expect(again.proposal.proposal_id).toBe(first.proposal.proposal_id);
+    expect(getClaim(db, first.proposal.proposal_id)?.status).toBe("live");
+  });
+
+  test("v3 remigration keeps split claim uniqueness", () => {
+    const db = memoryDb();
+    const first = fileProposal(db, proposalInput());
+    const other = fileProposal(
+      db,
+      proposalInput({ frontmatter: { type: "fact", title: "other" } }),
+    );
+    expect(first.outcome).toBe("stored");
+    expect(other.outcome).toBe("stored");
+    if (first.outcome !== "stored" || other.outcome !== "stored") return;
+    expect(() => applyClaimsV3(db)).not.toThrow();
+    expect(getClaim(db, first.proposal.proposal_id)?.status).toBe("live");
+    expect(getClaim(db, other.proposal.proposal_id)?.status).toBe("live");
+    const claimsSql =
+      db
+        .query<{ sql: string | null }, [string]>(
+          "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+        )
+        .get("claims_idempotency")?.sql ?? "";
+    expect(claimsSql).toContain("content_hash");
+    db.exec("DROP TABLE identity_links");
+    expect(() => initClaims(db)).not.toThrow();
+    expect(getClaim(db, first.proposal.proposal_id)?.status).toBe("live");
+    expect(getClaim(db, other.proposal.proposal_id)?.status).toBe("live");
   });
 
   test("an upgraded empty signature still occupies the live slot", () => {

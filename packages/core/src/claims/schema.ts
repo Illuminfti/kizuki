@@ -41,10 +41,6 @@ CREATE TABLE IF NOT EXISTS claims (
 `;
 
 const CLAIMS_INDEXES = `
-DROP INDEX IF EXISTS claims_idempotency;
-CREATE UNIQUE INDEX claims_idempotency
-  ON claims (kind, coalesce(target, ''), body_hash)
-  WHERE status = 'live' AND kind <> 'purge_review';
 CREATE INDEX IF NOT EXISTS claims_by_key ON claims(claim_key, status, valid_from);
 CREATE INDEX IF NOT EXISTS claims_by_status ON claims(status, created_at);
 CREATE INDEX IF NOT EXISTS claims_by_subject ON claims(subject, status);
@@ -392,27 +388,59 @@ function backfillProposalContentHash(db: Database): void {
   }
 }
 
+function withdrawDuplicatePendingSignatures(db: Database): void {
+  db.exec(`
+    UPDATE proposals
+       SET status = 'withdrawn'
+     WHERE status = 'pending'
+       AND rowid NOT IN (
+         SELECT MIN(rowid) FROM proposals
+          WHERE status = 'pending'
+          GROUP BY content_hash
+       );
+  `);
+}
+
+function skipDuplicateLiveSignatures(db: Database): void {
+  db.exec(`
+    UPDATE claims
+       SET status = 'skipped',
+           retracted_at = COALESCE(retracted_at, created_at)
+     WHERE status = 'live'
+       AND kind <> 'purge_review'
+       AND content_hash <> ''
+       AND rowid NOT IN (
+         SELECT MIN(rowid) FROM claims
+          WHERE status = 'live'
+            AND kind <> 'purge_review'
+            AND content_hash <> ''
+          GROUP BY content_hash
+       );
+  `);
+}
+
 /**
  * Pending-only content-signature idempotency for the legacy proposals
  * projection, and live-only claims uniqueness so a withdrawn row cannot
- * occupy the slot of later evidence.
+ * occupy the slot of later evidence. Unique indexes are dropped before
+ * hashes are rewritten so a remigration collapse cannot abort init.
  */
 export function applyLegacyStagingIdempotency(db: Database): void {
   if (!tableExists(db, "proposals")) return;
   addColumn(db, "proposals", "content_hash TEXT NOT NULL DEFAULT ''");
+  db.exec("DROP INDEX IF EXISTS proposals_idempotency");
+  db.exec("DROP INDEX IF EXISTS proposals_signature");
   backfillProposalContentHash(db);
-  const proposalsSql = indexSql(db, "proposals_signature") ?? "";
-  if (!proposalsSql.includes("content_hash") || !proposalsSql.includes("pending")) {
-    db.exec("DROP INDEX IF EXISTS proposals_idempotency");
-    db.exec("DROP INDEX IF EXISTS proposals_signature");
-    db.exec(
-      `CREATE UNIQUE INDEX proposals_signature
-         ON proposals (content_hash)
-         WHERE status = 'pending'`,
-    );
-  }
+  withdrawDuplicatePendingSignatures(db);
+  db.exec(
+    `CREATE UNIQUE INDEX proposals_signature
+       ON proposals (content_hash)
+       WHERE status = 'pending'`,
+  );
   if (!tableExists(db, "claims")) return;
   addColumn(db, "claims", "content_hash TEXT NOT NULL DEFAULT ''");
+  db.exec("DROP INDEX IF EXISTS claims_idempotency");
+  db.exec("DROP INDEX IF EXISTS claims_signature_idempotency");
   db.exec(
     `UPDATE claims
         SET content_hash = (
@@ -424,23 +452,18 @@ export function applyLegacyStagingIdempotency(db: Database): void {
            WHERE p.proposal_id = claims.claim_id AND p.content_hash <> ''
         )`,
   );
-  const bodySql = indexSql(db, "claims_idempotency") ?? "";
-  const signatureSql = indexSql(db, "claims_signature_idempotency") ?? "";
-  if (!bodySql.includes("content_hash") || !signatureSql.includes("content_hash")) {
-    db.exec("DROP INDEX IF EXISTS claims_idempotency");
-    db.exec("DROP INDEX IF EXISTS claims_signature_idempotency");
-    db.exec(
-      `CREATE UNIQUE INDEX claims_idempotency
-         ON claims (kind, coalesce(target, ''), body_hash)
-         WHERE status = 'live' AND kind <> 'purge_review'
-           AND (content_hash IS NULL OR content_hash = '')`,
-    );
-    db.exec(
-      `CREATE UNIQUE INDEX claims_signature_idempotency
-         ON claims (content_hash)
-         WHERE status = 'live' AND kind <> 'purge_review' AND content_hash <> ''`,
-    );
-  }
+  skipDuplicateLiveSignatures(db);
+  db.exec(
+    `CREATE UNIQUE INDEX claims_idempotency
+       ON claims (kind, coalesce(target, ''), body_hash)
+       WHERE status = 'live' AND kind <> 'purge_review'
+         AND (content_hash IS NULL OR content_hash = '')`,
+  );
+  db.exec(
+    `CREATE UNIQUE INDEX claims_signature_idempotency
+       ON claims (content_hash)
+       WHERE status = 'live' AND kind <> 'purge_review' AND content_hash <> ''`,
+  );
 }
 
 function stagingIdempotencyReady(db: Database): boolean {
