@@ -124,20 +124,18 @@ export function writeAll(
 }
 
 export function writeDurableFile(path: string, bytes: Uint8Array): void {
-  let fd: number | undefined;
+  // Cleanup belongs to this call only after exclusive creation succeeds.
+  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   try {
-    fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-    writeAll(fd, bytes);
-    fsyncSync(fd);
-  } catch (error) {
-    if (fd !== undefined) {
+    try {
+      writeAll(fd, bytes);
+      fsyncSync(fd);
+    } finally {
       closeSync(fd);
-      fd = undefined;
     }
+  } catch (error) {
     rmSync(path, { force: true });
     throw error;
-  } finally {
-    if (fd !== undefined) closeSync(fd);
   }
 }
 
@@ -197,16 +195,15 @@ export interface StagedSwap {
   stagingPath: string;
   /** Where the bytes being replaced wait until the row commits. */
   backupPath: string | null;
-  journalPath: string;
-  journalBytes: Uint8Array;
 }
 
 /**
- * Journal first, then keep the old bytes, then move the new ones in. The order
- * is what lets recovery tell a finished swap from an interrupted one.
+ * The caller owns a durable journal before entering this swap. Flush its
+ * directory entry before moving bytes so recovery can identify an interrupted
+ * swap even when the first rename fails. The caller records the completed
+ * swap before flushing the renamed directory entries.
  */
 export function swapStateFile(directory: string, swap: StagedSwap): void {
-  writeDurableFile(swap.journalPath, swap.journalBytes);
   fsyncDirectory(directory);
   if (swap.backupPath !== null) renameSync(swap.finalPath, swap.backupPath);
   try {
@@ -219,7 +216,6 @@ export function swapStateFile(directory: string, swap: StagedSwap): void {
       cause: error,
     });
   }
-  fsyncDirectory(directory);
 }
 
 /** Puts back whatever a swap moved, however far through it got. */
