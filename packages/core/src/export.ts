@@ -44,6 +44,7 @@ import { rebuildDerived } from "./derived";
 import { EVENT_LIMITS, type CaptureEvent } from "./contracts/event";
 import { isUlid, ulid } from "./util/ulid";
 import { writeRailCursor } from "./ledger/checkpoints";
+import { NULL_CONNECTION_CONFIG } from "./ledger/connection-state";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "./ledger/db";
 import { eventFromRow, parseEventRecord, type LegacyEventRecord } from "./ledger/event-record";
 import { bindLegacyEventOrigins, installEventIdentityGuards } from "./ledger/event-identity-schema";
@@ -141,7 +142,7 @@ export interface RestoreReport {
   receipts: number;
   vault_files: number;
   doctor: { total: number; valid: number; invalid: number };
-  /** Older backup formats did not preserve an interrupted model decision. */
+  /** Runtime recovery limits, including disconnected portable connection history. */
   recovery_warnings: readonly string[];
 }
 
@@ -218,11 +219,10 @@ interface ClaimRow {
 interface ConnectionRow {
   connector_id: string;
   source_key: string;
-  config: string;
-  secret_refs: string;
   connected_at: string;
   disconnected_at: string | null;
   implementation_version: string;
+  consent_required: number;
 }
 
 interface CheckpointRow {
@@ -1069,15 +1069,18 @@ function* pageReceipts(db: Database): Generator<Record<string, unknown>> {
   }
 }
 
+const CONNECTION_RECOVERY_WARNING = "restored connection history is disconnected and has no connector state; further capture requires supported fresh enrollment with a new source key and fresh consent; retained checkpoints will not resume automatically";
+
 function* pageConnections(db: Database): Generator<Record<string, unknown>> {
+  const disconnectedAt = new Date().toISOString();
   let after: { connector_id: string; source_key: string } | null = null;
   while (true) {
     let rows: ConnectionRow[];
     if (after === null) {
       rows = db
         .query<ConnectionRow, [number]>(
-          `SELECT connector_id, source_key, config, secret_refs,
-                  connected_at, disconnected_at, implementation_version, consent_required
+          `SELECT connector_id, source_key, connected_at, disconnected_at,
+                  implementation_version, consent_required
            FROM connections
            ORDER BY connector_id, source_key LIMIT ?`,
         )
@@ -1085,8 +1088,8 @@ function* pageConnections(db: Database): Generator<Record<string, unknown>> {
     } else {
       rows = db
         .query<ConnectionRow, [string, string, string, number]>(
-          `SELECT connector_id, source_key, config, secret_refs,
-                  connected_at, disconnected_at, implementation_version, consent_required
+          `SELECT connector_id, source_key, connected_at, disconnected_at,
+                  implementation_version, consent_required
            FROM connections
            WHERE connector_id > ?
               OR (connector_id = ? AND source_key > ?)
@@ -1099,12 +1102,12 @@ function* pageConnections(db: Database): Generator<Record<string, unknown>> {
       yield {
         connector_id: row.connector_id,
         source_key: row.source_key,
-        config: JSON.parse(row.config) as unknown,
-        secret_refs: JSON.parse(row.secret_refs) as unknown,
+        config: JSON.parse(NULL_CONNECTION_CONFIG) as unknown,
+        secret_refs: [],
         connected_at: row.connected_at,
-        disconnected_at: row.disconnected_at,
+        disconnected_at: row.disconnected_at ?? disconnectedAt,
         implementation_version: row.implementation_version,
-        consent_required: (row as ConnectionRow & { consent_required: number }).consent_required,
+        consent_required: row.consent_required,
       };
     }
     const last: ConnectionRow | undefined = rows.at(-1);
@@ -1854,10 +1857,10 @@ function insertConnectionRow(db: Database, raw: Record<string, unknown>): void {
   ).run(
     asString(raw.connector_id, "connector_id"),
     asString(raw.source_key, "source_key"),
-    JSON.stringify(raw.config),
-    JSON.stringify(refs),
+    NULL_CONNECTION_CONFIG,
+    "[]",
     asString(raw.connected_at, "connected_at"),
-    asStringOrNull(raw.disconnected_at, "disconnected_at"),
+    asStringOrNull(raw.disconnected_at, "disconnected_at") ?? new Date().toISOString(),
     asString(raw.implementation_version ?? "", "implementation_version"),
     raw.consent_required === undefined ? 0 : raw.consent_required === 0 || raw.consent_required === 1 ? raw.consent_required : (() => { throw new Error("invalid consent requirement"); })(),
   );
@@ -2234,9 +2237,14 @@ export function restoreVault(
           key.startsWith("vault/"),
         ).length,
         doctor: doctor.counts,
-        recovery_warnings: manifest.schema_versions.serve < 8
-          ? ["backup predates durable extraction recovery; an interrupted model decision was not preserved"]
-          : [],
+        recovery_warnings: [
+          ...(manifest.schema_versions.serve < 8
+            ? ["backup predates durable extraction recovery; an interrupted model decision was not preserved"]
+            : []),
+          ...(db.query("SELECT 1 FROM connections LIMIT 1").get() !== null
+            ? [CONNECTION_RECOVERY_WARNING]
+            : []),
+        ],
       };
       db.close();
       unlinkSync(join(staging, INCOMPLETE));
