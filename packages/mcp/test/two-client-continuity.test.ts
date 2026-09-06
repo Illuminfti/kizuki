@@ -7,6 +7,7 @@ import {
   initAgents,
   listClaims,
   listConnections,
+  listAgents,
   openLedger,
   revokeAgent,
   revokeSourceGrant,
@@ -111,6 +112,8 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
       if (value === null) throw new Error("synthetic principal did not authenticate");
       return value;
     };
+    // Fixture setup only: an absent token cannot construct an owner-default context.
+    expect(authenticate(db, "")).toBeNull();
     const a = await client({ db, vaultPath: setup.vault, principal: principal(aToken) });
     const b = await client({ db, vaultPath: setup.vault, principal: principal(bToken) });
 
@@ -158,6 +161,8 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
     const forbidden = await call(b, "correct", correctionArgs);
     expect(forbidden.isError).toBe(true);
     expect(errorOf(forbidden).error).toBe("tool_not_granted");
+    expect(JSON.parse(forbidden.content[0]!.text)).toEqual({ error: "tool_not_granted", message: "tool not granted", retry_after_seconds: null });
+    expect(JSON.stringify(envelopeOf(forbidden))).not.toContain("cause");
 
     const latestB = await call(b, "context_packet", {
       subjects: [project], include: ["claims"], purpose: "correction", budget_tokens: 500,
@@ -185,21 +190,33 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
     const narrowedEnvelope = JSON.stringify(envelopeOf(narrowed));
     expect(narrowedEnvelope).not.toContain("active");
     expect(narrowedEnvelope).not.toContain(marker);
+    expect(narrowedEnvelope).not.toContain(project);
+    expect(narrowedEnvelope).not.toContain("blocked");
+    expect(narrowedEnvelope).not.toContain(event.event_id);
     expect(narrowedEnvelope).not.toContain(claimId);
     expect(narrowedEnvelope).not.toContain(correction.event_id);
     const aStillAllowed = await call(a, "context_packet", { subjects: [project], include: ["claims"], budget_tokens: 500 });
     expect(packet(envelopeOf(aStillAllowed)).packet_md).toContain("active");
 
+    const beforeReconnect = listAgents(db).map((agent) => agent.agent_id);
+    const reconnectedB = await client({ db, vaultPath: setup.vault, principal: principal(bToken) });
+    expect(listAgents(db).map((agent) => agent.agent_id)).toEqual(beforeReconnect);
+    expect((await call(reconnectedB, "context_packet", { include: ["claims"], budget_tokens: 500 })).isError).not.toBe(true);
+
     revokeAgent(db, "continuity-b");
     const revoked = await call(b, "context_packet", { subjects: [project], include: ["claims"], budget_tokens: 500 });
     expect(revoked.isError).toBe(true);
     expect(errorOf(revoked).error).toBe("unknown_agent");
+    expect(JSON.parse(revoked.content[0]!.text)).toEqual({ error: "unknown_agent", message: "unknown agent", retry_after_seconds: null });
+    expect(JSON.stringify(envelopeOf(revoked))).not.toContain("cause");
 
     revokeSourceGrant(db, { source_key: selectedSourceKey!, expected_revision: 1, operation_id: "two-client-source-revoke" });
     const sourceDenied = await call(a, "context_packet", { subjects: [project], include: ["claims"], budget_tokens: 500 });
     sameEnvelope(sourceDenied);
     const afterRevoke = JSON.stringify(envelopeOf(sourceDenied));
     expect(afterRevoke).not.toContain("active");
+    expect(afterRevoke).not.toContain(project);
+    expect(afterRevoke).not.toContain("blocked");
     expect(afterRevoke).not.toContain(marker);
     expect(afterRevoke).not.toContain(event.event_id);
     const controlTimeline = await call(a, "timeline", {});
