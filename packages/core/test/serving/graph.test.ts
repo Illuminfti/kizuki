@@ -276,10 +276,6 @@ describe("serveGraph", () => {
   });
 
   test("a public reader is not capped by private outgoing dests", async () => {
-    const destLinks = [
-      ...Array.from({ length: 100 }, (_value, index) => `[[Out secret ${index}]]`),
-      "[[Out open]]",
-    ].join(" ");
     await recordedPage(fixture.db, fixture.vaultPath, "facts/out-hub.md", {
       id: "fact:out-hub",
       title: "Out hub",
@@ -287,7 +283,7 @@ describe("serveGraph", () => {
       status: "active",
       sensitivity: "public",
       taint: "clean",
-    }, destLinks, [fixture.events["public"] as string]);
+    }, "[[Out open]]", [fixture.events["public"] as string]);
     for (let index = 0; index < 100; index += 1) {
       await recordedPage(fixture.db, fixture.vaultPath, `facts/out-secret-${index}.md`, {
         id: `fact:aaa-out-secret-${index}`,
@@ -307,6 +303,16 @@ describe("serveGraph", () => {
       taint: "clean",
     }, "A public dest.", [fixture.events["public"] as string]);
     rebuildGraph(fixture.db, fixture.vaultPath);
+
+    // Isolate cap/filter behavior in the disposable projection. The public
+    // hub keeps its recorded open link; private outgoing dests are injected
+    // so the durable writer path is not parsing a hundred links per rebuild.
+    const insert = fixture.db.query(`INSERT OR IGNORE INTO graph_edges
+      (src, dst, kind, sensitivity, dest_sensitivity, taint, authority, provenance)
+      VALUES ('fact:out-hub', ?, 'wikilink', 'public', 'private', 'clean', 'model_inference', '[]')`);
+    for (let index = 0; index < 100; index += 1) {
+      insert.run(`fact:aaa-out-secret-${index}`);
+    }
 
     const owner = serveGraph(fixture.owner(), {
       id: "fact:out-hub",

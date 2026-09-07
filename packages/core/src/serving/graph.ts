@@ -59,6 +59,12 @@ function kindsOf(
   return kinds;
 }
 
+type PageDecision = ReturnType<typeof pageDecision>;
+
+function edgeKey(edge: GraphEdge): string {
+  return `${edge.src}\u0000${edge.dst}\u0000${edge.kind}`;
+}
+
 function classifyGraph(
   edges: GraphEdge[],
   index: CanonIndex,
@@ -66,18 +72,26 @@ function classifyGraph(
   facts: Map<string, ServableEvent>,
   seen: Set<string>,
   collect: boolean,
+  decisions: Map<string, PageDecision>,
 ): { kept: GraphEdge[]; withheld: AuditDenial[] } {
   const kept: GraphEdge[] = [];
   const withheld: AuditDenial[] = [];
+  const decisionFor = (page: CanonIndex["pages"][number]): PageDecision => {
+    const cached = decisions.get(page.id);
+    if (cached !== undefined) return cached;
+    const resolved = pageDecision(index, grant, page);
+    decisions.set(page.id, resolved);
+    return resolved;
+  };
   for (const edge of edges) {
-    const key = `${edge.src}\u0000${edge.dst}\u0000${edge.kind}`;
+    const key = edgeKey(edge);
     if (seen.has(key)) continue;
     seen.add(key);
 
     const source = index.byId.get(edge.src);
     // A stale edge whose page is gone or retracted is dropped, not counted.
     if (source === undefined || !eligible(source)) continue;
-    const sourceDecision = pageDecision(index, grant, source);
+    const sourceDecision = decisionFor(source);
     if (!sourceDecision.allow) {
       withheld.push({ id: source.id, reason: sourceDecision.reason });
       continue;
@@ -93,7 +107,7 @@ function classifyGraph(
           continue;
         }
         if (!eligible(target)) continue;
-        const targetDecision = pageDecision(index, grant, target);
+        const targetDecision = decisionFor(target);
         if (!targetDecision.allow) {
           withheld.push({ id: target.id, reason: targetDecision.reason });
           continue;
@@ -170,17 +184,24 @@ export function serveGraph(
         limit: MAX_EDGES,
         ...(kinds === undefined ? {} : { kinds }),
       };
-      // Ceiling shapes the served cap. The uncovered pass only counts what
-      // that ceiling hid, matching serveSearch.
+      // Ceiling shapes the served cap. When a ceiling is set, a second walk
+      // without it counts what that filter hid, matching serveSearch.
       const found = neighbors(ctx.db, id, { ...query, ceiling: grant.ceiling });
-      const uncovered = neighbors(ctx.db, id, query);
+      const foundKeys = new Set(found.edges.map(edgeKey));
+      const auditEdges =
+        grant.ceiling === undefined
+          ? []
+          : neighbors(ctx.db, id, query).edges.filter(
+              (edge) => !foundKeys.has(edgeKey(edge)),
+            );
       const facts = readServableEvents(
         ctx.db,
-        [...found.edges, ...uncovered.edges]
+        [...found.edges, ...auditEdges]
           .filter((edge) => edge.kind === "source")
           .map((edge) => edge.dst),
       );
       const seen = new Set<string>();
+      const decisions = new Map<string, PageDecision>();
       const served = classifyGraph(
         found.edges,
         index,
@@ -188,14 +209,16 @@ export function serveGraph(
         facts,
         seen,
         true,
+        decisions,
       );
       const hidden = classifyGraph(
-        uncovered.edges,
+        auditEdges,
         index,
         grant,
         facts,
         seen,
         false,
+        decisions,
       );
 
       return {
