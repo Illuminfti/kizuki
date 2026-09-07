@@ -83,7 +83,7 @@ export function withdrawPendingCanonWrite(scope: VaultMutationScope, io: CanonIo
   }
 }
 
-/** Transfer external residue to the existing owned-store erasure inventory. */
+/** Cancel known work, retaining the existing inventory of actual store instances. */
 export function withdrawPendingCanonProjections(scope: VaultMutationScope, io: CanonIo, sourceKey: string): void {
   requireCanonFiles(scope, io);
   const db = io.db;
@@ -103,11 +103,10 @@ export function withdrawPendingCanonProjections(scope: VaultMutationScope, io: C
       // A request whose outcome is unknown may still write after an erasure.
       // Store absence alone cannot establish that it has stopped executing.
       if (saved.value.external_execution.includes("started")) recoveryFailure("projection_pending", row.receipt_id);
-      // Cancelling a positive upsert is not erasure. Every scheduled or acknowledged
-      // store effect must pass the existing qualified whole-store protocol.
-      for (const op of saved.value.external_ops) {
-        db.query("INSERT INTO source_retrieval_stores VALUES (?,?,'pending') ON CONFLICT(source_key,store_id) DO UPDATE SET status='pending'").run(sourceKey, op.store);
-      }
+      // Scheduled operations were never sent. Acknowledged operations recorded
+      // their real store instance before I/O. Preserve that inventory for the
+      // existing whole-store erasure protocol; op.store is a port descriptor,
+      // not an instance ID and cannot create an erasure receipt by itself.
       const removed = oneShotGet<{ receipt_id: string }>(db, "DELETE FROM canon_projection_obligations WHERE receipt_id=? AND digest=? RETURNING receipt_id", row.receipt_id, saved.row.digest);
       if (removed?.receipt_id !== row.receipt_id) recoveryFailure("intent_invalid", row.receipt_id);
       advanceCanonReadGeneration(db);
