@@ -16,10 +16,12 @@ for (const claimCount of [0, 2]) {
       const staging = openStagingDb(path);
       let rowsBefore: unknown[];
       try {
-        expect(tableExists(staging, "schema_version")).toBe(false);
+        expect(readSchemaVersion(staging)).toBe(LEDGER_SCHEMA_VERSION);
+        expect(inspectOpenLedgerHealth(staging, { full: true }).ok).toBe(true);
+        expect(staging.query("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
         expect(tableExists(staging, "promotions")).toBe(false);
-        // The claims helpers open a full ledger first. Seed inactive schema
-        // fixtures directly so this path starts with only the staging schema.
+        // Seed inactive fixture rows through the compatibility opener, then
+        // check that the central ledger opener observes precisely those rows.
         for (let index = 0; index < claimCount; index++) {
           const body = `Synthetic migration fixture ${index + 1}.`;
           const at = "2026-09-06T00:00:00.000Z";

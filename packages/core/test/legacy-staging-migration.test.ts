@@ -68,30 +68,35 @@ for (const populated of [false, true]) {
   });
 }
 
-for (const mutation of ["missing-hash", "ambiguous-hashes", "extra-column"] as const) {
-  test(`malformed historical ${mutation} rolls back all pending migrations and preserves staged rows`, () => {
-    const directory = mkdtempSync(join(tmpdir(), "kizuki-staging-malformed-"));
-    const path = join(directory, "ledger.sqlite");
-    try {
-      const old = new Database(path);
-      old.exec(STAGING_SCHEMA);
-      populate(old);
-      old.exec("CREATE TABLE schema_version (version INTEGER NOT NULL); INSERT INTO schema_version VALUES (0)");
-      if (mutation === "missing-hash") old.exec("ALTER TABLE promotions RENAME COLUMN after_hash TO unknown_hash");
-      else old.exec(`ALTER TABLE promotions ADD COLUMN ${mutation === "ambiguous-hashes" ? "page_hash" : "unknown_column"} TEXT`);
-      const schema = old.query("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all();
-      const receipts = old.query("SELECT * FROM promotions ORDER BY receipt_id").all();
-      const proposals = old.query("SELECT * FROM proposals ORDER BY proposal_id").all();
-      old.close();
-
-      expect(() => openLedger(path)).toThrow("historical promotions schema is unsupported");
-      const unchanged = new Database(path);
+for (const versioned of [false, true]) {
+  for (const mutation of ["missing-hash", "ambiguous-hashes", "extra-column"] as const) {
+    test(`malformed historical ${mutation} with ${versioned ? "version zero" : "no version table"} rolls back pending migrations and preserves staged rows`, () => {
+      const directory = mkdtempSync(join(tmpdir(), "kizuki-staging-malformed-"));
+      const path = join(directory, "ledger.sqlite");
       try {
-        expect(readSchemaVersion(unchanged)).toBe(0);
-        expect(unchanged.query("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all()).toEqual(schema);
-        expect(unchanged.query("SELECT * FROM promotions ORDER BY receipt_id").all()).toEqual(receipts);
-        expect(unchanged.query("SELECT * FROM proposals ORDER BY proposal_id").all()).toEqual(proposals);
-      } finally { unchanged.close(); }
-    } finally { rmSync(directory, { recursive: true, force: true }); }
-  });
+        const old = new Database(path);
+        old.exec(STAGING_SCHEMA);
+        populate(old);
+        if (versioned) old.exec("CREATE TABLE schema_version (version INTEGER NOT NULL); INSERT INTO schema_version VALUES (0)");
+        if (mutation === "missing-hash") old.exec("ALTER TABLE promotions RENAME COLUMN after_hash TO unknown_hash");
+        else old.exec(`ALTER TABLE promotions ADD COLUMN ${mutation === "ambiguous-hashes" ? "page_hash" : "unknown_column"} TEXT`);
+        const schema = old.query<{ name: string }, []>("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all();
+        const receipts = old.query("SELECT * FROM promotions ORDER BY receipt_id").all();
+        const proposals = old.query("SELECT * FROM proposals ORDER BY proposal_id").all();
+        old.close();
+
+        expect(() => openLedger(path)).toThrow("historical promotions schema is unsupported");
+        const unchanged = new Database(path);
+        try {
+          expect(readSchemaVersion(unchanged)).toBe(0);
+          // The central opener creates the missing version-zero table before
+          // the pending migration transaction; historical data/schema survive.
+          const after = unchanged.query<{ name: string }, []>("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all();
+          expect(versioned ? after : after.filter(row => row.name !== "schema_version")).toEqual(schema);
+          expect(unchanged.query("SELECT * FROM promotions ORDER BY receipt_id").all()).toEqual(receipts);
+          expect(unchanged.query("SELECT * FROM proposals ORDER BY proposal_id").all()).toEqual(proposals);
+        } finally { unchanged.close(); }
+      } finally { rmSync(directory, { recursive: true, force: true }); }
+    });
+  }
 }

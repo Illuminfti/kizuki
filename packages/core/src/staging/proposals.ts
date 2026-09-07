@@ -1,4 +1,5 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
+import { openLedger } from "../ledger/db";
 import type { Sensitivity } from "../agents/types";
 import { contentSignature } from "../claims/hash";
 import { initClaims } from "../claims/schema";
@@ -110,10 +111,7 @@ export function initStaging(db: Database): void {
 }
 
 export function openStagingDb(path: string): Database {
-  const db = new Database(path, { create: true });
-  db.exec("PRAGMA journal_mode = WAL");
-  initStaging(db);
-  return db;
+  return openLedger(path);
 }
 
 export function hashBody(body: string): string {
