@@ -6,6 +6,7 @@ import { evaluateRelease, releaseDecision, writeAcceptanceReport } from "./go-no
 import { absolute, assertCheckoutCustody, assertProductCheckoutCustody, digest, EVALUATOR_ROOT, EvidenceError, hash, parents, read, reject } from "./release-evidence";
 import { parseProofJson } from "./proof-json";
 import { validateToolchain, validateWorkflowText } from "./verify-workflows";
+import { GITHUB_ARCHIVE_LIMIT, verifyGithubNativeArchive } from "./github-native-artifact";
 
 export const GITHUB_REPOSITORY_ID = 1353875622;
 interface GithubRepository { id: typeof GITHUB_REPOSITORY_ID; full_name: string; }
@@ -15,22 +16,41 @@ const REQUIRED = [
   { path: ".github/workflows/ci.yml", jobs: ["test", "secrets"] },
   { path: ".github/workflows/workflows.yml", jobs: ["workflows"] },
 ] as const;
-const CANDIDATE_FILES = [".bun-version", "package.json", "bun.lock", "tsconfig.json", ...REQUIRED.map(item => item.path)];
-const COLLECTOR_FILES = [...CANDIDATE_FILES, "scripts/github-release-evidence.ts", "scripts/go-no-go.ts", "scripts/release-evidence.ts", "scripts/verify-workflows.ts", "scripts/proof-json.ts"];
+const CANDIDATE_FILES = [".bun-version", "package.json", "bun.lock", "tsconfig.json", ...REQUIRED.map(item => item.path), ".github/workflows/macos-native.yml"];
+const COLLECTOR_FILES = [...CANDIDATE_FILES, "scripts/github-release-evidence.ts", "scripts/go-no-go.ts", "scripts/release-evidence.ts", "scripts/verify-workflows.ts", "scripts/proof-json.ts", "scripts/github-artifact-archive.py"];
 type JsonObject = Record<string, unknown>;
 type GetJson = (endpoint: string) => Promise<unknown>;
-interface Run {
+export interface GithubRun {
   id: number; run_number: number; run_attempt: number; workflow_id: number; path: string; head_sha: string;
   event: string; status: string; conclusion: string | null; created_at: string; updated_at: string; run_started_at: string;
 }
-interface Job {
+export interface GithubJob {
   id: number; run_id: number; run_attempt: number; head_sha: string; name: string; status: string; conclusion: string | null;
   steps: { name: string; number: number; status: string; conclusion: string | null }[];
 }
+type Run = GithubRun;
+type Job = GithubJob;
+interface Requirement { path: string; jobs: readonly string[]; events?: readonly string[]; native?: boolean; }
 export interface GithubCandidateObservation {
   schema: "kizuki.github-candidate-observation/v1"; repository: GithubRepository; candidate_source_sha: string;
   inventory: Run[]; attempts: { run_id: number; attempt: number; status: string; conclusion: string | null; path: string; run_started_at: string; created_at: string; updated_at: string }[];
   required: { path: string; run: Run | null; jobs: Job[]; status: "PASS" | "FAIL" | "MISSING"; reason: string }[];
+}
+
+const PACKAGE_COMMANDS = ["verify", "typecheck", "build:release", "smoke:release", "proof:artifact"] as const;
+export function validateGithubCommandBindings(candidate: Buffer, collector: Buffer) {
+  const actual = object(object(parseProofJson(candidate)).scripts), reviewed = object(object(parseProofJson(collector)).scripts);
+  return PACKAGE_COMMANDS.map(name => {
+    const command = string(reviewed[name], 4096);
+    if (actual[name] !== command) reject("github-candidate-command-mismatch");
+    const hooks = ["pre", "post"].map(prefix => {
+      const key = prefix + name, expected = reviewed[key] ?? null;
+      if (expected !== null) string(expected, 4096);
+      if ((actual[key] ?? null) !== expected) reject("github-candidate-command-mismatch");
+      return expected;
+    });
+    return { name, command, pre: hooks[0], post: hooks[1] };
+  });
 }
 
 function object(value: unknown): JsonObject {
@@ -76,7 +96,7 @@ function run(value: unknown, candidate: string, expectedRepository: GithubReposi
 function job(value: unknown, expected: Run): Job {
   const row = object(value);
   if (row.run_id !== expected.id || row.run_attempt !== expected.run_attempt || row.head_sha !== expected.head_sha) reject("github-job-identity-mismatch");
-  if (!Array.isArray(row.steps) || row.steps.length < 1 || row.steps.length > 100) reject("github-invalid-steps");
+  if (!Array.isArray(row.steps) || row.steps.length > 100) reject("github-invalid-steps");
   const steps = row.steps.map(value => {
     const step = object(value);
     return { name: string(step.name), number: integer(step.number), status: status(step.status), conclusion: conclusion(step.conclusion) };
@@ -124,6 +144,10 @@ function same(left: unknown, right: unknown): boolean { return JSON.stringify(le
 /** Evidence analysis is testable, but its result is untrusted until the private
  * online entrypoint obtains it from the fixed GitHub transport and binds source. */
 export async function inspectGithubCandidate(transport: GetJson, candidate: string, workflows: ReadonlyMap<string, string>): Promise<GithubCandidateObservation> {
+  return inspectGithubWorkflows(transport, candidate, workflows, REQUIRED);
+}
+
+async function inspectGithubWorkflows(transport: GetJson, candidate: string, workflows: ReadonlyMap<string, string>, requirements: readonly Requirement[]): Promise<GithubCandidateObservation> {
   digest(candidate, 40);
   let requests = 0; const started = performance.now();
   const get: GetJson = async endpoint => {
@@ -139,14 +163,14 @@ export async function inspectGithubCandidate(transport: GetJson, candidate: stri
   const attempts: GithubCandidateObservation["attempts"] = [];
   const required: GithubCandidateObservation["required"] = [];
   const latestAttempts: Run[] = [];
-  for (const requirement of REQUIRED) {
+  for (const requirement of requirements) {
     const histories = before.filter(row => row.path === requirement.path);
     const workflowAttempts: Run[] = [];
     // Every bounded attempt is retained. An old run's fresh rerun can supersede
     // a newer run number, and any still-pending attempt prevents gate credit.
     let pending = false;
     for (const historical of histories) {
-      if (!["push", "pull_request"].includes(historical.event)) reject("github-workflow-event-mismatch");
+      if (!(requirement.events ?? ["push", "pull_request"]).includes(historical.event)) reject("github-workflow-event-mismatch");
       if (historical.run_attempt > LIMITS.attempts) reject("github-attempt-limit");
       const current = run(await get(`${prefix}/actions/runs/${historical.id}`), candidate, expectedRepository);
       if (!same(current, historical)) reject("github-run-changed");
@@ -178,10 +202,14 @@ export async function inspectGithubCandidate(transport: GetJson, candidate: stri
     if (workflowText === undefined || validateWorkflowText(requirement.path, workflowText).length > 0) reject("github-candidate-workflow-invalid");
     const configured = object(object(Bun.YAML.parse(workflowText)).jobs);
     let ok = current.status === "completed" && current.conclusion === "success";
-    if (jobs.length !== requirement.jobs.length) ok = false;
+    if (jobs.length !== requirement.jobs.length + (requirement.native ? 1 : 0)) ok = false;
+    if (requirement.native) {
+      const inactive = jobs.find(row => row.name === "native-arm64");
+      if (!inactive || inactive.status !== "completed" || inactive.conclusion !== "skipped" || inactive.steps.length !== 0) ok = false;
+    }
     for (const name of requirement.jobs) {
       const actual = jobs.find(item => item.name === name);
-      const definition = object(configured[name]);
+      const definition = object(configured[requirement.native ? "native-service" : name]);
       if (!actual || actual.status !== "completed" || actual.conclusion !== "success") { ok = false; continue; }
       if (!Array.isArray(definition.steps)) reject("github-candidate-workflow-invalid");
       for (let index = 0; index < definition.steps.length; index++) {
@@ -189,7 +217,8 @@ export async function inspectGithubCandidate(transport: GetJson, candidate: stri
         const expectedName = step.name ?? (typeof step.uses === "string" ? `Run ${step.uses}` : null);
         if (typeof expectedName !== "string") reject("github-unbound-step-name");
         const observed = actual.steps.find(item => item.number === index + 2);
-        if (!observed || observed.name !== expectedName || observed.status !== "completed" || observed.conclusion !== "success") ok = false;
+        const expectedConclusion = requirement.native && name === "native-service (macos-15)" && step.if === "${{ runner.os == 'Linux' }}" ? "skipped" : "success";
+        if (!observed || observed.name !== expectedName || observed.status !== "completed" || observed.conclusion !== expectedConclusion) ok = false;
       }
     }
     required.push({ path: requirement.path, run: current, jobs, status: ok ? "PASS" : "FAIL", reason: ok ? "github-current-required-jobs-passed" : "github-current-required-jobs-not-passed" });
@@ -204,11 +233,85 @@ export async function inspectGithubCandidate(transport: GetJson, candidate: stri
   return { schema: "kizuki.github-candidate-observation/v1", repository: expectedRepository, candidate_source_sha: candidate, inventory: before, attempts, required };
 }
 
-function ghJson(endpoint: string): Buffer {
+export async function inspectGithubNativeJobs(transport: GetJson, candidate: string, workflow: string): Promise<GithubCandidateObservation> {
+  return inspectGithubWorkflows(transport, candidate, new Map([[".github/workflows/macos-native.yml", workflow]]), [{
+    path: ".github/workflows/macos-native.yml", jobs: ["native-service (ubuntu-24.04)", "native-service (macos-15)"], events: ["workflow_dispatch"], native: true,
+  }]);
+}
+
+const NATIVE_TARGETS = [
+  { os: "ubuntu-24.04", target: "bun-linux-x64-baseline" },
+  { os: "macos-15", target: "bun-darwin-arm64" },
+] as const;
+interface Artifact {
+  id: number; name: string; size_in_bytes: number; digest: string; created_at: string; updated_at: string; expires_at: string;
+}
+function artifact(value: unknown, selected: Run, repo: GithubRepository): Artifact {
+  const row = object(value), owner = object(row.workflow_run);
+  if (owner.id !== selected.id || owner.repository_id !== repo.id || owner.head_repository_id !== repo.id || owner.head_sha !== selected.head_sha) reject("github-artifact-identity-mismatch");
+  if (row.expired !== false || integer(row.size_in_bytes) > GITHUB_ARCHIVE_LIMIT || typeof row.digest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(row.digest)) reject("github-artifact-unavailable");
+  return { id: integer(row.id), name: string(row.name), size_in_bytes: integer(row.size_in_bytes), digest: row.digest,
+    created_at: timestamp(row.created_at), updated_at: timestamp(row.updated_at), expires_at: timestamp(row.expires_at) };
+}
+function nativeJob(value: unknown, selected: Run, expected: Job, os: string) {
+  const row = object(value);
+  if (!same(job(row, selected), expected) || !same(row.labels, [os]) || row.runner_group_id !== 0 || row.runner_group_name !== "GitHub Actions") reject("github-native-job-mismatch");
+  const started_at = timestamp(row.started_at), completed_at = timestamp(row.completed_at);
+  const steps = (row.steps as unknown[]).map(object);
+  const upload = steps.find(step => step.name === "retain lifecycle receipt even when a native gate fails");
+  if (!upload || upload.conclusion !== "success") reject("github-native-upload-missing");
+  const upload_started_at = timestamp(upload.started_at), upload_completed_at = timestamp(upload.completed_at);
+  if (Date.parse(started_at) < Date.parse(selected.run_started_at) || Date.parse(completed_at) < Date.parse(started_at) ||
+      Date.parse(upload_started_at) < Date.parse(started_at) || Date.parse(upload_completed_at) < Date.parse(upload_started_at) ||
+      Date.parse(upload_completed_at) > Date.parse(completed_at)) reject("github-native-job-time-mismatch");
+  return { job_id: expected.id, runner_id: integer(row.runner_id), labels: [os], runner_group_id: 0, started_at, completed_at, upload_started_at, upload_completed_at };
+}
+
+/** Synthetic API analysis has no gate authority. Only the private fixed online
+ * transport's result can be applied inside evaluateReleaseOnline. */
+export async function inspectGithubNativeArtifacts(get: GetJson, download: (endpoint: string) => Promise<Buffer>, candidate: string, workflow: string, bunVersion: string, output: string) {
+  const observation = await inspectGithubNativeJobs(get, candidate, workflow);
+  const current = observation.required[0]!;
+  const targets: { target: string; artifact: Artifact; job: ReturnType<typeof nativeJob>; bytes: ReturnType<typeof verifyGithubNativeArchive> }[] = [];
+  if (current.status !== "PASS" || current.run === null) return { observation, status: "FAIL" as const, targets };
+  const selected = current.run, prefix = `/repos/${observation.repository.full_name}`;
+  const rawJobs = await pages(get, `${prefix}/actions/runs/${selected.id}/attempts/${selected.run_attempt}/jobs`, "jobs", LIMITS.jobs);
+  const collectArtifacts = async () => (await pages(get, `${prefix}/actions/runs/${selected.id}/artifacts`, "artifacts", 100))
+    .map(row => artifact(row, selected, observation.repository)).sort((a, b) => a.id - b.id);
+  const artifacts = await collectArtifacts();
+  if (artifacts.length !== 2 || new Set(artifacts.map(row => row.id)).size !== 2 || new Set(artifacts.map(row => row.name)).size !== 2) reject("github-native-artifact-inventory");
+  for (const target of NATIVE_TARGETS) {
+    const expectedJob = current.jobs.find(row => row.name === `native-service (${target.os})`)!;
+    const raw = rawJobs.filter(value => object(value).id === expectedJob.id);
+    if (raw.length !== 1) reject("github-native-job-mismatch");
+    const host = nativeJob(raw[0], selected, expectedJob, target.os);
+    const retained = artifacts.find(row => row.name === `native-service-lifecycle-${target.os}-${candidate}`);
+    if (!retained || Date.parse(retained.created_at) < Date.parse(host.upload_started_at) || Date.parse(retained.created_at) > Date.parse(host.upload_completed_at) ||
+        Date.parse(retained.updated_at) > Date.parse(host.upload_completed_at) || Date.parse(retained.updated_at) < Date.parse(retained.created_at)) reject("github-artifact-attempt-unbound");
+    const body = await download(`${prefix}/actions/artifacts/${retained.id}/zip`);
+    if (body.length !== retained.size_in_bytes || `sha256:${hash(body)}` !== retained.digest) reject("github-artifact-digest-mismatch");
+    const archive = join(output, `${target.target}.zip`);
+    writeFileSync(archive, body, { flag: "wx", mode: 0o600 });
+    const bytes = verifyGithubNativeArchive(archive, join(output, target.target), target.target, candidate, bunVersion);
+    targets.push({ target: target.target, artifact: retained, job: host, bytes });
+    if (!same(retained, artifact(await get(`${prefix}/actions/artifacts/${retained.id}`), selected, observation.repository))) reject("github-artifact-changed");
+  }
+  if (!same(artifacts, await collectArtifacts())) reject("github-artifact-changed");
+  const finalJobs = await pages(get, `${prefix}/actions/runs/${selected.id}/attempts/${selected.run_attempt}/jobs`, "jobs", LIMITS.jobs);
+  for (const target of NATIVE_TARGETS) {
+    const expectedJob = current.jobs.find(row => row.name === `native-service (${target.os})`)!;
+    const raw = finalJobs.filter(value => object(value).id === expectedJob.id);
+    if (raw.length !== 1 || !same(targets.find(row => row.target === target.target)!.job, nativeJob(raw[0], selected, expectedJob, target.os))) reject("github-native-job-changed");
+  }
+  if (!same(observation, await inspectGithubNativeJobs(get, candidate, workflow))) reject("github-native-attempt-changed");
+  return { observation, status: "PASS" as const, targets };
+}
+
+function ghJson(endpoint: string, binary = false): Buffer {
   if ((endpoint !== `/repositories/${GITHUB_REPOSITORY_ID}` && !/^\/repos\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/actions\//.test(endpoint)) || !/^[/A-Za-z0-9_.?=&-]+$/.test(endpoint)) reject("github-endpoint-refused");
   try {
     return execFileSync("gh", ["api", "--hostname", "github.com", "--method", "GET", "-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2022-11-28", endpoint],
-      { maxBuffer: LIMITS.json_bytes, timeout: LIMITS.timeout_ms, stdio: ["ignore", "pipe", "pipe"] });
+      { maxBuffer: binary ? GITHUB_ARCHIVE_LIMIT : LIMITS.json_bytes, timeout: LIMITS.timeout_ms, stdio: ["ignore", "pipe", "pipe"] });
   } catch { reject("github-read-unavailable"); }
 }
 
@@ -224,6 +327,8 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
   const collectorHead = execFileSync("git", ["-C", EVALUATOR_ROOT, "rev-parse", "HEAD"], { encoding: "utf8", timeout: LIMITS.timeout_ms }).trim();
   const collectorFrame = assertProductCheckoutCustody(EVALUATOR_ROOT, collectorHead, ["scripts/github-release-evidence.ts"], COLLECTOR_FILES);
   if (validateToolchain(root).length > 0) reject("github-candidate-toolchain-invalid");
+  const commandBindings = validateGithubCommandBindings(candidateFrame.files.find(file => file.path === "package.json")!.bytes,
+    collectorFrame.files.find(file => file.path === "package.json")!.bytes);
   const workflows = new Map(REQUIRED.map(item => [item.path, candidateFrame.files.find(file => file.path === item.path)!.bytes.toString("utf8")]));
   const checkOutputParent = parents(output);
   mkdirSync(output, { mode: 0o700 }); checkOutputParent();
@@ -232,18 +337,31 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
   const started = new Date().toISOString();
   let observation: GithubCandidateObservation | null = null;
   let failure: string | null = null;
-  try {
-    observation = await inspectGithubCandidate(async endpoint => {
+  let native: Awaited<ReturnType<typeof inspectGithubNativeArtifacts>> | null = null;
+  let nativeFailure: string | null = null;
+  let onlineRequests = 0; const onlineStarted = performance.now();
+  const bounded = () => { if (++onlineRequests > LIMITS.requests || performance.now() - onlineStarted > LIMITS.total_ms) reject("github-observation-limit"); };
+  const get: GetJson = async endpoint => {
+      bounded();
       const bytes = ghJson(endpoint), name = `github-${String(raw.length + 1).padStart(4, "0")}.json`;
       writeFileSync(join(output, name), bytes, { flag: "wx", mode: 0o600 });
       raw.push({ path: name, endpoint, sha256: hash(bytes), bytes: bytes.length });
       return parseProofJson(bytes);
-    }, candidate, workflows);
+  };
+  try {
+    observation = await inspectGithubCandidate(get, candidate, workflows);
+    try {
+      const nativeWorkflow = candidateFrame.files.find(file => file.path === ".github/workflows/macos-native.yml")!.bytes.toString("utf8");
+      const bunVersion = candidateFrame.files.find(file => file.path === ".bun-version")!.bytes.toString("utf8").trim();
+      native = await inspectGithubNativeArtifacts(get, async endpoint => { bounded(); return ghJson(endpoint, true); }, candidate, nativeWorkflow, bunVersion, output);
+    } catch (error) { nativeFailure = error instanceof EvidenceError ? error.reason : "github-native-observation-unavailable"; }
+    // Native downloads may take time: CI credit must still describe current facts.
+    if (!same(observation, await inspectGithubCandidate(get, candidate, workflows))) reject("github-required-checks-changed");
     candidateFrame.unchanged(); collectorFrame.unchanged(); index.unchanged(); checkOutput();
   } catch (error) { failure = error instanceof EvidenceError ? error.reason : "github-observation-unavailable"; }
   const retained = { schema: "kizuki.github-collection/v1", candidate_source_sha: candidate, collector_source_sha: collectorHead,
     candidate_files: candidateFrame.files.map(({ path, sha256 }) => ({ path, sha256 })), collector_files: collectorFrame.files.map(({ path, sha256 }) => ({ path, sha256 })),
-    started_at: started, completed_at: new Date().toISOString(), raw, observation, failure,
+    started_at: started, completed_at: new Date().toISOString(), command_bindings: commandBindings, raw, observation, failure, native, native_failure: nativeFailure,
     trust_scope: "fresh GitHub HTTPS observation under local operator custody; saved JSON alone is not an authenticated input" };
   const receiptPath = join(output, "github-observation.json");
   writeFileSync(receiptPath, JSON.stringify(retained, null, 2) + "\n", { flag: "wx", mode: 0o600 });
@@ -259,9 +377,15 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
     const passed = observation.required.every(item => item.status === "PASS");
     Object.assign(gate, { status: passed ? "PASS" : "FAIL", reason: passed ? "github-current-required-jobs-passed" : "github-current-required-jobs-not-passed", evidence_sha256: passed ? receipt.sha256 : null });
   }
+  for (const target of NATIVE_TARGETS) {
+    const row = report.gates.find(item => item.id === `native.${target.target}`)!;
+    const passed = failure === null && nativeFailure === null && native?.status === "PASS" && native.targets.length === 2;
+    Object.assign(row, { status: passed ? "PASS" : native?.status === "FAIL" ? "FAIL" : "UNVERIFIABLE",
+      reason: passed ? "github-paired-native-package-proof" : failure ?? nativeFailure ?? "github-paired-native-jobs-not-passed", evidence_sha256: passed ? receipt.sha256 : null });
+  }
   const result = { ...report, schema: "kizuki.online-acceptance-report/v1", ...releaseDecision(profile, report.gates), github_observation_sha256: receipt.sha256,
-    trust_scope: `${report.trust_scope}; candidate.required-checks additionally observed from GitHub during this evaluation`,
-    online_policy_sha256: hash(JSON.stringify({ schema: "kizuki.github-evidence-policy/v1", repository_id: GITHUB_REPOSITORY_ID, required: REQUIRED, limits: LIMITS, selection: "latest-attempt-start-no-pending-ambiguous-refused" })),
+    trust_scope: `${report.trust_scope}; candidate.required-checks and native target facts additionally observed from GitHub during this evaluation; lifecycle remains separate`,
+    online_policy_sha256: hash(JSON.stringify({ schema: "kizuki.github-evidence-policy/v1", repository_id: GITHUB_REPOSITORY_ID, required: REQUIRED, native_targets: NATIVE_TARGETS, native_archive_bytes: GITHUB_ARCHIVE_LIMIT, package_commands: PACKAGE_COMMANDS, limits: LIMITS, selection: "latest-attempt-start-no-pending-ambiguous-refused" })),
     online_verifier_sha256: hash(JSON.stringify(retained.collector_files)) };
   receipt.unchanged();
   writeAcceptanceReport(join(output, "acceptance-report.json"), result);

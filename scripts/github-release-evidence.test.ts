@@ -1,7 +1,16 @@
-import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { afterEach, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { writePackageFixture } from "./release-package-fixture";
+import { CURRENT_PACKAGE_FILES } from "./release-artifacts";
+import { artifactProofSteps, SQLITE_ENGINE_POLICY } from "./artifact-proof";
+import { distributionIdentity } from "./release-notices";
+import { verifyGithubNativeArchive } from "./github-native-artifact";
 import { resolve } from "node:path";
-import { GITHUB_REPOSITORY_ID, inspectGithubCandidate, parseGithubEvidenceArgs } from "./github-release-evidence";
+import { GITHUB_REPOSITORY_ID, inspectGithubCandidate, inspectGithubNativeArtifacts, inspectGithubNativeJobs, validateGithubCommandBindings, parseGithubEvidenceArgs } from "./github-release-evidence";
 
 const SHA = "a".repeat(40);
 const REPO = { id: GITHUB_REPOSITORY_ID, full_name: "fixture-owner/fixture-repo", private: false };
@@ -180,4 +189,152 @@ test("end freshness rereads every latest attempt even if inventory and selected 
     if (endpoint.endsWith("/101/attempts/1") && ++count === 2) value.conclusion = "failure";
     return value;
   }, SHA, workflowText)).rejects.toThrow("github-attempt-changed");
+});
+
+
+const nativeRoots: string[] = [];
+afterEach(() => { for (const root of nativeRoots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+const digest = (value: Buffer) => createHash("sha256").update(value).digest("hex");
+function syntheticArchive(target: string, mode = "valid") {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-github-native-")); nativeRoots.push(root);
+  const directory = join(root, "package"); mkdirSync(directory);
+  const build = writePackageFixture(directory, SHA, target);
+  const package_sha256 = Object.fromEntries(CURRENT_PACKAGE_FILES.map(name => [name, digest(readFileSync(join(directory, name)))]));
+  const paths = { executable: "/tmp/kizuki-artifact-proof-synthetic/artifact/kizuki", home: "/tmp/kizuki-artifact-proof-synthetic/execution/home",
+    config: "/tmp/kizuki-artifact-proof-synthetic/execution/config/kizuki.toml", vault: "/tmp/kizuki-artifact-proof-synthetic/execution/vault", restored_vault: "/tmp/kizuki-artifact-proof-synthetic/execution/restored" };
+  const engine = SQLITE_ENGINE_POLICY.accepted[0];
+  const runtime = { schema: "kizuki.sqlite-runtime/v1", bun_version: "1.3.14", sqlite_version: engine.sqlite_version, sqlite_source_id: engine.sqlite_source_id };
+  const proof: any = { schema: "kizuki.artifact-proof/v3", source_sha: SHA, target, host_platform: target.includes("linux") ? "linux" : "darwin", host_arch: target.includes("linux") ? "x64" : "arm64",
+    host_kernel_release: "synthetic-kernel", binary_sha256: package_sha256.kizuki, bun_version: "1.3.14", package_sha256, paths, distribution_identity: distributionIdentity(build.distribution),
+    steps: artifactProofSteps("kizuki.artifact-proof/v3", paths).map(step => ({ ...step, passed: true, exit_code: 0 })), failures: [],
+    engine_observations: { kizuki: { executable_sha256: package_sha256.kizuki, runtime, exit_code: 0, doctor_status: "ok" }, kizuki_mcp: { executable_sha256: package_sha256["kizuki-mcp"], runtime, exit_code: 0, mcp_is_error: false } } };
+  if (mode === "wrong-host") proof.host_arch = "wrong";
+  if (mode === "skipped-proof") proof.steps[2].passed = false;
+  if (mode === "legacy-proof") proof.schema = "kizuki.artifact-proof/v2";
+  writeFileSync(join(root, "proof.json"), JSON.stringify(proof));
+  const archive = join(root, "input.zip");
+  execFileSync("python3", ["-c", `import pathlib,sys,zipfile,stat
+root=pathlib.Path(sys.argv[1]); target=sys.argv[2]; mode=sys.argv[3]
+items=[('repo/repo/dist/kizuki-0.1.0/'+target+'/'+p.name,p.read_bytes()) for p in (root/'package').iterdir()]
+items += [('_temp/kizuki-native-artifact-proof/receipt.json',(root/'proof.json').read_bytes()),('_temp/kizuki-native-service-lifecycle/receipt.json',b'{"diagnostic":"synthetic only"}')]
+if mode=='extra': items.append(('unexpected',b'x'))
+if mode=='duplicate': items.append(items[0])
+if mode=='missing': items.pop()
+if mode=='traversal': items[0]=('../escape',items[0][1])
+if mode=='absolute': items[0]=('/escape',items[0][1])
+if mode=='oversize': items=[(n,b'x'*65537 if n.endswith('/README.txt') else b) for n,b in items]
+with zipfile.ZipFile(root/'input.zip','w',compression=zipfile.ZIP_DEFLATED) as z:
+ for i,(name,body) in enumerate(items):
+  entry=zipfile.ZipInfo(name); entry.compress_type=zipfile.ZIP_DEFLATED
+  if mode=='symlink' and i==0: entry.create_system=3; entry.external_attr=(stat.S_IFLNK|0o777)<<16
+  z.writestr(entry,body)
+`, root, target, mode], { stdio: ["ignore", "ignore", "pipe"] });
+  let bytes = readFileSync(archive);
+  if (mode === "truncated") { bytes = bytes.subarray(0, bytes.length - 5); writeFileSync(archive, bytes); }
+  return { root, archive, bytes, output: join(root, "unpacked") };
+}
+
+test.each(["bun-linux-x64-baseline", "bun-darwin-arm64"])("closed native %s archive validates actual seven package bytes without executing them", target => {
+  const f = syntheticArchive(target), result = verifyGithubNativeArchive(f.archive, f.output, target, SHA, "1.3.14");
+  expect(result.archive_sha256).toBe(digest(f.bytes));
+  expect(Object.keys(result.package_sha256).sort()).toEqual([...CURRENT_PACKAGE_FILES].sort());
+  expect(result.lifecycle.release_credit).toBe(false);
+});
+
+test.each(["extra", "duplicate", "missing", "traversal", "absolute", "oversize", "symlink", "truncated", "wrong-host", "skipped-proof", "legacy-proof"])("native archive refuses %s", mode => {
+  const f = syntheticArchive("bun-linux-x64-baseline", mode);
+  expect(() => verifyGithubNativeArchive(f.archive, f.output, "bun-linux-x64-baseline", SHA, "1.3.14")).toThrow();
+});
+
+function nativeFixture() {
+  const f = fixture(), path = ".github/workflows/macos-native.yml", text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  const selected = f.run(301, path, 33); selected.event = "workflow_dispatch"; f.runs.splice(0, f.runs.length, selected);
+  const steps = (Bun.YAML.parse(text) as any).jobs["native-service"].steps;
+  const archives = new Map<number, ReturnType<typeof syntheticArchive>>();
+  const artifacts: any[] = [];
+  const jobs = ["ubuntu-24.04", "macos-15"].map((os, index) => {
+    const archive = syntheticArchive(index === 0 ? "bun-linux-x64-baseline" : "bun-darwin-arm64"); archives.set(index + 401, archive);
+    artifacts.push({ id: index + 401, name: `native-service-lifecycle-${os}-${SHA}`, size_in_bytes: archive.bytes.length, digest: `sha256:${digest(archive.bytes)}`, expired: false,
+      created_at: "2026-09-07T00:05:01Z", updated_at: "2026-09-07T00:05:01Z", expires_at: "2026-09-14T00:05:01Z",
+      workflow_run: { id: 301, repository_id: REPO.id, head_repository_id: REPO.id, head_sha: SHA } });
+    return { id: index + 30100, run_id: 301, run_attempt: 1, head_sha: SHA, name: `native-service (${os})`, status: "completed", conclusion: "success",
+      labels: [os], runner_id: index + 1001, runner_group_id: 0, runner_group_name: "GitHub Actions", started_at: "2026-09-07T00:02:00Z", completed_at: "2026-09-07T00:06:00Z",
+      steps: [{ name: "Set up job", number: 1, status: "completed", conclusion: "success" }, ...steps.map((step: any, offset: number) => ({
+        name: step.name ?? `Run ${step.uses}`, number: offset + 2, status: "completed", conclusion: os === "macos-15" && step.if === "${{ runner.os == 'Linux' }}" ? "skipped" : "success",
+        started_at: "2026-09-07T00:05:00Z", completed_at: "2026-09-07T00:05:01Z",
+      }))] };
+  });
+  f.jobs.set(301, [...jobs, { id: 30102, run_id: 301, run_attempt: 1, head_sha: SHA, name: "native-arm64", status: "completed", conclusion: "skipped", steps: [] }]);
+  const get = async (endpoint: string) => {
+    if (endpoint.includes("/artifacts")) {
+      const match = endpoint.match(/\/artifacts\/(\d+)$/);
+      return structuredClone(match ? artifacts.find(row => row.id === Number(match[1])) : { total_count: artifacts.length, artifacts });
+    }
+    return f.get(endpoint);
+  };
+  let downloads = 0;
+  const download = async (endpoint: string) => { downloads++; return archives.get(Number(endpoint.match(/\/artifacts\/(\d+)\/zip$/)![1]))!.bytes; };
+  const output = join(archives.get(401)!.root, "collection"); mkdirSync(output);
+  return { ...f, text, selected, nativeJobs: jobs, artifacts, get, download, output, downloads: () => downloads };
+}
+
+test("same successful native matrix attempt binds both digests and leaves lifecycle uncredited", async () => {
+  const f = nativeFixture(), result = await inspectGithubNativeArtifacts(f.get, f.download, SHA, f.text, "1.3.14", f.output);
+  expect(result.status).toBe("PASS"); expect(result.targets).toHaveLength(2); expect(f.downloads()).toBe(2);
+  expect(result.targets.every(row => row.bytes.lifecycle.release_credit === false)).toBe(true);
+});
+
+test.each(["old-upload", "wrong-digest", "wrong-repository", "wrong-run", "missing-artifact", "wrong-runner", "mixed-attempt"])("native API refuses %s", async mode => {
+  const f = nativeFixture();
+  if (mode === "old-upload") f.artifacts[0].created_at = "2026-09-07T00:00:00Z";
+  if (mode === "wrong-digest") f.artifacts[0].digest = `sha256:${"0".repeat(64)}`;
+  if (mode === "wrong-repository") f.artifacts[0].workflow_run.repository_id = 1;
+  if (mode === "wrong-run") f.artifacts[0].workflow_run.id = 302;
+  if (mode === "missing-artifact") f.artifacts.pop();
+  if (mode === "wrong-runner") f.nativeJobs[0]!.runner_group_id = 1;
+  if (mode === "mixed-attempt") f.nativeJobs[1]!.run_attempt = 2;
+  await expect(inspectGithubNativeArtifacts(f.get, f.download, SHA, f.text, "1.3.14", f.output)).rejects.toThrow();
+});
+
+test("failed paired native run cannot borrow its one successful target or download bytes", async () => {
+  const f = nativeFixture(); f.selected.conclusion = "failure"; f.nativeJobs[1]!.conclusion = "failure";
+  const result = await inspectGithubNativeArtifacts(f.get, f.download, SHA, f.text, "1.3.14", f.output);
+  expect(result.status).toBe("FAIL"); expect(result.targets).toEqual([]); expect(f.downloads()).toBe(0);
+});
+
+test.each(["artifact", "job", "attempt"])("native %s change during download invalidates credit", async mode => {
+  const f = nativeFixture(); let mutated = false;
+  const download = async (endpoint: string) => {
+    const bytes = await f.download(endpoint);
+    if (!mutated) {
+      mutated = true;
+      if (mode === "artifact") f.artifacts[0].updated_at = "2026-09-07T00:05:02Z";
+      if (mode === "job") f.nativeJobs[0]!.runner_id++;
+      if (mode === "attempt") f.selected.run_attempt++;
+    }
+    return bytes;
+  };
+  await expect(inspectGithubNativeArtifacts(f.get, download, SHA, f.text, "1.3.14", f.output)).rejects.toThrow();
+});
+
+
+test("archive inspection ignores Python module and site injection from caller environment", () => {
+  const f = syntheticArchive("bun-linux-x64-baseline"), marker = join(f.root, "injected");
+  writeFileSync(join(f.root, "zipfile.py"), `open(${JSON.stringify(marker)}, "w").write("injected")\nraise RuntimeError("wrong module")\n`);
+  const child = Bun.spawnSync([process.execPath, "--eval", `import {verifyGithubNativeArchive} from ${JSON.stringify(join(import.meta.dir, "github-native-artifact.ts"))};
+    const result=verifyGithubNativeArchive(${JSON.stringify(f.archive)},${JSON.stringify(f.output)},"bun-linux-x64-baseline",${JSON.stringify(SHA)},"1.3.14");console.log(result.archive_sha256);`], {
+    cwd: f.root, env: { ...process.env, PYTHONPATH: f.root }, stdout: "pipe", stderr: "pipe", timeout: 10000,
+  });
+  expect(child.exitCode, child.stderr.toString()).toBe(0); expect(child.stdout.toString().trim()).toBe(digest(f.bytes)); expect(existsSync(marker)).toBe(false);
+});
+
+
+test.each(["verify", "typecheck", "build:release", "smoke:release", "proof:artifact"])("candidate package command %s cannot substitute execution behind a green job name", name => {
+  const reviewed = readFileSync(resolve(import.meta.dir, "../package.json")), candidate = JSON.parse(reviewed.toString());
+  expect(validateGithubCommandBindings(reviewed, reviewed)).toHaveLength(5);
+  candidate.scripts[name] = "echo synthetic replacement";
+  expect(() => validateGithubCommandBindings(Buffer.from(JSON.stringify(candidate)), reviewed)).toThrow("github-candidate-command-mismatch");
+  candidate.scripts[name] = JSON.parse(reviewed.toString()).scripts[name];
+  candidate.scripts["pre" + name] = "echo synthetic hook";
+  expect(() => validateGithubCommandBindings(Buffer.from(JSON.stringify(candidate)), reviewed)).toThrow("github-candidate-command-mismatch");
 });

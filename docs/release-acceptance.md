@@ -60,8 +60,12 @@ bun scripts/github-release-evidence.ts --profile rc --evidence /absolute/evidenc
 ```
 
 The collector uses existing `gh` read access and performs GET requests only.
+Native archive inspection also requires Python 3 with its standard `zipfile`
+module in isolated interpreter mode; downloaded executable bytes are never launched by the collector.
 The candidate checkout must be clean and match the index SHA. It validates
-that checkout's workflow and toolchain files with the current verifier; it
+that checkout's workflow and toolchain files with the current verifier, and
+binds invoked package scripts and associated hooks to the collector's reviewed
+definitions; it
 also binds the collector's separate clean source revision and transitive product
 imports. Both source
 inventories, raw public API responses, and observation hashes are retained in
@@ -70,8 +74,21 @@ the new private output directory alongside `acceptance-report.json`.
 There is no repository, host, run, attempt, or passing-facts option. Saved API
 JSON is useful for review but cannot be submitted to establish online credit.
 The offline checker continues to leave raw CI receipts unverified. This online
-path supplies CI evidence only: native lifecycle, accounts, independent review,
-findings and unfamiliar-human acceptance remain separate required evidence.
+path can also establish each `native.<target>` gate from one successful paired
+native workflow attempt. Both exact hosted matrix jobs, authored step results,
+artifact names, repository/run/source identities and API archive digests must
+match. Each artifact's creation time must fall within that attempt's successful
+upload step. Jobs, artifacts and attempts are reread after download; CI is checked
+again before credit. The archive must contain exactly the seven current package
+files, the current artifact proof and the retained lifecycle diagnostic. Bounded
+archive inspection rejects links, paths outside that inventory, duplicates,
+truncation and oversized files, then applies the current package/proof parsers.
+
+The existing lifecycle receipt is retained as diagnostic evidence. It does not
+prove a real release upgrade or reboot, and cannot establish `lifecycle.<target>`.
+Accounts, independent review, findings and unfamiliar-human acceptance also
+remain separate required evidence. Earlier native failures remain in the history;
+a failed paired attempt cannot contribute a single successful platform as a pass.
 
 ## Index schema
 
@@ -253,7 +270,7 @@ run, and does not itself produce a trusted passing receipt.
 ## Verification
 
 ```bash
-bun test scripts/artifact-proof.test.ts scripts/artifact-engine.test.ts scripts/go-no-go.test.ts scripts/stranger-proof.test.ts scripts/release-artifacts.test.ts scripts/release-targets.test.ts scripts/qualification.test.ts
+bun test scripts/github-release-evidence.test.ts scripts/artifact-proof.test.ts scripts/artifact-engine.test.ts scripts/go-no-go.test.ts scripts/stranger-proof.test.ts scripts/release-artifacts.test.ts scripts/release-targets.test.ts scripts/qualification.test.ts
 bun run typecheck
 bun run verify
 ```
