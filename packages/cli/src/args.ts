@@ -85,12 +85,12 @@ export function extractVault(tokens: string[]): {
       continue;
     }
     if (token === "--vault" || token.startsWith("--vault=")) {
+      if (vault !== null) throw new UsageError("repeated option --vault");
       const inlineValue = token === "--vault" ? undefined : token.slice("--vault=".length);
       const value = inlineValue ?? tokens[index + 1];
-      if (value === undefined || (inlineValue === undefined && value.startsWith("--"))) {
+      if (value === undefined || value.length === 0 || (inlineValue === undefined && value.startsWith("--"))) {
         throw new UsageError("missing value for --vault");
       }
-      if (vault !== null) throw new UsageError("repeated option --vault");
       vault = value;
       if (inlineValue === undefined) index += 1;
       continue;

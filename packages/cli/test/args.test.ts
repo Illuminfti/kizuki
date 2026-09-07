@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { extractVault, parseArguments } from "../src/args";
 import { createHelpers } from "./helpers";
+import pkg from "../package.json" with { type: "json" };
 
 const { cleanup, isolatedEnv, runCli } = createHelpers();
 afterEach(cleanup);
@@ -55,17 +56,20 @@ describe("option grammar", () => {
   test("the public CLI accepts inline global values without stealing command data", () => {
     const result = runCli(isolatedEnv(), "version", "--vault=--literal");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe("0.1.0\n");
+    expect(result.stdout).toBe(`${pkg.version}\n`);
     expect(result.stderr).toBe("");
     const literal = runCli(isolatedEnv(), "version", "--", "--vault=literal");
     expect(literal.exitCode).toBe(2);
     expect(literal.stderr).toContain("usage: kizuki version");
+    expect(literal.stderr).toContain("error: invalid arguments");
     expect(literal.stderr).not.toContain("unknown option");
   });
 
   test("the public CLI reports global option failures without printing values", () => {
     for (const [args, diagnostic] of [
       [["version", "--vault"], "missing value for --vault"],
+      [["version", "--vault="], "missing value for --vault"],
+      [["version", "--vault", ""], "missing value for --vault"],
       [["version", "--vault=private-a", "--vault=private-b"], "repeated option --vault"],
     ] as const) {
       const result = runCli(isolatedEnv(), ...args);
@@ -74,6 +78,22 @@ describe("option grammar", () => {
       expect(result.stderr).toContain(`error: ${diagnostic}`);
       expect(result.stderr).not.toContain("private-a");
       expect(result.stderr).not.toContain("private-b");
+    }
+  });
+
+  test("the public CLI distinguishes every command parser failure", () => {
+    for (const [args, diagnostic] of [
+      [["query", "--"], "wrong arity"],
+      [["query", "text", "--unknown=value"], "unknown option --unknown"],
+      [["query", "text", "--limit"], "missing value for --limit"],
+      [["query", "text", "--limit=1", "--limit=2"], "repeated option --limit"],
+      [["query", "text", "--json", "--json"], "repeated flag --json"],
+    ] as const) {
+      const result = runCli(isolatedEnv(), ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki query");
     }
   });
 });
