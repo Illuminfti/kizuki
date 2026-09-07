@@ -187,6 +187,8 @@ describe("serveGraph", () => {
     ).toBe("invalid_arguments");
   });
 
+  // Each cap case records 102 pages through capture, claims, and durable canon writes.
+  // Allow that setup its own CI budget; serveGraph bounds and assertions stay intact.
   test("a public reader is not capped by private incoming edges", async () => {
     await recordedPage(fixture.db, fixture.vaultPath, "facts/cap-hub.md", {
       id: "fact:cap-hub",
@@ -235,7 +237,7 @@ describe("serveGraph", () => {
     expect(limited.data?.truncated).toBe(false);
     expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 100 }]);
     expect(JSON.stringify(limited)).not.toContain("aaa-secret");
-  });
+  }, 15_000);
 
   test("a leftover wikilink stays prose when an archived page shares the title", async () => {
     await recordedPage(fixture.db, fixture.vaultPath, "facts/ghost-link.md", {
@@ -325,7 +327,7 @@ describe("serveGraph", () => {
     expect(limited.data?.truncated).toBe(false);
     expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 100 }]);
     expect(JSON.stringify(limited)).not.toContain("aaa-out-secret");
-  });
+  }, 15_000);
 
   test("a public reader is not capped by private source dests", async () => {
     const eventIds: string[] = [];
