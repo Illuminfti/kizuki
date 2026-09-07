@@ -1011,10 +1011,13 @@ describe("restoreVault", () => {
       { encoding: "kizuki.identity-evidence/raw-v1", raw: "\ud800" },
       { encoding: "kizuki.identity-evidence/raw-v1", raw: "[]", extra: true },
     ];
+    const db = openLedger(":memory:");
+    const vaultPath = temporary("kizuki-identity-vault-");
+    initVault(vaultPath);
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    db.close();
     for (const evidence of cases) {
-      const { db, vaultPath } = populated();
-      const backup = join(temporary("kizuki-export-parent-"), "dump");
-      const manifest = exportVault(db, vaultPath, backup);
       const key = "claims/identity_links.jsonl";
       const payload = Buffer.from(`${JSON.stringify({
         subject_a: "person:a", subject_b: "person:b", score: 1, evidence,
@@ -1029,7 +1032,6 @@ describe("restoreVault", () => {
       const target = join(temporary("kizuki-restore-parent-"), "vault");
       expect(() => restoreVault(backup, target)).toThrow(/identity evidence/);
       expect(existsSync(target)).toBe(false);
-      db.close();
     }
   });
 
