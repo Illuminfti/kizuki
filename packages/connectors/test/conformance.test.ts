@@ -1,3 +1,4 @@
+import { exportPurgeFixture, imapPurgeFixture, telegramPurgeFixture } from "./purge-fixtures";
 import { XApiFixture } from "@kizuki/connector-x/api/testkit";
 import { X_API_CONNECTOR_ID, createXApiConnector } from "@kizuki/connector-x/api";
 import { GOOGLE_CALENDAR_CONNECTOR_ID, createGoogleCalendarConnector } from "@kizuki/connector-google-calendar";
@@ -241,17 +242,17 @@ function batteryFor(
           // Pinned so the double backfill is identical on any host.
           timezone: WHATSAPP_FIXTURE_TIMEZONE,
         }),
-        { unavailable: missingPath(WHATSAPP_IMPORT_CONNECTOR_ID) },
+        { unavailable: missingPath(WHATSAPP_IMPORT_CONNECTOR_ID), purgeFixture: () => exportPurgeFixture(WHATSAPP_IMPORT_CONNECTOR_ID) },
       ),
     [POCKET_IMPORT_CONNECTOR_ID]: () =>
       runConformance(
         getConnector(POCKET_IMPORT_CONNECTOR_ID, { path: layout.pocket }),
-        { unavailable: missingPath(POCKET_IMPORT_CONNECTOR_ID) },
+        { unavailable: missingPath(POCKET_IMPORT_CONNECTOR_ID), purgeFixture: () => exportPurgeFixture(POCKET_IMPORT_CONNECTOR_ID) },
       ),
     [OMNIVORE_IMPORT_CONNECTOR_ID]: () =>
       runConformance(
         getConnector(OMNIVORE_IMPORT_CONNECTOR_ID, { path: layout.omnivore }),
-        { unavailable: missingPath(OMNIVORE_IMPORT_CONNECTOR_ID) },
+        { unavailable: missingPath(OMNIVORE_IMPORT_CONNECTOR_ID), purgeFixture: () => exportPurgeFixture(OMNIVORE_IMPORT_CONNECTOR_ID) },
       ),
     [X_ARCHIVE_CONNECTOR_ID]: () =>
       runConformance(
@@ -274,6 +275,7 @@ function batteryFor(
         );
       });
       return runConformance(telegram, {
+        purgeFixture: telegramPurgeFixture,
         unavailable: {
           connector: new TelegramConnector({}, scriptedDeps()),
         },
@@ -309,6 +311,7 @@ function batteryFor(
       );
       await imap.connect(async () => JSON.stringify(fixtureState()));
       return runConformance(imap, {
+        purgeFixture: imapPurgeFixture,
         unavailable: { connector: createImapConnector({}) },
         tombstone: {
           prepare: async () => (await imap.backfill(null)).cursor,

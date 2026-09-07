@@ -42,3 +42,5 @@ export {
 } from "./import-whatsapp";
 export { LEGACY_WIKI_FIXTURE } from "./import-legacy-wiki";
 export { LEGACY_EVENTS_FIXTURE } from "./import-legacy-events";
+
+export type { PurgeConformanceFactory, PurgeConformanceFixture, PurgeFixtureRow } from "./purge-conformance";

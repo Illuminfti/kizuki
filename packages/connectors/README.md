@@ -248,3 +248,36 @@ X API access are not supported by this bounded importer.
   deferred by an explicit decision.
 - Reading zip archives, downloading or parsing media, and converting saved
   article HTML to text.
+
+
+## Purge conformance for connector authors
+
+A declared purge planner requires a `purgeFixture` factory in `runConformance`.
+The factory creates a fresh connector and disposable synthetic source, names
+known selected and unrelated records, and supplies a source snapshot, an
+executor, an absence verifier and cleanup. See
+[test fixtures](test/purge-fixtures.ts) and the
+[adversarial execution tests](test/purge-conformance.test.ts).
+
+The suite refuses a missing factory before calling the configured connector's
+`purgeSource`. It checks that planning leaves the source unchanged, requires
+`complete: true` and the exact removable/unreachable partition, executes the
+admitted plan, verifies every removable ID is absent, checks that unreachable
+and unrelated records are unchanged, and replans. Missing completeness,
+incomplete continuation, wrong IDs and destructive planning all fail.
+Connectors declaring no purge capability must still reject the method with
+`not_supported`.
+
+This qualifies the synthetic fixture. It does not call a real provider to delete
+data and does not replace Core's separate local erasure protocol. Read-only
+export, IMAP and Telegram fixtures have an empty removable set and must prove
+that all unreachable records survive; the mutable synthetic fixture proves
+actual execution and absence. WhatsApp, Pocket and Omnivore plans report complete
+only after reading their full configured exports. Provider planners state their
+coverage limits in their own README files.
+
+Run the shared and provider checks with:
+
+```sh
+bun test packages/connectors/test packages/connector-imap/test packages/connector-telegram/test
+```
