@@ -217,15 +217,27 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
       record("pre-init-absent-unit-diagnostics", true, serviceDiagnostics(`kizuki@lifecycle-probe-${crypto.randomUUID()}.service`));
     }
     // Default init must create and activate the installed service, without --no-service.
+    const initialDiagnostic = platform === "darwin" ? prepareLaunchctlDiagnostics(fixtureRoot) : null;
+    const instrumentedEnv = initialDiagnostic === null ? cliEnv : { ...cliEnv,
+      PATH: `${initialDiagnostic.path}:${cliEnv.PATH}`, CI: "true", GITHUB_ACTIONS: "true",
+      RUNNER_TEMP: realpathSync(process.env.RUNNER_TEMP!) };
     const initializedAt = new Date().toISOString();
-    const initialized = invoke([executable, "init", vault, "--no-default"]);
+    const initialized = invoke([executable, "init", vault, "--no-default"], instrumentedEnv);
+    const initialRows = initialDiagnostic?.collect().rows.length ?? 0;
     if (existsSync(join(vault, ".kizuki", "vault-id"))) {
       const vaultId = readFileSync(join(vault, ".kizuki", "vault-id"), "utf8").trim();
       check(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(vaultId), "invalid synthetic vault identity");
       unit = platform === "darwin" ? `dev.kizuki.${vaultId}` : `kizuki@${vaultId}.service`;
       unitPath = platform === "darwin" ? join(home, "Library/LaunchAgents", `${unit}.plist`) : join(configHome, "systemd/user", unit);
     }
-    record("default-init-installs-service", initialized.exit_code === 0, { ...initialized, native_status: unit ? serviceDiagnostics(unit) : null });
+    if (initialDiagnostic !== null) {
+      steps.push({ id: "instrumented-default-init-diagnostics", passed: initialRows > 0,
+        evidence: { ...initialDiagnostic.collect(), expected_wrapper_sha256: initialDiagnostic.wrapper_sha256 } });
+      save();
+    }
+    record("default-init-installs-service", initialized.exit_code === 0, { ...initialized,
+      instrumented: initialDiagnostic !== null, timing_changed: initialDiagnostic !== null,
+      native_status: unit ? serviceDiagnostics(unit) : null });
     let observed = await active("default-init-running", executable);
     const status = invoke([executable, "serve", "status", "--json", "--vault", vault]);
     const statusBody = JSON.parse(status.stdout).data;
@@ -252,14 +264,15 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     writeFileSync(join(vault, ".kizuki", "serve.toml"), "[serve]\nbind_port = 0\n", { mode: 0o600 });
     if (platform === "darwin") {
       const vaultId = readFileSync(join(vault, ".kizuki/vault-id"), "utf8").trim();
-      const diagnostic = prepareLaunchctlDiagnostics(fixtureRoot, vaultId);
+      const diagnostic = initialDiagnostic!;
       // Only this CLI child sees the wrapper. launchd's unit contains no inherited
       // EnvironmentVariables, and the parent/native observer environment is unchanged.
       const env = { ...cliEnv, PATH: `${diagnostic.path}:${cliEnv.PATH}`, CI: "true", GITHUB_ACTIONS: "true",
         RUNNER_TEMP: realpathSync(process.env.RUNNER_TEMP!) };
       const before = syntheticServiceFileMetadata(fixtureRoot, vaultId);
       const result = invoke([executable, "serve", "--install", "--json", "--vault", vault], env);
-      const trace = diagnostic.collect();
+      const collected = diagnostic.collect();
+      const trace = { ...collected, rows: collected.rows.slice(initialRows) };
       const state = managerState(5000);
       steps.push({ id: "instrumented-repeat-install-diagnostics", passed: trace.rows.length > 0,
         evidence: { ...trace, expected_wrapper_sha256: diagnostic.wrapper_sha256, before,

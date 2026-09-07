@@ -104,7 +104,7 @@ test("fixture guard binds real files and rejects aliases, tampering and wrong so
     import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, lstatSync, realpathSync, rmSync, symlinkSync, unlinkSync, chmodSync } from 'node:fs';
     import { tmpdir } from 'node:os';
     import { join } from 'node:path';
-    import { launchctlFixtureMatches } from ${JSON.stringify(join(import.meta.dir, "native-launchctl-diagnostics.ts"))};
+    import { launchctlFixtureMatches, bindInitializedLaunchctlFixture } from ${JSON.stringify(join(import.meta.dir, "native-launchctl-diagnostics.ts"))};
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     const runner = realpathSync(mkdtempSync(join(tmpdir(), 'kizuki-launchctl-guard-')));
     const root = mkdtempSync(join(runner, 'kizuki native lifecycle '));
@@ -116,6 +116,12 @@ test("fixture guard binds real files and rejects aliases, tampering and wrong so
     Object.assign(process.env, { CI: 'true', GITHUB_ACTIONS: 'true', RUNNER_TEMP: runner });
     try {
       assert.equal(launchctlFixtureMatches(fixture), true);
+      const { vault_id, ...pending } = fixture;
+      assert.equal(bindInitializedLaunchctlFixture(pending).vault_id, vault_id);
+      unlinkSync(id); assert.throws(() => bindInitializedLaunchctlFixture(pending)); writeFileSync(id, 'synthetic-vault', { mode: 0o600 });
+      writeFileSync(id, '../foreign'); assert.throws(() => bindInitializedLaunchctlFixture(pending)); writeFileSync(id, 'synthetic-vault');
+      chmodSync(id, 0o644); assert.throws(() => bindInitializedLaunchctlFixture(pending)); chmodSync(id, 0o600);
+      assert.throws(() => bindInitializedLaunchctlFixture({ ...pending, binary: { ...pending.binary, ino: 0 } }));
       process.env.CI = 'false'; assert.equal(launchctlFixtureMatches(fixture), false); process.env.CI = 'true';
       assert.equal(launchctlFixtureMatches({ ...fixture, runner_temp: root }), false);
       assert.equal(launchctlFixtureMatches({ ...fixture, uid: fixture.uid + 1 }), false);

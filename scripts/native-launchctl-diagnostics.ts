@@ -103,16 +103,29 @@ export function runFixtureLaunchctl(fixture: LaunchctlFixture, argv: readonly st
   process.exit(result.exit_code);
 }
 
+/** Init creates its own identity; bind it only after its private file exists. */
+export function bindInitializedLaunchctlFixture(pending: Omit<LaunchctlFixture, "vault_id">): LaunchctlFixture {
+  const path = join(pending.root, "synthetic vault/.kizuki/vault-id");
+  if (!privateRegular(path, pending.uid, 130)) throw new Error("synthetic launchctl identity refused");
+  const fixture = { ...pending, vault_id: readFileSync(path, "utf8").trim() };
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(fixture.vault_id) || !launchctlFixtureMatches(fixture)) {
+    throw new Error("synthetic launchctl diagnostic fixture refused");
+  }
+  return fixture;
+}
+
 /** The wrapper is only placed in one CLI child's PATH. The daemon and parent env are unchanged. */
-export function prepareLaunchctlDiagnostics(root: string, vaultId: string) {
+export function prepareLaunchctlDiagnostics(root: string, vaultId?: string) {
   const folder = join(root, "launchctl diagnostics"), wrapper = join(folder, "launchctl"), trace = join(folder, "commands.jsonl");
   mkdirSync(folder, { mode: 0o700 });
   writeFileSync(trace, "", { mode: 0o600, flag: "wx" });
-  const fixture: LaunchctlFixture = { root, runner_temp: realpathSync(process.env.RUNNER_TEMP!), uid: process.getuid!(), vault_id: vaultId,
+  const pending = { root, runner_temp: realpathSync(process.env.RUNNER_TEMP!), uid: process.getuid!(),
     binary: identity(join(root, "installed package/kizuki")) };
-  const source = `#!${process.execPath}\nimport { runFixtureLaunchctl } from ${JSON.stringify(import.meta.path)};\nrunFixtureLaunchctl(${JSON.stringify(fixture)}, process.argv.slice(2));\n`;
+  const fixture = vaultId === undefined ? null : { ...pending, vault_id: vaultId };
+  const binding = fixture === null ? `bindInitializedLaunchctlFixture(${JSON.stringify(pending)})` : JSON.stringify(fixture);
+  const source = `#!${process.execPath}\nimport { runFixtureLaunchctl, bindInitializedLaunchctlFixture } from ${JSON.stringify(import.meta.path)};\nrunFixtureLaunchctl(${binding}, process.argv.slice(2));\n`;
   writeFileSync(wrapper, source, { mode: 0o700, flag: "wx" });
-  if (!launchctlFixtureMatches(fixture)) throw new Error("synthetic launchctl diagnostic fixture refused");
+  if (fixture !== null && !launchctlFixtureMatches(fixture)) throw new Error("synthetic launchctl diagnostic fixture refused");
   return { path: folder, fixture, wrapper_sha256: createHash("sha256").update(source).digest("hex"),
     collect: () => {
       const bytes = readFileSync(trace);
