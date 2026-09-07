@@ -36,8 +36,11 @@ Native proof now resolves a closed host/target registry and refuses foreign
 artifacts. Its receipt additionally binds Bun version and the checksums of all
 packaged files plus the checksum manifest. A macOS arm64 package must be proved
 on an actual macOS arm64 runner; cross-compilation and Linux fixture results do
-not count. The manual macOS workflow is cost-gated and does not activate launchd
-or provide calendar/human stranger evidence; see [native-build.md](native-build.md).
+not count. The manual workflow requires confirmed existing runner allowance.
+Its explicit `native_lifecycle_only` branch installs an ephemeral fixture through
+the native user service manager on both hosts; ordinary artifact and adapter
+checks do not. Neither branch supplies real-account or human stranger evidence;
+see [native-build.md](native-build.md).
 
 ## Effective SQLite engine evidence
 
@@ -87,6 +90,12 @@ required even with the same Bun pin. `host_kernel_release` records
 `node:os.release()`; it is not a macOS product or patch version. Vendor builds
 and backports require sourced policy entries rather than a guessed version
 comparison. Re-observe after changing the host, OS, runtime or library.
+
+Policy v2 also admits the [observed Apple vendor identity](sqlite-vendor-qualification.md)
+only for macOS arm64, Bun 1.3.14 and kernel 24.6.0. That entry is based on native
+signature, system CLI, SDK header and matching runtime observations. It is not an
+upstream SQLite source commit or an audit of Apple's private changes. Other
+targets, runtimes, kernels and version/source-ID pairs do not inherit this entry.
 
 Historical v1 receipts remain readable with their original fixture scope and
 explicitly lack engine proof. The offline acceptance evaluator and fixture

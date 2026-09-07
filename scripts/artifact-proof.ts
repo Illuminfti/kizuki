@@ -24,13 +24,22 @@ export interface ArtifactProofIdentity {
 }
 export interface EngineQualification { status: "PASS" | "MISSING" | "FAIL"; reason: string; }
 
-/** Exact source identity checked against the official release record on 2026-09-06. */
+/** Exact upstream or native-vendor observations; never a version-range exemption. */
 export const SQLITE_ENGINE_POLICY = {
-  schema: "kizuki.sqlite-engine-policy/v1",
+  schema: "kizuki.sqlite-engine-policy/v2",
   accepted: [{
+    targets: ["bun-linux-x64-baseline", "bun-darwin-arm64"],
     sqlite_version: "3.53.0",
     sqlite_source_id: "2026-04-09 11:41:38 4525003a53a7fc63ca75c59b22c79608659ca12f0131f52c18637f829977f20b",
     source_url: "https://www.sqlite.org/releaselog/3_53_0.html",
+  }, {
+    targets: ["bun-darwin-arm64"],
+    bun_version: "1.3.14",
+    host_kernel_release: "24.6.0",
+    sqlite_version: "3.43.2",
+    sqlite_source_id: "2023-10-10 13:08:14 1b37c146ee9ebb7acd0160c0ab1fd11017a419fa8a3187386ed8cb32b709aapl",
+    source_url: "https://api.github.com/repositories/1353875622/actions/jobs/101692661138/logs",
+    evidence: "docs/sqlite-vendor-qualification.md",
   }],
 } as const;
 export { ArtifactProofError, PROOF_JSON_LIMITS, parseProofJson } from "./proof-json";
@@ -118,7 +127,10 @@ export function validateArtifactProof(value: unknown, expected: ArtifactProofIde
     if (cliRuntime.bun_version !== expected.bun_version || mcpRuntime.bun_version !== expected.bun_version) reject("engine-bun-mismatch");
     if (cliRuntime.sqlite_version !== mcpRuntime.sqlite_version || cliRuntime.sqlite_source_id !== mcpRuntime.sqlite_source_id) reject("engine-sqlite-mismatch");
     cliExit = cli.exit_code as 0 | 1;
-    engine = SQLITE_ENGINE_POLICY.accepted.some(entry => entry.sqlite_version === cliRuntime.sqlite_version && entry.sqlite_source_id === cliRuntime.sqlite_source_id)
+    engine = SQLITE_ENGINE_POLICY.accepted.some(entry => entry.targets.some(admitted => admitted === expected.target) &&
+      (!("bun_version" in entry) || entry.bun_version === cliRuntime.bun_version) &&
+      (!("host_kernel_release" in entry) || entry.host_kernel_release === kernel) &&
+      entry.sqlite_version === cliRuntime.sqlite_version && entry.sqlite_source_id === cliRuntime.sqlite_source_id)
       ? { status: "PASS", reason: "effective-sqlite-identity-qualified" }
       : { status: "FAIL", reason: "unqualified-sqlite-identity" };
   }

@@ -91,11 +91,33 @@ test.each([0, 1])("v2 qualifies both exact engines while preserving doctor exit 
 
 test("the initial engine policy names the official exact pair", () => {
   const { proof } = fixture();
-  expect(SQLITE_ENGINE_POLICY.accepted).toHaveLength(1);
+  expect(SQLITE_ENGINE_POLICY.schema).toBe("kizuki.sqlite-engine-policy/v2");
+  expect(SQLITE_ENGINE_POLICY.accepted).toHaveLength(2);
   const entry = SQLITE_ENGINE_POLICY.accepted[0];
   expect(proof.engine_observations!.kizuki.runtime.sqlite_version).toBe(entry.sqlite_version);
   expect(proof.engine_observations!.kizuki.runtime.sqlite_source_id).toBe(entry.sqlite_source_id);
   expect(entry.source_url).toBe("https://www.sqlite.org/releaselog/3_53_0.html");
+});
+
+test("the observed Apple vendor identity is restricted to its native target, Bun and kernel", () => {
+  const { proof, expected } = fixture();
+  const entry = SQLITE_ENGINE_POLICY.accepted[1];
+  for (const observation of Object.values(proof.engine_observations!)) {
+    observation.runtime.sqlite_version = entry.sqlite_version;
+    observation.runtime.sqlite_source_id = entry.sqlite_source_id;
+  }
+  proof.host_kernel_release = entry.host_kernel_release;
+  // Equal SQLite strings cannot qualify a Linux package as this Apple build.
+  expect(validateArtifactProof(proof, expected).engine.status).toBe("FAIL");
+  proof.target = expected.target = "bun-darwin-arm64";
+  proof.host_platform = "darwin"; proof.host_arch = "arm64";
+  expect(validateArtifactProof(proof, expected).engine.status).toBe("PASS");
+  proof.host_kernel_release = "24.7.0";
+  expect(validateArtifactProof(proof, expected).engine.status).toBe("FAIL");
+  proof.host_kernel_release = entry.host_kernel_release;
+  proof.bun_version = expected.bun_version = "1.3.15";
+  for (const observation of Object.values(proof.engine_observations!)) observation.runtime.bun_version = "1.3.15";
+  expect(validateArtifactProof(proof, expected).engine.status).toBe("FAIL");
 });
 
 test.each(["version", "source-id"])("matching unknown engine %s stays observable and unqualified", field => {
