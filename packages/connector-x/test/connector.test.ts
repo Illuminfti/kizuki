@@ -148,6 +148,15 @@ describe("local X archive connector", () => {
     expect(parseCursor(page0.cursor!)).toMatchObject({ next_part: 1, next_record: 0, seen_records: 2 });
   });
 
+  test("a native post id repeated across parts refuses the whole archive before any checkpoint", async () => {
+    const root = await temporaryArchive();
+    await writeFile(path.join(root, "data", "tweets-part1.js"), tweetsSource(1, [tweet("1742012345678901234", "same id, later part")]));
+    const connector = new XArchiveConnector({ path: root });
+    await expect(connector.backfill(null)).rejects.toMatchObject({ code: "parse_error" });
+    expect(await connector.health()).toMatchObject({ state: "misconfigured", detail: "kizuki.import-x-archive: archive contains a duplicate native post id" });
+    await expect(scanArchive(root)).rejects.toMatchObject({ code: "parse_error" });
+  });
+
   test("health and connect validate every supported post before reporting ready", async () => {
     const root = await temporaryArchive();
     await writeFile(

@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
-import { DEFAULT_GRANT, setSourceGrant, registerConnection, runToCompletion, timeline } from "@kizuki/core";
+import { DEFAULT_GRANT, resolveSensitivity, setSourceGrant, registerConnection, runToCompletion, timeline } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
+import { TelegramConnector } from "../src/connector";
 import { TELEGRAM_CONNECTOR_ID } from "../src/map";
+import { scriptedDeps } from "../src/scripted";
 import { connected } from "./helpers";
 
 const FEBRUARY = Date.parse("2026-02-01T00:00:00.000Z");
@@ -50,4 +52,22 @@ test("nothing this connector captured is served under the default agent ceiling"
     timeline(db, { connector_id: TELEGRAM_CONNECTOR_ID, ceiling: "private" }),
   ).toHaveLength(12);
   db.close();
+});
+
+/** The direct-messaging class policy (RFC 0002 §8.2), read off the manifest core seals. */
+test("the manifest declares a private default over a personal floor", () => {
+  const manifest = new TelegramConnector({}, scriptedDeps()).manifest();
+  expect(manifest.default_sensitivity).toBe("private");
+  expect(manifest.sensitivity_floor).toBe("personal");
+});
+
+test("a public hint on an event is honoured only upward, never below the manifest policy", () => {
+  const manifest = new TelegramConnector({}, scriptedDeps()).manifest();
+  const resolved = resolveSensitivity({
+    connector_floor: manifest.sensitivity_floor,
+    connector_default: manifest.default_sensitivity,
+    event_hint: "public",
+  });
+  expect(resolved.sensitivity).toBe("private");
+  expect(resolved.hint_ignored).toBe(true);
 });

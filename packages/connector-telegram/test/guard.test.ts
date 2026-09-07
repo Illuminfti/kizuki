@@ -113,3 +113,30 @@ test("abandoning a page closes the provider iterator", async () => {
   }
   expect(closed).toBe(true);
 });
+
+test("every dead-session name ends in one conclusion, stated without the provider's words", () => {
+  for (const name of [
+    "AUTH_KEY_UNREGISTERED",
+    "AUTH_KEY_INVALID",
+    "SESSION_REVOKED",
+    "SESSION_EXPIRED",
+    "USER_DEACTIVATED",
+    "USER_DEACTIVATED_BAN",
+  ]) {
+    const error = classify(new Rpc(name), PROVIDER);
+    expect(error.code).toBe("unauthenticated");
+    expect(error.message).toBe(
+      "kizuki.telegram: the stored session is no longer authorized; sign in again",
+    );
+    expect(error.message).not.toContain(name);
+  }
+});
+
+test("a wait whose length is not a whole number of seconds carries no retry_after", () => {
+  for (const seconds of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, "30", undefined]) {
+    const error = classify(new Wait(seconds), PROVIDER);
+    expect(error.code).toBe("flood_wait");
+    expect(error.retry_after).toBeUndefined();
+    expect(error.message).not.toContain(String(seconds));
+  }
+});

@@ -84,6 +84,35 @@ test("numeric/date retry hints clamp to one day and malformed hints use a fixed 
   expect((error as HttpFailure).retrySeconds).toBe(60);
 });
 
+test("x-rate-limit-reset is a bounded fallback hint that retry-after overrides", async () => {
+  const now = Date.parse("2026-02-01T00:00:00Z"), epoch = Math.floor(now / 1000);
+  for (const [headers, expected] of [
+    [{ "x-rate-limit-reset": String(epoch + 900) }, 900],
+    [{ "x-rate-limit-reset": String(epoch - 5) }, 1],
+    [{ "x-rate-limit-reset": String(epoch + 10 * 86_400) }, 86_400],
+    [{ "x-rate-limit-reset": "soon" }, 60],
+    [{ "x-rate-limit-reset": String(epoch + 900), "retry-after": "30" }, 30],
+  ] as const) {
+    let error: unknown;
+    try { await request(url(), "synthetic-token", new ApiBudget(() => 0), async () => Response.json({}, { status: 429, headers }), () => now); } catch (caught) { error = caught; }
+    expect((error as HttpFailure).retrySeconds).toBe(expected);
+  }
+});
+
+test("a transport fault is unreachable to the caller and to health, without its own words", async () => {
+  const fault = async () => { throw new Error("SYNTHETIC_TRANSPORT_CANARY"); };
+  let detail = "";
+  try { await request(url(), "synthetic-token", new ApiBudget(() => 0), fault); } catch (error) { detail = String(error); }
+  expect(detail).toContain("unreachable"); expect(detail).not.toContain("SYNTHETIC_TRANSPORT_CANARY");
+  const f = new XApiFixture(1), port = await f.connected();
+  f.before = async () => { throw new Error("SYNTHETIC_TRANSPORT_CANARY"); };
+  const batch = await port.sync(null);
+  expect(batch).toMatchObject({ events: [], cursor: null, status: "unavailable" });
+  expect(batch.detail).not.toContain("SYNTHETIC_TRANSPORT_CANARY");
+  expect((await port.health()).state).toBe("unreachable"); expect(f.forms).toEqual([]);
+  await port.close();
+});
+
 test("expiry between identity and timeline admits no later request and a fresh operation recovers", async () => {
   const f = new XApiFixture(1); let clock = 0, expire = false;
   const port = await f.connected({ clock: () => clock });

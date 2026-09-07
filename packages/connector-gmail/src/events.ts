@@ -54,9 +54,10 @@ export function messageEvent(account: string, raw: unknown, observed: string, se
                         coverage.add("participants_truncated");
                         break;
                     }
-                    const email = match[0].toLowerCase();
-                    if (email.length <= 254)
-                        subjects.push({ subject_id: `email:${email}`, role: name === "from" ? "from" : "to" });
+                    const email = match[0].toLowerCase(), role = name === "from" ? "from" : "to";
+                    // One recipient can appear on both To and Cc; the ingress refuses a repeated subject and role.
+                    if (email.length <= 254 && !subjects.some(subject => subject.subject_id === `email:${email}` && subject.role === role))
+                        subjects.push({ subject_id: `email:${email}`, role });
                 }
             }
         }
