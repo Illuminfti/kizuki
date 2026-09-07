@@ -213,7 +213,8 @@ export interface ModelDoctor {
   /** Historical last_success, last_failure and counts describe only the selected receipt window. */
   readonly history_truncated: boolean;
   readonly unavailable: number;
-  readonly budget: Readonly<Record<string, { used: number; limit: number }>>;
+  /** Null usage means durable accounting could not be read; see report failures. */
+  readonly budget: Readonly<Record<string, { used: number | null; limit: number }>>;
   readonly detail: string;
 }
 
@@ -253,7 +254,8 @@ export interface CalibrationDoctor {
   readonly residual_duplicate_claims: number;
   readonly duplicate_evaluation: "limited" | "evaluated";
   readonly limitations: string[];
-  readonly canon_writes_today: number;
+  /** Null when durable canon write accounting is unavailable. */
+  readonly canon_writes_today: number | null;
   readonly top_subjects: { subject: string; writes: number }[];
   readonly failures: string[];
 }

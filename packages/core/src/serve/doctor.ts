@@ -267,7 +267,7 @@ function modelDoctor(
   modelRef: string | null | undefined,
   configuredModelRef: string | null | undefined,
   configCanonDay: number,
-  usedToday: number,
+  usedToday: number | null,
 ): ModelDoctor {
   const receipts = history.receipts;
   const on = typeof modelRef === "string" && modelRef.length > 0;
@@ -460,14 +460,17 @@ export function inspectServeDoctor(
     );
   });
   const config = loadServeConfig(vaultPath);
-  const usedToday = readDurableWriteUsage(db, vaultPath, now.slice(0, 10));
+  let usedToday: number | null = null;
+  try { usedToday = readDurableWriteUsage(db, vaultPath, now.slice(0, 10)); }
+  catch { /* Unreadable accounting is reported below without exposing receipt bytes. */ }
   const modelRef = options.model_ref ?? null;
   const configuredModelRef = options.configured_model_ref ?? loadConfiguredModelRef(vaultPath);
   const modelHistory = modelRef || configuredModelRef ? readModelRunHistory(db, since) : { receipts: [], truncated: false };
   const model = modelDoctor(modelHistory, modelRef, configuredModelRef, config.canon_writes_per_day, usedToday);
   const stores = storeDoctor(db, vaultPath, now);
-  const cal = calibration(db, receipts, now);
+  const cal = { ...calibration(db, receipts, now), canon_writes_today: usedToday };
   const failures: string[] = [];
+  if (usedToday === null) failures.push("canon write budget unavailable: inspect canon receipt recovery");
   if (model.current_failure !== null) failures.push(`${model.current_failure.detail} (at ${model.current_failure.at})`);
   if (model.history_unverified) failures.push("model history unverified; the latest current-model attempt cannot be established from retained receipts");
   if (intent === "unknown") failures.push("service intent unavailable or invalid");

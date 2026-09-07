@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProducerPort } from "../../src/contracts/producer";
 import { openLedger } from "../../src/ledger/db";
 import { inspectServeDoctor } from "../../src/serve/doctor";
+import { createDurableWriteBudget } from "../../src/serve/budget-ledger";
 import { runRail } from "../../src/serve/rails";
 import { fileProposal } from "../../src/staging/proposals";
 import { initVault } from "../../src/vault/init";
@@ -46,6 +47,7 @@ for (const crashAfter of [undefined, "after-file", "after-jsonl", "after-db"] as
         expect(inspectServeDoctor(db, vault, { now: now() }).model.budget.canon_writes_per_day).toEqual({ used: 1, limit: 1 });
       }
       expect(db.query("SELECT total_changes() AS n").get()).toEqual(before);
+      expect(inspectServeDoctor(db, vault, { now: now() }).calibration.canon_writes_today).toBe(1);
       const resumed = await runRail(db, vault, "sync", { hooks: hooks(), now });
       expect(resumed.canon_writes).toBe(0);
       expect(resumed.stopped).toBe("budget:canon_writes_per_day");
@@ -55,3 +57,30 @@ for (const crashAfter of [undefined, "after-file", "after-jsonl", "after-db"] as
     } finally { db.close(); rmSync(vault, { recursive: true, force: true }); }
   });
 }
+
+
+test("unreadable budget evidence returns an unavailable doctor report while write admission refuses", () => {
+  const vault = mkdtempSync(join(tmpdir(), "kizuki-doctor-budget-corrupt-"));
+  initVault(vault);
+  const db = openLedger(join(vault, ".kizuki/kizuki.db"));
+  try {
+    const path = join(vault, ".kizuki/receipts/promotions.jsonl");
+    const bytes = '{"synthetic_private_receipt_body":';
+    mkdirSync(join(vault, ".kizuki/receipts"), { recursive: true });
+    writeFileSync(path, bytes);
+    const before = db.query("SELECT total_changes() AS n").get();
+    const report = inspectServeDoctor(db, vault);
+    expect(report.ok).toBe(false);
+    expect(report.model.budget.canon_writes_per_day?.used).toBeNull();
+    expect(report.calibration.canon_writes_today).toBeNull();
+    expect(report.failures).toContain("canon write budget unavailable: inspect canon receipt recovery");
+    expect(JSON.stringify(report)).not.toContain("synthetic_private_receipt_body");
+    expect(readFileSync(path, "utf8")).toBe(bytes);
+    expect(db.query("SELECT total_changes() AS n").get()).toEqual(before);
+    const budget = createDurableWriteBudget(db, vault, new Date().toISOString().slice(0, 10), {
+      canon_writes_per_run: 1, canon_writes_per_day: 1,
+    });
+    expect(() => budget.chargeWrite({ receipt_id: "synthetic-denied", page_path: "facts/note.md", before_hash: null })).toThrow();
+    expect(db.query("SELECT 1 FROM canon_write_reservations").get()).toBeNull();
+  } finally { db.close(); rmSync(vault, { recursive: true, force: true }); }
+});
