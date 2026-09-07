@@ -7,8 +7,8 @@ import { COMMANDS } from "../packages/cli/src/commands/index";
 import { printRootHelp } from "../packages/cli/src/help";
 import { evaluateRelease, parseAcceptanceArgs, writeAcceptanceReport } from "./go-no-go";
 import {
-  CAPABILITY_PROOF_FILE, CONNECTORS, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, SURFACE_DOC_FILES, SURFACE_GATE, SURFACE_OBSERVED_FILES, SURFACE_PRODUCER, SURFACE_PRODUCER_FILES, TARGETS,
-  assertCheckoutCustody, bindEvaluatorCheckout, cliVerbSequence, consumeSurfaceReceipt, evaluateSurfaceReceipt, inspectOptionalVerifier, read, surfaceProducerActive,
+  CAPABILITY_PROOF_FILE, CHECKOUT_LIMITS, CONNECTORS, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, SURFACE_DOC_FILES, SURFACE_GATE, SURFACE_OBSERVED_FILES, SURFACE_PRODUCER, SURFACE_PRODUCER_FILES, TARGETS,
+  assertCheckoutCustody, assertProductCheckoutCustody, bindEvaluatorCheckout, cliVerbSequence, collectProductSources, consumeSurfaceReceipt, evaluateSurfaceReceipt, inspectOptionalVerifier, read, surfaceProducerActive,
 } from "./release-evidence";
 import type { ExpectedSurfaceInventory } from "./release-evidence";
 import { initQualification } from "./qualification";
@@ -453,8 +453,12 @@ test("v1 and v2 indexes remain valid after the v3 reader lands", () => {
   const v1 = fixture(), v2 = engineFixture();
   expect(gate(evaluateRelease("rc", v1.indexPath), "evidence.index").status).toBe("PASS");
   expect(gate(evaluateRelease("rc", v2.indexPath), `engine.${target}`).status).toBe("PASS");
-  v1.index = { ...v1.index, gate_receipts: [] }; v1.save();
-  expect(gate(evaluateRelease("rc", v1.indexPath), "evidence.index").status).toBe("FAIL");
+  for (const f of [v1, v2]) {
+    // save() retains this index object; rebinding f.index leaves the file valid.
+    Object.assign(f.index, { gate_receipts: [] }); f.save();
+    expect(JSON.parse(readFileSync(f.indexPath, "utf8")).gate_receipts).toEqual([]);
+    expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index")).toMatchObject({ status: "FAIL", reason: "invalid-schema" });
+  }
 });
 
 test("v3 empty receipts keep artifact credit and do not implement new families", () => {
@@ -668,6 +672,94 @@ test("surface inventory derivation rejects product modules resolved outside the 
   expect(reasonOf(() => bindEvaluatorCheckout(repo.root, repo.sha, [...SURFACE_OBSERVED_FILES, CAPABILITY_PROOF_FILE]))).toBe("candidate-root-mismatch");
   expect(reasonOf(() => consumeSurfaceReceipt({ schema: SURFACE_PRODUCER }, repo.root, repo.sha))).toBe("candidate-root-mismatch");
   expect(EVALUATOR_ROOT).not.toBe(repo.root);
+});
+
+test("product custody follows transitive runtime definitions, metadata and assets", () => {
+  const repo = custodyRepo({
+    "commands/index.ts": 'export { command } from "./entry";\nimport type { Missing } from "./absent-types";\n',
+    "commands/entry.ts": 'import { name } from "./name";\nimport metadata from "./metadata.json";\nexport const command = { name, metadata };\n',
+    "commands/name.ts": 'export const name = "synthetic";\n',
+    "commands/metadata.json": '{"summary":"synthetic"}\n',
+  });
+  const graph = collectProductSources(repo.root, ["commands/index.ts"]);
+  expect(graph.bindings.map(item => item.path)).toEqual(["commands/entry.ts", "commands/index.ts", "commands/metadata.json", "commands/name.ts"]);
+  const frame = assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES);
+  frame.unchanged();
+  expect(frame.files.find(item => item.path === "commands/name.ts")?.sha256).toBe(digest('export const name = "synthetic";\n'));
+  appendFileSync(join(repo.root, "commands/name.ts"), "// changed after derivation\n");
+  expect(reasonOf(() => frame.unchanged())).toBe("file-changed");
+});
+
+test("product custody refuses imported raw bytes hidden by Git text normalization", () => {
+  const repo = custodyRepo({
+    ".gitattributes": "commands/*.ts text eol=lf\n",
+    "commands/index.ts": 'export { name } from "./name";\n',
+    "commands/name.ts": 'export const name = "synthetic";\n',
+  });
+  writeFileSync(join(repo.root, "commands/name.ts"), 'export const name = "synthetic";\r\n');
+  git(repo.root, ["add", "commands/name.ts"]);
+  expect(git(repo.root, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe("");
+  // The old direct-file frame misses this imported definition entirely.
+  assertCheckoutCustody(repo.root, repo.sha, SURFACE_OBSERVED_FILES).unchanged();
+  expect(reasonOf(() => assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES))).toBe("candidate-byte-mismatch");
+});
+
+test("product custody refuses an internal import alias canonicalized by Bun", () => {
+  const repo = custodyRepo({
+    "commands/index.ts": 'export { name } from "./alias";\n',
+    "commands/name.ts": 'export const name = "synthetic";\n',
+  });
+  symlinkSync("name.ts", join(repo.root, "commands/alias.ts"));
+  git(repo.root, ["add", "commands/alias.ts"]);
+  git(repo.root, ["commit", "-m", "synthetic import alias", "--no-gpg-sign"]);
+  const sha = git(repo.root, ["rev-parse", "HEAD"]);
+  expect(Bun.resolveSync("./alias", join(repo.root, "commands"))).toBe(join(repo.root, "commands/name.ts"));
+  expect(reasonOf(() => assertProductCheckoutCustody(repo.root, sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES))).toBe("candidate-file-symlink-or-mode");
+});
+
+test.each(["@kizuki/synthetic", "synthetic-dependency"])("product custody distinguishes %s from external third-party dependencies", (name) => {
+  const external = mkdtempSync(join(tmpdir(), "kizuki-external-module-")); roots.push(external);
+  const directory = join(external, "node_modules", name);
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "package.json"), JSON.stringify({ name, exports: "./index.ts" }));
+  writeFileSync(join(directory, "index.ts"), 'export const name = "external-synthetic";\n');
+  const repo = custodyRepo({ ".gitignore": "node_modules/\n", "commands/index.ts": `export { name } from ${JSON.stringify(name)};\n` });
+  const installed = join(repo.root, "node_modules", name);
+  mkdirSync(dirname(installed), { recursive: true }); symlinkSync(directory, installed);
+  if (name.startsWith("@kizuki/")) {
+    expect(reasonOf(() => assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES))).toBe("candidate-product-resolution-outside");
+  } else {
+    const frame = assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES);
+    expect(frame.files.some(item => item.path.includes("node_modules"))).toBe(false);
+    frame.unchanged();
+  }
+});
+
+test("product custody refuses an unresolved runtime import", () => {
+  const repo = custodyRepo({ "commands/index.ts": 'export { name } from "./absent";\n' });
+  expect(reasonOf(() => collectProductSources(repo.root, ["commands/index.ts"]))).toBe("candidate-import-unresolved");
+});
+
+test("product custody binds workspace export metadata and imported definitions", () => {
+  const repo = custodyRepo({
+    ".gitignore": "node_modules/\n",
+    "commands/index.ts": 'export { name } from "@kizuki/synthetic";\n',
+    "packages/synthetic/package.json": '{"name":"@kizuki/synthetic","exports":"./src/index.ts"}\n',
+    "packages/synthetic/src/index.ts": 'export { name } from "./name";\n',
+    "packages/synthetic/src/name.ts": 'export const name = "synthetic";\n',
+  });
+  mkdirSync(join(repo.root, "node_modules/@kizuki"), { recursive: true });
+  symlinkSync("../../packages/synthetic", join(repo.root, "node_modules/@kizuki/synthetic"));
+  const frame = assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES);
+  expect(frame.files.map(item => item.path)).toContain("packages/synthetic/package.json");
+  expect(frame.files.map(item => item.path)).toContain("packages/synthetic/src/name.ts");
+  frame.unchanged();
+});
+
+test("product source traversal enforces explicit file and byte bounds", () => {
+  const repo = custodyRepo({ "commands/index.ts": `//${"x".repeat(CHECKOUT_LIMITS.file_bytes)}\n` });
+  expect(reasonOf(() => collectProductSources(repo.root, Array(CHECKOUT_LIMITS.files + 1).fill("commands/index.ts")))).toBe("checkout-file-bound");
+  expect(reasonOf(() => collectProductSources(repo.root, ["commands/index.ts"]))).toBe("unsafe-file-or-size");
 });
 
 test("v3 refuses extra keys and more than forty gate receipts", () => {

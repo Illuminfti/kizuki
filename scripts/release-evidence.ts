@@ -1,7 +1,8 @@
 /** Shared v3 evidence reader, receipt identity, and the surface-inventory family. */
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, join, parse, resolve } from "node:path";
+import { isBuiltin } from "node:module";
+import { dirname, extname, isAbsolute, join, parse, resolve } from "node:path";
 import { COMMANDS } from "../packages/cli/src/commands/index";
 import { printRootHelp } from "../packages/cli/src/help";
 import { RETIRED_OWNER_GATE_VERBS } from "../packages/cli/src/retired";
@@ -34,14 +35,18 @@ export const CONNECTORS = [
   { id: "omnivore", connector_id: "kizuki.import-omnivore", evidence: "file-import" },
 ] as const;
 export const EVIDENCE_LIMITS = { index: 16384, index_v3: 32768, family_receipt: 65536, journey_connector_receipt: 262144, depth: 32 } as const;
-export const CHECKOUT_LIMITS = { files: 32, file_bytes: 1_048_576, total_bytes: 4_194_304, help_lines: 256, help_line_chars: 4096 } as const;
+export const CHECKOUT_LIMITS = { files: 1024, imports: 8192, file_bytes: 1_048_576, total_bytes: 4_194_304, help_lines: 256, help_line_chars: 4096 } as const;
 export const SURFACE_PRODUCER = "kizuki.surface-inventory/v1";
 export const SURFACE_GATE = "surface.capabilities-and-docs";
 export const SURFACE_PRODUCER_FILES = ["scripts/capability-proof.ts", "scripts/release-evidence.ts"] as const;
 export const CAPABILITY_PROOF_FILE = "scripts/capability-proof.ts";
 export const SURFACE_DOC_FILES = ["README.md", "SECURITY.md", "docs/CURRENT.md", "docs/cli.md"] as const;
+const SURFACE_MODULE_FILES = [
+  "packages/cli/src/commands/index.ts", "packages/cli/src/help.ts", "packages/cli/src/retired.ts",
+  "packages/mcp/src/index.ts", "packages/connectors/src/index.ts",
+] as const;
 export const SURFACE_OBSERVED_FILES = [
-  ".bun-version", ...SURFACE_DOC_FILES, "scripts/release-evidence.ts",
+  ".bun-version", "package.json", "tsconfig.json", "bun.lock", ...SURFACE_DOC_FILES, "scripts/release-evidence.ts",
   "packages/cli/src/commands/index.ts", "packages/cli/src/help.ts", "packages/cli/src/retired.ts",
   "packages/mcp/src/index.ts", "packages/mcp/src/server.ts",
   "packages/connectors/src/index.ts", "packages/connectors/src/registry.ts",
@@ -344,9 +349,85 @@ export function assertCheckoutCustody(root: string, candidateSha: string, files:
   };
 }
 
+/** Enumerate source custody, never inventory values. Bun supplies the same
+ * literal import resolution used by the executing product modules. */
+export function collectProductSources(root: string, entrypoints: readonly string[]) {
+  if (entrypoints.length < 1 || entrypoints.length > CHECKOUT_LIMITS.files) reject("checkout-file-bound");
+  const canonical = canonicalRoot(root), pending = [...entrypoints];
+  const files = new Map<string, string>(), resolutions: [string, string, string][] = [];
+  const parsers = { ts: new Bun.Transpiler({ loader: "ts" }), tsx: new Bun.Transpiler({ loader: "tsx" }),
+    js: new Bun.Transpiler({ loader: "js" }), jsx: new Bun.Transpiler({ loader: "jsx" }) };
+  let total = 0;
+  while (pending.length > 0) {
+    const file = relativePosix(pending.pop());
+    if (files.has(file)) continue;
+    if (files.size >= CHECKOUT_LIMITS.files) reject("checkout-file-bound");
+    const path = resolve(canonical, file);
+    if (!path.startsWith(`${canonical}/`) || path.slice(canonical.length + 1) !== file) reject("unsafe-path");
+    const body = read(path, CHECKOUT_LIMITS.file_bytes);
+    total += body.bytes.length;
+    if (total > CHECKOUT_LIMITS.total_bytes) reject("checkout-byte-bound");
+    files.set(file, body.sha256);
+    // Package exports are part of workspace resolution, even if the module
+    // itself never imports its package metadata.
+    const workspace = file.match(/^packages\/[^/]+\//)?.[0];
+    if (workspace) pending.push(`${workspace}package.json`);
+    const extension = extname(file);
+    const parser = extension === ".ts" || extension === ".mts" || extension === ".cts" ? parsers.ts
+      : extension === ".tsx" ? parsers.tsx : extension === ".js" || extension === ".mjs" || extension === ".cjs" ? parsers.js
+      : extension === ".jsx" ? parsers.jsx : null;
+    // JSON and literal text/assets are bound as bytes, not executed as source.
+    if (!parser) continue;
+    let imports;
+    try { imports = parser.scanImports(body.bytes); }
+    catch { reject("candidate-imports-unenumerable"); }
+    for (const item of imports) {
+      const specifier = item.path;
+      if (isBuiltin(specifier) || specifier === "bun" || specifier.startsWith("bun:")) continue;
+      if (resolutions.length >= CHECKOUT_LIMITS.imports) reject("checkout-import-bound");
+      let resolved;
+      try { resolved = realpathSync(Bun.resolveSync(specifier, dirname(path))); }
+      catch { reject("candidate-import-unresolved"); }
+      const inDependencies = resolved.includes("/node_modules/");
+      if (resolved.startsWith(`${canonical}/`) && !inDependencies) {
+        const dependency = relativePosix(resolved.slice(canonical.length + 1));
+        resolutions.push([file, specifier, dependency]); pending.push(dependency);
+      } else {
+        // Existing bundled PGlite assets use relative node_modules imports.
+        // Relative product imports and every @kizuki import must stay inside
+        // the candidate; third-party dependency installations may live outside.
+        const relativeDependency = specifier.startsWith(".") && /\/node_modules\/(?!@kizuki\/)/.test(specifier);
+        const bareDependency = !specifier.startsWith(".") && !isAbsolute(specifier) && !specifier.startsWith("@kizuki/");
+        if (!inDependencies || (!relativeDependency && !bareDependency)) reject("candidate-product-resolution-outside");
+        resolutions.push([file, specifier, resolved]);
+      }
+    }
+    body.unchanged();
+  }
+  const bindings = [...files].sort(([a], [b]) => a.localeCompare(b)).map(([path, sha256]) => ({ path, sha256 }));
+  return { bindings, fingerprint: hash(JSON.stringify({ bindings, resolutions })) };
+}
+
+export function assertProductCheckoutCustody(root: string, candidateSha: string, entrypoints: readonly string[], files: readonly string[]): CheckoutCustodyFrame {
+  const canonical = canonicalRoot(root), graph = collectProductSources(canonical, entrypoints);
+  // Bun resolves symlinks before returning filenames. Require regular source
+  // trees for every participating workspace, so a tracked import alias cannot
+  // disappear from the raw-byte/mode checks through resolver canonicalization.
+  const sourceTrees = [...new Set(graph.bindings.map(item => item.path.match(/^packages\/[^/]+/)?.[0] ?? dirname(item.path)))];
+  const aliases = [...parseTree(git(canonical, ["ls-tree", "-r", "-z", "HEAD", "--", ...sourceTrees]))]
+    .filter(([, entry]) => entry.mode === "120000").map(([path]) => path);
+  const frame = assertCheckoutCustody(canonical, candidateSha, [...new Set([...files, ...graph.bindings.map(item => item.path), ...aliases])]);
+  const bound = new Map(frame.files.map(item => [item.path, item.sha256]));
+  if (graph.bindings.some(item => bound.get(item.path) !== item.sha256)) reject("file-changed");
+  return { ...frame, unchanged: () => {
+    if (collectProductSources(canonical, entrypoints).fingerprint !== graph.fingerprint) reject("file-changed");
+    frame.unchanged();
+  } };
+}
+
 export function bindEvaluatorCheckout(root: string, candidateSha: string, files: readonly string[]): CheckoutCustodyFrame {
   if (canonicalRoot(root) !== EVALUATOR_ROOT) reject("candidate-root-mismatch");
-  return assertCheckoutCustody(EVALUATOR_ROOT, candidateSha, files);
+  return assertProductCheckoutCustody(EVALUATOR_ROOT, candidateSha, SURFACE_MODULE_FILES, files);
 }
 
 export function cliVerbSequence(): string[] {
