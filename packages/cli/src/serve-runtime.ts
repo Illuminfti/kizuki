@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import {
   MODEL_PRODUCER_ID,
   PortError,
@@ -11,6 +11,8 @@ import {
   registerModelProducerPort,
   runToCompletion,
   readRetrievalDocuments,
+  readAppModelConfiguration,
+  readAppManagedModelCredential,
   type ClaimsIo,
   type LlmPort,
   type PortContext,
@@ -24,7 +26,6 @@ import { listHostConnections, loadConnector, closeHostConnector } from "./connec
 import { tryRefreshDerived } from "./derived";
 import { tokenResolver } from "./secrets";
 
-const CONFIG_PATH = ".kizuki/serve.toml";
 const NONE_LLM_ID = "kizuki.llm.none";
 const MODEL_LLM_ID = "kizuki.llm.openai-compatible";
 const MAX_SYNC_ERRORS = 32;
@@ -45,20 +46,7 @@ function runtimeError(message: string): never {
   throw new ServeRuntimeError(`serve model configuration: ${message}`);
 }
 
-function readLlmSelection(vaultPath: string): LlmSelection {
-  const path = join(vaultPath, CONFIG_PATH);
-  if (!existsSync(path)) return { id: NONE_LLM_ID, config: {}, secret_ref: null };
-  let parsed: unknown;
-  try {
-    parsed = Bun.TOML.parse(readFileSync(path, "utf8"));
-  } catch {
-    runtimeError("invalid TOML");
-  }
-  if (!isPlainObject(parsed)) runtimeError("config must be a table");
-  const ports = parsed["ports"];
-  if (ports === undefined) return { id: NONE_LLM_ID, config: {}, secret_ref: null };
-  if (!isPlainObject(ports)) runtimeError("[ports] must be a table");
-  const llm = ports["llm"];
+function parseLlmSelection(llm: unknown): LlmSelection {
   if (llm === undefined || llm === NONE_LLM_ID) {
     return { id: NONE_LLM_ID, config: {}, secret_ref: null };
   }
@@ -159,11 +147,18 @@ interface ServeRuntimeOptions {
 }
 
 async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; producer?: ProducerPort }> {
-  const selected = readLlmSelection(options.vaultPath);
+  let document: ReturnType<typeof readAppModelConfiguration>;
+  try {
+    document = readAppModelConfiguration(options.vaultPath, value => { parseLlmSelection(value); });
+  } catch { runtimeError("configuration snapshot unavailable"); }
+  const selected = parseLlmSelection(document.llm);
   let secret: string | null = null;
   if (selected.secret_ref !== null) {
     try {
-      secret = await tokenResolver(selected.secret_ref, options.env)(selected.secret_ref);
+      const managed = `file:${join(resolve(options.vaultPath), ".kizuki/app-model")}/`;
+      secret = selected.secret_ref.startsWith(managed)
+        ? readAppManagedModelCredential(options.vaultPath, document.revision, selected.secret_ref)
+        : await tokenResolver(selected.secret_ref, options.env)(selected.secret_ref);
     } catch {
       runtimeError("configured secret reference cannot be resolved");
     }

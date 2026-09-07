@@ -1,5 +1,5 @@
 /** Local browser protocol. Only the app bearer belongs in sessionStorage. */
-import type { SourceGrantPolicy } from '@kizuki/core';
+import type { SourceGrantPolicy, Grant, AgentEnrollmentResult } from '@kizuki/core';
 import type { ServeIntent, SupervisorKind, SupervisorState } from '@kizuki/core';
 export interface AppServiceStatus {
     intent: ServeIntent | 'unknown';
@@ -33,7 +33,23 @@ export interface AppSource {
     errors: number;
     revoke_operation: string | null;
     purge_blockers: string[];
+    model_consent: 'local_only' | 'current' | 'different_model' | 'unavailable';
 }
+export type AppModelSelection = { kind: 'none' } | { kind: 'openai_compatible'; base_url: string; model: string };
+export interface AppModelTest {
+    revision: string;
+    at: string;
+    outcome: 'succeeded' | 'failed';
+    latency_ms: number;
+    error_code: string | null;
+}
+export interface AppModelStatus {
+    revision: string;
+    selection: { kind: 'none' } | { kind: 'openai_compatible'; base_url: string; model: string; model_endpoint: string };
+    credential: 'none' | 'configured' | 'unavailable';
+    last_test: AppModelTest | null;
+}
+export type AppModelCredential = { action: 'keep' | 'clear' } | { action: 'replace'; value: string };
 export interface AppCatalogEntry {
     id: 'markdown' | 'gmail' | 'google-calendar';
     title: string;
@@ -56,6 +72,16 @@ export interface AppOperation {
         message: string;
         source_key?: string;
         receipt_id?: string;
+        rewritten_pages?: number;
+        agent?: { receipt: AgentEnrollmentResult; mcp: { command: string; args: string[] } | null };
+        run?: {
+            run_id: string;
+            status: string;
+            canon_writes: number;
+            claims_extracted: number;
+            model_calls: number;
+            model_configured: boolean;
+        };
     } | null;
     error: AppError | null;
 }
@@ -106,6 +132,23 @@ export interface AppProtocol {
     };
     service_status: { request: {}; response: AppServiceStatus };
     install_service: { request: {}; response: { operation_id: string } };
+    model_status: { request: {}; response: AppModelStatus };
+    model_save: {
+        request: { expected_revision: string; selection: AppModelSelection; credential: AppModelCredential };
+        response: AppModelStatus;
+    };
+    model_test: { request: { expected_revision: string }; response: { operation_id: string } };
+    source_model_consent: {
+        request: { source_key: string; expected_revision: number; expected_model_revision: string; operation_id: string; allow: boolean };
+        response: { source_key: string; revision: number; status: string };
+    };
+    run_pass: { request: {}; response: { operation_id: string } };
+    agents: { request: {}; response: { agents: { agent_id: string; name: string; grant: Grant; revoked_at: string | null }[] } };
+    agent_enroll: { request: { name: string; grant: Grant; operation_id: string }; response: { operation_id: string } };
+    agent_revoke: { request: { name: string }; response: { operation_id: string } };
+    correction_targets: { request: { page_id: string }; response: { claims: { claim_id: string; subject: string | null; predicate: string | null; object: string | null; body: string; authority: string; sensitivity: string }[]; truncated: boolean } };
+    correction_preview: { request: { claim_id: string; statement: string; object?: string }; response: { answer: string; affected_pages: number | null } };
+    correct: { request: { claim_id: string; statement: string; object?: string }; response: { operation_id: string } };
     sources: {
         request: {};
         response: {
