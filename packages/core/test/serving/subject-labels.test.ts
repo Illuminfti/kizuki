@@ -281,3 +281,20 @@ test('denied rows may exhaust optional enrichment quota but only generic degrada
   expect(JSON.stringify(result)).not.toContain('HIDDEN_QUOTA');
   expect(result.denied).toEqual([]);
 });
+
+import { producedClaimInput } from '../../src/serve/extract';
+import { insertClaim } from '../../src/claims/store';
+
+test('the real draft materializer needs no frontmatter subjects for current hash-bound identity projection', async () => {
+  const f = fixture(), event = labelEvent(f.db);
+  const input = producedClaimInput(f.db, { kind: 'claim', subject: SUBJECT, predicate: 'identity.display_name', object: LABEL, polarity: 'positive', body: 'Orchard identity is Ada Example.', event_ids: [event], confidence: 0.8, sensitivity: 'public', valid_from: null, valid_to: null }, 'deterministic', null);
+  expect(input.frontmatter).toBeUndefined();
+  const filed = await insertClaim({ db: f.db }, input);
+  expect(filed.outcome).toBe('stored'); if (filed.outcome !== 'stored') throw Error('synthetic materialization refused');
+  write(f.io, filed.claim);
+  const result = serveEntities(owner(f), { name: LABEL });
+  expect(result.canon).toHaveLength(1); expect(result.canon[0]?.subjects).toEqual([]);
+  expect(result.canon[0]?.title).toBe('a'.repeat(64));
+  expect(result.canon[0]?.subject_labels?.[0]).toMatchObject({ subject: SUBJECT, display_name: LABEL });
+  expect(result.canon[0]?.taint).toBe('quoted');
+});
