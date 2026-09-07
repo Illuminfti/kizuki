@@ -29,6 +29,7 @@ a SQLite-only rule for derived retrieval (D13); an owner-started daemon
 | `security-privacy-review` | Crossing data, auth, filesystem, network, serving, import, or export boundaries |
 | `write-rfc` | Changing architecture, authority, durable state, or a binding contract |
 | `handoff-work` | Stopping, transferring, or preserving a lane |
+| `kun` | Vendor overlay from kunchenguid/kun (`/kun`); loads living docs over HTTPS |
 
 ## Domain guidance skills
 
