@@ -326,3 +326,24 @@ test("Linux validator rejects removal or bypass of each native receipt retention
     expect(validateWorkflowText(path, JSON.stringify(doc)).length, name).toBeGreaterThan(0);
   }
 });
+
+
+test("native lifecycle mode cannot lose a host, source binding, supervisor gate or retained failure receipt", () => {
+  const path = ".github/workflows/macos-native.yml";
+  const current = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  const mutations = [
+    (doc: any) => { doc.jobs["native-service"].strategy.matrix.os = ["ubuntu-24.04"]; },
+    (doc: any) => { doc.jobs["native-service"]["timeout-minutes"] = 60; },
+    (doc: any) => { doc.jobs["native-service"].if = "${{ true }}"; },
+    (doc: any) => { doc.jobs["native-service"].steps[0].with.ref = "main"; },
+    (doc: any) => { doc.jobs["native-service"].steps[5].run += "\nsystemctl --user stop unrelated.service"; },
+    (doc: any) => { doc.jobs["native-service"].steps[7].run += " || true"; },
+    (doc: any) => { doc.jobs["native-service"].steps[8].if = "${{ success() }}"; },
+    (doc: any) => { doc.jobs["native-service"].steps[8].with.path = "${{ runner.temp }}/**"; },
+  ];
+  for (const mutate of mutations) {
+    const doc = Bun.YAML.parse(current);
+    mutate(doc);
+    expect(validateWorkflowText(path, JSON.stringify(doc)).some(failure => failure.reason.includes("macOS proof"))).toBe(true);
+  }
+});
