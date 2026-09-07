@@ -33,6 +33,7 @@ class Element {
     showModal() { this.open = true; }
     close() { this.open = false; }
     focus() {}
+    scrollIntoView() {}
 }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 const source = readFileSync(new URL('../src/app/ui/client.js', import.meta.url), 'utf8');
@@ -452,4 +453,113 @@ test('agent setup refuses invalid names and reversed time windows before enrollm
     f.dialog.querySelector('#agent-until')!.value = '2026-09-07T12:00';
     await f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
     expect(f.dialog.textContent).toContain('start time must be before'); expect(f.requests).toHaveLength(0);
+});
+
+const belief = { claim_id: 'claim-a', subject: 'person:ada', predicate: 'works_at', object: 'Old company', body: 'Ada works at Old company.', authority: 'owner_authored', sensitivity: 'private' };
+async function openCorrection(f: ReturnType<typeof fixture>, claims = [belief], truncated = false) {
+    const work = f.evaluate<Promise<void>>(`correction({id:'page-a',scope:'canon',title:'People'})`);
+    expect(f.requests[0]!.payload).toEqual({ page_id: 'page-a' });
+    f.reply('correction_targets', { claims, truncated }); await work;
+}
+
+test('correction action belongs only to canon search results and reads exact admitted page targets', async () => {
+    const f = fixture(); f.evaluate(`state.hits=[{id:'page-a',scope:'canon',title:'People',text:'Memory page'},{id:'event-a',scope:'ledger',title:'Source',text:'Source quote'}]; render();`);
+    expect(findAction(f.main, 'Correct memory')).toBeTruthy();
+    await f.evaluate(`correction({id:'event-a',scope:'ledger',title:'Source'})`); expect(f.requests).toHaveLength(0);
+    await openCorrection(f, [belief], true);
+    expect(f.dialog.textContent).toContain('This list is limited'); expect(f.dialog.textContent).toContain(belief.body);
+});
+
+test('denial preview omits object, requires own statement and applies the same exact belief', async () => {
+    const f = fixture(); await openCorrection(f);
+    await f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+    expect(f.requests).toHaveLength(0); expect(f.dialog.textContent).toContain('Explain the correction');
+    f.dialog.querySelector('#correction-statement')!.value = 'This recorded belief is wrong.';
+    const preview = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} }); await tick();
+    const payload = { claim_id: 'claim-a', statement: 'This recorded belief is wrong.' };
+    expect(f.requests[0]!.route).toBe('correction_preview'); expect(f.requests[0]!.payload).toEqual(payload);
+    f.reply('correction_preview', { answer: 'Would deny this reading.', affected_pages: 2 }); await preview;
+    expect(f.dialog.textContent).toContain('2 memory pages currently affected');
+    void findAction(f.dialog, 'Apply correction').fire('click'); await tick();
+    expect(f.requests[0]!.route).toBe('correct'); expect(f.requests[0]!.payload).toEqual(payload);
+    expect(f.storageWrites).toHaveLength(0);
+});
+
+test('replacement value is explicit and field changes invalidate preview including pending responses', async () => {
+    const f = fixture(); await openCorrection(f);
+    const mode = f.dialog.querySelector('#correction-mode')!; mode.value = 'replace'; await mode.fire('change');
+    f.dialog.querySelector('#correction-statement')!.value = 'Ada moved to New company.';
+    const value = f.dialog.querySelector('#correction-value')!; value.value = 'New company';
+    const first = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} }); await tick();
+    expect(f.requests[0]!.payload).toEqual({ claim_id: 'claim-a', statement: 'Ada moved to New company.', object: 'New company' });
+    value.value = 'Another company'; await value.fire('input');
+    f.reply('correction_preview', { answer: 'STALE_PREVIEW', affected_pages: 2 }); await first;
+    expect(f.dialog.textContent).not.toContain('STALE_PREVIEW'); expect(findAction(f.dialog, 'Apply correction').disabled).toBe(true);
+    const fresh = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} }); await tick();
+    f.reply('correction_preview', { answer: 'Current preview', affected_pages: null }); await fresh;
+    expect(f.dialog.textContent).toContain('Current affected-page count unavailable');
+    expect(f.dialog.textContent).not.toContain('0 memory pages');
+    mode.value = 'deny'; await mode.fire('change'); expect(value.value).toBe(''); expect(findAction(f.dialog, 'Apply correction').disabled).toBe(true);
+});
+
+test('correction drafts and targets clear on closure, navigation, disconnect and privacy invalidation', async () => {
+    for (const action of ['closeDialog()', `dialog.fire('cancel')`, `navigate('sources')`, 'disconnect()', 'invalidatePrivateView()', `window.fire('pagehide')`]) {
+        const f = fixture(); await openCorrection(f);
+        const statement = f.dialog.querySelector('#correction-statement')!; statement.value = 'PRIVATE_STATEMENT';
+        const value = f.dialog.querySelector('#correction-value')!; value.value = 'PRIVATE_VALUE';
+        const work = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} }); await tick();
+        await f.evaluate(action);
+        f.reply('correction_preview', { answer: 'PRIVATE_LATE_PREVIEW', affected_pages: 1 }); await work;
+        expect(statement.value).toBe(''); expect(value.value).toBe('');
+        expect(f.dialog.textContent).not.toContain(belief.body); expect(f.dialog.textContent).not.toContain('PRIVATE_LATE_PREVIEW');
+        expect(f.storageWrites).toHaveLength(0);
+    }
+});
+
+test('changing the selected belief or changing fields without an input event cannot apply an old preview', async () => {
+    const f = fixture(); await openCorrection(f, [belief, { ...belief, claim_id: 'claim-b', object: 'Different company' }]);
+    const statement = f.dialog.querySelector('#correction-statement')!; statement.value = 'This is wrong.';
+    const preview = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} }); await tick();
+    f.reply('correction_preview', { answer: 'Would deny claim-a.', affected_pages: 1 }); await preview;
+    statement.value = 'Changed silently.';
+    await findAction(f.dialog, 'Apply correction').fire('click'); expect(f.requests).toHaveLength(0);
+    const choice = f.dialog.querySelector('#correction-claim')!; choice.value = 'claim-b'; await choice.fire('change');
+    expect(f.dialog.textContent).toContain('Different company'); expect(findAction(f.dialog, 'Apply correction').disabled).toBe(true);
+});
+
+test('correction result reports actual message, rewritten count and receipt as escaped text', () => {
+    const f = fixture(); f.evaluate(`state.operation={id:'correct-1',kind:'correct',state:'succeeded',result:{message:'Recorded <img src=x> correction.',rewritten_pages:2,receipt_id:'receipt-actual'}}; render();`);
+    expect(f.main.textContent).toContain('Recorded <img src=x> correction.'); expect(f.main.querySelector('img')).toBeNull();
+    expect(f.main.textContent).toContain('2 memory pages rewritten'); expect(f.main.textContent).toContain('receipt-actual');
+});
+
+test('closed correction target requests cannot expose late beliefs and empty target sets cannot apply', async () => {
+    const f = fixture(); const work = f.evaluate<Promise<void>>(`correction({id:'page-a',scope:'canon'})`);
+    f.evaluate('closeDialog()'); f.reply('correction_targets', { claims: [belief], truncated: false }); await work;
+    expect(f.dialog.textContent).not.toContain(belief.body); expect(f.dialog.open).toBe(false);
+    await openCorrection(f, []); expect(f.dialog.textContent).toContain('No correctable beliefs'); expect(f.dialog.querySelector('form')).toBeNull();
+});
+
+test('failed correction preview never enables application or displays provider error bodies', async () => {
+    const f = fixture(); await openCorrection(f);
+    f.dialog.querySelector('#correction-statement')!.value = 'This is wrong.';
+    const work = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} }); await tick();
+    f.requests.shift()!.result.resolve({ status: 403, json: async () => ({ ok: false, error: { code: 'source_capture_denied', message: 'PRIVATE_ERROR_BODY' } }) }); await work;
+    expect(findAction(f.dialog, 'Apply correction').disabled).toBe(true); expect(f.dialog.textContent).not.toContain('PRIVATE_ERROR_BODY');
+    await findAction(f.dialog, 'Apply correction').fire('click'); expect(f.requests).toHaveLength(0);
+});
+
+test('applied correction survives the changed privacy epoch only as its current operation receipt in Activity', async () => {
+    const f = fixture(); await openCorrection(f);
+    f.dialog.querySelector('#correction-statement')!.value = 'This is wrong.';
+    const preview = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} }); await tick();
+    f.reply('correction_preview', { answer: 'Would deny.', affected_pages: 1 }); await preview;
+    const work = findAction(f.dialog, 'Apply correction').fire('click'); await tick();
+    f.reply('correct', { operation_id: 'correct-epoch' }); await tick();
+    const operation = { id: 'correct-epoch', kind: 'correct', state: 'succeeded', result: { message: 'Recorded correction.', receipt_id: 'receipt-current', rewritten_pages: 1 } };
+    f.reply('operation', operation); await tick();
+    f.reply('status', status([operation], '2')); await tick(); f.reply('catalog', { sources: [] }); f.reply('sources', { sources: [] }); await tick();
+    f.reply('activity', { receipts: [] }); await work; await tick();
+    expect(f.evaluate<string>('state.view')).toBe('activity'); expect(f.main.textContent).toContain('receipt-current');
+    expect(f.dialog.textContent).toBe(''); expect(f.evaluate('state.hits')).toBeNull();
 });

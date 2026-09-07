@@ -8,6 +8,7 @@ const notice = document.getElementById('notification');
 const state = { view: 'memory', status: null, service: null, model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], hits: null, query: '', degraded: [], busy: false, operation: null };
 let bearer = null;
 let noticeTimer;
+let dialogCleanup = null;
 let refreshSequence = 0;
 let searchSequence = 0;
 let pulseRunning = false;
@@ -78,6 +79,7 @@ function invalidatePrivateView() {
   privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++; serviceSequence++; modelSequence++; agentsSequence++;
   privateViewValid = false;
   state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.service = null; state.model = null; state.modelError = false; state.agents = null; state.agentsError = false; state.operation = null;
+  clearDialogTransient();
   if (dialog.open) closeDialog();
   dialog.replaceChildren();
   clearTimeout(noticeTimer); notice.textContent = ''; notice.hidden = true;
@@ -127,6 +129,7 @@ function renderDisconnected() {
 }
 function navigate(view, focus = true) {
   if (!['memory', 'sources', 'activity', 'settings'].includes(view)) return;
+  if (dialog.open) closeDialog();
   state.view = view;
   render();
   if (focus) main.focus({ preventScroll: true });
@@ -179,12 +182,88 @@ function renderMemory() {
     const list = el('div', { class: 'result-list' });
     for (const hit of state.hits) {
       const citations = Array.isArray(hit.citations) ? hit.citations : [];
-      list.append(el('article', { class: 'result-item' }, el('div', { class: 'result-meta' }, el('span', { class: 'badge' }, hit.scope === 'canon' ? 'Memory page' : 'Source evidence'), el('span', {}, hit.sensitivity === 'public' ? 'Public' : hit.sensitivity === 'internal' ? 'Internal' : 'Private')), el('h3', {}, resultTitle(hit)), el('p', { class: 'result-text' }, hit.text), el('details', { class: 'result-details' }, el('summary', {}, 'View evidence references'), el('p', {}, 'Use these references to check the original information.'), ...citations.map(id => el('p', {}, el('code', {}, id))))));
+      list.append(el('article', { class: 'result-item' }, el('div', { class: 'result-meta' }, el('span', { class: 'badge' }, hit.scope === 'canon' ? 'Memory page' : 'Source evidence'), el('span', {}, hit.sensitivity === 'public' ? 'Public' : hit.sensitivity === 'internal' ? 'Internal' : 'Private')), el('h3', {}, resultTitle(hit)), el('p', { class: 'result-text' }, hit.text), el('details', { class: 'result-details' }, el('summary', {}, 'View evidence references'), el('p', {}, 'Use these references to check the original information.'), ...citations.map(id => el('p', {}, el('code', {}, id)))), hit.scope === 'canon' && button('Correct memory', () => correction(hit))));
     }
     section.append(list);
   }
   if (state.degraded.length) section.append(el('div', { class: 'status-note' }, icon('info'), el('p', {}, 'Search is using an available local path. Some optional capabilities are unavailable; these results are not a complete view of every connected source.')));
   return section;
+}
+async function correction(hit) {
+  if (hit.scope !== 'canon' || !privateViewValid || !bearer) return;
+  const content = openDialog('Correct this memory', 'Checking the visible beliefs recorded for this memory page…', 'memory');
+  let claims = [], disposed = false, previewSequence = 0, preview = null;
+  let choice, statement, value, beliefDetails, previewPanel, apply;
+  dialogCleanup = () => {
+    disposed = true; previewSequence++; preview = null; claims.length = 0; claims = [];
+    if (statement) statement.value = ''; if (value) value.value = '';
+    if (choice) { choice.value = ''; choice.replaceChildren(); }
+    beliefDetails?.replaceChildren(); previewPanel?.replaceChildren(); content.replaceChildren();
+  };
+  const current = () => !disposed && privateViewValid && bearer && dialog.open && dialog.contains(content);
+  try {
+    const targets = await api('correction_targets', { page_id: hit.id });
+    if (!current()) return;
+    claims = targets.claims;
+    content.querySelector('.dialog-description').textContent = 'Choose one recorded belief. Corrections change your memory pages; quoted source information stays unchanged.';
+    if (!claims.length) { content.append(el('p', { class: 'status-note' }, 'No correctable beliefs are available for this page under your current permissions.')); return; }
+    if (targets.truncated) content.append(el('p', { class: 'status-note' }, 'This list is limited. Additional beliefs may exist for this page.'));
+    const form = el('form'); content.append(form);
+    choice = el('select', { id: 'correction-claim' }, ...claims.map(claim => el('option', { value: claim.claim_id }, claim.body.slice(0, 120)))); choice.value = claims[0].claim_id;
+    form.append(el('div', { class: 'form-field' }, el('label', { for: 'correction-claim' }, 'Recorded belief'), choice));
+    beliefDetails = el('div', { class: 'belief-details' }); form.append(beliefDetails);
+    const selected = () => claims.find(claim => claim.claim_id === choice.value);
+    const showBelief = () => {
+      const claim = selected(); beliefDetails.replaceChildren(); if (!claim) return;
+      beliefDetails.append(el('blockquote', {}, claim.body), el('dl', { class: 'grant-summary' }, ...[['Subject', claim.subject], ['Relationship', claim.predicate], ['Current value', claim.object]].map(([label, item]) => el('div', {}, el('dt', {}, label), el('dd', {}, item)))), el('details', { class: 'result-details' }, el('summary', {}, 'Belief reference'), el('code', {}, claim.claim_id), el('p', {}, `Recorded authority: ${claim.authority} · Privacy: ${claim.sensitivity}`)));
+    }; showBelief();
+    const mode = el('select', { id: 'correction-mode' }, el('option', { value: 'deny' }, 'Deny this belief'), el('option', { value: 'replace' }, 'Replace its value')); mode.value = 'deny';
+    form.append(el('div', { class: 'form-field' }, el('label', { for: 'correction-mode' }, 'What should change?'), mode), el('p', { class: 'model-note' }, 'Deny marks this belief as wrong without asserting a replacement. Replace uses the exact new value you enter below.'));
+    const replacement = el('div'); value = field(replacement, 'New value', 'correction-value', 'The exact replacement value'); value.setAttribute('maxlength', '1024'); replacement.hidden = true; form.append(replacement);
+    statement = el('textarea', { id: 'correction-statement', rows: '3', maxlength: '2000', placeholder: 'Explain the correction in your own words.', autocomplete: 'off' });
+    form.append(el('div', { class: 'form-field' }, el('label', { for: 'correction-statement' }, 'Your correction'), statement));
+    const errorLine = el('p', { class: 'form-error', role: 'alert' });
+    const previewButton = el('button', { type: 'submit', class: 'button button-secondary' }, 'Preview correction');
+    previewPanel = el('div', { class: 'correction-preview', 'aria-live': 'polite', tabindex: '-1' });
+    const invalidatePreview = () => { previewSequence++; preview = null; previewPanel.replaceChildren(); previewButton.disabled = false; if (apply) apply.disabled = true; errorLine.textContent = ''; };
+    for (const input of [choice, mode, statement, value]) { input.addEventListener('input', invalidatePreview); input.addEventListener('change', invalidatePreview); }
+    choice.addEventListener('change', showBelief);
+    mode.addEventListener('change', () => { replacement.hidden = mode.value !== 'replace'; if (replacement.hidden) value.value = ''; });
+    const request = () => {
+      const claim = selected();
+      if (!claim) throw new Error('Choose a recorded belief before previewing.');
+      if (!['deny', 'replace'].includes(mode.value)) throw new Error('Choose whether to deny this belief or replace its value.');
+      if (!statement.value.trim() || statement.value.length > 2000) throw new Error('Explain the correction in your own words, using up to 2,000 characters.');
+      if (mode.value === 'replace' && (!value.value.trim() || value.value.length > 1024)) throw new Error('Enter an explicit new value, using up to 1,024 characters.');
+      return { claim_id: claim.claim_id, statement: statement.value, ...(mode.value === 'replace' ? { object: value.value } : {}) };
+    };
+    apply = button('Apply correction', async () => {
+      if (!current() || !preview) return;
+      let payload; try { payload = request(); } catch (error) { invalidatePreview(); errorLine.textContent = error.message; return; }
+      if (JSON.stringify(payload) !== JSON.stringify(preview.request)) { invalidatePreview(); errorLine.textContent = 'The correction changed. Preview it again before applying.'; return; }
+      await launchOperation('correct', payload, 'Applying your correction', async operation => {
+        await refresh();
+        if (bearer && privateViewValid && state.operation?.id === operation.id) navigate('activity');
+      });
+    }, 'primary', { disabled: true });
+    form.append(errorLine, el('div', { class: 'form-actions' }, button('Cancel', closeDialog), previewButton), previewPanel, el('div', { class: 'form-actions' }, apply));
+    form.addEventListener('submit', async event => {
+      event.preventDefault(); if (!current()) return;
+      invalidatePreview();
+      let payload; try { payload = request(); } catch (error) { errorLine.textContent = error.message; return; }
+      const sequence = ++previewSequence; previewButton.disabled = true;
+      try {
+        const result = await api('correction_preview', payload);
+        if (!current() || sequence !== previewSequence) return;
+        preview = { request: payload };
+        const count = result.affected_pages;
+        previewPanel.replaceChildren(el('h3', {}, 'Preview'), el('p', {}, result.answer), el('p', {}, Number.isSafeInteger(count) && count >= 0 ? `${safeCount(count)} memory ${count === 1 ? 'page' : 'pages'} currently affected.` : 'Current affected-page count unavailable.'), el('p', { class: 'model-note' }, 'Applying checks your current permissions again. The result may differ if the memory or source permissions change.'));
+        apply.disabled = false;
+        previewPanel.focus({ preventScroll: true }); apply.scrollIntoView({ block: 'nearest' });
+      } catch (error) { if (current() && sequence === previewSequence && error.code !== 'stale_response') errorLine.textContent = error.message; }
+      finally { if (current() && sequence === previewSequence) previewButton.disabled = false; }
+    });
+  } catch (error) { if (current() && error.code !== 'stale_response') content.append(el('p', { class: 'form-error', role: 'alert' }, error.message)); }
 }
 async function search(text) {
   const query = text.trim(); if (!query || state.busy || !privateViewValid || !bearer) return;
@@ -223,9 +302,10 @@ function renderSources() {
   return section;
 }
 function clearDialogSecrets() { const key = dialog.querySelector('#model-key'); if (key) key.value = ''; }
-function closeDialog() { clearDialogSecrets(); dialog.close(); }
-dialog.addEventListener('cancel', clearDialogSecrets);
-dialog.addEventListener('close', clearDialogSecrets);
+function clearDialogTransient() { clearDialogSecrets(); const cleanup = dialogCleanup; dialogCleanup = null; if (cleanup) cleanup(); }
+function closeDialog() { clearDialogTransient(); dialog.close(); }
+dialog.addEventListener('cancel', clearDialogTransient);
+dialog.addEventListener('close', () => { if (!dialog.open) clearDialogTransient(); });
 function openDialog(title, description, symbol = 'info') {
   if (dialog.open) closeDialog();
   const content = el('div', {}, el('div', { class: 'dialog-top' }, el('div', {}, el('div', { class: 'source-icon' }, icon(symbol)), el('h2', { id: 'dialog-title' }, title)), el('button', { type: 'button', class: 'icon-button', 'aria-label': 'Close dialog', onclick: () => closeDialog() }, icon('close'))), el('p', { class: 'dialog-description' }, description));
@@ -549,9 +629,9 @@ function renderOperation() {
   const operation = state.operation;
   if (!operation) return null;
   const running = operation.state === 'running';
-  const title = operation.kind === 'agent_enroll' || operation.kind === 'agent_revoke' ? (running ? 'Updating agent access' : 'Agent access result') : operation.kind === 'model_test' ? (running ? 'Testing your model connection' : operation.state === 'succeeded' ? 'Connection test completed' : 'Connection test needs attention') : operation.kind === 'run_pass' ? (running ? 'Organising your memory' : operation.state === 'succeeded' ? 'Processing run completed' : 'Processing needs attention') : running ? 'Working on your source' : operation.state === 'failed' ? 'This step needs attention' : operation.state === 'unknown' ? 'Completion is not yet confirmed' : operation.kind === 'capture' ? 'Import progress saved' : 'Completed';
-  const detail = operation.result?.agent ? `Access: ${operation.result.agent.receipt.authority}. Enrollment: ${operation.result.agent.receipt.status}.` : operation.kind === 'run_pass' && !running && !operation.error ? runSummary(operation) : operation.kind === 'model_test' && !operation.error ? 'This test uses a made-up prompt. It does not use your imported information or grant source permission.' : running ? 'Your source checkpoint keeps progress recoverable. You can continue using the app.' : operation.error ? humanError(operation.error.code) : operation.kind === 'capture' && operation.counts ? `${safeCount(operation.counts.stored)} saved this time. Check Sources for the latest history and any problems.` : 'Check Sources or Activity for the current state.';
-  return el('div', { class: 'job-status', role: 'status' }, icon(running ? 'clock' : operation.state === 'succeeded' ? 'check' : 'info'), el('div', {}, el('h3', {}, title), el('p', {}, detail), operation.result?.run?.run_id && el('details', { class: 'result-details' }, el('summary', {}, 'Run receipt'), el('code', {}, operation.result.run.run_id)), operation.result?.agent && button('Agent setup details', () => showAgentResult(operation))));
+  const title = operation.kind === 'correct' ? (running ? 'Applying your correction' : 'Correction result') : operation.kind === 'agent_enroll' || operation.kind === 'agent_revoke' ? (running ? 'Updating agent access' : 'Agent access result') : operation.kind === 'model_test' ? (running ? 'Testing your model connection' : operation.state === 'succeeded' ? 'Connection test completed' : 'Connection test needs attention') : operation.kind === 'run_pass' ? (running ? 'Organising your memory' : operation.state === 'succeeded' ? 'Processing run completed' : 'Processing needs attention') : running ? 'Working on your source' : operation.state === 'failed' ? 'This step needs attention' : operation.state === 'unknown' ? 'Completion is not yet confirmed' : operation.kind === 'capture' ? 'Import progress saved' : 'Completed';
+  const detail = operation.kind === 'correct' && operation.result ? operation.result.message : operation.result?.agent ? `Access: ${operation.result.agent.receipt.authority}. Enrollment: ${operation.result.agent.receipt.status}.` : operation.kind === 'run_pass' && !running && !operation.error ? runSummary(operation) : operation.kind === 'model_test' && !operation.error ? 'This test uses a made-up prompt. It does not use your imported information or grant source permission.' : running ? 'Your source checkpoint keeps progress recoverable. You can continue using the app.' : operation.error ? humanError(operation.error.code) : operation.kind === 'capture' && operation.counts ? `${safeCount(operation.counts.stored)} saved this time. Check Sources for the latest history and any problems.` : 'Check Sources or Activity for the current state.';
+  return el('div', { class: 'job-status', role: 'status' }, icon(running ? 'clock' : operation.state === 'succeeded' ? 'check' : 'info'), el('div', {}, el('h3', {}, title), el('p', {}, detail), operation.kind === 'correct' && Number.isSafeInteger(operation.result?.rewritten_pages) && el('p', {}, `${safeCount(operation.result.rewritten_pages)} memory ${operation.result.rewritten_pages === 1 ? 'page' : 'pages'} rewritten.`), operation.kind === 'correct' && operation.result?.receipt_id && el('details', { class: 'result-details' }, el('summary', {}, 'Correction receipt'), el('code', {}, operation.result.receipt_id)), operation.result?.run?.run_id && el('details', { class: 'result-details' }, el('summary', {}, 'Run receipt'), el('code', {}, operation.result.run.run_id)), operation.result?.agent && button('Agent setup details', () => showAgentResult(operation))));
 }
 function render() {
   renderNavigation();
