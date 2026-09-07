@@ -66,7 +66,7 @@ function peekLedgerIdentity(vaultPath: string, dbPath: string): void {
   }
 }
 
-export function assertVault(path: string): string {
+function assertVaultLayout(path: string): string {
   const absolutePath = resolve(path);
   const control = join(absolutePath, ".kizuki");
   const archive = join(absolutePath, "archive");
@@ -85,7 +85,12 @@ export function assertVault(path: string): string {
       `vault ledger missing: ${absolutePath}; run: kizuki init ${absolutePath}`,
     );
   }
-  peekLedgerIdentity(absolutePath, dbPath);
+  return absolutePath;
+}
+
+export function assertVault(path: string): string {
+  const absolutePath = assertVaultLayout(path);
+  peekLedgerIdentity(absolutePath, join(absolutePath, ".kizuki", "kizuki.db"));
   assertVaultControl(absolutePath);
   // Remint a snapshot-cloned identity once this volume lands on a new machine.
   ensureVaultId(absolutePath);
@@ -155,7 +160,7 @@ export async function withReadVault<T>(
   options: { audit?: boolean; retrieval?: "optional" | "none" } = {},
 ): Promise<T> {
   const path = configPath(io.env);
-  const vaultPath = resolveVault(io.env, readConfig(path), io.vaultOverride);
+  const vaultPath = assertVaultLayout(resolveVault(io.env, readConfig(path), io.vaultOverride));
   assertVaultControl(vaultPath, { repairPermissions: false });
   assertBoundVaultId(vaultPath);
   let binding = openLedgerRead(vaultPath, { audit: options.audit ?? false });
