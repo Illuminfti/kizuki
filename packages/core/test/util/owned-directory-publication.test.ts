@@ -59,11 +59,13 @@ for (const existing of [false, true]) test(`publication preserves staged data; e
   } finally { parent.close(); }
 });
 
-test("sticky temp parent accepts root custody and refuses an unrelated owner", () => {
-  const path = root(), parent = openOwnedDirectory(tmpdir());
-  const name = `${basename(path)}-stage`, stagingPath = join(tmpdir(), name); roots.push(stagingPath);
+test("qualified temp parent accepts current-user or sticky root custody and refuses an unrelated owner", () => {
+  const temporary = realpathSync(tmpdir());
+  const path = root(), parent = openOwnedDirectory(temporary);
+  const name = `${basename(path)}-stage`, stagingPath = join(temporary, name); roots.push(stagingPath);
   try {
-    if (lstatSync(tmpdir()).uid !== 0) {
+    const owner = lstatSync(temporary).uid;
+    if (owner !== 0 && owner !== process.geteuid?.()) {
       expect(failure(() => parent.createStaging(name)).reason).toBe("unsafe");
       expect(existsSync(stagingPath)).toBe(false);
       return;
