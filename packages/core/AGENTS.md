@@ -24,7 +24,7 @@ Read the relevant contract under `src/contracts`, its public export from
 
 ## Rules
 
-- Do not change `kizuki.event/v1`, current claim contracts, connector
+- Do not change `kizuki.event/v1`, the live `kizuki.claim/v1` contract, connector
   contracts, vault frontmatter, or exported types casually. A contract change
   needs an explicit task, compatibility analysis, and any required RFC.
   RFC 0002 is the binding change for claims and the receipted writer; do not

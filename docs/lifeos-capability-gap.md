@@ -59,8 +59,8 @@ names, deployment paths, and provider configuration are intentionally omitted.
 
 Order reconciled on 2026-09-07 with [RFC 0002 §18](../rfcs/0002-autonomous-canon.md#18-migration-and-lanes)
 and [D15/D19](decision-log.md). The matrix above records the 2026-09-01
-snapshot; this sequence describes accepted dependencies, not unfinished work
-or a claim that the current candidate has passed its release gates. Check
+snapshot; this sequence records dependency order. It does not report current
+completion or candidate release acceptance. Check
 [Current direction](CURRENT.md) for implementation status.
 
 1. **Close connection secret custody structurally and land the core spine.**
@@ -79,7 +79,7 @@ or a claim that the current candidate has passed its release gates. Check
    work; prove them through the RFC §11/§18 restart and liveness gates.
    Preserve the explicit `--no-service` opt-out and unsupported-host diagnostic.
 4. **Implement MCP and portable context over the same core contracts.** The
-   stdio adapter remains independently usable when the daemon is down. Enforce
+   CLI and stdio adapter remain independently usable when the daemon is down. Enforce
    identity, grants, rate limits, and audit beneath both transports; stdio
    availability does not defer service installation. Model reusable agent
    skills, working conventions, demonstrated creative standards,
