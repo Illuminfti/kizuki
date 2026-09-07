@@ -16,14 +16,15 @@ async function sourceTreeDigest(root: string): Promise<string> {
   const entries: unknown[] = [];
   const visit = async (relative: string, depth: number): Promise<void> => {
     if (depth > 8 || entries.length > 64) throw new Error("synthetic source inventory exceeded its bound");
+    const target = join(root, relative), stat = await lstat(target, { bigint: true });
+    if (stat.size > 1_048_576n || stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) throw new Error("synthetic source type changed");
+    // atime is deliberately excluded: observing source bytes may update it.
+    entries.push([relative, stat.isDirectory() ? "directory" : digest(await readFile(target)),
+      ...[stat.dev, stat.ino, stat.mode, stat.uid, stat.gid, stat.nlink, stat.size, stat.mtimeNs, stat.ctimeNs].map(String)]);
+    if (!stat.isDirectory()) return;
     const names = await readdir(join(root, relative));
     if (names.length + entries.length > 64) throw new Error("synthetic source inventory exceeded its bound");
-    for (const name of names.sort()) {
-      const child = join(relative, name), target = join(root, child), stat = await lstat(target);
-      if (stat.size > 1_048_576 || stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) throw new Error("synthetic source type changed");
-      entries.push([child, stat.isDirectory() ? "directory" : digest(await readFile(target)), stat.ino, stat.mtimeMs]);
-      if (stat.isDirectory()) await visit(child, depth + 1);
-    }
+    for (const name of names.sort()) await visit(join(relative, name), depth + 1);
   };
   await visit("", 0);
   return digest(JSON.stringify(entries));
@@ -70,9 +71,8 @@ export async function exportPurgeFixture(id: string): Promise<PurgeConformanceFi
     const snapshot = async () => {
       // Every record's digest binds the actual complete export bytes, not a cached
       // connector result. Any planning mutation of any source file is detected.
-      const sha256 = await sourceTreeDigest(source);
-      return [...ids.map(source_record_id => ({ source_record_id, sha256 })),
-        { source_record_id: "fixture:unrelated-source", sha256: digest(await readFile(sentinel)) }];
+      const sha256 = await sourceTreeDigest(root);
+      return [...ids, "fixture:unrelated-source"].map(source_record_id => ({ source_record_id, sha256 }));
     };
     return readOnlyFixture(connector, subject, selected, [...ids, "fixture:unrelated-source"], snapshot,
       () => rm(root, { recursive: true }));

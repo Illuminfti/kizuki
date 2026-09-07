@@ -122,3 +122,41 @@ test("a fixture for a different implementation refuses before planning", async (
   expect(result.pass).toBe(false);
   expect(f.counts).toEqual({ base: 0, plans: 0, executed: 0, verified: 0, disposed: 1 });
 });
+
+for (const field of ["subject_id", "source_record_ids", "unreachable_source_record_ids", "complete", "continuation", "array-element"] as const) {
+  test(`purge admission refuses ${field} accessors without invoking them`, async () => {
+    const f = factory(); let invoked = 0;
+    const result = await runConformance(f.base, { purgeFixture: async () => {
+      const fixture = await f.create(), original = fixture.connector.purgeSource.bind(fixture.connector);
+      fixture.connector.purgeSource = async subject => {
+        const raw = await original(subject);
+        const target = field === "array-element" ? raw.source_record_ids : raw;
+        const key = field === "array-element" ? "0" : field;
+        const value = Reflect.get(target, key);
+        Object.defineProperty(target, key, { enumerable: true, get() { invoked++; return value; } });
+        return raw;
+      };
+      return fixture;
+    } });
+    expect(result.pass).toBe(false); expect(invoked).toBe(0);
+    expect(f.counts.executed).toBe(0); expect(f.counts.disposed).toBe(1);
+  });
+}
+
+test("a late factory fixture is disposed exactly once after admission times out", async () => {
+  const f = factory();
+  let release!: () => void, finished!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const disposed = new Promise<void>(resolve => { finished = resolve; });
+  const run = await runConformance(f.base, { deadlineMs: 5, purgeFixture: async () => {
+    const fixture = await f.create(); await gate;
+    const dispose = fixture.dispose.bind(fixture);
+    fixture.dispose = async () => { await dispose(); finished(); };
+    return fixture;
+  } });
+  expect(run.pass).toBe(false); expect(f.counts.disposed).toBe(0);
+  release();
+  await Promise.race([disposed, Bun.sleep(100)]);
+  expect(f.counts).toEqual({base:0,plans:0,executed:0,verified:0,disposed:1});
+  await Bun.sleep(10); expect(f.counts.disposed).toBe(1);
+});

@@ -28,10 +28,19 @@ class PurgeFixtureError extends Error {}
 const validId = (id: unknown): id is string => typeof id === "string" && id.length > 0 && id.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(id);
 
 function ids(value: unknown): string[] {
-  if (!Array.isArray(value) || value.length > MAX_IDS || !value.every(validId) || new Set(value).size !== value.length) {
+  if (!Array.isArray(value) || value.length > MAX_IDS) {
     throw new PurgeFixtureError("purge fixture IDs must be bounded, unique strings");
   }
-  return [...value].sort();
+  const detached: string[] = [];
+  for (let index = 0; index < value.length; index++) {
+    const entry = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!entry || !("value" in entry) || !validId(entry.value)) {
+      throw new PurgeFixtureError("purge fixture IDs must be bounded, unique strings");
+    }
+    detached.push(entry.value);
+  }
+  if (new Set(detached).size !== detached.length) throw new PurgeFixtureError("purge fixture IDs must be bounded, unique strings");
+  return detached.sort();
 }
 function same(left: unknown, right: unknown): boolean { return JSON.stringify(left) === JSON.stringify(right); }
 function rows(value: unknown): PurgeFixtureRow[] {
@@ -44,10 +53,13 @@ function rows(value: unknown): PurgeFixtureRow[] {
     .sort((a, b) => a.source_record_id < b.source_record_id ? -1 : a.source_record_id > b.source_record_id ? 1 : 0);
 }
 function plan(value: unknown, subject: string, removable: string[], unreachable: string[]): PurgePlan {
-  if (!isPlainObject(value) || Object.keys(value).some(key => !["subject_id", "source_record_ids", "unreachable_source_record_ids", "complete", "continuation"].includes(key)) ||
-      value["subject_id"] !== subject || value["complete"] !== true ||
-      value["continuation"] !== undefined || !same(ids(value["source_record_ids"]), removable) ||
-      !same(ids(value["unreachable_source_record_ids"]), unreachable)) {
+  if (!isPlainObject(value)) throw new PurgeFixtureError("purge fixture plan must be complete and match the exact selector partition");
+  const fields = Object.getOwnPropertyDescriptors(value);
+  if (Reflect.ownKeys(fields).some(key => typeof key !== "string" ||
+      !["subject_id", "source_record_ids", "unreachable_source_record_ids", "complete", "continuation"].includes(key) || !("value" in fields[key]!)) ||
+      fields["subject_id"]?.value !== subject || fields["complete"]?.value !== true ||
+      fields["continuation"]?.value !== undefined || !same(ids(fields["source_record_ids"]?.value), removable) ||
+      !same(ids(fields["unreachable_source_record_ids"]?.value), unreachable)) {
     throw new PurgeFixtureError("purge fixture plan must be complete and match the exact selector partition");
   }
   // The executor receives the exact admitted plan, detached from provider state.
@@ -62,8 +74,17 @@ export async function checkPurgeFixture(base: Connector, factory: PurgeConforman
     return;
   }
   let fixture: PurgeConformanceFixture | undefined;
+  let created: Promise<PurgeConformanceFixture> | undefined;
+  let disposalStarted = false;
+  const dispose = async (owned: PurgeConformanceFixture): Promise<void> => {
+    if (disposalStarted) return;
+    disposalStarted = true;
+    try {
+      if (owned && typeof owned.dispose === "function") await timed("purge fixture disposal", () => owned.dispose());
+    } catch { failures.push("purge fixture disposal failed"); }
+  };
   try {
-    fixture = await timed("purge fixture factory", factory);
+    fixture = await timed("purge fixture factory", () => created = Promise.resolve().then(factory));
     if (!fixture || fixture.connector === base || !validId(fixture.subject_id) ||
         typeof fixture.snapshot !== "function" || typeof fixture.execute !== "function" ||
         typeof fixture.verifyAbsent !== "function" || typeof fixture.dispose !== "function") {
@@ -86,6 +107,7 @@ export async function checkPurgeFixture(base: Connector, factory: PurgeConforman
     const rawPlan = await timed("purge fixture plan", () => owned.connector.purgeSource(subject));
     if (!same(await snapshot(), before)) throw new PurgeFixtureError("purge fixture planning mutated the source");
     const exact = plan(rawPlan, subject, removable, unreachable);
+    if (!same(await snapshot(), before)) throw new PurgeFixtureError("purge fixture admission mutated the source");
     await timed("purge fixture execute", () => owned.execute(exact));
     const proof = await timed("purge fixture verify absence", () => owned.verifyAbsent(removable));
     if (!isPlainObject(proof) || proof["checked"] !== removable.length || !same(ids(proof["found"]), [])) {
@@ -101,9 +123,9 @@ export async function checkPurgeFixture(base: Connector, factory: PurgeConforman
     const known = error instanceof PurgeFixtureError;
     failures.push(known ? error.message : "purge fixture qualification failed");
   } finally {
-    if (fixture && typeof fixture.dispose === "function") {
-      try { await timed("purge fixture disposal", () => fixture!.dispose()); }
-      catch { failures.push("purge fixture disposal failed"); }
-    }
+    if (fixture) await dispose(fixture);
+    // A deadline stops qualification, not ownership of an eventual factory
+    // result. Observe rejection and dispose a late result without retrying it.
+    else if (created) void created.then(dispose, () => undefined);
   }
 }
