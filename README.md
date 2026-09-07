@@ -159,11 +159,18 @@ The richer world-model architecture above is the direction being built on top of
 
 Requires **Bun 1.3.14**, the version pinned by CI, and Git.
 
-Clone this repository using GitHub’s Code button, then run these commands from the checkout root.
+Clone this repository using GitHub’s Code button, then open the guided app from the checkout root:
 
 ```bash
 bun install --frozen-lockfile
+bun packages/cli/src/main.ts app
+```
 
+Create your workspace, connect a local notes folder, and review its permissions before importing. Search works without a model. Settings lets you configure a model, test the connection with a synthetic prompt, and separately permit each source to use that exact model destination. It also lets you give an assistant scoped read access. [Local app guide →](docs/local-app.md)
+
+For a temporary command-line example with background activity turned off:
+
+```bash
 demo="$(mktemp -d)"
 mkdir "$demo/notes"
 cat > "$demo/notes/atlas.md" <<'NOTE'
