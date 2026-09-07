@@ -249,6 +249,19 @@ test("uninstall of an enabled inactive systemd unit confirms disable without act
   const original = readFileSync(first.unitPath!, "utf8");
   const before = ordinaryVault(f.vault);
   f.observe("disabled", true);
+  const trace: string[] = [];
+  const disable = f.host.disable;
+  f.host.disable = name => {
+    expect(readFileSync(first.unitPath!, "utf8")).toBe(original);
+    trace.push("disable before removal");
+    return disable(name);
+  };
+  f.host.reload = () => {
+    expect(f.host.query("synthetic")).toMatchObject({ state: "disabled", enabled: false });
+    expect(existsSync(first.unitPath!)).toBe(false);
+    trace.push("reload after removal");
+    return { ok: true, detail: "reloaded" };
+  };
   const removed = uninstallServeService(f.vault, f.host);
   expect(removed.removed).toBe(true);
   expect(removed.status.enabled).toBe(false);
@@ -259,7 +272,31 @@ test("uninstall of an enabled inactive systemd unit confirms disable without act
   expect(ordinaryVault(f.vault)).toEqual(before);
   expect(f.activated).toEqual([original]);
   expect(f.enabledWithoutStart).toEqual([]);
+  expect(trace).toEqual(["disable before removal", "reload after removal"]);
 });
+
+for (const failure of ["disable", "reload"] as const) {
+  test(`one failed ${failure} restores inactive enablement and the prior intent without activation`, () => {
+    const f = fixture(); const first = installServeService(f.vault, f.host);
+    const original = readFileSync(first.unitPath!, "utf8");
+    f.observe("disabled", true);
+    const before = ordinaryVault(f.vault);
+    const operation = f.host[failure];
+    let calls = 0;
+    f.host[failure] = (name: string = "") => ++calls === 1
+      ? { ok: false, detail: "ordinary operation failure" }
+      : operation(name);
+    expect(() => uninstallServeService(f.vault, f.host)).toThrow("previous configuration restored");
+    expect(calls).toBe(2);
+    expect(readFileSync(first.unitPath!, "utf8")).toBe(original);
+    expect(f.host.query("synthetic")).toMatchObject({ state: "disabled", enabled: true });
+    expect(readServeIntent(f.vault)).toBe("installed");
+    expect(existsSync(journalPath(f.vault))).toBe(false);
+    expect(ordinaryVault(f.vault)).toEqual(before);
+    expect(f.activated).toEqual([original]);
+    expect(f.enabledWithoutStart).toHaveLength(1);
+  });
+}
 
 test("failed disable of inactive+enabled stays pending and retry uninstalls without activation", () => {
   const f = fixture(); const first = installServeService(f.vault, f.host);
@@ -355,6 +392,7 @@ test("valid version-2 active and disabled journals recover according to their or
     version: 2, kind: "systemd", identity_hash: activeJournal.identity_hash,
     previous_unit: activeJournal.previous_unit, previous_intent: "installed", previous_enabled: true,
   }));
+  f.setState("disabled"); // The post-interruption state does not redefine v2's prior activity.
   const recoveredActive = installServeService(f.vault, f.host);
   expect(recoveredActive.status.state).toBe("active");
   expect(f.activated.at(-2)).toBe(original);
@@ -367,6 +405,7 @@ test("valid version-2 active and disabled journals recover according to their or
     version: 2, kind: "systemd", identity_hash: disabledJournal.identity_hash,
     previous_unit: disabledJournal.previous_unit, previous_intent: "opted-out", previous_enabled: false,
   }));
+  f.setState("active");
   const beforeEnable = f.activated.length;
   let restoredUnit = "";
   let restoredStatus: SupervisorStatus | undefined;
@@ -402,7 +441,7 @@ test("interrupted version-3 inactive+enabled snapshot preserves original activit
 
 test("hosts without enablement-only restoration refuse inactive+enabled before mutation and keep active flows", () => {
   const f = fixture(); const first = installServeService(f.vault, withoutEnablementOnly(f.host));
-  const original = readFileSync(first.unitPath!, "utf8");
+  expect(existsSync(first.unitPath!)).toBe(true);
   const next = installServeService(f.vault, { ...withoutEnablementOnly(f.host), execStart: ["/synthetic/kizuki-v2", "serve"] });
   expect(next.status.state).toBe("active");
   expect(uninstallServeService(f.vault, withoutEnablementOnly(f.host)).removed).toBe(true);
@@ -485,15 +524,47 @@ test("unsupported journal shapes are retained without mutating the unit", () => 
   const original = readFileSync(first.unitPath!, "utf8");
   interruptInstall(f, { state: "active", enabled: true });
   const valid = JSON.parse(readFileSync(journalPath(f.vault), "utf8"));
-  writeFileSync(journalPath(f.vault), JSON.stringify({ ...valid, extra: true }));
-  const snapshot = readFileSync(journalPath(f.vault), "utf8");
   let mutations = 0;
   const host: SupervisorHost = { ...f.host,
+    reload: () => { mutations++; return f.host.reload(); },
     enable: (path, name) => { mutations++; return f.host.enable(path, name); },
     disable: name => { mutations++; return f.host.disable(name); },
   };
-  expect(() => installServeService(f.vault, host)).toThrow("another vault or service location");
-  expect(mutations).toBe(0);
+  for (const fields of [
+    { extra: true },
+    { version: 2 }, // v2 cannot carry the additional v3 activity field.
+    { version: 4 },
+    { previous_active: undefined },
+    { previous_active: "false" },
+    { previous_enabled: "true" },
+    { previous_enabled: false, previous_active: true },
+    { previous_unit: null, previous_enabled: true },
+  ]) {
+    const snapshot = JSON.stringify({ ...valid, ...fields });
+    writeFileSync(journalPath(f.vault), snapshot);
+    expect(() => installServeService(f.vault, host)).toThrow("another vault or service location");
+    expect(mutations).toBe(0);
+    expect(readFileSync(journalPath(f.vault), "utf8")).toBe(snapshot);
+    expect(readFileSync(first.unitPath!, "utf8")).not.toBe(original);
+  }
+});
+
+test("version-3 launchd journals cannot claim inactive enablement even with a capable host", () => {
+  const f = fixture("launchd"); const first = installServeService(f.vault, f.host);
+  interruptInstall(f, { state: "active", enabled: true });
+  const prior = JSON.parse(readFileSync(journalPath(f.vault), "utf8"));
+  const snapshot = JSON.stringify({ ...prior, previous_active: false });
+  writeFileSync(journalPath(f.vault), snapshot);
+  const published = readFileSync(first.unitPath!, "utf8");
+  const calls: string[] = [];
+  const host: SupervisorHost = { ...f.host,
+    disable: name => { calls.push("disable"); return f.host.disable(name); },
+    reload: () => { calls.push("reload"); return f.host.reload(); },
+    enableWithoutStart: () => { calls.push("enable without start"); return { ok: true, detail: "enabled" }; },
+  };
+  expect(() => installServeService(f.vault, host)).toThrow("snapshot is invalid");
+  expect(calls).toEqual([]);
   expect(readFileSync(journalPath(f.vault), "utf8")).toBe(snapshot);
-  expect(readFileSync(first.unitPath!, "utf8")).not.toBe(original);
+  expect(readFileSync(first.unitPath!, "utf8")).toBe(published);
+  expect(readServeIntent(f.vault)).toBe("installed");
 });

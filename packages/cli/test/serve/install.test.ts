@@ -170,7 +170,7 @@ test("public uninstall of an enabled inactive unit preserves vault bytes and doe
 
 test("public reinstall of an enabled inactive unit still activates the current definition", () => {
   const setup = tempVault();
-  const env = { ...fakeSystemd(setup.root, setup.env), KIZUKI_SUPERVISOR: "systemd" };
+  const env: Record<string, string | undefined> = { ...fakeSystemd(setup.root, setup.env), KIZUKI_SUPERVISOR: "systemd" };
   assertSyntheticSystemctl(setup.root, env);
   expect(runCli(env, "serve", "--install").exitCode).toBe(0);
   writeFileSync(env.TEST_SUPERVISOR_FILE!, "enabled\n");
@@ -185,7 +185,7 @@ test("public reinstall of an enabled inactive unit still activates the current d
 
 test("failed reinstall from enabled inactive restores original inactivity without a success payload", () => {
   const setup = tempVault();
-  const env = { ...fakeSystemd(setup.root, setup.env), KIZUKI_SUPERVISOR: "systemd" };
+  const env: Record<string, string | undefined> = { ...fakeSystemd(setup.root, setup.env), KIZUKI_SUPERVISOR: "systemd" };
   assertSyntheticSystemctl(setup.root, env);
   const installed = runCli(env, "serve", "--install", "--json");
   expect(installed.exitCode).toBe(0);
@@ -208,7 +208,7 @@ test("failed reinstall from enabled inactive restores original inactivity withou
 
 test("ordinary failed recovery from enabled inactive returns nonzero and later converges", () => {
   const setup = tempVault();
-  const env = { ...fakeSystemd(setup.root, setup.env), KIZUKI_SUPERVISOR: "systemd" };
+  const env: Record<string, string | undefined> = { ...fakeSystemd(setup.root, setup.env), KIZUKI_SUPERVISOR: "systemd" };
   assertSyntheticSystemctl(setup.root, env);
   const installed = runCli(env, "serve", "--install", "--json");
   expect(installed.exitCode).toBe(0);
