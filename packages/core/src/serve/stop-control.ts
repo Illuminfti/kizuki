@@ -104,13 +104,18 @@ export async function requestServeStop(vaultPath: string): Promise<ServeStopResu
 /** Unverified control data is never interpreted as an instruction to exit. */
 export function serveStopRequested(vaultPath: string, own: ServeProcessMarker): boolean {
   let files: CanonFiles | undefined;
+  let requested = false;
   try {
     files = openCanonFiles(vaultPath); files.assertPrivateDirectory(".kizuki");
     const value = read(files, REQUEST, true);
-    if (value === null) return false;
-    try { return same(value.marker, own); } finally { value.snapshot.close(); }
-  } catch { return false; }
-  finally { files?.close(); }
+    if (value !== null) {
+      try { requested = same(value.marker, own); } finally { value.snapshot.close(); }
+    }
+  } catch { requested = false; }
+  finally {
+    try { files?.close(); } catch { requested = false; }
+  }
+  return requested;
 }
 
 /** Cleanup cannot displace a successor's request; retained old requests are inert. */

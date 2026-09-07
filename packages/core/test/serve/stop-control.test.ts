@@ -21,7 +21,7 @@ function fixture() {
 }
 const bytes = (own: ServeProcessMarker) => JSON.stringify({ schema: "kizuki.serve-stop/v1", ...own });
 
-test("concurrent requests converge on one private immutable publication", async () => {
+test("repeated requests converge on one private immutable publication", async () => {
   const f = fixture();
   const outcomes = await Promise.all(Array.from({ length: 8 }, () => requestServeStop(f.root)));
   expect(outcomes.filter(x => x.status === "queued")).toHaveLength(1);
@@ -32,6 +32,76 @@ test("concurrent requests converge on one private immutable publication", async 
   expect(readFileSync(f.request)).toEqual(data);
   expect(before.mode & 0o777).toBe(0o600); expect(before.nlink).toBe(1);
   expect(existsSync(f.stage)).toBe(false);
+});
+
+test("separate processes released together enqueue one request under contention", async () => {
+  const f = fixture(), release = join(f.root, "release-callers");
+  const children = Array.from({ length: 4 }, (_, index) => Bun.spawn([process.execPath, "--eval", `
+    import { existsSync, writeFileSync } from "node:fs";
+    import { requestServeStop } from ${JSON.stringify(join(import.meta.dir, "../../src/serve/stop-control.ts"))};
+    writeFileSync(${JSON.stringify(join(f.root, "ready-"))} + ${index}, "ready");
+    while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(5);
+    const result = await requestServeStop(${JSON.stringify(f.root)});
+    process.stdout.write(JSON.stringify({ pid: process.pid, ...result }));
+  `], { stdout: "pipe", stderr: "pipe" }));
+  const output = children.map(async child => ({ exit: await child.exited,
+    stdout: await new Response(child.stdout).text(), stderr: await new Response(child.stderr).text() }));
+  try {
+    await withVaultMutationSync({ vault_path: f.root }, async () => {
+      const deadline = Date.now() + 5000;
+      while (!children.every((_, index) => existsSync(join(f.root, "ready-" + index))) && Date.now() < deadline) await Bun.sleep(10);
+      expect(children.every((_, index) => existsSync(join(f.root, "ready-" + index)))).toBe(true);
+      writeFileSync(release, "start");
+      await Bun.sleep(100);
+      expect(existsSync(f.request)).toBe(false);
+    });
+    const results = await Promise.all(output);
+    for (const result of results) expect(result.exit, result.stderr).toBe(0);
+    const outcomes = results.map(result => JSON.parse(result.stdout));
+    expect(new Set(outcomes.map(x => x.pid)).size).toBe(4);
+    expect(outcomes.filter(x => x.status === "queued")).toHaveLength(1);
+    expect(outcomes.filter(x => x.status === "already_queued")).toHaveLength(3);
+    expect(outcomes.every(x => x.instance_id === f.own.instance_id)).toBe(true);
+    expect(JSON.parse(readFileSync(f.request, "utf8"))).toEqual(JSON.parse(bytes(f.own)));
+    expect(lstatSync(f.request).nlink).toBe(1); expect(existsSync(f.stage)).toBe(false);
+  } finally {
+    for (const child of children) if (child.exitCode === null) child.kill("SIGKILL");
+    await Promise.all(output);
+  }
+});
+
+test("a real poll descriptor close failure cannot escape as a daemon shutdown", () => {
+  const f = fixture(); writeFileSync(f.request, "not a control request", { mode: 0o600 });
+  const script = `
+    import { mock } from "bun:test";
+    import * as ffi from "bun:ffi";
+    import * as fs from "node:fs";
+    import { basename } from "node:path";
+    import { strict as assert } from "node:assert";
+    let rootFd = null, injected = 0;
+    const realCc = ffi.cc, realClose = fs.closeSync;
+    mock.module("bun:ffi", () => ({ ...ffi, cc(options) {
+      const library = realCc(options), open = library.symbols.kizuki_open_owned_child;
+      return { ...library, symbols: { ...library.symbols, kizuki_open_owned_child(...args) {
+        const fd = open(...args);
+        if (rootFd === null && fd >= 0 && new ffi.CString(args[1]).toString() === basename(${JSON.stringify(f.root)})) rootFd = fd;
+        return fd;
+      } } };
+    } }));
+    mock.module("node:fs", () => ({ ...fs, closeSync(fd) {
+      realClose(fd);
+      if (fd === rootFd && injected === 0) { injected++; throw Object.assign(new Error("synthetic close failure"), { code: "EIO" }); }
+    } }));
+    const { serveStopRequested } = await import(${JSON.stringify(join(import.meta.dir, "../../src/serve/stop-control.ts"))});
+    assert.equal(serveStopRequested(${JSON.stringify(f.root)}, ${JSON.stringify(f.own)}), false);
+    assert.equal(injected, 1);
+    assert.throws(() => fs.fstatSync(rootFd), { code: "EBADF" });
+    assert.equal(fs.readFileSync(${JSON.stringify(f.request)}, "utf8"), "not a control request");
+    process.stdout.write("passed");
+  `;
+  const result = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 10_000 });
+  expect(result.exitCode, result.stderr.toString()).toBe(0);
+  expect(result.stdout.toString()).toBe("passed");
 });
 
 test("a request for a previous instance cannot stop or be removed by its successor", async () => {
