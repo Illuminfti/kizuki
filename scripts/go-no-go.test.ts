@@ -469,7 +469,8 @@ test("v3 empty receipts keep artifact credit and do not implement new families",
   expect(gate(result, SURFACE_GATE).status).toBe("NOT_IMPLEMENTED");
   expect(result.decision).toBe("NO-GO");
   expect(result.verifier.find(item => item.file === "scripts/release-evidence.ts")?.sha256).toBe(digest(readFileSync(join(import.meta.dir, "release-evidence.ts"))));
-  expect(result.verifier.find(item => item.file === CAPABILITY_PROOF_FILE)).toEqual({ file: CAPABILITY_PROOF_FILE, sha256: null, status: "MISSING" });
+  expect(result.verifier.find(item => item.file === CAPABILITY_PROOF_FILE)).toEqual({ file: CAPABILITY_PROOF_FILE,
+    sha256: digest(readFileSync(join(import.meta.dir, "capability-proof.ts"))), status: "PRESENT" });
   expect(result.verifier_sha256).toBe(digest(JSON.stringify(result.verifier)));
 });
 
@@ -494,7 +495,7 @@ test("v3 unknown, duplicate and mismatched gate references fail the index withou
   expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").reason).toBe("mismatched-gate-or-target");
 });
 
-test("inactive producers keep default states even when v3 lists missing receipts", () => {
+test("inactive families keep default states while an active surface producer refuses missing receipts", () => {
   const f = fixture(), missing = join(f.root, "never-opened.json");
   const receipts = [
     ...TARGETS.flatMap(platform => [
@@ -523,7 +524,7 @@ test("inactive producers keep default states even when v3 lists missing receipts
   expect(gate(result, "candidate.required-checks").status).toBe("NOT_IMPLEMENTED");
   expect(gate(result, "candidate.independent-review").status).toBe("NOT_IMPLEMENTED");
   expect(gate(result, "candidate.current-p0-disposition").status).toBe("UNVERIFIABLE");
-  expect(gate(result, SURFACE_GATE)).toMatchObject({ status: "NOT_IMPLEMENTED", evidence_sha256: null });
+  expect(gate(result, SURFACE_GATE)).toMatchObject({ status: "FAIL", evidence_sha256: null });
   for (const id of JOURNEYS) expect(gate(result, `journey.${id}`).status).toBe("NOT_IMPLEMENTED");
   for (const item of CONNECTORS) expect(gate(result, `connector.${item.id}`).status).toBe("NOT_IMPLEMENTED");
   expect(gate(result, "human.unfamiliar-user").status).toBe("NOT_IMPLEMENTED");
