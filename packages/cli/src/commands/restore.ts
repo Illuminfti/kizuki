@@ -1,7 +1,42 @@
-import { resolve } from "node:path";
-import { restoreVault, verifyBackup } from "@kizuki/core";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import type { Database } from "bun:sqlite";
+import { listConnections, restoreVault, verifyBackup } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
+import { connectionStateIsCredentialFree } from "../connections";
+import { openVaultDb } from "../context";
+import { tryRefreshDerived } from "../derived";
 import type { CliIo, Command } from "./index";
+
+/**
+ * The counterpart to `exportCredentialFreeConnectionState`: only a
+ * `none`-auth connector ever had its state copied into the backup, so only
+ * those connections can come back usable. Anything else keeps reporting
+ * `state=missing` exactly as it did before this fix — re-enrollment, not a
+ * silently trusted credential, is what a sign-in connector gets back.
+ */
+function restoreCredentialFreeConnectionState(
+  db: Database,
+  backupDir: string,
+  into: string,
+): number {
+  let restored = 0;
+  for (const connection of listConnections(db, { includeDisconnected: true })) {
+    if (!connectionStateIsCredentialFree(connection.connector_id)) continue;
+    const ref = connection.secret_refs[0];
+    if (connection.secret_refs.length !== 1 || ref === undefined) continue;
+    if (!ref.startsWith("file:connections/") || !ref.endsWith(".state")) continue;
+    const relative = ref.slice("file:".length);
+    const from = join(backupDir, relative);
+    if (!existsSync(from)) continue;
+    const bytes = readFileSync(from);
+    const to = join(into, ".kizuki", relative);
+    writeFileSync(to, bytes, { mode: 0o600 });
+    chmodSync(to, 0o600);
+    restored += 1;
+  }
+  return restored;
+}
 
 export const restoreCommand: Command = {
   name: "restore",
@@ -26,8 +61,9 @@ export const restoreCommand: Command = {
       }
       return 0;
     }
-    const report = restoreVault(backupDir, resolve(into));
-    io.out(`vault=${resolve(into)}`);
+    const target = resolve(into);
+    const report = restoreVault(backupDir, target);
+    io.out(`vault=${target}`);
     io.out(
       [
         `events=${report.events}`,
@@ -39,6 +75,15 @@ export const restoreCommand: Command = {
       ].join(" "),
     );
     for (const warning of report.recovery_warnings) io.out(`warning=${warning}`);
+    const db = openVaultDb(target);
+    try {
+      const connectionState = restoreCredentialFreeConnectionState(db, backupDir, target);
+      io.out(`connection_state=${connectionState}`);
+      const derived = tryRefreshDerived(db, target);
+      for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
+    } finally {
+      db.close();
+    }
     return 0;
   },
 };
