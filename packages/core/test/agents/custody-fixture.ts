@@ -20,7 +20,7 @@ export const credentialCustodyQualified = ((process.platform === "linux" && proc
 /** Match private ledger setup before testing enrollment's fail-closed custody. */
 export function initializeEnrollmentLedger(dbPath: string): void {
   const db = openLedger(dbPath);
-  try { hardenLedgerFile(dbPath); } finally { db.close(); }
+  try { hardenLedgerFile(dbPath); } finally { db.close(true); }
   const uid = process.geteuid?.();
   assert.notEqual(uid, undefined, "enrollment fixture requires a native owner");
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
