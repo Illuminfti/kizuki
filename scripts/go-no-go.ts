@@ -8,9 +8,10 @@ import { ArtifactProofError, PROOF_JSON_LIMITS, SQLITE_ENGINE_POLICY, parseProof
 import type { ArtifactProofIdentity, ArtifactProofSchema } from "./artifact-proof";
 import {
   CAPABILITY_PROOF_FILE, CONNECTORS, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, SURFACE_GATE, SURFACE_PRODUCER, TARGETS,
-  absolute, consumeSurfaceReceipt, digest, exact, gateReceiptMappingError, hash, inspectOptionalVerifier, parseGateReceipts, parents, read, reject, surfaceProducerActive, text,
+  absolute, digest, exact, gateReceiptMappingError, hash, inspectOptionalVerifier, parseGateReceipts, parents, read, reject, surfaceProducerActive, text,
 } from "./release-evidence";
 import type { GateReceiptReference } from "./release-evidence";
+import { consumeCompatibleSurfaceReceipt } from "./surface-compatible-evidence";
 
 type Profile = "rc" | "1.0";
 type Status = "PASS" | "FAIL" | "MISSING" | "UNVERIFIABLE" | "NOT_IMPLEMENTED";
@@ -32,7 +33,7 @@ const LIMITS = { index: EVIDENCE_LIMITS.index, index_v3: EVIDENCE_LIMITS.index_v
 const POLICY = { schema: "kizuki.acceptance-policy/v2", sqlite_engine: SQLITE_ENGINE_POLICY, supported_bun_version: SUPPORTED_BUN_VERSION, targets: TARGETS, journeys: JOURNEYS, connectors: CONNECTORS, limits: LIMITS,
   post_ready_observation_ms: { owner: 604800000, estate: 1209600000 }, unfamiliar_user_ms: 900000,
   deferred_connectors: ["composio", "whatsapp-business-api"], carry_forward: false, fixture_release_credit: false };
-const VERIFIER_FILES = [".bun-version", "scripts/go-no-go.ts", "scripts/release-evidence.ts", "scripts/artifact-proof.ts", "scripts/artifact-engine.ts", "packages/core/src/ledger/runtime.ts", "scripts/stranger-proof.ts", "scripts/release-targets.ts", "scripts/release-artifacts.ts", "scripts/release-notices.ts", "scripts/proof-json.ts", "scripts/qualification.ts", "packages/core/src/serve/qualification.ts", "packages/core/src/serve/receipts.ts", "packages/core/src/serve/types.ts"];
+const VERIFIER_FILES = [".bun-version", "scripts/go-no-go.ts", "scripts/release-evidence.ts", "scripts/surface-compatible-evidence.ts", "scripts/artifact-proof.ts", "scripts/artifact-engine.ts", "packages/core/src/ledger/runtime.ts", "scripts/stranger-proof.ts", "scripts/release-targets.ts", "scripts/release-artifacts.ts", "scripts/release-notices.ts", "scripts/proof-json.ts", "scripts/qualification.ts", "packages/core/src/serve/qualification.ts", "packages/core/src/serve/receipts.ts", "packages/core/src/serve/types.ts"];
 
 function parseIndex(value: unknown, bytes: number): EvidenceIndex {
   if (!value || typeof value !== "object" || Array.isArray(value)) reject("invalid-index");
@@ -114,7 +115,7 @@ function gates(): Gate[] {
   return rows;
 }
 
-export function evaluateRelease(profile: Profile, evidencePath: string) {
+export function evaluateRelease(profile: Profile, evidencePath: string, options: { candidateRoot?: string } = {}) {
   if (profile !== "rc" && profile !== "1.0") reject("unsupported-profile");
   const rows = gates(), evidence: ReturnType<typeof verifyArtifact>[] = [];
   const row = (id: string) => rows.find(item => item.id === id)!;
@@ -145,7 +146,8 @@ export function evaluateRelease(profile: Profile, evidencePath: string) {
   const capability = inspectOptionalVerifier(EVALUATOR_ROOT, CAPABILITY_PROOF_FILE);
   const verifier = [...VERIFIER_FILES.map(name => ({ file: name, sha256: hash(readFileSync(resolve(EVALUATOR_ROOT, name))) })), capability];
   if ((index?.schema === "kizuki.acceptance-evidence/v3" || index?.schema === "kizuki.acceptance-evidence/v4") && row("evidence.index").status === "PASS") {
-    const surfaceActive = surfaceProducerActive(EVALUATOR_ROOT);
+    const candidateRoot = options.candidateRoot ?? EVALUATOR_ROOT;
+    const surfaceActive = surfaceProducerActive(candidateRoot);
     for (const ref of index.gate_receipts) {
       if (ref.producer !== SURFACE_PRODUCER || ref.gate_id !== SURFACE_GATE) continue;
       if (!surfaceActive) continue;
@@ -153,7 +155,7 @@ export function evaluateRelease(profile: Profile, evidencePath: string) {
       try {
         const file = read(ref.path, LIMITS.family_receipt);
         if (file.sha256 !== ref.sha256) reject("receipt-digest-mismatch");
-        const evaluated = consumeSurfaceReceipt(json(file.bytes), EVALUATOR_ROOT, index.candidate_source_sha);
+        const evaluated = consumeCompatibleSurfaceReceipt(json(file.bytes), candidateRoot, index.candidate_source_sha);
         file.unchanged();
         gate.status = evaluated.status; gate.reason = evaluated.reason; gate.evidence_sha256 = evaluated.creditDigest ? file.sha256 : null;
       } catch (error) { fail(gate, error); }

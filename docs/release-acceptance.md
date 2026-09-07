@@ -96,6 +96,14 @@ diagnostic. Bounded
 archive inspection rejects links, paths outside that inventory, duplicates,
 truncation and oversized files, then applies the current package/proof parsers.
 
+The online collector evaluates surface receipts against its explicit candidate
+checkout. When evaluator and candidate commits differ, the complete transitive
+surface implementation, producer, dependency metadata and observed documentation
+must match in bytes and modes. Both clean checkouts are checked again before and
+after receipt evaluation. A different collector commit alone does not change the
+product identity; a changed surface closure remains refused. The offline CLI
+continues to evaluate its own checkout by default.
+
 Native credit also requires both packages in the supplied v4 index. Each target's
 seven package digests, including `BUILD.json`, and proof digest must equal the
 freshly downloaded native evidence. A missing indexed package leaves native

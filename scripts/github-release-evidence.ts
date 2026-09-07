@@ -377,7 +377,7 @@ function ghJson(endpoint: string, binary = false): Buffer {
 export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: string, candidateRoot: string, output: string) {
   absolute(output); absolute(candidateRoot);
   const index = read(evidence, 32768);
-  let report = evaluateRelease(profile, evidence);
+  let report = evaluateRelease(profile, evidence, { candidateRoot });
   if (report.candidate_source_sha === null || report.gates.find(row => row.id === "evidence.index")?.status !== "PASS") reject("github-index-invalid");
   const candidate = report.candidate_source_sha;
   const root = realpathSync(candidateRoot);
@@ -437,7 +437,7 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
   // This frame never enters from JSON or a public function argument. Only this
   // fixed-transport collection can apply remote evidence to the local report.
   // Revalidate local package and index bytes after the network observation.
-  index.unchanged(); report = evaluateRelease(profile, evidence);
+  index.unchanged(); report = evaluateRelease(profile, evidence, { candidateRoot });
   candidateFrame.unchanged(); collectorFrame.unchanged(); nativeProducer?.unchanged(); lifecycleProducer?.unchanged(); index.unchanged(); checkOutput();
   const gate = report.gates.find(row => row.id === "candidate.required-checks")!;
   if (failure !== null || observation === null) Object.assign(gate, { status: "UNVERIFIABLE", reason: failure ?? "github-observation-unavailable", evidence_sha256: null });
