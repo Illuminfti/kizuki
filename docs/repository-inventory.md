@@ -4,6 +4,11 @@ The tables below come from the workspace manifests and the central connector
 registry. Registration identifies an implementation; it does not establish
 real-account qualification, CLI enrollment support or release readiness.
 
+For example, `@kizuki/connector-whoop` exists as a provider package but has no
+entry in the default connector registry or CLI enrollment route. Its
+[qualification and integration limits](whoop.md) remain separate from the
+package inventory.
+
 Screenpipe is an offline, read-only adapter for a stopped SQLite database.
 It imports settled screen text and audio transcriptions with a private
 sensitivity floor. It does not read media, use the Screenpipe HTTP API, emit
