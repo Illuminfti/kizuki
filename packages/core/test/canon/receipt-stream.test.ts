@@ -13,6 +13,7 @@ import { hashBytes } from "../../src/vault/write";
 import { tempVault } from "../helpers/vault";
 
 const cleanup: (() => void)[] = [];
+const descriptorDirectory = process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd";
 afterEach(() => { for (const dispose of cleanup.splice(0)) dispose(); });
 function fixture() {
   const vault = tempVault("canon-receipt-stream-");
@@ -141,14 +142,14 @@ test("source stream needs an existing receipt parent and both stream types relea
   withCanonMutationSync(f.io, (scope, io) => {
     openOrdinaryReceiptStream(scope, io).close();
     openSourceErasureReceiptStream(scope, io).close();
-    const before = readdirSync("/proc/self/fd").length;
+    const before = readdirSync(descriptorDirectory).length;
     for (let count = 0; count < 16; count++) {
       const a = openOrdinaryReceiptStream(scope, io), b = openSourceErasureReceiptStream(scope, io);
       expect(Reflect.ownKeys(a)).toEqual([]);
       b.close(); b.close(); a.close(); a.close();
       expect(() => a.append(Buffer.from("closed"))).toThrow("canon_receipt_stream_closed");
     }
-    expect(readdirSync("/proc/self/fd").length).toBe(before);
+    expect(readdirSync(descriptorDirectory).length).toBe(before);
   });
 });
 
@@ -170,7 +171,7 @@ for (const mode of ["short-write", "no-progress", "fsync-failure"] as const) {
       import { mock } from 'bun:test';
       import * as fs from 'node:fs';
       import { strict as assert } from 'node:assert';
-      const mode = ${JSON.stringify(mode)}, root = ${JSON.stringify(f.vault)}, log = ${JSON.stringify(f.log)};
+      const mode = ${JSON.stringify(mode)}, root = ${JSON.stringify(f.vault)}, log = ${JSON.stringify(f.log)}, descriptors = ${JSON.stringify(descriptorDirectory)};
       const realWrite = fs.writeSync, realSync = fs.fsyncSync;
       let calls = 0, armed = false;
       mock.module('node:fs', () => ({ ...fs,
@@ -187,7 +188,7 @@ for (const mode of ["short-write", "no-progress", "fsync-failure"] as const) {
       const { openOrdinaryReceiptStream } = await import(${JSON.stringify(join(import.meta.dir, "../../src/canon/receipt-stream.ts"))});
       const db = openLedger(root + '/.kizuki/kizuki.db'), io = snapshotCanonIo({ db, vault_path: root });
       withCanonMutationSync(io, (scope, io) => openOrdinaryReceiptStream(scope, io).close());
-      const before = fs.readdirSync('/proc/self/fd').length;
+      const before = fs.readdirSync(descriptors).length;
       withCanonMutationSync(io, (scope, io) => {
         const stream = openOrdinaryReceiptStream(scope, io);
         try {
@@ -202,7 +203,7 @@ for (const mode of ["short-write", "no-progress", "fsync-failure"] as const) {
         } finally { armed = false; stream.close(); stream.close(); }
       });
       assert.equal(fs.readFileSync(log, 'utf8'), mode === 'no-progress' ? 'ab' : 'abcdef');
-      assert.equal(fs.readdirSync('/proc/self/fd').length, before);
+      assert.equal(fs.readdirSync(descriptors).length, before);
       db.close();
     `;
     const child = spawnSync(process.execPath, ["-e", script], { encoding: "utf8", timeout: 20_000 });

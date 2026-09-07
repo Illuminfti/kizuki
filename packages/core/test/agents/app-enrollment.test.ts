@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentEnrollmentError, authenticateAgentCredential, enrollAppAgent, listAgents, listAudit, revokeAgentEnrollment, type AgentEnrollmentErrorCode, type AppAgentEnrollmentRequest } from "../../src";
 import { openLedger } from "../../src/ledger/db";
@@ -7,6 +7,7 @@ import { tryWriteFlock } from "../../src/serve/flock";
 import { gateAsync } from "../../src/serving/gate";
 import { ServeError } from "../../src/serving/types";
 import { tempVault } from "../helpers/vault";
+import { initializeEnrollmentLedger } from "./custody-fixture";
 
 const disposers: (() => void)[] = [];
 afterEach(() => { for (const dispose of disposers.splice(0).reverse()) dispose(); });
@@ -14,7 +15,7 @@ afterEach(() => { for (const dispose of disposers.splice(0).reverse()) dispose()
 function fixture() {
   const vault = tempVault("kizuki-app-agent-"); disposers.push(vault.dispose);
   const dbPath = join(vault.path, ".kizuki/kizuki.db");
-  const db = openLedger(dbPath); db.close(); chmodSync(dbPath, 0o600);
+  initializeEnrollmentLedger(dbPath);
   const directory = join(vault.path, ".kizuki/agent-credentials");
   const request: AppAgentEnrollmentRequest = {
     operation_id: "app-agent-0001", name: "app-reader",

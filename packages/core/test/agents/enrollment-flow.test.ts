@@ -1,4 +1,4 @@
-import { credentialCustodyQualified } from "./custody-fixture";
+import { credentialCustodyQualified, initializeEnrollmentLedger } from "./custody-fixture";
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -9,7 +9,7 @@ import { openLedger } from "../../src/ledger/db";
 function fixture() {
   const vault = mkdtempSync(join(tmpdir(), "kizuki-enrollment-flow-vault-"));
   const control = join(vault, ".kizuki"); mkdirSync(control); chmodSync(control, 0o700);
-  const dbPath = join(control, "kizuki.db"); const db = openLedger(dbPath); db.close(); chmodSync(dbPath, 0o600);
+  const dbPath = join(control, "kizuki.db"); initializeEnrollmentLedger(dbPath);
   const credentials = mkdtempSync(join(tmpdir(), "kizuki-enrollment-flow-credential-")); chmodSync(credentials, 0o700);
   const request = { operation_id: "enroll-flow-0001", name: "flow-agent", token_ref: `file:${join(credentials, "agent.json")}`, grant: { ceiling: "public" as const, types: [], subjects: [], since: null, until: null, tools: [], rate_limit_per_minute: 60, relay_owner_corrections: false } };
   return { vault, dbPath, request, clean: () => { rmSync(vault, { recursive: true, force: true }); rmSync(credentials, { recursive: true, force: true }); } };

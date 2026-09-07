@@ -7,6 +7,7 @@ import { CanonFilesError, openCanonFiles, type CanonFileSnapshot } from "../../s
 
 const roots: string[] = [];
 const supported = (process.platform === "linux" && process.arch === "x64") || (process.platform === "darwin" && process.arch === "arm64");
+const descriptorDirectory = process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd";
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function fixture(): string { const root = mkdtempSync(join(tmpdir(), "canon-files-")); roots.push(root); return root; }
 function qualifiedAncestry(path: string): boolean {
@@ -217,12 +218,12 @@ qualified("an ordinary owner edit invalidates a retained snapshot", () => {
 
 qualified("repeated close releases all retained file and directory descriptors", () => {
   const root = fixture(); openCanonFiles(root).close();
-  const before = readdirSync("/proc/self/fd").length;
+  const before = readdirSync(descriptorDirectory).length;
   for (let i = 0; i < 32; i++) {
     const files = openCanonFiles(root), made = files.create(`page-${i}.md`, Buffer.from("synthetic"));
     files.read(made.path); files.read(made.path); files.close(); files.close();
   }
-  expect(readdirSync("/proc/self/fd").length).toBe(before);
+  expect(readdirSync(descriptorDirectory).length).toBe(before);
 });
 
 for (const mode of ["unsupported", "unavailable", "unknown-native", "partial-write", "no-progress"] as const) {
@@ -232,9 +233,9 @@ for (const mode of ["unsupported", "unavailable", "unknown-native", "partial-wri
       import { mock } from "bun:test";
       import * as fs from "node:fs";
       import { strict as assert } from "node:assert";
-      const mode = ${JSON.stringify(mode)}, root = ${JSON.stringify(root)};
+      const mode = ${JSON.stringify(mode)}, root = ${JSON.stringify(root)}, descriptors = ${JSON.stringify(descriptorDirectory)};
       const realWrite = fs.writeSync;
-      let written = 0;
+      let written = 0, writes = 0, armed = false;
       if (mode === 'unsupported') Object.defineProperty(process, 'platform', {value: 'win32'});
       if (mode === 'unavailable' || mode === 'unknown-native') {
         mock.module(${JSON.stringify(join(import.meta.dir, "../../src/util/owned-directory-native.ts"))}, () => ({
@@ -244,24 +245,25 @@ for (const mode of ["unsupported", "unavailable", "unknown-native", "partial-wri
           }
         }));
       }
-      if (mode === 'partial-write' || mode === 'no-progress') mock.module('node:fs', () => ({ ...fs, writeSync(fd, bytes, offset, length, position) {
+      if (mode === 'partial-write' || mode === 'no-progress') mock.module('node:fs', () => ({ ...fs, writeSync(fd, ...args) {
+        if (!armed) return realWrite(fd, ...args);
+        const [bytes, offset, length, position] = args; writes++;
         if (mode === 'no-progress') return 0;
         const count = realWrite(fd, bytes, offset, Math.min(length, 2), position); written += count; return count;
       } }));
       const {openCanonFiles, CanonFilesError} = await import(${JSON.stringify(join(import.meta.dir, "../../src/vault/canon-files.ts"))});
-      // Bun's first native compilation retains its process-wide /tmp handle.
-      // Initialize the loader alone before measuring operation-owned lifetimes.
-      if (mode === 'partial-write' || mode === 'no-progress') {
-        const {loadOwnedDirectoryNative} = await import(${JSON.stringify(join(import.meta.dir, "../../src/util/owned-directory-native.ts"))});
-        const native = loadOwnedDirectoryNative(); native.compiled.close(); native.libc.close();
-      }
-      const before = fs.readdirSync('/proc/self/fd').length;
+      // Initialize the consumer's cached native loader before measuring
+      // operation-owned descriptors, with the write fault still unarmed.
+      if (mode === 'partial-write' || mode === 'no-progress') openCanonFiles(root).close();
+      const before = fs.readdirSync(descriptors).length;
       if (['unsupported', 'unavailable', 'unknown-native'].includes(mode)) {
         const reason = {unsupported: 'unsupported', unavailable: 'native_unavailable', 'unknown-native': 'unsafe'}[mode];
         assert.throws(() => openCanonFiles(root), error => error instanceof CanonFilesError && error.reason === reason && error.message === 'canon_files_' + reason);
       } else {
         const cap = openCanonFiles(root);
         try {
+          // Inject into the canon operation, after Darwin's source pipe is loaded.
+          armed = true;
           if (mode === 'no-progress') {
             assert.throws(() => cap.create('page.md', Buffer.from('synthetic')), {message: 'canon_files_io'});
             assert.equal(fs.existsSync(root + '/page.md'), false);
@@ -269,9 +271,10 @@ for (const mode of ["unsupported", "unavailable", "unknown-native", "partial-wri
             const file = cap.create('page.md', Buffer.from('synthetic'));
             assert.equal(Buffer.from(file.bytes).toString(), 'synthetic'); assert.equal(written, 9); file.close();
           }
-        } finally { cap.close(); }
+          assert.ok(writes > 0, 'the canon write fault must be reached');
+        } finally { armed = false; cap.close(); }
       }
-      assert.equal(fs.readdirSync('/proc/self/fd').length, before);
+      assert.equal(fs.readdirSync(descriptors).length, before);
       process.stdout.write('passed');
     `;
     const child = spawnSync(process.execPath, ["--eval", script], { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024 });

@@ -147,9 +147,11 @@ for (const mode of ["short", "zero", "throw", "fd-sync", "directory-sync"] as co
     import { join } from "node:path";
     import { tmpdir } from "node:os";
     const mode = ${JSON.stringify(mode)}, realWrite = fs.writeSync, realSync = fs.fsyncSync;
-    let writes = 0, syncs = 0;
+    let writes = 0, syncs = 0, armed = false;
     mock.module("node:fs", () => ({ ...fs,
-      writeSync(fd, bytes, offset, length, position) {
+      writeSync(fd, ...args) {
+        if (!armed) return realWrite(fd, ...args);
+        const [bytes, offset, length, position] = args;
         writes++;
         if (mode === "throw") throw new Error("synthetic");
         if (mode === "zero") return 0;
@@ -166,11 +168,14 @@ for (const mode of ["short", "zero", "throw", "fd-sync", "directory-sync"] as co
     const root = fs.mkdtempSync(join(tmpdir(), "kizuki-credential-fault-")); fs.chmodSync(root, 0o700);
     const directory = openCredentialDirectory(root), handle = directory.create("credential"), bytes = new Uint8Array([1, 2, 3]);
     try {
+      // The native loader's Darwin source pipe is outside this credential fault.
+      armed = true;
       if (mode === "short") { directory.writeComplete(handle, bytes); directory.syncAndVerify(handle, bytes); directory.removeCreated(handle, bytes); }
       else { assert.throws(() => directory.writeComplete(handle, bytes), /credential_file_(write|unsafe)/);
         directory.removeCreated(handle, mode === "zero" || mode === "throw" ? new Uint8Array() : bytes); }
       assert.equal(fs.existsSync(join(root, "credential")), false);
-    } finally { directory.close(); fs.rmSync(root, { recursive: true, force: true }); }
+      assert.ok(writes > 0, "the credential write fault must be reached");
+    } finally { armed = false; directory.close(); fs.rmSync(root, { recursive: true, force: true }); }
   `;
   const result = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
   expect(result.exitCode, result.stderr.toString()).toBe(0);

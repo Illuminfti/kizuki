@@ -1,6 +1,6 @@
-import { credentialCustodyQualified as qualified } from "./custody-fixture";
+import { credentialCustodyQualified as qualified, initializeEnrollmentLedger } from "./custody-fixture";
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { authenticateAgentCredential, enrollAgent, revokeAgentEnrollment } from "../../src/agents/enrollment";
@@ -12,7 +12,7 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "kizuki-enrollment-fault-")); roots.push(root);
   const vault = join(root, "vault"), control = join(vault, ".kizuki"); mkdirSync(control, { recursive: true, mode: 0o700 });
-  const dbPath = join(control, "kizuki.db"), db = openLedger(dbPath); db.close(); chmodSync(dbPath, 0o600);
+  const dbPath = join(control, "kizuki.db"); initializeEnrollmentLedger(dbPath);
   const credentialDir = join(control, "agent-credentials"); mkdirSync(credentialDir, { mode: 0o700 });
   const credential = join(credentialDir, "agent.credential");
   const request = { operation_id: "fault-agent-0001", name: "fault-agent", token_ref: `file:${credential}`,
