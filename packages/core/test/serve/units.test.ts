@@ -25,6 +25,7 @@ describe("serve units", () => {
     expect(unit).toContain("PrivateTmp=true");
     expect(unit).toContain("ExitType=main");
     expect(unit).toContain("KillMode=control-group");
+    expect(unit).toContain("TimeoutStopSec=90s");
     expect(unit).toContain(`ExecStart=${spec.execStart} --service-custody ${spec.vaultId}`);
     expect(unit).toContain(`ExecStartPost=+${spec.execStart} --custody-broker-launch ${spec.vaultId}`);
     expect(unit).not.toContain("ExecStart=+");

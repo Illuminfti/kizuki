@@ -45,6 +45,7 @@ export function renderSystemdUnit(spec: UnitSpec): string {
     "Type=simple",
     "ExitType=main",
     "KillMode=control-group",
+    "TimeoutStopSec=90s",
     `ExecStart=${exec} --service-custody ${spec.vaultId}`,
     // The metadata broker needs original namespace UID interpretation. '+'
     // affects this command only; the broker reinstates NNP and AF_UNIX-only
