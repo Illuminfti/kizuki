@@ -74,6 +74,22 @@ function git(args: string[]): string {
   return result.stdout.toString().trim();
 }
 
+/** Capture the actual synthetic command failure before the controller cleans
+ * the unit. Successful command results retain the existing closed shape. */
+export function runNativeExtensionCommand(command: readonly string[], cwd: string, env: Record<string, string>, expectedExit: number,
+  failed: (evidence: { command: string[]; expected_exit: number; exit_code: number; signal: string | null; duration_ms: number; stdout: string; stderr: string }) => void,
+  timeoutMs = timeout): CommandResult {
+  check(command.length > 0 && command.length <= 17 && command.every(part => part.length <= 4096), "extension command argument bound");
+  const started = performance.now();
+  const raw = Bun.spawnSync([...command], { cwd, env, stdout: "pipe", stderr: "pipe", stdin: "ignore", timeout: timeoutMs });
+  const result = { exit_code: raw.exitCode, stdout: text(raw.stdout), stderr: text(raw.stderr) };
+  if (raw.exitCode !== expectedExit || raw.signalCode !== undefined) {
+    failed({ command: [...command], expected_exit: expectedExit, ...result, signal: raw.signalCode ?? null, duration_ms: Math.ceil(performance.now() - started) });
+    throw new Error(`extension command failed: ${command[1] ?? "unknown"}`);
+  }
+  return result;
+}
+
 /** Only automatic supervisor restarts wait through the lease reclaim window. */
 export function nativeWaitTimeout(description: string): number {
   return description === "crash-restarts-new-instance" || description === "launchd-restarts-after-graceful-exit"
@@ -471,9 +487,15 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
       rememberUnit();
       return id;
     };
-    const command = (binary: string, args: string[], expected = 0) => {
-      const result = invoke([binary, ...args]); check(result.exit_code === expected, `extension command failed: ${args[0]}`); return result;
-    };
+    const command = (binary: string, args: string[], expected = 0) => runNativeExtensionCommand([binary, ...args], fixtureRoot!, cliEnv, expected, result => {
+      const evidence: Record<string, unknown> = { ...result, unit };
+      try {
+        const state = managerState(5000);
+        evidence.manager = platform === "darwin" ? projectLaunchctlResult("print", { ...state, signal: null }, 0) : state;
+        evidence.process = processObservation(state, 5000);
+      } catch { evidence.manager_diagnostic = "unavailable"; }
+      steps.push({ id: "extension-command-failure", passed: false, evidence }); save();
+    });
     const candidate = join(copied, "kizuki");
     const activateExtension = async (selected: string, binary = candidate) => {
       selectVault(selected, binary); const started_at = new Date().toISOString();

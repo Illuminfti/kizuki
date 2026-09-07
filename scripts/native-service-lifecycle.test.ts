@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cleanupOwnedNativeFixtures, managerPid, nativeServiceStopped, nativeWaitTimeout, waitForNativeState } from "./native-service-lifecycle";
+import { cleanupOwnedNativeFixtures, runNativeExtensionCommand, managerPid, nativeServiceStopped, nativeWaitTimeout, waitForNativeState } from "./native-service-lifecycle";
 import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS } from "../packages/core/src/serve/types";
 import { RAIL_IDS, emptyRunTotals } from "../packages/core/src/serve/types";
 import { installedRailsHealth, readNativeRailDiagnostics, recordInstalledHealth, waitForFreshRails } from "./native-service-health";
@@ -271,4 +271,21 @@ test("cross-binary fixture evidence refuses same bytes, same instance and damage
   expect(upgradePhasePassed(e)).toBe(true);
   for (const change of [{ candidate_binary_sha256: e.baseline_binary_sha256 }, { candidate_instance_id: e.baseline_instance_id }, { after_event_sha256: "f".repeat(64) }, { baseline_stopped: false }, { candidate_active: false }, { backup_verified: false }, { baseline_schema: 15 }])
     expect(upgradePhasePassed({ ...e, ...change })).toBe(false);
+});
+
+
+test("actual extension commands retain bounded failure bytes and the exit before cleanup", () => {
+  const failure: any[] = [];
+  expect(() => runNativeExtensionCommand([process.execPath, "-e", 'process.stdout.write("x".repeat(9000));process.stderr.write("synthetic exit detail");process.exit(7)'], import.meta.dir,
+    { PATH: "/usr/bin:/bin" }, 0, value => failure.push(value))).toThrow("extension command failed");
+  expect(failure).toHaveLength(1); expect(failure[0]).toMatchObject({ expected_exit: 0, exit_code: 7, signal: null, stderr: "synthetic exit detail" });
+  expect(failure[0].stdout).toBe("x".repeat(8192) + "[truncated]"); expect(failure[0].duration_ms).toBeGreaterThanOrEqual(0);
+  const success = runNativeExtensionCommand([process.execPath, "-e", 'process.stdout.write("synthetic success")'], import.meta.dir, { PATH: "/usr/bin:/bin" }, 0, value => failure.push(value));
+  expect(success).toEqual({ exit_code: 0, stdout: "synthetic success", stderr: "" }); expect(failure).toHaveLength(1);
+});
+
+test("actual extension signal failure remains observable and never becomes expected exit success", () => {
+  const failure: any[] = [];
+  expect(() => runNativeExtensionCommand([process.execPath, "-e", 'process.kill(process.pid,"SIGTERM")'], import.meta.dir, { PATH: "/usr/bin:/bin" }, 0, value => failure.push(value))).toThrow("extension command failed");
+  expect(failure).toHaveLength(1); expect(failure[0].signal).toBe("SIGTERM");
 });
