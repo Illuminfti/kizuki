@@ -24,8 +24,9 @@ form when a value starts with `--`; everything after the first `=` is the
 literal value. A standalone `--` ends option parsing, including global
 `--vault` extraction, so `kizuki query -- --example` searches for `--example`.
 Repeated options or flags are errors, even across the two value spellings.
-Flags such as `--json` never take a value. Explicit empty values are passed to
-the command's validation; missing values and unknown options are usage errors.
+Flags such as `--json` never take a value. Command-specific empty values pass
+to their command's validation; `--vault` requires a nonempty value. Missing
+values and unknown options are usage errors.
 
 `--json` prints a `kizuki.cli.<verb>/v1` envelope with `status`, `data`,
 `degraded`, and `warnings`. Diagnostics stay on stderr.
