@@ -18,6 +18,7 @@ import { KizukiError, notSupported } from "../errors";
 import {
   importHealthReport,
   misconfiguredHealth,
+  summarizeImportErrors,
 } from "../import-report";
 import type { ImportRecordError } from "../import-report";
 import { readBoundedBytes, readReason } from "../read";
@@ -270,6 +271,14 @@ export class MarkdownFolderConnector implements Connector {
     }
 
     if (tombstones.length === 0) {
+      // Valid pages have already checkpointed. Keep unreadable identities in
+      // that checkpoint and report the incomplete sweep without advancing it.
+      if (scan.errors.length > 0 || scan.truncated) {
+        return {
+          events: [], cursor, status: "unavailable",
+          detail: `partial_import: ${summarizeImportErrors(scan.errors)}${scan.truncated ? "; scan truncated" : ""}`,
+        };
+      }
       return {
         events: [],
         cursor: nextCursor(!scan.truncated, "files", null),
