@@ -43,6 +43,36 @@ corrupt or missing index still yields the complete gate inventory with a
 failed index gate. Existing reports are never overwritten. There are no
 waivers, actor declarations, skip flags, threshold overrides or clock flags.
 
+### Observe current GitHub checks
+
+The explicit online collector can establish `candidate.required-checks` by
+reading GitHub during the evaluation. It resolves the fixed public repository
+ID, then orders each candidate workflow by its latest attempt's `run_started_at`.
+An older run that was rerun most recently takes precedence over a newer run
+number. Missing or tied start times cannot establish order. Any pending required
+attempt prevents credit. Earlier failures remain explicit history and review
+obligations; they do not permanently veto a later successful attempt. Every
+required job and authored step must have succeeded. A second inventory and
+latest-attempt read refuses changes during collection.
+
+```bash
+bun scripts/github-release-evidence.ts --profile rc --evidence /absolute/evidence/index.json --checkout /absolute/clean-candidate --out /absolute/new-github-evaluation
+```
+
+The collector uses existing `gh` read access and performs GET requests only.
+The candidate checkout must be clean and match the index SHA. It validates
+that checkout's workflow and toolchain files with the current verifier; it
+also binds the collector's separate clean source revision and transitive product
+imports. Both source
+inventories, raw public API responses, and observation hashes are retained in
+the new private output directory alongside `acceptance-report.json`.
+
+There is no repository, host, run, attempt, or passing-facts option. Saved API
+JSON is useful for review but cannot be submitted to establish online credit.
+The offline checker continues to leave raw CI receipts unverified. This online
+path supplies CI evidence only: native lifecycle, accounts, independent review,
+findings and unfamiliar-human acceptance remain separate required evidence.
+
 ## Index schema
 
 The current `kizuki.acceptance-evidence/v4` index retains the v3 fields and
@@ -204,8 +234,9 @@ display actual observed and credited duration, last observation and pending
 boundary rails, with `release_credit: false`. Nothing advances observation
 time, starts a service, opens an account, or calls a model.
 
-The checker has no trusted attempt inventory, actor/account authority source,
-current remote CI status, review source or P0 freshness policy. These gaps
+The offline checker has no trusted attempt inventory or current remote CI status.
+Neither path has an actor/account authority source, review source or P0 freshness
+policy. These gaps
 cannot be filled by a handwritten passing flag or selecting a green rerun.
 Retain failed attempts and unresolved findings with the candidate; future
 adapters must validate their complete disposition before granting acceptance.

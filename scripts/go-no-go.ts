@@ -15,6 +15,11 @@ import type { GateReceiptReference } from "./release-evidence";
 type Profile = "rc" | "1.0";
 type Status = "PASS" | "FAIL" | "MISSING" | "UNVERIFIABLE" | "NOT_IMPLEMENTED";
 interface Gate { id: string; required: boolean; status: Status; scope: string; reason: string; target: string | null; evidence_sha256: string | null; }
+/** Shared decision only; this function never establishes evidence authority. */
+export function releaseDecision(profile: Profile, rows: readonly Gate[]) {
+  const accepted = rows.filter(item => item.required).every(item => item.status === "PASS") && !rows.some(item => item.status === "FAIL");
+  return { decision: accepted ? "GO" as const : "NO-GO" as const, release_1_0_accepted: profile === "1.0" && accepted };
+}
 interface ArtifactReference { producer: ArtifactProofSchema; target: string; directory: string; proof: string; proof_sha256: string; }
 interface FixtureReference { producer: "kizuki.qualification/v1"; directory: string; manifest_sha256: string; genesis_sha256: string; samples_sha256: string; }
 interface EvidenceIndex {
@@ -154,8 +159,7 @@ export function evaluateRelease(profile: Profile, evidencePath: string) {
       } catch (error) { fail(gate, error); }
     }
   }
-  const accepted = rows.filter(item => item.required).every(item => item.status === "PASS") && !rows.some(item => item.status === "FAIL");
-  return { schema: "kizuki.acceptance-report/v2", profile, decision: accepted ? "GO" : "NO-GO", release_1_0_accepted: profile === "1.0" && accepted,
+  return { schema: "kizuki.acceptance-report/v2", profile, ...releaseDecision(profile, rows),
     candidate_source_sha: index?.candidate_source_sha ?? null, index_sha256: indexDigest, supported_bun_version: SUPPORTED_BUN_VERSION, policy_sha256: hash(JSON.stringify({ policy: POLICY, gates: { rc: gates(), "1.0": gates() } })), verifier_sha256: hash(JSON.stringify(verifier)), verifier,
     trust_scope: "local-operator-custody; receipt consistency is not independent execution or actor attestation", connectors: CONNECTORS,
     deferred_connectors: POLICY.deferred_connectors, gates: rows, evidence, fixture_observation: fixture };
