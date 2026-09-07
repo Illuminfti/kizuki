@@ -129,6 +129,7 @@ function recovery(id: string,value: unknown,expected: NativeLifecycleIdentity): 
     need(equal(failed,["failed-admission","failed-late-ddl"])&&e.failure_scope==="admission-and-late-ddl-transaction-rollback"&&e.recovery_copy_sha256!==null);
   } else {
     need(failed.length===0&&e.failure_scope==="none"&&preservation.original_columns_equal===true&&preservation.public_query==="passed"&&preservation.events===1);
+    need(preservation.claims===(fixture.id==="ledger16"||fixture.id==="claim-backup16"?1:0),"native-lifecycle-historical-claims-lost");
     need(preservation.current_claim_consumer===(Number(preservation.claims)>0?"passed":"not_applicable"));
     const roles=id.startsWith("restore-")?["restored"]:[id==="migration-backup-recovery"?"recovery-preimage":"before","doctor-after","migrated"];
     need(equal(snapshots.map(s=>s.role),roles));const last=snapshots.at(-1)!.value;
@@ -161,7 +162,7 @@ const ORIGINAL_DIAGNOSTICS=["instrumented-default-init-diagnostics","pre-init-ab
 function originalSteps(value: unknown,platform:string): { steps:Row[];units:string[] } {
   const steps=list(value,128).map(v=>row(v,"id,passed,evidence"));
   const allowed=new Set<string>([...LIFECYCLE_ORIGINAL_STEPS,...ORIGINAL_DIAGNOSTICS]);
-  let next=0;const counts=new Map<string,number>();const units:string[]=[];
+  let next=0;const counts=new Map<string,number>();const units:string[]=[];const processInstances=new Set<string>();
   for(const s of steps){const id=str(s.id);need(allowed.has(id),"native-lifecycle-step-unknown");need(s.passed===true,"native-lifecycle-step-failed");boundedJson(s.evidence);
     const count=(counts.get(id)??0)+1;counts.set(id,count);need(count<=(platform==="darwin"&&id==="repeat-install-replaces-process"?2:1),"native-lifecycle-step-duplicate");
     if(id===LIFECYCLE_ORIGINAL_STEPS[next])next++;
@@ -189,7 +190,7 @@ function originalSteps(value: unknown,platform:string): { steps:Row[];units:stri
     if(id==="launchd-graceful-exit"){const e=row(s.evidence,"operation,exit_code,signal,duration_ms,state,pid,last_exit_code,error,output_truncated");need(e.operation==="print"&&e.exit_code===0&&e.signal===null&&e.last_exit_code===0&&e.output_truncated===false);num(e.duration_ms,0,60000);}
     if(id==="private-unit"){const e=row(s.evidence,"unit,mode,sha256");need(e.mode===384);hash(e.sha256);units.push(unit(e.unit,platform));}
     if(["default-init-running","repeat-install-replaces-process","crash-restarts-new-instance","replacement-executable-running","rollback-restores-replacement-process","launchd-restarts-after-graceful-exit"].includes(id)){
-      const e=row(s.evidence,"manager_pid,marker_pid,instance_id,command");num(e.manager_pid,2,2**31-1);need(e.manager_pid===e.marker_pid);instance(e.instance_id);str(e.command,8192);
+      const e=row(s.evidence,"manager_pid,marker_pid,instance_id,command");num(e.manager_pid,2,2**31-1);need(e.manager_pid===e.marker_pid);instance(e.instance_id);str(e.command,8192);need(!processInstances.has(String(e.instance_id)),"native-lifecycle-process-not-replaced");processInstances.add(String(e.instance_id));
     }
     if(id==="native-api-failed-activation-rolls-back"){const e=row(s.evidence,"failure,unit_sha256,recovery_journal_exists,boundary");str(e.failure,4096);hash(e.unit_sha256);need(e.recovery_journal_exists===false);str(e.boundary,512);}
     if(id==="deliberately-stopped"){const e=row(s.evidence,"unit_exists,intent");need(e.unit_exists===false&&e.intent==="opted-out");}
@@ -233,7 +234,10 @@ export function validateNativeLifecycle(value: unknown,expected:NativeLifecycleI
   const first=admitted.get("migrate-ledger15")!, failed=admitted.get("migration-failure-preserved")!, recovered=admitted.get("migration-backup-recovery")!;
   need(first.recovery_copy_sha256===failed.recovery_copy_sha256&&first.recovery_copy_sha256===recovered.recovery_copy_sha256,"native-lifecycle-recovery-copy-binding");
   const firstSnapshot=(first.snapshots as Row[])[0]!, recoveredSnapshot=(recovered.snapshots as Row[])[0]!;
-  need(equal(firstSnapshot.value,recoveredSnapshot.value),"native-lifecycle-recovery-preimage-binding");
+  // The copied database is the preimage. New vault identity/configuration files
+  // legitimately differ; each vault's own doctor/failure file snapshot stays bound.
+  const logical=(value: unknown)=>{const {files_sha256: _files,...database}=snapshot(value);return database;};
+  need(equal(logical(firstSnapshot.value),logical(recoveredSnapshot.value)),"native-lifecycle-recovery-preimage-binding");
   const services=list(q.recovery_services,5).map(v=>row(v,"id,vault_id,unit,pid,instance_id,ledger_schema,active,stopped,event_text_sha256"));
   need(equal(services.map(s=>s.id),LIFECYCLE_RECOVERY_IDS.filter(id=>id!=="migration-failure-preserved")),"native-lifecycle-recovery-service-inventory");
   const serviceIds=new Set<string>();

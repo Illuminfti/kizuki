@@ -76,3 +76,21 @@ test("refuses array holes, accessors, inherited fields and additional snapshot k
   const e=expected(),f=lifecycleFixture(e);change(f);expect(()=>validateNativeLifecycle(f,e)).toThrow();
  }
 });
+
+test("new recovery vault retains its own files while the copied database preimage stays identical",()=>{
+ const e=expected(),f=lifecycleFixture(e),recovery=phase(f,"migration-backup-recovery");
+ for(const s of recovery.snapshots)s.value.files_sha256="e".repeat(64);
+ expect(()=>validateNativeLifecycle(f,e)).not.toThrow();
+ recovery.snapshots[1].value.files_sha256="f".repeat(64);
+ expect(()=>validateNativeLifecycle(f,e)).toThrow("native-lifecycle-read-mutated-legacy");
+});
+test("cannot declare historical claim preservation with zero surviving claims",()=>{
+ const e=expected(),f=lifecycleFixture(e),r=phase(f,"restore-claim-backup16");
+ r.preservation.claims=0;r.preservation.current_claim_consumer="not_applicable";r.snapshots[0].value.claims=0;
+ expect(()=>validateNativeLifecycle(f,e)).toThrow("native-lifecycle-historical-claims-lost");
+});
+test("crash/replacement evidence needs a new instance even if passed is asserted",()=>{
+ const e=expected(),f=lifecycleFixture(e);
+ f.steps.find((s:any)=>s.id==="crash-restarts-new-instance").evidence.instance_id="repeat-install-replaces-process";
+ expect(()=>validateNativeLifecycle(f,e)).toThrow("native-lifecycle-process-not-replaced");
+});
