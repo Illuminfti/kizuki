@@ -56,6 +56,7 @@ export function queryObservation(stdout: string, stderr: string, fixture: Pick<F
   for (const raw of data.hits) {
     const hit = exact(raw, "doc_id,scope,title,path,page_type,sensitivity,taint,authority,occurred_at,connector_id,subjects,snippet,rank");
     check(typeof hit.doc_id === "string" && hit.doc_id.startsWith("event:") && hit.scope === "ledger" && hit.connector_id === fixture.connector && hit.authority === "connector_evidence" && hit.taint === "quoted", "query-authority");
+    check([hit.title, hit.path, hit.page_type, hit.occurred_at].every(value => typeof value === "string") && Number.isFinite(Date.parse(hit.occurred_at)) && typeof hit.rank === "number" && Number.isFinite(hit.rank) && Array.isArray(hit.subjects) && hit.subjects.every((value: unknown) => typeof value === "string"), "query-hit-shape");
     check(typeof hit.snippet === "string" && hit.snippet.includes(fixture.sentinel) && hit.sensitivity === "private", "query-sentinel-or-sensitivity");
     check(!ids.includes(hit.doc_id), "duplicate-query-hit"); ids.push(hit.doc_id);
   }
@@ -87,9 +88,27 @@ function statusObservation(stdout: string, connector: string, sourceKey: string 
   check(typeof row.last_run === "string" && Number.isFinite(Date.parse(row.last_run)), "connection-last-run");
   return { sourceKey: row.source_key as string, observation: { ...empty(), stored: row.stored, errors: row.errors, consent: row.consent, last_run: row.last_run } };
 }
-function consentObservation(stdout: string, source: string, expected: "denied" | "purged") {
+export function consentObservation(stdout: string, source: string, expected: "denied" | "purged", connector: string, operation: string) {
   const body = envelope(stdout, "connect"), data = exact(body.data, "source_key,receipt,grant,purge,maintenance_error");
   check(body.status === "ok" && data.source_key === source && data.maintenance_error === null && data.grant?.status === expected && data.grant.revision === (expected === "purged" ? 3 : 2), "unexpected-consent-state");
+  const grant = exact(data.grant, "source_key,connector_id,revision,status,policy,policy_digest,updated_at,revoke_operation,purge_receipt_id,erasure,retention_effects,owned_retrieval,purge_blockers");
+  check(grant.source_key === source && grant.connector_id === connector && grant.revoke_operation === operation && /^[0-9A-HJKMNP-TV-Z]{26}$/.test(grant.purge_receipt_id), "contradictory-grant-identity");
+  const policy = exact(grant.policy, "purposes,allowed_fields,retention,egress,sensitivity_floor");
+  const expectedPolicy = { ...FILE_IMPORT_POLICY, purposes: [...FILE_IMPORT_POLICY.purposes].sort(), allowed_fields: [...FILE_IMPORT_POLICY.allowed_fields].sort() };
+  for (const key of Object.keys(expectedPolicy) as (keyof typeof expectedPolicy)[]) check(JSON.stringify(policy[key]) === JSON.stringify(expectedPolicy[key]), "source-policy-changed");
+  check(grant.policy_digest === hash(JSON.stringify(expectedPolicy)) && typeof grant.updated_at === "string" && Number.isFinite(Date.parse(grant.updated_at)), "source-policy-binding");
+  check(JSON.stringify(exact(grant.retention_effects, "joint_derived_records,disposable_retrieval")) === JSON.stringify({ joint_derived_records: "whole_record_erasure", disposable_retrieval: "whole_generation_erasure" }), "unexpected-retention-effect");
+  check(Array.isArray(grant.owned_retrieval) && Array.isArray(grant.purge_blockers), "purge-inventory-shape");
+  for (const raw of grant.owned_retrieval) { const store = exact(raw, "store_id,status"); check(typeof store.store_id === "string" && /^local:[a-z0-9][a-z0-9._-]{0,127}$/.test(store.store_id) && (expected === "purged" ? ["maintained", "absent"] : ["pending", "logical_absence", "maintained", "absent"]).includes(store.status), "owned-store-still-pending"); }
+  if (expected === "denied") {
+    const receipt = exact(data.receipt, "operation_id,source_key,action,prior_revision,revision,status,at,policy_digest");
+    check(receipt.operation_id === operation && receipt.source_key === source && receipt.action === "revoke" && receipt.prior_revision === 1 && receipt.revision === 2 && receipt.status === "denied" && receipt.policy_digest === grant.policy_digest && receipt.at === grant.updated_at, "contradictory-consent-receipt");
+  } else {
+    check(data.receipt === null, "unexpected-maintenance-receipt");
+    const erasure = exact(grant.erasure, "logical_absence,owned_file_maintenance,external_copies,affected_claim_ids,affected_proposal_ids,affected_receipt_ids,affected_identity_hashes,retained_reasons");
+    check(erasure.logical_absence === true && erasure.owned_file_maintenance === "complete" && erasure.external_copies === "out_of_scope" && Array.isArray(erasure.retained_reasons) && erasure.retained_reasons.length === 0, "erasure-still-pending");
+    for (const key of ["affected_claim_ids", "affected_proposal_ids", "affected_receipt_ids", "affected_identity_hashes"]) check(Array.isArray(erasure[key]) && erasure[key].every((id: unknown) => typeof id === "string" && /^[a-zA-Z0-9._:-]{1,128}$/.test(id)), "erasure-identity-shape");
+  }
   check(data.purge === (expected === "purged" ? "complete" : "pending"), "unexpected-purge-state");
   if (expected === "purged") check(Array.isArray(data.grant.purge_blockers) && data.grant.purge_blockers.length === 0, "purge-still-blocked");
   return { ...empty(), consent: data.grant.status, purge: data.purge };
@@ -165,11 +184,11 @@ export async function runFileImportProof(args: FileImportArgs): Promise<string> 
             const second = await query("repeat-query", fixture.events); check(JSON.stringify(first.hit_ids) === JSON.stringify(second.hit_ids), "repeat-query-identities-changed");
             await run("repeat-status", ["connect", "status", "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-status-diagnostics"); return statusObservation(stdout, fixture.connector, entry.source_key, 0, 0).observation; });
             const operation = `synthetic-${fixture.format}-revoke`, selector = ["--source", entry.source_key!];
-            await run("revoke", ["connect", "revoke", ...selector, "--expected-revision", "1", "--operation-id", operation, "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-revoke-diagnostics"); return consentObservation(stdout, entry.source_key!, "denied"); });
+            await run("revoke", ["connect", "revoke", ...selector, "--expected-revision", "1", "--operation-id", operation, "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-revoke-diagnostics"); return consentObservation(stdout, entry.source_key!, "denied", fixture.connector, operation); });
             await query("revoked-query", 0);
-            await run("resume-revocation", ["connect", "resume-revocation", ...selector, "--operation-id", operation, "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-purge-diagnostics"); return consentObservation(stdout, entry.source_key!, "purged"); });
+            await run("resume-revocation", ["connect", "resume-revocation", ...selector, "--operation-id", operation, "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-purge-diagnostics"); return consentObservation(stdout, entry.source_key!, "purged", fixture.connector, operation); });
             await query("purged-query", 0);
-            await run("purge-status", ["connect", "status", ...selector, "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-purge-diagnostics"); return consentObservation(stdout, entry.source_key!, "purged"); });
+            await run("purge-status", ["connect", "status", ...selector, "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-purge-diagnostics"); return consentObservation(stdout, entry.source_key!, "purged", fixture.connector, operation); });
             await run("denied-reimport", importArgs, 1, (stdout, stderr) => { check(stdout === "" && stderr === `error: source_capture_denied; consent-required: kizuki connect grant --source ${entry.source_key} --policy POLICY.json --expected-revision 3 --operation-id UNIQUE_ID\n`, "missing-or-extra-capture-denial"); return empty(); });
             await query("denied-reimport-query", 0);
           } else {
