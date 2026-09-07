@@ -80,6 +80,7 @@ function historicalConnection(backup: string, manifest: ExportManifest, source: 
     count: 1, sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"), size: Buffer.byteLength(bytes), mode: 0o600,
   };
   manifest.schema = schema;
+  if (schema === V2_BACKUP_SCHEMA) manifest.schema_versions.ledger = 20;
   if (schema !== BACKUP_SCHEMA) {
     for (const table of ["purge_batches", "purge_batch_receipts", "purge_ops"]) {
       delete manifest.files[`ledger/${table}.jsonl`];

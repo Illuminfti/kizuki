@@ -4,6 +4,7 @@ import { refreshDerivedPage, removeDerivedPage } from "../derived";
 import { MAX_CANON_INTENT_BYTES, MAX_CANON_IDENTITY_BINDINGS } from "../ledger/canon-recovery-schema";
 import { requireSourceEvents, sourcePolicyEpoch } from "../ledger/source-grants";
 import { recordSourceStoreWrite } from "../ledger/source-stores";
+import { FTS5_RETRIEVAL_ID } from "../retrieval/fts5";
 import { validateAbsenceProof, validateRetrievalDoc } from "../contracts/retrieval";
 import { sha256Hex } from "../util/hash";
 import { isPlainObject } from "../util/validate";
@@ -33,6 +34,15 @@ export interface CanonProjectionObligation {
 }
 interface StoredObligation { receipt_id: string; page_path: string; obligation: string; digest: string }
 
+function externalOperations(receipt: CanonReceipt): RetrievalOpRef[] {
+  if (receipt.kind !== "purge_rewrite") return receipt.retrieval_ops;
+  // The purge coordinator has its own durable store closure and absence proof
+  // before rewriting canon. Its rewrite receipt names the local lexical floor;
+  // it must not schedule a second external deletion after that floor is rebuilt.
+  if (receipt.retrieval_ops.some(op => op.store !== FTS5_RETRIEVAL_ID || op.op !== "remove")) recoveryFailure("intent_invalid", receipt.receipt_id);
+  return [];
+}
+
 function insert(db: Database, row: StoredObligation, sources: CanonProjectionObligation["sources"]): void {
   db.query("INSERT INTO canon_projection_obligations VALUES (?,?,?,?)").run(row.receipt_id, row.page_path, row.obligation, row.digest);
   for (const source of sources) db.query("INSERT INTO canon_projection_sources VALUES (?,?,?)").run(row.receipt_id, source.source_key, source.event_id);
@@ -42,8 +52,8 @@ export function enqueueCanonProjection(db: Database, intent: CanonWriteIntent): 
   const obligation: CanonProjectionObligation = {
     version: 1, receipt: intent.receipt, page_id: intent.completion.page_id, after_base64: intent.after_base64,
     source_epoch: intent.admission.source_epoch, sources: intent.admission.sources, derive_ids: intent.admission.derive_ids,
-    external_ops: intent.receipt.retrieval_ops,
-    external_execution: intent.receipt.retrieval_ops.map(() => "scheduled"),
+    external_ops: externalOperations(intent.receipt),
+    external_execution: externalOperations(intent.receipt).map(() => "scheduled"),
   };
   const json = JSON.stringify(obligation);
   if (Buffer.byteLength(json) > MAX_CANON_INTENT_BYTES) recoveryFailure("intent_invalid");
@@ -66,8 +76,8 @@ export function readCanonProjectionObligation(db: Database, receiptId: string): 
       !Number.isSafeInteger(value.source_epoch) || value.source_epoch < 0 ||
       !Array.isArray(value.derive_ids) || value.derive_ids.length > MAX_CANON_IDENTITY_BINDINGS || value.derive_ids.some(id => typeof id !== "string" || !id.length || Buffer.byteLength(id) > 1024 || id.includes("\0")) || new Set(value.derive_ids).size !== value.derive_ids.length ||
       !Array.isArray(value.sources) || value.sources.length > MAX_CANON_IDENTITY_BINDINGS || value.sources.some(source => !isPlainObject(source) || Object.keys(source).sort().join(",") !== "event_id,source_key" || typeof source.event_id !== "string" || typeof source.source_key !== "string" || !source.event_id.length || Buffer.byteLength(source.event_id) > 1024 || Buffer.byteLength(source.source_key) > 1024 || source.event_id.includes("\0") || source.source_key.includes("\0")) || new Set(value.sources.map(source => source.event_id)).size !== value.sources.length ||
-      JSON.stringify(value.external_ops) !== JSON.stringify(receipt.retrieval_ops) ||
-      !Array.isArray(value.external_execution) || value.external_execution.length !== receipt.retrieval_ops.length ||
+      JSON.stringify(value.external_ops) !== JSON.stringify(externalOperations(receipt)) ||
+      !Array.isArray(value.external_execution) || value.external_execution.length !== value.external_ops.length ||
       value.external_execution.some(state => state !== "scheduled" && state !== "started" && state !== "acknowledged")) recoveryFailure("intent_invalid", receiptId);
   const bytes = decodeCanonImage(value.after_base64);
   if ((bytes === null ? ABSENT_PAGE_HASH : hashBytes(bytes)) !== receipt.after_hash) recoveryFailure("intent_invalid", receiptId);

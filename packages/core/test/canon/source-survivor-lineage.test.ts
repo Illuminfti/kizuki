@@ -405,6 +405,7 @@ test("a legacy-format backup carrying lineage is refused before publication", as
     acceptSource(db, a, "a", "plain event");
     const manifest = exportVault(db, dir, backup);
     manifest.schema = V2_BACKUP_SCHEMA;
+    manifest.schema_versions.ledger = 20;
     // Remove v3 purge history so this fixture isolates the lineage format guard.
     for (const table of ["purge_batches", "purge_batch_receipts", "purge_ops"]) {
       const stream = `ledger/${table}.jsonl`;

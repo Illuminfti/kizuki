@@ -345,8 +345,8 @@ export function gate<T>(
   let served: Served<T>;
   try {
     served = run({ ctx: live, at });
-    if (canonGeneration !== null && canonReadGeneration(live.db) !== canonGeneration) throw new ServeError("held", "canon changed during request; retry");
     if (purgeReadEpoch(live.db) !== purgeEpoch) throw new ServeError("held", "canon unavailable during purge recovery");
+    if (canonGeneration !== null && canonReadGeneration(live.db) !== canonGeneration) throw new ServeError("held", "canon changed during request; retry");
     if (sourcePolicyEpoch(live.db) !== sourceEpoch) throw new ServeError("error", "source authorization changed during serving");
   } catch (error) {
     failed(live, tool, args, audit_id, error);
@@ -374,8 +374,8 @@ export async function gateAsync<T>(
   let served: Served<T>;
   try {
     served = await run({ ctx: live, at });
-    if (canonGeneration !== null && canonReadGeneration(live.db) !== canonGeneration) throw new ServeError("held", "canon changed during request; retry");
     if (purgeReadEpoch(live.db) !== purgeEpoch) throw new ServeError("held", "canon unavailable during purge recovery");
+    if (canonGeneration !== null && canonReadGeneration(live.db) !== canonGeneration) throw new ServeError("held", "canon changed during request; retry");
     if (sourceEpoch !== sourcePolicyEpoch(live.db)) throw new ServeError("error", "source authorization changed during request; retry");
     // Async reads may overlap grant changes. Refuse the entire result rather
     // than returning a packet assembled under withdrawn authority.

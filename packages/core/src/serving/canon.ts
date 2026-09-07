@@ -164,8 +164,8 @@ export function canonChunk(
   excerpt: string,
   truncated: boolean,
 ): CanonChunk {
-  if (index.generation !== canonReadGeneration(index.sourceContext.db)) throw new ServeError("held", "canon changed during request; retry");
   assertCanonReadAdmission(index.sourceContext, page);
+  if (index.generation !== canonReadGeneration(index.sourceContext.db)) throw new ServeError("held", "canon changed during request; retry");
   const evidence = assessLivePageEvidence(index.sourceContext.db, page);
   if (!evidence.admitted || !sourceEventsAllowed(index.sourceContext.db, evidence.sourceIds, {
     owner: index.sourceContext.principal.kind === "owner",
