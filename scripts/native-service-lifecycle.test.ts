@@ -2,7 +2,37 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cleanupStoppedNativeFixture, managerPid, nativeServiceStopped, waitForNativeState } from "./native-service-lifecycle";
+import { cleanupStoppedNativeFixture, managerPid, nativeServiceStopped, nativeWaitTimeout, waitForNativeState } from "./native-service-lifecycle";
+import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS } from "../packages/core/src/serve/types";
+
+test("only the two supervisor restart gates allow lease expiry plus bounded startup time", () => {
+  const restart = (HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS + 15) * 1000;
+  for (const id of ["crash-restarts-new-instance", "launchd-restarts-after-graceful-exit"]) expect(nativeWaitTimeout(id)).toBe(restart);
+  for (const id of ["default-init-running", "repeat-install-replaces-process", "graceful process stop", "uninstall stops service", "final uninstall stop", "unknown step"])
+    expect(nativeWaitTimeout(id)).toBe(30_000);
+});
+
+test("the actual restart wait accepts a new instance after 31 seconds while an install still times out", () => {
+  // Isolate the deterministic clock from other tests; no host service is used.
+  const script = `
+    import { strict as assert } from 'node:assert';
+    const { waitForNativeState } = await import(${JSON.stringify(join(import.meta.dir, "native-service-lifecycle.ts"))});
+    let clock = 0, diagnostics = 0;
+    Date.now = () => clock;
+    Bun.sleep = async (ms) => { clock += ms; };
+    for (const description of ['crash-restarts-new-instance', 'launchd-restarts-after-graceful-exit']) {
+      clock = 0;
+      await waitForNativeState(() => clock >= 31000, description, () => { diagnostics++; });
+      assert.equal(clock, 31000);
+    }
+    assert.equal(diagnostics, 0);
+    clock = 0;
+    await assert.rejects(waitForNativeState(() => clock >= 31000, 'default-init-running', () => { diagnostics++; }), /timed out: default-init-running/);
+    assert.equal(clock, 30000); assert.equal(diagnostics, 1);
+  `;
+  const result = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 10_000 });
+  expect({ code: result.exitCode, stderr: result.stderr.toString() }).toEqual({ code: 0, stderr: "" });
+});
 
 test("native wait records timeout evidence before the caller cleans up", async () => {
   const events: string[] = [];

@@ -1,4 +1,7 @@
-import type { ServeConfig } from "./types";
+import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS, type ServeConfig } from "./types";
+
+/** A dead writer's fresh lease remains protected until its reclaim window ends. */
+export const SERVICE_RESTART_SECONDS = HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS + 1;
 
 export interface UnitSpec {
   readonly vaultPath: string;
@@ -46,6 +49,7 @@ export function renderSystemdUnit(spec: UnitSpec): string {
     // spaces and backslashes away from the configuration line boundary.
     `WorkingDirectory=${spec.vaultPath.replaceAll("%", "%%")}/.`,
     "Restart=on-failure",
+    `RestartSec=${SERVICE_RESTART_SECONDS}s`,
     "NoNewPrivileges=true",
     "PrivateTmp=true",
     "ProtectSystem=strict",
@@ -88,6 +92,8 @@ export function renderLaunchdPlist(spec: UnitSpec): string {
     `  <true/>`,
     `  <key>KeepAlive</key>`,
     `  <true/>`,
+    `  <key>ThrottleInterval</key>`,
+    `  <integer>${SERVICE_RESTART_SECONDS}</integer>`,
     `  <key>Umask</key>`,
     `  <integer>63</integer>`,
     `  <key>Nice</key>`,

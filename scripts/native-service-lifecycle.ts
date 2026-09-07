@@ -3,6 +3,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, re
 import { homedir, release } from "node:os";
 import { join, resolve } from "node:path";
 import { installServeService, realSupervisorHost } from "../packages/core/src/serve/supervisor";
+import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS } from "../packages/core/src/serve/types";
 import { parseBuildInfo, parseProofArgs } from "./stranger-proof";
 import { requireRegularFile, verifyChecksumManifest } from "./release-artifacts";
 import { releaseTarget, requireNativeHost } from "./release-targets";
@@ -10,6 +11,7 @@ import { releaseTarget, requireNativeHost } from "./release-targets";
 const repository = resolve(import.meta.dir, "..");
 const packageFiles = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"] as const;
 const timeout = 30_000;
+const restartTimeout = (HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS + 15) * 1000;
 type CommandResult = { exit_code: number; stdout: string; stderr: string };
 type Observation = { manager_pid: number | null; marker_pid: number | null; instance_id: string | null; command: string | null };
 type Step = { id: string; passed: boolean; evidence: unknown };
@@ -31,9 +33,15 @@ function git(args: string[]): string {
   return result.stdout.toString().trim();
 }
 
+/** Only automatic supervisor restarts wait through the lease reclaim window. */
+export function nativeWaitTimeout(description: string): number {
+  return description === "crash-restarts-new-instance" || description === "launchd-restarts-after-graceful-exit"
+    ? restartTimeout : timeout;
+}
+
 /** Failure evidence is collected before cleanup and cannot replace the timeout. */
 export async function waitForNativeState(
-  predicate: () => boolean, description: string, onTimeout: () => void, timeoutMs = timeout,
+  predicate: () => boolean, description: string, onTimeout: () => void, timeoutMs = nativeWaitTimeout(description),
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) { if (predicate()) return; await Bun.sleep(200); }
