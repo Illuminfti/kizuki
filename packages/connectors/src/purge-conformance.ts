@@ -34,7 +34,7 @@ function ids(value: unknown): string[] {
   const detached: string[] = [];
   for (let index = 0; index < value.length; index++) {
     const entry = Object.getOwnPropertyDescriptor(value, String(index));
-    if (!entry || !("value" in entry) || !validId(entry.value)) {
+    if (!entry || !Object.hasOwn(entry, "value") || !validId(entry.value)) {
       throw new PurgeFixtureError("purge fixture IDs must be bounded, unique strings");
     }
     detached.push(entry.value);
@@ -55,11 +55,12 @@ function rows(value: unknown): PurgeFixtureRow[] {
 function plan(value: unknown, subject: string, removable: string[], unreachable: string[]): PurgePlan {
   if (!isPlainObject(value)) throw new PurgeFixtureError("purge fixture plan must be complete and match the exact selector partition");
   const fields = Object.getOwnPropertyDescriptors(value);
+  const ownValue = (key: string): unknown => Object.hasOwn(fields, key) ? fields[key]?.value : undefined;
   if (Reflect.ownKeys(fields).some(key => typeof key !== "string" ||
-      !["subject_id", "source_record_ids", "unreachable_source_record_ids", "complete", "continuation"].includes(key) || !("value" in fields[key]!)) ||
-      fields["subject_id"]?.value !== subject || fields["complete"]?.value !== true ||
-      fields["continuation"]?.value !== undefined || !same(ids(fields["source_record_ids"]?.value), removable) ||
-      !same(ids(fields["unreachable_source_record_ids"]?.value), unreachable)) {
+      !["subject_id", "source_record_ids", "unreachable_source_record_ids", "complete", "continuation"].includes(key) || !Object.hasOwn(fields[key]!, "value")) ||
+      ownValue("subject_id") !== subject || ownValue("complete") !== true ||
+      ownValue("continuation") !== undefined || !same(ids(ownValue("source_record_ids")), removable) ||
+      !same(ids(ownValue("unreachable_source_record_ids")), unreachable)) {
     throw new PurgeFixtureError("purge fixture plan must be complete and match the exact selector partition");
   }
   // The executor receives the exact admitted plan, detached from provider state.

@@ -160,3 +160,43 @@ test("a late factory fixture is disposed exactly once after admission times out"
   expect(f.counts).toEqual({base:0,plans:0,executed:0,verified:0,disposed:1});
   await Bun.sleep(10); expect(f.counts.disposed).toBe(1);
 });
+
+for (const mutation of ["complete-accessor", "array-accessor", "missing-complete", "plain-plan"] as const) {
+  test(`inherited descriptor metadata cannot authorize purge: ${mutation}`, async () => {
+    const f = factory();
+    let invoked = 0;
+    const prototypeKey = mutation === "missing-complete" ? "complete" : "value";
+    const previous = Object.getOwnPropertyDescriptor(Object.prototype, prototypeKey);
+    try {
+      const result = await runConformance(f.base, { purgeFixture: async () => {
+        const fixture = await f.create(), original = fixture.connector.purgeSource.bind(fixture.connector);
+        fixture.connector.purgeSource = async subject => {
+          const raw = await original(subject);
+          if (mutation === "missing-complete") delete raw.complete;
+          if (mutation === "complete-accessor" || mutation === "array-accessor") {
+            const target = mutation === "array-accessor" ? raw.source_record_ids : raw;
+            const key = mutation === "array-accessor" ? "0" : "complete";
+            const descriptor = Object.assign(Object.create(null), {
+              enumerable: true, get() { invoked++; throw Error("synthetic accessor must not execute"); },
+            });
+            Object.defineProperty(target, key, descriptor);
+          }
+          Object.defineProperty(Object.prototype, prototypeKey, {
+            configurable: true, writable: true,
+            value: mutation === "array-accessor" ? "selected-a" : mutation === "missing-complete" ? { value: true } : true,
+          });
+          return raw;
+        };
+        return fixture;
+      } });
+      expect(result.pass).toBe(mutation === "plain-plan");
+      expect(invoked).toBe(0);
+      expect(f.counts.base).toBe(0);
+      expect(f.counts.executed).toBe(mutation === "plain-plan" ? 1 : 0);
+      expect(f.counts.disposed).toBe(1);
+    } finally {
+      if (previous) Object.defineProperty(Object.prototype, prototypeKey, previous);
+      else Reflect.deleteProperty(Object.prototype, prototypeKey);
+    }
+  });
+}
