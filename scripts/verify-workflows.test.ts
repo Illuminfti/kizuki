@@ -328,12 +328,12 @@ test("Linux validator rejects removal or bypass of each native receipt retention
 });
 
 
-test("both native modes require WAL lifecycle and ledger identity proofs", () => {
+test("both native modes require ledger identity and service custody consumer proofs", () => {
   const path = ".github/workflows/macos-native.yml";
   const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
   expect(validateWorkflowText(path, text)).toEqual([]);
   for (const [job, index] of [["native-arm64", 5], ["native-service", 4]] as const) {
-    for (const proof of [" packages/core/test/ledger-wal.test.ts", " packages/core/test/ledger-identity.test.ts"]) {
+    for (const proof of [" packages/core/test/ledger-wal.test.ts", " packages/core/test/ledger-identity.test.ts", " packages/core/test/serve/custody-native.test.ts", " packages/core/test/serve/custody-observation.test.ts", " packages/core/test/serve/custody.test.ts", " packages/cli/test/serve/custody.test.ts"]) {
       const doc = Bun.YAML.parse(text) as any;
       const step = doc.jobs[job].steps[index];
       expect(step.run, job).toContain(proof);
