@@ -9,6 +9,7 @@ import { KizukiError } from "./errors";
 import {
   importHealthReport,
   misconfiguredHealth,
+  summarizeImportErrors,
 } from "./import-report";
 import type { ImportParseResult } from "./import-report";
 import { readBoundedUtf8File } from "./read";
@@ -130,12 +131,17 @@ function drain(
   const identity = exportIdentity(text);
   const previous =
     cursor === null ? undefined : parseCursor(cursor, spec.connectorId);
+  // Valid records can be accepted independently, but malformed members prevent
+  // a successful drain. Unsupported parts retain their existing health warning.
+  const dirty = parsed.errors.some((error) => error.code !== "unsupported_part");
+  const incomplete = (): SyncBatch => ({ events: [], cursor, status: "unavailable",
+    detail: `partial_import: ${summarizeImportErrors(parsed.errors)}` });
   if (
     previous !== undefined &&
     previous.export.size === identity.size &&
     previous.export.sha256 === identity.sha256
   ) {
-    return { events: [], cursor };
+    return dirty ? incomplete() : { events: [], cursor };
   }
 
   const current = new Map<string, string>();
@@ -163,7 +169,9 @@ function drain(
 
   // unsupported_part rides with an emitted event that kept its real id.
   // missing_id (and every other code) is not proof a prior id is gone.
-  const dirty = parsed.errors.some((error) => error.code !== "unsupported_part");
+  // With no changed valid records there is no progress to checkpoint. Preserve
+  // the prior cursor and publish the parse failure on this attempt immediately.
+  if (dirty && events.length === 0) return incomplete();
 
   // A dirty parse cannot prove a record is gone. Keep prior identities so a
   // later clean export can still tombstone them.

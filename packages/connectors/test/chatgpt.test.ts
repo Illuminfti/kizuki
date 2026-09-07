@@ -386,6 +386,33 @@ describe("parseChatGptExport", () => {
 });
 
 describe("ChatGptImportConnector", () => {
+  test("unsupported parts preserve supported events and the existing health-only degradation", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
+    try {
+      const file = path.join(root, "conversations.json");
+      await writeFile(file, JSON.stringify([{ id: "supported", mapping: { n: { message: {
+        author: { role: "user" }, content: { parts: ["supported text", { content_type: "unsupported-synthetic-part" }] }, create_time: 1700000000,
+      } } } }]));
+      const connector = createChatGptImportConnector({ path: file });
+      expect((await connector.health()).state).toBe("degraded");
+      const first = await connector.backfill(null); expect(first.status ?? "ok").toBe("ok"); expect(first.events).toHaveLength(1);
+      const drain = await connector.backfill(first.cursor); expect(drain).toEqual({ events: [], cursor: first.cursor });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  test("malformed completion reports only bounded code counts after valid progress", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
+    try {
+      const file = path.join(root, "conversations.json");
+      await writeFile(file, JSON.stringify([...INLINE_EXPORT, ...Array(100).fill("SYNTHETIC_SECRET_BODY")]));
+      const connector = createChatGptImportConnector({ path: file }), first = await connector.backfill(null);
+      expect(first.events).toHaveLength(2); const drained = await connector.backfill(first.cursor);
+      expect(drained).toMatchObject({ status: "unavailable", events: [], cursor: first.cursor });
+      expect(drained.detail).toBe("partial_import: 100 record errors (not_object=100; truncated=68)");
+      expect(drained.detail!.length).toBeLessThan(512); expect(drained.detail).not.toContain("SYNTHETIC_SECRET_BODY"); expect(drained.detail).not.toContain(file);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   test("health probes the export and refuses a malformed file", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
     try {
@@ -460,6 +487,7 @@ describe("ChatGptImportConnector", () => {
         ]),
       );
       const dirty = await connector.sync(first.cursor);
+      expect(dirty.status).toBe("unavailable"); expect(dirty.cursor).toBe(first.cursor);
       expect(dirty.events.some((event) => event.deleted)).toBe(false);
       const dirtyCursor = JSON.parse(dirty.cursor ?? "{}") as {
         records: Array<[string, string]>;
