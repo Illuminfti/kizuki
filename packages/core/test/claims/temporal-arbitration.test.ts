@@ -130,3 +130,18 @@ test("correction scopes include equal instants and exclude genuinely earlier cla
     expect(getClaim(f.db, stored.claim.claim_id)?.valid_from).toBe("2026-09-07T01:00:00+01:00");
   } finally { f.dispose(); }
 });
+
+test("an identical retry after its validity window retains the original defaulted start", async () => {
+  const f = fixture();
+  try {
+    const input = claimInput(f.ids[0]!, { provenance: f.ids, valid_to: "2026-09-07T13:00:00Z" });
+    const first = await insertClaim({ db: f.db, now: () => "2026-09-07T12:00:00Z" }, input);
+    if (first.outcome !== "stored") throw new Error("unexpected outcome");
+    const retry = await insertClaim({ db: f.db, now: () => "2026-09-07T14:00:00Z" }, input);
+    expect(retry.outcome).toBe("duplicate");
+    if (retry.outcome !== "duplicate") throw new Error("unexpected outcome");
+    expect(retry.claim).toEqual(first.claim);
+    expect(f.db.query("SELECT count(*) AS n FROM claims").get()).toEqual({ n: 1 });
+    expect(listSupersessions(f.db)).toEqual([]);
+  } finally { f.db.close(); }
+});

@@ -989,12 +989,6 @@ function applyClaimInsert(
   semanticNomineeIds: readonly string[],
 ): InsertClaimResult {
   const at = nowOf(io);
-  // New assertions require a nonempty interval, as in the claim/v2 contract.
-  // Supersession may still end stored history at its start; do not revalidate
-  // or rewrite those historical rows here.
-  if (input.valid_to != null && compareRfc3339(input.valid_to, "valid_to", input.valid_from ?? at, "valid_from") <= 0) {
-    throw new ClaimError("schema_invalid", "valid_to must be after valid_from");
-  }
   const sourceScope = { owner: canonicalizeProducer(input.producer) !== "model" && !input.producer.startsWith("agent:"), model: canonicalizeProducer(input.producer) === "model", purpose: input.intent === "correct" ? "correction" as const : "derive" as const };
   const historicalSignature = historicalClaimReplaySignature(input);
   const historicalInputAllowed = (): boolean => historicalSourceWriteAllowed(
@@ -1116,6 +1110,13 @@ function applyClaimInsert(
       (historicalInputAllowed() && exact.model_ref === (input.model_ref ?? null) &&
        JSON.stringify(exact.provenance) === JSON.stringify(input.provenance)))) {
     return { outcome: "duplicate", claim: exact, dedup: mode };
+  }
+
+  // New assertions require a nonempty interval, as in the claim/v2 contract.
+  // Exact retries above retain their original validity even after it expires.
+  // Supersession may end stored history at its start; do not rewrite it here.
+  if (claim.valid_to !== null && compareRfc3339(claim.valid_to, "valid_to", claim.valid_from, "valid_from") <= 0) {
+    throw new ClaimError("schema_invalid", "valid_to must be after valid_from");
   }
 
   const structuralCandidates = [
