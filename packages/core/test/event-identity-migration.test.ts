@@ -25,6 +25,7 @@ function legacyFixture(size = 1) {
     db.query("UPDATE events SET content_hash=? WHERE event_id=?").run(computeLegacyContentHash(input), stored.event.event_id);
   }
   db.exec(`
+    DROP TABLE canon_source_survivor_lineage;
     DROP TABLE purge_batch_receipts;
     DROP TABLE purge_batches;
     DROP TRIGGER agent_enrollments_block_legacy_agent_insert;
