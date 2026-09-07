@@ -11,7 +11,7 @@ import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS } from "../packages/core/sr
 import { parseBuildInfo, parseProofArgs } from "./stranger-proof";
 import { packageFiles, requireRegularFile, verifyPackageDirectory } from "./release-artifacts";
 import { releaseTarget, requireNativeHost } from "./release-targets";
-import { installedRailsHealth, readNativeRailDiagnostics, recordInstalledHealth, waitForFreshRails } from "./native-service-health";
+import { installedRailsHealth, readNativeRailDiagnostics, recordInstalledHealth, waitForFreshRails, type NativeRailDiagnostics } from "./native-service-health";
 import { captureSyntheticServiceTrace } from "./native-service-trace";
 import { prepareLaunchctlDiagnostics, projectLaunchctlResult, syntheticServiceFileMetadata } from "./native-launchctl-diagnostics";
 
@@ -72,6 +72,18 @@ function git(args: string[]): string {
   const result = Bun.spawnSync(["git", ...args], { cwd: repository, stdout: "pipe", stderr: "pipe" });
   check(result.exitCode === 0, "source Git identity unavailable");
   return result.stdout.toString().trim();
+}
+
+/** Take one public snapshot after first-run receipt coverage, including failed rails. */
+export async function observeInstalledNativeHealth(expectedPid: number, since: string,
+  readDiagnostics: () => NativeRailDiagnostics, readStatus: () => CommandResult) {
+  const diagnostics = await waitForFreshRails(readDiagnostics);
+  const status = readStatus();
+  const body = JSON.parse(status.stdout).data;
+  return {
+    publicStatus: { passed: status.exit_code === 0 && body?.pid === expectedPid && body?.supervisor?.state === "active" && body?.supervisor?.enabled === true, evidence: status },
+    installedHealth: installedRailsHealth(status, diagnostics, since),
+  };
 }
 
 /** Capture the actual synthetic command failure before the controller cleans
@@ -367,16 +379,13 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
       instrumented: initialDiagnostic !== null, timing_changed: initialDiagnostic !== null,
       native_status: unit ? serviceDiagnostics(unit) : null });
     let observed = await active("default-init-running", executable);
-    const status = invoke([executable, "serve", "status", "--json", "--vault", vault]);
-    const statusBody = JSON.parse(status.stdout).data;
-    record("public-status-agrees-with-native-manager", statusBody?.pid === observed.manager_pid && statusBody?.supervisor?.state === "active" &&
-      statusBody?.supervisor?.enabled === true, status);
-    const diagnostics = await waitForFreshRails(() => readNativeRailDiagnostics(vault,
-      { pid: observed.manager_pid!, instance_id: observed.instance_id! }, initializedAt));
-    const freshStatus = invoke([executable, "serve", "status", "--json", "--vault", vault]);
-    const installedHealth = installedRailsHealth(freshStatus, diagnostics, initializedAt);
+    const { publicStatus, installedHealth } = await observeInstalledNativeHealth(observed.manager_pid!, initializedAt,
+      () => readNativeRailDiagnostics(vault, { pid: observed.manager_pid!, instance_id: observed.instance_id! }, initializedAt),
+      () => invoke([executable, "serve", "status", "--json", "--vault", vault]));
+    steps.push({ id: "public-status-agrees-with-native-manager", ...publicStatus });
     recordInstalledHealth(steps, failures, installedHealth);
     save();
+    check(publicStatus.passed, "public-status-agrees-with-native-manager failed");
     if (platform === "linux" && !installedHealth.passed) {
       const current = processObservation();
       const verified = current.manager_pid === observed.manager_pid && current.marker_pid === current.manager_pid &&

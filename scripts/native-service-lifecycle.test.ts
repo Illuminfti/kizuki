@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cleanupOwnedNativeFixtures, runNativeExtensionCommand, managerPid, nativeServiceStopped, nativeWaitTimeout, waitForNativeState } from "./native-service-lifecycle";
+import { cleanupOwnedNativeFixtures, runNativeExtensionCommand, managerPid, nativeServiceStopped, nativeWaitTimeout, observeInstalledNativeHealth, waitForNativeState } from "./native-service-lifecycle";
 import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS } from "../packages/core/src/serve/types";
 import { RAIL_IDS, emptyRunTotals } from "../packages/core/src/serve/types";
 import { installedRailsHealth, readNativeRailDiagnostics, recordInstalledHealth, waitForFreshRails } from "./native-service-health";
@@ -21,6 +21,50 @@ test("fresh empty no-model rails pass while fixed identity degradation stays vis
   const result = installedRailsHealth({ exit_code: 0, stdout: JSON.stringify(healthyStatus()), stderr: "" }, healthyDiagnostics(), healthAt, Date.parse(healthAt));
   expect(result.passed).toBe(true); expect(result.evidence).toMatchObject({ doctor_ok: true, canon_writing: "off", identity_degraded: ["identity-authority-unavailable"] });
 });
+
+function freshNativeHealth() {
+  const since = new Date().toISOString(), body = healthyStatus(), diagnostics = healthyDiagnostics();
+  for (const rail of body.data.doctor.rails) rail.last_receipt_at = since;
+  for (const receipt of diagnostics.receipts) receipt.finished_at = since;
+  return { since, diagnostics, body: { ...body, data: { ...body.data, supervisor: { state: "active", enabled: true } } } };
+}
+
+test("installed native status waits for first rail coverage and shares one successful command snapshot", async () => {
+  const { since, diagnostics, body } = freshNativeHealth();
+  const events: string[] = []; let reads = 0;
+  const result = await observeInstalledNativeHealth(501, since, () => {
+    events.push("rails"); reads++;
+    return reads === 1 ? { ...diagnostics, complete: false, receipts: [] } : diagnostics;
+  }, () => {
+    events.push("status");
+    return reads < 2
+      ? { exit_code: 1, stdout: JSON.stringify({ ...body, status: "error", data: { ...body.data, doctor: { ...body.data.doctor, ok: false, rails: [] } } }), stderr: "" }
+      : { exit_code: 0, stdout: JSON.stringify(body), stderr: "" };
+  });
+  expect(events).toEqual(["rails", "rails", "status"]);
+  expect(result.publicStatus).toEqual({ passed: true, evidence: { exit_code: 0, stdout: JSON.stringify(body), stderr: "" } });
+  expect(result.installedHealth.passed).toBe(true);
+  expect(result.installedHealth.evidence.diagnostics).toBe(diagnostics);
+});
+
+for (const fault of ["exit", "pid", "inactive", "disabled", "failed-rail", "failed-receipt"] as const) {
+  test(`installed native status retains ${fault} after first rail coverage`, async () => {
+    const { since, diagnostics, body } = freshNativeHealth(); let reads = 0, commands = 0;
+    if (fault === "pid") body.data.pid = 502;
+    if (fault === "inactive") body.data.supervisor.state = "inactive";
+    if (fault === "disabled") body.data.supervisor.enabled = false;
+    if (fault === "failed-rail") body.data.doctor.rails[0]!.status = "down";
+    if (fault === "failed-receipt") { diagnostics.receipts[0]!.status = "failed"; diagnostics.receipts[0]!.errors = ["synthetic failure"]; }
+    const result = await observeInstalledNativeHealth(501, since, () => { reads++; return diagnostics; }, () => {
+      commands++; return { exit_code: fault === "exit" ? 1 : 0, stdout: JSON.stringify(body), stderr: "" };
+    });
+    expect(reads).toBe(1); expect(commands).toBe(1);
+    if (["exit", "pid", "inactive", "disabled"].includes(fault)) expect(result.publicStatus.passed).toBe(false);
+    if (["exit", "failed-rail", "failed-receipt"].includes(fault)) expect(result.installedHealth.passed).toBe(false);
+    expect(result.publicStatus.passed && result.installedHealth.passed).toBe(false);
+    expect(result.installedHealth.evidence.diagnostics).toBe(diagnostics);
+  });
+}
 
 for (const fault of ["exit", "doctor", "failed-rail", "stale", "missing", "model", "receipt-error", "incomplete", "truncated", "diagnostic-error", "malformed"] as const) {
   test(`installed fresh health refuses ${fault} independently of native PID agreement`, () => {
