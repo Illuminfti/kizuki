@@ -89,6 +89,9 @@ test("failure metadata leaves journal content unread and preserves symlink ident
     expect(actual.unit).toEqual({ exists: false });
     expect(JSON.stringify(actual)).not.toContain("PRIVATE_JOURNAL_CANARY");
     expect(readFileSync(journal, "utf8")).toBe("PRIVATE_JOURNAL_CANARY");
+    // ENOTDIR is a failed metadata observation, not evidence that the journal is absent.
+    expect(syntheticServiceFileMetadata(journal, "synthetic-vault").journal)
+      .toEqual({ exists: null, error: "metadata_unavailable" });
   } finally { rmSync(root, { recursive: true }); }
 });
 

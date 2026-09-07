@@ -119,7 +119,8 @@ export function prepareLaunchctlDiagnostics(root: string, vaultId: string) {
       if (bytes.length > MAX_BYTES) throw new Error("launchctl diagnostic bound exceeded");
       const rows = bytes.toString().trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
       return { instrumented: true, timing_changed: true, limit_records: MAX_RECORDS, limit_bytes: MAX_BYTES,
-        wrapper_sha256: createHash("sha256").update(readFileSync(wrapper)).digest("hex"), rows };
+        wrapper_sha256: createHash("sha256").update(readFileSync(wrapper)).digest("hex"),
+        truncated: rows.length >= MAX_RECORDS, rows };
     } };
 }
 
@@ -133,6 +134,9 @@ export function syntheticServiceFileMetadata(root: string, vaultId: string) {
       const s = lstatSync(path);
       return [name, { exists: true, regular: s.isFile(), symlink: s.isSymbolicLink(), mode: s.mode & 0o777, uid: s.uid,
         nlink: s.nlink, dev: s.dev, ino: s.ino, size: s.size, mtime_ms: s.mtimeMs }];
-    } catch { return [name, { exists: false }]; }
+    } catch (error) {
+      return [name, error && typeof error === "object" && "code" in error && error.code === "ENOENT"
+        ? { exists: false } : { exists: null, error: "metadata_unavailable" }];
+    }
   }));
 }
