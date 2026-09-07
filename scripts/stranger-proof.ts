@@ -202,6 +202,8 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
     artifactTarget = build.target;
     packageHashes = Object.fromEntries(packageFiles(build).map(name => [name, sha256(join(copiedArtifact, name))]));
     const requireUnchangedPackage = () => {
+      verifyPackageDirectory(args.artifact, build);
+      verifyPackageDirectory(copiedArtifact, build);
       for (const [name, digest] of Object.entries(packageHashes)) {
         if (sha256(join(args.artifact, name)) !== digest || sha256(join(copiedArtifact, name)) !== digest) {
           throw new Error("artifact identity changed");

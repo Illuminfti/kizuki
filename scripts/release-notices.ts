@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 export const DISTRIBUTION_LIMITS = { components: 256, notices_per_component: 16, notices_bytes: 4 * 1024 * 1024, build_bytes: 512 * 1024 } as const;
 export const BUN_DISTRIBUTION_PIN = {
   version: "1.3.14", revision: "0d9b296af33f2b851fcbf4df3e9ec89751734ba4",
+  notice_url: "https://github.com/oven-sh/bun/blob/0d9b296af33f2b851fcbf4df3e9ec89751734ba4/LICENSE.md",
   notice_sha256: "2c6160ec8fb853f7e8f97d9b249e756c9b0ac44860a68b6bf4f1b0bcbc5c3741",
 } as const;
 const REASONS = ["license_text_missing", "embedded_component_inventory_incomplete", "embedded_license_texts_incomplete", "corresponding_source_unassessed", "relink_material_unassessed"] as const;
@@ -80,10 +81,11 @@ export function parsePackageDistribution(value: unknown): PackageDistribution {
     ordered(noticeNames);
     if (!Array.isArray(c.unresolved) || c.unresolved.some(x => !REASONS.includes(x))) fail();
     ordered(c.unresolved); unresolved ||= c.unresolved.length > 0;
+    if (c.kind === "npm" && c.notice_texts.length === 0 && !c.unresolved.includes("license_text_missing")) fail();
     if (c.kind === "runtime") {
       runtimes++;
       if (c.name !== "Bun" || c.version_or_revision !== BUN_DISTRIBUTION_PIN.revision || source.kind !== "repository" ||
-          source.revision !== BUN_DISTRIBUTION_PIN.revision || source.sha256 !== BUN_DISTRIBUTION_PIN.notice_sha256 ||
+          source.url !== BUN_DISTRIBUTION_PIN.notice_url || source.revision !== BUN_DISTRIBUTION_PIN.revision || source.sha256 !== BUN_DISTRIBUTION_PIN.notice_sha256 ||
           !c.notice_texts.some((n: Notice) => n.sha256 === BUN_DISTRIBUTION_PIN.notice_sha256)) fail();
     }
   }
@@ -204,7 +206,7 @@ export function createPackageDistribution(root: string, revision: string, metafi
   const bunNotice = localBytes(root, "scripts/release-notices/Bun-1.3.14-LICENSE.md");
   if (distributionHash(bunNotice) !== BUN_DISTRIBUTION_PIN.notice_sha256) fail();
   addTexts({ kind: "runtime", name: "Bun", version_or_revision: BUN_DISTRIBUTION_PIN.revision, declared_license: "MIT; embedded components have separate declarations",
-    source: { kind: "repository", url: `https://github.com/oven-sh/bun/blob/${BUN_DISTRIBUTION_PIN.revision}/LICENSE.md`, revision: BUN_DISTRIBUTION_PIN.revision, sha256: distributionHash(bunNotice) },
+    source: { kind: "repository", url: BUN_DISTRIBUTION_PIN.notice_url, revision: BUN_DISTRIBUTION_PIN.revision, sha256: distributionHash(bunNotice) },
     binaries: ["kizuki", "kizuki-mcp"], input_identity_sha256: distributionHash(BUN_DISTRIBUTION_PIN.revision), notice_texts: [],
     unresolved: ["corresponding_source_unassessed", "embedded_component_inventory_incomplete", "embedded_license_texts_incomplete", "relink_material_unassessed"] }, [{ name: "LICENSE.md", source: bunNotice }]);
   const vendorFiles = ["LICENSE", "NOTICE"].map(name => ({ name, source: localBytes(root, `packages/retrieval-pg/vendor/${name}`) }));
