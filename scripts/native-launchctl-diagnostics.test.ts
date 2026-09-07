@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fixtureLaunchctlOperation, launchctlFixtureMatches, observeLaunchctl, projectLaunchctlResult, syntheticServiceFileMetadata, type LaunchctlFixture } from "./native-launchctl-diagnostics";
+import { fixtureLaunchctlOperation, launchctlFixtureMatches, observeLaunchctl, projectLaunchctlResult, syntheticServiceFileMetadata, prepareLaunchctlStartupCapture, startupCapturePlist, type LaunchctlFixture } from "./native-launchctl-diagnostics";
 
 const fixture: LaunchctlFixture = { root: "/synthetic/kizuki native lifecycle fixed", runner_temp: "/synthetic", uid: 501,
   vault_id: "synthetic-vault", binary: { dev: 1, ino: 2, size: 3, mtime_ms: 4 } };
@@ -133,6 +133,77 @@ test("fixture guard binds real files and rejects aliases, tampering and wrong so
       writeFileSync(trace, 'x'.repeat(65537)); assert.equal(launchctlFixtureMatches(fixture), false); writeFileSync(trace, '');
       writeFileSync(binary, 'changed-binary'); assert.equal(launchctlFixtureMatches(fixture), false);
     } finally { rmSync(runner, { recursive: true }); }
+  `;
+  const result = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 5000 });
+  expect({ exit: result.exitCode, stderr: result.stderr.toString() }).toEqual({ exit: 0, stderr: "" });
+});
+
+
+test("startup capture changes only output paths and refuses unexpected definitions", () => {
+  const source = "<plist>\n<dict>\n<key>KeepAlive</key><true/>\n</dict>\n</plist>\n";
+  const clone = startupCapturePlist(source, source, "/synthetic/a&b", "/synthetic/error");
+  expect(clone).toContain("<key>KeepAlive</key><true/>");
+  expect(clone).toContain("/synthetic/a&amp;b");
+  expect(clone.replace(/  <key>StandardOutPath<\/key>[\s\S]*?<\/string>\n  <key>StandardErrorPath<\/key>[\s\S]*?<\/string>\n/, "")).toBe(source);
+  expect(() => startupCapturePlist(source + "extra", source, "/out", "/err")).toThrow("definition refused");
+});
+
+test("held startup capture bounds output and refuses replaced endpoints", () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-startup-output-"));
+  mkdirSync(join(root, "launchctl diagnostics"), { mode: 0o700 });
+  const capture = prepareLaunchctlStartupCapture(root);
+  try {
+    writeFileSync(join(root, "launchctl diagnostics/startup-stderr.log"), "startup_failure\n" + "x".repeat(9000));
+    const observed = capture.collect();
+    expect(observed).toMatchObject({ changed_native_configuration: true, release_eligible: false, timing_changed: true });
+    expect(observed.output.stderr).toMatchObject({ bytes_read: 8192, truncated: true });
+    expect(observed.output.stderr!.text).toStartWith("startup_failure\n");
+    rmSync(join(root, "launchctl diagnostics/startup-stdout.log"));
+    symlinkSync("startup-stderr.log", join(root, "launchctl diagnostics/startup-stdout.log"));
+    expect(() => capture.collect()).toThrow("custody refused");
+  } finally { capture.close(); capture.close(); rmSync(root, { recursive: true }); }
+});
+
+test("synthetic bootstrap clone retains original and actual subprocess startup failure", () => {
+  // Simulate only platform admission; the callback runs an owned child, never launchctl.
+  const script = `
+    import { strict as assert } from 'node:assert';
+    import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, lstatSync, realpathSync, rmSync, openSync, closeSync } from 'node:fs';
+    import { tmpdir } from 'node:os'; import { join } from 'node:path';
+    import { prepareLaunchctlStartupCapture, captureLaunchctlBootstrap } from ${JSON.stringify(join(import.meta.dir, "native-launchctl-diagnostics.ts"))};
+    import { renderLaunchdPlist } from ${JSON.stringify(join(import.meta.dir, "../packages/core/src/serve/units.ts"))};
+    import { DEFAULT_SERVE_CONFIG } from ${JSON.stringify(join(import.meta.dir, "../packages/core/src/serve/types.ts"))};
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    const runner = realpathSync(mkdtempSync(join(tmpdir(), 'kizuki-capture-guard-'))), root = mkdtempSync(join(runner, 'kizuki native lifecycle '));
+    for (const folder of ['synthetic vault/.kizuki', 'installed package', 'launchctl diagnostics', 'home/Library/LaunchAgents']) mkdirSync(join(root, folder), { recursive: true, mode: 0o700 });
+    const vault = join(root, 'synthetic vault'), binary = join(root, 'installed package/kizuki'), unit = join(root, 'home/Library/LaunchAgents/dev.kizuki.synthetic-vault.plist');
+    writeFileSync(join(vault, '.kizuki/vault-id'), 'synthetic-vault', { mode: 0o600 }); writeFileSync(binary, 'synthetic-binary', { mode: 0o700 });
+    writeFileSync(join(root, 'launchctl diagnostics/commands.jsonl'), '', { mode: 0o600 });
+    const original = renderLaunchdPlist({ vaultPath: vault, vaultId: 'synthetic-vault', execStart: [binary, 'serve', '--vault', vault], config: DEFAULT_SERVE_CONFIG });
+    writeFileSync(unit, original, { mode: 0o600 });
+    const capture = prepareLaunchctlStartupCapture(root), s = lstatSync(binary);
+    const fixture = { root, runner_temp: runner, uid: process.getuid(), vault_id: 'synthetic-vault', binary: { dev: s.dev, ino: s.ino, size: s.size, mtime_ms: s.mtimeMs }, startup_capture: capture.binding };
+    Object.assign(process.env, { CI: 'true', GITHUB_ACTIONS: 'true', RUNNER_TEMP: runner });
+    let calls = 0;
+    try {
+      const result = captureLaunchctlBootstrap(fixture, ['bootstrap', 'gui/' + fixture.uid, unit], command => {
+        calls++; assert.deepEqual(command.slice(0,3), ['/bin/launchctl', 'bootstrap', 'gui/' + fixture.uid]);
+        assert.equal(command[3], join(root, 'launchctl diagnostics/startup.plist'));
+        assert.equal(readFileSync(unit, 'utf8'), original);
+        const clone = readFileSync(command[3], 'utf8'); assert.ok(clone.includes('<key>StandardErrorPath</key>'));
+        const fd = openSync(join(root, 'launchctl diagnostics/startup-stderr.log'), 'a');
+        try { const child = Bun.spawnSync([process.execPath, '--eval', 'console.error("SYNTHETIC_STARTUP_FATAL"); process.exit(1)'], { stdout: 'ignore', stderr: fd }); assert.equal(child.exitCode, 1); }
+        finally { closeSync(fd); }
+        return { exit_code: 0, stdout: '', stderr: '', signal: null };
+      });
+      assert.equal(result.exit_code, 0); assert.equal(calls, 1); assert.equal(readFileSync(unit, 'utf8'), original);
+      const evidence = capture.collect(); assert.ok(evidence.output.stderr.text.includes('SYNTHETIC_STARTUP_FATAL'));
+      assert.equal(JSON.parse(evidence.output.metadata.text).original_preserved, true);
+      assert.throws(() => captureLaunchctlBootstrap(fixture, ['bootstrap', 'gui/0', unit], () => { calls++; throw Error('unreachable'); }));
+      writeFileSync(unit, original.replace('<true/>', '<false/>'));
+      assert.throws(() => captureLaunchctlBootstrap(fixture, ['bootstrap', 'gui/' + fixture.uid, unit], () => { calls++; throw Error('unreachable'); }));
+      assert.equal(calls, 1);
+    } finally { capture.close(); rmSync(runner, { recursive: true }); }
   `;
   const result = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 5000 });
   expect({ exit: result.exitCode, stderr: result.stderr.toString() }).toEqual({ exit: 0, stderr: "" });

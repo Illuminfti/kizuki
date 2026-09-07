@@ -212,6 +212,7 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
   let fixtureRoot: string | null = null;
   let vault = "", unit = "", unitPath = "", executable = "";
   let cliEnv: Record<string, string> = {};
+  let startupCapture: ReturnType<typeof prepareLaunchctlDiagnostics>["startup_capture"] = null;
   const ownedUnits: OwnedNativeFixtureUnit[] = [];
   const rememberUnit = () => {
     const prior = ownedUnits.find(row => row.unit === unit);
@@ -391,7 +392,16 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     writeFileSync(join(vault, ".kizuki", "serve.toml"), "[serve]\nbind_port = 0\n", { mode: 0o600 });
     if (platform === "darwin") {
       const vaultId = readFileSync(join(vault, ".kizuki/vault-id"), "utf8").trim();
-      const diagnostic = initialDiagnostic ?? prepareLaunchctlDiagnostics(fixtureRoot, vaultId);
+      const captureStartup = process.env.KIZUKI_NATIVE_MAC_STARTUP_CAPTURE === "1";
+      check(!captureStartup || initialDiagnostic === null, "startup capture requires uninstrumented initial init");
+      const diagnostic = initialDiagnostic ?? prepareLaunchctlDiagnostics(fixtureRoot, vaultId, captureStartup);
+      startupCapture = diagnostic.startup_capture;
+      if (captureStartup) {
+        failures.push("diagnostic startup capture is ineligible for lifecycle qualification");
+        steps.push({ id: "mac-startup-capture-enabled", passed: false, evidence: {
+          changed_native_configuration: true, timing_changed: true, release_eligible: false } });
+        save();
+      }
       // Only this CLI child sees the wrapper. launchd's unit contains no inherited
       // EnvironmentVariables, and the parent/native observer environment is unchanged.
       const env = { ...cliEnv, PATH: `${diagnostic.path}:${cliEnv.PATH}`, CI: "true", GITHUB_ACTIONS: "true",
@@ -660,6 +670,11 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
       } catch { steps.push({ id: "failed-native-service-metadata", passed: false, evidence: { status: "unavailable" } }); }
     }
   } finally {
+    if (startupCapture !== null) {
+      try { steps.push({ id: "mac-startup-output-diagnostics", passed: false, evidence: startupCapture.collect() }); }
+      catch { steps.push({ id: "mac-startup-output-diagnostics", passed: false, evidence: { status: "capture_unavailable" } }); }
+      finally { startupCapture.close(); receipt.passed = false; save(); }
+    }
     receipt.cleanup.attempted = true;
     try {
       rememberUnit();
