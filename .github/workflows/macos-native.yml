@@ -11,6 +11,11 @@ on:
         required: true
         default: false
         type: boolean
+      native_adapter_only:
+        description: Run the bounded Darwin owned-directory adapter proof without full product qualification
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read
 concurrency:
@@ -40,23 +45,43 @@ jobs:
           test "$(uname -m)" = arm64
           bun install --frozen-lockfile
       - name: platform tests
+        if: ${{ inputs.native_adapter_only != true }}
         run: |
           bun run typecheck
           bun test scripts/release-targets.test.ts scripts/release-artifacts.test.ts scripts/stranger-proof.test.ts packages/core/test/serve/advisory-file-lock.test.ts packages/core/test/serve/flock.test.ts packages/core/test/serve/leases.test.ts packages/core/test/serve/units.test.ts packages/core/test/serve/service-arguments.test.ts packages/cli/test/config.test.ts packages/cli/test/terminal-prompt.test.ts packages/tui/test/terminal.test.ts packages/retrieval-pg/test/contention.test.ts scripts/native-platform.test.ts
       - name: native package and copied-artifact proof
+        if: ${{ inputs.native_adapter_only != true }}
         run: |
           bun run build:release
           bun run smoke:release
           bun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-macos-artifact-proof"
       - name: require artifact proof receipt
+        if: ${{ inputs.native_adapter_only != true }}
         run: test -f "$RUNNER_TEMP/kizuki-macos-artifact-proof/receipt.json"
       - name: retain native package and receipt in this repository only
-        if: ${{ success() }}
+        if: ${{ success() && inputs.native_adapter_only != true }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: macos-arm64-${{ github.sha }}
           path: |
             dist/kizuki-*/bun-darwin-arm64/
             ${{ runner.temp }}/kizuki-macos-artifact-proof/receipt.json
+          retention-days: 7
+          if-no-files-found: error
+      - name: Darwin owned-directory adapter canary
+        if: ${{ !cancelled() && inputs.native_adapter_only == true }}
+        run: |
+          bun run typecheck
+          bun scripts/darwin-native-canary.ts --report "$RUNNER_TEMP/kizuki-darwin-native-canary"
+          bun test packages/core/test/util/native-loader.test.ts packages/core/test/util/native-enumeration.test.ts packages/core/test/util/owned-directory.test.ts packages/core/test/util/owned-directory-publication.test.ts
+      - name: require Darwin adapter canary receipt
+        if: ${{ !cancelled() && inputs.native_adapter_only == true }}
+        run: test -f "$RUNNER_TEMP/kizuki-darwin-native-canary/receipt.json"
+      - name: retain Darwin adapter canary receipt and executable
+        if: ${{ !cancelled() && inputs.native_adapter_only == true }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-native-adapter-${{ github.sha }}
+          path: ${{ runner.temp }}/kizuki-darwin-native-canary/
           retention-days: 7
           if-no-files-found: error

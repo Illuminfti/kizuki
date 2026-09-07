@@ -138,6 +138,14 @@ const MACOS_RECEIPT_CHECK = 'test -f "$RUNNER_TEMP/kizuki-macos-artifact-proof/r
 const MACOS_ARTIFACT_NAME = "macos-arm64-${{ github.sha }}";
 const MACOS_ARTIFACT_PATH =
   "dist/kizuki-*/bun-darwin-arm64/\n${{ runner.temp }}/kizuki-macos-artifact-proof/receipt.json";
+const FULL_QUALIFICATION = "${{ inputs.native_adapter_only != true }}";
+const ADAPTER_ONLY = "${{ inputs.native_adapter_only == true }}";
+const ADAPTER_RETAIN = "${{ !cancelled() && inputs.native_adapter_only == true }}";
+const ADAPTER_COMMAND =
+  'bun run typecheck\nbun scripts/darwin-native-canary.ts --report "$RUNNER_TEMP/kizuki-darwin-native-canary"\nbun test packages/core/test/util/native-loader.test.ts packages/core/test/util/native-enumeration.test.ts packages/core/test/util/owned-directory.test.ts packages/core/test/util/owned-directory-publication.test.ts';
+const ADAPTER_RECEIPT_CHECK = 'test -f "$RUNNER_TEMP/kizuki-darwin-native-canary/receipt.json"';
+const ADAPTER_ARTIFACT_NAME = "macos-native-adapter-${{ github.sha }}";
+const ADAPTER_ARTIFACT_PATH = "${{ runner.temp }}/kizuki-darwin-native-canary/";
 
 function commandLines(value: unknown): string {
   return typeof value === "string" ? value.trim().split("\n").map(line => line.trim()).join("\n") : "";
@@ -148,14 +156,19 @@ function isBareCommand(step: unknown, command: string): boolean {
     commandLines(step["run"]) === command;
 }
 
+function isConditionedCommand(step: unknown, command: string, condition: string): boolean {
+  return isRecord(step) && Object.keys(step).every(key => ["name", "run", "if"].includes(key)) &&
+    step["if"] === condition && commandLines(step["run"]) === command;
+}
+
 function isUploadArtifactStep(step: unknown): boolean {
   return isRecord(step) && typeof step["uses"] === "string" &&
     step["uses"].startsWith("actions/upload-artifact@");
 }
 
-function isNativeArtifactUpload(step: unknown, artifactName: string, artifactPath: string): boolean {
+function isNativeArtifactUpload(step: unknown, artifactName: string, artifactPath: string, condition = SUCCESS_PRECONDITION): boolean {
   if (!isRecord(step) || !Object.keys(step).every(key => ["name", "uses", "with", "if"].includes(key)) ||
-      step["uses"] !== UPLOAD_ARTIFACT_ACTION || step["if"] !== SUCCESS_PRECONDITION ||
+      step["uses"] !== UPLOAD_ARTIFACT_ACTION || step["if"] !== condition ||
       !isRecord(step["with"])) return false;
   const actual = step["with"];
   const expected: Record<string, unknown> = {
@@ -173,7 +186,7 @@ function isNativeArtifactUpload(step: unknown, artifactName: string, artifactPat
 // cosmetic; run bodies, action configuration and failure propagation are not.
 function hasMacNativeProof(document: Record<string, unknown>, job: Record<string, unknown>): boolean {
   const steps = job["steps"];
-  if (!Array.isArray(steps) || steps.length !== 9 || document["env"] !== undefined || document["defaults"] !== undefined ||
+  if (!Array.isArray(steps) || steps.length !== 12 || document["env"] !== undefined || document["defaults"] !== undefined ||
       job["defaults"] !== undefined || !isRecord(job["env"]) ||
       Object.keys(job["env"]).join() !== "KIZUKI_TARGET" || job["env"]["KIZUKI_TARGET"] !== "bun-darwin-arm64") return false;
   const action = (index: number, prefix: string, settings: Record<string, unknown>, condition?: string): boolean => {
@@ -189,10 +202,13 @@ function hasMacNativeProof(document: Record<string, unknown>, job: Record<string
     action(2, "oven-sh/setup-bun", { "bun-version": BUN_VERSION }) &&
     isBareCommand(steps[3], "bun scripts/ci-diff-check.ts") &&
     isBareCommand(steps[4], 'test "$(uname -s)" = Darwin\ntest "$(uname -m)" = arm64\nbun install --frozen-lockfile') &&
-    isBareCommand(steps[5], "bun run typecheck\nbun test scripts/release-targets.test.ts scripts/release-artifacts.test.ts scripts/stranger-proof.test.ts packages/core/test/serve/advisory-file-lock.test.ts packages/core/test/serve/flock.test.ts packages/core/test/serve/leases.test.ts packages/core/test/serve/units.test.ts packages/core/test/serve/service-arguments.test.ts packages/cli/test/config.test.ts packages/cli/test/terminal-prompt.test.ts packages/tui/test/terminal.test.ts packages/retrieval-pg/test/contention.test.ts scripts/native-platform.test.ts") &&
-    isBareCommand(steps[6], MACOS_PROOF_COMMAND) &&
-    isBareCommand(steps[7], MACOS_RECEIPT_CHECK) &&
-    isNativeArtifactUpload(steps[8], MACOS_ARTIFACT_NAME, MACOS_ARTIFACT_PATH);
+    isConditionedCommand(steps[5], "bun run typecheck\nbun test scripts/release-targets.test.ts scripts/release-artifacts.test.ts scripts/stranger-proof.test.ts packages/core/test/serve/advisory-file-lock.test.ts packages/core/test/serve/flock.test.ts packages/core/test/serve/leases.test.ts packages/core/test/serve/units.test.ts packages/core/test/serve/service-arguments.test.ts packages/cli/test/config.test.ts packages/cli/test/terminal-prompt.test.ts packages/tui/test/terminal.test.ts packages/retrieval-pg/test/contention.test.ts scripts/native-platform.test.ts", FULL_QUALIFICATION) &&
+    isConditionedCommand(steps[6], MACOS_PROOF_COMMAND, FULL_QUALIFICATION) &&
+    isConditionedCommand(steps[7], MACOS_RECEIPT_CHECK, FULL_QUALIFICATION) &&
+    isNativeArtifactUpload(steps[8], MACOS_ARTIFACT_NAME, MACOS_ARTIFACT_PATH, "${{ success() && inputs.native_adapter_only != true }}") &&
+    isConditionedCommand(steps[9], ADAPTER_COMMAND, ADAPTER_RETAIN) &&
+    isConditionedCommand(steps[10], ADAPTER_RECEIPT_CHECK, ADAPTER_RETAIN) &&
+    isNativeArtifactUpload(steps[11], ADAPTER_ARTIFACT_NAME, ADAPTER_ARTIFACT_PATH, ADAPTER_RETAIN);
 }
 
 function hasLinuxNativeProof(document: Record<string, unknown>, job: Record<string, unknown>): boolean {
@@ -248,12 +264,14 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
     const inputs = isRecord(dispatch) ? dispatch["inputs"] : undefined;
     const allowance = isRecord(inputs) ? inputs["existing_allowance_verified"] : undefined;
     const base = isRecord(inputs) ? inputs["base_sha"] : undefined;
+    const adapterOnly = isRecord(inputs) ? inputs["native_adapter_only"] : undefined;
     const jobs = document["jobs"];
     const job = isRecord(jobs) ? jobs["native-arm64"] : undefined;
     const steps = isRecord(job) ? job["steps"] : undefined;
     if (!isRecord(trigger) || Object.keys(trigger).join() !== "workflow_dispatch" ||
         !isRecord(allowance) || allowance["type"] !== "boolean" || allowance["default"] !== false || allowance["required"] !== true ||
         !isRecord(base) || base["type"] !== "string" || base["required"] !== true ||
+        !isRecord(adapterOnly) || adapterOnly["type"] !== "boolean" || adapterOnly["default"] !== false || adapterOnly["required"] !== false ||
         !isRecord(jobs) || Object.keys(jobs).join() !== "native-arm64" || !isRecord(job) ||
         job["if"] !== "${{ inputs.existing_allowance_verified == true }}" || job["runs-on"] !== "macos-15" || job["timeout-minutes"] !== 15 || job["strategy"] !== undefined ||
         !hasMacNativeProof(document, job) || !Array.isArray(steps) || !steps.some(step => isRecord(step) && step["if"] === undefined && step["run"] === "bun scripts/ci-diff-check.ts") ||

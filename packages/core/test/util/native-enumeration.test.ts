@@ -10,33 +10,15 @@ function scenario(mode: string, body: string): void {
     import { join } from "node:path";
     import { strict as assert } from "node:assert";
     const mode = ${JSON.stringify(mode)};
-    const root = fs.mkdtempSync("/tmp/kizuki-native-enumeration-");
+    const root = fs.realpathSync(fs.mkdtempSync("/tmp/kizuki-native-enumeration-"));
     const owned = join(root, "owned"), outside = join(root, "outside");
     fs.mkdirSync(owned); fs.mkdirSync(outside); fs.writeFileSync(join(outside, "canary"), "SYNTHETIC_UNOWNED");
     const realDlopen = ffi.dlopen, realCc = ffi.cc;
-    const libc = realDlopen("libc.so.6", { __errno_location: { args: [], returns: ffi.FFIType.ptr } });
-    const errno = new DataView(ffi.toArrayBuffer(libc.symbols.__errno_location(), 0, 4));
+    const errnoName = process.platform === "darwin" ? "__error" : "__errno_location";
+    const libc = realDlopen(process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6", { [errnoName]: { args: [], returns: ffi.FFIType.ptr } });
+    const errno = new DataView(ffi.toArrayBuffer(libc.symbols[errnoName](), 0, 4));
     let injected = 0;
-    mock.module("bun:ffi", () => ({ ...ffi, dlopen(...args) {
-      const library = realDlopen(...args), original = library.symbols;
-      const symbols = { ...original };
-      // Also inject at the pre-fix libc seam so these regressions demonstrate
-      // the original late-errno failure when run against its implementation.
-      if (original.openat) symbols.openat = (...values) => {
-        const name = new ffi.CString(values[1]).toString();
-        if (mode === "present-with-false-enoent" && name === "present") {
-          injected++; errno.setInt32(0, 2, true); return -1;
-        }
-        const result = original.openat(...values);
-        if (mode === "openat-errno" && result < 0) { injected++; errno.setInt32(0, 11, true); }
-        return result;
-      };
-      if (original.readdir) symbols.readdir = (...values) => {
-        const result = original.readdir(...values);
-        if (mode === "eof-errno" && !result) { injected++; errno.setInt32(0, 11, true); }
-        return result;
-      };
-      if (original.syscall) symbols.syscall = (...values) => {
+    function scan(original, values) {
         assert.equal(values[0], 217n);
         assert.equal(typeof values[1], "bigint");
         assert.equal(typeof values[3], "bigint");
@@ -53,15 +35,38 @@ function scenario(mode: string, body: string): void {
           if (mode === "malformed-nul") bytes.fill(97, 19, 24);
           return 24;
         }
-        const result = original.syscall(...values);
+        const result = original(...values);
         if (!injected && mode === "root-rename-during-scan") { injected++; fs.renameSync(owned, join(root, "moved")); fs.mkdirSync(owned); }
         if (mode === "eof-errno" && result === 0) { injected++; errno.setInt32(0, 11, true); }
         return result;
+    }
+    mock.module("bun:ffi", () => ({ ...ffi, dlopen(...args) {
+      const library = realDlopen(...args), original = library.symbols;
+      const symbols = { ...original };
+      // Also inject at the pre-fix libc seam so these regressions demonstrate
+      // the original late-errno failure when run against its implementation.
+      if (process.platform === "linux" && original.openat) symbols.openat = (...values) => {
+        const name = new ffi.CString(values[1]).toString();
+        if (mode === "present-with-false-enoent" && name === "present") {
+          injected++; errno.setInt32(0, 2, true); return -1;
+        }
+        const result = original.openat(...values);
+        if (mode === "openat-errno" && result < 0) { injected++; errno.setInt32(0, 11, true); }
+        return result;
       };
+      if (original.readdir) symbols.readdir = (...values) => {
+        const result = original.readdir(...values);
+        if (mode === "eof-errno" && !result) { injected++; errno.setInt32(0, 11, true); }
+        return result;
+      };
+      if (original.syscall) symbols.syscall = (...values) => scan(original.syscall, values);
       return { ...library, symbols };
     }, cc(options) {
       const library = realCc(options), original = library.symbols.kizuki_open_owned_child;
-      return { ...library, symbols: { ...library.symbols, kizuki_open_owned_child(...values) {
+      return { ...library, symbols: { ...library.symbols,
+        ...(library.symbols.kizuki_read_directory ? { kizuki_read_directory(fd, address, length) {
+          return scan((_number, descriptor, buffer, capacity) => library.symbols.kizuki_read_directory(Number(descriptor), buffer, capacity), [217n, BigInt(fd), address, BigInt(length)]);
+        } } : {}), kizuki_open_owned_child(...values) {
         const name = new ffi.CString(values[1]).toString();
         assert.ok(values[2] === 0 || values[2] === 1);
         if (mode === "present-with-false-enoent" && name === "present") {

@@ -260,6 +260,12 @@ test("macOS validator rejects removal or bypass of each native proof obligation"
     ["if-no-files-found change", d => { d.jobs["native-arm64"].steps[8].with["if-no-files-found"] = "warn"; }],
     ["proof-command removal", d => { d.jobs["native-arm64"].steps[6].run = "bun run build:release\nbun run smoke:release"; }],
     ["conditional receipt check", d => { d.jobs["native-arm64"].steps[7].if = "false"; }],
+    ["adapter-only input removed", d => { delete d.on.workflow_dispatch.inputs.native_adapter_only; }],
+    ["adapter canary removed", d => { d.jobs["native-arm64"].steps.splice(9, 1); }],
+    ["adapter canary command weakened", d => { d.jobs["native-arm64"].steps[9].run = "bun run typecheck"; }],
+    ["adapter canary receipt check removed", d => { d.jobs["native-arm64"].steps.splice(10, 1); }],
+    ["adapter receipt upload condition weakened", d => { d.jobs["native-arm64"].steps[11].if = "${{ always() }}"; }],
+    ["adapter receipt upload path changed", d => { d.jobs["native-arm64"].steps[11].with.path = "dist/"; }],
   ];
   for (const [name, mutate] of mutations) {
     const doc = Bun.YAML.parse(text); mutate(doc);
