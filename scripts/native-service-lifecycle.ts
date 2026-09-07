@@ -322,6 +322,7 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     record("stopped-evidence-readable", result.exit_code === 0 && result.stdout.includes("observatory"), result);
     const upgraded = join(fixtureRoot, "replacement package");
     cpSync(copied, upgraded, { recursive: true, errorOnExist: true });
+    verifyPackageDirectory(upgraded, build);
     const replacement = join(upgraded, "kizuki");
     check(hash(replacement) === receipt.binary_sha256, "replacement executable identity changed");
     cli("replacement-location-install", ["serve", "--install", "--json", "--vault", vault], 0, replacement);
@@ -346,7 +347,10 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     cli("restore-stopped-vault", ["restore", "--from", exportPath, "--into", restored]);
     const restoredQuery = invoke([executable, "query", "Ada", "--degraded", "--vault", restored]);
     record("recovered-evidence-readable", restoredQuery.exit_code === 0 && restoredQuery.stdout.includes("observatory"), restoredQuery);
-    for (const name of names) check(hash(join(copied, name)) === receipt.package_sha256[name] && hash(join(args.artifact, name)) === receipt.package_sha256[name], "package changed during lifecycle proof");
+    for (const directory of [args.artifact, copied, upgraded]) {
+      verifyPackageDirectory(directory, build);
+      for (const name of names) check(hash(join(directory, name)) === receipt.package_sha256[name], "package changed during lifecycle proof");
+    }
     exact();
     receipt.passed = failures.length === 0 && steps.every(step => step.passed);
   } catch (error) {
