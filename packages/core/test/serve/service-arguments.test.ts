@@ -15,6 +15,10 @@ describe("service argument vectors", () => {
     expect(unit).toContain('ExecStart="/opt/Kizuki App/kizuki" serve --vault "/tmp/ada notes/$$work%% \\"one\\""');
     expect(unit).toContain('WorkingDirectory=/tmp/ada notes/$work%% "one"/.');
     expect(unit).toContain('ReadWritePaths="/tmp/ada notes/$work%% \\"one\\""');
+    const start = unit.split("\n").find(line => line.startsWith("ExecStart="))!;
+    const post = unit.split("\n").find(line => line.startsWith("ExecStartPost="))!;
+    expect(post).toBe(start.replace("ExecStart=", "ExecStartPost=+")
+      .replace("--service-custody", "--custody-broker-launch"));
   });
 
   test("systemd retains directory names ending in whitespace or a backslash", () => {

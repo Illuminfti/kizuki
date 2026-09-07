@@ -3,6 +3,7 @@ import type { BigIntStats } from "node:fs";
 import { closeSync, constants, fstatSync, fsyncSync, openSync, readSync, writeSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { loadOwnedDirectoryNative } from "../util/owned-directory-native";
+import { serviceAncestorOwner } from "../serve/custody";
 
 // Internal byte adapter. Writer authorization, mutation scope and the receipt
 // protocol surround this capability; it does not confer ledger authority.
@@ -50,10 +51,15 @@ function sameSnapshot(a: BigIntStats, b: BigIntStats): boolean {
   return sameIdentity(a, b) && a.size === b.size && a.mode === b.mode && a.uid === b.uid && a.gid === b.gid &&
     a.nlink === b.nlink && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 }
-function directoryStat(fd: number, ancestor = false): BigIntStats {
+function directoryStat(fd: number, ancestor = false, vaultPath?: string): BigIntStats {
   const stat = fstatSync(fd, { bigint: true }), uid = BigInt(process.geteuid!());
-  if (!stat.isDirectory() || (stat.uid !== uid && (!ancestor || stat.uid !== 0n))) fail("unsafe");
-  const trustedStickyAncestor = ancestor && stat.uid === 0n && (stat.mode & 0o1000n) !== 0n;
+  if (!stat.isDirectory()) fail("unsafe");
+  let owner = stat.uid;
+  if (ancestor && owner !== uid && owner !== 0n && vaultPath !== undefined) {
+    owner = serviceAncestorOwner(vaultPath, fd, stat) ?? owner;
+  }
+  if (owner !== uid && (!ancestor || owner !== 0n)) fail("unsafe");
+  const trustedStickyAncestor = ancestor && owner === 0n && (stat.mode & 0o1000n) !== 0n;
   if ((stat.mode & 0o022n) !== 0n && !trustedStickyAncestor) fail("unsafe");
   return stat;
 }
@@ -65,7 +71,7 @@ function openRoot(path: string): number {
   const access = process.platform === "linux" && components.length > 0 ? 0x200000 /* O_PATH */ : constants.O_RDONLY;
   let fd = openSync("/", access | constants.O_DIRECTORY | constants.O_NOFOLLOW | closeOnExec);
   try {
-    directoryStat(fd, true);
+    directoryStat(fd, true, path);
     for (const [index, part] of components.entries()) {
       const ancestor = index < components.length - 1;
       let next: number | null;
@@ -78,7 +84,7 @@ function openRoot(path: string): number {
       if (next === null) fail("changed");
       closeSync(fd); fd = next;
       // O_PATH|NOFOLLOW must never turn a symlink descriptor into authority.
-      directoryStat(fd, ancestor);
+      directoryStat(fd, ancestor, path);
     }
     return fd;
   } catch (error) { closeSync(fd); throw error; }

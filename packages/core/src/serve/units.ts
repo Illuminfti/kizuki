@@ -43,7 +43,13 @@ export function renderSystemdUnit(spec: UnitSpec): string {
     "",
     "[Service]",
     "Type=simple",
-    `ExecStart=${exec}`,
+    "ExitType=main",
+    "KillMode=control-group",
+    `ExecStart=${exec} --service-custody ${spec.vaultId}`,
+    // The metadata broker needs original namespace UID interpretation. '+'
+    // affects this command only; the broker reinstates NNP and AF_UNIX-only
+    // seccomp before its readiness handshake. Unit resource caps still apply.
+    `ExecStartPost=+${exec} --custody-broker-launch ${spec.vaultId}`,
     // WorkingDirectory is one literal path, not an argument list: systemd
     // does not remove quotes or C escapes here. A final /. keeps trailing
     // spaces and backslashes away from the configuration line boundary.
