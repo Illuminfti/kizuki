@@ -157,7 +157,7 @@ The richer world-model architecture above is the direction being built on top of
 
 ## Quick start
 
-Requires **Bun 1.3.14**, the version pinned by CI, and Git.
+Use a Linux x86_64 or macOS Apple Silicon desktop with **Bun 1.3.14**, the version pinned by CI, Git, and a working default browser. The app opens that browser through `/usr/bin/xdg-open` on Linux or `/usr/bin/open` on macOS. On a headless machine, use the command-line example below.
 
 Clone this repository using GitHub’s Code button, then open the guided app from the checkout root:
 
@@ -199,7 +199,7 @@ Importing does **not** itself write canon. Without a model, expect `canon writin
 
 Start with `kizuki connect` to see the catalog and `kizuki connect status` to inspect enrolled sources and their last run. New enrollment requires an explicit [source consent policy](docs/cli.md#source-consent) before capture.
 
-Current entry points include local Markdown, ChatGPT/Claude exports, WhatsApp/Pocket/Omnivore exports, Beeper Desktop, read-only IMAP, native Telegram sign-in, Gmail and Google Calendar browser sign-in, ICS files, offline Screenpipe ingestion, and one-shot [estate importers](docs/legacy-import.md) with owner-written mapping files. Telegram, Gmail, and Google Calendar require operator-supplied app credentials; none of those account paths are live-account qualified on this revision. WHOOP and the X API package exist but are not CLI-enrollable. Provider-specific coverage and qualification limits are documented honestly rather than implied.
+Current entry points include local Markdown, ChatGPT/Claude exports, WhatsApp/Pocket/Omnivore exports, Beeper Desktop, read-only IMAP, native Telegram sign-in, Gmail, Google Calendar and X own-post browser sign-in, ICS files, offline Screenpipe ingestion, and one-shot [estate importers](docs/legacy-import.md) with owner-written mapping files. Telegram, Gmail and Google Calendar require operator-supplied app configuration. X requires a public Native App client ID, an exact registered loopback callback and eligible API access with usage credits. None of those account paths are live-account qualified on this revision. WHOOP remains a component without CLI enrollment. The connection guide lists provider setup and coverage limits.
 
 [Connection setup and limits →](docs/connect.md)
 

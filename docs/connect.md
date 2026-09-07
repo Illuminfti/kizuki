@@ -36,9 +36,10 @@ that a provider application or account does not exist.
 | `kizuki.telegram` | native sign-in | [Telegram](#telegram) |
 | `kizuki.gmail` | browser sign-in | [Gmail](#gmail) |
 | `kizuki.google-calendar` | browser sign-in | [Google Calendar](#google-calendar) |
+| `kizuki.x` | browser sign-in | [X own-post API](#x-own-post-api) |
 
-WHOOP and the X API package are implemented as components and are **not** in
-this list. See [not enrollable](#not-enrollable-from-this-cli).
+WHOOP remains a component without CLI enrollment. See
+[not enrollable](#not-enrollable-from-this-cli).
 
 ## Connection design
 
@@ -208,6 +209,35 @@ kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,descript
 See [the native Calendar contract](google-calendar.md) for fields, consent,
 reauthorization, and limits.
 
+## X own-post API
+
+Read-only own-post browser sign-in is CLI-wired. Use an interactive desktop
+terminal with public `KIZUKI_X_CLIENT_ID` and `KIZUKI_X_REDIRECT_URI`
+configuration. Register the callback exactly as
+`http://127.0.0.1:PORT/callback`, with a port from 1 through 65535 that is free
+on that desktop. Core uses S256 PKCE; enrollment needs no client secret or
+pasted access token.
+
+```bash
+kizuki connect x-api --fields none --history-start 2026-01-01T00:00:00Z
+```
+
+`--fields none` selects text and baseline metadata. Additional selections are
+`relationships`, `links` and `media`; media captures references. Enrollment
+captures no history. Grant the new source's policy before running
+`kizuki backfill x-api --source KEY`.
+
+The protected v2 state saves the public app configuration for background
+capture, so later processes need no terminal exports. Existing sources retain
+their account, app, selection and history during reauthorization. See the
+[X enrollment reference](cli.md#x-own-post-api-enrollment) for bounded history,
+legacy-state configuration and `connect recover-x-api` after an uncertain
+refresh outcome.
+
+An eligible X Native App and API usage credits are external prerequisites.
+Live-account access and credit availability have not been qualified. The local
+X archive importer remains available separately and requires no API access.
+
 ## ICS calendar file
 
 CLI enrollment is the none-mode file path:
@@ -249,8 +279,4 @@ deletion from a shorter later export.
   not sanctioned here. Public docs that mention an eight-character OAuth state
   or omit PKCE do not prove that WHOOP rejects Core's flow. See
   [WHOOP](whoop.md).
-- **X API.** The owned-post API lives at `@kizuki/connector-x/api` and is not
-  registered in the native CLI. The enrollable surface is the local archive
-  importer `kizuki.import-x-archive`. See
-  [the X API package notes](../packages/connector-x/API.md).
 - Composio and WhatsApp Business API remain explicitly deferred.
