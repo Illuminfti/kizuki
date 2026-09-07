@@ -233,13 +233,15 @@ function readServiceChange(raw: string, kind: SupervisorKind, identityHash: stri
     !isServeIntent(value.previous_intent)) throw new Error();
   const keys = Object.keys(value).sort().join(",");
   if (value.version === 2 && keys === SERVICE_CHANGE_V2_KEYS) {
+    // Version 2 admitted only active+enabled or stopped+disabled snapshots.
     return {
       previous_unit: value.previous_unit, previous_intent: value.previous_intent,
       previous_enabled: value.previous_enabled, previous_active: value.previous_enabled,
     };
   }
   if (value.version === 3 && keys === SERVICE_CHANGE_V3_KEYS && typeof value.previous_active === "boolean" &&
-    (!value.previous_active || (value.previous_enabled && value.previous_unit !== null))) {
+    (!value.previous_active || (value.previous_enabled && value.previous_unit !== null)) &&
+    (!value.previous_enabled || value.previous_active || kind === "systemd")) {
     return {
       previous_unit: value.previous_unit, previous_intent: value.previous_intent,
       previous_enabled: value.previous_enabled, previous_active: value.previous_active,
