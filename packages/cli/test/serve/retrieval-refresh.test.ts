@@ -16,7 +16,7 @@ test("the offline retrieval rail refreshes canon edits and deletion through the 
   expect(helpers.runCli(f.env, "import", "markdown-folder", "--source", f.notes, ...fixtureConsent(f.root)).exitCode).toBe(0);
   const page = join(f.vault, "facts/orchard.md");
   const data = { id: "fact:orchard", title: "Orchard", type: "fact", status: "active", sensitivity: "personal", taint: "clean" };
-  const writePage = async (body: string) => {
+  const writeRecordedPage = async (body: string) => {
     const db = openLedger(join(f.vault, ".kizuki/kizuki.db"));
     try {
       const sources = db.query<{ event_id: string }, [string]>("SELECT event_id FROM events WHERE text=?").all(evidence).map(row => row.event_id);
@@ -30,7 +30,7 @@ test("the offline retrieval rail refreshes canon edits and deletion through the 
       expect(refreshDerived(db, f.vault).degraded).toEqual([]);
     } finally { db.close(); }
   };
-  await writePage("The library opens after sunrise.");
+  await writeRecordedPage("The library opens after sunrise.");
   writeFileSync(join(f.vault, ".kizuki/serve.toml"), '[ports]\nretrieval="kizuki.retrieval.embedded-pg"\n');
   const rail = () => {
     const run = helpers.runCli(f.env, "serve", "run", "retrieval-sweep", "--json");
@@ -50,7 +50,7 @@ test("the offline retrieval rail refreshes canon edits and deletion through the 
   expect(first[0]?.snippet).toContain("after sunrise");
   expect(helpers.runCli(f.env, "rebuild", "--json").exitCode).toBe(0);
   expect(query()).toEqual(first);
-  await writePage("The library opens at noon.");
+  await writeRecordedPage("The library opens at noon.");
   rail();
   expect(query()[0]?.snippet).toContain("at noon");
   rmSync(page);

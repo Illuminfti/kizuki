@@ -60,6 +60,7 @@ function message(text) { clearTimeout(noticeTimer); notice.textContent = text; n
 function dateText(value) { if (!value) return 'Not captured yet'; const date = new Date(value); return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date) : 'Time unavailable'; }
 function providerIcon(id) { return id.includes('calendar') ? 'calendar' : id.includes('gmail') ? 'mail' : 'folder'; }
 function resultTitle(hit) {
+  if (hit.scope === 'canon' && /^[a-f0-9]{64}$/i.test(String(hit.title))) return 'Memory page';
   if (hit.scope === 'ledger' && String(hit.title).startsWith('kizuki.')) {
     const first = String(hit.text).split(/\r?\n/, 1)[0].trim();
     if (/^#{1,6}\s+/.test(first)) return first.replace(/^#{1,6}\s+/, '').slice(0, 160);
