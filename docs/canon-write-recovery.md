@@ -95,6 +95,9 @@ denial and file custody. When a failed joint write replaced an independent
 committed page, withdrawal restores that exact preimage only after rechecking
 its current source permission, supporting claims and predecessor state. This
 rollback does not complete the withdrawn write or mint a positive receipt.
+If rollback publishes the preimage but intent deletion fails, every retry
+rechecks that same authority before clearing the hold, even when no file move
+is needed. Changed authority preserves the bytes and the pending intent.
 It preserves unrelated bytes and refuses changed pages,
 unknown stages or unknown external execution. Cancelling scheduled or acknowledged
 projection work retains the inventory of real store instances for the existing

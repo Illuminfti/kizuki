@@ -91,11 +91,13 @@ export function withdrawPendingCanonWrite(scope: VaultMutationScope, io: CanonIo
           recoveryFailure("authority_changed", receipt.receipt_id);
         }
       }
+      // A prior attempt may already have restored these bytes before SQL
+      // completion failed. Preserving them still requires current authority.
+      if (independentBefore && before !== null) assertIndependentRollback(db, intent, before);
       // Global single-intent admission makes the expected receipt the only
       // permitted suffix. The primitive refuses every foreign or changed tail.
       stream.withdrawExact(intent.checkpoint, Buffer.from(`${JSON.stringify(receipt)}\n`));
       if (rollback !== null && before !== null) {
-        assertIndependentRollback(db, intent, before);
         // Fresh creation custody permits atomic rollback. An interrupted stage
         // still follows the explicit unknown-stage hold on the next attempt.
         const stage = files.create(intent.stages.live_stage, before);
