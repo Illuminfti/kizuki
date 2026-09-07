@@ -773,6 +773,17 @@ for (const detail of ["loaded but not running", "stopped (last exit code 0)", "f
   });
 }
 
+test("forward uninstall requires the host and observed status to agree on launchd", () => {
+  const f=fixture("systemd"),installed=installServeService(f.vault,f.host);
+  const original=readFileSync(installed.unitPath!,"utf8"); let mutations=0;
+  const mixed: SupervisorHost={...f.host,
+    query:()=>({kind:"launchd",state:"disabled",enabled:true,unit:"synthetic",detail:"failed (last exit code 2)"}),
+    disable:()=>{mutations++;return{ok:false,detail:"unexpected"};}};
+  expect(()=>uninstallServeService(f.vault,mixed)).toThrow("no service change made");
+  expect(mutations).toBe(0); expect(existsSync(join(f.vault,".kizuki/service-change.json"))).toBe(false);
+  expect(readFileSync(installed.unitPath!,"utf8")).toBe(original);
+});
+
 for (const mode of ["retained-failure", "reset-failure", "reset-no-transition", "reset-reactivates", "rollback-failure", "ordinary"] as const) {
   test(`systemd uninstall clears only the stopped owned failure before deletion: ${mode}`, () => {
     const f = fixture(); const first = installServeService(f.vault, f.host);

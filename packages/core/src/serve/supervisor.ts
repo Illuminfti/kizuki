@@ -380,7 +380,7 @@ function changeService<T>(vaultPath: string, host: SupervisorHost, operation: (p
   try {
     recoverChange(vaultPath, host, paths);
     const previous = host.query(paths.vaultId);
-    if (forwardRemoval && confirmedFailedLaunchd(previous)) {
+    if (forwardRemoval && host.kind === "launchd" && confirmedFailedLaunchd(previous)) {
       const previous_unit = serviceFile(paths.path);
       if (previous_unit === null) throw new Error("refusing to remove a failed service without its owned definition");
       const entry: ForwardRemoval = { operation: "uninstall", previous_unit, previous_intent: readServeIntent(vaultPath) };
