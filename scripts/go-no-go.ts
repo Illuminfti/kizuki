@@ -5,7 +5,7 @@ import { parseBuildInfoValue, packageFiles, packageFileLimit, verifyPackageDirec
 import { releaseTarget } from "./release-targets";
 import { statusQualification } from "./qualification";
 import { ArtifactProofError, PROOF_JSON_LIMITS, SQLITE_ENGINE_POLICY, parseProofJson as json, validateArtifactProof } from "./artifact-proof";
-import type { ArtifactPackageFile, ArtifactProofSchema } from "./artifact-proof";
+import type { ArtifactProofIdentity, ArtifactProofSchema } from "./artifact-proof";
 import {
   CAPABILITY_PROOF_FILE, CONNECTORS, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, SURFACE_GATE, SURFACE_PRODUCER, TARGETS,
   absolute, consumeSurfaceReceipt, digest, exact, gateReceiptMappingError, hash, inspectOptionalVerifier, parseGateReceipts, parents, read, reject, surfaceProducerActive, text,
@@ -68,7 +68,7 @@ function verifyArtifact(ref: ArtifactReference, candidate: string) {
   if (files["SHA256SUMS"]!.bytes.toString("utf8") !== checksums) reject("package-checksum-mismatch");
   const proof = read(ref.proof, LIMITS.proof);
   if (proof.sha256 !== ref.proof_sha256) reject("proof-digest-mismatch");
-  const package_sha256 = Object.fromEntries(names.map(name => [name, files[name]!.sha256])) as Record<ArtifactPackageFile, string>;
+  const package_sha256 = Object.fromEntries(names.map(name => [name, files[name]!.sha256])) as ArtifactProofIdentity["package_sha256"];
   const validated = validateArtifactProof(json(proof.bytes), { source_sha: candidate, target: ref.target, bun_version: build.bun_version, package_sha256, build });
   if (validated.schema !== ref.producer) reject("proof-identity-mismatch");
   for (const file of Object.values(files)) file.unchanged(); proof.unchanged();

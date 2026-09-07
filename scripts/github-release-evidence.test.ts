@@ -6,12 +6,13 @@ import { dirname, join } from "node:path";
 import { collectProductSources } from "./release-evidence";
 import { createHash } from "node:crypto";
 import { writePackageFixture } from "./release-package-fixture";
-import { CURRENT_PACKAGE_FILES } from "./release-artifacts";
+import { checksumManifest, CURRENT_PACKAGE_FILES } from "./release-artifacts";
 import { artifactProofSteps, SQLITE_ENGINE_POLICY } from "./artifact-proof";
 import { distributionIdentity } from "./release-notices";
 import { verifyGithubNativeArchive } from "./github-native-artifact";
+import { evaluateRelease } from "./go-no-go";
 import { resolve } from "node:path";
-import { GITHUB_REPOSITORY_ID, inspectGithubCandidate, inspectGithubNativeArtifacts, inspectGithubNativeJobs, validateGithubCommandBindings, bindGithubNativeProducer, parseGithubEvidenceArgs } from "./github-release-evidence";
+import { GITHUB_REPOSITORY_ID, inspectGithubCandidate, inspectGithubNativeArtifacts, inspectGithubNativeJobs, inspectGithubNativeIndexBinding, validateGithubCommandBindings, bindGithubNativeProducer, parseGithubEvidenceArgs } from "./github-release-evidence";
 
 const SHA = "a".repeat(40);
 const REPO = { id: GITHUB_REPOSITORY_ID, full_name: "fixture-owner/fixture-repo", private: false };
@@ -200,6 +201,9 @@ function syntheticArchive(target: string, mode = "valid") {
   const root = mkdtempSync(join(tmpdir(), "kizuki-github-native-")); nativeRoots.push(root);
   const directory = join(root, "package"); mkdirSync(directory);
   const build = writePackageFixture(directory, SHA, target);
+  if (mode === "different-package") writeFileSync(join(directory, "kizuki"), "Different synthetic executable, same source revision. Never executed.\n");
+  if (mode === "different-build") writeFileSync(join(directory, "BUILD.json"), JSON.stringify(build, null, 2) + "\n");
+  if (mode === "different-package" || mode === "different-build") writeFileSync(join(directory, "SHA256SUMS"), checksumManifest(directory, CURRENT_PACKAGE_FILES.slice(0, -1)));
   const package_sha256 = Object.fromEntries(CURRENT_PACKAGE_FILES.map(name => [name, digest(readFileSync(join(directory, name)))]));
   const paths = { executable: "/tmp/kizuki-artifact-proof-synthetic/artifact/kizuki", home: "/tmp/kizuki-artifact-proof-synthetic/execution/home",
     config: "/tmp/kizuki-artifact-proof-synthetic/execution/config/kizuki.toml", vault: "/tmp/kizuki-artifact-proof-synthetic/execution/vault", restored_vault: "/tmp/kizuki-artifact-proof-synthetic/execution/restored" };
@@ -212,6 +216,7 @@ function syntheticArchive(target: string, mode = "valid") {
   if (mode === "wrong-host") proof.host_arch = "wrong";
   if (mode === "skipped-proof") proof.steps[2].passed = false;
   if (mode === "legacy-proof") proof.schema = "kizuki.artifact-proof/v2";
+  if (mode === "different-proof") proof.host_kernel_release = "different-synthetic-kernel";
   writeFileSync(join(root, "proof.json"), JSON.stringify(proof));
   const archive = join(root, "input.zip");
   execFileSync("python3", ["-c", `import pathlib,sys,zipfile,stat
@@ -283,6 +288,62 @@ test("same successful native matrix attempt binds both digests and leaves lifecy
   const f = nativeFixture(), result = await inspectGithubNativeArtifacts(f.get, f.download, SHA, f.text, "1.3.14", f.output);
   expect(result.status).toBe("PASS"); expect(result.targets).toHaveLength(2); expect(f.downloads()).toBe(2);
   expect(result.targets.every(row => row.bytes.lifecycle.release_credit === false)).toBe(true);
+});
+
+function indexedNativeReport(output: string, targets: Awaited<ReturnType<typeof inspectGithubNativeArtifacts>>["targets"]) {
+  const index = join(output, "index.json");
+  writeFileSync(index, JSON.stringify({ schema: "kizuki.acceptance-evidence/v4", candidate_source_sha: SHA, fixture_observation: null, gate_receipts: [],
+    artifacts: targets.map(row => ({ producer: "kizuki.artifact-proof/v3", target: row.target,
+      directory: join(output, row.target, "package"), proof: join(output, row.target, "artifact-proof.json"), proof_sha256: row.bytes.proof_sha256 })) }));
+  return evaluateRelease("rc", index);
+}
+
+test("paired native credit requires the same independently indexed seven-file packages without granting engine credit", async () => {
+  const f = nativeFixture(), result = await inspectGithubNativeArtifacts(f.get, f.download, SHA, f.text, "1.3.14", f.output);
+  const missing = indexedNativeReport(f.output, []);
+  expect(inspectGithubNativeIndexBinding(result.targets, missing.evidence)).toEqual({ status: "UNVERIFIABLE", reason: "github-native-package-not-indexed" });
+  expect(missing.gates.filter(row => row.id.startsWith("engine.")).every(row => row.status === "MISSING")).toBe(true);
+  const report = indexedNativeReport(f.output, result.targets), before = JSON.stringify(report);
+  expect(report.evidence).toHaveLength(2);
+  expect(report.evidence.every(row => row.engine.status === "PASS")).toBe(true);
+  expect(inspectGithubNativeIndexBinding(result.targets, report.evidence).status).toBe("PASS");
+  expect(inspectGithubNativeIndexBinding(result.targets, [report.evidence[0]!]).status).toBe("UNVERIFIABLE");
+  expect(JSON.stringify(report)).toBe(before);
+});
+
+test.each(["different-package", "different-build", "different-proof"])("same-source %s cannot mix indexed package evidence with the fresh native bytes", async mode => {
+  const f = nativeFixture(), result = await inspectGithubNativeArtifacts(f.get, f.download, SHA, f.text, "1.3.14", f.output);
+  const alternate = syntheticArchive(result.targets[0]!.target, mode);
+  const bytes = verifyGithubNativeArchive(alternate.archive, alternate.output, result.targets[0]!.target, SHA, "1.3.14");
+  const index = join(alternate.root, "index.json");
+  writeFileSync(index, JSON.stringify({ schema: "kizuki.acceptance-evidence/v4", candidate_source_sha: SHA, fixture_observation: null, gate_receipts: [], artifacts: [
+    { producer: "kizuki.artifact-proof/v3", target: bytes.target, directory: join(alternate.output, "package"), proof: join(alternate.output, "artifact-proof.json"), proof_sha256: bytes.proof_sha256 },
+    { producer: "kizuki.artifact-proof/v3", target: result.targets[1]!.target, directory: join(f.output, result.targets[1]!.target, "package"),
+      proof: join(f.output, result.targets[1]!.target, "artifact-proof.json"), proof_sha256: result.targets[1]!.bytes.proof_sha256 },
+  ] }));
+  const report = evaluateRelease("rc", index);
+  expect(report.evidence).toHaveLength(2);
+  expect(report.evidence.every(row => row.engine.status === "PASS")).toBe(true);
+  expect(inspectGithubNativeIndexBinding(result.targets, report.evidence)).toEqual({ status: "FAIL", reason: "github-native-index-package-mismatch" });
+});
+
+test("index binding checks every member and refuses swapped proofs or targets", async () => {
+  const f = nativeFixture(), result = await inspectGithubNativeArtifacts(f.get, f.download, SHA, f.text, "1.3.14", f.output);
+  const report = indexedNativeReport(f.output, result.targets);
+  for (const name of CURRENT_PACKAGE_FILES) {
+    const changed = structuredClone(report.evidence); changed[0]!.package_sha256[name] = "f".repeat(64);
+    expect(inspectGithubNativeIndexBinding(result.targets, changed).status).toBe("FAIL");
+  }
+  const proofSwap = structuredClone(report.evidence);
+  [proofSwap[0]!.proof_sha256, proofSwap[1]!.proof_sha256] = [proofSwap[1]!.proof_sha256, proofSwap[0]!.proof_sha256];
+  expect(inspectGithubNativeIndexBinding(result.targets, proofSwap).status).toBe("FAIL");
+  const targetSwap = structuredClone(report.evidence);
+  [targetSwap[0]!.target, targetSwap[1]!.target] = [targetSwap[1]!.target, targetSwap[0]!.target];
+  expect(inspectGithubNativeIndexBinding(result.targets, targetSwap).status).toBe("FAIL");
+  expect(inspectGithubNativeIndexBinding(result.targets, [...report.evidence, report.evidence[0]!]).status).toBe("FAIL");
+  expect(inspectGithubNativeIndexBinding([result.targets[0]!, result.targets[0]!], report.evidence).status).toBe("FAIL");
+  const oneMissingOneMismatch = structuredClone(report.evidence.slice(1)); oneMissingOneMismatch[0]!.proof_sha256 = "f".repeat(64);
+  expect(inspectGithubNativeIndexBinding(result.targets, oneMissingOneMismatch).status).toBe("FAIL");
 });
 
 test.each(["old-upload", "wrong-digest", "wrong-repository", "wrong-run", "missing-artifact", "wrong-runner", "mixed-attempt"])("native API refuses %s", async mode => {

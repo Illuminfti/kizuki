@@ -7,6 +7,7 @@ import { absolute, assertCheckoutCustody, assertProductCheckoutCustody, digest, 
 import { parseProofJson } from "./proof-json";
 import { validateToolchain, validateWorkflowText } from "./verify-workflows";
 import { GITHUB_ARCHIVE_LIMIT, verifyGithubNativeArchive } from "./github-native-artifact";
+import { CURRENT_PACKAGE_FILES } from "./release-artifacts";
 
 export const GITHUB_REPOSITORY_ID = 1353875622;
 interface GithubRepository { id: typeof GITHUB_REPOSITORY_ID; full_name: string; }
@@ -320,6 +321,28 @@ export async function inspectGithubNativeArtifacts(get: GetJson, download: (endp
   return { observation, status: "PASS" as const, targets };
 }
 
+/** Digest comparison only, with no gate authority. Only the private online
+ * evaluation supplies verified inputs and can apply this result to gates. */
+export function inspectGithubNativeIndexBinding(
+  targets: Awaited<ReturnType<typeof inspectGithubNativeArtifacts>>["targets"],
+  evidence: ReturnType<typeof evaluateRelease>["evidence"],
+): { status: "PASS" | "FAIL" | "UNVERIFIABLE"; reason: string } {
+  if (targets.length !== NATIVE_TARGETS.length || NATIVE_TARGETS.some(expected => targets.filter(row => row.target === expected.target).length !== 1))
+    return { status: "FAIL", reason: "github-native-index-target-mismatch" };
+  let missing = false;
+  for (const target of targets) {
+    const indexed = evidence.filter(row => row.target === target.target);
+    if (indexed.length === 0) { missing = true; continue; }
+    const row = indexed[0]!;
+    if (indexed.length !== 1 || row.producer !== "kizuki.artifact-proof/v3" || target.bytes.target !== target.target || target.bytes.build.target !== target.target ||
+        row.proof_sha256 !== target.bytes.proof_sha256 || Object.keys(row.package_sha256).length !== CURRENT_PACKAGE_FILES.length ||
+        CURRENT_PACKAGE_FILES.some(name => row.package_sha256[name] !== target.bytes.package_sha256[name]))
+      return { status: "FAIL", reason: "github-native-index-package-mismatch" };
+  }
+  return missing ? { status: "UNVERIFIABLE", reason: "github-native-package-not-indexed" }
+    : { status: "PASS", reason: "github-paired-native-package-proof" };
+}
+
 function ghJson(endpoint: string, binary = false): Buffer {
   if ((endpoint !== `/repositories/${GITHUB_REPOSITORY_ID}` && !/^\/repos\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/actions\//.test(endpoint)) || !/^[/A-Za-z0-9_.?=&-]+$/.test(endpoint)) reject("github-endpoint-refused");
   try {
@@ -393,15 +416,17 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
     const passed = observation.required.every(item => item.status === "PASS");
     Object.assign(gate, { status: passed ? "PASS" : "FAIL", reason: passed ? "github-current-required-jobs-passed" : "github-current-required-jobs-not-passed", evidence_sha256: passed ? receipt.sha256 : null });
   }
+  const nativeBinding = failure === null && nativeFailure === null && native?.status === "PASS"
+    ? inspectGithubNativeIndexBinding(native.targets, report.evidence) : null;
   for (const target of NATIVE_TARGETS) {
     const row = report.gates.find(item => item.id === `native.${target.target}`)!;
-    const passed = failure === null && nativeFailure === null && native?.status === "PASS" && native.targets.length === 2;
-    Object.assign(row, { status: passed ? "PASS" : native?.status === "FAIL" ? "FAIL" : "UNVERIFIABLE",
-      reason: passed ? "github-paired-native-package-proof" : failure ?? nativeFailure ?? "github-paired-native-jobs-not-passed", evidence_sha256: passed ? receipt.sha256 : null });
+    const status = nativeBinding?.status ?? (native?.status === "FAIL" ? "FAIL" : "UNVERIFIABLE");
+    Object.assign(row, { status,
+      reason: nativeBinding?.reason ?? failure ?? nativeFailure ?? "github-paired-native-jobs-not-passed", evidence_sha256: status === "PASS" ? receipt.sha256 : null });
   }
   const result = { ...report, schema: "kizuki.online-acceptance-report/v1", ...releaseDecision(profile, report.gates), github_observation_sha256: receipt.sha256,
     trust_scope: `${report.trust_scope}; candidate.required-checks and native target facts additionally observed from GitHub during this evaluation; lifecycle remains separate`,
-    online_policy_sha256: hash(JSON.stringify({ schema: "kizuki.github-evidence-policy/v1", repository_id: GITHUB_REPOSITORY_ID, required: REQUIRED, native_targets: NATIVE_TARGETS, native_archive_bytes: GITHUB_ARCHIVE_LIMIT, package_commands: PACKAGE_COMMANDS, native_producer_entrypoints: NATIVE_PRODUCER_ENTRYPOINTS, limits: LIMITS, selection: "latest-attempt-start-no-pending-ambiguous-refused" })),
+    online_policy_sha256: hash(JSON.stringify({ schema: "kizuki.github-evidence-policy/v1", repository_id: GITHUB_REPOSITORY_ID, required: REQUIRED, native_targets: NATIVE_TARGETS, native_archive_bytes: GITHUB_ARCHIVE_LIMIT, native_index_binding: "same-target-v3-proof-and-all-seven-package-digests", package_commands: PACKAGE_COMMANDS, native_producer_entrypoints: NATIVE_PRODUCER_ENTRYPOINTS, limits: LIMITS, selection: "latest-attempt-start-no-pending-ambiguous-refused" })),
     online_verifier_sha256: hash(JSON.stringify(retained.collector_files)) };
   receipt.unchanged();
   writeAcceptanceReport(join(output, "acceptance-report.json"), result);

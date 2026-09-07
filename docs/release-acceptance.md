@@ -92,6 +92,21 @@ files, the current artifact proof and the retained lifecycle diagnostic. Bounded
 archive inspection rejects links, paths outside that inventory, duplicates,
 truncation and oversized files, then applies the current package/proof parsers.
 
+Native credit also requires both packages in the supplied v4 index. Each target's
+seven package digests, including `BUILD.json`, and proof digest must equal the
+freshly downloaded native evidence. A missing indexed package leaves native
+credit unverifiable; any mismatch fails it. Matching source revisions alone do
+not bind builds. Artifact and engine gates remain owned by the offline evaluator
+and its current parsers; the online path does not override their decisions.
+
+For a first collection without package references, the verified downloaded files
+remain under `<out>/<target>/package/` and `<out>/<target>/artifact-proof.json`.
+Create a new v4 index referencing both directories and proof files with their
+recorded proof digests, then run the online checker again with that index and a
+new output directory. The second observation must still find the same current
+successful attempt and package bytes. An old or different build cannot supply
+artifact or engine credit for the new native observation.
+
 The existing lifecycle receipt is retained as diagnostic evidence. It does not
 prove a real release upgrade or reboot, and cannot establish `lifecycle.<target>`.
 Accounts, independent review, findings and unfamiliar-human acceptance also
