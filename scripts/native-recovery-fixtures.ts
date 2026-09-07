@@ -220,7 +220,7 @@ export async function runNativeRecoveryFixtures(options: NativeRecoveryOptions):
           writableFixture(join(failed,".kizuki/kizuki.db"), db => db.exec(fault === "admission" ? "UPDATE events SET text='Synthetic deliberately mismatched text.'" : "CREATE TABLE canon_projection_sources (synthetic_collision TEXT NOT NULL); INSERT INTO canon_projection_sources VALUES ('fixture')"));
           const before = inspectRecoveryFixture(failed); evidence.snapshots.push({ role: `${fault}-before`, value: before.summary });
           const output = command("migrate", ["init", failed, "--no-service", "--no-default"], 1, "migration_rejected");
-          requireThat(output.stderr.includes(fault === "admission" ? "text" : "canon_projection_sources"), "negative-rejection-point");
+          requireThat(output.stderr.includes(fault === "admission" ? "event record is invalid" : "canon_projection_sources"), "negative-rejection-point");
           const after = inspectRecoveryFixture(failed); evidence.snapshots.push({ role: `${fault}-after`, value: after.summary });
           requireThat(equalLogical(before, after) && after.summary.schema_version === 15, "failed-migration-mutated-legacy");
           evidence.retained_failed_vaults.push(`failed-${fault}`);
@@ -257,8 +257,8 @@ export async function runNativeRecoveryFixtures(options: NativeRecoveryOptions):
         for (const [path,text] of Object.entries(fixture.files)) requireThat(sha(readFileSync(join(backup,path)))===sha(String(text)),"backup-input-mutated");
       }
       verifyPackageDirectory(dirname(executable),build); requireThat(sha(readFileSync(executable))===executableHash,"candidate-bytes-changed"); historicalRecoveryInput(input.identity.id);
-      phase.passed=true;
       if (id!=="migration-failure-preserved") { const current=inspectRecoveryFixture(vault); result.service_vaults.push({id,vault,event_text_sha256:sha(String(current.tables.events![0]!.text))}); }
+      phase.passed=true;
     } catch(error) { evidence.failure_code = error instanceof RecoveryFixtureError ? error.code : "fixture-operation-failed"; }
   }
   return result;
