@@ -183,8 +183,7 @@ export async function enrollHostConnection(
     throw new ConnectionError("connection state connector_id does not match");
   }
   decodeHostState(encodeHostState(state), connectorId);
-  store.recover(db);
-  const enrollment = store.begin();
+  const enrollment = store.beginWithRecovery(db);
   try {
     await enrollment.writer.write(encodeHostState(state));
     return store.save(db, connectorId, enrollment.pending);
@@ -228,7 +227,6 @@ export async function enrollSignedInConnection(
   if (!manifest.auth_modes.includes("sign_in") || connector.signIn === undefined) {
     throw new ConnectionError(`${manifest.connector_id} does not support interactive sign-in`);
   }
-  store.recover(db);
   const existing = listConnections(db, { includeDisconnected: true }).filter(
     (connection) => connection.connector_id === manifest.connector_id,
   );

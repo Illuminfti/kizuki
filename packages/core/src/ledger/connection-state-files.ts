@@ -36,10 +36,9 @@ const JOURNAL_NAME = new RegExp(
   `^(${ULID_PATTERN})\\.state\\.${ULID_PATTERN}\\.journal$`,
 );
 /**
- * A staging file younger than this may belong to a writer another process is
- * running right now; only an older one is certainly the debris of a crash.
- * The bound is well past the five minutes a browser sign-in is given, because
- * sweeping a live writer's file costs the owner a grant they already made.
+ * Conservatively retain recent staging debris. Age never proves that a writer
+ * is dead: ConnectionStateStore must hold the operation's kernel lease before
+ * invoking this sweep, so an active sign-in is excluded regardless of age.
  */
 const ABANDONED_STAGING_MS = 1_800_000;
 

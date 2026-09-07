@@ -170,8 +170,12 @@ describe("portable connection history", () => {
         expect(existsSync(join(target, ".kizuki", "connections", `${source}.state`))).toBe(false);
 
         const repeatedBackup = join(root, "backup-again"), repeatedTarget = join(root, "restored-again");
-        expect(exportVault(restored, target, repeatedBackup).schema).toBe(BACKUP_SCHEMA);
+        expect(existsSync(join(target, ".kizuki", "connection-state.lock"))).toBe(true);
+        const repeatedManifest = exportVault(restored, target, repeatedBackup);
+        expect(repeatedManifest.schema).toBe(BACKUP_SCHEMA);
+        expect(Object.keys(repeatedManifest.files).some(path => path.includes("connection-state.lock"))).toBe(false);
         const repeatedReport = restoreVault(repeatedBackup, repeatedTarget);
+        expect(existsSync(join(repeatedTarget, ".kizuki", "connection-state.lock"))).toBe(false);
         expect(repeatedReport.recovery_warnings.join(" ")).toContain("retained checkpoints will not resume automatically");
         const repeated = openLedger(join(repeatedTarget, ".kizuki", "kizuki.db"));
         try {

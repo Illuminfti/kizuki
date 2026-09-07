@@ -49,15 +49,23 @@ export function runGuardedSignIn(
   io: SignInIo,
   writer: ConnectionStateWriter,
   context: SignInContext,
+  onActualSettlement?: () => void,
 ): Promise<SignInDisplay> {
-  const signIn = connector.signIn;
-  if (typeof signIn !== "function") {
-    throw new LedgerError("connector does not implement interactive sign-in");
-  }
-  return withDeadline(
-    signIn.call(connector, guardedSignInIo(io), writer, context.mode === "replace"
+  let operation: Promise<SignInDisplay>;
+  try {
+    const signIn = connector.signIn;
+    if (typeof signIn !== "function") throw new LedgerError("connector does not implement interactive sign-in");
+    operation = Promise.resolve(signIn.call(connector, guardedSignInIo(io), writer, context.mode === "replace"
       ? { mode: "replace", previous_state: context.previous_state.slice() }
-      : { mode: "new" }),
+      : { mode: "new" }));
+  } catch (error) {
+    onActualSettlement?.();
+    throw error;
+  }
+  // A deadline is an outward result, not proof that provider execution stopped.
+  // The owner may release its operation lease only after this promise settles.
+  return withDeadline(
+    operation.finally(() => onActualSettlement?.()),
     CONNECTOR_SIGN_IN_DEADLINE_MS,
     "sign-in timed out",
   );

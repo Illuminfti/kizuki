@@ -165,12 +165,15 @@ test('duplicate X account/app/selection is refused even after revoke; changed se
   } finally { db.close(); }
 });
 
-test('concurrent native X enrollments publish exactly one duplicate identity', async () => {
+test('concurrent native X enrollments exclude the loser before browser and provider callbacks', async () => {
   const setup = h.tempVault(), a = await owner(setup), b = await owner(setup);
   const result = await Promise.allSettled([a, b].map(o => runXApiConnect(o.io, { ...options, newSource: true }, () => {}, o.create, o.open)));
   expect(result.filter(item => item.status === 'fulfilled')).toHaveLength(1);
   const rejected = result.find(item => item.status === 'rejected') as PromiseRejectedResult;
-  expect(String(rejected.reason)).toContain('source_already_enrolled');
+  expect(String(rejected.reason)).toContain('X sign-in did not complete');
+  const loser = [a, b][result.findIndex(item => item.status === 'rejected')]!;
+  expect(loser.opens()).toBe(0); expect(loser.f.forms).toHaveLength(0); expect(loser.f.requests).toHaveLength(0);
+  expect(a.opens() + b.opens()).toBe(1); expect(a.f.forms.length + b.f.forms.length).toBe(1);
   const { db } = ledger(setup); try { expect(listConnections(db)).toHaveLength(1); } finally { db.close(); }
 });
 

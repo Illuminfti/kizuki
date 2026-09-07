@@ -235,7 +235,7 @@ describe("connection state recovery and locking", () => {
     db.close();
   });
 
-  test("recovery leaves the staging file this store still owns", async () => {
+  test("public recovery refuses reentrance and leaves the staging file this store still owns", async () => {
     const directory = temporary();
     const { db, store, connection } = await enrolled(directory, "first-envelope");
     const pending = store.begin();
@@ -249,7 +249,7 @@ describe("connection state recovery and locking", () => {
       utimesSync(join(store.directory, name), long_ago, long_ago);
     }
 
-    store.recover(db);
+    expect(() => store.recover(db)).toThrow("locked");
     expect(
       readdirSync(store.directory).filter((name) => name.endsWith(".tmp")),
     ).toEqual(staged);
