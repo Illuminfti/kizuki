@@ -1,3 +1,4 @@
+import { LIFECYCLE_PRODUCER_ENTRYPOINTS, LIFECYCLE_PRODUCER_DATA, LIFECYCLE_REGISTRY_SHA256, LIFECYCLE_HISTORY } from "./native-lifecycle-proof";
 /** Explicit online GitHub observation. Saved JSON is never a trusted input. */
 import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
@@ -244,12 +245,22 @@ export async function inspectGithubNativeJobs(transport: GetJson, candidate: str
 const NATIVE_PRODUCER_ENTRYPOINTS = ["scripts/stranger-proof.ts", "scripts/build-release.ts", "scripts/smoke-release.ts"] as const;
 /** Evidence harness code is reviewed separately from the product it executes. */
 export function bindGithubNativeProducer(candidateRoot: string, candidateSha: string, collectorRoot: string, collectorSha: string) {
-  const metadata = [".bun-version", "bun.lock", "tsconfig.json"];
-  const reviewed = assertProductCheckoutCustody(collectorRoot, collectorSha, NATIVE_PRODUCER_ENTRYPOINTS, metadata);
-  const candidate = assertProductCheckoutCustody(candidateRoot, candidateSha, NATIVE_PRODUCER_ENTRYPOINTS, metadata);
+  return bindProducer(candidateRoot, candidateSha, collectorRoot, collectorSha, NATIVE_PRODUCER_ENTRYPOINTS, [], "github-native-producer-unreviewed");
+}
+/** Separate lifecycle source custody: string-addressed children and SQL/JSON inputs
+ * are explicit roots in addition to actual compiler-resolved transitive imports. */
+export function bindGithubLifecycleProducer(candidateRoot: string, candidateSha: string, collectorRoot: string, collectorSha: string) {
+  const frame = bindProducer(candidateRoot, candidateSha, collectorRoot, collectorSha, [...LIFECYCLE_PRODUCER_ENTRYPOINTS, ...NATIVE_PRODUCER_ENTRYPOINTS], LIFECYCLE_PRODUCER_DATA, "github-lifecycle-producer-unreviewed");
+  if (LIFECYCLE_HISTORY.some(input => frame.candidate_files.find(file => file.path === `packages/core/test/fixtures/${input.file}`)?.sha256 !== input.sha256)) reject("github-lifecycle-historical-input-mismatch");
+  return frame;
+}
+function bindProducer(candidateRoot: string, candidateSha: string, collectorRoot: string, collectorSha: string, entrypoints: readonly string[], data: readonly string[], reason: string) {
+  const metadata = [".bun-version", "bun.lock", "tsconfig.json", ...data];
+  const reviewed = assertProductCheckoutCustody(collectorRoot, collectorSha, entrypoints, metadata);
+  const candidate = assertProductCheckoutCustody(candidateRoot, candidateSha, entrypoints, metadata);
   const projection = (frame: typeof candidate) => frame.files.map(({ path, sha256 }) => ({ path, sha256 })).sort((a, b) => a.path.localeCompare(b.path));
   const candidate_files = projection(candidate), reviewed_files = projection(reviewed);
-  if (!same(candidate_files, reviewed_files)) reject("github-native-producer-unreviewed");
+  if (!same(candidate_files, reviewed_files)) reject(reason);
   return { candidate_files, reviewed_files, unchanged: () => { candidate.unchanged(); reviewed.unchanged(); } };
 }
 
@@ -307,6 +318,7 @@ export async function inspectGithubNativeArtifacts(get: GetJson, download: (endp
     const archive = join(output, `${target.target}.zip`);
     writeFileSync(archive, body, { flag: "wx", mode: 0o600 });
     const bytes = verifyGithubNativeArchive(archive, join(output, target.target), target.target, candidate, bunVersion);
+    if (bytes.lifecycle.facts?.observed_model_starts.some(start => Date.parse(start) < Date.parse(host.started_at) || Date.parse(start) > Date.parse(host.upload_started_at))) reject("github-lifecycle-time-unbound");
     targets.push({ target: target.target, artifact: retained, job: host, bytes });
     if (!same(retained, artifact(await get(`${prefix}/actions/artifacts/${retained.id}`), selected, observation.repository))) reject("github-artifact-changed");
   }
@@ -343,6 +355,15 @@ export function inspectGithubNativeIndexBinding(
     : { status: "PASS", reason: "github-paired-native-package-proof" };
 }
 
+/** Pure comparison, not authority. Only the fixed online transport can apply it. */
+export function inspectGithubLifecycleIndexBinding(targets: Awaited<ReturnType<typeof inspectGithubNativeArtifacts>>["targets"], evidence: ReturnType<typeof evaluateRelease>["evidence"]) {
+  const packages = inspectGithubNativeIndexBinding(targets, evidence);
+  if (packages.status !== "PASS") return packages;
+  if (targets.some(target => target.bytes.lifecycle.facts === null)) return { status: "UNVERIFIABLE" as const, reason: "native-lifecycle-v2-required" };
+  if (targets.some(target => target.bytes.lifecycle.facts!.source_sha !== target.bytes.build.source_sha || target.bytes.lifecycle.facts!.target !== target.target || target.bytes.lifecycle.facts!.registry_sha256 !== LIFECYCLE_REGISTRY_SHA256)) return { status: "FAIL" as const, reason: "github-lifecycle-package-mismatch" };
+  return { status: "PASS" as const, reason: "github-current-native-candidate-lifecycle" };
+}
+
 function ghJson(endpoint: string, binary = false): Buffer {
   if ((endpoint !== `/repositories/${GITHUB_REPOSITORY_ID}` && !/^\/repos\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/actions\//.test(endpoint)) || !/^[/A-Za-z0-9_.?=&-]+$/.test(endpoint)) reject("github-endpoint-refused");
   try {
@@ -376,6 +397,8 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
   let native: Awaited<ReturnType<typeof inspectGithubNativeArtifacts>> | null = null;
   let nativeFailure: string | null = null;
   let nativeProducer: ReturnType<typeof bindGithubNativeProducer> | null = null;
+  let lifecycleProducer: ReturnType<typeof bindGithubLifecycleProducer> | null = null;
+  let lifecycleFailure: string | null = null;
   let onlineRequests = 0; const onlineStarted = performance.now();
   const bounded = () => { if (++onlineRequests > LIMITS.requests || performance.now() - onlineStarted > LIMITS.total_ms) reject("github-observation-limit"); };
   const get: GetJson = async endpoint => {
@@ -389,17 +412,21 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
     observation = await inspectGithubCandidate(get, candidate, workflows);
     try {
       nativeProducer = bindGithubNativeProducer(root, candidate, EVALUATOR_ROOT, collectorHead);
+      try { lifecycleProducer = bindGithubLifecycleProducer(root, candidate, EVALUATOR_ROOT, collectorHead); }
+      catch (error) { lifecycleFailure = error instanceof EvidenceError ? error.reason : "github-lifecycle-producer-unavailable"; }
       const nativeWorkflow = candidateFrame.files.find(file => file.path === ".github/workflows/macos-native.yml")!.bytes.toString("utf8");
       const bunVersion = candidateFrame.files.find(file => file.path === ".bun-version")!.bytes.toString("utf8").trim();
       native = await inspectGithubNativeArtifacts(get, async endpoint => { bounded(); return ghJson(endpoint, true); }, candidate, nativeWorkflow, bunVersion, output);
     } catch (error) { nativeFailure = error instanceof EvidenceError ? error.reason : "github-native-observation-unavailable"; }
     // Native downloads may take time: CI credit must still describe current facts.
     if (!same(observation, await inspectGithubCandidate(get, candidate, workflows))) reject("github-required-checks-changed");
-    candidateFrame.unchanged(); collectorFrame.unchanged(); nativeProducer?.unchanged(); index.unchanged(); checkOutput();
+    candidateFrame.unchanged(); collectorFrame.unchanged(); nativeProducer?.unchanged(); lifecycleProducer?.unchanged(); index.unchanged(); checkOutput();
   } catch (error) { failure = error instanceof EvidenceError ? error.reason : "github-observation-unavailable"; }
   const retained = { schema: "kizuki.github-collection/v1", candidate_source_sha: candidate, collector_source_sha: collectorHead,
     candidate_files: candidateFrame.files.map(({ path, sha256 }) => ({ path, sha256 })), collector_files: collectorFrame.files.map(({ path, sha256 }) => ({ path, sha256 })),
     started_at: started, completed_at: new Date().toISOString(), command_bindings: commandBindings, raw, observation, failure, native, native_failure: nativeFailure,
+    lifecycle_failure: lifecycleFailure,
+    lifecycle_producer: lifecycleProducer === null ? null : { candidate_files: lifecycleProducer.candidate_files, reviewed_files: lifecycleProducer.reviewed_files },
     native_producer: nativeProducer === null ? null : { candidate_files: nativeProducer.candidate_files, reviewed_files: nativeProducer.reviewed_files },
     trust_scope: "fresh GitHub HTTPS observation under local operator custody; saved JSON alone is not an authenticated input" };
   const receiptPath = join(output, "github-observation.json");
@@ -409,7 +436,7 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
   // fixed-transport collection can apply remote evidence to the local report.
   // Revalidate local package and index bytes after the network observation.
   index.unchanged(); report = evaluateRelease(profile, evidence);
-  candidateFrame.unchanged(); collectorFrame.unchanged(); nativeProducer?.unchanged(); index.unchanged(); checkOutput();
+  candidateFrame.unchanged(); collectorFrame.unchanged(); nativeProducer?.unchanged(); lifecycleProducer?.unchanged(); index.unchanged(); checkOutput();
   const gate = report.gates.find(row => row.id === "candidate.required-checks")!;
   if (failure !== null || observation === null) Object.assign(gate, { status: "UNVERIFIABLE", reason: failure ?? "github-observation-unavailable", evidence_sha256: null });
   else {
@@ -424,9 +451,16 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
     Object.assign(row, { status,
       reason: nativeBinding?.reason ?? failure ?? nativeFailure ?? "github-paired-native-jobs-not-passed", evidence_sha256: status === "PASS" ? receipt.sha256 : null });
   }
+  const lifecycleBinding = nativeBinding?.status === "PASS" && lifecycleProducer !== null && lifecycleFailure === null && native !== null
+    ? inspectGithubLifecycleIndexBinding(native.targets, report.evidence) : null;
+  for (const target of NATIVE_TARGETS) {
+    const row = report.gates.find(item => item.id === `lifecycle.${target.target}`)!;
+    const status = lifecycleBinding?.status ?? (nativeBinding?.status === "FAIL" ? "FAIL" : "UNVERIFIABLE");
+    Object.assign(row, { status, reason: lifecycleBinding?.reason ?? lifecycleFailure ?? nativeBinding?.reason ?? failure ?? nativeFailure ?? "github-current-lifecycle-not-observed", evidence_sha256: status === "PASS" ? receipt.sha256 : null });
+  }
   const result = { ...report, schema: "kizuki.online-acceptance-report/v1", ...releaseDecision(profile, report.gates), github_observation_sha256: receipt.sha256,
-    trust_scope: `${report.trust_scope}; candidate.required-checks and native target facts additionally observed from GitHub during this evaluation; lifecycle remains separate`,
-    online_policy_sha256: hash(JSON.stringify({ schema: "kizuki.github-evidence-policy/v1", repository_id: GITHUB_REPOSITORY_ID, required: REQUIRED, native_targets: NATIVE_TARGETS, native_archive_bytes: GITHUB_ARCHIVE_LIMIT, native_index_binding: "same-target-v3-proof-and-all-seven-package-digests", package_commands: PACKAGE_COMMANDS, native_producer_entrypoints: NATIVE_PRODUCER_ENTRYPOINTS, limits: LIMITS, selection: "latest-attempt-start-no-pending-ambiguous-refused" })),
+    trust_scope: `${report.trust_scope}; candidate.required-checks and native target facts additionally observed from GitHub during this evaluation; native lifecycle additionally requires independently reviewed producer closure and all17 v2 phases; released-version upgrades, hardware reboot, distribution and human trials are not asserted`,
+    online_policy_sha256: hash(JSON.stringify({ schema: "kizuki.github-evidence-policy/v1", repository_id: GITHUB_REPOSITORY_ID, required: REQUIRED, native_targets: NATIVE_TARGETS, native_archive_bytes: GITHUB_ARCHIVE_LIMIT, native_index_binding: "same-target-v3-proof-and-all-seven-package-digests", package_commands: PACKAGE_COMMANDS, native_producer_entrypoints: NATIVE_PRODUCER_ENTRYPOINTS, lifecycle_producer_entrypoints: LIFECYCLE_PRODUCER_ENTRYPOINTS, lifecycle_producer_data: LIFECYCLE_PRODUCER_DATA, lifecycle_registry_sha256: LIFECYCLE_REGISTRY_SHA256, limits: LIMITS, selection: "latest-attempt-start-no-pending-ambiguous-refused" })),
     online_verifier_sha256: hash(JSON.stringify(retained.collector_files)) };
   receipt.unchanged();
   writeAcceptanceReport(join(output, "acceptance-report.json"), result);

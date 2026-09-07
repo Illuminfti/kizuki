@@ -99,7 +99,7 @@ function gates(): Gate[] {
     add(`artifact.${target}`, "automated-fixture-integrity", "MISSING", "artifact-proof-missing", true, target);
     add(`engine.${target}`, "effective-sqlite-runtime", "MISSING", "missing-engine-proof", true, target);
     add(`native.${target}`, "native-execution-attestation", "UNVERIFIABLE", "producer-revision-and-native-attestation-unavailable", true, target);
-    add(`lifecycle.${target}`, "native-installed-service", "NOT_IMPLEMENTED", "native-lifecycle-producer-not-implemented", true, target);
+    add(`lifecycle.${target}`, "native-installed-service", "UNVERIFIABLE", "trusted-online-lifecycle-observation-required", true, target);
   }
   add("candidate.required-checks", "exact-candidate-ci"); add("candidate.independent-review", "independent-review");
   add("candidate.current-p0-disposition", "current-head-findings", "UNVERIFIABLE", "trusted-snapshot-and-freshness-policy-unavailable");

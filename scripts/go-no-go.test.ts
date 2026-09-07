@@ -522,7 +522,7 @@ test("inactive families keep default states while an active surface producer ref
   expect(gate(result, `artifact.${target}`).status).toBe("PASS");
   for (const platform of TARGETS) {
     expect(gate(result, `native.${platform}`)).toMatchObject({ status: "UNVERIFIABLE", evidence_sha256: null });
-    expect(gate(result, `lifecycle.${platform}`)).toMatchObject({ status: "NOT_IMPLEMENTED", evidence_sha256: null });
+    expect(gate(result, `lifecycle.${platform}`)).toMatchObject({ status: "UNVERIFIABLE", reason: "trusted-online-lifecycle-observation-required", evidence_sha256: null });
   }
   expect(gate(result, "candidate.required-checks").status).toBe("NOT_IMPLEMENTED");
   expect(gate(result, "candidate.independent-review").status).toBe("NOT_IMPLEMENTED");

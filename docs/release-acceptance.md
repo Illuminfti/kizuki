@@ -107,8 +107,24 @@ new output directory. The second observation must still find the same current
 successful attempt and package bytes. An old or different build cannot supply
 artifact or engine credit for the new native observation.
 
-The existing lifecycle receipt is retained as diagnostic evidence. It does not
-prove a real release upgrade or reboot, and cannot establish `lifecycle.<target>`.
+Legacy lifecycle receipts remain diagnostic evidence. The online collector can
+establish `lifecycle.<target>` only from the same successful paired native run and
+attempt, whose downloaded package and proof digests equal the current offline
+index. Its closed v2 receipt must pass all 17 independent phase checks and complete
+per-unit cleanup. The collector separately binds the candidate and reviewed
+transitive lifecycle producers, baseline builder, recovery and model helpers,
+explicit endpoint child, and four fixed historical fixture files.
+
+This contract covers installed candidate lifecycle, a distinct fixed prior
+candidate binary upgrade, historical schema 15/16 migration and recovery, five
+native states, and synthetic model availability and recovery. Offline recovery
+uses an explicitly recorded synthetic sync due-time adjustment while stopped,
+then a real scheduled receipt after installed-service restart; it does not claim
+that 15 minutes elapsed or an unassisted retry delay was observed. Prior package
+hashes and engine identities are reviewed builder observations; prior bytes are
+not independently downloaded in this nine-file artifact. Released-version
+upgrades, hardware reboot, host network isolation, public distribution, and human
+trials are not asserted. Saved JSON alone cannot establish online lifecycle credit.
 Accounts, independent review, findings and unfamiliar-human acceptance also
 remain separate required evidence. Earlier native failures remain in the history;
 a failed paired attempt cannot contribute a single successful platform as a pass.
@@ -222,7 +238,7 @@ can set `release_1_0_accepted` after every required row passes.
 | `artifact.<target>` for both targets | Local package and recorded fixture-step consistency; implemented with `automated-fixture-integrity` scope |
 | `engine.<target>` for both targets | Both copied executables report the matching qualified SQLite identity and pinned Bun; v1 is missing, unknown identities fail |
 | `native.<target>` for both targets | Trusted producer revision and native execution attestation; `UNVERIFIABLE` |
-| `lifecycle.<target>` for both targets | Actual normal install, upgrade, restart, reboot and uninstall; `NOT_IMPLEMENTED` |
+| `lifecycle.<target>` for both targets | Online current paired native v2: install, distinct prior candidate upgrade, historical migration/recovery, native states, synthetic model matrix/recovery, restart, uninstall and complete cleanup; saved receipts remain unverified |
 | `candidate.required-checks` | Exact-candidate required CI/check identities; adapter `NOT_IMPLEMENTED` |
 | `candidate.independent-review` | Independent specification/security and regression review; adapter `NOT_IMPLEMENTED` |
 | `candidate.current-p0-disposition` | Complete current-head findings and explicit freshness policy; `UNVERIFIABLE` |

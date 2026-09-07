@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { CURRENT_PACKAGE_FILES, packageFileLimit, parseBuildInfoValue, verifyPackageDirectory } from "./release-artifacts";
 import { validateArtifactProof, PROOF_JSON_LIMITS } from "./artifact-proof";
 import { absolute, EVALUATOR_ROOT, parents, read, reject } from "./release-evidence";
+import { validateNativeLifecycle, NativeLifecycleProofError } from "./native-lifecycle-proof";
 import { parseProofJson } from "./proof-json";
 
 export const GITHUB_ARCHIVE_LIMIT = 300_000_000;
@@ -28,9 +29,15 @@ export function verifyGithubNativeArchive(archive: string, output: string, targe
   const proof = read(join(output, "artifact-proof.json"), PROOF_JSON_LIMITS.bytes);
   const validated = validateArtifactProof(parseProofJson(proof.bytes), { source_sha: candidate, target, bun_version: bunVersion, package_sha256, build });
   if (validated.schema !== "kizuki.artifact-proof/v3" || validated.engine.status !== "PASS") reject("github-artifact-proof-unqualified");
-  const lifecycle = read(join(output, "lifecycle-diagnostic.json"), 1_048_576, false);
+  const lifecycle = read(join(output, "lifecycle-diagnostic.json"), 1_048_576);
+  const lifecycleValue = parseProofJson(lifecycle.bytes);
+  let lifecycleFacts: ReturnType<typeof validateNativeLifecycle> | null = null;
+  if (lifecycleValue !== null && typeof lifecycleValue === "object" && "schema" in lifecycleValue && lifecycleValue.schema === "kizuki.native-service-lifecycle/v2") {
+    try { lifecycleFacts = validateNativeLifecycle(lifecycleValue, { source_sha: candidate, target, bun_version: bunVersion, package_sha256 }); }
+    catch (error) { reject(error instanceof NativeLifecycleProofError ? error.reason : "native-lifecycle-unavailable"); }
+  }
   for (const { file } of files) file.unchanged();
   buildFile.unchanged(); proof.unchanged(); lifecycle.unchanged(); held.unchanged(); checkParent();
   return { archive_sha256: held.sha256, target, package_sha256, proof_sha256: proof.sha256, build,
-    members, lifecycle: { sha256: lifecycle.sha256, release_credit: false, reason: "current-receipt-does-not-prove-release-upgrade-and-reboot" } };
+    members, lifecycle: { sha256: lifecycle.sha256, release_credit: false as const, reason: lifecycleFacts ? "receipt-consistency-only-online-producer-binding-required" : "native-lifecycle-v2-required", facts: lifecycleFacts } };
 }

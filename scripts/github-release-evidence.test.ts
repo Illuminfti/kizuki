@@ -1,3 +1,5 @@
+import { lifecycleFixture } from "./native-lifecycle-proof-fixture";
+import { LIFECYCLE_PRODUCER_ENTRYPOINTS, LIFECYCLE_PRODUCER_DATA } from "./native-lifecycle-proof";
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -12,7 +14,7 @@ import { distributionIdentity } from "./release-notices";
 import { verifyGithubNativeArchive } from "./github-native-artifact";
 import { evaluateRelease } from "./go-no-go";
 import { resolve } from "node:path";
-import { GITHUB_REPOSITORY_ID, inspectGithubCandidate, inspectGithubNativeArtifacts, inspectGithubNativeJobs, inspectGithubNativeIndexBinding, validateGithubCommandBindings, bindGithubNativeProducer, parseGithubEvidenceArgs } from "./github-release-evidence";
+import { GITHUB_REPOSITORY_ID, inspectGithubCandidate, inspectGithubNativeArtifacts, inspectGithubNativeJobs, inspectGithubNativeIndexBinding, validateGithubCommandBindings, bindGithubNativeProducer, bindGithubLifecycleProducer, inspectGithubLifecycleIndexBinding, parseGithubEvidenceArgs } from "./github-release-evidence";
 
 const SHA = "a".repeat(40);
 const REPO = { id: GITHUB_REPOSITORY_ID, full_name: "fixture-owner/fixture-repo", private: false };
@@ -218,11 +220,18 @@ function syntheticArchive(target: string, mode = "valid") {
   if (mode === "legacy-proof") proof.schema = "kizuki.artifact-proof/v2";
   if (mode === "different-proof") proof.host_kernel_release = "different-synthetic-kernel";
   writeFileSync(join(root, "proof.json"), JSON.stringify(proof));
+  const lifecycle = mode.startsWith("lifecycle-") ? lifecycleFixture({ source_sha: SHA, target, bun_version: "1.3.14", package_sha256 }) : { diagnostic: "synthetic only" };
+  if (mode.startsWith("lifecycle-")) {
+    for (const p of lifecycle.qualification.phases) if (p.id.startsWith("model-")) { p.evidence.started_at = "2026-09-07T00:03:00Z"; if (p.evidence.recovery) { p.evidence.recovery.started_at = "2026-09-07T00:04:00Z"; p.evidence.recovery.receipt_due_at = p.evidence.recovery.scheduling_override.next = "2026-09-07T00:03:59.000Z"; } }
+    if (mode === "lifecycle-forged") lifecycle.qualification.phases[0].evidence.public_doctor_ok = false;
+    if (mode === "lifecycle-stale") lifecycle.qualification.phases.at(-1).evidence.started_at = "2026-09-07T00:01:00Z";
+  }
+  writeFileSync(join(root, "lifecycle.json"), JSON.stringify(lifecycle));
   const archive = join(root, "input.zip");
   execFileSync("python3", ["-c", `import pathlib,sys,zipfile,stat
 root=pathlib.Path(sys.argv[1]); target=sys.argv[2]; mode=sys.argv[3]
 items=[('repo/repo/dist/kizuki-0.1.0/'+target+'/'+p.name,p.read_bytes()) for p in (root/'package').iterdir()]
-items += [('_temp/kizuki-native-artifact-proof/receipt.json',(root/'proof.json').read_bytes()),('_temp/kizuki-native-service-lifecycle/receipt.json',b'{"diagnostic":"synthetic only"}')]
+items += [('_temp/kizuki-native-artifact-proof/receipt.json',(root/'proof.json').read_bytes()),('_temp/kizuki-native-service-lifecycle/receipt.json',(root/'lifecycle.json').read_bytes())]
 if mode=='extra': items.append(('unexpected',b'x'))
 if mode=='duplicate': items.append(items[0])
 if mode=='missing': items.pop()
@@ -252,14 +261,14 @@ test.each(["extra", "duplicate", "missing", "traversal", "absolute", "oversize",
   expect(() => verifyGithubNativeArchive(f.archive, f.output, "bun-linux-x64-baseline", SHA, "1.3.14")).toThrow();
 });
 
-function nativeFixture() {
+function nativeFixture(mode = "valid") {
   const f = fixture(), path = ".github/workflows/macos-native.yml", text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
   const selected = f.run(301, path, 33); selected.event = "workflow_dispatch"; f.runs.splice(0, f.runs.length, selected);
   const steps = (Bun.YAML.parse(text) as any).jobs["native-service"].steps;
   const archives = new Map<number, ReturnType<typeof syntheticArchive>>();
   const artifacts: any[] = [];
   const jobs = ["ubuntu-24.04", "macos-15"].map((os, index) => {
-    const archive = syntheticArchive(index === 0 ? "bun-linux-x64-baseline" : "bun-darwin-arm64"); archives.set(index + 401, archive);
+    const archive = syntheticArchive(index === 0 ? "bun-linux-x64-baseline" : "bun-darwin-arm64", mode); archives.set(index + 401, archive);
     artifacts.push({ id: index + 401, name: `native-service-lifecycle-${os}-${SHA}`, size_in_bytes: archive.bytes.length, digest: `sha256:${digest(archive.bytes)}`, expired: false,
       created_at: "2026-09-07T00:05:01Z", updated_at: "2026-09-07T00:05:01Z", expires_at: "2026-09-14T00:05:01Z",
       workflow_run: { id: 301, repository_id: REPO.id, head_repository_id: REPO.id, head_sha: SHA } });
@@ -402,7 +411,7 @@ test.each(["verify", "typecheck", "build:release", "smoke:release", "proof:artif
 });
 
 
-function producerFixture() {
+function producerFixture(lifecycle = false) {
   const root = mkdtempSync(join(tmpdir(), "kizuki-github-producer-")); nativeRoots.push(root);
   const source = resolve(import.meta.dir, "..");
   const graph = collectProductSources(source, ["scripts/stranger-proof.ts", "scripts/build-release.ts", "scripts/smoke-release.ts"]);
@@ -412,6 +421,11 @@ function producerFixture() {
   const repos = ["reviewed", "candidate"].map(name => {
     const path = join(root, name); mkdirSync(path);
     for (const file of paths) { mkdirSync(dirname(join(path, file)), { recursive: true }); writeFileSync(join(path, file), readFileSync(join(source, file))); }
+    if (lifecycle) {
+      for (const entry of LIFECYCLE_PRODUCER_ENTRYPOINTS) { mkdirSync(dirname(join(path, entry)), { recursive: true }); writeFileSync(join(path, entry), 'import "./synthetic-lifecycle-leaf";\nexport const synthetic = true;\n'); }
+      writeFileSync(join(path, "scripts/synthetic-lifecycle-leaf.ts"), "export const observed = true;\n");
+      for (const entry of LIFECYCLE_PRODUCER_DATA) { mkdirSync(dirname(join(path, entry)), { recursive: true }); writeFileSync(join(path, entry), readFileSync(join(source, entry))); }
+    }
     git(path, ["-c", "init.defaultBranch=main", "init"]);
     return { path, sha: commit(path) };
   });
@@ -454,4 +468,35 @@ test("an attempt resource update during collection still fails freshness", async
     if (endpoint.endsWith("/101/attempts/1") && ++reads === 2) row.updated_at = "2026-09-07T00:01:01Z";
     return row;
   }, SHA, workflowText)).rejects.toThrow("github-attempt-changed");
+});
+
+
+test("v2 paired lifecycle consistency requires same indexed bytes and still leaves offline lifecycle uncredited", async () => {
+  const f = nativeFixture("lifecycle-valid"), result = await inspectGithubNativeArtifacts(f.get, f.download, SHA, f.text, "1.3.14", f.output);
+  const report = indexedNativeReport(f.output, result.targets);
+  expect(result.targets.every(row => row.bytes.lifecycle.facts?.status === "PASS" && row.bytes.lifecycle.release_credit === false)).toBe(true);
+  expect(inspectGithubLifecycleIndexBinding(result.targets, report.evidence)).toEqual({ status: "PASS", reason: "github-current-native-candidate-lifecycle" });
+  expect(inspectGithubLifecycleIndexBinding(result.targets, []).status).toBe("UNVERIFIABLE");
+  expect(report.gates.filter(row => row.id.startsWith("lifecycle.")).every(row => row.status !== "PASS")).toBe(true);
+  expect(report.decision).not.toBe("GO");
+  const modified = structuredClone(report.evidence); modified[0]!.package_sha256.kizuki = "f".repeat(64);
+  expect(inspectGithubLifecycleIndexBinding(result.targets, modified).status).toBe("FAIL");
+  const proofSwap = structuredClone(report.evidence); [proofSwap[0]!.proof_sha256, proofSwap[1]!.proof_sha256] = [proofSwap[1]!.proof_sha256, proofSwap[0]!.proof_sha256];
+  expect(inspectGithubLifecycleIndexBinding(result.targets, proofSwap).status).toBe("FAIL");
+});
+test("legacy lifecycle diagnostic cannot acquire credit through a valid current package", async () => {
+  const f = nativeFixture(), result = await inspectGithubNativeArtifacts(f.get, f.download, SHA, f.text, "1.3.14", f.output);
+  const report = indexedNativeReport(f.output, result.targets);
+  expect(inspectGithubLifecycleIndexBinding(result.targets, report.evidence)).toEqual({ status: "UNVERIFIABLE", reason: "native-lifecycle-v2-required" });
+});
+test.each(["lifecycle-forged", "lifecycle-stale"])("fresh API metadata cannot authenticate %s lifecycle content", async mode => {
+  const f = nativeFixture(mode);
+  await expect(inspectGithubNativeArtifacts(f.get, f.download, SHA, f.text, "1.3.14", f.output)).rejects.toThrow();
+});
+test.each([...LIFECYCLE_PRODUCER_ENTRYPOINTS, ...LIFECYCLE_PRODUCER_DATA, "scripts/synthetic-lifecycle-leaf.ts"])("lifecycle producer custody binds %s", path => {
+  const f = producerFixture(true), held = bindGithubLifecycleProducer(f.candidate.path, f.candidate.sha, f.reviewed.path, f.reviewed.sha);
+  expect(held.candidate_files).toEqual(held.reviewed_files);
+  writeFileSync(join(f.candidate.path, path), readFileSync(join(f.candidate.path, path), "utf8") + "\nchanged synthetic observation\n"); f.candidate.sha = f.commit(f.candidate.path);
+  expect(() => bindGithubLifecycleProducer(f.candidate.path, f.candidate.sha, f.reviewed.path, f.reviewed.sha)).toThrow();
+  expect(() => held.unchanged()).toThrow();
 });
