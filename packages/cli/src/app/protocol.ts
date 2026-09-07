@@ -73,6 +73,7 @@ export interface AppOperation {
         source_key?: string;
         receipt_id?: string;
         rewritten_pages?: number;
+        recovery_pending?: { receipt_id: string; phase: 'write' | 'projection' }[];
         agent?: { receipt: AgentEnrollmentResult; mcp: { command: string; args: string[] } | null };
         run?: {
             run_id: string;

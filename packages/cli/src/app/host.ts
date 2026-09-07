@@ -2,7 +2,7 @@ import { basename, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline } from '@kizuki/core';
+import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline } from '@kizuki/core';
 import type { Connector, SourceGrantPolicy } from '@kizuki/core';
 import { createGmailConnector, inspectGmailState, assertSameGmailIdentity } from '@kizuki/connector-gmail';
 import { createGoogleCalendarConnector, inspectGoogleCalendarState, assertSameGoogleCalendarIdentity } from '@kizuki/connector-google-calendar';
@@ -63,9 +63,10 @@ function revision(value: unknown): number { if (!Number.isSafeInteger(value) || 
 function sourceKey(value: unknown): string { const key = string(value, 26); if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(key))
     throw new AppFailure('invalid_request'); return key; }
 function failure(error: unknown): AppError {
+    if (error instanceof CanonRecoveryError) return { code: 'recovery_pending', retryable: false };
     if (error instanceof DuplicateSourceError) return { code: 'duplicate_identity', retryable: false };
     const code = error instanceof AppFailure ? error.code : error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
-    const allowed = ['invalid_request', 'no_vault', 'busy', 'writer_busy', 'unauthorized', 'consent_required', 'source_capture_denied', 'source_field_denied', 'revision_conflict', 'source_revision_conflict', 'source_not_enrolled', 'source_not_active', 'misconfigured', 'identity_conflict', 'custody_unknown', 'service_unavailable', 'configuration_invalid', 'configuration_unsupported', 'credential_invalid', 'custody_unavailable', 'transaction_unavailable', 'model_unconfigured', 'model_test_failed', 'processing_failed', 'mcp_unavailable', 'invalid_grant', 'credential_unsafe', 'credential_conflict', 'operation_conflict', 'name_conflict', 'migration_required', 'enrollment_busy', 'recovery_required', 'enrollment_unavailable', 'correction_failed'];
+    const allowed = ['invalid_request', 'no_vault', 'busy', 'writer_busy', 'unauthorized', 'consent_required', 'source_capture_denied', 'source_field_denied', 'revision_conflict', 'source_revision_conflict', 'source_not_enrolled', 'source_not_active', 'misconfigured', 'identity_conflict', 'custody_unknown', 'service_unavailable', 'configuration_invalid', 'configuration_unsupported', 'credential_invalid', 'custody_unavailable', 'transaction_unavailable', 'model_unconfigured', 'model_test_failed', 'processing_failed', 'mcp_unavailable', 'invalid_grant', 'credential_unsafe', 'credential_conflict', 'operation_conflict', 'name_conflict', 'migration_required', 'enrollment_busy', 'recovery_required', 'enrollment_unavailable', 'correction_failed', 'recovery_pending'];
     return { code: allowed.includes(code) ? code : 'unavailable', retryable: ['busy', 'writer_busy', 'unavailable', 'service_unavailable', 'transaction_unavailable'].includes(code) };
 }
 const fullFields = ['text', 'subjects', 'metadata', 'attachments'];
@@ -152,13 +153,18 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
                 initAgents(ctx.db);
                 const result = await serveCorrect({ ...ctx, principal: OWNER }, args);
                 if (!result.data) throw new AppFailure('correction_failed');
-                tryRefreshDerived(ctx.db, ctx.vaultPath);
+                const pending = result.data.recovery_pending;
+                if (pending === undefined) tryRefreshDerived(ctx.db, ctx.vaultPath);
                 // Jobs outlive source revocation. Keep their durable projection
                 // free of source-derived subject names and page contents.
-                const projection = { message: result.data.rewritten.length > 0
+                const projection = { message: pending !== undefined
+                    ? 'Correction recorded; canon completion is unconfirmed and recovery remains pending. Run kizuki recover --json before another change.'
+                    : result.data.rewritten.length > 0
                     ? `Correction recorded. ${result.data.rewritten.length} memory page(s) rewritten.`
                     : 'Correction is recorded; no memory pages were rewritten.', rewritten_pages: result.data.rewritten.length,
-                    ...(result.data.receipt_id === null ? {} : { receipt_id: result.data.receipt_id }) };
+                    ...(result.data.receipt_id === null ? {} : { receipt_id: result.data.receipt_id }),
+                    ...(pending === undefined ? {} : { recovery_pending: pending.map(({ receipt_id, phase }) => ({ receipt_id, phase })) }) };
+                if (pending !== undefined) throw new AppOperationFailure('recovery_pending', projection);
                 if (result.denied.some(denial => denial.reason === 'error')) throw new AppOperationFailure('correction_failed', projection);
                 return projection;
             }));
@@ -366,7 +372,21 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
         if (route === 'undo') {
             const id = string(input.receipt_id, 128), cascade = boolean(input.cascade);
             return operation('undo', async () => context(async (ctx) => {
-                const result = await undoReceipt({ db: ctx.db, vault_path: ctx.vaultPath }, id, { cascade });
+                const original = getCanonReceipt(ctx.db, id);
+                let result;
+                try { result = await undoReceipt({ db: ctx.db, vault_path: ctx.vaultPath }, id, { cascade }); }
+                catch (error) {
+                    const pending = inspectCanonRecovery(ctx.db);
+                    if (pending.pending && pending.receipt_id !== null && pending.page_path === original?.page_path) {
+                        throw new AppOperationFailure('recovery_pending', { message: 'Undo completion is unconfirmed; recovery remains pending. Run kizuki recover --json before another change.',
+                            recovery_pending: [{ receipt_id: pending.receipt_id, phase: 'write' }] });
+                    }
+                    throw error;
+                }
+                if (result.projection_pending === true) throw new AppOperationFailure('recovery_pending', {
+                    receipt_id: result.receipt_id, message: 'The memory change is undone. Retrieval updates remain pending; run kizuki recover --json before another change.',
+                    recovery_pending: [{ receipt_id: result.receipt_id, phase: 'projection' }],
+                });
                 tryRefreshDerived(ctx.db, ctx.vaultPath);
                 return { receipt_id: result.receipt_id, message: 'Receipt undone.' };
             }));

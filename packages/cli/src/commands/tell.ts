@@ -47,17 +47,18 @@ export const tellCommand: Command = {
             ...(parsed.flags.has("--dry-run") ? { dry_run: true } : {}),
           },
         );
-        const derived = tryRefreshDerived(ctx.db, ctx.vaultPath);
+        const pending = result.recovery_pending !== undefined;
+        const derived = pending ? { degraded: [] as string[] } : tryRefreshDerived(ctx.db, ctx.vaultPath);
         if (parsed.flags.has("--json")) {
           io.out(
             jsonEnvelope(
               "tell",
-              derived.degraded.length > 0 ? "degraded" : "ok",
+              pending ? "error" : derived.degraded.length > 0 ? "degraded" : "ok",
               result,
               { degraded: derived.degraded },
             ),
           );
-          return 0;
+          return pending ? 1 : 0;
         }
         io.out(result.answer);
         if (parsed.flags.has("--verbose")) {
@@ -66,7 +67,7 @@ export const tellCommand: Command = {
           }
         }
         for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
-        return 0;
+        return pending ? 1 : 0;
       } catch (error) {
         if (error instanceof CorrectError) {
           io.err(error.message);

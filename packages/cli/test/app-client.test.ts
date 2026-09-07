@@ -65,6 +65,28 @@ function fixture() {
 }
 const status = (operations: unknown[] = [], epoch = '1') => ({ vault: { ready: true }, visibility_epoch: epoch, operations });
 
+test('pending recovery in the shipped client shows its result and never calls the undo success callback', async () => {
+    const f = fixture();
+    f.evaluate('globalThis.syntheticCompletions=0');
+    const work = f.evaluate<Promise<void>>(`launchOperation('undo',{receipt_id:'synthetic-receipt'},'Undoing this change',async()=>{syntheticCompletions++;})`);
+    f.reply('undo', { operation_id: 'pending-undo' }); await tick();
+    f.reply('operation', { id: 'pending-undo', kind: 'undo', state: 'failed', stage: 'stopped', counts: null,
+        result: { message: 'The memory change is undone. Retrieval updates remain pending; run kizuki recover --json.', recovery_pending: [{ receipt_id: 'synthetic-revert', phase: 'projection' }] },
+        error: { code: 'recovery_pending', retryable: false } });
+    await work; await tick();
+    expect(f.evaluate<number>('syntheticCompletions')).toBe(0);
+    expect(f.dialog.textContent).toContain('Retrieval updates remain pending');
+    expect(f.dialog.textContent).toContain('kizuki recover --json');
+    expect(f.evaluate<string>('state.operation.state')).toBe('failed');
+});
+
+test('a pending correction never renders zero pages as proof that no bytes moved', () => {
+    const f = fixture();
+    f.evaluate(`state.operation={id:'pending-correct',kind:'correct',state:'failed',error:{code:'recovery_pending',retryable:false},result:{message:'The statement is recorded. Canon completion is unconfirmed; recovery remains pending.',rewritten_pages:0,recovery_pending:[{receipt_id:'synthetic-receipt',phase:'write'}]}}; render();`);
+    expect(f.main.textContent).toContain('Canon completion is unconfirmed');
+    expect(f.main.textContent).not.toContain('0 memory pages rewritten');
+});
+
 test('Gmail form requires one selected field before requesting enrollment', async () => {
     const f = fixture();
     f.evaluate(`enrollment({id:'gmail',title:'Gmail',detail:'Synthetic',available:true,fields:['text']}); dialog.querySelector('input').checked=false;`);

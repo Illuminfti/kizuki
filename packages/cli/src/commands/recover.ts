@@ -20,8 +20,7 @@ export const recoverCommand: Command = {
         completed = recoverCanonWrites(target).completed;
         projections = (await retryCanonProjectionObligations(target)).completed;
       } catch (error) {
-        if (!(error instanceof CanonRecoveryError)) throw error;
-        reason = error.reason;
+        reason = error instanceof CanonRecoveryError ? error.reason : "completion_failed";
       }
       const recovery = inspectCanonRecovery(ctx.db);
       const ok = reason === null && !recovery.pending && recovery.projection_pending === 0;

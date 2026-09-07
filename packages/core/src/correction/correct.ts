@@ -21,6 +21,8 @@ import { ulid } from "../util/ulid";
 import { unifiedDiff } from "./diff";
 import { bumpClaimsEpoch, initClaimsEpoch } from "./epoch";
 import { CorrectError } from "./errors";
+import { correctionRecoveryPending } from "./recovery";
+import { CanonRecoveryError } from "../canon/write-intent";
 import { hasExactTarget, objectFromStatement, sourceRecordId } from "./parse";
 import {
   CORRECTION_MAX_PAGES,
@@ -269,14 +271,20 @@ function reconstruct(
       diff: page === null ? "" : unifiedDiff("", page.content, receipt.page_path),
     }];
   });
+  const pending = correctionRecoveryPending(io.db, winner.claim_id);
+  const knownPaths = [...new Set(superseded.flatMap(row => row.page_path === null ? [] : [row.page_path]))].slice(0, CORRECTION_MAX_PAGES);
+  for (const path of knownPaths) for (const item of correctionRecoveryPending(io.db, winner.claim_id, path)) {
+    if (!pending.some(prior => prior.receipt_id === item.receipt_id)) pending.push(item);
+  }
   return {
+    ...(pending.length === 0 ? {} : { recovery_pending: pending }),
     receipt_id: winner.receipt_id,
     event_id: eventId,
     claim_ids: [winner.claim_id],
     superseded,
     rewritten,
     ambiguous: [],
-    answer: formatAnswer(winner, superseded, rewritten, rewritten.length === 0 ? null : winner.receipt_id, 0),
+    answer: formatAnswer(winner, superseded, rewritten, rewritten.length === 0 ? null : winner.receipt_id, 0, pending.length === 0 ? undefined : pending),
   };
 }
 
@@ -286,6 +294,7 @@ function formatAnswer(
   rewritten: CorrectResult["rewritten"],
   receiptId: string | null,
   remainder: number,
+  pending?: CorrectResult['recovery_pending'],
 ): string {
   const was = superseded[0]?.was;
   const now = winner.object ?? winner.body;
@@ -314,10 +323,10 @@ function formatAnswer(
   return [
     head,
     `Superseded ${superseded.length} claim${superseded.length === 1 ? "" : "s"}.`,
-    pages.length > 0 ? `Rewrote ${pages}.` : "No canon pages rewritten.",
+    pages.length > 0 ? `Rewrote ${pages}.` : pending !== undefined ? "Canon completion is unconfirmed." : "No canon pages rewritten.",
   ]
     .join("\n")
-    .concat(extra, undo);
+    .concat(extra, pending !== undefined ? "\nCanon recovery is pending. Run kizuki recover --json; unknown external operations require inspection before another change." : "", undo);
 }
 
 function acceptOwnerEvent(
@@ -533,8 +542,9 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
 
   if (input.dry_run !== true && accepted.duplicate) {
     const prior = existingCorrection(io.db, accepted.event_id);
-    if (prior !== null && prior.receipt_id !== null) {
-      return reconstruct(io, accepted.event_id, prior);
+    if (prior !== null) {
+      const recorded = reconstruct(io, accepted.event_id, prior);
+      if (prior.receipt_id !== null || recorded.recovery_pending !== undefined) return recorded;
     }
   }
 
@@ -605,9 +615,15 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
   const canon = canonIo(io);
   const rewritten: CorrectResult["rewritten"] = [];
   const claimIds = [winner.claim_id];
+  let recoveryPending: CorrectResult["recovery_pending"];
   let receiptId: string | null = null;
 
   for (const [index, page] of chosen.entries()) {
+    const held = correctionRecoveryPending(io.db, winner.claim_id, page.rel_path);
+    if (held.length > 0) {
+      recoveryPending = [...(recoveryPending ?? []), ...held];
+      continue;
+    }
     const existing = readVaultPage(io, page.rel_path);
     if (existing === null) continue;
     const before = existing.content;
@@ -668,12 +684,16 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
         budget,
       });
     } catch (error) {
+      const pending = correctionRecoveryPending(io.db, stored.claim_id, page.rel_path);
+      if (pending.length > 0 || error instanceof CanonRecoveryError) { recoveryPending = pending; break; }
       if (error instanceof CanonWriteError || error instanceof BudgetExhausted) {
         continue;
       }
       throw error;
     }
     if (receiptId === null) receiptId = receipt.receipt_id;
+    const pending = correctionRecoveryPending(io.db, stored.claim_id, receipt.page_path);
+    if (pending.length > 0) recoveryPending = [...(recoveryPending ?? []), ...pending];
     const after = readVaultPage(io, receipt.page_path);
     rewritten.push({
       page_path: receipt.page_path,
@@ -695,6 +715,7 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
     superseded,
     rewritten,
     ambiguous: [],
-    answer: formatAnswer(winner, superseded, rewritten, receiptId, remainder),
+    ...(recoveryPending === undefined ? {} : { recovery_pending: recoveryPending }),
+    answer: formatAnswer(winner, superseded, rewritten, receiptId, remainder, recoveryPending),
   };
 }
