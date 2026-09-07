@@ -8,6 +8,7 @@ import { startApp } from '../src/commands/app';
 import type { CliIo } from '../src/commands';
 import type { AppOperation, AppProtocol, AppRoute } from '../src/app/protocol';
 import { createHelpers } from './helpers';
+import { traceSyntheticAppFailures } from './app-native-diagnostics';
 import { defaultChatCompletion, startFakeEndpoint, type SeenRequest } from '../../llm/test/fake-endpoint';
 
 const h = createHelpers(), cleanup: (() => Promise<void>)[] = [];
@@ -38,6 +39,8 @@ function completion(request: SeenRequest): Response {
  * opened only to compare the published receipt and authorization evidence. */
 async function fixture() {
     const env = h.isolatedEnv(), notes = h.tempDir('privacy-race-notes-'), vault = join(env.HOME!, 'Kizuki');
+    const diagnostic = traceSyntheticAppFailures(vault);
+    cleanup.push(async () => { diagnostic.close(); });
     writeFileSync(join(notes, 'ada.md'), SOURCE_TEXT);
     const endpoint = startFakeEndpoint(completion), output: string[] = [];
     let app: Awaited<ReturnType<typeof startApp>> | undefined, bearer = '';
@@ -78,6 +81,7 @@ async function fixture() {
     expect((await call('source_model_consent', { source_key: source, expected_revision: 1, expected_model_revision: model.revision,
         operation_id: 'privacy-model', allow: true })).revision).toBe(2);
     const processed = await done((await call('run_pass', {})).operation_id);
+    if (processed.state !== 'succeeded') diagnostic.report('privacy-fixture-processing', processed);
     expect(processed.state).toBe('succeeded');
     expect(processed.result!.run!.model_calls).toBe(1);
     expect(processed.result!.run!.canon_writes).toBeGreaterThan(0);

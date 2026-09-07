@@ -6,6 +6,7 @@ import { openLedger } from '@kizuki/core/testing';
 import { startApp } from '../src/commands/app';
 import type { CliIo } from '../src/commands';
 import { createHelpers } from './helpers';
+import { traceSyntheticAppFailures } from './app-native-diagnostics';
 import { defaultChatCompletion, startFakeEndpoint, type SeenRequest } from '../../llm/test/fake-endpoint';
 
 const h = createHelpers();
@@ -34,6 +35,7 @@ function completion(request: SeenRequest): Response {
 test('authenticated first use separates connection tests, source permission and receipted model processing', async () => {
     const env = h.isolatedEnv(), notes = h.tempDir('app-model-notes-'), outputs: string[] = [], visible: unknown[] = [];
     const vault = join(env.HOME!, 'Kizuki');
+    const diagnostic = traceSyntheticAppFailures(vault);
     writeFileSync(join(notes, 'ada.md'), 'Ada joined the orchard library project.');
     const endpoint = startFakeEndpoint(completion), replacement = startFakeEndpoint(completion);
     const io: CliIo = { env, vaultOverride: null, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false,
@@ -182,6 +184,7 @@ test('authenticated first use separates connection tests, source permission and 
             egress: { model_endpoint: endpoint.base_url + '/chat/completions', model: selection.model, external_retention: 'provider_managed' } };
         expect((await call('consent', { source_key: source, expected_revision: 2, operation_id: 'expand-app-source-fields', policy: revisedPolicy })).data.revision).toBe(3);
         expect((await call('source_model_consent', permission)).error.code).toBe('source_revision_conflict');
+        expect(diagnostic.saw('source_revision_conflict')).toBe(true);
         const afterReplay = openLedger(join(vault, '.kizuki/kizuki.db'));
         try {
             expect(inspectSourceGrant(afterReplay, source)?.revision).toBe(3);
@@ -192,7 +195,9 @@ test('authenticated first use separates connection tests, source permission and 
             selection: { ...selection, base_url: replacement.base_url }, credential: { action: 'keep' } })).data;
         expect(changed.last_test).toBeNull();
         expect((await call('sources')).data.sources[0].model_consent).toBe('different_model');
-        expect((await call('source_model_consent', { ...permission, expected_revision: 3, operation_id: 'stale-model-revision' })).error.code).toBe('revision_conflict');
+        const staleModel = await call('source_model_consent', { ...permission, expected_revision: 3, operation_id: 'stale-model-revision' });
+        if (staleModel.error?.code !== 'revision_conflict') diagnostic.report('stale-model-consent');
+        expect(staleModel.error.code).toBe('revision_conflict');
         writeFileSync(join(notes, 'later.md'), 'Ada coordinates the orchard library reading group.');
         expect((await run()).result.run.model_calls).toBe(0);
         expect(replacement.requests).toHaveLength(0);
@@ -225,5 +230,5 @@ test('authenticated first use separates connection tests, source permission and 
         // Only the expressly requested MCP configuration contains a file ref.
         const withoutAgentSetup = visible.filter((response: any) => !response.data?.result?.agent?.mcp);
         expect(JSON.stringify(withoutAgentSetup)).not.toContain('file:');
-    } finally { await app.close(); endpoint.stop(); replacement.stop(); }
+    } finally { diagnostic.close(); await app.close(); endpoint.stop(); replacement.stop(); }
 }, 30_000);
