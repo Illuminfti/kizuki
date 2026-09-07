@@ -10,6 +10,7 @@ test("all eight public file formats have distinct bounded serialized fixtures an
   expect(FILE_IMPORT_POLICY.egress).toBe("local_only");
   for (const fixture of cases) {
     expect(fixture.events).toBe(1);
+    expect(fixture.proposals).toBe(fixture.format === "whatsapp" ? 3 : 2);
     expect(Object.values(fixture.valid).some(text => typeof text === "string" && text.includes(fixture.sentinel))).toBe(true);
     for (const scenario of [fixture.valid, fixture.invalid]) for (const [name, bytes] of Object.entries(scenario)) {
       expect(name.startsWith("/") || name.split("/").includes("..")).toBe(false);
@@ -27,7 +28,8 @@ test("file fixture timestamps are explicit and no source filename can be supplie
   expect(() => parseFileImportArgs(["--artifact", "/a", "--artifact", "/b", "--report", "/c"])).toThrow();
 });
 test("exact import counts distinguish successful idempotence and partial failure", () => {
-  expect(importCounts("events_stored=1 duplicates=0 proposals_created=0 withdrawn=0 retractions_filed=0 errors=0\n", 1, 0).stored).toBe(1);
+  expect(importCounts("events_stored=1 duplicates=0 proposals_created=2 withdrawn=0 retractions_filed=0 errors=0\n", 1, 0, 2).proposals).toBe(2);
+  expect(() => importCounts("events_stored=1 duplicates=0 proposals_created=3 withdrawn=0 retractions_filed=0 errors=0\n", 1, 0, 2)).toThrow();
   expect(importCounts("events_stored=0 duplicates=0 proposals_created=0 withdrawn=0 retractions_filed=0 errors=0\n", 0, 0).stored).toBe(0);
   expect(importCounts("events_stored=1 duplicates=0 proposals_created=0 withdrawn=0 retractions_filed=0 errors=1\n", 1, 1).errors).toBe(1);
   for (const raw of ["events_stored=1 duplicates=1 proposals_created=0 withdrawn=0 retractions_filed=0 errors=0\n", "events_stored=0 duplicates=0 proposals_created=0 withdrawn=0 retractions_filed=0 errors=0\n", "events_stored=1 duplicates=0 proposals_created=0 withdrawn=0 retractions_filed=0 errors=0\nextra\n"]) expect(() => importCounts(raw, 1, 0)).toThrow();

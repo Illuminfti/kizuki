@@ -25,7 +25,8 @@ access and uses no host mounts.
 
 For each format, a successful import must store exactly one event. Public ledger
 query must return exactly its distinct sentinel with connector provenance and
-private sensitivity. A second process imports the unchanged files and must store
+private sensitivity through the normal query path. Deterministic capture and subject
+proposals must total two (three for the WhatsApp sender/thread fixture). A second process imports the unchanged files and must store
 zero events with zero duplicates or errors; query identities and public source
 identity must remain stable. Public connection status exposes last-run counts and
 time, not the underlying cursor, so this proof claims observed resume behavior
@@ -37,7 +38,11 @@ refuses capture when the unchanged source is imported again without a new grant.
 Each format also receives a separate malformed source. Markdown invalid UTF-8 and
 partial ChatGPT/Claude exports must report failure; valid records in a partial
 export remain queryable, and repeating it must not create duplicate evidence.
-Other malformed formats must be refused before enrollment. Every expected nonzero
+Malformed X and Omnivore exports must be refused before enrollment. ICS, WhatsApp
+and Pocket parse during capture; these must return a failed run with zero stored
+events and retain a public failed-run summary. Their retry must fail again without
+creating evidence. Empty and post-revocation queries explicitly permit the
+documented degraded floor to test absence; positive queries do not use this flag. Every expected nonzero
 exit is checked explicitly; unexpected output, counts or missing steps fail the
 proof rather than receiving success credit.
 
