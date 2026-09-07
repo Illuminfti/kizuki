@@ -80,14 +80,29 @@ function replacement(
   // A revoked claim can contain an independently supported claim verbatim.
   // Preserve those exact characters while removing the enclosing claim.
   const erased = new Uint8Array(page.body.length);
-  const mark = (claim: Claim, value: number): void => {
-    const text = claim.body.trim();
-    for (let start = page.body.indexOf(text); start !== -1; start = page.body.indexOf(text, start + 1)) {
-      erased.fill(value, start, start + text.length);
+  const mark = (text: string, value: number): void => {
+    // KMP finds overlapping occurrences in linear time. Write each character
+    // once per distinct body instead of refilling every overlapping span.
+    const prefix = new Uint32Array(text.length);
+    for (let i = 1, matched = 0; i < text.length; i++) {
+      while (matched > 0 && text[i] !== text[matched]) matched = prefix[matched - 1]!;
+      if (text[i] === text[matched]) matched++;
+      prefix[i] = matched;
+    }
+    let matched = 0, coveredUntil = 0;
+    for (let i = 0; i < page.body.length; i++) {
+      while (matched > 0 && page.body[i] !== text[matched]) matched = prefix[matched - 1]!;
+      if (page.body[i] === text[matched]) matched++;
+      if (matched === text.length) {
+        const end = i + 1;
+        erased.fill(value, Math.max(end - text.length, coveredUntil), end);
+        coveredUntil = end;
+        matched = prefix[matched - 1]!;
+      }
     }
   };
-  for (const claim of present.filter(claim => affected.has(claim.claim_id))) mark(claim, 1);
-  for (const claim of independent) mark(claim, 0);
+  for (const text of new Set(present.filter(claim => affected.has(claim.claim_id)).map(claim => claim.body.trim()))) mark(text, 1);
+  for (const text of new Set(independent.map(claim => claim.body.trim()))) mark(text, 0);
   let body = "";
   for (let start = 0; start < page.body.length;) {
     let end = start + 1;

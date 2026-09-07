@@ -616,3 +616,31 @@ test("portable survivor lineage refuses an archive staging receipt as its child"
     db.close();
   }
 });
+
+test("source erasure preserves independent overlapping text in a near-limit repetitive page", async () => {
+  const { db, dir, a, b } = setup();
+  try {
+    grant(db, a, "grant-a");
+    grant(db, b, "grant-b");
+    const aa = acceptSource(db, a, "a", "A repetitive claim evidence");
+    const bb = acceptSource(db, b, "b", "B independent repetitive claim evidence");
+    const io = { db, vault_path: dir };
+    const original = write(io, await storeClaim(db, aa.event_id, {
+      body: "A_ONLY " + "x".repeat(640_000) + " A_END",
+    }));
+    write(io, await storeClaim(db, bb.event_id, {
+      kind: "merge", predicate: null, object: null, body: "x".repeat(320_000),
+    }));
+    const before = listCanonPages(dir).find(row => row.relPath === original.page_path)!;
+    expect(before.body.replace(/[^x]/g, "").length).toBe(960_000);
+    revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "erase-a" });
+    expect((await resumeSourceRevocation(db, dir, "erase-a", retrieval)).status).toBe("purged");
+    const page = listCanonPages(dir).find(row => row.relPath === original.page_path)!;
+    expect(page.body).not.toContain("A_ONLY");
+    expect(page.body).not.toContain("A_END");
+    expect(page.body.replace(/\s/g, "")).toBe("x".repeat(960_000));
+    expect(assessLivePageEvidence(db, page).admitted).toBe(true);
+  } finally {
+    db.close();
+  }
+});
