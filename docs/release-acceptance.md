@@ -45,7 +45,13 @@ waivers, actor declarations, skip flags, threshold overrides or clock flags.
 
 ## Index schema
 
-The current `kizuki.acceptance-evidence/v3` index extends v2 with a required
+The current `kizuki.acceptance-evidence/v4` index retains the v3 fields and
+limits, and additionally accepts `kizuki.artifact-proof/v3` for seven-file
+Build V2 packages. V1, V2 and V3 index producer sets remain unchanged. New
+proofs bind the license, notices and closed distribution inventory without
+adding release credit for unresolved material or a distribution assessment.
+
+The `kizuki.acceptance-evidence/v3` index extends v2 with a required
 `gate_receipts` array. Each reference names its producer, gate, target, absolute
 receipt path and SHA-256. V3 accepts at most forty references and 32 KiB of index
 bytes. Unsupported evidence families retain their explicit missing-adapter

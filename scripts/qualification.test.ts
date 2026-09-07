@@ -4,7 +4,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, appendFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { checksumManifest } from "./release-artifacts";
+import { writePackageFixture } from "./release-package-fixture";
+import { distributionIdentity } from "./release-notices";
+import { CURRENT_PACKAGE_FILES, checksumManifest } from "./release-artifacts";
 import { cliDiagnostic, initQualification, sampleQualification, statusQualification, strictReceiptProjection } from "./qualification";
 import { initVault } from "../packages/core/src/vault/init";
 import { openLedger } from "../packages/core/src/ledger/db";
@@ -368,4 +370,17 @@ test("CLI admits only closed local and proof diagnostics",()=>{
  expect(cliDiagnostic(new Error("artifact or proof identity changed"))).toBe("artifact or proof identity changed");
  expect(cliDiagnostic(new Error("collection rejected; durable interruption recorded"))).toBe("collection rejected; durable interruption recorded");
  expect(cliDiagnostic(new SyntaxError(sentinel))).toBe("qualification json unreadable");
+});
+
+
+test("v3 seven-file qualification binds material identity but remains fixture-only", () => {
+ const f=fixture("kizuki.artifact-proof/v2"),build=writePackageFixture(f.artifact);
+ const hashes=Object.fromEntries(CURRENT_PACKAGE_FILES.map(name=>[name,hash(readFileSync(join(f.artifact,name)))]));
+ Object.assign(f.receipt,{schema:"kizuki.artifact-proof/v3",package_sha256:hashes,binary_sha256:hashes.kizuki,distribution_identity:distributionIdentity(build.distribution)});
+ f.receipt.engine_observations!.kizuki.executable_sha256=hashes.kizuki!;
+ f.receipt.engine_observations!.kizuki_mcp.executable_sha256=hashes["kizuki-mcp"]!;f.saveProof();
+ expect(initQualification(f.artifact,f.proof,f.scope,f.out).status).toBe("awaiting-observation");
+ expect(statusQualification(f.out)).toMatchObject({release_qualified:false,rail_qualification:"fixture-only",samples:0});
+ appendFileSync(join(f.artifact,"THIRD-PARTY-NOTICES.txt"),"changed");
+ expect(()=>statusQualification(f.out)).toThrow();
 });

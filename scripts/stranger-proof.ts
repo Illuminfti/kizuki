@@ -2,26 +2,20 @@ import { createHash } from "node:crypto";
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { release as kernelRelease, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { requireRegularFile, verifyChecksumManifest } from "./release-artifacts";
+import { requireRegularFile, packageFiles, verifyPackageDirectory, parseBuildInfo } from "./release-artifacts";
 
 import { releaseTarget, requireNativeHost, selectedReleaseTarget } from "./release-targets";
 import { ArtifactProofError, validateArtifactProof } from "./artifact-proof";
-import type { CliEngineObservation, McpEngineObservation } from "./artifact-proof";
+import type { ArtifactProofSchema, CliEngineObservation, McpEngineObservation } from "./artifact-proof";
 import { EngineProofError, collectEngineProcess, mcpObservationFromOutput, parseDoctorObservation } from "./artifact-engine";
 
 const root = resolve(import.meta.dir, "..");
-const schema = "kizuki.artifact-proof/v2" as const;
+import type { BuildInfo } from "./release-artifacts";
+import { distributionIdentity } from "./release-notices";
+export { parseBuildInfo, parseBuildInfoValue } from "./release-artifacts";
 const supportedBunVersion = readFileSync(join(root, ".bun-version"), "utf8").trim();
 
-const packaged = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"] as const;
 const CHILD_TIMEOUT_MS = 30_000;
-
-interface BuildInfo {
-  schema: "kizuki.release-build/v1";
-  source_sha: string;
-  target: string;
-  bun_version: string;
-}
 
 export interface StepReceipt {
   id: string;
@@ -32,7 +26,8 @@ export interface StepReceipt {
 }
 
 interface ProofReceipt {
-  schema: typeof schema;
+  schema: ArtifactProofSchema;
+  distribution_identity?: ReturnType<typeof distributionIdentity>;
   source_sha: string;
   target: string;
   host_platform: string;
@@ -95,27 +90,6 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function parseBuildInfo(path: string): BuildInfo {
-  let value: unknown;
-  try {
-    value = JSON.parse(readFileSync(path, "utf8")) as unknown;
-  } catch {
-    throw new Error("release BUILD.json is unreadable");
-  }
-  return parseBuildInfoValue(value);
-}
-
-/** Allows bounded readers to validate the exact bytes they already hashed. */
-export function parseBuildInfoValue(value: unknown): BuildInfo {
-  if (!isObject(value) || Object.keys(value).sort().join(",") !== "bun_version,schema,source_sha,target" ||
-      value["schema"] !== "kizuki.release-build/v1" || typeof value["source_sha"] !== "string" ||
-      !/^[0-9a-f]{40}$/.test(value["source_sha"]) || typeof value["target"] !== "string" ||
-      typeof value["bun_version"] !== "string") {
-    throw new Error("release BUILD.json has an invalid shape");
-  }
-  return value as unknown as BuildInfo;
-}
-
 export function proofEnvironment(directory: string): Record<string, string> {
   return {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
@@ -145,9 +119,8 @@ function checkedArtifact(path: string): BuildInfo {
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw new Error("artifact must be a regular directory");
   }
-  for (const name of [...packaged, "SHA256SUMS"]) requireRegularFile(join(path, name));
-  verifyChecksumManifest(path, packaged);
   const build = parseBuildInfo(join(path, "BUILD.json"));
+  verifyPackageDirectory(path, build);
   requireNativeHost(releaseTarget(build.target));
   if (build.bun_version !== Bun.version || Bun.version !== supportedBunVersion) throw new Error("artifact Bun version mismatch");
   return build;
@@ -212,6 +185,8 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
   const steps: StepReceipt[] = [];
   const failures: string[] = [];
   let receipt: ProofReceipt | undefined;
+  let schema: ArtifactProofSchema = "kizuki.artifact-proof/v2";
+  let distribution: ReturnType<typeof distributionIdentity> | undefined;
   let sourceSha = "unavailable";
   let artifactTarget = "unavailable";
   const engineObservations: ProofReceipt["engine_observations"] = { kizuki: null, kizuki_mcp: null };
@@ -221,9 +196,11 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
     cpSync(args.artifact, copiedArtifact, { recursive: true, dereference: false, errorOnExist: true });
     // The copied snapshot supplies both provenance and the bytes we execute.
     const build = checkedArtifact(copiedArtifact);
+    schema = build.schema === "kizuki.release-build/v2" ? "kizuki.artifact-proof/v3" : "kizuki.artifact-proof/v2";
+    distribution = build.schema === "kizuki.release-build/v2" ? distributionIdentity(build.distribution) : undefined;
     sourceSha = build.source_sha;
     artifactTarget = build.target;
-    packageHashes = Object.fromEntries([...packaged, "SHA256SUMS"].map(name => [name, sha256(join(copiedArtifact, name))]));
+    packageHashes = Object.fromEntries(packageFiles(build).map(name => [name, sha256(join(copiedArtifact, name))]));
     const requireUnchangedPackage = () => {
       for (const [name, digest] of Object.entries(packageHashes)) {
         if (sha256(join(args.artifact, name)) !== digest || sha256(join(copiedArtifact, name)) !== digest) {
@@ -274,6 +251,7 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
 
     receipt = {
       schema,
+      ...(distribution === undefined ? {} : { distribution_identity: distribution }),
       source_sha: sourceSha,
       target: artifactTarget,
       host_platform: process.platform,
@@ -289,7 +267,7 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
     };
     const checked = validateArtifactProof(receipt, {
       source_sha: sourceSha, target: artifactTarget, bun_version: build.bun_version,
-      package_sha256: packageHashes as Record<(typeof packaged)[number] | "SHA256SUMS", string>,
+      package_sha256: packageHashes as Record<"kizuki" | "kizuki-mcp" | "README.txt" | "BUILD.json" | "SHA256SUMS", string>, build,
     });
     if (checked.engine.status !== "PASS") throw new ArtifactProofError(checked.engine.reason);
   } catch (error) {
@@ -298,6 +276,7 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
       last?.passed === false ? `${last.id}-failed` : "artifact-proof-failed");
     receipt = {
       schema,
+      ...(distribution === undefined ? {} : { distribution_identity: distribution }),
       source_sha: sourceSha,
       target: artifactTarget,
       host_platform: process.platform,

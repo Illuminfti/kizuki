@@ -3,6 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseBuildInfo, parseProofArgs, proofEnvironment, requireFixture, runArtifactProof } from "./stranger-proof";
+import { writePackageFixture } from "./release-package-fixture";
+import { nativeReleaseTarget } from "./release-targets";
 import type { StepReceipt } from "./stranger-proof";
 
 const directories: string[] = [];
@@ -79,4 +81,17 @@ describe("artifact proof", () => {
       expect(receipt.engine_observations).toEqual({ kizuki: null, kizuki_mcp: null });
     }
   });
+});
+
+
+test.each(["notice", "missing-license", "extra-member"])("copied proof refuses %s before any child execution", async mutation => {
+  const artifact = temporary(), report = join(temporary(), "report");
+  writePackageFixture(artifact, undefined, nativeReleaseTarget().target);
+  if (mutation === "notice") writeFileSync(join(artifact, "THIRD-PARTY-NOTICES.txt"), "changed notice");
+  if (mutation === "missing-license") rmSync(join(artifact, "LICENSE"));
+  if (mutation === "extra-member") writeFileSync(join(artifact, "extra"), "unexpected");
+  await expect(runArtifactProof({ artifact, report })).rejects.toThrow("artifact proof failed");
+  const receipt = JSON.parse(readFileSync(join(report, "receipt.json"), "utf8"));
+  expect(receipt.steps).toEqual([]);
+  expect(receipt.engine_observations).toEqual({ kizuki: null, kizuki_mcp: null });
 });

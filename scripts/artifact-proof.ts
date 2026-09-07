@@ -1,11 +1,15 @@
+import { CURRENT_PACKAGE_FILES, LEGACY_PACKAGE_FILES, parseBuildInfoValue, type BuildInfo } from "./release-artifacts";
+import { distributionIdentity } from "./release-notices";
+import { ArtifactProofError } from "./proof-json";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parseSqliteRuntime } from "../packages/core/src/ledger/runtime";
 import type { SqliteRuntime } from "../packages/core/src/ledger/runtime";
 import { releaseTarget } from "./release-targets";
 
-export const ARTIFACT_PACKAGE_FILES = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json", "SHA256SUMS"] as const;
+export const ARTIFACT_PACKAGE_FILES = LEGACY_PACKAGE_FILES;
+export const ARTIFACT_PACKAGE_FILES_V3 = CURRENT_PACKAGE_FILES;
 export type ArtifactPackageFile = typeof ARTIFACT_PACKAGE_FILES[number];
-export type ArtifactProofSchema = "kizuki.artifact-proof/v1" | "kizuki.artifact-proof/v2";
+export type ArtifactProofSchema = "kizuki.artifact-proof/v1" | "kizuki.artifact-proof/v2" | "kizuki.artifact-proof/v3";
 export interface ArtifactProofPaths { executable: string; home: string; config: string; vault: string; restored_vault: string; }
 export interface ArtifactProofStep { id: string; command: string[]; timeout_ms: number; }
 export interface CliEngineObservation {
@@ -16,7 +20,7 @@ export interface McpEngineObservation {
 }
 export interface EngineObservations { kizuki: CliEngineObservation | null; kizuki_mcp: McpEngineObservation | null; }
 export interface ArtifactProofIdentity {
-  source_sha: string; target: string; bun_version: string; package_sha256: Record<ArtifactPackageFile, string>;
+  source_sha: string; target: string; bun_version: string; package_sha256: Record<ArtifactPackageFile, string> & Partial<Record<"LICENSE" | "THIRD-PARTY-NOTICES.txt", string>>; build?: BuildInfo;
 }
 export interface EngineQualification { status: "PASS" | "MISSING" | "FAIL"; reason: string; }
 
@@ -29,41 +33,8 @@ export const SQLITE_ENGINE_POLICY = {
     source_url: "https://www.sqlite.org/releaselog/3_53_0.html",
   }],
 } as const;
-export const PROOF_JSON_LIMITS = { bytes: 1_048_576, depth: 32 } as const;
-
-export class ArtifactProofError extends Error {
-  constructor(readonly reason: string) { super(reason); }
-}
+export { ArtifactProofError, PROOF_JSON_LIMITS, parseProofJson } from "./proof-json";
 function reject(reason: string): never { throw new ArtifactProofError(reason); }
-
-/** Bound decoding and nesting; JSON.parse alone loses duplicate object keys. */
-export function parseProofJson(bytes: string | Uint8Array): unknown {
-  try {
-    if ((typeof bytes === "string" ? Buffer.byteLength(bytes) : bytes.byteLength) > PROOF_JSON_LIMITS.bytes) reject("json-byte-limit");
-    const raw = typeof bytes === "string" ? bytes : new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-    const stack: (Set<string> | null)[] = [];
-    for (const token of raw.matchAll(/"(?:[^"\\]|\\.)*"|[{}\[\]]/g)) {
-      const value = token[0];
-      if (value === "{" || value === "[") {
-        stack.push(value === "{" ? new Set() : null);
-        if (stack.length > PROOF_JSON_LIMITS.depth) reject("json-depth-limit");
-      } else if (value === "}" || value === "]") stack.pop();
-      else {
-        let after = token.index + value.length;
-        while (after < raw.length && /\s/.test(raw[after]!)) after++;
-        if (raw[after] === ":") {
-          const keys = stack.at(-1), key = JSON.parse(value) as string;
-          if (keys?.has(key)) reject("duplicate-json-key");
-          keys?.add(key);
-        }
-      }
-    }
-    return JSON.parse(raw) as unknown;
-  } catch (error) {
-    if (error instanceof ArtifactProofError) throw error;
-    reject("invalid-json");
-  }
-}
 
 function exact(value: unknown, keys: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) reject("invalid-proof-schema");
@@ -85,7 +56,7 @@ function runtime(value: unknown): SqliteRuntime {
 
 /** One ordered command contract for both consumers and the producer's checks. */
 export function artifactProofSteps(schema: ArtifactProofSchema, paths: ArtifactProofPaths): ArtifactProofStep[] {
-  if (schema !== "kizuki.artifact-proof/v1" && schema !== "kizuki.artifact-proof/v2") reject("unknown-proof-schema");
+  if (schema !== "kizuki.artifact-proof/v1" && schema !== "kizuki.artifact-proof/v2" && schema !== "kizuki.artifact-proof/v3") reject("unknown-proof-schema");
   exact(paths, "executable,home,config,vault,restored_vault");
   for (const value of Object.values(paths)) {
     const path = text(value);
@@ -105,7 +76,7 @@ export function artifactProofSteps(schema: ArtifactProofSchema, paths: ArtifactP
     ["restored-context", ["context", "--query", "Ada", "--vault", restored]], ["restored-context-result", []],
   ];
   const steps = commands.map(([id, args]) => ({ id, command: args.length ? ["kizuki", ...args] : ["assert", "fixture is recalled"], timeout_ms: args.length ? 30_000 : 0 }));
-  if (schema === "kizuki.artifact-proof/v2") steps.splice(2, 0,
+  if (schema !== "kizuki.artifact-proof/v1") steps.splice(2, 0,
     { id: "cli-engine", command: ["kizuki", "doctor", "--json", "--vault", vault], timeout_ms: 30_000 },
     { id: "mcp-engine", command: ["kizuki-mcp", "--vault", vault, "--owner"], timeout_ms: 30_000 },
   );
@@ -115,18 +86,26 @@ export function artifactProofSteps(schema: ArtifactProofSchema, paths: ArtifactP
 /** Validate a successful recorded journey; matching observations can remain unqualified. */
 export function validateArtifactProof(value: unknown, expected: ArtifactProofIdentity): { schema: ArtifactProofSchema; engine: EngineQualification } {
   const schema = value && typeof value === "object" && "schema" in value ? value.schema : null;
-  if (schema !== "kizuki.artifact-proof/v1" && schema !== "kizuki.artifact-proof/v2") reject("unknown-proof-schema");
+  if (schema !== "kizuki.artifact-proof/v1" && schema !== "kizuki.artifact-proof/v2" && schema !== "kizuki.artifact-proof/v3") reject("unknown-proof-schema");
   const row = exact(value, "schema,source_sha,target,host_platform,host_arch,binary_sha256,bun_version,package_sha256,paths,steps,failures" +
-    (schema === "kizuki.artifact-proof/v2" ? ",host_kernel_release,engine_observations" : ""));
+    (schema !== "kizuki.artifact-proof/v1" ? ",host_kernel_release,engine_observations" : "") +
+    (schema === "kizuki.artifact-proof/v3" ? ",distribution_identity" : ""));
   const target = releaseTarget(expected.target);
   if (digest(row.source_sha, 40) !== expected.source_sha || row.target !== target.target || row.host_platform !== target.platform || row.host_arch !== target.arch || text(row.bun_version, 64) !== expected.bun_version || digest(row.binary_sha256) !== expected.package_sha256.kizuki) reject("proof-identity-mismatch");
-  const hashes = exact(row.package_sha256, ARTIFACT_PACKAGE_FILES.join());
-  for (const name of ARTIFACT_PACKAGE_FILES) if (digest(hashes[name]) !== expected.package_sha256[name]) reject("proof-package-mismatch");
+  if (expected.build && (expected.build.source_sha !== expected.source_sha || expected.build.target !== expected.target || expected.build.bun_version !== expected.bun_version)) reject("proof-build-identity-mismatch");
+  const files = schema === "kizuki.artifact-proof/v3" ? CURRENT_PACKAGE_FILES : LEGACY_PACKAGE_FILES;
+  if (schema === "kizuki.artifact-proof/v3") {
+    if (!expected.build || parseBuildInfoValue(expected.build).schema !== "kizuki.release-build/v2" || expected.build.schema !== "kizuki.release-build/v2") reject("proof-build-version-mismatch");
+    const identity = exact(row.distribution_identity, "build_schema,inventory_sha256"), wanted = distributionIdentity(expected.build.distribution);
+    if (identity.build_schema !== wanted.build_schema || digest(identity.inventory_sha256) !== wanted.inventory_sha256) reject("proof-distribution-mismatch");
+  } else if (expected.build?.schema === "kizuki.release-build/v2") reject("proof-build-version-mismatch");
+  const hashes = exact(row.package_sha256, files.join());
+  for (const name of files) if (digest(hashes[name]) !== expected.package_sha256[name]) reject("proof-package-mismatch");
   if (!Array.isArray(row.failures) || row.failures.length !== 0) reject("proof-has-failures");
 
   let cliExit = 0;
   let engine: EngineQualification = { status: "MISSING", reason: "missing-engine-proof" };
-  if (schema === "kizuki.artifact-proof/v2") {
+  if (schema !== "kizuki.artifact-proof/v1") {
     const kernel = text(row.host_kernel_release, 256);
     if (kernel.trim() !== kernel || /[^\x20-\x7e]/.test(kernel)) reject("invalid-kernel-release");
     const observations = exact(row.engine_observations, "kizuki,kizuki_mcp");

@@ -1,12 +1,14 @@
 import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { checksumManifest, ensureReleaseDirectory, requireAbsent } from "./release-artifacts";
+import { checksumManifest, ensureReleaseDirectory, requireAbsent, CURRENT_PACKAGE_FILES, parseBuildInfo, verifyPackageDirectory } from "./release-artifacts";
+
+import { createPackageDistribution, BUN_DISTRIBUTION_PIN } from "./release-notices";
 
 import { selectedReleaseTarget } from "./release-targets";
 
 const root = resolve(import.meta.dir, "..");
 const pinnedBun = (await Bun.file(resolve(root, ".bun-version")).text()).trim();
-if (Bun.version !== pinnedBun) {
+if (Bun.version !== pinnedBun || Bun.revision !== BUN_DISTRIBUTION_PIN.revision) {
   throw new Error(`native builds require Bun ${pinnedBun}; current runtime is ${Bun.version}`);
 }
 const version = (await Bun.file(resolve(root, "packages/cli/package.json")).json() as {
@@ -46,6 +48,7 @@ const binaries = [
   { entrypoint: "packages/mcp/src/bin.ts", name: "kizuki-mcp" },
 ] as const;
 
+const metafiles: Partial<Record<"kizuki" | "kizuki-mcp", NonNullable<Awaited<ReturnType<typeof Bun.build>>["metafile"]>>> = {};
 let published = false;
 try {
   for (const binary of binaries) {
@@ -58,13 +61,18 @@ try {
         autoloadBunfig: false,
       },
       define: { KIZUKI_COMPILED: "true" },
+      metafile: true,
     });
-    if (!result.success) {
+    if (!result.success || !result.metafile) {
       throw new Error(`could not compile ${binary.name}: ${result.logs.join("\n")}`);
     }
+    metafiles[binary.name] = result.metafile;
   }
 
   requireBuildState();
+  const materials = createPackageDistribution(root, sourceSha, { kizuki: metafiles.kizuki!, "kizuki-mcp": metafiles["kizuki-mcp"]! });
+  writeFileSync(resolve(staging, "LICENSE"), materials.license);
+  writeFileSync(resolve(staging, "THIRD-PARTY-NOTICES.txt"), materials.notices);
   writeFileSync(
     resolve(staging, "README.txt"),
     [
@@ -73,6 +81,8 @@ try {
       "This local package contains Kizuki, its dependencies and the Bun runtime",
       `for ${selected.description}. It is an unsigned, unpublished candidate;`,
       "check BUILD.json against the accompanying exact-source native proof receipt.",
+      "LICENSE covers Kizuki; THIRD-PARTY-NOTICES.txt records bundled material",
+      "and unresolved notice/source information. Distribution has not been assessed.",
       "",
       "Verify the package files before running either executable:",
       `  ${selected.checksum_command}`,
@@ -121,15 +131,17 @@ try {
   writeFileSync(
     resolve(staging, "BUILD.json"),
     `${JSON.stringify({
-      schema: "kizuki.release-build/v1",
+      schema: "kizuki.release-build/v2",
       source_sha: sourceSha,
       target,
       bun_version: Bun.version,
+      distribution: materials.distribution,
     }, null, 2)}\n`,
     "utf8",
   );
-  const packaged = [...binaries.map(({ name }) => name), "README.txt", "BUILD.json"];
+  const packaged = CURRENT_PACKAGE_FILES.slice(0, -1);
   writeFileSync(resolve(staging, "SHA256SUMS"), checksumManifest(staging, packaged), "utf8");
+  verifyPackageDirectory(staging, parseBuildInfo(resolve(staging, "BUILD.json")));
   // The target was checked absent before staging. This rename publishes a complete package.
   requireBuildState();
   requireAbsent(output);

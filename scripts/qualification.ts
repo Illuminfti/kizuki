@@ -1,10 +1,11 @@
+import { packageFiles, packageFileLimit, verifyPackageDirectory } from "./release-artifacts";
 /** Explicit, one-shot fixture observation. This script never starts a daemon. */
 import { Database, SQLiteError } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, parse } from "node:path";
 import { parseBuildInfoValue } from "./stranger-proof";
-import { ARTIFACT_PACKAGE_FILES, ArtifactProofError, parseProofJson, validateArtifactProof } from "./artifact-proof";
+import { ArtifactProofError, parseProofJson, validateArtifactProof } from "./artifact-proof";
 import type { ArtifactPackageFile } from "./artifact-proof";
 import { evaluateQualification, qualificationDate, type QualificationProfile, type QualificationReceipt, type QualificationSample } from "../packages/core/src/serve/qualification";
 import { loadServeConfig } from "../packages/core/src/serve/config";
@@ -81,23 +82,24 @@ function anchor() {
 interface Identity { source_sha: string; binary_sha256: string; build_sha256: string; proof_sha256: string; target: string; }
 function verifyArtifact(artifact: string, proofPath: string): Identity {
   pathCheck(artifact);
-  const buildBytes = read(join(artifact, "BUILD.json"), 65536);
+  const buildBytes = read(join(artifact, "BUILD.json"), packageFileLimit("BUILD.json"));
+  const build = parseBuildInfoValue(parseProofJson(buildBytes)), names = packageFiles(build);
   const checksumBytes = read(join(artifact, "SHA256SUMS"), 65536);
-  const package_sha256 = {} as Record<ArtifactPackageFile, string>;
-  for (const name of ARTIFACT_PACKAGE_FILES) {
+  const package_sha256 = {} as Record<ArtifactPackageFile | "LICENSE" | "THIRD-PARTY-NOTICES.txt", string>;
+  for (const name of names) {
     const bytes = name === "BUILD.json" ? buildBytes : name === "SHA256SUMS" ? checksumBytes
-      : read(join(artifact, name), name === "README.txt" ? 65536 : 256 * 1024 * 1024);
+      : read(join(artifact, name), packageFileLimit(name, build));
     package_sha256[name] = hash(bytes);
   }
-  const checksums = ARTIFACT_PACKAGE_FILES.slice(0, -1).map(name => `${package_sha256[name]}  ${name}`).join("\n") + "\n";
+  const checksums = names.slice(0, -1).map(name => `${package_sha256[name]}  ${name}`).join("\n") + "\n";
   if (checksumBytes.toString() !== checksums) throw new Error("artifact checksum mismatch");
-  const build = parseBuildInfoValue(parseProofJson(buildBytes));
+  verifyPackageDirectory(artifact, build);
   const proofBytes = read(proofPath, 1024 * 1024);
   const validated = validateArtifactProof(parseProofJson(proofBytes), {
-    source_sha: build.source_sha, target: build.target, bun_version: build.bun_version, package_sha256,
+    source_sha: build.source_sha, target: build.target, bun_version: build.bun_version, package_sha256, build,
   });
   // Retained v1 journals keep their original identity and fixture-only scope.
-  if (validated.schema === "kizuki.artifact-proof/v2") {
+  if (validated.schema !== "kizuki.artifact-proof/v1") {
     if (build.bun_version !== SUPPORTED_BUN_VERSION) throw new ArtifactProofError("unsupported-package-bun-version");
     if (validated.engine.status !== "PASS") throw new ArtifactProofError(validated.engine.reason);
   }

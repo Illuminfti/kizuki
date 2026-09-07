@@ -368,3 +368,23 @@ test("native lifecycle mode cannot lose a host, source binding, supervisor gate 
     expect(validateWorkflowText(path, JSON.stringify(doc)).some(failure => failure.reason.includes("macOS proof"))).toBe(true);
   }
 });
+
+
+test("paired native qualification retains exactly the built package and both receipts", () => {
+  const path = ".github/workflows/macos-native.yml";
+  const current = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  expect(validateWorkflowText(path, current)).toEqual([]);
+  for (const missing of ["bun run smoke:release", 'bun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-native-artifact-proof"']) {
+    const doc = Bun.YAML.parse(current) as any;
+    doc.jobs["native-service"].steps[6].run = doc.jobs["native-service"].steps[6].run.replace(missing, "");
+    expect(validateWorkflowText(path, JSON.stringify(doc)).length).toBeGreaterThan(0);
+  }
+  for (const missing of ["dist/kizuki-*/bun-linux-x64-baseline/", "dist/kizuki-*/bun-darwin-arm64/", "${{ runner.temp }}/kizuki-native-artifact-proof/receipt.json", "${{ runner.temp }}/kizuki-native-service-lifecycle/receipt.json"]) {
+    const doc = Bun.YAML.parse(current) as any;
+    doc.jobs["native-service"].steps[8].with.path = doc.jobs["native-service"].steps[8].with.path.replace(missing, "");
+    expect(validateWorkflowText(path, JSON.stringify(doc)).length).toBeGreaterThan(0);
+  }
+  const doc = Bun.YAML.parse(current) as any;
+  doc.jobs["native-service"].steps[8].with.path += "\n${{ runner.temp }}/kizuki-native-artifact-proof/execution/";
+  expect(validateWorkflowText(path, JSON.stringify(doc)).length).toBeGreaterThan(0);
+});

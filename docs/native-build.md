@@ -20,9 +20,12 @@ sha256sum -c SHA256SUMS
 ./kizuki-mcp --vault ./vault --owner
 ```
 
-The package contains `kizuki`, `kizuki-mcp`, `README.txt`, `BUILD.json`, and
-`SHA256SUMS`. The checksum manifest covers the four package files. `BUILD.json`
-records the exact source SHA, target, and Bun runtime. The build refuses to
+New packages contain `kizuki`, `kizuki-mcp`, `README.txt`, `LICENSE`,
+`THIRD-PARTY-NOTICES.txt`, `BUILD.json`, and `SHA256SUMS`. The manifest hashes
+the preceding six files. Build V2 records source SHA, target, pinned Bun
+revision and material inventory from both actual compile graphs. Unresolved
+notice, embedded-asset and source information remains explicit; distribution
+has not been assessed. Legacy five-file Build V1 packages remain readable. The build refuses to
 overwrite an existing target and stages output before publishing it.
 
 `bun run smoke:release` exercises the built package with a synthetic vault. It
@@ -31,7 +34,7 @@ packet, one no-HTTP serve pass, and MCP initialization plus `tools/list`.
 
 `bun run proof:artifact -- --report /tmp/kizuki-artifact-proof` copies the
 checksummed package out of the checkout, uses a clean home and Kizuki config,
-and records a v2 receipt for init, the copied CLI and MCP SQLite identities,
+and records a v3 receipt for new packages (v2 for legacy packages) covering init, the copied CLI and MCP SQLite identities,
 import, query, context, export, and clean-target restore. Both child engine
 identities must agree with the exact qualification policy. See the
 [engine evidence contract](stranger-proof.md#effective-sqlite-engine-evidence).

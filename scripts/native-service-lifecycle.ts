@@ -5,14 +5,13 @@ import { join, resolve } from "node:path";
 import { installServeService, realSupervisorHost } from "../packages/core/src/serve/supervisor";
 import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS } from "../packages/core/src/serve/types";
 import { parseBuildInfo, parseProofArgs } from "./stranger-proof";
-import { requireRegularFile, verifyChecksumManifest } from "./release-artifacts";
+import { packageFiles, requireRegularFile, verifyPackageDirectory } from "./release-artifacts";
 import { releaseTarget, requireNativeHost } from "./release-targets";
 import { installedRailsHealth, readNativeRailDiagnostics, recordInstalledHealth, waitForFreshRails } from "./native-service-health";
 import { captureSyntheticServiceTrace } from "./native-service-trace";
 import { prepareLaunchctlDiagnostics, projectLaunchctlResult, syntheticServiceFileMetadata } from "./native-launchctl-diagnostics";
 
 const repository = resolve(import.meta.dir, "..");
-const packageFiles = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"] as const;
 const timeout = 30_000;
 const restartTimeout = (HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS + 15) * 1000;
 type CommandResult = { exit_code: number; stdout: string; stderr: string };
@@ -173,8 +172,9 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     exact();
     receipt.source_sha = sourceSha;
     requireRegularFile(join(args.artifact, "BUILD.json"));
-    verifyChecksumManifest(args.artifact, packageFiles);
     const build = parseBuildInfo(join(args.artifact, "BUILD.json"));
+    verifyPackageDirectory(args.artifact, build);
+    const names = packageFiles(build);
     requireNativeHost(releaseTarget(build.target));
     check(build.source_sha === sourceSha && build.bun_version === Bun.version, "package is not the exact native source candidate");
     receipt.target = build.target;
@@ -185,9 +185,9 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     mkdirSync(home, { mode: 0o700 });
     const copied = join(fixtureRoot, "installed package");
     cpSync(args.artifact, copied, { recursive: true, dereference: false, errorOnExist: true });
-    verifyChecksumManifest(copied, packageFiles);
+    verifyPackageDirectory(copied, build);
     executable = join(copied, "kizuki");
-    for (const name of [...packageFiles, "SHA256SUMS"]) {
+    for (const name of names) {
       receipt.package_sha256[name] = hash(join(copied, name));
       check(receipt.package_sha256[name] === hash(join(args.artifact, name)), "copied package identity changed");
     }
@@ -346,7 +346,7 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     cli("restore-stopped-vault", ["restore", "--from", exportPath, "--into", restored]);
     const restoredQuery = invoke([executable, "query", "Ada", "--degraded", "--vault", restored]);
     record("recovered-evidence-readable", restoredQuery.exit_code === 0 && restoredQuery.stdout.includes("observatory"), restoredQuery);
-    for (const name of [...packageFiles, "SHA256SUMS"]) check(hash(join(copied, name)) === receipt.package_sha256[name] && hash(join(args.artifact, name)) === receipt.package_sha256[name], "package changed during lifecycle proof");
+    for (const name of names) check(hash(join(copied, name)) === receipt.package_sha256[name] && hash(join(args.artifact, name)) === receipt.package_sha256[name], "package changed during lifecycle proof");
     exact();
     receipt.passed = failures.length === 0 && steps.every(step => step.passed);
   } catch (error) {

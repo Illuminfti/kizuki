@@ -229,9 +229,9 @@ function hasNativeLifecycleProof(job: unknown): boolean {
     isBareCommand(steps[3], "bun scripts/ci-diff-check.ts") &&
     isBareCommand(steps[4], "bun install --frozen-lockfile\n" + CANONICAL_NATIVE_TMPDIR + "\nbun run typecheck\nbun test scripts/native-service-lifecycle.test.ts\n" + NATIVE_CONSUMER_TESTS) &&
     isConditionedCommand(steps[5], 'sudo systemctl start "user@$(id -u).service"\nprintf \'XDG_RUNTIME_DIR=/run/user/%s\\n\' "$(id -u)" >> "$GITHUB_ENV"\nprintf \'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus\\n\' "$(id -u)" >> "$GITHUB_ENV"', "${{ runner.os == 'Linux' }}") &&
-    isBareCommand(steps[6], "bun run build:release") &&
+    isBareCommand(steps[6], 'bun run build:release\nbun run smoke:release\nbun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-native-artifact-proof"') &&
     isBareCommand(steps[7], 'bun scripts/native-service-lifecycle.ts --report "$RUNNER_TEMP/kizuki-native-service-lifecycle"') &&
-    isNativeArtifactUpload(steps[8], "native-service-lifecycle-${{ matrix.os }}-${{ github.sha }}", "${{ runner.temp }}/kizuki-native-service-lifecycle/receipt.json", "${{ !cancelled() }}");
+    isNativeArtifactUpload(steps[8], "native-service-lifecycle-${{ matrix.os }}-${{ github.sha }}", "dist/kizuki-*/bun-linux-x64-baseline/\ndist/kizuki-*/bun-darwin-arm64/\n${{ runner.temp }}/kizuki-native-artifact-proof/receipt.json\n${{ runner.temp }}/kizuki-native-service-lifecycle/receipt.json", "${{ !cancelled() }}");
 }
 
 function hasLinuxNativeProof(document: Record<string, unknown>, job: Record<string, unknown>): boolean {

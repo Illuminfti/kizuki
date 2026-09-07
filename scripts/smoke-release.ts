@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { verifyChecksumManifest } from "./release-artifacts";
+import { verifyPackageDirectory } from "./release-artifacts";
 
 import { selectedReleaseTarget } from "./release-targets";
 import { parseBuildInfo } from "./stranger-proof";
@@ -21,7 +21,7 @@ for (const required of [cli, mcp, join(release, "SHA256SUMS"), join(release, "RE
 
 const build = parseBuildInfo(join(release, "BUILD.json"));
 if (build.target !== target.target || build.bun_version !== Bun.version) throw new Error("artifact target or Bun version mismatch");
-verifyChecksumManifest(release, ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"]);
+verifyPackageDirectory(release, build);
 
 function run(command: string, args: string[], env: Record<string, string>): string {
   const result = Bun.spawnSync([command, ...args], { env, stderr: "pipe", stdout: "pipe", timeout: 30_000 });
@@ -153,7 +153,7 @@ try {
   if ((await session.exited) !== 0) throw new Error(`MCP smoke failed: ${stderr}`);
   if (!output.includes('"tools"')) throw new Error("MCP tools/list did not respond");
 
-  verifyChecksumManifest(release, ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"]);
+  verifyPackageDirectory(release, build);
   process.stdout.write(`release smoke passed: ${release}\n`);
 } finally {
   rmSync(rootTemp, { force: true, recursive: true });

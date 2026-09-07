@@ -16,6 +16,9 @@ import { initVault } from "../packages/core/src/vault/init";
 import { openLedger } from "../packages/core/src/ledger/db";
 import { initServe } from "../packages/core/src/serve/schema";
 import { artifactProofSteps, SQLITE_ENGINE_POLICY } from "./artifact-proof";
+import { writePackageFixture } from "./release-package-fixture";
+import { CURRENT_PACKAGE_FILES } from "./release-artifacts";
+import { distributionIdentity } from "./release-notices";
 import type { SqliteRuntime } from "../packages/core/src/ledger/runtime";
 
 const roots: string[] = [];
@@ -839,4 +842,37 @@ test("v3 refuses extra keys and more than forty gate receipts", () => {
   const overflow = evaluateRelease("rc", f.indexPath);
   expect(gate(overflow, "evidence.index").status).toBe("FAIL");
   expect(gate(overflow, `artifact.${target}`).status).toBe("MISSING");
+});
+
+
+function materialFixture(complete = false) {
+  const f = engineFixture(), build = writePackageFixture(f.artifact, source, target, complete);
+  const hashes = Object.fromEntries(CURRENT_PACKAGE_FILES.map(name => [name, digest(readFileSync(join(f.artifact, name)))]));
+  Object.assign(f.receipt, { schema: "kizuki.artifact-proof/v3", package_sha256: hashes, binary_sha256: hashes.kizuki, distribution_identity: distributionIdentity(build.distribution) });
+  f.receipt.engine_observations.kizuki.executable_sha256 = hashes.kizuki!;
+  f.receipt.engine_observations.kizuki_mcp.executable_sha256 = hashes["kizuki-mcp"]!;
+  f.ref.producer = "kizuki.artifact-proof/v3"; Object.assign(f.index, { schema: "kizuki.acceptance-evidence/v4", gate_receipts: [] }); f.save();
+  return { ...f, build };
+}
+test.each([false, true])("v4 accepts v3 material integrity complete=%s without promoting release GO", complete => {
+  const f = materialFixture(complete), result = evaluateRelease("rc", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, `artifact.${target}`).status).toBe("PASS");
+  expect(gate(result, `engine.${target}`).status).toBe("PASS");
+  expect(result.decision).toBe("NO-GO");
+});
+test.each(["v1", "v2", "v3"])("old index %s never admits v3 producer", version => {
+  const f = materialFixture(); f.index.schema = `kizuki.acceptance-evidence/${version}`;
+  if (version !== "v3") delete (f.index as any).gate_receipts;
+  f.save(); const result = evaluateRelease("rc", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("FAIL");
+  expect(gate(result, `artifact.${target}`).status).toBe("MISSING");
+});
+test.each(["notice", "inventory", "extra-member", "missing-license"])("v4 package refuses %s mutation despite rehashed proof reference", mutation => {
+  const f = materialFixture();
+  if (mutation === "notice") writeFileSync(join(f.artifact, "THIRD-PARTY-NOTICES.txt"), "changed bytes");
+  if (mutation === "inventory") { f.build.distribution.components[0]!.declared_license = "changed"; writeFileSync(join(f.artifact, "BUILD.json"), JSON.stringify(f.build)); }
+  if (mutation === "extra-member") writeFileSync(join(f.artifact, "extra"), "unexpected");
+  if (mutation === "missing-license") rmSync(join(f.artifact, "LICENSE"));
+  f.save(); expect(gate(evaluateRelease("rc", f.indexPath), `artifact.${target}`).status).toBe("FAIL");
 });
