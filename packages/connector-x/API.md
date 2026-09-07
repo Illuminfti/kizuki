@@ -1,13 +1,27 @@
 # X owned-post API connector
 
-Evidence date: 2026-09-05. This implementation captures the authenticated
+Evidence date: 2026-09-07. This implementation captures the authenticated
 account's own posts through the official API. Offline tests exercise the actual
 wire parser, core OAuth helper, host state store, and ledger. Provider enrollment,
 paid access, the deployed API dialect, and provider deletion coverage have not
 been qualified against a real account. The API connector is an explicit package
-subpath and is not registered in the native CLI.
+subpath and is registered as `kizuki.x` in the native CLI. Registration does not
+establish real-account qualification.
 
 ## Scope and enrollment
+
+The CLI owns browser sign-in, the fixed loopback listener and protected state
+persistence. Configure the registered public native-app client ID in
+`KIZUKI_X_CLIENT_ID` and its exact `http://127.0.0.1:PORT/callback` in
+`KIZUKI_X_REDIRECT_URI`. An eligible application, provider usage credits and a
+supported desktop browser are prerequisites; no client secret is embedded.
+
+```sh
+kizuki connect x-api --fields relationships,links,media --history-start 2026-01-01T00:00:00Z
+```
+
+Enrollment does not capture history or grant source consent. The programmatic
+host contract below remains separate from the CLI's handling of that state.
 
 Import `createXApiConnector` from `@kizuki/connector-x/api`. The trusted host must
 supply `client_id`, an owner-controlled `secret_ref`, an explicit selection, and
@@ -41,7 +55,7 @@ injected trusted `OAuthTransport`: the default core ephemeral loopback listener
 has not been qualified against the provider's exact registered callback rule.
 A failed sign-in cannot silently register an application or obtain paid access.
 
-This connector advertises contract minor 2 and requires the trusted host's
+This connector advertises contract minor 3 and requires the trusted host's
 explicit third `signIn` argument. Core `enrollConnection` supplies `{ mode: "new" }`;
 `ConnectionStateStore.replace` supplies `{ mode: "replace", previous_state }`
 with copied prior bytes. Direct context-less calls refuse before any egress.

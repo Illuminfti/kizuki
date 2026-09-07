@@ -44,6 +44,7 @@ These ids match `defaultConnectorRegistry.ids()` on this revision.
 | `kizuki.markdown-folder` | A folder of Markdown files, rescanned each run                                                        | Live source       |
 | `kizuki.screenpipe`      | A local screenpipe SQLite database, read-only and offline (see that package's README before using it) | Live local source |
 | `kizuki.telegram`        | Native Telegram user sign-in; accessible dialogs. Project app credentials required; live-account qualification unrun | Bounded live source |
+| `kizuki.x`               | Read-only owner posts through the X API; configured native app and usage credits required; live-account qualification unrun | Bounded live source |
 
 In the examples below, `kizuki` stands for `bun packages/cli/src/main.ts` run
 from the tree, as in the repository README.
@@ -340,14 +341,21 @@ bytes, infers deletion from absence, or contacts X.
 Likes are not inspected. Bookmarks, direct messages, ZIP input, live sync, and
 X API access are not supported by this bounded importer.
 
+## X API
+
+The separate `kizuki.x` connector is registered for native CLI enrollment and
+read-only capture of the authenticated account's own posts. The CLI owns
+browser sign-in, the configured fixed loopback callback and protected OAuth
+state; source consent is a separate step. See the [X API guide](../connector-x/API.md)
+for the enrollment command and prerequisites. Provider enrollment, paid access,
+API compatibility and deletion coverage remain unqualified against a real
+account. The local archive importer above does not supply that qualification.
+
 ## Not here, deliberately
 
 - Live sync of WhatsApp, Pocket, or Omnivore. There is no sanctioned personal
   API for any of the three: the first has none for personal history, and the
   other two are closed services.
-- Live X sync and X API access. This package registers only the bounded local
-  archive slice described above. `@kizuki/connector-x/api` exists as an
-  unregistered package subpath and is not CLI-enrollable.
 - WHOOP. `@kizuki/connector-whoop` exists as a synthetic-tested component and
   is not registered here. Native enrollment, live-account qualification, and
   provider OAuth compatibility are unrun. Local desktop custody of a WHOOP

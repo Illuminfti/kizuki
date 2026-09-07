@@ -31,5 +31,7 @@ future streaming importer.
 
 An additional, explicitly constructed owned-post API connector is available at
 [`@kizuki/connector-x/api`](./API.md). It has separate state and a separate
-connector identity. Its provider enrollment and deletion coverage remain
-unqualified; it is not registered as a native CLI connection.
+connector identity, `kizuki.x`, registered for native CLI enrollment. Its
+provider enrollment, paid access, API compatibility and deletion coverage remain
+unqualified against a real account. The archive importer does not establish
+that qualification.
