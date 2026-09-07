@@ -30,6 +30,15 @@ const BLOCK = 512;
 const RAW_LIMIT = CURRENT_PACKAGE_FILES.reduce((sum, name) => sum + BLOCK + Math.ceil(packageFileLimit(name) / BLOCK) * BLOCK, 1024);
 export const DOWNLOAD_LIMITS = { archive: RAW_LIMIT + 1_048_576, unpacked: RAW_LIMIT, manifest: 65_536, proof: 1_048_576 } as const;
 const GZIP_HEADER = Buffer.from("1f8b0800000000000203", "hex");
+function canonicalGzip(bytes: Buffer): Buffer {
+  const compressed = gzipSync(bytes, { level: 9 });
+  // RFC 1952's OS byte describes the compressor host, not the payload.
+  // Preserve the fixed no-extra-fields header and encode Unix consistently
+  // for both supported native hosts; never normalize an incoming archive.
+  requireValue(compressed.length >= 18 && compressed.subarray(0, 9).equals(GZIP_HEADER.subarray(0, 9)), "encoder_header");
+  compressed[9] = GZIP_HEADER[9]!;
+  return compressed;
+}
 function requireValue(value: unknown, reason: string): asserts value { if (!value) throw new Error(`release_download_${reason}`); }
 function count(value: unknown, limit: number): number { requireValue(typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= limit, "size"); return value; }
 function fileIdentity(value: unknown, limit: number): FileIdentity { const row = exact(value, "bytes,sha256"); return { bytes: count(row.bytes, limit), sha256: digest(row.sha256) }; }
@@ -60,7 +69,7 @@ export function createPackageArchive(files: PackageContents): Buffer {
   const blocks: Buffer[] = [];
   for (const name of CURRENT_PACKAGE_FILES) blocks.push(header(name, files[name].length), files[name], Buffer.alloc((BLOCK - files[name].length % BLOCK) % BLOCK));
   blocks.push(Buffer.alloc(BLOCK * 2));
-  return gzipSync(Buffer.concat(blocks), { level: 9 });
+  return canonicalGzip(Buffer.concat(blocks));
 }
 /** No extraction occurs. Unknown tar/gzip representations fail before publication. */
 export function parsePackageArchive(archive: Uint8Array, source?: string): { files: PackageContents; build: CurrentBuild } {
@@ -74,7 +83,7 @@ export function parsePackageArchive(archive: Uint8Array, source?: string): { fil
   requireValue(tar.length === announced && tar.length <= RAW_LIMIT, "unpacked_size");
   // Gunzip accepts concatenated members and some trailing data. Re-encoding the
   // exact canonical representation closes those otherwise ambiguous inputs.
-  requireValue(gzipSync(tar, { level: 9 }).equals(bytes), "gzip_noncanonical");
+  requireValue(canonicalGzip(tar).equals(bytes), "gzip_noncanonical");
   const entries: [PackageFile, Buffer][] = []; let offset = 0;
   for (const name of CURRENT_PACKAGE_FILES) {
     requireValue(offset + BLOCK <= tar.length, "tar_truncated");

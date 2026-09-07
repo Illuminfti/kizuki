@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { gzipSync, gunzipSync } from "node:zlib";
+import * as zlib from "node:zlib";
 import { artifactProofSteps, SQLITE_ENGINE_POLICY } from "./artifact-proof";
 import { checksumManifest, CURRENT_PACKAGE_FILES, type PackageFile } from "./release-artifacts";
 import { distributionIdentity } from "./release-notices";
@@ -33,7 +34,8 @@ function fixture(target = "bun-linux-x64-baseline", complete = false) {
 }
 function prepare(f: ReturnType<typeof fixture>) { return prepareReleaseDownload({ source_sha: f.build.source_sha, packages: [{ directory: f.packageDir, proof: f.proofFile }], output: f.output }); }
 function changedArchive(change: (tar: Buffer) => Buffer | void) {
-  const f = fixture(), tar = gunzipSync(createPackageArchive(f.files)); return gzipSync(change(tar) ?? tar, { level: 9 });
+  const f = fixture(), tar = gunzipSync(createPackageArchive(f.files)), archive = gzipSync(change(tar) ?? tar, { level: 9 });
+  archive[9] = 3; return archive;
 }
 function refreshHeader(tar: Buffer, offset = 0) { tar.fill(32, offset + 148, offset + 156); const sum = [...tar.subarray(offset, offset + 512)].reduce((n, b) => n + b, 0); tar.write(sum.toString(8).padStart(6, "0") + "\0 ", offset + 148, 8, "ascii"); }
 
@@ -41,6 +43,28 @@ test("canonical current package roundtrip is deterministic and byte exact", () =
   const f = fixture(), first = createPackageArchive(f.files), second = createPackageArchive(f.files), parsed = parsePackageArchive(first, f.build.source_sha);
   expect(first.equals(second)).toBe(true); expect(parsed.build).toEqual(f.build);
   for (const name of CURRENT_PACKAGE_FILES) expect(parsed.files[name].equals(f.files[name])).toBe(true);
+});
+test("compressor host metadata is canonicalized while foreign input headers are refused", () => {
+  const f = fixture(), original = zlib.gzipSync, wanted = createPackageArchive(f.files);
+  console.log(JSON.stringify({ schema: "kizuki.gzip-encoder-observation/v1", platform: process.platform,
+    bun_version: Bun.version, raw_header: original(Buffer.from("synthetic gzip fixture"), { level: 9 }).subarray(0, 10).toString("hex") }));
+  for (const os of [3, 19, 255]) {
+    const encoder = spyOn(zlib, "gzipSync").mockImplementation((...args: Parameters<typeof gzipSync>) => {
+      const bytes = original(...args); bytes[9] = os; return bytes;
+    });
+    try {
+      const archive = createPackageArchive(f.files);
+      expect(archive.equals(wanted)).toBe(true);
+      expect(parsePackageArchive(archive).build).toEqual(f.build);
+    } finally { encoder.mockRestore(); }
+  }
+  const foreign = Buffer.from(wanted); foreign[9] = 19;
+  expect(() => parsePackageArchive(foreign)).toThrow("release_download_gzip_header");
+  const encoder = spyOn(zlib, "gzipSync").mockImplementation((...args: Parameters<typeof gzipSync>) => {
+    const bytes = original(...args); bytes[3] = 4; return bytes;
+  });
+  try { expect(() => createPackageArchive(f.files)).toThrow("release_download_encoder_header"); }
+  finally { encoder.mockRestore(); }
 });
 for (const [name, mutate] of [
   ["traversal", (tar: Buffer) => { tar.fill(0, 0, 100); tar.write("../kizuki"); refreshHeader(tar); }],

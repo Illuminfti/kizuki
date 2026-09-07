@@ -35,7 +35,10 @@ this order: `kizuki`, `kizuki-mcp`, `README.txt`, `LICENSE`,
 `THIRD-PARTY-NOTICES.txt`, `BUILD.json`, `SHA256SUMS`. Executable archive modes
 are 0755; text modes are 0644. All uid/gid and timestamps are zero. The archive
 uses a closed ustar header representation, exactly two terminal zero blocks and
-a canonical level-nine gzip stream. The parser rejects other archive
+a canonical level-nine gzip stream. The encoder fixes the gzip OS byte to Unix
+on both native hosts; the [gzip format](https://www.rfc-editor.org/rfc/rfc1952)
+defines that byte as compressor metadata. Incoming headers remain strict and
+are never rewritten. The parser rejects other archive
 representations, including links, traversal names, duplicates, extensions,
 extra padding or concatenated gzip members. Input and decompressed sizes are
 bounded by the existing package-member limits. No archive is extracted during
