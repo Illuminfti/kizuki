@@ -299,6 +299,42 @@ test("same successful native matrix attempt binds both digests and leaves lifecy
   expect(result.targets.every(row => row.bytes.lifecycle.release_credit === false)).toBe(true);
 });
 
+test.each([0, 1])("native target %s binds artifact timestamps finalized after the upload step but within the same job", async index => {
+  const f = nativeFixture();
+  // Observed API shape: upload step ends at :14, artifact backend records :15,
+  // and the same native job completes at :18. No arbitrary clock slack is used.
+  const upload = f.nativeJobs[index]!.steps.find(step => step.name === "retain lifecycle receipt even when a native gate fails")!;
+  upload.completed_at = "2026-09-07T00:05:14Z";
+  f.artifacts[index].created_at = "2026-09-07T00:05:15Z";
+  f.artifacts[index].updated_at = "2026-09-07T00:05:15Z";
+  f.nativeJobs[index]!.completed_at = "2026-09-07T00:05:18Z";
+  const result = await inspectGithubNativeArtifacts(f.get, f.download, SHA, f.text, "1.3.14", f.output);
+  expect(result.status).toBe("PASS"); expect(result.targets).toHaveLength(2); expect(f.downloads()).toBe(2);
+  expect(result.targets[index]!.job.upload_completed_at).toBe("2026-09-07T00:05:14Z");
+  expect(result.targets[index]!.artifact.created_at).toBe("2026-09-07T00:05:15Z");
+});
+
+test("native artifact time bounds include upload start and the same job completion", async () => {
+  const f = nativeFixture();
+  f.artifacts[0].created_at = "2026-09-07T00:05:00Z";
+  f.artifacts[0].updated_at = "2026-09-07T00:06:00Z";
+  const result = await inspectGithubNativeArtifacts(f.get, f.download, SHA, f.text, "1.3.14", f.output);
+  expect(result.status).toBe("PASS"); expect(result.targets).toHaveLength(2);
+});
+
+test.each(["before-upload", "created-after-job", "updated-after-job", "updated-before-created"])("native artifact timestamp refuses %s before downloading bytes", async mode => {
+  const f = nativeFixture();
+  if (mode === "before-upload") f.artifacts[0].created_at = "2026-09-07T00:04:59Z";
+  if (mode === "created-after-job") {
+    f.artifacts[0].created_at = "2026-09-07T00:06:01Z";
+    f.artifacts[0].updated_at = "2026-09-07T00:06:01Z";
+  }
+  if (mode === "updated-after-job") f.artifacts[0].updated_at = "2026-09-07T00:06:01Z";
+  if (mode === "updated-before-created") f.artifacts[0].updated_at = "2026-09-07T00:05:00Z";
+  await expect(inspectGithubNativeArtifacts(f.get, f.download, SHA, f.text, "1.3.14", f.output)).rejects.toThrow("github-artifact-attempt-unbound");
+  expect(f.downloads()).toBe(0);
+});
+
 function indexedNativeReport(output: string, targets: Awaited<ReturnType<typeof inspectGithubNativeArtifacts>>["targets"]) {
   const index = join(output, "index.json");
   writeFileSync(index, JSON.stringify({ schema: "kizuki.acceptance-evidence/v4", candidate_source_sha: SHA, fixture_observation: null, gate_receipts: [],

@@ -311,8 +311,10 @@ export async function inspectGithubNativeArtifacts(get: GetJson, download: (endp
     if (raw.length !== 1) reject("github-native-job-mismatch");
     const host = nativeJob(raw[0], selected, expectedJob, target.os);
     const retained = artifacts.find(row => row.name === `native-service-lifecycle-${target.os}-${candidate}`);
-    if (!retained || Date.parse(retained.created_at) < Date.parse(host.upload_started_at) || Date.parse(retained.created_at) > Date.parse(host.upload_completed_at) ||
-        Date.parse(retained.updated_at) > Date.parse(host.upload_completed_at) || Date.parse(retained.updated_at) < Date.parse(retained.created_at)) reject("github-artifact-attempt-unbound");
+    // Artifact backend timestamps can follow the action's recorded step end.
+    // Bind them to this successful upload's start and the same attempt job's end.
+    if (!retained || Date.parse(retained.created_at) < Date.parse(host.upload_started_at) || Date.parse(retained.created_at) > Date.parse(host.completed_at) ||
+        Date.parse(retained.updated_at) > Date.parse(host.completed_at) || Date.parse(retained.updated_at) < Date.parse(retained.created_at)) reject("github-artifact-attempt-unbound");
     const body = await download(`${prefix}/actions/artifacts/${retained.id}/zip`);
     if (body.length !== retained.size_in_bytes || `sha256:${hash(body)}` !== retained.digest) reject("github-artifact-digest-mismatch");
     const archive = join(output, `${target.target}.zip`);

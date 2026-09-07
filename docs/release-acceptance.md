@@ -86,10 +86,13 @@ collector, and otherwise leaves native evidence unverifiable.
 
 Both exact hosted matrix jobs, authored step results,
 artifact names, repository/run/source identities and API archive digests must
-match. Each artifact's creation time must fall within that attempt's successful
-upload step. Jobs, artifacts and attempts are reread after download; CI is checked
-again before credit. The archive must contain exactly the seven current package
-files, the current artifact proof and the retained lifecycle diagnostic. Bounded
+match. Each artifact's creation and update times must be ordered and fall between
+that attempt's successful upload-step start and the same native job's completion.
+Artifact backend timestamps can follow the action's recorded step end; no fixed
+clock tolerance is added. Jobs, artifacts and attempts are reread after download;
+CI is checked again before credit. The archive must contain exactly the seven
+current package files, the current artifact proof and the retained lifecycle
+diagnostic. Bounded
 archive inspection rejects links, paths outside that inventory, duplicates,
 truncation and oversized files, then applies the current package/proof parsers.
 
