@@ -2,6 +2,7 @@ import { rebuildRetrieval } from "@kizuki/core";
 import { parseArguments, UsageError } from "../args";
 import { withVault } from "../context";
 import { jsonEnvelope } from "../output";
+import { refreshDerived } from "../derived";
 import type { Command } from "./index";
 
 export const rebuildCommand: Command = {
@@ -15,6 +16,7 @@ export const rebuildCommand: Command = {
     }
     return withVault(io, async ctx => {
       const result = await rebuildRetrieval(ctx.db, ctx.vaultPath, ctx.retrieval);
+      refreshDerived(ctx.db, ctx.vaultPath);
       io.out(parsed.flags.has("--json") ? jsonEnvelope("rebuild", "ok", result)
         : `rebuilt=${result.documents} backend=${result.backend} store=${result.store} floor_documents=${result.floor_documents} generation=${result.generation}`);
       return 0;
