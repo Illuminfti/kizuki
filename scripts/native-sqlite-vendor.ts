@@ -88,7 +88,7 @@ export function captureNativeSqliteVendor() {
       const remaining = Math.floor(deadline - performance.now());
       if (remaining <= 0) refuse("vendor-command-timeout");
       const result = spawnSync(command[0]!, command.slice(1), { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
-        timeout: Math.min(5000, remaining), maxBuffer: OUTPUT_LIMIT,
+        timeout: Math.min(5000, remaining), killSignal: "SIGKILL", maxBuffer: OUTPUT_LIMIT,
         env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" } });
       const code = (result.error as NodeJS.ErrnoException | undefined)?.code;
       return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "",
