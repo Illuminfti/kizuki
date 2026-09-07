@@ -25,7 +25,8 @@ export function assertPageRelPath(relPath: string): void {
   }
   for (const [index, segment] of segments.entries()) {
     const limit = index === segments.length - 1 ? MAX_SEGMENT_LENGTH + 3 : MAX_SEGMENT_LENGTH;
-    if (segment.length > limit || !PATH_SEGMENT.test(segment)) {
+    const nestedControlName = index > 0 && index < segments.length - 1 && segment === ".kizuki";
+    if (segment.length > limit || (!nestedControlName && !PATH_SEGMENT.test(segment))) {
       throw new CanonWriteError("target_invalid", "decision names an unusable page path");
     }
   }

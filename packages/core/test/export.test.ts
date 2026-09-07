@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   BACKUP_SCHEMA,
   exportVault,
@@ -1267,13 +1267,16 @@ describe("restoreVault", () => {
     db.close();
   });
 
-  test("refuses a backup that plants the control directory", () => {
-    for (const plantedName of [".kizuki", ".Kizuki"] as const) {
+  test.each([
+    ".kizuki/vault-id", ".Kizuki/vault-id", "facts/.Kizuki/vault-id",
+    "facts/.hidden/.kizuki/vault-id", "facts/.kizuki", "facts/.kizuki/.hidden.md",
+  ])(
+    "refuses a backup that plants a forbidden control path at %s", (plantedName) => {
       const { db, vaultPath } = populated();
       const backup = join(temporary("kizuki-export-parent-"), "dump");
       const manifest = exportVault(db, vaultPath, backup);
-      const planted = join(backup, "vault", plantedName, "vault-id");
-      mkdirSync(join(backup, "vault", plantedName), { recursive: true, mode: 0o700 });
+      const planted = join(backup, "vault", plantedName);
+      mkdirSync(dirname(planted), { recursive: true, mode: 0o700 });
       writeFileSync(planted, "01plantedvaultid000000000001\n");
       chmodSync(planted, 0o600);
       const bytes = readFileSync(planted);
@@ -1281,7 +1284,7 @@ describe("restoreVault", () => {
         ...manifest,
         files: {
           ...manifest.files,
-          [`vault/${plantedName}/vault-id`]: {
+          [`vault/${plantedName}`]: {
             count: 1,
             sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
             size: bytes.byteLength,
@@ -1294,8 +1297,8 @@ describe("restoreVault", () => {
       expect(() => restoreVault(backup, target)).toThrow(/control directory/);
       expect(existsSync(join(target, ".kizuki"))).toBe(false);
       db.close();
-    }
-  });
+    },
+  );
 
   test("refuses a vault path that would escape the restore target", () => {
     const { db, vaultPath } = populated();

@@ -71,9 +71,11 @@ test("doctor diagnoses every nested page while preserving root doctrine and arch
   const eventId = putEvent(db);
   db.close();
   mkdirSync(join(setup.vault, "facts", "archive"));
+  mkdirSync(join(setup.vault, "facts", ".kizuki"));
   const missing = page("nested-canon", []);
   delete missing["sources"];
   const files = [
+    seed(setup.vault, ".kizuki/item", page("nested-control-name", [])),
     seed(setup.vault, "CANON", missing),
     seed(setup.vault, "SCHEMA", page("nested-schema", [])),
     seed(setup.vault, "archive/item", page("nested-archive", [eventId, "synthetic-unresolved-nested-event"])),
@@ -93,6 +95,7 @@ test("doctor diagnoses every nested page while preserving root doctrine and arch
   expect(report.status).toBe("error");
   expect(report.data.ok).toBe(false);
   expect(report.data.problems.filter((item: { error: string }) => item.error.includes("sources:"))).toEqual([
+    { page: "facts/.kizuki/item.md", error: "sources: must name at least one event unless archived" },
     { page: "facts/CANON.md", error: "sources: is required" },
     { page: "facts/SCHEMA.md", error: "sources: must name at least one event unless archived" },
     { page: "facts/archive/item.md", error: "sources: one or more event IDs do not resolve in the ledger" },

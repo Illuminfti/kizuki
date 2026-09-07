@@ -67,8 +67,9 @@ interface TargetFault {
 function targetFault(target: string): TargetFault | null {
   const segments = target.split(/[:/]/);
   if (segments.length > MAX_SEGMENTS) return { rule: SEGMENT_COUNT_RULE };
-  for (const segment of segments) {
-    if (segment.length > MAX_SEGMENT_LENGTH || !PATH_SEGMENT.test(segment)) {
+  for (const [index, segment] of segments.entries()) {
+    const nestedControlName = index > 0 && index < segments.length - 1 && segment === ".kizuki";
+    if (segment.length > MAX_SEGMENT_LENGTH || (!nestedControlName && !PATH_SEGMENT.test(segment))) {
       // Bounded: a segment is refused precisely because it broke the length
       // and character rules, so it can be arbitrary text of arbitrary length.
       return { rule: SEGMENT_RULE, segment: segment.slice(0, MAX_SEGMENT_LENGTH) };

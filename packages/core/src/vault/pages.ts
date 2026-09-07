@@ -203,7 +203,7 @@ function walk(state: WalkState, directory: string, vaultPath: string, depth: num
 
   for (const entry of entries) {
     if (state.truncated) return;
-    if (entry.name === ".kizuki" || (depth === 0 && entry.name === "archive")) continue;
+    if (depth === 0 && (entry.name === ".kizuki" || entry.name === "archive")) continue;
     const target = join(directory, entry.name);
     const relPath = relative(vaultPath, target).split(sep).join("/");
     if (entry.isSymbolicLink()) {

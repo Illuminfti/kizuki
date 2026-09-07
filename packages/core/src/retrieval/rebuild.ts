@@ -30,9 +30,10 @@ function boundCanon(vaultPath: string): void {
   let bytes = 0;
   const pending = [vaultPath];
   while (pending.length > 0) {
-    for (const entry of readdirSync(pending.pop()!, { withFileTypes: true })) {
+    const directory = pending.pop()!;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
       if (++entries > MAX_REBUILD_RECORDS * 2) tooLarge();
-      if (entry.name === ".kizuki" || entry.name === "archive") continue;
+      if (directory === vaultPath && (entry.name === ".kizuki" || entry.name === "archive")) continue;
       const path = join(entry.parentPath, entry.name);
       if (entry.isSymbolicLink()) {
         throw new PortError("config_invalid", "rebuild refuses linked canon entries", false);

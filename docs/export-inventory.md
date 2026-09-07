@@ -15,11 +15,16 @@ The selected files are:
   filenames remain supported; init's default directories are not an allowlist.
   A nested path such as `projects/archive/note.md` remains ordinary canon.
   Validated nested `CANON.md` and `SCHEMA.md` pages are ordinary canon too.
+  The exact directory name `.kizuki` below an ordinary content directory,
+  such as `facts/.kizuki/note.md`, is also ordinary canon. Discovery, retrieval,
+  the receipted writer, undo and export/restore use this same exception.
+  Only vault-root `.kizuki/`, `archive/`, `CANON.md` and `SCHEMA.md` have their
+  special control, history or doctrine roles.
 - Prior revisions in root `archive/` justified by canon receipt paths and hashes, including the
   modern encoded archive name and legacy `.prev-` names used by undo. Unavailable
   explicit archive references are counted in the inventory.
 
-Hidden entries, the control directory, Git contents, links, special files,
+Other hidden entries, the root control directory, Git contents, links, special files,
 recognized backup containers and unclassified files are excluded. Exclusion
 counts describe entries at the point a walk excludes them; they do not count
 every descendant of a skipped directory or disclose those descendants' names.

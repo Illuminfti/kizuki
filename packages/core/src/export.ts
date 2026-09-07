@@ -690,7 +690,9 @@ function vaultInventory(db: Database, root: string): VaultInventory {
   function ordinaryPath(path: string): boolean {
     const parts = path.split("/");
     return path.length <= 1024 && parts.length <= MAX_CANON_DEPTH &&
-      parts.every(part => part.length > 0 && !part.startsWith(".") && !part.includes("\\") && !part.includes("\0"));
+      parts.every((part, index) => part.length > 0 &&
+        (!part.startsWith(".") || (part === ".kizuki" && index > 0 && index < parts.length - 1)) &&
+        !part.includes("\\") && !part.includes("\0"));
   }
   if (tableExists(db, "canon_receipts")) {
     let receipts = 0;
@@ -813,7 +815,8 @@ function vaultInventory(db: Database, root: string): VaultInventory {
       }
     }
     for (const entry of entries.sort((a, b) => compareCodeUnits(a.name, b.name))) {
-      if (entry.name.startsWith(".")) { inventory.excluded_entries.hidden++; continue; }
+      const nestedControlName = depth > 0 && entry.isDirectory() && entry.name === CONTROL_DIR;
+      if (entry.name.startsWith(".") && !nestedControlName) { inventory.excluded_entries.hidden++; continue; }
       if (entry.isSymbolicLink() || (!entry.isFile() && !entry.isDirectory())) {
         inventory.excluded_entries.links_or_special++;
         continue;
@@ -1862,7 +1865,12 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
       continue;
     }
     if (parts[0] === "vault" && parts.some(isControlDir)) {
-      throw new Error(`backup must not include the control directory: ${key}`);
+      const vaultParts = parts.slice(1);
+      // Only exact nested directory names are canon. Root control, aliases,
+      // hidden ancestors and hidden filenames retain the existing refusal.
+      const invalid = vaultParts.some((part, index) => part.startsWith(".") &&
+        !(part === CONTROL_DIR && index > 0 && index < vaultParts.length - 1));
+      if (invalid) throw new Error(`backup must not include the control directory: ${key}`);
     }
     const path = pathUnder(root, parts);
     if (!existsSync(path) || lstatSync(path).isSymbolicLink()) {
