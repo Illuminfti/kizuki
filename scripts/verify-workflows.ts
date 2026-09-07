@@ -211,6 +211,27 @@ function hasMacNativeProof(document: Record<string, unknown>, job: Record<string
     isNativeArtifactUpload(steps[11], ADAPTER_ARTIFACT_NAME, ADAPTER_ARTIFACT_PATH, ADAPTER_RETAIN);
 }
 
+function hasNativeLifecycleProof(job: unknown): boolean {
+  if (!isRecord(job) || job["if"] !== "${{ inputs.existing_allowance_verified == true && inputs.native_lifecycle_only == true }}" ||
+      job["runs-on"] !== "${{ matrix.os }}" || job["timeout-minutes"] !== 15 || job["env"] !== undefined || job["defaults"] !== undefined ||
+      !isRecord(job["strategy"]) || job["strategy"]["fail-fast"] !== false || !isRecord(job["strategy"]["matrix"]) ||
+      JSON.stringify(job["strategy"]["matrix"]) !== JSON.stringify({ os: ["ubuntu-24.04", "macos-15"] })) return false;
+  const steps = job["steps"];
+  if (!Array.isArray(steps) || steps.length !== 9) return false;
+  const action = (step: unknown, prefix: string, settings: Record<string, unknown>) => isRecord(step) &&
+    Object.keys(step).every(key => ["name", "uses", "with"].includes(key)) && typeof step["uses"] === "string" &&
+    step["uses"].startsWith(prefix + "@") && JSON.stringify(step["with"]) === JSON.stringify(settings);
+  return action(steps[0], "actions/checkout", { "fetch-depth": 0, ref: "${{ github.event.pull_request.head.sha || github.sha }}" }) &&
+    isBareCommand(steps[1], "bash scripts/ci-restrict-origin-refs.sh") &&
+    action(steps[2], "oven-sh/setup-bun", { "bun-version": BUN_VERSION }) &&
+    isBareCommand(steps[3], "bun scripts/ci-diff-check.ts") &&
+    isBareCommand(steps[4], "bun install --frozen-lockfile\nbun run typecheck\nbun test scripts/native-service-lifecycle.test.ts") &&
+    isConditionedCommand(steps[5], 'sudo systemctl start "user@$(id -u).service"\nprintf \'XDG_RUNTIME_DIR=/run/user/%s\\n\' "$(id -u)" >> "$GITHUB_ENV"\nprintf \'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus\\n\' "$(id -u)" >> "$GITHUB_ENV"', "${{ runner.os == 'Linux' }}") &&
+    isBareCommand(steps[6], "bun run build:release") &&
+    isBareCommand(steps[7], 'bun scripts/native-service-lifecycle.ts --report "$RUNNER_TEMP/kizuki-native-service-lifecycle"') &&
+    isNativeArtifactUpload(steps[8], "native-service-lifecycle-${{ matrix.os }}-${{ github.sha }}", "${{ runner.temp }}/kizuki-native-service-lifecycle/receipt.json", "${{ !cancelled() }}");
+}
+
 function hasLinuxNativeProof(document: Record<string, unknown>, job: Record<string, unknown>): boolean {
   const steps = job["steps"];
   if (!Array.isArray(steps) || steps.length < 4 || document["defaults"] !== undefined ||
@@ -265,6 +286,7 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
     const allowance = isRecord(inputs) ? inputs["existing_allowance_verified"] : undefined;
     const base = isRecord(inputs) ? inputs["base_sha"] : undefined;
     const adapterOnly = isRecord(inputs) ? inputs["native_adapter_only"] : undefined;
+    const lifecycleOnly = isRecord(inputs) ? inputs["native_lifecycle_only"] : undefined;
     const jobs = document["jobs"];
     const job = isRecord(jobs) ? jobs["native-arm64"] : undefined;
     const steps = isRecord(job) ? job["steps"] : undefined;
@@ -272,8 +294,9 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
         !isRecord(allowance) || allowance["type"] !== "boolean" || allowance["default"] !== false || allowance["required"] !== true ||
         !isRecord(base) || base["type"] !== "string" || base["required"] !== true ||
         !isRecord(adapterOnly) || adapterOnly["type"] !== "boolean" || adapterOnly["default"] !== false || adapterOnly["required"] !== false ||
-        !isRecord(jobs) || Object.keys(jobs).join() !== "native-arm64" || !isRecord(job) ||
-        job["if"] !== "${{ inputs.existing_allowance_verified == true }}" || job["runs-on"] !== "macos-15" || job["timeout-minutes"] !== 15 || job["strategy"] !== undefined ||
+        !isRecord(lifecycleOnly) || lifecycleOnly["type"] !== "boolean" || lifecycleOnly["default"] !== false || lifecycleOnly["required"] !== false ||
+        !isRecord(jobs) || Object.keys(jobs).sort().join() !== "native-arm64,native-service" || !isRecord(job) || !hasNativeLifecycleProof(jobs["native-service"]) ||
+        job["if"] !== "${{ inputs.existing_allowance_verified == true && inputs.native_lifecycle_only != true }}" || job["runs-on"] !== "macos-15" || job["timeout-minutes"] !== 15 || job["strategy"] !== undefined ||
         !hasMacNativeProof(document, job) || !Array.isArray(steps) || !steps.some(step => isRecord(step) && step["if"] === undefined && step["run"] === "bun scripts/ci-diff-check.ts") ||
         !steps.some(step => isRecord(step) && typeof step["uses"] === "string" && step["uses"].startsWith("actions/checkout@"))) {
       failures.push({ path, reason: "macOS proof must retain its manual allowance gate, native tests, immutable build and retained artifact proof" });
