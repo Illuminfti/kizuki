@@ -50,10 +50,10 @@ export function detectSupervisorKind(
   return "none";
 }
 
-function runCommand(argv: string[]): { ok: boolean; exitCode: number | null; stdout: string; stderr: string } {
+function runCommand(argv: string[], timeout = 5_000): { ok: boolean; exitCode: number | null; stdout: string; stderr: string } {
   const result = spawnSync(argv[0] ?? "", argv.slice(1), {
     encoding: "utf8",
-    timeout: 5_000,
+    timeout,
   });
   return {
     ok: result.status === 0,
@@ -61,6 +61,38 @@ function runCommand(argv: string[]): { ok: boolean; exitCode: number | null; std
     stdout: (result.stdout ?? "").trim(),
     stderr: (result.stderr ?? "").trim(),
   };
+}
+
+function queryLaunchdService(label: string, timeout = 5_000): SupervisorStatus {
+  const printed = runCommand(["launchctl", "print", `gui/${process.getuid?.() ?? 0}/${label}`], timeout);
+  const text = `${printed.stdout} ${printed.stderr}`.toLowerCase();
+  let state: SupervisorState = "unknown";
+  if (text.includes("disabled")) state = "disabled";
+  else if (printed.ok) state = /^\s*state = running\s*$/m.test(printed.stdout) && /^\s*pid = [1-9]\d*\s*$/m.test(printed.stdout) ? "active" : "disabled";
+  else if (text.includes("could not find service")) state = "absent";
+  return {
+    kind: "launchd", state, unit: label, enabled: printed.ok,
+    detail: state === "unknown" ? "supervisor state could not be queried" : state,
+  };
+}
+
+function stopLaunchdService(label: string): boolean {
+  const stopped = runCommand(["launchctl", "bootout", `gui/${process.getuid?.() ?? 0}/${label}`]);
+  if (!stopped.ok) return false;
+  // bootout acknowledges removal before the old job has necessarily disappeared.
+  // Loading another definition is safe only after observing this label absent.
+  const deadline = performance.now() + 5_000;
+  const signal = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) return false;
+    const observed = queryLaunchdService(label, Math.ceil(remaining));
+    if (observed.state === "absent" && !observed.enabled) return true;
+    if (observed.state === "unknown") return false;
+    const delay = Math.min(50, deadline - performance.now());
+    if (delay <= 0) return false;
+    Atomics.wait(signal, 0, 0, delay);
+  }
 }
 
 export function realSupervisorHost(
@@ -111,20 +143,7 @@ export function realSupervisorHost(
           detail: state === "unknown" ? "supervisor state could not be queried" : state,
         };
       }
-      const label = launchdLabel(vaultId);
-      const printed = runCommand(["launchctl", "print", `gui/${process.getuid?.() ?? 0}/${label}`]);
-      const text = `${printed.stdout} ${printed.stderr}`.toLowerCase();
-      let state: SupervisorState = "unknown";
-      if (text.includes("disabled")) state = "disabled";
-      else if (printed.ok) state = /^\s*state = running\s*$/m.test(printed.stdout) && /^\s*pid = [1-9]\d*\s*$/m.test(printed.stdout) ? "active" : "disabled";
-      else if (text.includes("could not find service")) state = "absent";
-      return {
-        kind,
-        state,
-        unit: label,
-        enabled: printed.ok,
-        detail: state === "unknown" ? "supervisor state could not be queried" : state,
-      };
+      return queryLaunchdService(launchdLabel(vaultId));
     },
     reload() {
       if (kind !== "systemd") return { ok: true, detail: "no definition cache reload required" };
@@ -144,10 +163,10 @@ export function realSupervisorHost(
         };
       }
       if (kind === "launchd") {
-        const domain = `gui/${process.getuid?.() ?? 0}`;
-        if (runCommand(["launchctl", "print", `${domain}/${unitName}`]).ok) {
-          const stopped = runCommand(["launchctl", "bootout", `${domain}/${unitName}`]);
-          if (!stopped.ok) return { ok: false, detail: "service replacement stop failed" };
+        const before = queryLaunchdService(unitName);
+        if (before.state === "unknown") return { ok: false, detail: "service replacement state unavailable" };
+        if (before.state !== "absent" || before.enabled) {
+          if (!stopLaunchdService(unitName)) return { ok: false, detail: "service replacement stop failed" };
         }
         const loaded = runCommand(["launchctl", "bootstrap", `gui/${process.getuid?.() ?? 0}`, unitPath]);
         return {
@@ -163,12 +182,8 @@ export function realSupervisorHost(
         return { ok: result.ok, detail: result.ok ? "disabled" : "service disable failed" };
       }
       if (kind === "launchd") {
-        const result = runCommand([
-          "launchctl",
-          "bootout",
-          `gui/${process.getuid?.() ?? 0}/${unitName}`,
-        ]);
-        return { ok: result.ok, detail: result.ok ? "unloaded" : "service unload failed" };
+        const stopped = stopLaunchdService(unitName);
+        return { ok: stopped, detail: stopped ? "unloaded" : "service unload failed" };
       }
       return { ok: true, detail: "no supervisor" };
     },
