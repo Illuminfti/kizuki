@@ -96,7 +96,10 @@ export interface CanonFileSnapshot {
 }
 export interface CanonFiles {
   read(path: string): CanonFileSnapshot | null;
+  /** Private control material requires exactly 0600, unlike readable canon. */
+  readPrivate(path: string): CanonFileSnapshot | null;
   ensureDirectory(path: string): void;
+  assertPrivateDirectory(path: string): void;
   create(path: string, bytes: Uint8Array): CanonFileSnapshot;
   /** Recover only the exact receipt temp beside this live expected target. */
   resumeExactTemporary(target: CanonFileSnapshot, receiptId: string, bytes: Uint8Array): CanonFileSnapshot | null;
@@ -216,6 +219,23 @@ class NativeCanonFiles implements CanonFiles {
   }
   ensureDirectory(path: string): void {
     guarded(() => { const fd = this.#directory(parts(path), true); if (fd === null) fail("changed"); closeSync(fd); this.#assertCurrent(); });
+  }
+  assertPrivateDirectory(path: string): void {
+    guarded(() => {
+      const fd = this.#directory(parts(path)); if (fd === null) fail("changed");
+      try { if ((directoryStat(fd).mode & 0o777n) !== 0o700n) fail("unsafe"); }
+      finally { closeSync(fd); }
+      this.#assertCurrent();
+    });
+  }
+  readPrivate(path: string): CanonFileSnapshot | null {
+    return guarded(() => {
+      const snapshot = this.read(path); if (snapshot === null) return null;
+      try {
+        if ((this.#record(snapshot).stat.mode & 0o777n) !== 0o600n) fail("unsafe");
+        return snapshot;
+      } catch (error) { snapshot.close(); throw error; }
+    });
   }
   create(path: string, input: Uint8Array): CanonFileSnapshot {
     return guarded(() => {

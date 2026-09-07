@@ -127,6 +127,25 @@ qualified("publication rejects borrowed or changed stages and unsafe target path
   } finally { files.close(); foreign.close(); }
 });
 
+qualified("private control reads require descriptor-verified 0700 directories and 0600 files", () => {
+  const root = fixture(), files = openCanonFiles(root);
+  try {
+    files.ensureDirectory("private");
+    files.assertPrivateDirectory("private");
+    const created = files.create("private/key", Buffer.from("synthetic key")); created.close();
+    const privateRead = files.readPrivate("private/key")!;
+    expect(Buffer.from(privateRead.bytes).toString()).toBe("synthetic key"); privateRead.close();
+    expect(files.readPrivate("private/absent")).toBeNull();
+    chmodSync(join(root, "private/key"), 0o644);
+    expect(() => files.readPrivate("private/key")).toThrow("canon_files_unsafe");
+    // Public canon's existing readable-file contract remains unchanged.
+    const canonRead = files.read("private/key")!; expect(canonRead.bytes.length).toBe(13); canonRead.close();
+    chmodSync(join(root, "private"), 0o755);
+    expect(() => files.assertPrivateDirectory("private")).toThrow("canon_files_unsafe");
+    expect(() => files.assertPrivateDirectory("missing")).toThrow("canon_files_changed");
+  } finally { files.close(); }
+});
+
 qualified("rejects foreign, forged and closed handles with private typed errors", () => {
   const first = openCanonFiles(fixture()), second = openCanonFiles(fixture());
   try {
