@@ -31,7 +31,7 @@ import { buildExtractionMessages } from "./prompt";
 import {
   MAX_EVENT_ID_CHARS,
   containsVerbatimCapture,
-  parseExtractResponse,
+  parseExtractClaims,
 } from "./schema";
 
 export const MODEL_PRODUCER_ID = "kizuki.producer.model" as const;
@@ -487,7 +487,7 @@ export function createModelProducerPort(
         if (hasFenceLeak(text, batch.nonce)) {
           return { status: "rejected", reason: "fence_leak", usage };
         }
-        const parsed = parseExtractResponse(text);
+        const parsed = parseExtractClaims(text);
         if (!parsed.ok) {
           ctx.logger({
             level: "warn",
@@ -495,6 +495,13 @@ export function createModelProducerPort(
             detail: { detail: parsed.detail },
           });
           return { status: "rejected", reason: "schema_invalid", usage, diagnostic: parsed.diagnostic };
+        }
+        for (const rejection of parsed.rejected) {
+          ctx.logger({
+            level: "warn",
+            message: "extract_claim_rejected",
+            detail: { detail: rejection.detail, diagnostic: rejection.diagnostic },
+          });
         }
 
         const batchEventIds = new Set(batch.events.map((event) => event.event_id));

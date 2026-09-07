@@ -22,6 +22,11 @@ describe("complete producer result boundary", () => {
     expect(validated.result.status === "ok" && validated.result.claims.length).toBe(65);
   });
 
+  test("a v1 result with one malformed claim among valid ones is invalid, never partial", () => {
+    const validated = validateProduceResult({ status: "ok", claims: [draft(), draft(), draft({ sensitivity: "professional" as never })], usage });
+    expect(validated).toMatchObject({ usage_known: false, result: { status: "rejected", reason: "schema_invalid" } });
+  });
+
   test("v1 string unavailability is wire-compatible but has a fixed safe projection", () => {
     expect(validateProduceResult({ status: "unavailable", reason: CANARY, usage })).toEqual({
       result: { status: "unavailable", reason: "unavailable", usage }, usage_known: true,

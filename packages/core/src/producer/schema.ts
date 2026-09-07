@@ -7,8 +7,11 @@ import { diagnosticShape } from "./diagnostics";
 /**
  * Strict `ExtractResponse` validation (RFC 0002 §4.2, §12.1). The extracted
  * claim payload is attacker-controlled input: exact key sets, closed enums,
- * size caps, no coercion. Any deviation is `schema_invalid` for the whole
- * call. Provider envelope metadata is projected by the LLM port, not here.
+ * size caps, no coercion. A response that is not text, not JSON, not exactly
+ * `{claims}` or over a cap is `schema_invalid` for the whole call. One
+ * malformed claim is rejected alone and returned for counting, unless
+ * rejections reach `REJECTED_CLAIMS_CEILING`, which refuses the whole
+ * response. Provider envelope metadata is projected by the LLM port, not here.
  */
 
 export const MAX_RESPONSE_CHARS = 400_000;
@@ -19,6 +22,8 @@ export const MAX_SUBJECT_CHARS = 256;
 export const MAX_PREDICATE_CHARS = 128;
 export const MAX_EVENT_ID_CHARS = 64;
 export const MAX_EVENT_IDS_PER_CLAIM = 32;
+/** Rejected claims at or above this share of a response refuse the whole response. */
+export const REJECTED_CLAIMS_CEILING = 0.5;
 
 const RESPONSE_KEYS = ["claims"] as const;
 const CLAIM_KEYS = [
@@ -53,8 +58,16 @@ const SENSITIVITIES: ReadonlySet<string> = new Set<Sensitivity>([
 /** One optional Markdown code fence around the object is formatting, not schema. */
 const CODE_FENCE = /^```(?:json)?\s*\n([\s\S]*?)\n```\s*$/;
 
+/** One claim the parser refused; names the field, never the offending value. */
+export interface ClaimRejection {
+  readonly detail: string;
+  readonly diagnostic: ClaimDiagnostic;
+}
 export type ParseExtractResult =
   | { ok: true; claims: ClaimDraft[] }
+  | { ok: false; detail: string; diagnostic: ClaimDiagnostic };
+export type ParseExtractClaimsResult =
+  | { ok: true; claims: ClaimDraft[]; rejected: ClaimRejection[] }
   | { ok: false; detail: string; diagnostic: ClaimDiagnostic };
 type SchemaFailure = Extract<ParseExtractResult, { ok: false }>;
 
@@ -169,11 +182,7 @@ function readClaim(raw: unknown, index: number, count: number): ClaimDraft | Sch
   };
 }
 
-/**
- * Parses raw response text into validated drafts. Never throws on model
- * output; a failure names the field, never the offending value.
- */
-export function parseExtractResponse(text: string): ParseExtractResult {
+function readResponse(text: string): ParseExtractClaimsResult {
   if (typeof text !== "string") return fail("response is not text", "response", "text", text);
   if (text.length > MAX_RESPONSE_CHARS) return fail("response exceeds the size cap", "response", "size_cap", text);
 
@@ -199,12 +208,43 @@ export function parseExtractResponse(text: string): ParseExtractResult {
   }
 
   const claims: ClaimDraft[] = [];
+  const rejected: ClaimRejection[] = [];
   for (const [index, raw] of rawClaims.entries()) {
     const claim = readClaim(raw, index, rawClaims.length);
-    if ("ok" in claim) return claim;
-    claims.push(claim);
+    if ("ok" in claim) rejected.push({ detail: claim.detail, diagnostic: claim.diagnostic });
+    else claims.push(claim);
   }
-  return { ok: true, claims };
+  return { ok: true, claims, rejected };
+}
+
+/**
+ * Parses raw model text into validated drafts, rejecting malformed claims
+ * one at a time. Every rejection is returned so the caller counts it; half
+ * or more rejected refuses the response, so a wholesale-malformed response
+ * cannot be laundered claim by claim. Never throws on model output; a
+ * failure names the field, never the offending value.
+ */
+export function parseExtractClaims(text: string): ParseExtractClaimsResult {
+  const read = readResponse(text);
+  if (!read.ok) return read;
+  const [first] = read.rejected;
+  const count = read.claims.length + read.rejected.length;
+  if (first !== undefined && read.rejected.length >= count * REJECTED_CLAIMS_CEILING) {
+    return { ok: false, detail: `${read.rejected.length} of ${count} claims rejected, at or above the ceiling: ${first.detail}`, diagnostic: first.diagnostic };
+  }
+  return read;
+}
+
+/**
+ * Strict form for stored drafts and in-process port results: any rejected
+ * claim fails the response with that claim's diagnostic.
+ */
+export function parseExtractResponse(text: string): ParseExtractResult {
+  const read = readResponse(text);
+  if (!read.ok) return read;
+  const [first] = read.rejected;
+  if (first !== undefined) return { ok: false, ...first };
+  return { ok: true, claims: read.claims };
 }
 
 /** A verbatim run this long from any quoted record makes a body a capture, not prose. */
