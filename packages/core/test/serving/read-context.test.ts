@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, renameSync } from "node:fs";
-import { Database, constants } from "bun:sqlite";
+import { constants } from "bun:sqlite";
 import { join } from "node:path";
 import { hardenLedgerFile } from "../../src/vault/init";
 import { openLedgerRead } from "../../src/ledger/read-context";
@@ -146,8 +146,12 @@ for (const last of ["reader", "audit"] as const) test(`the last ${last} handle c
   expect(existsSync(path + "-wal")).toBe(false);
   expect(existsSync(path + "-shm")).toBe(false);
   expect(lstatSync(path).mode & 0o777).toBe(0o600);
-  const verified = new Database(path, { readonly: true });
-  try { expect(listAudit(verified, "owner").length).toBe(before + 1); }
-  finally { verified.close(true); }
+  // Reopen through the public read binding: no initialization or migration.
+  const verified = openLedgerRead(f.vaultPath);
+  try {
+    expect(listAudit(verified.db, "owner").length).toBe(before + 1);
+    expect(verified.db.query("PRAGMA query_only").get()).toEqual({ query_only: 1 });
+    expect(() => verified.db.exec("DELETE FROM events")).toThrow();
+  } finally { verified.close(); }
   expect(() => read.close()).not.toThrow();
 });

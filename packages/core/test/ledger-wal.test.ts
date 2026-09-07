@@ -89,8 +89,14 @@ test("Darwin lifecycle control overrides a last query-only reader's persistent-j
         // Negative control: writer policy alone cannot remove reader-persisted journals.
         assert.equal(existsSync(path+"-wal"),!managed);
         assert.equal(existsSync(path+"-shm"),!managed);
-        const check = new Database(path,{readonly:true});
-        assert.deepEqual(check.query("SELECT n FROM saved").get(),{n:7}); check.close(true);
+        // No CREATE or migrations: read the actual WAL view, including the negative control.
+        const check = new Database(path,constants.SQLITE_OPEN_READWRITE|constants.SQLITE_OPEN_NOFOLLOW);
+        try {
+          configureLedgerWalLifecycle(check,path);
+          check.exec("PRAGMA query_only=ON");
+          assert.deepEqual(check.query("SELECT n FROM saved").get(),{n:7});
+          assert.throws(()=>check.exec("DELETE FROM saved"));
+        } finally { check.close(true); }
       }
     `;
     const child = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });

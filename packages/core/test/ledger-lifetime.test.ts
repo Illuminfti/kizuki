@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database, constants } from "bun:sqlite";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openLedger } from "../src/ledger/db";
 import { manageDatabaseLifetime } from "../src/ledger/lifetime";
+import { configureLedgerWalLifecycle } from "../src/ledger/wal-lifecycle";
 
 for (const strict of [false, true]) test(`ledger close(${strict}) finalizes held uncached queries and a prepared iterator`, () => {
   const root = mkdtempSync(join(tmpdir(), "ledger-lifetime-")), path = join(root, "ledger.db");
@@ -20,8 +21,14 @@ for (const strict of [false, true]) test(`ledger close(${strict}) finalizes held
     for (const statement of [...statements, prepared]) expect(() => statement.get()).toThrow();
     expect(existsSync(path + "-wal")).toBe(false);
     expect(existsSync(path + "-shm")).toBe(false);
-    const reader = new Database(path, { readonly: true });
-    try { expect(reader.query("SELECT n FROM held_close_fixture").get()).toEqual({ n: 7 }); }
+    // Match the readable-WAL contract without CREATE, migrations or SQL writes.
+    const reader = new Database(path, constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_NOFOLLOW);
+    try {
+      configureLedgerWalLifecycle(reader, path);
+      reader.exec("PRAGMA query_only=ON");
+      expect(reader.query("SELECT n FROM held_close_fixture").get()).toEqual({ n: 7 });
+      expect(() => reader.exec("DELETE FROM held_close_fixture")).toThrow();
+    }
     finally { reader.close(true); }
     expect(() => db.close(strict)).not.toThrow();
   } finally {
