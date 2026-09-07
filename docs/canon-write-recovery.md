@@ -91,7 +91,11 @@ retain only the affected receipt IDs and phases, without page paths or content.
 An unrelated global hold is reported without identifying its receipt or page.
 
 Source withdrawal may erase its exact source-bound pending write under current
-denial and file custody. It preserves unrelated bytes and refuses changed pages,
+denial and file custody. When a failed joint write replaced an independent
+committed page, withdrawal restores that exact preimage only after rechecking
+its current source permission, supporting claims and predecessor state. This
+rollback does not complete the withdrawn write or mint a positive receipt.
+It preserves unrelated bytes and refuses changed pages,
 unknown stages or unknown external execution. Cancelling scheduled or acknowledged
 projection work retains the inventory of real store instances for the existing
 source-erasure protocol. A port descriptor alone cannot establish store absence.

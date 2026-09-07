@@ -9,6 +9,7 @@ import { bindLocalSourcePort, inspectSourceGrant, resumeSourceRevocation, revoke
 import { exportVault, restoreVault } from "../../src/export";
 import { loadCanon, pageDecision, canonChunk } from "../../src/serving/canon";
 import { gateAsync } from "../../src/serving/gate";
+import { serveSearch } from "../../src/serving/search";
 import { readDerivedHolds } from "../../src/derived-holds";
 import { assessLivePageEvidence } from "../../src/vault/provenance";
 import { recoverCanonWrites } from "../../src/canon/recovery";
@@ -186,4 +187,44 @@ for (const changed of ["page", "stage"] as const) test(`withdrawal preserves cha
   expect(grant.status).toBe("denied"); expect(grant.purge_blockers).toContain("canon_recovery_pending");
   expect(readFileSync(path, "utf8")).toBe("independent owner content");
   expect(readCanonWriteIntent(f.db)?.receipt.receipt_id).toBe(pending.receipt.receipt_id);
+});
+
+test("withdrawing a failed joint write preserves the previously committed independent live page", async () => {
+  const f = await fixture(true);
+  const independent = await storeClaim(f.db, putEvent(f.db), { predicate: "preference.prefers", object: "music", body: "Grace studies music." });
+  const original = write(f.io, independent);
+  const before = readFileSync(join(f.vault, original.page_path));
+  breakRows(f.db); expect(() => write(f.io, f.claim)).toThrow("boundary row failure");
+  const pending = readCanonWriteIntent(f.db)!; allowRows(f.db);
+  expect(pending.receipt.archive_path).not.toBeNull();
+  expect(readFileSync(join(f.vault, pending.receipt.archive_path!))).toEqual(before);
+  revokeSourceGrant(f.db, { source_key: f.source, expected_revision: 1, operation_id: "withdraw-joint" });
+  const result = await resumeSourceRevocation(f.db, f.vault, "withdraw-joint", {
+    ownedRetrieval: { stores: async () => ({ stores: [], absent_store_ids: [] }) },
+  });
+  expect(result.status).toBe("purged");
+  expect(readCanonWriteIntent(f.db)).toBeNull();
+  expect(existsSync(join(f.vault, original.page_path))).toBe(true);
+  expect(readFileSync(join(f.vault, original.page_path))).toEqual(before);
+  expect(readReceiptsLog(f.vault).some(receipt => receipt.receipt_id === pending.receipt.receipt_id)).toBe(false);
+  const canon = loadCanon(f.owner), page = canon.byPath.get(original.page_path)!;
+  expect(pageDecision(canon, OWNER_AGENT_GRANT, page).allow).toBe(true);
+  expect((await serveSearch(f.owner, { query: "music", scope: "canon" })).canon.some(hit => hit.excerpt.includes("music"))).toBe(true);
+});
+
+
+test("withdrawal cannot restore a prior page after its supporting claim changed", async () => {
+  const f = await fixture(true);
+  const independent = await storeClaim(f.db, putEvent(f.db), { predicate: "preference.prefers", object: "music", body: "Grace studies music." });
+  const original = write(f.io, independent);
+  breakRows(f.db); expect(() => write(f.io, f.claim)).toThrow("boundary row failure");
+  const pending = readCanonWriteIntent(f.db)!; allowRows(f.db);
+  const postimage = readFileSync(join(f.vault, original.page_path));
+  f.db.query("UPDATE claims SET body=? WHERE claim_id=?").run("Owner changed the supporting statement.", independent.claim_id);
+  revokeSourceGrant(f.db, { source_key: f.source, expected_revision: 1, operation_id: "withdraw-changed-support" });
+  const result = await resumeSourceRevocation(f.db, f.vault, "withdraw-changed-support");
+  expect(result.status).toBe("denied");
+  expect(result.purge_blockers).toContain("canon_recovery_pending");
+  expect(readCanonWriteIntent(f.db)?.receipt.receipt_id).toBe(pending.receipt.receipt_id);
+  expect(readFileSync(join(f.vault, original.page_path))).toEqual(postimage);
 });

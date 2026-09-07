@@ -4,12 +4,26 @@ import { sha256Hex } from "../util/hash";
 import { parseFrontmatter } from "../vault/frontmatter";
 import { eventIdFromReference } from "../retrieval/ids";
 import { oneShotGet } from "../ledger/schema";
+import { requireSourceEvents } from "../ledger/source-grants";
 import { requireCanonFiles } from "./io";
 import { latestReceiptForPage } from "./receipts";
 import { openOrdinaryRecoveryReceiptStream } from "./receipt-stream";
 import { readCanonProjectionObligation } from "./projection-obligations";
 import type { CanonIo } from "./store";
-import { advanceCanonReadGeneration, decodeCanonImage, readCanonWriteIntent, recoveryFailure } from "./write-intent";
+import { advanceCanonReadGeneration, captureCanonAdmission, decodeCanonImage, readCanonWriteIntent, recoveryFailure, type CanonWriteIntent } from "./write-intent";
+
+/** Restoring a prior committed page does not complete the withdrawn write. */
+function assertIndependentRollback(db: CanonIo["db"], intent: CanonWriteIntent, before: Buffer): void {
+  const current = captureCanonAdmission(db, intent.receipt, intent.completion, before, decodeCanonImage(intent.after_base64), intent.admission.claims.map(claim => claim.id));
+  for (const key of ["claims", "predecessor_digest", "original_digest", "page_index_digest", "supersessions_digest", "claim_bindings_digest"] as const) {
+    if (JSON.stringify(current[key]) !== JSON.stringify(intent.admission[key])) recoveryFailure("authority_changed", intent.receipt.receipt_id);
+  }
+  const ids = new Set((parseFrontmatter(before.toString("utf8")).data["sources"] as string[]).map(eventIdFromReference));
+  const selected = (events: CanonWriteIntent["admission"]["events"]) => events.filter(event => ids.has(event.id));
+  if (JSON.stringify(selected(current.events)) !== JSON.stringify(selected(intent.admission.events))) recoveryFailure("authority_changed", intent.receipt.receipt_id);
+  try { requireSourceEvents(db, [...ids], { owner: true, purpose: "derive" }); }
+  catch { recoveryFailure("authority_changed", intent.receipt.receipt_id); }
+}
 
 /**
  * An owner's source withdrawal may erase the exact pending joint record. It
@@ -48,20 +62,29 @@ export function withdrawPendingCanonWrite(scope: VaultMutationScope, io: CanonIo
         if (stage !== null) { stage.close(); recoveryFailure("stage_custody_unknown", receipt.receipt_id); }
       }
       const before = decodeCanonImage(intent.before_base64), after = decodeCanonImage(intent.after_base64);
+      const independentBefore = before !== null && !(parseFrontmatter(before.toString("utf8")).data["sources"] as string[])
+        .some(source => deniedEvents.has(eventIdFromReference(source)));
+      let rollback: { target: CanonFileSnapshot | null } | null = null;
       for (const [path, images] of [
         [receipt.page_path, [before, after]],
         [receipt.archive_path, [before]],
       ] as const) {
         if (path === null) continue;
         const snapshot = files.read(path);
-        if (snapshot === null) continue; // A previous erasure attempt may have removed it.
+        if (snapshot === null) {
+          if (path === receipt.page_path && independentBefore) rollback = { target: null };
+          continue; // A previous erasure attempt may have removed it.
+        }
         held.push(snapshot);
         const bytes = Buffer.from(snapshot.bytes);
         if (!images.some(image => image !== null && image.equals(bytes))) recoveryFailure("page_changed", receipt.receipt_id);
         const sources = parseFrontmatter(bytes.toString("utf8")).data["sources"];
         if (!Array.isArray(sources) || !sources.every(source => typeof source === "string")) recoveryFailure("intent_invalid", receipt.receipt_id);
         const withdrawn = sources.some(source => deniedEvents.has(eventIdFromReference(source)));
-        if (withdrawn) remove.push(snapshot);
+        if (withdrawn) {
+          if (path === receipt.page_path && independentBefore) rollback = { target: snapshot };
+          else remove.push(snapshot);
+        }
         else if (path === receipt.page_path && (before === null || !before.equals(bytes))) {
           // An independent postimage has no committed positive basis yet.
           // Neither deleting it nor inventing its completion is withdrawal.
@@ -71,6 +94,16 @@ export function withdrawPendingCanonWrite(scope: VaultMutationScope, io: CanonIo
       // Global single-intent admission makes the expected receipt the only
       // permitted suffix. The primitive refuses every foreign or changed tail.
       stream.withdrawExact(intent.checkpoint, Buffer.from(`${JSON.stringify(receipt)}\n`));
+      if (rollback !== null && before !== null) {
+        assertIndependentRollback(db, intent, before);
+        // Fresh creation custody permits atomic rollback. An interrupted stage
+        // still follows the explicit unknown-stage hold on the next attempt.
+        const stage = files.create(intent.stages.live_stage, before);
+        try {
+          const restored = rollback.target === null ? files.publish(stage, receipt.page_path) : files.replace(stage, rollback.target);
+          restored.close();
+        } finally { stage.close(); }
+      }
       for (const snapshot of remove) files.remove(snapshot);
       stream.verifyBinding();
       const removed = oneShotGet<{ receipt_id: string }>(db, "DELETE FROM canon_write_intents WHERE receipt_id=? AND digest=? RETURNING receipt_id", receipt.receipt_id, binding.digest);
