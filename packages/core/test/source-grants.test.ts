@@ -1819,18 +1819,21 @@ for (const replacement of ["symlink", "regular", "during-commit"] as const) {
         fs.writeFileSync(outside, "UNRELATED_OWNER_BYTES\n", { mode: 0o600 });
         const inode = fs.lstatSync(log).ino;
         const originalRead = fs.readFileSync;
+        const originalReadSync = fs.readSync;
         const before = originalRead(log, "utf8");
         let swapped = false;
-        const spy = spyOn(fs, "readFileSync").mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
-            const result = originalRead(...args);
-            if (replacement !== "during-commit" && !swapped && typeof args[0] === "number" && fs.fstatSync(args[0]).ino === inode) {
+        // Native receipt custody reads its checked descriptor with readSync.
+        // Replace the name after the real read, before the stream verifies it again.
+        const spy = spyOn(fs, "readSync").mockImplementation(((...args: Parameters<typeof fs.readSync>) => {
+            const result = originalReadSync(...args);
+            if (replacement !== "during-commit" && !swapped && result > 0 && fs.fstatSync(args[0]).ino === inode) {
                 swapped = true;
                 fs.renameSync(log, old);
                 if (replacement === "symlink") fs.symlinkSync(outside, log);
                 else fs.writeFileSync(log, "", { mode: 0o600 });
             }
             return result;
-        }) as typeof fs.readFileSync);
+        }) as typeof fs.readSync);
         const originalQuery = db.query.bind(db);
         const querySpy = replacement === "during-commit" ? spyOn(db, "query").mockImplementation(((sql: string) => {
             const statement = originalQuery(sql);
