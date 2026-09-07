@@ -1,4 +1,4 @@
-import { capturePortableAdapter, capturePortableLocal, readPortableBackup, restorePortableLocal, PORTABLE_LOCAL_STREAM, type PortableLocalAdapter } from "./portable-local";
+import { capturePortableAdapter, capturePortableLocal, hashPortableLocal, readPortableBackup, restorePortableLocal, PORTABLE_LOCAL_STREAM, type PortableLocalAdapter } from "./portable-local";
 export type { PortableLocalAdapter } from "./portable-local";
 import { assertVaultMutationScope, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "./vault/mutation-scope";
 import { assertReceiptPaths } from "./canon/paths";
@@ -1729,6 +1729,10 @@ function exportVaultOwned(
       staged!.assertCurrent(); directory.assertCurrent();
       portable?.check();
       verifyFiles(staging, manifest);
+      // Publication must satisfy the same bounded consumer, including the
+      // connection/grant streams that accompany the optional local records.
+      const stagedPortable = readPortableBackup(staging, manifest, options.portableLocal);
+      stagedPortable?.close();
       const stagedManifest = readFileSyncNoFollow(join(staging, "manifest.json"), manifestContent.length);
       if (!manifestContent.equals(stagedManifest)) throw new Error("export staged manifest changed");
       throwIfAborted(options.signal);
@@ -1851,6 +1855,12 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
     const entry = manifest.files[key];
     if (entry === undefined) continue;
     const parts = splitBackupPath(key);
+    if (key === PORTABLE_LOCAL_STREAM) {
+      if (entry.mode !== FILE_MODE) throw new Error("portable_local_invalid");
+      const hashed = hashPortableLocal(root);
+      if (hashed.sha256 !== entry.sha256 || hashed.size !== entry.size) throw new Error(`backup file hash mismatch: ${key}`);
+      continue;
+    }
     if (parts[0] === "vault" && parts.some(isControlDir)) {
       throw new Error(`backup must not include the control directory: ${key}`);
     }
@@ -2600,6 +2610,7 @@ export function restoreVault(
       fsyncDirectory(staging);
       portable?.check(); restoredState?.check(); staged.assertCurrent(); parentDirectory.assertCurrent();
       verifyFiles(source, manifest);
+      prepareDestination(destination);
       try {
         parentDirectory.publishStaging(basenameSafe(staging), stagingIdentity, basenameSafe(destination), destinationIdentity);
         published = true;

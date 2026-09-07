@@ -89,6 +89,20 @@ function checkSnapshots(files: ReturnType<typeof openCanonFiles>, snapshots: rea
   }
 }
 
+/** Generic manifest verification must never open this member by pathname first. */
+export function hashPortableLocal(root: string): { sha256: string; size: number } {
+  const parent = openCanonFiles(dirname(root));
+  let files: ReturnType<typeof openCanonFiles> | undefined;
+  try {
+    parent.assertPrivateDirectory(basename(root));
+    files = openCanonFiles(root); files.assertPrivateDirectory("connections");
+    const snapshot = files.readPrivate(PORTABLE_LOCAL_STREAM); if (snapshot === null) fail();
+    const bytes = snapshot.bytes;
+    checkSnapshots(files, [snapshot]); parent.assertPrivateDirectory(basename(root));
+    return { sha256: sha256Hex(bytes), size: bytes.byteLength };
+  } finally { try { files?.close(); } finally { parent.close(); } }
+}
+
 /** Immutable expected bytes and fresh native reads bind inputs through publication. */
 export function readPortableBackup(root: string, manifest: ExportManifest, adapter?: PortableLocalAdapter) {
   const entry = manifest.files[PORTABLE_LOCAL_STREAM];
@@ -130,6 +144,14 @@ export function readPortableBackup(root: string, manifest: ExportManifest, adapt
       if (row.disconnected_at !== null && !isRfc3339(row.disconnected_at)) fail();
       bySource.set(row.source_key, row);
     }
+    // Verification is read-only: establish the portable grant's membership and
+    // export permission here. Core's existing policy restore validates the full
+    // policy/receipt graph before any state is reconstructed.
+    const byGrant = new Map<string, Record<string, unknown>>();
+    for (const grant of grants) {
+      if (typeof grant.source_key !== "string" || !isUlid(grant.source_key) || byGrant.has(grant.source_key)) fail();
+      byGrant.set(grant.source_key, grant);
+    }
     const seen = new Set<string>();
     const records = raw.map(value => {
       const row = own(value, ["connector_id", "source_key", "path", "was_connected"]);
@@ -140,6 +162,13 @@ export function readPortableBackup(root: string, manifest: ExportManifest, adapt
       if (original === undefined || original.connector_id !== id || row.was_connected !== (original.disconnected_at === null) ||
           JSON.stringify(original.config) !== '{"schema":"kizuki.connection-config/v1","state_ref_index":null}' ||
           !Array.isArray(original.secret_refs) || original.secret_refs.length !== 0) fail();
+      const grant = byGrant.get(row.source_key);
+      if (grant === undefined || grant.connector_id !== id || grant.status !== "active" || typeof grant.policy !== "string") fail();
+      let policy: unknown;
+      try { policy = JSON.parse(grant.policy); } catch { fail(); }
+      if (typeof policy !== "object" || policy === null || Array.isArray(policy) ||
+          !Object.hasOwn(policy, "purposes") || !Array.isArray((policy as { purposes: unknown }).purposes) ||
+          !(policy as { purposes: unknown[] }).purposes.includes("export")) fail();
       seen.add(row.source_key);
       return Object.freeze({ connector_id: id, source_key: row.source_key, ...config({ path: row.path }), was_connected: row.was_connected });
     });
@@ -185,6 +214,11 @@ export function capturePortableLocal(db: Database, vault: string, adapter?: Port
 }
 
 export function restorePortableLocal(db: Database, staging: string, records: readonly PortableLocalRecord[], adapter?: PortableLocalAdapter) {
+  // Validate every record before the first codec, including an inert restore.
+  for (const row of records) {
+    const grant = inspectSourceGrant(db, row.source_key);
+    if (grant?.status !== "active" || grant.connector_id !== row.connector_id || !grant.policy.purposes.includes("export")) fail();
+  }
   if (adapter === undefined || records.length === 0) return undefined;
   const files = openCanonFiles(staging), snapshots: CanonFileSnapshot[] = [];
   const check = (): void => {

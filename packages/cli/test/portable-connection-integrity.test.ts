@@ -1,7 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { registerConnection, setSourceGrant, ulid } from "@kizuki/core";
+import { openLedger } from "../../core/src/ledger/db";
 import { createHelpers, fixtureConsent } from "./helpers";
 
 const h = createHelpers();
@@ -94,4 +96,40 @@ test("unmanifested state cannot redirect an existing capture grant to another lo
   expect(captured).toBe(false);
   expect(verified.exitCode).not.toBe(0);
   expect(restored.exitCode).not.toBe(0);
+});
+
+
+test("public export refuses an oversized portable grant snapshot before publishing", () => {
+  const f = h.tempVault(), db = openLedger(join(f.vault, ".kizuki/kizuki.db"));
+  try {
+    for (let n = 0; n < 400; n++) {
+      const source_key = ulid(); registerConnection(db, "fixture", source_key);
+      setSourceGrant(db, { source_key, expected_revision: 0, operation_id: `synthetic-grant-${n}`, policy: {
+        purposes: ["export"], allowed_fields: ["text"], retention: "persistent_owned_until_revoked", sensitivity_floor: "private",
+        egress: { model_endpoint: "https://synthetic.invalid/" + "x".repeat(1950), model: "m".repeat(256), external_retention: "provider_managed" },
+      } });
+    }
+  } finally { db.close(); }
+  const backup = join(f.root, "oversized-backup"), exported = h.runCli(f.env, "export", "--out", backup);
+  expect(exported.exitCode).not.toBe(0);
+  expect(exported.stderr).toContain("portable_local_invalid");
+  expect(exported.stderr).not.toContain("synthetic.invalid");
+  expect(existsSync(backup)).toBe(false);
+});
+
+
+// Linux's qualified filesystem exposes read atime. Keep a positive control;
+// refusal alone cannot prove that the private outside bytes were never opened.
+test.skipIf(process.platform !== "linux")("public verify and restore refuse a portable ancestor alias before reading outside bytes", () => {
+  const f = exported(), outside = join(f.root, "outside-connections");
+  renameSync(join(f.backup, "connections"), outside); symlinkSync(outside, join(f.backup, "connections"));
+  const path = join(outside, "portable-local.v1.jsonl"), old = new Date("2001-01-01T00:00:00.000Z");
+  utimesSync(path, old, old); const before = statSync(path).atimeMs;
+  readFileSync(path); expect(statSync(path).atimeMs).toBeGreaterThan(before);
+  utimesSync(path, old, old); expect(statSync(path).atimeMs).toBe(before);
+  const verified = h.runCli(f.env, "restore", "--from", f.backup, "--verify");
+  expect(verified.exitCode).not.toBe(0); expect(statSync(path).atimeMs).toBe(before);
+  const restored = h.runCli(f.env, "restore", "--from", f.backup, "--into", f.into);
+  expect(restored.exitCode).not.toBe(0); expect(statSync(path).atimeMs).toBe(before);
+  expect(existsSync(f.into)).toBe(false);
 });

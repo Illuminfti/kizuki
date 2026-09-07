@@ -233,3 +233,34 @@ test("rehashed duplicate keys in the new versioned stream fail even when JSON wo
   expect(() => restoreVault(f.backup, f.target, f.options)).toThrow("portable_local_invalid");
   expect(existsSync(f.target)).toBe(false);
 });
+
+for (const hostAdapter of [false, true]) {
+  test(`portable path without captured export permission refuses restore (adapter=${hostAdapter})`, async () => {
+    const f = await fixture(); exportVault(f.db, f.vault, f.backup, f.options);
+    // Use Core's actual policy mutation to supply internally consistent, current
+    // grant rows/receipts. Only the portable path is incompatible with that cut.
+    setSourceGrant(f.db, { source_key: f.connection.source_key, expected_revision: 1,
+      operation_id: "capture-without-export", policy: { ...policy, purposes: ["capture"] } });
+    rewritten(f.backup, "ledger/source_grants.jsonl", f.db.query("SELECT * FROM source_grants ORDER BY source_key").all());
+    rewritten(f.backup, "ledger/source_grant_receipts.jsonl", f.db.query("SELECT * FROM source_grant_receipts ORDER BY sequence").all());
+    let codecCalls = 0;
+    const options = hostAdapter ? { portableLocal: { ...adapter, encode(id: string, config: { readonly path: string }) { codecCalls++; return adapter.encode(id, config); } } } : {};
+    expect(() => verifyBackup(f.backup, options)).toThrow("portable_local_invalid");
+    expect(() => restoreVault(f.backup, f.target, options)).toThrow("portable_local_invalid");
+    expect(codecCalls).toBe(0); expect(existsSync(f.target)).toBe(false);
+  });
+}
+
+
+for (const mutation of ["missing", "duplicate", "wrong-connector", "inactive"] as const) {
+  test(`portable verification refuses ${mutation} captured grant even without adapter`, async () => {
+    const f = await fixture(); exportVault(f.db, f.vault, f.backup, f.options);
+    const [grant] = rows(f.backup, "ledger/source_grants.jsonl");
+    if (mutation === "wrong-connector") grant!.connector_id = "another";
+    if (mutation === "inactive") grant!.status = "purged";
+    rewritten(f.backup, "ledger/source_grants.jsonl", mutation === "missing" ? [] : mutation === "duplicate" ? [grant, grant] : [grant]);
+    expect(() => verifyBackup(f.backup)).toThrow("portable_local_invalid");
+    expect(() => restoreVault(f.backup, f.target)).toThrow("portable_local_invalid");
+    expect(existsSync(f.target)).toBe(false);
+  });
+}
