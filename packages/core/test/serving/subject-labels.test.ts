@@ -244,3 +244,40 @@ test('label audit evidence never displaces reserved base items or exceeds the ex
   expect(exhausted.labels.size).toBe(0); expect(exhausted.audit.size).toBe(0);
   expect(exhausted.degraded).toEqual(['subject-labels-overflow']);
 });
+
+import { recordedPage } from '../helpers/recorded-page';
+import { seedConnectorSensitivity } from '../../src/sensitivity/store';
+
+test('quoted identity raises a clean canonical aggregate taint without rewriting its body or promoting authority', async () => {
+  const f = fixture(), event = labelEvent(f.db, SUBJECT, 'public', 'Orchard names Ada Example.');
+  await writeIdentity(f.io, { eventId: event, body: '> Orchard names Ada Example.', taint: 'quoted' });
+  const base = await recordedPage(f.db, f.vault, 'facts/clean-base.md', { id: 'fact:clean-base', title: 'A clean base page', type: 'fact', status: 'active', sensitivity: 'public', taint: 'clean', subjects: [SUBJECT] }, 'Orchard base prose.');
+  const bytes = readFileSync(join(f.vault, base.receipt.page_path));
+  expect(bytes.toString()).toContain('taint: "clean"');
+  rebuildDerived(f.db, f.vault);
+  const result = await serveSearch(owner(f), { query: 'orchard', scope: 'all' });
+  const chunk = result.canon.find(chunk => chunk.page_id === 'fact:clean-base')!;
+  expect(chunk.subject_labels?.[0]?.display_name).toBe(LABEL); expect(chunk.taint).toBe('quoted');
+  expect(chunk.authority).toBe(base.receipt.authority);
+  expect(result.quoted.find(chunk => chunk.event_id === event)?.tainted).toBe(true);
+  expect(readFileSync(join(f.vault, base.receipt.page_path))).toEqual(bytes);
+});
+
+test('denied rows may exhaust optional enrichment quota but only generic degradation reaches the reader', async () => {
+  const f = fixture();
+  // Unknown connectors default private even when a model asks for public.
+  // This synthetic connector explicitly declares the intended public baseline.
+  seedConnectorSensitivity(f.db, { connector_id: 'fixture', source_key: 'identity-quota' }, { default_sensitivity: 'public', sensitivity_floor: 'public' });
+  const first = await writeIdentity(f.io);
+  expect(first.claim.sensitivity).toBe('public');
+  const ctx = agent(f, { ceiling: 'public' });
+  expect(serveEntities(ctx, { name: LABEL })).toMatchObject({ canon: [expect.objectContaining({ subject_labels: expect.any(Array) })] });
+  for (let i = 0; i < 33; i++) await writeIdentity(f.io, { written: false, sensitivity: 'private', predicate: 'identity.handle_on', object: `@HIDDEN_QUOTA_${i}` });
+  const result = serveEntities(ctx, {});
+  expect(result.canon).toHaveLength(1); expect(result.canon[0]?.subject_labels).toBeUndefined();
+  expect(result.data).toEqual({ degraded: ['subject-labels-overflow'] });
+  expect(result.canon[0]?.sources).toContain(first.event);
+  expect(serveEntities(ctx, { name: LABEL }).canon).toHaveLength(0);
+  expect(JSON.stringify(result)).not.toContain('HIDDEN_QUOTA');
+  expect(result.denied).toEqual([]);
+});

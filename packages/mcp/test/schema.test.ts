@@ -233,3 +233,52 @@ describe("the advertised output schema describes what the server sends", () => {
     }
   });
 });
+
+import { rebuildDerived } from '@kizuki/core';
+import { LABEL, SUBJECT, labelEvent, writeIdentity } from '../../core/test/serving/subject-label-fixture';
+
+test('a listed validating MCP client accepts real written identity evidence on canonical and quoted results', async () => {
+  const running = live(), written = await writeIdentity({ db: running.db, vault_path: running.vaultPath });
+  rebuildDerived(running.db, running.vaultPath);
+  const client = await listed(running);
+  const entities = envelopeOf(await call(client, 'query_entities', { name: LABEL }));
+  const canon = entities['canon'] as { subject_labels?: { subject: string; display_name: string | null }[] }[];
+  expect(canon).toHaveLength(1);
+  expect(canon[0]?.subject_labels?.[0]).toMatchObject({ subject: SUBJECT, display_name: LABEL });
+  const search = await call(client, 'search', { query: 'orchard', scope: 'all' });
+  expect(search.isError ?? false).toBe(false);
+  const envelope = envelopeOf(search);
+  const quoted = (envelope['quoted'] as { event_id: string; subject_labels?: { display_name: string | null }[] }[]).find(chunk => chunk.event_id === written.event);
+  expect(quoted?.subject_labels?.[0]?.display_name).toBe(LABEL);
+  expect(JSON.parse(search.content[0]!.text)).toEqual(envelope);
+});
+
+test('identity output records are optional and closed at every evidence level', () => {
+  const label = { subject: SUBJECT, display_name: LABEL, handles: ['@ada'], evidence: [{ claim_id: 'synthetic-claim', authority: 'connector_evidence', sources: ['synthetic-source'] }] };
+  const chunk = { event_id: 'synthetic-event', connector_id: 'synthetic', kind: 'message', occurred_at: '2026-02-28T10:00:00Z', sensitivity: 'public', subjects: [SUBJECT], text: 'Synthetic body.', tainted: true };
+  const envelope = { schema: ENVELOPE_SCHEMA, tool: 'search', principal: 'owner', at: '2026-02-28T10:00:00Z', canon: [], quoted: [chunk], denied: [] };
+  const accepts = (subject_labels: unknown) => ENVELOPE_SHAPE.safeParse({ ...envelope, quoted: [{ ...chunk, subject_labels }] }).success;
+  expect(ENVELOPE_SHAPE.safeParse(envelope).success).toBe(true);
+  expect(accepts([label])).toBe(true);
+  expect(accepts([{ ...label, display_name: '𐐀'.repeat(160) }])).toBe(true);
+  for (const invalid of [
+    [{ ...label, extra: true }], [{ ...label, display_name: 7 }], [{ ...label, handles: Array(5).fill('@ada') }],
+    [{ ...label, evidence: [] }], [{ ...label, evidence: Array(33).fill(label.evidence[0]) }],
+    [{ ...label, evidence: [{ ...label.evidence[0], authority: 'invented' }] }],
+    [{ ...label, evidence: [{ ...label.evidence[0], sources: [] }] }],
+    [{ ...label, evidence: [{ ...label.evidence[0], extra: true }] }],
+    [{ subject: SUBJECT, display_name: LABEL, handles: [] }], Array(51).fill(label), null,
+  ]) expect(accepts(invalid)).toBe(false);
+});
+
+test('listed MCP preserves quoted aggregate taint when a clean page gains a separately admitted quoted label', async () => {
+  const running = live();
+  await writeIdentity({ db: running.db, vault_path: running.vaultPath }, { eventId: labelEvent(running.db, SUBJECT, 'public', 'Orchard names Ada Example.'), taint: 'quoted', body: '> Orchard names Ada Example.' });
+  const base = await recordedPage(running.db, running.vaultPath, 'facts/clean-label-base.md', { id: 'fact:clean-label-base', title: 'Clean human title', type: 'fact', status: 'active', sensitivity: 'public', taint: 'clean', subjects: [SUBJECT] }, 'Orchard base prose.');
+  rebuildDerived(running.db, running.vaultPath);
+  const result = await call(await listed(running), 'search', { query: 'orchard', scope: 'canon' });
+  expect(result.isError ?? false).toBe(false);
+  const chunk = (envelopeOf(result)['canon'] as { page_id: string; taint: string; authority: string; subject_labels?: unknown[] }[]).find(chunk => chunk.page_id === 'fact:clean-label-base')!;
+  expect(chunk.taint).toBe('quoted'); expect(chunk.authority).toBe(base.receipt.authority);
+  expect(chunk.subject_labels).toHaveLength(1);
+});

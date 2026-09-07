@@ -628,16 +628,19 @@ import { createHelpers } from './helpers';
 import { startApp } from '../src/commands/app';
 import type { CliIo } from '../src/commands';
 import { hardenLedgerFile, rebuildDerived } from '@kizuki/core';
-import { LABEL, SUBJECT, writeIdentity } from '../../core/test/serving/subject-label-fixture';
+import { LABEL, SUBJECT, labelEvent, writeIdentity } from '../../core/test/serving/subject-label-fixture';
 import { openLedger } from '../../core/src/ledger/db';
+import { recordedPage } from '../../core/test/helpers/recorded-page';
 import type { AppHit } from '../src/app/protocol';
 
 test('real written identity crosses authenticated HTTP into readable App title, explicit subject chips and evidence', async () => {
     const helpers = createHelpers(), setup = helpers.tempVault();
     const path = join(setup.vault, '.kizuki', 'kizuki.db'), db = openLedger(path);
     const io = { db, vault_path: setup.vault };
-    const first = await writeIdentity(io), handle = await writeIdentity(io, { predicate: 'identity.handle_on', object: '@ada-exact' });
+    const first = await writeIdentity(io, { eventId: labelEvent(db, SUBJECT, 'public', 'Orchard names Ada Example.'), body: '> Orchard names Ada Example.', taint: 'quoted' }), handle = await writeIdentity(io, { predicate: 'identity.handle_on', object: '@ada-exact' });
     await writeIdentity(io, { subject: `person:${'b'.repeat(64)}`, object: 'Grace Example', frontmatter: { type: 'person', title: 'My trusted human title', subjects: [`person:${'b'.repeat(64)}`] } });
+    await recordedPage(db, setup.vault, 'facts/clean-base.md', { id: 'fact:clean-base', title: 'A clean base page', type: 'fact', status: 'active', sensitivity: 'public', taint: 'clean', subjects: [SUBJECT] }, 'Orchard base prose.');
+    expect(readFileSync(join(setup.vault, 'facts/clean-base.md'), 'utf8')).toContain('taint: "clean"');
     rebuildDerived(db, setup.vault); hardenLedgerFile(path); db.close();
     const original = readFileSync(join(setup.vault, first.receipt!.page_path));
     let launched = ''; const output: string[] = [];
@@ -649,8 +652,9 @@ test('real written identity crosses authenticated HTTP into readable App title, 
         expect(response.status).toBe(200);
         const body = await response.json() as { ok: boolean; data: { hits: AppHit[]; degraded: string[] } };
         expect(body.ok).toBe(true);
-        const canonical = body.data.hits.find(hit => hit.scope === 'canon' && hit.subject_labels?.some(label => label.subject === SUBJECT))!;
+        const canonical = body.data.hits.find(hit => hit.scope === 'canon' && hit.title === 'a'.repeat(64) && hit.subject_labels?.some(label => label.subject === SUBJECT))!;
         const quoted = body.data.hits.find(hit => hit.scope === 'ledger' && hit.id === first.event)!;
+        expect(body.data.hits.find(hit => hit.id === 'fact:clean-base')?.taint).toBe('quoted');
         expect(canonical.title).toBe('a'.repeat(64));
         expect(canonical.subject_labels?.[0]?.display_name).toBe(LABEL);
         expect(canonical.citations).toEqual(expect.arrayContaining([first.event, handle.event]));
@@ -663,6 +667,7 @@ test('real written identity crosses authenticated HTTP into readable App title, 
         expect(all(articles).filter(node => node.tag === 'h3').map(node => node.textContent)).toContain(LABEL);
         expect(all(articles).filter(node => node.tag === 'h3').map(node => node.textContent)).toContain('My trusted human title');
         expect(all(articles).filter(node => node.attributes['aria-label'] === 'Recorded subject labels').some(node => node.textContent.includes('@ada-exact'))).toBe(true);
+        expect(f.main.textContent).toContain('Includes quoted evidence');
         expect(f.main.textContent).not.toContain('UNTRUSTED_CAPTURE_NAME');
         expect(f.main.textContent).not.toContain('UNTRUSTED_METADATA_NAME');
         expect(f.storageWrites.join('')).not.toContain(LABEL);

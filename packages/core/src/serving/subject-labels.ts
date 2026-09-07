@@ -54,6 +54,8 @@ function readSubjectLabels(index: CanonIndex, grant: Grant, at: string, subjects
   const reader = claimReader(ctx.db, grant, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" });
   let count = 0;
   for (const subject of exact) {
+    // Raw quota includes denied rows: they may suppress optional enrichment,
+    // but only generic overflow escapes; their values never decide a match.
     const rows = ctx.db.query<{ claim_id: string }, [string, number]>(`
       SELECT claim_id FROM claims WHERE subject=? AND status='live'
         AND predicate IN ('identity.display_name','identity.handle_on')
@@ -125,5 +127,6 @@ export function attachSubjectLabels(projection: SubjectLabelProjection, chunk: C
     const audit = projection.audit.get(id); return audit === undefined ? [] : [audit];
   });
   for (const item of audit) if (isSensitivity(item.sensitivity) && SENSITIVITY_ORDER[item.sensitivity] > SENSITIVITY_ORDER[chunk.sensitivity]) chunk.sensitivity = item.sensitivity;
+  if ("taint" in chunk && audit.some(item => item.taint === "quoted")) chunk.taint = "quoted";
   return audit;
 }

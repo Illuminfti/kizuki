@@ -28,7 +28,7 @@ export interface CanonChunk {
   title: string;
   type: string;
   sensitivity: Sensitivity;
-  /** `quoted` means the body carries verbatim capture inside blockquotes. */
+  /** `quoted` means the body or attached identity includes quoted capture. */
   taint: PageTaint;
   /** Effective authority of the page snapshot, resolved against its byte hash. */
   authority: AuthorityTier | null;

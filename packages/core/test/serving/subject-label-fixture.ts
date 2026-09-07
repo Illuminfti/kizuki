@@ -8,9 +8,9 @@ import { eventFacts } from '../claims/helpers';
 
 export const SUBJECT = `person:${'a'.repeat(64)}`;
 export const LABEL = 'Ada Example';
-export function labelEvent(db: Database, subject = SUBJECT, sensitivity: 'public' | 'personal' | 'private' = 'public'): string {
+export function labelEvent(db: Database, subject = SUBJECT, sensitivity: 'public' | 'personal' | 'private' = 'public', text = 'Orchard evidence from a synthetic source.'): string {
   const result = accept(db, { ...validEvent(), source_record_id: crypto.randomUUID(),
-    text: 'Orchard evidence from a synthetic source.', subjects: [{ subject_id: subject, role: 'from', display_name: 'UNTRUSTED_CAPTURE_NAME' }],
+    text, subjects: [{ subject_id: subject, role: 'from', display_name: 'UNTRUSTED_CAPTURE_NAME' }],
     sensitivity_hint: sensitivity, metadata: { display_name: 'UNTRUSTED_METADATA_NAME' } });
   if (result.status !== 'stored') throw Error('synthetic capture failed');
   return result.event.event_id;

@@ -93,6 +93,7 @@ export interface AppHit {
     text: string;
     citations: string[];
     sensitivity: string;
+    taint?: 'clean' | 'quoted';
     subject_labels?: SubjectLabel[];
 }
 export interface AppReceipt {
