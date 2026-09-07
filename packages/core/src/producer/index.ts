@@ -16,11 +16,13 @@ export type { ExtractionBatch } from "./prompt";
 export {
   MAX_BODY_CHARS,
   MAX_OBJECT_CHARS,
+  REJECTED_CLAIMS_CEILING,
   VERBATIM_RUN_CHARS,
   containsVerbatimCapture,
+  parseExtractClaims,
   parseExtractResponse,
 } from "./schema";
-export type { ParseExtractResult } from "./schema";
+export type { ClaimRejection, ParseExtractClaimsResult, ParseExtractResult } from "./schema";
 export {
   CHARS_PER_TOKEN,
   DEFAULT_PRODUCER_DEADLINE_MS,

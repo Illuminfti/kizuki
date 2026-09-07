@@ -169,6 +169,54 @@ describe("kizuki.producer.model", () => {
     });
   });
 
+  test("one malformed claim is rejected alone and counted in the log", async () => {
+    const llm = scriptedLlm(() =>
+      responseText([
+        draft(),
+        draft({ object: "runs sales at Acme" }),
+        draft({ sensitivity: "professional" as never }),
+      ]),
+    );
+    await withProducer(llm, async (producer, logs) => {
+      const result = await producer.produce(input([GRACE_EVENT]));
+      expect(result).toEqual({
+        status: "ok",
+        claims: [draft(), draft({ object: "runs sales at Acme" })],
+        usage: expect.objectContaining({ calls: 1 }),
+        dropped: [],
+      });
+      const rejected = logs.filter((line) => line.message === "extract_claim_rejected");
+      expect(rejected).toEqual([
+        {
+          level: "warn",
+          message: "extract_claim_rejected",
+          detail: {
+            detail: "claims[2].sensitivity is not a sensitivity",
+            diagnostic: { stage: "claims", rule: "enum", field: "sensitivity", shape: "string", claim_index: 2, claim_count: 3 },
+          },
+        },
+      ]);
+      expect(JSON.stringify(logs)).not.toContain("professional");
+    });
+  });
+
+  test("half or more malformed claims rejects the whole call", async () => {
+    const llm = scriptedLlm(() =>
+      responseText([draft(), draft({ sensitivity: "professional" as never })]),
+    );
+    await withProducer(llm, async (producer, logs) => {
+      const result = await producer.produce(input([GRACE_EVENT]));
+      expect(result).toMatchObject({
+        status: "rejected",
+        reason: "schema_invalid",
+        diagnostic: { stage: "claims", field: "sensitivity", claim_index: 1, claim_count: 2 },
+      });
+      expect(logs.some((line) => line.message === "extract_schema_invalid")).toBe(true);
+      expect(logs.some((line) => line.message === "extract_claim_rejected")).toBe(false);
+      expect(JSON.stringify(logs)).not.toContain("professional");
+    });
+  });
+
   test("citing an event outside the input discards the whole call", async () => {
     const llm = scriptedLlm(() =>
       responseText([draft(), draft({ event_ids: [GRACE_EVENT.event_id, "01JFABRICATED"] })]),
