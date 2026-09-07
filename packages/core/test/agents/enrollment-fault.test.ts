@@ -145,7 +145,7 @@ test.if(qualified)("rollback cleanup retains a file changed after the separate C
   expect(authenticateAgentCredential(db, f.request.token_ref)).toBeNull(); db.close();
 });
 
-test.if(process.env.GITHUB_ACTIONS === "true" && process.platform === "linux" && process.arch === "x64")("crash and commit proof requires qualified Linux custody", () => {
+test.if(process.env.GITHUB_ACTIONS === "true" && ((process.platform === "linux" && process.arch === "x64") || (process.platform === "darwin" && process.arch === "arm64")))("crash and commit proof requires qualified native custody", () => {
   expect(qualified).toBe(true);
 });
 

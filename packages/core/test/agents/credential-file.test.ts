@@ -5,13 +5,14 @@ import { join } from "node:path";
 import { openCredentialDirectory, type CredentialFileInspection } from "../../src/agents/credential-file";
 
 const roots: string[] = [];
+const supported = (process.platform === "linux" && process.arch === "x64") || (process.platform === "darwin" && process.arch === "arm64");
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function temporary(): string {
   const root = mkdtempSync(join(tmpdir(), "kizuki-credential-file-"));
   roots.push(root); chmodSync(root, 0o700); return root;
 }
 function custodyPathIsQualified(path: string): boolean {
-  if (process.platform !== "linux" || process.arch !== "x64" || process.geteuid === undefined) return false;
+  if (!supported || process.geteuid === undefined) return false;
   const uid = BigInt(process.geteuid()); let current = "/";
   for (const part of path.split("/").filter(Boolean)) {
     const stat = lstatSync(current, { bigint: true });
@@ -26,7 +27,7 @@ const probe = temporary();
 const canExerciseCustody = custodyPathIsQualified(probe);
 
 test.if(!canExerciseCustody)("refuses the uid-mapped ancestry instead of weakening custody", () => {
-  if (process.platform !== "linux" || process.arch !== "x64") {
+  if (!supported) {
     expect(() => openCredentialDirectory(temporary())).toThrow("credential_file_unsupported");
     return;
   }
@@ -36,7 +37,7 @@ test.if(!canExerciseCustody)("refuses the uid-mapped ancestry instead of weakeni
   expect(statSync("/", { bigint: true }).uid).not.toBe(BigInt(uid));
 });
 
-test.if(process.env.GITHUB_ACTIONS === "true" && process.platform === "linux" && process.arch === "x64")("requires a qualified Linux CI filesystem", () => {
+test.if(process.env.GITHUB_ACTIONS === "true" && supported)("requires a qualified native CI filesystem", () => {
   expect(canExerciseCustody).toBe(true);
 });
 

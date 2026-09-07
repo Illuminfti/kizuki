@@ -19,7 +19,7 @@ function fail(reason: Failure): never { throw new ReceiptStreamError(reason); }
 function mapped(error: unknown): ReceiptStreamError { return error instanceof ReceiptStreamError ? error : new ReceiptStreamError("io"); }
 let native: ReturnType<typeof loadOwnedDirectoryNative> | undefined;
 function api() {
-  if (process.platform !== "linux" || process.arch !== "x64" || process.geteuid === undefined) fail("unsupported");
+  if (!((process.platform === "linux" && process.arch === "x64") || (process.platform === "darwin" && process.arch === "arm64")) || process.geteuid === undefined) fail("unsupported");
   try { return native ??= loadOwnedDirectoryNative(); } catch { fail("native_unavailable"); }
 }
 function nameBytes(name: string): Buffer {
@@ -59,7 +59,8 @@ function directoryStat(fd: number, ancestor = false): BigIntStats {
 }
 function openRoot(path: string): number {
   if (path === "/" || path.split("/").length > 257) fail("bounds");
-  let fd = openSync("/", constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | 0x80000);
+  const closeOnExec = process.platform === "darwin" ? 0x1000000 : 0x80000;
+  let fd = openSync("/", constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | closeOnExec);
   try {
     directoryStat(fd, true);
     const parts = path.split("/").filter(Boolean);

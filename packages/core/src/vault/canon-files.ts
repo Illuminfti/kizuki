@@ -19,7 +19,7 @@ function guarded<T>(work: () => T): T {
 }
 let native: ReturnType<typeof loadOwnedDirectoryNative> | undefined;
 function api() {
-  if (process.platform !== "linux" || process.arch !== "x64" || process.geteuid === undefined) fail("unsupported");
+  if (!((process.platform === "linux" && process.arch === "x64") || (process.platform === "darwin" && process.arch === "arm64")) || process.geteuid === undefined) fail("unsupported");
   try { return native ??= loadOwnedDirectoryNative(); } catch { fail("native_unavailable"); }
 }
 function nameBytes(name: string): Buffer {
@@ -58,7 +58,8 @@ function directoryStat(fd: number, ancestor = false): BigIntStats {
   return stat;
 }
 function openRoot(path: string): number {
-  let fd = openSync("/", constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | 0x80000 /* Linux O_CLOEXEC */);
+  const closeOnExec = process.platform === "darwin" ? 0x1000000 : 0x80000;
+  let fd = openSync("/", constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | closeOnExec);
   try {
     directoryStat(fd, true);
     const components = path.split("/").filter(Boolean);
@@ -382,7 +383,7 @@ class NativeCanonFiles implements CanonFiles {
   }
 }
 
-/** Private Linux x64/glibc capability; no fallback or public core re-export. */
+/** Qualified Linux x64/Darwin ARM64 capability; no fallback or raw public export. */
 export function openCanonFiles(vaultPath: string): CanonFiles {
   return guarded(() => {
     api();

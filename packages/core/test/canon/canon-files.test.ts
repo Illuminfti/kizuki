@@ -6,10 +6,11 @@ import { join } from "node:path";
 import { CanonFilesError, openCanonFiles, type CanonFileSnapshot } from "../../src/vault/canon-files";
 
 const roots: string[] = [];
+const supported = (process.platform === "linux" && process.arch === "x64") || (process.platform === "darwin" && process.arch === "arm64");
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function fixture(): string { const root = mkdtempSync(join(tmpdir(), "canon-files-")); roots.push(root); return root; }
 function qualifiedAncestry(path: string): boolean {
-  if (process.platform !== "linux" || process.arch !== "x64" || process.geteuid === undefined) return false;
+  if (!supported || process.geteuid === undefined) return false;
   const uid = BigInt(process.geteuid());
   let current = "/";
   for (const component of path.split("/").filter(Boolean)) {
@@ -28,7 +29,7 @@ const qualified = test.if(canExercise);
 test("validates native fixture custody and refuses unsupported environments", () => {
   if (canExercise) openCanonFiles(fixture()).close();
   else expect(() => openCanonFiles(fixture())).toThrow(CanonFilesError);
-  if (process.env.GITHUB_ACTIONS === "true" && process.platform === "linux" && process.arch === "x64") expect(canExercise).toBe(true);
+  if (process.env.GITHUB_ACTIONS === "true" && supported) expect(canExercise).toBe(true);
 });
 
 qualified("creates bounded nested files and returns immutable expected-byte snapshots", () => {
@@ -234,7 +235,7 @@ for (const mode of ["unsupported", "unavailable", "unknown-native", "partial-wri
       const mode = ${JSON.stringify(mode)}, root = ${JSON.stringify(root)};
       const realWrite = fs.writeSync;
       let written = 0;
-      if (mode === 'unsupported') Object.defineProperty(process, 'platform', {value: 'darwin'});
+      if (mode === 'unsupported') Object.defineProperty(process, 'platform', {value: 'win32'});
       if (mode === 'unavailable' || mode === 'unknown-native') {
         mock.module(${JSON.stringify(join(import.meta.dir, "../../src/util/owned-directory-native.ts"))}, () => ({
           loadOwnedDirectoryNative() {
