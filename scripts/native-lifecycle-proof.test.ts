@@ -94,3 +94,26 @@ test("crash/replacement evidence needs a new instance even if passed is asserted
  f.steps.find((s:any)=>s.id==="crash-restarts-new-instance").evidence.instance_id="repeat-install-replaces-process";
  expect(()=>validateNativeLifecycle(f,e)).toThrow("native-lifecycle-process-not-replaced");
 });
+
+for (const target of ["bun-linux-x64-baseline","bun-darwin-arm64"]) {
+ test(`recovered service event and vault identity join the original ${target} evidence`,()=>{
+  const e=expected(target);
+  for(const mutate of [(f:any)=>f.qualification.recovery_services[0].event_text_sha256="e".repeat(64),
+   (f:any)=>f.qualification.recovery_services[0].vault_id="foreign-vault",
+   (f:any)=>phase(f,"cross-binary-upgrade").vault_id="foreign-vault",
+   (f:any)=>phase(f,"migration-failure-preserved").preservation.event_text_sha256="e".repeat(64)]) {
+   const f=lifecycleFixture(e);mutate(f);expect(()=>validateNativeLifecycle(f,e)).toThrow();
+  }
+ });
+ test(`offline recovery cannot reuse another ${target} model instance or receipt`,()=>{
+  const e=expected(target);
+  for(const key of ["instance_id","receipt_run_id"]){const f=lifecycleFixture(e);phase(f,"model-dependency-offline").recovery[key]=phase(f,"model-configured")[key];expect(()=>validateNativeLifecycle(f,e)).toThrow("native-lifecycle-model-instance-reused");}
+ });
+}
+
+test("service joins use event text bytes rather than the encoded legacy row digest",()=>{
+ const e=expected(),f=lifecycleFixture(e),preserved=phase(f,"migrate-ledger15").preservation;
+ expect(preserved.event_text_sha256).not.toBe(preserved.event_sha256);expect(()=>validateNativeLifecycle(f,e)).not.toThrow();
+ f.qualification.recovery_services[0].event_text_sha256=preserved.event_sha256;
+ expect(()=>validateNativeLifecycle(f,e)).toThrow("native-lifecycle-recovery-event-binding");
+});

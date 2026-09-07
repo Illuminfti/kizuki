@@ -35,7 +35,7 @@ export interface NativeRecoveryEvidence {
   candidate_source_sha: string; helper_source_sha: string; executable_sha256: string;
   commands: NativeRecoveryCommand[];
   snapshots: { role: "before" | "doctor-after" | "migrated" | "admission-before" | "admission-after" | "late-ddl-before" | "late-ddl-after" | "recovery-preimage" | "restored"; value: NativeRecoverySnapshot }[];
-  preservation: { events: number; claims: number; event_sha256: string; claim_sha256: string; original_columns_equal: boolean; current_claim_consumer: "not_applicable" | "passed"; public_query: "not_run" | "passed" };
+  preservation: { events: number; claims: number; event_sha256: string; event_text_sha256: string | null; claim_sha256: string; original_columns_equal: boolean; current_claim_consumer: "not_applicable" | "passed"; public_query: "not_run" | "passed" };
   recovery_copy_sha256: string | null;
   failure_scope: "none" | "admission-and-late-ddl-transaction-rollback";
   retained_failed_vaults: string[];
@@ -170,13 +170,17 @@ function projectedRows(before: Row[], after: Row[], key: string): Row[] {
   requireThat(before.length === after.length, "preservation-cardinality");
   return before.map(row => { const match = after.find(item => item[key] === row[key]); requireThat(match, "preservation-identity"); return Object.fromEntries(Object.keys(row).map(field => [field, match[field] ?? null])); });
 }
+function preservedEventTextHash(events: Row[]): string {
+  requireThat(events.length === 1 && typeof events[0]!.text === "string", "preservation-event-text");
+  return sha(events[0]!.text);
+}
 function preserve(before: Snapshot, after: Snapshot, evidence: NativeRecoveryEvidence): void {
   const events = before.tables.events ?? [], claims = before.tables.claims ?? [];
   const afterEvents = projectedRows(events, after.tables.events ?? [], "event_id");
   const afterClaims = projectedRows(claims, after.tables.claims ?? [], "claim_id");
   requireThat(encode(events) === encode(afterEvents) && encode(claims) === encode(afterClaims), "legacy-row-changed");
   for (const event of after.tables.events ?? []) requireThat(event.text_hash === sha(String(event.text)) && (event.content_hash_version === 1 || event.content_hash_version === 2) && event.origin === "external", "current-event-metadata");
-  evidence.preservation = { events: events.length, claims: claims.length, event_sha256: sha(encode(events)), claim_sha256: sha(encode(claims)), original_columns_equal: true, current_claim_consumer: "not_applicable", public_query: "not_run" };
+  evidence.preservation = { events: events.length, claims: claims.length, event_sha256: sha(encode(events)), event_text_sha256: preservedEventTextHash(events), claim_sha256: sha(encode(claims)), original_columns_equal: true, current_claim_consumer: "not_applicable", public_query: "not_run" };
 }
 function claimConsumer(vault: string, before: Snapshot, evidence: NativeRecoveryEvidence): void {
   const claims = before.tables.claims ?? []; if (!claims.length) return;
@@ -217,7 +221,7 @@ export async function runNativeRecoveryFixtures(options: NativeRecoveryOptions):
   let goodCopy: Buffer | null = null, goodBefore: Snapshot | null = null;
   for (const [index,id] of NATIVE_RECOVERY_PHASE_IDS.entries()) {
     const input = historicalRecoveryInput(inputs[index]!);
-    const evidence: NativeRecoveryEvidence = { fixture_id: input.identity.id, fixture_sha256: input.identity.sha256, writer_commit: input.identity.writer_commit, writer_bun: input.identity.writer_bun, candidate_source_sha: options.candidate_source_sha, helper_source_sha: options.helper_source_sha, executable_sha256: executableHash, commands: [], snapshots: [], preservation: { events: 0, claims: 0, event_sha256: sha("[]"), claim_sha256: sha("[]"), original_columns_equal: false, current_claim_consumer: "not_applicable", public_query: "not_run" }, recovery_copy_sha256: null, failure_scope: "none", retained_failed_vaults: [], failure_code: null };
+    const evidence: NativeRecoveryEvidence = { fixture_id: input.identity.id, fixture_sha256: input.identity.sha256, writer_commit: input.identity.writer_commit, writer_bun: input.identity.writer_bun, candidate_source_sha: options.candidate_source_sha, helper_source_sha: options.helper_source_sha, executable_sha256: executableHash, commands: [], snapshots: [], preservation: { events: 0, claims: 0, event_sha256: sha("[]"), event_text_sha256: null, claim_sha256: sha("[]"), original_columns_equal: false, current_claim_consumer: "not_applicable", public_query: "not_run" }, recovery_copy_sha256: null, failure_scope: "none", retained_failed_vaults: [], failure_code: null };
     const phase = { id, passed: false, evidence }; result.phases.push(phase);
     const vault = join(workspace, id);
     const command = (step: NativeRecoveryCommand["step"], args: string[], expected: 0 | 1 = 0, diagnostic: NativeRecoveryCommand["diagnostic"] = "none"): { stdout: string; stderr: string } => {
@@ -299,12 +303,16 @@ export async function runNativeRecoveryFixtures(options: NativeRecoveryOptions):
         requireThat(events.length === 1 && after.summary.claims === claims.length, "backup-row-count");
         preserveSerialized(events, after.tables.events ?? [], "event_id", "kizuki.event/v1");
         preserveSerialized(claims, after.tables.claims ?? [], "claim_id", "kizuki.claim/v1");
-        evidence.preservation = {events:events.length,claims:claims.length,event_sha256:sha(encode(events)),claim_sha256:sha(encode(claims)),original_columns_equal:true,current_claim_consumer:"not_applicable",public_query:"not_run"};
+        evidence.preservation = {events:events.length,claims:claims.length,event_sha256:sha(encode(events)),event_text_sha256:preservedEventTextHash(events),claim_sha256:sha(encode(claims)),original_columns_equal:true,current_claim_consumer:"not_applicable",public_query:"not_run"};
         claimConsumer(vault, after, evidence); publicQuery(vault,after);
         for (const [path,text] of Object.entries(fixture.files)) requireThat(sha(readFileSync(join(backup,path)))===sha(String(text)),"backup-input-mutated");
       }
       verifyPackageDirectory(dirname(executable),build); for (const name of CURRENT_PACKAGE_FILES) requireThat(sha(readFileSync(join(dirname(executable),name)))===packageHashes[name],"candidate-bytes-changed"); historicalRecoveryInput(input.identity.id);
-      if (id!=="migration-failure-preserved") { const current=inspectRecoveryFixture(vault); result.service_vaults.push({id,vault,event_text_sha256:sha(String(current.tables.events![0]!.text))}); }
+      if (id!=="migration-failure-preserved") {
+        const current=inspectRecoveryFixture(vault), eventTextHash=preservedEventTextHash(current.tables.events ?? []);
+        requireThat(eventTextHash === evidence.preservation.event_text_sha256, "preservation-event-text-changed");
+        result.service_vaults.push({id,vault,event_text_sha256:eventTextHash});
+      }
       phase.passed=true;
     } catch(error) { evidence.failure_code = error instanceof RecoveryFixtureError ? error.code : "fixture-operation-failed"; }
   }

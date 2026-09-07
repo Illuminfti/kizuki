@@ -47,6 +47,10 @@ function equal(a: unknown,b: unknown) { return JSON.stringify(a) === JSON.string
 function hashes(value: unknown): Record<string,string> { const r=row(value,CURRENT_PACKAGE_FILES.join(",")); return Object.fromEntries(CURRENT_PACKAGE_FILES.map(k=>[k,hash(r[k])])); }
 function unit(value: unknown, platform: string): string { const s=str(value); need(platform === "linux" ? /^kizuki@[a-zA-Z0-9._-]+\.service$/.test(s) : /^dev\.kizuki\.[a-zA-Z0-9._-]+$/.test(s), "native-lifecycle-unit"); return s; }
 function instance(value: unknown) { return str(value,128); }
+function vaultUnit(vaultId: unknown, value: unknown, platform: string): string {
+  const id=instance(vaultId);need(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(id),"native-lifecycle-vault-id");
+  const name=unit(value,platform);need(name===(platform==="linux"?`kizuki@${id}.service`:`dev.kizuki.${id}`),"native-lifecycle-vault-unit-binding");return name;
+}
 function boundedJson(value: unknown, depth=0): void {
   need(depth<=12,"native-lifecycle-depth");
   if(value===null || typeof value==="boolean") return;
@@ -114,7 +118,7 @@ function recovery(id: string,value: unknown,expected: NativeLifecycleIdentity): 
   for(const c of commands){str(c.step);const args=list(c.argv,16).map(v=>str(v,4096));need(args[0]==="kizuki");need(c.expected_exit===0||c.expected_exit===1);need(c.exit_code===c.expected_exit&&c.signal===null);num(c.duration_ms,0,30000);hash(c.stdout_sha256);hash(c.stderr_sha256);need(["none","migration_required","migration_rejected"].includes(String(c.diagnostic)));}
   const snapshots=list(e.snapshots,6).map(v=>{const s=row(v,"role,value");return {role:str(s.role),value:snapshot(s.value)};});
   need(new Set(snapshots.map(s=>s.role)).size===snapshots.length);
-  const preservation=row(e.preservation,"events,claims,event_sha256,claim_sha256,original_columns_equal,current_claim_consumer,public_query");
+  const preservation=row(e.preservation,"events,claims,event_sha256,event_text_sha256,claim_sha256,original_columns_equal,current_claim_consumer,public_query");
   num(preservation.events);num(preservation.claims);hash(preservation.event_sha256);hash(preservation.claim_sha256);need(typeof preservation.original_columns_equal==="boolean");
   const failed=list(e.retained_failed_vaults,2).map(v=>str(v));
   const expectedCommands=id==="migration-failure-preserved"?["initialize","migrate","initialize","migrate"]:id.startsWith("restore-")?["restore-verify","restore","rebuild","query"]:["initialize","doctor-before","migrate","rebuild","query"];
@@ -124,10 +128,12 @@ function recovery(id: string,value: unknown,expected: NativeLifecycleIdentity): 
     need(c.exit_code===(denied?1:0) && c.diagnostic===(denied?(c.step==="doctor-before"?"migration_required":"migration_rejected"):"none"));
   }
   if(id==="migration-failure-preserved") {
+    need(preservation.event_text_sha256===null,"native-lifecycle-failed-event-text");
     need(equal(snapshots.map(s=>s.role),["admission-before","admission-after","late-ddl-before","late-ddl-after"]));
     need(equal(snapshots[0]!.value,snapshots[1]!.value)&&equal(snapshots[2]!.value,snapshots[3]!.value)&&snapshots.every(s=>s.value.schema_version===15),"native-lifecycle-rollback-changed");
     need(equal(failed,["failed-admission","failed-late-ddl"])&&e.failure_scope==="admission-and-late-ddl-transaction-rollback"&&e.recovery_copy_sha256!==null);
   } else {
+    hash(preservation.event_text_sha256);
     need(failed.length===0&&e.failure_scope==="none"&&preservation.original_columns_equal===true&&preservation.public_query==="passed"&&preservation.events===1);
     need(preservation.claims===(fixture.id==="ledger16"||fixture.id==="claim-backup16"?1:0),"native-lifecycle-historical-claims-lost");
     need(preservation.current_claim_consumer===(Number(preservation.claims)>0?"passed":"not_applicable"));
@@ -153,7 +159,7 @@ function upgrade(value: unknown, expected: NativeLifecycleIdentity, prior: Row, 
   const p=prior.package_sha256 as Record<string,string>;
   need(e.baseline_source_sha===LIFECYCLE_BASELINE_SOURCE&&e.candidate_source_sha===expected.source_sha&&e.baseline_binary_sha256===p.kizuki&&e.candidate_binary_sha256===expected.package_sha256.kizuki,"native-lifecycle-upgrade-binary-binding");
   need(e.baseline_schema===21&&e.candidate_schema===21);instance(e.baseline_instance_id);instance(e.candidate_instance_id);need(e.baseline_instance_id!==e.candidate_instance_id);
-  num(e.baseline_pid,2,2**31-1);num(e.candidate_pid,2,2**31-1);instance(e.vault_id);hash(e.before_event_sha256);hash(e.after_event_sha256);hash(e.backup_manifest_sha256);hash(e.unit_sha256);unit(e.unit,platform);
+  num(e.baseline_pid,2,2**31-1);num(e.candidate_pid,2,2**31-1);instance(e.vault_id);hash(e.before_event_sha256);hash(e.after_event_sha256);hash(e.backup_manifest_sha256);hash(e.unit_sha256);vaultUnit(e.vault_id,e.unit,platform);
   for(const key of ["baseline_stopped","candidate_active","baseline_query_preserved","candidate_query_preserved","backup_verified"])need(e[key]===true);
   need(e.before_event_sha256===e.after_event_sha256,"native-lifecycle-upgrade-content");return e;
 }
@@ -228,7 +234,13 @@ export function validateNativeLifecycle(value: unknown,expected:NativeLifecycleI
     if((LIFECYCLE_STATE_IDS as readonly string[]).includes(id))e=state(id,phase.evidence,platform);
     else if(id==="cross-binary-upgrade")e=upgrade(phase.evidence,expected,prior,platform);
     else if((LIFECYCLE_RECOVERY_IDS as readonly string[]).includes(id))e=recovery(id,phase.evidence,expected);
-    else {e=model(id,phase.evidence,platform);need(!instances.has(String(e.instance_id))&&!receipts.has(String(e.receipt_run_id)),"native-lifecycle-model-instance-reused");instances.add(String(e.instance_id));receipts.add(String(e.receipt_run_id));}
+    else {
+      e=model(id,phase.evidence,platform);
+      for(const observation of [e,...(e.recovery===null?[]:[e.recovery as Row])]) {
+        need(!instances.has(String(observation.instance_id))&&!receipts.has(String(observation.receipt_run_id)),"native-lifecycle-model-instance-reused");
+        instances.add(String(observation.instance_id));receipts.add(String(observation.receipt_run_id));
+      }
+    }
     admitted.set(id,e);if(e.unit!==undefined&&e.mechanism!=="not-applicable-launchd")units.add(String(e.unit));
   }
   const first=admitted.get("migrate-ledger15")!, failed=admitted.get("migration-failure-preserved")!, recovered=admitted.get("migration-backup-recovery")!;
@@ -241,7 +253,7 @@ export function validateNativeLifecycle(value: unknown,expected:NativeLifecycleI
   const services=list(q.recovery_services,5).map(v=>row(v,"id,vault_id,unit,pid,instance_id,ledger_schema,active,stopped,event_text_sha256"));
   need(equal(services.map(s=>s.id),LIFECYCLE_RECOVERY_IDS.filter(id=>id!=="migration-failure-preserved")),"native-lifecycle-recovery-service-inventory");
   const serviceIds=new Set<string>();
-  for(const s of services){instance(s.vault_id);instance(s.instance_id);num(s.pid,2,2**31-1);hash(s.event_text_sha256);need(s.ledger_schema===21&&s.active===true&&s.stopped===true);const u=unit(s.unit,platform);need(!serviceIds.has(u));serviceIds.add(u);units.add(u);}
+  for(const s of services){instance(s.vault_id);instance(s.instance_id);num(s.pid,2,2**31-1);hash(s.event_text_sha256);need(s.ledger_schema===21&&s.active===true&&s.stopped===true);const u=vaultUnit(s.vault_id,s.unit,platform);need(s.event_text_sha256===(admitted.get(String(s.id))!.preservation as Row).event_text_sha256,"native-lifecycle-recovery-event-binding");need(!serviceIds.has(u));serviceIds.add(u);units.add(u);}
   const cleanup=row(r.cleanup,"attempted,service_gone,unit_removed,synthetic_root_removed,units");
   for(const k of ["attempted","service_gone","unit_removed","synthetic_root_removed"])need(cleanup[k]===true,"native-lifecycle-cleanup-incomplete");
   const removed=list(cleanup.units,32).map(v=>{const c=row(v,"unit,service_gone,unit_removed");need(c.service_gone===true&&c.unit_removed===true,"native-lifecycle-unit-cleanup");return unit(c.unit,platform);});
