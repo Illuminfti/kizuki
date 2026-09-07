@@ -23,7 +23,8 @@ afterEach(async () => {
 
 // Inspect the runner independently of the implementation. Qualified CI must
 // exercise the actual positive process path, never skip because an API threw.
-const qualified = process.platform === "linux" && process.arch === "x64" && (() => {
+const supported = (process.platform === "linux" && process.arch === "x64") || (process.platform === "darwin" && process.arch === "arm64");
+const qualified = supported && (() => {
   const uid = process.geteuid?.();
   if (uid === undefined) return false;
   for (let path = tmpdir();; path = dirname(path)) {
@@ -129,7 +130,7 @@ function denied(reply: Reply, code: string): void {
   expect(reply.result?.structuredContent).toBeUndefined();
 }
 
-test.if(process.env.GITHUB_ACTIONS === "true" && process.platform === "linux" && process.arch === "x64")("file credential stdio proof requires qualified Linux CI custody", () => {
+test.if(process.env.GITHUB_ACTIONS === "true" && supported)("file credential stdio proof requires qualified native CI custody", () => {
   expect(qualified).toBe(true);
 });
 
