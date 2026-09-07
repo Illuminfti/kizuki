@@ -92,18 +92,12 @@ export const serveCommand: Command = {
       if (verb === "run") {
         if (rail === undefined || !isRailId(rail)) throw new UsageError(this.usage);
         const crashAfter = parsed.options.get("--crash-after");
-        const runtime = await createServeRuntime({ ...ctx, env: io.env, err: io.err });
-        let receipt;
-        try {
-          receipt = await runRail(ctx.db, ctx.vaultPath, rail, {
-            hooks: runtime.hooks,
-            ...(crashAfter !== undefined && isCrashPoint(crashAfter)
-              ? { crashAfter }
-              : {}),
-          });
-        } finally {
-          await runtime.close();
-        }
+        const receipt = await runRail(ctx.db, ctx.vaultPath, rail, {
+          acquireRuntime: () => createServeRuntime({ ...ctx, env: io.env, err: io.err }),
+          ...(crashAfter !== undefined && isCrashPoint(crashAfter)
+            ? { crashAfter }
+            : {}),
+        });
         if (parsed.flags.has("--json")) {
           io.out(
             jsonEnvelope(
@@ -125,22 +119,17 @@ export const serveCommand: Command = {
         throw new UsageError(this.usage);
       }
       const crashAfter = parsed.options.get("--crash-after");
-      const runtime = await createServeRuntime({ ...ctx, env: io.env, err: io.err });
-      let result;
-      try {
-        result = await runServeDaemon(ctx.db, ctx.vaultPath, {
-          once: parsed.flags.has("--once"),
-          http: !parsed.flags.has("--no-http"),
-          ...(port === undefined ? {} : { port }),
-          ...(crashAfter !== undefined && isCrashPoint(crashAfter)
-            ? { crashAfter }
-            : {}),
-          process: thisProcess(),
-          hooks: runtime.hooks,
-        });
-      } finally {
-        await runtime.close();
-      }
+      const result = await runServeDaemon(ctx.db, ctx.vaultPath, {
+        once: parsed.flags.has("--once"),
+        http: !parsed.flags.has("--no-http"),
+        ...(port === undefined ? {} : { port }),
+        ...(crashAfter !== undefined && isCrashPoint(crashAfter)
+          ? { crashAfter }
+          : {}),
+        process: thisProcess(),
+        acquireRuntime: () => createServeRuntime({ ...ctx, env: io.env, err: io.err, configurationErrorMode: "disable-model" }),
+        ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
+      });
       if (parsed.flags.has("--json")) {
         io.out(
           jsonEnvelope("serve", "ok", {

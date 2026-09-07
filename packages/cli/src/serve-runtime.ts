@@ -3,7 +3,9 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   MODEL_PRODUCER_ID,
+  PortError,
   PortRegistry,
+  SourceGrantError,
   bindSourceModelPort,
   isPlainObject,
   registerModelProducerPort,
@@ -13,7 +15,7 @@ import {
   type LlmPort,
   type PortContext,
   type ProducerPort,
-  type RailHooks,
+  type RailRuntime,
   type RailSyncResult,
   type RetrievalPort,
 } from "@kizuki/core";
@@ -37,10 +39,7 @@ interface LlmSelection {
   readonly secret_ref: string | null;
 }
 
-export interface ServeRuntime {
-  readonly hooks: RailHooks;
-  close(): Promise<void>;
-}
+export type ServeRuntime = RailRuntime;
 
 function runtimeError(message: string): never {
   throw new ServeRuntimeError(`serve model configuration: ${message}`);
@@ -86,21 +85,20 @@ function portContext(
   id: string,
   config: Readonly<Record<string, unknown>>,
   secretRef: string | null,
-  env: Record<string, string | undefined>,
+  secret: string | null,
   log: (line: string) => void,
 ): PortContext {
   const data_dir = join(vaultPath, ".kizuki", kind, id);
   mkdirSync(data_dir, { recursive: true, mode: 0o700 });
-  const resolve = secretRef === null ? null : tokenResolver(secretRef, env);
   return {
     vault_path: vaultPath,
     data_dir,
     config,
     secrets: async (requested) => {
-      if (resolve === null || requested !== secretRef) {
+      if (secret === null || requested !== secretRef) {
         runtimeError("secret reference is not bound to the selected model port");
       }
-      return resolve(requested);
+      return secret;
     },
     clock: () => new Date().toISOString(),
     logger: (line) => log(`model ${line.level}: ${line.message}`),
@@ -149,19 +147,23 @@ async function syncConnections(
   return { events_synced, events_stored, events_duplicate, events_self_skipped: 0, errors };
 }
 
-/** Bind the complete model port before any rail is allowed to write canon. */
-export async function createServeRuntime(options: {
+interface ServeRuntimeOptions {
   readonly db: Database;
   readonly vaultPath: string;
   readonly store: Parameters<typeof listHostConnections>[1];
   readonly env: Record<string, string | undefined>;
   readonly retrieval?: RetrievalPort;
   readonly err: (line: string) => void;
-}): Promise<ServeRuntime> {
+  /** Strict by default; the daemon can retain its useful local capture floor. */
+  readonly configurationErrorMode?: "throw" | "disable-model";
+}
+
+async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; producer?: ProducerPort }> {
   const selected = readLlmSelection(options.vaultPath);
+  let secret: string | null = null;
   if (selected.secret_ref !== null) {
     try {
-      await tokenResolver(selected.secret_ref, options.env)(selected.secret_ref);
+      secret = await tokenResolver(selected.secret_ref, options.env)(selected.secret_ref);
     } catch {
       runtimeError("configured secret reference cannot be resolved");
     }
@@ -171,7 +173,7 @@ export async function createServeRuntime(options: {
   const llm = (await registry.bindFromConfig<LlmPort>(
     "llm",
     { llm: selected.id },
-    portContext(options.vaultPath, "llm", selected.id, selected.config, selected.secret_ref, options.env, options.err),
+    portContext(options.vaultPath, "llm", selected.id, selected.config, selected.secret_ref, secret, options.err),
   )).port;
   let producer: ProducerPort | undefined;
   try {
@@ -180,7 +182,7 @@ export async function createServeRuntime(options: {
       producer = (await registry.bindFromConfig<ProducerPort>(
         "producer",
         { producer: MODEL_PRODUCER_ID },
-        portContext(options.vaultPath, "producer", MODEL_PRODUCER_ID, {}, null, options.env, options.err),
+        portContext(options.vaultPath, "producer", MODEL_PRODUCER_ID, {}, null, null, options.err),
       )).port;
       if (selected.id === MODEL_LLM_ID) {
         const configured = parseOpenAiCompatibleConfig(selected.config);
@@ -191,8 +193,25 @@ export async function createServeRuntime(options: {
       }
     }
   } catch (error) {
-    await llm.close();
+    // A partially bound producer is still owned here. Cleanup failures must
+    // escape, rather than being mistaken for a safe model-disabled runtime.
+    try {
+      try { await producer?.close(); } finally { await llm.close(); }
+    } catch { throw new Error("model runtime cleanup failed"); }
     throw error;
+  }
+  return { llm, ...(producer === undefined ? {} : { producer }) };
+}
+
+/** Bind one immutable model destination and credential for one rail attempt. */
+export async function createServeRuntime(options: ServeRuntimeOptions): Promise<ServeRuntime> {
+  let binding: Awaited<ReturnType<typeof bindModel>> | undefined;
+  let configurationUnavailable = false;
+  try { binding = await bindModel(options); }
+  catch (error) {
+    if (options.configurationErrorMode !== "disable-model" ||
+        !(error instanceof ServeRuntimeError || error instanceof PortError || error instanceof SourceGrantError)) throw error;
+    configurationUnavailable = true;
   }
   const claims: ClaimsIo = { db: options.db,
     ...(options.retrieval === undefined ? {} : { retrieval: options.retrieval }),
@@ -200,10 +219,15 @@ export async function createServeRuntime(options: {
   let closed = false;
   return {
     hooks: {
-      model_ref: llm.model_ref,
-      ...(producer === undefined ? {} : { producer }),
+      model_ref: binding?.llm.model_ref ?? null,
+      ...(binding?.producer === undefined ? {} : { producer: binding.producer }),
       claims,
-      sync: () => syncConnections(options.db, options.vaultPath, options.store, options.env),
+      sync: async () => {
+        const result = await syncConnections(options.db, options.vaultPath, options.store, options.env);
+        return configurationUnavailable
+          ? { ...result, errors: [...result.errors, "model configuration unavailable"] }
+          : result;
+      },
       refresh: async () => {
         const degraded: string[] = [];
         if (options.retrieval !== undefined) {
@@ -223,9 +247,9 @@ export async function createServeRuntime(options: {
       if (closed) return;
       closed = true;
       try {
-        if (producer !== undefined) await producer.close();
+        if (binding?.producer !== undefined) await binding.producer.close();
       } finally {
-        await llm.close();
+        await binding?.llm.close();
       }
     },
   };

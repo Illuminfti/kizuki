@@ -91,7 +91,7 @@ export {
 export type { SupervisorHost } from "./supervisor";
 export { FILE_NOTIFIER_ID, briefPath, createFileNotifier } from "./notifier-file";
 export { dueRails, runRail, runServeOnce } from "./rails";
-export type { RailHooks, RailSyncResult, RunRailOptions } from "./rails";
+export type { RailHooks, RailRuntime, RailSyncResult, RunRailOptions } from "./rails";
 export { runWritePass } from "./write-pass";
 export type { WritePassOptions, WritePassResult } from "./write-pass";
 export {

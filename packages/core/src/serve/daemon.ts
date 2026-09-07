@@ -13,13 +13,17 @@ import {
   type LeaseProcess,
 } from "./leases";
 import { recoverRunJournal } from "./receipts";
-import { dueRails, runRail, type RailHooks } from "./rails";
+import { dueRails, runRail, type RailHooks, type RailRuntime } from "./rails";
+import type { RetrievalPort } from "../contracts/retrieval";
 import { initServe, listSchedules } from "./schema";
 import { SERVE_PID_PATH, ServeDaemonError, isRailId, type CrashPoint, type RailId } from "./types";
 
 export interface ServeDaemonOptions {
   readonly now?: () => string;
   readonly hooks?: RailHooks;
+  readonly acquireRuntime?: () => Promise<RailRuntime>;
+  /** HTTP owns no per-rail runtime; this port belongs to the daemon's caller. */
+  readonly retrieval?: RetrievalPort;
   readonly crashAfter?: CrashPoint;
   readonly http?: boolean;
   readonly port?: number;
@@ -96,6 +100,9 @@ export async function runServeDaemon(
   vaultPath: string,
   options: ServeDaemonOptions = {},
 ): Promise<{ receipts: number; http: ServeHttpHandle | null }> {
+  if (options.hooks !== undefined && options.acquireRuntime !== undefined) {
+    throw new ServeDaemonError("runtime_options_conflict", "rail hooks and acquireRuntime are mutually exclusive");
+  }
   initServe(db);
   const recovered = recoverRunJournal(db, vaultPath);
   const process = options.process ?? thisProcess(options.now);
@@ -119,12 +126,13 @@ export async function runServeDaemon(
   const config = loadServeConfig(vaultPath);
   const httpEnabled = options.http ?? config.http;
   if (httpEnabled) {
+    const retrieval = options.retrieval ?? options.hooks?.claims?.retrieval;
     http = startServeHttp({
       db,
       vaultPath,
       host: config.bind_host,
       port: options.port ?? config.bind_port,
-      ...(options.hooks?.claims?.retrieval === undefined ? {} : { retrieval: options.hooks.claims.retrieval }),
+      ...(retrieval === undefined ? {} : { retrieval }),
     });
   }
 
@@ -151,6 +159,7 @@ export async function runServeDaemon(
           now: process.now,
           execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "once", due_at: null },
           ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
+          ...(options.acquireRuntime === undefined ? {} : { acquireRuntime: options.acquireRuntime }),
           ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
         });
         receipts += 1;
@@ -168,6 +177,7 @@ export async function runServeDaemon(
           execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "scheduled",
             due_at: listSchedules(db).find(row => row.rail === rail)?.next_run_at ?? process.now() },
           ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
+          ...(options.acquireRuntime === undefined ? {} : { acquireRuntime: options.acquireRuntime }),
         });
         receipts += 1;
         continue;

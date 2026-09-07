@@ -991,6 +991,7 @@ export type {
   ModelDoctor,
   RailDoctor,
   RailHooks,
+  RailRuntime,
   RailId,
   RailSpec,
   RailSyncResult,

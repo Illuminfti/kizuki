@@ -43,12 +43,19 @@ export interface RailHooks {
   readonly embedding_backlog?: number;
 }
 
+/** One host binding, owned and released by exactly one rail attempt. */
+export interface RailRuntime {
+  readonly hooks: RailHooks;
+  close(): Promise<void>;
+}
+
 const processInstance = crypto.randomUUID();
 
 export interface RunRailOptions {
   readonly execution?: RunExecution;
   readonly now?: () => string;
   readonly hooks?: RailHooks;
+  readonly acquireRuntime?: () => Promise<RailRuntime>;
   readonly crashAfter?: CrashPoint;
 }
 
@@ -299,7 +306,12 @@ export async function runRail(
     let partial: Partial<RunReceipt> = {};
     let hooks: RailHooks | undefined;
     let budget: BudgetTracker | undefined;
+    let runtime: RailRuntime | undefined;
+    let interrupted = false;
     try {
+      if (options.hooks !== undefined && options.acquireRuntime !== undefined) {
+        throw new Error("rail hooks and acquireRuntime are mutually exclusive");
+      }
       // A failed preflight may append this run's audit receipt only. In particular,
       // do not import older receipt/usage journals before validating a sync decision.
       if (rail === "sync") requireAtomicExtractReplay(db);
@@ -318,9 +330,13 @@ export async function runRail(
       } catch (error) {
         if (!(error instanceof VaultMutationError) || error.code !== "writer_busy") throw error;
       }
-      hooks = withResolvedModel(options.hooks);
       const config = loadServeConfig(vaultPath);
       budget = createDurableWriteBudget(db, vaultPath, () => budgetDay(now()), config);
+      if (options.acquireRuntime !== undefined) {
+        try { runtime = await options.acquireRuntime(); }
+        catch { throw new Error("rail runtime acquisition failed"); }
+      }
+      hooks = withResolvedModel(runtime?.hooks ?? options.hooks);
       switch (rail) {
         case "sync":
           partial = await runSyncRail(db, vaultPath, budget, hooks, runId);
@@ -347,9 +363,19 @@ export async function runRail(
           break;
       }
     } catch (error) {
-      if (error instanceof InjectedCrash) throw error;
+      if (error instanceof InjectedCrash) { interrupted = true; throw error; }
       partial = { status: "failed", errors: [redactReceiptError(error)],
         ...(error instanceof LegacyExtractReconciliationError ? { stopped: error.code } : {}) };
+    } finally {
+      // Close before publication so failure cannot leave a successful receipt.
+      // This also releases the binding before any journal persistence can fail.
+      if (runtime !== undefined) {
+        try { await runtime.close(); }
+        catch {
+          if (interrupted) throw new Error("rail runtime close failed after interruption");
+          partial = { ...partial, status: "failed", errors: [...(partial.errors ?? []), "rail runtime close failed"] };
+        }
+      }
     }
 
     const usage = db.query<{ model_ref: string | null; metrics: string }, [string]>("SELECT model_ref,metrics FROM extract_usage WHERE run_id=?").get(runId);
