@@ -773,7 +773,7 @@ for (const detail of ["loaded but not running", "stopped (last exit code 0)", "f
   });
 }
 
-for (const mode of ["retained-failure", "reset-failure", "reset-no-transition", "rollback-failure", "ordinary"] as const) {
+for (const mode of ["retained-failure", "reset-failure", "reset-no-transition", "reset-reactivates", "rollback-failure", "ordinary"] as const) {
   test(`systemd uninstall clears only the stopped owned failure before deletion: ${mode}`, () => {
     const f = fixture(); const first = installServeService(f.vault, f.host);
     const original = readFileSync(first.unitPath!, "utf8");
@@ -790,14 +790,15 @@ for (const mode of ["retained-failure", "reset-failure", "reset-no-transition", 
       assert.deepEqual(args, command==='daemon-reload' ? ['--user',command] : command==='disable' ? ['--user','disable','--now',unit] : ['--user',command,unit]);
       s.calls.push(command); let code=0, output='';
       if(command==='is-enabled') { output=existsSync(unitPath) ? (s.enabled?'enabled':'disabled') : 'not-found'; code=output==='enabled'?0:output==='not-found'?4:1; }
-      else if(command==='is-active') { output=s.failed?'failed':'inactive'; code=existsSync(unitPath)?3:4; }
-      else if(command==='disable') { s.enabled=false; }
+      else if(command==='is-active') { output=s.active?'active':s.failed?'failed':'inactive'; code=s.active?0:existsSync(unitPath)?3:4; }
+      else if(command==='disable') { s.enabled=false; s.active=false; }
       else if(command==='reset-failed') {
         assert.equal(existsSync(unitPath),true,'reset must precede owned definition removal');
         assert.equal(s.enabled,false,'reset must follow confirmed disable');
         assert.equal(s.failed,true);
         if(['reset-failure','rollback-failure'].includes(s.mode))code=1;
         else if(s.mode!=='reset-no-transition')s.failed=false;
+        if(s.mode==='reset-reactivates')s.active=true;
       } else if(command==='enable') { if(s.mode==='rollback-failure')code=1; else s.enabled=true; }
       else assert.equal(command,'daemon-reload','uninstall must never start or restart');
       writeFileSync(path,JSON.stringify(s)); process.stdout.write(output); process.exit(code);
@@ -825,5 +826,30 @@ for (const mode of ["retained-failure", "reset-failure", "reset-no-transition", 
       expect(state.calls.filter((c:string)=>c==='reset-failed').length).toBe(1);
     }
     expect(ordinaryVault(f.vault)).toEqual(ordinary);
+    if (mode === "rollback-failure") {
+      writeFileSync(statePath, JSON.stringify({...state, mode: "retained-failure"}));
+      const retry=Bun.spawnSync([process.execPath,'-e',script], {env:{...process.env,PATH:f.root+':'+process.env.PATH},stdout:'pipe',stderr:'pipe',timeout:15_000});
+      expect({code:retry.exitCode,stderr:retry.stderr.toString()}).toEqual({code:0,stderr:""});
+      expect(JSON.parse(retry.stdout.toString()).result.removed).toBe(true);
+      expect(existsSync(journalPath(f.vault))).toBe(false); expect(existsSync(first.unitPath!)).toBe(false);
+      expect(readServeIntent(f.vault)).toBe('opted-out'); expect(ordinaryVault(f.vault)).toEqual(ordinary);
+    }
+  });
+}
+
+for (const owned of [true, false]) {
+  test(`failed systemd uninstall refuses unavailable reset capability or definition: owned=${owned}`, () => {
+    const f = fixture(); const first = installServeService(f.vault, f.host);
+    f.observe("disabled", false);
+    const query = f.host.query;
+    f.host.query = id => ({...query(id), detail: "failed"});
+    let resets = 0;
+    if (!owned) {
+      rmSync(first.unitPath!);
+      f.host.resetFailure = () => { resets++; return {ok:true, detail:"unexpected"}; };
+    }
+    expect(() => uninstallServeService(f.vault, f.host)).toThrow("previous configuration restored");
+    expect(resets).toBe(0); expect(existsSync(first.unitPath!)).toBe(owned);
+    expect(readServeIntent(f.vault)).toBe("installed");
   });
 }
