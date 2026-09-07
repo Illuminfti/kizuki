@@ -8,6 +8,8 @@ import { validateAbsenceProof, validateRetrievalDoc } from "../contracts/retriev
 import { sha256Hex } from "../util/hash";
 import { isPlainObject } from "../util/validate";
 import { parseFrontmatter } from "../vault/frontmatter";
+import { validatePage } from "../vault/schema";
+import { eventIdFromReference } from "../retrieval/ids";
 import { ABSENT_PAGE_HASH, hashBytes } from "../vault/write";
 import type { CanonPage } from "../vault/pages";
 import type { VaultMutationScope } from "../vault/mutation-scope";
@@ -69,6 +71,13 @@ export function readCanonProjectionObligation(db: Database, receiptId: string): 
       value.external_execution.some(state => state !== "scheduled" && state !== "started" && state !== "acknowledged")) recoveryFailure("intent_invalid", receiptId);
   const bytes = decodeCanonImage(value.after_base64);
   if ((bytes === null ? ABSENT_PAGE_HASH : hashBytes(bytes)) !== receipt.after_hash) recoveryFailure("intent_invalid", receiptId);
+  const page = bytes === null ? null : parseFrontmatter(bytes.toString("utf8"));
+  if (page !== null && (validatePage(page.data).length > 0 || page.data["id"] !== value.page_id)) recoveryFailure("intent_invalid", receiptId);
+  const pageSources = page === null ? [] : page.data["sources"] as string[];
+  const expectedDerive = [...new Set((receipt.kind === "purge_rewrite" ? pageSources : [...receipt.provenance, ...pageSources]).map(eventIdFromReference))].sort();
+  const sourceEvents = new Set(value.sources.map(source => source.event_id));
+  if (JSON.stringify(expectedDerive) !== JSON.stringify(value.derive_ids) ||
+      [...receipt.provenance, ...pageSources].some(id => !sourceEvents.has(eventIdFromReference(id)))) recoveryFailure("intent_invalid", receiptId);
   const associations = db.query<{ source_key: string; event_id: string }, [string]>(`SELECT source_key,event_id FROM canon_projection_sources WHERE receipt_id=? ORDER BY event_id LIMIT ${MAX_CANON_IDENTITY_BINDINGS + 1}`).all(receiptId);
   if (JSON.stringify(associations.map(row => [row.event_id, row.source_key])) !== JSON.stringify(value.sources.map(row => [row.event_id, row.source_key]))) recoveryFailure("intent_invalid", receiptId);
   return { row: { receipt_id: raw.receipt_id, page_path: raw.page_path, obligation: json, digest: raw.digest }, value };

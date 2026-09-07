@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { LedgerStoreError } from "./errors";
+import { oneShotAll, oneShotGet } from "./schema";
 
 /** Replay payloads are private, source-associated state, never portable evidence. */
 export const MAX_CANON_INTENT_BYTES = 8 * 1024 * 1024;
@@ -47,12 +48,12 @@ function normalized(sql: string): string { return sql.replace(/\s+/g, "").replac
 
 export function assertCanonRecoverySchema(db: Database): void {
   for (const [name, expected] of Object.entries(TABLES)) {
-    const row = db.query<{ sql: string }, [string]>("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(name);
+    const row = oneShotGet<{ sql: string }>(db, "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", name);
     if (row === null || normalized(row.sql) !== normalized(expected)) {
       throw new LedgerStoreError("corrupt", "canon recovery schema is invalid");
     }
   }
-  const rows = db.query<{ singleton: number; generation: number }, []>("SELECT * FROM canon_read_generation LIMIT 2").all();
+  const rows = oneShotAll<{ singleton: number; generation: number }>(db, "SELECT * FROM canon_read_generation LIMIT 2");
   if (rows.length !== 1 || rows[0]!.singleton !== 1 || !Number.isSafeInteger(rows[0]!.generation) || rows[0]!.generation < 0) {
     throw new LedgerStoreError("corrupt", "canon recovery generation is invalid");
   }

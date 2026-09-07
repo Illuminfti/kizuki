@@ -5,7 +5,7 @@ import { sha256Hex } from "../util/hash";
 import { isPlainObject } from "../util/validate";
 import { isUlid } from "../util/ulid";
 import { isRfc3339 } from "../util/time";
-import { parseFrontmatter } from "../vault/frontmatter";
+import { parseFrontmatter, serializePage } from "../vault/frontmatter";
 import { validatePage } from "../vault/schema";
 import { ABSENT_PAGE_HASH, archiveRelPath, canonStageRelPath, hashBytes } from "../vault/write";
 import { eventIdFromReference } from "../retrieval/ids";
@@ -134,7 +134,8 @@ export function parseCanonWriteIntent(value: unknown): CanonWriteIntent {
       (receipt.kind === "write" && (value.completion.original_receipt_id !== null || receipt.reverts !== null || value.completion.claim_kind === "revert" || value.completion.claim_kind === "purge_review"))) recoveryFailure("intent_invalid");
   if (after !== null) {
     const page = parseFrontmatter(FATAL_UTF8.decode(after));
-    if (validatePage(page.data).length > 0 || page.data["id"] !== value.completion.page_id) recoveryFailure("intent_invalid");
+    if (validatePage(page.data).length > 0 || page.data["id"] !== value.completion.page_id ||
+        !Buffer.from(serializePage(page)).equals(after)) recoveryFailure("intent_invalid");
   }
   object(value.admission, ["source_epoch", "claims", "events", "sources", "derive_ids", "predecessor_digest", "original_digest", "page_index_digest", "supersessions_digest", "claim_bindings_digest"]);
   const admission = value.admission;
@@ -142,6 +143,13 @@ export function parseCanonWriteIntent(value: unknown): CanonWriteIntent {
   guards(admission.claims); guards(admission.events); ids(admission.derive_ids);
   for (const key of ["predecessor_digest", "original_digest", "page_index_digest", "supersessions_digest", "claim_bindings_digest"]) hash(admission[key]);
   array(admission.sources); const sourceEvents = new Set<string>(); for (const source of admission.sources) { object(source, ["source_key", "event_id"]); text(source.source_key); id(source.event_id); if (sourceEvents.has(source.event_id)) recoveryFailure("intent_invalid"); sourceEvents.add(source.event_id); }
+  const eventIds = [...new Set([...receipt.provenance, ...pageSources(before), ...pageSources(after)].map(eventIdFromReference))].sort();
+  const deriveIds = [...new Set((value.completion.mode === "purge" ? pageSources(after) : [...receipt.provenance, ...pageSources(after)]).map(eventIdFromReference))].sort();
+  const boundEvents = (admission.events as unknown as Guard[]).map(item => item.id);
+  const boundClaims = new Set((admission.claims as unknown as Guard[]).map(item => item.id));
+  if (digest(eventIds) !== digest(boundEvents) || digest(eventIds) !== digest([...sourceEvents]) ||
+      digest(deriveIds) !== digest(admission.derive_ids) ||
+      [...receipt.claim_ids, ...receipt.superseded.map(item => item.claim_id)].some(id => !boundClaims.has(id))) recoveryFailure("intent_invalid");
   validateOrdinaryReceiptCheckpoint(value.checkpoint);
   object(value.stages, ["live_stage", "archive_stage"]);
   if (value.stages.live_stage !== canonStageRelPath(receipt.page_path, receipt.receipt_id) ||

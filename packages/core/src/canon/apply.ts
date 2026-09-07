@@ -463,7 +463,6 @@ export function applyCanonWriteOwned(
       ? []
       : [{ store: io.retrieval_store, op: "upsert", doc: `page:${pageId}` }];
 
-  if (existing !== null && new CanonAuthorityResolver(io.db, [target.rel_path]).basis(target.rel_path, existing.hash) === null) recoveryFailure("historical_orphan");
   const expectedAfter = hashBytes(Buffer.from(serializePage(prepared.page)));
   const admit = (): void => {
     persistedClaims(io, claims);
@@ -483,6 +482,7 @@ export function applyCanonWriteOwned(
       }
     }
     if (!sourceDeletion) requireExternalEvents(io.db, union([provenance, existingSources(prepared.page)]));
+    if (existing !== null && new CanonAuthorityResolver(io.db, [target.rel_path]).basis(target.rel_path, existing.hash) === null) recoveryFailure("historical_orphan");
   };
   const receipt: CanonReceipt = {
     receipt_id: receiptId,

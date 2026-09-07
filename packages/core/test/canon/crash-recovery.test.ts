@@ -15,7 +15,7 @@ import { getClaim } from "../../src/claims/store";
 import { createDurableWriteBudget, readDailyBudget, settleWriteReservations } from "../../src/serve/budget-ledger";
 import { registerConnection } from "../../src/ledger/connections";
 import { accept } from "../../src/ledger/ledger";
-import { revokeSourceGrant, setSourceGrant } from "../../src/ledger/source-grants";
+import { bindLocalSourcePort, revokeSourceGrant, setSourceGrant } from "../../src/ledger/source-grants";
 import { createFts5RetrievalPort, FTS5_RETRIEVAL_DESCRIPTOR } from "../../src/retrieval/fts5";
 import { temporaryPortContext } from "../contracts/fixtures";
 import { validEvent } from "../fixtures";
@@ -236,7 +236,7 @@ test("v20 migration preserves canon and creates a closed empty v21 recovery ledg
   expect(() => f.db.exec("UPDATE canon_read_generation SET generation=-1")).toThrow();
 });
 
-for (const mutation of ["version", "field", "image", "checkpoint", "sources"] as const) {
+for (const mutation of ["version", "field", "image", "checkpoint", "sources", "source_closure", "derive_closure"] as const) {
   test(`closed persisted intent refuses ${mutation} corruption without changing page or receipt`, async () => {
     const f = await fixture(); failRow(f.db); expect(() => write(f.io, f.claim)).toThrow();
     const row = f.db.query<{ intent: string }, []>("SELECT intent FROM canon_write_intents").get()!;
@@ -246,8 +246,14 @@ for (const mutation of ["version", "field", "image", "checkpoint", "sources"] as
     if (mutation === "image") intent.after_base64 += "=";
     if (mutation === "checkpoint") intent.checkpoint.file.ino = "001";
     if (mutation === "sources") f.db.exec("DELETE FROM canon_write_intent_sources");
+    if (mutation === "source_closure") {
+      intent.admission.sources = []; intent.admission.events = []; intent.admission.derive_ids = [];
+      f.db.exec("DELETE FROM canon_write_intent_sources");
+    }
+    if (mutation === "derive_closure") intent.admission.derive_ids = [];
     const json = JSON.stringify(intent);
     f.db.query("UPDATE canon_write_intents SET intent=?,digest=?").run(json, sha256Hex(json));
+    expect(() => readCanonWriteIntent(f.db)).toThrow();
     const page = readFileSync(join(f.vault, intent.receipt.page_path)), log = readFileSync(join(f.vault, RECEIPTS_PATH));
     allowRow(f.db); expect(() => recoverCanonWrites(f.io)).toThrow();
     expect(readFileSync(join(f.vault, intent.receipt.page_path))).toEqual(page);
@@ -289,6 +295,7 @@ test("known scheduled operation survives absent runtime and completes once a rea
 test("source revocation during actual engine upsert prevents acknowledgment and removes the exposed document", async () => {
   const f = await fixture(true), temporary = temporaryPortContext(FTS5_RETRIEVAL_DESCRIPTOR);
   cleanup.push(temporary.cleanup); const port = createFts5RetrievalPort(temporary.ctx); cleanup.push(() => { void port.close(); });
+  bindLocalSourcePort(port, { store_id: "local:recovery-fts5" });
   const io = { ...f.io, retrieval: port, retrieval_store: port.descriptor.id };
   const receipt = write(io, f.claim), upsert = port.upsert.bind(port);
   port.upsert = async docs => {
