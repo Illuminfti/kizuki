@@ -151,9 +151,20 @@ the library this connector uses implements no part of that protocol: the
 `purgeSource` returns a plan, not a deletion. Telegram keeps its own copy and
 this connector performs no outbound actions, so every record it can name for a
 subject is listed under `unreachable_source_record_ids` and
-`source_record_ids` is empty. The plan covers what this process emitted, up to
-10 000 records per subject; the ledger's own purge is keyed on the subject, so
-a truncated plan still removes everything Kizuki holds.
+`source_record_ids` is empty. The plan retains up to 10 000 records per subject
+from this process's latest sweep started without a checkpoint.
+
+`complete: true` requires an uninterrupted sweep of all accessible history in
+that dialog listing, no listing cap, and no dropped IDs for the subject. A
+resumed process has no such witness. Reconnection, a changed dialog listing,
+overlapping walks or a broken checkpoint chain invalidates it. An incomplete
+plan has `complete: false`; it does not invent a continuation. Rebuilding the
+witness requires another full sweep started without a checkpoint.
+
+Planning makes no network calls. Completeness describes the last observed
+accessible listing, not deleted or inaccessible provider history. Kizuki's
+local purge separately scopes its ledger and derived stores; it does not use
+this connector plan as authority for local erasure or remote deletion.
 
 ## Tests
 

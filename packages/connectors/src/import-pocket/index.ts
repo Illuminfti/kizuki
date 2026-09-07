@@ -303,6 +303,7 @@ export class PocketImportConnector implements Connector {
     const events = await this.read();
     return {
       subject_id,
+      complete: true,
       source_record_ids: [],
       unreachable_source_record_ids: events
         .filter((event) =>

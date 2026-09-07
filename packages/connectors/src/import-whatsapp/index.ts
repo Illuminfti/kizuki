@@ -279,6 +279,7 @@ export class WhatsAppImportConnector implements Connector {
       .sort(compareStrings);
     return {
       subject_id,
+      complete: true,
       // The export file is the owner's and is never modified by a purge.
       source_record_ids: [],
       unreachable_source_record_ids: unreachable,

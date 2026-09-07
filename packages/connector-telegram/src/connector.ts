@@ -34,7 +34,7 @@ import { disconnectQuietly, openSession } from "./session";
 import type { SessionDeps } from "./session";
 import { enroll, waitSeconds } from "./sign-in";
 import { encodeState, type TelegramState } from "./state";
-import { TELEGRAM_CURSOR_SCHEMA } from "./cursor";
+import { TELEGRAM_CURSOR_SCHEMA, parseCursor } from "./cursor";
 import { walk } from "./walk";
 import type { DialogListing } from "./walk";
 
@@ -87,6 +87,8 @@ export class TelegramConnector implements Connector {
   #self: TelegramUser | null = null;
   #floodUntil = 0;
   #listing: DialogListing | null = null;
+  #coverage: { cursor: Cursor | null; dialogs: string | null; complete: boolean } | null = null;
+  #activeWalks = 0;
   #revoked = false;
   #closed = false;
   #closing: Promise<void> | null = null;
@@ -117,6 +119,8 @@ export class TelegramConnector implements Connector {
   }
 
   async connect(resolve: SecretResolver): Promise<void> {
+    // A connection/account transition cannot inherit another enumeration witness.
+    this.#coverage = null;
     // Revocation is terminal for the instance, not a state to reconnect out
     // of: whatever the stored ref still resolves to, this connector was told
     // its access ended.
@@ -277,6 +281,9 @@ export class TelegramConnector implements Connector {
 
   async purgeSource(subject_id: string): Promise<PurgePlan> {
     return {
+      // This proves only accessible history actually enumerated by this instance.
+      // A resumed checkpoint, changed dialog selection or bounded index is incomplete.
+      complete: !this.#closed && !this.#revoked && this.#api !== null && this.#coverage?.complete === true && !this.#plan.truncated(subject_id),
       subject_id,
       source_record_ids: [],
       unreachable_source_record_ids: this.#plan.forSubject(subject_id),
@@ -304,7 +311,38 @@ export class TelegramConnector implements Connector {
     return events;
   }
 
-  async #advance(
+  async #advance(cursor: Cursor | null, mode: "backfill" | "sync"): Promise<SyncBatch> {
+    this.#assertOpen();
+    if (this.#activeWalks++ > 0) this.#coverage = null;
+    else if (cursor === null) {
+      this.#plan.reset();
+      this.#coverage = { cursor: null, dialogs: null, complete: false };
+    } else if (cursor !== this.#coverage?.cursor) this.#coverage = null;
+    const coverage = this.#coverage;
+    if (coverage) coverage.complete = false;
+    try {
+      const batch = await this.#walk(cursor, mode);
+      if (coverage !== null && this.#coverage === coverage) {
+        const listing = this.#listing;
+        const dialogs = listing === null ? null : JSON.stringify(listing.dialogs.map(dialog =>
+          [dialog.peer_id, dialog.peer_type, dialog.top_message_id]).sort((a, b) => String(a[0]) < String(b[0]) ? -1 : String(a[0]) > String(b[0]) ? 1 : 0));
+        if (listing === null || listing.limitReached || (coverage.dialogs !== null && coverage.dialogs !== dialogs)) this.#coverage = null;
+        else {
+          coverage.dialogs = dialogs;
+          coverage.cursor = batch.cursor;
+          const next = batch.cursor === null ? null : parseCursor(batch.cursor);
+          coverage.complete = this.#floodUntil <= this.#deps.now() && next?.phase === "synced" && next.pass === null &&
+            Object.values(next.dialogs).every(dialog => dialog.exhausted);
+        }
+      }
+      return batch;
+    } catch (error) {
+      this.#coverage = null;
+      throw error;
+    } finally { this.#activeWalks--; }
+  }
+
+  async #walk(
     cursor: Cursor | null,
     mode: "backfill" | "sync",
   ): Promise<SyncBatch> {

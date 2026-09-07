@@ -267,6 +267,7 @@ export class ImapConnector implements Connector {
   async purgeSource(subject_id: string): Promise<PurgePlan> {
     const empty: PurgePlan = {
       subject_id,
+      complete: false,
       source_record_ids: [],
       unreachable_source_record_ids: [],
     };
@@ -276,6 +277,7 @@ export class ImapConnector implements Connector {
 
     const state = this.state;
     const unreachable: string[] = [];
+    let complete = true;
     const session = await ImapSession.open(
       this.dial,
       state,
@@ -288,6 +290,7 @@ export class ImapConnector implements Connector {
         const found = await session.search(
           `OR OR FROM ${quoted} TO ${quoted} CC ${quoted}`,
         );
+        if (found.length > MAX_PURGE_IDS_PER_FOLDER) complete = false;
         for (const uid of found.slice(0, MAX_PURGE_IDS_PER_FOLDER)) {
           unreachable.push(recordId(wire, status.uidvalidity, uid));
         }
@@ -301,6 +304,7 @@ export class ImapConnector implements Connector {
       subject_id,
       source_record_ids: [],
       unreachable_source_record_ids: unreachable,
+      complete,
     };
   }
 
