@@ -57,3 +57,44 @@ for (const failure of ["unsupported", "throws", "missing"] as const) test(`Darwi
     expect(child.stdout.length).toBe(0); expect(child.stderr.length).toBe(0);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("Darwin lifecycle control overrides a last query-only reader's persistent-journal default", () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-reader-wal-"));
+  try {
+    const script = `
+      import { Database, constants } from "bun:sqlite";
+      import { strict as assert } from "node:assert";
+      import { existsSync } from "node:fs";
+      import { configureLedgerWalLifecycle } from ${JSON.stringify(join(import.meta.dir, "../src/ledger/wal-lifecycle.ts"))};
+      const originalPlatform = process.platform;
+      for (const managed of [false,true]) {
+        const path = ${JSON.stringify(root)} + "/" + managed + ".db";
+        const writer = new Database(path);
+        assert.equal(writer.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL,0),0);
+        writer.exec("PRAGMA journal_mode=WAL; CREATE TABLE saved(n); INSERT INTO saved VALUES(7)");
+        const reader = new Database(path);
+        // Reproduce the Apple default using the actual SQLite driver on either native host.
+        assert.equal(reader.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL,1),0);
+        if (managed) {
+          Object.defineProperty(process,"platform",{value:"darwin",configurable:true});
+          try { configureLedgerWalLifecycle(reader,path); }
+          finally { Object.defineProperty(process,"platform",{value:originalPlatform,configurable:true}); }
+        }
+        reader.exec("PRAGMA query_only=ON");
+        assert.deepEqual(reader.query("SELECT n FROM saved").get(),{n:7});
+        assert.throws(()=>reader.exec("DELETE FROM saved"));
+        writer.close(true);
+        assert.equal(existsSync(path+"-wal"),true);
+        reader.close(true);
+        // Negative control: writer policy alone cannot remove reader-persisted journals.
+        assert.equal(existsSync(path+"-wal"),!managed);
+        assert.equal(existsSync(path+"-shm"),!managed);
+        const check = new Database(path,{readonly:true});
+        assert.deepEqual(check.query("SELECT n FROM saved").get(),{n:7}); check.close(true);
+      }
+    `;
+    const child = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
+    expect(child.exitCode, child.stderr.toString()).toBe(0);
+    expect(child.stdout.length).toBe(0); expect(child.stderr.length).toBe(0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

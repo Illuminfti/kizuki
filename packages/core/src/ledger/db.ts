@@ -1,4 +1,6 @@
-import { Database, constants } from "bun:sqlite";
+import { Database } from "bun:sqlite";
+import { manageDatabaseLifetime } from "./lifetime";
+import { configureLedgerWalLifecycle } from "./wal-lifecycle";
 import { applySourceGrantsV11, applyNativeOwnerEvidenceV12, applySourceStoresV13, applySourceErasureV14, applySourceReceiptIntegrityV15 } from "./source-grants-schema";
 import { applyAgentsV9 } from "../agents/schema";
 import { applyCanonV4, initCanon } from "../canon/schema";
@@ -271,17 +273,12 @@ function migrate(db: Database): void {
 export function openLedger(dbPath: string, options: { busyTimeoutMs?: number } = {}): Database {
   const timeout = options.busyTimeoutMs ?? LEDGER_BUSY_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 5000) throw new TypeError("invalid ledger busy timeout");
-  const db = new Database(dbPath);
+  const db = manageDatabaseLifetime(new Database(dbPath));
   try {
     // Apple's SQLite persists WAL/SHM after close by default. Match the normal
     // last-writer cleanup before using a file-backed connection; SQLite owns
     // checkpointing and removal. Immutable previews must never repair journals.
-    if (process.platform === "darwin" && dbPath !== ":memory:" && dbPath !== "") {
-      let status: number;
-      try { status = db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0); }
-      catch { throw new LedgerStoreError("infrastructure", "ledger WAL lifecycle is unavailable"); }
-      if (status !== 0) throw new LedgerStoreError("infrastructure", "ledger WAL lifecycle is unavailable");
-    }
+    configureLedgerWalLifecycle(db, dbPath);
     // Apply before migrations: concurrent process startup is a writer too.
     db.exec(`PRAGMA busy_timeout = ${timeout}`);
     db.exec("PRAGMA journal_mode = WAL");

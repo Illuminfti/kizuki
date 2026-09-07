@@ -5,6 +5,8 @@ import { bindServingAudit } from "../serving/audit-capability";
 import { LEDGER_SCHEMA_VERSION } from "./db";
 import { assertLedgerSchema } from "./integrity";
 import { LEDGER_BUSY_TIMEOUT_MS } from "./limits";
+import { manageDatabaseLifetime } from "./lifetime";
+import { configureLedgerWalLifecycle } from "./wal-lifecycle";
 
 export class LedgerReadError extends Error {
   constructor(readonly code: "migration_required" | "custody_unavailable") { super(code); }
@@ -44,8 +46,9 @@ export function openLedgerRead(vaultPath: string, options: { audit?: boolean } =
   };
   const open = (read: boolean): Database => {
     assertCurrent();
-    const handle = new Database(path, constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_NOFOLLOW);
+    const handle = manageDatabaseLifetime(new Database(path, constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_NOFOLLOW));
     try {
+      configureLedgerWalLifecycle(handle, path);
       if (read) handle.exec("PRAGMA query_only = ON");
       handle.exec(`PRAGMA busy_timeout = ${LEDGER_BUSY_TIMEOUT_MS}`);
       handle.exec("PRAGMA foreign_keys = ON");

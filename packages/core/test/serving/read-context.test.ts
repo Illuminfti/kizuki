@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, renameSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, renameSync } from "node:fs";
+import { Database, constants } from "bun:sqlite";
 import { join } from "node:path";
 import { hardenLedgerFile } from "../../src/vault/init";
 import { openLedgerRead } from "../../src/ledger/read-context";
@@ -122,4 +123,31 @@ test("metadata tampering during awaited work refuses release without permission 
       chmodSync(path, 0o644); return { ...empty(), data: "synthetic private result" };
     })).rejects.toThrow("custody_unavailable");
   } finally { chmodSync(path, 0o600); }
+});
+
+for (const last of ["reader", "audit"] as const) test(`the last ${last} handle closes its statements and journals without losing private audit data`, async () => {
+  const { fixture: f, read, ctx } = await setup();
+  const path = join(f.vaultPath, ".kizuki/kizuki.db");
+  const held = Array.from({ length: 30 }, (_, i) => read.db.query(`SELECT ${i} AS held`));
+  expect(read.db.query("PRAGMA query_only").get()).toEqual({ query_only: 1 });
+  expect(() => read.db.exec("DELETE FROM events")).toThrow();
+  if (process.platform === "darwin") {
+    const policy = new Int32Array([-1]);
+    expect(read.db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, policy)).toBe(0);
+    expect(policy[0]).toBe(0);
+  }
+  const before = listAudit(f.db, "owner").length;
+  gate(ctx, "search", {}, empty);
+  if (last === "audit") read.db.close(true);
+  f.db.close(true);
+  expect(existsSync(path + "-wal")).toBe(true);
+  read.close();
+  for (const statement of held) expect(() => statement.get()).toThrow();
+  expect(existsSync(path + "-wal")).toBe(false);
+  expect(existsSync(path + "-shm")).toBe(false);
+  expect(lstatSync(path).mode & 0o777).toBe(0o600);
+  const verified = new Database(path, { readonly: true });
+  try { expect(listAudit(verified, "owner").length).toBe(before + 1); }
+  finally { verified.close(true); }
+  expect(() => read.close()).not.toThrow();
 });
