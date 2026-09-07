@@ -6,6 +6,7 @@ import { custodyNative } from "../util/custody-native";
 import { loadOwnedDirectoryNative } from "../util/owned-directory-native";
 import { openCanonFiles } from "../vault/canon-files";
 import { observeAncestorOwner } from "./custody-observation";
+import { connectServiceCustody, custodyEndpointStat } from "./custody-startup";
 
 /** This channel reports current metadata for held directories. It grants no
  * ledger, page, source, or filesystem mutation authority. */
@@ -88,12 +89,6 @@ function controlDescriptors(path: string): { vault: number; control: number } {
 }
 function endpointName(value: Binding): string { return `custody-${value.invocation}.sock`; }
 function endpointPath(control: number, name: string): string { return `/proc/self/fd/${control}/${name}`; }
-function endpointStat(control: number, name: string): BigIntStats {
-  const stat = lstatSync(endpointPath(control, name), { bigint: true });
-  if (!stat.isSocket() || stat.uid !== BigInt(process.geteuid!()) ||
-      (stat.mode & 0o777n) !== 0o600n || stat.nlink !== 1n) fail();
-  return stat;
-}
 function checkControl(value: Binding, descriptors: { vault: number; control: number }): void {
   ownedDirectory(descriptors.vault); ownedDirectory(descriptors.control, true);
   const current = controlDescriptors(value.path);
@@ -154,7 +149,7 @@ export async function startServiceCustody(
       try {
         if (closed || endpoint === undefined || !api.healthy(socket)) fail();
         checkControl(value, descriptors);
-        const current = endpointStat(descriptors.control, name);
+        const current = custodyEndpointStat(descriptors.control, name);
         if (!same(current, endpoint) || current.mode !== endpoint.mode || current.ctimeNs !== endpoint.ctimeNs) fail();
       } catch { invalidate(); }
     },
@@ -165,19 +160,11 @@ export async function startServiceCustody(
     },
   };
   try {
-    const deadline = performance.now() + 10_000;
-    while (performance.now() < deadline) {
-      try {
-        checkControl(value, descriptors);
-        endpoint = endpointStat(descriptors.control, name);
-        socket = api.connect(descriptors.control, name);
-        break;
-      } catch (error) {
-        if (endpoint !== undefined) throw error;
-        await new Promise(resolve => setTimeout(resolve, 25));
-      }
-    }
-    if (socket < 0 || endpoint === undefined) fail();
+    const connected = await connectServiceCustody(descriptors.control, name, () => {
+      if (unifiedGroup(process.pid) !== value.group || process.geteuid!() !== value.uid) fail();
+      checkControl(value, descriptors);
+    });
+    socket = connected.socket; endpoint = connected.endpoint;
     const peer = api.peer(socket);
     if (peer.uid !== value.uid || peer.pid === process.pid || unifiedGroup(peer.pid) !== value.group) fail();
     // The first authenticated descriptor exchange also completes the post
@@ -225,7 +212,7 @@ export function runServiceCustodyBroker(
     } finally { files.close(); }
     descriptors = controlDescriptors(value.path);
     listener = api.listen(descriptors.control, name);
-    endpoint = endpointStat(descriptors.control, name);
+    endpoint = custodyEndpointStat(descriptors.control, name);
     checkControl(value, descriptors);
     if (!sameProcess(original, processIdentity(mainPid))) fail();
     api.restrictBroker();
@@ -237,7 +224,7 @@ export function runServiceCustodyBroker(
       try {
         if (endpoint !== undefined) {
           checkControl(value, descriptors);
-          const current = endpointStat(descriptors.control, name);
+          const current = custodyEndpointStat(descriptors.control, name);
           if (same(endpoint, current) && endpoint.mode === current.mode && endpoint.ctimeNs === current.ctimeNs) {
             unlinkSync(endpointPath(descriptors.control, name));
           }
