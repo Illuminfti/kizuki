@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import { listConnections, restoreVault, verifyBackup } from "@kizuki/core";
@@ -8,12 +8,17 @@ import { openVaultDb } from "../context";
 import { tryRefreshDerived } from "../derived";
 import type { CliIo, Command } from "./index";
 
+/** Matches core STATE_CONNECTION_CONFIG; kept local to avoid expanding the public surface. */
+const STATE_CONNECTION_CONFIG =
+  '{"schema":"kizuki.connection-config/v1","state_ref_index":0}';
+
 /**
- * The counterpart to `exportCredentialFreeConnectionState`: only a
- * `none`-auth connector ever had its state copied into the backup, so only
- * those connections can come back usable. Anything else keeps reporting
- * `state=missing` exactly as it did before this fix — re-enrollment, not a
- * silently trusted credential, is what a sign-in connector gets back.
+ * Portable restore (#534) writes every connection row as disconnected history
+ * with secret_refs stripped. A `none`-auth connector's state was copied into
+ * the backup by export (never a credential), so restore can put those bytes
+ * back, rebind `file:connections/<source_key>.state`, and clear
+ * disconnected_at — the connection becomes usable again without re-enrollment.
+ * Sign-in connectors stay disconnected / state-missing.
  */
 function restoreCredentialFreeConnectionState(
   db: Database,
@@ -21,18 +26,29 @@ function restoreCredentialFreeConnectionState(
   into: string,
 ): number {
   let restored = 0;
+  const connectionsDir = join(into, ".kizuki", "connections");
   for (const connection of listConnections(db, { includeDisconnected: true })) {
     if (!connectionStateIsCredentialFree(connection.connector_id)) continue;
-    const ref = connection.secret_refs[0];
-    if (connection.secret_refs.length !== 1 || ref === undefined) continue;
-    if (!ref.startsWith("file:connections/") || !ref.endsWith(".state")) continue;
-    const relative = ref.slice("file:".length);
+    const relative = `connections/${connection.source_key}.state`;
     const from = join(backupDir, relative);
     if (!existsSync(from)) continue;
     const bytes = readFileSync(from);
+    mkdirSync(connectionsDir, { recursive: true, mode: 0o700 });
+    chmodSync(connectionsDir, 0o700);
     const to = join(into, ".kizuki", relative);
     writeFileSync(to, bytes, { mode: 0o600 });
     chmodSync(to, 0o600);
+    const ref = `file:${relative}`;
+    db.query(
+      `UPDATE connections
+          SET config = ?, secret_refs = ?, disconnected_at = NULL
+        WHERE connector_id = ? AND source_key = ?`,
+    ).run(
+      STATE_CONNECTION_CONFIG,
+      JSON.stringify([ref]),
+      connection.connector_id,
+      connection.source_key,
+    );
     restored += 1;
   }
   return restored;
