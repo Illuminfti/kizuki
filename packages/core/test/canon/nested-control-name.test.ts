@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { assertPageRelPath } from "../../src/canon/paths";
+import { pageRelPath } from "../../src/canon/arbiter";
 import { undoReceipt } from "../../src/canon/undo";
 import { targetProblem } from "../../src/contracts/page-candidate";
 import { exportVault, restoreVault } from "../../src/export";
@@ -78,6 +79,19 @@ test("only exact nested directory spelling extends the writer and target grammar
   for (const path of [".kizuki/note.md", "facts/.Kizuki/note.md", "facts/.hidden/note.md", "facts/.kizuki.md", "facts/../note.md", "facts/.kizuki/../../note.md"]) {
     expect(() => assertPageRelPath(path)).toThrow();
     expect(targetProblem(path.slice(0, -3))).not.toBeNull();
+  }
+});
+
+test("colon and slash target spellings resolve to the same contained nested page", () => {
+  for (const target of ["facts/.kizuki/note", "facts:.kizuki:note", "facts:.kizuki/note", "facts/.kizuki:note"]) {
+    expect(targetProblem(target)).toBeNull();
+    const path = pageRelPath({ claim_id: "synthetic", target });
+    expect(path).toBe(PAGE);
+    expect(() => assertPageRelPath(path)).not.toThrow();
+  }
+  for (const target of [".kizuki:note", ".kizuki/note", "facts:..:.kizuki:note"]) {
+    expect(targetProblem(target)).not.toBeNull();
+    expect(() => pageRelPath({ claim_id: "synthetic", target })).toThrow();
   }
 });
 
