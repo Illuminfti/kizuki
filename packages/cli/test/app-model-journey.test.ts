@@ -32,9 +32,9 @@ function completion(request: SeenRequest): Response {
     }] }));
 }
 
-test('authenticated first use separates connection tests, source permission and receipted model processing', async () => {
+test.each(['Kizuki', 'My Kizuki Vault'])('authenticated first use in %s separates connection tests, source permission and receipted model processing', async (vaultName) => {
     const env = h.isolatedEnv(), notes = h.tempDir('app-model-notes-'), outputs: string[] = [], visible: unknown[] = [];
-    const vault = join(env.HOME!, 'Kizuki');
+    const vault = join(env.HOME!, vaultName);
     const diagnostic = traceSyntheticAppFailures(vault);
     writeFileSync(join(notes, 'ada.md'), 'Ada joined the orchard library project.');
     const endpoint = startFakeEndpoint(completion), replacement = startFakeEndpoint(completion);
@@ -59,11 +59,14 @@ test('authenticated first use separates connection tests, source permission and 
     const run = async () => done((await call('run_pass')).data.operation_id);
     try {
         expect((await call('status')).data.vault.ready).toBe(false);
-        expect((await done((await call('initialize')).data.operation_id)).state).toBe('succeeded');
+        expect((await done((await call('initialize', { path: vault })).data.operation_id)).state).toBe('succeeded');
         const empty = (await call('model_status')).data;
         expect(empty.selection).toEqual({ kind: 'none' });
         const selection = { kind: 'openai_compatible', base_url: endpoint.base_url, model: 'synthetic-app-model' };
-        const saved = (await call('model_save', { expected_revision: empty.revision, selection, credential: { action: 'replace', value: KEY } })).data;
+        const savedResponse = await call('model_save', { expected_revision: empty.revision, selection, credential: { action: 'replace', value: KEY } });
+        expect(savedResponse.error?.code).toBeUndefined();
+        expect(savedResponse.ok).toBe(true);
+        const saved = savedResponse.data;
         expect(saved.credential).toBe('configured');
         expect(saved.selection.model_endpoint).toBe(endpoint.base_url + '/chat/completions');
         expect(endpoint.requests).toHaveLength(0);
@@ -109,6 +112,8 @@ test('authenticated first use separates connection tests, source permission and 
         // rather than resolving the generated path through a weaker file reader.
         const config = Bun.TOML.parse(readFileSync(join(vault, '.kizuki/serve.toml'), 'utf8')) as any;
         const credentialPath = config.ports.llm.secret_ref.slice(5);
+        expect(credentialPath.startsWith(join(vault, '.kizuki/app-model') + '/')).toBe(true);
+        expect(credentialPath.includes(' ')).toBe(vaultName.includes(' '));
         for (const path of [credentialPath, join(vault, '.kizuki/app-model')]) {
             chmodSync(path, path === credentialPath ? 0o644 : 0o755);
             try {
