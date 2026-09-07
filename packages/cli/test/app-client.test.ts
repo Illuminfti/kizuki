@@ -480,8 +480,43 @@ test('denial preview omits object, requires own statement and applies the same e
     expect(f.requests[0]!.route).toBe('correction_preview'); expect(f.requests[0]!.payload).toEqual(payload);
     f.reply('correction_preview', { answer: 'Would deny this reading.', affected_pages: 2 }); await preview;
     expect(f.dialog.textContent).toContain('2 memory pages currently affected');
+    const panel = f.dialog.querySelector('.correction-preview')!;
+    expect(panel.textContent).toContain('Deny the selected belief without adding a replacement.');
+    expect(panel.textContent).toContain(payload.statement);
+    expect(panel.querySelector('details')!.textContent).toContain('Would deny this reading.');
+    expect(panel.querySelector('details')!.open).toBe(false);
     void findAction(f.dialog, 'Apply correction').fire('click'); await tick();
     expect(f.requests[0]!.route).toBe('correct'); expect(f.requests[0]!.payload).toEqual(payload);
+    expect(f.storageWrites).toHaveLength(0);
+});
+
+test('correction keeps exact beliefs and submitted replacement visible while technical identifiers remain expandable', async () => {
+    const f = fixture();
+    const exact = { ...belief, subject: 'markdown-folder:' + 'f'.repeat(64), predicate: 'employment.role', object: '<Old value>', body: 'An unchanged recorded belief.' };
+    await openCorrection(f, [exact]);
+    const details = f.dialog.querySelector('.belief-details')!;
+    const visibleBelief = details.children.filter(child => child.tag !== 'details').map(child => child.textContent).join('');
+    expect(visibleBelief).toContain(exact.body); expect(visibleBelief).toContain(exact.object);
+    expect(visibleBelief).not.toContain(exact.subject); expect(visibleBelief).not.toContain(exact.predicate);
+    const references = details.querySelector('details')!;
+    for (const value of [exact.subject, exact.predicate, exact.claim_id, exact.authority, exact.sensitivity]) expect(references.textContent).toContain(value);
+    expect(references.open).toBe(false);
+    const mode = f.dialog.querySelector('#correction-mode')!; mode.value = 'replace'; await mode.fire('change');
+    const replacement = '  <New value>  ', statement = 'First line.\nSecond line.';
+    f.dialog.querySelector('#correction-value')!.value = replacement;
+    f.dialog.querySelector('#correction-statement')!.value = statement;
+    const work = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} }); await tick();
+    const answer = `Nothing was written. This would retire 1 claim(s) about ${exact.subject}.`;
+    f.reply('correction_preview', { answer, affected_pages: 1 }); await work;
+    const panel = f.dialog.querySelector('.correction-preview')!;
+    const visiblePreview = panel.children.filter(child => child.tag !== 'details').map(child => child.textContent).join('');
+    expect(visiblePreview).toContain('Replace the selected belief’s value with:');
+    expect(visiblePreview).toContain(replacement); expect(visiblePreview).toContain(statement);
+    expect(visiblePreview).toContain('1 memory page currently affected.'); expect(visiblePreview).not.toContain(exact.subject);
+    expect(panel.querySelector('details')!.textContent).toContain(answer); expect(panel.querySelector('details')!.open).toBe(false);
+    expect(f.dialog.querySelector('img')).toBeNull();
+    void findAction(f.dialog, 'Apply correction').fire('click'); await tick();
+    expect(f.requests[0]!.payload).toEqual({ claim_id: exact.claim_id, statement, object: replacement });
     expect(f.storageWrites).toHaveLength(0);
 });
 
