@@ -55,6 +55,19 @@ export class LedgerError extends Error {
   override name = "LedgerError";
 }
 
+export class DisconnectError extends LedgerError {
+  override name = "DisconnectError";
+  constructor(readonly reason: "unknown_connection" | "already_disconnected" | "connection_changed") {
+    super(reason);
+  }
+}
+
+export interface DisconnectResult {
+  connector_id: string;
+  source_key: string;
+  disconnected_at: string;
+}
+
 interface ConnectionRow {
   connector_id: string;
   source_key: string;
@@ -262,10 +275,18 @@ export function disconnect(
   db: Database,
   connector_id: string,
   source_key: string,
-): void {
-  db.query(
-    "UPDATE connections SET disconnected_at = ? WHERE connector_id = ? AND source_key = ?",
-  ).run(new Date().toISOString(), connector_id, source_key);
+): DisconnectResult {
+  return db.transaction(() => {
+    const connection = getConnection(db, connector_id, source_key);
+    if (connection === null) throw new DisconnectError("unknown_connection");
+    if (connection.disconnected_at !== null) throw new DisconnectError("already_disconnected");
+    const disconnected_at = new Date().toISOString();
+    const result = db.query(
+      "UPDATE connections SET disconnected_at = ? WHERE connector_id = ? AND source_key = ? AND disconnected_at IS NULL",
+    ).run(disconnected_at, connector_id, source_key);
+    if (result.changes !== 1) throw new DisconnectError("connection_changed");
+    return { connector_id, source_key, disconnected_at };
+  }).immediate();
 }
 
 export function requireActiveConnection(

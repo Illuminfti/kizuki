@@ -47,6 +47,7 @@ describe("public surface", () => {
       "DOCTRINE_VERSION",
       "DROPPED_DRAFT_REASONS",
       "DeadlineError",
+      "DisconnectError",
       "EMBEDDING_CAPABILITIES",
       "EMBEDDING_CONTRACT",
       "EMBEDDING_CONTRACT_MINOR",

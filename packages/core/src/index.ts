@@ -670,6 +670,7 @@ export type {
 } from "./ledger/purge";
 export {
   LedgerError,
+  DisconnectError,
   disconnect,
   getCheckpoint,
   getConnection,
@@ -683,6 +684,7 @@ export {
 } from "./ledger/connections";
 export type {
   Checkpoint,
+  DisconnectResult,
   Connection,
   ConnectionConfig,
   ConnectionRun,
