@@ -632,3 +632,39 @@ test("version-3 launchd journals cannot claim inactive enablement even with a ca
   expect(readFileSync(first.unitPath!, "utf8")).toBe(published);
   expect(readServeIntent(f.vault)).toBe("installed");
 });
+
+
+for (const [name, stdout, code, detail] of [
+  ["failed exit", "state = exited\nlast exit code = 78", 0, "failed (last exit code 78)"],
+  ["failed retry", "state = spawn scheduled\nlast exit code = 1", 0, "failed (last exit code 1)"],
+  ["clean stop", "state = not running\nlast exit code = 0", 0, "stopped (last exit code 0)"],
+  ["initial wait", "state = waiting", 0, "loaded but not running"],
+  ["active after failure", "state = running\npid = 98765\nlast exit code = 78", 0, "active"],
+  ["conflicting exit", "state = exited\nlast exit code = 78\nlast exit code = 0", 0, "loaded but not running"],
+  ["duplicate exit", "state = exited\nlast exit code = 78\nlast exit code = 78", 0, "loaded but not running"],
+  ["malformed exit", "state = exited\nlast exit code = PRIVATE_MANAGER_CANARY", 0, "loaded but not running"],
+  ["malformed sibling", "state = exited\nlast exit code = 78\nlast exit code=garbage", 0, "loaded but not running"],
+  ["unsafe exit", "state = exited\nlast exit code = 999999999999999999", 0, "loaded but not running"],
+  ["noncanonical exit", "state = exited\nlast exit code = 078", 0, "loaded but not running"],
+  ["out of range exit", "state = exited\nlast exit code = 256", 0, "loaded but not running"],
+  ["nested exit", "\tstate = exited\n\tenvironment = {\n\t\tlast exit code = 78\n\t}", 0, "loaded but not running"],
+  ["failed print", "state = exited\nlast exit code = 78", 1, "supervisor state could not be queried"],
+] as const) {
+  test(`launchd status distinguishes ${name} with bounded diagnostics only`, () => {
+    const root = mkdtempSync(join(tmpdir(), "kizuki-launchd-status-")); roots.push(root);
+    writeFileSync(join(root, "launchctl"), `#!${process.execPath}\nimport assert from 'node:assert/strict';
+      assert.deepEqual(process.argv.slice(2), ['print', 'gui/' + process.getuid() + '/dev.kizuki.synthetic']);
+      process.stdout.write(${JSON.stringify(stdout)}); process.stderr.write('PRIVATE_MANAGER_CANARY'); process.exit(${code});
+`, { mode: 0o700 });
+    const script = `const {realSupervisorHost} = await import(${JSON.stringify(join(import.meta.dir, "../../src/serve/supervisor.ts"))});
+      console.log(JSON.stringify(realSupervisorHost('launchd', '/synthetic', '/synthetic/kizuki').query('synthetic')));`;
+    const result = Bun.spawnSync([process.execPath, "--eval", script], {
+      env: { ...process.env, PATH: root + ":" + process.env.PATH }, stdout: "pipe", stderr: "pipe", timeout: 10_000,
+    });
+    expect(result.exitCode).toBe(0); expect(result.stderr.toString()).toBe("");
+    const status = JSON.parse(result.stdout.toString());
+    expect(status).toEqual({ kind: "launchd", unit: "dev.kizuki.synthetic", enabled: code === 0,
+      state: code !== 0 ? "unknown" : name === "active after failure" ? "active" : "disabled", detail });
+    expect(result.stdout.toString()).not.toContain("PRIVATE_MANAGER_CANARY");
+  });
+}

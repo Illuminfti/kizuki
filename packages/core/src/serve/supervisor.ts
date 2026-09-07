@@ -63,6 +63,19 @@ function runCommand(argv: string[], timeout = 5_000): { ok: boolean; exitCode: n
   };
 }
 
+/** launchctl print also contains arbitrary configuration and environment text. */
+function launchdInactiveDetail(stdout: string): string {
+  const unavailable = "loaded but not running";
+  if (stdout.length > 65_536) return unavailable;
+  const states = [...stdout.matchAll(/^([ \t]*)state = (?:waiting|spawn scheduled|exited|not running)[ \t]*$/gm)];
+  const exits = stdout.split("\n").filter(line => /^[ \t]*last exit code(?:[ \t=]|$)/.test(line));
+  if (states.length !== 1 || exits.length !== 1) return unavailable;
+  const match = /^([ \t]*)last exit code = (0|[1-9]\d{0,2})[ \t]*$/.exec(exits[0]!);
+  // The job fields share indentation; a nested environment value is not an exit.
+  if (!match || match[1] !== states[0]![1] || Number(match[2]) > 255) return unavailable;
+  return match[2] === "0" ? "stopped (last exit code 0)" : `failed (last exit code ${match[2]})`;
+}
+
 function queryLaunchdService(label: string, timeout = 5_000): SupervisorStatus {
   const printed = runCommand(["launchctl", "print", `gui/${process.getuid?.() ?? 0}/${label}`], timeout);
   const text = `${printed.stdout} ${printed.stderr}`.toLowerCase();
@@ -72,7 +85,8 @@ function queryLaunchdService(label: string, timeout = 5_000): SupervisorStatus {
   else if (text.includes("could not find service")) state = "absent";
   return {
     kind: "launchd", state, unit: label, enabled: printed.ok,
-    detail: state === "unknown" ? "supervisor state could not be queried" : state,
+    detail: state === "unknown" ? "supervisor state could not be queried" :
+      printed.ok && state !== "active" ? launchdInactiveDetail(printed.stdout) : state,
   };
 }
 
@@ -143,7 +157,9 @@ export function realSupervisorHost(
           state,
           unit,
           enabled: enabled.ok && enabled.stdout === "enabled",
-          detail: state === "unknown" ? "supervisor state could not be queried" : state,
+          detail: active.exitCode === 3 && active.stdout === "failed" ? "failed" :
+            state === "disabled" && enabled.ok && enabled.stdout === "enabled" ? "inactive (enabled)" :
+            state === "unknown" ? "supervisor state could not be queried" : state,
         };
       }
       return queryLaunchdService(launchdLabel(vaultId));
