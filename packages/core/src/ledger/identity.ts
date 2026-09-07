@@ -4,8 +4,8 @@ import { pathToFileURL } from "node:url";
 import { openCredentialDirectory, type CredentialDirectory } from "../agents/credential-file";
 
 export class LedgerIdentityError extends Error {
-  constructor(readonly code: "invalid_ledger" | "busy" | "custody_unavailable") {
-    super(code === "busy" ? "vault ledger changed during identity check; retry" : "vault ledger identity is unavailable");
+  constructor(readonly code: "invalid_ledger" | "busy" | "custody_unavailable", options?: ErrorOptions) {
+    super(code === "busy" ? "vault ledger changed during identity check; retry" : "vault ledger identity is unavailable", options);
   }
 }
 
@@ -36,7 +36,7 @@ export function inspectLedgerIdentity(vaultPath: string): { schemaVersion: numbe
   const path = join(resolve(vaultPath), ".kizuki", "kizuki.db");
   if (process.platform !== "darwin") {
     try { return readAndClose(new Database(path, { readonly: true })); }
-    catch { throw new LedgerIdentityError("invalid_ledger"); }
+    catch (error) { throw new LedgerIdentityError("invalid_ledger", { cause: error }); }
   }
 
   let directory: CredentialDirectory;
@@ -84,6 +84,6 @@ export function inspectLedgerIdentity(vaultPath: string): { schemaVersion: numbe
   } catch (error) {
     if (error instanceof LedgerIdentityError) throw error;
     if (error instanceof Error && error.message.startsWith("credential_file_")) throw new LedgerIdentityError("custody_unavailable");
-    throw new LedgerIdentityError("invalid_ledger");
+    throw new LedgerIdentityError("invalid_ledger", { cause: error });
   } finally { directory.close(); }
 }

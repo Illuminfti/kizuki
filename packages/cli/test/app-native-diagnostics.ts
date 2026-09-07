@@ -28,7 +28,17 @@ export function traceSyntheticAppFailures(vault: string) {
             (candidate.message.startsWith('vault ledger is not a Kizuki database') ? 'ledger_identity_refused' : 'other') : 'other';
         const frames = typeof candidate?.stack === 'string'
             ? [...candidate.stack.matchAll(/packages\/(?:core|cli)\/src\/[A-Za-z0-9_./-]+\.ts:\d+:\d+/g)].slice(0, 8).map(match => match[0]) : [];
-        errors.push({ boundary, code, message, frames, before, after: metadata() });
+        const causes = [];
+        let nested = (candidate as { cause?: unknown } | null)?.cause;
+        for (let depth = 0; depth < 3 && nested && typeof nested === 'object'; depth++) {
+            const value = nested as { code?: unknown; message?: unknown; stack?: unknown; cause?: unknown; errno?: unknown };
+            causes.push({ code: typeof value.code === 'string' && codes.has(value.code) ? value.code : 'other',
+                errno: Number.isSafeInteger(value.errno) && (value.errno as number) >= 0 && (value.errno as number) <= 0x7fffffff ? value.errno : null,
+                message: typeof value.message === 'string' ? messages.find(item => item === value.message) ?? 'other' : 'other',
+                frames: typeof value.stack === 'string' ? [...value.stack.matchAll(/packages\/(?:core|cli)\/src\/[A-Za-z0-9_./-]+\.ts:\d+:\d+/g)].slice(0, 8).map(match => match[0]) : [] });
+            nested = value.cause;
+        }
+        errors.push({ boundary, code, message, frames, causes, before, after: metadata() });
         if (errors.length > 8) errors.shift();
     };
     const original = context.withVault;
