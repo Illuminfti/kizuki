@@ -71,6 +71,7 @@ export {
 export { addDailyBudget, budgetDay, listDailyBudget, readDailyBudget } from "./budget-ledger";
 export { ensureVaultId, readVaultId } from "./vault-id";
 export { readServeIntent, writeServeIntent } from "./intent";
+export { requestServeStop, ServeStopError, type ServeStopResult } from "./stop-control";
 export { loadConfiguredModelRef, loadServeConfig } from "./config";
 export {
   launchdLabel,

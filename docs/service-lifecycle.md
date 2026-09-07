@@ -42,6 +42,13 @@ packaging, lock execution, launchd activation and real install/upgrade/restart
 proofs remain required qualification work. Synthetic command-adapter tests do
 not establish that a service is installed on a user's machine.
 
-`serve stop` sends a termination request and reports that request. The supervisor
-may restart the daemon according to its configured policy. Use `serve --uninstall`
+`serve stop` queues a private request for the current daemon instance and reports
+`stop request queued`; it does not signal a PID or claim the process has exited.
+The daemon checks the request between rails and within one second while idle,
+finishes an active rail, and releases its runtime, process marker and writer lease.
+Concurrent requests are idempotent. A busy writer is retried for up to one second;
+continued contention reports a retryable error. Malformed, legacy or unsafe
+control files are refused, and requests for an old instance cannot stop a successor.
+The supervisor may restart the daemon according to its configured policy.
+Use `serve --uninstall`
 when the intended result is removal from automatic supervision.

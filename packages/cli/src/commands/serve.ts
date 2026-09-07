@@ -6,6 +6,8 @@ import {
   isRailId,
   queryServeService,
   readServePid,
+  requestServeStop,
+  ServeStopError,
   runRail,
   runServeDaemon,
   serveExecHint,
@@ -74,19 +76,16 @@ export const serveCommand: Command = {
       }
 
       if (verb === "stop") {
-        const pid = readServePid(ctx.vaultPath);
-        if (pid === null) {
-          io.err("serve is not running");
-          return 1;
-        }
         try {
-          process.kill(pid, "SIGTERM");
-        } catch {
-          io.err("serve is not running");
+          const result = await requestServeStop(ctx.vaultPath);
+          if (parsed.flags.has("--json")) io.out(jsonEnvelope("serve", "ok", result));
+          else io.out(result.status === "queued" ? "stop request queued" : "stop request already queued");
+          return 0;
+        } catch (error) {
+          if (!(error instanceof ServeStopError)) throw error;
+          io.err(error.message);
           return 1;
         }
-        io.out(`stop requested for pid=${pid}`);
-        return 0;
       }
 
       if (verb === "run") {
