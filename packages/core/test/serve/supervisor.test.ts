@@ -772,3 +772,58 @@ for (const detail of ["loaded but not running", "stopped (last exit code 0)", "f
     expect(calls).toBe(0); expect(existsSync(f.journal)).toBe(false); expect(existsSync(f.path)).toBe(true);
   });
 }
+
+for (const mode of ["retained-failure", "reset-failure", "reset-no-transition", "rollback-failure", "ordinary"] as const) {
+  test(`systemd uninstall clears only the stopped owned failure before deletion: ${mode}`, () => {
+    const f = fixture(); const first = installServeService(f.vault, f.host);
+    const original = readFileSync(first.unitPath!, "utf8");
+    const ordinary = ordinaryVault(f.vault);
+    const unit = first.unitPath!.split("/").at(-1)!;
+    const statePath = join(f.root, "systemd-state.json");
+    writeFileSync(statePath, JSON.stringify({ mode, enabled: true, failed: mode !== "ordinary", calls: [] }), {mode: 0o600});
+    writeFileSync(join(f.root, "systemctl"), `#!${process.execPath}
+      import {existsSync,readFileSync,writeFileSync} from 'node:fs';
+      import assert from 'node:assert/strict';
+      const path=${JSON.stringify(statePath)}, unitPath=${JSON.stringify(first.unitPath)}, unit=${JSON.stringify(unit)};
+      const s=JSON.parse(readFileSync(path,'utf8')), args=process.argv.slice(2), command=args[1];
+      assert.equal(args[0],'--user');
+      assert.deepEqual(args, command==='daemon-reload' ? ['--user',command] : command==='disable' ? ['--user','disable','--now',unit] : ['--user',command,unit]);
+      s.calls.push(command); let code=0, output='';
+      if(command==='is-enabled') { output=existsSync(unitPath) ? (s.enabled?'enabled':'disabled') : 'not-found'; code=output==='enabled'?0:output==='not-found'?4:1; }
+      else if(command==='is-active') { output=s.failed?'failed':'inactive'; code=existsSync(unitPath)?3:4; }
+      else if(command==='disable') { s.enabled=false; }
+      else if(command==='reset-failed') {
+        assert.equal(existsSync(unitPath),true,'reset must precede owned definition removal');
+        assert.equal(s.enabled,false,'reset must follow confirmed disable');
+        assert.equal(s.failed,true);
+        if(['reset-failure','rollback-failure'].includes(s.mode))code=1;
+        else if(s.mode!=='reset-no-transition')s.failed=false;
+      } else if(command==='enable') { if(s.mode==='rollback-failure')code=1; else s.enabled=true; }
+      else assert.equal(command,'daemon-reload','uninstall must never start or restart');
+      writeFileSync(path,JSON.stringify(s)); process.stdout.write(output); process.exit(code);
+    `, {mode: 0o700});
+    const script=`
+      import {realSupervisorHost,uninstallServeService} from ${JSON.stringify(join(import.meta.dir,"../../src/serve/supervisor.ts"))};
+      const host=realSupervisorHost('systemd',${JSON.stringify(f.root)},'/synthetic/kizuki');
+      try { console.log(JSON.stringify({result:uninstallServeService(${JSON.stringify(f.vault)},host)})); }
+      catch(error) { console.log(JSON.stringify({error:error.message})); }
+    `;
+    const result=Bun.spawnSync([process.execPath,'-e',script], {env:{...process.env,PATH:f.root+':'+process.env.PATH},stdout:'pipe',stderr:'pipe',timeout:15_000});
+    expect({code:result.exitCode,stderr:result.stderr.toString()}).toEqual({code:0,stderr:""});
+    const observed=JSON.parse(result.stdout.toString());
+    const state=JSON.parse(readFileSync(statePath,'utf8'));
+    if(mode==='retained-failure'||mode==='ordinary') {
+      expect(observed.error).toBeUndefined(); expect(observed.result.removed).toBe(true);
+      expect(observed.result.status.state).toBe('absent'); expect(observed.result.status.enabled).toBe(false);
+      expect(existsSync(first.unitPath!)).toBe(false); expect(readServeIntent(f.vault)).toBe('opted-out');
+      expect(state.calls.filter((c:string)=>c==='reset-failed').length).toBe(mode==='ordinary'?0:1);
+      expect(state.calls.includes('enable')).toBe(false);
+    } else {
+      expect(observed.error).toContain(mode==='rollback-failure'?'recovery is pending':'previous configuration restored');
+      expect(readFileSync(first.unitPath!,'utf8')).toBe(original); expect(readServeIntent(f.vault)).toBe('installed');
+      expect(existsSync(journalPath(f.vault))).toBe(mode==='rollback-failure');
+      expect(state.calls.filter((c:string)=>c==='reset-failed').length).toBe(1);
+    }
+    expect(ordinaryVault(f.vault)).toEqual(ordinary);
+  });
+}
