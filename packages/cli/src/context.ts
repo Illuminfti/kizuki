@@ -59,8 +59,8 @@ function peekLedgerIdentity(vaultPath: string, dbPath: string): void {
   try {
     inspectLedgerIdentity(vaultPath);
   } catch (error) {
-    if (error instanceof LedgerIdentityError && error.code === "invalid_ledger") {
-      throw new Error(`vault ledger is not a Kizuki database or has no usable schema version: ${dbPath}; run: kizuki init`, { cause: error });
+    if (error instanceof LedgerIdentityError && error.code === "invalid_ledger" && error.diagnostic?.kind === "semantic") {
+      throw new Error(`vault ledger is not a Kizuki database or has no usable schema version: ${dbPath}; run: kizuki init [phase=${error.diagnostic.phase} kind=semantic reason=${error.diagnostic.reason}]`, { cause: error });
     }
     throw error;
   }

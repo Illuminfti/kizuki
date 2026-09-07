@@ -98,7 +98,10 @@ for (const kind of ["foreign", "missing-version", "duplicate-version", "zero-ver
           kind === "unsafe-version" ? "; INSERT INTO schema_version VALUES (9007199254740992)" : ""));
       db.close(true); chmodSync(f.path, 0o600);
       const before = closedFootprint(f);
-      expect(() => inspectLedgerIdentity(f.root)).toThrow(LedgerIdentityError);
+      const error = identityFailure(f.root);
+      expect(error.diagnostic).toEqual(kind === "foreign"
+        ? { phase: "tables", kind: "semantic", reason: "missing_tables" }
+        : { phase: "version", kind: "semantic", reason: "invalid_version" });
       expect(closedFootprint(f)).toEqual(before);
     } finally { f.close(); }
   });
@@ -148,5 +151,85 @@ for (const alias of ["database-hardlink", "database-symlink", "directory-symlink
       expect(error).toBeInstanceOf(LedgerIdentityError);
       expect((error as LedgerIdentityError).code).toBe("custody_unavailable");
     } finally { f.close(); }
+  });
+}
+
+function identityFailure(root: string): LedgerIdentityError {
+  let error: unknown;
+  try { inspectLedgerIdentity(root); } catch (caught) { error = caught; }
+  expect(error).toBeInstanceOf(LedgerIdentityError);
+  return error as LedgerIdentityError;
+}
+
+function sqliteFailure(code: string, errno: number): Error {
+  return Object.assign(new Error("synthetic private SQLite text and /private/ledger.db"), { name: "SQLiteError", code, errno });
+}
+
+for (const phase of ["tables", "version", "transaction", "close"] as const) {
+  test(`identity identifies ${phase} SQLite refusal without exposing exception text`, () => {
+    const f = fixture(), originalQuery = Database.prototype.query, originalTransaction = Database.prototype.transaction, originalClose = Database.prototype.close;
+    let injected = 0, closed = 0;
+    Database.prototype.query = function(this: Database, ...args: Parameters<typeof originalQuery>) {
+      if ((phase === "tables" && args[0].startsWith("SELECT name FROM sqlite_master")) ||
+          (phase === "version" && args[0] === "SELECT version FROM schema_version LIMIT 2")) {
+        injected++; throw sqliteFailure("SQLITE_BUSY", 5);
+      }
+      return originalQuery.apply(this, args);
+    } as typeof originalQuery;
+    if (phase === "transaction") Database.prototype.transaction = function() { injected++; throw sqliteFailure("SQLITE_BUSY", 5); } as typeof originalTransaction;
+    Database.prototype.close = function(this: Database, ...args: Parameters<typeof originalClose>) {
+      closed++; const result = originalClose.apply(this, args);
+      if (phase === "close") { injected++; throw sqliteFailure("SQLITE_BUSY", 5); }
+      return result;
+    };
+    try {
+      const error = identityFailure(f.root);
+      expect(error.diagnostic).toEqual({ phase, kind: "sqlite", sqlite_code: "SQLITE_BUSY", sqlite_errno: 5 });
+      expect(Object.isFrozen(error.diagnostic)).toBe(true);
+      expect(error.code).toBe(process.platform === "darwin" && phase === "close" ? "custody_unavailable" : "invalid_ledger");
+      expect(error.message).toBe(`vault ledger identity is unavailable [phase=${phase} kind=sqlite sqlite_code=SQLITE_BUSY sqlite_errno=5]`);
+      expect(injected).toBe(1); expect(closed).toBe(1);
+    } finally { Database.prototype.query = originalQuery; Database.prototype.transaction = originalTransaction; Database.prototype.close = originalClose; f.close(); }
+  });
+}
+
+test("Linux missing file is an actual bounded SQLite open refusal", () => {
+  if (process.platform === "darwin") return; // Darwin performs native custody admission before SQLite open.
+  const f = fixture();
+  try {
+    rmSync(f.path);
+    const error = identityFailure(f.root);
+    expect(error.code).toBe("invalid_ledger");
+    expect(error.diagnostic).toEqual({ phase: "open", kind: "sqlite", sqlite_code: "SQLITE_CANTOPEN", sqlite_errno: 14 });
+    expect(error.message).not.toContain(f.root);
+    expect(readdirSync(f.control)).not.toContain("kizuki.db");
+  } finally { f.close(); }
+});
+
+for (const shape of ["code-getter", "errno-getter", "name-getter", "inherited", "mismatched-errno", "arbitrary-code", "descriptor-value"] as const) {
+  test(`identity diagnostics refuse ${shape} metadata without evaluating unknown getters`, () => {
+    const f = fixture(); let getters = 0;
+    const failure = sqliteFailure("SQLITE_BUSY", 5);
+    Object.defineProperty(failure, "message", { get() { getters++; throw new Error("message getter must not run"); } });
+    if (shape.endsWith("-getter")) Object.defineProperty(failure, shape.slice(0, -7), { get() { getters++; return "synthetic private error"; } });
+    else if (shape === "inherited") {
+      for (const key of ["code", "errno", "name"]) Reflect.deleteProperty(failure, key);
+      Object.setPrototypeOf(failure, { name: "SQLiteError", code: "SQLITE_BUSY", errno: 5 });
+    } else if (shape === "mismatched-errno") Object.assign(failure, { errno: 14 });
+    else if (shape === "arbitrary-code") Object.assign(failure, { code: "SQLITE_private_token", errno: 5 });
+    else Object.defineProperty(failure, "code", { get() { getters++; return "SQLITE_BUSY"; } });
+    const restore = beforeIdentityQuery(() => { throw failure; });
+    const previousValue = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+    let error: LedgerIdentityError;
+    try {
+      if (shape === "descriptor-value") Object.defineProperty(Object.prototype, "value", { value: "SQLITE_BUSY", configurable: true });
+      error = identityFailure(f.root);
+    } finally {
+      if (previousValue) Object.defineProperty(Object.prototype, "value", previousValue); else Reflect.deleteProperty(Object.prototype, "value");
+      restore(); f.close();
+    }
+    expect(getters).toBe(0);
+    expect(error.diagnostic).toEqual({ phase: "tables", kind: "unknown" });
+    expect(error.message).toBe("vault ledger identity is unavailable [phase=tables kind=unknown]");
   });
 }
