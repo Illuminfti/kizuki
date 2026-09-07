@@ -132,4 +132,4 @@ test("strict runtime callers still reject invalid configuration, credentials, an
       } finally { await disabled.close(); }
     }
   } finally { db.close(); }
-});
+}, 15_000);

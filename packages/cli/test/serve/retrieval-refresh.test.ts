@@ -36,8 +36,8 @@ test("the offline retrieval rail refreshes edits and deletion for a reused engin
   };
   await writeRecordedPage("The library opens after sunrise.");
   writeFileSync(join(f.vault, ".kizuki/serve.toml"), '[ports]\nretrieval="kizuki.retrieval.embedded-pg"\n');
-  const rail = () => {
-    const run = helpers.runCli(f.env, "serve", "run", "retrieval-sweep", "--json");
+  const rail = async () => {
+    const run = await helpers.runCliAsync(f.env, "serve", "run", "retrieval-sweep", "--json");
     expect(run.exitCode).toBe(0);
     expect(JSON.parse(run.stdout).data.status).toBe("ok");
   };
@@ -57,7 +57,7 @@ test("the offline retrieval rail refreshes edits and deletion for a reused engin
     } finally { await retrieval?.close(); }
   };
   expect(await query()).toEqual([]);
-  rail();
+  await rail();
   const first = await query();
   expect(first.map(hit => hit.doc_id)).toEqual(["page:fact:orchard"]);
   expect(first[0]?.authority).toBe("model_inference");
@@ -70,12 +70,12 @@ test("the offline retrieval rail refreshes edits and deletion for a reused engin
   expect(lexical.exitCode).toBe(0);
   expect(JSON.parse(lexical.stdout).data.hits[0]?.doc_id).toBe("page:fact:orchard");
 
-  expect(helpers.runCli(f.env, "rebuild", "--json").exitCode).toBe(0);
+  expect((await helpers.runCliAsync(f.env, "rebuild", "--json")).exitCode).toBe(0);
   expect(await query()).toEqual(first);
   await writeRecordedPage("The library opens at noon.");
-  rail();
+  await rail();
   expect((await query())[0]?.snippet).toContain("at noon");
   rmSync(page);
-  rail();
+  await rail();
   expect(await query()).toEqual([]);
 }, 60_000);

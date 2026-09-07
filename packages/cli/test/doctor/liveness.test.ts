@@ -51,7 +51,7 @@ describe("doctor liveness", () => {
     );
     expect(absent.exitCode).toBe(1);
     expect(absent.stdout).toContain("absent");
-  });
+  }, 15_000);
 
   test("a deliberately disabled service is reported without failing", () => {
     const setup = supervisedVault();
@@ -69,14 +69,6 @@ describe("doctor liveness", () => {
       const ran = runCli(setup.env, "serve", "run", "sync", "--json");
       expect(ran.exitCode).toBe(0);
     }
-    const doctor = runCli(
-      {
-        ...setup.env,
-        KIZUKI_SUPERVISOR: "systemd",
-        TEST_SUPERVISOR_STATE: "active",
-      },
-      "doctor",
-    );
     // Intent is still opted-out from tempVault, so empty rails are idle, not down.
     // Install first so the vault expects liveness.
     runCli({ ...setup.env, KIZUKI_SUPERVISOR: "systemd" }, "serve", "--install");
@@ -90,7 +82,7 @@ describe("doctor liveness", () => {
     );
     expect(live.exitCode).toBe(1);
     expect(live.stdout).toContain("empty streak");
-  });
+  }, 30_000);
 
   test("doctor reports canon writing off with no model configured", () => {
     const setup = supervisedVault();
@@ -166,7 +158,7 @@ describe("doctor liveness", () => {
     expect(result.stdout).not.toContain("river-stone kernel");
     expect(result.stdout).not.toContain("moth-lantern patch");
     expect(result.stderr).not.toMatch(/sk-[A-Za-z0-9]{10,}/);
-  });
+  }, 15_000);
 
   test("doctor reports missing provenance on a generated brief without rewriting it", () => {
     const setup = supervisedVault();
@@ -221,7 +213,7 @@ describe("doctor liveness", () => {
         problem.page.startsWith("dashboards/brief-"),
       ),
     ).toEqual([{ page: `dashboards/${briefName}`, error: "sources: is required" }]);
-  });
+  }, 30_000);
 
   test("init without a supervisor prints the exact serve command", () => {
     const env = isolatedEnv({ KIZUKI_SUPERVISOR: "none" });

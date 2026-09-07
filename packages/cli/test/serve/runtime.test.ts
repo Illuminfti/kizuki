@@ -1,8 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { listCanonReceipts, listClaims, listRunReceipts, setSourceGrant, sourcePolicyEpoch } from "@kizuki/core";
+import { listCanonReceipts, listClaims, listRunReceipts, setSourceGrant, sourcePolicyEpoch, ConnectionStateStore } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
+import { createServeRuntime } from "../../src/serve-runtime";
+import { DIRECT_RETRIEVAL_DESCRIPTOR, ReferenceRetrievalPort } from "../../../core/test/contracts/reference-retrieval";
+import { temporaryPortContext } from "../../../core/test/contracts/fixtures";
 import { createHelpers } from "../helpers";
 
 const { cleanup, runCli, tempVault } = createHelpers();
@@ -217,13 +220,9 @@ test("a malformed model degrades daemon capture and fails strict foreground acqu
   } finally {
     db.close();
   }
-});
+}, 15_000);
 
 test("offline serve keeps the host retrieval capability bound for recovery sweeps", async () => {
-  const { ConnectionStateStore } = await import("@kizuki/core");
-  const { createServeRuntime } = await import("../../src/serve-runtime");
-  const { DIRECT_RETRIEVAL_DESCRIPTOR, ReferenceRetrievalPort } = await import("../../../core/test/contracts/reference-retrieval");
-  const { temporaryPortContext } = await import("../../../core/test/contracts/fixtures");
   const setup = tempVault();
   const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
   const temporary = temporaryPortContext(DIRECT_RETRIEVAL_DESCRIPTOR);

@@ -47,6 +47,6 @@ export const exportCommand: Command = {
         ].join(" "),
       );
       return 0;
-    });
+    }, { retrieval: "none" });
   },
 };

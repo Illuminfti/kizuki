@@ -131,7 +131,7 @@ export const purgeCommand: Command = {
           }
         }
         return report.ok ? 0 : 1;
-      });
+      }, { retrieval: "optional" });
     }
 
     const reason = parsed.options.get("--reason");
