@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tokenResolver, validTokenRef } from "../src/secrets";
+import { parseSecretRef } from "@kizuki/core";
 import { createHelpers } from "./helpers";
 
 const h = createHelpers();
@@ -33,4 +34,28 @@ describe("connection token references", () => {
       await expect(tokenResolver(`file:${path}`, {})(`file:${path}`)).rejects.toThrow("owner-only regular file");
     }
   });
+});
+
+
+test("file references preserve literal spaces and exact enrollment without decoding", async () => {
+  const directory = h.tempDir("kizuki secret directory "), path = join(directory, "credential with spaces");
+  writeFileSync(path, "synthetic-spaced-token", {mode:0o600});
+  const ref = `file:${path}`, resolver = tokenResolver(ref, {});
+  expect(parseSecretRef(ref)).toEqual({scheme:"file", value:path});
+  expect(validTokenRef(ref)).toBe(true);
+  await expect(resolver(ref)).resolves.toBe("synthetic-spaced-token");
+  await expect(resolver(ref.replaceAll(" ","%20"))).rejects.toThrow("not granted");
+  expect(parseSecretRef("file:/literal%20path")).toEqual({scheme:"file",value:"/literal%20path"});
+  expect(validTokenRef("file:relative path")).toBe(false);
+  chmodSync(path,0o640);
+  await expect(tokenResolver(ref,{})(ref)).rejects.toThrow("owner-only regular file");
+});
+
+test("file reference spaces do not admit other whitespace or control bytes", () => {
+  for (const separator of ["\t","\n","\r","\v","\f","\0","\x01","\x1f","\x7f","\x85","\x9f","\u00a0","\u2003","\u2028","\u2029"]) {
+    expect(parseSecretRef(`file:/synthetic/a${separator}b`)).toBeNull();
+  }
+  for (const invalid of ["file:","file:/synthetic/trailing\n","file:/synthetic/trailing\r\n","env:WITH SPACE","env:TAB\tNAME","env:","https:/synthetic/path"]) expect(parseSecretRef(invalid)).toBeNull();
+  expect(parseSecretRef("env:UNCHANGED_NAME")).toEqual({scheme:"env",value:"UNCHANGED_NAME"});
+  expect(validTokenRef("env:bad-name")).toBe(false);
 });

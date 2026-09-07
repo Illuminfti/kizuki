@@ -67,8 +67,8 @@ test("owned endpoint stays alive across blocking parent work, counts refusals an
   } finally { await endpoint.stop(); await endpoint.stop(); rmSync(workspace, { recursive: true }); }
 });
 
-test("the full model matrix observes actual daemon child receipts without an OS service manager", async () => {
-  const workspace = mkdtempSync(join(tmpdir(), "native-model-matrix-")), home = join(workspace, "home"); mkdirSync(home);
+test("the full model matrix observes actual daemon child receipts under paths with spaces", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "native model matrix ")), home = join(workspace, "home"); mkdirSync(home);
   const cli = join(import.meta.dir, "../packages/cli/src/main.ts");
   const env = { PATH: "/usr/bin:/bin", HOME: home, XDG_CONFIG_HOME: join(home, "config"), KIZUKI_CONFIG: join(home, "config.toml"), KIZUKI_SUPERVISOR: "none" };
   const children = new Map<string, ReturnType<typeof Bun.spawn>>(); const phases: NativeModelPhase[] = [];
@@ -92,9 +92,10 @@ test("the full model matrix observes actual daemon child receipts without an OS 
       },
       stillActive: (vault, instance) => children.get(vault)?.pid === instance.pid && children.get(vault)?.exitCode === null,
       deactivate: stop,
-      record: phase => { phases.push(phase); expect(phase).toMatchObject({ passed: true }); },
+      record: phase => { phases.push(phase); },
     });
     expect(phases.map(p => p.id)).toEqual([...MODEL_PHASE_IDS]);
+    expect(phases.map(p => ({id:p.id,passed:p.passed}))).toEqual(MODEL_PHASE_IDS.map(id => ({id,passed:true})));
   } finally {
     for (const vault of children.keys()) await stop(vault);
     rmSync(workspace, { recursive: true });
