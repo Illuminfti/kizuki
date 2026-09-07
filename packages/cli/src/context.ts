@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, lstatSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   ConnectionStateStore,
@@ -97,7 +97,13 @@ function openReadyLedgerRead(vaultPath: string, options: { audit?: boolean } = {
 /** Existing positive floors gate explicit writers before they repair or migrate.
  * Missing/legacy unsealed ledgers retain the explicit init migration path. */
 export function assertSealedLedgerReady(vaultPath: string): void {
-  if (!existsSync(join(vaultPath, ".kizuki"))) return;
+  try { lstatSync(join(vaultPath, ".kizuki", "ledger-mark")); }
+  catch (error) {
+    // Explicit init may repair an interrupted, unsealed bootstrap. A present
+    // entry, including a dangling symlink, still goes through native custody.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
   const floor = readLedgerMark(vaultPath);
   if (floor === null || floor === 0) return;
   const binding = openReadyLedgerRead(vaultPath);

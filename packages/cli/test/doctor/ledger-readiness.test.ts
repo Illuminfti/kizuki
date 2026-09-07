@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers, fixtureConsent } from "../helpers";
 
@@ -127,6 +127,29 @@ describe("ledger readiness mark", () => {
       expect(result.stdout).not.toContain("\"hits\"");
     }
     if (kind === "symlink") expect(readFileSync(outside, "utf8")).toBe("3\n");
+  });
+
+  test.each(["nonprivate-root", "nonprivate-mark", "dangling-mark"])("explicit init preserves a present mark when %s refuses admission", kind => {
+    const setup = tempVault();
+    const control = join(setup.vault, ".kizuki");
+    const mark = markPath(setup.vault);
+    const missing = join(setup.root, "missing-mark-target");
+    if (kind === "nonprivate-root") chmodSync(setup.vault, 0o775);
+    else if (kind === "nonprivate-mark") chmodSync(mark, 0o644);
+    else { rmSync(mark); symlinkSync(missing, mark); }
+    const beforeMark = lstatSync(mark, { bigint: true });
+    const beforeMode = statSync(setup.vault).mode;
+    const beforeNames = readdirSync(control).sort();
+    const beforeLedger = readFileSync(ledgerPath(setup.vault));
+    const result = runCli(setup.env, "init", setup.vault, "--adopt", "--no-service", "--no-default");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("ledger_mark_");
+    expect(result.stdout).toBe("");
+    expect(lstatSync(mark, { bigint: true })).toEqual(beforeMark);
+    expect(statSync(setup.vault).mode).toBe(beforeMode);
+    expect(readdirSync(control).sort()).toEqual(beforeNames);
+    expect(readFileSync(ledgerPath(setup.vault))).toEqual(beforeLedger);
+    expect(existsSync(missing)).toBe(false);
   });
 
   test("explicit init refuses a high floor before changing the short ledger or service intent", () => {
