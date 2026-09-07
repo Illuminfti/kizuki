@@ -10,6 +10,63 @@ import type { SupervisorKind, SupervisorState, SupervisorStatus } from "../../sr
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
+for (const mode of ["replace", "disable", "absent", "unknown", "timeout", "later-pid", "bootout-failure", "bootstrap-failure"] as const) {
+  test(`launchd replacement waits for observed removal: ${mode}`, () => {
+    const root = mkdtempSync(join(tmpdir(), "kizuki-launchd-fixture-")); roots.push(root);
+    const statePath = join(root, "state.json"), command = join(root, "launchctl");
+    writeFileSync(statePath, JSON.stringify({ calls: [], stopping: false, observations: 0, absent: false }), { mode: 0o600 });
+    // A real disposable executable exercises the native spawn boundary. It never
+    // invokes the platform service manager or depends on module-loader mocking.
+    writeFileSync(command, `#!${process.execPath}
+      import {readFileSync, writeFileSync} from 'node:fs';
+      import assert from 'node:assert/strict';
+      const mode = ${JSON.stringify(mode)}, path = ${JSON.stringify(statePath)};
+      const state = JSON.parse(readFileSync(path, 'utf8')), args = process.argv.slice(2);
+      state.calls.push(args[0]);
+      let code = 0, stdout = '', stderr = '';
+      if (args[0] === 'print') {
+        assert.equal(args[1], 'gui/' + process.getuid() + '/dev.kizuki.synthetic');
+        if (mode === 'absent' || (state.stopping && !['unknown','timeout','later-pid'].includes(mode) && ++state.observations > 1)) {
+          state.absent = true; code = 113; stderr = 'Could not find service "dev.kizuki.synthetic" in domain for user gui';
+        } else if (state.stopping && mode === 'unknown') { code = 1; stderr = 'synthetic inspection failure'; }
+        else stdout = 'state = running\\npid = ' + (state.stopping && mode === 'later-pid' ? 98765 : 5340);
+      } else if (args[0] === 'bootout') {
+        assert.equal(args[1], 'gui/' + process.getuid() + '/dev.kizuki.synthetic');
+        state.stopping = true; code = mode === 'bootout-failure' ? 1 : 0;
+      } else {
+        assert.equal(args[0], 'bootstrap');
+        assert.equal(args[1], 'gui/' + process.getuid());
+        assert.equal(args[2], '/synthetic/unit.plist');
+        assert.equal(state.absent, true, 'bootstrap must follow observed absence');
+        code = mode === 'bootstrap-failure' ? 5 : 0;
+      }
+      writeFileSync(path, JSON.stringify(state));
+      process.stdout.write(stdout); process.stderr.write(stderr); process.exit(code);
+    `, {mode: 0o700});
+    const script = `
+      import {readFileSync} from 'node:fs';
+      import assert from 'node:assert/strict';
+      const mode = ${JSON.stringify(mode)}; let elapsed = 0;
+      Object.defineProperty(performance, 'now', {value: () => elapsed});
+      Atomics.wait = (_a, _b, _c, ms) => { elapsed += ['timeout','later-pid'].includes(mode) ? 1000 : ms; return 'timed-out'; };
+      const {realSupervisorHost} = await import(${JSON.stringify(join(import.meta.dir, "../../src/serve/supervisor.ts"))});
+      const host = realSupervisorHost('launchd', '/synthetic', '/synthetic/kizuki');
+      assert.equal(host.query('synthetic').state, mode === 'absent' ? 'absent' : 'active');
+      const result = mode === 'disable' ? host.disable('dev.kizuki.synthetic') : host.enable('/synthetic/unit.plist', 'dev.kizuki.synthetic');
+      const state = JSON.parse(readFileSync(${JSON.stringify(statePath)}, 'utf8'));
+      assert.equal(result.ok, ['replace','disable','absent'].includes(mode));
+      assert.equal(state.calls.filter(call => call === 'bootstrap').length, ['replace','absent','bootstrap-failure'].includes(mode) ? 1 : 0);
+      if (['replace','disable'].includes(mode)) assert.ok(state.observations > 1, 'old process must be observed before disappearance');
+      if (['timeout','later-pid'].includes(mode)) assert.equal(elapsed, 5000);
+      if (mode === 'disable') assert.equal(state.absent, true);
+    `;
+    const result = Bun.spawnSync([process.execPath, "--eval", script], {
+      env: {...process.env, PATH: root + ':' + process.env.PATH}, stdout: "pipe", stderr: "pipe", timeout: 15_000,
+    });
+    expect({code: result.exitCode, stderr: result.stderr.toString()}).toEqual({code: 0, stderr: ""});
+  });
+}
+
 function fixture(kind: SupervisorKind = "systemd") {
   const root = mkdtempSync(join(tmpdir(), "kizuki-supervisor-")); roots.push(root);
   const vault = join(root, "vault"); initVault(vault); writeServeIntent(vault, "opted-out");
