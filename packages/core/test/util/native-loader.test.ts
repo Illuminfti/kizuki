@@ -148,9 +148,14 @@ for (const mode of ["pipe", "close-on-exec", "verify-close-on-exec", "nonblock",
       import * as fs from "node:fs";
       import { strict as assert } from "node:assert";
       const mode = ${JSON.stringify(mode)};
-      const realDlopen = ffi.dlopen, realCc = ffi.cc, realWrite = fs.writeSync;
+      const realDlopen = ffi.dlopen, realCc = ffi.cc, realWrite = fs.writeSync, realClose = fs.closeSync;
       let reader = -1, writer = -1, libraryCloses = 0, compiledCloses = 0, compiled = false;
-      mock.module("node:fs", () => ({ ...fs, writeSync(fd, ...args) {
+      const closed = [];
+      mock.module("node:fs", () => ({ ...fs, closeSync(fd) {
+        assert.ok(fd === reader || fd === writer);
+        assert.ok(fs.fstatSync(fd).isFIFO());
+        realClose(fd); closed.push(fd);
+      }, writeSync(fd, ...args) {
         if (fd === writer && mode === "write") throw new Error("synthetic source detail");
         if (fd === writer && mode === "short-write") return realWrite(fd, args[0].subarray(0, 1));
         return realWrite(fd, ...args);
@@ -203,7 +208,9 @@ for (const mode of ["pipe", "close-on-exec", "verify-close-on-exec", "nonblock",
         assert.equal(compiled, mode === "compile" || mode === "initialize");
         assert.equal(compiledCloses, mode === "initialize" ? 1 : 0);
       }
-      for (const descriptor of [reader, writer]) if (descriptor >= 0) assert.throws(() => fs.fstatSync(descriptor), { code: "EBADF" });
+      // TinyCC's SDK discovery can reuse the closed writer's numeric slot.
+      // Prove each actual source pipe end was closed once, while still a pipe.
+      assert.deepEqual(closed.sort((a,b) => a-b), [reader, writer].filter(fd => fd >= 0).sort((a,b) => a-b));
       process.stdout.write("passed");
     `;
     const result = await runChild(script);

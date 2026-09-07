@@ -169,3 +169,45 @@ for (const mode of ["count-overrun", "malformed-header", "malformed-length", "ma
 test("the cumulative entry bound refuses a truncated erasure scan", () => {
   scenario("entry-limit", "fs.mkdirSync(join(owned, 'store')); assert.throws(() => cap.removeTree('store', cap.childIdentity('store')), /bounds/); assert.ok(fs.existsSync(join(owned, 'store')));");
 });
+
+for (const mode of ["valid", "eof", "zero-inode", "short-header", "overrun", "empty-name", "missing-nul", "count-overrun"])
+  test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(`Darwin raw directory records preserve bytes or refuse: ${mode}`, () => {
+    const script = `
+      import { mock } from "bun:test";
+      import * as ffi from "bun:ffi";
+      import { strict as assert } from "node:assert";
+      const mode = ${JSON.stringify(mode)}, realDlopen = ffi.dlopen;
+      const callback = new ffi.JSCallback((_fd, pointer, capacity, _position) => {
+        const bytes = Buffer.from(ffi.toArrayBuffer(pointer, 0, Number(capacity))); bytes.fill(0);
+        if (mode === "eof") return 0;
+        if (mode === "short-header") return 23;
+        if (mode === "count-overrun") return Number(capacity) + 1;
+        bytes.writeBigUInt64LE(mode === "zero-inode" ? 0n : 42n, 0);
+        bytes.writeUInt16LE(mode === "overrun" ? 32 : 24, 16);
+        bytes.writeUInt16LE(mode === "empty-name" ? 0 : 2, 18);
+        bytes[20] = 8; bytes[21] = 195; bytes[22] = 191;
+        if (mode === "missing-nul") bytes[23] = 1;
+        return 24;
+      }, { args: [ffi.FFIType.i32, ffi.FFIType.ptr, ffi.FFIType.u64, ffi.FFIType.ptr], returns: ffi.FFIType.i64_fast });
+      mock.module("bun:ffi", () => ({ ...ffi, dlopen(...args) {
+        const library = realDlopen(...args), original = library.symbols;
+        return { ...library, symbols: { ...original, dlsym(handle, name) {
+          return new ffi.CString(name).toString() === "__getdirentries64" ? callback.ptr : original.dlsym(handle, name);
+        } } };
+      } }));
+      const { loadOwnedDirectoryNative } = await import(${JSON.stringify(join(import.meta.dir, "../../src/util/owned-directory-native.ts"))});
+      const api = loadOwnedDirectoryNative(), out = Buffer.alloc(16384);
+      try {
+        const status = api.symbols.readDirectory(-1, ffi.ptr(out), out.length);
+        if (mode === "valid") {
+          assert.equal(status, 24); assert.equal(out.readUInt16LE(16), 24);
+          assert.deepEqual([...out.subarray(19, 22)], [195, 191, 0]);
+        } else if (mode === "eof") assert.equal(status, 0);
+        else assert.equal(status, -22);
+        process.stdout.write("passed");
+      } finally { api.compiled.close(); api.libc.close(); callback.close(); }
+    `;
+    const result = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    expect(result.stdout.toString()).toBe("passed");
+  });

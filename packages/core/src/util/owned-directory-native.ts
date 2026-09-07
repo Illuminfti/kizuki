@@ -249,7 +249,9 @@ long kizuki_read_directory(int descriptor, unsigned char *out, unsigned long cap
     if ((unsigned long)count-offset < 24) return -22;
     unsigned short length=*(unsigned short *)(bytes+offset+16);
     if (length < 24 || length > 1048 || offset+length > (unsigned long)count) return -22;
-    if (*(unsigned long *)(bytes+offset) == 0) { offset+=length; continue; }
+    // A nonempty native page must never normalize to an EOF observation.
+    // Refuse an unidentifiable record instead of silently dropping its name.
+    if (*(unsigned long *)(bytes+offset) == 0) return -22;
     unsigned short namesize=*(unsigned short *)(bytes+offset+18);
     if (namesize < 1 || namesize > 255 || 21UL+namesize >= length) return -22;
     if (bytes[offset+21+namesize] != 0) return -22;
