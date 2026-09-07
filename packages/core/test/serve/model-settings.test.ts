@@ -232,3 +232,46 @@ test("a parent swapped after classification cannot redirect the model credential
   expect(readFileSync(join(retired, name), "utf8")).toBe("synthetic-external-key");
   expect(readFileSync(managed.slice(5), "utf8")).toBe("synthetic-token-one");
 });
+
+test.skipIf(process.platform !== "linux" || process.arch !== "x64")("in-vault external credentials retain the exact vault broker binding", () => {
+  const source = (path: string) => JSON.stringify(join(import.meta.dir, "../../src", path));
+  const script = `
+    import {mock,expect} from 'bun:test';
+    import * as fs from 'node:fs';
+    import {join} from 'node:path';
+    import {tmpdir} from 'node:os';
+    const realStat=fs.fstatSync; let mapped=false,broker=true,boundVault='',attestations=0;
+    mock.module('node:fs',()=>({...fs,fstatSync(fd,...args){const s=realStat(fd,...args);return mapped&&s.uid===0n?Object.assign(Object.create(Object.getPrototypeOf(s)),s,{uid:65534n,gid:65534n}):s;}}));
+    const custody=await import(${source("serve/custody.ts")});
+    mock.module(${source("serve/custody.ts")},()=>({...custody,serviceAncestorOwner(vault,_fd,s){if(broker&&vault===boundVault&&s.uid===65534n){attestations++;return 0n;}return undefined;}}));
+    const {readAppModelConfiguration,readAppModelFileCredential}=await import(${source("serve/model-settings.ts")});
+    const root=fs.mkdtempSync(join(tmpdir(),'model-broker-')),outside=root+'-outside';boundVault=root;
+    fs.mkdirSync(join(root,'.kizuki'),{mode:0o700});fs.mkdirSync(outside,{mode:0o700});
+    const key=join(root,'.kizuki/model.key'),other=join(outside,'model.key'),config=join(root,'.kizuki/serve.toml');
+    fs.writeFileSync(key,'synthetic-in-vault',{mode:0o400});fs.writeFileSync(other,'synthetic-outside',{mode:0o600});
+    const beforeKey=fs.readFileSync(key),beforeOther=fs.readFileSync(other);
+    function configure(reference){fs.writeFileSync(config,'[ports.llm]\\nsecret_ref='+JSON.stringify(reference)+'\\n',{mode:0o600});return readAppModelConfiguration(root,()=>{}).revision;}
+    try {
+      const reference='file:'+key,revision=configure(reference),beforeConfig=fs.readFileSync(config);
+      expect(readAppModelFileCredential(root,revision,reference)).toBe('synthetic-in-vault');
+      mapped=true;
+      expect(readAppModelFileCredential(root,revision,reference)).toBe('synthetic-in-vault');
+      expect(attestations).toBeGreaterThan(0);
+      expect(()=>readAppModelFileCredential(root,'absent',reference)).toThrow('revision_conflict');
+      expect(fs.readFileSync(config).equals(beforeConfig)).toBe(true);
+      broker=false;expect(()=>readAppModelFileCredential(root,revision,reference)).toThrow('custody_unavailable');broker=true;
+      boundVault=outside;expect(()=>readAppModelFileCredential(root,revision,reference)).toThrow('custody_unavailable');boundVault=root;
+      const outsideRef='file:'+other,outsideRevision=configure(outsideRef);
+      expect(()=>readAppModelFileCredential(root,outsideRevision,outsideRef)).toThrow('custody_unavailable');
+      mapped=false;expect(readAppModelFileCredential(root,outsideRevision,outsideRef)).toBe('synthetic-outside');mapped=true;
+      fs.symlinkSync(outside,join(root,'.kizuki/alias'));
+      const alias='file:'+join(root,'.kizuki/alias/model.key'),aliasRevision=configure(alias);
+      expect(()=>readAppModelFileCredential(root,aliasRevision,alias)).toThrow('custody_unavailable');
+      const rootRef='file:'+root,rootRevision=configure(rootRef);
+      expect(()=>readAppModelFileCredential(root,rootRevision,rootRef)).toThrow('credential_invalid');
+      expect(fs.readFileSync(key).equals(beforeKey)).toBe(true);expect(fs.readFileSync(other).equals(beforeOther)).toBe(true);
+    }finally{mapped=false;fs.rmSync(root,{recursive:true,force:true});fs.rmSync(outside,{recursive:true,force:true});}
+  `;
+  const result = Bun.spawnSync([process.execPath, "-e", script], {stdout:"pipe",stderr:"pipe",timeout:15_000});
+  expect({code:result.exitCode,stderr:result.stderr.toString()}).toEqual({code:0,stderr:""});
+});

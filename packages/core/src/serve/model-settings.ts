@@ -234,20 +234,24 @@ export function readAppModelFileCredential(vaultPath: string, expectedRevision: 
   const kind = classifyAppModelCredential(vaultPath, reference);
   if (kind === "env") fail("credential_invalid");
   if (kind === "managed_file") return readAppManagedModelCredential(vaultPath, expectedRevision, reference, options);
-  return readOnly(vaultPath, (_files, _vault, current) => {
+  return readOnly(vaultPath, (files, vault, current) => {
     if (revision(current?.bytes ?? null) !== expectedRevision) fail("revision_conflict");
     const llm = llmOf(parseConfig(current?.bytes ?? null));
     if (!isPlainObject(llm) || llm.secret_ref !== reference) fail("credential_invalid");
-    const path = resolve(reference.slice(5)), external = openCanonFiles(dirname(path));
+    const path = resolve(reference.slice(5));
+    if (path === vault) fail("credential_invalid");
+    // A service broker is bound to the actual vault, not a nested key directory.
+    // Keep in-vault credentials under the already held no-follow authority.
+    const inVault = path.startsWith(`${vault}/`), external = inVault ? null : openCanonFiles(dirname(path));
     try {
-      const snapshot = external.readOwnerOnly(basename(path));
+      const snapshot = (external ?? files).readOwnerOnly(inVault ? path.slice(vault.length + 1) : basename(path));
       if (snapshot === null) fail("credential_invalid");
       try {
         const bytes = snapshot.bytes, value = Buffer.from(bytes).toString("utf8").trim();
         if (bytes.byteLength > 16_384 || !value || value.length > 16_384 || /\s|[\x00-\x1f\x7f]/.test(value)) fail("credential_invalid");
         return value;
       } finally { snapshot.close(); }
-    } finally { external.close(); }
+    } finally { external?.close(); }
   }, options.reconcile ?? true);
 }
 /** Resolve only immutable credentials owned by this settings authority. */
