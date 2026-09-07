@@ -117,3 +117,41 @@ test("service joins use event text bytes rather than the encoded legacy row dige
  f.qualification.recovery_services[0].event_text_sha256=preserved.event_sha256;
  expect(()=>validateNativeLifecycle(f,e)).toThrow("native-lifecycle-recovery-event-binding");
 });
+
+const startupCaptureSteps = () => {
+ const evidence = { changed_native_configuration: true, timing_changed: true, release_eligible: false };
+ const emptyStream = () => ({ text: "", bytes_read: 0, file_size: 0, truncated: false,
+  sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" });
+ return [
+  { id: "mac-startup-capture-enabled", passed: false, evidence: { ...evidence } },
+  { id: "mac-startup-output-diagnostics", passed: false, evidence: { ...evidence, limit_bytes_per_stream: 8192,
+   output: { stdout: emptyStream(), stderr: emptyStream(), metadata: emptyStream() } } },
+ ];
+};
+
+test("opt-in Mac startup capture remains diagnostic with every normal phase complete",()=>{
+ const e=expected("bun-darwin-arm64"),f=lifecycleFixture(e);
+ expect(validateNativeLifecycle(f,e).status).toBe("PASS");
+ f.steps.push(...startupCaptureSteps());
+ f.failures.push("diagnostic startup capture is ineligible for lifecycle qualification");
+ f.passed=false;
+ expect(()=>validateNativeLifecycle(f,e)).toThrow("native-lifecycle-failed");
+});
+
+for (const index of [0,1]) test(`${startupCaptureSteps()[index]!.id} cannot gain credit through forged passed flags`,()=>{
+ const e=expected("bun-darwin-arm64"),f=lifecycleFixture(e);
+ const step=startupCaptureSteps()[index]!;
+ step.passed=true;
+ step.evidence.release_eligible=true;
+ f.steps.push(step);
+ expect(f.passed).toBe(true);
+ expect(f.failures).toEqual([]);
+ expect(f.qualification.phases.every((p:any)=>p.passed)).toBe(true);
+ expect(()=>validateNativeLifecycle(f,e)).toThrow("native-lifecycle-step-unknown");
+});
+
+test("Mac startup capture failure cannot be relabeled as a passing diagnostic",()=>{
+ const e=expected("bun-darwin-arm64"),f=lifecycleFixture(e);
+ f.steps.push({id:"mac-startup-output-diagnostics",passed:true,evidence:{status:"capture_unavailable"}});
+ expect(()=>validateNativeLifecycle(f,e)).toThrow("native-lifecycle-step-unknown");
+});
