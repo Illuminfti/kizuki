@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { openLedger } from '@kizuki/core/testing';
 import { inspectCanonRecovery, retryCanonProjectionObligations } from '@kizuki/core';
@@ -10,6 +10,7 @@ import { readCanonWriteIntent } from '../../core/src/canon/write-intent';
 import { listCanonReceipts } from '../../core/src/canon/receipts';
 import { createHelpers } from './helpers';
 import { startApp } from '../src/commands/app';
+import { openConfiguredRetrieval } from '../src/retrieval-runtime';
 import type { CliIo } from '../src/commands';
 
 const h = createHelpers(), cleanup: (() => void)[] = [];
@@ -206,3 +207,43 @@ test('actual tell never attributes an unrelated pending receipt or page to the a
   expect(readFileSync(join(f.vault, secondReceipt.page_path), 'utf8')).not.toContain('Initech');
   expect(listCanonReceipts(f.db)).toHaveLength(2);
 });
+
+
+test('actual app undo completes against its configured retrieval engine and releases the lease', async () => {
+  const f = await fixture();
+  writeFileSync(join(f.vault, '.kizuki', 'serve.toml'), '[ports]\nretrieval="kizuki.retrieval.embedded-pg"\n');
+  const edit = await storeClaim(f.db, f.event, { kind: 'edit', predicate: null, object: null, body: 'Grace studies astronomy.', frontmatter: {} });
+  const edited = write({ ...f.io, retrieval_store: 'kizuki.retrieval.embedded-pg' }, edit);
+  const first = await openConfiguredRetrieval(f.vault);
+  expect(first).toBeDefined();
+  try { expect((await retryCanonProjectionObligations({ ...f.io, retrieval: first! })).pending).toBe(0); }
+  finally { await first?.close(); }
+  const io: CliIo = { env: f.env, vaultOverride: f.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out() {}, err() {}, prompt: async () => { throw Error('no prompt'); } };
+  let token = '';
+  const app = await startApp(io, { noService: true }, async raw => { token = new URL(raw).hash.slice('#token='.length); });
+  const call = async (route: string, body: unknown) => {
+    const response = await fetch(app.url + '/app/v1/' + route, { method: 'POST', headers: { origin: app.url, authorization: 'Bearer ' + token, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    expect(response.status).toBe(200); return response.json() as Promise<any>;
+  };
+  try {
+    const started = await call('undo', { receipt_id: edited.receipt_id });
+    let job;
+    for (let i = 0; i < 1000; i++) {
+      job = (await call('operation', { id: started.data.operation_id })).data;
+      if (job.state !== 'running') break;
+      await Bun.sleep(10);
+    }
+    expect(job.state).toBe('succeeded');
+    expect(job.error).toBeNull();
+    expect(inspectCanonRecovery(f.db).projection_pending).toBe(0);
+    expect(readFileSync(join(f.vault, f.receipt.page_path), 'utf8')).not.toContain('astronomy');
+    // The operation closes its configured writer. A fresh consumer sees the
+    // restored exact document rather than requiring a rebuild or manual retry.
+    const reopened = await openConfiguredRetrieval(f.vault);
+    expect(reopened).toBeDefined();
+    try {
+      expect((await reopened!.search({ text: 'astronomy', mode: 'lexical', scope: {}, ceiling: 'private', limit: 10, deadline_ms: 5000 })).hits).toHaveLength(0);
+      expect((await reopened!.search({ text: 'partnerships', mode: 'lexical', scope: {}, ceiling: 'private', limit: 10, deadline_ms: 5000 })).hits).toHaveLength(1);
+    } finally { await reopened?.close(); }
+  } finally { await app.close(); }
+}, 60_000);

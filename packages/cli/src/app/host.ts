@@ -80,8 +80,8 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
     let lastModelTest: AppModelTest | null = null;
     const io = (): CliIo => ({ ...baseIo, vaultOverride: selected, out: () => { }, err: () => { }, prompt: async () => { throw new AppFailure('unavailable'); } });
     const ready = () => !initializationIncomplete && existsSync(join(selected, '.kizuki', 'kizuki.db'));
-    const context = <T>(fn: Parameters<typeof withVault<T>>[1]) => { if (!ready())
-        throw new AppFailure('no_vault'); return withVault(io(), fn, { retrieval: 'none' }); };
+    const context = <T>(fn: Parameters<typeof withVault<T>>[1], retrieval: 'none' | 'required' = 'none') => { if (!ready())
+        throw new AppFailure('no_vault'); return withVault(io(), fn, { retrieval }); };
     function operation(kind: string, work: (job: AppOperation) => Promise<AppOperation['result']>, urgent = false) {
         if (closed || mutation && !urgent)
             throw new AppFailure('busy');
@@ -374,7 +374,7 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
             return operation('undo', async () => context(async (ctx) => {
                 const original = getCanonReceipt(ctx.db, id);
                 let result;
-                try { result = await undoReceipt({ db: ctx.db, vault_path: ctx.vaultPath }, id, { cascade }); }
+                try { result = await undoReceipt({ db: ctx.db, vault_path: ctx.vaultPath, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }) }, id, { cascade }); }
                 catch (error) {
                     const pending = inspectCanonRecovery(ctx.db);
                     if (pending.pending && pending.receipt_id !== null && pending.page_path === original?.page_path) {
@@ -389,7 +389,7 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
                 });
                 tryRefreshDerived(ctx.db, ctx.vaultPath);
                 return { receipt_id: result.receipt_id, message: 'Receipt undone.' };
-            }));
+            }, 'required'));
         }
         if (route === 'capture') {
             const key = sourceKey(input.source_key), mode = string(input.mode, 8);
