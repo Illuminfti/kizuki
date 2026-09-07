@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 import { tableExists } from "../ledger/schema";
+import { readDarwinBootSessionId } from "./darwin-boot";
 import {
   HEARTBEAT_SECONDS,
   LEASE_RECLAIM_HEARTBEATS,
@@ -76,11 +77,14 @@ export function pidAlive(pid: number): boolean {
 }
 
 export function readBootId(): string {
+  if (process.platform === "darwin") {
+    return readDarwinBootSessionId() ?? `pid:${process.pid}`;
+  }
   try {
     const trimmed = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
     if (trimmed.length > 0) return trimmed;
   } catch {
-    // macOS and test hosts have no proc boot id.
+    // Unsupported hosts may have no native boot identity.
   }
   return `pid:${process.pid}`;
 }
