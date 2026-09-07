@@ -589,7 +589,6 @@ function reportControlFile(reports: ControlPathReport[], root: string, rel: stri
 export function inspectVaultControl(root: string): ControlPathReport[] {
   assertPermissionPlatform();
   const reports: ControlPathReport[] = [];
-  hardenLedgerFile(join(root, ".kizuki", "kizuki.db"));
   reportControlDir(reports, root, ".kizuki", true);
   for (const rel of CONTROL_LAYOUT) {
     if (rel === ".kizuki") continue;

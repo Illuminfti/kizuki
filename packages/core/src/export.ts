@@ -72,7 +72,7 @@ import { SERVE_SCHEMA_VERSION } from "./serve/types";
 import { extractBatchFilingVersion, validateDurableExtractStorage } from "./serve/extract";
 import { ensureVaultId, readVaultId, vaultIdPath } from "./serve/vault-id";
 import { doctorVault } from "./vault/doctor";
-import { initVault } from "./vault/init";
+import { hardenLedgerFile, initVault } from "./vault/init";
 import { parseFrontmatter } from "./vault/frontmatter";
 import { MAX_CANON_DEPTH, MAX_CANON_PAGE_BYTES, MAX_CANON_PAGES, MAX_CANON_WALK_BYTES } from "./vault/pages";
 import { validatePage } from "./vault/schema";
@@ -2526,6 +2526,7 @@ export function restoreVault(
       }
       rebuildDerived(db, staging);
       rebuildPageIndex({ db, vault_path: staging });
+      hardenLedgerFile(join(staging, CONTROL_DIR, "kizuki.db"));
       const doctor = doctorVault(staging);
       const report: RestoreReport = {
         vault_id: readVaultId(staging),

@@ -6,6 +6,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSy
 import { join } from "node:path";
 import { createHelpers } from "./helpers";
 import { assertBoundVaultId, openLedgerRead } from "@kizuki/core/internal";
+import { doctorVault } from "@kizuki/core";
 
 const h = createHelpers(); afterEach(h.cleanup);
 const hash = (path: string) => new Bun.CryptoHasher("sha256").update(readFileSync(path)).digest("hex");
@@ -121,6 +122,15 @@ test("reads reject unsafe ledger metadata without chmod repair", () => {
   const result = h.runCli(f.env, "connect", "status", "--json");
   expect(result.exitCode).toBe(1); expect(result.stdout).toBe("");
   expect(statSync(path).mode & 0o777).toBe(0o644);
+});
+
+test("doctor filesystem inspection reports unsafe ledger metadata without repairing it", () => {
+  const f = h.tempVault(), path = join(f.vault, ".kizuki/kizuki.db");
+  chmodSync(path, 0o644);
+  const before = hash(path), report = doctorVault(f.vault);
+  expect(statSync(path).mode & 0o777).toBe(0o644);
+  expect(hash(path)).toBe(before);
+  expect(report.control).toContainEqual({ path: ".kizuki/kizuki.db", problem: "mode 644, expected 0600" });
 });
 
 
