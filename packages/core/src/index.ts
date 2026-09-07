@@ -725,6 +725,8 @@ export type {
   ExportManifest,
   ExportManifestEntry,
   ExportOptions,
+  PortableLocalAdapter,
+  RestoreOptions,
   RestoreReport,
 } from "./export";
 

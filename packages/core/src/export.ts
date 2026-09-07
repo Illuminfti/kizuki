@@ -1,3 +1,5 @@
+import { capturePortableAdapter, capturePortableLocal, readPortableBackup, restorePortableLocal, PORTABLE_LOCAL_STREAM, type PortableLocalAdapter } from "./portable-local";
+export type { PortableLocalAdapter } from "./portable-local";
 import { assertVaultMutationScope, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "./vault/mutation-scope";
 import { assertReceiptPaths } from "./canon/paths";
 import { canonReadGeneration, inspectCanonRecovery } from "./canon/write-intent";
@@ -159,11 +161,17 @@ export interface ExportManifest {
 }
 
 export interface ExportOptions {
+  portableLocal?: PortableLocalAdapter;
   signal?: AbortSignal;
   /** Synchronous notifications run outside SQLite transactions while the writer
    * remains owned. Inventory is a pre-copy preview; later phases describe the
    * sealed capture and cannot alter its database cut. */
   onProgress?: (label: string) => void;
+}
+
+export interface RestoreOptions extends ExportOptions {
+  /** Trusted synchronous host projection rebuild in private, unpublished staging. */
+  rebuildDerived?: (db: Database, stagingPath: string) => void;
 }
 
 /** Publication succeeded even though a later transaction/ownership cleanup failed. */
@@ -177,6 +185,7 @@ class ExportPublicationError extends Error {
 }
 
 export interface RestoreReport {
+  connection_state: number;
   vault_id: string | null;
   events: number;
   claims: number;
@@ -1212,7 +1221,7 @@ function* pageReceipts(db: Database): Generator<Record<string, unknown>> {
 
 const CONNECTION_RECOVERY_WARNING = "restored connection history is disconnected and has no connector state; further capture requires supported fresh enrollment with a new source key and fresh consent; retained checkpoints will not resume automatically";
 
-function* pageConnections(db: Database): Generator<Record<string, unknown>> {
+function* pageConnections(db: Database, portableKeys: ReadonlySet<string> = new Set()): Generator<Record<string, unknown>> {
   const disconnectedAt = new Date().toISOString();
   let after: { connector_id: string; source_key: string } | null = null;
   while (true) {
@@ -1246,7 +1255,7 @@ function* pageConnections(db: Database): Generator<Record<string, unknown>> {
         config: JSON.parse(NULL_CONNECTION_CONFIG) as unknown,
         secret_refs: [],
         connected_at: row.connected_at,
-        disconnected_at: row.disconnected_at ?? disconnectedAt,
+        disconnected_at: portableKeys.has(row.source_key) ? row.disconnected_at : row.disconnected_at ?? disconnectedAt,
         implementation_version: row.implementation_version,
         consent_required: row.consent_required,
       };
@@ -1511,8 +1520,9 @@ export function exportVault(
   const target = Object.freeze({ db, vault_path: resolve(vaultPath) });
   const destination = resolve(outDir);
   const { signal, onProgress } = options;
+  const portableLocal = capturePortableAdapter(options.portableLocal);
   if (onProgress !== undefined && typeof onProgress !== "function") throw new TypeError("export progress listener must be a function");
-  const captured = Object.freeze({ ...(signal === undefined ? {} : { signal }), ...(onProgress === undefined ? {} : { onProgress }) });
+  const captured = Object.freeze({ ...(portableLocal === undefined ? {} : { portableLocal }), ...(signal === undefined ? {} : { signal }), ...(onProgress === undefined ? {} : { onProgress }) });
   throwIfAborted(signal);
   assertExportTransactionAvailable(db);
   // Preserve early recovery refusals before callbacks, path access or staging.
@@ -1575,6 +1585,7 @@ function exportVaultOwned(
   let staged: OwnedDirectory | undefined;
   let published = false;
   let publicationUncertain = false;
+  let portable: ReturnType<typeof capturePortableLocal>;
   try {
     const destinationIdentity = directory.childIdentity(destinationName);
     stagingIdentity = directory.createStaging(stagingName);
@@ -1611,6 +1622,7 @@ function exportVaultOwned(
       source.assertCurrent(); staged!.assertCurrent();
       throwIfAborted(options.signal);
       assertSourceExport(db); assertNoPendingPurgeExport(db);
+      portable = capturePortableLocal(db, vaultPath, options.portableLocal);
       const sourceEpoch = sourcePolicyEpoch(db);
       if (preview !== undefined && preview.epoch !== sourceEpoch) throw new Error("source authorization changed during export");
       const identity = vaultIdentity(source);
@@ -1676,10 +1688,11 @@ function exportVaultOwned(
       writeStream(
         staging,
         "connections.jsonl",
-        pageConnections(db),
+        pageConnections(db, new Set(portable?.records.map(row => row.source_key))),
         files,
         options.signal,
       );
+      if (portable !== undefined) writeStream(staging, PORTABLE_LOCAL_STREAM, portable.records, files, options.signal);
       writeStream(
         staging,
         "checkpoints.jsonl",
@@ -1714,6 +1727,7 @@ function exportVaultOwned(
     assertExportTransactionAvailable(db);
     return db.transaction(() => {
       staged!.assertCurrent(); directory.assertCurrent();
+      portable?.check();
       verifyFiles(staging, manifest);
       const stagedManifest = readFileSyncNoFollow(join(staging, "manifest.json"), manifestContent.length);
       if (!manifestContent.equals(stagedManifest)) throw new Error("export staged manifest changed");
@@ -1747,7 +1761,7 @@ function exportVaultOwned(
       catch (cleanup) { throw new AggregateError([error, cleanup], "export failed; owned staging cleanup is incomplete"); }
     }
     throw error;
-  } finally { staged?.close(); directory.close(); }
+  } finally { try { portable?.close(); } finally { staged?.close(); directory.close(); } }
 }
 
 function readFileSyncNoFollow(path: string, maxBytes: number): Buffer {
@@ -2348,27 +2362,33 @@ function* streamRows(
   }
 }
 
-export function verifyBackup(backupDir: string): ExportManifest {
-  const root = resolveExisting(backupDir);
+export function verifyBackup(backupDir: string, options: Pick<ExportOptions, "portableLocal"> = {}): ExportManifest {
+  const adapter = capturePortableAdapter(options.portableLocal);
+  const root = resolve(backupDir);
   if (!existsSync(root) || !statSync(root).isDirectory()) {
     throw new Error(`backup directory is missing: ${backupDir}`);
   }
   const manifest = readManifest(root);
   verifyFiles(root, manifest);
   assertComplete(root, manifest);
+  const portable = readPortableBackup(root, manifest, adapter);
+  portable?.close();
   return manifest;
 }
 
 export function restoreVault(
   backupDir: string,
   targetDir: string,
-  options: ExportOptions = {},
+  options: RestoreOptions = {},
 ): RestoreReport {
+  const adapter = capturePortableAdapter(options.portableLocal);
+  const { rebuildDerived: rebuildHost } = options;
+  if (rebuildHost !== undefined && typeof rebuildHost !== "function") throw new TypeError("restore rebuild listener must be a function");
   throwIfAborted(options.signal);
   const source = resolve(backupDir);
   const destination = resolve(targetDir);
   assertSeparated(source, destination);
-  const manifest = verifyBackup(source);
+  const manifest = verifyBackup(source, adapter === undefined ? {} : { portableLocal: adapter });
   const supported = supportedSchemaVersions();
   if (manifest.schema_versions.ledger > supported.ledger) {
     throw new Error(
@@ -2388,8 +2408,18 @@ export function restoreVault(
     `${basenameSafe(destination)}${STAGING_MARK}${ulid()}.partial`,
   );
 
+  let portable: ReturnType<typeof readPortableBackup>;
+  let parentDirectory: OwnedDirectory | undefined;
+  let stagingIdentity: OwnedDirectoryIdentity | undefined;
+  let staged: OwnedDirectory | undefined;
+  let published = false, publicationUncertain = false;
+  let restoredState: ReturnType<typeof restorePortableLocal>;
   try {
-    mkdirPrivate(staging);
+    portable = readPortableBackup(source, manifest, adapter);
+    parentDirectory = openOwnedDirectory(parent);
+    const destinationIdentity = parentDirectory.childIdentity(basenameSafe(destination));
+    stagingIdentity = parentDirectory.createStaging(basenameSafe(staging));
+    staged = openOwnedDirectory(staging);
     writePrivateFile(join(staging, INCOMPLETE), Buffer.from("incomplete\n"));
     options.onProgress?.("staging");
     for (const key of Object.keys(manifest.files).sort(compareCodeUnits)) {
@@ -2453,7 +2483,7 @@ export function restoreVault(
           insertReceipt(db, row);
         }
         restoreSourceSurvivorLineage(db, source, manifest);
-        for (const row of streamRows(source, manifest, "connections.jsonl", true)) {
+        for (const row of portable?.connections ?? streamRows(source, manifest, "connections.jsonl", true)) {
           insertConnectionRow(db, row);
         }
         for (const row of streamRows(source, manifest, "checkpoints.jsonl", true)) {
@@ -2477,7 +2507,7 @@ export function restoreVault(
         for (const row of streamRows(source, manifest, "ledger/connector_sensitivity.jsonl", false)) {
           insertConnectorSensitivity(db, row);
         }
-        restoreSourcePolicy(db, source, manifest);
+        restoreSourcePolicy(db, source, manifest, portable?.grants);
         restorePurgeHistory(db, source, manifest);
         let intentCount = 0;
         for (const row of streamRows(
@@ -2524,11 +2554,17 @@ export function restoreVault(
       if (events !== manifest.snapshot.event_count) {
         throw new Error("restored event count does not match the snapshot");
       }
+      restoredState = restorePortableLocal(db, staging, portable?.records ?? [], adapter);
       rebuildDerived(db, staging);
       rebuildPageIndex({ db, vault_path: staging });
+      const rebuildResult: unknown = rebuildHost?.(db, staging);
+      if (rebuildResult instanceof Promise) throw new Error("restore rebuild must be synchronous");
+      if (db.inTransaction) throw new Error("restore rebuild left a transaction open");
+      portable?.check(); restoredState?.check(); staged.assertCurrent(); parentDirectory.assertCurrent();
       hardenLedgerFile(join(staging, CONTROL_DIR, "kizuki.db"));
       const doctor = doctorVault(staging);
       const report: RestoreReport = {
+        connection_state: restoredState?.count ?? 0,
         vault_id: readVaultId(staging),
         events,
         claims:
@@ -2554,7 +2590,7 @@ export function restoreVault(
           ...(manifest.schema_versions.serve < 8
             ? ["backup predates durable extraction recovery; an interrupted model decision was not preserved"]
             : []),
-          ...(db.query("SELECT 1 FROM connections LIMIT 1").get() !== null
+          ...(db.query("SELECT 1 FROM connections WHERE disconnected_at IS NOT NULL LIMIT 1").get() !== null
             ? [CONNECTION_RECOVERY_WARNING]
             : []),
         ],
@@ -2562,17 +2598,25 @@ export function restoreVault(
       db.close();
       unlinkSync(join(staging, INCOMPLETE));
       fsyncDirectory(staging);
-      installStaging(staging, destination);
-      fsyncDirectory(parent);
+      portable?.check(); restoredState?.check(); staged.assertCurrent(); parentDirectory.assertCurrent();
+      verifyFiles(source, manifest);
+      try {
+        parentDirectory.publishStaging(basenameSafe(staging), stagingIdentity, basenameSafe(destination), destinationIdentity);
+        published = true;
+      } catch (error) {
+        if (error instanceof OwnedDirectoryPublicationError) { published = error.publication === "published"; publicationUncertain = !error.cleanup_safe; }
+        else publicationUncertain = true;
+        throw error;
+      }
       return report;
     } catch (error) {
       db.close();
       throw error;
     }
   } catch (error) {
-    rmSync(staging, { recursive: true, force: true });
+    if (!published && !publicationUncertain && stagingIdentity !== undefined) parentDirectory!.removeTree(basenameSafe(staging), stagingIdentity);
     throw error;
-  }
+  } finally { try { restoredState?.close(); } finally { try { portable?.close(); } finally { staged?.close(); parentDirectory?.close(); } } }
 }
 
 const SOURCE_BACKUP_TABLES = ["source_grants", "source_event_bindings", "source_grant_receipts", "native_owner_evidence", "source_retrieval_stores", "source_store_inventory"] as const;
@@ -2844,12 +2888,12 @@ function assertSourceExport(db: Database): void {
     if (!sourceEventsAllowed(db, [row.event_id], { owner: true, purpose: "export" })) throw new Error("source_export_denied");
   }
 }
-function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManifest): void {
+function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManifest, capturedGrants?: readonly Record<string, unknown>[]): void {
   for (const table of SOURCE_BACKUP_TABLES) {
     const required = manifest.schema_versions.ledger >= (table === "native_owner_evidence" ? 12 : table === "source_store_inventory" ? 14 : table === "source_retrieval_stores" ? 13 : 11);
     const path = `ledger/${table}.jsonl`;
     if (required && manifest.files[path] === undefined) throw new Error("backup source policy stream missing");
-    for (const row of streamRows(backup, manifest, path, required)) {
+    for (const row of table === "source_grants" && capturedGrants !== undefined ? capturedGrants : streamRows(backup, manifest, path, required)) {
       if (table === "native_owner_evidence" && manifest.schema === LEGACY_BACKUP_SCHEMA) {
         if (Object.hasOwn(row, "event_content_hash")) throw new Error("legacy native owner proof contains a current field");
         row["event_content_hash"] = db.query<{ content_hash: string }, [string]>("SELECT content_hash FROM events WHERE event_id=?")

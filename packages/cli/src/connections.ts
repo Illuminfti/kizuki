@@ -143,18 +143,30 @@ export function connectorAuthModes(id: string): readonly string[] | null {
   return null;
 }
 
-/**
- * True only for a connector whose enrolled state can never hold credential
- * material. Sign-in and secret-ref connectors mint real secrets (session
- * tokens, app passwords) into the same opaque connection-state store a
- * `none`-auth connector uses for plain config like a local path; core never
- * distinguishes the two, so a backup that copied every connector's state
- * bytes would put those secrets in the backup. Only the `none`-auth shape is
- * safe to carry across a backup.
- */
-export function connectionStateIsCredentialFree(connectorId: string): boolean {
-  const modes = connectorAuthModes(connectorId);
-  return modes !== null && modes.length === 1 && modes[0] === "none";
+/** Only these host codecs are path-only. Auth-none alone is not sufficient. */
+const PORTABLE_PATH_IDS = Object.freeze([
+  "kizuki.markdown-folder", "kizuki.import-chatgpt", "kizuki.import-claude",
+  "kizuki.import-whatsapp", "kizuki.import-pocket", "kizuki.import-omnivore",
+  "kizuki.import-x-archive", "kizuki.screenpipe",
+]);
+export function portableLocalAdapter(): import("@kizuki/core").PortableLocalAdapter {
+  for (const id of PORTABLE_PATH_IDS) {
+    const manifest = getConnector(id, { path: "/var/empty" }).manifest();
+    if (manifest.auth_modes.length !== 1 || manifest.auth_modes[0] !== "none" || manifest.required_secrets.length !== 0) {
+      throw new ConnectionError("portable local connector contract changed");
+    }
+  }
+  return Object.freeze({
+    connector_ids: PORTABLE_PATH_IDS,
+    decode(id: string, bytes: Uint8Array) {
+      const state = decodeHostState(bytes, id);
+      if (state.config.path === undefined) throw new ConnectionError("portable connection requires a local path");
+      return Object.freeze({ path: state.config.path });
+    },
+    encode(id: string, config: { readonly path: string }) {
+      return encodeHostState({ schema: HOST_STATE_SCHEMA, connector_id: id, config });
+    },
+  });
 }
 
 export function listEnrollableConnectorIds(): string[] {
