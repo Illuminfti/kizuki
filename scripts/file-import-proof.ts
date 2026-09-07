@@ -18,7 +18,7 @@ function check(ok: unknown, code: string): asserts ok { if (!ok) throw new Error
 type Observation = { stored: number | null; duplicates: number | null; proposals: number | null; errors: number | null; withheld: number | null; hit_ids: string[]; consent: string | null; purge: string | null; last_run: string | null };
 const empty = (): Observation => ({ stored: null, duplicates: null, proposals: null, errors: null, withheld: null, hit_ids: [], consent: null, purge: null, last_run: null });
 interface Step { id: string; command: string[]; expected_exit: number; exit_code: number; passed: boolean; stdout_sha256: string; stderr_sha256: string; observation: Observation; failure: string | null; }
-interface CaseReceipt { format: FileFormat; connector_id: string; source_key: string | null; invalid_source_key: string | null; expected_events: number; expected_proposals: number; steps: Step[]; failures: string[]; }
+interface CaseReceipt { format: FileFormat; connector_id: string; source_key: string | null; invalid_source_key: string | null; expected_events: number; expected_proposals: number; expected_repeat_duplicates: number; expected_last_batch_stored: number; steps: Step[]; failures: string[]; }
 export interface FileImportArgs { artifact: string; artifact_proof: string; report: string; }
 export function parseFileImportArgs(argv: string[]): FileImportArgs {
   const values = new Map<string, string>();
@@ -41,11 +41,11 @@ function envelope(stdout: string, command: string) {
   check((body.status === "ok") === (body.degraded.length === 0), "contradictory-envelope-status");
   return body;
 }
-export function importCounts(stdout: string, expectedStored: number, expectedErrors: number, expectedProposals = 0): Observation {
+export function importCounts(stdout: string, expectedStored: number, expectedErrors: number, expectedProposals = 0, expectedDuplicates = 0): Observation {
   const match = /^events_stored=(\d+) duplicates=(\d+) proposals_created=(\d+) withdrawn=(\d+) retractions_filed=(\d+) errors=(\d+)\n$/.exec(stdout);
   check(match, "import-count-shape");
   const values = match.slice(1).map(Number);
-  check(values.every(Number.isSafeInteger) && values[0] === expectedStored && values[1] === 0 && values[2] === expectedProposals && values[3] === 0 && values[4] === 0 && values[5] === expectedErrors, "unexpected-import-counts");
+  check(values.every(Number.isSafeInteger) && values[0] === expectedStored && values[1] === expectedDuplicates && values[2] === expectedProposals && values[3] === 0 && values[4] === 0 && values[5] === expectedErrors, "unexpected-import-counts");
   return { ...empty(), stored: values[0]!, duplicates: values[1]!, proposals: values[2]!, errors: values[5]! };
 }
 export function queryObservation(stdout: string, stderr: string, fixture: Pick<FileCase, "connector" | "sentinel">, expected: number): Observation {
@@ -125,7 +125,7 @@ export async function runFileImportProof(args: FileImportArgs): Promise<string> 
     unchanged();
     const executable = join(copied, "kizuki"), fixtures = fileImportFixtures(referenceDay);
     for (const fixture of fixtures) {
-      const entry: CaseReceipt = { format: fixture.format, connector_id: fixture.connector, source_key: null, invalid_source_key: null, expected_events: fixture.events, expected_proposals: fixture.proposals, steps: [], failures: [] }; cases.push(entry);
+      const entry: CaseReceipt = { format: fixture.format, connector_id: fixture.connector, source_key: null, invalid_source_key: null, expected_events: fixture.events, expected_proposals: fixture.proposals, expected_repeat_duplicates: fixture.repeat_duplicates, expected_last_batch_stored: fixture.last_batch_stored, steps: [], failures: [] }; cases.push(entry);
       for (const scenario of ["valid", "invalid"] as const) {
         const directory = join(workspace, fixture.format, scenario), vault = join(directory, "vault"), source = join(directory, "source", fixture.source);
         mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -150,18 +150,18 @@ export async function runFileImportProof(args: FileImportArgs): Promise<string> 
         const query = (id: string, expected: number) => run(id, ["query", fixture.sentinel, "--scope", "ledger", "--json", ...(expected === 0 ? ["--degraded"] : [])], 0, (stdout, stderr) => { const observation = queryObservation(stdout, stderr, fixture, expected); if (id !== "revoked-query") check(observation.withheld === 0, "unexpected-withheld-evidence"); return observation; });
         const importArgs = ["import", fixture.connector, "--source", source];
         const grant = ["--policy", policy, "--expected-revision", "0", "--operation-id", `synthetic-${fixture.format}-${scenario}-grant`];
-        const counts = (stored: number, errors: number, error?: string, proposals = 0) => (stdout: string, stderr: string) => {
+        const counts = (stored: number, errors: number, error?: string, proposals = 0, duplicates = 0) => (stdout: string, stderr: string) => {
           if (errors === 0) check(stderr === "", "unexpected-import-diagnostics");
           else check(stderr.includes(error!) && stderr.trim().split("\n").every(line => /^(error: |degraded: Claude health check before capture found partial or unsupported content\.$)/.test(line)), "missing-or-extra-import-error");
-          return importCounts(stdout, stored, errors, proposals);
+          return importCounts(stdout, stored, errors, proposals, duplicates);
         };
         try {
           await run(scenario === "valid" ? "init" : "invalid-init", ["init", vault, "--no-service", "--no-default"], 0, (stdout, stderr) => { check(stdout === `${vault}\nservice: opted out (--no-service)\nnext: import a file source, then query and doctor\n` && stderr === "", "unexpected-init-output"); return empty(); });
           if (scenario === "valid") {
             await run("import", [...importArgs, ...grant], 0, counts(fixture.events, 0, undefined, fixture.proposals));
             const first = await query("query", fixture.events);
-            await run("status", ["connect", "status", "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-status-diagnostics"); const result = statusObservation(stdout, fixture.connector, null, fixture.events, 0); entry.source_key = result.sourceKey; return result.observation; });
-            await run("repeat-import", importArgs, 0, counts(0, 0));
+            await run("status", ["connect", "status", "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-status-diagnostics"); const result = statusObservation(stdout, fixture.connector, null, fixture.last_batch_stored, 0); entry.source_key = result.sourceKey; return result.observation; });
+            await run("repeat-import", importArgs, 0, counts(0, 0, undefined, 0, fixture.repeat_duplicates));
             const second = await query("repeat-query", fixture.events); check(JSON.stringify(first.hit_ids) === JSON.stringify(second.hit_ids), "repeat-query-identities-changed");
             await run("repeat-status", ["connect", "status", "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-status-diagnostics"); return statusObservation(stdout, fixture.connector, entry.source_key, 0, 0).observation; });
             const operation = `synthetic-${fixture.format}-revoke`, selector = ["--source", entry.source_key!];
@@ -175,7 +175,7 @@ export async function runFileImportProof(args: FileImportArgs): Promise<string> 
           } else {
             await run("invalid-import", [...importArgs, ...grant], 1, fixture.invalid_mode !== "blocked" ? counts(fixture.invalid_events, 1, fixture.invalid_error, fixture.invalid_events ? fixture.proposals : 0) : (stdout, stderr) => { check(stdout === "" && stderr.includes(fixture.invalid_error) && /^error: [^\n]+\n$/.test(stderr), "malformed-source-not-refused"); return empty(); });
             const first = await query("invalid-query", fixture.invalid_events);
-            await run("invalid-status", ["connect", "status", "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-status-diagnostics"); const result = statusObservation(stdout, fixture.connector, null, fixture.invalid_events, 1, fixture.invalid_mode !== "blocked" ? 1 : 0); entry.invalid_source_key = result.sourceKey; return result.observation; });
+            await run("invalid-status", ["connect", "status", "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-status-diagnostics"); const result = statusObservation(stdout, fixture.connector, null, 0, 1, fixture.invalid_mode !== "blocked" ? 1 : 0); entry.invalid_source_key = result.sourceKey; return result.observation; });
             if (fixture.invalid_mode !== "blocked") {
               await run("invalid-repeat", importArgs, 1, counts(0, 1, fixture.invalid_error));
               const second = await query("invalid-repeat-query", fixture.invalid_events); check(JSON.stringify(first.hit_ids) === JSON.stringify(second.hit_ids), "partial-repeat-identities-changed");

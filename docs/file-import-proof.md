@@ -27,9 +27,11 @@ For each format, a successful import must store exactly one event. Public ledger
 query must return exactly its distinct sentinel with connector provenance and
 private sensitivity through the normal query path. Deterministic capture and subject
 proposals must total two (three for the WhatsApp sender/thread fixture). A second process imports the unchanged files and must store
-zero events with zero duplicates or errors; query identities and public source
-identity must remain stable. Public connection status exposes last-run counts and
-time, not the underlying cursor, so this proof claims observed resume behavior
+zero events and errors; ICS, WhatsApp, Pocket and Omnivore replay one snapshot
+event as one duplicate, while the other formats drain their saved cursor with
+zero duplicates; query identities and public source
+identity must remain stable. Public connection status exposes final-batch counts
+and time (zero stored for formats that finish with an empty drain batch), not the underlying cursor, so this proof claims observed resume behavior
 without claiming inspection of a protected cursor.
 
 The same public CLI then revokes the source, checks query absence, completes
