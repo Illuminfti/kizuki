@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
+import { LIVE_PREDICATE } from "../ledger/ledger";
 import { ceilingSql, instantBound, instantSql, requireCeiling } from "./sql";
 
 export interface TimelineOptions {
@@ -75,7 +76,7 @@ function timelinePlan(
   const limit = validLimit(opts.limit ?? 200);
   if (limit === 0) return { tail: null, bindings: [] };
 
-  const clauses = ["events.deleted = 0"];
+  const clauses = [LIVE_PREDICATE];
   const bindings: (string | number)[] = [];
   if (opts.day !== undefined) {
     const window = dayWindow(opts.day);

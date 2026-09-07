@@ -11,7 +11,7 @@ import {
   readVaultId,
 } from "@kizuki/core";
 import type { ConnectionStateReader, RetrievalPort } from "@kizuki/core";
-import { assertBoundVaultId, openLedgerRead, inspectLedgerIdentity, LedgerIdentityError, openLedger, ledgerAccepted, readLedgerMark, sealLedger } from "@kizuki/core/internal";
+import { assertBoundVaultId, inspectLedgerIdentity, LedgerIdentityError, ledgerNotReadyError, openLedgerRead, openReadyLedgerRead, openLedger, ledgerAccepted, readLedgerMark, sealLedger } from "@kizuki/core/internal";
 import { inspectConfiguredRetrieval, openConfiguredRetrieval } from "./retrieval-runtime";
 import type { CliIo } from "./commands/index";
 import {
@@ -66,34 +66,6 @@ function peekLedgerIdentity(vaultPath: string, dbPath: string): void {
   }
 }
 
-const LEDGER_READY_DEADLINE_MS = 3_000;
-const LEDGER_READY_POLL_MS = 250;
-
-function notReady(vaultPath: string, accepted: number, floor: number): Error {
-  return new Error(`vault ledger not ready: ${accepted} of ${floor} sealed events readable after ${LEDGER_READY_DEADLINE_MS}ms: ${join(vaultPath, ".kizuki", "kizuki.db")}; the store is still restoring or lost kizuki.db-wal. Do not run kizuki init`);
-}
-
-/** Reopen each poll so an atomically restored ledger can become visible. The
- * returned binding retains the existing native custody and read-only contract. */
-function openReadyLedgerRead(vaultPath: string, options: { audit?: boolean } = {}): ReturnType<typeof openLedgerRead> {
-  const deadline = Date.now() + LEDGER_READY_DEADLINE_MS;
-  let floor = 0;
-  for (;;) {
-    assertVaultControl(vaultPath, { repairPermissions: false });
-    const binding = openLedgerRead(vaultPath, options);
-    let accepted: number;
-    try {
-      floor = Math.max(floor, readLedgerMark(vaultPath) ?? 0);
-      accepted = ledgerAccepted(binding.db);
-      binding.assertCurrent();
-      if (accepted >= floor) return binding;
-    } catch (error) { binding.close(); throw error; }
-    binding.close();
-    if (Date.now() >= deadline) throw notReady(vaultPath, accepted, floor);
-    Bun.sleepSync(Math.min(LEDGER_READY_POLL_MS, Math.max(1, deadline - Date.now())));
-  }
-}
-
 /** Existing positive floors gate explicit writers before they repair or migrate.
  * Missing/legacy unsealed ledgers retain the explicit init migration path. */
 export function assertSealedLedgerReady(vaultPath: string): void {
@@ -114,7 +86,7 @@ function assertWriterFloor(vaultPath: string, db: Database): void {
   const floor = readLedgerMark(vaultPath);
   if (floor !== null) {
     const accepted = ledgerAccepted(db);
-    if (accepted < floor) throw notReady(vaultPath, accepted, floor);
+    if (accepted < floor) throw ledgerNotReadyError(vaultPath, accepted, floor);
   }
 }
 

@@ -142,13 +142,7 @@ export function printCommandHelp(
 export function usageLines(command: Command, error: UsageError): string[] {
   const lines: string[] = [];
   const message = error.message;
-  if (
-    message.length > 0 &&
-    message !== command.usage &&
-    message !== "wrong arity"
-  ) {
-    lines.push(`error: ${message}`);
-  }
+  lines.push(`error: ${message.length > 0 && message !== command.usage ? message : "invalid arguments"}`);
   lines.push(`usage: kizuki ${command.usage}`);
   lines.push(`Try \`${INVOCATION} help ${command.name}\` for flags and examples.`);
   return lines;

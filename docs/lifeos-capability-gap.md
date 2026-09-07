@@ -57,6 +57,12 @@ names, deployment paths, and provider configuration are intentionally omitted.
 
 ## Ordered follow-on work
 
+Order reconciled on 2026-09-07 with [RFC 0002 §18](../rfcs/0002-autonomous-canon.md#18-migration-and-lanes)
+and [D15/D19](decision-log.md). The matrix above records the 2026-09-01
+snapshot; this sequence records dependency order. It does not report current
+completion or candidate release acceptance. Check
+[Current direction](CURRENT.md) for implementation status.
+
 1. **Close connection secret custody structurally and land the core spine.**
    Arbitrary connector configuration cannot be made safe with a blacklist of
    credential-looking names. Persist only values that are safe by
@@ -64,12 +70,21 @@ names, deployment paths, and provider configuration are intentionally omitted.
 2. **Define the reversible working model.** Add source-linked claims, aliases,
    conflict sets, confidence, supersession, conversational correction, and
    purge semantics beneath canon.
-3. **Define portable skill and taste context.** Model reusable agent skills,
-   working conventions, demonstrated creative standards, accepted/rejected
-   outputs, scope, confidence, evidence, revision, and expiry without turning
-   taste into a fixed personality label.
-4. **Implement MCP over stdio.** Enforce existing identity, grant, rate, and
-   audit policy at the adapter boundary. Defer a standing loopback daemon.
+3. **Establish the daemon and receipted rails.** After `contracts-core`,
+   `claims-core`, and `canon-writer` establish the contracts and write boundary,
+   the `serve-daemon` lane installs and starts `kizuki serve` during `init`
+   (D15). The daemon owns the serial loop and standing loopback endpoint.
+   Lease exclusion, durable run receipts for success and failure, write budgets,
+   checkpoint resumption, and restart recovery are prerequisites for unattended
+   work; prove them through the RFC §11/§18 restart and liveness gates.
+   Preserve the explicit `--no-service` opt-out and unsupported-host diagnostic.
+4. **Implement MCP and portable context over the same core contracts.** The
+   CLI and stdio adapter remain independently usable when the daemon is down. Enforce
+   identity, grants, rate limits, and audit beneath both transports; stdio
+   availability does not defer service installation. Model reusable agent
+   skills, working conventions, demonstrated creative standards,
+   accepted/rejected outputs, scope, confidence, evidence, revision, and expiry
+   without turning taste into a fixed personality label.
 5. **Implement deterministic context packets.** Apply task scope, sensitivity,
    provenance, freshness, fixed budgets, and retained-prefix/delta behavior.
 6. **Expand `kizuki doctor`.** Report connection, checkpoint, derived-index,
