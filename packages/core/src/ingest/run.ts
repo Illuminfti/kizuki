@@ -465,6 +465,7 @@ async function runConnector(
   }
 
   let batch: SyncBatch;
+  let hasMore: boolean | undefined;
   try {
     const received = await withDeadline(
       mode === "backfill"
@@ -473,7 +474,7 @@ async function runConnector(
       CONNECTOR_OPERATION_DEADLINE_MS,
       `${mode} timed out`,
     );
-    const hasMore = batchHasMore(received);
+    hasMore = batchHasMore(received);
     // Retain the accepted scalar rather than consulting the provider again
     // after event/receipt processing has begun.
     batch = Object.freeze({
@@ -530,7 +531,7 @@ async function runConnector(
     processed,
     status,
   );
-  return { result, terminal: status === "ok" && batch.has_more === false };
+  return { result, terminal: status === "ok" && hasMore === false };
 }
 
 export async function runBackfill(

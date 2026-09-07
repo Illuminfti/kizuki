@@ -586,6 +586,22 @@ describe("runToCompletion", () => {
     } finally { db.close(); }
   });
 
+  test("a global inherited completion flag cannot terminate a legacy batch", async () => {
+    const db = database();
+    const original = Object.getOwnPropertyDescriptor(Object.prototype, "has_more");
+    try {
+      Object.defineProperty(Object.prototype, "has_more", { value: false, configurable: true, writable: true });
+      const connector = new ScriptedConnector([page(1, 1), { ...page(2, 1), cursor: "page-1" }]);
+      const result = await runToCompletion(db, connector, "fixture", SOURCE, "backfill");
+      expect(result.errors).toEqual(["run made no progress"]);
+      expect(result.stored).toBe(2); expect(connector.cursors).toEqual([null, "page-1"]);
+    } finally {
+      if (original === undefined) Reflect.deleteProperty(Object.prototype, "has_more");
+      else Object.defineProperty(Object.prototype, "has_more", original);
+      db.close();
+    }
+  });
+
   test("forged completion metadata is refused before events without invoking accessors", async () => {
     let getterCalls = 0;
     for (const descriptor of [

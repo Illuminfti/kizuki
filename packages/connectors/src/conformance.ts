@@ -507,7 +507,7 @@ async function checkPagination(
       );
       if (fresh.length === 0) break;
       for (const event of fresh) seen.add(event.source_record_id);
-      if (batch.cursor === null || batch.has_more === false) break;
+      if (batch.cursor === null || Object.getOwnPropertyDescriptor(batch, "has_more")?.value === false) break;
       if (batch.cursor === cursor) {
         failures.push(
           "pagination: cursor did not advance while still emitting new records",
