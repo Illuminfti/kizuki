@@ -9,6 +9,7 @@ import { requireRegularFile, verifyChecksumManifest } from "./release-artifacts"
 import { releaseTarget, requireNativeHost } from "./release-targets";
 import { installedRailsHealth, readNativeRailDiagnostics, recordInstalledHealth, waitForFreshRails } from "./native-service-health";
 import { captureSyntheticServiceTrace } from "./native-service-trace";
+import { prepareLaunchctlDiagnostics, projectLaunchctlResult, syntheticServiceFileMetadata } from "./native-launchctl-diagnostics";
 
 const repository = resolve(import.meta.dir, "..");
 const packageFiles = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"] as const;
@@ -249,8 +250,35 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     record("private-unit", (lstatSync(unitPath).mode & 0o777) === 0o600, { unit, mode: lstatSync(unitPath).mode & 0o777, sha256: hash(unitPath) });
     // Port zero avoids a fixed port when the unique service is subsequently restarted.
     writeFileSync(join(vault, ".kizuki", "serve.toml"), "[serve]\nbind_port = 0\n", { mode: 0o600 });
-    cli("repeat-install", ["serve", "--install", "--json", "--vault", vault]);
-    observed = await active("repeat-install-replaces-process", executable, observed);
+    if (platform === "darwin") {
+      const vaultId = readFileSync(join(vault, ".kizuki/vault-id"), "utf8").trim();
+      const diagnostic = prepareLaunchctlDiagnostics(fixtureRoot, vaultId);
+      // Only this CLI child sees the wrapper. launchd's unit contains no inherited
+      // EnvironmentVariables, and the parent/native observer environment is unchanged.
+      const env = { ...cliEnv, PATH: `${diagnostic.path}:${cliEnv.PATH}`, CI: "true", GITHUB_ACTIONS: "true",
+        RUNNER_TEMP: realpathSync(process.env.RUNNER_TEMP!) };
+      const before = syntheticServiceFileMetadata(fixtureRoot, vaultId);
+      const result = invoke([executable, "serve", "--install", "--json", "--vault", vault], env);
+      const trace = diagnostic.collect();
+      const state = managerState(5000);
+      steps.push({ id: "instrumented-repeat-install-diagnostics", passed: trace.rows.length > 0,
+        evidence: { ...trace, expected_wrapper_sha256: diagnostic.wrapper_sha256, before,
+          after: syntheticServiceFileMetadata(fixtureRoot, vaultId),
+          manager: projectLaunchctlResult("print", { ...state, signal: null }, 0),
+          process: processObservation(state, 5000) } });
+      save();
+      record("repeat-install", result.exit_code === 0, { ...result, instrumented: true, timing_changed: true });
+      check(trace.rows.length > 0 && trace.wrapper_sha256 === diagnostic.wrapper_sha256,
+        "packaged supervisor did not produce the expected launchctl trace");
+      observed = await active("repeat-install-replaces-process", executable, observed);
+      // A successful instrumented run is followed by an independent uninstrumented
+      // replacement. Either failure stays a failure; neither operation is retried.
+      cli("uninstrumented-repeat-install", ["serve", "--install", "--json", "--vault", vault]);
+      observed = await active("repeat-install-replaces-process", executable, observed);
+    } else {
+      cli("repeat-install", ["serve", "--install", "--json", "--vault", vault]);
+      observed = await active("repeat-install-replaces-process", executable, observed);
+    }
     signalOwned(observed, "SIGKILL");
     observed = await active("crash-restarts-new-instance", executable, observed);
     cli("public-graceful-stop", ["serve", "stop", "--vault", vault]);
@@ -306,6 +334,16 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     receipt.passed = failures.length === 0 && steps.every(step => step.passed);
   } catch (error) {
     failures.push(error instanceof Error ? error.message : "native lifecycle proof failed");
+    if (platform === "darwin" && fixtureRoot && unit.startsWith("dev.kizuki.")) {
+      try {
+        const state = managerState(5000);
+        steps.push({ id: "failed-native-service-metadata", passed: false, evidence: {
+          files: syntheticServiceFileMetadata(fixtureRoot, unit.slice("dev.kizuki.".length)),
+          manager: projectLaunchctlResult("print", { ...state, signal: null }, 0),
+          process: processObservation(state, 5000), boundary: "before cleanup; no journal content or manager environment retained",
+        } });
+      } catch { steps.push({ id: "failed-native-service-metadata", passed: false, evidence: { status: "unavailable" } }); }
+    }
   } finally {
     receipt.cleanup.attempted = true;
     try {
