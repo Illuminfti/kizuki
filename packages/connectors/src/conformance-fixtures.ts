@@ -101,6 +101,19 @@ export function emptyOnUnavailableConnector(): Connector {
   });
 }
 
+/** Missing source reports a `status: "unavailable"` batch at the given cursor. */
+export function statusUnavailableConnector(cursor: string | null): Connector {
+  return base({
+    backfill: async () => ({ events: [], cursor, status: "unavailable" }),
+    health: async () =>
+      new HealthReport({
+        state: "unreachable",
+        checked_at: "2026-01-01T00:00:00.000Z",
+        detail: "nothing here",
+      }),
+  });
+}
+
 /** Health, sign-in, sync, revoke and purge never resolve. */
 export function hangingConnector(): Connector {
   const hang = <T>() => new Promise<T>(() => {});

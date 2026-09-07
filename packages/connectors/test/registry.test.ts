@@ -8,9 +8,11 @@ import {
   POCKET_IMPORT_CONNECTOR_ID,
   SCREENPIPE_CONNECTOR_ID,
   WHATSAPP_IMPORT_CONNECTOR_ID,
+  X_API_CONNECTOR_ID,
   X_ARCHIVE_CONNECTOR_ID,
   getConnector,
   listConnectorDescriptors,
+  sealConnector,
 } from "../src";
 
 test("getConnector builds kizuki.screenpipe", () => {
@@ -42,6 +44,37 @@ test("getConnector builds every snapshot importer", () => {
   for (const [id, config] of cases) {
     expect(getConnector(id, config).manifest().connector_id).toBe(id);
   }
+});
+
+test("X API registry entry is provider-bound, private, and fails closed without host composition", async () => {
+  const connector = getConnector(X_API_CONNECTOR_ID, {});
+  const manifest = connector.manifest();
+  expect(manifest.connector_id).toBe("kizuki.x");
+  expect(manifest.allowed_egress).toEqual(["api.x.com", "x.com"]);
+  expect(manifest.kinds).toEqual(["post"]);
+  expect(manifest.contract_minor).toBe(2);
+  expect(manifest.default_sensitivity).toBe("private");
+  expect(manifest.sensitivity_floor).toBe("private");
+  expect(manifest.auth_modes).toEqual(["oauth", "secret_ref"]);
+  expect(manifest.capabilities).toMatchObject({ backfill: true, sync: true, tombstones: false, purge: false, fixture: true });
+  expect(listConnectorDescriptors().find((port) => port.id === "kizuki.connector.x")).toMatchObject({
+    contract_minor: 2,
+    optional_package: "@kizuki/connector-x/api",
+    supports: ["backfill", "sync", "fixture", "sign_in"],
+  });
+  await expect(connector.connect(async () => "unused")).rejects.toMatchObject({ code: "misconfigured" });
+  expect((await connector.health()).state).toBe("misconfigured");
+});
+
+test("sealing forwards the sign-in context a contract-minor-2 connector requires", async () => {
+  const seen: unknown[] = [];
+  const sealed = sealConnector(
+    { ...getConnector(X_API_CONNECTOR_ID, {}), signIn: async (_io, _state, context) => { seen.push(context); return { display: "stub" }; } },
+    { contract_minor: 2, implementation: "stub", allowed_egress: [], cursor_schema: null },
+  );
+  const io = { prompt: async () => "", notify: () => {}, openUrl: async () => {} };
+  await sealed.signIn!(io, { write: async () => {} } as never, { mode: "new" });
+  expect(seen).toEqual([{ mode: "new" }]);
 });
 
 test("X archive registry policy is local, posts-only, and personal", () => {

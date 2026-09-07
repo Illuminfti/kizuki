@@ -67,6 +67,8 @@ export type {
   XArchiveCursor,
   XArchiveImportConfig,
 } from "@kizuki/connector-x";
+export { X_API_CONNECTOR_ID, X_API_CURSOR_SCHEMA, XApiConnector, createXApiConnector } from "@kizuki/connector-x/api";
+export type { XApiConfig, XApiDeps } from "@kizuki/connector-x/api";
 export {
   MARKDOWN_FOLDER_CONNECTOR_ID,
   MarkdownFolderConnector,

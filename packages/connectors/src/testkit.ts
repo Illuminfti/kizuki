@@ -18,6 +18,7 @@ export {
   hangingConnector,
   mutableManifestConnector,
   scriptedSignInConnector,
+  statusUnavailableConnector,
   unlabeledEventsConnector,
   untypedSignInCancelConnector,
 } from "./conformance-fixtures";
