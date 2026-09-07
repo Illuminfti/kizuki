@@ -1,6 +1,6 @@
 import { Database, constants } from "bun:sqlite";
 import { join, resolve } from "node:path";
-import { openCredentialDirectory } from "../agents/credential-file";
+import { openLedgerDirectory } from "../vault/canon-files";
 import { bindServingAudit } from "../serving/audit-capability";
 import { LEDGER_SCHEMA_VERSION } from "./db";
 import { assertLedgerSchema } from "./integrity";
@@ -26,7 +26,9 @@ export interface LedgerReadContext {
  */
 export function openLedgerRead(vaultPath: string, options: { audit?: boolean } = {}): LedgerReadContext {
   const path = join(resolve(vaultPath), ".kizuki", "kizuki.db");
-  const directory = openCredentialDirectory(join(resolve(vaultPath), ".kizuki"));
+  let directory: ReturnType<typeof openLedgerDirectory>;
+  try { directory = openLedgerDirectory(resolve(vaultPath)); }
+  catch { throw new LedgerReadError("custody_unavailable"); }
   let db: Database | undefined, writer: Database | undefined, closed = false;
   let original: ReturnType<typeof directory.inspectFileIdentity>;
   try { original = directory.inspectFileIdentity("kizuki.db"); }
@@ -35,7 +37,7 @@ export function openLedgerRead(vaultPath: string, options: { audit?: boolean } =
     if (closed || original === null) throw new LedgerReadError("custody_unavailable");
     try {
       const current = directory.inspectFileIdentity("kizuki.db");
-      for (const name of ["kizuki.db-wal", "kizuki.db-shm"]) directory.inspectFileIdentity(name);
+      for (const name of ["kizuki.db-wal", "kizuki.db-shm"] as const) directory.inspectFileIdentity(name);
       // Opening a hot rollback journal could recover database bytes before a
       // read. Only ordinary WAL/SHM mechanics belong to this capability.
       if (directory.inspectFileIdentity("kizuki.db-journal") !== null) throw new LedgerReadError("custody_unavailable");

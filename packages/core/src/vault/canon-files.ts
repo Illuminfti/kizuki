@@ -412,3 +412,66 @@ export function openCanonFiles(vaultPath: string): CanonFiles {
     try { return new NativeCanonFiles(ROOT_TOKEN, absolute, fd); } catch (error) { closeSync(fd); throw error; }
   });
 }
+
+const LEDGER_FILES = ["kizuki.db", "kizuki.db-wal", "kizuki.db-shm", "kizuki.db-journal"] as const;
+export interface LedgerDirectory {
+  inspectFileIdentity(name: typeof LEDGER_FILES[number]): Readonly<{ dev: string; ino: string }> | null;
+  close(): void;
+}
+
+/** Internal ledger metadata only. Reuse the vault's authenticated ancestry,
+ * without granting credential access or opening SQLite files and dropping locks. */
+export function openLedgerDirectory(vaultPath: string): LedgerDirectory {
+  return guarded(() => {
+    api();
+    if (typeof vaultPath !== "string" || !isAbsolute(vaultPath) || resolve(vaultPath) !== vaultPath ||
+        vaultPath === "/" || vaultPath.includes("\0") || Buffer.byteLength(vaultPath) > 4096 || vaultPath.split("/").length > 257) fail("invalid_path");
+    const root = openRoot(vaultPath);
+    let control: number | null = null, closed = false;
+    try {
+      const rootIdentity = directoryStat(root);
+      control = openChild(root, ".kizuki", true);
+      if (control === null) fail("changed");
+      const controlFd = control;
+      const privateControl = (fd: number): BigIntStats => {
+        const stat = directoryStat(fd);
+        if ((stat.mode & 0o7777n) !== 0o700n) fail("unsafe");
+        return stat;
+      };
+      const controlIdentity = privateControl(controlFd);
+      const assertCurrent = (): void => {
+        if (closed) fail("closed");
+        const currentRoot = openRoot(vaultPath);
+        let currentControl: number | null = null;
+        try {
+          if (!sameIdentity(directoryStat(currentRoot), rootIdentity)) fail("changed");
+          currentControl = openChild(currentRoot, ".kizuki", true);
+          if (currentControl === null || !sameIdentity(privateControl(currentControl), controlIdentity) ||
+              !sameIdentity(privateControl(controlFd), controlIdentity)) fail("changed");
+        } finally { if (currentControl !== null) closeSync(currentControl); closeSync(currentRoot); }
+      };
+      return Object.freeze({
+        inspectFileIdentity(name: typeof LEDGER_FILES[number]) {
+          return guarded(() => {
+            if (!LEDGER_FILES.includes(name)) fail("invalid_path");
+            assertCurrent();
+            const bytes = new Uint8Array(144);
+            const status = result(api().symbols.statChild(controlFd, ptr(nameBytes(name)), ptr(bytes)));
+            assertCurrent();
+            if (status === -2) return null;
+            if (status !== 0) fail("unsafe");
+            const stat = new DataView(bytes.buffer), mode = stat.getUint32(24, true);
+            if ((mode & 0o170000) !== 0o100000 || (mode & 0o7777) !== 0o600 ||
+                stat.getUint32(28, true) !== process.geteuid!() || stat.getBigUint64(16, true) !== 1n) fail("unsafe");
+            return Object.freeze({ dev: stat.getBigUint64(0, true).toString(), ino: stat.getBigUint64(8, true).toString() });
+          });
+        },
+        close() {
+          if (closed) return;
+          closed = true;
+          try { closeSync(controlFd); } finally { closeSync(root); }
+        },
+      });
+    } catch (error) { try { if (control !== null) closeSync(control); } finally { closeSync(root); } throw error; }
+  });
+}
