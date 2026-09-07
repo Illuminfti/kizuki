@@ -1,4 +1,6 @@
 import type { Database } from "bun:sqlite";
+import { recoverCanonWrites } from "../canon/recovery";
+import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent";
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import nodeProcess from "node:process";
@@ -124,6 +126,14 @@ export async function runServeDaemon(
   nodeProcess.once("SIGINT", requestStop);
   try {
   writePid(vaultPath, ownMarker);
+  if (inspectCanonRecovery(db).pending) {
+    try { recoverCanonWrites({ db, vault_path: vaultPath }); }
+    catch (error) {
+      // The durable hold remains visible to doctor and the serving boundary.
+      // A manual recovery case does not remove access to unaffected memory.
+      if (!(error instanceof CanonRecoveryError)) throw error;
+    }
+  }
   const config = loadServeConfig(vaultPath);
   const httpEnabled = options.http ?? config.http;
   if (httpEnabled) {

@@ -1,4 +1,5 @@
 import { purgeReadEpoch } from "../derived-holds";
+import { canonReadGeneration } from "../canon/write-intent";
 import { sourcePolicyEpoch } from "../ledger/source-grants";
 import {
   reserveAudit,
@@ -340,9 +341,11 @@ export function gate<T>(
   const { live, audit_id } = enter(ctx, tool, args, at);
   const sourceEpoch = sourcePolicyEpoch(live.db);
   const purgeEpoch = purgeReadEpoch(live.db);
+  const canonGeneration = tool === "propose" || tool === "correct" ? null : canonReadGeneration(live.db);
   let served: Served<T>;
   try {
     served = run({ ctx: live, at });
+    if (canonGeneration !== null && canonReadGeneration(live.db) !== canonGeneration) throw new ServeError("held", "canon changed during request; retry");
     if (purgeReadEpoch(live.db) !== purgeEpoch) throw new ServeError("held", "canon unavailable during purge recovery");
     if (sourcePolicyEpoch(live.db) !== sourceEpoch) throw new ServeError("error", "source authorization changed during serving");
   } catch (error) {
@@ -367,9 +370,11 @@ export async function gateAsync<T>(
   const sourceEpoch = sourcePolicyEpoch(live.db);
   const purgeEpoch = purgeReadEpoch(live.db);
   const readEpoch = tool === "search" || tool === "context_packet" ? claimsEpoch(live.db) : null;
+  const canonGeneration = tool === "propose" || tool === "correct" ? null : canonReadGeneration(live.db);
   let served: Served<T>;
   try {
     served = await run({ ctx: live, at });
+    if (canonGeneration !== null && canonReadGeneration(live.db) !== canonGeneration) throw new ServeError("held", "canon changed during request; retry");
     if (purgeReadEpoch(live.db) !== purgeEpoch) throw new ServeError("held", "canon unavailable during purge recovery");
     if (sourceEpoch !== sourcePolicyEpoch(live.db)) throw new ServeError("error", "source authorization changed during request; retry");
     // Async reads may overlap grant changes. Refuse the entire result rather

@@ -12,6 +12,7 @@ import {
   getCanonReceipt,
   getCheckpoint,
   inspectLedgerHealth,
+  inspectCanonRecovery,
   inspectPurgeHealth,
   inspectServeDoctor,
   latestReceiptForPage,
@@ -78,6 +79,7 @@ interface DoctorReport {
   doctrine: { file: string; state: string }[];
   ledger: ReturnType<typeof inspectLedgerHealth>;
   runtime: SqliteRuntime;
+  canon_recovery: ReturnType<typeof inspectCanonRecovery>;
   ok: boolean;
 }
 
@@ -277,6 +279,10 @@ async function collect(
   const problems = vault.pages.flatMap((page) =>
     page.errors.map((error) => ({ page: page.page, error })),
   );
+  const canonRecovery = inspectCanonRecovery(ctx.db);
+  if (canonRecovery.pending || canonRecovery.projection_pending > 0) {
+    problems.push({ page: canonRecovery.page_path ?? "-", error: "canon recovery pending; run: kizuki recover --json" });
+  }
   for (const item of vault.doctrine) {
     if (item.state === "current" || item.state === "owner-edited") continue;
     problems.push({ page: item.file, error: `doctrine ${item.state}` });
@@ -380,6 +386,7 @@ async function collect(
     doctrine: vault.doctrine,
     ledger,
     runtime: readSqliteRuntime(ctx.db),
+    canon_recovery: canonRecovery,
     ok: ok && ledger.ok,
   };
 }

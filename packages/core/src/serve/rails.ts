@@ -1,4 +1,7 @@
 import { VaultMutationError, withVaultMutationSync } from "../vault/mutation-scope";
+import { recoverCanonWrites } from "../canon/recovery";
+import { inspectCanonRecovery } from "../canon/write-intent";
+import { retryCanonProjectionObligations } from "../canon/projection-obligations";
 import { pidAlive, readBootId } from "./leases";
 import type { Database } from "bun:sqlite";
 import { pendingRetrievalOps, retryRetrievalOps } from "../claims/store";
@@ -272,9 +275,14 @@ async function runBrief(
 
 async function runDoctorSweep(db: Database, now: string): Promise<Partial<RunReceipt>> {
   const health = inspectPurgeHealth(db, now);
+  const recovery = inspectCanonRecovery(db);
+  const errors = [
+    ...(health.ok ? [] : ["purge-unhealthy"]),
+    ...(recovery.pending || recovery.projection_pending > 0 ? ["canon-recovery-pending"] : []),
+  ];
   return {
-    status: health.ok ? "ok" : "degraded",
-    errors: health.ok ? [] : ["purge-unhealthy"],
+    status: errors.length === 0 ? "ok" : "degraded",
+    errors,
   };
 }
 
@@ -316,6 +324,9 @@ export async function runRail(
       // do not import older receipt/usage journals before validating a sync decision.
       if (rail === "sync") requireAtomicExtractReplay(db);
       initServe(db);
+      if (rail !== "purge-sweep" && rail !== "doctor-sweep" && inspectCanonRecovery(db).pending) {
+        recoverCanonWrites({ db, vault_path: vaultPath });
+      }
       recoverRunJournal(db, vaultPath);
       try {
         withVaultMutationSync({ db, vault_path: vaultPath }, () => {
@@ -337,6 +348,12 @@ export async function runRail(
         catch { throw new Error("rail runtime acquisition failed"); }
       }
       hooks = withResolvedModel(runtime?.hooks ?? options.hooks);
+      if (rail === "retrieval-sweep" && inspectCanonRecovery(db).projection_pending > 0) {
+        const result = await retryCanonProjectionObligations({ db, vault_path: vaultPath,
+          ...(hooks?.claims?.retrieval === undefined ? {} : { retrieval: hooks.claims.retrieval }),
+        });
+        if (result.pending > 0) throw new Error("canon projection recovery pending");
+      }
       switch (rail) {
         case "sync":
           partial = await runSyncRail(db, vaultPath, budget, hooks, runId);

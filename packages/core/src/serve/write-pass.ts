@@ -3,6 +3,8 @@ import { inheritSourcePortBindings } from "../ledger/source-grants";
 import { SelfOriginError, requireExternalEvents } from "../ledger/event-origin";
 import { readReceiptsLog } from "../canon/receipts";
 import { settleWriteReservations } from "./budget-ledger";
+import { recoverCanonWritesOwned } from "../canon/recovery";
+import { inspectCanonRecovery } from "../canon/write-intent";
 import { ulid } from "../util/ulid";
 import type { Database } from "bun:sqlite";
 import {
@@ -211,6 +213,7 @@ export async function runWritePass(
   const io = snapshotCanonIo({ db, vault_path: vaultPath });
   try {
     return await withCanonMutationAsync(io, async (scope, owned) => {
+      if (inspectCanonRecovery(owned.db).pending) recoverCanonWritesOwned(scope, owned);
       try {
         settleWriteReservations(owned.db, owned.vault_path);
         return await runWritePassOwned(scope, owned, options);

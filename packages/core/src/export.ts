@@ -1,5 +1,6 @@
 import { assertVaultMutationScope, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "./vault/mutation-scope";
 import { assertReceiptPaths } from "./canon/paths";
+import { canonReadGeneration, inspectCanonRecovery } from "./canon/write-intent";
 import { isRfc3339 } from "./util/time";
 import { sourcePolicyEpoch, inspectSourceGrant, sourceEventsAllowed } from "./ledger/source-grants";
 import { Database, constants as SQLITE_CONSTANTS } from "bun:sqlite";
@@ -1556,6 +1557,10 @@ function exportVaultOwned(
 ): ExportManifest {
   assertVaultMutationScope(scope, target);
   const { db, vault_path: vaultPath } = target;
+  const canonGeneration = canonReadGeneration(db);
+  const assertCanonUnchanged = (): void => {
+    if (canonReadGeneration(db) !== canonGeneration) throw new Error("canon changed during export");
+  };
   assertExportTransactionAvailable(db);
   source.assertCurrent();
   throwIfAborted(options.signal);
@@ -1584,6 +1589,8 @@ function exportVaultOwned(
       options.onProgress?.(label);
       // A listener may leave a transaction open; never inherit it as a savepoint.
       assertExportTransactionAvailable(db);
+      assertCanonUnchanged();
+      assertSourceExport(db);
       throwIfAborted(options.signal);
       source.assertCurrent(); staged!.assertCurrent(); directory.assertCurrent();
     };
@@ -1689,6 +1696,7 @@ function exportVaultOwned(
       }
       source.assertCurrent();
       assertSourceExport(db); assertNoPendingPurgeExport(db);
+      assertCanonUnchanged();
       if (sourcePolicyEpoch(db) !== sourceEpoch) throw new Error("source authorization changed during export");
       const manifest = signManifest({
         schema: BACKUP_SCHEMA, vault_id: identity.value, created_at: new Date().toISOString(),
@@ -1712,6 +1720,7 @@ function exportVaultOwned(
       throwIfAborted(options.signal);
       source.assertCurrent();
       assertSourceExport(db); assertNoPendingPurgeExport(db);
+      assertCanonUnchanged();
       if (sourcePolicyEpoch(db) !== capture.sourceEpoch) throw new Error("source authorization changed during export");
       if (ledgerSchemaVersion(db) !== manifest.schema_versions.ledger || sqliteSchemaCookie(db) !== capture.schemaCookie) throw new Error("export schema identity changed");
       if (!sameBytes(vaultIdentity(source).bytes, capture.identity.bytes)) throw new Error("export vault identity changed");
@@ -1889,11 +1898,14 @@ function assertBackupFormat(manifest: ExportManifest): void {
   // Ledger17 adds explicit rail cursors; ledger16 keeps them in checkpoints.
   // Ledger18 adds local enrollment custody. Ledger19 adds purge batches;
   // their completed history is optional in older v3 backups. Pending work is refused.
-  // Ledger20 adds source-survivor lineage. Future migrations must make their
-  // own explicit compatibility decision.
+  // Ledger20 adds source-survivor lineage. Ledger21 adds nonportable recovery
+  // payload and a local read generation: current v3 exports require no pending
+  // intent/projection and restore an empty recovery state. No journal is copied.
+  // Future migrations must make their own explicit compatibility decision.
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
       versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
-      versions.ledger !== 19 && versions.ledger !== 20) {
+      versions.ledger !== 19 && versions.ledger !== 20 &&
+      !(manifest.schema === BACKUP_SCHEMA && versions.ledger === 21)) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -2642,7 +2654,7 @@ function hasPurgeHistory(manifest: ExportManifest): boolean {
   const present = entries.filter(entry => entry !== undefined).length;
   if (present === 0) return false;
   if (present !== entries.length || manifest.schema !== BACKUP_SCHEMA ||
-      (manifest.schema_versions.ledger !== 19 && manifest.schema_versions.ledger !== 20) ||
+      (manifest.schema_versions.ledger !== 19 && manifest.schema_versions.ledger !== 20 && manifest.schema_versions.ledger !== 21) ||
       entries.some(entry => entry === undefined || !Number.isSafeInteger(entry.count) || entry.count < 0 ||
         !Number.isSafeInteger(entry.size) || entry.size < 0)) {
     throw new Error("backup completed purge history streams are incomplete or incompatible");
@@ -2808,6 +2820,8 @@ function assertNoPendingPurgeExport(db: Database): void {
 }
 
 function assertSourceExport(db: Database): void {
+  const recovery = inspectCanonRecovery(db);
+  if (recovery.pending || recovery.projection_pending > 0) throw new Error("canon_recovery_pending");
   assertSourceInventoryIdentityErasure(db);
   if (db.query("SELECT 1 FROM canon_source_erasure_intents LIMIT 1").get() !== null) throw new Error("source_erasure_recovery_pending");
   if (sourcePolicyEpoch(db) === 0) return;

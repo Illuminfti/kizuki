@@ -25,6 +25,10 @@ export const undoCommand: Command = {
         io.out(`page_path=${revert.page_path}`);
         io.out(`before_hash=${revert.before_hash ?? ""}`);
         io.out(`after_hash=${revert.after_hash}`);
+        if (revert.projection_pending === true) {
+          io.err("The memory change is undone. Retrieval updates remain pending; run: kizuki recover --json");
+          return 1;
+        }
         const derived = tryRefreshDerived(ctx.db, ctx.vaultPath);
         for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
         return 0;

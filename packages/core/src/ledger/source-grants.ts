@@ -5,6 +5,8 @@ import {
   maintainSourceSqlite,
   type SourceErasureReport,
 } from "./source-erasure";
+import { withdrawPendingCanonProjections, withdrawPendingCanonWrite } from "../canon/withdrawal";
+import { CanonRecoveryError } from "../canon/write-intent";
 import {
   bindSourceStoreId,
   sourceStoreStatuses,
@@ -76,6 +78,7 @@ export interface SourceGrant {
     | "proposal_payload_retained"
     | "identity_payload_retained"
     | "canon_rewrite_pending"
+    | "canon_recovery_pending"
     | "owned_payload_maintenance_pending"
     | "owned_retrieval_pending"
     | "writer_busy"
@@ -515,6 +518,20 @@ export async function resumeSourceRevocation(
     db.query("SELECT 1 FROM event_purges WHERE receipt_id=?").get(receiptId) !==
     null;
   try {
+    // Consume ordinary source-associated replay payload before native purge
+    // changes its predecessor rows or the shared receipt-stream checkpoint.
+    if (tableExists(db, "canon_write_intent_sources") &&
+        db.query("SELECT 1 FROM canon_write_intent_sources WHERE source_key=? UNION ALL SELECT 1 FROM canon_projection_sources WHERE source_key=? LIMIT 1").get(grant.source_key, grant.source_key) !== null) {
+      try {
+        await underPurgeFence(db, vaultPath, options, async (scope, io) => {
+          withdrawPendingCanonWrite(scope, io, grant.source_key);
+          withdrawPendingCanonProjections(scope, io, grant.source_key);
+        });
+      } catch (error) {
+        if (!(error instanceof CanonRecoveryError)) throw error;
+        return inspectSourceGrant(db, row.source_key)!;
+      }
+    }
     if (!exists) {
       let first = true;
       await runPurge(
@@ -833,6 +850,9 @@ function sourcePurgeBlockers(
   sourceKey: string,
 ): SourceGrant["purge_blockers"] {
   const blockers: SourceGrant["purge_blockers"] = [];
+  if (tableExists(db, "canon_write_intent_sources") && db.query("SELECT 1 FROM canon_write_intent_sources WHERE source_key=? UNION ALL SELECT 1 FROM canon_projection_sources WHERE source_key=? LIMIT 1").get(sourceKey, sourceKey) !== null) {
+    blockers.push("canon_recovery_pending");
+  }
   if (sourceStoresPending(db, sourceKey))
     blockers.push("owned_retrieval_pending");
   if (

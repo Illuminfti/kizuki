@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { CanonAuthorityResolver, type CanonRevisionBasis } from "../canon/authority";
+import { canonPageRecoveryPending } from "../canon/write-intent";
 import { readLiveEvent } from "../ledger/ledger";
 import { sourceEventsAllowed } from "../ledger/source-grants";
 import { eventIdFromReference } from "../retrieval/ids";
@@ -8,7 +9,7 @@ import { parsePageSources } from "./schema";
 
 export type LivePageEvidence =
   | { admitted: true; sourceIds: string[]; revision: CanonRevisionBasis }
-  | { admitted: false; reason: "inactive" | "sources_unavailable" | "revision_unrecorded" };
+  | { admitted: false; reason: "inactive" | "sources_unavailable" | "revision_unrecorded" | "recovery_pending" };
 
 /** Existing evidence only. The caller owns the bounded page and database snapshot. */
 export function assessLivePageEvidence(
@@ -17,6 +18,7 @@ export function assessLivePageEvidence(
   resolver?: CanonAuthorityResolver,
 ): LivePageEvidence {
   if (!isLiveCanonPage(page)) return { admitted: false, reason: "inactive" };
+  if (canonPageRecoveryPending(db, page.relPath)) return { admitted: false, reason: "recovery_pending" };
   const sources = parsePageSources(page.data);
   if (!sources.ok) return { admitted: false, reason: "sources_unavailable" };
   const sourceIds = [...new Set(sources.value.map(eventIdFromReference))];
