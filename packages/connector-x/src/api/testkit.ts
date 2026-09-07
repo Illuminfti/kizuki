@@ -30,7 +30,7 @@ export class XApiFixture {
     this.selected = selection(selected);
     this.records = Array.from({ length: count }, (_, i) => ({ id: String(100 + i), author_id: this.account, text: `Synthetic own post ${i}.`,
       created_at: new Date(Date.parse("2026-01-02T00:00:00Z") + i * 1000).toISOString() }));
-    this.state = encodeState({ schema: X_API_STATE_SCHEMA, app: digest(this.clientId), selection: this.selected, checkpoint: null, pending: null, retry_at: null, revocation: "active",
+    this.state = encodeState({ schema: X_API_STATE_SCHEMA, app: digest(this.clientId), native_client: { id: this.clientId, redirect_uri: "http://127.0.0.1:49152/callback" }, credential_generation: digest("synthetic-initial-x-credential-generation"), refresh_pending: null, selection: this.selected, checkpoint: null, pending: null, retry_at: null, revocation: "active",
       oauth: { schema: "kizuki.oauth-state/v1", provider: X_API_CONNECTOR_ID, account: { id: this.account, display: "X account" }, written_at: this.time.toISOString(),
         tokens: { access_token: this.access, refresh_token: this.refresh, expires_at: "2027-01-01T00:00:00.000Z", scope: X_API_SCOPES.join(" "), token_type: "Bearer" } } });
   }
@@ -87,7 +87,7 @@ export class XApiFixture {
     },
   };
   config(secretRef = "env:KIZUKI_X_SYNTHETIC_STATE"): XApiConfig {
-    return { client_id: this.clientId, secret_ref: secretRef, selection: this.selected, expected_account: this.account };
+    return { client_id: this.clientId, redirect_uri: "http://127.0.0.1:49152/callback", secret_ref: secretRef, selection: this.selected, expected_account: this.account };
   }
   deps(overrides: XApiDeps = {}): XApiDeps { return { persist: this.persist, fetch: this.fetch, oauth: this.oauth, now: this.now, ...overrides }; }
   async connected(overrides: XApiDeps = {}) {

@@ -97,6 +97,7 @@ usage: kizuki connect [--list|status] [--json]
        kizuki connect imap [--source KEY] [--sensitivity public|personal|private]
        kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]
        kizuki connect x-api --fields relationships,links,media|none --history-start RFC3339 [--source KEY | --new-source] [--json]
+       kizuki connect recover-x-api --source KEY --fields relationships,links,media|none --history-start RFC3339 [--json]
        kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY | --new-source] [--json]
        kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY | --new-source] [--json]
 ```
@@ -516,6 +517,14 @@ S256 PKCE and an exact registered callback. The operator supplies public
 port must be free on the owner's desktop. The listener binds before browser or
 provider access; there is no client secret or pasted-token enrollment path.
 
+Enrollment saves the public client ID and exact callback with the protected v2
+connection state. A background process uses that saved configuration without
+terminal environment variables. Later environment values cannot override it.
+Legacy v1 state still requires both variables explicitly; reauthorization or the
+first durable refresh intent upgrades it to v2. The catalog checks the
+current environment for **new** enrollment, so an unconfigured catalog entry does
+not mean an existing v2 source needs those variables.
+
 Select `--fields none` for text and baseline metadata, or an explicit comma-separated
 selection from `relationships,links,media`. Set `--history-start` to an RFC3339 lower
 bound at or after 2010-11-06, representable without losing sub-millisecond precision.
@@ -525,6 +534,23 @@ report gaps, media means references, and provider deletion coverage is unavailab
 pending plan and retry state. `--new-source` requires a distinct account/app/selection;
 duplicates refuse even after local consent withdrawal. Each new source needs its own
 capture grant before `backfill x-api --source KEY` can read protected state or contact X.
+
+Before sending a refresh request, Kizuki durably records a pending intent in the
+same native state store. A valid rotated response replaces only that intent. An
+explicit rate-limit response stores its cooldown and clears the intent; a lost or
+invalid response leaves it pending. Restarting Kizuki does not retry the old token.
+Ordinary capture and `connect x-api` then refuse with
+`credential_recovery_required`.
+
+Use `connect recover-x-api --source KEY --fields FIELDS --history-start RFC3339`
+from an interactive desktop terminal to obtain a new browser grant. Supply the
+source's existing fields and history start. Recovery preserves the pending state
+until the new grant verifies the same account, app and selection and publishes
+against the exact original source state. Failed or competing recovery preserves
+the previous state. A late old response cannot replace a recovered generation.
+This action preserves capture consent, checkpoints and pending history; it does
+not retry old credentials or establish whether the provider invalidated them.
+Pending or completed provider revocation cannot use this recovery action.
 
 The developer app must be configured as a public Native App with the exact registered
 callback and read scopes `tweet.read users.read offline.access`. X API usage credits

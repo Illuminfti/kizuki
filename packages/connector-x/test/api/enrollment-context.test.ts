@@ -47,7 +47,7 @@ test("prior app, account, selection and malformed state refuse before the replac
     const root = mkdtempSync(join(tmpdir(), "x-api-bound-replacement-")), db = openLedger(":memory:");
     try {
       const f = new XApiFixture(1), state = parseState(f.state); f.authorize = true;
-      if (mismatch === "app") state.app = digest("different-app");
+      if (mismatch === "app") { state.app = digest("different-app"); if ("native_client" in state) state.native_client.id = "different-app"; }
       if (mismatch === "account") state.oauth.account.id = "8";
       if (mismatch === "selection") state.selection.history_start = "2026-01-03T00:00:00.000Z";
       const original = mismatch === "malformed" ? new TextEncoder().encode("SYNTHETIC_BAD_STATE_CANARY") : encodeState(state);

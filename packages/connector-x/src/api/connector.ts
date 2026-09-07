@@ -4,17 +4,17 @@ import type { SignInContext } from "@kizuki/core/contracts";
 import { ApiBudget, HttpFailure, X_API_ORIGIN, X_API_REQUEST_MS, fieldsQuery, request, type XApiFetch } from "./client";
 import { parseAccount, parsePage, type XApiPage } from "./parse";
 import { MAX_WALK_PAGES, X_API_CONNECTOR_ID, X_API_CURSOR_SCHEMA, X_API_SCOPES, X_API_STATE_SCHEMA, compareInstants, digest, encodeCursor, encodeState, failure, failureRule, id, normalizedFailure,
-  parseCursor, parseState, planDigest, selection, type XApiCursor, type XApiPlan, type XApiSelection, type XApiState } from "./state";
+  parseCursor, parseState, planDigest, selection, nativeClient, newCredentialGeneration, upgradeState, requiresCredentialRecovery, type XApiCursor, type XApiPlan, type XApiSelection, type XApiState, type XApiRefreshIntent } from "./state";
 
-export interface XApiConfig { client_id?: string; secret_ref?: string; selection?: XApiSelection; expected_account?: string }
+export interface XApiConfig { client_id?: string; redirect_uri?: string; secret_ref?: string; selection?: XApiSelection; expected_account?: string; recover_credentials?: true }
 export interface XApiDeps { persist?: StatePersister; fetch?: XApiFetch; oauth?: OAuthTransport; now?: () => Date; clock?: () => number }
 const COVERAGE = "X own-post API window; history capped; provider deletion coverage unavailable; real-account qualification pending";
 function coverageDetail(cursor: string): string { return `${COVERAGE}; ${parseCursor(cursor).phase === "idle" ? "available window drained" : "continuation pending"}`; }
-const MANIFEST = freezeManifest({ schema: "kizuki.connector/v1", connector_id: X_API_CONNECTOR_ID, version: "0.1.0", contract_minor: 2,
+const MANIFEST = freezeManifest({ schema: "kizuki.connector/v1", connector_id: X_API_CONNECTOR_ID, version: "0.2.0", contract_minor: 3,
   implementation: "@kizuki/connector-x/api", allowed_egress: ["api.x.com", "x.com"], cursor_schema: X_API_CURSOR_SCHEMA, kinds: ["post"],
   capabilities: { backfill: true, sync: true, tombstones: false, purge: false, fixture: true }, required_secrets: [],
   emits_sensitivity_hint: true, default_sensitivity: "private", sensitivity_floor: "private", auth_modes: ["oauth", "secret_ref", "sign_in"] });
-interface Custody { state: XApiState; persist: StatePersister }
+interface Custody { state: XApiState; persist: StatePersister; refreshIntent: XApiRefreshIntent | null }
 interface TokenAdmission { budget: ApiBudget; refusal: ReturnType<typeof failure> | null; rateLimited: boolean }
 
 export class XApiConnector implements Connector {
@@ -43,6 +43,8 @@ export class XApiConnector implements Connector {
   private readonly now: () => Date;
   constructor(config: XApiConfig = {}, deps: XApiDeps = {}) {
     if (config.secret_ref !== undefined && (!isSecretRef(config.secret_ref) || Buffer.byteLength(config.secret_ref) > 4096 || /[\x00-\x1f\x7f]/.test(config.secret_ref))) throw failure("misconfigured");
+    if (config.recover_credentials !== undefined && config.recover_credentials !== true) throw failure("misconfigured");
+    if (config.redirect_uri !== undefined) nativeClient({ id: config.client_id, redirect_uri: config.redirect_uri });
     this.config = { ...config, ...(config.selection === undefined ? {} : { selection: selection(config.selection) }) };
     if (config.expected_account !== undefined) { try { id(config.expected_account); } catch { throw failure("misconfigured"); } }
     this.deps = { ...deps }; this.now = deps.now ?? (() => new Date());
@@ -70,7 +72,7 @@ export class XApiConnector implements Connector {
   }
   private budget(duration?: number): ApiBudget { return new ApiBudget(this.deps.clock, duration); }
   private tokenTransport(generation: number): OAuthTransport {
-    return { listen: path => this.transport.listen(path), postForm: (url, form) => {
+    return { listen: path => this.transport.listen(path), postForm: async (url, form) => {
       this.live(generation);
       const admission = this.admission;
       if (admission === null || admission.budget !== this.operationBudget ||
@@ -79,16 +81,36 @@ export class XApiConnector implements Connector {
       catch (error) { admission.refusal = normalizedFailure(error); throw error; }
       const custody = this.custody;
       if (custody === null) throw failure("misconfigured");
-      return this.transport.postForm(url, form).then(async response => {
-        if (response.status === 429) {
-          // The core transport does not expose headers. Preserve a bounded
-          // default cooldown through original custody, including late delivery.
-          await this.commitCustody(custody, { ...custody.state, retry_at: new Date(this.now().getTime() + 60_000).toISOString() }, generation);
-          admission.rateLimited = true;
-        }
-        return response;
-      });
+      const refreshing = url.endsWith("/token");
+      if (refreshing) {
+        if (form.grant_type !== "refresh_token" || form.refresh_token !== custody.state.oauth.tokens.refresh_token ||
+          form.client_id !== this.config.client_id || custody.refreshIntent !== null || requiresCredentialRecovery(custody.state)) throw failure("credential_recovery_required");
+        const current = upgradeState(custody.state, custody.state.schema === X_API_STATE_SCHEMA ? custody.state.native_client : nativeClient({ id: this.config.client_id, redirect_uri: this.config.redirect_uri }));
+        const intent: XApiRefreshIntent = { intent_id: newCredentialGeneration(), generation: current.credential_generation,
+          account: current.oauth.account.id, app: current.app, scope_digest: digest(current.oauth.tokens.scope) };
+        // The exact original Core CAS must commit the intent before any refresh POST.
+        await this.commitCustody(custody, { ...current, refresh_pending: intent }, generation);
+        custody.refreshIntent = intent;
+        this.live(generation); admission.budget.remaining();
+      }
+      const response = await this.transport.postForm(url, form);
+      if (response.status === 429) {
+        // An explicit rate-limit response is not an issued token. Preserve cooldown
+        // through original custody, including late delivery; ambiguous outcomes stay fenced.
+        if (refreshing) this.assertRefreshIntent(custody);
+        const next = { ...custody.state, retry_at: new Date(this.now().getTime() + 60_000).toISOString() };
+        await this.commitCustody(custody, next.schema === X_API_STATE_SCHEMA ? { ...next, refresh_pending: null } : next, generation);
+        custody.refreshIntent = null;
+        admission.rateLimited = true;
+      }
+      return response;
     } };
+  }
+  private assertRefreshIntent(custody: Custody): void {
+    const state = custody.state, intent = custody.refreshIntent;
+    if (state.schema !== X_API_STATE_SCHEMA || intent === null || state.refresh_pending === null ||
+      digest(state.refresh_pending) !== digest(intent) || state.credential_generation !== intent.generation ||
+      state.oauth.account.id !== intent.account || state.app !== intent.app || digest(state.oauth.tokens.scope) !== intent.scope_digest) throw failure("credential_recovery_required");
   }
   private async commitCustody(custody: Custody, next: XApiState, generation: number): Promise<void> {
     this.pendingWrites++;
@@ -120,13 +142,18 @@ export class XApiConnector implements Connector {
       const state = parseState(new TextEncoder().encode(bytes));
       if (state.app !== digest(provider.client_id) || digest(state.selection) !== digest(selected) ||
         this.config.expected_account !== undefined && state.oauth.account.id !== this.config.expected_account) throw failure("identity_mismatch");
-      const custody: Custody = { state, persist: this.deps.persist }; this.state = state; this.custody = custody;
+      const custody: Custody = { state, persist: this.deps.persist, refreshIntent: null }; this.state = state; this.custody = custody;
+      if (requiresCredentialRecovery(state)) throw failure("credential_recovery_required");
+      if (state.schema === X_API_STATE_SCHEMA && this.config.redirect_uri !== undefined && this.config.redirect_uri !== state.native_client.redirect_uri) throw failure("identity_mismatch");
       if (state.revocation !== "active") { this.last = "disabled"; return; }
       this.session = new OAuthSession({ provider, state: state.oauth, transport: this.tokenTransport(generation), now: this.now,
         persist: async bytes => {
           const oauth = parseOAuthState(bytes, X_API_CONNECTOR_ID);
           if (oauth.account.id !== custody.state.oauth.account.id) throw failure("identity_mismatch");
-          await this.commitCustody(custody, { ...custody.state, oauth }, generation);
+          this.assertRefreshIntent(custody);
+          if (custody.state.schema !== X_API_STATE_SCHEMA) throw failure("invalid_state");
+          await this.commitCustody(custody, { ...custody.state, oauth, credential_generation: newCredentialGeneration(), refresh_pending: null }, generation);
+          custody.refreshIntent = null;
         } });
       if (state.retry_at === null || Date.parse(state.retry_at) <= this.now().getTime()) {
         if (parseAccount(await this.call(new URL(`${X_API_ORIGIN}/2/users/me`), budget)) !== state.oauth.account.id) throw failure("identity_mismatch");
@@ -142,14 +169,17 @@ export class XApiConnector implements Connector {
     this.idle();
     if (this.state?.revocation === "pending") throw failure("unavailable");
     if (context?.mode !== "new" && context?.mode !== "replace") throw failure("misconfigured");
-    const provider = this.provider(), selected = this.selected();
+    const provider = this.provider(), selected = this.selected(), client = nativeClient({ id: provider.client_id, redirect_uri: this.config.redirect_uri });
     let previous: XApiState | null = null;
     if (context.mode === "replace") {
       previous = parseState(context.previous_state);
       if (previous.revocation === "pending") throw failure("unavailable");
+      if (requiresCredentialRecovery(previous) !== (this.config.recover_credentials === true) ||
+        this.config.recover_credentials === true && previous.revocation !== "active") throw failure("credential_recovery_required");
+      if (previous.schema === X_API_STATE_SCHEMA && digest(previous.native_client) !== digest(client)) throw failure("identity_mismatch");
       if (previous.app !== digest(provider.client_id) || digest(previous.selection) !== digest(selected) ||
         this.config.expected_account !== undefined && previous.oauth.account.id !== this.config.expected_account) throw failure("identity_mismatch");
-    } else if (this.state !== null) throw failure("unavailable");
+    } else if (this.state !== null || this.config.recover_credentials === true) throw failure("unavailable");
     // The native registered callback is a separate qualification gate. Only
     // a trusted explicitly supplied transport may attempt interactive enrollment.
     if (this.deps.oauth === undefined) throw failure("misconfigured");
@@ -161,6 +191,7 @@ export class XApiConnector implements Connector {
       listen: async path => {
         const pending = this.transport.listen(path).then(opened => {
           if (!active) { void opened.close().catch(() => undefined); throw failure("timeout"); }
+          if (opened.redirect_uri !== client.redirect_uri) { void opened.close().catch(() => undefined); throw failure("misconfigured"); }
           listener = opened; return opened;
         });
         return withDeadline(pending, budget.remaining(), "X callback deadline");
@@ -181,7 +212,7 @@ export class XApiConnector implements Connector {
         if (!active) throw failure("timeout"); this.live(generation);
         if (this.config.expected_account !== undefined && account !== this.config.expected_account || previous !== null &&
           (previous.oauth.account.id !== account || previous.app !== digest(provider.client_id) || digest(previous.selection) !== digest(selected))) throw failure("identity_mismatch");
-        const state: XApiState = { schema: X_API_STATE_SCHEMA, app: digest(provider.client_id), selection: selected,
+        const state: XApiState = { schema: X_API_STATE_SCHEMA, app: digest(provider.client_id), selection: selected, native_client: client, credential_generation: newCredentialGeneration(), refresh_pending: null,
           oauth: { schema: "kizuki.oauth-state/v1", provider: X_API_CONNECTOR_ID, account: { id: account, display: "X account" }, tokens, written_at: this.now().toISOString() },
           checkpoint: previous?.checkpoint ?? null, pending: previous?.pending ?? null, retry_at: previous?.retry_at ?? null, revocation: "active" };
         const bytes = encodeState(state), ms = Math.min(X_API_REQUEST_MS, budget.remaining());

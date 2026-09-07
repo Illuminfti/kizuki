@@ -21,7 +21,11 @@ async function unusedCallback() {
   const uri = `http://127.0.0.1:${server.port}/callback`; await server.stop(true); return uri;
 }
 async function owner(setup: ReturnType<typeof h.tempVault>, f = new XApiFixture(3)) {
-  const output: string[] = [], redirect = await unusedCallback();
+  const output: string[] = [];
+  const existingDb = openLedger(join(setup.vault, '.kizuki/kizuki.db')), existingStore = new ConnectionStateStore(join(setup.vault, '.kizuki'));
+  let priorRedirect: string | undefined;
+  try { const first = listConnections(existingDb)[0]; if (first) priorRedirect = inspectXApiState(existingStore.read(first)!).native_client?.redirect_uri; } finally { existingDb.close(); }
+  const redirect = priorRedirect ?? await unusedCallback();
   const io: CliIo = { env: { ...setup.env, KIZUKI_X_CLIENT_ID: f.clientId, KIZUKI_X_REDIRECT_URI: redirect }, vaultOverride: setup.vault,
     stdinIsTTY: true, stdoutIsTTY: true, stderrIsTTY: true, out: line => output.push(line), err: line => output.push(line), prompt: async () => { throw Error('pasted credentials forbidden'); } };
   let opens = 0, auth: URL | undefined;
@@ -111,7 +115,7 @@ test('X runtime rejects incompatible fields and consent revision races before co
     expect(factories).toBe(0);
     setSourceGrant(db, { source_key: source, expected_revision: 1, operation_id: 'synthetic-x-fields', policy: { purposes: ['capture'], allowed_fields: ['metadata', 'text'], retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' } });
     const env = { ...o.io.env };
-    Object.defineProperty(env, 'KIZUKI_X_CLIENT_ID', { get() { revokeSourceGrant(db, { source_key: source, expected_revision: 2, operation_id: 'synthetic-x-race' }); return o.f.clientId; } });
+    queueMicrotask(() => revokeSourceGrant(db, { source_key: source, expected_revision: 2, operation_id: 'synthetic-x-race' }));
     await expect(loadConnector(selectConnection(db, store, ID, source), store, db, env, () => { factories++; throw Error(); })).rejects.toThrow('source_capture_denied');
     expect(factories).toBe(0);
   } finally { db.close(); }
@@ -199,13 +203,15 @@ for (const fault of ['browser', 'state', 'provider', 'account', 'publication'] a
   } finally { if (fault === 'publication') db.exec('DROP TRIGGER synthetic_x_publication_failure'); db.close(); }
 });
 
-test('reauthorization refuses changed selection and app before browser access', async () => {
+test('reauthorization refuses changed selection and ignores environment overrides of v2 public configuration', async () => {
   const setup = h.tempVault(), o = await owner(setup); await runXApiConnect(o.io, options, () => {}, o.create, o.open);
   const retry = await owner(setup, o.f);
   await expect(runXApiConnect(retry.io, { ...options, fields: 'links' }, () => {}, retry.create, retry.open)).rejects.toThrow('preserve');
-  retry.io.env.KIZUKI_X_CLIENT_ID = 'different-public-app';
-  await expect(runXApiConnect(retry.io, options, () => {}, retry.create, retry.open)).rejects.toThrow('sign-in did not complete');
   expect(retry.opens()).toBe(0);
+  retry.io.env.KIZUKI_X_CLIENT_ID = 'different-public-app';
+  retry.io.env.KIZUKI_X_REDIRECT_URI = 'http://127.0.0.1:9/callback';
+  expect(await runXApiConnect(retry.io, options, () => {}, retry.create, retry.open)).toBe(0);
+  expect(retry.auth().searchParams.get('client_id')).toBe(o.f.clientId);
 });
 
 test('public X CLI and catalog distinguish native configuration, explicit selection and separate account qualification', async () => {
@@ -230,7 +236,7 @@ test('actual process interruption during native X sign-in leaves the original so
   const setup = h.tempVault(), o = await owner(setup); await runXApiConnect(o.io, options, () => {}, o.create, o.open);
   const { db, store } = ledger(setup);
   const source = listConnections(db)[0]!, before = store.read(source)!;
-  const redirect = await unusedCallback(), script = join(setup.root, 'interrupted-x.ts');
+  const redirect = o.redirect, script = join(setup.root, 'interrupted-x.ts');
   writeFileSync(script, `import { runXApiConnect } from ${JSON.stringify(join(import.meta.dir, '../src/commands/connect-x-api.ts'))};
 import { createXApiConnector } from ${JSON.stringify(join(import.meta.dir, '../../connector-x/src/api/connector.ts'))};
 import { XApiFixture } from ${JSON.stringify(join(import.meta.dir, '../../connector-x/src/api/testkit.ts'))};

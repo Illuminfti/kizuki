@@ -29,7 +29,7 @@ const TITLES: Record<string, string> = {
 
 export function printConnectorCatalog(io: CliIo, json: boolean): number {
   let xConfigured = false;
-  try { xApiClient(io.env); xConfigured = true; } catch { /* Catalog reports public configuration only. */ }
+  try { xApiClient(io.env); xConfigured = true; } catch { /* New enrollment configuration only; existing v2 sources carry their own. */ }
   const enrollable = new Set(listEnrollableConnectorIds());
   const sources = Object.keys(REGISTRY).sort().map((id) => ({
     id,

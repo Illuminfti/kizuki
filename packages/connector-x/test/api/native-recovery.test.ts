@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ConnectionStateStore, createStatePersister, getConnection, getCheckpoint, replayLive, runToCompletion, setSourceGrant } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { XApiFixture } from "../../src/api/testkit";
-import { X_API_CONNECTOR_ID, X_API_SCOPES, encodeState, parseState } from "../../src/api/state";
+import { X_API_CONNECTOR_ID, X_API_SCOPES, X_API_STATE_SCHEMA, encodeState, newCredentialGeneration, parseState } from "../../src/api/state";
 
 const ID = X_API_CONNECTOR_ID;
 function grant(db: ReturnType<typeof openLedger>, source: string) {
@@ -81,6 +81,8 @@ for (const replacement of ["none", "same-account", "different-account", "revocat
     let newer: Uint8Array | null = null;
     if (replacement !== "none") {
       const value = parseState(f.state); value.oauth.tokens.access_token = "synthetic-replacement-access"; value.oauth.tokens.refresh_token = "synthetic-replacement-refresh";
+      if (value.schema !== X_API_STATE_SCHEMA) throw Error("expected v2 fixture");
+      value.refresh_pending = null; value.credential_generation = newCredentialGeneration();
       if (replacement === "different-account") { value.oauth.account.id = "8"; value.checkpoint = null; value.pending = null; }
       if (replacement.startsWith("revocation-pending")) value.revocation = "pending";
       newer = encodeState(value); await createStatePersister(db, store, handle.current()).persist(newer);

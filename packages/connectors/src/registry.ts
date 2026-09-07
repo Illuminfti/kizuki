@@ -422,7 +422,7 @@ enroll(
   ["backfill", "sync", "fixture", "sign_in"],
   "@kizuki/connector-x",
   config => createXApiConnector(config as XApiConfig),
-  { contract_minor: 2, implementation: "@kizuki/connector-x/api", allowed_egress: ["api.x.com", "x.com"],
+  { contract_minor: 3, implementation: "@kizuki/connector-x/api", allowed_egress: ["api.x.com", "x.com"],
     cursor_schema: X_API_CURSOR_SCHEMA, default_sensitivity: "private", sensitivity_floor: "private" },
 );
 enroll(

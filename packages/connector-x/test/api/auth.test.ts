@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createXApiConnector } from "../../src/api/connector";
 import { XApiFixture } from "../../src/api/testkit";
-import { X_API_SCOPES, encodeState, parseState } from "../../src/api/state";
+import { X_API_SCOPES, X_API_STATE_SCHEMA, encodeState, parseState } from "../../src/api/state";
 
 function expire(f: XApiFixture) { f.time = new Date("2027-02-01T00:00:00Z"); }
 function deferred<T>() { let resolve!: (value: T) => void; return { promise: new Promise<T>(r => { resolve = r; }), resolve }; }
@@ -44,7 +44,7 @@ test("rotated tokens are durable before the first protected GET and a failed wri
   for (const reject of [false, true]) {
     const f = new XApiFixture(1), blocked = deferred<void>(), entered = deferred<void>(); let gate = false;
     const port = await f.connected({ persist: async bytes => {
-      if (gate) { entered.resolve(); await blocked.promise; if (reject) throw Error("SYNTHETIC_PERSIST_CANARY"); }
+      if (gate && parseState(bytes).schema === X_API_STATE_SCHEMA && !(parseState(bytes) as import("../../src/api/state").XApiStateV2).refresh_pending) { entered.resolve(); await blocked.promise; if (reject) throw Error("SYNTHETIC_PERSIST_CANARY"); }
       await f.persist(bytes);
     } });
     gate = true; expire(f); f.requests = [];

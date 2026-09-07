@@ -217,5 +217,5 @@ export type {
 export { GMAIL_CONNECTOR_ID, GMAIL_CURSOR_SCHEMA, GMAIL_SCOPES, GmailConnector, createGmailConnector } from "@kizuki/connector-gmail";
 export type { GmailConnectorConfig, GmailConnectorDeps, GmailField } from "@kizuki/connector-gmail";
 
-export { XApiConnector, createXApiConnector, X_API_CONNECTOR_ID, X_API_CURSOR_SCHEMA, X_API_SCOPES, inspectXApiState, assertSameXApiIdentity, normalizeXApiSelection } from "@kizuki/connector-x/api";
-export type { XApiConfig, XApiDeps, XApiSelection, XApiField } from "@kizuki/connector-x/api";
+export { XApiConnector, createXApiConnector, X_API_CONNECTOR_ID, X_API_CURSOR_SCHEMA, X_API_SCOPES, inspectXApiState, assertSameXApiIdentity, assertXApiCredentialRecovery, normalizeXApiNativeClient, normalizeXApiSelection } from "@kizuki/connector-x/api";
+export type { XApiConfig, XApiDeps, XApiSelection, XApiField, XApiNativeClient } from "@kizuki/connector-x/api";

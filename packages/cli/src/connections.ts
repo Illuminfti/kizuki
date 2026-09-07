@@ -399,7 +399,8 @@ export async function loadConnector(
     if (!grant || xApiRequiredFields(identity.selection).some(field => !grant.policy.allowed_fields.includes(field as "text" | "subjects" | "attachments" | "metadata"))) {
       throw new ConnectionError("source_field_denied; X selected fields are incompatible with this grant. Inspect the source policy and explicitly reconcile consent; projection changes through reauthorization are unsupported.");
     }
-    const client = await xApiClient(env);
+    if (identity.recovery_required) throw new ConnectionError("credential_recovery_required; X refresh outcome is unknown; use connect recover-x-api for an explicit new authorization.");
+    const client = await xApiClient(env, identity);
     if (sourceCaptureAdmission(db, selected.connection.connector_id, selected.connection.source_key)?.expected_revision !== grant.revision) {
       throw new ConnectionError("source_capture_denied; source consent changed during host composition; retry with current policy.");
     }

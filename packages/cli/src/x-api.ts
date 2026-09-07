@@ -1,13 +1,13 @@
-import { KizukiError, loopbackTransport, withDeadline } from '@kizuki/core';
-import { createXApiConnector, inspectXApiState, normalizeXApiSelection, type XApiConfig, type XApiDeps, type XApiSelection } from '@kizuki/connectors';
+import { KizukiError, withDeadline } from '@kizuki/core';
+import { createXApiConnector, inspectXApiState, normalizeXApiNativeClient, normalizeXApiSelection, type XApiConfig, type XApiDeps, type XApiSelection } from '@kizuki/connectors';
 
 /** Public native-app configuration only. Core owns exact callback validation. */
-export function xApiClient(env: Record<string, string | undefined>): { id: string; redirectUri: string } {
+export function xApiClient(env: Record<string, string | undefined>, state?: ReturnType<typeof inspectXApiState> | null): { id: string; redirectUri: string } {
+  if (state?.native_client) return { id: state.native_client.id, redirectUri: state.native_client.redirect_uri };
   const id = env.KIZUKI_X_CLIENT_ID, redirectUri = env.KIZUKI_X_REDIRECT_URI;
   try {
-    if (!id || id.length > 512 || /[^\x21-\x7e]/.test(id) || redirectUri === undefined) throw new Error();
-    loopbackTransport({ redirectUri });
-    return { id, redirectUri };
+    const client = normalizeXApiNativeClient({ id, redirect_uri: redirectUri });
+    return { id: client.id, redirectUri: client.redirect_uri };
   } catch {
     throw new Error('X native app is not configured. Configure KIZUKI_X_CLIENT_ID and KIZUKI_X_REDIRECT_URI as the registered http://127.0.0.1:PORT/callback before enrollment.');
   }
@@ -25,7 +25,7 @@ export function xApiRequiredFields(selected: XApiSelection): string[] {
 }
 export function xApiStateConfig(bytes: Uint8Array, secret_ref: string, client: ReturnType<typeof xApiClient>): XApiConfig {
   const state = inspectXApiState(bytes);
-  return { client_id: client.id, secret_ref, selection: state.selection, expected_account: state.account_id };
+  return { client_id: client.id, redirect_uri: client.redirectUri, secret_ref, selection: state.selection, expected_account: state.account_id };
 }
 export type XApiFactory = (config: XApiConfig, deps: XApiDeps) => ReturnType<typeof createXApiConnector>;
 

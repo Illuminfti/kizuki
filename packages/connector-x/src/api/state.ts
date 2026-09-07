@@ -1,16 +1,17 @@
-import { createHash } from "node:crypto";
-import { KizukiError, isPlainObject, isRfc3339, parseOAuthState, type OAuthState } from "@kizuki/core";
+import { createHash, randomBytes } from "node:crypto";
+import { KizukiError, loopbackTransport, isPlainObject, isRfc3339, parseOAuthState, type OAuthState } from "@kizuki/core";
 
 export const X_API_CONNECTOR_ID = "kizuki.x";
 export const X_API_CURSOR_SCHEMA = "kizuki.x-api-cursor/v1";
-export const X_API_STATE_SCHEMA = "kizuki.x-api-state/v1";
+export const X_API_LEGACY_STATE_SCHEMA = "kizuki.x-api-state/v1";
+export const X_API_STATE_SCHEMA = "kizuki.x-api-state/v2";
 export const X_API_SCOPES = ["tweet.read", "users.read", "offline.access"] as const;
 export const MAX_PAGE_POSTS = 100;
 export const MAX_WALK_PAGES = 64;
 export const OPTIONAL_FIELDS = ["relationships", "links", "media"] as const;
 export type XApiField = typeof OPTIONAL_FIELDS[number];
 export interface XApiSelection { fields: XApiField[]; history_start: string; wire_profile: "tweet-v2" }
-const RULES = ["misconfigured", "unauthenticated", "unavailable", "timeout", "unreachable", "invalid_state", "invalid_cursor", "identity_mismatch", "provider_error", "partial_response", "response_limit", "batch_limit", "request_limit", "pagination_gap", "snapshot_changed", "rate_limited", "permission_denied", "billing_required", "not_supported"] as const;
+const RULES = ["misconfigured", "unauthenticated", "unavailable", "timeout", "unreachable", "invalid_state", "invalid_cursor", "identity_mismatch", "provider_error", "partial_response", "response_limit", "batch_limit", "request_limit", "pagination_gap", "snapshot_changed", "rate_limited", "permission_denied", "billing_required", "credential_recovery_required", "not_supported"] as const;
 export type FailureRule = typeof RULES[number];
 class XApiFailure extends KizukiError {
   constructor(readonly rule: FailureRule) {
@@ -104,8 +105,7 @@ export function parseCursor(raw: string): XApiCursor {
   } catch { throw failure("invalid_cursor"); }
 }
 export interface XApiPlan { id: string; base: string | null; next: string; observed: string; entries: { id: string; hash: string }[] }
-export interface XApiState {
-  schema: typeof X_API_STATE_SCHEMA;
+interface XApiStateBase {
   app: string;
   oauth: OAuthState;
   selection: XApiSelection;
@@ -114,13 +114,42 @@ export interface XApiState {
   retry_at: string | null;
   revocation: "active" | "pending" | "revoked";
 }
+export interface XApiNativeClient { id: string; redirect_uri: string }
+export interface XApiRefreshIntent { intent_id: string; generation: string; account: string; app: string; scope_digest: string }
+export interface XApiLegacyState extends XApiStateBase { schema: typeof X_API_LEGACY_STATE_SCHEMA }
+export interface XApiStateV2 extends XApiStateBase {
+  schema: typeof X_API_STATE_SCHEMA;
+  native_client: XApiNativeClient;
+  credential_generation: string;
+  refresh_pending: XApiRefreshIntent | null;
+}
+export type XApiState = XApiLegacyState | XApiStateV2;
+export function newCredentialGeneration(): string { return randomBytes(32).toString("hex"); }
+export function nativeClient(raw: unknown): XApiNativeClient {
+  try {
+    const value = object(raw); exact(value, ["id", "redirect_uri"]);
+    if (typeof value.id !== "string" || !value.id || value.id.length > 512 || /[^\x21-\x7e]/.test(value.id) || typeof value.redirect_uri !== "string") throw failure();
+    loopbackTransport({ redirectUri: value.redirect_uri });
+    return { id: value.id, redirect_uri: value.redirect_uri };
+  } catch { throw failure("misconfigured"); }
+}
+export function upgradeState(state: XApiState, client: XApiNativeClient): XApiStateV2 {
+  const checked = nativeClient(client);
+  if (state.app !== digest(checked.id)) throw failure("identity_mismatch");
+  if (state.schema === X_API_STATE_SCHEMA) {
+    if (digest(state.native_client) !== digest(checked)) throw failure("identity_mismatch");
+    return state;
+  }
+  return { ...state, schema: X_API_STATE_SCHEMA, native_client: checked, credential_generation: newCredentialGeneration(), refresh_pending: null };
+}
+export function requiresCredentialRecovery(state: XApiState): boolean { return state.schema === X_API_STATE_SCHEMA && state.refresh_pending !== null; }
 export function planDigest(plan: Omit<XApiPlan, "id">): string { return digest(plan); }
 export function parseState(bytes: Uint8Array): XApiState {
   try {
     if (bytes.byteLength > 256 * 1024) throw failure();
     const value = object(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
-    exact(value, ["schema", "app", "oauth", "selection", "checkpoint", "pending", "retry_at", "revocation"]);
-    if (value.schema !== X_API_STATE_SCHEMA || !["active", "pending", "revoked"].includes(String(value.revocation))) throw failure();
+    exact(value, ["schema", "app", "oauth", "selection", "checkpoint", "pending", "retry_at", "revocation", ...(value.schema === X_API_STATE_SCHEMA ? ["native_client", "credential_generation", "refresh_pending"] : [])]);
+    if (![X_API_LEGACY_STATE_SCHEMA, X_API_STATE_SCHEMA].includes(String(value.schema)) || !["active", "pending", "revoked"].includes(String(value.revocation))) throw failure();
     const selected = selection(value.selection), oauth = parseOAuthState(JSON.stringify(value.oauth), X_API_CONNECTOR_ID);
     id(oauth.account.id);
     if (!X_API_SCOPES.every(scope => oauth.tokens.scope.split(/\s+/).includes(scope)) || oauth.tokens.refresh_token === null ||
@@ -143,23 +172,45 @@ export function parseState(bytes: Uint8Array): XApiState {
       if (new Set(draft.entries.map(entry => entry.id)).size !== draft.entries.length || raw.id !== planDigest(draft) || draft.next === draft.base) throw failure();
       pending = { id: hash(raw.id), ...draft };
     }
-    return { schema: X_API_STATE_SCHEMA, app: hash(value.app), oauth, selection: selected, checkpoint, pending, retry_at: value.retry_at === null ? null : instant(value.retry_at),
+    const common = { app: hash(value.app), oauth, selection: selected, checkpoint, pending, retry_at: value.retry_at === null ? null : instant(value.retry_at),
       revocation: value.revocation as XApiState["revocation"] };
+    if (value.schema === X_API_LEGACY_STATE_SCHEMA) return { ...common, schema: X_API_LEGACY_STATE_SCHEMA };
+    const client = nativeClient(value.native_client), generation = hash(value.credential_generation);
+    if (common.app !== digest(client.id)) throw failure();
+    let refresh_pending: XApiRefreshIntent | null = null;
+    if (value.refresh_pending !== null) {
+      const raw = object(value.refresh_pending); exact(raw, ["intent_id", "generation", "account", "app", "scope_digest"]);
+      refresh_pending = { intent_id: hash(raw.intent_id), generation: hash(raw.generation), account: id(raw.account), app: hash(raw.app), scope_digest: hash(raw.scope_digest) };
+      if (refresh_pending.generation !== generation || refresh_pending.account !== oauth.account.id || refresh_pending.app !== common.app || refresh_pending.scope_digest !== digest(oauth.tokens.scope)) throw failure();
+    }
+    return { ...common, schema: X_API_STATE_SCHEMA, native_client: client, credential_generation: generation, refresh_pending };
   } catch { throw failure("invalid_state"); }
 }
 export function encodeState(state: XApiState): Uint8Array {
   const bytes = new TextEncoder().encode(JSON.stringify(state)); parseState(bytes); return bytes;
 }
 
-/** Identity and selection only; never return OAuth tokens, references or pending content. */
-export function inspectXApiState(bytes: Uint8Array): { account_id: string; app_digest: string; selection: XApiSelection; revocation: XApiState["revocation"] } {
+/** Public native configuration, identity and selection only; no token, intent or reference. */
+export function inspectXApiState(bytes: Uint8Array): { account_id: string; app_digest: string; selection: XApiSelection; revocation: XApiState["revocation"]; native_client: XApiNativeClient | null; recovery_required: boolean } {
   const state = parseState(bytes);
-  return { account_id: state.oauth.account.id, app_digest: state.app, selection: state.selection, revocation: state.revocation };
+  return { account_id: state.oauth.account.id, app_digest: state.app, selection: state.selection, revocation: state.revocation,
+    native_client: state.schema === X_API_STATE_SCHEMA ? state.native_client : null, recovery_required: requiresCredentialRecovery(state) };
+}
+function assertReplacement(a: XApiState, b: XApiState): void {
+  if (a.oauth.account.id !== b.oauth.account.id || a.app !== b.app || digest(a.selection) !== digest(b.selection) ||
+      a.checkpoint !== b.checkpoint || digest(a.pending) !== digest(b.pending) || a.retry_at !== b.retry_at ||
+      a.revocation === "pending" || b.revocation !== "active" || requiresCredentialRecovery(b) || b.schema !== X_API_STATE_SCHEMA ||
+      a.schema === X_API_STATE_SCHEMA && (digest(a.native_client) !== digest(b.native_client) || a.credential_generation === b.credential_generation)) throw failure("identity_mismatch");
 }
 /** Reauthorization replaces credentials, never account, app, projection or history custody. */
 export function assertSameXApiIdentity(previous: Uint8Array, candidate: Uint8Array): void {
   const a = parseState(previous), b = parseState(candidate);
-  if (a.oauth.account.id !== b.oauth.account.id || a.app !== b.app || digest(a.selection) !== digest(b.selection) ||
-      a.checkpoint !== b.checkpoint || digest(a.pending) !== digest(b.pending) || a.retry_at !== b.retry_at ||
-      a.revocation === "pending" || b.revocation !== "active") throw failure("identity_mismatch");
+  if (requiresCredentialRecovery(a)) throw failure("credential_recovery_required");
+  assertReplacement(a, b);
+}
+/** Only an explicit new browser grant may replace unknown credentials, through original Core CAS. */
+export function assertXApiCredentialRecovery(previous: Uint8Array, candidate: Uint8Array): void {
+  const a = parseState(previous), b = parseState(candidate);
+  if (!requiresCredentialRecovery(a) || a.revocation !== "active") throw failure("credential_recovery_required");
+  assertReplacement(a, b);
 }

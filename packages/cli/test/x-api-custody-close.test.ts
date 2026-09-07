@@ -4,7 +4,7 @@ import { ConnectionStateStore, listConnections, setSourceGrant } from '@kizuki/c
 import { openLedger } from '@kizuki/core/testing';
 import { createXApiConnector, type XApiConfig, X_API_SCOPES } from '@kizuki/connectors';
 import { XApiFixture } from '../../connector-x/src/api/testkit';
-import { encodeState, parseState } from '../../connector-x/src/api/state';
+import { encodeState, parseState, requiresCredentialRecovery } from '../../connector-x/src/api/state';
 import { closeHostConnector, loadConnector, selectConnection } from '../src/connections';
 import { withVault } from '../src/context';
 import { createHelpers } from './helpers';
@@ -24,7 +24,7 @@ for (const delayed of ['response', 'write'] as const) test(`X host drains late $
   const run = withVault(io, async ctx => {
     const loading = loadConnector(selectConnection(ctx.db, ctx.store, 'kizuki.x', saved.source_key), ctx.store, ctx.db, io.env, (_id, config, deps) => {
       connector = createXApiConnector(config as XApiConfig, { fetch: f.fetch, now: f.now,
-        persist: async bytes => { if (delayed === 'write') { enter(); await hold; } await deps!.persist!(bytes); },
+        persist: async bytes => { if (delayed === 'write' && !requiresCredentialRecovery(parseState(bytes))) { enter(); await hold; } await deps!.persist!(bytes); },
         oauth: { listen: async () => { throw Error('not enrollment'); }, postForm: async () => {
           if (delayed === 'response') { enter(); await hold; }
           return { status: 200, body: { access_token: 'synthetic-drained-access', refresh_token: 'synthetic-drained-refresh', expires_in: 3600, scope: X_API_SCOPES.join(' '), token_type: 'Bearer' } };

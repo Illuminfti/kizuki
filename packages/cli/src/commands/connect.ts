@@ -1,4 +1,4 @@
-import { runXApiConnect } from "./connect-x-api";
+import { runXApiConnect, runXApiRecovery } from "./connect-x-api";
 import { runGoogleCalendarConnect } from "./connect-google-calendar";
 import { runGmailConnect } from "./connect-gmail";
 import { runConnectConsent } from "./connect-consent";
@@ -111,7 +111,7 @@ export function imapSignInNotice(vaultPath: string): string {
 
 export const connectCommand: Command = {
   name: "connect",
-  usage: "connect [--list|status] [--json]\n       kizuki connect status --source KEY [--json]\n       kizuki connect grant --source KEY --policy FILE --expected-revision N --operation-id ID [--json]\n       kizuki connect revoke --source KEY --expected-revision N --operation-id ID [--json]\n       kizuki connect resume-revocation --source KEY --operation-id ID [--json]\n       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]\n       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]\n       kizuki connect imap [--source KEY] [--sensitivity public|personal|private]\n       kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY | --new-source] [--json]\n       kizuki connect x-api --fields relationships,links,media|none --history-start RFC3339 [--source KEY | --new-source] [--json]\n       kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY | --new-source] [--json]\n       kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]",
+  usage: "connect [--list|status] [--json]\n       kizuki connect status --source KEY [--json]\n       kizuki connect grant --source KEY --policy FILE --expected-revision N --operation-id ID [--json]\n       kizuki connect revoke --source KEY --expected-revision N --operation-id ID [--json]\n       kizuki connect resume-revocation --source KEY --operation-id ID [--json]\n       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]\n       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]\n       kizuki connect imap [--source KEY] [--sensitivity public|personal|private]\n       kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY | --new-source] [--json]\n       kizuki connect recover-x-api --source KEY --fields relationships,links,media|none --history-start RFC3339 [--json]\n       kizuki connect x-api --fields relationships,links,media|none --history-start RFC3339 [--source KEY | --new-source] [--json]\n       kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY | --new-source] [--json]\n       kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]",
   summary: "enroll a supported source and check consent or sync status",
   async run(io: CliIo, args: string[]): Promise<number> {
     if (["grant", "revoke", "resume-revocation"].includes(args[0] ?? "") || (args[0] === "status" && args.includes("--source"))) return runConnectConsent(io, args);
@@ -131,9 +131,9 @@ export const connectCommand: Command = {
     }
     if (parsed.flags.has("--list")) throw new UsageError("connect --list [--json]");
     const [rawId] = requirePositional(parsed.positionals, 1);
-    if (rawId === "x-api" || rawId === "kizuki.x") {
+    if (rawId === "x-api" || rawId === "kizuki.x" || rawId === "recover-x-api") {
       if (parsed.options.has("--endpoint") || parsed.options.has("--token-ref") || parsed.options.has("--calendar")) throw new UsageError("connect x-api --fields FIELDS --history-start RFC3339 [--source KEY | --new-source] [--json]");
-      return runXApiConnect(io, { newSource, source: parsed.options.get("--source"), fields: parsed.options.get("--fields"), historyStart: parsed.options.get("--history-start"), sensitivity: parseSensitivityFlag(parsed.options.get("--sensitivity")), json }, checkRequestedSensitivity);
+      return (rawId === "recover-x-api" ? runXApiRecovery : runXApiConnect)(io, { newSource, source: parsed.options.get("--source"), fields: parsed.options.get("--fields"), historyStart: parsed.options.get("--history-start"), sensitivity: parseSensitivityFlag(parsed.options.get("--sensitivity")), json }, checkRequestedSensitivity);
     }
     if (parsed.options.has("--history-start")) throw new UsageError("--history-start is only supported for connect x-api");
     if (rawId === "google-calendar" || rawId === "kizuki.google-calendar") {

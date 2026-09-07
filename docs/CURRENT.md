@@ -49,7 +49,11 @@ calendar URL sign-in is library surface, not a `connect` verb. Other sign-in
 connectors are not enrollable through this CLI except X own-post API native sign-in.
 X requires a public native app, an exact registered fixed loopback callback, explicit
 fields and history start, usage credits and separate source consent; real-account
-qualification remains unrun. WHOOP remains an unregistered component. After
+qualification remains unrun. Its v2 protected state saves the public native app
+configuration for background use. Unknown refresh outcomes survive restart and
+require `connect recover-x-api --source KEY` with the existing fields and history
+start to obtain a new browser grant; capture consent remains unchanged. WHOOP
+remains an unregistered component. After
 `import`, claims are live and `tell --claim` can name them. Canon writing
 still requires a configured model; without one the sync rail leaves live
 claims unwritten and doctor says so. The automated

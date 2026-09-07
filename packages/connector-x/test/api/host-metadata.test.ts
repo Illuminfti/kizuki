@@ -1,12 +1,12 @@
 import { expect, test } from 'bun:test';
 import { inspectXApiState, assertSameXApiIdentity, createXApiConnector } from '../../src/api';
 import { XApiFixture } from '../../src/api/testkit';
-import { digest, encodeState, parseState } from '../../src/api/state';
+import { digest, encodeState, parseState, X_API_STATE_SCHEMA, newCredentialGeneration } from '../../src/api/state';
 
 test('X host inspection projects identity and selection without credential or history payloads', () => {
   const f = new XApiFixture(1), projected = inspectXApiState(f.state);
-  expect(Object.keys(projected).sort()).toEqual(['account_id', 'app_digest', 'revocation', 'selection']);
-  expect(projected).toEqual({ account_id: f.account, app_digest: digest(f.clientId), revocation: 'active', selection: f.selected });
+  expect(Object.keys(projected).sort()).toEqual(['account_id', 'app_digest', 'native_client', 'recovery_required', 'revocation', 'selection']);
+  expect(projected).toEqual({ account_id: f.account, app_digest: digest(f.clientId), revocation: 'active', selection: f.selected, native_client: { id: f.clientId, redirect_uri: 'http://127.0.0.1:49152/callback' }, recovery_required: false });
   expect(JSON.stringify(projected)).not.toContain('SYNTHETIC_X');
   expect(() => inspectXApiState(new TextEncoder().encode('{"oauth":"private"}'))).toThrow();
 });
@@ -15,7 +15,7 @@ test('X replacement assertion preserves every noncredential custody dimension', 
   const f = new XApiFixture(1), port = await f.connected(); await port.backfill(null); await port.close();
   const original = parseState(f.state); expect(original.pending).not.toBeNull();
   original.retry_at = '2026-02-02T00:00:00Z'; const before = encodeState(original);
-  const rotated = structuredClone(original); rotated.oauth.tokens.access_token = 'synthetic-new-access'; rotated.oauth.tokens.refresh_token = 'synthetic-new-refresh';
+  const rotated = structuredClone(original); if (rotated.schema !== X_API_STATE_SCHEMA) throw Error('expected v2 fixture'); rotated.credential_generation = newCredentialGeneration(); rotated.oauth.tokens.access_token = 'synthetic-new-access'; rotated.oauth.tokens.refresh_token = 'synthetic-new-refresh';
   expect(() => assertSameXApiIdentity(before, encodeState(rotated))).not.toThrow();
   for (const change of ['account', 'app', 'selection', 'pending', 'retry', 'revocation'] as const) {
     const next = structuredClone(rotated);
