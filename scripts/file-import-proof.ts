@@ -170,7 +170,7 @@ export async function runFileImportProof(args: FileImportArgs): Promise<string> 
             await run("resume-revocation", ["connect", "resume-revocation", ...selector, "--operation-id", operation, "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-purge-diagnostics"); return consentObservation(stdout, entry.source_key!, "purged"); });
             await query("purged-query", 0);
             await run("purge-status", ["connect", "status", ...selector, "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-purge-diagnostics"); return consentObservation(stdout, entry.source_key!, "purged"); });
-            await run("denied-reimport", importArgs, 1, (stdout, stderr) => { check(stderr.includes("source_capture_denied"), "missing-capture-denial"); return importCounts(stdout, 0, 1); });
+            await run("denied-reimport", importArgs, 1, (stdout, stderr) => { check(stdout === "" && stderr === `error: source_capture_denied; consent-required: kizuki connect grant --source ${entry.source_key} --policy POLICY.json --expected-revision 3 --operation-id UNIQUE_ID\n`, "missing-or-extra-capture-denial"); return empty(); });
             await query("denied-reimport-query", 0);
           } else {
             await run("invalid-import", [...importArgs, ...grant], 1, fixture.invalid_mode !== "blocked" ? counts(fixture.invalid_events, 1, fixture.invalid_error, fixture.invalid_events ? fixture.proposals : 0) : (stdout, stderr) => { check(stdout === "" && stderr.includes(fixture.invalid_error) && /^error: [^\n]+\n$/.test(stderr), "malformed-source-not-refused"); return empty(); });
