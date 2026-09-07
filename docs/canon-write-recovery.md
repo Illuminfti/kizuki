@@ -3,8 +3,10 @@
 Ordinary canon writes, ordinary purge rewrites and undo use the v21 recovery
 ledger. The existing source-erasure protocol remains separate. A successful
 canon receipt records the page and claim transition; its `retrieval_ops` list
-records scheduled projection work. It does not prove that an external engine
-executed those operations.
+records projection work. It does not prove that an external engine executed
+those operations. For an ordinary purge rewrite, its local FTS5 removal references
+follow the purge coordinator's separate absence proof; recovery rebuilds the
+surviving local projection without scheduling another external deletion.
 
 ## Durable admission and completion
 
@@ -79,6 +81,23 @@ pending. If undo's own canon transition commits but its external projection
 cannot complete, its result includes `projection_pending: true`; the receipt,
 archive and claim lifecycle stay durably bound to that one undo.
 
+## Owner commands and source withdrawal
+
+`kizuki recover --json` attempts the original write and known scheduled projection
+work. It exits unsuccessfully while completion fails or any hold remains.
+`kizuki doctor` reports pending recovery. Correction and undo also return an
+unsuccessful result when their completion is unconfirmed. App operation results
+retain only the affected receipt IDs and phases, without page paths or content.
+An unrelated global hold is reported without identifying its receipt or page.
+
+Source withdrawal may erase its exact source-bound pending write under current
+denial and file custody. It preserves unrelated bytes and refuses changed pages,
+unknown stages or unknown external execution. Cancelling scheduled or acknowledged
+projection work retains the inventory of real store instances for the existing
+source-erasure protocol. A port descriptor alone cannot establish store absence.
+Clean export refuses both write and projection holds. Serving checks a monotonic
+canon generation so a cached page or awaited result cannot cross a recovery change.
+
 ## Verification
 
 `packages/core/test/canon/crash-recovery.test.ts` exercises real process exits
@@ -89,6 +108,9 @@ rollback, local projection rollback, real FTS5 retrieval and trust labels, and
 unknown engine execution after child death. The receipt-stream and staged
 publication tests separately exercise native file and log custody failures.
 
-These component checks do not constitute native service, startup, export,
-source withdrawal or full release qualification. Those consumers must preserve
-the pending payload and generation boundaries in their own integration tests.
+`packages/core/test/canon/recovery-boundaries.test.ts` covers cached and awaited
+reads, clean export refusal and v21 restore, and source withdrawal with an actual
+FTS5 engine. `packages/cli/test/recovery-public.test.ts` checks actual owner
+commands and authenticated App correction and undo outcomes. Native CI runs these
+consumers with the file and receipt recovery tests. Passing component tests alone
+does not establish installed-service or full release qualification.
