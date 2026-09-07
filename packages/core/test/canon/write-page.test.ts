@@ -416,7 +416,7 @@ describe("writePage", () => {
     const temp = join(root, "facts/.ordinary.md.ordinary-revise.tmp");
     writeFileSync(temp, serializePage(next), { mode: 0o600 });
     expect(() => writePage(grantCanonWrite("loop", "ordinary-revise", root), path, next,
-      { revision: true, expected_hash: created.after_hash })).toThrow("existing temporary revision");
+      { revision: true, expected_hash: created.after_hash })).toThrow("existing canon stage without creation custody");
     expect(readFileSync(path, "utf8")).toBe(serializePage(first));
     expect(readFileSync(temp, "utf8")).toBe(serializePage(next));
   });

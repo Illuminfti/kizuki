@@ -50,6 +50,7 @@ export class CanonWriteRefused extends Error {
       | "expected_hash_required"
       | "write_verify_failed"
       | "archive_exists"
+      | "stage_custody_unknown"
       | "parent_invalid"
       | "native_unsupported"
       | "native_unavailable",
@@ -131,6 +132,8 @@ export interface WritePageOptions {
   delete?: boolean;
   /** Native source erasure: retain hashes/receipts, never a payload preimage. */
   erase_prior?: boolean;
+  /** Same admitted receipt: an exact existing archive is read-only evidence. */
+  recovery?: boolean;
 }
 
 export interface WriteOutcome {
@@ -158,6 +161,11 @@ export function hashFile(path: string): string {
  */
 export function archiveRelPath(relPath: string, receiptId: string): string {
   return `archive/${relPath.replaceAll("/", "__")}--${receiptId}.md`;
+}
+
+/** Expected names are recovery inventory, never creation or cleanup authority. */
+export function canonStageRelPath(relPath: string, receiptId: string): string {
+  return join(dirname(relPath), `.${basename(relPath)}.${receiptId}.tmp`);
 }
 
 function vaultRelPath(vault: string, path: string): string {
@@ -224,10 +232,50 @@ function ensureCanonParents(files: CanonFiles, rel: string): void {
   if (parent !== ".") files.ensureDirectory(parent);
 }
 
-function archiveSnapshot(files: CanonFiles, prior: CanonFileSnapshot, receiptId: string): string {
+function createStage(files: CanonFiles, rel: string, bytes: Uint8Array, receiptId: string): CanonFileSnapshot {
+  try { return files.create(canonStageRelPath(rel, receiptId), bytes); }
+  catch (error) {
+    if (error instanceof CanonFilesError && error.reason === "conflict") {
+      throw new CanonWriteRefused("stage_custody_unknown", "Refusing an existing canon stage without creation custody");
+    }
+    throw error;
+  }
+}
+
+function publishNew(files: CanonFiles, rel: string, bytes: Uint8Array, receiptId: string): CanonFileSnapshot {
+  // create returns only after the entire private stage and its directory sync.
+  // publish retains the native no-replace operation; final names never contain
+  // an incremental write. Only this scope's creation may be cleaned up.
+  const stage = createStage(files, rel, bytes, receiptId);
+  try { return files.publish(stage, rel); }
+  catch (error) {
+    try { files.remove(stage); } catch { /* Preserve changed entries and the original failure. */ }
+    throw error;
+  } finally { stage.close(); }
+}
+
+function archiveSnapshot(files: CanonFiles, prior: CanonFileSnapshot, receiptId: string, recovery: boolean): string {
   const rel = archiveRelPath(prior.path, receiptId);
   files.ensureDirectory("archive");
-  try { files.create(rel, prior.bytes).close(); }
+  if (recovery) {
+    const existing = files.read(rel);
+    if (existing !== null) {
+      try {
+        if (!Buffer.from(existing.bytes).equals(prior.bytes)) {
+          throw new CanonWriteRefused("archive_exists", "Refusing a changed archive copy");
+        }
+        // An unknown stage remains payload residue even when the final archive
+        // happens to match. Never silently complete while it is unaccounted for.
+        const stage = files.read(canonStageRelPath(rel, receiptId));
+        if (stage !== null) {
+          stage.close();
+          throw new CanonWriteRefused("stage_custody_unknown", "Refusing an existing canon stage without creation custody");
+        }
+        return rel;
+      } finally { existing.close(); }
+    }
+  }
+  try { publishNew(files, rel, prior.bytes, receiptId).close(); }
   catch (error) {
     if (error instanceof CanonFilesError && error.reason === "conflict") {
       throw new CanonWriteRefused("archive_exists", "Refusing to overwrite an archive copy");
@@ -257,10 +305,10 @@ function replaceSnapshot(
   receiptId: string,
   erasePrior: boolean,
 ): string {
-  const tempPath = join(dirname(prior.path), `.${basename(prior.path)}.${receiptId}.tmp`);
+  const tempPath = canonStageRelPath(prior.path, receiptId);
   let temp = erasePrior ? files.resumeExactTemporary(prior, receiptId, bytes) : null;
   if (temp === null) {
-    try { temp = files.create(tempPath, bytes); }
+    try { temp = erasePrior ? files.create(tempPath, bytes) : createStage(files, prior.path, bytes, receiptId); }
     catch (error) {
       if (error instanceof CanonFilesError && error.reason === "conflict") {
         throw new CanonWriteRefused("page_changed", "Refusing an existing temporary revision");
@@ -291,7 +339,7 @@ function writeWithFiles(
   try {
     if (opts.delete === true) {
       const expected = expectedPrior(prior, opts.expected_hash, true);
-      const archive = opts.erase_prior === true ? null : archiveSnapshot(files, expected, cap.receipt_id);
+      const archive = opts.erase_prior === true ? null : archiveSnapshot(files, expected, cap.receipt_id, opts.recovery === true);
       files.remove(expected);
       return { archive_path: archive, after_hash: ABSENT_PAGE_HASH };
     }
@@ -310,13 +358,13 @@ function writeWithFiles(
     if (prior === null) {
       if (opts.revision === true) throw new CanonWriteRefused("page_missing", "Refusing to revise a missing page");
       ensureCanonParents(files, rel);
-      const created = files.create(rel, bytes);
+      const created = publishNew(files, rel, bytes, cap.receipt_id);
       try { return { archive_path: null, after_hash: hashBytes(created.bytes) }; }
       finally { created.close(); }
     }
 
     const expected = expectedPrior(prior, opts.expected_hash, false);
-    const archive = opts.erase_prior === true ? null : archiveSnapshot(files, expected, cap.receipt_id);
+    const archive = opts.erase_prior === true ? null : archiveSnapshot(files, expected, cap.receipt_id, opts.recovery === true);
     return {
       archive_path: archive,
       after_hash: replaceSnapshot(files, expected, bytes, cap.receipt_id, opts.erase_prior === true),
