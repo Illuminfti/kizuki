@@ -602,6 +602,24 @@ describe("runToCompletion", () => {
     }
   });
 
+  test("an inherited descriptor value cannot disguise a completion accessor as data", async () => {
+    const db = database();
+    const original = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+    let reads = 0;
+    const batch = page(1, 1);
+    Object.defineProperty(batch, "has_more", { get: () => { reads++; return false; } });
+    try {
+      Object.defineProperty(Object.prototype, "value", { value: false, configurable: true, writable: true });
+      const result = await runToCompletion(db, new FixtureConnector(batch), "fixture", SOURCE, "backfill");
+      expect(result.errors).toEqual(["sync batch has_more must be an own boolean data property"]);
+      expect(result.stored).toBe(0); expect(result.cursor).toBeNull(); expect(reads).toBe(0);
+    } finally {
+      Reflect.deleteProperty(Object.prototype, "value");
+      if (original !== undefined) Object.defineProperty(Object.prototype, "value", original);
+      db.close();
+    }
+  });
+
   test("forged completion metadata is refused before events without invoking accessors", async () => {
     let getterCalls = 0;
     for (const descriptor of [

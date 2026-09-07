@@ -122,7 +122,7 @@ function processEvent(
 function batchHasMore(batch: SyncBatch): boolean | undefined {
   const descriptor = Object.getOwnPropertyDescriptor(batch, "has_more");
   if (descriptor === undefined) return undefined;
-  if (!("value" in descriptor) || typeof descriptor.value !== "boolean") {
+  if (!(Object.hasOwn(descriptor, "value")) || typeof descriptor.value !== "boolean") {
     throw new TypeError("sync batch has_more must be an own boolean data property");
   }
   return descriptor.value;

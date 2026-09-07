@@ -725,7 +725,7 @@ function inspectBatch(
     return undefined;
   }
   const completion = Object.getOwnPropertyDescriptor(raw, "has_more");
-  if (completion !== undefined && (!("value" in completion) || typeof completion.value !== "boolean")) {
+  if (completion !== undefined && (!(Object.hasOwn(completion, "value")) || typeof completion.value !== "boolean")) {
     failures.push(`${label}: has_more must be an own boolean data property`);
     return undefined;
   }
