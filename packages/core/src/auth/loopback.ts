@@ -53,23 +53,43 @@ async function readCapped(response: Response): Promise<string> {
  * The one transport in core that opens a socket, declared with its reason in
  * `scripts/network-allowlist.txt`. It is deliberately dumb: it moves bytes for
  * `auth/oauth.ts` and holds no policy, no secrets and no logging.
+ * A fixed redirectUri binds its registered port; omission uses an ephemeral port.
  */
 export function loopbackTransport(
-  opts: { postTimeoutMs?: number } = {},
+  opts: { redirectUri?: string; postTimeoutMs?: number } = {},
 ): OAuthTransport {
   const postTimeoutMs = opts.postTimeoutMs ?? DEFAULT_POST_TIMEOUT_MS;
+  const redirectUri = opts.redirectUri;
+  let port = 0;
+  if (redirectUri !== undefined) {
+    // Keep the registered URI exact: URL parsing would normalize host aliases,
+    // dot segments and default ports instead of refusing those spellings.
+    const match =
+      typeof redirectUri === "string"
+        ? /^http:\/\/127\.0\.0\.1:([1-9]\d{0,4})\/callback$/.exec(redirectUri)
+        : null;
+    if (match === null || match[0] !== redirectUri || Number(match[1]) > 65535) {
+      throw new TypeError(
+        "redirectUri must be http://127.0.0.1:<port>/callback with port 1-65535",
+      );
+    }
+    port = Number(match[1]);
+  }
   return {
     async listen(redirectPath: string): Promise<LoopbackListener> {
       // The transport is the one that builds the redirect URI, so it judges
       // the path itself rather than trusting whoever assembled the call.
       assertRedirectPath(redirectPath);
+      if (redirectUri !== undefined && redirectPath !== "/callback") {
+        throw new TypeError("redirect_path must match the fixed redirectUri path");
+      }
       const waiters: Waiter[] = [];
       let received: URL | null = null;
       let closed = false;
 
       const server = Bun.serve({
         hostname: "127.0.0.1",
-        port: 0,
+        port,
         fetch(request: Request): Response {
           const url = new URL(request.url);
           if (request.method !== "GET" || url.pathname !== redirectPath) {
