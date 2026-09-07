@@ -165,7 +165,10 @@ function loadLinuxOwnedDirectoryNative() {
 const darwinSource = `
 static void *functions[9];
 #define FN(n, type) ((type)functions[n])
-void kizuki_initialize(void **values) { for (int i=0; i<9; i++) functions[i]=values[i]; }
+void kizuki_initialize(void *a, void *b, void *c, void *d, void *e, void *f, void *g, void *h, void *i) {
+  functions[0]=a; functions[1]=b; functions[2]=c; functions[3]=d; functions[4]=e;
+  functions[5]=f; functions[6]=g; functions[7]=h; functions[8]=i;
+}
 static long result(long value) {
   if (value >= 0) return value;
   int error = *FN(8, int *(*)(void))();
@@ -264,6 +267,9 @@ long kizuki_read_directory(int descriptor, unsigned char *out, unsigned long cap
 
 function loadDarwinOwnedDirectoryNative() {
   const libc = dlopen("/usr/lib/libSystem.B.dylib", {
+    dlopen: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.ptr },
+    dlsym: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
+    dlclose: { args: [FFIType.ptr], returns: FFIType.i32 },
     pipe: { args: [FFIType.ptr], returns: FFIType.i32 },
     // Apple's fixed-arity syscall veneer under the variadic fcntl wrapper.
     // Using fcntl itself with a fixed FFI signature misplaces its ARM64 vararg.
@@ -279,6 +285,11 @@ function loadDarwinOwnedDirectoryNative() {
   });
   let reader = -1, writer = -1;
   let compiled: ReturnType<typeof cc> | undefined;
+  let systemHandle: import("bun:ffi").Pointer | null = null;
+  const releaseLibc = () => {
+    if (systemHandle !== null) { libc.symbols.dlclose(systemHandle); systemHandle = null; }
+    libc.close();
+  };
   let phase = "pipe";
   try {
     const descriptors = new Int32Array(2);
@@ -299,7 +310,7 @@ function loadDarwinOwnedDirectoryNative() {
       flags: ["-nostdlib", "-x", "c"],
       source: `/dev/fd/${reader}`,
       symbols: {
-        kizuki_initialize: { args: [FFIType.ptr], returns: FFIType.void },
+        kizuki_initialize: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.void },
         kizuki_open_owned_child: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i64_fast },
         kizuki_create_credential_child: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
         kizuki_open_receipt_append_child: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i64_fast },
@@ -317,14 +328,19 @@ function loadDarwinOwnedDirectoryNative() {
     compiled = library;
     phase = "function_addresses";
     const entries = ["openat", "fstatat", "mkdirat", "renameat", "unlinkat", "renameatx_np", "__getdirentries64", "__fcntl_nocancel", "__error"] as const;
-    const addresses = new BigUint64Array(entries.map(name => {
-      const address: unknown = Reflect.get(libc.symbols[name], "ptr");
-      if (typeof address !== "number" || !Number.isSafeInteger(address) || address <= 0) throw new Error();
-      return BigInt(address);
-    }));
+    // Bun 1.3.14's function .ptr property is not the same representation as an
+    // FFIType.ptr result. Resolve from the exact library handle and pass those
+    // typed pointers directly, without address arithmetic or reinterpretation.
+    systemHandle = libc.symbols.dlopen(ptr(Buffer.from("/usr/lib/libSystem.B.dylib\0")), 2 /* RTLD_NOW */);
+    if (systemHandle === null) throw new Error();
+    const addresses = entries.map(name => {
+      const address = libc.symbols.dlsym(systemHandle, ptr(Buffer.from(`${name}\0`)));
+      if (address === null) throw new Error();
+      return address;
+    });
     phase = "initialize";
-    library.symbols.kizuki_initialize(ptr(addresses));
-    return { libc, compiled: library, symbols: {
+    library.symbols.kizuki_initialize(...addresses);
+    return { libc: { symbols: libc.symbols, close: releaseLibc }, compiled: library, symbols: {
       unlinkat: libc.symbols.unlinkat,
       duplicateDirectory: library.symbols.kizuki_duplicate_directory,
       readDirectory: (descriptor: number, address: ReturnType<typeof ptr>, length: number) =>
@@ -341,7 +357,7 @@ function loadDarwinOwnedDirectoryNative() {
       removeEmptyChild: library.symbols.kizuki_remove_empty_owned_child,
     } };
   } catch {
-    compiled?.close(); libc.close();
+    compiled?.close(); releaseLibc();
     throw new Error("owned_directory_native_unavailable", { cause: new Error(`owned_directory_native_${phase}`) });
   } finally {
     if (writer >= 0) closeSync(writer);
