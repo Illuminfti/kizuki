@@ -179,6 +179,125 @@ if ! git -C "$restrict_root" show-ref --verify --quiet refs/remotes/origin/main;
 fi
 rm -rf -- "$restrict_root"
 
+# Public repository links admit only the exact owner occurrence in tracked text.
+# Paths and every other occurrence, including URL suffixes, keep the denylist.
+tracked_text_root="$fixture_root/tracked-text"
+mkdir -p "$tracked_text_root"
+git -C "$tracked_text_root" init -q
+tracked_identifier_re='ill''umi|her''mes|ika-''hetzner|alb''edo'
+public_repository='https://github.com/Illuminfti/kizuki'
+private_token='ill''umi'
+public_owner='Ill''uminfti'
+upper_owner='ILL''UMINFTI'
+printf 'ordinary text\n' >"$tracked_text_root/fixture.txt"
+git -C "$tracked_text_root" add fixture.txt
+
+check_tracked_text() {
+  local expected="$1" text="$2" observed
+  printf '%s\n' "$text" >"$tracked_text_root/fixture.txt"
+  if (cd "$tracked_text_root"; assert_safe_tracked_text "$tracked_identifier_re") >"$fixture_root/tracked-result.log" 2>&1; then
+    observed=0
+  else
+    observed=$?
+  fi
+  if ((observed != expected)); then
+    printf 'policy test failed: tracked-text expected %d, received %d\n' "$expected" "$observed" >&2
+    cat "$fixture_root/tracked-result.log" >&2
+    exit 1
+  fi
+}
+
+for valid in \
+  'ordinary text without a match' \
+  "$public_repository" \
+  "($public_repository)" \
+  "<$public_repository>" \
+  "\"$public_repository/blob/0123456789abcdef/docs/local-app.md\"" \
+  "$public_repository?tab=readme#setup" \
+  "$public_repository#setup" \
+  "$public_repository/docs/one ($public_repository/docs/two)"
+do
+  check_tracked_text 0 "$valid"
+done
+
+for invalid in \
+  "$private_token" \
+  "${private_token}nfti" \
+  "https://github.com/${private_token}nfti/kizuki" \
+  "HTTPS://github.com/${public_owner}/kizuki" \
+  "https://GITHUB.com/${public_owner}/kizuki" \
+  "https://github.com/${upper_owner}/kizuki" \
+  "https://github.com/${public_owner}/Kizuki" \
+  "https://github.com/${public_owner}/kizuki-mirror/docs" \
+  "https://github.com/${public_owner}/kizuki.git" \
+  "https://github.com/${public_owner}/kizuki%2Fdocs" \
+  "https://github.com/${public_owner}/other" \
+  "https://github.com.evil.invalid/${public_owner}/kizuki" \
+  "https://evil.invalid/github.com/${public_owner}/kizuki" \
+  "https://reader@github.com/${public_owner}/kizuki" \
+  "http://github.com/${public_owner}/kizuki" \
+  "x$public_repository" \
+  "/$public_repository" \
+  "https://evil.invalid/?target=$public_repository" \
+  "$public_repository:extra" \
+  "$private_token $public_repository" \
+  "$public_repository $private_token" \
+  "$public_repository/docs/$private_token" \
+  "$public_repository?owner=$private_token" \
+  "$public_repository#$private_token" \
+  "$public_repository ($public_repository/docs/$private_token)"
+do
+  check_tracked_text 1 "$invalid"
+done
+for private_token in 'her''mes' 'ika-''hetzner' 'alb''edo'; do
+  check_tracked_text 1 "$public_repository/docs/$private_token"
+  check_tracked_text 1 "$public_repository text $private_token"
+done
+check_tracked_text 0 "$public_repository"
+newline_path=$'new\nline.txt'
+printf '%s\n' 'ill''umi' >"$tracked_text_root/$newline_path"
+git -C "$tracked_text_root" add "$newline_path"
+check_tracked_text 1 "$public_repository"
+printf '%s\n' "$public_repository" >"$tracked_text_root/$newline_path"
+check_tracked_text 0 "$public_repository"
+
+printf 'ordinary text\n' >"$tracked_text_root/$public_owner.txt"
+git -C "$tracked_text_root" add "$public_owner.txt"
+if (cd "$tracked_text_root"; assert_safe_tracked_paths "$tracked_identifier_re") >/dev/null 2>&1; then
+  printf 'policy test failed: public owner passed tracked-path denylist\n' >&2
+  exit 1
+fi
+
+if (git() { return 23; }; assert_safe_tracked_text "$tracked_identifier_re") >"$fixture_root/tracked-error.log" 2>&1; then
+  producer_status=0
+else
+  producer_status=$?
+fi
+if ((producer_status != 23)); then
+  printf 'policy test failed: tracked-text producer failure was masked\n' >&2
+  exit 1
+fi
+if (git() { printf 'invalid records'; }; assert_safe_tracked_text "$tracked_identifier_re") >/dev/null 2>&1; then
+  validator_status=0
+else
+  validator_status=$?
+fi
+if ((validator_status != 2)); then
+  printf 'policy test failed: tracked-text validator failure was masked\n' >&2
+  exit 1
+fi
+for malformed in '' 'missing separators' 'file\x00invalid\x00text\n' 'file\x0012\x00text' 'file\x001\x00text\x00hidden\n'; do
+  if printf '%b' "$malformed" | bun "$script_dir/verify-tracked-text.ts" "$tracked_identifier_re" >/dev/null 2>&1; then
+    malformed_status=0
+  else
+    malformed_status=$?
+  fi
+  if ((malformed_status != 2)); then
+    printf 'policy test failed: malformed tracked-text producer record passed\n' >&2
+    exit 1
+  fi
+done
+
 history_messages="$(mktemp)"
 github_owner='Ill''uminfti'
 printf 'Merge pull request #379 from %s/cursor/llm-port-8afe\n' "$github_owner" >"$history_messages"

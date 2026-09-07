@@ -87,6 +87,29 @@ assert_safe_tracked_paths() {
   rm -f -- "$paths_file"
 }
 
+assert_safe_tracked_text() {
+  local identifier_re="$1"
+  local records_file
+  local status
+  records_file="$(mktemp)"
+  if git grep --no-color -I -n -z -i -E "$identifier_re" >"$records_file"; then
+    if bun "$verify_script_dir/verify-tracked-text.ts" "$identifier_re" <"$records_file"; then
+      status=0
+    else
+      status=$?
+    fi
+  else
+    status=$?
+    if ((status == 1)); then
+      status=0
+    else
+      printf 'verification failed: tracked-text producer exited %d\n' "$status" >&2
+    fi
+  fi
+  rm -f -- "$records_file"
+  return "$status"
+}
+
 assert_required_commands() {
   local cmd
   for cmd in bun git grep; do
@@ -101,6 +124,7 @@ assert_required_helpers() {
   local path
   for path in \
     "$verify_script_dir/verify-attribution.ts" \
+    "$verify_script_dir/verify-tracked-text.ts" \
     "$verify_script_dir/verify-network.ts" \
     "$verify_script_dir/verify-secrets.ts" \
     "$verify_script_dir/verify-workflows.ts" \
@@ -219,7 +243,7 @@ main() {
   assert_no_match "phone-home dependency" git grep -I -n -E "$dependency_re" -- ':(glob)**/package.json'
   gate phone-home
   assert_safe_tracked_paths "$forbidden_identifier_re|$attributed_identifier_re"
-  assert_no_match "forbidden identifier in tracked text" git grep -I -n -i -E "$forbidden_identifier_re"
+  assert_safe_tracked_text "$forbidden_identifier_re"
   assert_no_match "attributed identifier outside public documentation" git grep -I -n -i -E "$attributed_identifier_re" -- . ':(exclude)README.md' ':(exclude)docs/upstream-policy.md'
   assert_exact_attribution_spelling README.md docs/upstream-policy.md
   gate denylist-tracked
