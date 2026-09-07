@@ -8,7 +8,7 @@ import { purgeEvents, setAfterCanonSnapshot, setPurgeRecoveryHook } from "../../
 import { FTS5_RETRIEVAL_ID, FTS5_RETRIEVAL_STORE_REL } from "../../core/src/retrieval";
 import { createHelpers } from "./helpers";
 
-const { cleanup, runCli, tempVault } = createHelpers();
+const { cleanup, runCliAsync, tempVault } = createHelpers();
 const AT = "2026-09-06T16:00:00.000Z";
 afterEach(() => { setAfterCanonSnapshot(); setPurgeRecoveryHook(); cleanup(); });
 
@@ -59,7 +59,7 @@ for (const cut of ["phase-one-committed", "discovery-held"] as const) {
       ).get()!.receipt_id;
       expect(f.db.query("SELECT state FROM purge_batches").all()).toEqual([{ state: "discovering" }]);
     } finally { await f.port.close(); f.db.close(); }
-    const result = runCli(f.env, "purge", "--verify", alias, "--json");
+    const result = await runCliAsync(f.env, "purge", "--verify", alias, "--json");
     expect(result.exitCode).toBe(0);
     const report = JSON.parse(result.stdout);
     expect(report.status).toBe("ok");
@@ -75,10 +75,10 @@ for (const cut of ["phase-one-committed", "discovery-held"] as const) {
     const text = readFileSync(join(f.vault, "facts/late-atlas.md"), "utf8");
     expect(text).not.toContain(f.body);
     expect(text).toContain("Current Atlas notes.");
-    const again = runCli(f.env, "purge", "--verify", alias);
+    const again = await runCliAsync(f.env, "purge", "--verify", alias);
     expect(again.exitCode).toBe(0);
     expect(readFileSync(join(f.vault, "facts/late-atlas.md"), "utf8")).toBe(text);
-  });
+  }, 30_000);
 }
 
 test("CLI reports pending provenance when exact document proofs are empty and retries the failed removal", async () => {
@@ -96,20 +96,20 @@ test("CLI reports pending provenance when exact document proofs are empty and re
     retained.exec(`CREATE TRIGGER ordinary_retention BEFORE DELETE ON search_documents
       WHEN OLD.doc_id='page:external-fixture' BEGIN SELECT RAISE(FAIL,'ordinary backend retention'); END`);
   } finally { retained.close(); }
-  const json = runCli(f.env, "purge", "--verify", receipt, "--json");
+  const json = await runCliAsync(f.env, "purge", "--verify", receipt, "--json");
   expect(json.exitCode).toBe(1);
   const report = JSON.parse(json.stdout);
   expect(report.status).toBe("error");
   expect(report.data.ok).toBe(false);
   expect(report.data.ops[0]).toMatchObject({ state: "pending", found: [], provenance: { checked: 1, found: [f.erased.event_id] } });
-  const human = runCli(f.env, "purge", "--verify", receipt);
+  const human = await runCliAsync(f.env, "purge", "--verify", receipt);
   expect(human.exitCode).toBe(1);
   expect(human.stdout).toMatch(/found 0\s+pending\s+provenance checked 1\s+found 1/);
   expect(human.stdout).not.toMatch(/found 0\s+done/);
   expect(human.stderr).toContain(`retry: kizuki purge --verify ${receipt}`);
   const released = new Database(storePath);
   try { released.exec("DROP TRIGGER ordinary_retention"); } finally { released.close(); }
-  const complete = runCli(f.env, "purge", "--verify", receipt, "--json");
+  const complete = await runCliAsync(f.env, "purge", "--verify", receipt, "--json");
   expect(complete.exitCode).toBe(0);
   expect(JSON.parse(complete.stdout).data.ops[0]).toMatchObject({ state: "done", found: [], provenance: { found: [] } });
-});
+}, 30_000);

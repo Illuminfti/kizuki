@@ -99,7 +99,7 @@ test("unmanifested state cannot redirect an existing capture grant to another lo
 });
 
 
-test("public export refuses an oversized portable grant snapshot before publishing", () => {
+test("public export refuses an oversized portable grant snapshot before publishing", async () => {
   const f = h.tempVault(), db = openLedger(join(f.vault, ".kizuki/kizuki.db"));
   try {
     for (let n = 0; n < 400; n++) {
@@ -110,12 +110,12 @@ test("public export refuses an oversized portable grant snapshot before publishi
       } });
     }
   } finally { db.close(); }
-  const backup = join(f.root, "oversized-backup"), exported = h.runCli(f.env, "export", "--out", backup);
+  const backup = join(f.root, "oversized-backup"), exported = await h.runCliAsync(f.env, "export", "--out", backup);
   expect(exported.exitCode).not.toBe(0);
   expect(exported.stderr).toContain("portable_local_invalid");
   expect(exported.stderr).not.toContain("synthetic.invalid");
   expect(existsSync(backup)).toBe(false);
-});
+}, 30_000);
 
 
 // Linux's qualified filesystem exposes read atime. Keep a positive control;

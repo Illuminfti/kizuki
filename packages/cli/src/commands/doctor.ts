@@ -120,7 +120,7 @@ function scrubDetail(text: string | null): string | null {
   return cleaned.length > DETAIL_CAP ? `${cleaned.slice(0, DETAIL_CAP)}…` : cleaned;
 }
 
-async function withDeadline<T>(ms: number, work: () => Promise<T>): Promise<T> {
+async function withDeadline<T>(ms: number, work: () => Promise<T>, label = "health"): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const pending = work();
   pending.catch(() => {
@@ -131,7 +131,7 @@ async function withDeadline<T>(ms: number, work: () => Promise<T>): Promise<T> {
     return await Promise.race([
       pending,
       new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("health timed out")), ms);
+        timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
       }),
     ]);
   } finally {
@@ -248,8 +248,14 @@ async function collect(
       continue;
     }
     try {
-      const connector = await loadConnector(host, ctx.store, ctx.db, env);
-      const health = await withDeadline(HEALTH_DEADLINE_MS, () => connector.health()).finally(() => closeHostConnector(connector));
+      const health = await withDeadline(HEALTH_DEADLINE_MS, async () => {
+        const connector = await loadConnector(host, ctx.store, ctx.db, env);
+        try {
+          return await connector.health();
+        } finally {
+          await closeHostConnector(connector);
+        }
+      });
       connections.push({
         ...base,
         path: host.state.config.path ?? host.state.config.base_url ?? "managed local state",
@@ -325,12 +331,14 @@ async function collect(
   const host = serveSupervisorHost(env, vaultPath);
   let boundModelRef: string | null = null;
   try {
-    boundModelRef = await inspectModelBinding(ctx.vaultPath, env);
+    boundModelRef = await withDeadline(HEALTH_DEADLINE_MS, () => inspectModelBinding(ctx.vaultPath, env), "model inspection");
   } catch (error) {
     // Existing invalid/unbound model configuration remains an explicit disabled
-    // writer diagnostic. Pending transactions and custody failures need recovery.
-    if (error instanceof Error && "code" in error &&
-        ["transaction_unavailable", "custody_unavailable"].includes(String(error.code))) {
+    // writer diagnostic. Pending transactions, custody failures, and inspection
+    // deadlines need recovery rather than a silent unbound report.
+    const timedOut = errorText(error).includes("timed out");
+    if (timedOut || (error instanceof Error && "code" in error &&
+        ["transaction_unavailable", "custody_unavailable"].includes(String(error.code)))) {
       problems.push({ page: "-", error: "model configuration inspection unavailable" });
     }
   }
