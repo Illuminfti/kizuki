@@ -8,6 +8,7 @@ import { parseBuildInfo, parseProofArgs } from "./stranger-proof";
 import { requireRegularFile, verifyChecksumManifest } from "./release-artifacts";
 import { releaseTarget, requireNativeHost } from "./release-targets";
 import { installedRailsHealth, readNativeRailDiagnostics, recordInstalledHealth, waitForFreshRails } from "./native-service-health";
+import { captureSyntheticServiceTrace } from "./native-service-trace";
 
 const repository = resolve(import.meta.dir, "..");
 const packageFiles = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"] as const;
@@ -232,8 +233,18 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     const diagnostics = await waitForFreshRails(() => readNativeRailDiagnostics(vault,
       { pid: observed.manager_pid!, instance_id: observed.instance_id! }, initializedAt));
     const freshStatus = invoke([executable, "serve", "status", "--json", "--vault", vault]);
-    recordInstalledHealth(steps, failures, installedRailsHealth(freshStatus, diagnostics, initializedAt));
+    const installedHealth = installedRailsHealth(freshStatus, diagnostics, initializedAt);
+    recordInstalledHealth(steps, failures, installedHealth);
     save();
+    if (platform === "linux" && !installedHealth.passed) {
+      const current = processObservation();
+      const verified = current.manager_pid === observed.manager_pid && current.marker_pid === current.manager_pid &&
+        current.instance_id === observed.instance_id && current.command === observed.command;
+      const evidence = verified ? captureSyntheticServiceTrace({ fixtureRoot, vault, binary: executable,
+        pid: current.manager_pid!, instanceId: current.instance_id! }) : { status: "target_changed" };
+      steps.push({ id: "failed-rail-syscall-diagnostics", passed: evidence.status === "captured", evidence });
+      save();
+    }
 
     record("private-unit", (lstatSync(unitPath).mode & 0o777) === 0o600, { unit, mode: lstatSync(unitPath).mode & 0o777, sha256: hash(unitPath) });
     // Port zero avoids a fixed port when the unique service is subsequently restarted.
