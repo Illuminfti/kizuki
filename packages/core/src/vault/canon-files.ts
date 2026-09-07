@@ -59,14 +59,26 @@ function directoryStat(fd: number, ancestor = false): BigIntStats {
 }
 function openRoot(path: string): number {
   const closeOnExec = process.platform === "darwin" ? 0x1000000 : 0x80000;
-  let fd = openSync("/", constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | closeOnExec);
+  const components = path.split("/").filter(Boolean);
+  // Ancestors confer traversal and identity only. Linux O_PATH avoids asking
+  // confinement for directory-listing access outside the readable vault.
+  const access = process.platform === "linux" && components.length > 0 ? 0x200000 /* O_PATH */ : constants.O_RDONLY;
+  let fd = openSync("/", access | constants.O_DIRECTORY | constants.O_NOFOLLOW | closeOnExec);
   try {
     directoryStat(fd, true);
-    const components = path.split("/").filter(Boolean);
     for (const [index, part] of components.entries()) {
-      const next = openChild(fd, part, true); if (next === null) fail("changed");
+      const ancestor = index < components.length - 1;
+      let next: number | null;
+      if (ancestor) {
+        const bytes = nameBytes(part);
+        next = result(api().symbols.openAncestorChild(fd, ptr(bytes)));
+        if (next === -2) fail("changed");
+        if (next < 0) fail("unsafe");
+      } else next = openChild(fd, part, true);
+      if (next === null) fail("changed");
       closeSync(fd); fd = next;
-      directoryStat(fd, index < components.length - 1);
+      // O_PATH|NOFOLLOW must never turn a symlink descriptor into authority.
+      directoryStat(fd, ancestor);
     }
     return fd;
   } catch (error) { closeSync(fd); throw error; }

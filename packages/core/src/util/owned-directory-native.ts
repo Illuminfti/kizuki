@@ -7,6 +7,15 @@ import { closeSync, writeFileSync, writeSync } from "node:fs";
 // DIRECTORY. The read helper cannot create; credential creation has its own
 // fixed exclusive-create helper below.
 const source = `
+long kizuki_open_ancestor_child(int parent, const char *name) {
+  long result;
+  long flags = 0x200000L | 0x10000L | 0x20000L | 0x80000L; /* PATH | DIRECTORY | NOFOLLOW | CLOEXEC */
+  register long mode __asm__("r10") = 0;
+  __asm__ volatile ("syscall" : "=a"(result)
+    : "a"(257L), "D"((long)parent), "S"(name), "d"(flags), "r"(mode)
+    : "rcx", "r11", "memory", "cc");
+  return result;
+}
 long kizuki_open_owned_child(int parent, const char *name, int directory) {
   long result;
   long flags = 0x20000L | 0x800L | 0x80000L | (directory ? 0x10000L : 0);
@@ -118,6 +127,7 @@ function loadLinuxOwnedDirectoryNative() {
         flags: ["-nostdlib", "-x", "c"],
         source: `/proc/self/fd/${fd}`,
         symbols: {
+          kizuki_open_ancestor_child: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
           kizuki_open_owned_child: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i64_fast },
           kizuki_create_credential_child: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
           kizuki_open_receipt_append_child: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i64_fast },
@@ -139,6 +149,7 @@ function loadLinuxOwnedDirectoryNative() {
           readDirectory: (descriptor: number, address: ReturnType<typeof ptr>, length: number) =>
             libc.symbols.syscall(217n, BigInt(descriptor), address, BigInt(length)),
           openChild: compiled.symbols.kizuki_open_owned_child,
+          openAncestorChild: compiled.symbols.kizuki_open_ancestor_child,
           createCredentialChild: compiled.symbols.kizuki_create_credential_child,
           openReceiptAppendChild: compiled.symbols.kizuki_open_receipt_append_child,
           openReceiptReadAppendChild: compiled.symbols.kizuki_open_receipt_read_append_child,
@@ -352,6 +363,7 @@ function loadDarwinOwnedDirectoryNative() {
       readDirectory: (descriptor: number, address: ReturnType<typeof ptr>, length: number) =>
         library.symbols.kizuki_read_directory(descriptor, address, BigInt(length)),
       openChild: library.symbols.kizuki_open_owned_child,
+      openAncestorChild: (parent: number, name: ReturnType<typeof ptr>) => library.symbols.kizuki_open_owned_child(parent, name, 1),
       createCredentialChild: library.symbols.kizuki_create_credential_child,
       openReceiptAppendChild: library.symbols.kizuki_open_receipt_append_child,
       openReceiptReadAppendChild: library.symbols.kizuki_open_receipt_read_append_child,

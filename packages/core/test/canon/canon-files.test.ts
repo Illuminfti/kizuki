@@ -241,7 +241,7 @@ for (const mode of ["unsupported", "unavailable", "unknown-native", "partial-wri
         mock.module(${JSON.stringify(join(import.meta.dir, "../../src/util/owned-directory-native.ts"))}, () => ({
           loadOwnedDirectoryNative() {
             if (mode === 'unavailable') throw new Error('synthetic private detail');
-            return { symbols: { openChild() { return -1234; } } };
+            return { symbols: { openChild() { return -1234; }, openAncestorChild() { return -1234; } } };
           }
         }));
       }
