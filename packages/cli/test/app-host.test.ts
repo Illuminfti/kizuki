@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { createHelpers } from './helpers';
 import { createAppHost } from '../src/app/host';
 import { Database } from 'bun:sqlite';
+import { errorText } from '../src/output';
 import type { CliIo } from '../src/commands';
 const h = createHelpers();
 afterEach(h.cleanup);
@@ -120,7 +121,17 @@ test.each(['authenticated', 'asset', 'unauthorized', 'malformed'])('launcher fai
                 connected = observed?.() ?? false;
                 throw Error('synthetic opener failure after request');
             });
-        } catch (error) { expect((error as Error).message).toBe('app_browser_unavailable'); }
+        } catch (error) {
+            expect((error as Error).message).toBe('app_browser_unavailable');
+            const diagnostic = errorText(error);
+            expect(diagnostic).toStartWith('app_browser_unavailable:');
+            expect(diagnostic).toContain(process.platform === 'darwin' ? '/usr/bin/open' : '/usr/bin/xdg-open');
+            expect(diagnostic).toContain('default web browser');
+            expect(diagnostic).toContain('does not sign you in');
+            expect(diagnostic).not.toContain('synthetic opener failure');
+            expect(diagnostic).not.toContain(origin);
+            expect(diagnostic).not.toContain('#token=');
+        }
         expect(connected).toBe(kind === 'authenticated');
         if (kind === 'authenticated') {
             expect(app).toBeDefined();

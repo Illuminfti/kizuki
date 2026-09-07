@@ -75,5 +75,14 @@ export function formatRunCounts(result: RunResult): string {
 }
 
 export function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === "app_browser_unavailable") {
+    const desktop = process.platform === "linux"
+      ? "Use a graphical Linux desktop with a default web browser and /usr/bin/xdg-open (usually supplied by xdg-utils)."
+      : process.platform === "darwin"
+        ? "Use your macOS desktop with a default web browser and /usr/bin/open available."
+        : "The local app requires a supported Linux desktop or macOS with a default web browser.";
+    return `${message}: ${desktop} Check the default browser, then retry the app command. --no-open is diagnostic; its printed address does not sign you in.`;
+  }
+  return message;
 }

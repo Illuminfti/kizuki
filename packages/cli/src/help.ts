@@ -106,6 +106,7 @@ export function printRootHelp(
   }
 
   write("Examples");
+  write(`  ${INVOCATION} app`);
   write(`  ${INVOCATION} init ./vault`);
   write(`  ${INVOCATION} import markdown-folder --source ./notes --policy POLICY.json --expected-revision 0 --operation-id first-import`);
   write(`  ${INVOCATION} query acme`);
@@ -114,12 +115,14 @@ export function printRootHelp(
   write("");
   write("Give your agent a focused context packet, with sources, using context.");
   write("Capture and recall work without a model. Automatic canon writing needs one.");
+  write("The app needs a graphical desktop and a default web browser.");
+  write("Linux uses /usr/bin/xdg-open; macOS uses /usr/bin/open.");
   write("Use connect to enroll local files, exports, Beeper messaging, IMAP, Telegram, Gmail, and Google Calendar.");
   write("Other account connectors are not enrollable here. None of these sign-in paths are live-account qualified.");
   write(
     `${RETIRED_OWNER_GATE_VERBS.join(", ")} are retired. Use audit, undo, and tell.`,
   );
-  write("Docs: README.md · docs/cli.md · docs/architecture.md");
+  write(IS_COMPILED ? "Setup guide: README.txt beside these executables." : "Docs: README.md · docs/cli.md · docs/architecture.md");
 }
 
 export function printCommandHelp(

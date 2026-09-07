@@ -2,10 +2,13 @@
 
 An agent connects to Kizuki with an explicit grant. Its credential stays in a
 private file; the CLI reports setup state without printing the credential or its
-path. File enrollment currently requires Linux x64 glibc with qualified local
-filesystem custody. Other platforms refuse this delivery method. A failure to
-load the required native custody helper also returns `unsupported_platform`;
+path. File enrollment requires native local filesystem custody. A failure to
+load the required native custody helper returns `unsupported_platform`;
 changing destination permissions cannot supply missing native support.
+
+For guided setup and the exact local Codex registration command, use
+[the app's Codex CLI guide](local-app.md#connect-codex-cli). It uses the generated
+scoped credential-file reference and does not grant owner access.
 
 ## Run from a package or source checkout
 
