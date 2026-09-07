@@ -13,7 +13,7 @@ establish real-account qualification.
 The CLI owns browser sign-in, the fixed loopback listener and protected state
 persistence. Configure the registered public native-app client ID in
 `KIZUKI_X_CLIENT_ID` and its exact `http://127.0.0.1:PORT/callback` in
-`KIZUKI_X_REDIRECT_URI`. An eligible application, provider usage credits and a
+`KIZUKI_X_REDIRECT_URI`. An eligible application, [provider usage credits](https://docs.x.com/x-api/getting-started/pricing) and a
 supported desktop browser are prerequisites; no client secret is embedded.
 
 ```sh
