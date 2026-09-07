@@ -107,6 +107,9 @@ until its required native gates pass; Linux results cannot supply that proof.
 
 The shared lock uses the OS system library on each target and keeps its native
 advisory locking and stable-inode ownership protocol. `readBootId()` reads the
-Linux kernel boot ID and falls back to a PID string where that file is absent,
-including macOS. That fallback does not establish a native boot-session UUID.
-Calendar qualification and actual host-reboot evidence remain separate gates.
+Linux kernel boot ID or the native `kern.bootsessionuuid` value on macOS arm64.
+Unavailable or malformed native identity falls back conservatively to a PID
+string; that fallback cannot establish a boot-session UUID. The native Mac
+consumer check compares the implementation across processes with the OS value.
+Simulated changed-boot lease recovery and actual host-reboot evidence remain
+distinct checks.
