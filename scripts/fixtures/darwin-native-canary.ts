@@ -44,7 +44,7 @@ try {
   const receipt = name("receipt");
   const source = name("source");
   const destination = name("destination");
-  const opaque = name([0x80, 0xff]);
+  const opaque = name([0xc3, 0xbf]);
 
   const credentialFd = nativeFd(symbols.createCredentialChild(parentFd, ptr(credential)));
   try {
@@ -88,6 +88,9 @@ try {
   assert.equal(symbols.removeEmptyChild(parentFd, ptr(source)), 0);
   assert.equal(symbols.removeEmptyChild(parentFd, ptr(destination)), 0);
 
+  // The native Mac volume rejects malformed UTF-8; the adapter preserves that
+  // refusal. Valid multibyte names still travel through the byte-oriented seam.
+  assert.equal(symbols.createCredentialChild(parentFd, ptr(name([0x80, 0xff]))), -92 /* EILSEQ */);
   const opaqueFd = nativeFd(symbols.createCredentialChild(parentFd, ptr(opaque)));
   closeSync(opaqueFd);
   assert.equal(symbols.mkdirChild(parentFd, ptr(source)), 0);

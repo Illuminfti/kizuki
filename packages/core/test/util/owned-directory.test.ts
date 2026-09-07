@@ -15,10 +15,10 @@ test("replacement of the opened root cannot redirect erasure", () => {
     expect(readFileSync(join(f.outside, "store/canary"), "utf8")).toBe("SYNTHETIC_UNOWNED");
   } finally { cap.close(); }
 });
-test("fd-relative erasure supports non-UTF8 native names and refuses symlinks", () => {
+test("fd-relative erasure supports opaque native names and refuses symlinks", () => {
   const f = fixture(), cap = openOwnedDirectory(f.owned);
   try {
-    const bytes = Buffer.concat([Buffer.from(join(f.owned, "store") + "/"), Buffer.from([0xff])]); writeFileSync(bytes, "synthetic bytes");
+    const bytes = Buffer.concat([Buffer.from(join(f.owned, "store") + "/"), Buffer.from(process.platform === "darwin" ? [0xc3, 0xbf] : [0xff])]); writeFileSync(bytes, "synthetic bytes");
     const identity = cap.childIdentity("store"); cap.removeTree("store", identity);
     expect(existsSync(join(f.owned, "store"))).toBe(false);
     mkdirSync(join(f.owned, "store")); symlinkSync(f.outside, join(f.owned, "store/link"));
@@ -78,7 +78,7 @@ test("emptiness starts a fresh directory scan on every call and sees new native 
     expect(cap.isEmpty()).toBe(false);
     rmSync(join(f.owned, "store"), { recursive: true });
     expect(cap.isEmpty()).toBe(true);
-    const raw = Buffer.concat([Buffer.from(f.owned + "/"), Buffer.from([0xff])]);
+    const raw = Buffer.concat([Buffer.from(f.owned + "/"), Buffer.from(process.platform === "darwin" ? [0xc3, 0xbf] : [0xff])]);
     writeFileSync(raw, "SYNTHETIC_KEEP");
     expect(cap.isEmpty()).toBe(false);
     expect(cap.isEmpty()).toBe(false);

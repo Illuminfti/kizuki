@@ -72,7 +72,7 @@ function scenario(mode: string, body: string): void {
         if (mode === "present-with-false-enoent" && name === "present") {
           injected++; errno.setInt32(0, 2, true); return -13;
         }
-        if (mode === "opaque-present" && new Uint8Array(ffi.toArrayBuffer(values[1], 0, 1))[0] === 255) {
+        if (mode === "opaque-present" && new Uint8Array(ffi.toArrayBuffer(values[1], 0, 1))[0] === (process.platform === "darwin" ? 195 : 255)) {
           injected++; errno.setInt32(0, 2, true); return -13;
         }
         if (mode === "fresh-open-failed" && name === ".") { injected++; return -13; }
@@ -124,7 +124,7 @@ test("failed opens of present symlinks and non-directory files remain unsafe", (
 test("native erasure preserves opaque names and refuses permission errors", () => {
   scenario("opaque-present", `
     fs.mkdirSync(join(owned, "store"));
-    for (const byte of [255, 254]) fs.writeFileSync(Buffer.concat([Buffer.from(join(owned, "store") + "/"), Buffer.from([byte])]), "synthetic");
+    for (const bytes of (process.platform === "darwin" ? [[195, 191], [195, 190]] : [[255], [254]])) fs.writeFileSync(Buffer.concat([Buffer.from(join(owned, "store") + "/"), Buffer.from(bytes)]), "synthetic");
     assert.throws(() => cap.removeTree("store", cap.childIdentity("store")), /unsafe/);
   `);
 });
