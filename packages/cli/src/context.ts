@@ -10,7 +10,7 @@ import {
   readVaultId,
 } from "@kizuki/core";
 import type { RetrievalPort } from "@kizuki/core";
-import { openLedger } from "@kizuki/core/internal";
+import { inspectLedgerIdentity, LedgerIdentityError, openLedger } from "@kizuki/core/internal";
 import { openConfiguredRetrieval } from "./retrieval-runtime";
 import type { CliIo } from "./commands/index";
 import {
@@ -54,31 +54,14 @@ function resolveVaultOverride(value: string, config: KizukiConfig): string {
   return resolve(value);
 }
 
-function peekLedgerIdentity(dbPath: string): void {
-  const peek = new Database(dbPath, { readonly: true });
+function peekLedgerIdentity(vaultPath: string, dbPath: string): void {
   try {
-    const tables = peek
-      .query<{ name: string }, []>(
-        "SELECT name FROM sqlite_master WHERE type = 'table'",
-      )
-      .all()
-      .map((row) => row.name);
-    const names = new Set(tables);
-    if (!names.has("schema_version") || !names.has("events")) {
-      throw new Error(
-        `vault ledger is not a Kizuki database: ${dbPath}; run: kizuki init`,
-      );
+    inspectLedgerIdentity(vaultPath);
+  } catch (error) {
+    if (error instanceof LedgerIdentityError && error.code === "invalid_ledger") {
+      throw new Error(`vault ledger is not a Kizuki database or has no usable schema version: ${dbPath}; run: kizuki init`);
     }
-    const versions = peek
-      .query<{ version: number }, []>("SELECT version FROM schema_version")
-      .all();
-    if (versions.length !== 1 || !Number.isInteger(versions[0]?.version) || (versions[0]?.version ?? 0) < 1) {
-      throw new Error(
-        `vault ledger has no usable schema version: ${dbPath}; run: kizuki init`,
-      );
-    }
-  } finally {
-    peek.close();
+    throw error;
   }
 }
 
@@ -101,7 +84,7 @@ export function assertVault(path: string): string {
       `vault ledger missing: ${absolutePath}; run: kizuki init ${absolutePath}`,
     );
   }
-  peekLedgerIdentity(dbPath);
+  peekLedgerIdentity(absolutePath, dbPath);
   assertVaultControl(absolutePath);
   // Remint a snapshot-cloned identity once this volume lands on a new machine.
   ensureVaultId(absolutePath);

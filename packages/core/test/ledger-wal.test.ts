@@ -20,7 +20,7 @@ test("the last writable ledger connection closes WAL sidecars and preserves comm
       expect(readdirSync(root)).toContain("ledger.sqlite-wal");
     } finally { db.close(true); }
     expect(readdirSync(root)).toEqual(["ledger.sqlite"]);
-    const reader = new Database(path, { readonly: true });
+    const reader = openLedger(path);
     try { expect(reader.query("SELECT n FROM wal_close_fixture").get()).toEqual({ n: 7 }); }
     finally { reader.close(true); }
   } finally { rmSync(root, { recursive: true, force: true }); }
