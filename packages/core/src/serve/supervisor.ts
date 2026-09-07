@@ -33,6 +33,8 @@ export interface SupervisorHost {
   /** Activate the current unit bytes, including replacement of an older running definition. */
   enable(unitPath: string, unitName: string): { ok: boolean; detail: string };
   disable(unitName: string): { ok: boolean; detail: string };
+  /** Clear only this stopped systemd unit's retained failure before uninstall. */
+  resetFailure?(unitName: string): { ok: boolean; detail: string };
   /** Restore unit enablement without starting or restarting it. */
   enableWithoutStart?(unitName: string): { ok: boolean; detail: string };
 }
@@ -209,6 +211,10 @@ export function realSupervisorHost(
     },
     ...(kind === "systemd"
       ? {
+          resetFailure(unitName: string) {
+            const result = runCommand(["systemctl", "--user", "reset-failed", unitName]);
+            return { ok: result.ok, detail: result.ok ? "failure cleared" : "service failure reset failed" };
+          },
           enableWithoutStart(unitName: string) {
             const result = runCommand(["systemctl", "--user", "enable", unitName]);
             return { ok: result.ok, detail: result.ok ? "enabled without start" : "service enable failed" };
@@ -443,6 +449,14 @@ export function uninstallServeService(
     const status = host.query(paths.vaultId);
     if (!confirmedStopped(status)) throw new Error("service stop was not confirmed");
     const removed = serviceFile(paths.path) !== null;
+    // systemd retains failed jobs after definition removal; is-active then emits
+    // failed with exit 4 (not-found), which is intentionally not a verified stop.
+    // Clear only the stopped owned job while its definition is still available.
+    if (host.kind === "systemd" && status.detail === "failed") {
+      if (!removed || !host.resetFailure?.(paths.unit).ok) throw new Error("service failure reset failed");
+      const cleared = host.query(paths.vaultId);
+      if (!confirmedStopped(cleared) || cleared.detail === "failed") throw new Error("service failure reset was not confirmed");
+    }
     replaceServiceFile(paths.path, null);
     if (!host.reload().ok) throw new Error("service removal definition reload failed");
     const refreshed = host.query(paths.vaultId);
