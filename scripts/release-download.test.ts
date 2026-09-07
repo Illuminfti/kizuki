@@ -45,9 +45,10 @@ test("canonical current package roundtrip is deterministic and byte exact", () =
   for (const name of CURRENT_PACKAGE_FILES) expect(parsed.files[name].equals(f.files[name])).toBe(true);
 });
 test("compressor host metadata is canonicalized while foreign input headers are refused", () => {
-  const f = fixture(), original = zlib.gzipSync, wanted = createPackageArchive(f.files);
+  const f = fixture(), original = zlib.gzipSync;
   console.log(JSON.stringify({ schema: "kizuki.gzip-encoder-observation/v1", platform: process.platform,
     bun_version: Bun.version, raw_header: original(Buffer.from("synthetic gzip fixture"), { level: 9 }).subarray(0, 10).toString("hex") }));
+  const wanted = createPackageArchive(f.files);
   for (const os of [3, 19, 255]) {
     const encoder = spyOn(zlib, "gzipSync").mockImplementation((...args: Parameters<typeof gzipSync>) => {
       const bytes = original(...args); bytes[9] = os; return bytes;
