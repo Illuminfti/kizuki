@@ -82,8 +82,11 @@ Automation writes both. What protects the owner is not an approval step; it
 is that every write is attributable, budgeted, reversible by one command,
 and outranked by the owner's own word.
 
-High-impact and low-impact writes differ in confidence, authority and
-budget, not in who presses a button.
+Authority-tier arbitration determines which claims reach canon. Material
+conflicts remain contested; conversational correction and receipt undo let
+the owner change or reverse the result. Confidence, authority and write budgets
+bound consequential writes. Approval language applies to external side
+effects, such as sending a message, rather than canon maintenance.
 
 ## Agent and harness experience
 

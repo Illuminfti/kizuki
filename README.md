@@ -328,6 +328,10 @@ Kizuki owns the durable layer beneath them:
 
 The architecture is a modular monolith with versioned ports. Connectors, models, embedding, retrieval and other replaceable components have explicit boundaries. Authoritative storage remains local and owned.
 
+The [repository inventory](docs/repository-inventory.md) lists every workspace package
+and registered connector, with Screenpipe's operating limits. Tests compare the
+tables with the current manifests and registry.
+
 To add a source, implement `kizuki.connector/v1`, emit `kizuki.event/v1`, and pass the shared conformance suite. Unsupported provider behavior must be declared rather than imitated.
 
 From a full-history checkout:

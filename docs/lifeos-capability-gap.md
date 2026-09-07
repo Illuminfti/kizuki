@@ -100,24 +100,19 @@ completion or candidate release acceptance. Check
 11. **Ship one consented connector beyond export/folder sources.** Require the
     complete conformance and custody contract before adding another.
 12. **Define proactive output contracts.** Briefs, insights, priorities,
-    scenarios, and predictions remain evidence-backed drafts with quiet
-    hours, notification consent, and approval rails. Superseded in part
-    2026-09-02, see `docs/decision-log.md` D9 and D10: there are no approval
-    rails. What bounds an autonomous write is a per-run and per-day budget, a
-    calibration band asserted in code, resolvable provenance, and reversal by
-    receipt. Quiet hours and notification consent are unchanged, and a
-    notifier still never acts.
+    scenarios, and predictions retain evidence links, quiet hours and
+    notification consent. Canon maintenance uses authority-tier arbitration,
+    contested rendering, conversational correction and receipt undo. Per-run
+    and per-day budgets, calibration and resolvable provenance bound writes.
+    Approval applies to external side effects, such as sending a message,
+    rather than maintaining truth. A notifier never executes an action.
 
-## Conclusion
+## Patterns to carry forward
 
-The valuable inheritance is not the private estate itself. It is a set of
-proven patterns: scoped retrieval, provenance, receipts, fail-closed
-authorization, correction-aware working knowledge, reversible derived state,
-and explicit human approval for consequential truth. Superseded 2026-09-02,
-see `docs/decision-log.md` D9, D10 and D14: the last pattern is not
-inherited. A gate whose only consumer is the owner has zero throughput
-(RFC 0002 §1.1). What replaces it is autonomy plus reversibility — budgeted,
-attributable, receipted writes that the owner outranks with a sentence and
-reverses with one command. Kizuki should reproduce
-those properties through public, local-first contracts and neutral evidence,
-while leaving private infrastructure and unverified automation behind.
+Carry forward scoped retrieval, provenance, receipts, fail-closed
+authorization, correction-aware knowledge and reversible derived state through
+public local-first contracts. Authority-tier arbitration selects claims;
+material conflicts remain contested. The owner's conversational correction
+outranks other sources, and receipt undo reverses writes. D9, D10 and D14 in
+[the decision log](decision-log.md) govern this boundary. Private infrastructure
+and unverified automation remain outside the implementation.
