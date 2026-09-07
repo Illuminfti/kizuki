@@ -1,23 +1,31 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
+import { Database, constants as sqlite } from "bun:sqlite";
+import { openCredentialDirectory } from "../packages/core/src/agents/credential-file";
 import { manageDatabaseLifetime } from "../packages/core/src/ledger/lifetime";
 import { configureLedgerWalLifecycle } from "../packages/core/src/ledger/wal-lifecycle";
 import { parseRunReceipt } from "../packages/core/src/serve/receipts";
 
 export const MODEL_PHASE_IDS = ["model-absent", "model-configured", "model-unavailable", "model-credential-loss", "model-dependency-offline"] as const;
 export type ModelPhaseId = typeof MODEL_PHASE_IDS[number];
+export type NativeModelRecovery = {
+  stop_confirmed: boolean; receipt_trigger: string; receipt_due_at: string | null; scheduling_override: { rail: "sync"; old: string | null; next: string; reason: "synthetic-due-time-for-recovery" };
+  trigger: "service-restart"; unit: string; pid: number; instance_id: string; started_at: string; receipt_run_id: string; receipt_status: string;
+  model_calls: number; model_unavailable: number; claims_extracted: number; canon_writes: number; endpoint_requests: number; unexpected_requests: number;
+  model_claims: number; model_canon_receipts: number; model_output_readable: boolean; source_event_present: boolean; query_preserved: boolean;
+  daemon_active: boolean; config_unchanged: boolean; credential_unchanged: boolean; endpoint_unchanged: boolean;
+};
 export type NativeModelEvidence = {
-  instance_id: string; pid: number; started_at: string; receipt_run_id: string; receipt_status: string;
+  unit: string; instance_id: string; pid: number; started_at: string; receipt_run_id: string; receipt_status: string;
   model_calls: number; model_unavailable: number; claims_extracted: number; canon_writes: number;
   endpoint_requests: number; unexpected_requests: number; credential_present: boolean; model_configured: boolean;
   source_event_present: boolean; query_preserved: boolean; weights_unchanged: boolean; config_unchanged: boolean;
   configuration_unavailable: boolean; daemon_active: boolean; model_ref_sha256: string | null;
-  model_claims: number; model_canon_receipts: number; model_output_readable: boolean;
+  model_claims: number; model_canon_receipts: number; model_output_readable: boolean; recovery: NativeModelRecovery | null;
 };
 export type NativeModelPhase = { id: ModelPhaseId; passed: boolean; evidence: NativeModelEvidence };
-export type NativeModelInstance = { pid: number; instance_id: string; started_at: string };
+export type NativeModelInstance = { unit: string; pid: number; instance_id: string; started_at: string };
 export type NativeModelHost = {
   executable: string; workspace: string; env: Record<string, string>;
   invoke(args: string[]): { exit_code: number; stdout: string; stderr: string };
@@ -55,16 +63,56 @@ export function readInstalledModelAttempt(vault: string, expected: NativeModelIn
   } finally { db.close(true); }
 }
 
+/** The native controller has proved this owned fixture stopped. Move only its
+ * durable sync due time; do not erase the offline receipt or change cadence. */
+export function prepareModelRecoverySchedule(vault: string, stopConfirmed: boolean): NativeModelRecovery["scheduling_override"] {
+  check(stopConfirmed && !existsSync(join(vault, ".kizuki/serve.pid")), "schedule_service_not_stopped");
+  const directory = openCredentialDirectory(join(vault, ".kizuki")), path = join(vault, ".kizuki/kizuki.db");
+  let db: Database | undefined;
+  try {
+    const before = directory.inspectFileIdentity("kizuki.db"); check(before, "schedule_ledger_missing");
+    for (const name of ["kizuki.db-wal", "kizuki.db-shm"]) directory.inspectFileIdentity(name);
+    check(!directory.inspectFileIdentity("kizuki.db-journal"), "schedule_hot_journal");
+    db = manageDatabaseLifetime(new Database(path, sqlite.SQLITE_OPEN_READWRITE | sqlite.SQLITE_OPEN_NOFOLLOW));
+    configureLedgerWalLifecycle(db, path); db.exec("PRAGMA busy_timeout=500");
+    const binding = () => { directory.observe(); const current = directory.inspectFileIdentity("kizuki.db"); check(current?.dev === before!.dev && current?.ino === before!.ino, "schedule_identity_changed"); };
+    binding();
+    return db.transaction(() => {
+      binding();
+      const schedules = db!.query<Record<string, string | number | null>, []>("SELECT * FROM schedules ORDER BY rail LIMIT 9").all();
+      check(schedules.length === 7, "schedule_inventory");
+      const sync = schedules.find(row => row.rail === "sync"); check(sync && (sync.next_run_at === null || typeof sync.next_run_at === "string"), "schedule_sync_missing");
+      const old = sync!.next_run_at as string | null, next = new Date(Date.now() - 1000).toISOString();
+      const receipts = () => { const rows = db!.query("SELECT * FROM run_receipts ORDER BY run_id LIMIT 129").all(); const text = JSON.stringify(rows); check(rows.length <= 128 && text.length <= 1_048_576, "schedule_receipts_bound"); return text; };
+      const priorReceipts = receipts();
+      const result = db!.query("UPDATE schedules SET next_run_at=? WHERE rail='sync' AND next_run_at IS ?").run(next, old);
+      check(result.changes === 1, "schedule_cas_conflict");
+      const after = db!.query<Record<string, string | number | null>, []>("SELECT * FROM schedules ORDER BY rail LIMIT 9").all();
+      const changed = after.find(row => row.rail === "sync"); check(changed?.next_run_at === next, "schedule_due_not_written"); changed!.next_run_at = old;
+      check(JSON.stringify(after) === JSON.stringify(schedules) && receipts() === priorReceipts, "schedule_unrelated_mutation"); binding();
+      return { rail: "sync" as const, old, next, reason: "synthetic-due-time-for-recovery" as const };
+    }).immediate();
+  } finally { try { db?.close(true); } finally { directory.close(); } }
+}
+
 /** Closed phase predicate: a prior successful receipt cannot certify a later failure case. */
 export function modelPhasePassed(id: ModelPhaseId, e: NativeModelEvidence): boolean {
   const common = e.daemon_active && e.pid > 1 && e.instance_id.length > 0 && e.receipt_run_id.length > 0 &&
     e.source_event_present && e.query_preserved && e.weights_unchanged && e.config_unchanged && e.unexpected_requests === 0;
-  if (!common) return false;
-  if (id === "model-absent") return !e.model_configured && !e.credential_present && e.model_calls === 0 && e.endpoint_requests === 0 && e.model_ref_sha256 === null && !e.configuration_unavailable;
+  if (!common || (id !== "model-dependency-offline" && e.recovery !== null)) return false;
+  const noAuthority = e.model_claims === 0 && e.model_canon_receipts === 0 && !e.model_output_readable;
+  if (id === "model-absent") return noAuthority && !e.model_configured && !e.credential_present && e.model_calls === 0 && e.endpoint_requests === 0 && e.model_ref_sha256 === null && !e.configuration_unavailable;
   if (!e.model_configured) return false;
-  if (id === "model-credential-loss") return !e.credential_present && e.configuration_unavailable && e.model_calls === 0 && e.endpoint_requests === 0 && e.claims_extracted === 0 && e.canon_writes === 0;
+  if (id === "model-credential-loss") return noAuthority && !e.credential_present && e.configuration_unavailable && e.model_calls === 0 && e.endpoint_requests === 0 && e.claims_extracted === 0 && e.canon_writes === 0;
   if (!e.credential_present || e.configuration_unavailable || e.model_ref_sha256 === null) return false;
   if (id === "model-configured") return e.receipt_status === "ok" && e.model_calls === 1 && e.model_unavailable === 0 && e.endpoint_requests === 1 && e.claims_extracted === 1 && e.canon_writes > 0 && e.model_claims === 1 && e.model_canon_receipts > 0 && e.model_output_readable;
+  if (id === "model-dependency-offline") {
+    const r = e.recovery;
+    if (r === null || !r.stop_confirmed || r.receipt_trigger !== "scheduled" || r.scheduling_override.rail !== "sync" || (r.receipt_due_at !== r.scheduling_override.next || !(Date.parse(r.started_at) - Date.parse(r.scheduling_override.next) > 0 && Date.parse(r.started_at) - Date.parse(r.scheduling_override.next) < 60_000)) || r.scheduling_override.reason !== "synthetic-due-time-for-recovery" || r.trigger !== "service-restart" || r.unit !== e.unit || r.instance_id === e.instance_id || r.receipt_run_id === e.receipt_run_id ||
+      r.pid <= 1 || !r.instance_id || !r.receipt_run_id || r.started_at <= e.started_at || r.receipt_status !== "ok" || r.model_calls !== 1 || r.model_unavailable !== 0 ||
+      r.claims_extracted !== 1 || r.canon_writes <= 0 || r.endpoint_requests !== 1 || r.unexpected_requests !== 0 || r.model_claims !== 1 || r.model_canon_receipts <= 0 ||
+      !r.model_output_readable || !r.source_event_present || !r.query_preserved || !r.daemon_active || !r.config_unchanged || !r.credential_unchanged || !r.endpoint_unchanged) return false;
+  }
   return e.model_calls === 1 && e.model_unavailable === 1 && e.claims_extracted === 0 && e.model_claims === 0 && e.model_canon_receipts === 0 && !e.model_output_readable &&
     e.endpoint_requests === (id === "model-unavailable" ? 1 : 0) && e.receipt_status !== "ok";
 }
@@ -81,11 +129,12 @@ function modelFiles(vault: string): string {
   return sha(JSON.stringify(names));
 }
 
-export async function startNativeModelEndpoint(workspace: string, mode: "ok" | "unavailable") {
+export async function startNativeModelEndpoint(workspace: string, mode: "ok" | "unavailable", reuse?: { port: number; key: string }) {
   mkdirSync(workspace, { recursive: true, mode: 0o700 });
   const keyPath = join(workspace, "fixture.key"), readyPath = join(workspace, "ready.json"), observationPath = join(workspace, "observation.json");
-  writeFileSync(keyPath, randomBytes(24).toString("hex"), { flag: "wx", mode: 0o600 });
-  const child = Bun.spawn([process.execPath, join(import.meta.dir, "native-model-endpoint.ts"), workspace, mode], {
+  check(reuse === undefined || (Number.isInteger(reuse.port) && reuse.port > 0 && reuse.port <= 65535 && /^[0-9a-f]{48}$/.test(reuse.key)), "endpoint_reuse");
+  writeFileSync(keyPath, reuse?.key ?? randomBytes(24).toString("hex"), { flag: "wx", mode: 0o600 });
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, "native-model-endpoint.ts"), workspace, mode, String(reuse?.port ?? 0)], {
     env: { PATH: "/usr/bin:/bin", LANG: "C.UTF-8" }, stdin: "ignore", stdout: "ignore", stderr: "ignore",
   });
   let stopped = false;
@@ -101,7 +150,8 @@ export async function startNativeModelEndpoint(workspace: string, mode: "ok" | "
     check(existsSync(readyPath) && child.exitCode === null, "endpoint_start");
     const ready = JSON.parse(readFileSync(readyPath, "utf8"));
     check(Object.keys(ready).sort().join() === "pid,port" && ready.pid === child.pid && Number.isInteger(ready.port) && ready.port > 0 && ready.port <= 65535, "endpoint_identity");
-    return { endpoint: `http://127.0.0.1:${ready.port}/v1`, key: readFileSync(keyPath, "utf8"), stop,
+    check(reuse === undefined || ready.port === reuse.port, "endpoint_port");
+    return { port: ready.port as number, endpoint: `http://127.0.0.1:${ready.port}/v1`, key: readFileSync(keyPath, "utf8"), stop,
       observation: () => {
         const stat = lstatSync(observationPath); check(stat.isFile() && !stat.isSymbolicLink() && stat.size < 1024, "endpoint_observation");
         const row = JSON.parse(readFileSync(observationPath, "utf8"));
@@ -118,6 +168,7 @@ export async function runNativeModelMatrix(host: NativeModelHost): Promise<void>
     mkdirSync(notes, { recursive: true, mode: 0o700 });
     const endpoint = await startNativeModelEndpoint(join(workspace, "endpoint"), id === "model-unavailable" ? "unavailable" : "ok");
     let activated = false;
+    let recoveredEndpoint: Awaited<ReturnType<typeof startNativeModelEndpoint>> | null = null;
     try {
       check(host.invoke(["init", vault, "--no-service", "--no-default"]).exit_code === 0, "init");
       const key = join(vault, ".kizuki/model-fixture.key"), config = join(vault, ".kizuki/serve.toml");
@@ -137,8 +188,8 @@ export async function runNativeModelMatrix(host: NativeModelHost): Promise<void>
       const deadline = Date.now() + 30_000;
       while (observation === null && Date.now() < deadline) { observation = readInstalledModelAttempt(vault, instance); if (observation === null) await Bun.sleep(100); }
       check(observation !== null, "receipt_missing");
-      const result = host.invoke(["query", "Orchard", "--degraded", "--vault", vault]);
-      const modelQuery = host.invoke(["query", "operations", "--json", "--degraded", "--vault", vault]);
+      const result = host.invoke(["query", "Orchard", "--vault", vault]);
+      const modelQuery = host.invoke(["query", "operations", "--json", "--vault", vault]);
       const modelOutputReadable = modelQuery.exit_code === 0 && modelQuery.stdout.includes("model_inference") && modelQuery.stdout.includes("operations");
       const counts = endpoint.observation(), receipt = observation!.receipt;
       const evidence: NativeModelEvidence = { ...instance, receipt_run_id: receipt.run_id, receipt_status: receipt.status,
@@ -147,10 +198,32 @@ export async function runNativeModelMatrix(host: NativeModelHost): Promise<void>
         source_event_present: observation!.source_event_present, query_preserved: result.exit_code === 0 && result.stdout.includes("Orchard"),
         weights_unchanged: modelFiles(vault) === weightsHash, config_unchanged: sha(readFileSync(config)) === configHash,
         configuration_unavailable: receipt.errors.includes("model configuration unavailable"), daemon_active: host.stillActive(vault, instance),
-        model_ref_sha256: receipt.model.model_ref_sha256 ?? null, model_claims: observation!.model_claims, model_canon_receipts: observation!.model_canon_receipts, model_output_readable: modelOutputReadable };
+        model_ref_sha256: receipt.model.model_ref_sha256 ?? null, model_claims: observation!.model_claims, model_canon_receipts: observation!.model_canon_receipts, model_output_readable: modelOutputReadable, recovery: null };
+      if (id === "model-dependency-offline") {
+        // Preserve the unavailable startup observation; recovery is a new installed-service instance.
+        await host.deactivate(vault); activated = false;
+        const stopConfirmed = !host.stillActive(vault, instance) && !existsSync(join(vault, ".kizuki/serve.pid"));
+        const schedulingOverride = prepareModelRecoverySchedule(vault, stopConfirmed);
+        recoveredEndpoint = await startNativeModelEndpoint(join(workspace, "recovered-endpoint"), "ok", { port: endpoint.port, key: endpoint.key });
+        const recovered = await host.activate(vault); activated = true;
+        let next: ReturnType<typeof readInstalledModelAttempt> = null;
+        const recoveryDeadline = Date.now() + 30_000;
+        while (next === null && Date.now() < recoveryDeadline) { next = readInstalledModelAttempt(vault, recovered); if (next === null) await Bun.sleep(100); }
+        check(next !== null, "recovery_receipt_missing");
+        const recoveredSource = host.invoke(["query", "Orchard", "--vault", vault]);
+        const recoveredModel = host.invoke(["query", "operations", "--json", "--vault", vault]);
+        const recoveredCounts = recoveredEndpoint.observation(), nextReceipt = next!.receipt;
+        evidence.recovery = { stop_confirmed: stopConfirmed, receipt_trigger: nextReceipt.execution?.trigger ?? "absent", receipt_due_at: nextReceipt.execution?.due_at ?? null, scheduling_override: schedulingOverride, trigger: "service-restart", ...recovered, receipt_run_id: nextReceipt.run_id, receipt_status: nextReceipt.status,
+          model_calls: nextReceipt.model.calls, model_unavailable: nextReceipt.model.unavailable, claims_extracted: nextReceipt.claims_extracted, canon_writes: nextReceipt.canon_writes,
+          endpoint_requests: recoveredCounts.requests, unexpected_requests: recoveredCounts.unexpected, model_claims: next!.model_claims, model_canon_receipts: next!.model_canon_receipts,
+          model_output_readable: recoveredModel.exit_code === 0 && recoveredModel.stdout.includes("model_inference") && recoveredModel.stdout.includes("operations"),
+          source_event_present: next!.source_event_present, query_preserved: recoveredSource.exit_code === 0 && recoveredSource.stdout.includes("Orchard"),
+          daemon_active: host.stillActive(vault, recovered), config_unchanged: sha(readFileSync(config)) === configHash,
+          credential_unchanged: readFileSync(key, "utf8") === endpoint.key, endpoint_unchanged: recoveredEndpoint.endpoint === endpoint.endpoint };
+      }
       host.record({ id, passed: modelPhasePassed(id, evidence), evidence });
     } finally {
-      try { if (activated) await host.deactivate(vault); } finally { await endpoint.stop(); }
+      try { if (activated) await host.deactivate(vault); } finally { try { await recoveredEndpoint?.stop(); } finally { await endpoint.stop(); } }
     }
   }
 }

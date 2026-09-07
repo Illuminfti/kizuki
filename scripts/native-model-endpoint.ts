@@ -19,15 +19,15 @@ export function syntheticModelReply(raw: unknown): unknown {
 }
 
 if (import.meta.main) {
-  const workspace = resolve(Bun.argv[2] ?? ""), mode = Bun.argv[3];
-  if (Bun.argv.length !== 4 || !["ok","unavailable"].includes(mode ?? "")) throw Error("endpoint_arguments");
+  const workspace = resolve(Bun.argv[2] ?? ""), mode = Bun.argv[3], port = Number(Bun.argv[4]);
+  if (Bun.argv.length !== 5 || !Number.isInteger(port) || port < 0 || port > 65535 || String(port) !== Bun.argv[4] || !["ok","unavailable"].includes(mode ?? "")) throw Error("endpoint_arguments");
   const keyPath = join(workspace, "fixture.key"), keyStat = lstatSync(keyPath);
   if (!keyStat.isFile() || keyStat.isSymbolicLink() || (keyStat.mode & 0o777) !== 0o600 || keyStat.size !== 48) throw Error("endpoint_key");
   const key = readFileSync(keyPath, "utf8"), observationPath = join(workspace, "observation.json");
   const observation = { requests: 0, unexpected: 0 };
   const save = () => { const temp = `${observationPath}.tmp`; writeFileSync(temp, JSON.stringify(observation), { mode: 0o600 }); renameSync(temp, observationPath); };
   save();
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, maxRequestBodySize: 65_536,
+  const server = Bun.serve({ hostname: "127.0.0.1", port, maxRequestBodySize: 65_536,
     async fetch(request) {
       if (observation.requests + observation.unexpected >= 32) return new Response("request_limit", { status: 429 });
       if (request.method !== "POST" || new URL(request.url).pathname !== "/v1/chat/completions" || request.headers.get("authorization") !== `Bearer ${key}`) {
@@ -39,6 +39,7 @@ if (import.meta.main) {
       catch { observation.unexpected++; save(); return new Response("synthetic_request_invalid", { status: 400 }); }
     },
   });
-  writeFileSync(join(workspace, "ready.json"), JSON.stringify({ pid: process.pid, port: server.port }), { mode: 0o600, flag: "wx" });
+  writeFileSync(join(workspace, "ready.tmp"), JSON.stringify({ pid: process.pid, port: server.port }), { mode: 0o600, flag: "wx" });
+  renameSync(join(workspace, "ready.tmp"), join(workspace, "ready.json"));
   process.on("SIGTERM", () => { server.stop(true); process.exit(0); });
 }

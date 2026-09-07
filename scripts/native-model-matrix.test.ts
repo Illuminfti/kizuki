@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { MODEL_PHASE_IDS, modelPhasePassed, runNativeModelMatrix, startNativeModelEndpoint, type NativeModelEvidence, type NativeModelPhase } from "./native-model-matrix";
 import { syntheticModelReply } from "./native-model-endpoint";
 
-const base: NativeModelEvidence = { instance_id: "synthetic-instance", pid: 123, started_at: "2026-09-07T00:00:00.000Z", receipt_run_id: "synthetic-run", receipt_status: "ok", model_calls: 1, model_unavailable: 0,
+const base: NativeModelEvidence = { unit: "kizuki@synthetic.service", instance_id: "synthetic-instance", pid: 123, started_at: "2026-09-07T00:00:00.000Z", receipt_run_id: "synthetic-run", receipt_status: "ok", model_calls: 1, model_unavailable: 0,
   claims_extracted: 1, canon_writes: 1, endpoint_requests: 1, unexpected_requests: 0, credential_present: true, model_configured: true,
-  source_event_present: true, query_preserved: true, weights_unchanged: true, config_unchanged: true, configuration_unavailable: false, daemon_active: true, model_ref_sha256: "a".repeat(64), model_claims: 1, model_canon_receipts: 1, model_output_readable: true };
+  source_event_present: true, query_preserved: true, weights_unchanged: true, config_unchanged: true, configuration_unavailable: false, daemon_active: true, model_ref_sha256: "a".repeat(64), model_claims: 1, model_canon_receipts: 1, model_output_readable: true, recovery: null };
 test("model qualification refuses absent receipts, detached daemon, wrong calls and invisible mutation", () => {
   expect(modelPhasePassed("model-configured", base)).toBe(true);
   for (const change of [{ receipt_run_id: "" }, { daemon_active: false }, { endpoint_requests: 0 }, { model_calls: 0 }, { unexpected_requests: 1 }, { weights_unchanged: false }, { config_unchanged: false }, { source_event_present: false }, { query_preserved: false }, { claims_extracted: 0 }])
@@ -15,6 +15,29 @@ test("model qualification refuses absent receipts, detached daemon, wrong calls 
   expect(modelPhasePassed("model-unavailable", base)).toBe(false);
   expect(modelPhasePassed("model-credential-loss", base)).toBe(false);
   expect(modelPhasePassed("model-dependency-offline", base)).toBe(false);
+});
+test("negative model phases refuse any model authority or readable model output", () => {
+  for (const id of ["model-absent", "model-credential-loss"] as const) {
+    const negative = { ...base, credential_present: false, model_configured: id !== "model-absent", model_calls: 0, endpoint_requests: 0,
+      configuration_unavailable: id === "model-credential-loss", claims_extracted: 0, canon_writes: 0, model_claims: 0, model_canon_receipts: 0,
+      model_output_readable: false, model_ref_sha256: null };
+    expect(modelPhasePassed(id, negative)).toBe(true);
+    for (const changed of [{ model_claims: 1 }, { model_canon_receipts: 1 }, { model_output_readable: true }])
+      expect(modelPhasePassed(id, { ...negative, ...changed })).toBe(false);
+  }
+});
+test("offline recovery requires the restored dependency and a distinct installed receipt", () => {
+  const recovery = { stop_confirmed: true, receipt_trigger: "scheduled", receipt_due_at: "2026-09-07T00:00:00.000Z", scheduling_override: { rail: "sync" as const, old: "2026-09-07T00:15:00.000Z", next: "2026-09-07T00:00:00.000Z", reason: "synthetic-due-time-for-recovery" as const }, trigger: "service-restart" as const, unit: base.unit, pid: 456, instance_id: "recovered-instance", started_at: "2026-09-07T00:00:01.000Z",
+    receipt_run_id: "recovered-run", receipt_status: "ok", model_calls: 1, model_unavailable: 0, claims_extracted: 1, canon_writes: 1,
+    endpoint_requests: 1, unexpected_requests: 0, model_claims: 1, model_canon_receipts: 1, model_output_readable: true,
+    source_event_present: true, query_preserved: true, daemon_active: true, config_unchanged: true, credential_unchanged: true, endpoint_unchanged: true };
+  const offline = { ...base, receipt_status: "degraded", model_unavailable: 1, claims_extracted: 0, canon_writes: 2, endpoint_requests: 0,
+    model_claims: 0, model_canon_receipts: 0, model_output_readable: false, recovery };
+  expect(modelPhasePassed("model-dependency-offline", offline)).toBe(true);
+  expect(modelPhasePassed("model-dependency-offline", { ...offline, recovery: null })).toBe(false);
+  for (const changed of [{ instance_id: base.instance_id }, { receipt_run_id: base.receipt_run_id }, { unit: "foreign-unit" }, { endpoint_unchanged: false },
+    { credential_unchanged: false }, { stop_confirmed: false }, { receipt_trigger: "manual" }, { receipt_due_at: null }, { model_output_readable: false }, { query_preserved: false }, { daemon_active: false }, { endpoint_requests: 0 }, { model_claims: 0 }])
+    expect(modelPhasePassed("model-dependency-offline", { ...offline, recovery: { ...recovery, ...changed } })).toBe(false);
 });
 test("scripted model response preserves request record binding and refuses another model", () => {
   const request = { model: "native-lifecycle-synthetic", messages: [{ content: "system" }, { content: 'record event-1 from source\n{"subject":"person:ada"}' }] };
@@ -56,7 +79,7 @@ test("the full model matrix observes actual daemon child receipts without an OS 
         while (!existsSync(marker) && child.exitCode === null && Date.now() < deadline) await Bun.sleep(20);
         expect(child.exitCode).toBeNull(); expect(existsSync(marker)).toBe(true);
         const identity = JSON.parse(readFileSync(marker, "utf8")); expect(identity.pid).toBe(child.pid);
-        return { pid: child.pid, instance_id: identity.instance_id, started_at };
+        return { unit: "direct-child-model-fixture", pid: child.pid, instance_id: identity.instance_id, started_at };
       },
       stillActive: (vault, instance) => children.get(vault)?.pid === instance.pid && children.get(vault)?.exitCode === null,
       deactivate: stop,

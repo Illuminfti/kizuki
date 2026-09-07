@@ -166,7 +166,9 @@ test("native service harness refuses local service mutation and retains the fail
     expect(receipt.cleanup.service_gone).toBe(true);
     expect(receipt.binary_sha256).toBe("unavailable");
     expect(receipt.scope.release_upgrade).toBe(false);
-    expect(receipt.scope.migration_rollback).toBe(false);
+    expect(receipt.scope.migration_rollback).toBe(true);
+    expect(receipt.qualification.phases).toEqual([]);
+    expect(receipt.schema).toBe("kizuki.native-service-lifecycle/v2");
   } finally { rmSync(report, { recursive: true }); }
 });
 
@@ -194,3 +196,46 @@ for (const [label, state, stopped] of [
     } finally { rmSync(report, { recursive: true }); }
   });
 }
+
+import { BASELINE_SOURCE_SHA, NATIVE_LIFECYCLE_PHASE_IDS, NATIVE_LIFECYCLE_REGISTRY_SHA256, parseLifecycleArgs, statePhasePassed, upgradePhasePassed, type NativeStateEvidence, type NativeUpgradeEvidence } from "./native-service-lifecycle";
+
+test("lifecycle baseline argument is explicit, unique and isolated from artifact proof arguments", () => {
+  expect(parseLifecycleArgs(["--artifact", "/candidate", "--baseline-artifact", "/baseline", "--report", "/report"])).toEqual({ artifact: "/candidate", baseline_artifact: "/baseline", report: "/report" });
+  for (const args of [["--baseline-artifact"], ["--baseline-artifact", "--report", "/r"], ["--baseline-artifact", "/a", "--baseline-artifact", "/b", "--report", "/r"]])
+    expect(() => parseLifecycleArgs(args)).toThrow("invalid --baseline-artifact");
+  expect(NATIVE_LIFECYCLE_PHASE_IDS).toHaveLength(17);
+  expect(new Set(NATIVE_LIFECYCLE_PHASE_IDS).size).toBe(17);
+  expect(NATIVE_LIFECYCLE_REGISTRY_SHA256).toMatch(/^[a-f0-9]{64}$/);
+});
+
+const stateBase: NativeStateEvidence = { mechanism: "systemd", unit: "kizuki@synthetic.service", unit_state: "inactive", manager_exit: 0, manager_pid: null,
+  definition_exists: false, intent: "opted-out", public_supervisor_state: "absent", public_enabled: false, public_detail: "absent", public_doctor_ok: true,
+  observed_failure: null, process_absent: true, definition_sha256: null };
+test("native state evidence refuses misleading healthy, enabled and failed observations", () => {
+  expect(statePhasePassed("init-no-service", stateBase)).toBe(true);
+  expect(statePhasePassed("init-no-service", { ...stateBase, manager_pid: 40 })).toBe(false);
+  const missing = { ...stateBase, intent: "installed", public_doctor_ok: false };
+  expect(statePhasePassed("state-missing", missing)).toBe(true);
+  const disabled = { ...missing, definition_exists: true, public_supervisor_state: "disabled" };
+  expect(statePhasePassed("state-disabled", disabled)).toBe(true);
+  expect(statePhasePassed("state-disabled", { ...disabled, public_enabled: true })).toBe(false);
+  const failed = { ...disabled, unit_state: "failed", public_enabled: true, observed_failure: "exit-code", public_detail: "failed" };
+  expect(statePhasePassed("state-failed", failed)).toBe(true);
+  expect(statePhasePassed("state-failed", { ...failed, public_detail: "disabled" })).toBe(false);
+  expect(statePhasePassed("state-failed", { ...failed, public_doctor_ok: true })).toBe(false);
+  expect(statePhasePassed("state-failed", { ...failed, observed_failure: null })).toBe(false);
+  expect(statePhasePassed("state-failed", { ...failed, mechanism: "launchd", public_detail: "failed (last exit code 2)" })).toBe(true);
+  expect(statePhasePassed("state-failed", { ...failed, public_detail: "failed (last exit code 0)" })).toBe(false);
+  expect(statePhasePassed("state-masked", { ...disabled, unit_state: "masked", public_supervisor_state: "masked" })).toBe(true);
+  expect(statePhasePassed("state-masked", { ...stateBase, mechanism: "not-applicable-launchd", unit_state: "not-applicable" })).toBe(true);
+  expect(statePhasePassed("state-masked", { ...stateBase, mechanism: "systemd", unit_state: "not-applicable" })).toBe(false);
+});
+
+test("cross-binary fixture evidence refuses same bytes, same instance and damaged original data", () => {
+  const e: NativeUpgradeEvidence = { baseline_source_sha: BASELINE_SOURCE_SHA, candidate_source_sha: "b".repeat(40), baseline_binary_sha256: "a".repeat(64), candidate_binary_sha256: "b".repeat(64), baseline_schema: 21, candidate_schema: 21,
+    baseline_instance_id: "old", candidate_instance_id: "new", baseline_pid: 40, candidate_pid: 41, unit: "kizuki@synthetic.service", vault_id: "synthetic", before_event_sha256: "e".repeat(64), after_event_sha256: "e".repeat(64),
+    baseline_stopped: true, candidate_active: true, baseline_query_preserved: true, candidate_query_preserved: true, backup_verified: true, backup_manifest_sha256: "c".repeat(64), unit_sha256: "d".repeat(64) };
+  expect(upgradePhasePassed(e)).toBe(true);
+  for (const change of [{ candidate_binary_sha256: e.baseline_binary_sha256 }, { candidate_instance_id: e.baseline_instance_id }, { after_event_sha256: "f".repeat(64) }, { baseline_stopped: false }, { candidate_active: false }, { backup_verified: false }, { baseline_schema: 15 }])
+    expect(upgradePhasePassed({ ...e, ...change })).toBe(false);
+});
