@@ -225,6 +225,12 @@ export function queryServeService(
   return host.query(ensureVaultId(vaultPath));
 }
 
+interface ForwardRemoval {
+  readonly operation: "uninstall";
+  readonly previous_unit: string;
+  readonly previous_intent: ServeIntent;
+}
+
 interface RecoveredChange {
   readonly previous_unit: string | null;
   readonly previous_intent: ServeIntent;
@@ -232,6 +238,7 @@ interface RecoveredChange {
   readonly previous_active: boolean;
 }
 
+const SERVICE_CHANGE_V4_KEYS = "identity_hash,kind,operation,previous_intent,previous_unit,version";
 const SERVICE_CHANGE_V2_KEYS = "identity_hash,kind,previous_enabled,previous_intent,previous_unit,version";
 const SERVICE_CHANGE_V3_KEYS = "identity_hash,kind,previous_active,previous_enabled,previous_intent,previous_unit,version";
 
@@ -263,14 +270,18 @@ function hasEnablementOnly(host: SupervisorHost): host is SupervisorHost & { ena
   return typeof host.enableWithoutStart === "function";
 }
 
-function readServiceChange(raw: string, kind: SupervisorKind, identityHash: string): RecoveredChange {
+function readServiceChange(raw: string, kind: SupervisorKind, identityHash: string): RecoveredChange | ForwardRemoval {
   const value = JSON.parse(raw);
   if (value === null || typeof value !== "object" || Array.isArray(value) ||
     value.kind !== kind || value.identity_hash !== identityHash ||
     !(value.previous_unit === null || typeof value.previous_unit === "string") ||
-    typeof value.previous_enabled !== "boolean" || (value.previous_enabled && value.previous_unit === null) ||
     !isServeIntent(value.previous_intent)) throw new Error();
   const keys = Object.keys(value).sort().join(",");
+  if (value.version === 4 && keys === SERVICE_CHANGE_V4_KEYS && kind === "launchd" &&
+    value.operation === "uninstall" && typeof value.previous_unit === "string") {
+    return { operation: "uninstall", previous_unit: value.previous_unit, previous_intent: value.previous_intent };
+  }
+  if (typeof value.previous_enabled !== "boolean" || (value.previous_enabled && value.previous_unit === null)) throw new Error();
   if (value.version === 2 && keys === SERVICE_CHANGE_V2_KEYS) {
     // Version 2 admitted only active+enabled or stopped+disabled snapshots.
     return {
@@ -289,12 +300,48 @@ function readServiceChange(raw: string, kind: SupervisorKind, identityHash: stri
   throw new Error();
 }
 
+/** A failed loaded launchd job cannot be restored without starting it. An
+ * explicit uninstall therefore records a forward-only removal decision. */
+function confirmedFailedLaunchd(status: SupervisorStatus): boolean {
+  const match = /^failed \(last exit code ([1-9]\d{0,2})\)$/.exec(status.detail);
+  return status.kind === "launchd" && status.state === "disabled" && status.enabled && match !== null && Number(match[1]) <= 255;
+}
+function completeForwardRemoval(vaultPath: string, host: SupervisorHost, paths: ReturnType<typeof servicePaths>, entry: ForwardRemoval) {
+  const absent = (status: SupervisorStatus) => status.kind === "launchd" && status.state === "absent" && !status.enabled;
+  const unchanged = () => {
+    const current = serviceFile(paths.path);
+    if (current !== null && current !== entry.previous_unit) throw new Error("unrelated service definition replaced the pending removal");
+    return current !== null;
+  };
+  try {
+    const removed = unchanged();
+    const before = host.query(paths.vaultId);
+    if (!absent(before)) {
+      if ((!confirmedActive(before) && !confirmedFailedLaunchd(before)) || !host.disable(paths.unit).ok || !absent(host.query(paths.vaultId))) {
+        throw new Error("failed service stop remains unverified");
+      }
+    }
+    unchanged();
+    replaceServiceFile(paths.path, null);
+    if (!host.reload().ok) throw new Error("service removal remains unverified");
+    const status = host.query(paths.vaultId);
+    if (!absent(status)) throw new Error("service removal remains unverified");
+    // A new definition appearing during native observation belongs to nobody's
+    // pending removal decision and must survive for explicit recovery.
+    if (serviceFile(paths.path) !== null) throw new Error("service definition appeared during removal");
+    writeServeIntent(vaultPath, "opted-out");
+    replaceServiceFile(paths.journal, null);
+    return { status, removed };
+  } catch { throw new Error("service uninstall is pending; retry with the same service home"); }
+}
+
 function recoverChange(vaultPath: string, host: SupervisorHost, paths: ReturnType<typeof servicePaths>): void {
   const raw = serviceFile(paths.journal);
   if (raw === null) return;
-  let entry: RecoveredChange;
+  let entry: RecoveredChange | ForwardRemoval;
   try { entry = readServiceChange(raw, host.kind, paths.identityHash); }
   catch { throw new Error("service recovery snapshot is invalid or belongs to another vault or service location"); }
+  if ("operation" in entry) { completeForwardRemoval(vaultPath, host, paths, entry); return; }
   if (entry.previous_enabled && !entry.previous_active && !hasEnablementOnly(host)) {
     throw new Error("service recovery cannot restore enablement; previous configuration retained");
   }
@@ -319,13 +366,21 @@ function recoverChange(vaultPath: string, host: SupervisorHost, paths: ReturnTyp
   replaceServiceFile(paths.journal, null);
 }
 
-function changeService<T>(vaultPath: string, host: SupervisorHost, operation: (paths: ReturnType<typeof servicePaths>) => T): T {
+function changeService<T>(vaultPath: string, host: SupervisorHost, operation: (paths: ReturnType<typeof servicePaths>) => T,
+  forwardRemoval?: (paths: ReturnType<typeof servicePaths>, entry: ForwardRemoval) => T): T {
   const paths = servicePaths(vaultPath, host);
   const lock = tryAdvisoryFileLock(join(vaultPath, ".kizuki", "service-change.lock"));
   if (lock === null) throw new Error("another service change is in progress");
   try {
     recoverChange(vaultPath, host, paths);
     const previous = host.query(paths.vaultId);
+    if (forwardRemoval && confirmedFailedLaunchd(previous)) {
+      const previous_unit = serviceFile(paths.path);
+      if (previous_unit === null) throw new Error("refusing to remove a failed service without its owned definition");
+      const entry: ForwardRemoval = { operation: "uninstall", previous_unit, previous_intent: readServeIntent(vaultPath) };
+      replaceServiceFile(paths.journal, JSON.stringify({ version: 4, kind: host.kind, identity_hash: paths.identityHash, ...entry }));
+      return forwardRemoval(paths, entry);
+    }
     if (!confirmedActive(previous) && !confirmedStopped(previous) && !confirmedInactiveEnabled(previous)) {
       throw new Error("service state is unknown or inconsistent; no service change made");
     }
@@ -394,5 +449,5 @@ export function uninstallServeService(
     if (!confirmedStopped(refreshed)) throw new Error("service removal stopped state remains unverified");
     writeServeIntent(vaultPath, "opted-out");
     return { status: refreshed, removed };
-  });
+  }, (paths, entry) => completeForwardRemoval(vaultPath, host, paths, entry));
 }

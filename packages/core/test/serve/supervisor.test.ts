@@ -670,3 +670,105 @@ for (const [name, stdout, code, detail] of [
     expect(result.stdout.toString()).not.toContain("PRIVATE_MANAGER_CANARY");
   });
 }
+
+
+test("uninstall of a positively observed failed launchd job removes it without starting it", () => {
+  const f = fixture("launchd"), installed = installServeService(f.vault, f.host);
+  f.observe("disabled", true);
+  const query = f.host.query; f.host.query = id => { const row = query(id); return row.enabled && row.state === "disabled" ? { ...row, detail: "failed (last exit code 2)" } : row; };
+  const disable = f.host.disable; f.host.disable = unit => { const result = disable(unit); f.observe("absent", false); return result; };
+  const starts = f.activated.length;
+  expect(uninstallServeService(f.vault, f.host).removed).toBe(true);
+  expect(f.activated.length).toBe(starts);
+  expect(existsSync(installed.unitPath!)).toBe(false);
+  expect(readServeIntent(f.vault)).toBe("opted-out");
+});
+
+
+function failedLaunchdFixture() {
+  const f = fixture("launchd"), installed = installServeService(f.vault, f.host);
+  f.observe("disabled", true);
+  const query = f.host.query;
+  f.host.query = id => { const row = query(id); return row.enabled && row.state === "disabled" ? { ...row, detail: "failed (last exit code 2)" } : row; };
+  f.host.disable = () => { f.observe("absent", false); return { ok: true, detail: "unloaded" }; };
+  return { ...f, path: installed.unitPath!, journal: join(f.vault, ".kizuki/service-change.json") };
+}
+
+test("failed launchd stop persists an exact forward decision and retry never starts the job", () => {
+  const f = failedLaunchdFixture(), original = readFileSync(f.path, "utf8"), disable = f.host.disable;
+  f.host.disable = () => ({ ok: false, detail: "failed" });
+  expect(() => uninstallServeService(f.vault, f.host)).toThrow("uninstall is pending");
+  const entry = JSON.parse(readFileSync(f.journal, "utf8"));
+  expect(Object.keys(entry).sort()).toEqual(["identity_hash", "kind", "operation", "previous_intent", "previous_unit", "version"]);
+  expect(entry).toMatchObject({ version: 4, kind: "launchd", operation: "uninstall", previous_unit: original, previous_intent: "installed" });
+  expect(readFileSync(f.path, "utf8")).toBe(original);
+  f.host.disable = disable;
+  uninstallServeService(f.vault, f.host);
+  expect(f.activated).toHaveLength(1); expect(existsSync(f.path)).toBe(false); expect(existsSync(f.journal)).toBe(false);
+  expect(readServeIntent(f.vault)).toBe("opted-out");
+});
+
+for (const point of ["after-stop", "after-remove"] as const) {
+  test(`actual process exit ${point} resumes durable launchd removal without bootstrap`, () => {
+    const f = failedLaunchdFixture(), module = join(import.meta.dir, "../../src/serve/supervisor.ts");
+    const script = `
+      import { uninstallServeService } from ${JSON.stringify(module)};
+      let stopped = false;
+      uninstallServeService(${JSON.stringify(f.vault)}, { kind:'launchd', home:${JSON.stringify(f.root)}, execStart:['/synthetic/kizuki-v1','serve'],
+        query: () => ({kind:'launchd',state:stopped?'absent':'disabled',enabled:!stopped,unit:'synthetic',detail:stopped?'absent':'failed (last exit code 2)'}),
+        disable: () => { stopped=true; ${point === "after-stop" ? "process.exit(86);" : ""} return {ok:true,detail:'stopped'}; },
+        reload: () => { process.exit(87); }, enable: () => { process.exit(99); } });
+    `;
+    const child = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 5000 });
+    expect({ exit: child.exitCode, stderr: child.stderr.toString() }).toEqual({ exit: point === "after-stop" ? 86 : 87, stderr: "" });
+    expect(JSON.parse(readFileSync(f.journal, "utf8")).operation).toBe("uninstall");
+    expect(existsSync(f.path)).toBe(point === "after-stop");
+    f.observe("absent", false); uninstallServeService(f.vault, f.host);
+    expect(f.activated).toHaveLength(1); expect(existsSync(f.path)).toBe(false); expect(existsSync(f.journal)).toBe(false);
+    expect(readServeIntent(f.vault)).toBe("opted-out");
+  });
+}
+
+for (const fault of ["identity", "kind", "operation", "extra", "replacement"] as const) {
+  test(`pending forward removal refuses ${fault} and preserves its journal and unrelated bytes`, () => {
+    const f = failedLaunchdFixture(); f.host.disable = () => ({ ok:false,detail:'failed' });
+    expect(() => uninstallServeService(f.vault, f.host)).toThrow("uninstall is pending");
+    const entry = JSON.parse(readFileSync(f.journal, "utf8"));
+    if (fault === "identity") entry.identity_hash = "foreign";
+    if (fault === "kind") entry.kind = "systemd";
+    if (fault === "operation") entry.operation = "install";
+    if (fault === "extra") entry.extra = true;
+    if (fault === "replacement") writeFileSync(f.path, "unrelated replacement", { mode:0o600 });
+    writeFileSync(f.journal, JSON.stringify(entry), { mode:0o600 });
+    const before = readFileSync(f.path, "utf8"), journal = readFileSync(f.journal, "utf8"); let calls=0;
+    f.host.disable = () => { calls++; return {ok:true,detail:'unexpected'}; };
+    expect(() => uninstallServeService(f.vault, f.host)).toThrow();
+    expect(calls).toBe(0); expect(readFileSync(f.path,"utf8")).toBe(before); expect(readFileSync(f.journal,"utf8")).toBe(journal);
+    expect(f.activated).toHaveLength(1);
+  });
+}
+
+test("forward removal refuses a definition replaced during stop and preserves pending authority", () => {
+  const f=failedLaunchdFixture();
+  f.host.disable=()=>{ writeFileSync(f.path,"replacement during stop",{mode:0o600}); f.observe("absent",false); return {ok:true,detail:"unloaded"}; };
+  expect(()=>uninstallServeService(f.vault,f.host)).toThrow("uninstall is pending");
+  expect(readFileSync(f.path,"utf8")).toBe("replacement during stop"); expect(existsSync(f.journal)).toBe(true); expect(readServeIntent(f.vault)).toBe("installed");
+});
+
+test("later explicit install completes pending forward removal before one requested activation", () => {
+  const f=failedLaunchdFixture(); f.host.reload=()=>({ok:false,detail:"failed"});
+  expect(()=>uninstallServeService(f.vault,f.host)).toThrow("uninstall is pending");
+  expect(existsSync(f.path)).toBe(false); expect(existsSync(f.journal)).toBe(true);
+  f.host.reload=()=>({ok:true,detail:"reloaded"});
+  installServeService(f.vault,f.host);
+  expect(f.activated).toHaveLength(2); expect(readServeIntent(f.vault)).toBe("installed"); expect(existsSync(f.journal)).toBe(false);
+});
+
+for (const detail of ["loaded but not running", "stopped (last exit code 0)", "failed (last exit code 0)", "failed (last exit code 256)", "failed (last exit code 02)", "failed (last exit code 2) trailing"]) {
+  test(`launchd forward removal never admits ambiguous state ${detail}`, () => {
+    const f=failedLaunchdFixture(),query=f.host.query;
+    f.host.query=id=>({...query(id),detail}); let calls=0; f.host.disable=()=>{calls++;return{ok:true,detail:"unexpected"};};
+    expect(()=>uninstallServeService(f.vault,f.host)).toThrow("no service change made");
+    expect(calls).toBe(0); expect(existsSync(f.journal)).toBe(false); expect(existsSync(f.path)).toBe(true);
+  });
+}
