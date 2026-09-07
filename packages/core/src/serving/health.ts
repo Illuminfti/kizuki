@@ -4,12 +4,15 @@ import { countClaims, pendingRetrievalOps } from "../claims/store";
 import { readDerivedMeta } from "../derived-meta";
 import { getCheckpoint, listConnections } from "../ledger/connections";
 import { count } from "../ledger/ledger";
+import { readSqliteRuntime } from "../ledger/runtime";
+import type { SqliteRuntime } from "../ledger/runtime";
 import { asSensitivity, asTaint, eligible, loadCanon, pageDecision } from "./canon";
 import { auditArguments, gate, principalName } from "./gate";
 import type { Served } from "./gate";
 import type { Envelope, ServeContext } from "./types";
 
 export interface HealthData {
+  runtime: SqliteRuntime;
   principal: {
     kind: "owner" | "agent";
     name: string;
@@ -108,6 +111,7 @@ export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
         quoted: [],
         withheld: [],
         data: {
+          runtime: readSqliteRuntime(ctx.db),
           principal: {
             kind: ctx.principal.kind,
             name: principalName(ctx.principal),

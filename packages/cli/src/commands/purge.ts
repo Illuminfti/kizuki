@@ -3,7 +3,7 @@ import {
   previewPurge,
   resolvePurgeConnectorId,
   runPurge,
-  verifyPurge,
+  resumePurge,
 } from "@kizuki/core";
 import type { PurgeFilter, PurgePreview } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
@@ -29,7 +29,9 @@ function isExactSelector(filter: PurgeFilter): boolean {
 function describeSelector(filter: PurgeFilter): string {
   if (filter.event_id !== undefined) return `event_id=${filter.event_id}`;
   if (filter.subject_handle !== undefined) {
-    return `subject_handle=${filter.subject_handle}`;
+    const parts = [`connector_id=${filter.connector_id}`, `subject_handle=${filter.subject_handle}`];
+    if (filter.source_key !== undefined) parts.push(`source_key=${filter.source_key}`);
+    return parts.join(" ");
   }
   if (filter.connector_id !== undefined && filter.source_record_id !== undefined) {
     return `connector_id=${filter.connector_id} source_record_id=${filter.source_record_id}`;
@@ -60,7 +62,7 @@ function printPreview(io: CliIo, preview: PurgePreview): void {
 export const purgeCommand: Command = {
   name: "purge",
   usage:
-    "purge (--event ID | --subject ID [--include-aliases] | --connector ID [--record ID] | --verify RECEIPT) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json]",
+    "purge (--event ID | --connector ID [--record ID | --subject ID [--source KEY] [--include-aliases]] | --verify RECEIPT) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json]",
   summary:
     "physically delete matching events, hold affected pages, and prove absence",
   async run(io: CliIo, args: string[]): Promise<number> {
@@ -68,6 +70,7 @@ export const purgeCommand: Command = {
       options: [
         "--event",
         "--subject",
+        "--source",
         "--connector",
         "--record",
         "--reason",
@@ -86,6 +89,7 @@ export const purgeCommand: Command = {
       if (
         parsed.options.has("--event") ||
         parsed.options.has("--subject") ||
+        parsed.options.has("--source") ||
         parsed.options.has("--connector") ||
         parsed.options.has("--record") ||
         parsed.options.has("--reason") ||
@@ -97,24 +101,25 @@ export const purgeCommand: Command = {
         throw new UsageError(this.usage);
       }
       return withVault(io, async (ctx) => {
-        const report = await verifyPurge(ctx.db, ctx.vaultPath, verifyId, ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval });
+        const report = await resumePurge(ctx.db, ctx.vaultPath, verifyId, ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval });
         if (asJson) {
           io.out(
             jsonEnvelope("purge", report.ok ? "ok" : "error", {
               ...report,
               ops: report.proofs.map((proof) => ({
                 store: proof.store,
-                state: proof.found.length === 0 ? "done" : "failed",
+                state: proof.found.length === 0 && proof.provenance.found.length === 0 ? "done" : "pending",
                 checked: proof.checked,
                 found: proof.found,
+                provenance: proof.provenance,
               })),
             }),
           );
         } else {
           for (const proof of report.proofs) {
-            const status = proof.found.length === 0 ? "done" : "failed";
+            const status = proof.found.length === 0 && proof.provenance.found.length === 0 ? "done" : "pending";
             io.out(
-              `${pad(proof.store, 23)} checked ${proof.checked}  found ${proof.found.length}   ${status}`,
+              `${pad(proof.store, 23)} checked ${proof.checked}  found ${proof.found.length}   ${status}   provenance checked ${proof.provenance.checked}  found ${proof.provenance.found.length}`,
             );
           }
           const hold = report.hold_lifted ? "hold lifted" : "hold remains";
@@ -132,16 +137,23 @@ export const purgeCommand: Command = {
     const reason = parsed.options.get("--reason");
     const eventId = parsed.options.get("--event");
     const subject = parsed.options.get("--subject");
+    const source = parsed.options.get("--source");
     const connector = parsed.options.get("--connector");
     const record = parsed.options.get("--record");
     const includeAliases = parsed.flags.has("--include-aliases");
-    const selectors = [eventId, subject, connector].filter(
+    const selectors = [eventId, connector].filter(
       (value) => value !== undefined,
     );
+    if (subject !== undefined && connector === undefined) {
+      throw new UsageError("subject purge requires --connector ID; a bare subject id has no namespace");
+    }
     if (reason === undefined || selectors.length !== 1) {
       throw new UsageError(this.usage);
     }
     if (record !== undefined && connector === undefined) {
+      throw new UsageError(this.usage);
+    }
+    if ((subject !== undefined && record !== undefined) || (source !== undefined && subject === undefined)) {
       throw new UsageError(this.usage);
     }
     if (includeAliases && subject === undefined) {
@@ -151,12 +163,13 @@ export const purgeCommand: Command = {
     return withVault(io, async (ctx) => {
       let filter: PurgeFilter;
       if (eventId !== undefined) filter = { event_id: eventId };
-      else if (subject !== undefined) filter = { subject_handle: subject };
       else {
         filter = {
           connector_id: resolvePurgeConnectorId(ctx.db, connector ?? ""),
         };
         if (record !== undefined) filter.source_record_id = record;
+        if (subject !== undefined) filter.subject_handle = subject;
+        if (source !== undefined) filter.source_key = source;
       }
 
       if (dryRun) {

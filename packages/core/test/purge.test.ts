@@ -118,7 +118,7 @@ describe("purgeEvents", () => {
     const receipts = purgeEvents(
       db,
       temporaryVault(),
-      { subject_handle: "person:grace" },
+      { connector_id: "fixture", subject_handle: "person:grace" },
       "subject request",
     ).receipts;
     expect(receipts.map(({ event_id }) => event_id)).toEqual([matching.event_id]);

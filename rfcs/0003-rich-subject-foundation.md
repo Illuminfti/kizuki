@@ -376,7 +376,7 @@ bun test packages/core/test/producer packages/core/test/contracts \
 bun run typecheck
 ```
 
-Use the pinned Bun 1.3.10. Later stages additionally require mixed-version and
+Use the pinned Bun 1.3.14. Later stages additionally require mixed-version and
 unknown-time behavior, immutable support dedup/corroboration, source/CAS races,
 every correction failure boundary, partition bridge rejection, undo/cascade,
 event and source purge totality, migration rollback, tampered restore, complete

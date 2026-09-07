@@ -9,7 +9,9 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join } from "node:path";
+import { assertReceiptPaths } from "../canon/paths";
+import { containedVaultFile } from "../vault/write";
 import { isDeepStrictEqual } from "node:util";
 import { applyPurgeRewrite, recoverSourceErasureIntents } from "../canon/apply";
 import { getClaim } from "../claims/store";
@@ -29,28 +31,10 @@ interface Receipt {
   provenance: string;
 }
 function safePath(vault: string, relative: string): string | null {
-  const path = resolve(vault, relative);
-  const root = resolve(vault);
-  if (
-    !path.startsWith(root + sep) ||
-    relative
-      .split(/[\\/]/)
-      .some((part) => part === ".." || part === "." || part === "")
-  )
-    return null;
-  let current = root;
-  for (const part of relative.split("/")) {
-    current = join(current, part);
-    if (!existsSync(current)) break;
-    const stat = lstatSync(current);
-    if (
-      stat.isSymbolicLink() ||
-      (!stat.isDirectory() && (!stat.isFile() || stat.nlink !== 1))
-    )
-      return null;
-  }
-  return path;
+  try { return containedVaultFile(vault, relative); }
+  catch { return null; }
 }
+
 function replacement(
   page: VaultPage,
   claims: Claim[],
@@ -143,6 +127,7 @@ export function eraseSourceCanon(
   if (receipts.length > 10000) return false;
   const work = new Map<string, { hashes: Set<string>; original: string }>();
   for (const receipt of receipts) {
+    try { assertReceiptPaths(receipt); } catch { return false; }
     const current = work.get(receipt.page_path) ?? {
       hashes: new Set<string>(),
       original: receipt.page_path,

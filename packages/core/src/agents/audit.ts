@@ -403,7 +403,7 @@ function insertAudit(
   const servedCount = assertCount(lists.served.length, "served_count");
   const deniedCount = assertCount(lists.denied.length, "denied_count");
   const auditId = ulid();
-  db.query<
+  using statement = db.prepare<
     never,
     [string, string, string, string, string, string, number, number, number | null, string]
   >(
@@ -411,7 +411,8 @@ function insertAudit(
        (audit_id, agent_id, tool, query_shape, served, denied,
         served_count, denied_count, grant_epoch, at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
+  );
+  statement.run(
     auditId,
     agentId,
     tool,

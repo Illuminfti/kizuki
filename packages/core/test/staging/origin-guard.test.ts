@@ -196,7 +196,7 @@ describe("deterministic staging origin guard", () => {
       expect(() => fileProposal(fixture.db, {
         kind, target: "people/synthetic", body: "forged positive content", frontmatter: {},
         provenance: [self.event_id], producer: "deterministic", confidence: 1,
-      })).toThrow("machine origin");
+      })).toThrow(kind === "purge_review" ? "historical compatibility only" : "machine origin");
     } finally { fixture.dispose(); }
   });
 });

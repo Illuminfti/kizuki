@@ -24,6 +24,7 @@ settled 2026-09-02.
 | D16 | 2026-09-02 | Modular monolith with ports | One process. Every replaceable component sits behind a versioned port, a registry, and a shared conformance suite. |
 | D17 | 2026-09-04 | Retrieval permitted fork | Owner override: stop treating clean-reimplementation-only as the final word for the retrieval engine. Fork the public upstream tip (reachable default branch) of the retrieval recipe and entity graph into `@kizuki/retrieval-pg` as a permitted fork behind `kizuki.retrieval/v1`. Hybrid when embeddings exist; FTS otherwise, with declared degradation. Rerank and local GGUF remain Kizuki-own. Do not use the unreachable fork snapshot named in the D13 implementation notes. Do not invent a second product. |
 | D18 | 2026-09-05 | Arbitrary-agent enrollment | Supersedes RFC 0002 §8.4's personal default. New arbitrary agents authenticate with an inert public grant: empty tools/types/subjects, rate 60, and no owner-correction relay. `OWNER` is unchanged. `OWNER_AGENT_GRANT` remains an explicit private harness preset with its former useful scope. Existing stored grants are unchanged. |
+| D19 | 2026-09-05 | Readiness without calendar gates | Owner amendment in issue #403: ready means a stranger can install and use Kizuki, with executable stranger proof, zero live P0s on the exact candidate and an honest install path. Supersedes C1's estate-cutover prerequisite and mandatory seven-/fourteen-day elapsed release gates. Long observation is optional post-ready; operational cutover requires separate authorization. Other product acceptance requirements remain. |
 
 D9–D16 supersede any earlier Gate 0 answer that made the owner the only
 consumer of a review queue, or that forbade scheduled canon writes.
@@ -85,6 +86,11 @@ boundary, not those facts.
 
 ## Campaign-scope decisions (owner, 2026-09-02, round 1)
 
+Historical answers are retained below. D19 supersedes C1's estate-cutover
+prerequisite and any use of C7's observation schedule as a readiness gate.
+C7 records the earlier operational plan; it does not authorize a cutover.
+C2–C6 and C8 are unchanged by the readiness amendment.
+
 | Id | Decision | Answer |
 | --- | --- | --- |
 | C1 | Finish line | 1.0 as defined in `docs/wave1/plan/ROADMAP.md`: stranger proof and estate cutover, both. The 14-day parallel run starts inside the campaign. |
@@ -95,6 +101,29 @@ boundary, not those facts.
 | C6 | Model provider | Generic OpenAI-compatible chat completions over plain fetch, configured by `base_url`, `model` and a `secret_ref`; no vendor SDK. |
 | C7 | Estate parallel run | Shadow mode: days 1-7 the owner's assistant asks both stacks and answers from the estate with diffs logged; stop and report at day 7 before any flip; estate units stay up; nothing archived until the owner reads the parity log. |
 | C8 | 1.0 moat | Autonomous, provenance-total, reversible canon with conversational correction, zero phone-home, any harness. The owner review gate is no longer a claim anywhere. |
+
+## Owner amendment to readiness (2026-09-05)
+
+D19 records the explicit supersession at the top of
+issue #403. A stranger must be able
+to install Kizuki, connect a source and get value. Executable stranger proof,
+zero live P0s on the exact candidate and truthful installation claims define
+the readiness bar; this entry does not assert that the evidence exists.
+
+Seven-day rail observation and fourteen-day estate comparison remain optional
+post-ready diagnostics. They are not elapsed-time requirements for readiness
+or a 1.0 tag. Retain actual timestamps, interruptions and limitations in all
+historical receipts; this amendment grants no observation credit. Operational
+cutover is a separate, explicitly authorized action, including any change to
+existing estate services or archival of their data.
+
+The amendment removes calendar and cutover prerequisites only. It preserves
+the mandatory connector inventory and its honest limits, security and
+capability checks, Linux/macOS coverage, compiled checksummed artifacts tested
+outside the checkout, backup/restore, purge and undo proofs, and exact-head
+review and verification. Existing runtime health rules and receipt windows
+remain in force. It does not relax frozen ingress, canon authority, grants,
+sensitivity, provenance, correction or recovery semantics.
 
 ## Text that still carries the old policy (to annotate, never to follow)
 

@@ -31,8 +31,11 @@ packet, one no-HTTP serve pass, and MCP initialization plus `tools/list`.
 
 `bun run proof:artifact -- --report /tmp/kizuki-artifact-proof` copies the
 checksummed package out of the checkout, uses a clean home and Kizuki config,
-and records a receipt for init, import, query, context, export, and
-clean-target restore.
+and records a v2 receipt for init, the copied CLI and MCP SQLite identities,
+import, query, context, export, and clean-target restore. Both child engine
+identities must agree with the exact qualification policy. See the
+[engine evidence contract](stranger-proof.md#effective-sqlite-engine-evidence).
+Linux CI retains this package and its available receipt for seven days.
 
 ## Support boundary
 

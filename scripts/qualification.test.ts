@@ -9,26 +9,100 @@ import { initQualification, sampleQualification, statusQualification, strictRece
 import { initVault } from "../packages/core/src/vault/init";
 import { openLedger } from "../packages/core/src/ledger/db";
 import { initServe } from "../packages/core/src/serve/schema";
+import { ARTIFACT_PACKAGE_FILES, artifactProofSteps, SQLITE_ENGINE_POLICY } from "./artifact-proof";
+import type { ArtifactProofSchema } from "./artifact-proof";
+import type { SqliteRuntime } from "../packages/core/src/ledger/runtime";
 const dirs:string[]=[];
 afterEach(()=>{for(const dir of dirs.splice(0))rmSync(dir,{recursive:true,force:true});});
-function fixture(){
+const hash = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+function fixture(schema: ArtifactProofSchema = "kizuki.artifact-proof/v1"){
  const root=mkdtempSync(join(tmpdir(),"kizuki-qualification-test-"));dirs.push(root);
  const artifact=join(root,"artifact"),vault=join(root,"vault"),proof=join(root,"proof.json"),scope=join(root,"scope.json"),out=join(root,"report");
  mkdirSync(artifact);initVault(vault);const db=openLedger(join(vault,".kizuki/kizuki.db"));initServe(db);db.query("UPDATE schedules SET next_run_at = ?").run(new Date().toISOString());db.close();
  writeFileSync(join(vault,".kizuki/run-receipts.jsonl"),"");
- for(const name of ["kizuki","kizuki-mcp","README.txt"])writeFileSync(join(artifact,name),"synthetic artifact fixture: never executed");
- writeFileSync(join(artifact,"BUILD.json"),JSON.stringify({schema:"kizuki.release-build/v1",source_sha:"a".repeat(40),target:"bun-linux-x64-baseline",bun_version:"1.3.10"}));
+ for(const name of ["kizuki","kizuki-mcp","README.txt"])writeFileSync(join(artifact,name),`synthetic ${name} artifact fixture: never executed`);
+ const bun_version = schema === "kizuki.artifact-proof/v1" ? "1.3.10" : "1.3.14";
+ writeFileSync(join(artifact,"BUILD.json"),JSON.stringify({schema:"kizuki.release-build/v1",source_sha:"a".repeat(40),target:"bun-linux-x64-baseline",bun_version}));
  writeFileSync(join(artifact,"SHA256SUMS"),checksumManifest(artifact,["kizuki","kizuki-mcp","README.txt","BUILD.json"]));
- const ids=["help","init","import","query","query-result","context","context-result","export","restore-verify","restore","restored-query","restored-query-result","restored-context","restored-context-result"];
- writeFileSync(proof,JSON.stringify({schema:"kizuki.artifact-proof/v1",source_sha:"a".repeat(40),target:"bun-linux-x64-baseline",binary_sha256:createHash("sha256").update(readFileSync(join(artifact,"kizuki"))).digest("hex"),failures:[],steps:ids.map(id=>({id,passed:true,exit_code:0}))}));
+ const package_sha256 = Object.fromEntries(ARTIFACT_PACKAGE_FILES.map(name => [name, hash(readFileSync(join(artifact, name)))]));
+ const execution = "/tmp/kizuki-qualification-proof-synthetic/execution";
+ const paths = { executable: "/tmp/kizuki-qualification-proof-synthetic/artifact/kizuki", home: `${execution}/home`, config: `${execution}/config/kizuki.toml`, vault: `${execution}/vault`, restored_vault: `${execution}/restored` };
+ const entry = SQLITE_ENGINE_POLICY.accepted[0];
+ const runtime: SqliteRuntime = { schema: "kizuki.sqlite-runtime/v1", bun_version, sqlite_version: entry.sqlite_version, sqlite_source_id: entry.sqlite_source_id };
+ const receipt = { schema, source_sha: "a".repeat(40), target: "bun-linux-x64-baseline", host_platform: "linux", host_arch: "x64",
+   bun_version, binary_sha256: package_sha256.kizuki!, package_sha256, paths, failures: [] as string[],
+   steps: artifactProofSteps(schema, paths).map(step => ({ ...step, passed: true, exit_code: 0 })),
+   ...(schema === "kizuki.artifact-proof/v2" ? { host_kernel_release: "synthetic-kernel", engine_observations: {
+     kizuki: { executable_sha256: package_sha256.kizuki!, runtime: { ...runtime }, exit_code: 0, doctor_status: "ok" },
+     kizuki_mcp: { executable_sha256: package_sha256["kizuki-mcp"]!, runtime: { ...runtime }, exit_code: 0, mcp_is_error: false },
+   } } : {}),
+ };
+ const saveProof = () => writeFileSync(proof, JSON.stringify(receipt)); saveProof();
  writeFileSync(scope,JSON.stringify({scope:"fixture",vault,brief_hour:7,timezone:"UTC",supervisor:"none"}));
- return{root,artifact,vault,proof,scope,out};
+ return{root,artifact,vault,proof,scope,out,receipt,saveProof};
 }
 test("init binds proof/build/checksums, uses private files and refuses overwrite",()=>{
  const f=fixture();expect(initQualification(f.artifact,f.proof,f.scope,f.out).status).toBe("awaiting-observation");
  expect(statSync(f.out).mode & 0o777).toBe(0o700);expect(statSync(join(f.out,"manifest.json")).mode & 0o777).toBe(0o600);
  expect(()=>initQualification(f.artifact,f.proof,f.scope,f.out)).toThrow();
  expect(statusQualification(f.out).identity.source_sha).toBe("a".repeat(40));
+});
+
+test("historical v1 proof and qualification journal bytes keep their original identity", () => {
+ const f=fixture();initQualification(f.artifact,f.proof,f.scope,f.out);sampleQualification(f.out);
+ const paths=[f.proof,...["manifest.json","genesis.json","samples.jsonl"].map(name=>join(f.out,name))];
+ const before=paths.map(path=>readFileSync(path));
+ const status=statusQualification(f.out);
+ expect(status.identity.proof_sha256).toBe(hash(before[0]!));
+ expect(status.release_qualified).toBe(false);
+ expect(JSON.parse(before[0]!.toString()).bun_version).toBe("1.3.10");
+ expect(paths.map(path=>readFileSync(path))).toEqual(before);
+});
+
+test.each([0,1])("complete v2 records preserve doctor exit %d and remain fixture-only", exit => {
+ const f=fixture("kizuki.artifact-proof/v2");
+ f.receipt.engine_observations!.kizuki.exit_code=f.receipt.steps[2]!.exit_code=exit;
+ f.receipt.engine_observations!.kizuki.doctor_status=exit===0?"ok":"error";f.saveProof();
+ expect(initQualification(f.artifact,f.proof,f.scope,f.out).status).toBe("awaiting-observation");
+ expect(statusQualification(f.out)).toMatchObject({release_qualified:false,rail_qualification:"fixture-only",samples:0});
+});
+
+for(const [label,mutate] of [
+ ["partial old receipt",(f)=>{writeFileSync(f.proof,JSON.stringify({schema:f.receipt.schema,source_sha:f.receipt.source_sha,steps:f.receipt.steps}));}],
+ ["substituted command",(f)=>{f.receipt.steps[2]!.command=["kizuki","--help"];f.saveProof();}],
+ ["reordered steps",(f)=>{[f.receipt.steps[2],f.receipt.steps[3]]=[f.receipt.steps[3]!,f.receipt.steps[2]!];f.saveProof();}],
+ ["wrong timeout",(f)=>{f.receipt.steps[0]!.timeout_ms=0;f.saveProof();}],
+ ["unknown receipt field",(f)=>{Object.assign(f.receipt,{extra:true});f.saveProof();}],
+ ["duplicate receipt key",(f)=>{writeFileSync(f.proof,`{"schema":"${f.receipt.schema}",${JSON.stringify(f.receipt).slice(1)}`);}],
+] satisfies [string,(f:ReturnType<typeof fixture>)=>unknown][]) test(`qualification refuses ${label} before creating its journal`,()=>{
+ const f=fixture();mutate(f);
+ expect(()=>initQualification(f.artifact,f.proof,f.scope,f.out)).toThrow();
+ expect(fs.existsSync(f.out)).toBe(false);
+});
+
+for(const [label,mutate] of [
+ ["missing MCP",(f)=>Object.assign(f.receipt.engine_observations!,{kizuki_mcp:null})],
+ ["different executable",(f)=>{f.receipt.engine_observations!.kizuki_mcp.executable_sha256=f.receipt.binary_sha256;}],
+ ["different Bun",(f)=>{f.receipt.engine_observations!.kizuki.runtime.bun_version="9.9.9";}],
+ ["different SQLite",(f)=>{f.receipt.engine_observations!.kizuki_mcp.runtime.sqlite_source_id="synthetic other source";}],
+ ["unknown matching SQLite",(f)=>{for(const item of Object.values(f.receipt.engine_observations!))item.runtime.sqlite_source_id="synthetic unknown source";}],
+ ["contradictory doctor exit",(f)=>{f.receipt.engine_observations!.kizuki.exit_code=1;}],
+] satisfies [string,(f:ReturnType<typeof fixture>)=>unknown][]) test(`v2 qualification refuses ${label}`,()=>{
+ const f=fixture("kizuki.artifact-proof/v2");mutate(f);f.saveProof();
+ expect(()=>initQualification(f.artifact,f.proof,f.scope,f.out)).toThrow();
+ expect(fs.existsSync(f.out)).toBe(false);
+});
+
+test("a self-consistent v2 package cannot select another Bun policy",()=>{
+ const f=fixture("kizuki.artifact-proof/v2"), path=join(f.artifact,"BUILD.json"),build=JSON.parse(readFileSync(path,"utf8"));
+ build.bun_version=f.receipt.bun_version="9.9.9";
+ writeFileSync(path,JSON.stringify(build));
+ writeFileSync(join(f.artifact,"SHA256SUMS"),checksumManifest(f.artifact,ARTIFACT_PACKAGE_FILES.slice(0,-1)));
+ for(const name of ARTIFACT_PACKAGE_FILES)f.receipt.package_sha256[name]=hash(readFileSync(join(f.artifact,name)));
+ for(const item of Object.values(f.receipt.engine_observations!))item.runtime.bun_version="9.9.9";
+ f.saveProof();
+ expect(()=>initQualification(f.artifact,f.proof,f.scope,f.out)).toThrow("unsupported-package-bun-version");
+ expect(fs.existsSync(f.out)).toBe(false);
 });
 test("mismatched proof, owner scope and symlink paths are refused before report creation",()=>{
  const f=fixture();const original=readFileSync(f.proof,"utf8");writeFileSync(f.proof,original.replace('"source_sha":"'+"a".repeat(40),'"source_sha":"'+"b".repeat(40)));

@@ -756,7 +756,8 @@ export function createXConnector(config: XConnectorConfig): XConnector;
 - `purgeSource(subject_id)`: the empty plan (`purge: false` is honest: read
   scopes cannot delete at the source and the connector keeps no record
   index; subject-keyed purge works on the ledger through
-  `purgeEvents(db, vaultPath, { subject_handle }, reason)`).
+  `purgeEvents(db, vaultPath, { connector_id: "kizuki.x", subject_handle, source_key }, reason)`;
+  the source key is required for source-bound evidence).
 - `fixture()`: `advance` over `createFixtureXApi()` with `X_FIXTURE_STATE`
   and a fixed clock, until the cursor's four streams are in `phase: "sync"`;
   returns the accumulated events (deterministic, no network).

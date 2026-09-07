@@ -10,13 +10,14 @@ import {
 import { PortError } from "../../src/contracts/ports";
 import type { PortContext, PortDescriptor } from "../../src/contracts/ports";
 import type { RetrievalPort } from "../../src/contracts/retrieval";
+import { PROVENANCE_ERASURE_CAPABILITY } from "../../src/contracts/retrieval";
 import { FIXED_NOW } from "./fixtures";
 import {
   DIRECT_RETRIEVAL_DESCRIPTOR,
   ReferenceRetrievalPort,
 } from "./reference-retrieval";
 
-const [socketPath, readyPath, stateDir, token] = Bun.argv.slice(2);
+const [socketPath, readyPath, stateDir, token, proofStore] = Bun.argv.slice(2);
 if (
   socketPath === undefined ||
   readyPath === undefined ||
@@ -28,6 +29,7 @@ if (
 
 const descriptor = {
   ...DIRECT_RETRIEVAL_DESCRIPTOR,
+  supports: [...DIRECT_RETRIEVAL_DESCRIPTOR.supports, PROVENANCE_ERASURE_CAPABILITY],
   method_timeouts_ms: { wait: 10 },
 } satisfies PortDescriptor;
 
@@ -78,9 +80,13 @@ async function invoke(method: string, args: unknown[]): Promise<unknown> {
     case "remove":
       return port.remove(args[0] as Parameters<RetrievalPort["remove"]>[0]);
     case "verifyAbsent":
-      return port.verifyAbsent(
+      return { ...await port.verifyAbsent(
         args[0] as Parameters<RetrievalPort["verifyAbsent"]>[0],
-      );
+      ), ...(proofStore === undefined ? {} : { store: proofStore }) };
+    case "removeByProvenance":
+      return port.removeByProvenance!(args[0] as string[]);
+    case "verifyProvenanceAbsent":
+      return { ...await port.verifyProvenanceAbsent!(args[0] as string[]), ...(proofStore === undefined ? {} : { store: proofStore }) };
     case "neighbors":
       return port.neighbors(
         args[0] as Parameters<RetrievalPort["neighbors"]>[0],

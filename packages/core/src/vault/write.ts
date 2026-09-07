@@ -43,6 +43,7 @@ export interface CanonWriteCapability {
   readonly [CAPABILITY]: true;
   readonly writer: Writer;
   readonly receipt_id: string;
+  readonly vault_path: string;
 }
 
 export class CanonWriteRefused extends Error {
@@ -62,6 +63,7 @@ export class CanonWriteRefused extends Error {
       | "archive_exists"
       | "parent_invalid",
     message: string,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -74,6 +76,7 @@ export class CanonWriteRefused extends Error {
 export function grantCanonWrite(
   writer: Writer,
   receipt_id: string,
+  vault_path: string,
 ): CanonWriteCapability {
   if (!isWriter(writer)) {
     throw new CanonWriteRefused(
@@ -81,16 +84,17 @@ export function grantCanonWrite(
       `writer must be one of ${WRITERS.join(" | ")}`,
     );
   }
-  if (typeof receipt_id !== "string" || receipt_id.length === 0) {
+  if (typeof receipt_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(receipt_id)) {
     throw new CanonWriteRefused(
       "capability_invalid",
-      "a canon write capability is bound to a non-empty receipt_id",
+      "a canon write capability requires a safe receipt identifier",
     );
   }
   const cap: CanonWriteCapability = Object.freeze({
     [CAPABILITY]: true as const,
     writer,
     receipt_id,
+    vault_path: resolve(vault_path),
   });
   MINTED.add(cap);
   return cap;
@@ -163,21 +167,6 @@ function isSymlink(path: string): boolean {
   }
 }
 
-export function findVaultRoot(file: string): string {
-  let current = dirname(resolve(file));
-  while (true) {
-    if (
-      isDirectory(join(current, "archive")) &&
-      isDirectory(join(current, ".kizuki"))
-    ) {
-      return current;
-    }
-    const parent = dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  throw new Error(`cannot find vault root for ${file}`);
-}
 
 /**
  * Exclusive archive name: vault-relative path plus the receipt id. Two
@@ -206,10 +195,34 @@ function writeDurably(
 
 function vaultRelPath(vault: string, path: string): string {
   const rel = relative(resolve(vault), resolve(path));
-  if (rel.startsWith("..") || isAbsolute(rel)) {
+  if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw new CanonWriteRefused("parent_invalid", "Refusing to write outside the vault");
   }
   return rel.split(sep).join("/");
+}
+
+/** Path identity checks protect existing state; native swap-resistant handles are separate. */
+export function containedVaultFile(vaultPath: string, filePath: string): string {
+  const vault = resolve(vaultPath);
+  const path = resolve(vault, filePath);
+  const rel = vaultRelPath(vault, path);
+  const parts = rel.split("/");
+  let current = vault;
+  for (let index = -1; index < parts.length; index += 1) {
+    if (index >= 0) current = join(current, parts[index]!);
+    let entry;
+    try { entry = lstatSync(current); }
+    catch (error) {
+      if (index >= 0 && (error as NodeJS.ErrnoException).code === "ENOENT") return path;
+      throw error;
+    }
+    if (entry.isSymbolicLink()) throw new CanonWriteRefused("symlink", "vault file path contains a symlink");
+    const last = index === parts.length - 1;
+    if (last ? !entry.isFile() || entry.nlink !== 1 : !entry.isDirectory()) {
+      throw new CanonWriteRefused("parent_invalid", "vault file path has an unusable component", last && entry.isDirectory() ? "EISDIR" : "EIO");
+    }
+  }
+  return path;
 }
 
 function ensureCanonParents(vault: string, filePath: string): void {
@@ -272,12 +285,13 @@ function hashOnDisk(path: string, expected: string): string {
 }
 
 function replaceAtomically(
+  vault: string,
   path: string,
   content: string,
   stamp: string,
   resumeExact = false,
 ): void {
-  const temp = join(dirname(path), `.${basename(path)}.${stamp}.tmp`);
+  const temp = containedVaultFile(vault, join(dirname(path), `.${basename(path)}.${stamp}.tmp`));
   if (resumeExact && existsSync(temp)) {
     const before = lstatSync(temp);
     const fd = openSync(temp, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -316,6 +330,7 @@ function replaceAtomically(
 }
 
 function deleteExistingPage(
+  vault: string,
   path: string,
   expectedHash: string | undefined,
   receiptId: string,
@@ -349,10 +364,9 @@ function deleteExistingPage(
     }
     return { archive_path: null, after_hash: ABSENT_PAGE_HASH };
   }
-  const vault = findVaultRoot(path);
   mkdirSync(join(vault, "archive"), { recursive: true, mode: 0o700 });
   const archiveRel = archiveRelPath(vaultRelPath(vault, path), receiptId);
-  const archive = join(vault, archiveRel);
+  const archive = containedVaultFile(vault, archiveRel);
   archiveExclusively(path, archive);
   unlinkSync(path);
   if (existsSync(path)) {
@@ -376,6 +390,8 @@ export function writePage(
   opts: WritePageOptions = {},
 ): WriteOutcome {
   consume(cap);
+  const vault = cap.vault_path;
+  path = containedVaultFile(vault, path);
 
   if (isSymlink(path)) {
     throw new CanonWriteRefused(
@@ -386,6 +402,7 @@ export function writePage(
 
   if (opts.delete === true) {
     return deleteExistingPage(
+      vault,
       path,
       opts.expected_hash,
       cap.receipt_id,
@@ -403,7 +420,6 @@ export function writePage(
   const content = serializePage(page);
   const expectedHash = hashBytes(Buffer.from(content, "utf8"));
   const exists = existsSync(path);
-  const vault = findVaultRoot(path);
 
   if (exists && opts.revision !== true) {
     throw new CanonWriteRefused(
@@ -437,7 +453,7 @@ export function writePage(
   }
 
   if (opts.erase_prior === true) {
-    replaceAtomically(path, content, cap.receipt_id, true);
+    replaceAtomically(vault, path, content, cap.receipt_id, true);
     const fd = openSync(dirname(path), "r");
     try {
       fsyncSync(fd);
@@ -449,9 +465,9 @@ export function writePage(
 
   mkdirSync(join(vault, "archive"), { recursive: true, mode: 0o700 });
   const archiveRel = archiveRelPath(vaultRelPath(vault, path), cap.receipt_id);
-  const archive = join(vault, archiveRel);
+  const archive = containedVaultFile(vault, archiveRel);
   archiveExclusively(path, archive);
-  replaceAtomically(path, content, cap.receipt_id);
+  replaceAtomically(vault, path, content, cap.receipt_id);
   return {
     archive_path: archiveRel,
     after_hash: hashOnDisk(path, expectedHash),

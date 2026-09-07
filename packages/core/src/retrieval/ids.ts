@@ -28,6 +28,13 @@ export function bareRetrievalId(docId: string): string {
   return kind === null ? docId : docId.slice(PREFIXES[kind].length);
 }
 
+/** Canon sources accept raw event IDs and their event retrieval references. */
+export function eventIdFromReference(reference: string): string {
+  return reference.startsWith(PREFIXES.event)
+    ? reference.slice(PREFIXES.event.length)
+    : reference;
+}
+
 export function isNamespacedRetrievalId(
   docId: string,
   kind: RetrievalDocKind,

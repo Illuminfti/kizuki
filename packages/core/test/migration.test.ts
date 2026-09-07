@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyAgentsV9 } from "../src/agents/schema";
@@ -119,6 +119,24 @@ const V2_SCHEMA = `
 `;
 
 describe("openLedger migrations", () => {
+  test("keeps the existing one-second wait default and permits a bounded startup wait", () => {
+    const legacy = openLedger(":memory:"), contender = openLedger(":memory:", { busyTimeoutMs: 5000 });
+    try {
+      expect(legacy.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 1000 });
+      expect(contender.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 5000 });
+    } finally { legacy.close(); contender.close(); }
+  });
+
+  test("rejects invalid startup waits before creating a database", () => {
+    const root = mkdtempSync(join(tmpdir(), "kizuki-ledger-timeout-")), path = join(root, "ledger.db");
+    try {
+      for (const busyTimeoutMs of [-1, 5001, 1.5, NaN, Infinity, "5000"] as number[]) {
+        expect(() => openLedger(path, { busyTimeoutMs })).toThrow("invalid ledger busy timeout");
+        expect(existsSync(path)).toBe(false);
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   test("applies the current migrations and enables foreign keys", () => {
     const db = openLedger(":memory:");
     expect(schemaVersion(db)).toBeGreaterThanOrEqual(3);

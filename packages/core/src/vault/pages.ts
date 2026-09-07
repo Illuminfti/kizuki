@@ -69,8 +69,8 @@ function skip(relPath: string, code: ScanFailureCode, reason: string): SkippedPa
   return { relPath, reason, code };
 }
 
-function isCanonPageName(name: string): boolean {
-  return name.endsWith(".md") && name !== "CANON.md" && name !== "SCHEMA.md";
+function isCanonPagePath(relPath: string): boolean {
+  return relPath.endsWith(".md") && relPath !== "CANON.md" && relPath !== "SCHEMA.md";
 }
 
 interface WalkState {
@@ -203,11 +203,11 @@ function walk(state: WalkState, directory: string, vaultPath: string, depth: num
 
   for (const entry of entries) {
     if (state.truncated) return;
-    if (entry.name === ".kizuki" || entry.name === "archive") continue;
+    if (entry.name === ".kizuki" || (depth === 0 && entry.name === "archive")) continue;
     const target = join(directory, entry.name);
     const relPath = relative(vaultPath, target).split(sep).join("/");
     if (entry.isSymbolicLink()) {
-      if (isCanonPageName(entry.name)) {
+      if (isCanonPagePath(relPath)) {
         if (depth + 1 > MAX_CANON_DEPTH) {
           state.skipped.push(
             skip(relPath, "too_deep", `exceeds ${MAX_CANON_DEPTH} path segments`),
@@ -228,7 +228,7 @@ function walk(state: WalkState, directory: string, vaultPath: string, depth: num
       walk(state, target, vaultPath, depth + 1);
       continue;
     }
-    if (!entry.isFile() || !isCanonPageName(entry.name)) {
+    if (!entry.isFile() || !isCanonPagePath(relPath)) {
       continue;
     }
     if (depth + 1 > MAX_CANON_DEPTH) {

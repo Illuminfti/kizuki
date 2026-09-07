@@ -51,6 +51,14 @@ directory that is not a Kizuki vault. Control paths are created owner-only
 `kizuki.doctrine/v2`; untouched historical templates are upgraded, and
 owner edits are left in place.
 
+Init ensures the vault's root `.gitignore` contains an effective
+`/.kizuki/` exclusion, preserving owner entries and adding the rule after
+later inclusion rules when needed. Repeated init keeps it idempotent.
+In an enclosing Git repository, init and dry runs refuse already tracked
+`.kizuki` entries or an unreadable Git index before writing vault files.
+The owner must resolve tracked control files before retrying; init never
+changes Git's index or history. Git must be available for this check.
+
 ## import
 
 ```text
@@ -305,7 +313,7 @@ weights.
 ## purge
 
 ```text
-usage: kizuki purge (--event ID | --subject ID [--include-aliases] | --connector ID [--record ID] | --verify RECEIPT) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json]
+usage: kizuki purge (--event ID | --connector ID [--record ID | --subject ID [--source KEY] [--include-aliases]] | --verify RECEIPT) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json]
 ```
 
 Physical deletion plus a receipt. `--reason` is required except `--verify`,
@@ -321,6 +329,24 @@ absence proofs and `pending`/`done`/`failed` operation state. While any inert
 legacy identity row remains, identity absence is unprovable rather than
 successful.
 
+Subject purges use an exact raw `subject_id` in its emitting connector's
+namespace: `--subject ID --connector ID`. Bare subject IDs are refused,
+even when only one connector currently matches. For source-bound events,
+also supply `--source KEY` with the enrolled source key shown by
+`kizuki connect status`. Connector, raw subject and source filters are
+intersected; role and display name do not expand the subject's identity.
+Without `--source`, connector-plus-subject selection is allowed only when
+all matching events are legacy unbound evidence. Any matching source-bound
+event causes refusal, including matches beyond the printed preview limit.
+The same scope check runs again inside the deletion transaction.
+
+`--dry-run` displays the complete selector and bounded matched event IDs;
+`--json` retains the scope in `data.filter`. The Core `PurgeFilter` uses
+`{ connector_id, subject_handle, source_key? }` for this operation and reports
+`PurgeError` codes `subject_namespace_required` or `subject_source_required`
+for incomplete scope. `--source` is a subject qualifier, not a source-wide
+purge command. `--subject` cannot be combined with `--event` or `--record`.
+
 ## export
 
 ```text
@@ -329,6 +355,8 @@ usage: kizuki export --out DIR
 
 Dumps vault files and ledger tables into an empty directory as
 `kizuki.backup/v3`. The destination must sit outside the source vault.
+Agent identities, grants, authentication audit, enrollment receipts and `.kizuki`
+credential files are excluded. Restored vaults require explicit agent enrollment.
 
 ## restore
 
@@ -379,10 +407,14 @@ Prints the `@kizuki/cli` package version (`0.1.0` on this revision).
 ## MCP (not a CLI verb)
 
 ```bash
-bun packages/mcp/src/bin.ts --vault PATH (--owner | --token-env VAR) [--retrieval ID]
+bun packages/mcp/src/bin.ts --vault PATH (--owner | --token-env VAR | --token-ref file:/absolute/path) [--retrieval ID]
 ```
 
 Stdio adapter. Tokens never travel on argv.
+Select exactly one authentication method. Core resolves a private credential
+file at startup and checks its enrollment binding and current agent authority.
+Subsequent calls use the current stored grant and revocation state. Deleting a
+file does not revoke an existing session; use `agent revoke`.
 
 MCP uses the vault's configured retrieval engine when `--retrieval` is omitted.
 If that optional engine is temporarily busy or unavailable, the session starts
@@ -392,9 +424,34 @@ does not steal another process's lease or reconnect the engine mid-session.
 An explicit `--retrieval ID` remains required. Unknown engines and invalid
 configuration refuse startup. No model is needed for the lexical floor.
 
+## agent
+
+```text
+usage: kizuki agent add NAME --grant FILE --token-ref file:/absolute/path --operation-id ID [--dry-run] [--json]
+       kizuki agent revoke NAME [--json]
+```
+
+Enroll a scoped agent with a complete explicit grant and a private credential
+file, or revoke its access. The parent directory must already exist and have
+private owner custody. Credential delivery currently requires qualified Linux
+x64 glibc. Preview validates an existing vault without creating an identity,
+credential or configuration. An older ledger reports `migration_required`
+without applying that migration during preview. Preview requires a stable,
+checkpointed ledger without journal sidecars; otherwise it reports
+`enrollment_busy` and leaves the files intact.
+
+Retry the same operation ID and arguments after interruption. A retry reports
+the current grant and credential state; it never restores a narrowed grant,
+rotates a token or rewrites a completed credential. Setup exits 0 only for a
+validated preview or an active identity with its original credential ready.
+Invalid arguments or grants exit 2; conflicts and incomplete setup exit 1.
+Cancellation may retain an inactive partial file. See the
+[agent enrollment guide](agent-enrollment.md) for the complete grant, recovery
+states and MCP connection example.
+
 ## Not CLI verbs
 
-`timeline` and `agent add` are not registered. Timeline exists
+`timeline` is not registered. Timeline exists
 as an MCP / core serving function.
 
 Source revocation maintenance inventories both known native retrieval roots under

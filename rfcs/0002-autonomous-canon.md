@@ -80,9 +80,15 @@ correction_ is the update path a person actually uses, _zero phone-home_ is
 the reason the owner can point it at everything, and _any harness_ is why
 the memory outlives the tool.
 
-1.0 still requires the stranger proof (a person who is not the owner can
-install it, connect a source, and get value) and the owner's estate
-cutover. Neither is relaxed by this RFC.
+**Owner amendment (2026-09-05):**
+[D19](../docs/decision-log.md#owner-amendment-to-readiness-2026-09-05)
+supersedes the original estate-cutover and elapsed-time release gates.
+Readiness requires stranger proof (a person who is not the owner can install
+it, connect a source and get value), zero live P0s on the exact candidate and
+an honest install path. Seven-day rail and fourteen-day estate observations
+are optional post-ready diagnostics. Operational cutover requires separate
+authorization and is not a readiness or 1.0 tag prerequisite. The remaining
+product acceptance requirements and this RFC's runtime laws still apply.
 
 ---
 
@@ -2815,9 +2821,14 @@ proof; none is done until that proof runs.
 | `retrieval-fts5` | the minimal implementation behind the port                                       | retrieval              | retrieval conformance; ceiling never widens                                          |
 | `retrieval-pg`   | `@kizuki/retrieval-pg`, embedded engine, graph, lease                            | retrieval, embedding   | conformance + contention suite (11 named tests)                                      |
 | `embedding-gguf` | `@kizuki/embed-gguf`, space identity, pinned context/batch, `kizuki models pull` | embedding              | space-mismatch fails closed; RSS ceiling asserted                                    |
-| `serve-daemon`   | unit install, rails, leases, budgets, run receipts, doctor sections              | surface                | restart suite; seven days of receipts; a masked unit is a failure                    |
+| `serve-daemon`   | unit install, rails, leases, budgets, run receipts, doctor sections              | surface                | restart suite and rail/liveness receipts; a masked unit is a failure                 |
 | `purge-totality` | two-phase purge, `purge_ops`, `verifyAbsent`, `--verify`                         | retrieval, canon-store | purge suite; §16.4 example                                                           |
 | `docs-pivot`     | every replacement in §2, upstream-policy corrections, attribution                | —                      | `bun run verify`; no doc contradicts another                                         |
+
+Under D19, the original seven-day daemon observation is an optional post-ready
+diagnostic. Restart and liveness proof remain required. The rolling receipt
+window and health rules in §4.7 are unchanged; no elapsed wait substitutes for
+the lane's executable proof.
 
 `docs-pivot` merges **first** among the doc changes and **last** among all
 lanes' claims, in this order, so the tree is never self-contradictory:

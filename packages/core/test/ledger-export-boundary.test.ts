@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 
 const REPO = resolve(import.meta.dir, "../../..");
 const ROOTS = [
@@ -31,6 +31,30 @@ function walk(dir: string): string[] {
 }
 
 describe("ledger export boundary", () => {
+  test("checkpoint writes remain in ingest, backup restore and schema migration", () => {
+    const writers: string[] = [];
+    const retiredCalls: string[] = [];
+    for (const pkg of readdirSync(join(REPO, "packages")).sort()) {
+      const root = join(REPO, "packages", pkg, "src");
+      if (!existsSync(root)) continue;
+      for (const file of walk(root)) {
+        const text = readFileSync(file, "utf8");
+        if (/\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+["`\[]?(?:checkpoints|connection_runs)\b/i.test(text)) {
+          writers.push(relative(REPO, file).replaceAll("\\", "/"));
+        }
+        if (/\b(?:saveCheckpoint|recordConnectorRun|writeCheckpoint)\s*\(/.test(text)) {
+          retiredCalls.push(relative(REPO, file));
+        }
+      }
+    }
+    expect(writers.sort()).toEqual([
+      "packages/core/src/export.ts",
+      "packages/core/src/ingest/run.ts",
+      "packages/core/src/ledger/schema-v16.ts",
+    ]);
+    expect(retiredCalls).toEqual([]);
+  });
+
   test("production sources do not import openLedger from the public barrel", () => {
     const hits: string[] = [];
     for (const root of ROOTS) {

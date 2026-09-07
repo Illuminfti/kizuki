@@ -46,9 +46,9 @@ function validData(overrides: Record<string, unknown> = {}): Record<string, unkn
 }
 
 let counter = 0;
-function cap(): CanonWriteCapability {
+function cap(root: string): CanonWriteCapability {
   counter += 1;
-  return grantCanonWrite("loop", `receipt-${counter}`);
+  return grantCanonWrite("loop", `receipt-${counter}`, root);
 }
 
 afterEach(() => {
@@ -65,14 +65,14 @@ describe("writePage", () => {
       body: "New canon.\n",
     };
     const oldContent = serializePage(oldPage);
-    const created = writePage(cap(), path, oldPage);
+    const created = writePage(cap(root), path, oldPage);
     expect(created.archive_path).toBeNull();
     expect(created.after_hash).toBe(hashFile(path));
 
-    expect(() => writePage(cap(), path, newPage)).toThrow(/refusing to overwrite/i);
+    expect(() => writePage(cap(root), path, newPage)).toThrow(/refusing to overwrite/i);
     expect(readFileSync(path, "utf8")).toBe(oldContent);
 
-    const revised = writePage(cap(), path, newPage, {
+    const revised = writePage(cap(root), path, newPage, {
       revision: true,
       expected_hash: created.after_hash,
     });
@@ -94,7 +94,7 @@ describe("writePage", () => {
     const path = join(root, "facts", "invalid.md");
 
     expect(() =>
-      writePage(cap(), path, { data: { id: "fact:invalid" }, body: "No policy labels.\n" }),
+      writePage(cap(root), path, { data: { id: "fact:invalid" }, body: "No policy labels.\n" }),
     ).toThrow(/invalid page/i);
     expect(existsSync(path)).toBe(false);
   });
@@ -103,10 +103,10 @@ describe("writePage", () => {
     const root = vault();
     const path = join(root, "entities", "ada.md");
     const original: VaultPage = { data: validData(), body: "Former canon.\n" };
-    const created = writePage(cap(), path, original);
+    const created = writePage(cap(root), path, original);
 
     writePage(
-      cap(),
+      cap(root),
       path,
       { data: validData({ status: "archived" }), body: "Former canon.\n" },
       { revision: true, expected_hash: created.after_hash },
@@ -141,7 +141,7 @@ describe("writePage", () => {
   test("a capability is spent by its first use, even when that use failed", () => {
     const root = vault();
     const path = join(root, "entities", "ada.md");
-    const once = cap();
+    const once = cap(root);
     writePage(once, path, { data: validData(), body: "x\n" });
 
     let refused: unknown;
@@ -154,7 +154,7 @@ describe("writePage", () => {
     expect((refused as CanonWriteRefused).reason).toBe("capability_spent");
     expect(existsSync(join(root, "entities", "grace.md"))).toBe(false);
 
-    const failing = cap();
+    const failing = cap(root);
     expect(() => writePage(failing, path, { data: {}, body: "" })).toThrow(/invalid page/i);
     expect(() => writePage(failing, path, { data: validData(), body: "z\n" })).toThrow(
       /already used/,
@@ -164,16 +164,16 @@ describe("writePage", () => {
   test("a revision names the bytes it read and refuses a hand edit in between", () => {
     const root = vault();
     const path = join(root, "entities", "ada.md");
-    const created = writePage(cap(), path, { data: validData(), body: "Loop wrote this.\n" });
+    const created = writePage(cap(root), path, { data: validData(), body: "Loop wrote this.\n" });
 
     expect(() =>
-      writePage(cap(), path, { data: validData(), body: "No hash.\n" }, { revision: true }),
+      writePage(cap(root), path, { data: validData(), body: "No hash.\n" }, { revision: true }),
     ).toThrow(/hash/);
 
     writeFileSync(path, serializePage({ data: validData(), body: "Owner edited this.\n" }));
     expect(() =>
       writePage(
-        cap(),
+        cap(root),
         path,
         { data: validData(), body: "Loop again.\n" },
         { revision: true, expected_hash: created.after_hash },
@@ -187,9 +187,9 @@ describe("writePage", () => {
     const root = vault();
     const path = join(root, "entities", "ada.md");
     const original: VaultPage = { data: validData(), body: "Former canon.\n" };
-    const created = writePage(cap(), path, original);
+    const created = writePage(cap(root), path, original);
 
-    const deleted = writePage(cap(), path, original, {
+    const deleted = writePage(cap(root), path, original, {
       delete: true,
       expected_hash: created.after_hash,
     });
@@ -204,7 +204,7 @@ describe("writePage", () => {
   test("creates nested type directories and archives under the receipt id", () => {
     const root = vault();
     const path = join(root, "people", "projects", "nested.md");
-    const created = writePage(cap(), path, {
+    const created = writePage(cap(root), path, {
       data: validData({ id: "project:nested", type: "project" }),
       body: "Nested page.\n",
     });
@@ -213,7 +213,7 @@ describe("writePage", () => {
     expect(statSync(join(root, "people", "projects")).mode & 0o777).toBe(0o700);
 
     const revised = writePage(
-      cap(),
+      cap(root),
       path,
       { data: validData({ id: "project:nested", type: "project", title: "Nested" }), body: "Updated.\n" },
       { revision: true, expected_hash: created.after_hash },
@@ -227,19 +227,19 @@ describe("writePage", () => {
     const root = vault();
     const first = join(root, "entities", "ada.md");
     const second = join(root, "facts", "ada.md");
-    const one = writePage(cap(), first, { data: validData(), body: "Person.\n" });
-    const two = writePage(cap(), second, {
+    const one = writePage(cap(root), first, { data: validData(), body: "Person.\n" });
+    const two = writePage(cap(root), second, {
       data: validData({ id: "fact:ada", type: "fact" }),
       body: "Fact.\n",
     });
     writePage(
-      cap(),
+      cap(root),
       first,
       { data: validData(), body: "Person revised.\n" },
       { revision: true, expected_hash: one.after_hash },
     );
     writePage(
-      cap(),
+      cap(root),
       second,
       { data: validData({ id: "fact:ada", type: "fact" }), body: "Fact revised.\n" },
       { revision: true, expected_hash: two.after_hash },
@@ -259,12 +259,12 @@ describe("writePage", () => {
     const link = join(root, "entities", "link.md");
     symlinkSync(target, link);
 
-    expect(() => writePage(cap(), link, { data: validData(), body: "x\n" })).toThrow(/symlink/);
+    expect(() => writePage(cap(root), link, { data: validData(), body: "x\n" })).toThrow(/symlink/);
     expect(readFileSync(target, "utf8")).toBe("outside the vault\n");
 
     expect(() =>
       writePage(
-        cap(),
+        cap(root),
         join(root, "entities", "missing.md"),
         { data: validData(), body: "x\n" },
         { revision: true, expected_hash: "0".repeat(64) },

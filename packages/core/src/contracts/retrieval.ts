@@ -17,11 +17,14 @@ import type {
 export const RETRIEVAL_CONTRACT = "kizuki.retrieval/v1" as const;
 export const RETRIEVAL_CONTRACT_MINOR = 0;
 export const MAX_RETRIEVAL_LIMIT = 100;
+/** Additive, opt-in erasure contract. Existing exact-ID methods keep v1 semantics. */
+export const PROVENANCE_ERASURE_CAPABILITY = "provenance-erasure/v1" as const;
 export const RETRIEVAL_CAPABILITIES = [
   "lexical",
   "vector",
   "hybrid",
   "graph",
+  PROVENANCE_ERASURE_CAPABILITY,
 ] as const;
 export type RetrievalCapability =
   (typeof RETRIEVAL_CAPABILITIES)[number];
@@ -101,6 +104,10 @@ export interface AbsenceProof {
   readonly at: string;
 }
 
+export interface ProvenanceAbsenceProof extends AbsenceProof {
+  readonly scope: "event-provenance/v1";
+}
+
 export interface EntityRef {
   readonly entity_id: string;
 }
@@ -130,8 +137,18 @@ export interface RetrievalPort extends Port {
   rebuildFromDocuments?(docs: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>): Promise<void>;
   upsert(docs: readonly RetrievalDoc[]): Promise<RetrievalMutationReport>;
   search(query: RetrievalQuery): Promise<RetrievalResult>;
+  /** Remove only the requested document identities and their owned projections. */
   remove(ids: readonly string[]): Promise<RetrievalMutationReport>;
+  /** Check only the requested document identities. This is not a provenance proof. */
   verifyAbsent(ids: readonly string[]): Promise<AbsenceProof>;
+  /**
+   * Requires provenance-erasure/v1. Raw event IDs match both raw and event:
+   * provenance. Remove every supported document and its owned projections;
+   * document names themselves are not event IDs. Each request is <= 500 IDs.
+   */
+  removeByProvenance?(eventIds: readonly string[]): Promise<RetrievalMutationReport>;
+  /** Findings name requested raw event IDs whose derived support still exists. */
+  verifyProvenanceAbsent?(eventIds: readonly string[]): Promise<ProvenanceAbsenceProof>;
   neighbors(
     entity: EntityRef,
     options: GraphQueryOptions,
@@ -376,7 +393,9 @@ export function validateAbsenceProof(
     typeof value["checked"] !== "number" ||
     !Number.isSafeInteger(value["checked"]) ||
     value["checked"] < 0 ||
-    !validStrings(value["found"], { max: 10_000 }) ||
+    // A scoped response is bounded by the finite request already held by the
+    // caller. Unscoped responses retain the standalone contract ceiling.
+    !validStrings(value["found"], { max: requestedIds?.length ?? 10_000 }) ||
     typeof value["store"] !== "string" ||
     value["store"].length === 0 ||
     typeof value["method"] !== "string" ||
@@ -386,10 +405,11 @@ export function validateAbsenceProof(
     invalid("absence proof");
   }
   const found = value["found"] as string[];
+  const requested = requestedIds === undefined ? undefined : new Set(requestedIds);
   if (
     requestedIds !== undefined &&
     (value["checked"] !== requestedIds.length ||
-      found.some((id) => !requestedIds.includes(id)))
+      found.some((id) => !requested!.has(id)))
   ) {
     invalid("absence proof scope");
   }
@@ -400,6 +420,25 @@ export function validateAbsenceProof(
     method: value["method"] as string,
     at: value["at"] as string,
   };
+}
+
+export function validateProvenanceEventIds(eventIds: readonly string[]): void {
+  if (!validStrings(eventIds, { max: 500 }) || eventIds.some(id => id.length > 1_024 || id.startsWith("event:"))) {
+    invalid("provenance event IDs");
+  }
+}
+
+export function validateProvenanceAbsenceProof(value: unknown, eventIds: readonly string[]): ProvenanceAbsenceProof {
+  const proof = validateAbsenceProof(value, eventIds);
+  if (!isPlainObject(value) || value["scope"] !== "event-provenance/v1") invalid("provenance proof scope");
+  return { ...proof, scope: "event-provenance/v1" };
+}
+
+export function requireProvenanceErasure(port: RetrievalPort): asserts port is RetrievalPort & Required<Pick<RetrievalPort, "removeByProvenance" | "verifyProvenanceAbsent">> {
+  requirePortCapability(port.descriptor, PROVENANCE_ERASURE_CAPABILITY);
+  if (typeof port.removeByProvenance !== "function" || typeof port.verifyProvenanceAbsent !== "function") {
+    throw new PortError("not_supported", "retrieval provenance erasure methods are unavailable", false);
+  }
 }
 
 export function validateGraphResult(value: unknown): GraphResult {

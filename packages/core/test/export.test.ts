@@ -22,7 +22,6 @@ import {
   type ExportManifestEntry,
 } from "../src/export";
 import { readRailCursor, writeRailCursor } from "../src/ledger/checkpoints";
-import { saveCheckpoint } from "../src/ledger/connections";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { accept } from "../src/ledger/ledger";
 import { revokeSourceGrant, resumeSourceRevocation, setSourceGrant } from "../src/ledger/source-grants";
@@ -74,7 +73,9 @@ function populated() {
     new Date().toISOString(),
     "fixture@1",
   );
-  saveCheckpoint(db, "fixture", sourceKey, "next", "sync", {
+  // Seed an archived checkpoint/run snapshot for read and round-trip tests.
+  const checkpointAt = new Date().toISOString();
+  const checkpointResult = {
     stored: 1,
     duplicates: 0,
     errors: [],
@@ -82,7 +83,16 @@ function populated() {
     withdrawn: 0,
     retractions_filed: 0,
     cursor: "next",
-  });
+  };
+  db.query(`INSERT INTO checkpoints
+    (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result)
+    VALUES ('fixture', ?, ?, 'sync', ?, ?, ?)`)
+    .run(sourceKey, "next", checkpointAt, checkpointAt, JSON.stringify(checkpointResult));
+  db.query(`INSERT INTO connection_runs
+    (run_id, connector_id, source_key, mode, started_at, finished_at,
+     previous_cursor, attempted_cursor, committed_cursor, stored, duplicates, errors, status)
+    VALUES (?, 'fixture', ?, 'sync', ?, ?, NULL, ?, ?, ?, 0, '[]', 'ok')`)
+    .run(sourceKey, sourceKey, checkpointAt, checkpointAt, "next", "next", checkpointResult.stored);
   writeFileSync(join(vaultPath, "notes.txt"), "plain vault file\n");
   writeFileSync(join(vaultPath, "z-last.txt"), "z\n");
   writeFileSync(join(vaultPath, "ä-umlaut.txt"), "ae\n");
@@ -429,13 +439,12 @@ describe("exportVault", () => {
     db.close();
   });
 
-  test("copies ordinary vault files but excludes the control directory", () => {
+  test("copies classified canon but excludes unrelated files and the control directory", () => {
     const { db, vaultPath } = populated();
     const outDir = join(temporary("kizuki-export-parent-"), "dump");
     exportVault(db, vaultPath, outDir);
-    expect(readFileSync(join(outDir, "vault", "notes.txt"), "utf8")).toBe(
-      "plain vault file\n",
-    );
+    expect(existsSync(join(outDir, "vault", "notes.txt"))).toBe(false);
+    expect(readFileSync(join(outDir, "vault", "people", "Ada.md"), "utf8")).toContain("Ada");
     expect(existsSync(join(outDir, "vault", ".kizuki"))).toBe(false);
     const connections = readFileSync(join(outDir, "connections.jsonl"), "utf8");
     expect(connections).not.toContain("resolved_secret");
@@ -453,9 +462,8 @@ describe("exportVault", () => {
     expect(vaultKeys).toEqual([...vaultKeys].sort((left, right) =>
       left < right ? -1 : left > right ? 1 : 0,
     ));
-    expect(vaultKeys.indexOf("vault/z-last.txt")).toBeLessThan(
-      vaultKeys.indexOf("vault/ä-umlaut.txt"),
-    );
+    expect(vaultKeys).not.toContain("vault/z-last.txt");
+    expect(vaultKeys).not.toContain("vault/ä-umlaut.txt");
     db.close();
   });
 
@@ -583,7 +591,7 @@ describe("exportVault", () => {
     db.close();
   });
 
-  test("streams a large vault file without retaining the whole payload", () => {
+  test("excludes an unclassified large binary without copying its payload", () => {
     const { db, vaultPath } = populated();
     const blob = Buffer.alloc(4 * 1024 * 1024, 7);
     writeFileSync(join(vaultPath, "blob.bin"), blob);
@@ -591,7 +599,7 @@ describe("exportVault", () => {
     const outDir = join(temporary("kizuki-export-parent-"), "dump");
     const manifest = exportVault(db, vaultPath, outDir);
     const after = process.memoryUsage().rss;
-    expect(manifest.files["vault/blob.bin"]?.size).toBe(blob.byteLength);
+    expect(manifest.files["vault/blob.bin"]).toBeUndefined();
     expect(after - before).toBeLessThan(48 * 1024 * 1024);
     db.close();
   });
@@ -607,9 +615,8 @@ describe("restoreVault", () => {
 
     expect(report.events).toBe(1);
     expect(report.vault_files).toBeGreaterThan(0);
-    expect(readFileSync(join(target, "notes.txt"), "utf8")).toBe(
-      "plain vault file\n",
-    );
+    expect(existsSync(join(target, "notes.txt"))).toBe(false);
+    expect(readFileSync(join(target, "people", "Ada.md"), "utf8")).toContain("Ada");
     expect(existsSync(join(target, ".kizuki"))).toBe(true);
     const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
     expect(
@@ -683,14 +690,14 @@ describe("restoreVault", () => {
     db.close();
   });
 
-  test("restores a vault file named INCOMPLETE", () => {
+  test("does not select an unrelated vault file named INCOMPLETE", () => {
     const { db, vaultPath } = populated();
     writeFileSync(join(vaultPath, "INCOMPLETE"), "vault-marker\n");
     const backup = join(temporary("kizuki-export-parent-"), "dump");
     exportVault(db, vaultPath, backup);
     const target = join(temporary("kizuki-restore-parent-"), "vault");
     restoreVault(backup, target);
-    expect(readFileSync(join(target, "INCOMPLETE"), "utf8")).toBe("vault-marker\n");
+    expect(existsSync(join(target, "INCOMPLETE"))).toBe(false);
     db.close();
   });
 
@@ -1265,10 +1272,10 @@ describe("restoreVault", () => {
     const { db, vaultPath } = populated();
     const backup = join(temporary("kizuki-export-parent-"), "dump");
     const manifest = exportVault(db, vaultPath, backup);
-    const notes = manifest.files["vault/notes.txt"];
-    if (notes === undefined) throw new Error("expected vault/notes.txt");
+    const notes = manifest.files["vault/people/Ada.md"];
+    if (notes === undefined) throw new Error("expected vault/people/Ada.md");
     const files = { ...manifest.files };
-    delete files["vault/notes.txt"];
+    delete files["vault/people/Ada.md"];
     files["vault//tmp/kizuki-export-escape"] = notes;
     writeSignedManifest(backup, { ...manifest, files });
     const outside = join(tmpdir(), "kizuki-export-escape");

@@ -1,5 +1,6 @@
 import { CLAIMS_SCHEMA_VERSION } from "../claims/schema";
 import { isNonEmptyString } from "../util/validate";
+import type { ValidationResult } from "../util/validate";
 
 /** RFC 0002 §18.1 — claims-core. Re-exported so vault schema tracks the durable version. */
 export { CLAIMS_SCHEMA_VERSION };
@@ -108,6 +109,26 @@ export function validateFrontmatterValue(value: unknown, key: string): string[] 
   }
   errors.push(`${key}: must be a string, finite number, boolean, or string array`);
   return errors;
+}
+
+/**
+ * Strict provenance shape for diagnostics. Keep the legacy writer/scanner
+ * schema separate until owner-edit and purge postimages have complete support.
+ */
+export function parsePageSources(data: Record<string, unknown>): ValidationResult<string[]> {
+  if (!hasOwn(data, "sources")) return { ok: false, errors: ["sources: is required"] };
+  const sources = data["sources"];
+  if (!Array.isArray(sources) || !sources.every((source): source is string => typeof source === "string")) {
+    return { ok: false, errors: ["sources: must be a string array"] };
+  }
+  const errors = validateFrontmatterValue(sources, "sources");
+  if (sources.length === 0 && data["status"] !== "archived") {
+    errors.push("sources: must name at least one event unless archived");
+  }
+  if (sources.some((source) => source.trim().length === 0)) {
+    errors.push("sources: event IDs must be non-empty strings");
+  }
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, value: sources };
 }
 
 export function validatePage(data: Record<string, unknown>): string[] {

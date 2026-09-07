@@ -5,6 +5,7 @@ import {
   PortError,
   PortRegistry,
   runRetrievalConformance,
+  validateAbsenceProof,
 } from "@kizuki/core";
 import type {
   RetrievalConformanceHarness,
@@ -73,7 +74,7 @@ const PRIVATE_CORRECTION: RetrievalDoc = {
 describe("kizuki.retrieval.embedded-pg conformance", () => {
   test("bound capabilities advertise vector nomination only with an embedding port", async () => {
     const lexical = await openPort();
-    expect(lexical.port.descriptor.supports).toEqual(["lexical", "hybrid", "graph"]);
+    expect(lexical.port.descriptor.supports).toEqual(["lexical", "hybrid", "graph", "provenance-erasure/v1"]);
     expect((await lexical.port.health()).status).toBe("ready");
     const embedded = await openPort(new FixtureEmbeddingPort());
     expect(embedded.port.descriptor.supports).toEqual(EMBEDDED_RETRIEVAL_DESCRIPTOR.supports);
@@ -99,7 +100,7 @@ describe("kizuki.retrieval.embedded-pg conformance", () => {
       registry.listPorts("retrieval").find(({ id }) => id === EMBEDDED_RETRIEVAL_ID),
     ).toMatchObject({
       contract: "kizuki.retrieval/v1",
-      supports: ["lexical", "vector", "hybrid", "graph"],
+      supports: ["lexical", "vector", "hybrid", "graph", "provenance-erasure/v1"],
       requires_lease: true,
       optional_package: "@kizuki/retrieval-pg",
     });
@@ -261,5 +262,26 @@ describe("kizuki.retrieval.embedded-pg conformance", () => {
     await port.remove(["page:grace"]);
     const gone = await port.verifyAbsent(["page:grace"]);
     expect(gone.found).toEqual([]);
+  });
+
+  test("explicit provenance erasure cascades through raw and prefixed support while exact-ID methods preserve identity", async () => {
+    const { port } = await openPort();
+    const base = SYNTHETIC_DOCS[0]!;
+    await port.upsert([
+      { ...base, doc_id: "page:derived-raw", provenance: ["atlas-source"] },
+      { ...base, doc_id: "page:derived-prefixed", provenance: ["event:atlas-source"] },
+      { ...base, doc_id: "page:atlas-source", provenance: ["other-source"] },
+      { ...base, doc_id: "page:unrelated", provenance: ["other-source"] },
+    ]);
+    const requested = ["atlas-source"];
+    expect((await port.verifyAbsent(["event:atlas-source"])).found).toEqual([]);
+    const before = validateAbsenceProof(await port.verifyProvenanceAbsent!(requested), requested);
+    expect(before.found).toEqual(requested);
+    await port.removeByProvenance!(requested);
+    expect(validateAbsenceProof(await port.verifyProvenanceAbsent!(requested), requested).found).toEqual([]);
+    expect((await port.verifyAbsent(["page:derived-raw", "page:derived-prefixed"])).found).toEqual([]);
+    expect((await port.verifyAbsent(["page:atlas-source", "page:unrelated"])).found).toEqual(["page:atlas-source", "page:unrelated"]);
+    const neighbors = await port.neighbors({ entity_id: "person:grace" }, { hops: 1, limit: 100, ceiling: "private" });
+    expect(neighbors.edges.every(edge => !["page:derived-raw", "page:derived-prefixed"].includes(edge.from))).toBe(true);
   });
 });

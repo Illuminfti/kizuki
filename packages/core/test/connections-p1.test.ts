@@ -19,7 +19,6 @@ import {
   listConnectionRuns,
   listConnections,
   registerConnection,
-  saveCheckpoint,
 } from "../src/ledger/connections";
 import { ConnectionStateStore } from "../src/ledger/connection-state";
 import { isCoreUlid, journalSourceKey } from "../src/ledger/connection-state-files";
@@ -295,36 +294,22 @@ describe("ingest capability, budget, and unavailable", () => {
     db.close();
   });
 
-  test("a checkpoint write without an active connection is refused", () => {
+  test("a run without an active connection leaves no checkpoint or receipt", async () => {
     const db = openLedger(":memory:");
-    expect(() =>
-      saveCheckpoint(db, "fixture", SOURCE, "next", "sync", {
-        stored: 0,
-        duplicates: 0,
-        errors: [],
-        proposals_created: 0,
-        withdrawn: 0,
-        retractions_filed: 0,
-        cursor: "next",
-      }),
-    ).toThrow("active connection");
+    const result = await runSync(db, stub({}), "fixture", SOURCE);
+    expect(result.errors[0]).toContain("active connection");
+    expect(getCheckpoint(db, "fixture", SOURCE)).toBeNull();
+    expect(listConnectionRuns(db, "fixture", SOURCE)).toEqual([]);
     db.close();
   });
 
-  test("a disconnected connection cannot receive a checkpoint", () => {
+  test("a disconnected connection cannot receive a checkpoint or receipt", async () => {
     const db = database();
     disconnect(db, "fixture", SOURCE);
-    expect(() =>
-      saveCheckpoint(db, "fixture", SOURCE, "next", "sync", {
-        stored: 0,
-        duplicates: 0,
-        errors: [],
-        proposals_created: 0,
-        withdrawn: 0,
-        retractions_filed: 0,
-        cursor: "next",
-      }),
-    ).toThrow("active connection");
+    const result = await runSync(db, stub({}), "fixture", SOURCE);
+    expect(result.errors[0]).toContain("active connection");
+    expect(getCheckpoint(db, "fixture", SOURCE)).toBeNull();
+    expect(listConnectionRuns(db, "fixture", SOURCE)).toEqual([]);
     db.close();
   });
 
@@ -343,17 +328,10 @@ describe("ingest capability, budget, and unavailable", () => {
     db.close();
   });
 
-  test("strict checkpoint decode refuses unexpected last_result keys", () => {
+  test("strict checkpoint decode refuses unexpected last_result keys", async () => {
     const db = database();
-    saveCheckpoint(db, "fixture", SOURCE, "next", "sync", {
-      stored: 1,
-      duplicates: 0,
-      errors: [],
-      proposals_created: 0,
-      withdrawn: 0,
-      retractions_filed: 0,
-      cursor: "next",
-    });
+    const result = await runSync(db, stub({ sync: async () => ({ events: [], cursor: "next" }) }), "fixture", SOURCE);
+    expect(result.errors).toEqual([]);
     db.query(
       "UPDATE checkpoints SET last_result = ? WHERE connector_id = ? AND source_key = ?",
     ).run('{"stored":1,"extra":true}', "fixture", SOURCE);

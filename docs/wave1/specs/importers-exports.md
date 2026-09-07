@@ -255,7 +255,9 @@ that cannot be computed is not a plan) and returns
 
 An unknown subject (including the conformance suite's
 `"conformance:subject"`) yields both arrays empty. The ledger side is
-core's `purgeEvents(db, vault, { subject_handle }, reason)`; the plan tells
+core's `purgeEvents(db, vault, { connector_id, subject_handle, source_key }, reason)`;
+use the emitting connector and enrolled source key. The source key may be
+omitted only for legacy unbound matches. The plan tells
 the owner what that purge will reach and that the export file itself stays.
 
 ### 0.5 Timestamps

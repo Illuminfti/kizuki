@@ -1,6 +1,7 @@
 import {
   RETRIEVAL_CONTRACT,
   RETRIEVAL_CONTRACT_MINOR,
+  PROVENANCE_ERASURE_CAPABILITY,
 } from "@kizuki/core";
 import type { PortDescriptor } from "@kizuki/core";
 
@@ -11,7 +12,7 @@ export const EMBEDDED_RETRIEVAL_DESCRIPTOR = {
   kind: "retrieval",
   contract: RETRIEVAL_CONTRACT,
   contract_minor: RETRIEVAL_CONTRACT_MINOR,
-  supports: ["lexical", "vector", "hybrid", "graph"],
+  supports: ["lexical", "vector", "hybrid", "graph", PROVENANCE_ERASURE_CAPABILITY],
   requires_lease: true,
   optional_package: "@kizuki/retrieval-pg",
 } as const satisfies PortDescriptor;

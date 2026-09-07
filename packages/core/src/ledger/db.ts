@@ -16,7 +16,9 @@ import {
 import type { LedgerHealth } from "./integrity";
 import { LEDGER_BUSY_TIMEOUT_MS } from "./limits";
 import { applyPurgeV5 } from "./purge-schema";
+import { applyPurgeBatchesV19 } from "./purge-batch-schema";
 import { applyEventIdentityV16 } from "./event-identity-schema";
+import { applyAgentEnrollmentV18 } from "../agents/enrollment-schema";
 import { oneShotAll, oneShotRun, tableColumns, tableExists } from "./schema";
 import { applyLedgerV16 } from "./schema-v16";
 
@@ -179,6 +181,8 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 15, apply: applySourceReceiptIntegrityV15 },
   { version: 16, apply: applyEventIdentityV16 },
   { version: 17, apply: applyLedgerV16 },
+  { version: 18, apply: applyAgentEnrollmentV18 },
+  { version: 19, apply: applyPurgeBatchesV19 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
@@ -260,12 +264,15 @@ function migrate(db: Database): void {
   assertLedgerSchema(db, latest);
 }
 
-export function openLedger(dbPath: string): Database {
+export function openLedger(dbPath: string, options: { busyTimeoutMs?: number } = {}): Database {
+  const timeout = options.busyTimeoutMs ?? LEDGER_BUSY_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 5000) throw new TypeError("invalid ledger busy timeout");
   const db = new Database(dbPath);
   try {
+    // Apply before migrations: concurrent process startup is a writer too.
+    db.exec(`PRAGMA busy_timeout = ${timeout}`);
     db.exec("PRAGMA journal_mode = WAL");
     db.exec("PRAGMA foreign_keys = ON");
-    db.exec(`PRAGMA busy_timeout = ${LEDGER_BUSY_TIMEOUT_MS}`);
     migrate(db);
     initServe(db);
     initCanon(db);

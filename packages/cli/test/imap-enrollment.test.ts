@@ -5,7 +5,7 @@ import {
   freezeManifest,
   getCheckpoint,
   listConnections,
-  saveCheckpoint,
+  runSync,
   setSourceGrant,
 } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
@@ -180,15 +180,15 @@ describe("IMAP interactive enrollment", () => {
     const connectorFor = (candidate: typeof state) => signedInConnector(async () => new TextDecoder().decode(serializeImapState(candidate)));
     try {
       const first = await enrollSignedInConnection(db, store, connectorFor(state), prompts([]));
-      saveCheckpoint(db, first.connector_id, first.source_key, "checkpoint", "sync", {
-        stored: 0,
-        duplicates: 0,
-        errors: [],
-        proposals_created: 0,
-        withdrawn: 0,
-        retractions_filed: 0,
-        cursor: "checkpoint",
-      });
+      setSourceGrant(db, { source_key: first.source_key, expected_revision: 0, operation_id: "fixture-imap-checkpoint", policy: {
+        purposes: ["capture"], allowed_fields: ["text", "subjects", "attachments", "metadata"],
+        retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "personal",
+      } });
+      const result = await runSync(db, {
+        ...connectorFor(state),
+        sync: async () => ({ events: [], cursor: "checkpoint" }),
+      }, first.connector_id, first.source_key);
+      expect(result.errors).toEqual([]);
       const before = store.read(first)!;
       for (const candidate of [
         { ...state, username: "other@example.test" },

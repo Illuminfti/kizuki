@@ -6,6 +6,7 @@ import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
 import type { RetrievalAuthority } from "../contracts/retrieval";
 import { readDerivedMeta, stampDerived } from "../derived-meta";
 import type { DerivedStamp } from "../derived-meta";
+import { assertDerivedDiscoveryReady, markDerivedHeld, readDerivedHolds } from "../derived-holds";
 import { latestLedgerCursor } from "../ledger/ledger";
 import { tableExists } from "../ledger/schema";
 import { bareRetrievalId } from "../retrieval/ids";
@@ -76,75 +77,78 @@ interface StoredEdge {
 const FRONTIER_CHUNK = 500;
 
 function withoutCodeSpans(body: string): string {
-  let result = "";
-
+  const runs: { start: number; length: number; next: number }[] = [];
   for (let index = 0; index < body.length; index += 1) {
-    if (body[index] !== "`") {
-      result += body[index] as string;
-      continue;
-    }
+    if (body[index] !== "`") continue;
+    const start = index;
+    while (body[index + 1] === "`") index += 1;
+    runs.push({ start, length: index - start + 1, next: -1 });
+  }
+  if (runs.length === 0) return body;
 
-    let run = 1;
-    while (body[index + run] === "`") run += 1;
-    let closing = index + run;
-    while (closing < body.length) {
-      if (body[closing] !== "`") {
-        closing += 1;
-        continue;
-      }
-      let closingRun = 1;
-      while (body[closing + closingRun] === "`") closingRun += 1;
-      if (closingRun === run) break;
-      closing += closingRun;
-    }
-    if (closing >= body.length) {
-      result += "`".repeat(run);
-      index += run - 1;
-      continue;
-    }
-
-    const end = closing + run;
-    for (let cursor = index; cursor < end; cursor += 1) {
-      result += body[cursor] === "\n" ? "\n" : " ";
-    }
-    index = end - 1;
+  // Index the next exact-length run once. Unmatched runs must not each
+  // rescan the rest of a hostile page looking for a closing delimiter.
+  const nextByLength = new Map<number, number>();
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    const run = runs[index]!;
+    run.next = nextByLength.get(run.length) ?? -1;
+    nextByLength.set(run.length, index);
   }
 
-  return result;
+  const parts: string[] = [];
+  let cursor = 0;
+  for (let index = 0; index < runs.length;) {
+    const run = runs[index]!;
+    if (run.next < 0) {
+      index += 1;
+      continue;
+    }
+    const closing = runs[run.next]!;
+    const end = closing.start + closing.length;
+    parts.push(body.slice(cursor, run.start));
+    parts.push(body.slice(run.start, end).replace(/[^\n]/g, " "));
+    cursor = end;
+    index = run.next + 1;
+  }
+  parts.push(body.slice(cursor));
+  return parts.join("");
 }
 
 function wikilinks(body: string): string[] {
   const source = withoutCodeSpans(body);
+  if (!source.includes("[[")) return [];
   const targets: string[] = [];
 
-  for (let index = 0; index < source.length; index += 1) {
-    if (source.slice(index, index + 2) !== "[[") continue;
-    const contentStart = index + 2;
-    let cursor = contentStart;
-    let depth = 1;
-    let nested = false;
-
-    while (cursor < source.length && depth > 0) {
-      const pair = source.slice(cursor, cursor + 2);
-      if (pair === "[[") {
-        nested = true;
-        depth += 1;
-        cursor += 2;
-      } else if (pair === "]]") {
-        depth -= 1;
-        if (depth > 0) cursor += 2;
-      } else {
-        cursor += 1;
-      }
+  // For each suffix, find the first closing pair after any balanced nested
+  // groups. Right-to-left construction makes every lookup constant-time,
+  // including an unmatched opener and overlapping delimiters such as [[[.
+  const closes = new Int32Array(source.length + 2).fill(-1);
+  const nested = new Uint8Array(source.length + 2);
+  for (let index = source.length - 2; index >= 0; index -= 1) {
+    if (source[index] === "]" && source[index + 1] === "]") {
+      closes[index] = index;
+    } else if (source[index] === "[" && source[index + 1] === "[") {
+      const innerEnd = closes[index + 2]!;
+      if (innerEnd >= 0) closes[index] = closes[innerEnd + 2]!;
+      nested[index] = 1;
+    } else {
+      closes[index] = closes[index + 1]!;
+      nested[index] = nested[index + 1]!;
     }
+  }
 
-    if (depth !== 0) continue;
-    if (!nested) {
-      const content = source.slice(contentStart, cursor);
-      const target = (content.split("|", 1)[0] ?? "").trim();
+  for (let index = 0; index < source.length - 1; index += 1) {
+    if (source[index] !== "[" || source[index + 1] !== "[") continue;
+    const contentStart = index + 2;
+    const closing = closes[contentStart]!;
+    if (closing < 0) continue;
+    if (nested[contentStart] === 0) {
+      const content = source.slice(contentStart, closing);
+      const separator = content.indexOf("|");
+      const target = (separator < 0 ? content : content.slice(0, separator)).trim();
       if (target.length > 0) targets.push(target);
     }
-    index = cursor + 1;
+    index = closing + 1;
   }
 
   return targets;
@@ -283,36 +287,89 @@ function insertEdge(db: Database, edge: StoredEdge): void {
   );
 }
 
+function graphHoldSnapshot(db: Database, pages: readonly CanonPage[]) {
+  const held = readDerivedHolds(db, pages);
+  const missing = new Set(held.paths);
+  const aliases = new Set<string>();
+  for (const page of pages) {
+    if (!held.paths.has(page.relPath)) continue;
+    missing.delete(page.relPath);
+    const base = page.relPath.split("/").pop()!;
+    for (const alias of [page.id, page.relPath, page.relPath.replace(/\.md$/i, ""), base, base.replace(/\.md$/i, ""), page.data["title"]]) {
+      if (typeof alias === "string") aliases.add(alias.toLowerCase());
+    }
+  }
+  return { ...held, aliases, complete: missing.size === 0 };
+}
+
+function isHeldEdge(edge: StoredEdge, held: ReturnType<typeof graphHoldSnapshot>): boolean {
+  return held.pageIds.has(edge.dst) || (edge.kind === "wikilink" && held.aliases.has(edge.dst.toLowerCase()));
+}
+
 /** Project every live page's edges. Same write as a graph rebuild. */
 export function replacePageEdges(
   db: Database,
   pages: readonly CanonPage[],
   authorities = canonAuthorities(db,pages),
 ): void {
-  const live = pages.filter(isLiveCanonPage);
+  assertDerivedDiscoveryReady(db);
+  const held = graphHoldSnapshot(db, pages);
+  db.exec("DELETE FROM graph_edges");
+  // A missing held page leaves its title aliases unknown. Withhold this
+  // projection until a complete page snapshot can exclude those relations.
+  if (!held.complete) {
+    markDerivedHeld(db, "graph", held.paths.size);
+    return;
+  }
+  const live = pages.filter(page => isLiveCanonPage(page) && !held.paths.has(page.relPath));
+  // Keep held pages in resolution so links to them are withheld, rather than
+  // falling back to an apparently unrelated raw title or path edge.
   const index = linkIndexFromPages(pages);
   const byId = new Map(live.map((page) => [page.id, page]));
   const eventHints = eventSensitivityHints(db, sourceEventIds(live));
-  db.exec("DELETE FROM graph_edges");
   for (const page of live) {
     for (const edge of pageEdges(page, index, byId, eventHints, authorities.get(page.relPath)??"model_inference")) {
+      if (isHeldEdge(edge, held)) continue;
       insertEdge(db, edge);
     }
   }
+  markDerivedHeld(db, "graph", held.paths.size);
+}
+
+function removeHeldEdges(db: Database, held: ReturnType<typeof graphHoldSnapshot>): void {
+  if (held.paths.size === 0) return;
+  if (!held.complete) {
+    db.exec("DELETE FROM graph_edges");
+    return;
+  }
+  const ids = JSON.stringify([...held.pageIds]);
+  db.query(`DELETE FROM graph_edges
+             WHERE src IN (SELECT value FROM json_each(?))
+                OR dst IN (SELECT value FROM json_each(?))
+                OR (kind='wikilink' AND lower(dst) IN (SELECT value FROM json_each(?)))`)
+    .run(ids, ids, JSON.stringify([...held.aliases]));
+}
+
+/** Remove existing held relations without projecting any new page content. */
+export function removeHeldPageEdges(db: Database, pages: readonly CanonPage[]): void {
+  const held = graphHoldSnapshot(db, pages);
+  removeHeldEdges(db, held);
+  markDerivedHeld(db, "graph", held.paths.size);
 }
 
 function stampGraphIncomplete(db: Database, skippedCount: number): void {
   const existing = readDerivedMeta(db, "graph");
+  const held = readDerivedHolds(db).paths.size;
   stampDerived(db, {
     layer: "graph",
     generation: existing?.generation ?? ulid(),
     rebuilt_at: new Date().toISOString(),
     doc_count: existing?.doc_count ?? 0,
     source_count: existing?.source_count ?? 0,
-    skipped_count: skippedCount,
+    skipped_count: skippedCount + held,
     status: "degraded",
     ledger_watermark: existing?.ledger_watermark ?? null,
-    canon_hash: existing?.canon_hash ?? null,
+    canon_hash: held > 0 ? null : existing?.canon_hash ?? null,
     port_id: existing?.port_id ?? null,
     contract: existing?.contract ?? null,
     space: existing?.space ?? null,
@@ -320,6 +377,11 @@ function stampGraphIncomplete(db: Database, skippedCount: number): void {
 }
 
 function restoreGraphStamp(db: Database, pages: readonly CanonPage[]): void {
+  const held = readDerivedHolds(db).paths.size;
+  if (held > 0) {
+    stampGraphIncomplete(db, 0);
+    return;
+  }
   const existing = readDerivedMeta(db, "graph");
   if (existing === null || existing.status === "ok") return;
   const live = pages.filter(isLiveCanonPage);
@@ -348,7 +410,8 @@ function restoreGraphStamp(db: Database, pages: readonly CanonPage[]): void {
 
 /**
  * Incremental graph write. A complete walk projects the live set; a skipped
- * page keeps its edges until the next complete walk.
+ * page keeps its edges until the next complete walk, except relations to a
+ * page explicitly known to be inactive.
  */
 export function refreshPageEdges(
   db: Database,
@@ -357,6 +420,14 @@ export function refreshPageEdges(
   skipped: number,
   authorities = canonAuthorities(db,pages),
 ): void {
+  assertDerivedDiscoveryReady(db);
+  const held = graphHoldSnapshot(db, [page, ...pages]);
+  if (!held.complete) {
+    db.exec("DELETE FROM graph_edges");
+    stampGraphIncomplete(db, skipped);
+    return;
+  }
+  removeHeldEdges(db, held);
   if (skipped === 0) {
     replacePageEdges(db, pages,authorities);
     restoreGraphStamp(db, pages);
@@ -366,29 +437,40 @@ export function refreshPageEdges(
   const byId = new Map(
     pages.filter(isLiveCanonPage).map((candidate) => [candidate.id, candidate]),
   );
-  db.query("DELETE FROM graph_edges WHERE src = ?").run(page.id);
-  if (isLiveCanonPage(page)) {
+  if (isLiveCanonPage(page) && !held.paths.has(page.relPath)) {
+    db.query("DELETE FROM graph_edges WHERE src = ?").run(page.id);
     const eventHints = eventSensitivityHints(db, sourceEventIds([page]));
     for (const edge of pageEdges(page, index, byId, eventHints, authorities.get(page.relPath)??"model_inference")) {
+      if (isHeldEdge(edge, held)) continue;
       insertEdge(db, edge);
     }
+  } else {
+    db.query("DELETE FROM graph_edges WHERE src = ? OR dst = ?").run(page.id, page.id);
   }
   stampGraphIncomplete(db, skipped);
 }
 
-/** Incremental delete. Incomplete walks only drop this page's outgoing edges. */
+/** Incremental delete. Incomplete walks drop all relations to this page. */
 export function removePageEdges(
   db: Database,
   pageId: string,
   pages: readonly CanonPage[],
   skipped: number,
 ): void {
+  assertDerivedDiscoveryReady(db);
+  const held = graphHoldSnapshot(db, pages);
+  if (!held.complete) {
+    db.exec("DELETE FROM graph_edges");
+    stampGraphIncomplete(db, skipped);
+    return;
+  }
+  removeHeldEdges(db, held);
   if (skipped === 0) {
     replacePageEdges(db, pages);
     restoreGraphStamp(db, pages);
     return;
   }
-  db.query("DELETE FROM graph_edges WHERE src = ?").run(pageId);
+  db.query("DELETE FROM graph_edges WHERE src = ? OR dst = ?").run(pageId, pageId);
   stampGraphIncomplete(db, skipped);
 }
 
@@ -399,19 +481,20 @@ function stampGraph(
   edges: number,
 ): DerivedStamp {
   const watermark = latestLedgerCursor(db);
+  const held = readDerivedHolds(db).paths.size;
   return {
     layer: "graph",
     generation: input.generation,
     rebuilt_at: input.rebuilt_at,
     doc_count: edges,
     source_count: pages,
-    skipped_count: input.skipped.length,
-    status: input.skipped.length > 0 ? "degraded" : "ok",
+    skipped_count: input.skipped.length + held,
+    status: input.skipped.length + held > 0 ? "degraded" : "ok",
     ledger_watermark:
       watermark === null
         ? null
         : `${watermark.accepted_at}\t${watermark.event_id}`,
-    canon_hash: input.canon_hash,
+    canon_hash: held > 0 ? null : input.canon_hash,
     port_id: null,
     contract: "kizuki.retrieval/v1",
     space: null,
@@ -423,7 +506,7 @@ function snapshotGraphInput(vaultPath: string): GraphRebuildInput {
   const live = report.pages.filter(isLiveCanonPage);
   return {
     generation: ulid(),
-    pages: live,
+    pages: report.pages,
     skipped: report.skipped,
     rebuilt_at: new Date().toISOString(),
     canon_hash: canonPagesHash(live),
@@ -435,8 +518,10 @@ export function rebuildGraphLayer(
   db: Database,
   input: GraphRebuildInput,
 ): GraphRebuildResult {
-  const live = input.pages.filter(isLiveCanonPage);
-  replacePageEdges(db, live,input.authorities===undefined?canonAuthorities(db,live):new Map(input.authorities));
+  assertDerivedDiscoveryReady(db);
+  const held = readDerivedHolds(db, input.pages);
+  const live = input.pages.filter(page => isLiveCanonPage(page) && !held.paths.has(page.relPath));
+  replacePageEdges(db, input.pages,input.authorities===undefined?canonAuthorities(db,live):new Map(input.authorities));
   const edges =
     db
       .query<{ count: number }, []>(
@@ -450,7 +535,7 @@ export function rebuildGraphLayer(
     skipped: [...input.skipped],
     rebuilt_at: input.rebuilt_at,
     generation: input.generation,
-    status: input.skipped.length > 0 ? "degraded" : "ok",
+    status: input.skipped.length + held.paths.size > 0 ? "degraded" : "ok",
   };
 }
 
@@ -565,6 +650,7 @@ export function neighbors(
       limit + 1,
     );
     const next: string[] = [];
+    const frontierNodes = new Set(frontier);
     for (const edge of available) {
       const key = `${edge.src}\u0000${edge.dst}\u0000${edge.kind}`;
       if (seenEdges.has(key)) continue;
@@ -574,7 +660,7 @@ export function neighbors(
         break;
       }
       result.push(edge);
-      const adjacent = frontier.includes(edge.src) ? edge.dst : edge.src;
+      const adjacent = frontierNodes.has(edge.src) ? edge.dst : edge.src;
       if (!seenNodes.has(adjacent)) {
         seenNodes.add(adjacent);
         next.push(adjacent);

@@ -21,6 +21,8 @@ import {
   readVaultId,
 } from "@kizuki/core";
 import type { ClaimStatus } from "@kizuki/core";
+import { readSqliteRuntime } from "@kizuki/core/internal";
+import type { SqliteRuntime } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
 import { listHostConnections, loadConnector } from "../connections";
 import { withVault } from "../context";
@@ -75,6 +77,7 @@ interface DoctorReport {
   serve: ReturnType<typeof inspectServeDoctor>;
   doctrine: { file: string; state: string }[];
   ledger: ReturnType<typeof inspectLedgerHealth>;
+  runtime: SqliteRuntime;
   ok: boolean;
 }
 
@@ -269,7 +272,7 @@ async function collect(
     id: hold.proposal_id,
   }));
 
-  const vault = doctorVault(vaultPath);
+  const vault = doctorVault(vaultPath, ctx.db);
   const ledger = inspectLedgerHealth(ctx.db, { full: fullIntegrity });
   const problems = vault.pages.flatMap((page) =>
     page.errors.map((error) => ({ page: page.page, error })),
@@ -376,6 +379,7 @@ async function collect(
     serve,
     doctrine: vault.doctrine,
     ledger,
+    runtime: readSqliteRuntime(ctx.db),
     ok: ok && ledger.ok,
   };
 }

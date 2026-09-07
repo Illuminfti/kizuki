@@ -44,7 +44,7 @@ async function waitUntilReady(
   }
 }
 
-export async function startRemoteRetrievalFixture(): Promise<RemoteRetrievalFixture> {
+export async function startRemoteRetrievalFixture(fixture: { proofStore?: string } = {}): Promise<RemoteRetrievalFixture> {
   const root = mkdtempSync(join(tmpdir(), "kz-remote-"));
   const socketPath = join(root, "port.sock");
   const readyPath = join(root, "ready");
@@ -66,6 +66,7 @@ export async function startRemoteRetrievalFixture(): Promise<RemoteRetrievalFixt
       readyPath,
       stateDir,
       token,
+      ...(fixture.proofStore === undefined ? [] : [fixture.proofStore]),
     ],
     stdout: "pipe",
     stderr: "pipe",

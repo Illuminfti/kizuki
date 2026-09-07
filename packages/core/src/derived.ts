@@ -95,7 +95,8 @@ export function rebuildDerived(
   initGraph(db);
   return db.transaction(() => {
     const search = rebuildSearchLayer(db, input);
-    const graph = rebuildGraphLayer(db, input);
+    // Held inactive pages still provide aliases needed to exclude relations.
+    const graph = rebuildGraphLayer(db, { ...input, pages: report.pages });
     return { search, graph, generation };
   }).immediate();
 }

@@ -4,6 +4,7 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "../helpers";
 import { fakeSystemd } from "../serve/supervisor-fixture";
+import { parseSqliteRuntime } from "@kizuki/core/internal";
 
 const { cleanup, isolatedEnv, runCli, tempVault } = createHelpers();
 function supervisedVault() {
@@ -57,6 +58,9 @@ describe("doctor liveness", () => {
     const result = runCli(setup.env, "doctor", "--json");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("opted-out");
+    expect(parseSqliteRuntime(JSON.parse(result.stdout).data.runtime)).toMatchObject({
+      schema: "kizuki.sqlite-runtime/v1", bun_version: Bun.version,
+    });
   });
 
   test("a rail with five empty runs in a row is reported down", () => {
@@ -164,7 +168,7 @@ describe("doctor liveness", () => {
     expect(result.stderr).not.toMatch(/sk-[A-Za-z0-9]{10,}/);
   });
 
-  test("serve --once writes a doctor-valid brief and does not fail doctor for that file", () => {
+  test("doctor reports missing provenance on a generated brief without rewriting it", () => {
     const setup = supervisedVault();
     const once = runCli(setup.env, "serve", "--once", "--no-http");
     expect(once.exitCode).toBe(0);
@@ -178,7 +182,7 @@ describe("doctor liveness", () => {
     expect(brief.startsWith("---\n")).toBe(true);
 
     const doctor = runCli(setup.env, "doctor", "--json");
-    expect(doctor.exitCode).toBe(0);
+    expect(doctor.exitCode).toBe(1);
     const report = (
       JSON.parse(doctor.stdout) as {
         data: {
@@ -188,11 +192,12 @@ describe("doctor liveness", () => {
         };
       }
     ).data;
-    expect(report.ok).toBe(true);
+    expect(report.ok).toBe(false);
     expect(report.serve.ok).toBe(true);
     expect(
       report.problems.filter((problem) => problem.page.startsWith("dashboards/brief-")),
-    ).toEqual([]);
+    ).toEqual([{ page: `dashboards/${briefName}`, error: "sources: is required" }]);
+    expect(readFileSync(join(setup.vault, "dashboards", briefName ?? ""), "utf8")).toBe(brief);
 
     runCli({ ...setup.env, KIZUKI_SUPERVISOR: "systemd" }, "serve", "--install");
     const masked = runCli(
@@ -215,7 +220,7 @@ describe("doctor liveness", () => {
       maskedReport.problems.filter((problem) =>
         problem.page.startsWith("dashboards/brief-"),
       ),
-    ).toEqual([]);
+    ).toEqual([{ page: `dashboards/${briefName}`, error: "sources: is required" }]);
   });
 
   test("init without a supervisor prints the exact serve command", () => {

@@ -602,11 +602,12 @@ which is not hashed.
 (no network) and the manifest says `purge: false`: the connector holds no
 index of ids and WHOOP offers no deletion API. Ledger purge is unaffected:
 every event carries `whoop:user:<user_id>` as an `about` subject, so
-`purgeEvents(db, vaultPath, { subject_handle: "whoop:user:<user_id>" }, reason)`
+`purgeEvents(db, vaultPath, { connector_id: "kizuki.whoop", subject_handle: "whoop:user:<user_id>", source_key }, reason)`
 (matches `subject_id` exactly) and
 `purgeEvents(db, vaultPath, { connector_id: "kizuki.whoop" }, reason)`
 (both in `packages/core/src/ledger/purge.ts`, exist on main) remove
-everything with receipts. The README says exactly this.
+the scoped events with receipts. Subject purges use the enrolled source key;
+only legacy unbound events may omit it. See [current purge syntax](../../cli.md#purge).
 
 ## 6. Fixture (`src/fixture.ts`)
 

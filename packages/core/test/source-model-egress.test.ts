@@ -967,6 +967,7 @@ test("restore explicitly reports the recovery limit of a pre-v8 backup", () => {
     const report = restoreVault(backup, target);
     expect(report.recovery_warnings).toEqual([
       "backup predates durable extraction recovery; an interrupted model decision was not preserved",
+      "restored connection history is disconnected and has no connector state; further capture requires supported fresh enrollment with a new source key and fresh consent; retained checkpoints will not resume automatically",
     ]);
   } finally { db.close(); }
 });

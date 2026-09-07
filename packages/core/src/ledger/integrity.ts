@@ -1,7 +1,10 @@
 import type { Database } from "bun:sqlite";
+import { assertAgentEnrollmentSchema } from "../agents/enrollment-schema";
+import { assertPurgeBatchSchema } from "./purge-batch-schema";
 import { LedgerStoreError } from "./errors";
 import { LEDGER_DOCTOR_ROW_CAP } from "./limits";
-import { decodeEventRow, type EventRow } from "./event-row";
+import { eventFromRow, type EventRow } from "./event-record";
+import { isUlid } from "../util/ulid";
 import { oneShotAll, oneShotGet, tableColumns, tableExists } from "./schema";
 
 const REQUIRED_TABLES = [
@@ -161,6 +164,8 @@ export function assertLedgerSchema(db: Database, expectedVersion: number): void 
   if (!checkpointSql.includes("REFERENCES connections")) {
     throw new LedgerStoreError("corrupt", "checkpoints lack a connections foreign key");
   }
+  if (expectedVersion >= 18) assertAgentEnrollmentSchema(db);
+  if (expectedVersion >= 19) assertPurgeBatchSchema(db);
 }
 
 function boundedCheck(db: Database, pragma: "quick_check" | "integrity_check"): string {
@@ -171,18 +176,20 @@ function boundedCheck(db: Database, pragma: "quick_check" | "integrity_check"): 
 }
 
 function sampleEventRows(db: Database): EventRow[] {
-  return db
-    .query<EventRow, [number]>(
-      `
-        SELECT event_id, connector_id, source_record_id, kind,
-               occurred_at, observed_at, text, subjects, sensitivity_hint,
-               deleted, attachments, metadata, content_hash, accepted_at
-          FROM events
-         ORDER BY accepted_at, event_id
-         LIMIT ?
-      `,
-    )
-    .all(LEDGER_DOCTOR_ROW_CAP);
+  return oneShotAll<EventRow>(
+    db,
+    `
+      SELECT event_id, connector_id, source_record_id, kind,
+             occurred_at, observed_at, text, subjects, sensitivity_hint,
+             deleted, attachments, metadata, content_hash, accepted_at,
+             content_hash_version, text_hash, origin, origin_binding_version,
+             origin_binding_kind, origin_binding
+        FROM events
+       ORDER BY accepted_at, event_id
+       LIMIT ?
+    `,
+    LEDGER_DOCTOR_ROW_CAP,
+  );
 }
 
 export function inspectLedgerHealth(
@@ -224,17 +231,22 @@ export function inspectLedgerHealth(
 
   let sampled = 0;
   if (tableExists(db, "events")) {
-    const rows = sampleEventRows(db);
+    let rows: EventRow[] = [];
+    try {
+      rows = sampleEventRows(db);
+    } catch {
+      failures.push({ kind: "row", table: "events", detail: "event sample could not be read" });
+    }
     sampled = rows.length;
     for (const row of rows) {
       try {
-        decodeEventRow(row);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "invalid row";
+        eventFromRow(row, db);
+      } catch {
+        const eventId = typeof row.event_id === "string" && isUlid(row.event_id) ? row.event_id : "invalid";
         failures.push({
-          kind: message.includes("content_hash") ? "hash" : "row",
+          kind: "row",
           table: "events",
-          detail: `event_id ${row.event_id}: ${message}`,
+          detail: `event_id ${eventId}: event record failed integrity validation`,
         });
       }
     }

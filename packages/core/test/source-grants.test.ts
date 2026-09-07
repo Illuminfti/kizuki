@@ -517,7 +517,7 @@ test("source completion stays retryable when identity residue appears after publ
       source: { source_key: b, expected_revision: 1 },
     });
     if (erased.status !== "stored" || surviving.status !== "stored") throw new Error("fixture failed");
-    const port = bindLocalSourcePort(new FixtureVectorPort({ vector: false }), { store_id: "local:identity-race" });
+    const port = bindLocalSourcePort(new FixtureVectorPort({ vector: false, provenanceErasure: true }), { store_id: "local:identity-race" });
     const verify = port.verifyAbsent.bind(port);
     let calls = 0;
     port.verifyAbsent = async (ids) => {

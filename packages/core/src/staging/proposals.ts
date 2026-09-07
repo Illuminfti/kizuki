@@ -222,6 +222,9 @@ function rowToProposal(db: Database, row: ProposalRow): StagedProposal {
 }
 
 function validateInput(input: ProposalInput): void {
+  if (input.kind === "purge_review") {
+    throw new StagingError("kind: purge_review is retained for historical compatibility only");
+  }
   if (!(PROPOSAL_KINDS as readonly string[]).includes(input.kind)) {
     throw new StagingError(
       `kind: must be one of ${PROPOSAL_KINDS.join(" | ")}`,
@@ -564,9 +567,7 @@ export function fileProposal(
 
   const bodyHash = hashBody(input.body);
   const target = input.target ?? null;
-  const provenance = input.kind === "purge_review"
-    ? [...new Set(input.provenance)].sort()
-    : uniqueStrings(input.provenance);
+  const provenance = uniqueStrings(input.provenance);
   resolveProvenance(db, provenance);
   const subjects = [...(input.subjects ?? [])];
   const labels = resolveLabels(db, input, provenance);

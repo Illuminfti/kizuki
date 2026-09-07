@@ -602,7 +602,8 @@ deletion (the connector never performs outbound actions). During
 `source_record_id`s of that batch in memory (`Map<string, Set<string>>`,
 capped at 10 000 ids per subject; beyond the cap the newest are kept and
 the plan is still honest because ledger purge is subject-keyed on its own —
-`purgeEvents(db, vault, { subject_handle }, reason)` in core). The plan is
+`purgeEvents(db, vault, { connector_id: "kizuki.telegram", subject_handle, source_key }, reason)`
+in core; source-bound evidence requires the enrolled source key). The plan is
 `{ subject_id, source_record_ids: [], unreachable_source_record_ids:
 [...sorted ids] }`: Telegram's copy stays, Kizuki's copy is what purge
 removes. Unknown subject ⇒ both arrays empty. Never touches the network.

@@ -449,6 +449,24 @@ describe("legacy staging p1 holes", () => {
     ).toBe(first.proposal.content_hash);
   });
 
+  test.each(["pending", "withdrawn"])("initClaims repairs a claim signature from its %s proposal", (status) => {
+    const db = memoryDb();
+    try {
+      const first = fileProposal(db, proposalInput());
+      if (first.outcome !== "stored") throw new Error("expected stored");
+      db.query("UPDATE claims SET content_hash = ''").run();
+      // Keep every index. Pending isolates the claim-side readiness check;
+      // withdrawn preserves repair of historical projection inconsistencies.
+      db.query("UPDATE proposals SET status = ?, content_hash = ?").run(
+        status, status === "pending" ? first.proposal.content_hash : "",
+      );
+      initClaims(db);
+      expect(db.query("SELECT content_hash FROM claims WHERE claim_id = ?").get(first.proposal.proposal_id))
+        .toEqual({ content_hash: first.proposal.content_hash });
+      expect(getClaim(db, first.proposal.proposal_id)?.status).toBe("live");
+    } finally { db.close(); }
+  });
+
   test("a later sighting may raise the stored sensitivity floor", () => {
     const db = memoryDb();
     const first = fileProposal(db, proposalInput());
