@@ -106,7 +106,7 @@ function model(id: string,value: unknown,platform: string): Row {
 }
 function snapshot(value: unknown): Row {
   const r=row(value,"schema_version,schema_sha256,rows_sha256,files_sha256,table_count,row_count,events,claims,integrity,foreign_key_errors");
-  num(r.schema_version,1,21);hash(r.schema_sha256);hash(r.rows_sha256);hash(r.files_sha256);num(r.table_count,1,256);num(r.row_count,1,10000);num(r.events,0,10000);num(r.claims,0,10000);need(r.integrity==="ok"&&r.foreign_key_errors===0);return r;
+  num(r.schema_version,1,22);hash(r.schema_sha256);hash(r.rows_sha256);hash(r.files_sha256);num(r.table_count,1,256);num(r.row_count,1,10000);num(r.events,0,10000);num(r.claims,0,10000);need(r.integrity==="ok"&&r.foreign_key_errors===0);return r;
 }
 function recovery(id: string,value: unknown,expected: NativeLifecycleIdentity): Row {
   const e=row(value,"fixture_id,fixture_sha256,writer_commit,writer_bun,candidate_source_sha,helper_source_sha,executable_sha256,commands,snapshots,preservation,recovery_copy_sha256,failure_scope,retained_failed_vaults,failure_code");
@@ -139,7 +139,7 @@ function recovery(id: string,value: unknown,expected: NativeLifecycleIdentity): 
     need(preservation.current_claim_consumer===(Number(preservation.claims)>0?"passed":"not_applicable"));
     const roles=id.startsWith("restore-")?["restored"]:[id==="migration-backup-recovery"?"recovery-preimage":"before","doctor-after","migrated"];
     need(equal(snapshots.map(s=>s.role),roles));const last=snapshots.at(-1)!.value;
-    need(last.schema_version===21&&last.events===preservation.events&&last.claims===preservation.claims);
+    need(last.schema_version===22&&last.events===preservation.events&&last.claims===preservation.claims);
     if(!id.startsWith("restore-")){need(snapshots[0]!.value.schema_version===fixture.ledger&&equal(snapshots[0]!.value,snapshots[1]!.value),"native-lifecycle-read-mutated-legacy");}
     if(id==="migrate-ledger15"||id==="migration-backup-recovery")need(e.recovery_copy_sha256!==null);
   }
@@ -158,7 +158,7 @@ function upgrade(value: unknown, expected: NativeLifecycleIdentity, prior: Row, 
   const e=row(value,"baseline_source_sha,candidate_source_sha,baseline_binary_sha256,candidate_binary_sha256,baseline_schema,candidate_schema,baseline_instance_id,candidate_instance_id,baseline_pid,candidate_pid,vault_id,before_event_sha256,after_event_sha256,baseline_stopped,candidate_active,baseline_query_preserved,candidate_query_preserved,backup_verified,backup_manifest_sha256,unit_sha256,unit");
   const p=prior.package_sha256 as Record<string,string>;
   need(e.baseline_source_sha===LIFECYCLE_BASELINE_SOURCE&&e.candidate_source_sha===expected.source_sha&&e.baseline_binary_sha256===p.kizuki&&e.candidate_binary_sha256===expected.package_sha256.kizuki,"native-lifecycle-upgrade-binary-binding");
-  need(e.baseline_schema===21&&e.candidate_schema===21);instance(e.baseline_instance_id);instance(e.candidate_instance_id);need(e.baseline_instance_id!==e.candidate_instance_id);
+  need(e.baseline_schema===21&&e.candidate_schema===22);instance(e.baseline_instance_id);instance(e.candidate_instance_id);need(e.baseline_instance_id!==e.candidate_instance_id);
   num(e.baseline_pid,2,2**31-1);num(e.candidate_pid,2,2**31-1);instance(e.vault_id);hash(e.before_event_sha256);hash(e.after_event_sha256);hash(e.backup_manifest_sha256);hash(e.unit_sha256);vaultUnit(e.vault_id,e.unit,platform);
   for(const key of ["baseline_stopped","candidate_active","baseline_query_preserved","candidate_query_preserved","backup_verified"])need(e[key]===true);
   need(e.before_event_sha256===e.after_event_sha256,"native-lifecycle-upgrade-content");return e;
@@ -253,7 +253,7 @@ export function validateNativeLifecycle(value: unknown,expected:NativeLifecycleI
   const services=list(q.recovery_services,5).map(v=>row(v,"id,vault_id,unit,pid,instance_id,ledger_schema,active,stopped,event_text_sha256"));
   need(equal(services.map(s=>s.id),LIFECYCLE_RECOVERY_IDS.filter(id=>id!=="migration-failure-preserved")),"native-lifecycle-recovery-service-inventory");
   const serviceIds=new Set<string>();
-  for(const s of services){instance(s.vault_id);instance(s.instance_id);num(s.pid,2,2**31-1);hash(s.event_text_sha256);need(s.ledger_schema===21&&s.active===true&&s.stopped===true);const u=vaultUnit(s.vault_id,s.unit,platform);need(s.event_text_sha256===(admitted.get(String(s.id))!.preservation as Row).event_text_sha256,"native-lifecycle-recovery-event-binding");need(!serviceIds.has(u));serviceIds.add(u);units.add(u);}
+  for(const s of services){instance(s.vault_id);instance(s.instance_id);num(s.pid,2,2**31-1);hash(s.event_text_sha256);need(s.ledger_schema===22&&s.active===true&&s.stopped===true);const u=vaultUnit(s.vault_id,s.unit,platform);need(s.event_text_sha256===(admitted.get(String(s.id))!.preservation as Row).event_text_sha256,"native-lifecycle-recovery-event-binding");need(!serviceIds.has(u));serviceIds.add(u);units.add(u);}
   const cleanup=row(r.cleanup,"attempted,service_gone,unit_removed,synthetic_root_removed,units");
   for(const k of ["attempted","service_gone","unit_removed","synthetic_root_removed"])need(cleanup[k]===true,"native-lifecycle-cleanup-incomplete");
   const removed=list(cleanup.units,32).map(v=>{const c=row(v,"unit,service_gone,unit_removed");need(c.service_gone===true&&c.unit_removed===true,"native-lifecycle-unit-cleanup");return unit(c.unit,platform);});

@@ -93,12 +93,12 @@ test("pending replay payload refuses export before callbacks or destination crea
   expect(callbacks).toBe(0); expect(existsSync(out)).toBe(false);
 });
 
-test("clean v21 backup restores canon with an empty private recovery ledger and fresh generation", async () => {
+test("clean current backup restores canon with an empty private recovery ledger and fresh generation", async () => {
   const f = await fixture(), receipt = write(f.io, f.claim);
   const out = `${f.vault}-backup`, target = `${f.vault}-restored`;
   cleanups.push(() => rmSync(out, { recursive: true, force: true }), () => rmSync(target, { recursive: true, force: true }));
   const manifest = exportVault(f.db, f.vault, out);
-  expect(manifest.schema_versions.ledger).toBe(21);
+  expect(manifest.schema_versions.ledger).toBe(22);
   expect(Object.keys(manifest.files).some(path => /canon_(write_intent|projection|read_generation)/.test(path))).toBe(false);
   restoreVault(out, target);
   const restored = openLedger(join(target, ".kizuki", "kizuki.db")); cleanups.push(() => restored.close());

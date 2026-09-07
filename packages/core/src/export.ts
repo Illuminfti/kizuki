@@ -1,3 +1,5 @@
+import { DISCONNECT_RECEIPT_COLUMNS, DISCONNECT_RECEIPT_STREAM } from "./ledger/connection-disconnect-schema";
+import { assertConnectionDisconnectReceipts } from "./ledger/disconnect";
 import { capturePortableAdapter, capturePortableLocal, hashPortableLocal, readPortableBackup, restorePortableLocal, PORTABLE_LOCAL_STREAM, type PortableLocalAdapter } from "./portable-local";
 export type { PortableLocalAdapter } from "./portable-local";
 import { assertVaultMutationScope, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "./vault/mutation-scope";
@@ -668,7 +670,7 @@ function vaultInventory(db: Database, root: string): VaultInventory {
     unavailable_archive_references: 0,
     recovery_limits: [
       "The v3 streams exclude credentials, opaque connection state and agent enrollment authority.",
-      "The v3 streams preserve completed purge batches and store obligations; pending purge work is refused. Other journals, holds and run or audit history are not preserved.",
+      "The v3 streams preserve completed purge batches and store obligations; pending purge work is refused. Connection disconnect receipts are preserved; other journals, holds and run or audit history are not preserved.",
       ...(hasUnassignedPurgeReceipts(db) ? [PURGE_HISTORY_RECOVERY_WARNING] : []),
       "Selected files and database streams share one SQLite capture and the cooperating writer fence; manual edits and complete runtime recovery remain outside this guarantee.",
       "A complete manifest verifies this artifact's listed bytes; it does not assert complete runtime recovery.",
@@ -1644,6 +1646,7 @@ function exportVaultOwned(
       }
       const snapshot = snapshotOf(db);
       validateExportEventOrigins(db, snapshot);
+      assertConnectionDisconnectReceipts(db);
       writeStream(
         staging,
         "ledger/events.jsonl",
@@ -1840,6 +1843,10 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
       manifest.files[RAIL_CURSORS_BACKUP] === undefined) {
     throw new Error("backup extract rail cursor stream is missing");
   }
+  const disconnects = manifest.files[DISCONNECT_RECEIPT_STREAM];
+  if (manifest.schema === BACKUP_SCHEMA && manifest.schema_versions.ledger >= 22) {
+    if (disconnects === undefined) throw new Error("backup disconnect receipt stream is missing");
+  } else if (disconnects !== undefined) throw new Error("backup disconnect receipt stream is incompatible");
   const lineage = manifest.files[SOURCE_SURVIVOR_LINEAGE_BACKUP];
   if (manifest.schema !== BACKUP_SCHEMA && lineage !== undefined) {
     throw new Error("legacy backup must not include source-survivor lineage");
@@ -1933,11 +1940,12 @@ function assertBackupFormat(manifest: ExportManifest): void {
   // Ledger20 adds source-survivor lineage. Ledger21 adds nonportable recovery
   // payload and a local read generation: current v3 exports require no pending
   // intent/projection and restore an empty recovery state. No journal is copied.
+  // Ledger22 adds portable append-only connection disconnect receipts, required in v3.
   // Future migrations must make their own explicit compatibility decision.
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
       versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
       versions.ledger !== 19 && versions.ledger !== 20 &&
-      !(manifest.schema === BACKUP_SCHEMA && versions.ledger === 21)) {
+      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22))) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -2638,9 +2646,10 @@ export function restoreVault(
   } finally { try { restoredState?.close(); } finally { try { portable?.close(); } finally { staged?.close(); parentDirectory?.close(); } } }
 }
 
-const SOURCE_BACKUP_TABLES = ["source_grants", "source_event_bindings", "source_grant_receipts", "native_owner_evidence", "source_retrieval_stores", "source_store_inventory"] as const;
+const SOURCE_BACKUP_TABLES = ["source_grants", "source_event_bindings", "source_grant_receipts", "native_owner_evidence", "source_retrieval_stores", "source_store_inventory", "connection_disconnect_receipts"] as const;
 type SourceBackupTable = typeof SOURCE_BACKUP_TABLES[number];
 const SOURCE_COLUMNS: Record<SourceBackupTable, readonly string[]> = {
+  connection_disconnect_receipts: DISCONNECT_RECEIPT_COLUMNS,
   source_retrieval_stores: ["source_key", "store_id", "status"],
   source_store_inventory: ["source_key", "checked", "payload_complete", "erasure_report"],
   native_owner_evidence: ["event_id", "origin", "request_digest", "recorded_at", "filing_state", "event_content_hash"],
@@ -2721,7 +2730,7 @@ function hasPurgeHistory(manifest: ExportManifest): boolean {
   const present = entries.filter(entry => entry !== undefined).length;
   if (present === 0) return false;
   if (present !== entries.length || manifest.schema !== BACKUP_SCHEMA ||
-      (manifest.schema_versions.ledger !== 19 && manifest.schema_versions.ledger !== 20 && manifest.schema_versions.ledger !== 21) ||
+      (manifest.schema_versions.ledger !== 19 && manifest.schema_versions.ledger !== 20 && manifest.schema_versions.ledger !== 21 && manifest.schema_versions.ledger !== 22) ||
       entries.some(entry => entry === undefined || !Number.isSafeInteger(entry.count) || entry.count < 0 ||
         !Number.isSafeInteger(entry.size) || entry.size < 0)) {
     throw new Error("backup completed purge history streams are incomplete or incompatible");
@@ -2890,6 +2899,7 @@ function assertSourceExport(db: Database): void {
   const recovery = inspectCanonRecovery(db);
   if (recovery.pending || recovery.projection_pending > 0) throw new Error("canon_recovery_pending");
   assertSourceInventoryIdentityErasure(db);
+  assertConnectionDisconnectReceipts(db);
   if (db.query("SELECT 1 FROM canon_source_erasure_intents LIMIT 1").get() !== null) throw new Error("source_erasure_recovery_pending");
   if (sourcePolicyEpoch(db) === 0) return;
   for (const row of db.query<{ source_key: string }, []>("SELECT source_key FROM source_grants").iterate()) {
@@ -2909,7 +2919,7 @@ function assertSourceExport(db: Database): void {
 }
 function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManifest, capturedGrants?: readonly Record<string, unknown>[]): void {
   for (const table of SOURCE_BACKUP_TABLES) {
-    const required = manifest.schema_versions.ledger >= (table === "native_owner_evidence" ? 12 : table === "source_store_inventory" ? 14 : table === "source_retrieval_stores" ? 13 : 11);
+    const required = manifest.schema_versions.ledger >= (table === "connection_disconnect_receipts" ? 22 : table === "native_owner_evidence" ? 12 : table === "source_store_inventory" ? 14 : table === "source_retrieval_stores" ? 13 : 11);
     const path = `ledger/${table}.jsonl`;
     if (required && manifest.files[path] === undefined) throw new Error("backup source policy stream missing");
     for (const row of table === "source_grants" && capturedGrants !== undefined ? capturedGrants : streamRows(backup, manifest, path, required)) {
@@ -2932,6 +2942,7 @@ function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManif
     }
   }
   assertSourceInventoryIdentityErasure(db);
+  assertConnectionDisconnectReceipts(db);
   for(const row of db.query<{receipt:string;receipt_digest:string|null},[]>("SELECT receipt,receipt_digest FROM source_grant_receipts").iterate()) {if(row.receipt_digest!==null && row.receipt_digest!==new Bun.CryptoHasher("sha256").update(row.receipt).digest("hex"))throw new Error("backup source receipt integrity mismatch");}
   for (const row of db.query<{ event_id:string; origin:string; request_digest:string; recorded_at:string; filing_state:string }, []>("SELECT * FROM native_owner_evidence").iterate()) {
     if (row.origin !== "correction" || !/^[a-f0-9]{64}$/.test(row.request_digest) || !isRfc3339(row.recorded_at) || !["recorded","filed","failed"].includes(row.filing_state) || db.query("SELECT 1 FROM source_event_bindings WHERE event_id=?").get(row.event_id) !== null || db.query("SELECT 1 FROM events WHERE event_id=?").get(row.event_id) === null) throw new Error("invalid native owner evidence backup");

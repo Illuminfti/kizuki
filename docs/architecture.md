@@ -125,6 +125,9 @@ undoable by receipt.
 
 ### kizuki.connector/v1
 
+Host-side [disconnect and recovery](connection-disconnect.md) bind provider
+revocation to an enrolled identity, a connection-state lease and durable receipts.
+
 `manifest / health / connect / backfill / sync / revoke / purgeSource /
 fixture`. In-tree curated registry; an entry exists only if the shared
 conformance suite passes: fixture round-trip, fail-closed without

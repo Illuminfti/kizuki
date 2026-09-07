@@ -152,7 +152,7 @@ test("restores genuine ledger16 writer output after the local enrollment migrati
   expect(restoreVault(backup, target).events).toBe(1);
   const db = openLedger(join(target, ".kizuki", "kizuki.db"));
   try {
-    expect(LEDGER_SCHEMA_VERSION).toBe(21);
+    expect(LEDGER_SCHEMA_VERSION).toBe(22);
     expect(db.query("SELECT version FROM schema_version").get()).toEqual({ version: LEDGER_SCHEMA_VERSION });
     const original = JSON.parse(fixture.files["ledger/events.jsonl"]) as Record<string, unknown>;
     expect(db.query("SELECT event_id,text,content_hash,text_hash,origin,origin_binding FROM events").get()).toEqual({
@@ -205,7 +205,7 @@ test.if(credentialCustodyQualified)("current writer excludes completed enrollmen
 });
 
 for (const schema of ["kizuki.backup/v2", "kizuki.backup/v3"] as const) {
-  for (const ledger of schema === "kizuki.backup/v3" ? [16, 17, 18, 19, 20, 21] : [16, 17, 18, 19, 20]) {
+  for (const ledger of schema === "kizuki.backup/v3" ? [16, 17, 18, 19, 20, 21, 22] : [16, 17, 18, 19, 20]) {
     test(`${schema} explicitly accepts the supported streams at ledger${ledger}`, () => {
       const { root, backup, manifest } = materialize();
       // Dispatch fixture: ledger17+ has a separate rail stream. The preceding
@@ -223,6 +223,11 @@ for (const schema of ["kizuki.backup/v2", "kizuki.backup/v3"] as const) {
         manifest.files[lineage] = { count: 0, size: 0, mode: 0o600,
           sha256: new Bun.CryptoHasher("sha256").update("").digest("hex") };
       }
+      if (schema === "kizuki.backup/v3" && ledger >= 22) {
+        const path = "ledger/connection_disconnect_receipts.jsonl";
+        writeFileSync(join(backup, path), "", { mode: 0o600 });
+        manifest.files[path] = { count: 0, size: 0, mode: 0o600, sha256: new Bun.CryptoHasher("sha256").update("").digest("hex") };
+      }
       resign(backup, { ...manifest, schema, schema_versions: { ...manifest.schema_versions, ledger } });
       expect(verifyBackup(backup).schema_versions.ledger).toBe(ledger);
       expect(restoreVault(backup, join(root, "restored")).events).toBe(1);
@@ -238,7 +243,7 @@ for (const schema of ["kizuki.backup/v2", "kizuki.backup/v3"] as const) {
       expect(existsSync(target)).toBe(false);
     });
   }
-  for (const ledger of [0, 15, ...(schema === "kizuki.backup/v2" ? [21] : []), 22, 99, 16.5, "16"]) {
+  for (const ledger of [0, 15, ...(schema === "kizuki.backup/v2" ? [21, 22] : []), 23, 99, 16.5, "16"]) {
     test(`${schema} refuses unsupported ledger version ${JSON.stringify(ledger)} before target publication`, () => {
       const { root, backup, manifest } = materialize();
       resign(backup, { ...manifest, schema, schema_versions: { ...manifest.schema_versions, ledger: ledger as number } });

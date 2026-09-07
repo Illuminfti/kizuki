@@ -296,6 +296,8 @@ function legacyFiles(backup: string, current: Record<string, ExportManifestEntry
     delete files[`ledger/${table}.jsonl`];
     rmSync(join(backup, "ledger", `${table}.jsonl`));
   }
+  delete files["ledger/connection_disconnect_receipts.jsonl"];
+  rmSync(join(backup, "ledger/connection_disconnect_receipts.jsonl"), { force: true });
   delete files["canon/source-survivor-lineage.v1.jsonl"];
   rmSync(join(backup, "canon", "source-survivor-lineage.v1.jsonl"), { force: true });
   return files;

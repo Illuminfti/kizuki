@@ -227,9 +227,9 @@ test("historical unrecorded bytes are refused rather than granted a synthetic re
 
 test("v20 migration preserves canon and creates a closed empty v21 recovery ledger", async () => {
   const f = await fixture(), receipt = write(f.io, f.claim);
-  f.db.exec("DROP TABLE canon_write_intent_sources; DROP TABLE canon_projection_sources; DROP TABLE canon_write_intents; DROP TABLE canon_projection_obligations; DROP TABLE canon_read_generation; UPDATE schema_version SET version=20");
+  f.db.exec("DROP TABLE canon_write_intent_sources; DROP TABLE canon_projection_sources; DROP TABLE canon_write_intents; DROP TABLE canon_projection_obligations; DROP TABLE canon_read_generation; DROP TABLE connection_disconnect_receipts; UPDATE schema_version SET version=20");
   f.reopen();
-  expect(f.db.query("SELECT version FROM schema_version").get()).toEqual({ version: 21 });
+  expect(f.db.query("SELECT version FROM schema_version").get()).toEqual({ version: 22 });
   expect(listCanonReceipts(f.db)).toEqual([receipt]);
   expect(inspectCanonRecovery(f.db)).toEqual({ pending: false, receipt_id: null, page_path: null, projection_pending: 0, generation: 0 });
   expect(() => f.db.exec("INSERT INTO canon_read_generation VALUES (2,0)")).toThrow();

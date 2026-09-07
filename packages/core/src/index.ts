@@ -668,6 +668,8 @@ export type {
   PurgeStorePresence,
   PurgeVerifyReport,
 } from "./ledger/purge";
+export { disconnectConnection, resumeConnectionDisconnect, inspectConnectionDisconnect } from "./ledger/disconnect";
+export type { ConnectionDisconnectIo, ConnectionDisconnectOutcome, ConnectionDisconnectReceipt } from "./ledger/disconnect";
 export {
   LedgerError,
   DisconnectError,

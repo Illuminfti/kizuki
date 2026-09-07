@@ -26,14 +26,14 @@ test("historical registry binds four genuine writer inputs and six distinct nati
 });
 for(const id of ["ledger15","ledger16"]) test(`managed ${id} observation is nonmutating and migration preserves all original event and claim columns`,()=>{
  const {vault,path}=fixture(id),before=inspectRecoveryFixture(vault);expect(inspectRecoveryFixture(vault)).toEqual(before);
- const db=openLedger(path);db.close();const after=inspectRecoveryFixture(vault);expect(after.summary.schema_version).toBe(21);
+ const db=openLedger(path);db.close();const after=inspectRecoveryFixture(vault);expect(after.summary.schema_version).toBe(22);
  for(const table of ["events","claims"]){const prior=before.tables[table]??[];expect(after.tables[table]).toHaveLength(prior.length);for(const row of prior){const key=table==="events"?"event_id":"claim_id";const next=after.tables[table]!.find(value=>value[key]===row[key]);for(const field of Object.keys(row))expect(next?.[field]).toEqual(row[field]);}}
 });
 test("invalid historical text is rejected before completion and leaves every original row and schema object unchanged",()=>{
  const {vault,path}=fixture();change(path,"UPDATE events SET text='Synthetic invalid old event text.'");const before=inspectRecoveryFixture(vault);
  expect(()=>openLedger(path)).toThrow();expect(inspectRecoveryFixture(vault)).toEqual(before);expect(before.summary.schema_version).toBe(15);
 });
-test("collision reaches the actual final v21 CREATE after intermediate migrations then atomically restores all old rows and schema",()=>{
+test("collision reaches the actual v21 CREATE after intermediate migrations then atomically restores all old rows and schema",()=>{
  const {vault,path}=fixture();change(path,"CREATE TABLE canon_projection_sources (synthetic_collision TEXT NOT NULL); INSERT INTO canon_projection_sources VALUES ('fixture')");const before=inspectRecoveryFixture(vault);
  const original=Database.prototype.exec;const observed:{version:number;earlier:boolean;new_columns:boolean}[]=[];
  Database.prototype.exec=function(sql:string){if(/^\s*CREATE TABLE canon_projection_sources\b/.test(sql)){observed.push({version:(this.query("SELECT version FROM schema_version").get() as {version:number}).version,earlier:this.query("SELECT name FROM sqlite_master WHERE name='canon_write_intents'").get()!==null,new_columns:this.query<{name:string},[]>("PRAGMA table_info(events)").all().some(row=>row.name==="text_hash")});}return original.call(this,sql);};

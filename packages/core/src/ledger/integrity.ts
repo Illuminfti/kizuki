@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { assertConnectionDisconnectSchema } from "./connection-disconnect-schema";
 import { assertAgentEnrollmentSchema } from "../agents/enrollment-schema";
 import { assertSourceSurvivorLineageSchema } from "./canon-source-survivor-lineage";
 import { assertCanonRecoverySchema } from "./canon-recovery-schema";
@@ -170,6 +171,7 @@ export function assertLedgerSchema(db: Database, expectedVersion: number): void 
   if (expectedVersion >= 19) assertPurgeBatchSchema(db);
   if (expectedVersion >= 20) assertSourceSurvivorLineageSchema(db);
   if (expectedVersion >= 21) assertCanonRecoverySchema(db);
+  if (expectedVersion >= 22) assertConnectionDisconnectSchema(db);
 }
 
 function boundedCheck(db: Database, pragma: "quick_check" | "integrity_check"): string {

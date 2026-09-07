@@ -10,6 +10,7 @@ test.each(["bun-linux-x64-baseline","bun-darwin-arm64"])("closed %s fixture prov
  expect(result.release_upgrade).toBe(false);expect(result.hardware_reboot).toBe(false);expect(result.baseline_evidence).toContain("not-downloaded");
 });
 const mutations: [string,(f:any)=>void][]=[
+ ["current binary reports old schema",f=>phase(f,"cross-binary-upgrade").candidate_schema=21],
  ["v1 cannot claim v2",f=>f.schema="kizuki.native-service-lifecycle/v1"],
  ["extra envelope field",f=>f.credit=true],
  ["missing scope",f=>delete f.scope.dependency_offline_startup],
