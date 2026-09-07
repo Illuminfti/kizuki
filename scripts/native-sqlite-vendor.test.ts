@@ -47,7 +47,7 @@ test("signed system identity is compared with Bun while a distinct SDK remains i
   expect(result.system_cli.apple_anchor_verified).toBe(true);
   expect(result.sdk).toMatchObject({ status: "available", path: SDK, version: "15.5", header_identity: { sqlite_version: "3.49.0" } });
   expect(result.scope).toBe("apple-signed-system-cli-identity-not-loaded-library");
-  expect(f.calls[0]).toEqual(["/usr/bin/codesign", "--verify", "--strict", "-R", "anchor apple", "/usr/bin/sqlite3"]);
+  expect(f.calls[0]).toEqual(["/usr/bin/codesign", "--verify", "--strict", "-R", "=anchor apple", "/usr/bin/sqlite3"]);
   expect(f.calls[2]).toEqual(["/usr/bin/sqlite3", "-batch", "-noheader", "-init", "/dev/null", ":memory:", "SELECT sqlite_version() || char(9) || sqlite_source_id();"]);
   expect(f.reads).toEqual(["/usr/bin/sqlite3", SDK + "/usr/include/sqlite3.h", "/usr/bin/sqlite3"]);
 });

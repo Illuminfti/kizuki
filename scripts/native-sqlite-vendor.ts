@@ -47,7 +47,9 @@ const hash = (bytes: Buffer): string => createHash("sha256").update(bytes).diges
 /** Test harness only. This observes an Apple-signed CLI; it does not attest Bun's loaded library. */
 export function collectSqliteVendor(io: VendorIO) {
   const before = hash(io.read(SQLITE, 32 * 1024 * 1024));
-  const verification = io.run([CODESIGN, "--verify", "--strict", "-R", "anchor apple", SQLITE]);
+  // codesign reads -R as a filename unless its argument starts with "=".
+  // Apple TN3127: https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements
+  const verification = io.run([CODESIGN, "--verify", "--strict", "-R", "=anchor apple", SQLITE]);
   const displayed = io.run([CODESIGN, "--display", "--verbose=2", SQLITE]);
   try { checked(verification, "vendor-signature-refused"); }
   catch (error) {
