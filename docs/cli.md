@@ -98,8 +98,8 @@ usage: kizuki connect [--list|status] [--json]
        kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]
        kizuki connect x-api --fields relationships,links,media|none --history-start RFC3339 [--source KEY | --new-source] [--json]
        kizuki connect recover-x-api --source KEY --fields relationships,links,media|none --history-start RFC3339 [--json]
-       kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY | --new-source] [--json]
-       kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY | --new-source] [--json]
+       kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY | --new-source] [--sensitivity public|personal|private] [--json]
+       kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY | --new-source] [--sensitivity public|personal|private] [--json]
 ```
 
 Browse sources, inspect saved sync status, or enroll a source. Local Beeper
@@ -522,7 +522,11 @@ native generation walker is currently qualified only for Linux x64 glibc;
 other platforms remain pending for physical generation maintenance.
 
 Telegram enrollment captures no history. Use `backfill telegram --source KEY`
-after the source is authorized. The connection's opaque protected session holds
+after the source is authorized. The first backfill has no date floor: it reads
+every listed dialog back to its beginning in batches of at most 500 events,
+across at most 5,000 dialogs, and reports degraded health when the listing
+bound truncates the view. Each later pass re-reads only the last 200 messages
+of a dialog for edits. The connection's opaque protected session holds
 provider cooldowns, and the native CLI persists those before returning a wait;
 reopening the source checks the cooldown before opening transport. Transport
 cleanup never logs out the Telegram session. Source-consent revocation and

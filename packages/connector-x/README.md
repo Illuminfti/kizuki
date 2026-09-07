@@ -8,8 +8,8 @@ It never executes archive JavaScript and never reads media bytes. Native account
 and post IDs, provider timestamps, links, and supported attachment references
 are preserved as connector evidence.
 
-The package is available through the shared connector registry and the generic
-local-source CLI path:
+The archive importer is available through the shared connector registry and
+the generic local-source CLI path:
 
 ```sh
 kizuki connect import-x-archive --source /path/to/unzipped-archive
@@ -33,5 +33,6 @@ An additional, explicitly constructed owned-post API connector is available at
 [`@kizuki/connector-x/api`](./API.md). It has separate state and a separate
 connector identity, `kizuki.x`, registered for native CLI enrollment. Its
 provider enrollment, paid access, API compatibility and deletion coverage remain
-unqualified against a real account. The archive importer does not establish
-that qualification.
+unqualified against a real account. The same post captured through both paths is
+two ledger records under two connector ids; they corroborate nothing about each
+other. The archive importer does not establish that qualification.

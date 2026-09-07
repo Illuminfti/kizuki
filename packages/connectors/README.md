@@ -44,7 +44,7 @@ These ids match `defaultConnectorRegistry.ids()` on this revision.
 | `kizuki.markdown-folder` | A folder of Markdown files, rescanned each run                                                        | Live source       |
 | `kizuki.screenpipe`      | A local screenpipe SQLite database, read-only and offline (see that package's README before using it) | Live local source |
 | `kizuki.telegram`        | Native Telegram user sign-in; accessible dialogs. Project app credentials required; live-account qualification unrun | Bounded live source |
-| `kizuki.x`               | Read-only owner posts through the X API; configured native app and usage credits required; live-account qualification unrun | Bounded live source |
+| `kizuki.x`               | Read-only owner posts through the X API; registered with declared egress; host-composed; live-account qualification unrun | Bounded live source |
 
 In the examples below, `kizuki` stands for `bun packages/cli/src/main.ts` run
 from the tree, as in the repository README.

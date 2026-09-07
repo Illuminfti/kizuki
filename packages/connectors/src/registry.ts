@@ -1,4 +1,3 @@
-import { X_API_CONNECTOR_ID, X_API_CURSOR_SCHEMA, createXApiConnector, type XApiConfig } from "@kizuki/connector-x/api";
 import { GOOGLE_CALENDAR_CONNECTOR_ID, GOOGLE_CALENDAR_CURSOR_SCHEMA, createGoogleCalendarConnector, type GoogleCalendarConnectorConfig } from "@kizuki/connector-google-calendar";
 import {
   PORT_CONTRACTS,
@@ -47,6 +46,8 @@ import {
   createXArchiveConnector,
 } from "@kizuki/connector-x";
 import type { XArchiveConnectorConfig } from "@kizuki/connector-x";
+import { X_API_CONNECTOR_ID, X_API_CURSOR_SCHEMA, createXApiConnector } from "@kizuki/connector-x/api";
+import type { XApiConfig } from "@kizuki/connector-x/api";
 import {
   CHATGPT_IMPORT_CONNECTOR_ID,
   createChatGptImportConnector,
@@ -416,15 +417,6 @@ enroll(
   (config) => createOmnivoreImportConnector(config as OmnivoreImportConfig),
   LOCAL,
 );
-// Native enrollment and refresh require explicit trusted host transport/state custody.
-enroll(
-  X_API_CONNECTOR_ID,
-  ["backfill", "sync", "fixture", "sign_in"],
-  "@kizuki/connector-x",
-  config => createXApiConnector(config as XApiConfig),
-  { contract_minor: 3, implementation: "@kizuki/connector-x/api", allowed_egress: ["api.x.com", "x.com"],
-    cursor_schema: X_API_CURSOR_SCHEMA, default_sensitivity: "private", sensitivity_floor: "private" },
-);
 enroll(
   X_ARCHIVE_CONNECTOR_ID,
   ["backfill", "sync", "fixture"],
@@ -437,6 +429,23 @@ enroll(
     cursor_schema: X_ARCHIVE_CURSOR_SCHEMA,
     default_sensitivity: "personal",
     sensitivity_floor: "personal",
+  },
+);
+// OAuth state, persistence and interactive sign-in require trusted host
+// composition through createXApiConnector(config, deps). An unbound registry
+// instance fails closed, and the CLI does not enroll this connector yet.
+enroll(
+  X_API_CONNECTOR_ID,
+  ["backfill", "sync", "fixture", "sign_in"],
+  "@kizuki/connector-x/api",
+  (config) => createXApiConnector(config as XApiConfig),
+  {
+    contract_minor: 3,
+    implementation: "@kizuki/connector-x/api",
+    allowed_egress: ["api.x.com", "x.com"],
+    cursor_schema: X_API_CURSOR_SCHEMA,
+    default_sensitivity: "private",
+    sensitivity_floor: "private",
   },
 );
 enroll(
@@ -513,6 +522,10 @@ export function getConnector(
 export function getConnector(
   id: typeof X_ARCHIVE_CONNECTOR_ID,
   config: XArchiveConnectorConfig,
+): Connector;
+export function getConnector(
+  id: typeof X_API_CONNECTOR_ID,
+  config: XApiConfig,
 ): Connector;
 export function getConnector(
   id: typeof LEGACY_WIKI_CONNECTOR_ID,

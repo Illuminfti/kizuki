@@ -5,8 +5,16 @@ account's own posts through the official API. Offline tests exercise the actual
 wire parser, core OAuth helper, host state store, and ledger. Provider enrollment,
 paid access, the deployed API dialect, and provider deletion coverage have not
 been qualified against a real account. The API connector is an explicit package
-subpath and is registered as `kizuki.x` in the native CLI. Registration does not
+subpath and is registered as `kizuki.x` in the shared connector registry with
+declared egress. The registry entry maps the `x-api` acceptance row to this
+connector; it supplies no live-account evidence. Registration does not
 establish real-account qualification.
+
+Provider pricing, quotas and the exact loopback-callback rule were last read
+from official documentation on 2026-09-02 in
+[the lane specification](../../docs/wave1/specs/connector-x.md) and have not
+been re-verified since. Re-check them before funding access or attempting the
+first real enrollment; nothing in this package authorizes spend.
 
 ## Scope and enrollment
 
@@ -147,8 +155,9 @@ overwrite a replacement enrollment. A deadline refusal before transport leaves
 the old refresh token usable in a fresh operation on the same session.
 
 A 401 permits one refresh and one retry. Payment and permission errors stay
-distinct. GET 429 hints are untrusted input: valid numeric or HTTP-date hints
-are clamped to a local automatic delay between one second and 24 hours;
+distinct. GET 429 hints are untrusted input: a valid numeric or HTTP-date
+`retry-after`, or failing that a numeric `x-rate-limit-reset` epoch, is
+clamped to a local automatic delay between one second and 24 hours;
 absent or malformed hints use 60 seconds. This cap is a local scheduling rule,
 not a claim about the provider's actual reset time. OAuth transport does not
 expose headers, so token-endpoint 429 uses the same fixed 60-second default.
@@ -184,15 +193,16 @@ acceptance, an actual child exit after durable plan write, request/body limits,
 same-session token admission retry, late rotation, and native state replacement
 for both the same and a different account. Additional cases cover token 429,
 late/stale cooldown persistence, cumulative restart limits, bounded headers,
-pending provider-revoke retry, and concurrent native revocation. The shared legacy conformance suite
-checks contract behavior; dedicated native tests prove unavailable batches are
+pending provider-revoke retry, concurrent native revocation, the
+`x-rate-limit-reset` fallback hint, and a transport fault reported as
+unreachable. The shared conformance suite runs against the registry entry and
+the synthetic peer; dedicated native tests prove unavailable batches are
 recorded by the host without cursor advancement.
 
 ```bash
-cd /home/ubuntu/LifeOS/workspace/kizuki-x-api-resume-20260905
-npx -y bun@1.3.10 test packages/connector-x/test
-npx -y bun@1.3.10 run typecheck
-npx -y bun@1.3.10 run verify:network
+bun test packages/connector-x/test packages/connectors/test/conformance.test.ts
+bun run typecheck
+bun run verify:network
 ```
 
 Provider references: [timeline integration](https://docs.x.com/x-api/posts/timelines/integrate),

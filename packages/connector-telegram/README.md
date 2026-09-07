@@ -99,8 +99,9 @@ row are the host's part.
 
 ## What it does not do
 
-The manifest declares the messaging source's private sensitivity floor;
-per-event hints cannot lower it.
+The manifest declares the direct-messaging policy: a private default over a
+personal floor. Per-event hints are honored only upward, so nothing lowers a
+message below that floor, and every message this connector maps lands private.
 
 Deletions are invisible to it. Telegram publishes them on the update stream,
 which this connector does not consume, so the manifest declares
@@ -181,7 +182,9 @@ KIZUKI_TELEGRAM_SMOKE=1 KIZUKI_TELEGRAM_API_ID=… KIZUKI_TELEGRAM_API_HASH=… 
   bun test packages/connector-telegram/test/client.smoke.test.ts
 ```
 
-It signs in interactively and lists one dialog.
+It signs in interactively and lists one dialog. The library stand-in is a
+process-wide module mock, so enabling the smoke test skips the offline
+client-layer tests in that same process; run the two separately.
 
 ## Provider facts
 

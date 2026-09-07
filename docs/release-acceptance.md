@@ -267,8 +267,9 @@ The frozen C3 catalogue is Telegram user sign-in, Gmail, Google Calendar,
 IMAP, ICS, WHOOP, X API, screenpipe, Markdown folder, ChatGPT export, Claude
 export, X archive, WhatsApp export, Pocket and Omnivore. Report entries include
 the current connector IDs, including the registered X API connector `kizuki.x`.
-Registration does not establish actual account qualification. File importers
-cannot stand in for live accounts. Composio and WhatsApp Business API remain explicitly deferred.
+The registry entry maps the `x-api` acceptance row to this connector; a registry
+entry is a port claim, never live-account evidence. File importers cannot stand
+in for live accounts. Composio and WhatsApp Business API remain explicitly deferred.
 
 ## Trust and qualification limits
 

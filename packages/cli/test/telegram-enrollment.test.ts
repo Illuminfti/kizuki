@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { ConnectionStateStore, setSourceGrant, revokeSourceGrant, getCheckpoint, listConnections, runToCompletion } from "@kizuki/core";
+import { ConnectionStateStore, setSourceGrant, revokeSourceGrant, getCheckpoint, listConnections, runToCompletion, timeline } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { TelegramConnector, TelegramConnectorError, ScriptedTelegramApi, fixtureAccount, FIXTURE_CREDENTIALS, FIXTURE_SESSION, parseState, type SignInFlow } from "@kizuki/connector-telegram";
 import { UsageError } from "../src/args";
@@ -209,4 +209,41 @@ test("ordinary unreachable sign-in keeps the generic connectivity diagnostic", a
   expect(owner.output.join("\n")).not.toContain("enrolled");
   expect(api.calls.some(call => call.method === "disconnect")).toBe(true);
   const db = openLedger(join(setup.vault, ".kizuki/kizuki.db")); try { expect(listConnections(db)).toEqual([]); } finally { db.close(); }
+});
+
+test("a grant without text refuses every Telegram message that carries it and keeps none in the ledger", async () => {
+  const setup = h.tempVault(), owner = ownerIo(setup), account = fixtureAccount();
+  await runTelegramConnect(owner.io, { json: true }, () => {}, () => new TelegramConnector({}, { api: () => new ScriptedTelegramApi(account), credentials: () => FIXTURE_CREDENTIALS }));
+  const dbPath = join(setup.vault, ".kizuki/kizuki.db"), db = openLedger(dbPath), store = new ConnectionStateStore(join(setup.vault, ".kizuki"));
+  try {
+    const row = listConnections(db)[0]!;
+    setSourceGrant(db, { source_key: row.source_key, expected_revision: 0, operation_id: "fixture-telegram-narrow-grant",
+      policy: { purposes: ["capture"], allowed_fields: ["subjects", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" } });
+    const port = await loadConnector(selectConnection(db, store, "kizuki.telegram", row.source_key), store, db, {}, (_id, config, deps) => new TelegramConnector(config as { state_ref: string }, { ...deps, api: () => new ScriptedTelegramApi(account), credentials: () => FIXTURE_CREDENTIALS }));
+    const run = await runToCompletion(db, port, "kizuki.telegram", row.source_key, "backfill"); await closeHostConnector(port);
+    const fixture = await new TelegramConnector({}, { credentials: () => FIXTURE_CREDENTIALS }).fixture();
+    const denied = fixture.filter(event => event.text.length > 0 || event.attachments.length > 0);
+    // Core does not project a narrower event: a field the grant withholds refuses the whole record.
+    expect(run.errors).toEqual(denied.map(() => "source_field_denied"));
+    expect(run.stored).toBe(fixture.length - denied.length);
+    const stored = timeline(db, { connector_id: "kizuki.telegram", ceiling: "private" });
+    expect(stored).toHaveLength(run.stored);
+    for (const entry of stored) { expect(entry.text_preview).toBe(""); expect(entry.subjects.length).toBeGreaterThan(0); }
+    for (const event of denied) if (event.text.length > 0) expect(readFileSync(dbPath).includes(Buffer.from(event.text))).toBe(false);
+  } finally { db.close(); }
+});
+
+test("an oversized two-step hint reaches the terminal cut to 512 printable characters", async () => {
+  const setup = h.tempVault(), account = fixtureAccount();
+  account.sign_in = { code: "22222", password: "correct horse", password_hint: "\u001b[2Jhint\u0007 ".repeat(500) };
+  expect(account.sign_in.password_hint!.length).toBe(5000);
+  const questions: string[] = [], answers = ["+15551234567", "22222", "correct horse"];
+  const io: CliIo = { ...ownerIo(setup).io, prompt: async question => { questions.push(question); return answers.shift() ?? ""; } };
+  expect(await runTelegramConnect(io, { json: true }, () => {}, () => new TelegramConnector({}, { api: () => new ScriptedTelegramApi(account), credentials: () => FIXTURE_CREDENTIALS }))).toBe(0);
+  expect(questions).toHaveLength(3);
+  const question = questions[2]!;
+  expect(question.startsWith("Two-step verification password (hint: ")).toBe(true);
+  expect(question.length).toBeLessThanOrEqual(512);
+  expect(question).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
+  const db = openLedger(join(setup.vault, ".kizuki/kizuki.db")); try { expect(listConnections(db)).toHaveLength(1); } finally { db.close(); }
 });

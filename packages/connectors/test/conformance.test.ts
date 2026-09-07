@@ -1,6 +1,5 @@
 import { exportPurgeFixture, imapPurgeFixture, telegramPurgeFixture } from "./purge-fixtures";
 import { XApiFixture } from "@kizuki/connector-x/api/testkit";
-import { X_API_CONNECTOR_ID, createXApiConnector } from "@kizuki/connector-x/api";
 import { GOOGLE_CALENDAR_CONNECTOR_ID, createGoogleCalendarConnector } from "@kizuki/connector-google-calendar";
 import { CalendarFixture } from "../../connector-google-calendar/src/testing";
 import { expect, test } from "bun:test";
@@ -23,9 +22,11 @@ import {
   TELEGRAM_CONNECTOR_ID,
   TelegramConnector,
   WHATSAPP_IMPORT_CONNECTOR_ID,
+  X_API_CONNECTOR_ID,
   X_ARCHIVE_CONNECTOR_ID,
   createIcsConnector,
   createImapConnector,
+  createXApiConnector,
   getConnector,
   scriptedDeps,
 } from "../src";
@@ -45,6 +46,7 @@ import {
   runConformance,
   scriptedSignInConnector,
   seedFixtureDatabase,
+  statusUnavailableConnector,
   unlabeledEventsConnector,
   untypedSignInCancelConnector,
 } from "../src/testkit";
@@ -259,6 +261,11 @@ function batteryFor(
         getConnector(X_ARCHIVE_CONNECTOR_ID, { path: layout.xArchive }),
         { unavailable: missingPath(X_ARCHIVE_CONNECTOR_ID), backfillTwice: true },
       ),
+    [X_API_CONNECTOR_ID]: async () =>
+      runConformance(await new XApiFixture(2).connected(), {
+        unavailable: { connector: createXApiConnector({}) },
+        backfillTwice: true,
+      }),
     [TELEGRAM_CONNECTOR_ID]: async () => {
       const telegram = new TelegramConnector(
         { state_ref: TELEGRAM_STATE_REF },
@@ -284,10 +291,6 @@ function batteryFor(
     [GOOGLE_CALENDAR_CONNECTOR_ID]: async () => {
       const fixture = new CalendarFixture(), connector = await fixture.connected();
       return runConformance(connector, {unavailable:{connector:createGoogleCalendarConnector({})},tombstone:{prepare:async()=>JSON.stringify(JSON.parse(new TextDecoder().decode(fixture.state)).pending.next),mutate:async()=>{fixture.rows=[{id:'allday1',status:'cancelled'}];fixture.version++;}}});
-    },
-    [X_API_CONNECTOR_ID]: async () => {
-      const fixture = new XApiFixture(2), connector = await fixture.connected();
-      return runConformance(connector, { unavailable: { connector: createXApiConnector({}) } });
     },
     [GMAIL_CONNECTOR_ID]: async () => {
       const fixture = new GmailFixture(2);
@@ -538,6 +541,19 @@ test("empty-on-unavailable fails conformance", async () => {
   expect(
     result.failures.some((item) => item.includes("unavailable")),
   ).toBe(true);
+});
+
+test("a status-unavailable batch is a typed refusal only while its cursor stays put", async () => {
+  const unchanged = await runConformance(statusUnavailableConnector(null), {
+    unavailable: { connector: statusUnavailableConnector(null) },
+  });
+  expect(unchanged.failures.filter((item) => item.startsWith("unavailable:"))).toEqual([]);
+  const advanced = await runConformance(statusUnavailableConnector(null), {
+    unavailable: { connector: statusUnavailableConnector("advanced") },
+  });
+  expect(advanced.failures).toContain(
+    "unavailable: empty page advanced the cursor (unavailable is not empty)",
+  );
 });
 
 test("a hanging connector times out", async () => {

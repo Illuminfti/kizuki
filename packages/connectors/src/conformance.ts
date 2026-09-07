@@ -581,7 +581,9 @@ async function checkUnavailable(
       );
       return;
     }
-    if (batch.events.length === 0) {
+    // The host runner records a `status: "unavailable"` batch as a refused
+    // run at its returned cursor, so an unchanged cursor is a typed refusal.
+    if (batch.events.length === 0 && batch.status !== "unavailable") {
       failures.push(
         "unavailable: returned an empty page instead of a typed failure",
       );

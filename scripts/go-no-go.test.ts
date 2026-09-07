@@ -154,6 +154,10 @@ test("readiness keeps install, stranger and P0 evidence required while calendar 
       "journey.connect-resume", "journey.correct-belief", "journey.revoke-purge", "journey.retrieve-trustworthily", "journey.import-estate-slice", "journey.daily-loop", "journey.useful-insight", "journey.install-recover",
     ]);
     expect(result.connectors).toHaveLength(15);
+    expect(result.connectors.filter(row => row.id.startsWith("x-"))).toEqual([
+      { id: "x-api", connector_id: "kizuki.x", evidence: "live-account" },
+      { id: "x-archive", connector_id: "kizuki.import-x-archive", evidence: "file-import" },
+    ]);
     expect(gate(result, `artifact.${target}`).status).toBe("MISSING");
     for (const id of ["owner.seven-day-rails", "estate.fourteen-day-parity", "owner.final-cutover"]) {
       expect(gate(result, id)).toMatchObject({ required: false, status: "NOT_IMPLEMENTED", reason: "superseded-readiness-gate" });

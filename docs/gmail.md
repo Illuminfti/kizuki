@@ -29,7 +29,7 @@ Reauthorize an existing source with the same selected fields:
 kizuki connect gmail --source KEY --fields text,subjects,headers,labels,attachments
 ```
 
-The account must match its stable OIDC subject. Core replacement preserves the source key and checkpoint, while the connector preserves its exact pending history witness. Changed account/fields/history or concurrent state drift refuses rather than orphaning a checkpoint. Changing a source's selected projection through reauthorization is unsupported. Revoked consent stays revoked after reauthorization. Disconnect retains its existing stop-sync meaning; it does not silently revoke upstream Google permission or claim native payload erasure.
+The account must match its stable OIDC subject. Core replacement preserves the source key and checkpoint, while the connector preserves its exact pending history witness. Changed account/fields/history or concurrent state drift refuses rather than orphaning a checkpoint. Changing a source's selected projection through reauthorization is unsupported. Revoked consent stays revoked after reauthorization. This CLI has no `disconnect` command; a connection is recorded disconnected only by core, for example through [portable export and restore](portable-connection-restore.md). A disconnected connection stops sync; it does not revoke upstream Google permission or claim native payload erasure.
 
 An unresolved OAuth exchange or started host write fences reconnect until actual
 settlement. If a successful refresh returns after a timeout or local close, its
