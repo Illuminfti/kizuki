@@ -16,7 +16,7 @@ import { captureSyntheticServiceTrace } from "./native-service-trace";
 import { prepareLaunchctlDiagnostics, projectLaunchctlResult, syntheticServiceFileMetadata } from "./native-launchctl-diagnostics";
 
 import type { CliEngineObservation, McpEngineObservation } from "./artifact-proof";
-import { MODEL_PHASE_IDS, runNativeModelMatrix, type NativeModelPhase } from "./native-model-matrix";
+import { MODEL_PHASE_IDS, runNativeModelMatrix, readStrictNativeQuery, type NativeModelPhase } from "./native-model-matrix";
 import { HISTORICAL_RECOVERY_INPUTS, NATIVE_RECOVERY_PHASE_IDS, runNativeRecoveryFixtures, inspectRecoveryFixture, type NativeRecoveryResult } from "./native-recovery-fixtures";
 
 export const BASELINE_SOURCE_SHA = "5d4c9870797607e22d25e30bdda37a879aba9d69";
@@ -107,17 +107,41 @@ export function nativeServiceStopped(platform: string, result: CommandResult): b
     /^ActiveState=(inactive|failed)$/m.test(result.stdout);
 }
 
-/** The actual cleanup removal boundary, shared with the refusal regression oracle. */
-export function cleanupStoppedNativeFixture(
-  platform: string, state: CommandResult, fixtureRoot: string, unitPath: string, afterUnitRemoved: () => void = () => {},
-): { service_gone: boolean; unit_removed: boolean; synthetic_root_removed: boolean } {
-  if (!nativeServiceStopped(platform, state)) {
-    return { service_gone: false, unit_removed: !existsSync(unitPath), synthetic_root_removed: false };
+export type OwnedNativeFixtureUnit = { vault: string; unit: string; unitPath: string; executable: string };
+export type NativeFixtureCleanupRow = { unit: string; service_gone: boolean; unit_removed: boolean };
+
+/** Every owned unit is attempted independently. An unknown service retains its
+ * definition and the complete synthetic root, even if other units are gone. */
+export async function cleanupOwnedNativeFixtures(platform: string, fixtureRoot: string | null,
+  units: readonly OwnedNativeFixtureUnit[], host: {
+    attemptStop(unit: OwnedNativeFixtureUnit): void;
+    state(unit: OwnedNativeFixtureUnit): CommandResult;
+    reload(): void;
+    record(row: NativeFixtureCleanupRow): void;
+  }, timeoutMs = timeout) {
+  const rows: NativeFixtureCleanupRow[] = [], errors: string[] = [];
+  for (const owned of [...units].reverse()) {
+    let gone = false;
+    try {
+      host.attemptStop(owned);
+      let state = host.state(owned); const deadline = Date.now() + timeoutMs;
+      while (!nativeServiceStopped(platform, state) && Date.now() < deadline) { await Bun.sleep(100); state = host.state(owned); }
+      gone = nativeServiceStopped(platform, state) && !existsSync(join(owned.vault, ".kizuki/serve.pid"));
+      if (gone && existsSync(owned.unitPath)) unlinkSync(owned.unitPath);
+    } catch (error) { errors.push(`${owned.unit}: ${error instanceof Error ? error.message : "cleanup failed"}`); }
+    const row = { unit: owned.unit, service_gone: gone, unit_removed: !existsSync(owned.unitPath) };
+    rows.push(row);
+    try { host.record(row); } catch (error) { errors.push(`${owned.unit}: ${error instanceof Error ? error.message : "cleanup receipt failed"}`); }
   }
-  if (existsSync(unitPath)) unlinkSync(unitPath);
-  afterUnitRemoved();
-  rmSync(fixtureRoot, { recursive: true });
-  return { service_gone: true, unit_removed: true, synthetic_root_removed: true };
+  try { if (units.length > 0) host.reload(); }
+  catch (error) { errors.push(error instanceof Error ? error.message : "cleanup manager reload failed"); }
+  const service_gone = rows.every(row => row.service_gone), unit_removed = rows.every(row => row.unit_removed);
+  let synthetic_root_removed = false;
+  if (service_gone && unit_removed && errors.length === 0 && fixtureRoot) {
+    try { rmSync(fixtureRoot, { recursive: true }); synthetic_root_removed = true; }
+    catch (error) { errors.push(error instanceof Error ? error.message : "synthetic root removal failed"); }
+  }
+  return { service_gone, unit_removed, synthetic_root_removed, units: rows, errors };
 }
 
 export function parseLifecycleArgs(argv: readonly string[]) {
@@ -172,7 +196,7 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
   let fixtureRoot: string | null = null;
   let vault = "", unit = "", unitPath = "", executable = "";
   let cliEnv: Record<string, string> = {};
-  const ownedUnits: { vault: string; unit: string; unitPath: string; executable: string }[] = [];
+  const ownedUnits: OwnedNativeFixtureUnit[] = [];
   const rememberUnit = () => {
     const prior = ownedUnits.find(row => row.unit === unit);
     if (prior) prior.executable = executable;
@@ -550,26 +574,28 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     const priorRails = await waitForFreshRails(() => readNativeRailDiagnostics(upgradeVault, priorInstance, priorInstance.started_at));
     check(priorRails.complete && !priorRails.truncated && priorRails.error === null, "baseline initial rail coverage unavailable");
     command(priorBinary, ["import", "markdown-folder", "--source", notes, "--policy", policy, "--expected-revision", "0", "--operation-id", "upgrade-import", "--vault", upgradeVault]);
-    const priorQuery = command(priorBinary, ["query", "observatory", "--vault", upgradeVault]);
+    const priorQuery = command(priorBinary, ["query", "observatory", "--json", "--vault", upgradeVault]);
     await deactivateExtension(upgradeVault, priorBinary);
     const beforeUpgrade = inspectRecoveryFixture(upgradeVault), recoveryCopy = join(fixtureRoot, "baseline export");
     command(priorBinary, ["export", "--out", recoveryCopy, "--vault", upgradeVault]);
     command(priorBinary, ["restore", "--from", recoveryCopy, "--verify"]);
     command(candidate, ["init", upgradeVault, "--no-service", "--no-default"]);
     const nextInstance = await activateExtension(upgradeVault, candidate);
+    const candidateActive = managerPid(platform, managerState()) === nextInstance.pid;
+    const installedUnitHash = hash(unitPath);
+    const nextQuery = command(candidate, ["query", "observatory", "--json", "--vault", upgradeVault]);
+    await deactivateExtension(upgradeVault);
     const afterUpgrade = inspectRecoveryFixture(upgradeVault);
-    const nextQuery = command(candidate, ["query", "observatory", "--vault", upgradeVault]);
     const upgrade: NativeUpgradeEvidence = { baseline_source_sha: baselineBuild.source_sha, candidate_source_sha: sourceSha,
       baseline_binary_sha256: priorHashes.kizuki!, candidate_binary_sha256: receipt.binary_sha256,
       baseline_schema: beforeUpgrade.summary.schema_version, candidate_schema: afterUpgrade.summary.schema_version,
       baseline_instance_id: priorInstance.instance_id, candidate_instance_id: nextInstance.instance_id, baseline_pid: priorInstance.pid, candidate_pid: nextInstance.pid,
       unit, vault_id: readFileSync(join(upgradeVault, ".kizuki/vault-id"), "utf8").trim(),
       before_event_sha256: createHash("sha256").update(JSON.stringify(beforeUpgrade.tables.events)).digest("hex"), after_event_sha256: createHash("sha256").update(JSON.stringify(afterUpgrade.tables.events)).digest("hex"),
-      baseline_stopped: true, candidate_active: managerPid(platform, managerState()) === nextInstance.pid,
-      baseline_query_preserved: priorQuery.stdout.includes("observatory"), candidate_query_preserved: nextQuery.stdout.includes("observatory"), backup_verified: true,
-      backup_manifest_sha256: hash(join(recoveryCopy, "manifest.json")), unit_sha256: hash(unitPath) };
+      baseline_stopped: true, candidate_active: candidateActive,
+      baseline_query_preserved: readStrictNativeQuery(priorQuery).some(hit => hit.scope === "ledger" && hit.authority === "connector_evidence" && hit.snippet.includes("observatory")), candidate_query_preserved: readStrictNativeQuery(nextQuery).some(hit => hit.scope === "ledger" && hit.authority === "connector_evidence" && hit.snippet.includes("observatory")), backup_verified: true,
+      backup_manifest_sha256: hash(join(recoveryCopy, "manifest.json")), unit_sha256: installedUnitHash };
     recordPhase({ id: "cross-binary-upgrade", passed: upgradePhasePassed(upgrade), evidence: upgrade });
-    await deactivateExtension(upgradeVault);
     verifyPackageDirectory(args.baseline_artifact!, baselineBuild); verifyPackageDirectory(priorPackage, baselineBuild);
     for (const name of packageFiles(baselineBuild)) check(hash(join(priorPackage, name)) === priorHashes[name] && hash(join(args.baseline_artifact!, name)) === priorHashes[name], "baseline package changed");
 
@@ -578,12 +604,14 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     for (const phase of recovery.phases) recordPhase(phase);
     for (const recovered of recovery.service_vaults) {
       const instance = await activateExtension(recovered.vault);
-      const schema = inspectRecoveryFixture(recovered.vault).summary.schema_version;
       const active = managerPid(platform, managerState()) === instance.pid, recoveredUnit = unit;
       const vaultId = readFileSync(join(recovered.vault, ".kizuki/vault-id"), "utf8").trim();
       await deactivateExtension(recovered.vault);
+      const stoppedSnapshot = inspectRecoveryFixture(recovered.vault), schema = stoppedSnapshot.summary.schema_version;
+      const eventHash = createHash("sha256").update(String(stoppedSnapshot.tables.events?.[0]?.text)).digest("hex");
+      check(eventHash === recovered.event_text_sha256, "activated recovery fixture changed original event");
       qualification.recovery_services.push({ id: recovered.id, vault_id: vaultId, unit: recoveredUnit, pid: instance.pid, instance_id: instance.instance_id,
-        ledger_schema: schema, active, stopped: nativeServiceStopped(platform, managerState()), event_text_sha256: recovered.event_text_sha256 }); save();
+        ledger_schema: schema, active, stopped: nativeServiceStopped(platform, managerState()), event_text_sha256: eventHash }); save();
     }
     await runNativeModelMatrix({ executable: candidate, workspace: join(fixtureRoot, "model matrix"), env: cliEnv,
       invoke: args => invoke([candidate, ...args]), activate: selected => activateExtension(selected), deactivate: selected => deactivateExtension(selected),
@@ -613,28 +641,21 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     receipt.cleanup.attempted = true;
     try {
       rememberUnit();
-      for (const owned of [...ownedUnits].reverse()) {
-        vault = owned.vault; unit = owned.unit; unitPath = owned.unitPath; executable = owned.executable;
-        // Each name was derived from a vault created by this invocation. No
-        // environment or unfiltered manager-wide process list is inspected.
-        if (executable) invoke([executable, "serve", "--uninstall", "--json", "--vault", vault]);
-        if (platform === "darwin") native("bootout", `${domain}/${unit}`);
-        else native("--user", "disable", "--now", unit);
-        let state = managerState();
-        const deadline = Date.now() + timeout;
-        while (!nativeServiceStopped(platform, state) && Date.now() < deadline) { await Bun.sleep(100); state = managerState(5000); }
-        const gone = nativeServiceStopped(platform, state) && !existsSync(join(vault, ".kizuki/serve.pid"));
-        if (gone && existsSync(unitPath)) unlinkSync(unitPath);
-        const removed = !existsSync(unitPath);
-        receipt.cleanup.units.push({ unit, service_gone: gone, unit_removed: removed }); save();
-      }
-      if (platform === "linux" && ownedUnits.length > 0) check(native("--user", "daemon-reload").exit_code === 0, "cleanup manager reload failed");
-      receipt.cleanup.service_gone = receipt.cleanup.units.every(row => row.service_gone);
-      receipt.cleanup.unit_removed = receipt.cleanup.units.every(row => row.unit_removed);
-      // Preserve all synthetic roots if any owned unit/process remains unknown.
-      if (receipt.cleanup.service_gone && receipt.cleanup.unit_removed && fixtureRoot) {
-        rmSync(fixtureRoot, { recursive: true }); receipt.cleanup.synthetic_root_removed = true;
-      }
+      const cleaned = await cleanupOwnedNativeFixtures(platform, fixtureRoot, ownedUnits, {
+        attemptStop: owned => {
+          vault = owned.vault; unit = owned.unit; unitPath = owned.unitPath; executable = owned.executable;
+          if (executable) invoke([executable, "serve", "--uninstall", "--json", "--vault", vault]);
+          if (platform === "darwin") native("bootout", `${domain}/${unit}`);
+          else native("--user", "disable", "--now", unit);
+        },
+        state: () => managerState(5000),
+        reload: () => { if (platform === "linux") check(native("--user", "daemon-reload").exit_code === 0, "cleanup manager reload failed"); },
+        record: row => { receipt.cleanup.units.push(row); save(); },
+      });
+      receipt.cleanup.service_gone = cleaned.service_gone;
+      receipt.cleanup.unit_removed = cleaned.unit_removed;
+      receipt.cleanup.synthetic_root_removed = cleaned.synthetic_root_removed;
+      if (cleaned.errors.length > 0) { receipt.passed = false; failures.push(...cleaned.errors.map(error => `cleanup: ${error}`)); }
       if (!receipt.cleanup.service_gone || !receipt.cleanup.unit_removed) {
         receipt.passed = false;
         failures.push("owned service cleanup remains unverified; synthetic root retained");

@@ -39,6 +39,20 @@ const check = (value: unknown, code: string): void => { if (!value) throw new Er
 const MODEL = "native-lifecycle-synthetic";
 const SOURCE_TEXT = "Ada is the coordinator for Orchard library.\n";
 
+/** Exit zero alone does not establish a healthy query: the CLI can return a
+ * degraded envelope. Require its complete public success boundary and hit data. */
+export function readStrictNativeQuery(result: { exit_code: number; stdout: string; stderr: string }): { scope: string; authority: string; snippet: string }[] {
+  check(result.exit_code === 0 && result.stderr === "" && Buffer.byteLength(result.stdout) <= 65_536, "query_command");
+  let body: any; try { body = JSON.parse(result.stdout); } catch { check(false, "query_json"); }
+  check(body && typeof body === "object" && !Array.isArray(body) && Object.keys(body).sort().join() === "data,degraded,schema,status,warnings" &&
+    body.schema === "kizuki.cli.query/v1" && body.status === "ok" && Array.isArray(body.degraded) && body.degraded.length === 0 && Array.isArray(body.warnings) && body.warnings.length === 0 &&
+    body.data && typeof body.data === "object" && !Array.isArray(body.data) && Object.keys(body.data).sort().join() === "hits,withheld" && body.data.withheld === 0 &&
+    Array.isArray(body.data.hits) && body.data.hits.length <= 50, "query_envelope");
+  for (const hit of body.data.hits) check(hit && typeof hit === "object" && !Array.isArray(hit) && ["canon","ledger"].includes(hit.scope) &&
+    typeof hit.authority === "string" && typeof hit.snippet === "string", "query_hit");
+  return body.data.hits;
+}
+
 /** The observer never migrates the installed daemon's database or retains statements. */
 export function readInstalledModelAttempt(vault: string, expected: NativeModelInstance) {
   const path = join(vault, ".kizuki/kizuki.db");
@@ -188,14 +202,15 @@ export async function runNativeModelMatrix(host: NativeModelHost): Promise<void>
       const deadline = Date.now() + 30_000;
       while (observation === null && Date.now() < deadline) { observation = readInstalledModelAttempt(vault, instance); if (observation === null) await Bun.sleep(100); }
       check(observation !== null, "receipt_missing");
-      const result = host.invoke(["query", "Orchard", "--vault", vault]);
+      const result = host.invoke(["query", "Orchard", "--json", "--vault", vault]);
       const modelQuery = host.invoke(["query", "operations", "--json", "--vault", vault]);
-      const modelOutputReadable = modelQuery.exit_code === 0 && modelQuery.stdout.includes("model_inference") && modelQuery.stdout.includes("operations");
+      const sourceHits = readStrictNativeQuery(result), modelHits = readStrictNativeQuery(modelQuery);
+      const modelOutputReadable = modelHits.some(hit => hit.scope === "canon" && hit.authority === "model_inference" && hit.snippet.includes("operations"));
       const counts = endpoint.observation(), receipt = observation!.receipt;
       const evidence: NativeModelEvidence = { ...instance, receipt_run_id: receipt.run_id, receipt_status: receipt.status,
         model_calls: receipt.model.calls, model_unavailable: receipt.model.unavailable, claims_extracted: receipt.claims_extracted, canon_writes: receipt.canon_writes,
         endpoint_requests: counts.requests, unexpected_requests: counts.unexpected, credential_present: existsSync(key), model_configured: id !== "model-absent",
-        source_event_present: observation!.source_event_present, query_preserved: result.exit_code === 0 && result.stdout.includes("Orchard"),
+        source_event_present: observation!.source_event_present, query_preserved: sourceHits.some(hit => hit.scope === "ledger" && hit.authority === "connector_evidence" && hit.snippet === SOURCE_TEXT),
         weights_unchanged: modelFiles(vault) === weightsHash, config_unchanged: sha(readFileSync(config)) === configHash,
         configuration_unavailable: receipt.errors.includes("model configuration unavailable"), daemon_active: host.stillActive(vault, instance),
         model_ref_sha256: receipt.model.model_ref_sha256 ?? null, model_claims: observation!.model_claims, model_canon_receipts: observation!.model_canon_receipts, model_output_readable: modelOutputReadable, recovery: null };
@@ -210,14 +225,15 @@ export async function runNativeModelMatrix(host: NativeModelHost): Promise<void>
         const recoveryDeadline = Date.now() + 30_000;
         while (next === null && Date.now() < recoveryDeadline) { next = readInstalledModelAttempt(vault, recovered); if (next === null) await Bun.sleep(100); }
         check(next !== null, "recovery_receipt_missing");
-        const recoveredSource = host.invoke(["query", "Orchard", "--vault", vault]);
+        const recoveredSource = host.invoke(["query", "Orchard", "--json", "--vault", vault]);
         const recoveredModel = host.invoke(["query", "operations", "--json", "--vault", vault]);
         const recoveredCounts = recoveredEndpoint.observation(), nextReceipt = next!.receipt;
+        const recoveredSourceHits = readStrictNativeQuery(recoveredSource), recoveredModelHits = readStrictNativeQuery(recoveredModel);
         evidence.recovery = { stop_confirmed: stopConfirmed, receipt_trigger: nextReceipt.execution?.trigger ?? "absent", receipt_due_at: nextReceipt.execution?.due_at ?? null, scheduling_override: schedulingOverride, trigger: "service-restart", ...recovered, receipt_run_id: nextReceipt.run_id, receipt_status: nextReceipt.status,
           model_calls: nextReceipt.model.calls, model_unavailable: nextReceipt.model.unavailable, claims_extracted: nextReceipt.claims_extracted, canon_writes: nextReceipt.canon_writes,
           endpoint_requests: recoveredCounts.requests, unexpected_requests: recoveredCounts.unexpected, model_claims: next!.model_claims, model_canon_receipts: next!.model_canon_receipts,
-          model_output_readable: recoveredModel.exit_code === 0 && recoveredModel.stdout.includes("model_inference") && recoveredModel.stdout.includes("operations"),
-          source_event_present: next!.source_event_present, query_preserved: recoveredSource.exit_code === 0 && recoveredSource.stdout.includes("Orchard"),
+          model_output_readable: recoveredModelHits.some(hit => hit.scope === "canon" && hit.authority === "model_inference" && hit.snippet.includes("operations")),
+          source_event_present: next!.source_event_present, query_preserved: recoveredSourceHits.some(hit => hit.scope === "ledger" && hit.authority === "connector_evidence" && hit.snippet === SOURCE_TEXT),
           daemon_active: host.stillActive(vault, recovered), config_unchanged: sha(readFileSync(config)) === configHash,
           credential_unchanged: readFileSync(key, "utf8") === endpoint.key, endpoint_unchanged: recoveredEndpoint.endpoint === endpoint.endpoint };
       }

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MODEL_PHASE_IDS, modelPhasePassed, runNativeModelMatrix, startNativeModelEndpoint, type NativeModelEvidence, type NativeModelPhase } from "./native-model-matrix";
+import { MODEL_PHASE_IDS, modelPhasePassed, readStrictNativeQuery, runNativeModelMatrix, startNativeModelEndpoint, type NativeModelEvidence, type NativeModelPhase } from "./native-model-matrix";
 import { syntheticModelReply } from "./native-model-endpoint";
 
 const base: NativeModelEvidence = { unit: "kizuki@synthetic.service", instance_id: "synthetic-instance", pid: 123, started_at: "2026-09-07T00:00:00.000Z", receipt_run_id: "synthetic-run", receipt_status: "ok", model_calls: 1, model_unavailable: 0,
@@ -38,6 +38,15 @@ test("offline recovery requires the restored dependency and a distinct installed
   for (const changed of [{ instance_id: base.instance_id }, { receipt_run_id: base.receipt_run_id }, { unit: "foreign-unit" }, { endpoint_unchanged: false },
     { credential_unchanged: false }, { stop_confirmed: false }, { receipt_trigger: "manual" }, { receipt_due_at: null }, { model_output_readable: false }, { query_preserved: false }, { daemon_active: false }, { endpoint_requests: 0 }, { model_claims: 0 }])
     expect(modelPhasePassed("model-dependency-offline", { ...offline, recovery: { ...recovery, ...changed } })).toBe(false);
+});
+test("strict native query refuses exit-zero degradation, warnings, stderr and malformed hits", () => {
+  const body = { schema: "kizuki.cli.query/v1", status: "ok", degraded: [], warnings: [], data: { withheld: 0, hits: [{ scope: "ledger", authority: "connector_evidence", snippet: "synthetic" }] } };
+  const result = { exit_code: 0, stderr: "", stdout: JSON.stringify(body) };
+  expect(readStrictNativeQuery(result)).toEqual(body.data.hits);
+  for (const changed of [{ status: "degraded" }, { degraded: ["index-behind-ledger"] }, { warnings: ["warning"] }, { error: { code: "unavailable" } }, { schema: "foreign" }, { data: { withheld: 1, hits: [] } }, { data: { withheld: 0, hits: [null] } }])
+    expect(() => readStrictNativeQuery({ ...result, stdout: JSON.stringify({ ...body, ...changed }) })).toThrow();
+  expect(() => readStrictNativeQuery({ ...result, stderr: "degraded=provider-unavailable" })).toThrow();
+  expect(() => readStrictNativeQuery({ ...result, exit_code: 1 })).toThrow();
 });
 test("scripted model response preserves request record binding and refuses another model", () => {
   const request = { model: "native-lifecycle-synthetic", messages: [{ content: "system" }, { content: 'record event-1 from source\n{"subject":"person:ada"}' }] };

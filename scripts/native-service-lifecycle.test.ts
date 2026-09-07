@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cleanupStoppedNativeFixture, managerPid, nativeServiceStopped, nativeWaitTimeout, waitForNativeState } from "./native-service-lifecycle";
+import { cleanupOwnedNativeFixtures, managerPid, nativeServiceStopped, nativeWaitTimeout, waitForNativeState } from "./native-service-lifecycle";
 import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS } from "../packages/core/src/serve/types";
 import { RAIL_IDS, emptyRunTotals } from "../packages/core/src/serve/types";
 import { installedRailsHealth, readNativeRailDiagnostics, recordInstalledHealth, waitForFreshRails } from "./native-service-health";
@@ -180,13 +180,14 @@ for (const [label, state, stopped] of [
   ["query failure without fields", { exit_code: 1, stdout: "", stderr: "bus unavailable" }, false],
   ["missing definition and confirmed inactive PID zero", { exit_code: 0, stdout: "LoadState=not-found\nActiveState=inactive\nMainPID=0\n", stderr: "" }, true],
 ] as const) {
-  test(`actual native cleanup retains the fixture until stop is proved: ${label}`, () => {
+  test(`actual native cleanup retains the fixture until stop is proved: ${label}`, async () => {
     const report = mkdtempSync(join(tmpdir(), "kizuki-cleanup-refusal-"));
     const fixture = join(report, "synthetic-root"), unit = join(report, "owned.service");
     mkdirSync(fixture); writeFileSync(join(fixture, "evidence"), "synthetic"); writeFileSync(unit, "synthetic");
     try {
       expect(nativeServiceStopped("linux", state)).toBe(stopped);
-      const cleanup = cleanupStoppedNativeFixture("linux", state, fixture, unit);
+      const cleanup = await cleanupOwnedNativeFixtures("linux", fixture, [{ vault: fixture, unit: "owned.service", unitPath: unit, executable: "/synthetic/kizuki" }],
+        { attemptStop() {}, state: () => state, reload() {}, record() {} }, 0);
       const receipt = { passed: cleanup.service_gone && cleanup.unit_removed, cleanup };
       writeFileSync(join(report, "receipt.json"), JSON.stringify(receipt));
       expect(JSON.parse(readFileSync(join(report, "receipt.json"), "utf8")).passed).toBe(stopped);
@@ -196,6 +197,38 @@ for (const [label, state, stopped] of [
     } finally { rmSync(report, { recursive: true }); }
   });
 }
+
+test("actual multi-unit cleanup preserves one unknown definition and root while cleaning other stopped units", async () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-multi-cleanup-")), fixture = join(root, "fixtures"); mkdirSync(fixture);
+  const units = ["stopped", "unknown"].map(unit => { const vault = join(fixture, unit); mkdirSync(vault); const unitPath = join(root, unit + ".service"); writeFileSync(unitPath, unit); return { vault, unit, unitPath, executable: "/synthetic/kizuki" }; });
+  const visited: string[] = [], recorded: string[] = [];
+  try {
+    const result = await cleanupOwnedNativeFixtures("linux", fixture, units, {
+      attemptStop: unit => { visited.push(unit.unit); },
+      state: unit => unit.unit === "unknown" ? { exit_code: 1, stdout: "ActiveState=inactive\nMainPID=0\n", stderr: "bus unavailable" } : { exit_code: 0, stdout: "ActiveState=inactive\nMainPID=0\n", stderr: "" },
+      reload() {}, record: row => { recorded.push(row.unit); },
+    }, 0);
+    expect(visited).toEqual(["unknown", "stopped"]); expect(recorded).toEqual(visited);
+    expect(result).toMatchObject({ service_gone: false, unit_removed: false, synthetic_root_removed: false });
+    expect(existsSync(fixture)).toBe(true); expect(existsSync(units[0]!.unitPath)).toBe(false); expect(readFileSync(units[1]!.unitPath, "utf8")).toBe("unknown");
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+test("actual multi-unit cleanup continues after a manager exception and retains every failure fact", async () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-multi-cleanup-error-")), fixture = join(root, "fixtures"); mkdirSync(fixture);
+  const units = ["stopped", "throws"].map(unit => { const vault = join(fixture, unit); mkdirSync(vault); const unitPath = join(root, unit + ".service"); writeFileSync(unitPath, unit); return { vault, unit, unitPath, executable: "/synthetic/kizuki" }; });
+  const visited: string[] = [];
+  try {
+    const result = await cleanupOwnedNativeFixtures("linux", fixture, units, {
+      attemptStop: unit => { visited.push(unit.unit); if (unit.unit === "throws") throw Error("owned stop command failed"); },
+      state: () => ({ exit_code: 0, stdout: "ActiveState=inactive\nMainPID=0\n", stderr: "" }),
+      reload() { throw Error("owned reload failed"); }, record() {},
+    }, 0);
+    expect(visited).toEqual(["throws", "stopped"]); expect(result.errors).toEqual(["throws: owned stop command failed", "owned reload failed"]);
+    expect(result.units).toEqual([{ unit: "throws", service_gone: false, unit_removed: false }, { unit: "stopped", service_gone: true, unit_removed: true }]);
+    expect(existsSync(fixture)).toBe(true); expect(existsSync(units[0]!.unitPath)).toBe(false); expect(existsSync(units[1]!.unitPath)).toBe(true);
+  } finally { rmSync(root, { recursive: true }); }
+});
 
 import { BASELINE_SOURCE_SHA, NATIVE_LIFECYCLE_PHASE_IDS, NATIVE_LIFECYCLE_REGISTRY_SHA256, parseLifecycleArgs, statePhasePassed, upgradePhasePassed, type NativeStateEvidence, type NativeUpgradeEvidence } from "./native-service-lifecycle";
 
