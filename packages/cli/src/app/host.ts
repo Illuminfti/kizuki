@@ -51,6 +51,10 @@ function string(value: unknown, max = 4096): string { if (typeof value !== 'stri
 function boolean(value: unknown): boolean { if (value === undefined)
     return false; if (typeof value !== 'boolean')
     throw new AppFailure('invalid_request'); return value; }
+function correctionText(value: unknown): string {
+    if (typeof value !== 'string' || !value.trim() || value.length > 4096 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value)) throw new AppFailure('invalid_request');
+    return value;
+}
 function limit(value: unknown): number { if (value === undefined)
     return 20; if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > 50)
     throw new AppFailure('invalid_request'); return Number(value); }
@@ -136,7 +140,7 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
             return context(async ctx => { initAgents(ctx.db); return inspectOwnerPageCorrectionTargets(ctx, page); });
         }
         if (route === 'correction_preview' || route === 'correct') {
-            const args = { target: { claim_id: string(input.claim_id, 128) }, statement: string(input.statement, 4096),
+            const args = { target: { claim_id: string(input.claim_id, 128) }, statement: correctionText(input.statement),
                 ...(input.object === undefined ? {} : { object: string(input.object, 4096) }) };
             if (route === 'correction_preview') return context(async ctx => {
                 initAgents(ctx.db);

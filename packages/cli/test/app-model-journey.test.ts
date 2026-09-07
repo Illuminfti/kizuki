@@ -146,7 +146,7 @@ test('authenticated first use separates connection tests, source permission and 
         const targets = (await call('correction_targets', { page_id: memory.id })).data;
         const target = targets.claims.find((claim: any) => claim.object === 'orchard library collaborator');
         expect(target).toBeDefined();
-        const correction = { claim_id: target.claim_id, statement: 'Ada is an orchard library coordinator.', object: 'orchard library coordinator' };
+        const correction = { claim_id: target.claim_id, statement: 'Ada is an orchard library coordinator.\nI confirmed this directly.', object: 'orchard library coordinator' };
         const priorActivity = (await call('activity')).data.receipts.length;
         const preview = await call('correction_preview', correction);
         expect(preview.ok).toBe(true);
