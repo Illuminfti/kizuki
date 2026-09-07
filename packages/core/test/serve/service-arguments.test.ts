@@ -13,8 +13,16 @@ describe("service argument vectors", () => {
   test("systemd preserves spaces, quotes, literal dollars and specifiers", () => {
     const unit = renderSystemdUnit(spec);
     expect(unit).toContain('ExecStart="/opt/Kizuki App/kizuki" serve --vault "/tmp/ada notes/$$work%% \\"one\\""');
-    expect(unit).toContain('WorkingDirectory="/tmp/ada notes/$work%% \\"one\\""');
+    expect(unit).toContain('WorkingDirectory=/tmp/ada notes/$work%% "one"/.');
     expect(unit).toContain('ReadWritePaths="/tmp/ada notes/$work%% \\"one\\""');
+  });
+
+  test("systemd retains directory names ending in whitespace or a backslash", () => {
+    for (const vaultPath of ["/tmp/trailing space ", "/tmp/trailing-backslash\\"]) {
+      const unit = renderSystemdUnit({ ...spec, vaultPath });
+      expect(unit.split("\n").find(line => line.startsWith("WorkingDirectory=")))
+        .toBe(`WorkingDirectory=${vaultPath}/.`);
+    }
   });
 
   test("launchd keeps a path with spaces as one exact XML argument", () => {

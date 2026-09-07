@@ -41,7 +41,10 @@ export function renderSystemdUnit(spec: UnitSpec): string {
     "[Service]",
     "Type=simple",
     `ExecStart=${exec}`,
-    `WorkingDirectory=${systemdValue(spec.vaultPath)}`,
+    // WorkingDirectory is one literal path, not an argument list: systemd
+    // does not remove quotes or C escapes here. A final /. keeps trailing
+    // spaces and backslashes away from the configuration line boundary.
+    `WorkingDirectory=${spec.vaultPath.replaceAll("%", "%%")}/.`,
     "Restart=on-failure",
     "NoNewPrivileges=true",
     "PrivateTmp=true",
