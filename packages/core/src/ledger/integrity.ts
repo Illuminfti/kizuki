@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { assertAgentEnrollmentSchema } from "../agents/enrollment-schema";
 import { assertSourceSurvivorLineageSchema } from "./canon-source-survivor-lineage";
+import { assertCanonRecoverySchema } from "./canon-recovery-schema";
 import { assertPurgeBatchSchema } from "./purge-batch-schema";
 import { LedgerStoreError } from "./errors";
 import { LEDGER_DOCTOR_ROW_CAP } from "./limits";
@@ -168,6 +169,7 @@ export function assertLedgerSchema(db: Database, expectedVersion: number): void 
   if (expectedVersion >= 18) assertAgentEnrollmentSchema(db);
   if (expectedVersion >= 19) assertPurgeBatchSchema(db);
   if (expectedVersion >= 20) assertSourceSurvivorLineageSchema(db);
+  if (expectedVersion >= 21) assertCanonRecoverySchema(db);
 }
 
 function boundedCheck(db: Database, pragma: "quick_check" | "integrity_check"): string {

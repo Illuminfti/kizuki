@@ -3,8 +3,10 @@ import {
   getSourceSurvivorLineage,
   insertSourceSurvivorLineage,
 } from "../ledger/canon-source-survivor-lineage";
-import { serializePage } from "../vault/frontmatter";
-import { hashBytes, ABSENT_PAGE_HASH } from "../vault/write";
+import { parseFrontmatter, serializePage } from "../vault/frontmatter";
+import { commitCanonWrite } from "./recovery";
+import { assertCanonAdmission, canonPageRecoveryPending, decodeCanonImage, readCanonWriteIntent, recoveryFailure, type CanonWriteIntent } from "./write-intent";
+import { archiveRelPath, hashBytes, ABSENT_PAGE_HASH } from "../vault/write";
 import { requireSourceEvents, sourceSensitivity } from "../ledger/source-grants";
 import { commitMachineByteIntent, requireExternalEvents } from "../ledger/event-origin";
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding, SourceTombstoneError } from "./source-tombstone";
@@ -40,7 +42,6 @@ import { initCanon } from "./schema";
 import { readOwnedCanonPage, requireCanonFiles, snapshotCanonIo, withCanonMutationSync } from "./io";
 import { assertVaultMutationScope, VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import {
-  appendReceiptLine,
   insertReceiptRow,
   mintId,
   nowOf,
@@ -379,58 +380,14 @@ function supersededRefs(io: CanonIo, decision: TargetDecision): CanonReceipt["su
   });
 }
 
-function recordRow(
-  io: CanonIo,
-  receipt: CanonReceipt,
-  primary: Claim,
-  claims: readonly Claim[],
-  pageId: string,
-  subjectKey: string | null,
-): void {
-  const ids = claims.map((claim) => claim.claim_id);
-  const placeholders = ids.map(() => "?").join(", ");
-  io.db.transaction((): void => {
-    insertReceiptRow(io.db, receipt, primary.kind);
-    io.db
-      .query(`UPDATE claims SET receipt_id = ? WHERE claim_id IN (${placeholders})`)
-      .run(receipt.receipt_id, ...ids);
-    if (tableExists(io.db, "claim_supersessions")) {
-      io.db
-        .query(`UPDATE claim_supersessions SET receipt_id = ? WHERE winner IN (${placeholders})`)
-        .run(receipt.receipt_id, ...ids);
-    }
-    const bind = io.db.query(
-      "INSERT OR IGNORE INTO claim_bindings (claim_key, page_id, bound_at) VALUES (?, ?, ?)",
-    );
-    for (const claim of claims) {
-      if (claim.claim_key !== null) bind.run(claim.claim_key, pageId, receipt.at);
-    }
-    upsertPageIndex(io.db, {
-      page_id: pageId,
-      rel_path: receipt.page_path,
-      subject_key: subjectKey,
-      last_receipt: receipt.receipt_id,
-      last_hash: receipt.after_hash,
-    });
-    if (tableExists(io.db, "proposals")) {
-      io.db
-        .query(`UPDATE proposals SET status = 'promoted' WHERE proposal_id IN (${placeholders})`)
-        .run(...ids);
-    }
-  })();
-}
-
-/**
- * The single writer (RFC 0002 §4.5). Order of effects is file → JSONL
- * receipt → database row, so a crash leaves an orphan that `doctor` reports
- * rather than a silent loss. Before/after hashes describe bytes on disk.
- */
+/** The single writer journals intent before bytes and completes one exact receipt. */
 export function applyCanonWrite(
   io: CanonIo,
   claim: Claim | readonly Claim[],
   decision: TargetDecision,
   opts: ApplyCanonWriteOptions,
 ): CanonReceipt {
+  if (io.db.inTransaction) recoveryFailure("nested_transaction");
   io = snapshotCanonIo(io);
   try {
     return withCanonMutationSync(io, (scope, owned) => applyCanonWriteOwned(scope, owned, claim, decision, opts));
@@ -450,20 +407,20 @@ export function applyCanonWriteOwned(
   decision: TargetDecision,
   opts: ApplyCanonWriteOptions,
 ): CanonReceipt {
+  if (io.db.inTransaction) recoveryFailure("nested_transaction");
   io = snapshotCanonIo(io);
-  const files = requireCanonFiles(scope, io);
+  requireCanonFiles(scope, io);
   claim = snapshotByteInput(claim);
   decision = snapshotByteInput(decision);
   opts = Object.freeze({ writer: opts.writer, budget: opts.budget });
   if (!isWriter(opts.writer)) {
     throw new CanonWriteError("writer_invalid", "writer must be loop, correction, revert or import");
   }
-  if (opts.writer === "loop" && io.db.inTransaction) {
-    throw new Error("loop byte admission requires a top-level transaction");
-  }
+  if (readCanonWriteIntent(io.db) !== null) recoveryFailure("recovery_pending");
   const supplied: Claim[] = Array.isArray(claim) ? [...(claim as readonly Claim[])] : [claim as Claim];
   assertBatch(supplied);
   const target = targetOf(decision);
+  if (canonPageRecoveryPending(io.db, target.rel_path)) recoveryFailure("projection_pending");
   const claims = persistedClaims(io, supplied);
   const primary = assertBatch(claims);
   // Historical rows remain readable, but only the dedicated purge pipeline can rewrite holds.
@@ -474,7 +431,6 @@ export function applyCanonWriteOwned(
   const existing = readPage(io, target.rel_path);
   const pageId = target.page_id ?? mintId(io);
   const receiptId = mintId(io);
-  opts.budget.chargeWrite({ receipt_id: receiptId, page_path: target.rel_path, before_hash: existing?.hash ?? null });
   initCanon(io.db);
   const provenance = union(claims.map((item) => item.provenance));
   assertProvenance(io, provenance);
@@ -507,8 +463,7 @@ export function applyCanonWriteOwned(
       ? []
       : [{ store: io.retrieval_store, op: "upsert", doc: `page:${pageId}` }];
 
-  const cap = grantCanonWrite(opts.writer, receiptId, io.vault_path, files);
-  const path = join(io.vault_path, target.rel_path);
+  if (existing !== null && new CanonAuthorityResolver(io.db, [target.rel_path]).basis(target.rel_path, existing.hash) === null) recoveryFailure("historical_orphan");
   const expectedAfter = hashBytes(Buffer.from(serializePage(prepared.page)));
   const admit = (): void => {
     persistedClaims(io, claims);
@@ -529,17 +484,6 @@ export function applyCanonWriteOwned(
     }
     if (!sourceDeletion) requireExternalEvents(io.db, union([provenance, existingSources(prepared.page)]));
   };
-  if (opts.writer === "loop") {
-    commitMachineByteIntent(io.db, { receipt_id: receiptId, before_hash: existing?.hash ?? null, after_hash: expectedAfter }, admit);
-  } else {
-    io.db.transaction(admit).immediate();
-  }
-  const outcome =
-    existing === null
-      ? writePage(cap, path, prepared.page)
-      : writePage(cap, path, prepared.page, { revision: true, expected_hash: existing.hash });
-  if (outcome.after_hash !== expectedAfter) throw new CanonWriteError("decision_stale", "canon postimage changed after byte admission");
-
   const receipt: CanonReceipt = {
     receipt_id: receiptId,
     kind: "write",
@@ -547,8 +491,8 @@ export function applyCanonWriteOwned(
     page_path: target.rel_path,
     page_action: prepared.action,
     before_hash: existing?.hash ?? null,
-    after_hash: outcome.after_hash,
-    archive_path: outcome.archive_path,
+    after_hash: expectedAfter,
+    archive_path: existing === null ? null : archiveRelPath(target.rel_path, receiptId),
     writer: opts.writer,
     producer: primary.producer,
     model_ref: primary.model_ref,
@@ -565,22 +509,12 @@ export function applyCanonWriteOwned(
     at: nowOf(io),
   };
 
-  appendReceiptLine(scope, io, receipt);
   const priorSubject = existing?.page.data["x-subject-id"];
-  recordRow(
-    io,
-    receipt,
-    primary,
-    claims,
-    pageId,
-    primary.subject ?? (typeof priorSubject === "string" ? priorSubject : null),
-  );
-  refreshDerivedPage(
-    io.db,
-    canonPageFromWrite(io.vault_path, target.rel_path, pageId, prepared.page, outcome.after_hash),
-    io.vault_path,
-  );
-  return receipt;
+  return commitCanonWrite(scope, io, {
+    receipt, before: existing === null ? null : Buffer.from(existing.content), after: Buffer.from(serializePage(prepared.page)),
+    completion: { mode: "write", claim_kind: primary.kind, page_id: pageId,
+      subject_key: primary.subject ?? (typeof priorSubject === "string" ? priorSubject : null), original_receipt_id: null },
+  }, admit, () => opts.budget.chargeWrite({ receipt_id: receiptId, page_path: target.rel_path, before_hash: existing?.hash ?? null }));
 }
 
 function canonPageFromWrite(
@@ -608,60 +542,6 @@ function snapshotByteInput<T>(input: T): T {
   }, errors);
   if (snapshot === undefined) throw new CanonWriteError("target_invalid", "canon byte input must be stable JSON data");
   return snapshot as T;
-}
-
-interface RevertWriteInput {
-  receipt_id: string;
-  rel_path: string;
-  expected_hash: string | null;
-  page: VaultPage | null;
-}
-
-interface RevertWriteOutcome {
-  archive_path: string | null;
-  after_hash: string;
-}
-
-/**
- * The only revert byte path. Mints a `writer: "revert"` capability and
- * calls `writePage` in this same function so the capability scan still
- * holds. `page === null` deletes (undo of a create).
- */
-export function applyRevertWrite(
-  scope: VaultMutationScope,
-  io: CanonIo,
-  input: RevertWriteInput,
-): RevertWriteOutcome {
-  io = snapshotCanonIo(io);
-  const files = requireCanonFiles(scope, io);
-  input = snapshotByteInput(input);
-  assertPageRelPath(input.rel_path);
-  if (input.page !== null) requireSourceEvents(io.db, existingSources(input.page), { owner: true, purpose: "derive" });
-  const cap = grantCanonWrite("revert", input.receipt_id, io.vault_path, files);
-  const path = join(io.vault_path, input.rel_path);
-  if (input.page === null) {
-    if (input.expected_hash === null) {
-      throw new CanonWriteError("page_missing", `page ${input.rel_path} is already gone`);
-    }
-    const existing = readPage(io, input.rel_path);
-    const outcome = writePage(cap, path, { data: {}, body: "" }, {
-      delete: true,
-      expected_hash: input.expected_hash,
-    });
-    if (existing !== null && typeof existing.page.data["id"] === "string") {
-      removeDerivedPage(io.db, existing.page.data["id"], io.vault_path);
-    }
-    return outcome;
-  }
-  const outcome =
-    input.expected_hash === null
-      ? writePage(cap, path, input.page)
-      : writePage(cap, path, input.page, {
-          revision: true,
-          expected_hash: input.expected_hash,
-        });
-  // Undo refreshes derived rows only after its receipt is durable.
-  return outcome;
 }
 
 export interface PurgeRewriteInput {
@@ -816,25 +696,10 @@ export function applyPurgeRewrite(
   if (input.source_erasure !== undefined) return applySourcePurgeWrite(scope, io,
     {...input,source_erasure:input.source_erasure},
     {existing,data,body,nothingRemains,action,authority,sensitivity,taint});
+  if (canonPageRecoveryPending(io.db, input.rel_path)) recoveryFailure("projection_pending");
   const receiptId = mintId(io);
-  const cap = grantCanonWrite("loop", receiptId, io.vault_path, files);
-  const path = join(io.vault_path, input.rel_path);
   const next = { data, body: body.length === 0 ? "\n" : body };
   const expectedAfter = hashBytes(Buffer.from(serializePage(next)));
-  commitMachineByteIntent(io.db, { receipt_id: receiptId, before_hash: existing.hash, after_hash: expectedAfter }, () => {
-    requireSourceEvents(io.db, existingSources(next).map(eventIdFromReference), { owner: true, purpose: "derive" });
-  });
-  const outcome = writePage(
-    cap,
-    path,
-    next,
-    {
-      revision: true,
-      expected_hash: existing.hash,
-    },
-  );
-  if (outcome.after_hash !== expectedAfter) throw new CanonWriteError("decision_stale", "purge postimage changed after byte admission");
-
   const pageIdRaw = existing.page.data["id"];
   const pageId =
     typeof pageIdRaw === "string" && pageIdRaw.length > 0 ? pageIdRaw : null;
@@ -850,8 +715,8 @@ export function applyPurgeRewrite(
     page_path: input.rel_path,
     page_action: action,
     before_hash: existing.hash,
-    after_hash: outcome.after_hash,
-    archive_path: outcome.archive_path,
+    after_hash: expectedAfter,
+    archive_path: archiveRelPath(input.rel_path, receiptId),
     writer: "loop",
     producer: "deterministic",
     model_ref: null,
@@ -868,46 +733,12 @@ export function applyPurgeRewrite(
     at: nowOf(io),
   };
 
-  appendReceiptLine(scope, io, receipt);
   const retainedSubject = data["x-subject-id"];
-  io.db.transaction((): void => {
-    insertReceiptRow(io.db, receipt, "purge_review");
-    if (tableExists(io.db, "canon_holds")) {
-      io.db
-        .query("DELETE FROM canon_holds WHERE page_path = ?")
-        .run(input.rel_path);
-    }
-    if (pageId !== null && !input.rel_path.startsWith("archive/")) {
-      upsertPageIndex(io.db, {
-          page_id: pageId,
-          rel_path: input.rel_path,
-          subject_key: typeof retainedSubject === "string" ? retainedSubject : null,
-          last_receipt: receipt.receipt_id,
-          last_hash: receipt.after_hash,
-        });
-    }
-  })();
-  if (pageId !== null && !input.rel_path.startsWith("archive/")) {
-    if (nothingRemains) {
-      removeDerivedPage(io.db, pageId, io.vault_path);
-    } else {
-      refreshDerivedPage(
-        io.db,
-        canonPageFromWrite(
-          io.vault_path,
-          input.rel_path,
-          pageId,
-          {
-            data,
-            body: body.length === 0 ? "\n" : body,
-          },
-          outcome.after_hash,
-        ),
-        io.vault_path,
-      );
-    }
-  }
-  return receipt;
+  return commitCanonWrite(scope, io, {
+    receipt, before: Buffer.from(existing.content), after: Buffer.from(serializePage(next)),
+    completion: { mode: "purge", claim_kind: "purge_review", page_id: pageId,
+      subject_key: typeof retainedSubject === "string" ? retainedSubject : null, original_receipt_id: null },
+  }, () => requireSourceEvents(io.db, existingSources(next).map(eventIdFromReference), { owner: true, purpose: "derive" }));
 }
 
 function finishSourceErasure(scope: VaultMutationScope, io: CanonIo, intent: SourceErasureIntent, page: VaultPage | null): void {
@@ -1039,4 +870,22 @@ function applySourcePurgeWrite(scope: VaultMutationScope, io: CanonIo, input: So
         throw new CanonWriteError("decision_stale", "source erasure postimage changed");
     finishSourceErasure(scope, io, intent, next);
     return intent.receipt;
+}
+
+/** A replay can mint a one-use writer only for the exact durable admission. */
+export function publishOrdinaryCanonIntent(scope: VaultMutationScope, io: CanonIo, intent: CanonWriteIntent): void {
+  const files = requireCanonFiles(scope, io);
+  intent = snapshotByteInput(intent);
+  if (!io.db.inTransaction || JSON.stringify(readCanonWriteIntent(io.db)) !== JSON.stringify(intent)) recoveryFailure("intent_invalid");
+  assertCanonAdmission(io.db, intent);
+  const before = decodeCanonImage(intent.before_base64), after = decodeCanonImage(intent.after_base64);
+  const cap = grantCanonWrite(intent.receipt.writer, intent.receipt.receipt_id, io.vault_path, files);
+  const path = join(io.vault_path, intent.receipt.page_path);
+  const page = after === null ? { data: {}, body: "" } : parseFrontmatter(after.toString("utf8"));
+  const outcome = after === null
+    ? writePage(cap, path, page, { delete: true, expected_hash: hashBytes(before!), recovery: true })
+    : before === null
+      ? writePage(cap, path, page, { recovery: true })
+      : writePage(cap, path, page, { revision: true, expected_hash: hashBytes(before), recovery: true });
+  if (outcome.after_hash !== intent.receipt.after_hash || outcome.archive_path !== intent.receipt.archive_path) recoveryFailure("page_changed", intent.receipt.receipt_id);
 }

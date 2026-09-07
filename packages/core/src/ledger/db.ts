@@ -20,6 +20,7 @@ import { applyPurgeBatchesV19 } from "./purge-batch-schema";
 import { applyEventIdentityV16 } from "./event-identity-schema";
 import { applyAgentEnrollmentV18 } from "../agents/enrollment-schema";
 import { applySourceSurvivorLineageV20 } from "./canon-source-survivor-lineage";
+import { applyCanonRecoveryV21 } from "./canon-recovery-schema";
 import { oneShotAll, oneShotRun, tableColumns, tableExists } from "./schema";
 import { applyLedgerV16 } from "./schema-v16";
 
@@ -185,6 +186,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 18, apply: applyAgentEnrollmentV18 },
   { version: 19, apply: applyPurgeBatchesV19 },
   { version: 20, apply: applySourceSurvivorLineageV20 },
+  { version: 21, apply: applyCanonRecoveryV21 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
