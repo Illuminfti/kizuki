@@ -10,6 +10,8 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { assertReceiptPaths } from "../canon/paths";
+import { CanonAuthorityResolver } from "../canon/authority";
+import { getSourceSurvivorLineage } from "./canon-source-survivor-lineage";
 import { containedVaultFile } from "../vault/write";
 import { isDeepStrictEqual } from "node:util";
 import { applyPurgeRewrite, recoverSourceErasureIntents } from "../canon/apply";
@@ -75,10 +77,24 @@ function replacement(
       return false;
   }
   if (independent.length === 0) return null;
-  let body = page.body;
-  for (const claim of present.filter((claim) => affected.has(claim.claim_id)))
-    if (!independent.some((other) => other.body.includes(claim.body.trim())))
-      body = body.split(claim.body.trim()).join("");
+  // A revoked claim can contain an independently supported claim verbatim.
+  // Preserve those exact characters while removing the enclosing claim.
+  const erased = new Uint8Array(page.body.length);
+  const mark = (claim: Claim, value: number): void => {
+    const text = claim.body.trim();
+    for (let start = page.body.indexOf(text); start !== -1; start = page.body.indexOf(text, start + 1)) {
+      erased.fill(value, start, start + text.length);
+    }
+  };
+  for (const claim of present.filter(claim => affected.has(claim.claim_id))) mark(claim, 1);
+  for (const claim of independent) mark(claim, 0);
+  let body = "";
+  for (let start = 0; start < page.body.length;) {
+    let end = start + 1;
+    while (end < page.body.length && erased[end] === erased[start]) end++;
+    if (erased[start] === 0) body += page.body.slice(start, end);
+    start = end;
+  }
   const data = { ...page.data };
   for (const [key, value] of Object.entries(data)) {
     if (generated.has(key)) continue;
@@ -225,6 +241,19 @@ export function eraseSourceCanon(
     ...receipts.map((row) => row.receipt_id),
     ...all.map((row) => row.receipt_id),
   ]);
+  // On retry, the inventory may include a previously committed survivor.
+  // Keep its current, positively bound path only if its evidence is independent.
+  for (const receipt of receipts) {
+    if (!selected.has(receipt.receipt_id) ||
+        (JSON.parse(receipt.provenance) as string[]).some(id => eventIds.has(id)) ||
+        (JSON.parse(receipt.claim_ids) as string[]).some(id => affected.has(id)) ||
+        getSourceSurvivorLineage(db, receipt.receipt_id) === null) continue;
+    const page = readOwnedCanonPage(io, receipt.page_path);
+    if (page !== null && new CanonAuthorityResolver(db, [receipt.page_path])
+        .basis(receipt.page_path, page.hash)?.receipt_id === receipt.receipt_id) {
+      selected.delete(receipt.receipt_id);
+    }
+  }
   const log = join(vault, ".kizuki", "receipts", "promotions.jsonl");
   if (existsSync(log)) {
     const safeLog = safePath(vault, ".kizuki/receipts/promotions.jsonl");

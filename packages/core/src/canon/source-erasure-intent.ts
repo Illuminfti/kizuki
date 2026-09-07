@@ -198,7 +198,8 @@ function parseIntentBytes(bytes: Uint8Array, digest: string): SourceErasureInten
     const parsed: unknown = JSON.parse(json);
     if (!isPlainObject(parsed))
         throw Error("source erasure intent invalid");
-    return parsed as SourceErasureIntent;
+    // The caller validates the versioned shape and semantic bindings before use.
+    return parsed as unknown as SourceErasureIntent;
 }
 
 function writeIntent(intent: SourceErasureIntent): string {

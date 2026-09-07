@@ -107,6 +107,7 @@ test("source survivor checkpoint admits retained B with a different result tier"
     initAgents(db);
     const aa = acceptSource(db, a, "a", "A_ONLY_LINEAGE");
     const bb = acceptSource(db, b, "b", "B independent survivor");
+    const corroboratingB = acceptSource(db, b, "b-corroboration", "B independent survivor confirmed");
     const io = { db, vault_path: dir };
     const original = write(io, await storeClaim(db, aa.event_id, {
       body: "A_ONLY_LINEAGE",
@@ -117,9 +118,12 @@ test("source survivor checkpoint admits retained B with a different result tier"
       predicate: null,
       object: null,
       body: "B independent survivor",
+      provenance: [bb.event_id, corroboratingB.event_id],
       frontmatter: { type: "person", title: "Shared" },
     }));
-    await correct(io, { statement: "B independent survivor remains owner-corrected.", target: { claim_id: original.claim_ids[0] } });
+    const originalClaim = original.claim_ids[0];
+    if (originalClaim === undefined) throw new Error("expected original claim");
+    await correct(io, { statement: "B independent survivor remains owner-corrected.", target: { claim_id: originalClaim } });
     const before = new CanonAuthorityResolver(db, [original.page_path]).basis(
       original.page_path,
       listCanonPages(dir).find(page => page.relPath === original.page_path)!.contentHash,
@@ -129,6 +133,8 @@ test("source survivor checkpoint admits retained B with a different result tier"
     const done = await resumeSourceRevocation(db, dir, "erase-a", retrieval);
     expect(done.status).toBe("purged");
     const page = listCanonPages(dir).find(row => row.relPath === original.page_path)!;
+    expect(page.body.trim()).toBe("B independent survivor");
+    expect(page.body).not.toContain("remains owner-corrected");
     const evidence = assessLivePageEvidence(db, page);
     expect(evidence.admitted).toBe(true);
     if (!evidence.admitted) throw new Error("expected admitted survivor");
@@ -196,6 +202,7 @@ test("ordinary purge, revert and undo-of-undo reach a source-survivor checkpoint
     grant(db, b, "grant-b");
     const aa = acceptSource(db, a, "a", "A_ONLY");
     const bb = acceptSource(db, b, "b", "B survivor marker");
+    const corroboratingB = acceptSource(db, b, "b-corroboration", "B survivor marker confirmed");
     const io = { db, vault_path: dir };
     const original = write(io, await storeClaim(db, aa.event_id, {
       body: "A_ONLY",
@@ -203,6 +210,7 @@ test("ordinary purge, revert and undo-of-undo reach a source-survivor checkpoint
     }));
     const merged = write(io, await storeClaim(db, bb.event_id, {
       kind: "merge", predicate: null, object: null, body: "B survivor marker",
+      provenance: [bb.event_id, corroboratingB.event_id],
       frontmatter: { type: "person", title: "Shared" },
     }));
     revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "erase-a" });
@@ -397,6 +405,12 @@ test("a legacy-format backup carrying lineage is refused before publication", as
     acceptSource(db, a, "a", "plain event");
     const manifest = exportVault(db, dir, backup);
     manifest.schema = V2_BACKUP_SCHEMA;
+    // Remove v3 purge history so this fixture isolates the lineage format guard.
+    for (const table of ["purge_batches", "purge_batch_receipts", "purge_ops"]) {
+      const stream = `ledger/${table}.jsonl`;
+      unlinkSync(join(backup, stream));
+      delete manifest.files[stream];
+    }
     signManifest(backup, manifest);
     expect(() => verifyBackup(backup)).toThrow(/must not include source-survivor lineage/);
     expect(() => restoreVault(backup, restored)).toThrow(/must not include source-survivor lineage/);
@@ -564,6 +578,39 @@ test("restore refuses a duplicated lineage child before publication", async () =
     const refused = join(root, "duplicate-restore");
     expect(() => restoreVault(backup, refused)).toThrow(/source-survivor lineage duplicate/);
     expect(existsSync(refused)).toBe(false);
+    expect(existsSync(restored)).toBe(false);
+  } finally {
+    db.close();
+  }
+});
+
+test("portable survivor lineage refuses an archive staging receipt as its child", async () => {
+  const { db, dir, a, b, backup, restored } = setup();
+  try {
+    grant(db, a, "grant-a");
+    grant(db, b, "grant-b");
+    const aa = acceptSource(db, a, "a", "A_ONLY");
+    const bb = acceptSource(db, b, "b", "B survivor marker");
+    const io = { db, vault_path: dir };
+    write(io, await storeClaim(db, aa.event_id, { body: "A_ONLY" }));
+    write(io, await storeClaim(db, bb.event_id, {
+      kind: "merge", predicate: null, object: null, body: "B survivor marker",
+    }));
+    revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "erase-a" });
+    expect((await resumeSourceRevocation(db, dir, "erase-a", retrieval)).status).toBe("purged");
+    const manifest = exportVault(db, dir, backup);
+    const lineage = JSON.parse(readFileSync(join(backup, SOURCE_SURVIVOR_LINEAGE_BACKUP), "utf8"));
+    const stream = "canon/receipts.jsonl";
+    const rows = readFileSync(join(backup, stream), "utf8").trim().split("\n").map(line => JSON.parse(line));
+    const child = rows.find(row => row.receipt_id === lineage.child_receipt_id);
+    expect(child).toBeDefined();
+    expect(child.page_path).toBe("people/grace.md");
+    child.page_path = "archive/retained.md";
+    const bytes = Buffer.from(rows.map(row => JSON.stringify(row)).join("\n") + "\n");
+    writeFileSync(join(backup, stream), bytes);
+    manifest.files[stream] = { ...manifest.files[stream]!, size: bytes.length, sha256: sha256Hex(bytes) };
+    signManifest(backup, manifest);
+    expect(() => restoreVault(backup, restored)).toThrow(/source-survivor lineage child path is invalid/);
     expect(existsSync(restored)).toBe(false);
   } finally {
     db.close();

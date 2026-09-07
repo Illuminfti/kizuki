@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { assertPageRelPath } from "../canon/paths";
 import { isAuthorityTier, type AuthorityTier } from "../contracts/proposal";
 import { isRfc3339 } from "../util/time";
 import { isPlainObject } from "../util/validate";
@@ -311,6 +312,10 @@ export function assertSurvivorChildReceipt(child: LineageReceipt, lineage: Sourc
     !isLineageTimestamp(child.at)
   ) {
     throw new Error("source-survivor child receipt is invalid");
+  }
+  if (child.page_path !== "") {
+    try { assertPageRelPath(child.page_path); }
+    catch { throw new Error("source-survivor lineage child path is invalid"); }
   }
 }
 
