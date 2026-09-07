@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { Database } from "bun:sqlite";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { listAudit } from "../../src/agents";
@@ -16,8 +17,63 @@ import { serveSearch } from "../../src/serving/search";
 import { serveTimeline } from "../../src/serving/timeline";
 import { ServeError } from "../../src/serving/types";
 import { CanonUnreadableError } from "../../src/serving/canon";
-import { page, recordedPage, serveFixture, storeEvent } from "./helpers";
+import { page, serveFixture, storeEvent } from "./helpers";
 import type { Fixture } from "./helpers";
+
+const SEARCH_DOCUMENT_COLUMNS =
+  "doc_id, scope, title, body, path, page_type, sensitivity, taint, authority, occurred_at, connector_id, subjects, provenance";
+
+/**
+ * More than the packet's SQL candidate limit, all of a type the grant
+ * excludes. Receipted filler pages would walk the vault once per write.
+ */
+function plantTypeExcludedKettleHits(db: Database): void {
+  const template = db
+    .query<
+      {
+        sensitivity: string;
+        taint: string;
+        authority: string;
+        occurred_at: string;
+        connector_id: string;
+        subjects: string;
+        provenance: string;
+      },
+      []
+    >(
+      "SELECT sensitivity, taint, authority, occurred_at, connector_id, subjects, provenance FROM search_documents WHERE scope = 'canon' AND page_type = 'fact' LIMIT 1",
+    )
+    .get();
+  if (template === null) {
+    throw new Error("fixture has no indexed fact document");
+  }
+  type Bindings = [string, string, string, string, string, string, string, string, string, string, string];
+  const sql =
+    `INSERT INTO search_documents (${SEARCH_DOCUMENT_COLUMNS}) VALUES (?, 'canon', ?, ?, ?, 'fact', ?, ?, ?, ?, ?, ?, ?)`;
+  const ftsSql =
+    `INSERT INTO search_docs (${SEARCH_DOCUMENT_COLUMNS}) VALUES (?, 'canon', ?, ?, ?, 'fact', ?, ?, ?, ?, ?, ?, ?)`;
+  db.transaction(() => {
+    const documents = db.query<never, Bindings>(sql);
+    const fts = db.query<never, Bindings>(ftsSql);
+    for (let index = 0; index < 25; index += 1) {
+      const values: Bindings = [
+        `page:fact:filler-${index}`,
+        `Filler kettle note ${index}`,
+        `Filler kettle prose number ${index}.`,
+        `facts/filler-${index}.md`,
+        template.sensitivity,
+        template.taint,
+        template.authority,
+        template.occurred_at,
+        template.connector_id,
+        template.subjects,
+        template.provenance,
+      ];
+      documents.run(...values);
+      fts.run(...values);
+    }
+  })();
+}
 
 let fixture: Fixture | null = null;
 
@@ -331,24 +387,7 @@ describe("the packet is scoped by the grant, not by the request", () => {
 
   test("a type-scoped agent is not starved by candidates it may not read", async () => {
     const live = await newFixture();
-    for (let index = 0; index < 25; index += 1) {
-      await recordedPage(
-        live.db,
-        live.vaultPath,
-        `facts/filler-${index}.md`,
-        {
-          id: `fact:filler-${index}`,
-          title: `Filler kettle note ${index}`,
-          type: "fact",
-          status: "active",
-          sensitivity: "public",
-          taint: "clean",
-        },
-        `Filler kettle prose number ${index}.`,
-        [live.events["public"] as string],
-      );
-    }
-    rebuildDerived(live.db, live.vaultPath);
+    plantTypeExcludedKettleHits(live.db);
     const ctx = live.agent("typed");
 
     const packet = (await serveContextPacket(ctx, {
@@ -360,6 +399,7 @@ describe("the packet is scoped by the grant, not by the request", () => {
     expect(packet.canon.length).toBeGreaterThan(0);
     expect(packet.canon.every((chunk) => chunk.type === "person")).toBe(true);
     expect(packet.data?.packet_md).toContain("[page:person:ada]");
+    expect(packet.data?.packet_md).not.toContain("fact:filler");
     // Flattened to text, a chunk still says what it is and where it came from.
     expect(packet.data?.packet_md).toContain("taint=clean auth=model_inference");
     expect(packet.data?.packet_md).toContain("origin=human");
