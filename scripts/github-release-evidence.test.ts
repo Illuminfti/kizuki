@@ -373,3 +373,24 @@ test("native producer equality permits separate product-under-test changes", () 
   const held = bindGithubNativeProducer(f.candidate.path, f.candidate.sha, f.reviewed.path, f.reviewed.sha);
   expect(held.candidate_files).toEqual(held.reviewed_files); expect(() => held.unchanged()).not.toThrow();
 });
+
+
+test("run and attempt resource update times may differ while each remains stable", async () => {
+  const f = fixture();
+  const result = await inspectGithubCandidate(async endpoint => {
+    const row = await f.get(endpoint);
+    if (endpoint.endsWith("/attempts/1")) row.updated_at = "2026-09-07T00:01:01Z";
+    return row;
+  }, SHA, workflowText);
+  expect(result.required.map(row => row.status)).toEqual(["PASS", "PASS"]);
+  expect(result.attempts.every(row => row.updated_at === "2026-09-07T00:01:01Z")).toBe(true);
+});
+
+test("an attempt resource update during collection still fails freshness", async () => {
+  const f = fixture(); let reads = 0;
+  await expect(inspectGithubCandidate(async endpoint => {
+    const row = await f.get(endpoint);
+    if (endpoint.endsWith("/101/attempts/1") && ++reads === 2) row.updated_at = "2026-09-07T00:01:01Z";
+    return row;
+  }, SHA, workflowText)).rejects.toThrow("github-attempt-changed");
+});

@@ -132,11 +132,12 @@ function latestAttempt(rows: Run[]): Run | null {
   if (ordered.length > 1 && ordered[0]!.run_started_at === ordered[1]!.run_started_at) reject("github-attempt-order-ambiguous");
   return ordered[0] ?? null;
 }
-// GitHub's run keeps its original created_at, whereas attempt created_at changes
-// on rerun. All current-attempt fields, including run_started_at, must agree.
+// GitHub run and attempt resources have distinct creation/update timestamps.
+// Compare identity, start and outcome across resources; freshness rereads each
+// endpoint's complete projection, including its own creation/update timestamps.
 function sameLatestAttempt(observed: Run, current: Run): boolean {
-  const { created_at: _attemptCreated, ...attempt } = observed;
-  const { created_at: _runCreated, ...run } = current;
+  const { created_at: _attemptCreated, updated_at: _attemptUpdated, ...attempt } = observed;
+  const { created_at: _runCreated, updated_at: _runUpdated, ...run } = current;
   return same(attempt, run);
 }
 function same(left: unknown, right: unknown): boolean { return JSON.stringify(left) === JSON.stringify(right); }
