@@ -565,3 +565,181 @@ describe("ChatGptImportConnector", () => {
     }
   });
 });
+
+describe("export fidelity", () => {
+  test("a regenerated answer keeps both branches as distinct messages", () => {
+    const result = parseChatGptExport(
+      JSON.stringify([
+        {
+          id: "c1",
+          mapping: {
+            root: { parent: null, children: ["q"] },
+            q: {
+              message: {
+                author: { role: "user" },
+                content: { parts: ["Question"] },
+                create_time: 1_700_000_001,
+              },
+              parent: "root",
+              children: ["a1", "a2"],
+            },
+            a1: {
+              message: {
+                author: { role: "assistant" },
+                content: { parts: ["First answer"] },
+                create_time: 1_700_000_002,
+              },
+              parent: "q",
+              children: [],
+            },
+            a2: {
+              message: {
+                author: { role: "assistant" },
+                content: { parts: ["Regenerated answer"] },
+                create_time: 1_700_000_003,
+              },
+              parent: "q",
+              children: [],
+            },
+          },
+        },
+      ]),
+      OBSERVED_AT,
+    );
+    expect(result.errors).toEqual([]);
+    expect(result.events.map((event) => [event.source_record_id, event.text])).toEqual([
+      [encodeSourceRecordId(["c1", "a1"]), "First answer"],
+      [encodeSourceRecordId(["c1", "a2"]), "Regenerated answer"],
+      [encodeSourceRecordId(["c1", "q"]), "Question"],
+    ]);
+    // The tree is flattened: no event records its parent or children.
+    for (const event of result.events) {
+      expect(Object.keys(event.metadata)).not.toContain("parent");
+      expect(Object.keys(event.metadata)).not.toContain("children");
+    }
+  });
+
+  test("every supported role is attributed to its own handle, never to the owner", () => {
+    const node = (role: string, text: string, at: number) => ({
+      message: {
+        author: { role },
+        content: { parts: [text] },
+        create_time: at,
+      },
+      parent: null,
+      children: [],
+    });
+    const result = parseChatGptExport(
+      JSON.stringify([
+        {
+          id: "c1",
+          mapping: {
+            a: node("user", "mine", 1_700_000_001),
+            b: node("assistant", "model text", 1_700_000_002),
+            c: node("system", "instructions", 1_700_000_003),
+            d: node("tool", "tool output", 1_700_000_004),
+          },
+        },
+      ]),
+      OBSERVED_AT,
+    );
+    expect(result.errors).toEqual([]);
+    expect(
+      result.events.map((event) => [
+        event.metadata["handle"],
+        event.subjects.map((subject) => `${subject.subject_id}:${subject.role}`),
+      ]),
+    ).toEqual([
+      ["self", ["chatgpt:self:from"]],
+      ["assistant", ["chatgpt:assistant:from"]],
+      ["system", ["chatgpt:system:from"]],
+      ["tool", ["chatgpt:tool:from"]],
+    ]);
+    for (const event of result.events) {
+      // No importer decides sensitivity: the connection's policy does.
+      expect(event.sensitivity_hint).toBeUndefined();
+    }
+  });
+
+  test("a role outside the supported set is reported and its node is not stored", () => {
+    const result = parseChatGptExport(
+      JSON.stringify([
+        {
+          id: "c1",
+          mapping: {
+            n1: {
+              message: {
+                author: { role: "critic" },
+                content: { parts: ["opinion"] },
+                create_time: 1_700_000_001,
+              },
+            },
+          },
+        },
+      ]),
+      OBSERVED_AT,
+    );
+    expect(result.events).toEqual([]);
+    expect(result.errors).toEqual([
+      expect.objectContaining({ location: "c1/n1", code: "unsupported_role" }),
+    ]);
+  });
+
+  test("a non-string, non-object part is reported without dropping the message", () => {
+    const result = parseChatGptExport(
+      JSON.stringify([
+        {
+          id: "c1",
+          mapping: {
+            n1: {
+              message: {
+                author: { role: "user" },
+                content: { parts: ["kept", 42, null] },
+                create_time: 1_700_000_001,
+              },
+            },
+          },
+        },
+      ]),
+      OBSERVED_AT,
+    );
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]?.text).toBe("kept");
+    expect(result.events[0]?.metadata["unsupported_parts"]).toEqual([
+      "non_object_part",
+      "non_object_part",
+    ]);
+  });
+
+  test("nesting past the JSON depth bound is refused before any node is read", () => {
+    const deep = "[".repeat(70) + "]".repeat(70);
+    expect(() => parseChatGptExport(deep, OBSERVED_AT)).toThrow(KizukiError);
+    try {
+      parseChatGptExport(deep, OBSERVED_AT);
+    } catch (error) {
+      expect((error as KizukiError).code).toBe("parse_error");
+      expect((error as KizukiError).message).toContain("nesting");
+    }
+  });
+
+  test("the export bears no version marker, so the shape is the contract", () => {
+    // A conversation whose mapping is empty is not an error: the export may
+    // legitimately hold an untitled, unstarted chat.
+    const result = parseChatGptExport(
+      JSON.stringify([{ id: "empty", title: "New chat", mapping: {} }]),
+      OBSERVED_AT,
+    );
+    expect(result.events).toEqual([]);
+    expect(result.errors).toEqual([]);
+    // A conversation missing the mapping object altogether is not one this
+    // importer knows how to read.
+    const missing = parseChatGptExport(
+      JSON.stringify([{ id: "c1", title: "No tree", messages: [] }]),
+      OBSERVED_AT,
+    );
+    expect(missing.events).toEqual([]);
+    expect(missing.errors).toEqual([
+      expect.objectContaining({ location: "c1", code: "missing_mapping" }),
+    ]);
+  });
+});

@@ -82,6 +82,111 @@ never rewritten.
 No importer opens a zip archive. Unzip the export and point the importer at the
 resulting folder; a `.zip` path is refused with a message that says so.
 
+None of the exports below carries a version marker. What an importer supports
+is the shape it reads, listed per source; a file of another shape is refused or
+reported record by record, never guessed at.
+
+## Markdown folder
+
+Choose a folder of your own notes. It must not be the Kizuki vault, sit inside
+one, or contain one; see the [folder boundary](../../docs/markdown-sources.md).
+
+```
+kizuki connect markdown-folder --source ./notes
+kizuki backfill markdown-folder
+```
+
+Each `.md` file becomes one `file` event, labeled `private`, identified by its
+path relative to the folder. A later `sync` re-reads the folder: a file whose
+bytes changed is a new version, a file that is gone is a tombstone, and an
+unchanged file stores nothing. Bytes decide, not modification time, so an
+edit that preserved the mtime is still seen.
+
+Known limits:
+
+- Only regular files named `*.md` are read. A symlink inside the folder is
+  skipped and reported, whether it points at a file or a directory; a pipe,
+  socket or device with a Markdown name is skipped silently. Hidden folders,
+  `node_modules` and the like are not entered. The folder itself may be
+  reached through a symlink.
+- A file past the per-file byte bound, one that is not valid UTF-8, or one the
+  process cannot read is reported and skipped; the rest of the folder still
+  imports. The scan stops at a fixed depth and a fixed number of files, and
+  says so in `health`.
+- The connection remembers which folder it watches. A checkpoint from another
+  folder, or from the same path after it became a vault, is refused rather
+  than replayed.
+- A note whose exact bytes match text Kizuki itself wrote is kept but marked
+  machine origin by Core, so the loop cannot learn from its own output.
+
+## ChatGPT export
+
+Request a data export from ChatGPT's settings, unzip it, and point the
+importer at the `conversations.json` inside.
+
+```
+kizuki import import-chatgpt --vault VAULT --source conversations.json
+```
+
+The file is a JSON array of conversations. From each the importer reads `id`
+(or `conversation_id`), `title` and the `mapping` object; from each mapping
+node it reads `message.author.role`, `message.create_time` and
+`message.content`, taking `parts` (or `text`) as the message text. Each node
+with a message becomes one `message` event, labeled `private`, identified by
+the conversation id and node id.
+
+Known limits:
+
+- The roles `user`, `assistant`, `system` and `tool` are read; each is its own
+  subject (`chatgpt:self`, `chatgpt:assistant`, `chatgpt:system`,
+  `chatgpt:tool`). A node with any other role is reported and not stored.
+  Nothing the model said is attributed to you.
+- The conversation tree is flattened. A regenerated answer is stored beside
+  the answer it replaced, each under its own node id, but neither event
+  records its parent or which branch the conversation continued on.
+- Image, file and audio parts become attachment references by their asset
+  pointer; the bytes are not read. Any other structured part is listed under
+  `unsupported_parts` and reported; the text around it still imports.
+- A message with no `create_time`, or one with no text and no attachments, is
+  reported and not stored. Import time is never substituted for message time.
+- Two nodes sharing an id are reported: as a duplicate when they agree, as a
+  conflict when they do not, and the first is kept. A conversation or node
+  without an id gets a stable content-derived id and is reported as such.
+- The file is read in full, bounded by size, record count and nesting depth;
+  past any bound the import is refused before a record is stored.
+
+## Claude export
+
+Request a data export from Claude's settings, unzip it, and point the importer
+at the `conversations.json` inside.
+
+```
+kizuki import import-claude --vault VAULT --source conversations.json
+```
+
+The file is a JSON array of conversations. From each the importer reads
+`uuid`, `name` and `chat_messages`; from each message it reads `uuid`,
+`sender`, `created_at`, `text`, the `content` blocks and the `attachments`
+list. Each message becomes one `message` event, labeled `private`, identified
+by the conversation uuid and message uuid.
+
+Known limits:
+
+- Only `human` and `assistant` senders are read, as `claude:self` and
+  `claude:assistant`. A message with another sender is reported and not
+  stored. Who a message quotes does not change who wrote it: a message that
+  repeats the other party's words stays with its sender.
+- `text` is the message; a `text` block repeating it is stored once, and any
+  further `text` block is appended. `image` and `document` blocks and listed
+  attachments become references by name and type; `tool_use`, `tool_result`
+  and `thinking` blocks are listed under `unsupported_parts` and reported.
+- A message with no `created_at`, or with no text and no attachments, is
+  reported and not stored.
+- Two messages sharing a uuid in one conversation are reported, and the first
+  is kept. A conversation or message without a uuid gets a stable
+  content-derived id and is reported as such.
+- The file is read in full, bounded by size, record count and nesting depth.
+
 ## WhatsApp chat export
 
 Open a chat, choose Export chat, and pick with or without media. Unzip the
@@ -108,7 +213,7 @@ Known limits:
   would be noise rather than evidence. They are not counted anywhere. A notice
   is recognized by having nothing before its first colon-and-space, so a notice
   that contains one — a subject change, which reads `Ada changed the subject
-  to: …` — is indistinguishable from a message and is captured as one, with
+to: …` — is indistinguishable from a message and is captured as one, with
   the text before the colon standing in for a sender.
 - A placeholder for a message that was deleted at the source stays ordinary
   text: nothing is withdrawn and no deletion is inferred. It is recognized by
@@ -152,9 +257,11 @@ Known limits:
 
 ## Pocket CSV export
 
-Pocket closed in 2025 and left a data export: one or more
-`part_NNNNNN.csv` files with the header `title,url,time_added,tags,status`.
-Unzip it and point the importer at the folder or at a single `.csv`.
+Pocket closed on 2025-07-08 and offered its data export until 2025-10-08. No
+new export can be obtained: the only input this importer will ever see is one
+saved before that date. It holds one or more `part_NNNNNN.csv` files with the
+header `title,url,time_added,tags,status`. Unzip it and point the importer at
+the folder or at a single `.csv`.
 
 Only `part_NNNNNN.csv` is picked up from a folder, because a file name found
 inside an export is not something Kizuki will repeat back to you in an error.
@@ -182,9 +289,10 @@ Known limits:
 
 ## Omnivore export
 
-Omnivore closed in 2024 and left an export holding `metadata_*.json` files, the
-saved article HTML under `content/`, and your highlights under `highlights/`.
-Unzip it and point the importer at the folder.
+Omnivore closed on 2024-11-15. No new export can be obtained; an export saved
+before then holds `metadata_*.json` files, the saved article HTML under
+`content/`, and your highlights under `highlights/`. Unzip it and point the
+importer at the folder.
 
 ```
 kizuki import import-omnivore --vault VAULT --source EXPORT_DIR

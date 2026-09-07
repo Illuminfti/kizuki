@@ -23,7 +23,7 @@ test("offline public configured-engine rebuild preserves query results and survi
   expect(before.exitCode).toBe(0);
   expect(before.stdout).toContain("acme");
   const rebuilt = run("rebuild", "--layer", "all", "--json");
-  expect(rebuilt.exitCode).toBe(0);
+  expect(rebuilt.exitCode, rebuilt.stdout + rebuilt.stderr).toBe(0);
   const report = JSON.parse(rebuilt.stdout).data;
   expect(report.store).toBe("kizuki.retrieval.embedded-pg");
   expect(report.backend).toBe("retrieval-port");
@@ -50,7 +50,7 @@ test("default rebuild JSON and text identify the actual SQLite floor count", () 
   const setup = helpers.tempVault();
   expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode).toBe(0);
   const rebuilt = helpers.runCli(setup.env, "rebuild", "--json");
-  expect(rebuilt.exitCode).toBe(0);
+  expect(rebuilt.exitCode, rebuilt.stdout + rebuilt.stderr).toBe(0);
   const report = JSON.parse(rebuilt.stdout).data;
   const reader = openLedgerRead(setup.vault);
   try {
@@ -75,7 +75,7 @@ for (const historical of ["ledger15", "ledger16"]) test(`public rebuild makes mi
   replayHistoricalRecoverySql(setup.vault,historical);
   expect(helpers.runCli(setup.env,"init",setup.vault,"--no-service","--no-default").exitCode).toBe(0);
   const stale=helpers.runCli(setup.env,"query","synthetic","--scope","ledger","--json");expect(stale.exitCode).toBe(1);expect(stale.stderr).toContain("index-behind-ledger");
-  const rebuilt=helpers.runCli(setup.env,"rebuild","--json");expect(rebuilt.exitCode).toBe(0);
+  const rebuilt=helpers.runCli(setup.env,"rebuild","--json");expect(rebuilt.exitCode, rebuilt.stdout + rebuilt.stderr).toBe(0);
   const queried=helpers.runCli(setup.env,"query","synthetic","--scope","ledger","--json");expect(queried.exitCode).toBe(0);expect(queried.stderr).toBe("");
   const envelope=JSON.parse(queried.stdout);expect(envelope.status).toBe("ok");expect(envelope.degraded).toEqual([]);expect(envelope.warnings).toEqual([]);expect(envelope.data.hits).toHaveLength(1);expect(envelope.data.hits[0].snippet).toContain("synthetic");
   const cursor=join(setup.vault,".kizuki/index-cursor.json");expect(existsSync(cursor)).toBe(true);const before=readFileSync(cursor);

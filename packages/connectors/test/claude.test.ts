@@ -289,3 +289,130 @@ describe("ClaudeImportConnector", () => {
     }
   });
 });
+
+describe("export fidelity", () => {
+  test("a sender is the author; text that quotes another voice stays with its sender", () => {
+    const result = parseClaudeExport(
+      JSON.stringify([
+        {
+          uuid: "c1",
+          name: "Quoting",
+          chat_messages: [
+            {
+              uuid: "m1",
+              sender: "human",
+              text: "Assistant: you said \"On the owner's disk.\" Why?",
+              created_at: "2026-01-01T00:00:01Z",
+            },
+            {
+              uuid: "m2",
+              sender: "assistant",
+              text: "Human: you asked where. Because it stays yours.",
+              created_at: "2026-01-01T00:00:02Z",
+            },
+          ],
+        },
+      ]),
+      OBSERVED_AT,
+    );
+    expect(result.errors).toEqual([]);
+    expect(
+      result.events.map((event) => [
+        event.metadata["handle"],
+        event.subjects.map((subject) => `${subject.subject_id}:${subject.role}`),
+        event.text,
+      ]),
+    ).toEqual([
+      ["self", ["claude:self:from"], "Assistant: you said \"On the owner's disk.\" Why?"],
+      [
+        "assistant",
+        ["claude:assistant:from"],
+        "Human: you asked where. Because it stays yours.",
+      ],
+    ]);
+    for (const event of result.events) {
+      expect(event.sensitivity_hint).toBeUndefined();
+    }
+  });
+
+  test("a content block repeating the message text is not stored twice", () => {
+    const result = parseClaudeExport(
+      JSON.stringify([
+        {
+          uuid: "c1",
+          chat_messages: [
+            {
+              uuid: "m1",
+              sender: "assistant",
+              text: "Answer",
+              created_at: "2026-01-01T00:00:01Z",
+              content: [
+                { type: "text", text: "Answer" },
+                { type: "text", text: "Footnote" },
+              ],
+            },
+          ],
+        },
+      ]),
+      OBSERVED_AT,
+    );
+    expect(result.errors).toEqual([]);
+    expect(result.events[0]?.text).toBe("Answer\nFootnote");
+  });
+
+  test("a sender outside human or assistant is reported and not stored", () => {
+    const result = parseClaudeExport(
+      JSON.stringify([
+        {
+          uuid: "c1",
+          chat_messages: [
+            {
+              uuid: "m1",
+              sender: "system",
+              text: "hidden",
+              created_at: "2026-01-01T00:00:01Z",
+            },
+          ],
+        },
+      ]),
+      OBSERVED_AT,
+    );
+    expect(result.events).toEqual([]);
+    expect(result.errors).toEqual([
+      expect.objectContaining({ location: "c1[0]", code: "unsupported_sender" }),
+    ]);
+  });
+
+  test("the same uuid repeated with different text is a conflict, not a version", () => {
+    const message = (text: string) => ({
+      uuid: "m1",
+      sender: "human",
+      text,
+      created_at: "2026-01-01T00:00:01Z",
+    });
+    const result = parseClaudeExport(
+      JSON.stringify([{ uuid: "c1", chat_messages: [message("one"), message("two")] }]),
+      OBSERVED_AT,
+    );
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]?.text).toBe("one");
+    expect(result.errors).toEqual([
+      expect.objectContaining({
+        location: encodeSourceRecordId(["c1", "m1"]),
+        code: "conflicting_id",
+      }),
+    ]);
+  });
+
+  test("nesting past the JSON depth bound is refused before any message is read", () => {
+    const deep = "[".repeat(70) + "]".repeat(70);
+    let thrown: unknown;
+    try {
+      parseClaudeExport(deep, OBSERVED_AT);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(KizukiError);
+    expect((thrown as KizukiError).code).toBe("parse_error");
+  });
+});

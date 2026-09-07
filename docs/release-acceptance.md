@@ -3,8 +3,9 @@
 Evidence date: 7 September 2026. The checked-in acceptance checker inventories
 the fixed RC and 1.0 obligations and validates the supported local evidence.
 The current producer set cannot establish release `GO`: independent review,
-native installed-service execution, live accounts and unfamiliar-user acceptance
-lack reviewed evidence adapters. The current readiness bar is a stranger who
+live accounts and unfamiliar-user acceptance still need their required evidence.
+The online collector can qualify current CI, native packages and complete
+installed-service lifecycle receipts under the contracts below. The current readiness bar is a stranger who
 can install and use the product, zero live P0 findings, and honest installation.
 The [current campaign decision](decision-log.md#owner-amendment-to-readiness-2026-09-05)
 supersedes seven- and fourteen-day calendar gates and estate cutover as
