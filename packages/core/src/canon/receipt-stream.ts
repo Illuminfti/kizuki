@@ -8,6 +8,7 @@ import { isRfc3339 } from "../util/time";
 import { isAuthorityTier, isProducer } from "../contracts/proposal";
 import { isSensitivity } from "../agents/types";
 import { assertCanonFiles } from "../vault/canon-files";
+import { serviceAncestorOwner } from "../serve/custody";
 import { assertVaultMutationScope, type VaultMutationScope } from "../vault/mutation-scope";
 import { requireCanonFiles } from "./io";
 import { parseReceiptLine, RECEIPTS_PATH } from "./receipts";
@@ -130,24 +131,35 @@ function sameFile(a: BigIntStats, b: BigIntStats): boolean {
   return sameIdentity(a, b) && a.size === b.size && a.mode === b.mode && a.uid === b.uid && a.gid === b.gid &&
     a.nlink === b.nlink && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 }
-function directoryStat(fd: number, ancestor = false): BigIntStats {
+function directoryStat(fd: number, ancestor = false, vaultPath?: string): BigIntStats {
   const stat = fstatSync(fd, { bigint: true }), uid = BigInt(process.geteuid!());
-  const sticky = ancestor && stat.uid === 0n && (stat.mode & 0o1000n) !== 0n;
-  if (!stat.isDirectory() || stat.nlink < 1n || (stat.uid !== uid && (!ancestor || stat.uid !== 0n)) ||
+  if (!stat.isDirectory() || stat.nlink < 1n) fail("unsafe");
+  let owner = stat.uid;
+  if (ancestor && owner !== uid && owner !== 0n && vaultPath !== undefined) {
+    owner = serviceAncestorOwner(vaultPath, fd, stat) ?? owner;
+  }
+  const sticky = ancestor && owner === 0n && (stat.mode & 0o1000n) !== 0n;
+  if ((owner !== uid && (!ancestor || owner !== 0n)) ||
       ((stat.mode & 0o022n) !== 0n && !sticky)) fail("unsafe");
   return stat;
 }
 function openRoot(path: string): number {
   if (path === "/" || path.split("/").length > 257) fail("bounds");
   const closeOnExec = process.platform === "darwin" ? 0x1000000 : 0x80000;
-  let fd = openSync("/", constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | closeOnExec);
+  // Ancestors supply traversal and identity, not directory-listing authority.
+  const access = process.platform === "linux" ? 0x200000 /* O_PATH */ : constants.O_RDONLY;
+  let fd = openSync("/", access | constants.O_DIRECTORY | constants.O_NOFOLLOW | closeOnExec);
   try {
-    directoryStat(fd, true);
+    directoryStat(fd, true, path);
     const parts = path.split("/").filter(Boolean);
     for (const [index, part] of parts.entries()) {
-      const next = openDirectory(fd, part); if (next === null) fail("missing");
+      const ancestor = index < parts.length - 1;
+      const bytes = nameBytes(part);
+      const next = ancestor ? result(api().symbols.openAncestorChild(fd, ptr(bytes))) : openDirectory(fd, part);
+      if (next === null || next === -2) fail("missing");
       closeSync(fd); fd = next;
-      directoryStat(fd, index < parts.length - 1);
+      // O_PATH|NOFOLLOW must never turn a symlink descriptor into authority.
+      directoryStat(fd, ancestor, path);
     }
     return fd;
   } catch (error) { closeSync(fd); throw error; }

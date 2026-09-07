@@ -210,3 +210,57 @@ for (const mode of ["short-write", "no-progress", "fsync-failure"] as const) {
     expect(child.error).toBeUndefined(); expect(child.status).toBe(0); expect(child.stderr).toBe("");
   });
 }
+
+test.skipIf(process.platform !== "linux" || process.arch !== "x64")("receipt streams retain exact vault broker custody through writes and revalidation", () => {
+  const source = (path: string) => JSON.stringify(join(import.meta.dir, "../../src", path));
+  const script = `
+    import {mock,expect} from 'bun:test';
+    import * as fs from 'node:fs';
+    import {join} from 'node:path';
+    import {tmpdir} from 'node:os';
+    const realStat=fs.fstatSync;let mapped=false,broker=true,boundVault='',owner=0n,attestations=0;
+    mock.module('node:fs',()=>({...fs,fstatSync(fd,...args){const s=realStat(fd,...args);return mapped&&s.uid===0n?Object.assign(Object.create(Object.getPrototypeOf(s)),s,{uid:65534n,gid:65534n}):s;}}));
+    const custody=await import(${source("serve/custody.ts")});
+    mock.module(${source("serve/custody.ts")},()=>({...custody,serviceAncestorOwner(vault,_fd,s){if(broker&&vault===boundVault&&s.uid===65534n){attestations++;return owner;}return undefined;}}));
+    const {initVault}=await import(${source("vault/init.ts")});
+    const {openLedger}=await import(${source("ledger/db.ts")});
+    const {putEvent}=await import(${JSON.stringify(join(import.meta.dir,"../claims/helpers.ts"))});
+    const {fileProposal}=await import(${source("staging/proposals.ts")});
+    const {runRail}=await import(${source("serve/rails.ts")});
+    const {snapshotCanonIo,withCanonMutationSync}=await import(${source("canon/io.ts")});
+    const {openOrdinaryReceiptStream}=await import(${source("canon/receipt-stream.ts")});
+    const {RECEIPTS_PATH}=await import(${source("canon/receipts.ts")});
+    const root=fs.mkdtempSync(join(tmpdir(),'receipt-broker-'));initVault(root);boundVault=root;
+    const db=openLedger(join(root,'.kizuki/kizuki.db')),io=snapshotCanonIo({db,vault_path:root});
+    try {
+      const id=putEvent(db);expect(fileProposal(db,{kind:'claim',target:'people/synthetic',body:'Synthetic role fact.',frontmatter:{type:'person',title:'Synthetic'},provenance:[id],subjects:['person:synthetic'],producer:'deterministic',confidence:0.8}).outcome).toBe('stored');
+      mapped=true;
+      const receipt=await runRail(db,root,'sync',{hooks:{model_ref:'kizuki.llm.openai-compatible:synthetic@local',claims:{db},producer:{descriptor:{id:'kizuki.producer.fixture',kind:'producer',contract:'kizuki.producer/v1',contract_minor:4,supports:['model'],requires_lease:false,optional_package:null},health:async()=>({status:'ready',detail:{}}),close:async()=>{},produce:async()=>({status:'ok',claims:[],usage:{calls:0,input_tokens:0,output_tokens:0},dropped:[]})}}});
+      expect(receipt.status).toBe('ok');expect(receipt.canon_writes).toBe(1);expect(receipt.errors).toEqual([]);
+      expect(db.query('SELECT count(*) AS n FROM canon_receipts').get().n).toBe(1);expect(attestations).toBeGreaterThan(0);
+      const log=join(root,RECEIPTS_PATH),before=fs.readFileSync(log);
+      for(const failure of ['absent-broker','wrong-owner','foreign-vault','changed-root','unsafe-leaf']) {
+        withCanonMutationSync(io,(scope,owned)=>{
+          const stream=openOrdinaryReceiptStream(scope,owned);stream.verifyBinding();
+          try {
+            if(failure==='absent-broker')broker=false;
+            if(failure==='wrong-owner')owner=12345n;
+            if(failure==='foreign-vault')boundVault=root+'-foreign';
+            if(failure==='changed-root')fs.renameSync(root,root+'-moved');
+            if(failure==='unsafe-leaf')fs.chmodSync(log,0o666);
+            expect(()=>stream.verifyBinding()).toThrow();
+          }finally{
+            broker=true;owner=0n;boundVault=root;
+            if(failure==='changed-root')fs.renameSync(root+'-moved',root);
+            if(failure==='unsafe-leaf')fs.chmodSync(log,0o600);
+            stream.close();
+          }
+        });
+        expect(fs.readFileSync(log).equals(before)).toBe(true);
+      }
+      withCanonMutationSync(io,(scope,owned)=>{const stream=openOrdinaryReceiptStream(scope,owned);stream.verifyBinding();stream.close();});
+    }finally{mapped=false;db.close();fs.rmSync(root,{recursive:true,force:true});}
+  `;
+  const result=spawnSync(process.execPath,["-e",script],{encoding:"utf8",timeout:20_000});
+  expect({code:result.status,stderr:result.stderr}).toEqual({code:0,stderr:""});
+});
