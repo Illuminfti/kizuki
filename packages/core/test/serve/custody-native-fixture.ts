@@ -1,10 +1,15 @@
 // Synthetic child process: real sockets and kernel descriptors, never an account.
-import { constants, openSync, closeSync, readdirSync, fstatSync, fchmodSync } from "node:fs";
+import { constants, openSync, closeSync, readdirSync, fstatSync, fchmodSync, writeFileSync, fsyncSync } from "node:fs";
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { custodyNative } from "../../src/util/custody-native";
 
 const [mode, directory, parent, bindingHex, variant = ""] = process.argv.slice(2);
-if (mode === "worker") {
+if (mode === "close-watch-worker") {
+  self.onmessage = () => {};
+  postMessage("worker-ready");
+  while (!await Bun.file(parent! + "/close-watch").exists()) await Bun.sleep(5);
+  closeSync(Number(directory)); postMessage("closed");
+} else if (mode === "worker") {
   const libc = dlopen("libc.so.6", { socket: { args: [FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.i32 } });
   postMessage("worker-ready");
   self.onmessage = () => { const fd = libc.symbols.socket(2, 1, 0); postMessage(fd); if (fd >= 0) closeSync(fd); };
@@ -27,12 +32,52 @@ if (mode === "worker") {
     netlink: libc.symbols.socket(16, 3, 0), inetPair: libc.symbols.socketpair(2, 1, 0, ptr(pair)), unix: unix >= 0, worker: await result }));
   if (unix >= 0) closeSync(unix);
   worker.terminate();
+} else if (mode === "draining-main") {
+  const api = custodyNative(); const control = openSync(directory!, constants.O_RDONLY | constants.O_DIRECTORY);
+  const bytes = Buffer.from("1234567890abcdef1234567890abcdef", "hex");
+  let requestedStop!: () => void; const stopRequested = new Promise<void>(resolve => { requestedStop = resolve; });
+  const broker = Bun.spawn([process.execPath, new URL(import.meta.url).pathname, "server", directory!, String(process.pid), bytes.toString("hex")],
+    { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+  const stopMain = () => { broker.kill("SIGTERM"); requestedStop(); };
+  process.on("SIGTERM", stopMain);
+  const reader = broker.stdout.getReader(); let output = "", socket = -1;
+  const until = async (marker: string) => { while (!output.includes(marker)) {
+    const chunk = await reader.read(); if (chunk.done) throw new Error("synthetic broker stopped before marker");
+    output += new TextDecoder().decode(chunk.value);
+  } };
+  try {
+    await until("LISTEN\n"); socket = api.connect(control, "broker.sock"); api.stat(socket, control, bytes);
+    await until("READY\n");
+    console.log(JSON.stringify({ main_pid: process.pid, broker_pid: broker.pid }));
+    await stopRequested;
+    const started = performance.now(); await Bun.sleep(700); // A held synthetic rail outlives the broker poll interval.
+    const observed = api.stat(socket, control, bytes);
+    const local = fstatSync(control, { bigint: true });
+    const receipt = { synthetic: true, final_rpc: observed.ino === local.ino && observed.dev === local.dev, held_ms: performance.now() - started };
+    const receiptFd = openSync(directory! + "/cleanup-receipt.json", constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+    try { writeFileSync(receiptFd, JSON.stringify(receipt)); fsyncSync(receiptFd); } finally { closeSync(receiptFd); }
+    closeSync(socket); socket = -1;
+    while (true) { const chunk = await reader.read(); if (chunk.done) break; output += new TextDecoder().decode(chunk.value); }
+    const brokerResult = JSON.parse(output.trim().split("\n").at(-1)!);
+    console.log(JSON.stringify({ ...receipt, broker_result: brokerResult.result, broker_exit: await broker.exited }));
+  } catch {
+    console.log(JSON.stringify({ synthetic: true, final_rpc: false, cleanup: false })); process.exitCode = 1;
+  } finally {
+    if (socket >= 0) closeSync(socket);
+    if (broker.exitCode === null) { broker.kill("SIGKILL"); await broker.exited; }
+    closeSync(control); process.off("SIGTERM", stopMain);
+  }
 } else {
   const api = custodyNative();
   const control = openSync(directory!, constants.O_RDONLY | constants.O_DIRECTORY);
   const listener = api.listen(control, "broker.sock");
   const pid = Number(parent);
   const watch = api.watchPid(variant.startsWith("watch:") ? Number(variant.slice(6)) : pid);
+  let watcher: Worker | undefined;
+  if (variant === "closed-watch") {
+    watcher = new Worker(new URL(import.meta.url).href, { argv: ["close-watch-worker", String(watch), directory!] });
+    await new Promise<void>(resolve => { watcher!.onmessage = () => resolve(); });
+  }
   const before = readdirSync("/proc/self/fd").length;
   console.log("LISTEN");
   api.restrictBroker();
@@ -52,7 +97,7 @@ if (mode === "worker") {
     Buffer.from(bindingHex!, "hex"), 1, watch);
   const after = readdirSync("/proc/self/fd").length;
   console.log(JSON.stringify({ result, descriptor_delta: after - before }));
-  closeSync(watch); closeSync(listener); closeSync(control);
+  watcher?.terminate(); if (variant !== "closed-watch") closeSync(watch); closeSync(listener); closeSync(control);
 }
 
 function packetLibc() { return dlopen("libc.so.6", {

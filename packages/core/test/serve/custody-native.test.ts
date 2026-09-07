@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { constants, openSync, closeSync, mkdtempSync, rmSync, fstatSync, writeFileSync, symlinkSync, lstatSync, readdirSync, mkdirSync } from "node:fs";
+import { constants, openSync, closeSync, mkdtempSync, rmSync, fstatSync, writeFileSync, symlinkSync, lstatSync, readdirSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { dlopen, FFIType, ptr } from "bun:ffi";
@@ -42,13 +42,16 @@ async function setup(variant = "") {
   const socket = api.connect(control, "broker.sock");
   let closed = false;
   return { directory, control, child, socket, api,
+    async ready() {
+      while (!output.includes("READY\n")) { const chunk = await reader.read(); if (chunk.done) throw new Error("synthetic broker ended before READY"); output += new TextDecoder().decode(chunk.value); }
+    },
     closeSocket() { if (!closed) { closeSync(socket); closed = true; } },
     async finish() {
       for (;;) { const chunk = await reader.read(); if (chunk.done) break; output += new TextDecoder().decode(chunk.value); }
       const exit = await child.exited; const stderr = await new Response(child.stderr).text();
       expect(stderr).toBe(""); expect(exit).toBe(0);
       const result = JSON.parse(output.trim().split("\n").at(-1)!);
-      expect(result.descriptor_delta).toBe(0);
+      expect(result.descriptor_delta).toBe(variant === "closed-watch" ? -1 : 0);
       return { ...result, ready: output.includes("READY\n") };
     },
     async cleanup() { if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; } if (!closed) closeSync(socket); closeSync(control); rmSync(directory, { recursive: true, force: true }); },
@@ -107,10 +110,42 @@ native("Linux custody descriptor transport", () => {
     finally { await f.cleanup(); }
   });
 
-  test("SIGTERM exits an established idle loop after READY", async () => {
+  test("SIGTERM drains an established idle loop until the main closes", async () => {
     const f = await setup();
-    try { f.api.stat(f.socket, f.control, binding); f.child.kill("SIGTERM");
+    try { f.api.stat(f.socket, f.control, binding); await f.ready(); f.child.kill("SIGTERM"); await Bun.sleep(600);
+      expect(f.api.healthy(f.socket)).toBe(true); f.api.stat(f.socket, f.control, binding); f.closeSocket();
       expect(await f.finish()).toMatchObject({ result: 0, ready: true }); }
+    finally { await f.cleanup(); }
+  });
+
+  test("two owned child PIDs drain a held rail, final RPC and durable cleanup before main EOF", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-custody-drain-"));
+    const main = Bun.spawn([process.execPath, fixture, "draining-main", directory], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    let brokerPid: number | undefined;
+    try {
+      const reader = main.stdout.getReader(); let output = "";
+      while (!output.includes("\n")) { const chunk = await reader.read(); if (chunk.done) throw new Error("synthetic main ended before readiness"); output += new TextDecoder().decode(chunk.value); }
+      const identity = JSON.parse(output.trim().split("\n")[0]!); brokerPid = identity.broker_pid;
+      expect(identity.main_pid).toBe(main.pid); expect(brokerPid).not.toBe(main.pid);
+      main.kill("SIGTERM"); // The synthetic main relays TERM through its owned broker Subprocess handle.
+      for (;;) { const chunk = await reader.read(); if (chunk.done) break; output += new TextDecoder().decode(chunk.value); }
+      const result = JSON.parse(output.trim().split("\n").at(-1)!);
+      expect({ exit: await main.exited, result }).toMatchObject({ exit: 0, result: { synthetic: true, final_rpc: true, broker_result: 0, broker_exit: 0 } });
+      expect(result.held_ms).toBeGreaterThanOrEqual(650);
+      const receipt = JSON.parse(readFileSync(join(directory, "cleanup-receipt.json"), "utf8"));
+      expect(receipt).toEqual({ synthetic: true, final_rpc: true, held_ms: result.held_ms });
+      expect(await new Response(main.stderr).text()).toBe("");
+    } finally {
+      if (main.exitCode === null) { main.kill("SIGKILL"); await main.exited; }
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("unexpected broker death makes further custody checks fail", async () => {
+    const f = await setup();
+    try { f.api.stat(f.socket, f.control, binding); await f.ready(); f.child.kill("SIGKILL"); await f.child.exited;
+      expect(f.api.healthy(f.socket)).toBe(false);
+      expect(() => f.api.stat(f.socket, f.control, binding)).toThrow("custody_native_unavailable"); }
     finally { await f.cleanup(); }
   });
 
@@ -124,7 +159,7 @@ native("Linux custody descriptor transport", () => {
   test("watched process exit stops the server while authenticated socket stays open", async () => {
     const watched = Bun.spawn([process.execPath, "-e", "setInterval(() => {},1000)"], { stdout: "ignore", stderr: "ignore", stdin: "ignore" });
     const f = await setup(`watch:${watched.pid}`);
-    try { f.api.stat(f.socket, f.control, binding); watched.kill("SIGTERM"); await watched.exited;
+    try { f.api.stat(f.socket, f.control, binding); await f.ready(); watched.kill("SIGTERM"); await watched.exited;
       expect(await f.finish()).toMatchObject({ result: 0, ready: true }); expect(f.api.healthy(f.socket)).toBe(false); }
     finally { if (watched.exitCode === null) { watched.kill("SIGKILL"); await watched.exited; } await f.cleanup(); }
   });
@@ -135,6 +170,21 @@ native("Linux custody descriptor transport", () => {
       expect(() => f.api.stat(f.socket, f.control, binding)).toThrow("custody_native_unavailable");
       expect(readdirSync("/proc/self/fd").length).toBe(before); expect(f.api.healthy(f.socket)).toBe(false);
       expect(await f.finish()).toMatchObject({ result: 0, ready: false }); }
+    finally { await f.cleanup(); }
+  });
+
+  test("draining does not turn a malformed request into clean shutdown", async () => {
+    const f = await setup();
+    try { f.api.stat(f.socket, f.control, binding); await f.ready(); f.child.kill("SIGTERM"); await Bun.sleep(600);
+      raw(f.socket, [f.control], "kind"); expect(await f.finish()).toMatchObject({ result: -1, ready: true }); }
+    finally { await f.cleanup(); }
+  });
+
+  test("draining refuses an invalidated pidfd as an error rather than main exit", async () => {
+    const f = await setup("closed-watch");
+    try { f.api.stat(f.socket, f.control, binding); await f.ready(); f.child.kill("SIGTERM"); await Bun.sleep(600);
+      writeFileSync(join(f.directory, "close-watch"), "synthetic");
+      expect(await f.finish()).toMatchObject({ result: -1, ready: true }); }
     finally { await f.cleanup(); }
   });
 

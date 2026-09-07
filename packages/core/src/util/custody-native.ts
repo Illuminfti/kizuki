@@ -45,28 +45,48 @@ _Static_assert(sizeof(struct signal_action)==152,"glibc Linux x64 sigaction ABI"
 static int (*signal_fn)(int,const struct signal_action *,struct signal_action *);
 void custody_initialize(void *signal) { signal_fn=(int (*)(int,const struct signal_action *,struct signal_action *))signal; }
 int custody_watch_pid(int pid) { return (int)call(434,pid,0,0,0,0,0); }
-static int main_alive(int pidfd) {
-  struct pollfd p={pidfd,1,0}; return call(7,(long)&p,1,0,0,0,0)==0;
+static long now_ms(void) {
+  long t[2]; if(call(228,1,(long)t,0,0,0,0)<0) return -1;
+  return t[0]*1000L+t[1]/1000000L;
 }
-static int server_wait(int fd,int pidfd,int timeout) {
-  int elapsed=0;
+static long deadline(int timeout) { long now=now_ms(); return now<0 ? -1 : now+timeout; }
+// 1 alive, 0 exited, -1 unavailable. An invalid pidfd is never clean shutdown.
+static int main_alive(int pidfd) {
+  long end=deadline(1000); if(end<0) return -1;
   for(;;) {
-    if(stopping || !main_alive(pidfd)) return -2;
-    int step=timeout<0 || timeout-elapsed>500 ? 500 : timeout-elapsed;
-    if(step<=0) return -1;
-    struct pollfd p[2]={{fd,1,0},{pidfd,1,0}};
-    long r=call(7,(long)p,2,step,0,0,0);
-    if(stopping || p[1].revents) return -2;
-    if(r>0) return (p[0].revents&1) && !(p[0].revents&(8|32)) ? 1 : -1;
-    if(r<0) return -1;
-    if(timeout>=0) elapsed+=step;
+    struct pollfd p={pidfd,1,0}; long r=call(7,(long)&p,1,0,0,0,0);
+    if(r==-4) { long now=now_ms(); if(now<0 || now>=end) return -1; continue; }
+    if(r==0) return 1;
+    return r==1 && (p.revents&(1|16)) && !(p.revents&(8|32)) ? 0 : -1;
   }
 }
-static int waitfd(int fd,short events,int timeout) {
-  struct pollfd p={fd,events,0};
-  long r=call(7,(long)&p,1,timeout,0,0,0);
-  return r==1 && (p.revents&events) && !(p.revents&(8|32)) ? p.revents : -1;
+static int server_wait(int fd,int pidfd,int timeout,int started) {
+  long end=timeout<0 ? 0 : deadline(timeout); if(end<0) return -1;
+  for(;;) {
+    int alive=main_alive(pidfd); if(alive<0) return -1;
+    if((stopping && !started) || alive==0) return -2;
+    int step=500;
+    if(timeout>=0) { long now=now_ms(); if(now<0 || now>=end) return -1; if(end-now<step) step=(int)(end-now); }
+    struct pollfd p[2]={{fd,1,0},{pidfd,1,0}};
+    long r=call(7,(long)p,2,step,0,0,0);
+    if(stopping && !started) return -2;
+    if(r==-4) continue;
+    if(r<0) return -1;
+    if(p[1].revents) return (p[1].revents&(1|16)) && !(p[1].revents&(8|32)) ? -2 : -1;
+    if(r>0) return (p[0].revents&1) && !(p[0].revents&(8|32)) ? 1 : -1;
+  }
 }
+static int waitfd(int fd,short events,long end) {
+  if(end<0) return -1;
+  for(;;) {
+    long now=now_ms(); if(now<0 || now>=end) return -1;
+    struct pollfd p={fd,events,0};
+    long r=call(7,(long)&p,1,end-now,0,0,0);
+    if(r==-4) continue;
+    return r==1 && (p.revents&events) && !(p.revents&(8|32)) ? p.revents : -1;
+  }
+}
+
 struct credentials { int pid; u32 uid,gid; };
 int custody_peer(int fd,struct credentials *out) {
   u32 n=sizeof(*out); int type=0; u32 tn=sizeof(type);
@@ -129,11 +149,17 @@ static void header(struct header *h,const unsigned char *binding) {
 // Consume and close every delivered descriptor, including malformed/truncated
 // messages. Linux closes rights that do not fit the receiving control buffer.
 static int receive(int socket,void *data,u64 size,int *one,int timeout) {
-  if(timeout!=-2 && waitfd(socket,1,timeout)<0) return -1;
+  long end=deadline(timeout==-2 ? 1000 : timeout); if(end<0) return -1;
   unsigned char controls[2048]; zero(controls,sizeof(controls));
   struct iovec io={data,size}; struct message m; zero(&m,sizeof(m));
-  m.iov=&io; m.iovlen=1; m.control=controls; m.controllen=sizeof(controls);
-  long got=call(47,socket,(long)&m,0x40000000|0x40,0,0,0); // CMSG_CLOEXEC | DONTWAIT
+  long got;
+  for(;;) {
+    if(timeout!=-2 && waitfd(socket,1,end)<0) return -1;
+    zero(&m,sizeof(m)); m.iov=&io; m.iovlen=1; m.control=controls; m.controllen=sizeof(controls);
+    got=call(47,socket,(long)&m,0x40000000|0x40,0,0,0); // CMSG_CLOEXEC | DONTWAIT
+    if(got!=-4) break;
+    timeout=1000; // Keep the original absolute deadline across interruptions.
+  }
   if(got<0) return -1;
   int count=0,held=-1,bad=0; u64 pos=0;
   while(pos+sizeof(struct control)<=m.controllen) {
@@ -157,14 +183,18 @@ static int receive(int socket,void *data,u64 size,int *one,int timeout) {
   return 1;
 }
 static int senddata(int socket,const void *data,u64 size,int directory) {
-  if(waitfd(socket,4,1000)<0) return -1;
+  long end=deadline(1000); if(end<0) return -1;
   unsigned char controls[24]; zero(controls,sizeof(controls));
   struct iovec io={(void *)data,size}; struct message m; zero(&m,sizeof(m)); m.iov=&io; m.iovlen=1;
   if(directory>=0) {
     struct control *c=(void *)controls; c->len=20; c->level=1; c->type=1; *(int *)(c+1)=directory;
     m.control=controls; m.controllen=sizeof(controls);
   }
-  return call(46,socket,(long)&m,0x4000|0x40,0,0,0)==(long)size ? 0 : -1; // NOSIGNAL | DONTWAIT
+  for(;;) {
+    if(waitfd(socket,4,end)<0) return -1;
+    long sent=call(46,socket,(long)&m,0x4000|0x40,0,0,0); // NOSIGNAL | DONTWAIT
+    if(sent!=-4) return sent==(long)size ? 0 : -1;
+  }
 }
 int custody_stat(int socket,int directory,const unsigned char *binding,struct metadata *out) {
   struct metadata before,after; struct header request; struct reply reply;
@@ -178,15 +208,19 @@ int custody_stat(int socket,int directory,const unsigned char *binding,struct me
   *out=reply.metadata; return 0;
 }
 int custody_healthy(int socket) {
-  struct pollfd p={socket,1,0}; long r=call(7,(long)&p,1,0,0,0,0);
-  return r==0; // Any queued data, EOF or error is not an idle valid channel.
+  long end=deadline(1000); if(end<0) return 0;
+  for(;;) {
+    struct pollfd p={socket,1,0}; long r=call(7,(long)&p,1,0,0,0,0);
+    if(r!=-4) return r==0; // Data, EOF or error is not an idle valid channel.
+    long now=now_ms(); if(now<0 || now>=end) return 0;
+  }
 }
 int custody_serve(int listener,int mainPid,u32 ownerUid,const unsigned char *binding,int ready,int mainPidFd) {
-  if(!signal_fn || !main_alive(mainPidFd)) return -1;
+  if(!signal_fn || main_alive(mainPidFd)!=1) return -1;
   stopping=0; struct signal_action previous,action; zero(&action,sizeof(action)); action.handler=(void *)stop;
   if(signal_fn(15,&action,&previous)!=0) return -1;
   int result=-1,socket=-1,started=0;
-  int waiting=server_wait(listener,mainPidFd,10000);
+  int waiting=server_wait(listener,mainPidFd,10000,0);
   if(waiting==-2) { result=0; goto finish; }
   if(waiting<0) goto finish;
   socket=(int)call(288,listener,0,0,0x80000|0x800,0,0);
@@ -194,7 +228,7 @@ int custody_serve(int listener,int mainPid,u32 ownerUid,const unsigned char *bin
   struct credentials peer; struct header expected; header(&expected,binding);
   if(custody_peer(socket,&peer)<0 || peer.pid!=mainPid || peer.uid!=ownerUid) goto finish;
   for(;;) {
-    waiting=server_wait(socket,mainPidFd,started ? -1 : 10000);
+    waiting=server_wait(socket,mainPidFd,started ? -1 : 10000,started);
     if(waiting==-2) { result=0; break; }
     if(waiting<0) break;
     struct header request; int fd=-1;
@@ -204,15 +238,24 @@ int custody_serve(int listener,int mainPid,u32 ownerUid,const unsigned char *bin
     struct reply reply; reply.header=expected;
     int valid=same(&request,&expected,sizeof(request)) && metadata(fd,&reply.metadata,1)==0;
     closefd(fd);
-    if(!valid || !main_alive(mainPidFd) || stopping || senddata(socket,&reply,sizeof(reply),-1)<0) break;
+    if(!valid) break;
+    int alive=main_alive(mainPidFd); if(alive<0) break;
+    if(alive==0 || (stopping && !started)) { result=0; break; }
+    if(senddata(socket,&reply,sizeof(reply),-1)<0) break;
     if(!started) {
-      if(!main_alive(mainPidFd) || stopping || call(1,ready,(long)"READY\\n",6,0,0,0)!=6) break;
+      if(main_alive(mainPidFd)!=1 || stopping) break;
+      long end=deadline(1000),written=-1;
+      while(!stopping && waitfd(ready,4,end)>=0) {
+        written=call(1,ready,(long)"READY\\n",6,0,0,0);
+        if(written!=-4) break;
+      }
+      // An interrupted/partial/ambiguous READY publication is bootstrap failure.
+      if(written!=6 || stopping || main_alive(mainPidFd)!=1) break;
       started=1;
     }
   }
 finish:
   closefd(socket);
-  if(stopping) result=0;
   if(signal_fn(15,&previous,0)!=0) result=-1;
   return result;
 }
