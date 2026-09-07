@@ -130,7 +130,7 @@ export async function startServiceCustody(
   if (active.has(value.path)) fail();
   const overflow = boundedText("/proc/sys/kernel/overflowuid", 32).trim();
   if (!/^[0-9]{1,10}$/.test(overflow) || BigInt(overflow) === 0n || BigInt(overflow) === BigInt(value.uid)) fail();
-  const descriptors = controlDescriptors(value.path), name = endpointName(value), api = custodyNative();
+  const api = custodyNative(), descriptors = controlDescriptors(value.path), name = endpointName(value);
   let socket = -1, closed = false, timer: ReturnType<typeof setInterval> | undefined;
   let endpoint: BigIntStats | undefined;
   const close = (): void => {
