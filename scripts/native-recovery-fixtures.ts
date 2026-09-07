@@ -93,6 +93,17 @@ function writableFixture(path: string, operation: (db: Database) => void): void 
   try { configureLedgerWalLifecycle(db, path); db.exec("PRAGMA foreign_keys=ON"); operation(db); }
   finally { db.close(); }
 }
+/** Replay the frozen SQLite dump in its original dump-loader mode, then inspect
+ * the complete database with foreign-key checks enabled. This is fixture setup. */
+export function replayHistoricalRecoverySql(vault: string, id: string): NativeRecoverySnapshot {
+  requireThat(id === "ledger15" || id === "ledger16", "not-historical-sql");
+  const input = historicalRecoveryInput(id);
+  writableFixture(join(vault, ".kizuki/kizuki.db"), db => {
+    db.exec("PRAGMA foreign_keys=OFF");
+    db.exec(input.bytes.toString("utf8"));
+  });
+  return inspectRecoveryFixture(vault).summary;
+}
 function ensureQuiescent(vault: string): void {
   const directory = openCredentialDirectory(join(vault, ".kizuki"));
   try { for (const suffix of ["-wal", "-shm", "-journal"]) requireThat(!directory.inspectFileIdentity(`kizuki.db${suffix}`), "fixture-not-quiescent"); }
@@ -174,7 +185,7 @@ export async function runNativeRecoveryFixtures(options: NativeRecoveryOptions):
     const initialize = (target: string): void => { command("initialize", ["init", target, "--no-service", "--no-default"]); };
     const makeSql = (target: string): Snapshot => {
       initialize(target); replaceClosedLedger(target, new Uint8Array());
-      writableFixture(join(target,".kizuki/kizuki.db"), db => db.exec(input.bytes.toString("utf8")));
+      replayHistoricalRecoverySql(target, input.identity.id);
       return inspectRecoveryFixture(target);
     };
     const publicQuery = (target: string, baseline: Snapshot): void => {

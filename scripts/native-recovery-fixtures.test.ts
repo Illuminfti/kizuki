@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { realpathSync } from "node:fs";
-import { historicalRecoveryInput, HISTORICAL_RECOVERY_INPUTS, inspectRecoveryFixture, NATIVE_RECOVERY_PHASE_IDS } from "./native-recovery-fixtures";
+import { historicalRecoveryInput, replayHistoricalRecoverySql, HISTORICAL_RECOVERY_INPUTS, inspectRecoveryFixture, NATIVE_RECOVERY_PHASE_IDS } from "./native-recovery-fixtures";
 import { openLedger } from "../packages/core/src/ledger/db";
 import { manageDatabaseLifetime } from "../packages/core/src/ledger/lifetime";
 import { configureLedgerWalLifecycle } from "../packages/core/src/ledger/wal-lifecycle";
@@ -14,8 +14,7 @@ afterEach(()=>{ for(const root of roots.splice(0)) rmSync(root,{recursive:true,f
 function fixture(id="ledger15"): {vault:string;path:string} {
   const vault=mkdtempSync(join(realpathSync(tmpdir()),"kizuki-recovery-input-")); roots.push(vault); chmodSync(vault,0o700);
   mkdirSync(join(vault,".kizuki"),{mode:0o700}); const path=join(vault,".kizuki/kizuki.db"); writeFileSync(path,"",{mode:0o600});
-  const db=manageDatabaseLifetime(new Database(path,constants.SQLITE_OPEN_READWRITE|constants.SQLITE_OPEN_NOFOLLOW));
-  try { configureLedgerWalLifecycle(db,path); db.exec(historicalRecoveryInput(id).bytes.toString()); } finally {db.close();}
+  replayHistoricalRecoverySql(vault,id);
   return {vault,path};
 }
 function change(path:string,sql:string):void {const db=manageDatabaseLifetime(new Database(path,constants.SQLITE_OPEN_READWRITE|constants.SQLITE_OPEN_NOFOLLOW));try{configureLedgerWalLifecycle(db,path);db.exec(sql);}finally{db.close();}}
