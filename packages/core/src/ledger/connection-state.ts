@@ -217,7 +217,11 @@ export class ConnectionStateStore implements ConnectionStateReader {
     expect?: ConnectionExpectation,
     implementationVersion = "",
     verifyNew?: (candidate: Uint8Array, existing: readonly { connection: Connection; state: Uint8Array }[]) => void,
+    replacement?: { previous: Uint8Array; verify: (previous: Uint8Array, candidate: Uint8Array) => void },
   ): Connection {
+    // A savepoint can be rolled back after this call returns. Callers use this
+    // return as durable publication before sending provider requests.
+    if (db.inTransaction) throw new LedgerError("connection state publication requires a top-level transaction");
     if (
       !this.handles.has(pending) ||
       !this.minted.has(pending.sourceKey) ||
@@ -249,6 +253,25 @@ export class ConnectionStateStore implements ConnectionStateReader {
     };
     try {
       writeLocked(db, () => {
+        if (replacement !== undefined) {
+          if (expect === undefined || !pending.written || pending.temporaryPath === null) throw new LedgerError("replacement verification requires staged state");
+          const current = getConnection(db, connectorId, pending.sourceKey);
+          if (current === null || current.connected_at !== expect.connected_at || current.disconnected_at !== expect.disconnected_at) throw new LedgerError(STALE_CONNECTION_SNAPSHOT);
+          const originalDigest = sha256Hex(replacement.previous);
+          const verifyBytes = () => {
+            const original = this.read(current), candidate = this.readStatePath(pending.temporaryPath!);
+            if (original === null || original.byteLength !== replacement.previous.byteLength || sha256Hex(original) !== originalDigest) throw new LedgerError("replacement original state changed");
+            if (candidate.byteLength !== pending.byteLength || sha256Hex(candidate) !== pending.digest) throw new LedgerError("replacement staged digest mismatch");
+            return candidate;
+          };
+          const candidate = verifyBytes();
+          const result: unknown = replacement.verify(replacement.previous.slice(), candidate);
+          if (result !== undefined) {
+            if (result instanceof Promise) void result.catch(() => {});
+            throw new LedgerError("replacement verifier must complete synchronously");
+          }
+          verifyBytes();
+        }
         if (verifyNew !== undefined) {
           if (expect !== undefined || existsSync(pending.finalPath) || getConnection(db, connectorId, pending.sourceKey) !== null) {
             throw new LedgerError("new enrollment verification cannot replace a source");
@@ -409,6 +432,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
       verifyReplacement?: (previous: Uint8Array, candidate: Uint8Array) => void;
     },
   ): Promise<Connection> {
+    if (db.inTransaction) throw new LedgerError("connection state replacement requires a top-level transaction");
     this.recover(db);
     const persisted = getConnection(
       db,
@@ -447,11 +471,6 @@ export class ConnectionStateStore implements ConnectionStateReader {
       if (!pending.pending.written) {
         throw new LedgerError(options.missingStateMessage);
       }
-      if (options.verifyReplacement !== undefined) {
-        const path = pending.pending.temporaryPath;
-        if (path === null) throw new LedgerError(options.missingStateMessage);
-        options.verifyReplacement(previous, this.readStatePath(path));
-      }
       return this.save(
         db,
         persisted.connector_id,
@@ -461,6 +480,8 @@ export class ConnectionStateStore implements ConnectionStateReader {
           disconnected_at: persisted.disconnected_at,
         },
         options.implementationVersion,
+        undefined,
+        options.verifyReplacement === undefined ? undefined : { previous: previous.slice(), verify: options.verifyReplacement },
       );
     } catch (error) {
       this.discard(pending.pending);
