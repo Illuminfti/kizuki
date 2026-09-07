@@ -10,7 +10,7 @@ import {
   serveExecHint,
   writeServeIntent,
 } from "@kizuki/core";
-import { openLedger } from "@kizuki/core/internal";
+import { openLedger, sealLedger } from "@kizuki/core/internal";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
   type KizukiConfig,
@@ -68,7 +68,11 @@ export function createInitCommand(supervisor: typeof serveSupervisorHost = serve
     ensureVaultId(vaultPath);
     const ledgerPath = join(vaultPath, ".kizuki", "kizuki.db");
     const ledger = openLedger(ledgerPath);
-    ledger.close();
+    try {
+      sealLedger(vaultPath, ledger);
+    } finally {
+      ledger.close();
+    }
     hardenLedgerFile(ledgerPath);
 
     let wrote = false;
