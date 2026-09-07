@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { openLedgerRead } from "@kizuki/core/internal";
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { registerConnection, setSourceGrant, ulid } from "@kizuki/core";
@@ -15,10 +15,10 @@ function exported(capture = true) {
     ? h.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root))
     : h.runCli(setup.env, "connect", "markdown-folder", "--source", setup.notes);
   expect(connected.exitCode, connected.stderr).toBe(0);
-  const db = new Database(join(setup.vault, ".kizuki/kizuki.db"), { readonly: true });
+  const read = openLedgerRead(setup.vault), db = read.db;
   let sourceKey: string;
   try { sourceKey = (db.query("SELECT source_key FROM connections").get() as { source_key: string }).source_key; }
-  finally { db.close(); }
+  finally { read.close(); }
   if (!capture) {
     const grant = h.runCli(setup.env, "connect", "grant", "--source", sourceKey, ...fixtureConsent(setup.root));
     expect(grant.exitCode, grant.stderr).toBe(0);
@@ -43,11 +43,11 @@ test("export verification binds the portable state required for a healthy none-a
   writeFileSync(join(f.notes, "resumed.md"), "synthetic_resumed_original_source\n", { mode: 0o600 });
   const synced = h.runCli({ ...f.env, KIZUKI_VAULT: f.into }, "sync", "markdown-folder");
   expect(synced.exitCode, synced.stderr).toBe(0);
-  const db = new Database(join(f.into, ".kizuki/kizuki.db"), { readonly: true });
+  const read = openLedgerRead(f.into), db = read.db;
   try {
     expect(db.query("SELECT COUNT(*) AS n FROM events WHERE text LIKE '%synthetic_resumed_original_source%'").get()).toEqual({ n: 1 });
     expect(db.query("SELECT source_key FROM connections WHERE disconnected_at IS NULL").get()).toEqual({ source_key: f.sourceKey });
-  } finally { db.close(); }
+  } finally { read.close(); }
 });
 
 for (const mutation of ["missing", "malformed", "symlink"] as const) {
@@ -86,11 +86,11 @@ test("unmanifested state cannot redirect an existing capture grant to another lo
   if (restored.exitCode === 0) {
     const synced = h.runCli({ ...f.env, KIZUKI_VAULT: f.into }, "sync", "markdown-folder");
     syncExit = synced.exitCode;
-    const db = new Database(join(f.into, ".kizuki/kizuki.db"), { readonly: true });
+    const read = openLedgerRead(f.into), db = read.db;
     try {
       captured = db.query("SELECT 1 FROM events WHERE text LIKE '%synthetic_unapproved_source_canary%'").get() !== null;
       sameSourceKey = (db.query("SELECT source_key FROM connections WHERE disconnected_at IS NULL").get() as { source_key?: string } | null)?.source_key === f.sourceKey;
-    } finally { db.close(); }
+    } finally { read.close(); }
   }
   console.log(JSON.stringify({ case: "retargeted-source", verify_exit: verified.exitCode, restore_exit: restored.exitCode, sync_exit: syncExit, unapproved_capture: captured, same_source_key: sameSourceKey }));
   expect(captured).toBe(false);
