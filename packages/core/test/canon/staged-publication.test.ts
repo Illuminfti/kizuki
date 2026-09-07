@@ -15,7 +15,7 @@ const post = Buffer.from(serializePage(page)), prior = Buffer.from(serializePage
 const rel = "people/item.md", id = "staged-receipt";
 function fixture() {
   const vault = tempVault("staged-publication-"); cleanup.push(vault.dispose);
-  mkdirSync(join(vault.path, "people"));
+  mkdirSync(join(vault.path, "people"), { mode: 0o700 });
   return vault.path;
 }
 
