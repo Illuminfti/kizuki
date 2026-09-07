@@ -3,6 +3,7 @@ import type { CanonFileSnapshot } from "../vault/canon-files";
 import { sha256Hex } from "../util/hash";
 import { parseFrontmatter } from "../vault/frontmatter";
 import { eventIdFromReference } from "../retrieval/ids";
+import { oneShotGet } from "../ledger/schema";
 import { requireCanonFiles } from "./io";
 import { latestReceiptForPage } from "./receipts";
 import { openOrdinaryRecoveryReceiptStream } from "./receipt-stream";
@@ -72,8 +73,8 @@ export function withdrawPendingCanonWrite(scope: VaultMutationScope, io: CanonIo
       stream.withdrawExact(intent.checkpoint, Buffer.from(`${JSON.stringify(receipt)}\n`));
       for (const snapshot of remove) files.remove(snapshot);
       stream.verifyBinding();
-      const removed = db.query("DELETE FROM canon_write_intents WHERE receipt_id=? AND digest=?").run(receipt.receipt_id, binding.digest);
-      if (removed.changes !== 1) recoveryFailure("intent_invalid", receipt.receipt_id);
+      const removed = oneShotGet<{ receipt_id: string }>(db, "DELETE FROM canon_write_intents WHERE receipt_id=? AND digest=? RETURNING receipt_id", receipt.receipt_id, binding.digest);
+      if (removed?.receipt_id !== receipt.receipt_id) recoveryFailure("intent_invalid", receipt.receipt_id);
       advanceCanonReadGeneration(db);
     }).immediate();
   } finally {
@@ -102,13 +103,13 @@ export function withdrawPendingCanonProjections(scope: VaultMutationScope, io: C
       // A request whose outcome is unknown may still write after an erasure.
       // Store absence alone cannot establish that it has stopped executing.
       if (saved.value.external_execution.includes("started")) recoveryFailure("projection_pending", row.receipt_id);
-      // Cancelling a positive upsert is not erasure. Every scheduled or unknown
+      // Cancelling a positive upsert is not erasure. Every scheduled or acknowledged
       // store effect must pass the existing qualified whole-store protocol.
       for (const op of saved.value.external_ops) {
         db.query("INSERT INTO source_retrieval_stores VALUES (?,?,'pending') ON CONFLICT(source_key,store_id) DO UPDATE SET status='pending'").run(sourceKey, op.store);
       }
-      const removed = db.query("DELETE FROM canon_projection_obligations WHERE receipt_id=? AND digest=?").run(row.receipt_id, saved.row.digest);
-      if (removed.changes !== 1) recoveryFailure("intent_invalid", row.receipt_id);
+      const removed = oneShotGet<{ receipt_id: string }>(db, "DELETE FROM canon_projection_obligations WHERE receipt_id=? AND digest=? RETURNING receipt_id", row.receipt_id, saved.row.digest);
+      if (removed?.receipt_id !== row.receipt_id) recoveryFailure("intent_invalid", row.receipt_id);
       advanceCanonReadGeneration(db);
     }
   }).immediate();

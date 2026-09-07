@@ -973,7 +973,7 @@ describe("restoreVault", () => {
       count: 1, size: payload.byteLength, mode: 0o600,
       sha256: new Bun.CryptoHasher("sha256").update(payload).digest("hex"),
     } };
-    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", files: legacyFiles(backup, files) });
+    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", schema_versions: { ...manifest.schema_versions, ledger: 20 }, files: legacyFiles(backup, files) });
     const target = join(temporary("kizuki-restore-parent-"), "vault");
     expect(restoreVault(backup, target).recovery_warnings.join(" ")).toContain("historical purge");
     const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
@@ -1172,6 +1172,7 @@ describe("restoreVault", () => {
     writeSignedManifest(backup, {
       ...manifest,
       schema: "kizuki.backup/v2",
+      schema_versions: { ...manifest.schema_versions, ledger: 20 },
       files: legacyFiles(backup, {
         ...manifest.files,
         ["ledger/source_store_inventory.jsonl"]: {
@@ -1201,7 +1202,7 @@ describe("restoreVault", () => {
     const files = { ...manifest.files };
     delete files["claims/identity_links.jsonl"];
     delete files["ledger/connector_sensitivity.jsonl"];
-    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", files: legacyFiles(backup, files) });
+    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", schema_versions: { ...manifest.schema_versions, ledger: 20 }, files: legacyFiles(backup, files) });
     const target = join(temporary("kizuki-restore-parent-"), "vault");
     const report = restoreVault(backup, target);
     expect(report.events).toBe(1);
