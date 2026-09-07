@@ -216,6 +216,21 @@ describe("ledger p1 store", () => {
     db.close();
   });
 
+  test("readSince preserves its cursor for a zero-budget read", () => {
+    const db = openLedger(":memory:");
+    try {
+      stored(db, "first");
+      const first = readSince(db, null, 1);
+      stored(db, "second");
+      const empty = readSince(db, first.cursor, 0);
+      expect(empty).toEqual({ events: [], cursor: first.cursor, exhausted: true });
+      expect(readSince(db, empty.cursor, 10).events).toHaveLength(1);
+      expect(readSince(db, null, 0)).toEqual({ events: [], cursor: null, exhausted: true });
+    } finally {
+      db.close();
+    }
+  });
+
   test("readSince rejects a limit above the core cap", () => {
     const db = openLedger(":memory:");
     expect(() => readSince(db, null, MAX_READ_SINCE + 1)).toThrow(LedgerStoreError);
