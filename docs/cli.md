@@ -476,8 +476,8 @@ usage: kizuki agent add NAME --grant FILE --token-ref file:/absolute/path --oper
 
 Enroll a scoped agent with a complete explicit grant and a private credential
 file, or revoke its access. The parent directory must already exist and have
-private owner custody. Credential delivery currently requires qualified Linux
-x64 glibc. Preview validates an existing vault without creating an identity,
+private owner custody. Credential delivery requires native local filesystem
+custody; a missing native helper reports `unsupported_platform`. Preview validates an existing vault without creating an identity,
 credential or configuration. An older ledger reports `migration_required`
 without applying that migration during preview. Preview requires a stable,
 checkpointed ledger without journal sidecars; otherwise it reports
