@@ -5,7 +5,7 @@ const SESSION_KEY = 'kizuki.app.session';
 const main = document.getElementById('main');
 const dialog = document.getElementById('dialog');
 const notice = document.getElementById('notification');
-const state = { view: 'memory', status: null, service: null, model: null, modelError: false, sources: [], catalog: [], receipts: [], hits: null, query: '', degraded: [], busy: false, operation: null };
+const state = { view: 'memory', status: null, service: null, model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], hits: null, query: '', degraded: [], busy: false, operation: null };
 let bearer = null;
 let noticeTimer;
 let refreshSequence = 0;
@@ -15,6 +15,7 @@ let privacyGeneration = 0;
 let activitySequence = 0;
 let serviceSequence = 0;
 let modelSequence = 0;
+let agentsSequence = 0;
 let privateViewValid = true;
 const icons = {
   memory: ['M7 3.5h10a2 2 0 0 1 2 2v15l-7-3-7 3v-15a2 2 0 0 1 2-2Z', 'M9 8h6M9 11.5h4'],
@@ -74,9 +75,9 @@ function sourceLabel(source) {
 }
 function staleResponse() { return Object.assign(new Error('Response superseded.'), { code: 'stale_response' }); }
 function invalidatePrivateView() {
-  privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++; serviceSequence++; modelSequence++;
+  privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++; serviceSequence++; modelSequence++; agentsSequence++;
   privateViewValid = false;
-  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.service = null; state.model = null; state.modelError = false; state.operation = null;
+  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.service = null; state.model = null; state.modelError = false; state.agents = null; state.agentsError = false; state.operation = null;
   if (dialog.open) closeDialog();
   dialog.replaceChildren();
   clearTimeout(noticeTimer); notice.textContent = ''; notice.hidden = true;
@@ -130,7 +131,7 @@ function navigate(view, focus = true) {
   render();
   if (focus) main.focus({ preventScroll: true });
   if (view === 'activity' && state.status?.vault.ready) loadActivity();
-  if (view === 'settings' && state.status?.vault.ready) loadService();
+  if (view === 'settings' && state.status?.vault.ready) { loadService(); loadAgents(); }
   if (['settings', 'sources'].includes(view) && state.status?.vault.ready) loadModel();
 }
 function renderNavigation() {
@@ -446,8 +447,98 @@ function runSummary(operation) {
 async function runPass() {
   await launchOperation('run_pass', {}, 'Organising your memory', async () => { await refresh(); });
 }
+const agentReadTools = [['search', 'Search memory'], ['get_page', 'Read memory pages'], ['query_entities', 'Find entities'], ['timeline', 'Read timelines'], ['context_packet', 'Get relevant context'], ['graph_neighbors', 'Explore connections'], ['system_health', 'Check system health']];
+async function loadAgents() {
+  if (!bearer || !privateViewValid) return;
+  const sequence = ++agentsSequence;
+  try {
+    const result = await api('agents');
+    if (sequence !== agentsSequence || !privateViewValid || !bearer) return;
+    state.agents = result.agents; state.agentsError = false;
+    if (state.view === 'settings') render();
+  } catch (error) {
+    if (sequence === agentsSequence && privateViewValid && bearer && error.code !== 'stale_response') {
+      state.agents = null; state.agentsError = true;
+      if (state.view === 'settings') render();
+      message(error.message);
+    }
+  }
+}
+function grantSummary(grant) {
+  if (!grant) return el('p', {}, 'The current grant is unavailable.');
+  const scope = (items, all) => items === null ? all : items.length ? items.join(', ') : 'None';
+  const rows = [['Sensitivity ceiling', grant.ceiling], ['Record types', scope(grant.types, 'All record types')], ['Subjects', scope(grant.subjects, 'All subjects')], ['From', grant.since || 'No start limit'], ['Until', grant.until || 'No end limit'], ['Tools', grant.tools.length ? grant.tools.map(tool => agentReadTools.find(([id]) => id === tool)?.[1] || tool).join(', ') : 'None'], ['Requests per minute', grant.rate_limit_per_minute], ['Owner correction relay', grant.relay_owner_corrections ? 'On' : 'Off']];
+  return el('dl', { class: 'grant-summary' }, ...rows.map(([label, value]) => el('div', {}, el('dt', {}, label), el('dd', {}, value))));
+}
+function renderAgents() {
+  const section = el('section', { class: 'agent-settings', 'aria-labelledby': 'agent-settings-title' }, el('div', { class: 'section-header' }, el('h2', { id: 'agent-settings-title' }, 'Let an agent read your memory'), button('Set up an agent', agentEnrollment)), el('p', {}, 'Give each assistant its own limited access. Review what it may read, then add its launch configuration to that assistant on this device.'));
+  if (!state.agents) section.append(el('p', { class: 'model-note' }, state.agentsError ? 'Agent access could not be checked. Refresh before relying on its status.' : 'Checking existing agents…'), button('Refresh agents', loadAgents));
+  else if (!state.agents.length) section.append(el('p', { class: 'model-note' }, 'No agents are connected yet. The setup starts with read-only access to public information.'));
+  else for (const agent of state.agents) section.append(el('article', { class: 'agent-row' }, el('div', { class: 'section-header' }, el('h3', {}, agent.name), el('span', { class: 'badge' }, agent.revoked_at ? 'Revoked' : 'Enrolled')), el('details', { class: 'result-details' }, el('summary', {}, 'View all permissions'), grantSummary(agent.grant)), !agent.revoked_at && button('Revoke access', () => agentRevoke(agent))));
+  return section;
+}
+function agentEnrollment() {
+  const content = openDialog('Set up a read-only agent', 'Choose the information this assistant may read. It will have its own identity, separate from your owner access.', 'lock');
+  const form = el('form'); content.append(form);
+  const name = field(form, 'Agent name', 'agent-name', 'research-helper'); name.setAttribute('maxlength', '64');
+  const ceiling = el('select', { id: 'agent-ceiling' }, ...[['public', 'Public only'], ['personal', 'Public and personal'], ['private', 'Public, personal and private']].map(([value, label]) => el('option', { value }, label))); ceiling.value = 'public';
+  form.append(el('div', { class: 'form-field' }, el('label', { for: 'agent-ceiling' }, 'Sensitivity ceiling'), ceiling), el('p', { class: 'model-note' }, 'Imported sources are private by default. A public-only agent may see no source information. A higher ceiling still respects your source permissions.'));
+  const choices = el('fieldset', { class: 'field-choices' }, el('legend', {}, 'Read tools'));
+  const tools = agentReadTools.map(([id, label]) => { const check = el('input', { type: 'checkbox', id: `agent-tool-${id}`, value: id, checked: ['search', 'get_page'].includes(id) }); check.value = id; choices.append(el('label', { class: 'check-row', for: `agent-tool-${id}` }, check, label)); return check; }); form.append(choices);
+  const scopeFields = el('details', { class: 'result-details' }, el('summary', {}, 'Narrow by type, subject or time (optional)')); form.append(scopeFields);
+  const types = field(scopeFields, 'Record types (optional)', 'agent-types', 'person, fact');
+  const subjects = field(scopeFields, 'Subjects (optional)', 'agent-subjects', 'person:ada');
+  scopeFields.append(el('p', { class: 'model-note' }, 'Use exact type or subject IDs, separated by commas. Leave a field blank to include all within the sensitivity ceiling.'));
+  const since = field(scopeFields, 'From (your local time, optional)', 'agent-since', '', 'datetime-local');
+  const until = field(scopeFields, 'Until (your local time, optional)', 'agent-until', '', 'datetime-local');
+  const rate = field(form, 'Requests per minute', 'agent-rate', '60', 'number'); rate.value = '60'; rate.setAttribute('min', '1'); rate.setAttribute('max', '1000'); rate.setAttribute('step', '1');
+  form.append(el('p', { class: 'model-note' }, 'Owner correction relay: off. This setup grants no correction or proposal tools.'));
+  const errorLine = el('p', { class: 'form-error', role: 'alert' });
+  form.append(errorLine, el('div', { class: 'form-actions' }, button('Cancel', closeDialog), el('button', { type: 'submit', class: 'button button-primary' }, 'Review access')));
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(name.value.trim())) { errorLine.textContent = 'Use 2–64 lowercase letters, numbers or hyphens, starting with a letter or number.'; name.focus(); return; }
+    const limit = Number(rate.value);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) { errorLine.textContent = 'Choose between 1 and 1,000 requests per minute.'; rate.focus(); return; }
+    const scope = input => input.value.trim() ? input.value.split(',').map(value => value.trim()).filter(Boolean) : null;
+    let start = null, end = null;
+    try { start = since.value ? new Date(since.value).toISOString() : null; end = until.value ? new Date(until.value).toISOString() : null; } catch { errorLine.textContent = 'Enter a valid start and end time, or leave them blank.'; return; }
+    if (start && end && start > end) { errorLine.textContent = 'The start time must be before the end time.'; since.focus(); return; }
+    const request = { name: name.value.trim(), operation_id: crypto.randomUUID(), grant: { ceiling: ceiling.value, types: scope(types), subjects: scope(subjects), since: start, until: end, tools: tools.filter(check => check.checked).map(check => check.value), rate_limit_per_minute: limit, relay_owner_corrections: false } };
+    const review = openDialog('Review this agent’s access', request.name, 'lock');
+    review.append(grantSummary(request.grant), el('p', { class: 'dialog-description' }, 'Only these permissions will be granted. The next step creates a private credential file on this device; its secret value will not appear in the browser.'), el('div', { class: 'form-actions' }, button('Cancel', closeDialog), button('Create agent', () => launchOperation('agent_enroll', request, 'Creating agent access', async operation => { await loadAgents(); showAgentResult(operation); }), 'primary')));
+  });
+}
+function agentLaunchConfig(mcp) {
+  if (!mcp || typeof mcp.command !== 'string' || !mcp.command || !Array.isArray(mcp.args) || !mcp.args.every(arg => typeof arg === 'string')) return null;
+  if ([mcp.command, ...mcp.args].some(value => /kzk_|--owner|--token(?:=|$)/.test(value))) return null;
+  const refs = mcp.args.filter(arg => arg === '--token-ref').length, at = mcp.args.indexOf('--token-ref');
+  if (refs !== 1 || !mcp.args[at + 1]?.startsWith('file:') || mcp.args[at + 1].length <= 5 || !mcp.args.includes('--vault')) return null;
+  return { command: mcp.command, args: [...mcp.args] };
+}
+function showAgentResult(operation) {
+  if (!bearer || !privateViewValid || state.operation?.id !== operation.id || !operation.result?.agent) return;
+  const { receipt, mcp } = operation.result.agent;
+  const content = openDialog('Agent access result', receipt.name, 'lock');
+  content.append(el('p', { class: 'dialog-description' }, `Access: ${receipt.authority}. Enrollment: ${receipt.status}. Credential file: ${receipt.credential}.`));
+  const config = receipt.authority === 'active' && receipt.credential === 'ready' ? agentLaunchConfig(mcp) : null;
+  if (config) {
+    const serialized = JSON.stringify(config, null, 2);
+    const text = el('textarea', { class: 'launch-config', readonly: '', rows: '8', 'aria-label': 'Agent MCP launch configuration', spellcheck: 'false' }); text.value = serialized;
+    content.append(el('p', { class: 'dialog-description' }, 'Add this launch configuration to your assistant’s MCP settings on this device. It refers to a private file; it contains no secret token. Kizuki has not changed another app’s settings.'), text, button('Copy launch configuration', async () => {
+      try { await navigator.clipboard.writeText(serialized); if (dialog.contains(content) && privateViewValid) message('Launch configuration copied. Add it to your assistant’s MCP settings.'); }
+      catch { if (dialog.contains(content) && privateViewValid) { text.focus(); text.select(); message('Select and copy the launch configuration from this field.'); } }
+    }));
+  } else if (receipt.authority === 'active') content.append(el('p', { class: 'form-error', role: 'alert' }, 'A usable scoped launch configuration was not returned. No owner access will be substituted.'));
+  if (receipt.grant) content.append(grantSummary(receipt.grant));
+  content.append(el('div', { class: 'form-actions' }, button('Done', closeDialog, 'primary')));
+}
+function agentRevoke(agent) {
+  const content = openDialog('Revoke this agent’s access?', agent.name, 'lock');
+  content.append(grantSummary(agent.grant), el('p', { class: 'dialog-description' }, 'This stops the agent’s access, including existing connections. Its name and credential file are retained; it cannot be reused as a new identity.'), el('div', { class: 'form-actions' }, button('Keep access', closeDialog), button('Revoke access', () => launchOperation('agent_revoke', { name: agent.name }, 'Revoking agent access', async operation => { await loadAgents(); showAgentResult(operation); }), 'danger')));
+}
 function renderSettings() {
-  return el('section', {}, heading('Simply yours.', 'A local workspace, clear permissions, and room to grow when you need it.'), renderModelSettings(), el('div', { class: 'settings-list' },
+  return el('section', {}, heading('Simply yours.', 'A local workspace, clear permissions, and room to grow when you need it.'), renderModelSettings(), renderAgents(), el('div', { class: 'settings-list' },
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Workspace'), el('p', {}, 'Your memory stays in a local folder you control.')), el('span', { class: 'settings-value' }, state.status?.vault.name || 'Not created')),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Background activity'), el('p', {}, state.service?.detail || 'Refresh to check background activity.'), state.service && el('small', {}, `Checked ${dateText(state.service.checked_at)}`)), el('div', { class: 'form-actions' }, button('Refresh', loadService), state.service && state.service.state !== 'active' && state.service.kind !== 'none' && button('Enable background activity', () => launchOperation('install_service', {}, 'Setting up background activity', async () => { await refresh(); await loadService(); }), 'primary'))),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Source privacy'), el('p', {}, 'Each source has its own permission. Imported content stays on this device unless you separately allow a model to use it.')), button('Manage sources', () => navigate('sources'))),
@@ -458,9 +549,9 @@ function renderOperation() {
   const operation = state.operation;
   if (!operation) return null;
   const running = operation.state === 'running';
-  const title = operation.kind === 'model_test' ? (running ? 'Testing your model connection' : operation.state === 'succeeded' ? 'Connection test completed' : 'Connection test needs attention') : operation.kind === 'run_pass' ? (running ? 'Organising your memory' : operation.state === 'succeeded' ? 'Processing run completed' : 'Processing needs attention') : running ? 'Working on your source' : operation.state === 'failed' ? 'This step needs attention' : operation.state === 'unknown' ? 'Completion is not yet confirmed' : operation.kind === 'capture' ? 'Import progress saved' : 'Completed';
-  const detail = operation.kind === 'run_pass' && !running && !operation.error ? runSummary(operation) : operation.kind === 'model_test' && !operation.error ? 'This test uses a made-up prompt. It does not use your imported information or grant source permission.' : running ? 'Your source checkpoint keeps progress recoverable. You can continue using the app.' : operation.error ? humanError(operation.error.code) : operation.kind === 'capture' && operation.counts ? `${safeCount(operation.counts.stored)} saved this time. Check Sources for the latest history and any problems.` : 'Check Sources or Activity for the current state.';
-  return el('div', { class: 'job-status', role: 'status' }, icon(running ? 'clock' : operation.state === 'succeeded' ? 'check' : 'info'), el('div', {}, el('h3', {}, title), el('p', {}, detail), operation.result?.run?.run_id && el('details', { class: 'result-details' }, el('summary', {}, 'Run receipt'), el('code', {}, operation.result.run.run_id))));
+  const title = operation.kind === 'agent_enroll' || operation.kind === 'agent_revoke' ? (running ? 'Updating agent access' : 'Agent access result') : operation.kind === 'model_test' ? (running ? 'Testing your model connection' : operation.state === 'succeeded' ? 'Connection test completed' : 'Connection test needs attention') : operation.kind === 'run_pass' ? (running ? 'Organising your memory' : operation.state === 'succeeded' ? 'Processing run completed' : 'Processing needs attention') : running ? 'Working on your source' : operation.state === 'failed' ? 'This step needs attention' : operation.state === 'unknown' ? 'Completion is not yet confirmed' : operation.kind === 'capture' ? 'Import progress saved' : 'Completed';
+  const detail = operation.result?.agent ? `Access: ${operation.result.agent.receipt.authority}. Enrollment: ${operation.result.agent.receipt.status}.` : operation.kind === 'run_pass' && !running && !operation.error ? runSummary(operation) : operation.kind === 'model_test' && !operation.error ? 'This test uses a made-up prompt. It does not use your imported information or grant source permission.' : running ? 'Your source checkpoint keeps progress recoverable. You can continue using the app.' : operation.error ? humanError(operation.error.code) : operation.kind === 'capture' && operation.counts ? `${safeCount(operation.counts.stored)} saved this time. Check Sources for the latest history and any problems.` : 'Check Sources or Activity for the current state.';
+  return el('div', { class: 'job-status', role: 'status' }, icon(running ? 'clock' : operation.state === 'succeeded' ? 'check' : 'info'), el('div', {}, el('h3', {}, title), el('p', {}, detail), operation.result?.run?.run_id && el('details', { class: 'result-details' }, el('summary', {}, 'Run receipt'), el('code', {}, operation.result.run.run_id)), operation.result?.agent && button('Agent setup details', () => showAgentResult(operation))));
 }
 function render() {
   renderNavigation();
@@ -497,6 +588,7 @@ async function refresh() {
     reconcileOperation(status.operations);
     render();
     if (status.vault.ready && ['settings', 'sources'].includes(state.view)) void loadModel();
+    if (status.vault.ready && state.view === 'settings') void loadAgents();
   } catch (error) { if (bearer && sequence === refreshSequence && error.code !== 'stale_response') { invalidatePrivateView(); main.replaceChildren(empty('Let’s reconnect.', error.message, button('Try again', refresh, 'primary'))); } }
 }
 async function launchOperation(route, payload, title, done) {

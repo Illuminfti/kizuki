@@ -48,7 +48,9 @@ function fixture() {
     const window = new Element();
     const requests: { route: string; payload: any; result: ReturnType<typeof deferred<any>> }[] = [];
     const storageWrites: string[] = [];
+    const clipboardWrites: string[] = [];
     const context = createContext({ document, window, Node: Element, URLSearchParams, AbortController, TextEncoder, crypto, Intl, console,
+        navigator: { clipboard: { async writeText(value: string) { clipboardWrites.push(value); } } },
         location: { hash: '', pathname: '/', search: '' }, history: { replaceState() {} },
         sessionStorage: { getItem: () => null, setItem(key: string, value: string) { storageWrites.push(`${key}=${value}`); }, removeItem() {} },
         setTimeout: () => 1, clearTimeout() {}, setInterval() {},
@@ -58,7 +60,7 @@ function fixture() {
     const evaluate = <T = any>(code: string): T => runInContext(code, context);
     evaluate(`bearer='synthetic-session'; state.status={vault:{ready:true},visibility_epoch:'1',operations:[]}; state.sources=[{source_key:'source-a',connector_id:'kizuki.markdown-folder',display_name:'markdown-folder',consent:'active',required_fields:['text'],stored:0,errors:0}];`);
     function reply(route: string, data: unknown, status = 200) { const at = requests.findIndex(request => request.route === route); if (at < 0) throw Error(`No pending ${route}`); requests.splice(at, 1)[0]!.result.resolve({ status, json: async () => ({ ok: true, data }) }); }
-    return { evaluate, reply, requests, storageWrites, main: ids.get('main')!, dialog: ids.get('dialog')!, notice: ids.get('notification')!, window };
+    return { evaluate, reply, requests, storageWrites, clipboardWrites, main: ids.get('main')!, dialog: ids.get('dialog')!, notice: ids.get('notification')!, window };
 }
 const status = (operations: unknown[] = [], epoch = '1') => ({ vault: { ready: true }, visibility_epoch: epoch, operations });
 
@@ -377,4 +379,77 @@ test('unreadable existing model settings do not expose a replacement form', asyn
     expect(f.dialog.querySelector('form')).toBeNull();
     expect(f.dialog.textContent).toContain('existing settings have not been replaced');
     expect(f.requests).toHaveLength(0);
+});
+
+const readGrant = { ceiling: 'public', types: null, subjects: null, since: null, until: null, tools: ['search', 'get_page'], rate_limit_per_minute: 60, relay_owner_corrections: false };
+test('agent enrollment reviews all eight grant fields before submitting a read-only identity', async () => {
+    const f = fixture(); f.evaluate('agentEnrollment()');
+    f.dialog.querySelector('#agent-name')!.value = 'research-helper';
+    await f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+    expect(f.requests).toHaveLength(0);
+    for (const label of ['Sensitivity ceiling', 'Record types', 'Subjects', 'From', 'Until', 'Tools', 'Requests per minute', 'Owner correction relay']) expect(f.dialog.textContent).toContain(label);
+    expect(f.dialog.textContent).toContain('Off');
+    const work = findAction(f.dialog, 'Create agent').fire('click'); await tick();
+    expect(f.requests[0]!.route).toBe('agent_enroll');
+    expect(f.requests[0]!.payload).toMatchObject({ name: 'research-helper', grant: readGrant });
+    expect(f.requests[0]!.payload.operation_id).toBeString();
+    f.reply('agent_enroll', { operation_id: 'enroll-agent' }); await tick();
+    f.reply('operation', { id: 'enroll-agent', kind: 'agent_enroll', state: 'succeeded', result: { agent: { receipt: { name: 'research-helper', status: 'completed', authority: 'active', credential: 'ready', grant: readGrant }, mcp: { command: '/opt/kizuki-mcp', args: ['--vault', '/local/kizuki', '--token-ref', 'file:/local/private/agent.json'] } } } }); await tick();
+    f.reply('agents', { agents: [] }); await work;
+    expect(f.dialog.querySelector('textarea')!.value).toContain('--token-ref'); expect(f.dialog.querySelector('textarea')!.value).not.toContain('--owner');
+    await findAction(f.dialog, 'Copy launch configuration').fire('click');
+    expect(f.clipboardWrites).toEqual([f.dialog.querySelector('textarea')!.value]);
+    expect(f.storageWrites).toHaveLength(0);
+});
+
+test('agent grant form submits explicit narrowed scopes, ceiling and read tools', async () => {
+    const f = fixture(); f.evaluate('agentEnrollment()');
+    f.dialog.querySelector('#agent-name')!.value = 'notes-helper';
+    f.dialog.querySelector('#agent-ceiling')!.value = 'private';
+    f.dialog.querySelector('#agent-types')!.value = 'person, fact';
+    f.dialog.querySelector('#agent-subjects')!.value = 'person:ada';
+    f.dialog.querySelector('#agent-tool-get_page')!.checked = false;
+    f.dialog.querySelector('#agent-rate')!.value = '12';
+    await f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+    void findAction(f.dialog, 'Create agent').fire('click'); await tick();
+    expect(f.requests[0]!.payload.grant).toEqual({ ...readGrant, ceiling: 'private', types: ['person', 'fact'], subjects: ['person:ada'], tools: ['search'], rate_limit_per_minute: 12 });
+    expect(f.requests[0]!.payload).not.toHaveProperty('token_ref');
+});
+
+test('agent launch projection refuses owner or raw-token configurations', () => {
+    const f = fixture();
+    for (const args of [['--owner'], ['--token', 'kzk_SYNTHETIC'], ['--token-ref', 'env:OWNER_TOKEN'], ['--token-ref', 'file:/private/agent.json', '--owner=true']]) {
+        const config = { command: '/opt/kizuki-mcp', args };
+        expect(f.evaluate(`agentLaunchConfig(${JSON.stringify(config)})`)).toBeNull();
+    }
+    const config = { command: '/opt/kizuki-mcp', args: ['--vault', '/local/kizuki', '--token-ref', 'file:/private/agent.json'] };
+    expect(f.evaluate<typeof config>(`agentLaunchConfig(${JSON.stringify(config)})`)).toEqual(config);
+});
+
+test('agent revocation uses only the selected identity name and shows the actual authority receipt', async () => {
+    const f = fixture(); f.evaluate(`agentRevoke({name:'research-helper',grant:${JSON.stringify(readGrant)},revoked_at:null})`);
+    const work = findAction(f.dialog, 'Revoke access').fire('click'); await tick();
+    expect(f.requests[0]!.route).toBe('agent_revoke'); expect(f.requests[0]!.payload).toEqual({ name: 'research-helper' });
+    f.reply('agent_revoke', { operation_id: 'revoke-agent' }); await tick();
+    f.reply('operation', { id: 'revoke-agent', kind: 'agent_revoke', state: 'succeeded', result: { agent: { receipt: { name: 'research-helper', status: 'completed', authority: 'revoked', credential: 'unknown', grant: null }, mcp: null } } }); await tick();
+    f.reply('agents', { agents: [] }); await work;
+    expect(f.dialog.textContent).toContain('revoked'); expect(f.dialog.textContent).not.toContain('Copy launch configuration');
+});
+
+test('agent records and deferred enrollment results cannot return after privacy invalidation', async () => {
+    const f = fixture(); const work = f.evaluate<Promise<void>>('loadAgents()');
+    f.evaluate('invalidatePrivateView()'); f.reply('agents', { agents: [{ name: 'PRIVATE_AGENT' }] }); await work;
+    expect(f.evaluate('state.agents')).toBeNull(); expect(f.main.textContent + f.dialog.textContent).not.toContain('PRIVATE_AGENT');
+});
+
+test('agent setup refuses invalid names and reversed time windows before enrollment', async () => {
+    const f = fixture(); f.evaluate('agentEnrollment()');
+    f.dialog.querySelector('#agent-name')!.value = 'Assistant Name';
+    await f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+    expect(f.dialog.textContent).toContain('lowercase letters'); expect(f.requests).toHaveLength(0);
+    f.dialog.querySelector('#agent-name')!.value = 'assistant-name';
+    f.dialog.querySelector('#agent-since')!.value = '2026-09-08T12:00';
+    f.dialog.querySelector('#agent-until')!.value = '2026-09-07T12:00';
+    await f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+    expect(f.dialog.textContent).toContain('start time must be before'); expect(f.requests).toHaveLength(0);
 });
