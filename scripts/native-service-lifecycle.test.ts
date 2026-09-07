@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { managerPid } from "./native-service-lifecycle";
+import { cleanupStoppedNativeFixture, managerPid, nativeServiceStopped } from "./native-service-lifecycle";
 
 for (const [platform, stdout, exit, expected] of [
   ["darwin", "\tstate = running\n\tpid = 501\n", 0, 501],
@@ -40,3 +40,28 @@ test("native service harness refuses local service mutation and retains the fail
     expect(receipt.scope.migration_rollback).toBe(false);
   } finally { rmSync(report, { recursive: true }); }
 });
+
+
+for (const [label, state, stopped] of [
+  ["missing definition with active process", { exit_code: 0, stdout: "LoadState=not-found\nActiveState=active\nMainPID=802\n", stderr: "" }, false],
+  ["query failure with inactive-looking output", { exit_code: 1, stdout: "LoadState=not-found\nActiveState=inactive\nMainPID=0\n", stderr: "bus unavailable" }, false],
+  ["missing definition without PID evidence", { exit_code: 0, stdout: "LoadState=not-found\nActiveState=inactive\n", stderr: "" }, false],
+  ["query failure without fields", { exit_code: 1, stdout: "", stderr: "bus unavailable" }, false],
+  ["missing definition and confirmed inactive PID zero", { exit_code: 0, stdout: "LoadState=not-found\nActiveState=inactive\nMainPID=0\n", stderr: "" }, true],
+] as const) {
+  test(`actual native cleanup retains the fixture until stop is proved: ${label}`, () => {
+    const report = mkdtempSync(join(tmpdir(), "kizuki-cleanup-refusal-"));
+    const fixture = join(report, "synthetic-root"), unit = join(report, "owned.service");
+    mkdirSync(fixture); writeFileSync(join(fixture, "evidence"), "synthetic"); writeFileSync(unit, "synthetic");
+    try {
+      expect(nativeServiceStopped("linux", state)).toBe(stopped);
+      const cleanup = cleanupStoppedNativeFixture("linux", state, fixture, unit);
+      const receipt = { passed: cleanup.service_gone && cleanup.unit_removed, cleanup };
+      writeFileSync(join(report, "receipt.json"), JSON.stringify(receipt));
+      expect(JSON.parse(readFileSync(join(report, "receipt.json"), "utf8")).passed).toBe(stopped);
+      expect(existsSync(fixture)).toBe(!stopped);
+      expect(existsSync(unit)).toBe(!stopped);
+      if (!stopped) expect(readFileSync(join(fixture, "evidence"), "utf8")).toBe("synthetic");
+    } finally { rmSync(report, { recursive: true }); }
+  });
+}
