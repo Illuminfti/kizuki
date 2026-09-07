@@ -579,3 +579,31 @@ test("unlabeled events fail conformance", async () => {
     result.failures.some((item) => item.includes("default_sensitivity")),
   ).toBe(true);
 });
+
+
+test("completion metadata is additive, boolean and never a connector getter", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "ics-completion-conformance-"));
+  try {
+    const file = path.join(root, "calendar.ics"); await writeFile(file, FIXTURE_ICS);
+    let getters = 0;
+    for (const value of ["absent", false, true, undefined, null, 0, "false", "getter"] as const) {
+      await writeFile(file, FIXTURE_ICS);
+      const connector = createIcsConnector({ path: file }, { now: () => new Date("2026-03-01T00:00:00Z") });
+      const backfill = connector.backfill.bind(connector);
+      connector.backfill = async cursor => {
+        const result = await backfill(cursor); delete result.has_more;
+        if (value !== "absent") Object.defineProperty(result, "has_more", value === "getter"
+          ? { enumerable: true, get: () => { getters++; return false; } }
+          : { enumerable: true, value });
+        return result;
+      };
+      const report = await runConformance(connector, { tombstone: {
+        prepare: async () => (await backfill(null)).cursor,
+        mutate: async () => writeFile(file, "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"),
+      } });
+      if (value === "absent" || typeof value === "boolean") expect(report).toEqual({ pass: true, failures: [] });
+      else expect(report.failures.some(failure => failure.includes("has_more must be an own boolean data property"))).toBe(true);
+    }
+    expect(getters).toBe(0);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

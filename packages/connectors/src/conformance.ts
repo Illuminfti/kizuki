@@ -507,7 +507,7 @@ async function checkPagination(
       );
       if (fresh.length === 0) break;
       for (const event of fresh) seen.add(event.source_record_id);
-      if (batch.cursor === null) break;
+      if (batch.cursor === null || batch.has_more === false) break;
       if (batch.cursor === cursor) {
         failures.push(
           "pagination: cursor did not advance while still emitting new records",
@@ -724,8 +724,13 @@ function inspectBatch(
     failures.push(`${label}: did not return a SyncBatch shape`);
     return undefined;
   }
+  const completion = Object.getOwnPropertyDescriptor(raw, "has_more");
+  if (completion !== undefined && (!("value" in completion) || typeof completion.value !== "boolean")) {
+    failures.push(`${label}: has_more must be an own boolean data property`);
+    return undefined;
+  }
   inspectEvents(raw["events"], label, manifest, failures);
-  return raw as unknown as SyncBatch;
+  return { ...raw, ...(completion === undefined ? {} : { has_more: completion.value }) } as unknown as SyncBatch;
 }
 
 function inspectEvents(

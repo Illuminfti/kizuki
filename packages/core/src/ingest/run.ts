@@ -118,7 +118,18 @@ function processEvent(
     .immediate();
 }
 
+/** Read completion once without executing connector-owned accessors. */
+function batchHasMore(batch: SyncBatch): boolean | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(batch, "has_more");
+  if (descriptor === undefined) return undefined;
+  if (!("value" in descriptor) || typeof descriptor.value !== "boolean") {
+    throw new TypeError("sync batch has_more must be an own boolean data property");
+  }
+  return descriptor.value;
+}
+
 function batchBudgetRefusal(batch: SyncBatch): string | null {
+  try { batchHasMore(batch); } catch (error) { return errorText(error); }
   if (batch.events.length > MAX_SYNC_BATCH_EVENTS) {
     return `sync batch exceeds ${MAX_SYNC_BATCH_EVENTS} events`;
   }
@@ -411,6 +422,8 @@ function persistRun(
     .immediate();
 }
 
+interface ConnectorStep { result: RunResult; terminal: boolean; }
+
 async function runConnector(
   db: Database,
   connector: Connector,
@@ -418,14 +431,14 @@ async function runConnector(
   source_key: string,
   mode: "backfill" | "sync",
   context?: SourceTombstoneContext,
-): Promise<RunResult> {
+): Promise<ConnectorStep> {
   const previous = getCheckpoint(db, connector_id, source_key)?.cursor ?? null;
   let admission: SourceAdmission | null;
   try {
     requireActiveConnection(db, connector_id, source_key);
     admission = sourceCaptureAdmission(db, connector_id, source_key);
   } catch (error) {
-    return refusedRun(errorText(error), previous);
+    return { result: refusedRun(errorText(error), previous), terminal: false };
   }
 
   const manifest = connector.manifest();
@@ -434,38 +447,48 @@ async function runConnector(
       `${connector_id}: manifest connector_id does not match the enrolled connection`,
       previous,
     );
-    return persistRun(db, connector_id, source_key, mode, previous, previous, result, "refused");
+    return { result: persistRun(db, connector_id, source_key, mode, previous, previous, result, "refused"), terminal: false };
   }
   if (mode === "backfill" && manifest.capabilities.backfill !== true) {
     const result = refusedRun(
       `${connector_id}: manifest does not declare backfill`,
       previous,
     );
-    return persistRun(db, connector_id, source_key, mode, previous, previous, result, "refused");
+    return { result: persistRun(db, connector_id, source_key, mode, previous, previous, result, "refused"), terminal: false };
   }
   if (mode === "sync" && manifest.capabilities.sync !== true) {
     const result = refusedRun(
       `${connector_id}: manifest does not declare sync`,
       previous,
     );
-    return persistRun(db, connector_id, source_key, mode, previous, previous, result, "refused");
+    return { result: persistRun(db, connector_id, source_key, mode, previous, previous, result, "refused"), terminal: false };
   }
 
   let batch: SyncBatch;
   try {
-    batch = await withDeadline(
+    const received = await withDeadline(
       mode === "backfill"
         ? connector.backfill(previous)
         : connector.sync(previous),
       CONNECTOR_OPERATION_DEADLINE_MS,
       `${mode} timed out`,
     );
+    const hasMore = batchHasMore(received);
+    // Retain the accepted scalar rather than consulting the provider again
+    // after event/receipt processing has begun.
+    batch = Object.freeze({
+      events: received.events,
+      cursor: received.cursor,
+      ...(received.status === undefined ? {} : { status: received.status }),
+      ...(received.detail === undefined ? {} : { detail: received.detail }),
+      ...(hasMore === undefined ? {} : { has_more: hasMore }),
+    });
   } catch (error) {
     const result = refusedRun(errorText(error), previous);
     const status: ConnectionRunStatus = isUnavailable(error, null)
       ? "unavailable"
       : "failed";
-    return persistRun(db, connector_id, source_key, mode, previous, previous, result, status);
+    return { result: persistRun(db, connector_id, source_key, mode, previous, previous, result, status), terminal: false };
   }
 
   if (batch.status === "unavailable") {
@@ -473,20 +496,20 @@ async function runConnector(
       batch.detail ?? `${connector_id}: connector unavailable`,
       previous,
     );
-    return persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "unavailable");
+    return { result: persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "unavailable"), terminal: false };
   }
 
   try {
     assertCursorSize(batch.cursor, "cursor");
   } catch (error) {
     const result = refusedRun(errorText(error), previous);
-    return persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "refused");
+    return { result: persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "refused"), terminal: false };
   }
 
   const refusal = batchRefusal(manifest, connector_id, batch);
   if (refusal !== null) {
     const result = refusedRun(refusal, previous);
-    return persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "refused");
+    return { result: persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "refused"), terminal: false };
   }
 
   const processed = runBatch(
@@ -497,7 +520,7 @@ async function runConnector(
     context,
   );
   const status: ConnectionRunStatus = processed.errors.length === 0 ? "ok" : "failed";
-  return persistRun(
+  const result = persistRun(
     db,
     connector_id,
     source_key,
@@ -507,26 +530,27 @@ async function runConnector(
     processed,
     status,
   );
+  return { result, terminal: status === "ok" && batch.has_more === false };
 }
 
-export function runBackfill(
+export async function runBackfill(
   db: Database,
   connector: Connector,
   connector_id: string,
   source_key: string,
   context?: SourceTombstoneContext,
 ): Promise<RunResult> {
-  return runConnector(db, connector, connector_id, source_key, "backfill", context);
+  return (await runConnector(db, connector, connector_id, source_key, "backfill", context)).result;
 }
 
-export function runSync(
+export async function runSync(
   db: Database,
   connector: Connector,
   connector_id: string,
   source_key: string,
   context?: SourceTombstoneContext,
 ): Promise<RunResult> {
-  return runConnector(db, connector, connector_id, source_key, "sync", context);
+  return (await runConnector(db, connector, connector_id, source_key, "sync", context)).result;
 }
 
 export interface RunToCompletionOptions {
@@ -554,8 +578,8 @@ function absorb(total: RunResult, batch: RunResult): void {
 
 /**
  * Repeats a bounded-batch connector until it returns an empty batch, a null
- * cursor, or an error. An empty batch is a connector saying it has nothing
- * left to give; a connector with more to read has to say so by returning some
+ * cursor, successful terminal batch, or an error. An empty batch is a connector
+ * saying it has nothing left to give; a connector with more to read has to say so by returning some
  * of it. Each batch and its checkpoint are committed before the next call, so
  * an interruption resumes from the last durable checkpoint rather than
  * replaying the run, and a connector that throws mid-run still returns what
@@ -579,10 +603,11 @@ export async function runToCompletion(
   const context = opts?.vault_path === undefined ? undefined : { vault_path: opts.vault_path };
   for (let batch = 0; batch < maxBatches; batch += 1) {
     const before = stored();
-    const result = await runConnector(db, connector, connector_id, source_key, mode, context);
+    const { result, terminal } = await runConnector(db, connector, connector_id, source_key, mode, context);
     absorb(total, result);
     total.cursor = stored();
     if (result.errors.length > 0) return total;
+    if (terminal) return total;
     if (total.cursor === null) return total;
     if (drained(result)) return total;
     if (total.cursor === before) {

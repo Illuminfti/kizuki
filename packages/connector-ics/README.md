@@ -168,3 +168,13 @@ duplicates=0 …` while the file is unchanged.
 For URL mode, enroll the connection through `enrollConnection` and confirm
 `health()` reports `ok`; `packages/connector-ics/test/connector.test.ts` does
 exactly that against an in-memory fetcher.
+
+## Snapshot completion
+
+Contract minor 2 adds `has_more: false` to a completed ICS batch. The host commits
+its events and receipt before treating that snapshot as complete, retaining the
+nonnull cursor for later syncs. Direct backfill still replays the full snapshot;
+a repeat import reports zero stored and one duplicate per unchanged event.
+Sync still emits edits and removal tombstones, and a null cursor starts a fresh
+snapshot. A failed or unavailable batch never advances the durable checkpoint.
+Legacy connectors that omit the field retain the existing bounded drain loop.

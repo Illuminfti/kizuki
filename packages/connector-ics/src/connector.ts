@@ -54,7 +54,7 @@ const MANIFEST: Manifest = freezeManifest({
   schema: "kizuki.connector/v1",
   connector_id: ICS_CONNECTOR_ID,
   version: "0.1.0",
-  contract_minor: 1,
+  contract_minor: 2,
   implementation: "@kizuki/connector-ics",
   allowed_egress: [],
   cursor_schema: ICS_CURSOR_SCHEMA,
@@ -349,6 +349,7 @@ export class IcsConnector implements Connector {
     return {
       events: snapshot.events,
       cursor: encodeIcsCursor(this.cursorFor(snapshot, previous)),
+      has_more: false,
     };
   }
 
@@ -359,7 +360,7 @@ export class IcsConnector implements Connector {
     const next = this.cursorFor(snapshot, previous);
     this.lastSuccessAt = this.now().toISOString();
     if (snapshot.unchanged) {
-      return { events: [], cursor: encodeIcsCursor(next) };
+      return { events: [], cursor: encodeIcsCursor(next), has_more: false };
     }
 
     const observedAt = this.now().toISOString();
@@ -406,6 +407,7 @@ export class IcsConnector implements Connector {
     return {
       events: [...tombstones, ...changed],
       cursor: encodeIcsCursor(next),
+      has_more: false,
     };
   }
 
