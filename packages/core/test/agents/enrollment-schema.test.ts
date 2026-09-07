@@ -53,7 +53,7 @@ describe("agent enrollment migration", () => {
     let before: string;
     const authority = (db: ReturnType<typeof openLedger>) => JSON.stringify(["agents", "agent_grants", "agent_audit"].map(table => db.query(`SELECT * FROM ${table}`).all()));
     try {
-      old.exec("DROP TRIGGER agent_enrollments_block_legacy_agent_insert; DROP TRIGGER agent_enrollments_block_token_update; DROP TABLE agent_enrollments; DROP TABLE purge_batch_receipts; DROP TABLE purge_batches; UPDATE schema_version SET version=17");
+      old.exec("DROP TABLE canon_source_survivor_lineage; DROP TRIGGER agent_enrollments_block_legacy_agent_insert; DROP TRIGGER agent_enrollments_block_token_update; DROP TABLE agent_enrollments; DROP TABLE purge_batch_receipts; DROP TABLE purge_batches; UPDATE schema_version SET version=17");
       addAgent(old, "legacy-migration");
       before = authority(old);
     } finally { old.close(); }
