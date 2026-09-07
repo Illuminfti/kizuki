@@ -6,6 +6,30 @@ import { openLedger } from "../src/ledger/db";
 import { count, readSince } from "../src/ledger/ledger";
 import { validEvent } from "./fixtures";
 
+async function readReady(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> {
+  let buffered = "";
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) throw new Error("acceptance child ended before ready");
+    buffered += new TextDecoder().decode(chunk.value);
+    const newline = buffered.indexOf("\n");
+    if (newline < 0) continue;
+    expect(buffered.slice(0, newline + 1)).toBe("ready\n");
+    return buffered.slice(newline + 1);
+  }
+}
+
+test("acceptance barrier reads fragmented lines and retains trailing output", async () => {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("rea"));
+      controller.enqueue(new TextEncoder().encode("dy\nstored\n"));
+      controller.close();
+    },
+  });
+  expect(await readReady(stream.getReader())).toBe("stored\n");
+});
+
 test("independent writers accept one source version once and return duplicate to every contender", async () => {
   const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-concurrent-"));
   const path = join(directory, "ledger.sqlite");
@@ -17,9 +41,7 @@ test("independent writers accept one source version once and return duplicate to
   try {
     // All handles are open before any accept call starts. Each contender then
     // takes the real SQLite writer lock around duplicate lookup and insertion.
-    const ready = await Promise.all(readers.map(reader => reader.read()));
-    expect(ready.map(chunk => new TextDecoder().decode(chunk.value)))
-      .toEqual(Array(8).fill("ready\n"));
+    const trailing = await Promise.all(readers.map(readReady));
     for (const child of children) {
       child.stdin.write("accept\n");
       child.stdin.end();
@@ -27,7 +49,7 @@ test("independent writers accept one source version once and return duplicate to
     const results = await Promise.all(children.map(async (child, index) => {
       const reader = readers[index]!;
       const decoder = new TextDecoder();
-      let output = "";
+      let output = trailing[index]!;
       for (;;) {
         const chunk = await reader.read();
         if (chunk.done) break;
