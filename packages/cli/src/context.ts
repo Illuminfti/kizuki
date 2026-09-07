@@ -10,7 +10,7 @@ import {
   readVaultId,
 } from "@kizuki/core";
 import type { RetrievalPort } from "@kizuki/core";
-import { openLedger } from "@kizuki/core/internal";
+import { ledgerAccepted, openLedger, readLedgerMark, sealLedger } from "@kizuki/core/internal";
 import { openConfiguredRetrieval } from "./retrieval-runtime";
 import type { CliIo } from "./commands/index";
 import {
@@ -54,7 +54,10 @@ function resolveVaultOverride(value: string, config: KizukiConfig): string {
   return resolve(value);
 }
 
-function peekLedgerIdentity(dbPath: string): void {
+const LEDGER_READY_DEADLINE_MS = 3_000;
+const LEDGER_READY_POLL_MS = 250;
+
+function peekLedger(dbPath: string): { accepted: number } {
   const peek = new Database(dbPath, { readonly: true });
   try {
     const tables = peek
@@ -77,8 +80,30 @@ function peekLedgerIdentity(dbPath: string): void {
         `vault ledger has no usable schema version: ${dbPath}; run: kizuki init`,
       );
     }
+    return { accepted: ledgerAccepted(peek) };
   } finally {
     peek.close();
+  }
+}
+
+/**
+ * Identity intact but the ledger reads short of the mark sealed at the last
+ * close: the store is still coming up, or it lost rows with kizuki.db-wal.
+ * Neither is a count a command may print. Each poll reopens the file so a
+ * store still being restored is seen once it lands; then fail closed.
+ */
+function awaitLedgerMark(vaultPath: string, dbPath: string): void {
+  const mark = readLedgerMark(vaultPath);
+  const deadline = Date.now() + LEDGER_READY_DEADLINE_MS;
+  let readable = peekLedger(dbPath).accepted;
+  while (mark !== null && readable < mark) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `vault ledger not ready: ${readable} of ${mark} sealed events readable after ${LEDGER_READY_DEADLINE_MS}ms: ${dbPath}; the store is still restoring or lost kizuki.db-wal. Do not run kizuki init`,
+      );
+    }
+    Bun.sleepSync(LEDGER_READY_POLL_MS);
+    readable = peekLedger(dbPath).accepted;
   }
 }
 
@@ -101,7 +126,7 @@ export function assertVault(path: string): string {
       `vault ledger missing: ${absolutePath}; run: kizuki init ${absolutePath}`,
     );
   }
-  peekLedgerIdentity(dbPath);
+  awaitLedgerMark(absolutePath, dbPath);
   assertVaultControl(absolutePath);
   // Remint a snapshot-cloned identity once this volume lands on a new machine.
   ensureVaultId(absolutePath);
@@ -148,10 +173,12 @@ export async function withVault<T>(
         retrievalUnavailable = true;
       }
     }
-    return await fn({ configPath: path, vaultPath, db, store,
+    const result = await fn({ configPath: path, vaultPath, db, store,
       ...(retrieval === undefined ? {} : { retrieval }),
       ...(retrievalUnavailable === undefined ? {} : { retrievalUnavailable }),
     });
+    sealLedger(vaultPath, db);
+    return result;
   } finally {
     try { await retrieval?.close(); } finally { db.close(); }
   }

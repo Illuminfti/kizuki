@@ -16,6 +16,8 @@ export interface CliHelpers {
     overrides?: Record<string, string | undefined>,
   ): Record<string, string | undefined>;
   runCli(env: Record<string, string | undefined>, ...args: string[]): CliResult;
+  /** Same environment rules as runCli; resolves when the process exits. */
+  runCliAsync(env: Record<string, string | undefined>, ...args: string[]): Promise<CliResult>;
   tempDir(prefix?: string): string;
   tempVault(): {
     env: Record<string, string | undefined>;
@@ -48,10 +50,9 @@ export function createHelpers(): CliHelpers {
     };
   };
 
-  const runCli = (
+  const spawnPlan = (
     env: Record<string, string | undefined>,
-    ...args: string[]
-  ): CliResult => {
+  ): { env: Record<string, string>; cwd: string } => {
     const home = env.HOME ?? tempDir("kizuki-home-");
     const spawnEnv: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) {
@@ -69,10 +70,19 @@ export function createHelpers(): CliHelpers {
       if (value !== undefined) spawnEnv[key] = value;
     }
 
-    const result = Bun.spawnSync([process.execPath, mainPath, ...args], {
+    return {
       env: spawnEnv,
       // Bun may initialize a HOME-relative cache before CLI config rejects HOME.
       cwd: isAbsolute(home) ? process.cwd() : tempDir("kizuki-cli-cwd-"),
+    };
+  };
+
+  const runCli = (
+    env: Record<string, string | undefined>,
+    ...args: string[]
+  ): CliResult => {
+    const result = Bun.spawnSync([process.execPath, mainPath, ...args], {
+      ...spawnPlan(env),
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -81,6 +91,23 @@ export function createHelpers(): CliHelpers {
       stderr: result.stderr.toString(),
       stdout: result.stdout.toString(),
     };
+  };
+
+  const runCliAsync = async (
+    env: Record<string, string | undefined>,
+    ...args: string[]
+  ): Promise<CliResult> => {
+    const child = Bun.spawn([process.execPath, mainPath, ...args], {
+      ...spawnPlan(env),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    return { exitCode, stderr, stdout };
   };
 
   const writeNotes = (
@@ -126,6 +153,7 @@ export function createHelpers(): CliHelpers {
     },
     isolatedEnv,
     runCli,
+    runCliAsync,
     tempDir,
     tempVault,
     writeNotes,

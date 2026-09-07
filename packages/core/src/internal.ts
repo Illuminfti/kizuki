@@ -3,5 +3,6 @@
  * through accept, purge, ingest, and the receipted writer for mutation.
  */
 export { openLedger } from "./ledger/db";
+export { ledgerAccepted, readLedgerMark, sealLedger } from "./ledger/mark";
 export { parseSqliteRuntime, readSqliteRuntime } from "./ledger/runtime";
 export type { SqliteRuntime } from "./ledger/runtime";

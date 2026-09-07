@@ -10,7 +10,7 @@ export function vaultIdPath(vaultPath: string): string {
   return join(vaultPath, VAULT_ID_PATH);
 }
 
-function readOwnedLine(path: string): string | null {
+export function readOwnedLine(path: string): string | null {
   if (!existsSync(path)) return null;
   const value = readFileSync(path, "utf8").split("\n")[0]?.trim() ?? "";
   return value.length === 0 ? null : value;
@@ -45,7 +45,7 @@ function readMachineId(): string | null {
   return readSystemIdent("/etc/machine-id");
 }
 
-function writeOwnedFile(path: string, body: string, exclusive: boolean): void {
+export function writeOwnedFile(path: string, body: string, exclusive: boolean): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   if (exclusive) {
     writeFileSync(path, body, { flag: "wx", mode: 0o600 });

@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join, resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import { listConnections, restoreVault, verifyBackup } from "@kizuki/core";
+import { sealLedger } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
 import { connectionStateIsCredentialFree } from "../connections";
 import { openVaultDb } from "../context";
@@ -97,6 +98,7 @@ export const restoreCommand: Command = {
       io.out(`connection_state=${connectionState}`);
       const derived = tryRefreshDerived(db, target);
       for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
+      sealLedger(target, db);
     } finally {
       db.close();
     }
