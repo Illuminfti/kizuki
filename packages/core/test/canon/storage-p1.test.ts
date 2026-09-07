@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { applyCanonWrite } from "../../src/canon/apply";
 import { ownerEdited, resolveTarget } from "../../src/canon/arbiter";
@@ -28,7 +28,10 @@ describe("canon storage p1", () => {
   test("readPage treats a filesystem failure as unreadable, not missing", () => {
     const live = canonFixture();
     fixtures.push(live);
-    mkdirSync(join(live.vault, "people", "grace.md"), { recursive: true });
+    mkdirSync(join(live.vault, "people"), { recursive: true, mode: 0o700 });
+    chmodSync(join(live.vault, "people"), 0o700);
+    mkdirSync(join(live.vault, "people", "grace.md"), { mode: 0o700 });
+    chmodSync(join(live.vault, "people", "grace.md"), 0o700);
     let error: unknown;
     try {
       readPage(live.io, "people/grace.md");
@@ -101,7 +104,8 @@ describe("canon storage p1", () => {
   test("rebuild keeps a schema-invalid page so the arbiter cannot fork it", async () => {
     const live = canonFixture();
     fixtures.push(live);
-    mkdirSync(join(live.vault, "people"));
+    mkdirSync(join(live.vault, "people"), { recursive: true, mode: 0o700 });
+    chmodSync(join(live.vault, "people"), 0o700);
     writeFileSync(
       join(live.vault, "people", "grace.md"),
       serializePage({
@@ -115,6 +119,7 @@ describe("canon storage p1", () => {
         },
         body: "Hand-written page missing taint.\n",
       }),
+      { mode: 0o600 },
     );
 
     const rebuilt = rebuildPageIndex(live.io);
@@ -180,6 +185,7 @@ describe("canon storage p1", () => {
         },
         body: "Invalid duplicate.\n",
       }),
+      { mode: 0o600 },
     );
 
     expect(() => rebuildPageIndex(live.io)).toThrow(/page index rebuild refused/);

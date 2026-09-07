@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { lstatSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
@@ -69,22 +70,31 @@ export class CanonPageUnreadable extends Error {
   }
 }
 
-function fsCode(error: unknown): string {
+function fsCode(error: unknown, path?: string): string {
   if (typeof error === "object" && error !== null && "code" in error) {
     const code = error.code;
     if (typeof code === "string" && /^[A-Z][A-Z0-9_]+$/.test(code)) return code;
+  }
+  // Native capability refusals often wrap EISDIR as a generic unsafe/io
+  // error. A final directory component stays EISDIR; absence stays ENOENT
+  // only when the original error named it.
+  if (path !== undefined) {
+    try {
+      if (lstatSync(path).isDirectory()) return "EISDIR";
+    } catch {
+      /* Keep the mapped capability code. */
+    }
   }
   return "EIO";
 }
 
 export function readPage(io: CanonIo, relPath: string): ExistingPage | null {
   assertStoredPageRelPath(relPath);
-  let path: string;
+  const vaultPath = resolve(io.vault_path);
+  const path = join(vaultPath, relPath);
   let bytes: Buffer;
   try {
-    const vaultPath = resolve(io.vault_path);
     const borrowed = canonFilesFor(io), files = borrowed ?? openCanonFiles(vaultPath);
-    path = join(vaultPath, relPath);
     try {
       const snapshot = files.read(relPath);
       if (snapshot === null) return null;
@@ -92,8 +102,9 @@ export function readPage(io: CanonIo, relPath: string): ExistingPage | null {
       finally { snapshot.close(); }
     } finally { if (borrowed === undefined) files.close(); }
   } catch (error) {
-    if (fsCode(error) === "ENOENT") return null;
-    throw new CanonPageUnreadable(relPath, fsCode(error));
+    const code = fsCode(error, path);
+    if (code === "ENOENT") return null;
+    throw new CanonPageUnreadable(relPath, code);
   }
   const content = bytes.toString("utf8");
   return {

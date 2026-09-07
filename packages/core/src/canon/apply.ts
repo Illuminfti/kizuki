@@ -42,6 +42,7 @@ import { initCanon } from "./schema";
 import { readOwnedCanonPage, requireCanonFiles, snapshotCanonIo, withCanonMutationSync } from "./io";
 import { assertVaultMutationScope, VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import {
+  CanonPageUnreadable,
   insertReceiptRow,
   mintId,
   nowOf,
@@ -589,7 +590,15 @@ export function applyPurgeRewrite(
   else assertStoredPageRelPath(input.rel_path);
   if (io.db.inTransaction) throw new Error("loop byte admission requires a top-level transaction");
   initCanon(io.db);
-  const existing = readPage(io, input.rel_path);
+  let existing: ExistingPage | null;
+  try {
+    existing = readPage(io, input.rel_path);
+  } catch (error) {
+    if (error instanceof CanonPageUnreadable) {
+      throw new CanonWriteError("decision_stale", `page ${input.rel_path} is unreadable`);
+    }
+    throw error;
+  }
   if (existing === null) {
     throw new CanonWriteError("page_missing", `page ${input.rel_path} is gone`);
   }
