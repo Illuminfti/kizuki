@@ -167,6 +167,7 @@ function modelEndpoint(value: unknown): string {
   if (utf8Bytes(canonical) > MODEL_ENDPOINT_BYTES) fail("invalid_source_policy");
   return canonical;
 }
+export { modelEndpoint as normalizeSourceModelEndpoint, modelName as normalizeSourceModelName };
 function egress(value: unknown): SourceGrantPolicy["egress"] {
   if (value === "local_only") return value;
   if (!isPlainObject(value) || Object.keys(value).sort().join(",") !== "external_retention,model,model_endpoint") {
