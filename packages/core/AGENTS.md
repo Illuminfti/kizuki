@@ -24,11 +24,25 @@ Read the relevant contract under `src/contracts`, its public export from
 
 ## Rules
 
-- Do not change `kizuki.event/v1`, `kizuki.proposal/v1` / `kizuki.claim/v1`,
-  connector contracts, vault frontmatter, or exported types casually. A
-  contract change needs an explicit task, compatibility analysis, and any
-  required RFC. RFC 0002 is the binding change for claims and the receipted
-  writer; do not invent a third write path.
+- Do not change `kizuki.event/v1`, current claim contracts, connector
+  contracts, vault frontmatter, or exported types casually. A contract change
+  needs an explicit task, compatibility analysis, and any required RFC.
+  RFC 0002 is the binding change for claims and the receipted writer; do not
+  invent a third write path.
+- `kizuki.proposal/v1` is legacy migration vocabulary, not a supported new
+  proposal workflow. The current tree still contains compatibility types and
+  exports in `src/contracts/proposal.ts` and `src/index.ts`, plus internal
+  `src/staging/` adapters. Their presence is not permission to extend them.
+  The deletion target is the remaining proposal-only compatibility surface
+  after supported stored proposals and callers have migrated to claims;
+  preserve historical decoding until its replacement is verified.
+  Current work belongs in `src/claims/`, `src/canon/`, and the versioned
+  contracts and port registry under `src/contracts/`.
+  Verify migration with `test/migration.test.ts` and
+  `test/claims/rejection-migration.test.ts`, retained extraction compatibility
+  with `test/serve/extract-legacy.test.ts`, and the retired public write paths
+  with `test/staging/no-return.test.ts`. These tests establish distinct
+  boundaries; a passing migration does not prove all legacy exports removed.
 - Keep the ledger append-only. Do not update an accepted event to simulate
   correction or deletion.
 - Canon mutation remains reachable only through the receipted writer
@@ -43,8 +57,8 @@ Read the relevant contract under `src/contracts`, its public export from
   never a competing record.
 - Enforce identity, grant, sensitivity, scope, rate, and audit policy below
   adapters and prompts.
-- Preserve total provenance for every proposal, claim, edge, search record, and
-  purge consequence.
+- Preserve total provenance for every legacy migration record, claim, edge,
+  search record, and purge consequence.
 - Derived tables must be disposable. A clean rebuild must reproduce observable
   results and authorization behavior.
 - Derived retrieval sits behind a versioned port, not inside core
