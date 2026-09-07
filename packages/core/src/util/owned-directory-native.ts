@@ -245,12 +245,13 @@ long kizuki_read_directory(int descriptor, unsigned char *out, unsigned long cap
   for (unsigned long offset=0; offset<(unsigned long)count;) {
     if ((unsigned long)count-offset < 24) return -22;
     unsigned short length=*(unsigned short *)(bytes+offset+16);
+    if (length < 24 || length > 1048 || offset+length > (unsigned long)count) return -22;
+    if (*(unsigned long *)(bytes+offset) == 0) { offset+=length; continue; }
     unsigned short namesize=*(unsigned short *)(bytes+offset+18);
-    if (length < 24 || length > 1048 || offset+length > (unsigned long)count ||
-        namesize < 1 || namesize > 255 || 21UL+namesize >= length) return -22;
+    if (namesize < 1 || namesize > 255 || 21UL+namesize >= length) return -22;
     if (bytes[offset+21+namesize] != 0) return -22;
     for (int i=0; i<namesize; i++) if (bytes[offset+21+i] == 0) return -22;
-    unsigned short normalized=(20UL+namesize+7UL)&~7UL;
+    unsigned short normalized=(20UL+namesize+3UL)&~3UL;
     if (used+normalized > capacity) return -22;
     for (int i=0; i<normalized; i++) out[used+i]=0;
     *(unsigned short *)(out+used+16)=normalized; out[used+18]=bytes[offset+20];
@@ -273,7 +274,7 @@ function loadDarwinOwnedDirectoryNative() {
     renameat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.ptr], returns: FFIType.i32 },
     unlinkat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
     renameatx_np: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
-    getdirentries64: { args: [FFIType.i32, FFIType.ptr, FFIType.u64, FFIType.ptr], returns: FFIType.i64_fast },
+    __getdirentries64: { args: [FFIType.i32, FFIType.ptr, FFIType.u64, FFIType.ptr], returns: FFIType.i64_fast },
     __error: { args: [], returns: FFIType.ptr },
   });
   let reader = -1, writer = -1;
@@ -310,7 +311,7 @@ function loadDarwinOwnedDirectoryNative() {
       },
     });
     compiled = library;
-    const entries = ["openat", "fstatat", "mkdirat", "renameat", "unlinkat", "renameatx_np", "getdirentries64", "__fcntl_nocancel", "__error"] as const;
+    const entries = ["openat", "fstatat", "mkdirat", "renameat", "unlinkat", "renameatx_np", "__getdirentries64", "__fcntl_nocancel", "__error"] as const;
     const addresses = new BigUint64Array(entries.map(name => {
       const address: unknown = Reflect.get(libc.symbols[name], "ptr");
       if (typeof address !== "number" || !Number.isSafeInteger(address) || address <= 0) throw new Error();
