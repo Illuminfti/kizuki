@@ -99,7 +99,7 @@ describe("doctor liveness", () => {
     expect(result.stdout).toContain("origin machine=0 human=0");
     expect(result.stdout).toContain("calibration write_rate=-");
     expect(result.stdout).toContain("write_check=no-extractions");
-    expect(result.stdout).toContain("confidence_check=insufficient-uncapped-model-claims samples=0 capped=0");
+    expect(result.stdout).toContain("confidence_check=insufficient-uncapped-model-claims samples=0 unevaluable=0");
     expect(result.exitCode).toBe(0);
   });
 

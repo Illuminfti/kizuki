@@ -283,13 +283,17 @@ also runs `PRAGMA integrity_check` on the vault ledger; JSON then reports
 that result in `ledger.integrity_check` (otherwise `null`). Exit 1 when
 the report is not ok. Calibration reports distinguish an evaluated check from
 insufficient evidence. The write-rate lower bound always applies to nonempty
-extractions. Its ceiling applies when current-window dedup observations could
-support it (`lower-bound-only` otherwise); one repeated fact does not make an
-otherwise fresh population mature. Confidence checks require eight uncapped
-model claims in the same window, sampling at most the newest 10,000 rows. Exactly capped model-inference scores are
-reported separately because stored confidence cannot distinguish a policy cap
-from a model that actually chose that score, even after corroboration. An
-unevaluable check is not proof of successful model calibration.
+extractions. Its ceiling applies when current receipt dedup observations could
+support it (`lower-bound-only` otherwise). Residual current model duplicates are
+checked separately against older eligible live facts; claim observations have no
+run linkage and cannot be added to a receipt denominator. The JSON reports
+comparison and sampling limits explicitly. Confidence checks require eight
+uncapped model claims in the same window, sampling at most the newest 10,000 rows.
+An initial claim with multiple distinct external events or matching native owner
+attestation can retain a genuine score of 0.5. Other exact-half inference scores
+are reported as unevaluable: corroboration keeps the initial provenance while
+aggregating confidence, so it cannot always reveal which observation supplied the
+score. An unevaluable check is not proof of successful model calibration.
 
 Successful CLI writes seal `.kizuki/ledger-mark` with
 the accepted event total, including purge receipts. Reads preserve this file.

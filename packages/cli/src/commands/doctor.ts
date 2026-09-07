@@ -426,7 +426,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   }
   const calibration = report.serve.calibration;
   io.out(
-    `calibration write_rate=${calibration.write_rate === null ? "-" : calibration.write_rate.toFixed(3)} write_check=${calibration.write_rate_evaluation} spread=${calibration.confidence_spread === null ? "-" : calibration.confidence_spread.toFixed(3)} confidence_check=${calibration.confidence_evaluation} samples=${calibration.confidence_samples} capped=${calibration.confidence_capped} failures=${calibration.failures.length}`,
+    `calibration write_rate=${calibration.write_rate === null ? "-" : calibration.write_rate.toFixed(3)} write_check=${calibration.write_rate_evaluation} spread=${calibration.confidence_spread === null ? "-" : calibration.confidence_spread.toFixed(3)} confidence_check=${calibration.confidence_evaluation} samples=${calibration.confidence_samples} unevaluable=${calibration.confidence_unevaluable} duplicate_check=${calibration.duplicate_evaluation} duplicates=${calibration.residual_duplicate_claims} failures=${calibration.failures.length}`,
   );
   const ports = report.effective_config["ports"];
   if (typeof ports === "object" && ports !== null && "llm" in ports) {

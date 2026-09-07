@@ -248,8 +248,11 @@ export interface CalibrationDoctor {
   readonly write_rate_evaluation: "no-extractions" | "lower-bound-only" | "evaluated";
   readonly confidence_evaluation: "insufficient-uncapped-model-claims" | "evaluated";
   readonly confidence_samples: number;
-  /** Exactly capped model-inference scores cannot reveal the original model score. */
-  readonly confidence_capped: number;
+  /** Stored confidence does not reveal whether the policy cap supplied the score. */
+  readonly confidence_unevaluable: number;
+  readonly residual_duplicate_claims: number;
+  readonly duplicate_evaluation: "limited" | "evaluated";
+  readonly limitations: string[];
   readonly canon_writes_today: number;
   readonly top_subjects: { subject: string; writes: number }[];
   readonly failures: string[];

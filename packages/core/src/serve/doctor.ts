@@ -5,6 +5,9 @@ import { isMachineOriginPath } from "../canon/origin";
 import { formatProducerDiagnostic } from "../producer/diagnostics";
 import { pendingRetrievalOps } from "../claims/store";
 import { SINGLE_SOURCE_CAP } from "../claims/authority";
+import { objectsMatch } from "../claims/hash";
+import { sourceEventsAllowed } from "../ledger/source-grants";
+import { requireExternalEvents } from "../ledger/event-origin";
 import { readDerivedMeta } from "../derived-meta";
 import { inspectConnectionStateRecovery } from "../ledger/connection-state";
 import { inspectCheckpoints, inspectConnections } from "../ledger/connections";
@@ -120,48 +123,63 @@ function stdev(values: number[]): number | null {
   return Math.sqrt(variance);
 }
 
+interface CalibrationClaim {
+  claim_id: string; claim_key: string | null; object: string | null; polarity: string;
+  asserted_at: string; provenance: string; confidence: number; authority: string;
+  corroboration: number; body: string;
+}
+const CALIBRATION_LIMIT = 10000;
+function provenanceOf(row: CalibrationClaim): string[] {
+  const value: unknown = JSON.parse(row.provenance);
+  if (!Array.isArray(value) || value.length === 0 || value.length > 1000 || !value.every(id => typeof id === "string")) throw new Error("invalid calibration provenance");
+  return [...new Set(value)];
+}
+
 function calibration(db: Database, receipts: RunReceipt[], now: string): CalibrationDoctor {
   const failures: string[] = [];
-  if (receipts.length === 0) {
-    return {
-      window_days: RUN_RECEIPT_RETENTION_DAYS,
-      write_rate: null,
-      dedup_rate: null,
-      confidence_spread: null,
-      write_rate_evaluation: "no-extractions",
-      confidence_evaluation: "insufficient-uncapped-model-claims",
-      confidence_samples: 0,
-      confidence_capped: 0,
-      canon_writes_today: 0,
-      top_subjects: [],
-      failures,
-    };
-  }
+  const limitations: string[] = ["claim observations are not linked to extraction receipts"];
+  if (receipts.length >= CALIBRATION_LIMIT) limitations.push("receipt cohort is bounded to newest 10000 runs");
+  receipts = receipts.filter(receipt => receipt.finished_at <= now);
   const extracted = receipts.reduce((sum, receipt) => sum + receipt.claims_extracted, 0);
   const written = receipts.reduce((sum, receipt) => sum + receipt.claims_written, 0);
   const deduped = receipts.reduce((sum, receipt) => sum + receipt.claims_deduped, 0);
   const writeRate = written / Math.max(1, extracted);
   const dedupRate = deduped / Math.max(1, extracted);
   const since = new Date(Date.parse(now) - RUN_RECEIPT_RETENTION_DAYS * 86_400_000).toISOString();
-  // A repeated conflict key alone is not a repeated fact: values and polarity
-  // can change legitimately. Count only residual identical live facts in this
-  // receipt window, alongside successful dedup recorded by that window's runs.
-  // The bounded newest cohort is a lower bound, never extrapolated to the vault.
-  const missedDedup = tableExists(db, "claims") ? db.query<{ n: number }, [string, string]>(`
-    SELECT coalesce(sum(n - 1), 0) AS n FROM (
-      SELECT count(*) AS n FROM (
-        SELECT claim_key, object, polarity FROM claims
-        WHERE status = 'live' AND claim_key IS NOT NULL
-          AND asserted_at >= ? AND asserted_at <= ?
-        ORDER BY asserted_at DESC, claim_id DESC LIMIT 10000
-      ) GROUP BY claim_key, object, polarity HAVING count(*) > 1
-    )`).get(since, now)?.n ?? 0 : 0;
-  // The existing ceiling assumes at least (1 - max) of extractions could have
-  // been absorbed. One repeat among otherwise new facts cannot justify it.
+  // Receipt totals and claim rows have no durable run linkage. Only observed
+  // receipt dedup can qualify the ratio ceiling; residual duplicates are a
+  // separate state failure, never added to the extracted denominator.
   const writeEvaluation: CalibrationDoctor["write_rate_evaluation"] = extracted === 0
-    ? "no-extractions"
-    : (deduped + missedDedup) / extracted < 1 - CALIBRATION_BAND.max
-      ? "lower-bound-only" : "evaluated";
+    ? "no-extractions" : dedupRate < 1 - CALIBRATION_BAND.max ? "lower-bound-only" : "evaluated";
+  const rows = tableExists(db, "claims") ? db.query<CalibrationClaim, [string, string]>(`
+    SELECT claim_id, claim_key, object, polarity, asserted_at, provenance, confidence, authority, corroboration, body
+    FROM claims WHERE status = 'live' AND producer = 'model' AND claim_key IS NOT NULL
+      AND asserted_at >= ? AND asserted_at <= ?
+    ORDER BY asserted_at DESC, claim_id DESC LIMIT 10001`).all(since, now) : [];
+  let duplicateLimited = rows.length > CALIBRATION_LIMIT;
+  let comparisons = 0, residualDuplicates = 0;
+  for (const current of rows.slice(0, CALIBRATION_LIMIT)) {
+    if (comparisons >= CALIBRATION_LIMIT) { duplicateLimited = true; break; }
+    const remaining = CALIBRATION_LIMIT - comparisons;
+    const prior = db.query<CalibrationClaim, [string, string, string, string, number]>(`
+      SELECT claim_id, claim_key, object, polarity, asserted_at, provenance, confidence, authority, corroboration, body
+      FROM claims WHERE status = 'live' AND claim_key = ?
+        AND (asserted_at < ? OR (asserted_at = ? AND claim_id < ?))
+      ORDER BY asserted_at, claim_id LIMIT ?`).all(current.claim_key!, current.asserted_at, current.asserted_at, current.claim_id, remaining + 1);
+    if (prior.length > remaining) duplicateLimited = true;
+    comparisons += Math.min(prior.length, remaining);
+    for (const old of prior.slice(0, remaining)) {
+      if (old.polarity !== current.polarity || !objectsMatch(old.object, current.object)) continue;
+      try {
+        const provenance = provenanceOf(old);
+        requireExternalEvents(db, provenance);
+        if (!sourceEventsAllowed(db, provenance, { owner: false, model: true, purpose: "derive" })) continue;
+        residualDuplicates++; break;
+      } catch { duplicateLimited = true; }
+    }
+  }
+  if (duplicateLimited) limitations.push("residual duplicate comparison is limited or has unverifiable provenance");
+  if (residualDuplicates > 0) failures.push(`residual_duplicate_claims ${residualDuplicates}`);
   // The lower bound never required dedup opportunity; retain detection of a
   // loop that extracts claims but stops writing even in an otherwise fresh vault.
   if (extracted > 0 && (writeRate < CALIBRATION_BAND.min ||
@@ -169,19 +187,31 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
     failures.push(`write_rate ${writeRate.toFixed(3)} outside [${CALIBRATION_BAND.min}, ${CALIBRATION_BAND.max}]`);
   }
   const samples = tableExists(db, "claims")
-    ? db.query<{ confidence: number; authority: string }, [string, string]>(`
-        SELECT confidence, authority FROM claims
+    ? db.query<CalibrationClaim, [string, string]>(`
+        SELECT confidence, authority, corroboration, provenance, body FROM claims
         WHERE status IN ('live', 'superseded') AND producer = 'model'
           AND asserted_at >= ? AND asserted_at <= ?
         ORDER BY asserted_at DESC, claim_id DESC LIMIT 10000
       `).all(since, now)
     : [];
-  // Re-observation increments corroboration even through the same connector;
-  // it does not mean SINGLE_SOURCE_CAP stopped applying. Original pre-cap
-  // confidence is not stored, so exact-cap inference scores are unevaluable.
-  const confidences = samples
-    .filter(row => row.authority !== "model_inference" || row.confidence !== SINGLE_SOURCE_CAP)
-    .map(row => row.confidence);
+  // Exact-half aggregates can hide either a capped observation or a genuine
+  // model score: max() retains the initial provenance, not the selected score's
+  // origin. Only initial admission with actual uncapped evidence resolves that.
+  const confidences = samples.filter(row => {
+    if (row.confidence !== SINGLE_SOURCE_CAP) return true;
+    if (row.corroboration !== 1) return false;
+    if (row.authority !== "model_inference") return true;
+    try {
+      const ids = provenanceOf(row);
+      requireExternalEvents(db, ids);
+      const events = db.query<{ event_id: string; owner_attested: number }, string[]>(`
+        SELECT e.event_id, EXISTS(SELECT 1 FROM native_owner_evidence n
+          WHERE n.event_id=e.event_id AND n.origin='correction' AND e.text=?) AS owner_attested
+        FROM events e WHERE event_id IN (${ids.map(() => "?").join(",")})`).all(row.body, ...ids);
+      return events.length === ids.length && (events.length > 1 || events.some(event => event.owner_attested === 1));
+    } catch { return false; }
+  }).map(row => row.confidence);
+  if (samples.length >= CALIBRATION_LIMIT) limitations.push("confidence cohort is bounded to newest 10000 claims");
   const spread = stdev(confidences);
   const confidenceEvaluation = confidences.length >= 8 ? "evaluated" : "insufficient-uncapped-model-claims";
   if (confidenceEvaluation === "evaluated" && spread !== null && spread < CONFIDENCE_SPREAD_MIN) {
@@ -204,13 +234,16 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
     : [];
   return {
     window_days: RUN_RECEIPT_RETENTION_DAYS,
-    write_rate: writeRate,
-    dedup_rate: dedupRate,
+    write_rate: extracted === 0 ? null : writeRate,
+    dedup_rate: extracted === 0 ? null : dedupRate,
     confidence_spread: spread,
     write_rate_evaluation: writeEvaluation,
     confidence_evaluation: confidenceEvaluation,
     confidence_samples: confidences.length,
-    confidence_capped: samples.length - confidences.length,
+    confidence_unevaluable: samples.length - confidences.length,
+    residual_duplicate_claims: residualDuplicates,
+    duplicate_evaluation: duplicateLimited ? "limited" : "evaluated",
+    limitations,
     canon_writes_today: canonToday,
     top_subjects: subjects,
     failures,

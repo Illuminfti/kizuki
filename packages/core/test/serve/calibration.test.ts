@@ -10,6 +10,8 @@ import { inspectServeDoctor } from "../../src/serve/doctor";
 import { persistRunReceipt } from "../../src/serve/receipts";
 import { emptyRunTotals } from "../../src/serve/types";
 import { writeServeIntent } from "../../src/serve/intent";
+import { setSourceGrant } from "../../src/ledger/source-grants";
+import { registerConnection } from "../../src/ledger/connections";
 
 const NOW = "2026-09-02T12:10:00.000Z";
 const dirs: string[] = [];
@@ -48,7 +50,7 @@ test("fresh distinct capped claims report healthy but explicitly unevaluable cal
     expect(report.calibration.failures).toEqual([]);
     expect(report.calibration.write_rate_evaluation).toBe("lower-bound-only");
     expect(report.calibration.confidence_evaluation).toBe("insufficient-uncapped-model-claims");
-    expect(report.calibration.confidence_capped).toBe(8);
+    expect(report.calibration.confidence_unevaluable).toBe(8);
   } finally { db.close(); }
 });
 
@@ -93,7 +95,7 @@ test("a genuine model score at the policy cap is explicitly ambiguous even after
     await population(db, { repeat: "independent", flat: 0.5 }); receipt(db, path, 16, 8, 8);
     const report = inspect(db, path);
     expect(report.calibration.confidence_evaluation).toBe("insufficient-uncapped-model-claims");
-    expect(report.calibration.confidence_capped).toBe(8);
+    expect(report.calibration.confidence_unevaluable).toBe(8);
   } finally { db.close(); }
 });
 
@@ -125,7 +127,7 @@ test("repeated live facts expose a failed deduplicator even when its receipts co
     // semantic facts instead of consolidating them. Different objects never count.
     db.query("UPDATE claims SET claim_key = 'repeated-key', object = 'same-object'").run();
     receipt(db, path, 8, 8, 0);
-    expect(inspect(db, path).calibration.failures.some(f => f.startsWith("write_rate"))).toBe(true);
+    expect(inspect(db, path).calibration.failures).toContain("residual_duplicate_claims 7");
   } finally { db.close(); }
 });
 
@@ -149,7 +151,7 @@ test("fresh uncapped scores remain evaluable without requiring corroboration", a
     const report = inspect(db, path);
     expect(report.calibration.failures).toEqual([]);
     expect(report.calibration.confidence_evaluation).toBe("evaluated");
-    expect(report.calibration.confidence_capped).toBe(0);
+    expect(report.calibration.confidence_unevaluable).toBe(0);
   } finally { db.close(); }
 });
 
@@ -174,5 +176,78 @@ test("the lower write-rate bound remains active before dedup maturity", () => {
     expect(report.calibration.write_rate_evaluation).toBe("lower-bound-only");
     expect(report.calibration.failures).toContain("write_rate 0.000 outside [0.15, 0.75]");
     expect(report.ok).toBe(false);
+  } finally { db.close(); }
+});
+
+test("initial two-event genuine half scores retain the flat-confidence health gate", async () => {
+  const { path, db } = fixture();
+  try {
+    for (let n = 0; n < 8; n++) {
+      const one = putEvent(db, { source_record_id: `multi-${n}-1` });
+      const two = putEvent(db, { source_record_id: `multi-${n}-2` });
+      const result = await insertClaim({ db, now: () => "2026-09-02T12:00:00.000Z" }, claimInput(one, {
+        producer: "model", subject: `multi-${n}`, subjects: [`multi-${n}`], body: `Multi fact ${n}`,
+        object: `value-${n}`, confidence: 0.5, provenance: [one, two],
+      }));
+      expect(result.outcome).toBe("stored");
+    }
+    receipt(db, path, 8, 8, 0);
+    expect(inspect(db, path).calibration.confidence_samples).toBe(8);
+    expect(inspect(db, path).calibration.failures).toContain("confidence_not_produced");
+    db.query("UPDATE claims SET provenance=json_array(json_extract(provenance,'$[0]'),json_extract(provenance,'$[0]'))").run();
+    expect(inspect(db, path).calibration.confidence_unevaluable).toBe(8);
+  } finally { db.close(); }
+});
+
+test("current residual duplicates compare against older eligible facts without changing the receipt ratio", async () => {
+  const { path, db } = fixture();
+  try {
+    const old = await population(db);
+    db.query("UPDATE claims SET asserted_at='2026-08-01T00:00:00.000Z'").run();
+    for (let n = 0; n < old.length; n++) {
+      const event = putEvent(db, { source_record_id: `current-${n}` });
+      const result = await insertClaim({ db, now: () => "2026-09-02T12:00:00.000Z" }, claimInput(event, {
+        producer: "model", subject: `current-${n}`, subjects: [`current-${n}`], body: `Current fact ${n}`, object: `current-${n}`,
+      }));
+      if (result.outcome !== "stored") throw new Error("current fixture not stored");
+      db.query("UPDATE claims SET claim_key=?,object=? WHERE claim_id=?").run(old[n]!.claim_key, old[n]!.object, result.claim.claim_id);
+    }
+    receipt(db, path, 8, 8, 0);
+    const cal = inspect(db, path).calibration;
+    expect(cal.failures).toContain("residual_duplicate_claims 8");
+    expect(cal.write_rate_evaluation).toBe("lower-bound-only");
+    expect(cal.residual_duplicate_claims).toBe(8);
+    expect(cal.duplicate_evaluation).toBe("evaluated");
+    db.query("UPDATE claims SET polarity='negative' WHERE asserted_at >= '2026-09-02'").run();
+    expect(inspect(db, path).calibration.residual_duplicate_claims).toBe(0);
+    db.query("UPDATE claims SET polarity='positive'").run();
+    const source = "01JC0000000000000000000001";
+    registerConnection(db, "fixture", source);
+    setSourceGrant(db, { source_key: source, expected_revision: 0, operation_id: "calibration-enable-consent",
+      policy: { purposes: ["capture", "recall"], allowed_fields: ["text", "subjects", "attachments", "metadata"],
+        retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" } });
+    // Consent is now enforced: the historical unbound observations cannot be
+    // reused by a model, so they do not prove a missed dedup opportunity.
+    expect(inspect(db, path).calibration.residual_duplicate_claims).toBe(0);
+    db.query("UPDATE claims SET provenance='[\"missing-event\"]' WHERE asserted_at < '2026-09-02'").run();
+    expect(inspect(db, path).calibration.duplicate_evaluation).toBe("limited");
+  } finally { db.close(); }
+});
+
+test("a capped aggregate cannot borrow initial multi-event provenance as uncapped evidence", async () => {
+  const { path, db } = fixture();
+  try {
+    for (let n = 0; n < 8; n++) {
+      const one = putEvent(db, { source_record_id: `aggregate-${n}-1` });
+      const two = putEvent(db, { source_record_id: `aggregate-${n}-2` });
+      const common = { producer: "model" as const, subject: `aggregate-${n}`, subjects: [`aggregate-${n}`], object: `value-${n}` };
+      await insertClaim({ db, now: () => "2026-09-02T12:00:00.000Z" }, claimInput(one, { ...common, body: `Initial ${n}`, confidence: 0.3, provenance: [one, two] }));
+      const third = putEvent(db, { source_record_id: `aggregate-${n}-3` });
+      const repeated = await insertClaim({ db, now: () => "2026-09-02T12:01:00.000Z" }, claimInput(third, { ...common, body: `Repeated ${n}`, confidence: 0.9 }));
+      expect(repeated.outcome).toBe("duplicate");
+      if (repeated.outcome === "duplicate") expect(repeated.claim.confidence).toBe(0.5);
+    }
+    receipt(db, path, 16, 8, 8);
+    expect(inspect(db, path).calibration.confidence_unevaluable).toBe(8);
   } finally { db.close(); }
 });
