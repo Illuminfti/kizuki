@@ -19,6 +19,14 @@ directory. Vault aliases are `[A-Za-z][A-Za-z0-9_-]{0,63}`. Writes are
 atomic under a lock. Port, model, budget, and sensitivity selection live
 in `<vault>/.kizuki/serve.toml` and appear in `doctor`.
 
+Value options also accept `--key=value`, including `--vault=PATH`. Use that
+form when a value starts with `--`; everything after the first `=` is the
+literal value. A standalone `--` ends option parsing, including global
+`--vault` extraction, so `kizuki query -- --example` searches for `--example`.
+Repeated options or flags are errors, even across the two value spellings.
+Flags such as `--json` never take a value. Explicit empty values are passed to
+the command's validation; missing values and unknown options are usage errors.
+
 `--json` prints a `kizuki.cli.<verb>/v1` envelope with `status`, `data`,
 `degraded`, and `warnings`. Diagnostics stay on stderr.
 
