@@ -8,7 +8,7 @@ import type { CliIo } from '../src/commands';
 const h = createHelpers();
 afterEach(h.cleanup);
 const policy = { purposes: ['capture', 'recall', 'session'], allowed_fields: ['text', 'subjects', 'metadata', 'attachments'], retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' };
-test('app status refuses ledger replacement during read admission', async () => {
+test.each([false, true])('app status refuses ledger replacement during read admission: schema error=%s', async schemaError => {
     const setup = h.tempVault(), path = join(setup.vault, '.kizuki', 'kizuki.db');
     const io: CliIo = { env: setup.env, vaultOverride: setup.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out() {}, err() {}, prompt: async () => '' };
     const host = createAppHost(io), original = Database.prototype.query;
@@ -17,6 +17,7 @@ test('app status refuses ledger replacement during read admission', async () => 
         if (armed && args[0].includes('FROM agents LIMIT 0')) {
             armed = false;
             renameSync(path, `${path}.held`);
+            if (schemaError) throw Error('synthetic schema failure after custody replacement');
         }
         return original.apply(this, args);
     } as typeof original;

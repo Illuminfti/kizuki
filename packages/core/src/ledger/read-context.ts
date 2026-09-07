@@ -64,7 +64,11 @@ export function openLedgerRead(vaultPath: string, options: { audit?: boolean } =
           "SELECT input_ids, integrity, outcome, batch_mode, model_inputs, deferred_inputs FROM extract_batches LIMIT 0",
         ]) handle.query(query).all();
       }
-      catch { throw new LedgerReadError("migration_required"); }
+      catch {
+        // A schema error can follow an inode swap; custody takes precedence.
+        assertCurrent();
+        throw new LedgerReadError("migration_required");
+      }
       assertCurrent();
       return handle;
     } catch (error) { handle.close(); throw error; }
