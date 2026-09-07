@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import {
   MODEL_PRODUCER_ID,
   PortError,
@@ -12,7 +12,8 @@ import {
   runToCompletion,
   readRetrievalDocuments,
   readAppModelConfiguration,
-  readAppManagedModelCredential,
+  classifyAppModelCredential,
+  readAppModelFileCredential,
   type ClaimsIo,
   type LlmPort,
   type PortContext,
@@ -155,10 +156,9 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
   let secret: string | null = null;
   if (selected.secret_ref !== null) {
     try {
-      const managed = `file:${join(resolve(options.vaultPath), ".kizuki/app-model")}/`;
-      secret = selected.secret_ref.startsWith(managed)
-        ? readAppManagedModelCredential(options.vaultPath, document.revision, selected.secret_ref)
-        : await tokenResolver(selected.secret_ref, options.env)(selected.secret_ref);
+      secret = classifyAppModelCredential(options.vaultPath, selected.secret_ref) === "env"
+        ? await tokenResolver(selected.secret_ref, options.env)(selected.secret_ref)
+        : readAppModelFileCredential(options.vaultPath, document.revision, selected.secret_ref);
     } catch {
       runtimeError("configured secret reference cannot be resolved");
     }

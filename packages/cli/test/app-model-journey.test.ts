@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { inspectSourceGrant, listCanonReceipts, listRunReceipts, type SourceGrantPolicy } from '@kizuki/core';
 import { openLedger } from '@kizuki/core/testing';
@@ -115,6 +115,23 @@ test('authenticated first use separates connection tests, source permission and 
                 expect(refused.result.run.model_calls).toBe(0);
                 expect(endpoint.requests).toHaveLength(2);
             } finally { chmodSync(path, path === credentialPath ? 0o600 : 0o700); }
+        }
+        const configPath = join(vault, '.kizuki/serve.toml'), originalConfig = readFileSync(configPath, 'utf8');
+        const aliasParent = join(env.HOME!, 'model-key-alias');
+        symlinkSync(join(vault, '.kizuki/app-model'), aliasParent);
+        chmodSync(join(vault, '.kizuki/app-model'), 0o755);
+        try {
+            for (const alias of [config.ports.llm.secret_ref.replace('/.kizuki/', '//.kizuki/'),
+                'file:' + join(aliasParent, credentialPath.split('/').at(-1)!)]) {
+                writeFileSync(configPath, originalConfig.replace(JSON.stringify(config.ports.llm.secret_ref), JSON.stringify(alias)));
+                const aliased = (await call('model_status')).data;
+                expect(aliased.credential).toBe('unavailable');
+                expect((await done((await call('model_test', { expected_revision: aliased.revision })).data.operation_id)).state).toBe('failed');
+                expect((await run()).state).toBe('failed');
+                expect(endpoint.requests).toHaveLength(2);
+            }
+        } finally {
+            writeFileSync(configPath, originalConfig); chmodSync(join(vault, '.kizuki/app-model'), 0o700); unlinkSync(aliasParent);
         }
         const db = openLedger(join(vault, '.kizuki/kizuki.db'));
         try {
