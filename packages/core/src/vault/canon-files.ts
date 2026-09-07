@@ -100,6 +100,8 @@ export interface CanonFiles {
   create(path: string, bytes: Uint8Array): CanonFileSnapshot;
   /** Recover only the exact receipt temp beside this live expected target. */
   resumeExactTemporary(target: CanonFileSnapshot, receiptId: string, bytes: Uint8Array): CanonFileSnapshot | null;
+  /** Atomically publish this scope's complete creation into an absent entry. */
+  publish(created: CanonFileSnapshot, path: string): CanonFileSnapshot;
   replace(created: CanonFileSnapshot, expected: CanonFileSnapshot): CanonFileSnapshot;
   remove(expected: CanonFileSnapshot): void;
   close(): void;
@@ -276,6 +278,32 @@ class NativeCanonFiles implements CanonFiles {
         state.resumeTarget = target;
         return recovered;
       } catch (error) { recovered.close(); throw error; }
+    });
+  }
+  publish(created: CanonFileSnapshot, path: string): CanonFileSnapshot {
+    return guarded(() => {
+      const source = this.#record(created);
+      if (!source.created || source.resumeTarget !== undefined || source.path === path) fail("handle");
+      const components = parts(path), name = components.pop()!;
+      this.#verify(source);
+      const parent = this.#directory(components); if (parent === null) fail("changed");
+      try {
+        const from = nameBytes(parts(source.path).at(-1)!), to = nameBytes(name);
+        const renamed = result(api().symbols.renameChildNoReplace(source.parent, ptr(from), parent, ptr(to)));
+        if (renamed === -17) fail("conflict");
+        if (renamed !== 0) fail("io");
+        // Absence is enforced by the native no-replace operation, including
+        // entries appearing after directory resolution. No overwrite fallback.
+        try {
+          fsyncSync(source.parent); fsyncSync(parent);
+          const published = this.read(path); if (!published) fail("changed");
+          const observed = this.#record(published);
+          if (!sameIdentity(observed.stat, source.stat) || !observed.bytes.equals(source.bytes)) {
+            published.close(); fail("changed");
+          }
+          return published;
+        } finally { this.#release(created); }
+      } finally { closeSync(parent); }
     });
   }
   replace(created: CanonFileSnapshot, expected: CanonFileSnapshot): CanonFileSnapshot {

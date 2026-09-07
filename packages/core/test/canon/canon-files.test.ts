@@ -89,6 +89,44 @@ qualified("exclusive creation preserves existing bytes and requires an owned cre
   } finally { files.close(); }
 });
 
+qualified("publishes a complete owned stage only into an absent target", () => {
+  const root = fixture(), files = openCanonFiles(root);
+  try {
+    files.ensureDirectory("settings");
+    const stage = files.create("settings/stage.tmp", Buffer.from("complete settings"));
+    const published = files.publish(stage, "settings/config.toml");
+    expect(Buffer.from(published.bytes).toString()).toBe("complete settings");
+    expect(lstatSync(join(root, "settings/config.toml")).mode & 0o777).toBe(0o600);
+    expect(files.read("settings/stage.tmp")).toBeNull();
+    expect(() => stage.bytes).toThrow("canon_files_handle");
+    const next = files.create("settings/next.tmp", Buffer.from("new settings"));
+    expect(() => files.publish(next, "settings/config.toml")).toThrow("canon_files_conflict");
+    expect(Buffer.from(next.bytes).toString()).toBe("new settings");
+    expect(readFileSync(join(root, "settings/config.toml"), "utf8")).toBe("complete settings");
+    files.remove(next); published.close();
+  } finally { files.close(); }
+});
+
+qualified("publication rejects borrowed or changed stages and unsafe target paths", () => {
+  const root = fixture(), files = openCanonFiles(root), foreign = openCanonFiles(fixture());
+  try {
+    const created = files.create("stage.tmp", Buffer.from("synthetic"));
+    const borrowed = files.read("stage.tmp")!;
+    expect(() => files.publish(borrowed, "config.toml")).toThrow("canon_files_handle");
+    expect(() => foreign.publish(created, "config.toml")).toThrow("canon_files_handle");
+    expect(() => files.publish(created, "stage.tmp")).toThrow("canon_files_handle");
+    expect(() => files.publish(created, "../escaped.toml")).toThrow("canon_files_invalid_path");
+    expect(() => files.publish(created, "missing/config.toml")).toThrow("canon_files_changed");
+    mkdirSync(join(root, "directory"));
+    expect(() => files.publish(created, "directory")).toThrow("canon_files_conflict");
+    writeFileSync(join(root, "stage.tmp"), "owner edit");
+    expect(() => files.publish(created, "config.toml")).toThrow("canon_files_changed");
+    expect(existsSync(join(root, "config.toml"))).toBe(false);
+    expect(readFileSync(join(root, "stage.tmp"), "utf8")).toBe("owner edit");
+    borrowed.close(); created.close();
+  } finally { files.close(); foreign.close(); }
+});
+
 qualified("rejects foreign, forged and closed handles with private typed errors", () => {
   const first = openCanonFiles(fixture()), second = openCanonFiles(fixture());
   try {
