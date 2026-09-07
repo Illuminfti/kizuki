@@ -44,7 +44,10 @@ Malformed X and Omnivore exports must be refused before enrollment. ICS, WhatsAp
 and Pocket parse during capture; these must return a failed run with zero stored
 events and retain a public failed-run summary. Their retry must fail again without
 creating evidence. Empty and post-revocation queries explicitly permit the
-documented degraded floor to test absence; positive queries do not use this flag. Every expected nonzero
+documented degraded floor to test absence. Only post-purge and denied-reimport
+absence may carry `index-behind-ledger`, because physical erasure changes the
+event count recorded by the CLI cursor. Other degradation fails. Positive queries
+require status `ok`, no degradation and no warnings; they do not use this flag. Every expected nonzero
 exit is checked explicitly; unexpected output, counts or missing steps fail the
 proof rather than receiving success credit.
 

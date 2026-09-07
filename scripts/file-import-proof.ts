@@ -15,8 +15,8 @@ const PRODUCER_FILES = ["scripts/file-import-proof.ts", "scripts/file-import-pro
 const TIMEOUT = 30_000, STREAM_LIMIT = 65_536;
 const hash = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 function check(ok: unknown, code: string): asserts ok { if (!ok) throw new Error(code); }
-type Observation = { stored: number | null; duplicates: number | null; proposals: number | null; errors: number | null; withheld: number | null; hit_ids: string[]; consent: string | null; purge: string | null; last_run: string | null };
-const empty = (): Observation => ({ stored: null, duplicates: null, proposals: null, errors: null, withheld: null, hit_ids: [], consent: null, purge: null, last_run: null });
+type Observation = { stored: number | null; duplicates: number | null; proposals: number | null; errors: number | null; degraded: string[]; withheld: number | null; hit_ids: string[]; consent: string | null; purge: string | null; last_run: string | null };
+const empty = (): Observation => ({ stored: null, duplicates: null, proposals: null, errors: null, degraded: [], withheld: null, hit_ids: [], consent: null, purge: null, last_run: null });
 interface Step { id: string; command: string[]; expected_exit: number; exit_code: number; passed: boolean; stdout_sha256: string; stderr_sha256: string; observation: Observation; failure: string | null; }
 interface CaseReceipt { format: FileFormat; connector_id: string; source_key: string | null; invalid_source_key: string | null; expected_events: number; expected_proposals: number; expected_repeat_duplicates: number; expected_last_batch_stored: number; steps: Step[]; failures: string[]; }
 export interface FileImportArgs { artifact: string; artifact_proof: string; report: string; }
@@ -48,10 +48,25 @@ export function importCounts(stdout: string, expectedStored: number, expectedErr
   check(values.every(Number.isSafeInteger) && values[0] === expectedStored && values[1] === expectedDuplicates && values[2] === expectedProposals && values[3] === 0 && values[4] === 0 && values[5] === expectedErrors, "unexpected-import-counts");
   return { ...empty(), stored: values[0]!, duplicates: values[1]!, proposals: values[2]!, errors: values[5]! };
 }
-export function queryObservation(stdout: string, stderr: string, fixture: Pick<FileCase, "connector" | "sentinel">, expected: number): Observation {
+export function importDiagnostics(stderr: string, errors: number, error: string | undefined, connector: string): void {
+  if (errors === 0) { check(stderr === "", "unexpected-import-diagnostics"); return; }
+  const lines = stderr.split("\n");
+  check(errors === 1 && typeof error === "string" && error.length > 0 && lines.pop() === "", "missing-or-extra-import-error");
+  if (connector === "kizuki.import-claude" && lines[0] === "degraded: Claude health check before capture found partial or unsupported content.") lines.shift();
+  check(lines.length === 1 && /^error: [^\n]+$/.test(lines[0]!) && lines[0]!.includes(error), "missing-or-extra-import-error");
+}
+export function queryObservation(stdout: string, stderr: string, fixture: Pick<FileCase, "connector" | "sentinel">, expected: number, phase: "ordinary" | "post_purge" = "ordinary"): Observation {
   const body = envelope(stdout, "query"), data = exact(body.data, "hits,withheld");
   check(Array.isArray(data.hits) && data.hits.length === expected && Number.isSafeInteger(data.withheld) && data.withheld >= 0, "query-cardinality");
-  if (expected > 0) check(data.withheld === 0, "positive-query-withheld");
+  if (expected > 0) {
+    check(body.status === "ok" && body.degraded.length === 0, "positive-query-degraded");
+    check(data.withheld === 0, "positive-query-withheld");
+  } else {
+    // Physical purge changes event count; the old CLI cursor can lag while
+    // the serving floor has already removed the authorized source's bytes.
+    const allowed = phase === "post_purge" ? ["index-behind-ledger"] : [];
+    check(body.degraded.length <= allowed.length && body.degraded.every((code: string) => allowed.includes(code)), "unexpected-negative-query-degradation");
+  }
   const ids: string[] = [];
   for (const raw of data.hits) {
     const hit = exact(raw, "doc_id,scope,title,path,page_type,sensitivity,taint,authority,occurred_at,connector_id,subjects,snippet,rank");
@@ -62,7 +77,7 @@ export function queryObservation(stdout: string, stderr: string, fixture: Pick<F
   }
   const expectedStderr = (data.withheld ? `withheld=${data.withheld} (excluded by access policy)\n` : "") + (body.degraded.length ? `degraded=${body.degraded.join(",")}\n` : "");
   check(stderr === expectedStderr, "unexpected-query-diagnostics");
-  return { ...empty(), withheld: data.withheld, hit_ids: ids.sort() };
+  return { ...empty(), degraded: [...body.degraded], withheld: data.withheld, hit_ids: ids.sort() };
 }
 async function child(executable: string, argv: string[], cwd: string, env: Record<string, string>) {
   const proc = Bun.spawn([executable, ...argv], { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
@@ -166,12 +181,11 @@ export async function runFileImportProof(args: FileImportArgs): Promise<string> 
             return step.observation;
           } catch (error) { step.failure = error instanceof Error ? error.message : "command-failed"; throw new Error(`${id}:${step.failure}`); }
         };
-        const query = (id: string, expected: number) => run(id, ["query", fixture.sentinel, "--scope", "ledger", "--json", ...(expected === 0 ? ["--degraded"] : [])], 0, (stdout, stderr) => { const observation = queryObservation(stdout, stderr, fixture, expected); if (id !== "revoked-query") check(observation.withheld === 0, "unexpected-withheld-evidence"); return observation; });
+        const query = (id: string, expected: number) => run(id, ["query", fixture.sentinel, "--scope", "ledger", "--json", ...(expected === 0 ? ["--degraded"] : [])], 0, (stdout, stderr) => { const observation = queryObservation(stdout, stderr, fixture, expected, id === "purged-query" || id === "denied-reimport-query" ? "post_purge" : "ordinary"); if (id !== "revoked-query") check(observation.withheld === 0, "unexpected-withheld-evidence"); return observation; });
         const importArgs = ["import", fixture.connector, "--source", source];
         const grant = ["--policy", policy, "--expected-revision", "0", "--operation-id", `synthetic-${fixture.format}-${scenario}-grant`];
         const counts = (stored: number, errors: number, error?: string, proposals = 0, duplicates = 0) => (stdout: string, stderr: string) => {
-          if (errors === 0) check(stderr === "", "unexpected-import-diagnostics");
-          else check(stderr.includes(error!) && stderr.trim().split("\n").every(line => /^(error: |degraded: Claude health check before capture found partial or unsupported content\.$)/.test(line)), "missing-or-extra-import-error");
+          importDiagnostics(stderr, errors, error, fixture.connector);
           return importCounts(stdout, stored, errors, proposals, duplicates);
         };
         try {

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { FILE_FORMATS, FILE_IMPORT_POLICY, fileImportFixtures } from "./file-import-proof-fixtures";
-import { consentObservation, expectedFileImportSteps, importCounts, parseFileImportArgs, queryObservation } from "./file-import-proof";
+import { consentObservation, expectedFileImportSteps, importCounts, importDiagnostics, parseFileImportArgs, queryObservation } from "./file-import-proof";
 
 test("all eight public file formats have distinct bounded serialized fixtures and explicit local consent", () => {
   const cases = fileImportFixtures("2026-09-07");
@@ -81,4 +81,44 @@ test("public consent oracle preserves the original policy and source-bound recei
     (value: any) => value.data.receipt.action = "grant",
     (value: any) => value.data.grant.approved = true,
   ]) { const invalid = structuredClone(result); mutate(invalid); expect(() => consentObservation(JSON.stringify(invalid), source, "denied", connector, operation)).toThrow(); }
+});
+
+
+test("positive query refuses a self-consistent unavailable retrieval fallback", () => {
+  const degraded = result(); degraded.status = "degraded"; (degraded.degraded as string[]).push("retrieval-unavailable");
+  expect(() => queryObservation(JSON.stringify(degraded), "degraded=retrieval-unavailable\n", fixture, 1)).toThrow();
+});
+
+test("ordinary empty query refuses unavailable or unexpectedly stale retrieval", () => {
+  for (const code of ["retrieval-unavailable", "index-behind-ledger"]) {
+    const degraded = result(); degraded.status = "degraded"; degraded.data.hits = []; (degraded.degraded as string[]).push(code);
+    expect(() => queryObservation(JSON.stringify(degraded), `degraded=${code}\n`, fixture, 0)).toThrow();
+  }
+});
+
+
+test("only post-purge absence may carry the documented index-count lag", () => {
+  const negative = result(); negative.status = "degraded"; negative.data.hits = []; (negative.degraded as string[]).push("index-behind-ledger");
+  expect(queryObservation(JSON.stringify(negative), "degraded=index-behind-ledger\n", fixture, 0, "post_purge").degraded).toEqual(["index-behind-ledger"]);
+  for (const flags of [["retrieval-unavailable"], ["index-behind-ledger", "retrieval-unavailable"], ["index-behind-ledger", "index-behind-ledger"]]) {
+    const invalid = structuredClone(negative); (invalid.degraded as string[]) = flags;
+    expect(() => queryObservation(JSON.stringify(invalid), `degraded=${flags.join(",")}\n`, fixture, 0, "post_purge")).toThrow();
+  }
+  const positive = result(); positive.status = "degraded"; (positive.degraded as string[]).push("index-behind-ledger");
+  expect(() => queryObservation(JSON.stringify(positive), "degraded=index-behind-ledger\n", fixture, 1, "post_purge")).toThrow();
+});
+
+
+test("failed import rejects extra errors and another format's health notice", () => {
+  const error = "error: partial_import: 1 record errors (not_utf8=1)\n";
+  const notice = "degraded: Claude health check before capture found partial or unsupported content.\n";
+  expect(() => importDiagnostics(error + "error: synthetic unexpected extra failure\n", 1, "not_utf8", "kizuki.markdown-folder")).toThrow();
+  expect(() => importDiagnostics(notice + error, 1, "not_utf8", "kizuki.markdown-folder")).toThrow();
+  expect(() => importDiagnostics(error + "\n", 1, "not_utf8", "kizuki.markdown-folder")).toThrow();
+});
+
+
+test("failed import keeps its one qualified error and optional Claude notice", () => {
+  expect(() => importDiagnostics("error: partial_import: 1 record errors (not_utf8=1)\n", 1, "not_utf8", "kizuki.markdown-folder")).not.toThrow();
+  expect(() => importDiagnostics("degraded: Claude health check before capture found partial or unsupported content.\nerror: partial_import: 1 record errors (not_object=1)\n", 1, "not_object", "kizuki.import-claude")).not.toThrow();
 });
