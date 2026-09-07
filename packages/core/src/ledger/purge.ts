@@ -9,6 +9,7 @@ import { join, resolve } from "node:path";
 import { applyPurgeRewrite } from "../canon/apply";
 import type { CanonIo } from "../canon";
 import { CanonWriteError } from "../canon/errors";
+import { CanonPageUnreadable } from "../canon/store";
 import { getClaim, listClaims, markClaimsAfterPurge } from "../claims/store";
 import { collectLegacyPurgeSubjects, parseLegacyIdentityEvidence, resolveLegacyIdentityRef, scanLegacyIdentityRows } from "../claims/identity";
 import { PortError } from "../contracts/ports";
@@ -1236,6 +1237,11 @@ function readHoldSources(vaultPath: string, relPath: string): string[] | null {
     return pageSources(parseFrontmatter(readFileSync(path, "utf8")).data["sources"]);
   } catch (error) {
     if (error instanceof SyntaxError) return null;
+    if (error instanceof CanonPageUnreadable) return null;
+    if (typeof error === "object" && error !== null && "code" in error) {
+      const code = error.code;
+      if (typeof code === "string" && /^[A-Z][A-Z0-9_]+$/.test(code)) return null;
+    }
     throw error;
   }
 }
@@ -1395,6 +1401,7 @@ function rewriteHolds(
       });
     } catch (error) {
       if (error instanceof SyntaxError) continue;
+      if (error instanceof CanonPageUnreadable) continue;
       if (error instanceof CanonWriteError && error.code === "decision_stale") {
         continue;
       }

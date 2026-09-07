@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { listCanonReceipts } from "../../src/canon/receipts";
 import { getClaim, insertClaim } from "../../src/claims/store";
@@ -60,8 +60,10 @@ function writeCanonPage(
   body: string,
 ): void {
   const path = join(vaultPath, relPath);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, serializePage({ data, body }), "utf8");
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
+  writeFileSync(path, serializePage({ data, body }), { encoding: "utf8", mode: 0o600 });
 }
 
 function fts5(vaultPath: string): RetrievalPort {

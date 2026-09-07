@@ -41,6 +41,11 @@ function temporaryVault(): string {
   return path;
 }
 
+/** Native page reads refuse group-writable files (umask 002). */
+function putCanonFile(vaultPath: string, relPath: string, content: string): void {
+  writeFileSync(join(vaultPath, relPath), content, { mode: 0o600 });
+}
+
 afterEach(() => {
   setAfterCanonSnapshot();
   for (const path of directories.splice(0)) {
@@ -209,7 +214,7 @@ describe("purgeEvents", () => {
     const db = openLedger(":memory:");
     const target = storedEvent(db, event("target"));
     const vaultPath = temporaryVault();
-    writeFileSync(join(vaultPath, "facts", "orphan.md"), "no frontmatter\n");
+    putCanonFile(vaultPath, "facts/orphan.md", "no frontmatter\n");
     const outcome = await runPurge(
       db,
       vaultPath,
@@ -238,8 +243,9 @@ describe("purgeEvents", () => {
     const db = openLedger(":memory:");
     const target = storedEvent(db, event("target"));
     const vaultPath = temporaryVault();
-    writeFileSync(
-      join(vaultPath, "facts", "bad-sources.md"),
+    putCanonFile(
+      vaultPath,
+      "facts/bad-sources.md",
       [
         "---",
         "id: page-bad-sources",
@@ -254,8 +260,9 @@ describe("purgeEvents", () => {
         "unreadable sources\n",
       ].join("\n"),
     );
-    writeFileSync(
-      join(vaultPath, "facts", "first.md"),
+    putCanonFile(
+      vaultPath,
+      "facts/first.md",
       serializePage({
         data: {
           id: "page-dup",
@@ -268,10 +275,10 @@ describe("purgeEvents", () => {
         },
         body: "first copy\n",
       }),
-      "utf8",
     );
-    writeFileSync(
-      join(vaultPath, "facts", "second.md"),
+    putCanonFile(
+      vaultPath,
+      "facts/second.md",
       serializePage({
         data: {
           id: "page-dup",
@@ -284,7 +291,6 @@ describe("purgeEvents", () => {
         },
         body: "duplicate copy\n",
       }),
-      "utf8",
     );
     const outcome = await runPurge(
       db,
@@ -321,7 +327,7 @@ describe("purgeEvents", () => {
     const db = openLedger(":memory:");
     const first = storedEvent(db, event("first"));
     const vaultPath = temporaryVault();
-    writeFileSync(join(vaultPath, "facts", "orphan.md"), "no frontmatter\n");
+    putCanonFile(vaultPath, "facts/orphan.md", "no frontmatter\n");
     await runPurge(db, vaultPath, { event_id: first.event_id }, "record request");
     expect(
       db.query<{ n: number }, []>("SELECT count(*) AS n FROM canon_holds").get(),
@@ -346,8 +352,9 @@ describe("purgeEvents", () => {
     const db = openLedger(":memory:");
     const first = storedEvent(db, event("first"));
     const vaultPath = temporaryVault();
-    writeFileSync(
-      join(vaultPath, "facts", "held.md"),
+    putCanonFile(
+      vaultPath,
+      "facts/held.md",
       [
         "---",
         "id: page-held",
@@ -363,8 +370,9 @@ describe("purgeEvents", () => {
       ].join("\n"),
     );
     await runPurge(db, vaultPath, { event_id: first.event_id }, "record request");
-    writeFileSync(
-      join(vaultPath, "facts", "held.md"),
+    putCanonFile(
+      vaultPath,
+      "facts/held.md",
       serializePage({
         data: {
           id: "page-held",
@@ -377,7 +385,6 @@ describe("purgeEvents", () => {
         },
         body: "repaired\n",
       }),
-      "utf8",
     );
     const second = storedEvent(db, event("second"));
     const later = await runPurge(
@@ -413,7 +420,7 @@ describe("purgeEvents", () => {
       "",
       "id-less page\n",
     ].join("\n");
-    writeFileSync(join(vaultPath, "facts", "noid.md"), raw);
+    putCanonFile(vaultPath, "facts/noid.md", raw);
     const outcome = await runPurge(
       db,
       vaultPath,
@@ -431,7 +438,7 @@ describe("purgeEvents", () => {
     const db = openLedger(":memory:");
     const first = storedEvent(db, event("first"));
     const vaultPath = temporaryVault();
-    writeFileSync(join(vaultPath, "facts", "gone.md"), "no frontmatter\n");
+    putCanonFile(vaultPath, "facts/gone.md", "no frontmatter\n");
     await runPurge(db, vaultPath, { event_id: first.event_id }, "record request");
     expect(isHeld(db, "facts/gone.md")).toBe(true);
     rmSync(join(vaultPath, "facts", "gone.md"));
@@ -453,8 +460,9 @@ describe("purgeEvents", () => {
     const target = storedEvent(db, event("target"));
     const vaultPath = temporaryVault();
     setAfterCanonSnapshot(() => {
-      writeFileSync(
-        join(vaultPath, "facts", "late.md"),
+      putCanonFile(
+        vaultPath,
+        "facts/late.md",
         serializePage({
           data: {
             id: "page-late",
@@ -467,7 +475,6 @@ describe("purgeEvents", () => {
           },
           body: "appeared during purge\n",
         }),
-        "utf8",
       );
     });
     const outcome = await runPurge(
@@ -493,10 +500,11 @@ describe("purgeEvents", () => {
     const db = openLedger(":memory:");
     const first = storedEvent(db, event("first"));
     const vaultPath = temporaryVault();
-    writeFileSync(join(vaultPath, "facts", "held.md"), "no frontmatter\n");
+    putCanonFile(vaultPath, "facts/held.md", "no frontmatter\n");
     await runPurge(db, vaultPath, { event_id: first.event_id }, "record request");
-    writeFileSync(
-      join(vaultPath, "facts", "held.md"),
+    putCanonFile(
+      vaultPath,
+      "facts/held.md",
       serializePage({
         data: {
           id: "page-held",
@@ -509,7 +517,6 @@ describe("purgeEvents", () => {
         },
         body: "clean\n",
       }),
-      "utf8",
     );
     const second = storedEvent(db, event("second"));
     const later = await runPurge(
@@ -636,7 +643,7 @@ describe("purgeEvents", () => {
     const db = openLedger(":memory:");
     storedEvent(db, event("keep", { connector_id: "calendar" }));
     const vaultPath = temporaryVault();
-    writeFileSync(join(vaultPath, "facts", "orphan.md"), "no frontmatter\n");
+    putCanonFile(vaultPath, "facts/orphan.md", "no frontmatter\n");
     const preview = previewPurge(
       db,
       vaultPath,
@@ -687,8 +694,9 @@ describe("purgeEvents", () => {
     }
     storedEvent(db, event("keep", { connector_id: "calendar" }));
     const wanted = new Set(purged);
-    writeFileSync(
-      join(vaultPath, "facts", "hub.md"),
+    putCanonFile(
+      vaultPath,
+      "facts/hub.md",
       serializePage({
         data: {
           id: "page-hub",
@@ -701,7 +709,6 @@ describe("purgeEvents", () => {
         },
         body: "hub page\n",
       }),
-      "utf8",
     );
     const started = performance.now();
     const outcome = purgeEvents(

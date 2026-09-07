@@ -77,7 +77,7 @@ async function fixture() {
   // Reintroduce an actual recorded revision synchronously after the discovery snapshot.
   const page = (id: string) => {
     if (id !== "late-atlas") throw new Error("only the prepared late page may be restored");
-    writeFileSync(latePath, lateBytes);
+    writeFileSync(latePath, lateBytes, { mode: 0o600 });
   };
   rebuildDerived(db, disk.path);
   const port = createVaultFts5Port(disk.path, () => AT);
