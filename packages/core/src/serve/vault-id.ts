@@ -98,7 +98,8 @@ export function ensureVaultId(vaultPath: string, machineId: string | null = read
   const existing = readOwnedLine(vaultIdPath(target.vault_path));
   if (existing !== null) {
     const bound = readOwnedLine(join(target.vault_path, VAULT_MACHINE_PATH));
-    if (machine === null || bound === machine) return existing;
+    if (machine === null) return existing;
+    if (bound !== null && bound === machine) return existing;
   }
   return withVaultMutationSync(target, scope => withMutationFilesSync(scope, target, files =>
     ensureVaultIdOwned(scope, target, files, machine)));
