@@ -3,8 +3,8 @@ import type { SubjectRef } from "./event";
 import type { Port } from "./ports";
 
 export const PRODUCER_CONTRACT = "kizuki.producer/v1" as const;
-/** Minor 3 adds a named quoted-character capacity diagnostic. */
-export const PRODUCER_CONTRACT_MINOR = 3;
+/** Minor 4 adds content-free per-claim schema rejection counts. */
+export const PRODUCER_CONTRACT_MINOR = 4;
 export const PRODUCER_CAPABILITIES = ["deterministic", "model"] as const;
 export type ProducerCapability =
   (typeof PRODUCER_CAPABILITIES)[number];
@@ -105,6 +105,7 @@ export const DROPPED_DRAFT_REASONS = [
   "unknown_predicate",
   "unknown_subject",
   "event_too_large",
+  "schema_invalid",
 ] as const;
 export type DroppedDraftReason = (typeof DROPPED_DRAFT_REASONS)[number];
 
@@ -114,6 +115,10 @@ export type DroppedDraftReason = (typeof DROPPED_DRAFT_REASONS)[number];
  * deliberately (RFC 0002 §4.2). Never carries captured text.
  */
 export type DroppedDraft =
+  | {
+      /** No unvalidated field, subject, or event reference crosses this boundary. */
+      readonly reason: "schema_invalid";
+    }
   | {
       readonly reason: "unknown_predicate";
       readonly predicate: string;

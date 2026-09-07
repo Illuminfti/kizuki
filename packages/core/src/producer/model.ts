@@ -497,6 +497,7 @@ export function createModelProducerPort(
           return { status: "rejected", reason: "schema_invalid", usage, diagnostic: parsed.diagnostic };
         }
         for (const rejection of parsed.rejected) {
+          dropped.push({ reason: "schema_invalid" });
           ctx.logger({
             level: "warn",
             message: "extract_claim_rejected",

@@ -53,7 +53,10 @@ function readDroppedV1(value: unknown): DroppedDraft[] | undefined {
     if (!isPlainObject(item)) {
       return undefined;
     }
-    if (item.reason === "unknown_predicate" &&
+    if (item.reason === "schema_invalid" && exact(item, ["reason"])) {
+      dropped.push({ reason: "schema_invalid" });
+    }
+    else if (item.reason === "unknown_predicate" &&
       exact(item, ["reason", "predicate", "event_ids"]) &&
       bounded(item.predicate, MAX_PREDICATE_CHARS) &&
       eventIds(item.event_ids)) {

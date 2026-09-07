@@ -27,6 +27,30 @@ describe("complete producer result boundary", () => {
     expect(validated).toMatchObject({ usage_known: false, result: { status: "rejected", reason: "schema_invalid" } });
   });
 
+  test("schema drops carry only a detached fixed reason and retain the aggregate bound", () => {
+    const dropped = [{ reason: "schema_invalid" }];
+    const validated = validateProduceResult({ status: "ok", claims: [draft()], usage, dropped });
+    expect(validated).toMatchObject({ usage_known: true, result: { dropped: [{ reason: "schema_invalid" }] } });
+    dropped[0]!.reason = CANARY;
+    expect(JSON.stringify(validated)).not.toContain(CANARY);
+
+    let getters = 0;
+    for (const item of [
+      { reason: "schema_invalid", diagnostic: CANARY },
+      { reason: "schema_invalid", event_ids: [CANARY] },
+      { get reason() { getters++; return "schema_invalid"; } },
+      Object.create({ reason: "schema_invalid" }),
+    ]) {
+      const refused = validateProduceResult({ status: "ok", claims: [], usage, dropped: [item] });
+      expect(refused.usage_known).toBe(false);
+      expect(JSON.stringify(refused)).not.toContain(CANARY);
+    }
+    expect(getters).toBe(0);
+    expect(validateProduceResult({ status: "ok", claims: [], usage,
+      dropped: Array.from({ length: 521 }, () => ({ reason: "schema_invalid" })),
+    }).usage_known).toBe(false);
+  });
+
   test("v1 string unavailability is wire-compatible but has a fixed safe projection", () => {
     expect(validateProduceResult({ status: "unavailable", reason: CANARY, usage })).toEqual({
       result: { status: "unavailable", reason: "unavailable", usage }, usage_known: true,
