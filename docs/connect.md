@@ -157,6 +157,12 @@ the account has one. Enrollment writes protected session state under the vault
 and captures no history. After an explicit source grant, run
 `kizuki backfill telegram --source KEY`.
 
+After `connect grant`, the first backfill reads every dialog back to its
+beginning: there is no date floor, batches hold at most 500 events, and at most
+5,000 dialogs are listed, after which health reports a truncated view. Each
+later pass re-reads the last 200 messages of a dialog to catch edits; older
+edits, deletions and secret chats are not captured.
+
 Project app credentials (`KIZUKI_TELEGRAM_API_ID` and
 `KIZUKI_TELEGRAM_API_HASH`) are required. Missing credentials refuse before
 any prompt or network connection. From a source checkout, export those
@@ -185,7 +191,10 @@ Read-only Gmail browser sign-in is CLI-wired. Operator desktop-app
 configuration (`KIZUKI_GMAIL_CLIENT_ID`, optional
 `KIZUKI_GMAIL_CLIENT_SECRET_REF`) is required; missing configuration refuses
 before browser or provider calls. This tree does not register a Google
-application. Account qualification is unrun.
+application. Account qualification is unrun. Gmail consent never enrolls
+Calendar and Calendar consent never enrolls Gmail: the two connectors request
+different scopes, keep provider-bound opaque state that the other refuses to
+load, and declare different egress hosts.
 
 ```bash
 kizuki connect gmail --fields text,subjects,headers,labels,attachments
