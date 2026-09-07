@@ -1,8 +1,9 @@
 /** Shared v3 evidence reader, receipt identity, and the surface-inventory family. */
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, opendirSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { dirname, extname, isAbsolute, join, parse, resolve } from "node:path";
+import ts from "typescript";
 import { COMMANDS } from "../packages/cli/src/commands/index";
 import { printRootHelp } from "../packages/cli/src/help";
 import { RETIRED_OWNER_GATE_VERBS } from "../packages/cli/src/retired";
@@ -35,7 +36,7 @@ export const CONNECTORS = [
   { id: "omnivore", connector_id: "kizuki.import-omnivore", evidence: "file-import" },
 ] as const;
 export const EVIDENCE_LIMITS = { index: 16384, index_v3: 32768, family_receipt: 65536, journey_connector_receipt: 262144, depth: 32 } as const;
-export const CHECKOUT_LIMITS = { files: 1024, imports: 8192, file_bytes: 1_048_576, total_bytes: 4_194_304, help_lines: 256, help_line_chars: 4096 } as const;
+export const CHECKOUT_LIMITS = { files: 1024, imports: 8192, resolution_entries: 8192, syntax_nodes: 262144, file_bytes: 1_048_576, total_bytes: 4_194_304, help_lines: 256, help_line_chars: 4096 } as const;
 export const SURFACE_PRODUCER = "kizuki.surface-inventory/v1";
 export const SURFACE_GATE = "surface.capabilities-and-docs";
 export const SURFACE_PRODUCER_FILES = ["scripts/capability-proof.ts", "scripts/release-evidence.ts"] as const;
@@ -349,8 +350,69 @@ export function assertCheckoutCustody(root: string, candidateSha: string, files:
   };
 }
 
-/** Enumerate source custody, never inventory values. Bun supplies the same
- * literal import resolution used by the executing product modules. */
+/** Refuse graphs Bun's literal scanner cannot prove. This syntax check never
+ * derives a command, connector, or tool inventory from source text. */
+function assertLiteralModuleLoading(file: string, bytes: Buffer) {
+  try {
+    const tree = ts.createSourceFile(file, bytes.toString("utf8"), ts.ScriptTarget.Latest, true);
+    const pending: ts.Node[] = [tree]; let count = 0;
+    while (pending.length > 0) {
+      const node = pending.pop()!;
+      if (++count > CHECKOUT_LIMITS.syntax_nodes) reject("candidate-imports-unenumerable");
+      if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+          (ts.isIdentifier(node.expression) && node.expression.text === "require"))) {
+        if (!node.arguments[0] || !ts.isStringLiteral(node.arguments[0])) reject("candidate-imports-unenumerable");
+      }
+      // An alias of require or createRequire can hide loading from scanImports.
+      if (ts.isIdentifier(node) && (node.text === "require" || node.text === "createRequire")) {
+        const parent = node.parent;
+        if (node.text === "createRequire") reject("candidate-imports-unenumerable");
+        const directCall = ts.isCallExpression(parent) && parent.expression === node && node.text === "require";
+        const propertyName = ((ts.isPropertyAccessExpression(parent) && parent.expression.kind === ts.SyntaxKind.ThisKeyword) ||
+          ts.isMethodDeclaration(parent) || ts.isPropertyDeclaration(parent) || ts.isPropertyAssignment(parent)) && parent.name === node;
+        if (!directCall && !propertyName) reject("candidate-imports-unenumerable");
+      }
+      ts.forEachChild(node, child => { pending.push(child); });
+    }
+  } catch (error) {
+    if (error instanceof EvidenceError) throw error;
+    reject("candidate-imports-unenumerable");
+  }
+}
+
+/** Bun canonicalizes lexical aliases, including aliases above an imported
+ * source directory, and consults metadata that is not itself imported. Inspect
+ * the bounded candidate namespace, including ignored entries, before accepting
+ * that resolution. Dependency installations retain their separate boundary. */
+function resolutionMetadata(root: string): string[] {
+  const pending = ["."];
+  const metadata: string[] = []; let count = 0;
+  while (pending.length > 0) {
+    const directory = pending.pop()!, path = resolve(root, directory);
+    const checkParents = parents(join(path, ".custody"));
+    const handle = opendirSync(path);
+    try {
+      let entry;
+      while ((entry = handle.readSync()) !== null) {
+        if (++count > CHECKOUT_LIMITS.resolution_entries) reject("checkout-resolution-bound");
+        if (entry.name === "node_modules" || entry.name === ".git") continue;
+        const relative = directory === "." ? entry.name : `${directory}/${entry.name}`;
+        const stat = lstatSync(resolve(root, relative));
+        if (stat.isSymbolicLink()) reject("candidate-file-symlink-or-mode");
+        if (stat.isDirectory()) pending.push(relative);
+        else if (entry.name === "package.json") {
+          if (!stat.isFile()) reject("candidate-file-symlink-or-mode");
+          metadata.push(relativePosix(relative));
+        }
+      }
+    } finally { handle.closeSync(); }
+    checkParents();
+  }
+  return metadata.sort();
+}
+
+/** Enumerate source custody, never inventory values. Bun supplies literal
+ * runtime resolution; unsupported dynamic graphs are explicitly refused. */
 export function collectProductSources(root: string, entrypoints: readonly string[]) {
   if (entrypoints.length < 1 || entrypoints.length > CHECKOUT_LIMITS.files) reject("checkout-file-bound");
   const canonical = canonicalRoot(root), pending = [...entrypoints];
@@ -358,9 +420,7 @@ export function collectProductSources(root: string, entrypoints: readonly string
   const parsers = { ts: new Bun.Transpiler({ loader: "ts" }), tsx: new Bun.Transpiler({ loader: "tsx" }),
     js: new Bun.Transpiler({ loader: "js" }), jsx: new Bun.Transpiler({ loader: "jsx" }) };
   let total = 0;
-  while (pending.length > 0) {
-    const file = relativePosix(pending.pop());
-    if (files.has(file)) continue;
+  const bindFile = (file: string) => {
     if (files.size >= CHECKOUT_LIMITS.files) reject("checkout-file-bound");
     const path = resolve(canonical, file);
     if (!path.startsWith(`${canonical}/`) || path.slice(canonical.length + 1) !== file) reject("unsafe-path");
@@ -368,16 +428,19 @@ export function collectProductSources(root: string, entrypoints: readonly string
     total += body.bytes.length;
     if (total > CHECKOUT_LIMITS.total_bytes) reject("checkout-byte-bound");
     files.set(file, body.sha256);
-    // Package exports are part of workspace resolution, even if the module
-    // itself never imports its package metadata.
-    const workspace = file.match(/^packages\/[^/]+\//)?.[0];
-    if (workspace) pending.push(`${workspace}package.json`);
+    return body;
+  };
+  while (pending.length > 0) {
+    const file = relativePosix(pending.pop());
+    if (files.has(file)) continue;
+    const path = resolve(canonical, file), body = bindFile(file);
     const extension = extname(file);
     const parser = extension === ".ts" || extension === ".mts" || extension === ".cts" ? parsers.ts
       : extension === ".tsx" ? parsers.tsx : extension === ".js" || extension === ".mjs" || extension === ".cjs" ? parsers.js
       : extension === ".jsx" ? parsers.jsx : null;
     // JSON and literal text/assets are bound as bytes, not executed as source.
     if (!parser) continue;
+    assertLiteralModuleLoading(file, body.bytes);
     let imports;
     try { imports = parser.scanImports(body.bytes); }
     catch { reject("candidate-imports-unenumerable"); }
@@ -404,19 +467,16 @@ export function collectProductSources(root: string, entrypoints: readonly string
     }
     body.unchanged();
   }
+  for (const file of resolutionMetadata(canonical)) {
+    if (!files.has(file)) bindFile(file).unchanged();
+  }
   const bindings = [...files].sort(([a], [b]) => a.localeCompare(b)).map(([path, sha256]) => ({ path, sha256 }));
   return { bindings, fingerprint: hash(JSON.stringify({ bindings, resolutions })) };
 }
 
 export function assertProductCheckoutCustody(root: string, candidateSha: string, entrypoints: readonly string[], files: readonly string[]): CheckoutCustodyFrame {
   const canonical = canonicalRoot(root), graph = collectProductSources(canonical, entrypoints);
-  // Bun resolves symlinks before returning filenames. Require regular source
-  // trees for every participating workspace, so a tracked import alias cannot
-  // disappear from the raw-byte/mode checks through resolver canonicalization.
-  const sourceTrees = [...new Set(graph.bindings.map(item => item.path.match(/^packages\/[^/]+/)?.[0] ?? dirname(item.path)))];
-  const aliases = [...parseTree(git(canonical, ["ls-tree", "-r", "-z", "HEAD", "--", ...sourceTrees]))]
-    .filter(([, entry]) => entry.mode === "120000").map(([path]) => path);
-  const frame = assertCheckoutCustody(canonical, candidateSha, [...new Set([...files, ...graph.bindings.map(item => item.path), ...aliases])]);
+  const frame = assertCheckoutCustody(canonical, candidateSha, [...new Set([...files, ...graph.bindings.map(item => item.path)])]);
   const bound = new Map(frame.files.map(item => [item.path, item.sha256]));
   if (graph.bindings.some(item => bound.get(item.path) !== item.sha256)) reject("file-changed");
   return { ...frame, unchanged: () => {

@@ -682,7 +682,7 @@ test("product custody follows transitive runtime definitions, metadata and asset
     "commands/metadata.json": '{"summary":"synthetic"}\n',
   });
   const graph = collectProductSources(repo.root, ["commands/index.ts"]);
-  expect(graph.bindings.map(item => item.path)).toEqual(["commands/entry.ts", "commands/index.ts", "commands/metadata.json", "commands/name.ts"]);
+  expect(graph.bindings.map(item => item.path)).toEqual(["commands/entry.ts", "commands/index.ts", "commands/metadata.json", "commands/name.ts", "package.json"]);
   const frame = assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES);
   frame.unchanged();
   expect(frame.files.find(item => item.path === "commands/name.ts")?.sha256).toBe(digest('export const name = "synthetic";\n'));
@@ -715,6 +715,74 @@ test("product custody refuses an internal import alias canonicalized by Bun", ()
   const sha = git(repo.root, ["rev-parse", "HEAD"]);
   expect(Bun.resolveSync("./alias", join(repo.root, "commands"))).toBe(join(repo.root, "commands/name.ts"));
   expect(reasonOf(() => assertProductCheckoutCustody(repo.root, sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES))).toBe("candidate-file-symlink-or-mode");
+});
+
+test.each(["commands/alias.ts", "alias.ts"])("product custody refuses ignored import aliases absent from HEAD: %s", alias => {
+  const repo = custodyRepo({
+    ".gitignore": `${alias}\n`,
+    "commands/index.ts": `export { name } from "${alias.startsWith("commands/") ? "./alias" : "../alias"}";\n`,
+    "commands/name.ts": 'export const name = "synthetic";\n',
+  });
+  symlinkSync(join(repo.root, "commands/name.ts"), join(repo.root, alias));
+  expect(git(repo.root, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe("");
+  expect(Bun.resolveSync(alias.startsWith("commands/") ? "./alias" : "../alias", join(repo.root, "commands"))).toBe(join(repo.root, "commands/name.ts"));
+  expect(reasonOf(() => assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES))).toBe("candidate-file-symlink-or-mode");
+});
+
+test("product custody binds nested resolution metadata before and after derivation", () => {
+  const repo = custodyRepo({
+    ".gitattributes": "commands/definition/package.json text eol=lf\n",
+    "commands/index.ts": 'export { name } from "./definition";\n',
+    "commands/definition/package.json": '{"main":"./value.ts"}\n',
+    "commands/definition/value.ts": 'export const name = "synthetic";\n',
+  });
+  const frame = assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES);
+  expect(frame.files.map(item => item.path)).toContain("commands/definition/package.json");
+  frame.unchanged();
+  writeFileSync(join(repo.root, "commands/definition/package.json"), '{"main":"./value.ts"}\r\n');
+  git(repo.root, ["add", "commands/definition/package.json"]);
+  expect(git(repo.root, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe("");
+  expect(reasonOf(() => frame.unchanged())).toBe("file-changed");
+  expect(reasonOf(() => assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES))).toBe("candidate-byte-mismatch");
+});
+
+test.each([
+  'const source = "./name.ts"; export const name = (await import(source)).name;\n',
+  'const source = "./name.ts"; export const name = require(source).name;\n',
+  'export const name = (await import(`./${"name"}.ts`)).name;\n',
+  'const load = require; export const name = load("./name.ts").name;\n',
+  'import { createRequire } from "node:module"; const load = createRequire(import.meta.url); export const name = load("./name.ts").name;\n',
+])("product custody refuses unsupported dynamic runtime graphs: %s", source => {
+  const repo = custodyRepo({
+    ".gitattributes": "commands/name.ts text eol=lf\n",
+    "commands/index.ts": source,
+    "commands/name.ts": 'export const name = "synthetic";\n',
+  });
+  writeFileSync(join(repo.root, "commands/name.ts"), 'export const name = "synthetic";\r\n');
+  git(repo.root, ["add", "commands/name.ts"]);
+  expect(git(repo.root, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe("");
+  expect(reasonOf(() => assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES))).toBe("candidate-imports-unenumerable");
+});
+
+test.each([
+  'export const name = (await import("./name.ts")).name;\n',
+  'export const name = require("./name.ts").name;\n',
+])("product custody retains literal module loading through cycles: %s", source => {
+  const repo = custodyRepo({
+    "commands/index.ts": source,
+    "commands/name.ts": 'import "./index"; export const name = "synthetic";\n',
+  });
+  const frame = assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES);
+  expect(frame.files.map(item => item.path)).toContain("commands/name.ts");
+  frame.unchanged();
+});
+
+test("product custody bounds ignored resolution directory entries", () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-resolution-bound-")); roots.push(root);
+  mkdirSync(join(root, "commands"));
+  writeFileSync(join(root, "commands/index.ts"), 'export const name = "synthetic";\n');
+  for (let i = 0; i < CHECKOUT_LIMITS.resolution_entries; i++) writeFileSync(join(root, `commands/entry-${i}`), "");
+  expect(reasonOf(() => collectProductSources(root, ["commands/index.ts"]))).toBe("checkout-resolution-bound");
 });
 
 test.each(["@kizuki/synthetic", "synthetic-dependency"])("product custody distinguishes %s from external third-party dependencies", (name) => {
