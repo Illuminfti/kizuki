@@ -42,6 +42,17 @@ async function setup(variant = "") {
   const socket = api.connect(control, "broker.sock");
   let closed = false;
   return { directory, control, child, socket, api,
+    async signalHandler() {
+      expect(JSON.parse(output.split("\n")[0]!).term_caught_before_serve).toBe(false);
+      const deadline = performance.now() + 2000;
+      while (performance.now() < deadline && child.exitCode === null) {
+        const status = readFileSync(`/proc/${child.pid}/status`, "utf8");
+        const caught = /^SigCgt:\s*([0-9a-f]+)$/mi.exec(status)?.[1];
+        if (caught && (BigInt(`0x${caught}`) & (1n << 14n)) !== 0n) return;
+        await Bun.sleep(5);
+      }
+      throw new Error("synthetic broker did not install its SIGTERM handler");
+    },
     async ready() {
       while (!output.includes("READY\n")) { const chunk = await reader.read(); if (chunk.done) throw new Error("synthetic broker ended before READY"); output += new TextDecoder().decode(chunk.value); }
     },
@@ -106,7 +117,7 @@ native("Linux custody descriptor transport", () => {
 
   test("SIGTERM exits C loop and runs JavaScript cleanup without READY", async () => {
     const f = await setup();
-    try { f.child.kill("SIGTERM"); expect(await f.finish()).toMatchObject({ result: 0, ready: false }); }
+    try { await f.signalHandler(); f.child.kill("SIGTERM"); expect(await f.finish()).toMatchObject({ result: 0, ready: false }); }
     finally { await f.cleanup(); }
   });
 

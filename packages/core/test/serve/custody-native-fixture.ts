@@ -1,5 +1,5 @@
 // Synthetic child process: real sockets and kernel descriptors, never an account.
-import { constants, openSync, closeSync, readdirSync, fstatSync, fchmodSync, writeFileSync, fsyncSync } from "node:fs";
+import { constants, openSync, closeSync, readdirSync, fstatSync, fchmodSync, writeFileSync, fsyncSync, readFileSync } from "node:fs";
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { custodyNative } from "../../src/util/custody-native";
 
@@ -79,6 +79,8 @@ if (mode === "close-watch-worker") {
     await new Promise<void>(resolve => { watcher!.onmessage = () => resolve(); });
   }
   const before = readdirSync("/proc/self/fd").length;
+  const caught = /^SigCgt:\s*([0-9a-f]+)$/mi.exec(readFileSync("/proc/self/status", "utf8"))?.[1];
+  console.log(JSON.stringify({ term_caught_before_serve: caught ? (BigInt(`0x${caught}`) & (1n << 14n)) !== 0n : null }));
   console.log("LISTEN");
   api.restrictBroker();
   let result: number;
