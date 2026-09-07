@@ -107,6 +107,11 @@ function credentialDirectory(path: string): CredentialDirectory {
     fail("credential_unsafe");
   }
 }
+
+/** Internal composition seam; validation stays identical before any app file work. */
+export function validateAgentEnrollmentRequest(request: AgentEnrollmentRequest): AgentEnrollmentRequest {
+  return parseRequest(request).request;
+}
 function assertCredentialDestination(vaultPath: string, destination: string): void {
   if (typeof vaultPath !== "string" || vaultPath.length > 4096) fail("vault_unavailable");
   if (SQLITE_FILENAMES.has(basename(destination))) fail("credential_unsafe");
