@@ -65,7 +65,28 @@ test("identity reads committed WAL frames while another writer remains open", ()
   } finally { writer.close(true); f.close(); }
 });
 
-for (const kind of ["foreign", "missing-version", "duplicate-version", "zero-version"] as const) {
+test("identity keeps one readonly snapshot when another connection changes the schema between queries", () => {
+  const f = fixture(), writer = openLedger(f.path), original = Database.prototype.query;
+  let changed = false;
+  try {
+    const version = (writer.query("SELECT version FROM schema_version").get() as { version: number }).version;
+    writer.exec("PRAGMA wal_autocheckpoint = 0; CREATE TABLE identity_snapshot_seed (n INTEGER)");
+    hardenLedgerFile(f.path);
+    Database.prototype.query = function(this: Database, ...args: Parameters<typeof original>) {
+      if (!changed && args[0] === "SELECT version FROM schema_version LIMIT 2") {
+        changed = true;
+        writer.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE; DROP TABLE events; UPDATE schema_version SET version = 1001; COMMIT");
+      }
+      return original.apply(this, args);
+    } as typeof original;
+    expect(inspectLedgerIdentity(f.root)).toEqual({ schemaVersion: version });
+    expect(changed).toBe(true);
+    expect(writer.query("SELECT version FROM schema_version").get()).toEqual({ version: 1001 });
+    expect(writer.query("SELECT name FROM sqlite_master WHERE name = 'events'").all()).toEqual([]);
+  } finally { Database.prototype.query = original; writer.close(true); f.close(); }
+});
+
+for (const kind of ["foreign", "missing-version", "duplicate-version", "zero-version", "unsafe-version"] as const) {
   test(`identity refuses ${kind} without modifying the database`, () => {
     const f = fixture();
     try {
@@ -73,7 +94,8 @@ for (const kind of ["foreign", "missing-version", "duplicate-version", "zero-ver
       const db = new Database(f.path);
       db.exec(kind === "foreign" ? "CREATE TABLE unrelated (value TEXT)" :
         "CREATE TABLE events (value TEXT); CREATE TABLE schema_version (version INTEGER)" +
-        (kind === "duplicate-version" ? "; INSERT INTO schema_version VALUES (1), (2)" : kind === "zero-version" ? "; INSERT INTO schema_version VALUES (0)" : ""));
+        (kind === "duplicate-version" ? "; INSERT INTO schema_version VALUES (1), (2)" : kind === "zero-version" ? "; INSERT INTO schema_version VALUES (0)" :
+          kind === "unsafe-version" ? "; INSERT INTO schema_version VALUES (9007199254740992)" : ""));
       db.close(true); chmodSync(f.path, 0o600);
       const before = closedFootprint(f);
       expect(() => inspectLedgerIdentity(f.root)).toThrow(LedgerIdentityError);

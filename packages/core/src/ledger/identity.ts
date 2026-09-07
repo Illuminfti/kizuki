@@ -17,14 +17,14 @@ function readIdentity(db: Database): { schemaVersion: number } {
   ).all();
   if (tables.length !== 2) throw new LedgerIdentityError("invalid_ledger");
   const versions = db.query<{ version: number }, []>("SELECT version FROM schema_version LIMIT 2").all();
-  if (versions.length !== 1 || !Number.isInteger(versions[0]?.version) || (versions[0]?.version ?? 0) < 1) {
+  if (versions.length !== 1 || !Number.isSafeInteger(versions[0]?.version) || (versions[0]?.version ?? 0) < 1) {
     throw new LedgerIdentityError("invalid_ledger");
   }
   return { schemaVersion: versions[0]!.version };
 }
 
 function readAndClose(db: Database): { schemaVersion: number } {
-  try { return readIdentity(db); }
+  try { return db.transaction(() => readIdentity(db)).deferred(); }
   finally {
     try { db.close(true); }
     catch { throw new LedgerIdentityError("custody_unavailable"); }
