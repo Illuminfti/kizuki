@@ -77,7 +77,7 @@ async function runChild(script: string, deadlineMs = 15_000): Promise<ChildResul
 }
 
 for (const mode of ["memfd", "write", "add-seals", "read-seals", "compile", "success"])
-  test(`fixed native helper closes its source and fails closed: ${mode}`, async () => {
+  test.skipIf(process.platform !== "linux" || process.arch !== "x64")(`fixed native helper closes its source and fails closed: ${mode}`, async () => {
     const script = `
       import { mock } from "bun:test";
       import * as ffi from "bun:ffi";
@@ -136,6 +136,81 @@ for (const mode of ["memfd", "write", "add-seals", "read-seals", "compile", "suc
     if (result.stdout.overflowed || result.stderr.overflowed)
       throw new Error(`native_loader_child_output_overflow:${mode}`);
     expect(result.exitCode).toBe(0);
+    expect(result.stdout.text).toBe("passed");
+    expect(result.stderr.text).toBe("");
+  }, 20_000);
+
+for (const mode of ["pipe", "close-on-exec", "verify-close-on-exec", "nonblock", "write", "short-write", "compile", "initialize", "success"])
+  test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(`Darwin pipe loader closes descriptors and fails closed: ${mode}`, async () => {
+    const script = `
+      import { mock } from "bun:test";
+      import * as ffi from "bun:ffi";
+      import * as fs from "node:fs";
+      import { strict as assert } from "node:assert";
+      const mode = ${JSON.stringify(mode)};
+      const realDlopen = ffi.dlopen, realCc = ffi.cc, realWrite = fs.writeSync;
+      let reader = -1, writer = -1, libraryCloses = 0, compiledCloses = 0, compiled = false;
+      mock.module("node:fs", () => ({ ...fs, writeSync(fd, ...args) {
+        if (fd === writer && mode === "write") throw new Error("synthetic source detail");
+        if (fd === writer && mode === "short-write") return realWrite(fd, args[0].subarray(0, 1));
+        return realWrite(fd, ...args);
+      } }));
+      mock.module("bun:ffi", () => ({ ...ffi, dlopen(...args) {
+        const library = realDlopen(...args), original = library.symbols;
+        const fcntl = (...values) => {
+          if (mode === "close-on-exec" && values[1] === 2) return -1;
+          if (mode === "verify-close-on-exec" && values[1] === 1) return 0;
+          if (mode === "nonblock" && values[1] === 4) return -1;
+          return original.__fcntl_nocancel(...values);
+        };
+        fcntl.ptr = original.__fcntl_nocancel.ptr;
+        return { ...library, close() { libraryCloses++; library.close(); }, symbols: { ...original,
+          __fcntl_nocancel: fcntl,
+          pipe(address) {
+            if (mode === "pipe") return -1;
+            const result = original.pipe(address);
+            if (result === 0) { const values = new Int32Array(ffi.toArrayBuffer(address, 0, 8)); reader = values[0]; writer = values[1]; }
+            return result;
+          },
+        } };
+      }, cc(options) {
+        compiled = true;
+        assert.equal(options.source, "/dev/fd/" + reader);
+        assert.deepEqual(options.flags, ["-nostdlib", "-x", "c"]);
+        assert.ok(fs.fstatSync(reader).isFIFO());
+        assert.throws(() => fs.fstatSync(writer), { code: "EBADF" });
+        assert.throws(() => realWrite(reader, "tamper"), { code: "EBADF" });
+        assert.throws(() => fs.openSync(options.source, fs.constants.O_WRONLY), { code: "EACCES" });
+        if (mode === "compile") throw new Error("synthetic compiler detail");
+        const library = realCc(options);
+        return { ...library, close() { compiledCloses++; library.close(); }, symbols: { ...library.symbols,
+          kizuki_initialize(...values) {
+            if (mode === "initialize") throw new Error("synthetic initializer detail");
+            return library.symbols.kizuki_initialize(...values);
+          },
+        } };
+      } }));
+      const { loadOwnedDirectoryNative } = await import(${JSON.stringify(join(import.meta.dir, "../../src/util/owned-directory-native.ts"))});
+      if (mode === "success") {
+        const api = loadOwnedDirectoryNative();
+        assert.equal(libraryCloses, 0); assert.ok(compiled);
+        const name = Buffer.from("synthetic-missing\\0");
+        assert.equal(api.symbols.openChild(-1, ffi.ptr(name), 0), -9);
+        api.compiled.close(); api.libc.close();
+      } else {
+        assert.throws(() => loadOwnedDirectoryNative(), { message: "owned_directory_native_unavailable" });
+        assert.equal(libraryCloses, 1);
+        assert.equal(compiled, mode === "compile" || mode === "initialize");
+        assert.equal(compiledCloses, mode === "initialize" ? 1 : 0);
+      }
+      for (const descriptor of [reader, writer]) if (descriptor >= 0) assert.throws(() => fs.fstatSync(descriptor), { code: "EBADF" });
+      process.stdout.write("passed");
+    `;
+    const result = await runChild(script);
+    expect(result.kind).toBe("exited");
+    if (result.kind !== "exited") throw new Error(`native_loader_child_${result.kind}:${mode}`);
+    expect(result.stdout.overflowed || result.stderr.overflowed).toBe(false);
+    expect(result.exitCode, result.stderr.text).toBe(0);
     expect(result.stdout.text).toBe("passed");
     expect(result.stderr.text).toBe("");
   }, 20_000);

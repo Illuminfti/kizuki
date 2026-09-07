@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { ptr } from "bun:ffi";
-import { chmodSync, closeSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { openOwnedDirectory, OwnedDirectoryPublicationError, type OwnedDirectoryIdentity } from "../../src/util/owned-directory";
@@ -9,7 +9,7 @@ import { loadOwnedDirectoryNative } from "../../src/util/owned-directory-native"
 // Fixed private fixtures only: no concurrent pathname replacement or live vaults.
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-function root(): string { const path = mkdtempSync(join(tmpdir(), "kizuki-publication-")); roots.push(path); return path; }
+function root(): string { const path = realpathSync(mkdtempSync(join(tmpdir(), "kizuki-publication-"))); roots.push(path); return path; }
 function id(path: string): OwnedDirectoryIdentity { const stat = lstatSync(path, { bigint: true }); return { dev: stat.dev, ino: stat.ino }; }
 function failure(action: () => unknown): OwnedDirectoryPublicationError {
   try { action(); } catch (error) { expect(error).toBeInstanceOf(OwnedDirectoryPublicationError); return error as OwnedDirectoryPublicationError; }

@@ -1,12 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync, existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { openOwnedDirectory } from "../../src/util/owned-directory";
 import { dlopen, FFIType, toArrayBuffer } from "bun:ffi";
 const roots: string[] = [];
 afterEach(() => { for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true }); });
-function fixture() { const root = mkdtempSync(join(tmpdir(), "owned-dir-")); roots.push(root); const owned = join(root, "owned"), outside = join(root, "outside"); mkdirSync(join(owned, "store"), { recursive: true }); mkdirSync(join(outside, "store"), { recursive: true }); writeFileSync(join(outside, "store/canary"), "SYNTHETIC_UNOWNED"); return { root, owned, outside }; }
+function fixture() { const root = realpathSync(mkdtempSync(join(tmpdir(), "owned-dir-"))); roots.push(root); const owned = join(root, "owned"), outside = join(root, "outside"); mkdirSync(join(owned, "store"), { recursive: true }); mkdirSync(join(outside, "store"), { recursive: true }); writeFileSync(join(outside, "store/canary"), "SYNTHETIC_UNOWNED"); return { root, owned, outside }; }
 test("replacement of the opened root cannot redirect erasure", () => {
   const f = fixture(), cap = openOwnedDirectory(f.owned), identity = cap.childIdentity("store");
   try {
@@ -105,8 +105,9 @@ test("emptiness refuses a root replaced during its observation", () => {
 for (const operation of ["empty-scan", "erase"] as const) test(`${operation} survives errno changes during memory-view allocation`, () => {
   const f = fixture(), cap = openOwnedDirectory(f.owned);
   if (operation === "empty-scan") rmSync(join(f.owned, "store"), { recursive: true });
-  const libc = dlopen("libc.so.6", { __errno_location: { args: [], returns: FFIType.ptr } });
-  const pointer = libc.symbols.__errno_location();
+  const symbol = process.platform === "darwin" ? "__error" : "__errno_location";
+  const libc = dlopen(process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6", { [symbol]: { args: [], returns: FFIType.ptr } });
+  const pointer = libc.symbols[symbol]!();
   if (!pointer) throw new Error("synthetic errno fixture unavailable");
   const OriginalDataView = DataView;
   const error = new OriginalDataView(toArrayBuffer(pointer, 0, 4));

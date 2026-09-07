@@ -5,9 +5,8 @@ import { tryAdvisoryFileLockFd, type AdvisoryFileLock } from "./advisory-file-lo
 import { resolve } from "node:path";
 import { loadOwnedDirectoryNative } from "./owned-directory-native";
 
-// Qualified Linux x86_64 glibc ABI: getdents64 is syscall 217; linux_dirent64
-// has u64 ino/off, u16 reclen at 16, u8 type at 18, then d_name bytes at 19.
-// No ABI claim is made for Darwin or other libc/architecture combinations.
+// The native backend normalizes records to u16 reclen at 16, u8 type at 18,
+// then name bytes at 19. Darwin structs never cross this private boundary.
 let native: ReturnType<typeof loadOwnedDirectoryNative> | undefined;
 function api() { return native ??= loadOwnedDirectoryNative(); }
 function fail(kind = "unsafe"): never { throw new Error(`owned_directory_${kind}`); }
@@ -82,7 +81,7 @@ function nativeStatus(status: number | bigint, exists: OwnedDirectoryPublication
   if (status !== 0) fail("io");
 }
 function childPresent(parent: number, name: string): boolean {
-  const bytes = nameBytes(name), stat = Buffer.alloc(144); // Linux x86_64 struct stat.
+  const bytes = nameBytes(name), stat = Buffer.alloc(144); // Normalized private stat layout.
   const status = api().symbols.statChild(parent, ptr(bytes), ptr(stat));
   if (status === -2) return false;
   nativeStatus(status, "destination_exists");
@@ -109,12 +108,14 @@ function syncDirectory(fd: number): void { try { fsyncSync(fd); } catch { fail("
 function identity(fd: number): OwnedDirectoryIdentity { const stat = fstatSync(fd, { bigint: true }); return { dev: stat.dev, ino: stat.ino }; }
 function same(a: OwnedDirectoryIdentity | null, b: OwnedDirectoryIdentity | null): boolean { return a === null ? b === null : b !== null && a.dev === b.dev && a.ino === b.ino; }
 function entries(fd: number, remaining: number, stopAtFirst = false): Buffer[] {
-  const duplicate = api().symbols.fcntl(fd, 1030 /* Linux F_DUPFD_CLOEXEC */, 0); if (duplicate < 0) fail();
+  const duplicate = api().symbols.duplicateDirectory(fd);
+  if (typeof duplicate !== "number" || !Number.isSafeInteger(duplicate) || duplicate > 0x7fffffff) fail("abi_invalid");
+  if (duplicate < 0) fail();
   const result: Buffer[] = [];
   try {
     const buffer = Buffer.alloc(16_384), address = ptr(buffer);
     for (;;) {
-      const count = api().symbols.syscall(217n, BigInt(duplicate), address, BigInt(buffer.length));
+      const count = api().symbols.readDirectory(duplicate, address, buffer.length);
       if (typeof count !== "number" || !Number.isSafeInteger(count) || count > buffer.length) fail("abi_invalid");
       if (count < 0) fail();
       if (count === 0) break;
@@ -375,7 +376,8 @@ export class OwnedDirectory {
         try { if (!same(identity(current), opened)) fail("identity_changed"); } finally { closeSync(current); }
         const bytes = nameBytes(name);
         // unlinkat never follows a final symlink; directory removal requires empty dir.
-        if (api().symbols.unlinkat(parent, ptr(bytes), stat.isDirectory() ? 0x200 : 0) !== 0) fail();
+        const removed = stat.isDirectory() ? api().symbols.removeEmptyChild(parent, ptr(bytes)) : api().symbols.unlinkChild(parent, ptr(bytes));
+        if (removed !== 0) fail();
       } finally { closeSync(fd); }
     };
     remove(this.fd, name, expected, 0);
