@@ -444,3 +444,47 @@ test("document subjects survive edits and tombstones without collapsing distinct
     await rm(root, { recursive: true, force: true });
   }
 });
+
+describe("special entries inside the source", () => {
+  test("a symlinked file is skipped and its target outside the root is never read", async () => {
+    const parent = await makeTempDir();
+    try {
+      const root = path.join(parent, "source");
+      const outside = path.join(parent, "outside.md");
+      await mkdir(root);
+      await writeFile(outside, "must not be captured\n");
+      await writeFile(path.join(root, "own.md"), "captured\n");
+      await symlink(outside, path.join(root, "link.md"));
+      const connector = createMarkdownFolderConnector({ path: root });
+      const batch = await connector.backfill(null);
+      expect(batch.events.map((event) => event.source_record_id)).toEqual([
+        "own.md",
+      ]);
+      expect(batch.events.map((event) => event.text)).toEqual(["captured\n"]);
+      const health = await connector.health();
+      expect(health.state).toBe("degraded");
+      expect(health.detail ?? "").toContain("symlink");
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  test("a named pipe with a markdown name is skipped rather than opened", async () => {
+    const which = Bun.spawnSync(["sh", "-c", "command -v mkfifo"]);
+    if (which.exitCode !== 0) return;
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "real.md"), "real\n");
+      const fifo = Bun.spawnSync(["mkfifo", path.join(root, "pipe.md")]);
+      expect(fifo.exitCode).toBe(0);
+      const batch = await createMarkdownFolderConnector({ path: root }).backfill(
+        null,
+      );
+      expect(batch.events.map((event) => event.source_record_id)).toEqual([
+        "real.md",
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
