@@ -1,7 +1,7 @@
 import { join, resolve } from "node:path";
 import {
   AppModelSettingsError, isPlainObject, normalizeSourceModelEndpoint, normalizeSourceModelName,
-  readAppModelConfiguration, readAppManagedModelCredential, saveAppModelConfiguration,
+  readAppModelConfiguration, classifyAppModelCredential, readAppModelFileCredential, saveAppModelConfiguration,
   type AppModelCredentialChange, type AppModelDocument,
 } from "@kizuki/core";
 import { chatCompletionsUrl, createOpenAiCompatibleLlmPort, parseOpenAiCompatibleConfig, type OpenAiCompatibleLlmConfig } from "@kizuki/llm";
@@ -49,8 +49,9 @@ export function readModelSelection(vaultPath: string): { revision: string; selec
 async function credential(vaultPath: string, document: AppModelDocument, selected: Configured, env: Record<string, string | undefined>): Promise<string | null> {
   const ref = selected.secret_ref;
   if (ref === null) return null;
-  if (ref.startsWith(`file:${join(resolve(vaultPath), ".kizuki/app-model")}/`)) return readAppManagedModelCredential(vaultPath, document.revision, ref);
-  return tokenResolver(ref, env)(ref);
+  return classifyAppModelCredential(vaultPath, ref) === "env"
+    ? tokenResolver(ref, env)(ref)
+    : readAppModelFileCredential(vaultPath, document.revision, ref);
 }
 async function status(vaultPath: string, document: AppModelDocument, env: Record<string, string | undefined>): Promise<AppModelSettingsStatus> {
   const selected = configured(document.llm);

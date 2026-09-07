@@ -1,10 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { AppModelSettingsError, editAppModelSection, readAppModelConfiguration, readAppManagedModelCredential, saveAppModelConfiguration,
-  saveAppModelConfigurationOwned, type AppModelSettingsUpdate } from "../../src/serve/model-settings";
+  classifyAppModelCredential, readAppModelFileCredential, saveAppModelConfigurationOwned, type AppModelSettingsUpdate } from "../../src/serve/model-settings";
 import { withVaultMutationSync } from "../../src/vault/mutation-scope";
 import { withMutationFilesSync } from "../../src/vault/mutation-files";
 import { exportVault, verifyBackup } from "../../src/export";
@@ -168,4 +168,67 @@ test("model settings reject unsafe files, private directory modes and key modes"
   expect(() => saveAppModelConfiguration(root, replacement(root), validate)).toThrow("custody_unavailable");
   const other = fixture(); symlinkSync(join(root, ".kizuki/serve.toml"), join(other, ".kizuki/serve.toml"));
   expect(() => readAppModelConfiguration(other, validate)).toThrow(AppModelSettingsError);
+});
+
+function configuredReference(root: string, reference: string) {
+  writeFileSync(join(root, ".kizuki/serve.toml"), `[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "http://127.0.0.1"\nmodel = "synthetic"\nsecret_ref = ${JSON.stringify(reference)}\n`, { mode: 0o600 });
+  return readAppModelConfiguration(root, validate).revision;
+}
+
+test("model file custody rejects normalized managed aliases and parent symlink aliases", () => {
+  const root = fixture(), saved = saveAppModelConfiguration(root, replacement(root), validate);
+  const reference = (saved.llm as Record<string, string>).secret_ref!, name = reference.split("/").at(-1)!;
+  expect(classifyAppModelCredential(root, reference)).toBe("managed_file");
+  for (const alias of [reference.replace("/.kizuki/", "//.kizuki/"), `file:${root}/./.kizuki/app-model/${name}`, `file:${root}/unused/../.kizuki/app-model/${name}`]) {
+    const revision = configuredReference(root, alias);
+    expect(() => classifyAppModelCredential(root, alias)).toThrow("credential_invalid");
+    expect(() => readAppModelFileCredential(root, revision, alias)).toThrow("credential_invalid");
+  }
+  const outside = fixture(), link = join(outside, "alias");
+  symlinkSync(join(root, ".kizuki/app-model"), link);
+  const alias = `file:${join(link, name)}`, revision = configuredReference(root, alias);
+  expect(classifyAppModelCredential(root, alias)).toBe("external_file");
+  expect(() => readAppModelFileCredential(root, revision, alias)).toThrow("custody_unavailable");
+  rmSync(link); symlinkSync(root, link);
+  const ancestorAlias = `file:${link}/.kizuki/app-model/${name}`;
+  expect(() => readAppModelFileCredential(root, configuredReference(root, ancestorAlias), ancestorAlias)).toThrow("custody_unavailable");
+  rmSync(link); linkSync(reference.slice(5), link);
+  const hardlink = `file:${link}`;
+  expect(() => readAppModelFileCredential(root, configuredReference(root, hardlink), hardlink)).toThrow("custody_unavailable");
+});
+
+test("direct external model files preserve owner-only modes, bounds and trimming with exact config binding", () => {
+  const root = fixture(), outside = fixture(), path = join(outside, "external.key"), reference = `file:${path}`;
+  writeFileSync(path, "  synthetic-external-key\n", { mode: 0o600 });
+  const revision = configuredReference(root, reference);
+  expect(classifyAppModelCredential(root, reference)).toBe("external_file");
+  expect(classifyAppModelCredential(root, "env:SYNTHETIC_MODEL_KEY")).toBe("env");
+  for (const mode of [0o400, 0o600, 0o700]) {
+    chmodSync(path, mode);
+    expect(readAppModelFileCredential(root, revision, reference)).toBe("synthetic-external-key");
+  }
+  expect(() => readAppModelFileCredential(root, "absent", reference)).toThrow("revision_conflict");
+  expect(() => readAppModelFileCredential(root, revision, `file:${outside}/different.key`)).toThrow("credential_invalid");
+  writeFileSync(path, "x".repeat(16_384));
+  expect(readAppModelFileCredential(root, revision, reference)).toHaveLength(16_384);
+  writeFileSync(path, "x".repeat(16_385));
+  expect(() => readAppModelFileCredential(root, revision, reference)).toThrow("credential_invalid");
+  writeFileSync(path, "bad internal whitespace");
+  expect(() => readAppModelFileCredential(root, revision, reference)).toThrow("credential_invalid");
+  chmodSync(path, 0o644);
+  expect(() => readAppModelFileCredential(root, revision, reference)).toThrow("custody_unavailable");
+  for (const alias of [`file:${outside}/./external.key`, `${reference}/`]) expect(() => classifyAppModelCredential(root, alias)).toThrow("credential_invalid");
+});
+
+test("a parent swapped after classification cannot redirect the model credential read", () => {
+  const root = fixture(), saved = saveAppModelConfiguration(root, replacement(root), validate);
+  const managed = (saved.llm as Record<string, string>).secret_ref!, name = managed.split("/").at(-1)!;
+  const outside = fixture(), parent = join(outside, "parent"), retired = join(outside, "retired");
+  mkdirSync(parent, { mode: 0o700 }); writeFileSync(join(parent, name), "synthetic-external-key", { mode: 0o600 });
+  const reference = `file:${parent}/${name}`, revision = configuredReference(root, reference);
+  expect(classifyAppModelCredential(root, reference)).toBe("external_file");
+  renameSync(parent, retired); symlinkSync(join(root, ".kizuki/app-model"), parent);
+  expect(() => readAppModelFileCredential(root, revision, reference)).toThrow("custody_unavailable");
+  expect(readFileSync(join(retired, name), "utf8")).toBe("synthetic-external-key");
+  expect(readFileSync(managed.slice(5), "utf8")).toBe("synthetic-token-one");
 });

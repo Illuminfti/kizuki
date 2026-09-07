@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readModelSelection, readModelSettings, saveModelSettings, testModelSettings } from "../src/app/model-settings";
@@ -148,3 +148,34 @@ test("the real synthetic model request stops at its fifteen-second deadline", as
     expect(requests).toBe(1);
   } finally { release(); }
 }, 20_000);
+
+test("managed credential aliases cannot use the connection test to bypass directory custody", async () => {
+  const root = fixture(); let requests = 0;
+  const url = endpoint(() => { requests++; return complete(); });
+  await saveModelSettings(root, { expected_revision: "absent", selection: selection(url), credential: { action: "replace", value: "synthetic-alias-key" } });
+  const path = join(root, ".kizuki/serve.toml"), original = readFileSync(path, "utf8");
+  const parsed = Bun.TOML.parse(original) as { ports: { llm: { secret_ref: string } } }, reference = parsed.ports.llm.secret_ref;
+  const outside = fixture(), link = join(outside, "alias");
+  symlinkSync(join(root, ".kizuki/app-model"), link);
+  chmodSync(join(root, ".kizuki/app-model"), 0o755);
+  for (const alias of [reference, reference.replace("/.kizuki/", "//.kizuki/"), `file:${link}/${reference.split("/").at(-1)}`]) {
+    writeFileSync(path, original.replace(reference, alias));
+    const current = await readModelSettings(root);
+    expect(current.credential).toBe("unavailable");
+    expect(await testModelSettings(root, current.revision)).toMatchObject({ outcome: "failed", error_code: "credential_unavailable" });
+  }
+  expect(requests).toBe(0);
+});
+
+test("direct external file and env credentials still bind once through the actual model test", async () => {
+  const seen: string[] = [], url = endpoint(request => { seen.push(request.headers.get("authorization")!); return complete(); });
+  const outside = fixture(), path = join(outside, "external.key");
+  writeFileSync(path, " synthetic-external-model-key\n", { mode: 0o400 });
+  for (const reference of [`file:${path}`, "env:SYNTHETIC_MODEL_KEY"]) {
+    const root = fixture(`[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "${url}"\nmodel = "synthetic"\nsecret_ref = ${JSON.stringify(reference)}\n`);
+    const env = { SYNTHETIC_MODEL_KEY: "synthetic-external-model-key" }, current = await readModelSettings(root, env);
+    expect(current.credential).toBe("configured");
+    expect(await testModelSettings(root, current.revision, env)).toMatchObject({ outcome: "succeeded", error_code: null });
+  }
+  expect(seen).toEqual(["Bearer synthetic-external-model-key", "Bearer synthetic-external-model-key"]);
+});

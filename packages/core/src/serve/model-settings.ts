@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { parseSecretRef } from "../contracts/secret-ref";
 import { isPlainObject } from "../util/validate";
 import { assertCanonFiles, openCanonFiles, type CanonFiles, type CanonFileSnapshot } from "../vault/canon-files";
 import { withMutationFilesSync } from "../vault/mutation-files";
@@ -203,6 +204,48 @@ function readOnly<T>(vaultPath: string, work: (files: CanonFiles, vault: string,
 }
 export function readAppModelConfiguration(vaultPath: string, check: AppModelConfigurationValidator): AppModelDocument {
   return readOnly(vaultPath, (_files, _vault, snapshot) => document(snapshot, check));
+}
+/** Classification is lexical only. Every file branch must use the bound file
+ * reader below; a pathname check cannot prove custody for a later legacy read. */
+export function classifyAppModelCredential(vaultPath: string, reference: string): "env" | "managed_file" | "external_file" {
+  const parsed = parseSecretRef(reference);
+  if (parsed === null) fail("credential_invalid");
+  if (parsed.scheme === "env") {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(parsed.value)) fail("credential_invalid");
+    return "env";
+  }
+  if (!isAbsolute(parsed.value) || Buffer.byteLength(parsed.value) > 4096 || parsed.value.includes("\0") || parsed.value.endsWith("/")) fail("credential_invalid");
+  const path = resolve(parsed.value), managed = join(resolve(vaultPath), PRIVATE);
+  if (path === managed || path.startsWith(`${managed}/`)) {
+    if (reference !== `file:${path}`) fail("credential_invalid");
+    return "managed_file";
+  }
+  // Resolving a symlink followed by '..' is not lexical path normalization.
+  // Refuse those ambiguous inputs instead of opening a different named file.
+  if (parsed.value.split("/").some(part => part === "." || part === "..")) fail("credential_invalid");
+  return "external_file";
+}
+/** File references are resolved once through held no-follow parent descriptors.
+ * Direct external files retain their 16 KiB, owner-only and trimming semantics. */
+export function readAppModelFileCredential(vaultPath: string, expectedRevision: string, reference: string): string {
+  const kind = classifyAppModelCredential(vaultPath, reference);
+  if (kind === "env") fail("credential_invalid");
+  if (kind === "managed_file") return readAppManagedModelCredential(vaultPath, expectedRevision, reference);
+  return readOnly(vaultPath, (_files, _vault, current) => {
+    if (revision(current?.bytes ?? null) !== expectedRevision) fail("revision_conflict");
+    const llm = llmOf(parseConfig(current?.bytes ?? null));
+    if (!isPlainObject(llm) || llm.secret_ref !== reference) fail("credential_invalid");
+    const path = resolve(reference.slice(5)), external = openCanonFiles(dirname(path));
+    try {
+      const snapshot = external.readOwnerOnly(basename(path));
+      if (snapshot === null) fail("credential_invalid");
+      try {
+        const bytes = snapshot.bytes, value = Buffer.from(bytes).toString("utf8").trim();
+        if (bytes.byteLength > 16_384 || !value || value.length > 16_384 || /\s|[\x00-\x1f\x7f]/.test(value)) fail("credential_invalid");
+        return value;
+      } finally { snapshot.close(); }
+    } finally { external.close(); }
+  });
 }
 /** Resolve only immutable credentials owned by this settings authority. */
 export function readAppManagedModelCredential(vaultPath: string, expectedRevision: string, reference: string): string {
