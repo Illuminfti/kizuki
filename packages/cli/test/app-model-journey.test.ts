@@ -59,7 +59,7 @@ test.each(['Kizuki', 'My Kizuki Vault'])('authenticated first use in %s separate
     const run = async () => done((await call('run_pass')).data.operation_id);
     try {
         expect((await call('status')).data.vault.ready).toBe(false);
-        expect((await done((await call('initialize', { path: vault })).data.operation_id)).state).toBe('succeeded');
+        expect((await done((await call('initialize', vaultName === 'Kizuki' ? {} : { path: vault })).data.operation_id)).state).toBe('succeeded');
         const empty = (await call('model_status')).data;
         expect(empty.selection).toEqual({ kind: 'none' });
         const selection = { kind: 'openai_compatible', base_url: endpoint.base_url, model: 'synthetic-app-model' };
