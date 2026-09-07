@@ -26,7 +26,7 @@ also matched. SDK metadata alone is not a runtime observation.
 - System CLI SHA-256: `1879b8999e1a368091d1111272676bd0ef3c66d663970e8d69dc91ec64d443c3`.
 - SDK version: `15.5`; sqlite3.h SHA-256: `d6227599d7e32e142ce33b5648e06335dd8c0c82e7e4d41592ed6fedd42ba7f4`.
 
-The exact public [job log](https://api.github.com/repositories/1353875622/actions/jobs/101692661138/logs)
+The retained authenticated [job log](https://api.github.com/repositories/1353875622/actions/jobs/101692661138/logs)
 SHA-256 is `2baf962a06f48cd0deb5a009c87fc37ae36ee294fa2706d69d64fcfea9b7f71f`. The sorted-key compact JSON observation, encoded as UTF-8
 with one trailing newline, has SHA-256 `00f40816d4873abc7a18f6940958c254c90bdf5cca87fd00f2b324b8b465a2d1`.
 The job also passed the native migration, FTS5 conformance/rebuild, FTS5 erasure,
