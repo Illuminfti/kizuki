@@ -644,6 +644,8 @@ for (const [name, stdout, code, detail] of [
   ["duplicate exit", "state = exited\nlast exit code = 78\nlast exit code = 78", 0, "loaded but not running"],
   ["malformed exit", "state = exited\nlast exit code = PRIVATE_MANAGER_CANARY", 0, "loaded but not running"],
   ["malformed sibling", "state = exited\nlast exit code = 78\nlast exit code=garbage", 0, "loaded but not running"],
+  ["malformed colon sibling", "state = exited\nlast exit code = 78\nlast exit code: 0", 0, "loaded but not running"],
+  ["oversized print", "state = exited\nlast exit code = 78\n" + "x".repeat(65_536), 0, "loaded but not running"],
   ["unsafe exit", "state = exited\nlast exit code = 999999999999999999", 0, "loaded but not running"],
   ["noncanonical exit", "state = exited\nlast exit code = 078", 0, "loaded but not running"],
   ["out of range exit", "state = exited\nlast exit code = 256", 0, "loaded but not running"],

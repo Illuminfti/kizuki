@@ -68,7 +68,7 @@ function launchdInactiveDetail(stdout: string): string {
   const unavailable = "loaded but not running";
   if (stdout.length > 65_536) return unavailable;
   const states = [...stdout.matchAll(/^([ \t]*)state = (?:waiting|spawn scheduled|exited|not running)[ \t]*$/gm)];
-  const exits = stdout.split("\n").filter(line => /^[ \t]*last exit code(?:[ \t=]|$)/.test(line));
+  const exits = stdout.split("\n").filter(line => /^[ \t]*last exit code/.test(line));
   if (states.length !== 1 || exits.length !== 1) return unavailable;
   const match = /^([ \t]*)last exit code = (0|[1-9]\d{0,2})[ \t]*$/.exec(exits[0]!);
   // The job fields share indentation; a nested environment value is not an exit.
