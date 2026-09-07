@@ -1,6 +1,6 @@
 # Release acceptance evidence
 
-Evidence date: 6 September 2026. The checked-in acceptance checker inventories
+Evidence date: 7 September 2026. The checked-in acceptance checker inventories
 the fixed RC and 1.0 obligations and validates the supported local evidence.
 The current producer set cannot establish release `GO`: independent review,
 native installed-service execution, live accounts and unfamiliar-user acceptance
@@ -44,6 +44,20 @@ failed index gate. Existing reports are never overwritten. There are no
 waivers, actor declarations, skip flags, threshold overrides or clock flags.
 
 ## Index schema
+
+The current `kizuki.acceptance-evidence/v3` index extends v2 with a required
+`gate_receipts` array. Each reference names its producer, gate, target, absolute
+receipt path and SHA-256. V3 accepts at most forty references and 32 KiB of index
+bytes. Unsupported evidence families retain their explicit missing-adapter
+status; an arbitrary receipt cannot supply release credit.
+
+The implemented `kizuki.surface-inventory/v1` producer is
+`scripts/capability-proof.ts`. Its receipt binds the exact candidate's public
+commands, MCP tools, connector manifests, C3 inventory and documentation hashes.
+The evaluator independently checks the source and receipt before accepting
+`surface.capabilities-and-docs`. This gate alone cannot establish release GO.
+V1 and v2 remain supported under their original schemas and limits.
+
 
 `kizuki.acceptance-evidence/v2` has exactly four keys: `schema`,
 `candidate_source_sha`, `artifacts` and `fixture_observation`. The candidate
@@ -136,7 +150,7 @@ can set `release_1_0_accepted` after every required row passes.
 | `candidate.required-checks` | Exact-candidate required CI/check identities; adapter `NOT_IMPLEMENTED` |
 | `candidate.independent-review` | Independent specification/security and regression review; adapter `NOT_IMPLEMENTED` |
 | `candidate.current-p0-disposition` | Complete current-head findings and explicit freshness policy; `UNVERIFIABLE` |
-| `surface.capabilities-and-docs` | Executable capability/legacy-surface inventory and SECURITY/docs/API agreement; adapter `NOT_IMPLEMENTED` |
+| `surface.capabilities-and-docs` | Exact-candidate executable surface and documentation inventory; v3 receipt adapter implemented |
 | `journey.connect-resume` | Complete connector capability, limit, cursor, sensitivity and account/history/edit/delete/restart evidence |
 | `journey.correct-belief` | Correction, supersession, provenance, canon/query/context/MCP agreement and undo |
 | `journey.revoke-purge` | Immediate and restarted denial, retained consumers, all owned stores and pending cleanup |
@@ -159,9 +173,9 @@ evidence support, not whether a product feature exists.
 The frozen C3 catalogue is Telegram user sign-in, Gmail, Google Calendar,
 IMAP, ICS, WHOOP, X API, screenpipe, Markdown folder, ChatGPT export, Claude
 export, X archive, WhatsApp export, Pocket and Omnivore. Report entries include
-the current connector IDs; X API has `connector_id: null` because this candidate
-has no registered API connector. File importers cannot stand in for live
-accounts. Composio and WhatsApp Business API remain explicitly deferred.
+the current connector IDs, including the registered X API connector `kizuki.x`.
+Registration does not establish actual account qualification. File importers
+cannot stand in for live accounts. Composio and WhatsApp Business API remain explicitly deferred.
 
 ## Trust and qualification limits
 

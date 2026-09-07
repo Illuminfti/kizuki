@@ -25,7 +25,7 @@ export const CONNECTORS = [
   { id: "imap", connector_id: "kizuki.imap", evidence: "live-account" },
   { id: "ics", connector_id: "kizuki.ics", evidence: "file-import" },
   { id: "whoop", connector_id: "kizuki.whoop", evidence: "live-account" },
-  { id: "x-api", connector_id: null, evidence: "live-account" },
+  { id: "x-api", connector_id: "kizuki.x", evidence: "live-account" },
   { id: "screenpipe", connector_id: "kizuki.screenpipe", evidence: "local-source" },
   { id: "markdown-folder", connector_id: "kizuki.markdown-folder", evidence: "file-import" },
   { id: "chatgpt-export", connector_id: "kizuki.import-chatgpt", evidence: "file-import" },
