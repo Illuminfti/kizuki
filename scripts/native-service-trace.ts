@@ -2,19 +2,19 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { constants } from "node:os";
 
-const SYSCALLS = ["openat", "newfstatat", "statx", "fstat", "close", "fsync", "fdatasync", "fcntl", "memfd_create", "read", "pread64"] as const;
+const SYSCALLS = ["openat", "newfstatat", "statx", "fstat", "close", "fsync", "fdatasync", "fcntl", "memfd_create", "read", "pread64", "getdents64", "readlink", "readlinkat"] as const;
 const NAMES = new Set<string>(SYSCALLS);
 const MAX_TRACE_BYTES = 65_536;
-const MAX_ROWS = 160;
 const KNOWN_NAMES = new Set(["/", ".", "..", ".kizuki", "serve.pid", "serve-stop.json", "dashboards", "writer.lock"]);
 
 /** Closed projection: never retain buffers, arbitrary paths, strings or errors. */
 export function projectNativeSyscallTrace(raw: string, fixtureRoot: string) {
-  const rows: { syscall: string; result: number | null; errno: string | null; path: string | null }[] = [];
+  type Row = { syscall: string; result: number | null; errno: string | null; path: string | null };
+  const first = new Map<number, Row>(), last = new Map<number, Row>(), failures = new Map<number, Row>();
+  let matched = 0;
   let discarded = 0;
   const limited = raw.slice(0, MAX_TRACE_BYTES);
   for (const line of limited.split("\n")) {
-    if (rows.length === MAX_ROWS) break;
     const match = /\b([a-z0-9_]+)\((.*)\)\s+=\s+(-?\d+|0x[0-9a-f]+|\?)\s*(E[A-Z0-9_]+)?(?:\s|$)/.exec(line);
     if (!match || !NAMES.has(match[1]!)) { if (line) discarded++; continue; }
     const firstString = /"([^"\\]*)"/.exec(match[2]!)?.[1];
@@ -25,10 +25,19 @@ export function projectNativeSyscallTrace(raw: string, fixtureRoot: string) {
       : firstString.startsWith("/proc/") ? "<proc-path>"
       : firstString.startsWith("/") ? "<external-path>" : "<relative-path>";
     const value = Number(match[3]);
-    rows.push({ syscall: match[1]!, result: Number.isSafeInteger(value) ? value : null,
-      errno: match[4] !== undefined && Object.hasOwn(constants.errno, match[4]) ? match[4] : null, path });
+    const row = { syscall: match[1]!, result: Number.isSafeInteger(value) ? value : null,
+      errno: match[4] !== undefined && Object.hasOwn(constants.errno, match[4]) ? match[4] : null, path };
+    const index = matched++;
+    if (first.size < 80) first.set(index, row);
+    last.set(index, row); if (last.size > 40) last.delete(last.keys().next().value!);
+    if (row.errno !== null) {
+      failures.set(index, row); if (failures.size > 40) failures.delete(failures.keys().next().value!);
+    }
   }
-  return { rows, discarded, truncated: raw.length > MAX_TRACE_BYTES || rows.length === MAX_ROWS };
+  // Keep the start, the tail, and recent errors independently; routine calls
+  // cannot consume the entire diagnostic budget before the failure appears.
+  const rows = [...new Map([...first, ...last, ...failures]).entries()].sort(([a], [b]) => a - b).map(([, row]) => row);
+  return { rows, discarded, omitted_rows: matched - rows.length, truncated: raw.length > MAX_TRACE_BYTES || matched > rows.length };
 }
 
 export interface SyntheticTraceTarget {
@@ -71,7 +80,7 @@ export function captureSyntheticServiceTrace(target: SyntheticTraceTarget) {
   try {
     const command = ["/usr/bin/sudo", "-n", "--", "/usr/bin/timeout", "--signal=INT", "--kill-after=1s", "3s",
       "/usr/bin/strace", "-f", "-qq", "-p", String(target.pid), "-s", "256",
-      "-e", `trace=${SYSCALLS.join(",")}`, "-e", "raw=read,pread64"];
+      "-e", `trace=${SYSCALLS.join(",")}`, "-e", "raw=read,pread64,getdents64,readlink,readlinkat"];
     const result = Bun.spawnSync(command, { env: { PATH: "/usr/bin:/bin", LANG: "C", HOME: join(target.fixtureRoot, "home") },
       cwd: target.fixtureRoot, stdin: "ignore", stdout: "ignore", stderr: "pipe", timeout: 5000, maxBuffer: MAX_TRACE_BYTES });
     const raw = result.stderr.toString();

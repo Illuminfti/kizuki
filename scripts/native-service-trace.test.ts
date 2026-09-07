@@ -26,10 +26,21 @@ test("native syscall diagnostics retain operation and errno without buffers or p
 
 test("native syscall diagnostics bound width and discard unsupported lines", () => {
   const output = projectNativeSyscallTrace('openat(3, ".", O_RDONLY) = 5\n'.repeat(10_000), "/synthetic");
-  expect(output.rows).toHaveLength(160); expect(output.truncated).toBe(true);
+  expect(output.rows).toHaveLength(120); expect(output.truncated).toBe(true);
   expect(JSON.stringify(output).length).toBeLessThan(16_384);
   expect(projectNativeSyscallTrace('execve("SECRET", [], []) = 0', "/synthetic").rows).toEqual([]);
   expect(projectNativeSyscallTrace('openat(3, ".", 0) = -1 E_PRIVATE_CANARY', "/synthetic").rows[0]!.errno).toBeNull();
+});
+
+test("routine calls cannot crowd out later directory and descriptor errors", () => {
+  const ordinary = 'openat(3, ".", O_RDONLY) = 5\n';
+  const output = projectNativeSyscallTrace(ordinary.repeat(200) +
+    'getdents64(5, 0x123456, 0x1000) = -1 EBADF (Bad file descriptor)\n' +
+    'readlinkat(5, 0x123456, 0x654321, 0x1000) = -1 EACCES (Permission denied)\n' + ordinary.repeat(200), "/synthetic");
+  expect(output.rows.length).toBeLessThanOrEqual(160);
+  expect(output.rows.filter(row => row.errno !== null).map(row => [row.syscall, row.errno]))
+    .toEqual([["getdents64", "EBADF"], ["readlinkat", "EACCES"]]);
+  expect(JSON.stringify(output)).not.toContain("0x123456");
 });
 
 test("native trace cannot target this process or arbitrary paths outside the synthetic CI contract", () => {
