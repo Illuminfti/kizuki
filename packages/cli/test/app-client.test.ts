@@ -40,24 +40,25 @@ const tick = async () => { for (let i = 0; i < 12; i++) await Promise.resolve();
 function fixture() {
     const ids = new Map(['main', 'dialog', 'notification', 'navigation', 'view-label', 'refresh'].map(id => [id, new Element()]));
     const document = new Element() as Element & { hidden: boolean; getElementById: (id: string) => Element | null; createElement: (tag: string) => Element; createTextNode: (text: string) => Element; createElementNS: (ns: string, tag: string) => Element };
-    document.getElementById = id => ids.get(id) ?? ids.get('main')!.querySelector(`#${id}`);
+    document.getElementById = id => ids.get(id) ?? ids.get('main')!.querySelector(`#${id}`) ?? ids.get('dialog')!.querySelector(`#${id}`);
     document.createElement = tag => new Element(tag);
     document.createTextNode = text => { const node = new Element('text'); node.textContent = text; return node; };
     document.createElementNS = (_ns, tag) => new Element(tag);
     const wordmark = new Element(); wordmark.className = 'wordmark'; document.append(wordmark);
     const window = new Element();
-    const requests: { route: string; result: ReturnType<typeof deferred<any>> }[] = [];
-    const context = createContext({ document, window, Node: Element, URLSearchParams, AbortController, crypto, Intl, console,
+    const requests: { route: string; payload: any; result: ReturnType<typeof deferred<any>> }[] = [];
+    const storageWrites: string[] = [];
+    const context = createContext({ document, window, Node: Element, URLSearchParams, AbortController, TextEncoder, crypto, Intl, console,
         location: { hash: '', pathname: '/', search: '' }, history: { replaceState() {} },
-        sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+        sessionStorage: { getItem: () => null, setItem(key: string, value: string) { storageWrites.push(`${key}=${value}`); }, removeItem() {} },
         setTimeout: () => 1, clearTimeout() {}, setInterval() {},
-        fetch: (url: string) => { const result = deferred<any>(); requests.push({ route: url.split('/').at(-1)!, result }); return result.promise; },
+        fetch: (url: string, options: { body: string }) => { const result = deferred<any>(); requests.push({ route: url.split('/').at(-1)!, payload: JSON.parse(options.body), result }); return result.promise; },
     });
     runInContext(source, context);
     const evaluate = <T = any>(code: string): T => runInContext(code, context);
     evaluate(`bearer='synthetic-session'; state.status={vault:{ready:true},visibility_epoch:'1',operations:[]}; state.sources=[{source_key:'source-a',connector_id:'kizuki.markdown-folder',display_name:'markdown-folder',consent:'active',required_fields:['text'],stored:0,errors:0}];`);
     function reply(route: string, data: unknown, status = 200) { const at = requests.findIndex(request => request.route === route); if (at < 0) throw Error(`No pending ${route}`); requests.splice(at, 1)[0]!.result.resolve({ status, json: async () => ({ ok: true, data }) }); }
-    return { evaluate, reply, requests, main: ids.get('main')!, dialog: ids.get('dialog')!, notice: ids.get('notification')!, window };
+    return { evaluate, reply, requests, storageWrites, main: ids.get('main')!, dialog: ids.get('dialog')!, notice: ids.get('notification')!, window };
 }
 const status = (operations: unknown[] = [], epoch = '1') => ({ vault: { ready: true }, visibility_epoch: epoch, operations });
 
@@ -222,4 +223,158 @@ test('explicit refresh resolves a recovered running operation to its returned te
     f.reply('catalog', { sources: [] }); f.reply('sources', { sources: [] }); await work;
     expect(f.evaluate<string>('state.operation.state')).toBe('failed');
     expect(f.main.textContent).toContain('This step needs attention');
+});
+
+const modelStatus = (revision = 'model-1') => ({ revision, selection: { kind: 'openai_compatible', base_url: 'https://synthetic.invalid/v1', model: 'test-model', model_endpoint: 'https://synthetic.invalid/v1/chat/completions' }, credential: 'configured', last_test: null });
+async function openModel(f: ReturnType<typeof fixture>) {
+    const work = f.evaluate<Promise<void>>('modelSettings()');
+    f.reply('model_status', modelStatus()); await work;
+}
+function findAction(node: Element, label: string): Element {
+    const found = node.tag === 'button' && node.textContent === label ? node : node.children.map(child => { try { return findAction(child, label); } catch { return null; } }).find(Boolean);
+    if (!found) throw Error(`Missing action ${label}`);
+    return found;
+}
+
+test('model save sends exact revision and transient replacement key without testing or granting a source', async () => {
+    const f = fixture(); await openModel(f);
+    const key = f.dialog.querySelector('#model-key')!; key.value = 'SYNTHETIC_KEY';
+    const save = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} }); await tick();
+    expect(key.value).toBe('');
+    expect(f.requests.map(x => x.route)).toEqual(['model_save']);
+    expect(f.requests[0]!.payload).toEqual({ expected_revision: 'model-1', selection: { kind: 'openai_compatible', base_url: 'https://synthetic.invalid/v1', model: 'test-model' }, credential: { action: 'replace', value: 'SYNTHETIC_KEY' } });
+    f.reply('model_save', modelStatus('model-2')); await save;
+    expect(f.storageWrites).toHaveLength(0);
+    expect(JSON.stringify(f.evaluate('state'))).not.toContain('SYNTHETIC_KEY');
+    expect(f.dialog.textContent + f.main.textContent + f.notice.textContent).not.toContain('SYNTHETIC_KEY');
+    expect(f.notice.textContent).toContain('No source permission');
+});
+
+test('model key clears on panel closure, Escape, off selection and privacy invalidation', async () => {
+    for (const action of ['closeDialog()', `dialog.fire('cancel')`, `dialog.querySelector('#model-kind').value='none'; dialog.querySelector('#model-kind').fire('change')`, 'disconnect()', 'invalidatePrivateView()', `window.fire('pagehide')`]) {
+        const f = fixture(); await openModel(f);
+        const key = f.dialog.querySelector('#model-key')!; key.value = 'SYNTHETIC_KEY';
+        await f.evaluate(action);
+        expect(key.value).toBe('');
+        expect(f.storageWrites).toHaveLength(0);
+    }
+});
+
+test('synthetic model test is explicit and binds only the saved revision', async () => {
+    const f = fixture(); f.evaluate(`state.model=${JSON.stringify(modelStatus())}; state.view='settings'; render();`);
+    expect(f.requests).toHaveLength(0);
+    const work = findAction(f.main, 'Test connection').fire('click'); await tick();
+    expect(f.requests[0]!.route).toBe('model_test');
+    expect(f.requests[0]!.payload).toEqual({ expected_revision: 'model-1' });
+    expect(f.dialog.textContent).toContain('made-up prompt');
+    f.reply('model_test', { operation_id: 'test' }); await tick();
+    f.reply('operation', { id: 'test', kind: 'model_test', state: 'succeeded' }); await tick();
+    f.reply('model_status', { ...modelStatus(), last_test: { revision: 'model-1', at: '2026-09-07T12:00:00Z', outcome: 'succeeded', latency_ms: 12, error_code: null } }); await work;
+    expect(f.main.textContent).toContain('Connection test passed');
+});
+
+test('source model permission binds exact model and source revisions, separately from capture', async () => {
+    const f = fixture(); f.evaluate(`state.sources[0].revision='source-1'; state.sources[0].model_consent='different_model';`);
+    const open = f.evaluate<Promise<void>>('modelConsent(state.sources[0], true)');
+    f.reply('model_status', modelStatus()); await open;
+    expect(f.dialog.textContent).toContain('https://synthetic.invalid/v1/chat/completions');
+    expect(f.dialog.textContent).toContain('test-model');
+    expect(f.dialog.textContent).toContain('provider');
+    const work = findAction(f.dialog, 'Allow this model').fire('click'); await tick();
+    expect(f.requests.map(x => x.route)).toEqual(['source_model_consent']);
+    expect(f.requests[0]!.payload).toMatchObject({ source_key: 'source-a', expected_revision: 'source-1', expected_model_revision: 'model-1', allow: true });
+    expect(f.requests[0]!.payload.operation_id).toBeString();
+    f.reply('source_model_consent', { source_key: 'source-a', revision: 'source-2', status: 'current' }); await tick();
+    f.reply('status', status()); await tick(); f.reply('catalog', { sources: [] }); f.reply('sources', { sources: [] }); await work;
+    expect(f.requests.some(x => x.route === 'capture' || x.route === 'run_pass')).toBe(false);
+});
+
+test('mismatched source consent never reads as permission for the current model', () => {
+    const f = fixture(); f.evaluate(`state.model=${JSON.stringify(modelStatus())}; state.view='sources'; state.sources[0].model_consent='different_model'; render();`);
+    expect(f.main.textContent).toContain('Permission is for a different model');
+    expect(f.main.textContent).toContain('test-model');
+    expect(findAction(f.main, 'Review model permission')).toBeTruthy();
+    expect(findAction(f.main, 'Withdraw model permission')).toBeTruthy();
+});
+
+test('processing reports real run receipt counts and does not equate capture with memory writes', async () => {
+    const f = fixture(); const work = f.evaluate<Promise<void>>('runPass()');
+    expect(f.requests[0]!.route).toBe('run_pass'); expect(f.requests[0]!.payload).toEqual({});
+    f.reply('run_pass', { operation_id: 'process' }); await tick();
+    const operation = { id: 'process', kind: 'run_pass', state: 'succeeded', result: { run: { run_id: 'receipt-real', status: 'completed', canon_writes: 2, claims_extracted: 3, model_calls: 1, model_configured: true } } };
+    f.reply('operation', operation); await tick();
+    f.reply('status', status([operation])); await tick(); f.reply('catalog', { sources: [] }); f.reply('sources', { sources: [] }); await work;
+    expect(f.main.textContent).toContain('2 memory writes'); expect(f.main.textContent).toContain('receipt-real');
+    f.evaluate(`state.operation={kind:'capture',state:'succeeded',counts:{stored:9}}; render();`);
+    expect(f.main.textContent).not.toContain('9 memory writes');
+});
+
+test('late model status and save cannot reopen private panels after disconnect', async () => {
+    const f = fixture(); const work = f.evaluate<Promise<void>>('modelSettings()');
+    f.evaluate('disconnect()'); f.reply('model_status', modelStatus()); await work;
+    expect(f.dialog.open).toBe(false); expect(f.evaluate('state.model')).toBeNull();
+    expect(f.main.textContent).not.toContain('test-model');
+});
+
+test('model off and key removal are explicit writes, and UTF-8 oversized keys never leave the form', async () => {
+    for (const action of ['off', 'clear', 'keep', 'oversize']) {
+        const f = fixture(); await openModel(f);
+        if (action === 'off') { f.dialog.querySelector('#model-kind')!.value = 'none'; await f.dialog.querySelector('#model-kind')!.fire('change'); }
+        if (action === 'clear') { f.dialog.querySelector('#model-clear-key')!.checked = true; await f.dialog.querySelector('#model-clear-key')!.fire('change'); }
+        if (action === 'oversize') f.dialog.querySelector('#model-key')!.value = '界'.repeat(400);
+        const save = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} }); await tick();
+        if (action === 'oversize') { await save; expect(f.requests).toHaveLength(0); expect(f.dialog.querySelector('#model-key')!.value).toBe(''); expect(f.dialog.textContent).toContain('too long'); continue; }
+        expect(f.requests[0]!.payload.credential).toEqual({ action: action === 'clear' ? 'clear' : 'keep' });
+        if (action === 'off') expect(f.requests[0]!.payload.selection).toEqual({ kind: 'none' });
+        f.reply('model_save', action === 'off' ? { ...modelStatus(), selection: { kind: 'none' } } : modelStatus()); await save;
+    }
+});
+
+test('withdrawal is allowed with model off and retains separate source revision checks', async () => {
+    const f = fixture(); f.evaluate(`state.sources[0].revision='source-1';`);
+    const open = f.evaluate<Promise<void>>('modelConsent(state.sources[0], false)');
+    f.reply('model_status', { ...modelStatus(), selection: { kind: 'none' } }); await open;
+    const work = findAction(f.dialog, 'Withdraw permission').fire('click'); await tick();
+    expect(f.requests[0]!.payload).toMatchObject({ expected_revision: 'source-1', expected_model_revision: 'model-1', allow: false });
+    f.requests.shift()!.result.resolve({ status: 409, json: async () => ({ ok: false, error: { code: 'revision_conflict', message: 'UNTRUSTED_ERROR_CONTENT' } }) }); await work;
+    expect(f.dialog.textContent).toContain('Something changed');
+    expect(f.dialog.textContent).not.toContain('UNTRUSTED_ERROR_CONTENT');
+    expect(findAction(f.dialog, 'Withdraw permission').disabled).toBe(false);
+});
+
+test('privacy invalidation fences a save already in flight and clears run receipt information', async () => {
+    const f = fixture(); await openModel(f);
+    f.dialog.querySelector('#model-key')!.value = 'SYNTHETIC_KEY';
+    const work = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} }); await tick();
+    f.evaluate(`state.operation={result:{run:{run_id:'PRIVATE_RUN'}}}; invalidatePrivateView();`);
+    f.reply('model_save', modelStatus()); await work;
+    expect(f.evaluate('state.model')).toBeNull(); expect(f.evaluate('state.operation')).toBeNull();
+    expect(f.dialog.textContent).toBe(''); expect(f.main.textContent).toBe(''); expect(f.notice.textContent).toBe('');
+});
+
+test('old connection tests are hidden after configuration changes and returned identifiers are text', () => {
+    const f = fixture();
+    f.evaluate(`state.view='settings'; state.model=${JSON.stringify({ ...modelStatus('new'), selection: { ...modelStatus().selection, model: '<img src=x onerror=alert(1)>' }, last_test: { revision: 'old', outcome: 'succeeded', at: '2026-09-07T12:00:00Z', latency_ms: 1 } })}; render();`);
+    expect(f.main.textContent).not.toContain('Connection test passed');
+    expect(f.main.textContent).toContain('<img src=x onerror=alert(1)>');
+    expect(f.main.querySelector('img')).toBeNull();
+});
+
+test('failed synthetic test refreshes the saved test outcome without claiming connection success', async () => {
+    const f = fixture(); f.evaluate(`state.model=${JSON.stringify(modelStatus())}; state.view='settings'; render();`);
+    const work = findAction(f.main, 'Test connection').fire('click'); await tick();
+    f.reply('model_test', { operation_id: 'test' }); await tick();
+    f.reply('operation', { id: 'test', kind: 'model_test', state: 'failed', error: { code: 'model_unavailable' } }); await tick();
+    f.reply('model_status', { ...modelStatus(), last_test: { revision: 'model-1', at: '2026-09-07T12:00:00Z', outcome: 'failed', latency_ms: 12, error_code: 'model_unavailable' } }); await work;
+    expect(f.main.textContent).toContain('Connection test failed');
+    expect(f.main.textContent).not.toContain('Connection test passed');
+    expect(f.requests.some(x => x.route === 'source_model_consent')).toBe(false);
+});
+
+test('unreadable existing model settings do not expose a replacement form', async () => {
+    const f = fixture(); const work = f.evaluate<Promise<void>>('modelSettings()');
+    f.requests.shift()!.result.resolve({ status: 400, json: async () => ({ ok: false, error: { code: 'model_config_invalid' } }) }); await work;
+    expect(f.dialog.querySelector('form')).toBeNull();
+    expect(f.dialog.textContent).toContain('existing settings have not been replaced');
+    expect(f.requests).toHaveLength(0);
 });
