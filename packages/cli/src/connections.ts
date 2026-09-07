@@ -127,7 +127,7 @@ export function decodeHostState(
   };
 }
 
-function connectorAuthModes(id: string): readonly string[] | null {
+export function connectorAuthModes(id: string): readonly string[] | null {
   // These importers need a real mapping to construct; their shared manifest
   // auth metadata is enough to discover the CLI path, never to admit capture.
   if (id === LEGACY_EVENTS_CONNECTOR_ID) return LEGACY_EVENTS_AUTH_MODES;
@@ -141,6 +141,20 @@ function connectorAuthModes(id: string): readonly string[] | null {
     }
   }
   return null;
+}
+
+/**
+ * True only for a connector whose enrolled state can never hold credential
+ * material. Sign-in and secret-ref connectors mint real secrets (session
+ * tokens, app passwords) into the same opaque connection-state store a
+ * `none`-auth connector uses for plain config like a local path; core never
+ * distinguishes the two, so a backup that copied every connector's state
+ * bytes would put those secrets in the backup. Only the `none`-auth shape is
+ * safe to carry across a backup.
+ */
+export function connectionStateIsCredentialFree(connectorId: string): boolean {
+  const modes = connectorAuthModes(connectorId);
+  return modes !== null && modes.length === 1 && modes[0] === "none";
 }
 
 export function listEnrollableConnectorIds(): string[] {
