@@ -99,7 +99,7 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
   };
   const domain = `gui/${process.getuid?.() ?? 0}`;
   const managerState = () => platform === "darwin" ? native("print", `${domain}/${unit}`) :
-    native("--user", "show", unit, "--property=MainPID,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,LoadState");
+    native("--user", "show", unit, "--property=MainPID,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,LoadState,UnitFileState");
   const processObservation = (): Observation => {
     let marker: { pid?: number; instance_id?: string } = {};
     try { marker = JSON.parse(readFileSync(join(vault, ".kizuki", "serve.pid"), "utf8")); } catch { /* A marker is absent while stopped. */ }
@@ -167,6 +167,22 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     // Only service-manager reachability is needed; no manager environment is read.
     record("native-user-manager-available", available.exit_code === 0, { command: platform === "darwin" ? "launchctl print gui/<uid>" : "systemctl --user show --property=Version", exit_code: available.exit_code });
     vault = join(fixtureRoot, "synthetic vault");
+    const serviceDiagnostics = (name: string) => {
+      if (platform !== "linux") return null;
+      const queries = [
+        ["--user", "show", name, "--property=LoadState,ActiveState,UnitFileState,MainPID"],
+        ["--user", "is-enabled", name],
+        ["--user", "is-active", name],
+      ];
+      return { unit: name, paths: { home, xdg_config_home: configHome, manager_home: managerEnv.HOME,
+        xdg_runtime_dir: managerEnv.XDG_RUNTIME_DIR ?? null },
+        queries: queries.map(command => ({ command: [manager, ...command], ...native(...command) })) };
+    };
+    if (platform === "linux") {
+      // Init chooses its own fresh vault identity. Probe a distinct never-installed
+      // synthetic unit before init; then capture the actual identity after init.
+      record("pre-init-absent-unit-diagnostics", true, serviceDiagnostics(`kizuki@lifecycle-probe-${crypto.randomUUID()}.service`));
+    }
     // Default init must create and activate the installed service, without --no-service.
     const initialized = invoke([executable, "init", vault, "--no-default"]);
     if (existsSync(join(vault, ".kizuki", "vault-id"))) {
@@ -175,7 +191,7 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
       unit = platform === "darwin" ? `dev.kizuki.${vaultId}` : `kizuki@${vaultId}.service`;
       unitPath = platform === "darwin" ? join(home, "Library/LaunchAgents", `${unit}.plist`) : join(configHome, "systemd/user", unit);
     }
-    record("default-init-installs-service", initialized.exit_code === 0, initialized);
+    record("default-init-installs-service", initialized.exit_code === 0, { ...initialized, native_status: unit ? serviceDiagnostics(unit) : null });
     let observed = await active("default-init-running", executable);
     const status = invoke([executable, "serve", "status", "--json", "--vault", vault]);
     const statusBody = JSON.parse(status.stdout).data;
