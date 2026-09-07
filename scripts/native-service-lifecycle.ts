@@ -31,6 +31,16 @@ function git(args: string[]): string {
   return result.stdout.toString().trim();
 }
 
+/** Failure evidence is collected before cleanup and cannot replace the timeout. */
+export async function waitForNativeState(
+  predicate: () => boolean, description: string, onTimeout: () => void, timeoutMs = timeout,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) { if (predicate()) return; await Bun.sleep(200); }
+  try { onTimeout(); } catch { /* Diagnostic failure must not hide the failed lifecycle gate. */ }
+  throw new Error(`timed out: ${description}`);
+}
+
 /** Parses only anchored native manager fields; an incidental PID is not activity evidence. */
 export function managerPid(platform: string, result: CommandResult): number | null {
   if (result.exit_code !== 0 || (platform !== "darwin" && platform !== "linux")) return null;
@@ -87,8 +97,8 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
   for (const key of ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"]) {
     if (process.env[key]) managerEnv[key] = process.env[key]!;
   }
-  const invoke = (command: readonly string[], env = cliEnv): CommandResult => {
-    const result = Bun.spawnSync([...command], { cwd: fixtureRoot ?? repository, env, stdout: "pipe", stderr: "pipe", stdin: "ignore", timeout });
+  const invoke = (command: readonly string[], env = cliEnv, commandTimeout = timeout): CommandResult => {
+    const result = Bun.spawnSync([...command], { cwd: fixtureRoot ?? repository, env, stdout: "pipe", stderr: "pipe", stdin: "ignore", timeout: commandTimeout });
     return { exit_code: result.exitCode, stdout: text(result.stdout), stderr: text(result.stderr) };
   };
   const native = (...command: string[]) => invoke([manager, ...command], managerEnv);
@@ -98,20 +108,32 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     return result;
   };
   const domain = `gui/${process.getuid?.() ?? 0}`;
-  const managerState = () => platform === "darwin" ? native("print", `${domain}/${unit}`) :
-    native("--user", "show", unit, "--property=MainPID,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,LoadState,UnitFileState");
-  const processObservation = (): Observation => {
+  const managerState = (commandTimeout = timeout) => invoke(platform === "darwin" ? [manager, "print", `${domain}/${unit}`] :
+    [manager, "--user", "show", unit, "--property=MainPID,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,LoadState,UnitFileState,NRestarts"], managerEnv, commandTimeout);
+  const processObservation = (state = managerState(), commandTimeout = timeout): Observation => {
     let marker: { pid?: number; instance_id?: string } = {};
     try { marker = JSON.parse(readFileSync(join(vault, ".kizuki", "serve.pid"), "utf8")); } catch { /* A marker is absent while stopped. */ }
-    const pid = managerPid(platform, managerState());
-    const command = pid === null ? null : invoke(["/bin/ps", "-p", String(pid), "-o", "command="], managerEnv).stdout.trim();
+    const pid = managerPid(platform, state);
+    const command = pid === null ? null : invoke(["/bin/ps", "-p", String(pid), "-o", "command="], managerEnv, commandTimeout).stdout.trim();
     return { manager_pid: pid, marker_pid: marker.pid ?? null, instance_id: marker.instance_id ?? null, command };
   };
-  const waitFor = async (predicate: () => boolean, description: string) => {
-    const deadline = Date.now() + timeout;
-    while (Date.now() < deadline) { if (predicate()) return; await Bun.sleep(200); }
-    throw new Error(`timed out: ${description}`);
-  };
+  const waitFor = (predicate: () => boolean, description: string) => waitForNativeState(predicate, description, () => {
+    const evidence: Record<string, unknown> = { waiting_for: description, unit };
+    try {
+      const state = managerState(5000);
+      evidence.manager_state = state;
+      evidence.process_observation = processObservation(state, 5000);
+    } catch { evidence.process_diagnostics_error = "native state or process query failed"; }
+    if (platform === "linux") {
+      // The generated unit is unique to this synthetic clean-environment vault.
+      // Never retrieve an unfiltered user journal or the manager environment.
+      const command = ["/usr/bin/journalctl", `--user-unit=${unit}`, "--boot", "--lines=80", "--no-pager", "--output=short-iso"];
+      try { evidence.unit_journal = { command, ...invoke(command, managerEnv, 5000) }; }
+      catch { evidence.journal_diagnostics_error = "owned unit journal query failed"; }
+    }
+    steps.push({ id: "native-wait-timeout-diagnostics", passed: false, evidence });
+    save();
+  });
   const active = async (id: string, binary: string, previous: Observation | null = null) => {
     let observed: Observation = { manager_pid: null, marker_pid: null, instance_id: null, command: null };
     await waitFor(() => {

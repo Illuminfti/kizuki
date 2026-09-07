@@ -2,7 +2,30 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cleanupStoppedNativeFixture, managerPid, nativeServiceStopped } from "./native-service-lifecycle";
+import { cleanupStoppedNativeFixture, managerPid, nativeServiceStopped, waitForNativeState } from "./native-service-lifecycle";
+
+test("native wait records timeout evidence before the caller cleans up", async () => {
+  const events: string[] = [];
+  try {
+    await waitForNativeState(() => false, "synthetic restart", () => { events.push("diagnostics"); }, 0);
+  } catch (error) {
+    expect((error as Error).message).toBe("timed out: synthetic restart");
+    events.push("failure");
+  } finally { events.push("cleanup"); }
+  expect(events).toEqual(["diagnostics", "failure", "cleanup"]);
+});
+
+test("failed timeout diagnostics preserve the original gate failure", async () => {
+  await expect(waitForNativeState(() => false, "synthetic restart", () => {
+    throw new Error("synthetic diagnostic failure");
+  }, 0)).rejects.toThrow("timed out: synthetic restart");
+});
+
+test("a successful native wait does not collect failure diagnostics", async () => {
+  let collected = false;
+  await waitForNativeState(() => true, "synthetic restart", () => { collected = true; });
+  expect(collected).toBe(false);
+});
 
 for (const [platform, stdout, exit, expected] of [
   ["darwin", "\tstate = running\n\tpid = 501\n", 0, 501],
