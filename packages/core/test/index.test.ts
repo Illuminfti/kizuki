@@ -243,6 +243,7 @@ describe("public surface", () => {
       "countUnwrittenLiveClaims",
       "countWrittenLiveClaims",
       "createBudgetTracker",
+      "createConnectionStateReader",
       "createFileNotifier",
       "createFts5RetrievalPort",
       "createModelProducerPort",
