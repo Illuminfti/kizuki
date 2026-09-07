@@ -35,10 +35,10 @@ test("invalid historical text is rejected before completion and leaves every ori
 });
 test("collision reaches the actual final v21 CREATE after intermediate migrations then atomically restores all old rows and schema",()=>{
  const {vault,path}=fixture();change(path,"CREATE TABLE canon_projection_sources (synthetic_collision TEXT NOT NULL); INSERT INTO canon_projection_sources VALUES ('fixture')");const before=inspectRecoveryFixture(vault);
- const original=Database.prototype.exec;let observed:{version:number;earlier:boolean;new_columns:boolean}|null=null;
- Database.prototype.exec=function(sql:string){if(/^\s*CREATE TABLE canon_projection_sources\b/.test(sql)){observed={version:(this.query("SELECT version FROM schema_version").get() as {version:number}).version,earlier:this.query("SELECT name FROM sqlite_master WHERE name='canon_write_intents'").get()!==null,new_columns:this.query<{name:string},[]>("PRAGMA table_info(events)").all().some(row=>row.name==="text_hash")};}return original.call(this,sql);};
+ const original=Database.prototype.exec;const observed:{version:number;earlier:boolean;new_columns:boolean}[]=[];
+ Database.prototype.exec=function(sql:string){if(/^\s*CREATE TABLE canon_projection_sources\b/.test(sql)){observed.push({version:(this.query("SELECT version FROM schema_version").get() as {version:number}).version,earlier:this.query("SELECT name FROM sqlite_master WHERE name='canon_write_intents'").get()!==null,new_columns:this.query<{name:string},[]>("PRAGMA table_info(events)").all().some(row=>row.name==="text_hash")});}return original.call(this,sql);};
  try{expect(()=>openLedger(path)).toThrow("canon_projection_sources");}finally{Database.prototype.exec=original;}
- expect(observed).toEqual({version:20,earlier:true,new_columns:true});expect(inspectRecoveryFixture(vault)).toEqual(before);
+ expect(observed).toEqual([{version:20,earlier:true,new_columns:true}]);expect(inspectRecoveryFixture(vault)).toEqual(before);
 });
 test("unsafe ledger alias is refused without changing the outside fixture",async()=>{
  const {vault,path}=fixture(),outside=fixture();const {unlinkSync,symlinkSync}=await import("node:fs");const before=inspectRecoveryFixture(outside.vault);unlinkSync(path);symlinkSync(outside.path,path);expect(()=>inspectRecoveryFixture(vault)).toThrow();expect(inspectRecoveryFixture(outside.vault)).toEqual(before);
