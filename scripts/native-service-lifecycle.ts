@@ -648,7 +648,7 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     await runNativeModelMatrix({ executable: candidate, workspace: join(fixtureRoot, "model matrix"), env: cliEnv,
       invoke: args => invoke([candidate, ...args]), activate: selected => activateExtension(selected), deactivate: selected => deactivateExtension(selected),
       stillActive: (selected, instance) => { selectVault(selected); const observed = processObservation(); return observed.manager_pid === instance.pid && observed.marker_pid === instance.pid && observed.instance_id === instance.instance_id; },
-      record: recordPhase });
+      record: recordPhase, diagnostic: evidence => { steps.push({ id: "model-phase-failure-diagnostics", passed: false, evidence }); save(); } });
     check(qualification.phases.length === NATIVE_LIFECYCLE_PHASE_IDS.length && qualification.phases.every((row,index) => row.id === NATIVE_LIFECYCLE_PHASE_IDS[index]), "native phase inventory incomplete");
 
     for (const directory of [args.artifact, copied, upgraded]) {

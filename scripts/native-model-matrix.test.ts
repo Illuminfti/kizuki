@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MODEL_PHASE_IDS, modelPhasePassed, readStrictNativeQuery, runNativeModelMatrix, startNativeModelEndpoint, type NativeModelEvidence, type NativeModelPhase } from "./native-model-matrix";
+import { MODEL_PHASE_IDS, modelPhasePassed, modelFailureDiagnostic, readStrictNativeQuery, runNativeModelMatrix, startNativeModelEndpoint, type NativeModelEvidence, type NativeModelPhase } from "./native-model-matrix";
 import { syntheticModelReply } from "./native-model-endpoint";
 
 const base: NativeModelEvidence = { unit: "kizuki@synthetic.service", instance_id: "synthetic-instance", pid: 123, started_at: "2026-09-07T00:00:00.000Z", receipt_run_id: "synthetic-run", receipt_status: "ok", model_calls: 1, model_unavailable: 0,
@@ -39,6 +39,24 @@ test("offline recovery requires the restored dependency and a distinct installed
     { credential_unchanged: false }, { stop_confirmed: false }, { receipt_trigger: "manual" }, { receipt_due_at: null }, { model_output_readable: false }, { query_preserved: false }, { daemon_active: false }, { endpoint_requests: 0 }, { model_claims: 0 }])
     expect(modelPhasePassed("model-dependency-offline", { ...offline, recovery: { ...recovery, ...changed } })).toBe(false);
 });
+test("failed receipt diagnostics bound and redact both attempts without serializing arbitrary values", () => {
+  const key = "ab".repeat(24), phase = { id: "model-configured" as const, passed: false, evidence: base };
+  let serialized = false;
+  const opaque = { toJSON: () => { serialized = true; return key; }, toString: () => { serialized = true; return key; } };
+  const errors = [opaque, null, 42, `failure\n\t\0${key}\u007f\u0085`, "x".repeat(150) + key + "tail", ...Array.from({length:10}, (_,i) => `error-${i}`)];
+  const original = { run_id: "original-run", errors }, recovery = { run_id: "recovery-run", errors };
+  const projected = modelFailureDiagnostic(phase, original, recovery, key)!;
+  expect(projected.phase_id).toBe(phase.id); expect(projected.unit).toBe(base.unit);
+  expect(projected.original.receipt_run_id).toBe("original-run"); expect(projected.recovery!.receipt_run_id).toBe("recovery-run");
+  expect(projected.original.errors).toHaveLength(4); expect(projected.recovery!.errors).toHaveLength(4);
+  expect(projected.original.errors[0]).toBe("failure   [redacted]  ");
+  expect(projected.original.errors[1]).toBe("x".repeat(150) + "[redacted]");
+  const text = JSON.stringify(projected); expect(text).not.toContain(key); expect(text).not.toContain(key.slice(0,10));
+  expect(projected.original.errors.every(error => error.length <= 160 && !/[\x00-\x1f\x7f-\x9f]/.test(error))).toBe(true);
+  expect(serialized).toBe(false);
+  expect(modelFailureDiagnostic(phase, original, null, key)!.original.errors).toHaveLength(8);
+  expect(modelFailureDiagnostic({ ...phase, passed: true }, original, recovery, key)).toBeNull();
+});
 test("strict native query refuses exit-zero degradation, warnings, stderr and malformed hits", () => {
   const body = { schema: "kizuki.cli.query/v1", status: "ok", degraded: [], warnings: [], data: { withheld: 0, hits: [{ scope: "ledger", authority: "connector_evidence", snippet: "synthetic" }] } };
   const result = { exit_code: 0, stderr: "", stdout: JSON.stringify(body) };
@@ -67,11 +85,13 @@ test("owned endpoint stays alive across blocking parent work, counts refusals an
   } finally { await endpoint.stop(); await endpoint.stop(); rmSync(workspace, { recursive: true }); }
 });
 
-test("the full model matrix observes actual daemon child receipts under paths with spaces", async () => {
+for (const configuredKeyMissing of [false, true]) test(`the full model matrix ${configuredKeyMissing ? "retains failed receipt diagnostics" : "emits no diagnostics for successful phases"} under paths with spaces`, async () => {
   const workspace = mkdtempSync(join(tmpdir(), "native model matrix ")), home = join(workspace, "home"); mkdirSync(home);
   const cli = join(import.meta.dir, "../packages/cli/src/main.ts");
   const env = { PATH: "/usr/bin:/bin", HOME: home, XDG_CONFIG_HOME: join(home, "config"), KIZUKI_CONFIG: join(home, "config.toml"), KIZUKI_SUPERVISOR: "none" };
   const children = new Map<string, ReturnType<typeof Bun.spawn>>(); const phases: NativeModelPhase[] = [];
+  const diagnostics: { phase_id: string; unit: string; original: { receipt_run_id: string; errors: string[] }; recovery: { receipt_run_id: string; errors: string[] } | null }[] = [];
+  let configuredKey = "";
   const invoke = (args: string[]) => { const r = Bun.spawnSync([process.execPath, cli, ...args], { env, cwd: workspace, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 30_000 }); if (r.exitCode !== 0) console.error(JSON.stringify({ argv: args.slice(0,2), exit: r.exitCode, stderr: r.stderr.toString() })); return { exit_code: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr.toString() }; };
   const stop = async (vault: string) => {
     const child = children.get(vault); if (!child) return;
@@ -82,6 +102,9 @@ test("the full model matrix observes actual daemon child receipts under paths wi
   try {
     await runNativeModelMatrix({ executable: process.execPath, workspace: join(workspace, "cases"), env, invoke,
       activate: async (vault) => {
+        if (configuredKeyMissing && vault.includes("/model-configured/")) {
+          const keyPath = join(vault, ".kizuki/model-fixture.key"); configuredKey = readFileSync(keyPath, "utf8"); unlinkSync(keyPath);
+        }
         const started_at = new Date().toISOString();
         const child = Bun.spawn([process.execPath, cli, "serve", "--no-http", "--vault", vault], { env, cwd: workspace, stdin: "ignore", stdout: "ignore", stderr: "ignore" }); children.set(vault, child);
         const marker = join(vault, ".kizuki/serve.pid"), deadline = Date.now() + 5000;
@@ -93,9 +116,15 @@ test("the full model matrix observes actual daemon child receipts under paths wi
       stillActive: (vault, instance) => children.get(vault)?.pid === instance.pid && children.get(vault)?.exitCode === null,
       deactivate: stop,
       record: phase => { phases.push(phase); },
+      ...{ diagnostic: (value: typeof diagnostics[number]) => diagnostics.push(value) },
     });
     expect(phases.map(p => p.id)).toEqual([...MODEL_PHASE_IDS]);
-    expect(phases.map(p => ({id:p.id,passed:p.passed}))).toEqual(MODEL_PHASE_IDS.map(id => ({id,passed:true})));
+    expect(phases.map(p => ({id:p.id,passed:p.passed}))).toEqual(MODEL_PHASE_IDS.map(id => ({id,passed: !(configuredKeyMissing && id === "model-configured")})));
+    if (configuredKeyMissing) {
+      expect(diagnostics).toEqual([{ phase_id: "model-configured", unit: "direct-child-model-fixture",
+        original: { receipt_run_id: phases.find(p => p.id === "model-configured")!.evidence.receipt_run_id, errors: ["model configuration unavailable"] }, recovery: null }]);
+      expect(JSON.stringify(diagnostics)).not.toContain(configuredKey);
+    } else expect(diagnostics).toEqual([]);
   } finally {
     for (const vault of children.keys()) await stop(vault);
     rmSync(workspace, { recursive: true });

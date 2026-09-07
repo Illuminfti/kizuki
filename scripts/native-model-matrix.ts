@@ -26,6 +26,11 @@ export type NativeModelEvidence = {
 };
 export type NativeModelPhase = { id: ModelPhaseId; passed: boolean; evidence: NativeModelEvidence };
 export type NativeModelInstance = { unit: string; pid: number; instance_id: string; started_at: string };
+export type NativeModelFailureDiagnostic = {
+  phase_id: ModelPhaseId; unit: string;
+  original: { receipt_run_id: string; errors: string[] };
+  recovery: { receipt_run_id: string; errors: string[] } | null;
+};
 export type NativeModelHost = {
   executable: string; workspace: string; env: Record<string, string>;
   invoke(args: string[]): { exit_code: number; stdout: string; stderr: string };
@@ -33,11 +38,27 @@ export type NativeModelHost = {
   stillActive(vault: string, instance: NativeModelInstance): boolean;
   deactivate(vault: string): Promise<void>;
   record(phase: NativeModelPhase): void;
+  diagnostic?(evidence: NativeModelFailureDiagnostic): void;
 };
 const sha = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const check = (value: unknown, code: string): void => { if (!value) throw new Error(`native_model_${code}`); };
 const MODEL = "native-lifecycle-synthetic";
 const SOURCE_TEXT = "Ada is the coordinator for Orchard library.\n";
+
+/** Diagnostic projection only: never serialize the receipt or endpoint response.
+ * Reserve space for both attempts so an offline error cannot hide recovery's cause. */
+export function modelFailureDiagnostic(phase: NativeModelPhase,
+  original: { run_id: string; errors: readonly unknown[] },
+  recovery: { run_id: string; errors: readonly unknown[] } | null,
+  syntheticKey: string): NativeModelFailureDiagnostic | null {
+  if (phase.passed) return null;
+  check(/^[0-9a-f]{48}$/.test(syntheticKey), "diagnostic_key");
+  const project = (receipt: typeof original, limit: number) => ({ receipt_run_id: receipt.run_id,
+    errors: receipt.errors.filter((error): error is string => typeof error === "string").slice(0, limit)
+      .map(error => error.replaceAll(syntheticKey, "[redacted]").replace(/[\x00-\x1f\x7f-\x9f]/g, " ").slice(0, 160)) });
+  return { phase_id: phase.id, unit: phase.evidence.unit,
+    original: project(original, recovery ? 4 : 8), recovery: recovery ? project(recovery, 4) : null };
+}
 
 /** Exit zero alone does not establish a healthy query: the CLI can return a
  * degraded envelope. Require its complete public success boundary and hit data. */
@@ -214,6 +235,7 @@ export async function runNativeModelMatrix(host: NativeModelHost): Promise<void>
         weights_unchanged: modelFiles(vault) === weightsHash, config_unchanged: sha(readFileSync(config)) === configHash,
         configuration_unavailable: receipt.errors.includes("model configuration unavailable"), daemon_active: host.stillActive(vault, instance),
         model_ref_sha256: receipt.model.model_ref_sha256 ?? null, model_claims: observation!.model_claims, model_canon_receipts: observation!.model_canon_receipts, model_output_readable: modelOutputReadable, recovery: null };
+      let recoveryReceipt: typeof receipt | null = null;
       if (id === "model-dependency-offline") {
         // Preserve the unavailable startup observation; recovery is a new installed-service instance.
         await host.deactivate(vault); activated = false;
@@ -228,6 +250,7 @@ export async function runNativeModelMatrix(host: NativeModelHost): Promise<void>
         const recoveredSource = host.invoke(["query", "Orchard", "--json", "--vault", vault]);
         const recoveredModel = host.invoke(["query", "operations", "--json", "--vault", vault]);
         const recoveredCounts = recoveredEndpoint.observation(), nextReceipt = next!.receipt;
+        recoveryReceipt = nextReceipt;
         const recoveredSourceHits = readStrictNativeQuery(recoveredSource), recoveredModelHits = readStrictNativeQuery(recoveredModel);
         evidence.recovery = { stop_confirmed: stopConfirmed, receipt_trigger: nextReceipt.execution?.trigger ?? "absent", receipt_due_at: nextReceipt.execution?.due_at ?? null, scheduling_override: schedulingOverride, trigger: "service-restart", ...recovered, receipt_run_id: nextReceipt.run_id, receipt_status: nextReceipt.status,
           model_calls: nextReceipt.model.calls, model_unavailable: nextReceipt.model.unavailable, claims_extracted: nextReceipt.claims_extracted, canon_writes: nextReceipt.canon_writes,
@@ -237,7 +260,10 @@ export async function runNativeModelMatrix(host: NativeModelHost): Promise<void>
           daemon_active: host.stillActive(vault, recovered), config_unchanged: sha(readFileSync(config)) === configHash,
           credential_unchanged: readFileSync(key, "utf8") === endpoint.key, endpoint_unchanged: recoveredEndpoint.endpoint === endpoint.endpoint };
       }
-      host.record({ id, passed: modelPhasePassed(id, evidence), evidence });
+      const phase = { id, passed: modelPhasePassed(id, evidence), evidence };
+      host.record(phase);
+      const diagnostic = modelFailureDiagnostic(phase, receipt, recoveryReceipt, endpoint.key);
+      if (diagnostic !== null) host.diagnostic?.(diagnostic);
     } finally {
       try { if (activated) await host.deactivate(vault); } finally { try { await recoveredEndpoint?.stop(); } finally { await endpoint.stop(); } }
     }
