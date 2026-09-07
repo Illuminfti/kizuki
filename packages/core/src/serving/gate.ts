@@ -340,6 +340,7 @@ export function gate<T>(
   const { live, audit_id } = enter(ctx, tool, args, at);
   const sourceEpoch = sourcePolicyEpoch(live.db);
   const purgeEpoch = purgeReadEpoch(live.db);
+  const readEpoch = tool === "query_entities" ? claimsEpoch(live.db) : null;
   const canonGeneration = tool === "propose" || tool === "correct" ? null : canonReadGeneration(live.db);
   let served: Served<T>;
   try {
@@ -347,6 +348,13 @@ export function gate<T>(
     if (purgeReadEpoch(live.db) !== purgeEpoch) throw new ServeError("held", "canon unavailable during purge recovery");
     if (canonGeneration !== null && canonReadGeneration(live.db) !== canonGeneration) throw new ServeError("held", "canon changed during request; retry");
     if (sourcePolicyEpoch(live.db) !== sourceEpoch) throw new ServeError("error", "source authorization changed during serving");
+    if (readEpoch !== null) {
+      if (readEpoch !== claimsEpoch(live.db)) throw new ServeError("error", "memory changed during request; retry");
+      const current = liveContext(ctx);
+      if (current === null) throw new ServeError("unknown_agent", "unknown agent");
+      if (live.principal.kind === "agent" && current.principal.kind === "agent" &&
+          live.principal.grant_epoch !== current.principal.grant_epoch) throw new ServeError("error", "authority changed during request; retry");
+    }
   } catch (error) {
     failed(live, tool, args, audit_id, error);
   }

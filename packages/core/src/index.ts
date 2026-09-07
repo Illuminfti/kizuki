@@ -889,6 +889,7 @@ export type {
   CorrectTarget,
   Denied,
   EntitiesArgs,
+  EntitiesData,
   Envelope,
   GetPageArgs,
   GraphArgs,
@@ -903,6 +904,8 @@ export type {
   SearchArgs,
   SearchData,
   ServeContext,
+  SubjectLabel,
+  SubjectLabelDegradation,
   Served,
   TimelineArgs,
 } from "./serving";

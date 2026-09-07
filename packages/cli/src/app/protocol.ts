@@ -1,5 +1,5 @@
 /** Local browser protocol. Only the app bearer belongs in sessionStorage. */
-import type { SourceGrantPolicy, Grant, AgentEnrollmentResult } from '@kizuki/core';
+import type { SourceGrantPolicy, Grant, AgentEnrollmentResult, SubjectLabel } from '@kizuki/core';
 import type { ServeIntent, SupervisorKind, SupervisorState } from '@kizuki/core';
 export interface AppServiceStatus {
     intent: ServeIntent | 'unknown';
@@ -93,6 +93,7 @@ export interface AppHit {
     text: string;
     citations: string[];
     sensitivity: string;
+    subject_labels?: SubjectLabel[];
 }
 export interface AppReceipt {
     id: string;

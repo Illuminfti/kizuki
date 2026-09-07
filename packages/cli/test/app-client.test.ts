@@ -620,3 +620,79 @@ test('applied correction survives the changed privacy epoch only as its current 
     expect(f.evaluate<string>('state.view')).toBe('activity'); expect(f.main.textContent).toContain('receipt-current');
     expect(f.dialog.textContent).toBe(''); expect(f.evaluate('state.hits')).toBeNull();
 });
+
+// The positive client oracle starts at real claim admission/canonical writes,
+// crosses the authenticated loopback HTTP boundary, then executes shipped JS.
+import { join } from 'node:path';
+import { createHelpers } from './helpers';
+import { startApp } from '../src/commands/app';
+import type { CliIo } from '../src/commands';
+import { hardenLedgerFile, rebuildDerived } from '@kizuki/core';
+import { LABEL, SUBJECT, writeIdentity } from '../../core/test/serving/subject-label-fixture';
+import { openLedger } from '../../core/src/ledger/db';
+import type { AppHit } from '../src/app/protocol';
+
+test('real written identity crosses authenticated HTTP into readable App title, explicit subject chips and evidence', async () => {
+    const helpers = createHelpers(), setup = helpers.tempVault();
+    const path = join(setup.vault, '.kizuki', 'kizuki.db'), db = openLedger(path);
+    const io = { db, vault_path: setup.vault };
+    const first = await writeIdentity(io), handle = await writeIdentity(io, { predicate: 'identity.handle_on', object: '@ada-exact' });
+    await writeIdentity(io, { subject: `person:${'b'.repeat(64)}`, object: 'Grace Example', frontmatter: { type: 'person', title: 'My trusted human title', subjects: [`person:${'b'.repeat(64)}`] } });
+    rebuildDerived(db, setup.vault); hardenLedgerFile(path); db.close();
+    const original = readFileSync(join(setup.vault, first.receipt!.page_path));
+    let launched = ''; const output: string[] = [];
+    const cliIo: CliIo = { env: setup.env, vaultOverride: setup.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out: value => output.push(value), err: value => output.push(value), prompt: async () => { throw Error('no prompt'); } };
+    const app = await startApp(cliIo, { noService: true }, async url => { launched = url; });
+    try {
+        const token = new URL(launched).hash.slice('#token='.length);
+        const response = await fetch(app.url + '/app/v1/query', { method: 'POST', headers: { origin: app.url, authorization: 'Bearer ' + token, 'content-type': 'application/json' }, body: JSON.stringify({ text: 'orchard' }) });
+        expect(response.status).toBe(200);
+        const body = await response.json() as { ok: boolean; data: { hits: AppHit[]; degraded: string[] } };
+        expect(body.ok).toBe(true);
+        const canonical = body.data.hits.find(hit => hit.scope === 'canon' && hit.subject_labels?.some(label => label.subject === SUBJECT))!;
+        const quoted = body.data.hits.find(hit => hit.scope === 'ledger' && hit.id === first.event)!;
+        expect(canonical.title).toBe('a'.repeat(64));
+        expect(canonical.subject_labels?.[0]?.display_name).toBe(LABEL);
+        expect(canonical.citations).toEqual(expect.arrayContaining([first.event, handle.event]));
+        expect(quoted.subject_labels?.[0]?.display_name).toBe(LABEL);
+        expect(quoted.citations).toContain(handle.event);
+        const f = fixture(), request = f.evaluate<Promise<void>>(`search('orchard')`);
+        f.reply('query', body.data); await request;
+        const articles = f.main.querySelector('.results') ?? f.main;
+        const all = (node: Element): Element[] => [node, ...node.children.flatMap(all)];
+        expect(all(articles).filter(node => node.tag === 'h3').map(node => node.textContent)).toContain(LABEL);
+        expect(all(articles).filter(node => node.tag === 'h3').map(node => node.textContent)).toContain('My trusted human title');
+        expect(all(articles).filter(node => node.attributes['aria-label'] === 'Recorded subject labels').some(node => node.textContent.includes('@ada-exact'))).toBe(true);
+        expect(f.main.textContent).not.toContain('UNTRUSTED_CAPTURE_NAME');
+        expect(f.main.textContent).not.toContain('UNTRUSTED_METADATA_NAME');
+        expect(f.storageWrites.join('')).not.toContain(LABEL);
+        expect(output.join('')).not.toContain(LABEL);
+        expect(readFileSync(join(setup.vault, first.receipt!.page_path))).toEqual(original);
+        f.evaluate('invalidatePrivateView();render()');
+        expect(f.main.textContent).not.toContain(LABEL); expect(f.main.textContent).not.toContain('@ada-exact');
+        expect(f.evaluate('state.hits')).toBeNull();
+    } finally { await app.close(); helpers.cleanup(); }
+}, 30_000);
+
+test('identity chips render hostile text literally and never assign a multi-subject result to the first subject', () => {
+    const f = fixture(), hostile = '<img src=x onerror=globalThis.identityExecuted=true>';
+    const label = { subject: 'person:one', display_name: hostile, handles: ['@one'], evidence: [] };
+    const hit = { id: 'page', scope: 'canon', title: 'a'.repeat(64), text: 'Synthetic source body.', sensitivity: 'private', citations: [], subject_labels: [label] };
+    f.evaluate(`state.hits=${JSON.stringify([hit])};render()`);
+    expect(f.main.querySelector('h3')?.textContent).toBe(hostile);
+    expect(f.main.querySelector('img')).toBeNull();
+    expect(f.evaluate('globalThis.identityExecuted')).toBeUndefined();
+    hit.subject_labels.push({ subject: 'person:two', display_name: 'Second Person', handles: [], evidence: [] });
+    f.evaluate(`state.hits=${JSON.stringify([hit])};render()`);
+    expect(f.main.querySelector('h3')?.textContent).toBe('Memory page');
+    expect(f.main.textContent).toContain(hostile); expect(f.main.textContent).toContain('Second Person');
+});
+
+test('privacy invalidation discards held HTTP labels and cannot restore their names or handles', async () => {
+    const f = fixture(), work = f.evaluate<Promise<void>>(`search('orchard')`);
+    f.evaluate('invalidatePrivateView();render()');
+    f.reply('query', { hits: [{ id: 'late', scope: 'canon', title: 'a'.repeat(64), text: 'held', sensitivity: 'private', citations: [], subject_labels: [{ subject: SUBJECT, display_name: 'REVOKED_IDENTITY_NAME', handles: ['@revoked-identity'], evidence: [] }] }], degraded: [] });
+    await work;
+    expect(f.evaluate('state.hits')).toBeNull();
+    expect(f.main.textContent).not.toContain('REVOKED_IDENTITY_NAME'); expect(f.main.textContent).not.toContain('@revoked-identity');
+});

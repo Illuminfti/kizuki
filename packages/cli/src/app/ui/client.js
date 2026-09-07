@@ -59,8 +59,16 @@ function button(text, run, kind = 'secondary', extra = {}) { return el('button',
 function message(text) { clearTimeout(noticeTimer); notice.textContent = text; notice.hidden = false; noticeTimer = setTimeout(() => { notice.hidden = true; }, 6500); }
 function dateText(value) { if (!value) return 'Not captured yet'; const date = new Date(value); return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date) : 'Time unavailable'; }
 function providerIcon(id) { return id.includes('calendar') ? 'calendar' : id.includes('gmail') ? 'mail' : 'folder'; }
+function subjectLabels(hit) {
+  return Array.isArray(hit.subject_labels) ? hit.subject_labels.filter(label => label && typeof label.subject === 'string' &&
+    (label.display_name === null || typeof label.display_name === 'string') && Array.isArray(label.handles) && label.handles.every(handle => typeof handle === 'string')) : [];
+}
 function resultTitle(hit) {
-  if (hit.scope === 'canon' && /^[a-f0-9]{64}$/i.test(String(hit.title))) return 'Memory page';
+  if (hit.scope === 'canon' && (!hit.title || /^[a-f0-9]{64}$/i.test(String(hit.title)))) {
+    const labels = subjectLabels(hit);
+    if (labels.length === 1) return labels[0].display_name || (labels[0].handles.length === 1 ? labels[0].handles[0] : 'Memory page');
+    return 'Memory page';
+  }
   if (hit.scope === 'ledger' && String(hit.title).startsWith('kizuki.')) {
     const first = String(hit.text).split(/\r?\n/, 1)[0].trim();
     if (/^#{1,6}\s+/.test(first)) return first.replace(/^#{1,6}\s+/, '').slice(0, 160);
@@ -184,7 +192,10 @@ function renderMemory() {
     const list = el('div', { class: 'result-list' });
     for (const hit of state.hits) {
       const citations = Array.isArray(hit.citations) ? hit.citations : [];
-      list.append(el('article', { class: 'result-item' }, el('div', { class: 'result-meta' }, el('span', { class: 'badge' }, hit.scope === 'canon' ? 'Memory page' : 'Source evidence'), el('span', {}, hit.sensitivity === 'public' ? 'Public' : hit.sensitivity === 'internal' ? 'Internal' : 'Private')), el('h3', {}, resultTitle(hit)), el('p', { class: 'result-text' }, hit.text), el('details', { class: 'result-details' }, el('summary', {}, 'View evidence references'), el('p', {}, 'Use these references to check the original information.'), ...citations.map(id => el('p', {}, el('code', {}, id)))), hit.scope === 'canon' && button('Correct memory', () => correction(hit))));
+      const labels = subjectLabels(hit);
+      const subjects = labels.length > 0 && el('div', { class: 'result-meta', 'aria-label': 'Recorded subject labels' },
+        ...labels.flatMap(label => [label.display_name && el('span', { class: 'badge' }, label.display_name), ...label.handles.map(handle => el('span', { class: 'badge' }, handle))]));
+      list.append(el('article', { class: 'result-item' }, el('div', { class: 'result-meta' }, el('span', { class: 'badge' }, hit.scope === 'canon' ? 'Memory page' : 'Source evidence'), el('span', {}, hit.sensitivity === 'public' ? 'Public' : hit.sensitivity === 'internal' ? 'Internal' : 'Private')), el('h3', {}, resultTitle(hit)), subjects, el('p', { class: 'result-text' }, hit.text), el('details', { class: 'result-details' }, el('summary', {}, 'View evidence references'), el('p', {}, 'Use these references to check the original information.'), ...citations.map(id => el('p', {}, el('code', {}, id)))), hit.scope === 'canon' && button('Correct memory', () => correction(hit))));
     }
     section.append(list);
   }

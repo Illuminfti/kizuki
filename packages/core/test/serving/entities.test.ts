@@ -14,7 +14,7 @@ afterAll(() => {
   fixture.dispose();
 });
 
-function titles(envelope: Envelope): string[] {
+function titles(envelope: Envelope<unknown>): string[] {
   return envelope.canon.map((chunk) => chunk.title);
 }
 

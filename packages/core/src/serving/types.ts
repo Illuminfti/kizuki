@@ -36,7 +36,18 @@ export interface CanonChunk {
   sources: string[];
   excerpt: string;
   truncated: boolean;
+  subject_labels?: SubjectLabel[];
 }
+
+/** Current, separately admitted identity beliefs; never captured display metadata. */
+export interface SubjectLabel {
+  subject: string;
+  display_name: string | null;
+  handles: string[];
+  evidence: { claim_id: string; authority: AuthorityTier; sources: string[] }[];
+}
+
+export type SubjectLabelDegradation = "subject-labels-ambiguous" | "subject-labels-overflow" | "subject-labels-unavailable";
 
 export interface QuotedChunk {
   event_id: string;
@@ -47,6 +58,7 @@ export interface QuotedChunk {
   subjects: string[];
   text: string;
   tainted: true;
+  subject_labels?: SubjectLabel[];
 }
 
 /** Counts per reason. Ids of withheld items reach only the owner's audit row. */
