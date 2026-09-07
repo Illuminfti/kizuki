@@ -92,7 +92,7 @@ function boundedProperty(
   depth: number,
   budget: Budget,
 ): void {
-  if ("value" in property) {
+  if (Object.hasOwn(property, "value")) {
     Object.defineProperty(target, key, { value: boundedValue(property.value, depth, budget), enumerable: true, configurable: true });
   } else if (budget.leaves <= 0 || depth > AUDIT_DEPTH_CAP) {
     budget.dropped += 1;
