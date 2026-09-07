@@ -17,7 +17,6 @@ const TITLES: Record<string, string> = {
   "kizuki.import-pocket": "Pocket export",
   "kizuki.import-omnivore": "Omnivore export",
   "kizuki.import-x-archive": "X archive export",
-  "kizuki.x": "X own posts (API)",
   "kizuki.import-legacy-wiki": "Markdown wiki migration",
   "kizuki.import-legacy-events": "Event history migration",
   "kizuki.screenpipe": "Screenpipe",
