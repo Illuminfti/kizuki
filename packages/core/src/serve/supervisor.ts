@@ -76,23 +76,26 @@ function queryLaunchdService(label: string, timeout = 5_000): SupervisorStatus {
   };
 }
 
-function stopLaunchdService(label: string): boolean {
-  const stopped = runCommand(["launchctl", "bootout", `gui/${process.getuid?.() ?? 0}/${label}`]);
-  if (!stopped.ok) return false;
-  // bootout acknowledges removal before the old job has necessarily disappeared.
-  // Loading another definition is safe only after observing this label absent.
+function waitForLaunchdState(label: string, state: "absent" | "active"): boolean {
+  // Both bootstrap and bootout acknowledge a request before the corresponding
+  // job transition has necessarily completed. Observe the requested state.
   const deadline = performance.now() + 5_000;
   const signal = new Int32Array(new SharedArrayBuffer(4));
   for (;;) {
     const remaining = deadline - performance.now();
     if (remaining <= 0) return false;
     const observed = queryLaunchdService(label, Math.ceil(remaining));
-    if (observed.state === "absent" && !observed.enabled) return true;
+    if (observed.state === state && observed.enabled === (state === "active")) return true;
     if (observed.state === "unknown") return false;
     const delay = Math.min(50, deadline - performance.now());
     if (delay <= 0) return false;
     Atomics.wait(signal, 0, 0, delay);
   }
+}
+
+function stopLaunchdService(label: string): boolean {
+  const stopped = runCommand(["launchctl", "bootout", `gui/${process.getuid?.() ?? 0}/${label}`]);
+  return stopped.ok && waitForLaunchdState(label, "absent");
 }
 
 export function realSupervisorHost(
@@ -169,9 +172,10 @@ export function realSupervisorHost(
           if (!stopLaunchdService(unitName)) return { ok: false, detail: "service replacement stop failed" };
         }
         const loaded = runCommand(["launchctl", "bootstrap", `gui/${process.getuid?.() ?? 0}`, unitPath]);
+        const active = loaded.ok && waitForLaunchdState(unitName, "active");
         return {
-          ok: loaded.ok,
-          detail: loaded.ok ? "loaded" : "service bootstrap failed",
+          ok: active,
+          detail: active ? "loaded" : loaded.ok ? "service activation was not confirmed" : "service bootstrap failed",
         };
       }
       return { ok: false, detail: "no supervisor" };

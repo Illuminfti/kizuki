@@ -132,7 +132,7 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     const evidence: Record<string, unknown> = { waiting_for: description, unit };
     try {
       const state = managerState(5000);
-      evidence.manager_state = state;
+      evidence.manager_state = platform === "darwin" ? projectLaunchctlResult("print", { ...state, signal: null }, 0) : state;
       evidence.process_observation = processObservation(state, 5000);
     } catch { evidence.process_diagnostics_error = "native state or process query failed"; }
     if (platform === "linux") {
@@ -217,7 +217,10 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
       record("pre-init-absent-unit-diagnostics", true, serviceDiagnostics(`kizuki@lifecycle-probe-${crypto.randomUUID()}.service`));
     }
     // Default init must create and activate the installed service, without --no-service.
-    const initialDiagnostic = platform === "darwin" ? prepareLaunchctlDiagnostics(fixtureRoot) : null;
+    // Default qualification keeps startup timing uninstrumented. Explicit CI
+    // diagnosis can opt in without changing any product configuration.
+    const initialDiagnostic = platform === "darwin" && process.env.KIZUKI_NATIVE_INITIAL_DIAGNOSTICS === "1"
+      ? prepareLaunchctlDiagnostics(fixtureRoot) : null;
     const instrumentedEnv = initialDiagnostic === null ? cliEnv : { ...cliEnv,
       PATH: `${initialDiagnostic.path}:${cliEnv.PATH}`, CI: "true", GITHUB_ACTIONS: "true",
       RUNNER_TEMP: realpathSync(process.env.RUNNER_TEMP!) };
@@ -264,7 +267,7 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     writeFileSync(join(vault, ".kizuki", "serve.toml"), "[serve]\nbind_port = 0\n", { mode: 0o600 });
     if (platform === "darwin") {
       const vaultId = readFileSync(join(vault, ".kizuki/vault-id"), "utf8").trim();
-      const diagnostic = initialDiagnostic!;
+      const diagnostic = initialDiagnostic ?? prepareLaunchctlDiagnostics(fixtureRoot, vaultId);
       // Only this CLI child sees the wrapper. launchd's unit contains no inherited
       // EnvironmentVariables, and the parent/native observer environment is unchanged.
       const env = { ...cliEnv, PATH: `${diagnostic.path}:${cliEnv.PATH}`, CI: "true", GITHUB_ACTIONS: "true",
@@ -299,7 +302,8 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
       // launchd KeepAlive=true restarts even a clean exit; this is process-stop proof.
       observed = await active("launchd-restarts-after-graceful-exit", executable, observed);
       const stopped = managerState();
-      record("launchd-graceful-exit", /^\s*last exit code = 0\s*$/m.test(stopped.stdout), stopped);
+      record("launchd-graceful-exit", /^\s*last exit code = 0\s*$/m.test(stopped.stdout),
+        projectLaunchctlResult("print", { ...stopped, signal: null }, 0));
     } else {
       await waitFor(() => nativeServiceStopped(platform, managerState()) && !existsSync(join(vault, ".kizuki", "serve.pid")), "graceful process stop");
       const stopped = managerState();
