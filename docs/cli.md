@@ -281,7 +281,17 @@ and `canon writing: on|off`. Off when no model is configured. The default
 report runs SQLite `quick_check` and samples ledger events. `--integrity`
 also runs `PRAGMA integrity_check` on the vault ledger; JSON then reports
 that result in `ledger.integrity_check` (otherwise `null`). Exit 1 when
-the report is not ok. Successful CLI writes seal `.kizuki/ledger-mark` with
+the report is not ok. Calibration reports distinguish an evaluated check from
+insufficient evidence. The write-rate lower bound always applies to nonempty
+extractions. Its ceiling applies when current-window dedup observations could
+support it (`lower-bound-only` otherwise); one repeated fact does not make an
+otherwise fresh population mature. Confidence checks require eight uncapped
+model claims in the same window, sampling at most the newest 10,000 rows. Exactly capped model-inference scores are
+reported separately because stored confidence cannot distinguish a policy cap
+from a model that actually chose that score, even after corroboration. An
+unevaluable check is not proof of successful model calibration.
+
+Successful CLI writes seal `.kizuki/ledger-mark` with
 the accepted event total, including purge receipts. Reads preserve this file.
 A ledger below its sealed floor waits up to 3 seconds for the store to land,
 then fails with `vault ledger not ready` before reporting counts. Explicit

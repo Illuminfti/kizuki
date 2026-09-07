@@ -4,6 +4,7 @@ import { inspectPageIndex } from "../canon";
 import { isMachineOriginPath } from "../canon/origin";
 import { formatProducerDiagnostic } from "../producer/diagnostics";
 import { pendingRetrievalOps } from "../claims/store";
+import { SINGLE_SOURCE_CAP } from "../claims/authority";
 import { readDerivedMeta } from "../derived-meta";
 import { inspectConnectionStateRecovery } from "../ledger/connection-state";
 import { inspectCheckpoints, inspectConnections } from "../ledger/connections";
@@ -127,6 +128,10 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
       write_rate: null,
       dedup_rate: null,
       confidence_spread: null,
+      write_rate_evaluation: "no-extractions",
+      confidence_evaluation: "insufficient-uncapped-model-claims",
+      confidence_samples: 0,
+      confidence_capped: 0,
       canon_writes_today: 0,
       top_subjects: [],
       failures,
@@ -137,22 +142,49 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
   const deduped = receipts.reduce((sum, receipt) => sum + receipt.claims_deduped, 0);
   const writeRate = written / Math.max(1, extracted);
   const dedupRate = deduped / Math.max(1, extracted);
-  if (extracted > 0 && (writeRate < CALIBRATION_BAND.min || writeRate > CALIBRATION_BAND.max)) {
+  const since = new Date(Date.parse(now) - RUN_RECEIPT_RETENTION_DAYS * 86_400_000).toISOString();
+  // A repeated conflict key alone is not a repeated fact: values and polarity
+  // can change legitimately. Count only residual identical live facts in this
+  // receipt window, alongside successful dedup recorded by that window's runs.
+  // The bounded newest cohort is a lower bound, never extrapolated to the vault.
+  const missedDedup = tableExists(db, "claims") ? db.query<{ n: number }, [string, string]>(`
+    SELECT coalesce(sum(n - 1), 0) AS n FROM (
+      SELECT count(*) AS n FROM (
+        SELECT claim_key, object, polarity FROM claims
+        WHERE status = 'live' AND claim_key IS NOT NULL
+          AND asserted_at >= ? AND asserted_at <= ?
+        ORDER BY asserted_at DESC, claim_id DESC LIMIT 10000
+      ) GROUP BY claim_key, object, polarity HAVING count(*) > 1
+    )`).get(since, now)?.n ?? 0 : 0;
+  // The existing ceiling assumes at least (1 - max) of extractions could have
+  // been absorbed. One repeat among otherwise new facts cannot justify it.
+  const writeEvaluation: CalibrationDoctor["write_rate_evaluation"] = extracted === 0
+    ? "no-extractions"
+    : (deduped + missedDedup) / extracted < 1 - CALIBRATION_BAND.max
+      ? "lower-bound-only" : "evaluated";
+  // The lower bound never required dedup opportunity; retain detection of a
+  // loop that extracts claims but stops writing even in an otherwise fresh vault.
+  if (extracted > 0 && (writeRate < CALIBRATION_BAND.min ||
+      (writeEvaluation === "evaluated" && writeRate > CALIBRATION_BAND.max))) {
     failures.push(`write_rate ${writeRate.toFixed(3)} outside [${CALIBRATION_BAND.min}, ${CALIBRATION_BAND.max}]`);
   }
-  const confidences = tableExists(db, "claims")
-    ? db
-        .query<{ confidence: number }, []>(
-          `SELECT confidence FROM claims
-            WHERE status IN ('live', 'superseded')
-            ORDER BY asserted_at DESC
-            LIMIT 10000`,
-        )
-        .all()
-        .map((row) => row.confidence)
+  const samples = tableExists(db, "claims")
+    ? db.query<{ confidence: number; authority: string }, [string, string]>(`
+        SELECT confidence, authority FROM claims
+        WHERE status IN ('live', 'superseded') AND producer = 'model'
+          AND asserted_at >= ? AND asserted_at <= ?
+        ORDER BY asserted_at DESC, claim_id DESC LIMIT 10000
+      `).all(since, now)
     : [];
+  // Re-observation increments corroboration even through the same connector;
+  // it does not mean SINGLE_SOURCE_CAP stopped applying. Original pre-cap
+  // confidence is not stored, so exact-cap inference scores are unevaluable.
+  const confidences = samples
+    .filter(row => row.authority !== "model_inference" || row.confidence !== SINGLE_SOURCE_CAP)
+    .map(row => row.confidence);
   const spread = stdev(confidences);
-  if (spread !== null && confidences.length >= 8 && spread < CONFIDENCE_SPREAD_MIN) {
+  const confidenceEvaluation = confidences.length >= 8 ? "evaluated" : "insufficient-uncapped-model-claims";
+  if (confidenceEvaluation === "evaluated" && spread !== null && spread < CONFIDENCE_SPREAD_MIN) {
     failures.push("confidence_not_produced");
   }
   const today = now.slice(0, 10);
@@ -175,6 +207,10 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
     write_rate: writeRate,
     dedup_rate: dedupRate,
     confidence_spread: spread,
+    write_rate_evaluation: writeEvaluation,
+    confidence_evaluation: confidenceEvaluation,
+    confidence_samples: confidences.length,
+    confidence_capped: samples.length - confidences.length,
     canon_writes_today: canonToday,
     top_subjects: subjects,
     failures,

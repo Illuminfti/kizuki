@@ -245,6 +245,11 @@ export interface CalibrationDoctor {
   readonly write_rate: number | null;
   readonly dedup_rate: number | null;
   readonly confidence_spread: number | null;
+  readonly write_rate_evaluation: "no-extractions" | "lower-bound-only" | "evaluated";
+  readonly confidence_evaluation: "insufficient-uncapped-model-claims" | "evaluated";
+  readonly confidence_samples: number;
+  /** Exactly capped model-inference scores cannot reveal the original model score. */
+  readonly confidence_capped: number;
   readonly canon_writes_today: number;
   readonly top_subjects: { subject: string; writes: number }[];
   readonly failures: string[];
