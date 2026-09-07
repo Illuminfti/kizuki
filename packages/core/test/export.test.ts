@@ -1003,36 +1003,33 @@ describe("restoreVault", () => {
     db.close();
   });
 
-  test("v3 identity evidence rejects malformed tags before target publication", () => {
-    const cases: readonly unknown[] = [
-      {},
-      { encoding: "kizuki.identity-evidence/raw-v1" },
-      { encoding: "kizuki.identity-evidence/raw-v1", raw: "x".repeat(16_385) },
-      { encoding: "kizuki.identity-evidence/raw-v1", raw: "\ud800" },
-      { encoding: "kizuki.identity-evidence/raw-v1", raw: "[]", extra: true },
-    ];
+  test.each([
+    ["missing encoding", {}],
+    ["missing raw value", { encoding: "kizuki.identity-evidence/raw-v1" }],
+    ["oversized raw value", { encoding: "kizuki.identity-evidence/raw-v1", raw: "x".repeat(16_385) }],
+    ["invalid Unicode", { encoding: "kizuki.identity-evidence/raw-v1", raw: "\ud800" }],
+    ["unknown field", { encoding: "kizuki.identity-evidence/raw-v1", raw: "[]", extra: true }],
+  ])("v3 identity evidence rejects malformed tags before target publication (%s)", (_name, evidence) => {
     const db = openLedger(":memory:");
     const vaultPath = temporary("kizuki-identity-vault-");
     initVault(vaultPath);
     const backup = join(temporary("kizuki-export-parent-"), "dump");
     const manifest = exportVault(db, vaultPath, backup);
     db.close();
-    for (const evidence of cases) {
-      const key = "claims/identity_links.jsonl";
-      const payload = Buffer.from(`${JSON.stringify({
-        subject_a: "person:a", subject_b: "person:b", score: 1, evidence,
-        status: "candidate", decided_by: "legacy", receipt_id: null, at: "2026-01-01T00:00:00.000Z",
-      })}\n`);
-      writeFileSync(join(backup, "claims", "identity_links.jsonl"), payload);
-      const files = { ...manifest.files, [key]: {
-        count: 1, size: payload.byteLength, mode: 0o600,
-        sha256: new Bun.CryptoHasher("sha256").update(payload).digest("hex"),
-      } };
-      writeSignedManifest(backup, { ...manifest, files });
-      const target = join(temporary("kizuki-restore-parent-"), "vault");
-      expect(() => restoreVault(backup, target)).toThrow(/identity evidence/);
-      expect(existsSync(target)).toBe(false);
-    }
+    const key = "claims/identity_links.jsonl";
+    const payload = Buffer.from(`${JSON.stringify({
+      subject_a: "person:a", subject_b: "person:b", score: 1, evidence,
+      status: "candidate", decided_by: "legacy", receipt_id: null, at: "2026-01-01T00:00:00.000Z",
+    })}\n`);
+    writeFileSync(join(backup, "claims", "identity_links.jsonl"), payload);
+    const files = { ...manifest.files, [key]: {
+      count: 1, size: payload.byteLength, mode: 0o600,
+      sha256: new Bun.CryptoHasher("sha256").update(payload).digest("hex"),
+    } };
+    writeSignedManifest(backup, { ...manifest, files });
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    expect(() => restoreVault(backup, target)).toThrow(/identity evidence/);
+    expect(existsSync(target)).toBe(false);
   });
 
   test.each(["terminated", "unterminated"])("v3 restore refuses invalid UTF-8 JSONL before target publication (%s)", (ending) => {
