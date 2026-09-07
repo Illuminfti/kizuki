@@ -211,6 +211,9 @@ export async function serveContextPacket(
         since: scoped.since ?? defaultSince,
         until: scoped.until ?? at,
       };
+      // The packet has no types argument: the grant is the scope. Passing it
+      // into candidate SQL keeps a type-scoped agent from spending the
+      // twenty-row limit on pages it may not read.
       const types = scopedTypes(grant, undefined);
 
       const epoch = claimsEpoch(ctx.db);
@@ -286,6 +289,16 @@ export async function serveContextPacket(
       const sections = { ...emptySections };
       let heading = "";
       for (const piece of pieces) {
+        if (
+          types !== undefined &&
+          piece.canon !== undefined &&
+          !types.includes(piece.canon.type)
+        ) {
+          // Candidate SQL already applies the grant. Skip any leftover
+          // out-of-type page so packing neither tokenizes it nor stops
+          // before a later in-scope chunk.
+          continue;
+        }
         const prefix = piece.heading === heading ? "" : `${piece.heading}\n`;
         const rendered = `${prefix}${piece.block}`;
         const candidateTokens = tokens(`${header}${body}${rendered}`);
