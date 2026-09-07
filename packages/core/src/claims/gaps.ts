@@ -3,6 +3,7 @@ import type { Claim } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
 import { isSingleValuedPredicate } from "./predicates";
 import { listClaims } from "./store";
+import { compareRfc3339 } from "../agents/time";
 
 export interface ValidityGap {
   readonly claim_key: string;
@@ -51,20 +52,15 @@ export function listValidityGaps(
     // derived assertion unless every interval used to compute it is visible.
     if (opts.canRead !== undefined && !group.every(opts.canRead)) continue;
     const ordered = [...group].sort((left, right) =>
-      left.valid_from < right.valid_from
-        ? -1
-        : left.valid_from > right.valid_from
-          ? 1
-          : left.claim_id < right.claim_id
-            ? -1
-            : 1,
+      compareRfc3339(left.valid_from, "valid_from", right.valid_from, "valid_from") ||
+      (left.claim_id < right.claim_id ? -1 : left.claim_id > right.claim_id ? 1 : 0),
     );
     for (let index = 0; index < ordered.length - 1; index += 1) {
       const current = ordered[index];
       const next = ordered[index + 1];
       if (current === undefined || next === undefined) continue;
       if (current.valid_to === null) continue;
-      if (current.valid_to < next.valid_from) {
+      if (compareRfc3339(current.valid_to, "valid_to", next.valid_from, "valid_from") < 0) {
         gaps.push({
           claim_key,
           predicate: current.predicate,

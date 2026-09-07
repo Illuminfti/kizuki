@@ -22,6 +22,7 @@ import { AUTHORITY_TIERS, CLAIM_SCHEMA, canonicalizeProducer, isClaimKind, isPro
 import { tableExists } from "../ledger/schema";
 import { labelClaimSensitivity } from "../sensitivity/store";
 import { isRfc3339 } from "../util/time";
+import { compareRfc3339 } from "../agents/time";
 import { ulid } from "../util/ulid";
 import {
   authorityFor,
@@ -226,7 +227,7 @@ function toConflict(claim: Claim, purged = false): ConflictClaim {
 
 function minTimestamp(left: string | null, right: string): string {
   if (left === null || left === "") return right;
-  return left < right ? left : right;
+  return compareRfc3339(left, "valid_to", right, "valid_from") <= 0 ? left : right;
 }
 
 function assertInput(input: InsertClaimInput): void {
@@ -988,6 +989,12 @@ function applyClaimInsert(
   semanticNomineeIds: readonly string[],
 ): InsertClaimResult {
   const at = nowOf(io);
+  // New assertions require a nonempty interval, as in the claim/v2 contract.
+  // Supersession may still end stored history at its start; do not revalidate
+  // or rewrite those historical rows here.
+  if (input.valid_to != null && compareRfc3339(input.valid_to, "valid_to", input.valid_from ?? at, "valid_from") <= 0) {
+    throw new ClaimError("schema_invalid", "valid_to must be after valid_from");
+  }
   const sourceScope = { owner: canonicalizeProducer(input.producer) !== "model" && !input.producer.startsWith("agent:"), model: canonicalizeProducer(input.producer) === "model", purpose: input.intent === "correct" ? "correction" as const : "derive" as const };
   const historicalSignature = historicalClaimReplaySignature(input);
   const historicalInputAllowed = (): boolean => historicalSourceWriteAllowed(

@@ -2,6 +2,7 @@ import type { AuthorityTier, Claim, ClaimPolarity } from "../contracts/proposal"
 import { AUTHORITY_TIERS } from "../contracts/proposal";
 import { objectsMatch, polaritiesConflict } from "./hash";
 import { isSingleValuedPredicate } from "./predicates";
+import { compareRfc3339 } from "../agents/time";
 
 export const CONFLICT_MARGIN = 0.15;
 
@@ -35,9 +36,11 @@ export function validityOverlaps(
   left: { valid_from: string; valid_to: string | null },
   right: { valid_from: string; valid_to: string | null },
 ): boolean {
-  const leftEnd = left.valid_to ?? "\uFFFF";
-  const rightEnd = right.valid_to ?? "\uFFFF";
-  return left.valid_from < rightEnd && right.valid_from < leftEnd;
+  // Supersession can leave empty historical intervals; they cover no time.
+  if (left.valid_to !== null && compareRfc3339(left.valid_to, "valid_to", left.valid_from, "valid_from") <= 0) return false;
+  if (right.valid_to !== null && compareRfc3339(right.valid_to, "valid_to", right.valid_from, "valid_from") <= 0) return false;
+  return (right.valid_to === null || compareRfc3339(left.valid_from, "valid_from", right.valid_to, "valid_to") < 0) &&
+    (left.valid_to === null || compareRfc3339(right.valid_from, "valid_from", left.valid_to, "valid_to") < 0);
 }
 
 /**
@@ -59,8 +62,9 @@ export function claimsConflict(left: ConflictClaim, right: ConflictClaim): boole
 }
 
 function laterWins(incoming: ConflictClaim, live: ConflictClaim): "incoming" | "live" {
-  if (incoming.valid_from !== live.valid_from) {
-    return incoming.valid_from > live.valid_from ? "incoming" : "live";
+  const recency = compareRfc3339(incoming.valid_from, "valid_from", live.valid_from, "valid_from");
+  if (recency !== 0) {
+    return recency > 0 ? "incoming" : "live";
   }
   if (incoming.confidence !== live.confidence) {
     return incoming.confidence > live.confidence ? "incoming" : "live";

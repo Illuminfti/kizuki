@@ -17,6 +17,7 @@ import { requireSourceEvents } from "../ledger/source-grants";
 import type { CaptureEventInput, SubjectRef } from "../contracts/event";
 import { tableExists } from "../ledger/schema";
 import { isRfc3339 } from "../util/time";
+import { compareRfc3339 } from "../agents/time";
 import { ulid } from "../util/ulid";
 import { unifiedDiff } from "./diff";
 import { bumpClaimsEpoch, initClaimsEpoch } from "./epoch";
@@ -134,8 +135,8 @@ function assertGrant(io: CorrectIo): void {
 
 function inScope(claim: Claim, scope: CorrectInput["scope"]): boolean {
   if (scope === undefined) return true;
-  if (scope.since !== undefined && claim.valid_from < scope.since) return false;
-  if (scope.until !== undefined && claim.valid_from > scope.until) return false;
+  if (scope.since !== undefined && compareRfc3339(claim.valid_from, "valid_from", scope.since, "scope.since") < 0) return false;
+  if (scope.until !== undefined && compareRfc3339(claim.valid_from, "valid_from", scope.until, "scope.until") > 0) return false;
   return true;
 }
 
