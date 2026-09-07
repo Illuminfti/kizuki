@@ -337,6 +337,7 @@ test("native lifecycle mode cannot lose a host, source binding, supervisor gate 
     (doc: any) => { doc.jobs["native-service"].if = "${{ true }}"; },
     (doc: any) => { doc.jobs["native-service"].steps[0].with.ref = "main"; },
     (doc: any) => { doc.jobs["native-service"].steps[4].run = doc.jobs["native-service"].steps[4].run.replace("packages/cli/test/app-model-journey.test.ts", ""); },
+    (doc: any) => { doc.jobs["native-service"].steps[4].run = doc.jobs["native-service"].steps[4].run.replace("packages/cli/test/app-privacy-races.test.ts", ""); },
     (doc: any) => { doc.jobs["native-service"].steps[4].run = doc.jobs["native-service"].steps[4].run.replace("realpathSync", "String"); },
     (doc: any) => { doc.jobs["native-service"].steps[5].run += "\nsystemctl --user stop unrelated.service"; },
     (doc: any) => { doc.jobs["native-service"].steps[7].run += " || true"; },
