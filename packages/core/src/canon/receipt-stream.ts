@@ -41,7 +41,7 @@ function record(value: unknown, keys: readonly string[]): Record<string, unknown
 function identity(value: unknown): ReceiptIdentity {
   const found = record(value, ["dev", "ino", "birthtime_ns"]);
   for (const key of ["dev", "ino", "birthtime_ns"]) {
-    if (typeof found[key] !== "string" || !/^(0|[1-9][0-9]{0,29})$/.test(found[key] as string)) fail("checkpoint_invalid");
+    if (typeof found[key] !== "string" || /^(0|[1-9][0-9]{0,29})$/.exec(found[key] as string)?.[0] !== found[key]) fail("checkpoint_invalid");
   }
   return Object.freeze({ dev: found.dev as string, ino: found.ino as string, birthtime_ns: found.birthtime_ns as string });
 }
@@ -50,7 +50,7 @@ export function validateOrdinaryReceiptCheckpoint(value: unknown): OrdinaryRecei
   const found = record(value, ["version", "byte_length", "prefix_sha256", "vault", "control", "directory", "file"]);
   if (found.version !== 1 || !Number.isSafeInteger(found.byte_length) || (found.byte_length as number) < 0 ||
       (found.byte_length as number) > Number(SOURCE_STREAM_LIMIT) || typeof found.prefix_sha256 !== "string" ||
-      !/^[a-f0-9]{64}$/.test(found.prefix_sha256)) fail("checkpoint_invalid");
+      found.prefix_sha256.length !== 64 || !/^[a-f0-9]{64}$/.test(found.prefix_sha256)) fail("checkpoint_invalid");
   return Object.freeze({ version: 1, byte_length: found.byte_length as number, prefix_sha256: found.prefix_sha256,
     vault: identity(found.vault), control: identity(found.control), directory: identity(found.directory), file: identity(found.file) });
 }

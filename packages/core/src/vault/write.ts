@@ -165,7 +165,11 @@ export function archiveRelPath(relPath: string, receiptId: string): string {
 
 /** Expected names are recovery inventory, never creation or cleanup authority. */
 export function canonStageRelPath(relPath: string, receiptId: string): string {
-  return join(dirname(relPath), `.${basename(relPath)}.${receiptId}.tmp`);
+  const name = `.${basename(relPath)}.${receiptId}.tmp`;
+  // Archive names already include the receipt ID. Keep valid final names
+  // publishable even when repeating that ID would exceed NAME_MAX.
+  const bounded = Buffer.byteLength(name) <= 255 ? name : `.canon-${hashBytes(Buffer.from(`${relPath}\0${receiptId}`))}.tmp`;
+  return join(dirname(relPath), bounded);
 }
 
 function vaultRelPath(vault: string, path: string): string {
@@ -305,7 +309,7 @@ function replaceSnapshot(
   receiptId: string,
   erasePrior: boolean,
 ): string {
-  const tempPath = canonStageRelPath(prior.path, receiptId);
+  const tempPath = erasePrior ? join(dirname(prior.path), `.${basename(prior.path)}.${receiptId}.tmp`) : canonStageRelPath(prior.path, receiptId);
   let temp = erasePrior ? files.resumeExactTemporary(prior, receiptId, bytes) : null;
   if (temp === null) {
     try { temp = erasePrior ? files.create(tempPath, bytes) : createStage(files, prior.path, bytes, receiptId); }

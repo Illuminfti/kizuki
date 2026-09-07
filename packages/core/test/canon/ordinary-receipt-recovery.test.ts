@@ -144,6 +144,7 @@ test("closed validator refuses extra fields, accessors, invalid identities and a
   const f = fixture(), before = checkpoint(f); let called = false;
   for (const invalid of [{ ...before, extra: true }, { ...before, byte_length: -1 }, { ...before, prefix_sha256: "x" },
     { ...before, version: 2 }, { ...before, file: { ...before.file, ino: "01" } },
+    { ...before, file: { ...before.file, ino: "1\n" } }, { ...before, prefix_sha256: before.prefix_sha256 + "\n" },
     { ...before, get byte_length() { called = true; return 0; } }]) {
     expect(() => validateOrdinaryReceiptCheckpoint(invalid)).toThrow("canon_receipt_stream_checkpoint_invalid");
   }

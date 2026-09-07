@@ -90,6 +90,17 @@ test("archive replay reads an exact prior copy, preserves its inode and publishe
   expect(readFileSync(join(vault, rel))).toEqual(post);
 });
 
+test("maximum receipt IDs retain valid archive publication within native basename limits", () => {
+  const vault = fixture(), receipt = "r".repeat(128), archive = archiveRelPath(rel, receipt);
+  writeFileSync(join(vault, rel), prior, { mode: 0o600 });
+  expect(Buffer.byteLength(archive.split("/").at(-1)!)).toBeLessThanOrEqual(255);
+  const stage = canonStageRelPath(archive, receipt);
+  expect(Buffer.byteLength(stage.split("/").at(-1)!)).toBeLessThanOrEqual(255);
+  writePage(grantCanonWrite("import", receipt, vault), rel, page, { revision: true, expected_hash: hashBytes(prior) });
+  expect(readFileSync(join(vault, archive))).toEqual(prior); expect(readFileSync(join(vault, rel))).toEqual(post);
+  expect(existsSync(join(vault, stage))).toBe(false);
+});
+
 test("exact archive plus unknown stage remains held; changed archive cannot be overwritten", () => {
   const vault = fixture(), archive = archiveRelPath(rel, id), stage = canonStageRelPath(archive, id);
   writeFileSync(join(vault, rel), prior, { mode: 0o600 });
