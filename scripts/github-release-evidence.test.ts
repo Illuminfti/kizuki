@@ -2,7 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { collectProductSources } from "./release-evidence";
 import { createHash } from "node:crypto";
 import { writePackageFixture } from "./release-package-fixture";
 import { CURRENT_PACKAGE_FILES } from "./release-artifacts";
@@ -10,7 +11,7 @@ import { artifactProofSteps, SQLITE_ENGINE_POLICY } from "./artifact-proof";
 import { distributionIdentity } from "./release-notices";
 import { verifyGithubNativeArchive } from "./github-native-artifact";
 import { resolve } from "node:path";
-import { GITHUB_REPOSITORY_ID, inspectGithubCandidate, inspectGithubNativeArtifacts, inspectGithubNativeJobs, validateGithubCommandBindings, parseGithubEvidenceArgs } from "./github-release-evidence";
+import { GITHUB_REPOSITORY_ID, inspectGithubCandidate, inspectGithubNativeArtifacts, inspectGithubNativeJobs, validateGithubCommandBindings, bindGithubNativeProducer, parseGithubEvidenceArgs } from "./github-release-evidence";
 
 const SHA = "a".repeat(40);
 const REPO = { id: GITHUB_REPOSITORY_ID, full_name: "fixture-owner/fixture-repo", private: false };
@@ -337,4 +338,38 @@ test.each(["verify", "typecheck", "build:release", "smoke:release", "proof:artif
   candidate.scripts[name] = JSON.parse(reviewed.toString()).scripts[name];
   candidate.scripts["pre" + name] = "echo synthetic hook";
   expect(() => validateGithubCommandBindings(Buffer.from(JSON.stringify(candidate)), reviewed)).toThrow("github-candidate-command-mismatch");
+});
+
+
+function producerFixture() {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-github-producer-")); nativeRoots.push(root);
+  const source = resolve(import.meta.dir, "..");
+  const graph = collectProductSources(source, ["scripts/stranger-proof.ts", "scripts/build-release.ts", "scripts/smoke-release.ts"]);
+  const paths = [...new Set([...graph.bindings.map(file => file.path), ".bun-version", "bun.lock", "tsconfig.json"])];
+  const git = (cwd: string, args: string[]) => execFileSync("git", ["-C", cwd, "-c", "core.hooksPath=/dev/null", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const commit = (cwd: string) => { git(cwd, ["add", "-f", "."]); git(cwd, ["-c", "user.name=fixture", "-c", "user.email=fixture@example.test", "-c", "commit.gpgsign=false", "commit", "-m", "synthetic producer custody"]); return git(cwd, ["rev-parse", "HEAD"]); };
+  const repos = ["reviewed", "candidate"].map(name => {
+    const path = join(root, name); mkdirSync(path);
+    for (const file of paths) { mkdirSync(dirname(join(path, file)), { recursive: true }); writeFileSync(join(path, file), readFileSync(join(source, file))); }
+    git(path, ["-c", "init.defaultBranch=main", "init"]);
+    return { path, sha: commit(path) };
+  });
+  return { reviewed: repos[0]!, candidate: repos[1]!, commit };
+}
+
+test.each(["scripts/stranger-proof.ts", "scripts/artifact-engine.ts"])("a clean candidate cannot replace reviewed native producer %s", path => {
+  const f = producerFixture();
+  const held = bindGithubNativeProducer(f.candidate.path, f.candidate.sha, f.reviewed.path, f.reviewed.sha);
+  expect(held.candidate_files).toEqual(held.reviewed_files);
+  writeFileSync(join(f.candidate.path, path), readFileSync(join(f.candidate.path, path), "utf8") + "\n// changed producer implementation\n");
+  f.candidate.sha = f.commit(f.candidate.path);
+  expect(() => bindGithubNativeProducer(f.candidate.path, f.candidate.sha, f.reviewed.path, f.reviewed.sha)).toThrow("github-native-producer-unreviewed");
+  expect(() => held.unchanged()).toThrow();
+});
+
+test("native producer equality permits separate product-under-test changes", () => {
+  const f = producerFixture(), path = join(f.candidate.path, "packages/cli/src/main.ts"); mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, "// synthetic product-under-test variation; never executed\n"); f.candidate.sha = f.commit(f.candidate.path);
+  const held = bindGithubNativeProducer(f.candidate.path, f.candidate.sha, f.reviewed.path, f.reviewed.sha);
+  expect(held.candidate_files).toEqual(held.reviewed_files); expect(() => held.unchanged()).not.toThrow();
 });

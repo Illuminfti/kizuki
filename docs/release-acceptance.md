@@ -75,7 +75,15 @@ There is no repository, host, run, attempt, or passing-facts option. Saved API
 JSON is useful for review but cannot be submitted to establish online credit.
 The offline checker continues to leave raw CI receipts unverified. This online
 path can also establish each `native.<target>` gate from one successful paired
-native workflow attempt. Both exact hosted matrix jobs, authored step results,
+native workflow attempt. Before collecting native evidence, the candidate's
+build, smoke and artifact-proof harnesses and their complete resolved product
+source closure must match the separately reviewed collector harness bytes.
+Both closures and resolution metadata are retained and checked again before
+credit. This compares evidence producers; product entrypoints executed as test
+subjects may change independently. A changed producer needs a newly reviewed
+collector, and otherwise leaves native evidence unverifiable.
+
+Both exact hosted matrix jobs, authored step results,
 artifact names, repository/run/source identities and API archive digests must
 match. Each artifact's creation time must fall within that attempt's successful
 upload step. Jobs, artifacts and attempts are reread after download; CI is checked

@@ -239,6 +239,18 @@ export async function inspectGithubNativeJobs(transport: GetJson, candidate: str
   }]);
 }
 
+const NATIVE_PRODUCER_ENTRYPOINTS = ["scripts/stranger-proof.ts", "scripts/build-release.ts", "scripts/smoke-release.ts"] as const;
+/** Evidence harness code is reviewed separately from the product it executes. */
+export function bindGithubNativeProducer(candidateRoot: string, candidateSha: string, collectorRoot: string, collectorSha: string) {
+  const metadata = [".bun-version", "bun.lock", "tsconfig.json"];
+  const reviewed = assertProductCheckoutCustody(collectorRoot, collectorSha, NATIVE_PRODUCER_ENTRYPOINTS, metadata);
+  const candidate = assertProductCheckoutCustody(candidateRoot, candidateSha, NATIVE_PRODUCER_ENTRYPOINTS, metadata);
+  const projection = (frame: typeof candidate) => frame.files.map(({ path, sha256 }) => ({ path, sha256 })).sort((a, b) => a.path.localeCompare(b.path));
+  const candidate_files = projection(candidate), reviewed_files = projection(reviewed);
+  if (!same(candidate_files, reviewed_files)) reject("github-native-producer-unreviewed");
+  return { candidate_files, reviewed_files, unchanged: () => { candidate.unchanged(); reviewed.unchanged(); } };
+}
+
 const NATIVE_TARGETS = [
   { os: "ubuntu-24.04", target: "bun-linux-x64-baseline" },
   { os: "macos-15", target: "bun-darwin-arm64" },
@@ -339,6 +351,7 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
   let failure: string | null = null;
   let native: Awaited<ReturnType<typeof inspectGithubNativeArtifacts>> | null = null;
   let nativeFailure: string | null = null;
+  let nativeProducer: ReturnType<typeof bindGithubNativeProducer> | null = null;
   let onlineRequests = 0; const onlineStarted = performance.now();
   const bounded = () => { if (++onlineRequests > LIMITS.requests || performance.now() - onlineStarted > LIMITS.total_ms) reject("github-observation-limit"); };
   const get: GetJson = async endpoint => {
@@ -351,17 +364,19 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
   try {
     observation = await inspectGithubCandidate(get, candidate, workflows);
     try {
+      nativeProducer = bindGithubNativeProducer(root, candidate, EVALUATOR_ROOT, collectorHead);
       const nativeWorkflow = candidateFrame.files.find(file => file.path === ".github/workflows/macos-native.yml")!.bytes.toString("utf8");
       const bunVersion = candidateFrame.files.find(file => file.path === ".bun-version")!.bytes.toString("utf8").trim();
       native = await inspectGithubNativeArtifacts(get, async endpoint => { bounded(); return ghJson(endpoint, true); }, candidate, nativeWorkflow, bunVersion, output);
     } catch (error) { nativeFailure = error instanceof EvidenceError ? error.reason : "github-native-observation-unavailable"; }
     // Native downloads may take time: CI credit must still describe current facts.
     if (!same(observation, await inspectGithubCandidate(get, candidate, workflows))) reject("github-required-checks-changed");
-    candidateFrame.unchanged(); collectorFrame.unchanged(); index.unchanged(); checkOutput();
+    candidateFrame.unchanged(); collectorFrame.unchanged(); nativeProducer?.unchanged(); index.unchanged(); checkOutput();
   } catch (error) { failure = error instanceof EvidenceError ? error.reason : "github-observation-unavailable"; }
   const retained = { schema: "kizuki.github-collection/v1", candidate_source_sha: candidate, collector_source_sha: collectorHead,
     candidate_files: candidateFrame.files.map(({ path, sha256 }) => ({ path, sha256 })), collector_files: collectorFrame.files.map(({ path, sha256 }) => ({ path, sha256 })),
     started_at: started, completed_at: new Date().toISOString(), command_bindings: commandBindings, raw, observation, failure, native, native_failure: nativeFailure,
+    native_producer: nativeProducer === null ? null : { candidate_files: nativeProducer.candidate_files, reviewed_files: nativeProducer.reviewed_files },
     trust_scope: "fresh GitHub HTTPS observation under local operator custody; saved JSON alone is not an authenticated input" };
   const receiptPath = join(output, "github-observation.json");
   writeFileSync(receiptPath, JSON.stringify(retained, null, 2) + "\n", { flag: "wx", mode: 0o600 });
@@ -370,7 +385,7 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
   // fixed-transport collection can apply remote evidence to the local report.
   // Revalidate local package and index bytes after the network observation.
   index.unchanged(); report = evaluateRelease(profile, evidence);
-  candidateFrame.unchanged(); collectorFrame.unchanged(); index.unchanged(); checkOutput();
+  candidateFrame.unchanged(); collectorFrame.unchanged(); nativeProducer?.unchanged(); index.unchanged(); checkOutput();
   const gate = report.gates.find(row => row.id === "candidate.required-checks")!;
   if (failure !== null || observation === null) Object.assign(gate, { status: "UNVERIFIABLE", reason: failure ?? "github-observation-unavailable", evidence_sha256: null });
   else {
@@ -385,7 +400,7 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
   }
   const result = { ...report, schema: "kizuki.online-acceptance-report/v1", ...releaseDecision(profile, report.gates), github_observation_sha256: receipt.sha256,
     trust_scope: `${report.trust_scope}; candidate.required-checks and native target facts additionally observed from GitHub during this evaluation; lifecycle remains separate`,
-    online_policy_sha256: hash(JSON.stringify({ schema: "kizuki.github-evidence-policy/v1", repository_id: GITHUB_REPOSITORY_ID, required: REQUIRED, native_targets: NATIVE_TARGETS, native_archive_bytes: GITHUB_ARCHIVE_LIMIT, package_commands: PACKAGE_COMMANDS, limits: LIMITS, selection: "latest-attempt-start-no-pending-ambiguous-refused" })),
+    online_policy_sha256: hash(JSON.stringify({ schema: "kizuki.github-evidence-policy/v1", repository_id: GITHUB_REPOSITORY_ID, required: REQUIRED, native_targets: NATIVE_TARGETS, native_archive_bytes: GITHUB_ARCHIVE_LIMIT, package_commands: PACKAGE_COMMANDS, native_producer_entrypoints: NATIVE_PRODUCER_ENTRYPOINTS, limits: LIMITS, selection: "latest-attempt-start-no-pending-ambiguous-refused" })),
     online_verifier_sha256: hash(JSON.stringify(retained.collector_files)) };
   receipt.unchanged();
   writeAcceptanceReport(join(output, "acceptance-report.json"), result);
