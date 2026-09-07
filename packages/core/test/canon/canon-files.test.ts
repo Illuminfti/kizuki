@@ -146,6 +146,23 @@ qualified("private control reads require descriptor-verified 0700 directories an
   } finally { files.close(); }
 });
 
+qualified("owner-only credential reads preserve read-only files and reject shared modes", () => {
+  const root = fixture(), files = openCanonFiles(root);
+  try {
+    files.create("key", Buffer.from("synthetic-key")).close();
+    for (const mode of [0o400, 0o600]) {
+      chmodSync(join(root, "key"), mode);
+      const snapshot = files.readOwnerOnly("key")!;
+      expect(Buffer.from(snapshot.bytes).toString()).toBe("synthetic-key"); snapshot.close();
+    }
+    for (const mode of [0o640, 0o604, 0o644]) {
+      chmodSync(join(root, "key"), mode);
+      expect(() => files.readOwnerOnly("key")).toThrow("canon_files_unsafe");
+    }
+    expect(files.readOwnerOnly("absent")).toBeNull();
+  } finally { files.close(); }
+});
+
 qualified("rejects foreign, forged and closed handles with private typed errors", () => {
   const first = openCanonFiles(fixture()), second = openCanonFiles(fixture());
   try {

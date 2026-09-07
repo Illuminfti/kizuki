@@ -98,6 +98,8 @@ export interface CanonFiles {
   read(path: string): CanonFileSnapshot | null;
   /** Private control material requires exactly 0600, unlike readable canon. */
   readPrivate(path: string): CanonFileSnapshot | null;
+  /** Existing external credentials may be read-only, but never group/world-readable. */
+  readOwnerOnly(path: string): CanonFileSnapshot | null;
   ensureDirectory(path: string): void;
   assertPrivateDirectory(path: string): void;
   create(path: string, bytes: Uint8Array): CanonFileSnapshot;
@@ -233,6 +235,15 @@ class NativeCanonFiles implements CanonFiles {
       const snapshot = this.read(path); if (snapshot === null) return null;
       try {
         if ((this.#record(snapshot).stat.mode & 0o777n) !== 0o600n) fail("unsafe");
+        return snapshot;
+      } catch (error) { snapshot.close(); throw error; }
+    });
+  }
+  readOwnerOnly(path: string): CanonFileSnapshot | null {
+    return guarded(() => {
+      const snapshot = this.read(path); if (snapshot === null) return null;
+      try {
+        if ((this.#record(snapshot).stat.mode & 0o077n) !== 0n) fail("unsafe");
         return snapshot;
       } catch (error) { snapshot.close(); throw error; }
     });
