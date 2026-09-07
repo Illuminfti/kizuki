@@ -9,7 +9,7 @@ import { configureLedgerWalLifecycle } from "../packages/core/src/ledger/wal-lif
 import { openLedgerRead } from "../packages/core/src/ledger/read-context";
 import { getProposal, initStaging } from "../packages/core/src/staging/proposals";
 import { openCanonFiles } from "../packages/core/src/vault/canon-files";
-import { parseBuildInfo, verifyPackageDirectory } from "./release-artifacts";
+import { parseBuildInfo, verifyPackageDirectory, CURRENT_PACKAGE_FILES } from "./release-artifacts";
 
 const repository = resolve(import.meta.dir, "..");
 const sha = (bytes: string | Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
@@ -120,6 +120,23 @@ function privateBytes(vault: string): Buffer {
   try { const file = files.readPrivate(".kizuki/kizuki.db"); requireThat(file, "missing-fixture-ledger"); return Buffer.from(file.bytes); }
   finally { files.close(); }
 }
+function privateWorkspaceCopy(workspace: string): Buffer {
+  const files = openCanonFiles(workspace);
+  try { const copy = files.readPrivate("verified-preimage.db"); requireThat(copy, "recovery-preimage-missing"); return Buffer.from(copy.bytes); }
+  finally { files.close(); }
+}
+function preserveSerialized(rows: Record<string,unknown>[], actual: Row[], key: string, schema: string): void {
+  requireThat(rows.length === actual.length, "backup-row-count");
+  for (const row of rows) {
+    requireThat(row.schema === schema, "backup-row-schema");
+    const found = actual.find(value => value[key] === row[key]); requireThat(found, "backup-row-identity");
+    for (const [field,value] of Object.entries(row)) {
+      if (field === "schema") continue;
+      const stored = value !== null && typeof value === "object" ? encode(value) : typeof value === "boolean" ? Number(value) : value;
+      requireThat(Object.hasOwn(found,field) && found[field] === stored, "backup-original-field-changed");
+    }
+  }
+}
 function equalLogical(a: Snapshot, b: Snapshot): boolean { return a.summary.schema_sha256 === b.summary.schema_sha256 && a.summary.rows_sha256 === b.summary.rows_sha256; }
 function projectedRows(before: Row[], after: Row[], key: string): Row[] {
   requireThat(before.length === after.length, "preservation-cardinality");
@@ -156,7 +173,8 @@ export async function runNativeRecoveryFixtures(options: NativeRecoveryOptions):
   const build = parseBuildInfo(join(dirname(executable), "BUILD.json"));
   requireThat(build.schema === "kizuki.release-build/v2" && build.source_sha === options.candidate_source_sha, "candidate-source-mismatch");
   verifyPackageDirectory(dirname(executable), build);
-  const executableHash = sha(readFileSync(executable));
+  const packageHashes = Object.fromEntries(CURRENT_PACKAGE_FILES.map(name => [name, sha(readFileSync(join(dirname(executable),name)))]));
+  const executableHash = packageHashes.kizuki!;
   const head = Bun.spawnSync(["git", "-C", repository, "rev-parse", "HEAD"], { stdout: "pipe", stderr: "pipe" });
   requireThat(head.exitCode === 0 && head.stdout.toString().trim() === options.helper_source_sha, "helper-source-mismatch");
   const dirty = Bun.spawnSync(["git", "-C", repository, "diff", "--exit-code", "HEAD", "--", "scripts/native-recovery-fixtures.ts", "packages/core/src", "packages/core/test/fixtures"], { stdout: "pipe", stderr: "pipe" });
@@ -212,7 +230,7 @@ export async function runNativeRecoveryFixtures(options: NativeRecoveryOptions):
       if (id === "migrate-ledger15" || id === "migrate-ledger16") {
         const before = makeSql(vault); evidence.snapshots.push({ role: "before", value: before.summary });
         requireThat(before.summary.schema_version === input.identity.ledger && before.summary.events === 1, "historical-sql-shape");
-        if (id === "migrate-ledger15") { goodCopy = privateBytes(vault); goodBefore = before; const backup = join(workspace, "verified-preimage.db"); writeFileSync(backup, goodCopy, {flag:"wx",mode:0o600}); evidence.recovery_copy_sha256 = sha(goodCopy); }
+        if (id === "migrate-ledger15") { goodCopy = privateBytes(vault); goodBefore = before; const files = openCanonFiles(workspace); try { files.create("verified-preimage.db", goodCopy); } finally { files.close(); } evidence.recovery_copy_sha256 = sha(goodCopy); }
         migrate(vault, before);
       } else if (id === "migration-failure-preserved") {
         for (const fault of ["admission", "late-ddl"] as const) {
@@ -225,11 +243,11 @@ export async function runNativeRecoveryFixtures(options: NativeRecoveryOptions):
           requireThat(equalLogical(before, after) && after.summary.schema_version === 15, "failed-migration-mutated-legacy");
           evidence.retained_failed_vaults.push(`failed-${fault}`);
         }
-        requireThat(goodCopy && goodBefore && sha(readFileSync(join(workspace,"verified-preimage.db"))) === sha(goodCopy), "recovery-preimage-changed");
+        requireThat(goodCopy && goodBefore && sha(privateWorkspaceCopy(workspace)) === sha(goodCopy), "recovery-preimage-changed");
         evidence.recovery_copy_sha256 = sha(goodCopy); evidence.failure_scope = "admission-and-late-ddl-transaction-rollback";
       } else if (id === "migration-backup-recovery") {
         requireThat(goodCopy && goodBefore, "recovery-preimage-missing");
-        const copy = readFileSync(join(workspace,"verified-preimage.db")); requireThat(sha(copy) === sha(goodCopy), "recovery-preimage-changed");
+        const copy = privateWorkspaceCopy(workspace); requireThat(sha(copy) === sha(goodCopy), "recovery-preimage-changed");
         initialize(vault); replaceClosedLedger(vault, copy);
         const before = inspectRecoveryFixture(vault); requireThat(equalLogical(goodBefore, before), "recovery-copy-logical-mismatch");
         evidence.snapshots.push({role:"recovery-preimage",value:before.summary}); evidence.recovery_copy_sha256 = sha(copy);
@@ -250,13 +268,13 @@ export async function runNativeRecoveryFixtures(options: NativeRecoveryOptions):
         // Backup event rows are a public serialization; prove preserved event/claim
         // identities and content without pretending JSON fields are SQL columns.
         requireThat(events.length === 1 && after.summary.claims === claims.length, "backup-row-count");
-        for (const event of events) requireThat(after.tables.events?.some(row => row.event_id === event.event_id && row.text === event.text && row.content_hash === event.content_hash), "backup-event-preservation");
-        for (const claim of claims) requireThat(after.tables.claims?.some(row=>row.claim_id===claim.claim_id && row.body===claim.body && row.provenance===encode(claim.provenance)), "backup-claim-preservation");
+        preserveSerialized(events, after.tables.events ?? [], "event_id", "kizuki.event/v1");
+        preserveSerialized(claims, after.tables.claims ?? [], "claim_id", "kizuki.claim/v1");
         evidence.preservation = {events:events.length,claims:claims.length,event_sha256:sha(encode(events)),claim_sha256:sha(encode(claims)),original_columns_equal:true,current_claim_consumer:"not_applicable",public_query:"not_run"};
         claimConsumer(vault, after, evidence); publicQuery(vault,after);
         for (const [path,text] of Object.entries(fixture.files)) requireThat(sha(readFileSync(join(backup,path)))===sha(String(text)),"backup-input-mutated");
       }
-      verifyPackageDirectory(dirname(executable),build); requireThat(sha(readFileSync(executable))===executableHash,"candidate-bytes-changed"); historicalRecoveryInput(input.identity.id);
+      verifyPackageDirectory(dirname(executable),build); for (const name of CURRENT_PACKAGE_FILES) requireThat(sha(readFileSync(join(dirname(executable),name)))===packageHashes[name],"candidate-bytes-changed"); historicalRecoveryInput(input.identity.id);
       if (id!=="migration-failure-preserved") { const current=inspectRecoveryFixture(vault); result.service_vaults.push({id,vault,event_text_sha256:sha(String(current.tables.events![0]!.text))}); }
       phase.passed=true;
     } catch(error) { evidence.failure_code = error instanceof RecoveryFixtureError ? error.code : "fixture-operation-failed"; }
