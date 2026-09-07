@@ -22,6 +22,7 @@ import { sha256Hex } from "../util/hash";
 import { listSchedules } from "./schema";
 import type { SupervisorHost } from "./supervisor";
 import { queryServeService } from "./supervisor";
+import { readDurableWriteUsage } from "./budget-ledger";
 import {
   CALIBRATION_BAND,
   CONFIDENCE_SPREAD_MIN,
@@ -459,9 +460,7 @@ export function inspectServeDoctor(
     );
   });
   const config = loadServeConfig(vaultPath);
-  const usedToday = receipts
-    .filter((receipt) => receipt.finished_at.startsWith(now.slice(0, 10)))
-    .reduce((sum, receipt) => sum + receipt.canon_writes, 0);
+  const usedToday = readDurableWriteUsage(db, vaultPath, now.slice(0, 10));
   const modelRef = options.model_ref ?? null;
   const configuredModelRef = options.configured_model_ref ?? loadConfiguredModelRef(vaultPath);
   const modelHistory = modelRef || configuredModelRef ? readModelRunHistory(db, since) : { receipts: [], truncated: false };

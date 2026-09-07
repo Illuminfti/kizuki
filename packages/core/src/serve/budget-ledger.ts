@@ -68,7 +68,7 @@ export function createDurableWriteBudget(
       if (runUsed >= limits.canon_writes_per_run) throw new BudgetExhausted("canon_writes_per_run", limits.canon_writes_per_run);
       const chargedDay = currentDay();
       db.transaction(() => {
-        const used = durableUsage(db, vaultPath, chargedDay);
+        const used = readDurableWriteUsage(db, vaultPath, chargedDay);
         const reserved = db.query<{ count: number }, [string]>("SELECT count(*) AS count FROM canon_write_reservations WHERE day=?").get(chargedDay)!.count;
         if (used + reserved >= limits.canon_writes_per_day) throw new BudgetExhausted("canon_writes_per_day", limits.canon_writes_per_day);
         db.query("INSERT INTO canon_write_reservations(receipt_id,day,page_path,before_hash) VALUES (?,?,?,?)").run(write.receipt_id, chargedDay, write.page_path, write.before_hash);
@@ -78,13 +78,14 @@ export function createDurableWriteBudget(
     usage() {
       return {
         canon_writes_per_run: { used: runUsed, limit: limits.canon_writes_per_run },
-        canon_writes_per_day: { used: durableUsage(db, vaultPath, currentDay()), limit: limits.canon_writes_per_day },
+        canon_writes_per_day: { used: readDurableWriteUsage(db, vaultPath, currentDay()), limit: limits.canon_writes_per_day },
       };
     },
   };
 }
 
-function durableUsage(db: Database, vaultPath: string, day: string): number {
+/** Daily write usage from durable counters and distinct canon receipt identities. */
+export function readDurableWriteUsage(db: Database, vaultPath: string, day: string): number {
   const reserved = new Set(db.query<{ receipt_id: string }, []>("SELECT receipt_id FROM canon_write_reservations").all().map(row => row.receipt_id));
   const ids = new Set(db.query<{ receipt_id: string }, [string]>("SELECT receipt_id FROM canon_receipts WHERE writer='loop' AND substr(at,1,10)=?").all(day).map(row => row.receipt_id));
   for (const receipt of readReceiptsLog(vaultPath)) {
@@ -109,7 +110,7 @@ export function settleWriteReservations(db: Database, vaultPath: string): void {
     // receipt consumed none. Uncertain changed bytes count conservatively.
     const committed = journal.has(row.receipt_id) || db.query("SELECT 1 FROM canon_receipts WHERE receipt_id=?").get(row.receipt_id) !== null || current !== row.before_hash;
     db.transaction(() => {
-      const used = durableUsage(db, vaultPath, row.day) + (committed ? 1 : 0);
+      const used = readDurableWriteUsage(db, vaultPath, row.day) + (committed ? 1 : 0);
       db.query("INSERT INTO budget_ledger(day,name,used) VALUES (?,'canon_writes_per_day',?) ON CONFLICT(day,name) DO UPDATE SET used=excluded.used").run(row.day, used);
       db.query("DELETE FROM canon_write_reservations WHERE receipt_id=?").run(row.receipt_id);
     }).immediate();
