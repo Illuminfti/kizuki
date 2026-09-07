@@ -227,10 +227,10 @@ function hasNativeLifecycleProof(job: unknown): boolean {
     isBareCommand(steps[1], "bash scripts/ci-restrict-origin-refs.sh") &&
     action(steps[2], "oven-sh/setup-bun", { "bun-version": BUN_VERSION }) &&
     isBareCommand(steps[3], "bun scripts/ci-diff-check.ts") &&
-    isBareCommand(steps[4], "bun install --frozen-lockfile\n" + CANONICAL_NATIVE_TMPDIR + "\nbun run typecheck\nbun test scripts/native-service-lifecycle.test.ts scripts/native-baseline-package.test.ts scripts/native-model-matrix.test.ts scripts/native-recovery-fixtures.test.ts scripts/native-lifecycle-proof.test.ts\n" + NATIVE_CONSUMER_TESTS) &&
+    isBareCommand(steps[4], "bun install --frozen-lockfile\n" + CANONICAL_NATIVE_TMPDIR + "\nbun run typecheck\nbun test scripts/native-service-lifecycle.test.ts scripts/native-launchctl-diagnostics.test.ts scripts/native-baseline-package.test.ts scripts/native-model-matrix.test.ts scripts/native-recovery-fixtures.test.ts scripts/native-lifecycle-proof.test.ts\n" + NATIVE_CONSUMER_TESTS) &&
     isConditionedCommand(steps[5], 'sudo systemctl start "user@$(id -u).service"\nprintf \'XDG_RUNTIME_DIR=/run/user/%s\\n\' "$(id -u)" >> "$GITHUB_ENV"\nprintf \'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus\\n\' "$(id -u)" >> "$GITHUB_ENV"', "${{ runner.os == 'Linux' }}") &&
     isBareCommand(steps[6], 'bun run build:release\nbun run smoke:release\nbun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-native-artifact-proof"\nbun scripts/native-baseline-package.ts --out "$RUNNER_TEMP/kizuki-native-baseline"') &&
-    isBareCommand(steps[7], 'bun scripts/native-service-lifecycle.ts --baseline-artifact "$RUNNER_TEMP/kizuki-native-baseline/package" --report "$RUNNER_TEMP/kizuki-native-service-lifecycle"') &&
+    isBareCommand(steps[7], 'KIZUKI_NATIVE_MAC_STARTUP_CAPTURE=${{ inputs.mac_startup_capture && \'1\' || \'0\' }} bun scripts/native-service-lifecycle.ts --baseline-artifact "$RUNNER_TEMP/kizuki-native-baseline/package" --report "$RUNNER_TEMP/kizuki-native-service-lifecycle"') &&
     isNativeArtifactUpload(steps[8], "native-service-lifecycle-${{ matrix.os }}-${{ github.sha }}", "dist/kizuki-*/bun-linux-x64-baseline/\ndist/kizuki-*/bun-darwin-arm64/\n${{ runner.temp }}/kizuki-native-artifact-proof/receipt.json\n${{ runner.temp }}/kizuki-native-service-lifecycle/receipt.json", "${{ !cancelled() }}");
 }
 
@@ -289,6 +289,7 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
     const base = isRecord(inputs) ? inputs["base_sha"] : undefined;
     const adapterOnly = isRecord(inputs) ? inputs["native_adapter_only"] : undefined;
     const lifecycleOnly = isRecord(inputs) ? inputs["native_lifecycle_only"] : undefined;
+    const startupCapture = isRecord(inputs) ? inputs["mac_startup_capture"] : undefined;
     const jobs = document["jobs"];
     const job = isRecord(jobs) ? jobs["native-arm64"] : undefined;
     const steps = isRecord(job) ? job["steps"] : undefined;
@@ -297,6 +298,7 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
         !isRecord(base) || base["type"] !== "string" || base["required"] !== true ||
         !isRecord(adapterOnly) || adapterOnly["type"] !== "boolean" || adapterOnly["default"] !== false || adapterOnly["required"] !== false ||
         !isRecord(lifecycleOnly) || lifecycleOnly["type"] !== "boolean" || lifecycleOnly["default"] !== false || lifecycleOnly["required"] !== false ||
+        !isRecord(startupCapture) || startupCapture["type"] !== "boolean" || startupCapture["default"] !== false || startupCapture["required"] !== false ||
         !isRecord(jobs) || Object.keys(jobs).sort().join() !== "native-arm64,native-service" || !isRecord(job) || !hasNativeLifecycleProof(jobs["native-service"]) ||
         job["if"] !== "${{ inputs.existing_allowance_verified == true && inputs.native_lifecycle_only != true }}" || job["runs-on"] !== "macos-15" || job["timeout-minutes"] !== 15 || job["strategy"] !== undefined ||
         !hasMacNativeProof(document, job) || !Array.isArray(steps) || !steps.some(step => isRecord(step) && step["if"] === undefined && step["run"] === "bun scripts/ci-diff-check.ts") ||

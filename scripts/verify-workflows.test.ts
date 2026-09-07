@@ -260,6 +260,9 @@ test("macOS validator rejects removal or bypass of each native proof obligation"
     ["if-no-files-found change", d => { d.jobs["native-arm64"].steps[8].with["if-no-files-found"] = "warn"; }],
     ["proof-command removal", d => { d.jobs["native-arm64"].steps[6].run = "bun run build:release\nbun run smoke:release"; }],
     ["conditional receipt check", d => { d.jobs["native-arm64"].steps[7].if = "false"; }],
+    ["startup capture input removed", d => { delete d.on.workflow_dispatch.inputs.mac_startup_capture; }],
+    ["startup capture enabled by default", d => { d.on.workflow_dispatch.inputs.mac_startup_capture.default = true; }],
+    ["startup capture input unconstrained", d => { d.on.workflow_dispatch.inputs.mac_startup_capture.type = "string"; }],
     ["adapter-only input removed", d => { delete d.on.workflow_dispatch.inputs.native_adapter_only; }],
     ["adapter canary removed", d => { d.jobs["native-arm64"].steps.splice(9, 1); }],
     ["adapter canary command weakened", d => { d.jobs["native-arm64"].steps[9].run = "bun run typecheck"; }],
@@ -361,6 +364,7 @@ test("native lifecycle mode cannot lose a host, source binding, supervisor gate 
     (doc: any) => { doc.jobs["native-service"].steps[6].run = doc.jobs["native-service"].steps[6].run.split("\n").slice(0, 3).join("\n"); },
     (doc: any) => { doc.jobs["native-service"].steps[7].run = doc.jobs["native-service"].steps[7].run.replace("--baseline-artifact", "--unverified-baseline"); },
     (doc: any) => { doc.jobs["native-service"].steps[7].run += " || true"; },
+    (doc: any) => { doc.jobs["native-service"].steps[7].run = doc.jobs["native-service"].steps[7].run.replace("inputs.mac_startup_capture", "true"); },
     (doc: any) => { doc.jobs["native-service"].steps[8].if = "${{ success() }}"; },
     (doc: any) => { doc.jobs["native-service"].steps[8].with.path = "${{ runner.temp }}/**"; },
   ];
