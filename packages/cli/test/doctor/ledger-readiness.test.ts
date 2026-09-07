@@ -7,6 +7,8 @@ const { cleanup, runCli, runCliAsync, tempDir, tempVault } = createHelpers();
 afterEach(cleanup);
 
 const SIDECARS = ["", "-wal", "-shm"] as const;
+/** WAL sidecars must land before the main file so a resumed store is not read without them. */
+const RESTORE_SIDECARS = ["-wal", "-shm", ""] as const;
 const ledgerPath = (vault: string): string => join(vault, ".kizuki", "kizuki.db");
 const markPath = (vault: string): string => join(vault, ".kizuki", "ledger-mark");
 const readMark = (vault: string): string => readFileSync(markPath(vault), "utf8");
@@ -36,7 +38,7 @@ function parkLedger(setup: Seeded): { restore(): void } {
   chmodSync(ledgerPath(setup.vault), 0o600);
   return {
     restore() {
-      for (const suffix of SIDECARS) {
+      for (const suffix of RESTORE_SIDECARS) {
         const file = `${ledgerPath(setup.vault)}${suffix}`;
         rmSync(file, { force: true });
         const kept = join(parked, `kizuki.db${suffix}`);
