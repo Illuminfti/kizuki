@@ -138,6 +138,8 @@ const MACOS_RECEIPT_CHECK = 'test -f "$RUNNER_TEMP/kizuki-macos-artifact-proof/r
 const MACOS_ARTIFACT_NAME = "macos-arm64-${{ github.sha }}";
 const MACOS_ARTIFACT_PATH =
   "dist/kizuki-*/bun-darwin-arm64/\n${{ runner.temp }}/kizuki-macos-artifact-proof/receipt.json";
+const NATIVE_CONSUMER_TESTS = "bun test packages/core/test/canon/canon-files.test.ts packages/core/test/canon/receipt-stream.test.ts packages/core/test/canon/apply.test.ts packages/core/test/vault/mutation-scope.test.ts packages/core/test/vault/mutation-callers.test.ts packages/core/test/agents/credential-file.test.ts packages/core/test/agents/app-enrollment.test.ts packages/core/test/agents/enrollment-flow.test.ts packages/core/test/agents/enrollment-fault.test.ts packages/core/test/correction/correct.test.ts packages/core/test/correction/source-consent.test.ts packages/core/test/serve/model-settings.test.ts packages/core/test/serve/model-diagnostics.test.ts packages/core/test/serve/app-http.test.ts packages/cli/test/app-host.test.ts packages/cli/test/app-agents.test.ts packages/cli/test/app-client.test.ts packages/cli/test/app-service.test.ts packages/cli/test/app-browser.test.ts packages/cli/test/app-model-settings.test.ts packages/cli/test/app-model-journey.test.ts packages/mcp/test/credential-stdio.test.ts";
+const CANONICAL_NATIVE_TMPDIR = "export TMPDIR=\"$(bun -e 'console.log(require(\"node:fs\").realpathSync(process.env.RUNNER_TEMP))')\"\nprintf 'TMPDIR=%s\\n' \"$TMPDIR\" >> \"$GITHUB_ENV\"";
 const FULL_QUALIFICATION = "${{ inputs.native_adapter_only != true }}";
 const ADAPTER_ONLY = "${{ inputs.native_adapter_only == true }}";
 const ADAPTER_RETAIN = "${{ !cancelled() && inputs.native_adapter_only == true }}";
@@ -201,8 +203,8 @@ function hasMacNativeProof(document: Record<string, unknown>, job: Record<string
     isBareCommand(steps[1], "bash scripts/ci-restrict-origin-refs.sh") &&
     action(2, "oven-sh/setup-bun", { "bun-version": BUN_VERSION }) &&
     isBareCommand(steps[3], "bun scripts/ci-diff-check.ts") &&
-    isBareCommand(steps[4], 'test "$(uname -s)" = Darwin\ntest "$(uname -m)" = arm64\nbun install --frozen-lockfile') &&
-    isConditionedCommand(steps[5], "bun run typecheck\nbun test scripts/release-targets.test.ts scripts/release-artifacts.test.ts scripts/stranger-proof.test.ts packages/core/test/serve/advisory-file-lock.test.ts packages/core/test/serve/flock.test.ts packages/core/test/serve/leases.test.ts packages/core/test/serve/units.test.ts packages/core/test/serve/service-arguments.test.ts packages/cli/test/config.test.ts packages/cli/test/terminal-prompt.test.ts packages/tui/test/terminal.test.ts packages/retrieval-pg/test/contention.test.ts scripts/native-platform.test.ts", FULL_QUALIFICATION) &&
+    isBareCommand(steps[4], 'test "$(uname -s)" = Darwin\ntest "$(uname -m)" = arm64\nbun install --frozen-lockfile\n' + CANONICAL_NATIVE_TMPDIR) &&
+    isConditionedCommand(steps[5], "bun run typecheck\nbun test scripts/release-targets.test.ts scripts/release-artifacts.test.ts scripts/stranger-proof.test.ts packages/core/test/serve/advisory-file-lock.test.ts packages/core/test/serve/flock.test.ts packages/core/test/serve/leases.test.ts packages/core/test/serve/units.test.ts packages/core/test/serve/service-arguments.test.ts packages/cli/test/config.test.ts packages/cli/test/terminal-prompt.test.ts packages/tui/test/terminal.test.ts packages/retrieval-pg/test/contention.test.ts scripts/native-platform.test.ts\n" + NATIVE_CONSUMER_TESTS, FULL_QUALIFICATION) &&
     isConditionedCommand(steps[6], MACOS_PROOF_COMMAND, FULL_QUALIFICATION) &&
     isConditionedCommand(steps[7], MACOS_RECEIPT_CHECK, FULL_QUALIFICATION) &&
     isNativeArtifactUpload(steps[8], MACOS_ARTIFACT_NAME, MACOS_ARTIFACT_PATH, "${{ success() && inputs.native_adapter_only != true }}") &&
@@ -225,7 +227,7 @@ function hasNativeLifecycleProof(job: unknown): boolean {
     isBareCommand(steps[1], "bash scripts/ci-restrict-origin-refs.sh") &&
     action(steps[2], "oven-sh/setup-bun", { "bun-version": BUN_VERSION }) &&
     isBareCommand(steps[3], "bun scripts/ci-diff-check.ts") &&
-    isBareCommand(steps[4], "bun install --frozen-lockfile\nbun run typecheck\nbun test scripts/native-service-lifecycle.test.ts") &&
+    isBareCommand(steps[4], "bun install --frozen-lockfile\n" + CANONICAL_NATIVE_TMPDIR + "\nbun run typecheck\nbun test scripts/native-service-lifecycle.test.ts\n" + NATIVE_CONSUMER_TESTS) &&
     isConditionedCommand(steps[5], 'sudo systemctl start "user@$(id -u).service"\nprintf \'XDG_RUNTIME_DIR=/run/user/%s\\n\' "$(id -u)" >> "$GITHUB_ENV"\nprintf \'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus\\n\' "$(id -u)" >> "$GITHUB_ENV"', "${{ runner.os == 'Linux' }}") &&
     isBareCommand(steps[6], "bun run build:release") &&
     isBareCommand(steps[7], 'bun scripts/native-service-lifecycle.ts --report "$RUNNER_TEMP/kizuki-native-service-lifecycle"') &&
