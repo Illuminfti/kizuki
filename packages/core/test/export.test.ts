@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import * as vaultIdentity from "../src/serve/vault-id";
 import {
   chmodSync,
   existsSync,
@@ -1386,15 +1387,22 @@ describe("restoreVault", () => {
     db.close();
   });
 
-  test("preserves vault identity when the source had one", () => {
+  test("restore binds the current machine before publication while preserving the source vault identity", () => {
     const { db, vaultPath } = populated();
     writeFileSync(join(vaultPath, ".kizuki", "vault-id"), "01exportvaultid000000000001\n");
     const backup = join(temporary("kizuki-export-parent-"), "dump");
     const manifest = exportVault(db, vaultPath, backup);
     expect(manifest.vault_id).toBe("01exportvaultid000000000001");
     const target = join(temporary("kizuki-restore-parent-"), "vault");
-    restoreVault(backup, target);
+    // Inject only the platform machine identifier. The real identity writer,
+    // restore staging/publication and immutable read validation still execute.
+    const ensure = vaultIdentity.ensureVaultId;
+    const machine = "synthetic-restore-machine";
+    const platform = spyOn(vaultIdentity, "ensureVaultId").mockImplementation(path => ensure(path, machine));
+    try { restoreVault(backup, target); } finally { platform.mockRestore(); }
     expect(readVaultId(target)).toBe("01exportvaultid000000000001");
+    expect(() => vaultIdentity.assertBoundVaultId(target, machine)).not.toThrow();
+    expect(readFileSync(join(target, ".kizuki/vault-machine"), "utf8")).toBe(`${machine}\n`);
     db.close();
   });
 });

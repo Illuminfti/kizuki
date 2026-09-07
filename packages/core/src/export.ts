@@ -70,7 +70,7 @@ import { tableExists } from "./ledger/schema";
 import { SENSITIVITY_SCHEMA_VERSION } from "./sensitivity/schema";
 import { SERVE_SCHEMA_VERSION } from "./serve/types";
 import { extractBatchFilingVersion, validateDurableExtractStorage } from "./serve/extract";
-import { readVaultId, vaultIdPath } from "./serve/vault-id";
+import { ensureVaultId, readVaultId, vaultIdPath } from "./serve/vault-id";
 import { doctorVault } from "./vault/doctor";
 import { initVault } from "./vault/init";
 import { parseFrontmatter } from "./vault/frontmatter";
@@ -2407,6 +2407,9 @@ export function restoreVault(
         writePrivateFile(idPath, Buffer.from(`${manifest.vault_id}\n`));
       }
     }
+    // Restore is the explicit adoption boundary. Keep the manifest identity and
+    // bind this machine before publication; later inspection must never repair it.
+    ensureVaultId(staging);
 
     const db = openLedger(join(staging, CONTROL_DIR, "kizuki.db"));
     try {

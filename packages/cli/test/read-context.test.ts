@@ -48,6 +48,24 @@ for (const args of [["query", "synthetic", "--json"], ["context", "--json"], ["d
   });
 }
 
+test("a clean public restore is immediately readable without read-time initialization", () => {
+  const f = h.tempVault(), backup = join(f.root, "backup"), restored = join(f.root, "restored");
+  expect(h.runCli(f.env, "export", "--out", backup).exitCode).toBe(0);
+  const restore = h.runCli(f.env, "restore", "--from", backup, "--into", restored);
+  expect(restore.exitCode).toBe(0);
+  const before = observe(restored), tree = files(restored);
+  for (const args of [["query", "synthetic", "--json"], ["context", "--json"], ["doctor", "--json"]]) {
+    const result = h.runCli(f.env, "--vault", restored, ...args);
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).schema).toBe(`kizuki.cli.${args[0]}/v1`);
+    expect(JSON.parse(result.stdout).status).not.toBe("error");
+  }
+  const after = observe(restored);
+  expect(after.schema).toEqual(before.schema);
+  expect(after.audit).toBe(before.audit + 2);
+  expect(files(restored)).toEqual(tree);
+});
+
 test("read-only contexts refuse schema repair and never remint a foreign machine binding", () => {
   const f = h.tempVault(), machine = join(f.vault, ".kizuki/vault-machine"), id = hash(join(f.vault, ".kizuki/vault-id"));
   const machineKnown = existsSync(machine);
