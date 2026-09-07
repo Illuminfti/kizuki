@@ -248,7 +248,7 @@ long kizuki_read_directory(int descriptor, unsigned char *out, unsigned long cap
   for (unsigned long offset=0; offset<(unsigned long)count;) {
     if ((unsigned long)count-offset < 24) return -22;
     unsigned short length=*(unsigned short *)(bytes+offset+16);
-    if (length < 24 || length > 1048 || offset+length > (unsigned long)count) return -22;
+    if (length < 24 || length > 1048 || (length & 3) != 0 || offset+length > (unsigned long)count) return -22;
     // A nonempty native page must never normalize to an EOF observation.
     // Refuse an unidentifiable record instead of silently dropping its name.
     if (*(unsigned long *)(bytes+offset) == 0) return -22;
@@ -256,6 +256,10 @@ long kizuki_read_directory(int descriptor, unsigned char *out, unsigned long cap
     if (namesize < 1 || namesize > 255 || 21UL+namesize >= length) return -22;
     if (bytes[offset+21+namesize] != 0) return -22;
     for (int i=0; i<namesize; i++) if (bytes[offset+21+i] == 0) return -22;
+    // Darwin permits extra alignment padding (including vnode conversion's
+    // struct tail padding), but it must be null. A forged oversized dot record
+    // must not hide a following entry and become a false emptiness observation.
+    for (unsigned long i=22UL+namesize; i<length; i++) if (bytes[offset+i] != 0) return -22;
     unsigned short normalized=(20UL+namesize+3UL)&~3UL;
     if (used+normalized > capacity) return -22;
     for (int i=0; i<normalized; i++) out[used+i]=0;

@@ -170,7 +170,7 @@ test("the cumulative entry bound refuses a truncated erasure scan", () => {
   scenario("entry-limit", "fs.mkdirSync(join(owned, 'store')); assert.throws(() => cap.removeTree('store', cap.childIdentity('store')), /bounds/); assert.ok(fs.existsSync(join(owned, 'store')));");
 });
 
-for (const mode of ["valid", "eof", "zero-inode", "short-header", "overrun", "empty-name", "missing-nul", "count-overrun"])
+for (const mode of ["valid", "valid-padded", "eof", "zero-inode", "short-header", "overrun", "empty-name", "missing-nul", "count-overrun", "misaligned", "nonzero-padding", "oversized-dot"])
   test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(`Darwin raw directory records preserve bytes or refuse: ${mode}`, () => {
     const script = `
       import { mock } from "bun:test";
@@ -183,11 +183,19 @@ for (const mode of ["valid", "eof", "zero-inode", "short-header", "overrun", "em
         if (mode === "short-header") return 23;
         if (mode === "count-overrun") return Number(capacity) + 1;
         bytes.writeBigUInt64LE(mode === "zero-inode" ? 0n : 42n, 0);
-        bytes.writeUInt16LE(mode === "overrun" ? 32 : 24, 16);
+        const length = mode === "misaligned" ? 25 : mode === "valid-padded" || mode === "nonzero-padding" ? 32 : 24;
+        bytes.writeUInt16LE(mode === "overrun" ? 32 : length, 16);
         bytes.writeUInt16LE(mode === "empty-name" ? 0 : 2, 18);
         bytes[20] = 8; bytes[21] = 195; bytes[22] = 191;
         if (mode === "missing-nul") bytes[23] = 1;
-        return 24;
+        if (mode === "nonzero-padding") bytes[31] = 1;
+        if (mode === "oversized-dot") {
+          bytes.writeUInt16LE(64, 16); bytes.writeUInt16LE(1, 18); bytes[21] = 46; bytes[22] = 0;
+          bytes.writeBigUInt64LE(43n, 32); bytes.writeUInt16LE(32, 48);
+          bytes.writeUInt16LE(1, 50); bytes[52] = 8; bytes[53] = 120;
+          return 64;
+        }
+        return length;
       }, { args: [ffi.FFIType.i32, ffi.FFIType.ptr, ffi.FFIType.u64, ffi.FFIType.ptr], returns: ffi.FFIType.i64_fast });
       mock.module("bun:ffi", () => ({ ...ffi, dlopen(...args) {
         const library = realDlopen(...args), original = library.symbols;
@@ -199,13 +207,55 @@ for (const mode of ["valid", "eof", "zero-inode", "short-header", "overrun", "em
       const api = loadOwnedDirectoryNative(), out = Buffer.alloc(16384);
       try {
         const status = api.symbols.readDirectory(-1, ffi.ptr(out), out.length);
-        if (mode === "valid") {
+        if (mode === "valid" || mode === "valid-padded") {
           assert.equal(status, 24); assert.equal(out.readUInt16LE(16), 24);
           assert.deepEqual([...out.subarray(19, 22)], [195, 191, 0]);
         } else if (mode === "eof") assert.equal(status, 0);
         else assert.equal(status, -22);
         process.stdout.write("passed");
       } finally { api.compiled.close(); api.libc.close(); callback.close(); }
+    `;
+    const result = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    expect(result.stdout.toString()).toBe("passed");
+  });
+
+for (const mode of ["misaligned", "oversized-dot"])
+  test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(`Darwin malformed dot records cannot establish emptiness: ${mode}`, () => {
+    const script = `
+      import { mock } from "bun:test";
+      import * as ffi from "bun:ffi";
+      import * as fs from "node:fs";
+      import { join } from "node:path";
+      import { strict as assert } from "node:assert";
+      const mode = ${JSON.stringify(mode)}, realDlopen = ffi.dlopen;
+      const root = fs.realpathSync(fs.mkdtempSync("/tmp/kizuki-darwin-malformed-dot-"));
+      fs.writeFileSync(join(root, "x"), "SYNTHETIC_PRESENT");
+      let calls = 0;
+      const callback = new ffi.JSCallback((_fd, pointer, capacity, _position) => {
+        if (calls++ > 0) return 0;
+        const bytes = Buffer.from(ffi.toArrayBuffer(pointer, 0, Number(capacity))); bytes.fill(0);
+        bytes.writeBigUInt64LE(42n, 0); bytes.writeUInt16LE(mode === "misaligned" ? 25 : 64, 16);
+        bytes.writeUInt16LE(1, 18); bytes[20] = 4; bytes[21] = 46;
+        if (mode === "misaligned") return 25;
+        bytes.writeBigUInt64LE(43n, 32); bytes.writeUInt16LE(32, 48);
+        bytes.writeUInt16LE(1, 50); bytes[52] = 8; bytes[53] = 120;
+        return 64;
+      }, { args: [ffi.FFIType.i32, ffi.FFIType.ptr, ffi.FFIType.u64, ffi.FFIType.ptr], returns: ffi.FFIType.i64_fast });
+      mock.module("bun:ffi", () => ({ ...ffi, dlopen(...args) {
+        const library = realDlopen(...args), original = library.symbols;
+        return { ...library, symbols: { ...original, dlsym(handle, name) {
+          return new ffi.CString(name).toString() === "__getdirentries64" ? callback.ptr : original.dlsym(handle, name);
+        } } };
+      } }));
+      const { openOwnedDirectory } = await import(${JSON.stringify(join(import.meta.dir, "../../src/util/owned-directory.ts"))});
+      const cap = openOwnedDirectory(root);
+      try {
+        assert.throws(() => cap.isEmpty(), /unsafe/);
+        assert.ok(calls > 0);
+        assert.equal(fs.readFileSync(join(root, "x"), "utf8"), "SYNTHETIC_PRESENT");
+        process.stdout.write("passed");
+      } finally { cap.close(); callback.close(); fs.rmSync(root, { recursive: true, force: true }); }
     `;
     const result = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
     expect(result.exitCode, result.stderr.toString()).toBe(0);
