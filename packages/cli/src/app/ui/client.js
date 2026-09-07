@@ -385,11 +385,19 @@ async function resumeRemoval(source) {
   if (!source.revoke_operation) { await refresh(); message('Refresh the source status before continuing removal.'); return; }
   await launchOperation('resume_revocation', { source_key: source.source_key, operation_id: source.revoke_operation }, `Checking removal · ${sourceLabel(source)}`, async () => { await refresh(); navigate('sources'); });
 }
+function activityTitle(action) {
+  switch (action) {
+    case 'create': return 'Memory page created';
+    case 'edit': return 'Memory page updated';
+    case 'archive': return 'Memory page removed';
+    default: return 'Memory change';
+  }
+}
 function renderActivity() {
   const section = el('section', {}, heading('A clear history.', 'See receipted changes to your memory. Undo restores the previous state when its receipt still applies.'));
   if (!state.receipts.length) { section.append(empty('No receipted changes yet.', 'Imported sources are searchable right away. Changes to your memory pages appear here when they happen.')); return section; }
   const list = el('ol', { class: 'activity-list' });
-  for (const receipt of state.receipts) list.append(el('li', { class: 'activity-item' }, el('div', { class: 'activity-top' }, el('div', {}, el('h3', {}, receipt.page || 'Memory change'), el('p', {}, `${dateText(receipt.at)} · ${receipt.reverted ? 'Undone' : receipt.action}`)), !receipt.reverted && button('Undo', () => undo(receipt))), el('details', { class: 'result-details' }, el('summary', {}, 'Receipt reference'), el('code', {}, receipt.id))));
+  for (const receipt of state.receipts) list.append(el('li', { class: 'activity-item' }, el('div', { class: 'activity-top' }, el('div', {}, el('h3', {}, activityTitle(receipt.action)), el('p', {}, `${dateText(receipt.at)}${receipt.reverted ? ' · Undone' : ''}`)), !receipt.reverted && button('Undo', () => undo(receipt))), el('details', { class: 'result-details' }, el('summary', {}, 'Change details'), el('p', {}, 'Page: ', el('code', {}, receipt.page)), el('p', {}, 'Receipt: ', el('code', {}, receipt.id)))));
   section.append(list); return section;
 }
 async function loadActivity() {

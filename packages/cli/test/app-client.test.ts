@@ -65,6 +65,39 @@ function fixture() {
 }
 const status = (operations: unknown[] = [], epoch = '1') => ({ vault: { ready: true }, visibility_epoch: epoch, operations });
 
+test('Activity names the receipt action while preserving exact references in closed details', () => {
+    for (const [action, title] of [['create', 'Memory page created'], ['edit', 'Memory page updated'], ['archive', 'Memory page removed'], ['unknown', 'Memory change'], ['toString', 'Memory change']] as const) {
+        const f = fixture();
+        const receipt = { id: 'receipt-synthetic', page: 'auto/captures/synthetic-page.md', action, at: '2026-09-07T00:00:00Z', reverted: false };
+        f.evaluate(`state.view='activity'; state.receipts=[${JSON.stringify(receipt)}]; render();`);
+        expect(f.main.querySelector('h3')!.textContent).toBe(title);
+        const details = f.main.querySelector('details')!;
+        expect(details.attributes.open).toBeUndefined();
+        expect(details.textContent).toContain(receipt.page);
+        expect(details.textContent).toContain(receipt.id);
+        expect(f.main.querySelector('h3')!.textContent).not.toContain(receipt.page);
+        expect(f.storageWrites).toHaveLength(0);
+    }
+});
+
+test('Activity keeps the exact undo target and shows undone receipts without another undo action', async () => {
+    const f = fixture();
+    const receipt = { id: 'receipt-exact', page: 'auto/captures/exact-page.md', action: 'edit', at: '2026-09-07T00:00:00Z', reverted: false };
+    f.evaluate(`state.view='activity'; state.receipts=[${JSON.stringify(receipt)}]; render();`);
+    await f.main.querySelector('button')!.fire('click');
+    expect(f.dialog.textContent).toContain(receipt.page);
+    const submit = f.dialog.querySelector('.form-actions')!.children.find(node => node.textContent === 'Undo change')!;
+    const request = submit.fire('click');
+    expect(f.requests.find(row => row.route === 'undo')!.payload).toEqual({ receipt_id: receipt.id, cascade: false });
+    const pending = f.requests.splice(f.requests.findIndex(row => row.route === 'undo'), 1)[0]!;
+    pending.result.resolve({ status: 400, json: async () => ({ ok: false, error: { code: 'invalid_request' } }) });
+    await request;
+    f.evaluate(`state.receipts=[${JSON.stringify({ ...receipt, reverted: true })}]; render();`);
+    expect(f.main.querySelector('h3')!.textContent).toBe('Memory page updated');
+    expect(f.main.textContent).toContain('Undone');
+    expect(f.main.querySelector('button')).toBeNull();
+});
+
 test('pending recovery in the shipped client shows its result and never calls the undo success callback', async () => {
     const f = fixture();
     f.evaluate('globalThis.syntheticCompletions=0');
