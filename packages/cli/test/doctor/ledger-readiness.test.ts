@@ -7,6 +7,8 @@ const { cleanup, runCli, runCliAsync, tempDir, tempVault } = createHelpers();
 afterEach(cleanup);
 
 const SIDECARS = ["", "-wal", "-shm"] as const;
+/** WAL sidecars must land before the main file so a resumed store is not read without them. */
+const RESTORE_SIDECARS = ["-wal", "-shm", ""] as const;
 const ledgerPath = (vault: string): string => join(vault, ".kizuki", "kizuki.db");
 const markPath = (vault: string): string => join(vault, ".kizuki", "ledger-mark");
 const readMark = (vault: string): string => readFileSync(markPath(vault), "utf8");
@@ -36,7 +38,7 @@ function parkLedger(setup: Seeded): { restore(): void } {
   chmodSync(ledgerPath(setup.vault), 0o600);
   return {
     restore() {
-      for (const suffix of SIDECARS) {
+      for (const suffix of RESTORE_SIDECARS) {
         const file = `${ledgerPath(setup.vault)}${suffix}`;
         rmSync(file, { force: true });
         const kept = join(parked, `kizuki.db${suffix}`);
@@ -85,6 +87,68 @@ describe("ledger readiness mark", () => {
     expect(doctor.stderr).toBe("");
     expect(doctor.stdout).toContain("events=3");
     expect(readMark(setup.vault)).toBe("3\n");
+  });
+
+  test.each(["ledger", "mark"])("a %s replacement during the readiness snapshot is retried", kind => {
+    const setup = seeded();
+    const core = join(import.meta.dir, "../../../core/src");
+    const script = `
+      import { expect, mock } from "bun:test";
+      import * as fs from "node:fs";
+      import { join } from "node:path";
+      const vault = ${JSON.stringify(setup.vault)};
+      const kind = ${JSON.stringify(kind)};
+      const ledger = join(vault, ".kizuki/kizuki.db");
+      const mark = join(vault, ".kizuki/ledger-mark");
+      const target = kind === "ledger" ? ledger : mark;
+      const replacement = target + ".replacement";
+      fs.copyFileSync(target, replacement);
+      fs.chmodSync(replacement, 0o600);
+      let replaced = false, opens = 0, closes = 0;
+      if (kind === "mark") {
+        const read = fs.readSync;
+        const markInode = fs.statSync(mark, { bigint: true }).ino;
+        mock.module("node:fs", () => ({ ...fs, readSync(fd, ...args) {
+          const count = read(fd, ...args);
+          if (opens > 0 && !replaced && fs.fstatSync(fd, { bigint: true }).ino === markInode) {
+            replaced = true;
+            fs.renameSync(mark, mark + ".held");
+            fs.renameSync(replacement, mark);
+          }
+          return count;
+        } }));
+      }
+      const filesPath = ${JSON.stringify(join(core, "vault/canon-files.ts"))};
+      const files = await import(filesPath);
+      const open = files.openLedgerDirectory;
+      mock.module(filesPath, () => ({ ...files, openLedgerDirectory(path) {
+        const directory = open(path);
+        opens++;
+        let inspections = 0;
+        return {
+          inspectFileIdentity(name) {
+            if (kind === "ledger" && !replaced && name === "kizuki.db" && ++inspections === 2) {
+              replaced = true;
+              fs.renameSync(replacement, ledger);
+            }
+            return directory.inspectFileIdentity(name);
+          },
+          close() { closes++; directory.close(); },
+        };
+      } }));
+      const { assertSealedLedgerReady } = await import(${JSON.stringify(join(import.meta.dir, "../../src/context.ts"))});
+      assertSealedLedgerReady(vault);
+      expect(replaced).toBe(true);
+      expect(opens).toBe(2);
+      expect(closes).toBe(opens);
+      expect(fs.readFileSync(mark, "utf8")).toBe("3\\n");
+      console.log("replacement retried; both directory bindings closed");
+    `;
+    const result = Bun.spawnSync([process.execPath, "--eval", script], {
+      stdout: "pipe", stderr: "pipe", timeout: 10_000,
+    });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    expect(result.stdout.toString()).toContain("replacement retried; both directory bindings closed");
   });
 
   test("doctor and query tolerate legacy unsealed marks without creating, repairing or resealing", () => {
