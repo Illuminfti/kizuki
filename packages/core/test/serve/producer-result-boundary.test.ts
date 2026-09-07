@@ -48,7 +48,8 @@ for (const rejectedCount of [1, 2]) {
       expect(readExtractCursor(db)).not.toBeNull();
       const claims = db.query<{ authority: string; taint: string }, []>("SELECT authority,taint FROM claims").all();
       expect(claims.length).toBeGreaterThan(0);
-      for (const claim of claims) expect(claim).toEqual({ authority: "model_inference", taint: "untrusted" });
+      // Model drafts remain quoted claims; the source event uses "untrusted".
+      for (const claim of claims) expect(claim).toEqual({ authority: "model_inference", taint: "quoted" });
 
       const stored = db.query<{ report: string }, [string]>("SELECT report FROM run_receipts WHERE run_id=?").get(receipt.run_id)!;
       expect(JSON.parse(stored.report).claims_rejected).toEqual({ schema_invalid: rejectedCount });
