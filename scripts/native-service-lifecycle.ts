@@ -41,6 +41,26 @@ export function managerPid(platform: string, result: CommandResult): number | nu
   return Number.isSafeInteger(pid) && pid > 1 ? pid : null;
 }
 
+/** Missing definitions do not imply stopped processes; query failure never proves cleanup. */
+export function nativeServiceStopped(platform: string, result: CommandResult): boolean {
+  if (platform === "darwin") return result.exit_code !== 0 && /could not find service/i.test(result.stdout + result.stderr);
+  return platform === "linux" && result.exit_code === 0 && /^MainPID=0$/m.test(result.stdout) &&
+    /^ActiveState=(inactive|failed)$/m.test(result.stdout);
+}
+
+/** The actual cleanup removal boundary, shared with the refusal regression oracle. */
+export function cleanupStoppedNativeFixture(
+  platform: string, state: CommandResult, fixtureRoot: string, unitPath: string, afterUnitRemoved: () => void = () => {},
+): { service_gone: boolean; unit_removed: boolean; synthetic_root_removed: boolean } {
+  if (!nativeServiceStopped(platform, state)) {
+    return { service_gone: false, unit_removed: !existsSync(unitPath), synthetic_root_removed: false };
+  }
+  if (existsSync(unitPath)) unlinkSync(unitPath);
+  afterUnitRemoved();
+  rmSync(fixtureRoot, { recursive: true });
+  return { service_gone: true, unit_removed: true, synthetic_root_removed: true };
+}
+
 /** Real native CI only: this harness loads one unique synthetic user service. */
 export async function runNativeServiceLifecycle(argv: readonly string[]): Promise<string> {
   const args = parseProofArgs(argv);
@@ -176,12 +196,12 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
       const stopped = managerState();
       record("launchd-graceful-exit", /^\s*last exit code = 0\s*$/m.test(stopped.stdout), stopped);
     } else {
-      await waitFor(() => managerPid(platform, managerState()) === null && !existsSync(join(vault, ".kizuki", "serve.pid")), "graceful process stop");
+      await waitFor(() => nativeServiceStopped(platform, managerState()) && !existsSync(join(vault, ".kizuki", "serve.pid")), "graceful process stop");
       const stopped = managerState();
       record("systemd-graceful-exit", /^ExecMainStatus=0$/m.test(stopped.stdout), stopped);
     }
     cli("uninstall-before-stopped-read", ["serve", "--uninstall", "--json", "--vault", vault]);
-    await waitFor(() => managerPid(platform, managerState()) === null && !existsSync(join(vault, ".kizuki", "serve.pid")), "uninstall stops service");
+    await waitFor(() => nativeServiceStopped(platform, managerState()) && !existsSync(join(vault, ".kizuki", "serve.pid")), "uninstall stops service");
     record("deliberately-stopped", !existsSync(unitPath), { unit_exists: existsSync(unitPath), intent: readFileSync(join(vault, ".kizuki", "serve-intent"), "utf8").trim() });
     const notes = join(fixtureRoot, "notes"); mkdirSync(notes, { mode: 0o700 });
     writeFileSync(join(notes, "welcome.md"), "Ada met Grace at the lifecycle observatory.\n", { mode: 0o600 });
@@ -208,7 +228,7 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
       { failure, unit_sha256: hash(unitPath), recovery_journal_exists: existsSync(join(vault, ".kizuki", "service-change.json")), boundary: "exact-source native API with missing executable; not a packaged release migration" });
     await active("rollback-restores-replacement-process", replacement, observed);
     cli("final-uninstall", ["serve", "--uninstall", "--json", "--vault", vault], 0, replacement);
-    await waitFor(() => managerPid(platform, managerState()) === null && !existsSync(join(vault, ".kizuki", "serve.pid")), "final uninstall stop");
+    await waitFor(() => nativeServiceStopped(platform, managerState()) && !existsSync(join(vault, ".kizuki", "serve.pid")), "final uninstall stop");
     result = query();
     record("uninstall-preserves-readable-vault", result.exit_code === 0 && result.stdout.includes("observatory") && !existsSync(unitPath), result);
     const exportPath = join(fixtureRoot, "export"), restored = join(fixtureRoot, "restored");
@@ -230,18 +250,15 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
         if (executable) invoke([executable, "serve", "--uninstall", "--json", "--vault", vault]);
         if (platform === "darwin") native("bootout", `${domain}/${unit}`);
         else native("--user", "disable", "--now", unit);
-        const state = managerState();
-        const gone = platform === "darwin" ? state.exit_code !== 0 && /could not find service/i.test(state.stdout + state.stderr) :
-          (/^LoadState=not-found$/m.test(state.stdout) || (state.exit_code === 0 && /^MainPID=0$/m.test(state.stdout) && /^ActiveState=(inactive|failed)$/m.test(state.stdout)));
-        receipt.cleanup.service_gone = gone;
-        if (gone && existsSync(unitPath)) unlinkSync(unitPath);
-        receipt.cleanup.unit_removed = !existsSync(unitPath);
-        if (platform === "linux" && gone) native("--user", "daemon-reload");
+        check(fixtureRoot !== null, "cleanup fixture identity missing");
+        Object.assign(receipt.cleanup, cleanupStoppedNativeFixture(platform, managerState(), fixtureRoot, unitPath, () => {
+          if (platform === "linux") check(native("--user", "daemon-reload").exit_code === 0, "cleanup manager reload failed");
+        }));
       } else {
         receipt.cleanup.service_gone = true;
         receipt.cleanup.unit_removed = true;
       }
-      if (receipt.cleanup.service_gone && receipt.cleanup.unit_removed && fixtureRoot) {
+      if (receipt.cleanup.service_gone && receipt.cleanup.unit_removed && !receipt.cleanup.synthetic_root_removed && fixtureRoot) {
         rmSync(fixtureRoot, { recursive: true });
         receipt.cleanup.synthetic_root_removed = true;
       }
