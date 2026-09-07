@@ -272,7 +272,12 @@ and `canon writing: on|off`. Off when no model is configured. The default
 report runs SQLite `quick_check` and samples ledger events. `--integrity`
 also runs `PRAGMA integrity_check` on the vault ledger; JSON then reports
 that result in `ledger.integrity_check` (otherwise `null`). Exit 1 when
-the report is not ok. After a folder import, expect live claims; the writer
+the report is not ok. Successful CLI writes seal `.kizuki/ledger-mark` with
+the accepted event total, including purge receipts. Reads preserve this file.
+A ledger below its sealed floor waits up to 3 seconds for the store to land,
+then fails with `vault ledger not ready` before reporting counts. Explicit
+init also refuses a ledger below its existing floor. Missing or bounded
+malformed private legacy marks remain unsealed until a successful write. After a folder import, expect live claims; the writer
 still needs a model before those claims become pages. Loop creates land
 under `auto/`; human pages stay where they are.
 

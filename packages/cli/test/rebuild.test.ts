@@ -1,5 +1,5 @@
 import { fixtureConsent } from "./helpers";
-import { Database } from "bun:sqlite";
+import { openLedgerRead } from "@kizuki/core/internal";
 import { afterEach, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -52,16 +52,17 @@ test("default rebuild JSON and text identify the actual SQLite floor count", () 
   const rebuilt = helpers.runCli(setup.env, "rebuild", "--json");
   expect(rebuilt.exitCode).toBe(0);
   const report = JSON.parse(rebuilt.stdout).data;
-  const db = new Database(join(setup.vault, ".kizuki", "kizuki.db"), { readonly: true });
+  const reader = openLedgerRead(setup.vault);
   try {
-    const actual = db.query<{ n: number }, []>("SELECT count(*) AS n FROM search_documents").get()!.n;
+    const actual = reader.db.query<{ n: number }, []>("SELECT count(*) AS n FROM search_documents").get()!.n;
+    reader.assertCurrent();
     expect(actual).toBeGreaterThan(0);
     expect(report).toMatchObject({ backend: "sqlite-floor", documents: actual, floor_documents: actual, store: "kizuki.retrieval.fts5" });
     const text = helpers.runCli(setup.env, "rebuild");
     expect(text.exitCode).toBe(0);
     expect(text.stdout).toContain(`rebuilt=${actual} backend=sqlite-floor`);
     expect(text.stdout).toContain(`floor_documents=${actual}`);
-  } finally { db.close(); }
+  } finally { reader.close(); }
 });
 
 for (const historical of ["ledger15", "ledger16"]) test(`public rebuild makes migrated ${historical} immediately queryable and preserves its cursor on refusal`, async () => {

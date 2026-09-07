@@ -3,6 +3,7 @@
  * through accept, purge, ingest, and the receipted writer for mutation.
  */
 export { openLedger } from "./ledger/db";
+export { ledgerAccepted, readLedgerMark, sealLedger } from "./ledger/mark";
 export { openLedgerRead, LedgerReadError } from "./ledger/read-context";
 export type { LedgerReadContext } from "./ledger/read-context";
 export { inspectLedgerIdentity, LedgerIdentityError } from "./ledger/identity";

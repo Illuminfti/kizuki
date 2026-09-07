@@ -11,7 +11,7 @@ import {
   readVaultId,
 } from "@kizuki/core";
 import type { ConnectionStateReader, RetrievalPort } from "@kizuki/core";
-import { assertBoundVaultId, openLedgerRead, inspectLedgerIdentity, LedgerIdentityError, openLedger } from "@kizuki/core/internal";
+import { assertBoundVaultId, openLedgerRead, inspectLedgerIdentity, LedgerIdentityError, openLedger, ledgerAccepted, readLedgerMark, sealLedger } from "@kizuki/core/internal";
 import { inspectConfiguredRetrieval, openConfiguredRetrieval } from "./retrieval-runtime";
 import type { CliIo } from "./commands/index";
 import {
@@ -66,6 +66,52 @@ function peekLedgerIdentity(vaultPath: string, dbPath: string): void {
   }
 }
 
+const LEDGER_READY_DEADLINE_MS = 3_000;
+const LEDGER_READY_POLL_MS = 250;
+
+function notReady(vaultPath: string, accepted: number, floor: number): Error {
+  return new Error(`vault ledger not ready: ${accepted} of ${floor} sealed events readable after ${LEDGER_READY_DEADLINE_MS}ms: ${join(vaultPath, ".kizuki", "kizuki.db")}; the store is still restoring or lost kizuki.db-wal. Do not run kizuki init`);
+}
+
+/** Reopen each poll so an atomically restored ledger can become visible. The
+ * returned binding retains the existing native custody and read-only contract. */
+function openReadyLedgerRead(vaultPath: string, options: { audit?: boolean } = {}): ReturnType<typeof openLedgerRead> {
+  const deadline = Date.now() + LEDGER_READY_DEADLINE_MS;
+  let floor = 0;
+  for (;;) {
+    assertVaultControl(vaultPath, { repairPermissions: false });
+    const binding = openLedgerRead(vaultPath, options);
+    let accepted: number;
+    try {
+      floor = Math.max(floor, readLedgerMark(vaultPath) ?? 0);
+      accepted = ledgerAccepted(binding.db);
+      binding.assertCurrent();
+      if (accepted >= floor) return binding;
+    } catch (error) { binding.close(); throw error; }
+    binding.close();
+    if (Date.now() >= deadline) throw notReady(vaultPath, accepted, floor);
+    Bun.sleepSync(Math.min(LEDGER_READY_POLL_MS, Math.max(1, deadline - Date.now())));
+  }
+}
+
+/** Existing positive floors gate explicit writers before they repair or migrate.
+ * Missing/legacy unsealed ledgers retain the explicit init migration path. */
+export function assertSealedLedgerReady(vaultPath: string): void {
+  if (!existsSync(join(vaultPath, ".kizuki"))) return;
+  const floor = readLedgerMark(vaultPath);
+  if (floor === null || floor === 0) return;
+  const binding = openReadyLedgerRead(vaultPath);
+  binding.close();
+}
+
+function assertWriterFloor(vaultPath: string, db: Database): void {
+  const floor = readLedgerMark(vaultPath);
+  if (floor !== null) {
+    const accepted = ledgerAccepted(db);
+    if (accepted < floor) throw notReady(vaultPath, accepted, floor);
+  }
+}
+
 function assertVaultLayout(path: string): string {
   const absolutePath = resolve(path);
   const control = join(absolutePath, ".kizuki");
@@ -92,6 +138,7 @@ export function assertVault(path: string): string {
   const absolutePath = assertVaultLayout(path);
   peekLedgerIdentity(absolutePath, join(absolutePath, ".kizuki", "kizuki.db"));
   assertVaultControl(absolutePath);
+  assertSealedLedgerReady(absolutePath);
   // Remint a snapshot-cloned identity once this volume lands on a new machine.
   ensureVaultId(absolutePath);
   return absolutePath;
@@ -126,6 +173,7 @@ export async function withVault<T>(
   const store = new ConnectionStateStore(join(vaultPath, ".kizuki"));
   let retrieval: RetrievalPort | undefined;
   try {
+    assertWriterFloor(vaultPath, db);
     let retrievalUnavailable: true | undefined;
     if (options.retrieval !== "none") {
       try { retrieval = await openConfiguredRetrieval(vaultPath); }
@@ -137,10 +185,12 @@ export async function withVault<T>(
         retrievalUnavailable = true;
       }
     }
-    return await fn({ configPath: path, vaultPath, db, store,
+    const result = await fn({ configPath: path, vaultPath, db, store,
       ...(retrieval === undefined ? {} : { retrieval }),
       ...(retrievalUnavailable === undefined ? {} : { retrievalUnavailable }),
     });
+    sealLedger(vaultPath, db);
+    return result;
   } finally {
     try { await retrieval?.close(); } finally { db.close(); }
   }
@@ -163,7 +213,7 @@ export async function withReadVault<T>(
   const vaultPath = assertVaultLayout(resolveVault(io.env, readConfig(path), io.vaultOverride));
   assertVaultControl(vaultPath, { repairPermissions: false });
   assertBoundVaultId(vaultPath);
-  let binding = openLedgerRead(vaultPath, { audit: options.audit ?? false });
+  let binding = openReadyLedgerRead(vaultPath, { audit: options.audit ?? false });
   let paused = false;
   try {
     const retrievalUnavailable = options.retrieval === "optional" && inspectConfiguredRetrieval(vaultPath);
@@ -176,7 +226,7 @@ export async function withReadVault<T>(
         finally {
           assertVaultControl(vaultPath, { repairPermissions: false });
           assertBoundVaultId(vaultPath);
-          binding = openLedgerRead(vaultPath, { audit: options.audit ?? false }); paused = false;
+          binding = openReadyLedgerRead(vaultPath, { audit: options.audit ?? false }); paused = false;
         }
       },
       ...(retrievalUnavailable ? { retrievalUnavailable: "configured-engine-unavailable" as const } : {}),

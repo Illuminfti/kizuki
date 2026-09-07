@@ -1,5 +1,6 @@
-import { resolve } from "node:path";
-import { restoreVault, verifyBackup } from "@kizuki/core";
+import { join, resolve } from "node:path";
+import { hardenLedgerFile, restoreVault, verifyBackup } from "@kizuki/core";
+import { sealLedger } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
 import { portableLocalAdapter } from "../connections";
 import { refreshDerived } from "../derived";
@@ -29,7 +30,7 @@ export const restoreCommand: Command = {
       return 0;
     }
     const target = resolve(into);
-    const report = restoreVault(backupDir, target, { portableLocal: portableLocalAdapter(), rebuildDerived: refreshDerived });
+    const report = restoreVault(backupDir, target, { portableLocal: portableLocalAdapter(), rebuildDerived(db, stagingPath) { refreshDerived(db, stagingPath); hardenLedgerFile(join(stagingPath, ".kizuki", "kizuki.db")); sealLedger(stagingPath, db); } });
     io.out(`vault=${target}`);
     io.out(
       [

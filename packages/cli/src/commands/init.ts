@@ -11,7 +11,7 @@ import {
   serveExecHint,
   writeServeIntent,
 } from "@kizuki/core";
-import { openLedger } from "@kizuki/core/internal";
+import { openLedger, sealLedger } from "@kizuki/core/internal";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
   type KizukiConfig,
@@ -22,6 +22,7 @@ import {
 } from "../config";
 import type { CliIo, Command } from "./index";
 import { serveSupervisorHost } from "../service-host";
+import { assertSealedLedgerReady } from "../context";
 
 /** Only emitted after vault creation, ledger hardening and default selection succeed. */
 export class InitServiceError extends Error {
@@ -47,6 +48,7 @@ export function createInitCommand(supervisor: typeof serveSupervisorHost = serve
     }
 
     const vaultPath = resolve(rawPath);
+    if (!parsed.flags.has("--dry-run")) assertSealedLedgerReady(vaultPath);
     let result;
     try {
       result = initVault(vaultPath, {
@@ -69,7 +71,7 @@ export function createInitCommand(supervisor: typeof serveSupervisorHost = serve
     ensureVaultId(vaultPath);
     const ledgerPath = join(vaultPath, ".kizuki", "kizuki.db");
     const ledger = openLedger(ledgerPath);
-    try { initSearch(ledger); } finally { ledger.close(); }
+    try { initSearch(ledger); hardenLedgerFile(ledgerPath); sealLedger(vaultPath, ledger); } finally { ledger.close(); }
     hardenLedgerFile(ledgerPath);
 
     let wrote = false;
