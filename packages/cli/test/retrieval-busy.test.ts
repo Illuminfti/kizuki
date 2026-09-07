@@ -30,7 +30,7 @@ test("a busy optional engine preserves recall and daemon controls while required
     expect(doctor.stderr).not.toContain("writer lease");
     const stop = runCli(f.env, "serve", "stop");
     expect(stop.exitCode).toBe(1);
-    expect(stop.stderr).toContain("serve is not running");
+    expect(stop.stderr).toContain("serve has no current instance marker");
     const start = runCli(f.env, "serve", "--once", "--no-http");
     expect(start.exitCode).toBe(1);
     expect(start.stderr).toContain("writer lease");
