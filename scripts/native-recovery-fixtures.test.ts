@@ -43,3 +43,11 @@ test("collision reaches the actual final v21 CREATE after intermediate migration
 test("unsafe ledger alias is refused without changing the outside fixture",async()=>{
  const {vault,path}=fixture(),outside=fixture();const {unlinkSync,symlinkSync}=await import("node:fs");const before=inspectRecoveryFixture(outside.vault);unlinkSync(path);symlinkSync(outside.path,path);expect(()=>inspectRecoveryFixture(vault)).toThrow();expect(inspectRecoveryFixture(outside.vault)).toEqual(before);
 });
+
+ test("non-ledger preservation binds added, missing, changed files and directory modes",()=>{
+  const {vault}=fixture(); const clean=inspectRecoveryFixture(vault); const path=join(vault,"sentinel.txt");
+  writeFileSync(path,"Synthetic original bytes",{mode:0o600}); const original=inspectRecoveryFixture(vault); expect(original.summary.files_sha256).not.toBe(clean.summary.files_sha256);expect(original.summary.rows_sha256).toBe(clean.summary.rows_sha256);
+  writeFileSync(path,"Synthetic changed bytes");expect(inspectRecoveryFixture(vault).summary.files_sha256).not.toBe(original.summary.files_sha256);
+  rmSync(path);expect(inspectRecoveryFixture(vault).summary.files_sha256).toBe(clean.summary.files_sha256);
+  mkdirSync(join(vault,"extra"),{mode:0o700});expect(inspectRecoveryFixture(vault).summary.files_sha256).not.toBe(clean.summary.files_sha256);chmodSync(join(vault,"extra"),0o755);expect(()=>inspectRecoveryFixture(vault)).toThrow("fixture-directory-custody");
+ });

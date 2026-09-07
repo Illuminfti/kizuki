@@ -28,7 +28,7 @@ export type RecoveryInputId = typeof HISTORICAL_RECOVERY_INPUTS[number]["id"];
 export const NATIVE_RECOVERY_PHASE_IDS = ["migrate-ledger15", "migrate-ledger16", "migration-failure-preserved", "migration-backup-recovery", "restore-backup16", "restore-claim-backup16"] as const;
 export type NativeRecoveryPhaseId = typeof NATIVE_RECOVERY_PHASE_IDS[number];
 export interface NativeRecoveryOptions { executable: string; candidate_source_sha: string; helper_source_sha: string; workspace: string; }
-export interface NativeRecoverySnapshot { schema_version: number; schema_sha256: string; rows_sha256: string; table_count: number; row_count: number; events: number; claims: number; integrity: "ok"; foreign_key_errors: 0; }
+export interface NativeRecoverySnapshot { schema_version: number; files_sha256: string; schema_sha256: string; rows_sha256: string; table_count: number; row_count: number; events: number; claims: number; integrity: "ok"; foreign_key_errors: 0; }
 export interface NativeRecoveryCommand { step: "initialize" | "doctor-before" | "migrate" | "rebuild" | "query" | "restore-verify" | "restore"; argv: string[]; expected_exit: 0 | 1; exit_code: number; signal: string | null; duration_ms: number; stdout_sha256: string; stderr_sha256: string; diagnostic: "none" | "migration_required" | "migration_rejected"; }
 export interface NativeRecoveryEvidence {
   fixture_id: string; fixture_sha256: string; writer_commit: string; writer_bun: string;
@@ -53,6 +53,34 @@ export function historicalRecoveryInput(id: string): { identity: typeof HISTORIC
   const bytes = readFileSync(path);
   requireThat(sha(bytes) === identity.sha256 && Buffer.from(bytes.toString("utf8")).equals(bytes), "historical-input-hash");
   return { identity, bytes };
+}
+
+/** Only SQLite-owned main/journal entries are excluded. All other names, modes,
+ * directory ownership and native-read file bytes are bound; timestamps are not. */
+function nonLedgerFiles(vault: string): string {
+  const rows: {path:string;kind:"file"|"directory";mode:number;uid:number;sha256:string|null}[] = [];
+  const files = openCanonFiles(vault); let bytes = 0;
+  try {
+    const walk = (relative: string): void => {
+      const path = relative ? join(vault,relative) : vault, stat = lstatSync(path);
+      requireThat(stat.isDirectory() && !stat.isSymbolicLink() && stat.uid === process.geteuid!() && (stat.mode & 0o7777) === 0o700, "fixture-directory-custody");
+      rows.push({path:relative,kind:"directory",mode:stat.mode & 0o7777,uid:stat.uid,sha256:null});
+      for (const name of readdirSync(path).sort()) {
+        const child = relative ? `${relative}/${name}` : name;
+        if ([".kizuki/kizuki.db",".kizuki/kizuki.db-wal",".kizuki/kizuki.db-shm",".kizuki/kizuki.db-journal"].includes(child)) continue;
+        requireThat(rows.length < 512, "fixture-file-count-bound");
+        const metadata = lstatSync(join(vault,child));
+        if (metadata.isDirectory() && !metadata.isSymbolicLink()) walk(child);
+        else {
+          requireThat(metadata.isFile() && !metadata.isSymbolicLink(), "fixture-file-custody");
+          const snapshot = files.read(child); requireThat(snapshot, "fixture-file-changed");
+          try { const content = snapshot.bytes; bytes += content.byteLength; requireThat(bytes <= 2_097_152, "fixture-file-byte-bound"); rows.push({path:child,kind:"file",mode:metadata.mode & 0o7777,uid:metadata.uid,sha256:sha(content)}); }
+          finally { snapshot.close(); }
+        }
+      }
+    };
+    walk(""); return sha(encode(rows));
+  } finally { files.close(); }
 }
 
 /** Query-only legacy inspection uses the same managed SQLite lifecycle as current readers.
@@ -84,7 +112,7 @@ export function inspectRecoveryFixture(vault: string): Snapshot {
     const version = Number(tables.schema_version?.[0]?.version); requireThat(Number.isSafeInteger(version) && version >= 1 && version <= LEDGER_SCHEMA_VERSION, "fixture-version");
     directory.observe(); const after = directory.inspectFileIdentity("kizuki.db");
     requireThat(after?.dev === before.dev && after.ino === before.ino, "fixture-identity-changed");
-    return { schema, tables, summary: { schema_version: version, schema_sha256: sha(encode(schema)), rows_sha256: sha(text), table_count: names.length, row_count: rows, events: tables.events?.length ?? 0, claims: tables.claims?.length ?? 0, integrity: "ok", foreign_key_errors: 0 } };
+    return { schema, tables, summary: { schema_version: version, files_sha256: nonLedgerFiles(vault), schema_sha256: sha(encode(schema)), rows_sha256: sha(text), table_count: names.length, row_count: rows, events: tables.events?.length ?? 0, claims: tables.claims?.length ?? 0, integrity: "ok", foreign_key_errors: 0 } };
   } finally { try { db?.close(); } finally { directory.close(); } }
 }
 
@@ -219,7 +247,7 @@ export async function runNativeRecoveryFixtures(options: NativeRecoveryOptions):
       const doctor = command("doctor-before", ["doctor", "--json", "--vault", target], 1, "migration_required");
       requireThat(doctor.stderr.includes("migration_required"), "doctor-migration-diagnostic");
       const unchanged = inspectRecoveryFixture(target); evidence.snapshots.push({ role: "doctor-after", value: unchanged.summary });
-      requireThat(equalLogical(baseline, unchanged), "doctor-mutated-legacy");
+      requireThat(equalLogical(baseline, unchanged) && baseline.summary.files_sha256 === unchanged.summary.files_sha256, "doctor-mutated-legacy");
       command("migrate", ["init", target, "--no-service", "--no-default"]);
       const after = inspectRecoveryFixture(target); evidence.snapshots.push({ role: "migrated", value: after.summary });
       requireThat(after.summary.schema_version === LEDGER_SCHEMA_VERSION, "migration-version");
@@ -235,12 +263,13 @@ export async function runNativeRecoveryFixtures(options: NativeRecoveryOptions):
       } else if (id === "migration-failure-preserved") {
         for (const fault of ["admission", "late-ddl"] as const) {
           const failed = join(workspace, `failed-${fault}`); makeSql(failed);
+          const sentinel = openCanonFiles(failed); try { sentinel.create("recovery-sentinel.txt",Buffer.from("Synthetic recovery preservation sentinel.\n")); } finally { sentinel.close(); }
           writableFixture(join(failed,".kizuki/kizuki.db"), db => db.exec(fault === "admission" ? "UPDATE events SET text='Synthetic deliberately mismatched text.'" : "CREATE TABLE canon_projection_sources (synthetic_collision TEXT NOT NULL); INSERT INTO canon_projection_sources VALUES ('fixture')"));
           const before = inspectRecoveryFixture(failed); evidence.snapshots.push({ role: `${fault}-before`, value: before.summary });
           const output = command("migrate", ["init", failed, "--no-service", "--no-default"], 1, "migration_rejected");
           requireThat(output.stderr.includes(fault === "admission" ? "event record is invalid" : "canon_projection_sources"), "negative-rejection-point");
           const after = inspectRecoveryFixture(failed); evidence.snapshots.push({ role: `${fault}-after`, value: after.summary });
-          requireThat(equalLogical(before, after) && after.summary.schema_version === 15, "failed-migration-mutated-legacy");
+          requireThat(equalLogical(before, after) && before.summary.files_sha256 === after.summary.files_sha256 && after.summary.schema_version === 15, "failed-migration-mutated-legacy");
           evidence.retained_failed_vaults.push(`failed-${fault}`);
         }
         requireThat(goodCopy && goodBefore && sha(privateWorkspaceCopy(workspace)) === sha(goodCopy), "recovery-preimage-changed");
