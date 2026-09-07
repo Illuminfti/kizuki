@@ -116,7 +116,30 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")("native A
     expect(evidence.status).toBe("PASS");
   } catch (error) {
     console.log(JSON.stringify({ schema: "kizuki.sqlite-vendor-observation/v1", status: "FAIL",
-      reason: error instanceof SqliteVendorError ? error.code : "vendor-capture-failed" }));
+      reason: error instanceof SqliteVendorError ? error.code : "vendor-capture-failed",
+      ...(error instanceof SqliteVendorError && error.diagnostic ? { diagnostic: error.diagnostic } : {}) }));
     throw new Error(error instanceof SqliteVendorError ? error.code : "vendor-capture-failed");
   }
 }, 35_000);
+
+
+test("signature refusal retains bounded public diagnostics and never queries SQLite", () => {
+  const f = fixture(); let queried = false;
+  f.io.runtime = () => { queried = true; return ID; };
+  f.io.run = command => command.includes("--verify")
+    ? { status: 1, stdout: "", stderr: "synthetic signature requirement refusal" }
+    : { status: 0, stdout: "", stderr: "Executable=/usr/bin/sqlite3\nSignature=synthetic\n" };
+  let failure: SqliteVendorError | undefined;
+  try { collectSqliteVendor(f.io); } catch (error) { failure = error as SqliteVendorError; }
+  expect(failure?.code).toBe("vendor-signature-refused");
+  expect(failure?.diagnostic?.verification.status).toBe(1);
+  expect(failure?.diagnostic?.display.stderr).toContain("Executable=/usr/bin/sqlite3");
+  expect(failure?.diagnostic?.system_cli_sha256).toMatch(/^[a-f0-9]{64}$/);
+  expect(queried).toBe(false);
+  f.io.run = () => ({ status: 1, stdout: "x".repeat(16385), stderr: "x".repeat(16385) });
+  try { collectSqliteVendor(f.io); } catch (error) { failure = error as SqliteVendorError; }
+  expect(failure?.code).toBe("vendor-output-limit");
+  expect(failure?.diagnostic?.verification.stdout).toBe("[output limit exceeded]");
+  expect(failure?.diagnostic?.display.stderr).toBe("[output limit exceeded]");
+  expect(queried).toBe(false);
+});

@@ -15,7 +15,7 @@ export interface VendorIO {
   kernel(): string;
 }
 export class SqliteVendorError extends Error {
-  constructor(readonly code: string) { super(code); }
+  constructor(readonly code: string, readonly diagnostic?: { system_cli_sha256: string; verification: VendorCommand; display: VendorCommand }) { super(code); }
 }
 function refuse(code: string): never { throw new SqliteVendorError(code); }
 function oneLine(value: string, pattern: RegExp): string {
@@ -47,8 +47,20 @@ const hash = (bytes: Buffer): string => createHash("sha256").update(bytes).diges
 /** Test harness only. This observes an Apple-signed CLI; it does not attest Bun's loaded library. */
 export function collectSqliteVendor(io: VendorIO) {
   const before = hash(io.read(SQLITE, 32 * 1024 * 1024));
-  checked(io.run([CODESIGN, "--verify", "--strict", "-R", "anchor apple", SQLITE]), "vendor-signature-refused");
-  const display = checked(io.run([CODESIGN, "--display", "--verbose=2", SQLITE]), "vendor-signature-display-failed");
+  const verification = io.run([CODESIGN, "--verify", "--strict", "-R", "anchor apple", SQLITE]);
+  const displayed = io.run([CODESIGN, "--display", "--verbose=2", SQLITE]);
+  try { checked(verification, "vendor-signature-refused"); }
+  catch (error) {
+    // These two fixed read-only commands inspect only the public system CLI.
+    // Keep bounded failure evidence without ever continuing into SQLite.
+    const bounded = (value: VendorCommand): VendorCommand => ({ status: value.status,
+      stdout: Buffer.byteLength(value.stdout) <= OUTPUT_LIMIT ? value.stdout : "[output limit exceeded]",
+      stderr: Buffer.byteLength(value.stderr) <= OUTPUT_LIMIT ? value.stderr : "[output limit exceeded]",
+      ...(value.error === undefined ? {} : { error: value.error }) });
+    throw new SqliteVendorError(error instanceof SqliteVendorError ? error.code : "vendor-signature-refused",
+      { system_cli_sha256: before, verification: bounded(verification), display: bounded(displayed) });
+  }
+  const display = checked(displayed, "vendor-signature-display-failed");
   if (!(display.stdout + display.stderr).trim()) refuse("vendor-signature-display-invalid");
   const system = parseVendorIdentity(checked(io.run([SQLITE, "-batch", "-noheader", "-init", "/dev/null", ":memory:",
     "SELECT sqlite_version() || char(9) || sqlite_source_id();"]), "vendor-system-query-failed").stdout);
