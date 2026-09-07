@@ -4,6 +4,82 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cleanupStoppedNativeFixture, managerPid, nativeServiceStopped, nativeWaitTimeout, waitForNativeState } from "./native-service-lifecycle";
 import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS } from "../packages/core/src/serve/types";
+import { RAIL_IDS, emptyRunTotals } from "../packages/core/src/serve/types";
+import { installedRailsHealth, readNativeRailDiagnostics, recordInstalledHealth, waitForFreshRails } from "./native-service-health";
+import { Database } from "bun:sqlite";
+
+const healthAt = "2026-09-07T00:00:00.000Z";
+function healthyStatus() {
+  return { schema: "kizuki.cli.serve/v1", status: "ok", data: { pid: 501, doctor: { ok: true, failures: [],
+    model: { canon_writing: "off", model_ref: null }, stores: { degraded: ["identity-authority-unavailable"] },
+    rails: RAIL_IDS.map(rail => ({ rail, status: "ok", reason: null, last_receipt_at: healthAt })) } } };
+}
+const healthyDiagnostics = () => ({ complete: true, truncated: false, error: null,
+  receipts: RAIL_IDS.map(rail => ({ rail, status: "ok", finished_at: healthAt, current_instance: true, errors: [] as string[], retrieval_degraded: [] as string[] })) });
+
+test("fresh empty no-model rails pass while fixed identity degradation stays visible", () => {
+  const result = installedRailsHealth({ exit_code: 0, stdout: JSON.stringify(healthyStatus()), stderr: "" }, healthyDiagnostics(), healthAt, Date.parse(healthAt));
+  expect(result.passed).toBe(true); expect(result.evidence).toMatchObject({ doctor_ok: true, canon_writing: "off", identity_degraded: ["identity-authority-unavailable"] });
+});
+
+for (const fault of ["exit", "doctor", "failed-rail", "stale", "missing", "model", "receipt-error", "incomplete", "truncated", "diagnostic-error", "malformed"] as const) {
+  test(`installed fresh health refuses ${fault} independently of native PID agreement`, () => {
+    const body = healthyStatus(), diagnostics = healthyDiagnostics(); let exit = 0, stdout: string | undefined;
+    if (fault === "exit") exit = 1;
+    if (fault === "doctor") body.data.doctor.ok = false;
+    if (fault === "failed-rail") body.data.doctor.rails[0]!.status = "down";
+    if (fault === "stale") body.data.doctor.rails[0]!.last_receipt_at = "2026-09-06T00:00:00.000Z";
+    if (fault === "missing") body.data.doctor.rails.pop();
+    if (fault === "model") body.data.doctor.model.canon_writing = "on";
+    if (fault === "receipt-error") diagnostics.receipts[0]!.errors = ["native file operation failed"];
+    if (fault === "incomplete") diagnostics.complete = false;
+    if (fault === "truncated") diagnostics.truncated = true;
+    if (fault === "diagnostic-error") Object.assign(diagnostics, { error: "database unavailable" });
+    if (fault === "malformed") stdout = "{";
+    const health = installedRailsHealth({ exit_code: exit, stdout: stdout ?? JSON.stringify(body), stderr: "" }, diagnostics, healthAt, Date.parse(healthAt));
+    const steps = [{ id: "public-status-agrees-with-native-manager", passed: true, evidence: { pid: body.data.pid } }], failures: string[] = [];
+    recordInstalledHealth(steps, failures, health);
+    steps.push({ id: "independent-restart-proof", passed: true, evidence: { pid: 502 } });
+    expect(steps.map(step => step.passed)).toEqual([true, false, true]); expect(failures).toEqual(["installed-rails-healthy failed"]);
+    expect(failures.length === 0 && steps.every(step => step.passed)).toBe(false);
+  });
+}
+
+test("first-run wait ends on complete failed receipts and never waits for a retry to erase failure", async () => {
+  const failure = healthyDiagnostics(); failure.receipts[0]!.status = "failed"; failure.receipts[0]!.errors = ["native file operation failed"];
+  let reads = 0;
+  expect(await waitForFreshRails(() => { reads++; return failure; })).toEqual(failure); expect(reads).toBe(1);
+  const incomplete = { ...healthyDiagnostics(), complete: false };
+  expect(await waitForFreshRails(() => incomplete, 0)).toEqual(incomplete);
+});
+
+test("synthetic database diagnostics bind the process instance, bound reports, redact errors and leave SQL unchanged", () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-native-health-")); mkdirSync(join(root, ".kizuki"));
+  const db = new Database(join(root, ".kizuki/kizuki.db"));
+  try {
+    db.exec("CREATE TABLE run_receipts(run_id TEXT, rail TEXT, status TEXT, finished_at TEXT, report TEXT)");
+    const insert = db.query("INSERT INTO run_receipts VALUES(?,?,?,?,?)");
+    for (const rail of RAIL_IDS) {
+      const report = { ...emptyRunTotals(), run_id: rail, rail, started_at: healthAt, finished_at: healthAt, status: rail === "sync" ? "failed" : "ok", stopped: null,
+        execution: { instance_id: "synthetic-current", pid: 501, boot_id: "synthetic-boot", trigger: "scheduled", due_at: healthAt },
+        errors: rail === "sync" ? ["SYNTHETIC_CREDENTIAL_CANARY_NEVER_OUTPUT /tmp/synthetic-private/file native guard failed"] : [],
+        model: { ...emptyRunTotals().model, model_ref: "SYNTHETIC_MODEL_REFERENCE_NEVER_OUTPUT" },
+        arbitrary_content: "SYNTHETIC_SOURCE_CONTENT_NEVER_OUTPUT" };
+      insert.run(rail, rail, report.status, healthAt, JSON.stringify(report));
+    }
+    const before = db.query("SELECT * FROM run_receipts ORDER BY run_id").all(), schema = db.query("SELECT sql FROM sqlite_master").all();
+    const actual = readNativeRailDiagnostics(root, { pid: 501, instance_id: "synthetic-current" }, healthAt);
+    expect(actual).toMatchObject({ complete: true, truncated: false, error: null }); expect(actual.receipts.find(row => row.rail === "sync")?.errors[0]).toContain("native guard failed");
+    expect(JSON.stringify(actual)).not.toContain("CANARY"); expect(JSON.stringify(actual)).not.toContain("NEVER_OUTPUT"); expect(JSON.stringify(actual)).not.toContain("synthetic-private");
+    expect(readNativeRailDiagnostics(root, { pid: 501, instance_id: "synthetic-stale" }, healthAt).complete).toBe(false);
+    expect(db.query("SELECT * FROM run_receipts ORDER BY run_id").all()).toEqual(before); expect(db.query("SELECT sql FROM sqlite_master").all()).toEqual(schema);
+    insert.run("oversized", "sync", "failed", healthAt, "x".repeat(65537));
+    expect(readNativeRailDiagnostics(root, { pid: 501, instance_id: "synthetic-current" }, healthAt).error).toBe("run receipt exceeds diagnostic bound");
+    db.exec("DELETE FROM run_receipts WHERE run_id='oversized'");
+    for (let i = 0; i < 33; i++) insert.run(`extra-${i}`, "sync", "ok", healthAt, JSON.stringify({ ...emptyRunTotals(), run_id: `extra-${i}`, rail: "sync", started_at: healthAt, finished_at: healthAt, status: "ok" }));
+    expect(readNativeRailDiagnostics(root, { pid: 501, instance_id: "synthetic-current" }, healthAt).truncated).toBe(true);
+  } finally { db.close(); rmSync(root, { recursive: true }); }
+});
 
 test("only the two supervisor restart gates allow lease expiry plus bounded startup time", () => {
   const restart = (HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS + 15) * 1000;

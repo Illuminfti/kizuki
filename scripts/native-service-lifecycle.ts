@@ -7,6 +7,7 @@ import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS } from "../packages/core/sr
 import { parseBuildInfo, parseProofArgs } from "./stranger-proof";
 import { requireRegularFile, verifyChecksumManifest } from "./release-artifacts";
 import { releaseTarget, requireNativeHost } from "./release-targets";
+import { installedRailsHealth, readNativeRailDiagnostics, recordInstalledHealth, waitForFreshRails } from "./native-service-health";
 
 const repository = resolve(import.meta.dir, "..");
 const packageFiles = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"] as const;
@@ -214,6 +215,7 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
       record("pre-init-absent-unit-diagnostics", true, serviceDiagnostics(`kizuki@lifecycle-probe-${crypto.randomUUID()}.service`));
     }
     // Default init must create and activate the installed service, without --no-service.
+    const initializedAt = new Date().toISOString();
     const initialized = invoke([executable, "init", vault, "--no-default"]);
     if (existsSync(join(vault, ".kizuki", "vault-id"))) {
       const vaultId = readFileSync(join(vault, ".kizuki", "vault-id"), "utf8").trim();
@@ -227,6 +229,11 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     const statusBody = JSON.parse(status.stdout).data;
     record("public-status-agrees-with-native-manager", statusBody?.pid === observed.manager_pid && statusBody?.supervisor?.state === "active" &&
       statusBody?.supervisor?.enabled === true, status);
+    const diagnostics = await waitForFreshRails(() => readNativeRailDiagnostics(vault,
+      { pid: observed.manager_pid!, instance_id: observed.instance_id! }, initializedAt));
+    const freshStatus = invoke([executable, "serve", "status", "--json", "--vault", vault]);
+    recordInstalledHealth(steps, failures, installedRailsHealth(freshStatus, diagnostics, initializedAt));
+    save();
 
     record("private-unit", (lstatSync(unitPath).mode & 0o777) === 0o600, { unit, mode: lstatSync(unitPath).mode & 0o777, sha256: hash(unitPath) });
     // Port zero avoids a fixed port when the unique service is subsequently restarted.
@@ -285,7 +292,7 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
     record("recovered-evidence-readable", restoredQuery.exit_code === 0 && restoredQuery.stdout.includes("observatory"), restoredQuery);
     for (const name of [...packageFiles, "SHA256SUMS"]) check(hash(join(copied, name)) === receipt.package_sha256[name] && hash(join(args.artifact, name)) === receipt.package_sha256[name], "package changed during lifecycle proof");
     exact();
-    receipt.passed = true;
+    receipt.passed = failures.length === 0 && steps.every(step => step.passed);
   } catch (error) {
     failures.push(error instanceof Error ? error.message : "native lifecycle proof failed");
   } finally {
