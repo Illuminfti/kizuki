@@ -45,6 +45,81 @@ describe("content type parameters", () => {
     expect(disposition?.params["filename"]).toBe("café report.pdf");
   });
 
+  test.each([
+    [
+      "keeps ISO-8859-1 across a later encoded segment",
+      "attachment; filename*0*=iso-8859-1''caf; filename*1*=%E9.txt",
+      "café.txt",
+    ],
+    [
+      "reassembles a UTF-8 character split across segments",
+      "attachment; filename*0*=utf-8''caf%C3; filename*1*=%A9.txt",
+      "café.txt",
+    ],
+    [
+      "mixes encoded segments with an unencoded suffix",
+      "attachment; filename*0*=iso-8859-1''caf; filename*1*=%E9; filename*2=.txt",
+      "café.txt",
+    ],
+    [
+      "leaves an unencoded percent sign literal",
+      "attachment; filename*0*=utf-8''budget; filename*1=%20.txt",
+      "budget%20.txt",
+    ],
+  ])("%s", (_label, header, expected) => {
+    expect(parseDisposition(header)?.params["filename"]).toBe(expected);
+  });
+
+  test("continued filename is independent of parameter order", () => {
+    expect(
+      parseDisposition(
+        "attachment; filename*1*=%A9.txt; filename*0*=utf-8''caf%C3",
+      )?.params["filename"],
+    ).toBe("café.txt");
+    expect(
+      parseDisposition(
+        "attachment; filename*2=.txt; filename*1*=%E9; filename*0*=iso-8859-1''caf",
+      )?.params["filename"],
+    ).toBe("café.txt");
+  });
+
+  test("joins unencoded continuations without percent-decoding", () => {
+    const disposition = parseDisposition(
+      "attachment; filename*0=hello; filename*1=.txt",
+    );
+    expect(disposition?.params["filename"]).toBe("hello.txt");
+  });
+
+  test.each([
+    [
+      "keeps ISO-8859-1 across a later encoded segment",
+      "application/pdf; name*0*=iso-8859-1''caf; name*1*=%E9.txt",
+      "café.txt",
+    ],
+    [
+      "reassembles a UTF-8 character split across segments",
+      "application/pdf; name*0*=utf-8''caf%C3; name*1*=%A9.txt",
+      "café.txt",
+    ],
+    [
+      "mixes encoded segments with an unencoded suffix",
+      "application/pdf; name*0*=iso-8859-1''caf; name*1*=%E9; name*2=.txt",
+      "café.txt",
+    ],
+    [
+      "leaves an unencoded percent sign literal",
+      "application/pdf; name*0*=utf-8''budget; name*1=%20.txt",
+      "budget%20.txt",
+    ],
+    [
+      "is independent of parameter order",
+      "application/pdf; name*1*=%E9.txt; name*0*=iso-8859-1''caf",
+      "café.txt",
+    ],
+  ])("Content-Type name %s", (_label, header, expected) => {
+    expect(parseContentType(header).params["name"]).toBe(expected);
+  });
+
   test("decodes a single extended parameter", () => {
     const disposition = parseDisposition("attachment; filename*=utf-8''r%C3%A9sum%C3%A9.pdf");
     expect(disposition?.params["filename"]).toBe("résumé.pdf");

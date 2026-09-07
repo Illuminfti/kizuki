@@ -52,7 +52,7 @@ function call<T>(operation: () => T): T {
   }
 }
 function api(): Native {
-  if (process.platform !== "linux" || process.arch !== "x64") fail("unsupported");
+  if (!((process.platform === "linux" && process.arch === "x64") || (process.platform === "darwin" && process.arch === "arm64"))) fail("unsupported");
   try { return native ??= loadOwnedDirectoryNative(); } catch { fail("unavailable"); }
 }
 function euid(): bigint {
@@ -121,7 +121,8 @@ function openQualifiedParent(path: string): number {
   if (typeof path !== "string" || path.length > 4096 || Buffer.byteLength(path) > 4096 || Buffer.from(path).toString() !== path ||
       !isAbsolute(path) || resolve(path) !== path || path.split("/").length > 257) fail();
   const owner = euid();
-  let fd = call(() => openSync("/", constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | 0x80000));
+  const closeOnExec = process.platform === "darwin" ? 0x1000000 : 0x80000;
+  let fd = call(() => openSync("/", constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | closeOnExec));
   try {
     if (!ownerIsSafe(call(() => fstatSync(fd, { bigint: true })), owner)) fail();
     for (const component of path.split("/").filter(Boolean)) {

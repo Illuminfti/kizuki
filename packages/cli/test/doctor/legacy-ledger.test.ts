@@ -1,10 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, readFileSync, renameSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "../helpers";
-import { parseSqliteRuntime } from "@kizuki/core/internal";
 import { LEDGER_SCHEMA_VERSION } from "../../../core/src/ledger/db";
+import { parseSqliteRuntime } from "@kizuki/core/internal";
 
 const { cleanup, runCli, tempVault } = createHelpers();
 afterEach(cleanup);
@@ -19,6 +19,13 @@ test("doctor JSON accepts a genuine migrated v1 event without hiding unrelated h
   expect(existsSync(`${ledgerPath}-wal`)).toBe(false);
   expect(existsSync(`${ledgerPath}-shm`)).toBe(false);
   renameSync(oldPath, ledgerPath);
+  chmodSync(ledgerPath, 0o600);
+  const refused = runCli(setup.env, "doctor", "--json", "--integrity");
+  expect(refused.exitCode).toBe(1); expect(refused.stdout).toBe("");
+  expect(refused.stderr).toContain("migration_required");
+  // Migration is an explicit initialization effect, never doctor startup.
+  expect(runCli(setup.env, "init", setup.vault, "--no-service").exitCode).toBe(0);
+
 
   const result = runCli(setup.env, "doctor", "--json", "--integrity");
   expect(result.stderr).toBe("");

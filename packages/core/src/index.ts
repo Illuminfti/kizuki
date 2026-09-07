@@ -507,6 +507,7 @@ export {
   CANON_SCHEMA_VERSION,
   CANON_WRITE_BUDGETS,
   CanonWriteError,
+  CanonRecoveryError,
   UndoError,
   PAGE_ACTIONS,
   RECEIPTS_PATH,
@@ -519,6 +520,7 @@ export {
   getCanonReceipt,
   initCanon,
   inspectPageIndex,
+  inspectCanonRecovery,
   latestReceiptForPage,
   laterReceiptsForPage,
   listAuditReceipts,
@@ -529,6 +531,8 @@ export {
   readReceiptsLog,
   rebuildPageIndex,
   receiptsForClaim,
+  recoverCanonWrites,
+  retryCanonProjectionObligations,
   resolveTarget,
   undoReceipt,
 } from "./canon";
@@ -541,6 +545,8 @@ export type {
   BudgetUsage,
   CanonIo,
   CanonReceipt,
+  CanonRecoveryReport,
+  CanonRecoverySummary,
   CanonWriteBudget,
   CanonWriteErrorCode,
   EditReason,
@@ -689,6 +695,7 @@ export { DeadlineError, withDeadline } from "./util/deadline";
 export { sha256Hex } from "./util/hash";
 export {
   ConnectionStateStore,
+  createConnectionStateReader,
   CONNECTION_CONFIG_SCHEMA,
   MAX_CONNECTION_STATE_BYTES,
 } from "./ledger/connection-state";
@@ -718,6 +725,8 @@ export type {
   ExportManifest,
   ExportManifestEntry,
   ExportOptions,
+  PortableLocalAdapter,
+  RestoreOptions,
   RestoreReport,
 } from "./export";
 
@@ -788,6 +797,7 @@ export {
   listQuarantinedAgents,
   recordAudit,
   enrollAgent,
+  enrollAppAgent,
   previewAgentEnrollment,
   revokeAgentEnrollment,
   reserveAudit,
@@ -804,6 +814,8 @@ export type {
   AgentEnrollmentRequest,
   AgentEnrollmentErrorCode,
   AgentEnrollmentResult,
+  AppAgentEnrollmentRequest,
+  AppAgentEnrollmentResult,
   AuditDenial,
   AuditItem,
   AuditPage,
@@ -879,6 +891,7 @@ export type {
   CorrectTarget,
   Denied,
   EntitiesArgs,
+  EntitiesData,
   Envelope,
   GetPageArgs,
   GraphArgs,
@@ -893,6 +906,8 @@ export type {
   SearchArgs,
   SearchData,
   ServeContext,
+  SubjectLabel,
+  SubjectLabelDegradation,
   Served,
   TimelineArgs,
 } from "./serving";
@@ -959,6 +974,9 @@ export {
   readRunReceiptsLog,
   readServeIntent,
   readServePid,
+  requestServeStop,
+  ServeStopError,
+  type ServeStopResult,
   readVaultId,
   realSupervisorHost,
   reclaimDeadLease,
@@ -991,6 +1009,7 @@ export type {
   ModelDoctor,
   RailDoctor,
   RailHooks,
+  RailRuntime,
   RailId,
   RailSpec,
   RailSyncResult,
@@ -1039,3 +1058,8 @@ export type { OwnedSourceRetrievalInventory, OwnedSourceRetrievalStore, SourceSt
 
 export { openOwnedDirectory } from "./util/owned-directory";
 export type { OwnedDirectory, OwnedDirectoryIdentity } from "./util/owned-directory";
+export { inspectOwnerPageCorrectionTargets, inspectOwnerCorrectionPageCount } from "./serving/owner-correction-targets";
+
+export { AppModelSettingsError, readAppModelConfiguration, saveAppModelConfiguration, readAppManagedModelCredential, classifyAppModelCredential, readAppModelFileCredential } from "./serve/model-settings";
+export type { AppModelSettingsFailure, AppModelDocument, AppModelCredentialChange, AppModelSettingsUpdate, AppModelConfigurationValidator } from "./serve/model-settings";
+export { normalizeSourceModelEndpoint, normalizeSourceModelName } from "./ledger/source-grants";

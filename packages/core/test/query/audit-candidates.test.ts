@@ -5,6 +5,8 @@ import * as publicSearch from "../../src/search";
 import * as publicQuery from "../../src/query";
 import { searchAuditCandidates } from "../../src/search/query";
 import { timelineAuditCandidates } from "../../src/query/timeline";
+import { recordedPage } from "../helpers/recorded-page";
+import { tempVault } from "../helpers/vault";
 
 test("audit query helpers are absent from every public query export", () => {
   for (const api of [core, publicSearch, publicQuery]) {
@@ -14,17 +16,27 @@ test("audit query helpers are absent from every public query export", () => {
   }
 });
 
-test("search audit candidates retain bounded rank/filter order without projecting content", () => {
+test("search audit candidates retain bounded rank/filter order without projecting content", async () => {
+  const vault = tempVault("kizuki-search-audit-");
   const db = openLedger(":memory:");
   try {
     core.initSearch(db);
     for (const [n, sensitivity] of [[1, "private"], [2, "public"], [3, undefined], [4, "personal"]] as const) {
-      core.indexPage(db, {
-        id: `fact:${n}`, path: `facts/${n}.md`, relPath: `facts/${n}.md`, contentHash: "0".repeat(64),
-        data: { id: `fact:${n}`, type: "fact", title: "PRIVATE_AUDIT_TITLE_CANARY", status: "active", sensitivity },
-        body: "ceilingaudit PRIVATE_AUDIT_BODY_CANARY",
-      });
+      await recordedPage(db, vault.path, `facts/${n}.md`, {
+        id: `fact:${n}`, type: "fact", title: "PRIVATE_AUDIT_TITLE_CANARY",
+        status: "active", sensitivity: sensitivity ?? "private", taint: "clean",
+      }, "ceilingaudit PRIVATE_AUDIT_BODY_CANARY");
     }
+    for (const page of core.listCanonPages(vault.path)) core.indexPage(db, page);
+    // Preserve the synthetic missing-label case only in the derived index;
+    // the canonical pages and their writer receipts retain their real authority.
+    db.query("UPDATE search_docs SET sensitivity = 'unlabeled' WHERE doc_id = ?").run("page:fact:3");
+    expect(db.query("SELECT doc_id, sensitivity, authority FROM search_docs ORDER BY doc_id").all()).toEqual([
+      { doc_id: "page:fact:1", sensitivity: "private", authority: "model_inference" },
+      { doc_id: "page:fact:2", sensitivity: "public", authority: "model_inference" },
+      { doc_id: "page:fact:3", sensitivity: "unlabeled", authority: "model_inference" },
+      { doc_id: "page:fact:4", sensitivity: "personal", authority: "model_inference" },
+    ]);
     const sql: string[] = [];
     const readDb = { query: (query: string) => { sql.push(query); return db.query(query); } } as typeof db;
     const result = searchAuditCandidates(readDb, "ceilingaudit", { scope: "canon", types: ["fact"], limit: 2, excludePaths: ["facts/2.md"] });
@@ -35,7 +47,7 @@ test("search audit candidates retain bounded rank/filter order without projectin
     expect(projection).not.toMatch(/\b(?:body|title|snippet|text_preview)\b/);
     expect(projection).toContain("LIMIT ?");
     expect(searchAuditCandidates(readDb, "ceilingaudit", { limit: 0 }).candidates).toEqual([]);
-  } finally { db.close(); }
+  } finally { db.close(); vault.dispose(); }
 });
 
 test("timeline audit candidates keep time/filter/limit order and retrieve identities only", () => {

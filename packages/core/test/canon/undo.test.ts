@@ -5,6 +5,7 @@ import { resolveTarget } from "../../src/canon/arbiter";
 import { UndoError } from "../../src/canon/errors";
 import { getCanonReceipt, listCanonReceipts } from "../../src/canon/receipts";
 import { undoReceipt } from "../../src/canon/undo";
+import { retryCanonProjectionObligations, readCanonProjectionObligation } from "../../src/canon/projection-obligations";
 import { getClaim } from "../../src/claims/store";
 import { ABSENT_PAGE_HASH } from "../../src/vault/write";
 import { FixtureVectorPort } from "../claims/helpers";
@@ -256,6 +257,7 @@ describe("undoReceipt", () => {
     });
     const eventId = putEvent(db);
     const created = write(io, await storeClaim(db, eventId));
+    await retryCanonProjectionObligations(io);
     const prior = readFileSync(join(vault, created.page_path), "utf8");
     const docId = created.retrieval_ops[0]?.doc as string;
     await retrieval.upsert([
@@ -313,7 +315,7 @@ describe("undoReceipt", () => {
     expect(retrieval.docs.get(docId)?.provenance).toEqual(created.provenance);
   });
 
-  test("a retrieval failure after bytes restore can be retried", async () => {
+  test("a lost retrieval result after bytes restore retains the committed revert and unknown operation", async () => {
     let blows = 1;
     const retrieval = new FixtureVectorPort();
     const originalRemove = retrieval.remove.bind(retrieval);
@@ -349,24 +351,20 @@ describe("undoReceipt", () => {
       },
     ]);
 
-    const first = await attempt(() => undoReceipt(io, receipt.receipt_id));
-    expect(first).toBeInstanceOf(Error);
-    expect(String(first)).toContain("retrieval down");
+    const first = await undoReceipt(io, receipt.receipt_id);
+    expect(first.projection_pending).toBe(true);
     expect(existsSync(join(vault, receipt.page_path))).toBe(false);
-    expect(getCanonReceipt(db, receipt.receipt_id)?.reverted_by).toBeNull();
-
-    const revert = await undoReceipt(io, receipt.receipt_id);
-    expect(revert.kind).toBe("revert");
-    expect(revert.archive_path).not.toBeNull();
-    expect(getCanonReceipt(db, receipt.receipt_id)?.reverted_by).toBe(revert.receipt_id);
-    expect(retrieval.docs.has(docId)).toBe(false);
-
-    const restored = await undoReceipt(io, revert.receipt_id);
-    expect(existsSync(join(vault, receipt.page_path))).toBe(true);
-    expect(restored.reverts).toBe(revert.receipt_id);
+    expect(getCanonReceipt(db, receipt.receipt_id)?.reverted_by).toBe(first.receipt_id);
+    expect(first.archive_path).not.toBeNull();
+    expect(sha256(readBytes(vault, first.archive_path!))).toBe(receipt.after_hash);
+    expect(readCanonProjectionObligation(db, first.receipt_id)?.value.external_execution).toEqual(["started"]);
+    expect(String(await attempt(() => undoReceipt(io, receipt.receipt_id)))).toContain("projection_pending");
+    expect(String(await attempt(() => undoReceipt(io, first.receipt_id)))).toContain("projection_pending");
+    expect(retrieval.docs.has(docId)).toBe(true);
+    expect(listCanonReceipts(db).filter(row => row.kind === "revert")).toHaveLength(1);
   });
 
-  test("retried edit undo keeps the archive of the undone write", async () => {
+  test("unknown edit projection keeps exact undo archives without admitting a successor", async () => {
     let blows = 0;
     const retrieval = new FixtureVectorPort();
     const originalUpsert = retrieval.upsert.bind(retrieval);
@@ -384,6 +382,7 @@ describe("undoReceipt", () => {
     });
     const eventId = putEvent(db);
     const created = write(io, await storeClaim(db, eventId));
+    await retryCanonProjectionObligations(io);
     const prior = readBytes(vault, created.page_path);
     const edited = write(
       io,
@@ -412,20 +411,19 @@ describe("undoReceipt", () => {
         updated_at: edited.at,
       },
     ]);
+    await retryCanonProjectionObligations(io);
     blows = 1;
 
-    const first = await attempt(() => undoReceipt(io, edited.receipt_id));
-    expect(String(first)).toContain("retrieval down");
+    const first = await undoReceipt(io, edited.receipt_id);
+    expect(first.projection_pending).toBe(true);
     expect(sha256(readBytes(vault, edited.page_path))).toBe(sha256(prior));
-
-    const revert = await undoReceipt(io, edited.receipt_id);
-    expect(revert.archive_path).not.toBeNull();
-    expect(sha256(readBytes(vault, revert.archive_path as string))).toBe(edited.after_hash);
+    expect(first.archive_path).not.toBeNull();
+    expect(sha256(readBytes(vault, first.archive_path!))).toBe(edited.after_hash);
+    expect(readCanonProjectionObligation(db, first.receipt_id)?.value.external_execution).toEqual(["started"]);
+    expect(String(await attempt(() => undoReceipt(io, edited.receipt_id)))).toContain("projection_pending");
+    expect(String(await attempt(() => undoReceipt(io, first.receipt_id)))).toContain("projection_pending");
+    expect(sha256(readBytes(vault, first.archive_path!))).toBe(edited.after_hash);
     expect(sha256(readBytes(vault, edited.page_path))).toBe(sha256(prior));
-
-    await undoReceipt(io, revert.receipt_id);
-    expect(sha256(readBytes(vault, edited.page_path))).toBe(edited.after_hash);
-    expect(readFileSync(join(vault, edited.page_path), "utf8")).toContain("leads partnerships");
   });
 
   test("concurrent undo of the same receipt writes one revert", async () => {

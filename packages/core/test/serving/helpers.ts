@@ -12,7 +12,6 @@ import {
 } from "../../src/agents";
 import { TOOLS } from "../../src/agents";
 import type { Grant, Principal, Tool } from "../../src/agents";
-import { getClaim } from "../../src/claims/store";
 import { rebuildDerived } from "../../src/derived";
 import { initGraph } from "../../src/graph/schema";
 import { openLedger } from "../../src/ledger/db";
@@ -20,11 +19,11 @@ import { accept } from "../../src/ledger/ledger";
 import { purgeEvents } from "../../src/ledger/purge";
 import { initSearch } from "../../src/search/schema";
 import type { ServeContext } from "../../src/serving/types";
-import { fileProposal } from "../../src/staging/proposals";
 import { ulid } from "../../src/util/ulid";
 import { serializePage } from "../../src/vault/frontmatter";
 import { initVault } from "../../src/vault/init";
-import { write } from "../canon/helpers";
+import { recordedPage } from "../helpers/recorded-page";
+export { recordedPage } from "../helpers/recorded-page";
 
 export interface Fixture {
   vaultPath: string;
@@ -75,6 +74,7 @@ const AGENTS: Record<string, Partial<Grant>> = {
   gone: { ...EXPLICIT_GRANT, ceiling: "private" },
 };
 
+/** Raw owner files are used only for intentionally unrecorded or invalid cases. */
 export function page(
   vaultPath: string,
   relPath: string,
@@ -117,11 +117,13 @@ export function storeEvent(
   return result.event.event_id;
 }
 
-function writePages(vaultPath: string): void {
-  page(
+async function writePages(db: Database, vaultPath: string, eventId: string): Promise<void> {
+  await recordedPage(
+    db,
     vaultPath,
     "entities/person-ada.md",
     {
+      sources: [eventId],
       id: "person:ada",
       title: "Ada",
       type: "person",
@@ -133,10 +135,12 @@ function writePages(vaultPath: string): void {
     },
     "Ada keeps the kettle warm.",
   );
-  page(
+  await recordedPage(
+    db,
     vaultPath,
     "entities/person-grace.md",
     {
+      sources: [eventId],
       id: "person:grace",
       title: "Grace",
       type: "person",
@@ -147,10 +151,12 @@ function writePages(vaultPath: string): void {
     },
     "Grace reviews the kettle log.",
   );
-  page(
+  await recordedPage(
+    db,
     vaultPath,
     "entities/org-acme.md",
     {
+      sources: [eventId],
       id: "org:acme",
       title: "Acme",
       type: "org",
@@ -161,10 +167,12 @@ function writePages(vaultPath: string): void {
     },
     "Acme ships kettles.",
   );
-  page(
+  await recordedPage(
+    db,
     vaultPath,
     "facts/kettle-private.md",
     {
+      sources: [eventId],
       id: "fact:kettle",
       title: "Kettle protocol",
       type: "fact",
@@ -179,6 +187,7 @@ function writePages(vaultPath: string): void {
     vaultPath,
     "facts/archived.md",
     {
+      sources: [eventId],
       id: "fact:archived",
       title: "Archived kettle note",
       type: "fact",
@@ -188,10 +197,12 @@ function writePages(vaultPath: string): void {
     },
     "A retracted kettle note.",
   );
-  page(
+  await recordedPage(
+    db,
     vaultPath,
     "facts/linked.md",
     {
+      sources: [eventId],
       id: "fact:linked",
       title: "Linked kettle note",
       type: "fact",
@@ -202,10 +213,12 @@ function writePages(vaultPath: string): void {
     },
     "The kettle note points at [[Grace]] and at [[Nowhere]].",
   );
-  page(
+  await recordedPage(
+    db,
     vaultPath,
     "facts/quoted-body.md",
     {
+      sources: [eventId],
       id: "fact:quoted",
       title: "Quoted kettle body",
       type: "fact",
@@ -245,33 +258,11 @@ function writeInvalidPages(vaultPath: string): void {
   );
 }
 
-function makeHeldPage(
-  db: Database,
-  vaultPath: string,
-  eventId: string,
-): string {
-  const filed = fileProposal(db, {
-    kind: "entity",
-    target: "facts:held",
-    body: "A kettle page whose only source was purged.",
-    frontmatter: { type: "fact", title: "Held kettle note" },
-    provenance: [eventId],
-    subjects: ["person:ada"],
-    producer: "deterministic",
-    confidence: 1,
-  });
-  if (filed.outcome !== "stored") {
-    throw new Error(`fixture hold proposal: ${filed.outcome}`);
-  }
-  db.query("UPDATE claims SET status = 'live', sensitivity = ? WHERE claim_id = ?").run(
-    "public",
-    filed.proposal.proposal_id,
-  );
-  const claim = getClaim(db, filed.proposal.proposal_id);
-  if (claim === null) {
-    throw new Error(`fixture claim ${filed.proposal.proposal_id} is missing`);
-  }
-  const receipt = write({ db, vault_path: vaultPath }, claim, { writer: "import" });
+async function makeHeldPage(db: Database, vaultPath: string, eventId: string): Promise<string> {
+  const { receipt } = await recordedPage(db, vaultPath, "facts/held.md", {
+    id: "fact:held", type: "fact", title: "Held kettle note", status: "active",
+    sensitivity: "public", taint: "clean", subjects: ["person:ada"],
+  }, "A kettle page whose only source was purged.", [eventId]);
   purgeEvents(db, vaultPath, { event_id: eventId }, "fixture purge");
   return receipt.page_path;
 }
@@ -312,15 +303,13 @@ function enrollFixtureConnection(db: Database): string {
   return sourceKey;
 }
 
-export function serveFixture(): Fixture {
+export async function serveFixture(): Promise<Fixture> {
   const vaultPath = mkdtempSync(join(tmpdir(), "kizuki-serving-"));
   initVault(vaultPath);
   const db = openLedger(join(vaultPath, ".kizuki", "kizuki.db"));
   initSearch(db);
   initGraph(db);
   initAgents(db);
-
-  writePages(vaultPath);
 
   const events: Record<string, string> = {
     public: storeEvent(
@@ -372,6 +361,24 @@ export function serveFixture(): Fixture {
       "public",
     ),
   };
+
+  await writePages(db, vaultPath, events["public"] as string);
+  await recordedPage(
+    db,
+    vaultPath,
+    "facts/sourced.md",
+    {
+      id: "fact:sourced",
+      title: "Sourced kettle note",
+      type: "fact",
+      status: "active",
+      sensitivity: "public",
+      taint: "clean",
+      sources: [events["tombstoned"] as string, events["public"] as string],
+    },
+    "A kettle note that cites one live and one retracted record.",
+  );
+
   storeEvent(
     db,
     "rec-tomb",
@@ -382,22 +389,7 @@ export function serveFixture(): Fixture {
     true,
   );
 
-  page(
-    vaultPath,
-    "facts/sourced.md",
-    {
-      id: "fact:sourced",
-      title: "Sourced kettle note",
-      type: "fact",
-      status: "active",
-      sensitivity: "public",
-      taint: "clean",
-      sources: [events["tombstoned"], events["public"]],
-    },
-    "A kettle note that cites one live and one retracted record.",
-  );
-
-  const heldPath = makeHeldPage(db, vaultPath, events["hold"] as string);
+  const heldPath = await makeHeldPage(db, vaultPath, events["hold"] as string);
   // Exercise serving's schema denials separately from purge's conservative
   // hold of unreadable pages, whose unknown aliases withhold the whole graph.
   writeInvalidPages(vaultPath);

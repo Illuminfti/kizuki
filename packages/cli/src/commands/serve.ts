@@ -6,6 +6,8 @@ import {
   isRailId,
   queryServeService,
   readServePid,
+  requestServeStop,
+  ServeStopError,
   runRail,
   runServeDaemon,
   serveExecHint,
@@ -18,6 +20,9 @@ import { jsonEnvelope } from "../output";
 import type { CliIo, Command } from "./index";
 import { serveSupervisorHost } from "../service-host";
 import { createServeRuntime } from "../serve-runtime";
+import { runServiceCustodyBroker, startServiceCustody, ServiceCustodyError, type ServiceCustodyHandle } from "@kizuki/core/internal";
+import { launchServiceCustodyBroker } from "../service-custody";
+import { isAbsolute, resolve } from "node:path";
 
 export const serveCommand: Command = {
   name: "serve",
@@ -27,11 +32,33 @@ export const serveCommand: Command = {
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
       flags: ["--once", "--no-http", "--json", "--install", "--uninstall"],
-      options: ["--port", "--crash-after"],
+      options: ["--port", "--crash-after", "--service-custody", "--custody-broker-launch", "--custody-broker-child"],
     });
     const [verb, rail] = parsed.positionals;
-
-    return withVault(io, async (ctx) => {
+    const modes = ["--service-custody", "--custody-broker-launch", "--custody-broker-child"]
+      .filter(mode => parsed.options.has(mode));
+    if (modes.length > 1) throw new ServiceCustodyError();
+    let custody: ServiceCustodyHandle | undefined;
+    if (modes.length === 1) {
+      if (verb !== undefined || parsed.flags.size !== 0 || parsed.options.size !== 1 ||
+          io.vaultOverride === null || !isAbsolute(io.vaultOverride) || resolve(io.vaultOverride) !== io.vaultOverride) {
+        throw new ServiceCustodyError();
+      }
+      const mode = modes[0]!, id = parsed.options.get(mode)!;
+      if (mode === "--custody-broker-launch") {
+        await launchServiceCustodyBroker(io.vaultOverride, id, io.env);
+        return 0;
+      }
+      if (mode === "--custody-broker-child") return runServiceCustodyBroker(io.vaultOverride, id, io.env);
+      custody = await startServiceCustody(io.vaultOverride, id, io.env, () => {
+        // Lost metadata authority is a daemon failure, including while a rail
+        // would otherwise catch an adapter error. Durable recovery handles the
+        // same boundary as a killed service; never continue with stale custody.
+        io.err("service_custody_unavailable");
+        process.exit(1);
+      });
+    }
+    try { return await withVault(io, async (ctx) => {
       const kind = detectSupervisorKind(io.env);
       const host = serveSupervisorHost(io.env, ctx.vaultPath);
 
@@ -74,36 +101,27 @@ export const serveCommand: Command = {
       }
 
       if (verb === "stop") {
-        const pid = readServePid(ctx.vaultPath);
-        if (pid === null) {
-          io.err("serve is not running");
-          return 1;
-        }
         try {
-          process.kill(pid, "SIGTERM");
-        } catch {
-          io.err("serve is not running");
+          const result = await requestServeStop(ctx.vaultPath);
+          if (parsed.flags.has("--json")) io.out(jsonEnvelope("serve", "ok", result));
+          else io.out(result.status === "queued" ? "stop request queued" : "stop request already queued");
+          return 0;
+        } catch (error) {
+          if (!(error instanceof ServeStopError)) throw error;
+          io.err(error.message);
           return 1;
         }
-        io.out(`stop requested for pid=${pid}`);
-        return 0;
       }
 
       if (verb === "run") {
         if (rail === undefined || !isRailId(rail)) throw new UsageError(this.usage);
         const crashAfter = parsed.options.get("--crash-after");
-        const runtime = await createServeRuntime({ ...ctx, env: io.env, err: io.err });
-        let receipt;
-        try {
-          receipt = await runRail(ctx.db, ctx.vaultPath, rail, {
-            hooks: runtime.hooks,
-            ...(crashAfter !== undefined && isCrashPoint(crashAfter)
-              ? { crashAfter }
-              : {}),
-          });
-        } finally {
-          await runtime.close();
-        }
+        const receipt = await runRail(ctx.db, ctx.vaultPath, rail, {
+          acquireRuntime: () => createServeRuntime({ ...ctx, env: io.env, err: io.err }),
+          ...(crashAfter !== undefined && isCrashPoint(crashAfter)
+            ? { crashAfter }
+            : {}),
+        });
         if (parsed.flags.has("--json")) {
           io.out(
             jsonEnvelope(
@@ -125,22 +143,17 @@ export const serveCommand: Command = {
         throw new UsageError(this.usage);
       }
       const crashAfter = parsed.options.get("--crash-after");
-      const runtime = await createServeRuntime({ ...ctx, env: io.env, err: io.err });
-      let result;
-      try {
-        result = await runServeDaemon(ctx.db, ctx.vaultPath, {
-          once: parsed.flags.has("--once"),
-          http: !parsed.flags.has("--no-http"),
-          ...(port === undefined ? {} : { port }),
-          ...(crashAfter !== undefined && isCrashPoint(crashAfter)
-            ? { crashAfter }
-            : {}),
-          process: thisProcess(),
-          hooks: runtime.hooks,
-        });
-      } finally {
-        await runtime.close();
-      }
+      const result = await runServeDaemon(ctx.db, ctx.vaultPath, {
+        once: parsed.flags.has("--once"),
+        http: !parsed.flags.has("--no-http"),
+        ...(port === undefined ? {} : { port }),
+        ...(crashAfter !== undefined && isCrashPoint(crashAfter)
+          ? { crashAfter }
+          : {}),
+        process: thisProcess(),
+        acquireRuntime: () => createServeRuntime({ ...ctx, env: io.env, err: io.err, configurationErrorMode: "disable-model" }),
+        ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
+      });
       if (parsed.flags.has("--json")) {
         io.out(
           jsonEnvelope("serve", "ok", {
@@ -161,5 +174,6 @@ export const serveCommand: Command = {
       if (result.http !== null) await result.http.stop();
       return 0;
     }, { retrieval: verb === "status" || verb === "stop" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required" });
+    } finally { custody?.close(); }
   },
 };

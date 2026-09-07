@@ -1,4 +1,5 @@
 export type CanonWriteErrorCode =
+  | "writer_busy"
   | "claim_not_live"
   | "claim_kind_retired"
   | "claim_unknown"
@@ -19,6 +20,7 @@ export type CanonWriteErrorCode =
   | "decision_stale";
 
 export type UndoErrorCode =
+  | "writer_busy"
   | "receipt_unknown"
   | "already_reverted"
   | "page_changed"

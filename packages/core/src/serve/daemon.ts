@@ -1,4 +1,6 @@
 import type { Database } from "bun:sqlite";
+import { recoverCanonWrites } from "../canon/recovery";
+import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent";
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import nodeProcess from "node:process";
@@ -13,13 +15,18 @@ import {
   type LeaseProcess,
 } from "./leases";
 import { recoverRunJournal } from "./receipts";
-import { dueRails, runRail, type RailHooks } from "./rails";
+import { dueRails, runRail, type RailHooks, type RailRuntime } from "./rails";
+import type { RetrievalPort } from "../contracts/retrieval";
 import { initServe, listSchedules } from "./schema";
 import { SERVE_PID_PATH, ServeDaemonError, isRailId, type CrashPoint, type RailId } from "./types";
+import { clearServeStopRequest, serveStopRequested } from "./stop-control";
 
 export interface ServeDaemonOptions {
   readonly now?: () => string;
   readonly hooks?: RailHooks;
+  readonly acquireRuntime?: () => Promise<RailRuntime>;
+  /** HTTP owns no per-rail runtime; this port belongs to the daemon's caller. */
+  readonly retrieval?: RetrievalPort;
   readonly crashAfter?: CrashPoint;
   readonly http?: boolean;
   readonly port?: number;
@@ -96,10 +103,14 @@ export async function runServeDaemon(
   vaultPath: string,
   options: ServeDaemonOptions = {},
 ): Promise<{ receipts: number; http: ServeHttpHandle | null }> {
+  if (options.hooks !== undefined && options.acquireRuntime !== undefined) {
+    throw new ServeDaemonError("runtime_options_conflict", "rail hooks and acquireRuntime are mutually exclusive");
+  }
   initServe(db);
   const recovered = recoverRunJournal(db, vaultPath);
   const process = options.process ?? thisProcess(options.now);
   const instanceId = crypto.randomUUID();
+  const ownMarker = { pid: process.pid, boot_id: process.boot_id, instance_id: instanceId };
   const acquired = acquireLease(db, process);
   if (!acquired.acquired) {
     throw new ServeDaemonError("lease_busy", "writer lease is held by a live process");
@@ -107,24 +118,32 @@ export async function runServeDaemon(
   let http: ServeHttpHandle | null = null;
   let receipts = recovered.length;
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-  // SIGTERM is the public stop mechanism.  Consume it here so an in-flight
-  // receipted write can reach its durable boundary, then leave the loop and
-  // release the writer lease/PID in the finally block below.
+  // Native supervisor signals and instance-bound CLI requests leave an active
+  // rail at its durable boundary, then release the runtime, marker and lease.
   let stopping = false;
   const requestStop = (): void => { stopping = true; };
   nodeProcess.once("SIGTERM", requestStop);
   nodeProcess.once("SIGINT", requestStop);
   try {
-  writePid(vaultPath, { pid: process.pid, boot_id: process.boot_id, instance_id: instanceId });
+  writePid(vaultPath, ownMarker);
+  if (inspectCanonRecovery(db).pending) {
+    try { recoverCanonWrites({ db, vault_path: vaultPath }); }
+    catch (error) {
+      // The durable hold remains visible to doctor and the serving boundary.
+      // A manual recovery case does not remove access to unaffected memory.
+      if (!(error instanceof CanonRecoveryError)) throw error;
+    }
+  }
   const config = loadServeConfig(vaultPath);
   const httpEnabled = options.http ?? config.http;
   if (httpEnabled) {
+    const retrieval = options.retrieval ?? options.hooks?.claims?.retrieval;
     http = startServeHttp({
       db,
       vaultPath,
       host: config.bind_host,
       port: options.port ?? config.bind_port,
-      ...(options.hooks?.claims?.retrieval === undefined ? {} : { retrieval: options.hooks.claims.retrieval }),
+      ...(retrieval === undefined ? {} : { retrieval }),
     });
   }
 
@@ -145,12 +164,13 @@ export async function runServeDaemon(
         "journal-prune",
       ];
       for (const rail of listed) {
-        if (stopping) break;
+        if (stopping || serveStopRequested(vaultPath, ownMarker)) break;
         if (!isRailId(rail)) continue;
         await runRail(db, vaultPath, rail, {
           now: process.now,
           execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "once", due_at: null },
           ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
+          ...(options.acquireRuntime === undefined ? {} : { acquireRuntime: options.acquireRuntime }),
           ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
         });
         receipts += 1;
@@ -158,7 +178,7 @@ export async function runServeDaemon(
       return { receipts, http };
     }
 
-    while (!stopping && (options.shouldContinue?.() ?? true)) {
+    while (!stopping && !serveStopRequested(vaultPath, ownMarker) && (options.shouldContinue?.() ?? true)) {
       heartbeatLease(db, process);
       const due = dueRails(db, process.now());
       const rail = due[0];
@@ -168,6 +188,7 @@ export async function runServeDaemon(
           execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "scheduled",
             due_at: listSchedules(db).find(row => row.rail === rail)?.next_run_at ?? process.now() },
           ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
+          ...(options.acquireRuntime === undefined ? {} : { acquireRuntime: options.acquireRuntime }),
         });
         receipts += 1;
         continue;
@@ -181,7 +202,7 @@ export async function runServeDaemon(
     nodeProcess.off("SIGINT", requestStop);
     try { if (http !== null) await http.stop(); }
     finally {
-      try { clearPid(vaultPath, instanceId); }
+      try { clearServeStopRequest(vaultPath, ownMarker); clearPid(vaultPath, instanceId); }
       finally { releaseLease(db, process); }
     }
   }

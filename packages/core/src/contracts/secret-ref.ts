@@ -10,21 +10,19 @@ export interface SecretRef {
   value: string;
 }
 
-const SECRET_REF = /^(env|file):([^\s]+)$/;
+const ENV_REF = /^env:([^\s]+)$/;
+// File references carry literal path bytes. Only ASCII space is admitted in
+// addition to the old non-whitespace alphabet; controls are forbidden.
+const FILE_REF = /^file:((?:[^\s\x00-\x1f\x7f-\x9f]| )+)$/;
 
 export function parseSecretRef(value: unknown): SecretRef | null {
   if (typeof value !== "string") return null;
-  const match = SECRET_REF.exec(value);
-  if (match === null) return null;
-  const scheme = match[1];
-  const reference = match[2];
-  if (
-    reference === undefined ||
-    (scheme !== "env" && scheme !== "file")
-  ) {
-    return null;
-  }
-  return { scheme, value: reference };
+  const env = ENV_REF.exec(value);
+  if (env?.[1] !== undefined) return { scheme: "env", value: env[1] };
+  const file = FILE_REF.exec(value);
+  // `$` may match before a terminal newline; never trim or decode file paths.
+  if (file?.[1] !== undefined && file[0] === value) return { scheme: "file", value: file[1] };
+  return null;
 }
 
 export function isSecretRef(value: unknown): value is string {

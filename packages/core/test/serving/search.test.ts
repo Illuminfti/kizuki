@@ -10,8 +10,8 @@ import type { Fixture } from "./helpers";
 
 let fixture: Fixture;
 
-beforeAll(() => {
-  fixture = serveFixture();
+beforeAll(async () => {
+  fixture = await serveFixture();
 });
 
 afterAll(() => {
@@ -184,7 +184,7 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
   });
 
   test("a degraded search index is named on the envelope", async () => {
-    const isolated = serveFixture();
+    const isolated = await serveFixture();
     try {
       isolated.db.exec("DROP TABLE search_docs");
       stampDerived(isolated.db, {

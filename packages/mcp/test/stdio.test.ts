@@ -2,8 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openEmbeddedRetrievalPort } from "@kizuki/retrieval-pg";
-import { serializePage } from "@kizuki/core";
+import type { CanonChunk } from "@kizuki/core";
 import { readSqliteRuntime } from "@kizuki/core/internal";
+import { recordedPage } from "../../core/test/helpers/recorded-page";
 import { mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
 
@@ -172,21 +173,10 @@ describe("the stdio process entry", () => {
 
   test("a client that stops reading does not wedge the process", async () => {
     const running = live();
-    writeFileSync(
-      join(running.vaultPath, "facts", "wide.md"),
-      serializePage({
-        data: {
-          id: "fact:wide",
-          title: "A wide kettle note",
-          type: "fact",
-          status: "active",
-          sensitivity: "public",
-          taint: "clean",
-        },
-        body: "the kettle is on. ".repeat(6_000),
-      }),
-      "utf8",
-    );
+    await recordedPage(running.db, running.vaultPath, "facts/wide.md", {
+      id: "fact:wide", title: "A wide kettle note", type: "fact", status: "active",
+      sensitivity: "public", taint: "clean",
+    }, "the kettle is on. ".repeat(6_000), [running.eventId]);
     const child = Bun.spawn([process.execPath, BIN, "--vault", running.vaultPath, "--owner"], {
       stdin: "pipe",
       stdout: "pipe",
@@ -220,21 +210,11 @@ describe("the stdio process entry", () => {
     const running = live();
     // Big enough that the answer cannot leave the pipe in one turn: a
     // shutdown that does not wait for the write loses the tail of it.
-    writeFileSync(
-      join(running.vaultPath, "facts", "long.md"),
-      serializePage({
-        data: {
-          id: "fact:long",
-          title: "A long kettle note",
-          type: "fact",
-          status: "active",
-          sensitivity: "public",
-          taint: "clean",
-        },
-        body: "the kettle is on. ".repeat(6_000),
-      }),
-      "utf8",
-    );
+    const body = "the kettle is on. ".repeat(6_000);
+    const recorded = await recordedPage(running.db, running.vaultPath, "facts/long.md", {
+      id: "fact:long", title: "A long kettle note", type: "fact", status: "active",
+      sensitivity: "public", taint: "clean",
+    }, body, [running.eventId]);
     const work = [
       '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}',
       '{"jsonrpc":"2.0","method":"notifications/initialized"}',
@@ -257,11 +237,16 @@ describe("the stdio process entry", () => {
         .map((line) => JSON.parse(line) as { id?: number; result?: unknown });
       const answered = answers.find((message) => message.id === 2);
       const payload = answered?.result as
-        | { structuredContent?: { canon?: { excerpt?: string }[] } }
+        | { structuredContent?: { canon?: CanonChunk[] } }
         | undefined;
       expect(payload?.structuredContent?.canon?.[0]?.excerpt?.length).toBe(
         65_536,
       );
+      const chunk = payload?.structuredContent?.canon?.[0];
+      expect(chunk?.excerpt).toBe(body.slice(0, 65_536));
+      expect(chunk?.sources).toEqual(recorded.sourceIds);
+      expect(chunk?.authority).toBe(recorded.receipt.authority);
+      expect(chunk?.taint).toBe("clean");
     }
   });
 

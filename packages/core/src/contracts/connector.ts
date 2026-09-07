@@ -214,8 +214,14 @@ export type SyncBatchStatus = "ok" | "unavailable";
 
 export interface SyncBatch {
   events: CaptureEventInput[];
-  /** Checkpoint to resume from; `null` once the source is exhausted. */
+  /** Durable resume checkpoint; null may also mark an exhausted source. */
   cursor: Cursor | null;
+  /**
+   * False explicitly completes this requested snapshot after its batch commits,
+   * retaining a nonnull checkpoint for future runs. True or absent preserves
+   * legacy bounded draining. This must be an own boolean data property.
+   */
+  has_more?: boolean;
   /**
    * Absent means ok. `unavailable` is not an empty page: the host must not
    * advance the checkpoint (RFC 0002 E11 / tri-state).

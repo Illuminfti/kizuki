@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as filesystem from "node:fs/promises";
 import {
   chmod,
   mkdir,
@@ -15,7 +16,7 @@ import {
   MARKDOWN_FOLDER_CONNECTOR_ID,
   createMarkdownFolderConnector,
 } from "../src";
-import { MAX_DEPTH } from "../src/markdown-folder";
+import { MAX_DEPTH, MAX_SCAN_ENTRIES } from "../src/markdown-folder";
 
 async function makeTempDir(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), "kizuki-markdown-"));
@@ -255,6 +256,49 @@ describe("MarkdownFolderConnector", () => {
       const health = await connector.health();
       expect(health.state).toBe("degraded");
       expect(health.detail ?? "").toContain("not_utf8");
+      const terminal = await connector.backfill(batch.cursor);
+      expect(terminal).toEqual({ events: [], cursor: batch.cursor, status: "unavailable",
+        detail: "partial_import: 1 record errors (not_utf8=1)" });
+      expect(await connector.backfill(batch.cursor)).toEqual(terminal);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("malformed files preserve prior identity while valid and deleted pages drain before refusal", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "a-removed.md"), "removed later\n");
+      await writeFile(path.join(root, "z-private-name.md"), "PRIVATE_SAVED_BODY\n");
+      const connector = createMarkdownFolderConnector({ path: root, page_size: 1 });
+      const first = await connector.backfill(null);
+      const second = await connector.backfill(first.cursor);
+      const before = await connector.backfill(second.cursor);
+      expect(before.events).toEqual([]);
+      await unlink(path.join(root, "a-removed.md"));
+      await writeFile(path.join(root, "z-private-name.md"), Buffer.from([255, 254, 253]));
+      await writeFile(path.join(root, "b-new.md"), "new B\n");
+      await writeFile(path.join(root, "c-new.md"), "new C\n");
+      const b = await connector.sync(before.cursor);
+      const c = await connector.sync(b.cursor);
+      const removed = await connector.sync(c.cursor);
+      expect([b, c, removed].map(batch => batch.events.map(event => [event.source_record_id, event.deleted])))
+        .toEqual([[["b-new.md", false]], [["c-new.md", false]], [["a-removed.md", true]]]);
+      const terminal = await connector.sync(removed.cursor);
+      expect(terminal).toEqual({ events: [], cursor: removed.cursor, status: "unavailable",
+        detail: "partial_import: 1 record errors (not_utf8=1)" });
+      expect(JSON.parse(terminal.cursor!).files.map(([name]: [string]) => name))
+        .toEqual(["b-new.md", "c-new.md", "z-private-name.md"]);
+      expect(await connector.sync(terminal.cursor)).toEqual(terminal);
+      expect(terminal.detail).not.toContain("z-private-name");
+      expect(terminal.detail).not.toContain("PRIVATE_SAVED_BODY");
+      await writeFile(path.join(root, "z-private-name.md"), "repaired once\n");
+      const repaired = await connector.sync(terminal.cursor);
+      expect(repaired.events.map(event => [event.source_record_id, event.text, event.deleted]))
+        .toEqual([["z-private-name.md", "repaired once\n", false]]);
+      const clean = await connector.sync(repaired.cursor);
+      expect(clean.events).toEqual([]);
+      expect(clean.status).toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -337,6 +381,31 @@ describe("MarkdownFolderConnector", () => {
     }
   });
 
+  test("a bounded truncated scan refuses completion and preserves unseen prior identities", async () => {
+    const root = await makeTempDir();
+    let listing: ReturnType<typeof spyOn> | undefined;
+    try {
+      await writeFile(path.join(root, "prior.md"), "previous evidence\n");
+      const connector = createMarkdownFolderConnector({ path: root });
+      const first = await connector.backfill(null);
+      const original = filesystem.readdir;
+      const [entry] = await original(root, { withFileTypes: true });
+      // Isolate the directory-listing boundary; no hundred-thousand-file fixture.
+      const crowded = Array.from({ length: MAX_SCAN_ENTRIES + 1 }, (_, index) => ({ ...entry!, name: `.hidden-${index}` }));
+      listing = spyOn(filesystem, "readdir").mockImplementation(((...args: Parameters<typeof original>) =>
+        String(args[0]) === root ? Promise.resolve(crowded) : original(...args)) as typeof original);
+      const result = await connector.sync(first.cursor);
+      expect(result).toEqual({ events: [], cursor: first.cursor, status: "unavailable",
+        detail: "partial_import: 1 record errors (scan_limit=1); scan truncated" });
+      expect(await connector.sync(first.cursor)).toEqual(result);
+      listing.mockRestore(); listing = undefined;
+      expect((await connector.sync(first.cursor)).events).toEqual([]);
+    } finally {
+      listing?.mockRestore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("an unreadable directory does not tombstone the files it hid", async () => {
     const root = await makeTempDir();
     const nested = path.join(root, "nested");
@@ -356,6 +425,8 @@ describe("MarkdownFolderConnector", () => {
         expect(
           second.events.map((event) => event.source_record_id),
         ).not.toContain("nested/hidden.md");
+        expect(second).toEqual({ events: [], cursor: first.cursor, status: "unavailable",
+          detail: "partial_import: 1 record errors (unreadable=1)" });
       } finally {
         await chmod(nested, 0o755);
       }
@@ -401,6 +472,8 @@ describe("MarkdownFolderConnector", () => {
       const health = await connector.health();
       expect(health.state).toBe("degraded");
       expect(health.detail ?? "").toContain("depth");
+      expect(await connector.backfill(batch.cursor)).toEqual({ events: [], cursor: batch.cursor, status: "unavailable",
+        detail: "partial_import: 1 record errors (depth=1)" });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import * as vaultIdentity from "../src/serve/vault-id";
 import {
   chmodSync,
   existsSync,
@@ -289,6 +290,17 @@ function writeSignedManifest(
   return signed;
 }
 
+function legacyFiles(backup: string, current: Record<string, ExportManifestEntry>): Record<string, ExportManifestEntry> {
+  const files = { ...current };
+  for (const table of ["purge_batches", "purge_batch_receipts", "purge_ops"]) {
+    delete files[`ledger/${table}.jsonl`];
+    rmSync(join(backup, "ledger", `${table}.jsonl`));
+  }
+  delete files["canon/source-survivor-lineage.v1.jsonl"];
+  rmSync(join(backup, "canon", "source-survivor-lineage.v1.jsonl"), { force: true });
+  return files;
+}
+
 function insertFixtureReceipt(
   db: ReturnType<typeof openLedger>,
   kind = "purge_review",
@@ -381,6 +393,8 @@ describe("exportVault", () => {
     expect(manifest.files["connections.jsonl"]?.count).toBe(1);
     expect(manifest.files["checkpoints.jsonl"]?.count).toBe(1);
     expect(manifest.files["rail_cursors.jsonl"]?.count).toBe(0);
+    expect(manifest.files["canon/source-survivor-lineage.v1.jsonl"]?.count).toBe(0);
+    expect(readFileSync(join(outDir, "canon/source-survivor-lineage.v1.jsonl"), "utf8")).toBe("");
     expect(manifest.snapshot.event_count).toBe(1);
     expect(JSON.parse(readFileSync(join(outDir, "manifest.json"), "utf8"))).toEqual(
       manifest,
@@ -560,9 +574,19 @@ describe("exportVault", () => {
   test("does not chmod an existing parent directory", () => {
     const { db, vaultPath } = populated();
     const parent = temporary("kizuki-export-parent-");
-    chmodSync(parent, 0o777);
+    chmodSync(parent, 0o755);
     exportVault(db, vaultPath, join(parent, "dump"));
+    expect(lstatSync(parent).mode & 0o777).toBe(0o755);
+    db.close();
+  });
+
+  test("refuses an unsafe shared parent without changing its permissions", () => {
+    const { db, vaultPath } = populated();
+    const parent = temporary("kizuki-export-parent-");
+    chmodSync(parent, 0o777);
+    expect(() => exportVault(db, vaultPath, join(parent, "dump"))).toThrow("owned_directory_publication_unsafe");
     expect(lstatSync(parent).mode & 0o777).toBe(0o777);
+    expect(readdirSync(parent)).toEqual([]);
     db.close();
   });
 
@@ -950,9 +974,9 @@ describe("restoreVault", () => {
       count: 1, size: payload.byteLength, mode: 0o600,
       sha256: new Bun.CryptoHasher("sha256").update(payload).digest("hex"),
     } };
-    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", files });
+    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", schema_versions: { ...manifest.schema_versions, ledger: 20 }, files: legacyFiles(backup, files) });
     const target = join(temporary("kizuki-restore-parent-"), "vault");
-    restoreVault(backup, target);
+    expect(restoreVault(backup, target).recovery_warnings.join(" ")).toContain("historical purge");
     const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
     expect(restored.query<{ evidence: string }, []>("SELECT evidence FROM identity_links").get()?.evidence)
       .toBe('["event:legacy-v2"]');
@@ -1149,16 +1173,17 @@ describe("restoreVault", () => {
     writeSignedManifest(backup, {
       ...manifest,
       schema: "kizuki.backup/v2",
-      files: {
+      schema_versions: { ...manifest.schema_versions, ledger: 20 },
+      files: legacyFiles(backup, {
         ...manifest.files,
         ["ledger/source_store_inventory.jsonl"]: {
           count: 1, size: payload.byteLength, mode: 0o600,
           sha256: new Bun.CryptoHasher("sha256").update(payload).digest("hex"),
         },
-      },
+      }),
     });
     const target = join(temporary("kizuki-restore-parent-"), "vault");
-    restoreVault(backup, target);
+    expect(restoreVault(backup, target).recovery_warnings.join(" ")).toContain("historical purge");
     const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
     expect(JSON.parse(restored.query<{ erasure_report: string }, [string]>(
       "SELECT erasure_report FROM source_store_inventory WHERE source_key=?",
@@ -1178,9 +1203,11 @@ describe("restoreVault", () => {
     const files = { ...manifest.files };
     delete files["claims/identity_links.jsonl"];
     delete files["ledger/connector_sensitivity.jsonl"];
-    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", files });
+    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", schema_versions: { ...manifest.schema_versions, ledger: 20 }, files: legacyFiles(backup, files) });
     const target = join(temporary("kizuki-restore-parent-"), "vault");
-    expect(restoreVault(backup, target).events).toBe(1);
+    const report = restoreVault(backup, target);
+    expect(report.events).toBe(1);
+    expect(report.recovery_warnings.join(" ")).toContain("historical purge");
     db.close();
   });
 
@@ -1360,15 +1387,22 @@ describe("restoreVault", () => {
     db.close();
   });
 
-  test("preserves vault identity when the source had one", () => {
+  test("restore binds the current machine before publication while preserving the source vault identity", () => {
     const { db, vaultPath } = populated();
     writeFileSync(join(vaultPath, ".kizuki", "vault-id"), "01exportvaultid000000000001\n");
     const backup = join(temporary("kizuki-export-parent-"), "dump");
     const manifest = exportVault(db, vaultPath, backup);
     expect(manifest.vault_id).toBe("01exportvaultid000000000001");
     const target = join(temporary("kizuki-restore-parent-"), "vault");
-    restoreVault(backup, target);
+    // Inject only the platform machine identifier. The real identity writer,
+    // restore staging/publication and immutable read validation still execute.
+    const ensure = vaultIdentity.ensureVaultId;
+    const machine = "synthetic-restore-machine";
+    const platform = spyOn(vaultIdentity, "ensureVaultId").mockImplementation(path => ensure(path, machine));
+    try { restoreVault(backup, target); } finally { platform.mockRestore(); }
     expect(readVaultId(target)).toBe("01exportvaultid000000000001");
+    expect(() => vaultIdentity.assertBoundVaultId(target, machine)).not.toThrow();
+    expect(readFileSync(join(target, ".kizuki/vault-machine"), "utf8")).toBe(`${machine}\n`);
     db.close();
   });
 });

@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { accept, indexPage, initSearch, serializePage } from "@kizuki/core";
 import type { CanonPage, SearchHit } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
+import { recordedPage } from "../../core/test/helpers/recorded-page";
+import { refreshDerived } from "../src/derived";
 import { createHelpers } from "./helpers";
 
 const { cleanup, runCli, tempVault } = createHelpers();
@@ -73,6 +75,22 @@ function seedCanonPage(
   return relPath;
 }
 
+async function recordCanonPage(
+  setup: ReturnType<typeof tempVault>,
+  { id, relPath, body }: { id: string; relPath: string; body: string },
+): Promise<void> {
+  const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+  try {
+    // Reuse the explicitly granted source when this fixture already imported notes.
+    const source = db.query<{ event_id: string }, []>("SELECT event_id FROM events ORDER BY event_id LIMIT 1").get();
+    const { receipt } = await recordedPage(db, setup.vault, relPath, {
+      id, title: id, type: "fact", status: "active", sensitivity: "personal", taint: "clean",
+    }, body, source === null ? undefined : [source.event_id]);
+    expect(receipt.authority).toBe("model_inference");
+    refreshDerived(db, setup.vault);
+  } finally { db.close(); }
+}
+
 describe("query", () => {
   test("--limit 0 and --limit x are usage errors", () => {
     const setup = tempVault();
@@ -83,10 +101,10 @@ describe("query", () => {
     }
   });
 
-  test("--scope canon and --scope ledger split pages from connected source events", () => {
+  test("--scope canon and --scope ledger split pages from connected source events", async () => {
     const setup = tempVault();
     importNotes(setup);
-    seedCanonPage(setup, {
+    await recordCanonPage(setup, {
       id: "fact:acme",
       relPath: "facts/acme.md",
       body: "acme canonical fact",
@@ -147,9 +165,9 @@ describe("query", () => {
     expect(result.stdout).toBe("");
   });
 
-  test("--json lines parse as SearchHit", () => {
+  test("--json lines parse as SearchHit", async () => {
     const setup = tempVault();
-    seedCanonPage(setup, {
+    await recordCanonPage(setup, {
       id: "fact:acme",
       relPath: "facts/acme.md",
       body: "acme canonical fact",
@@ -166,6 +184,9 @@ describe("query", () => {
     expect(hit?.scope).toBe("canon");
     expect(hit?.doc_id).toBeDefined();
     expect(hit?.snippet).toContain("acme");
+    expect(hit?.authority).toBe("model_inference");
+    expect(hit?.sensitivity).toBe("personal");
+    expect(hit?.taint).toBe("clean");
   });
 
   test("query refuses when canon receipts drift without a derived refresh", () => {

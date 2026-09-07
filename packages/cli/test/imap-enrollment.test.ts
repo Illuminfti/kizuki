@@ -203,7 +203,8 @@ describe("IMAP interactive enrollment", () => {
         expect(store.read(first)).toEqual(before);
         expect(getCheckpoint(db, first.connector_id, first.source_key)?.cursor).toBe("checkpoint");
         expect(listConnections(db)).toHaveLength(1);
-        expect(readdirSync(directory).filter((name) => !name.endsWith(".tmp"))).toHaveLength(1);
+        expect(readdirSync(store.directory)).toEqual([`${first.source_key}.state`]);
+        expect(readdirSync(directory).sort()).toEqual(["connection-state.lock", "connections"]);
       }
       const rotated = await enrollSignedInConnection(db, store, connectorFor({ ...state, password: "rotated" }), prompts([]), first.source_key, assertSameImapIdentity);
       expect(rotated.source_key).toBe(first.source_key);
@@ -251,7 +252,8 @@ describe("IMAP interactive enrollment", () => {
         prompts([]),
       )).rejects.toThrow("sign-in refused");
       expect(listConnections(db)).toEqual([]);
-      expect(Array.from(new Bun.Glob("*").scanSync(directory))).toEqual([]);
+      expect(readdirSync(store.directory)).toEqual([]);
+      expect(readdirSync(directory).sort()).toEqual(["connection-state.lock", "connections"]);
     } finally {
       db.close();
     }

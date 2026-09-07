@@ -43,6 +43,11 @@ export type {
   RetrievalOpRef,
 } from "./receipts";
 export { undoReceipt } from "./undo";
+export { recoverCanonWrites } from "./recovery";
+export { retryCanonProjectionObligations } from "./projection-obligations";
+export { CanonRecoveryError, inspectCanonRecovery } from "./write-intent";
+export type { CanonRecoveryReport } from "./recovery";
+export type { CanonRecoverySummary } from "./write-intent";
 export type { UndoReceiptOptions } from "./undo";
 export { CANON_SCHEMA_VERSION, applyCanonV4, initCanon } from "./schema";
 export { CanonPageUnreadable, inspectPageIndex, rebuildPageIndex } from "./store";

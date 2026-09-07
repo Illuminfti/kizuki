@@ -47,3 +47,143 @@ These cover late errno changes, failed initialization and cleanup, sealed
 source, malformed directory records, opaque names, traversal bounds, root
 replacement and observation-time absence. Release acceptance additionally
 requires the copied executable on each claimed native platform.
+
+## Private canon adapter
+
+`vault/write.ts` uses the internal `vault/canon-files.ts` adapter for page
+creation, revision, deletion, archives and temporary revisions. The writer
+reads its expected preimage from a retained snapshot and archives those exact
+bytes. Higher-level preimage readers and receipt appenders still need their
+separate integration; this byte port alone does not complete canon containment.
+
+The adapter keeps root, parent and file descriptors private. It opens each
+component with no-follow semantics, checks directory custody, and returns
+owner-bound, closeable file snapshots whose expected bytes cannot be edited.
+Files must be regular, single-link, owned by the effective user, and not
+writable by a group or others. Reads and writes are limited to 1 MiB; relative
+paths are limited to 64 components and 4,096 UTF-8 bytes, with at most 255 bytes
+per component. The adapter accepts ordinary nested doctrine and archive names;
+the writer enforces the shared page grammar and reserved root paths.
+
+The shared sealed loader now also provides fixed 0700 `mkdirat`, `renameat`
+and file-only `unlinkat` helpers. Existing native and credential symbols remain
+unchanged. Exclusive file creation reuses the existing fixed 0600 helper,
+completes every write, verifies its bytes, and syncs the file and parent.
+Replacement and removal validate retained snapshots and sync their parents.
+Failed creation attempts clean up only when the created inode and the bytes
+actually written still match; ambiguous cleanup preserves the entry.
+
+`grantCanonWrite` still mints a one-use capability in `canon/apply.ts`. Its
+optional fourth argument borrows a live, root-bound `CanonFiles` capability;
+the writer closes its own snapshots and leaves the borrowed scope open. The
+caller acquires that scope inside its mutation ownership and retains it until
+the actual operation and cleanup settle. Without a borrowed scope, the
+synchronous writer opens and closes its own native scope. There is no public
+locked flag or core re-export. `assertCanonFiles` checks module-minted identity,
+the selected root and liveness before a borrowed scope is used.
+
+Source erasure retains no new archive. It may rewrite or delete an existing
+historical archive through the shared stored-path grammar, with an expected
+hash; it cannot create a missing archive entry. Its `resumeExactTemporary` helper derives
+only the same-parent `.<page>.<receipt-id>.tmp` name from a live expected target.
+It requires exact postimage bytes, private permission bits, regular single-link
+ownership and unchanged descriptor identities, then syncs the temp. The token
+can replace only that exact target snapshot and cannot authorize deletion or
+creation. Intent, grant and receipt authorization remain in the existing source
+erasure caller; this helper makes no ledger-attestation claim. Ordinary
+revisions refuse existing temps. A failed source-erasure publication preserves
+its receipt temp for the existing same-ID retry protocol.
+
+These operations require Linux x64/glibc and the existing native loader
+facilities. Unsupported or unavailable backends return a typed, private error
+without a pathname fallback. Canon byte writes now refuse on macOS and other
+unsupported platforms; Linux proof does not qualify a macOS backend. The
+remaining higher-level reader and mutation-scope integration is tracked
+separately. The 1 MiB page limit must not be applied to receipt streams, which
+retain their separate size policy. Descriptor-relative rename and
+unlink still operate on entry names; snapshot checks do not provide atomic
+compare-and-swap against an unrestricted external editor. A general crash
+journal, publication recovery, descriptor-backed receipt append, and copied
+executable qualification remain separate work.
+
+Focused adapter qualification uses synthetic roots and the repaired code:
+
+```bash
+bun test packages/core/test/canon/write-page.test.ts packages/core/test/canon/write-capability.test.ts packages/core/test/canon/canon-files.test.ts packages/core/test/util/native-loader.test.ts
+```
+
+The positive adapter cases require a qualified native filesystem ancestry.
+An unsupported or UID-mapped sandbox is recorded as refusal, with positive
+cases skipped; those skips provide no backend qualification. Native Linux CI
+requires qualified custody. No macOS adapter qualification is claimed.
+
+## Internal sibling publication
+
+`OwnedDirectory.createStaging(name)` exclusively creates a 0700 child through
+the retained parent descriptor, syncs the new directory and parent, and returns
+the observed device/inode identity. An error preserves any remaining child;
+it does not grant cleanup authority for an inode that was never returned.
+
+`publishStaging(stageName, stageIdentity, destinationName, expectedDestination)`
+moves that private staging directory to a sibling. Names are single valid UTF-8
+components of at most 255 bytes; identities are bounded unsigned 64-bit values.
+The parent must belong to the effective user without group/other write access,
+or be a root-owned sticky directory such as `/tmp`. Staging and an existing
+destination must belong to the effective user with no group/other permission
+bits. The method retains the stage and existing destination descriptors and
+checks their identities along with the selected parent before effects.
+
+Every move uses the fixed Linux x86_64 `renameat2` syscall 316 with
+`RENAME_NOREPLACE`, returning the signed kernel status through the sealed
+loader. An occupied destination cannot be overwritten. Unsupported syscall or
+filesystem flag results refuse publication without a pathname fallback. The
+existing page and credential helper symbols retain their behavior.
+
+An expected absent destination publishes directly. An expected owner-only empty
+destination is first moved without replacement to the bounded sibling name
+`.kizuki-empty-<destination-device-hex>-<destination-inode-hex>-<stage-inode-hex>`.
+The helper checks and syncs this parked inode before publishing. Following
+publication it checks that the parked inode is still the original empty
+directory, removes it using fixed empty-directory-only `unlinkat`, and syncs
+the parent. An occupied parking name refuses the operation. No recursive
+deletion is used for publication or recovery.
+
+Success returns only `{ publication: "published", durability: "synced" }` after
+the required directory syncs and final observations. The caller must sync staged
+file contents and hold its mutation ownership across staging, final guards,
+publication and cleanup. These directory syncs do not qualify file contents,
+archive consistency or a complete backup/recovery protocol.
+
+`OwnedDirectoryPublicationError` reports a bounded reason, publication state
+(`not_published`, `published`, or `uncertain`), directory durability state,
+`cleanup_safe`, and an optional parked-name/identity recovery hint. A failed
+publication can restore the original empty inode only through another
+no-replace move. `cleanup_safe` is true only after the original stage is
+revalidated and any originally present destination is proved restored; a
+caller must still revalidate before cleanup. Failed restoration preserves the
+stage and parked inode. A published result followed by a failed sync or parked
+removal is an error with cleanup refused, never success. Unknown observations
+preserve all remaining names. The recovery hint is not a deletion capability.
+
+The protocol does not provide atomic source-inode compare-and-swap against an
+unrestricted same-owner external editor. It relies on the caller excluding
+those writers; final inode checks cannot remove that limitation. Process
+termination can leave a parked empty inode, and no general crash journal or
+automatic post-crash cleanup is introduced. Qualification covers the local
+Linux filesystem used by the fixtures; it does not qualify NFS or another
+remote filesystem, where a reported rename error can follow a server-side
+effect. See the [Linux rename documentation](https://man7.org/linux/man-pages/man2/rename.2.html).
+
+The bounded qualification uses fixed private fixtures and deterministic syscall
+or sync refusal injection, without concurrent pathname replacement:
+
+```bash
+bun test packages/core/test/util/owned-directory-publication.test.ts packages/core/test/util/native-loader.test.ts
+```
+
+It covers absent and empty destinations, occupied and changed expectations,
+parking collisions, staging custody, signed unsupported results, restoration,
+and publication/durability uncertainty. The sticky `/tmp` positive case requires
+root custody; a UID-mapped sandbox instead verifies refusal and gives that
+positive case no qualification credit. Export and canon integrations, copied
+executable proof, and release acceptance remain separate gates.

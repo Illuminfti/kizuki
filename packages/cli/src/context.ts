@@ -1,17 +1,18 @@
 import { Database } from "bun:sqlite";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, lstatSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   ConnectionStateStore,
+  createConnectionStateReader,
   assertVaultControl,
   ensureVaultId,
   initSearch,
   PortError,
   readVaultId,
 } from "@kizuki/core";
-import type { RetrievalPort } from "@kizuki/core";
-import { ledgerAccepted, openLedger, readLedgerMark, sealLedger } from "@kizuki/core/internal";
-import { openConfiguredRetrieval } from "./retrieval-runtime";
+import type { ConnectionStateReader, RetrievalPort } from "@kizuki/core";
+import { assertBoundVaultId, openLedgerRead, inspectLedgerIdentity, LedgerIdentityError, openLedger, ledgerAccepted, readLedgerMark, sealLedger } from "@kizuki/core/internal";
+import { inspectConfiguredRetrieval, openConfiguredRetrieval } from "./retrieval-runtime";
 import type { CliIo } from "./commands/index";
 import {
   type KizukiConfig,
@@ -54,60 +55,70 @@ function resolveVaultOverride(value: string, config: KizukiConfig): string {
   return resolve(value);
 }
 
+function peekLedgerIdentity(vaultPath: string, dbPath: string): void {
+  try {
+    inspectLedgerIdentity(vaultPath);
+  } catch (error) {
+    if (error instanceof LedgerIdentityError && error.code === "invalid_ledger" && error.diagnostic?.kind === "semantic") {
+      throw new Error(`vault ledger is not a Kizuki database or has no usable schema version: ${dbPath}; run: kizuki init [phase=${error.diagnostic.phase} kind=semantic reason=${error.diagnostic.reason}]`, { cause: error });
+    }
+    throw error;
+  }
+}
+
 const LEDGER_READY_DEADLINE_MS = 3_000;
 const LEDGER_READY_POLL_MS = 250;
 
-function peekLedger(dbPath: string): { accepted: number } {
-  const peek = new Database(dbPath, { readonly: true });
-  try {
-    const tables = peek
-      .query<{ name: string }, []>(
-        "SELECT name FROM sqlite_master WHERE type = 'table'",
-      )
-      .all()
-      .map((row) => row.name);
-    const names = new Set(tables);
-    if (!names.has("schema_version") || !names.has("events")) {
-      throw new Error(
-        `vault ledger is not a Kizuki database: ${dbPath}; run: kizuki init`,
-      );
-    }
-    const versions = peek
-      .query<{ version: number }, []>("SELECT version FROM schema_version")
-      .all();
-    if (versions.length !== 1 || !Number.isInteger(versions[0]?.version) || (versions[0]?.version ?? 0) < 1) {
-      throw new Error(
-        `vault ledger has no usable schema version: ${dbPath}; run: kizuki init`,
-      );
-    }
-    return { accepted: ledgerAccepted(peek) };
-  } finally {
-    peek.close();
-  }
+function notReady(vaultPath: string, accepted: number, floor: number): Error {
+  return new Error(`vault ledger not ready: ${accepted} of ${floor} sealed events readable after ${LEDGER_READY_DEADLINE_MS}ms: ${join(vaultPath, ".kizuki", "kizuki.db")}; the store is still restoring or lost kizuki.db-wal. Do not run kizuki init`);
 }
 
-/**
- * Identity intact but the ledger reads short of the mark sealed at the last
- * close: the store is still coming up, or it lost rows with kizuki.db-wal.
- * Neither is a count a command may print. Each poll reopens the file so a
- * store still being restored is seen once it lands; then fail closed.
- */
-function awaitLedgerMark(vaultPath: string, dbPath: string): void {
-  const mark = readLedgerMark(vaultPath);
+/** Reopen each poll so an atomically restored ledger can become visible. The
+ * returned binding retains the existing native custody and read-only contract. */
+function openReadyLedgerRead(vaultPath: string, options: { audit?: boolean } = {}): ReturnType<typeof openLedgerRead> {
   const deadline = Date.now() + LEDGER_READY_DEADLINE_MS;
-  let readable = peekLedger(dbPath).accepted;
-  while (mark !== null && readable < mark) {
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `vault ledger not ready: ${readable} of ${mark} sealed events readable after ${LEDGER_READY_DEADLINE_MS}ms: ${dbPath}; the store is still restoring or lost kizuki.db-wal. Do not run kizuki init`,
-      );
-    }
-    Bun.sleepSync(LEDGER_READY_POLL_MS);
-    readable = peekLedger(dbPath).accepted;
+  let floor = 0;
+  for (;;) {
+    assertVaultControl(vaultPath, { repairPermissions: false });
+    const binding = openLedgerRead(vaultPath, options);
+    let accepted: number;
+    try {
+      floor = Math.max(floor, readLedgerMark(vaultPath) ?? 0);
+      accepted = ledgerAccepted(binding.db);
+      binding.assertCurrent();
+      if (accepted >= floor) return binding;
+    } catch (error) { binding.close(); throw error; }
+    binding.close();
+    if (Date.now() >= deadline) throw notReady(vaultPath, accepted, floor);
+    Bun.sleepSync(Math.min(LEDGER_READY_POLL_MS, Math.max(1, deadline - Date.now())));
   }
 }
 
-export function assertVault(path: string): string {
+/** Existing positive floors gate explicit writers before they repair or migrate.
+ * Missing/legacy unsealed ledgers retain the explicit init migration path. */
+export function assertSealedLedgerReady(vaultPath: string): void {
+  try { lstatSync(join(vaultPath, ".kizuki", "ledger-mark")); }
+  catch (error) {
+    // Explicit init may repair an interrupted, unsealed bootstrap. A present
+    // entry, including a dangling symlink, still goes through native custody.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  const floor = readLedgerMark(vaultPath);
+  if (floor === null || floor === 0) return;
+  const binding = openReadyLedgerRead(vaultPath);
+  binding.close();
+}
+
+function assertWriterFloor(vaultPath: string, db: Database): void {
+  const floor = readLedgerMark(vaultPath);
+  if (floor !== null) {
+    const accepted = ledgerAccepted(db);
+    if (accepted < floor) throw notReady(vaultPath, accepted, floor);
+  }
+}
+
+function assertVaultLayout(path: string): string {
   const absolutePath = resolve(path);
   const control = join(absolutePath, ".kizuki");
   const archive = join(absolutePath, "archive");
@@ -126,8 +137,14 @@ export function assertVault(path: string): string {
       `vault ledger missing: ${absolutePath}; run: kizuki init ${absolutePath}`,
     );
   }
-  awaitLedgerMark(absolutePath, dbPath);
+  return absolutePath;
+}
+
+export function assertVault(path: string): string {
+  const absolutePath = assertVaultLayout(path);
+  peekLedgerIdentity(absolutePath, join(absolutePath, ".kizuki", "kizuki.db"));
   assertVaultControl(absolutePath);
+  assertSealedLedgerReady(absolutePath);
   // Remint a snapshot-cloned identity once this volume lands on a new machine.
   ensureVaultId(absolutePath);
   return absolutePath;
@@ -145,7 +162,7 @@ export interface VaultContext {
   db: Database;
   store: ConnectionStateStore;
   retrieval?: RetrievalPort;
-  retrievalUnavailable?: true;
+  retrievalUnavailable?: true | "configured-engine-unavailable";
 }
 
 export async function withVault<T>(
@@ -162,6 +179,7 @@ export async function withVault<T>(
   const store = new ConnectionStateStore(join(vaultPath, ".kizuki"));
   let retrieval: RetrievalPort | undefined;
   try {
+    assertWriterFloor(vaultPath, db);
     let retrievalUnavailable: true | undefined;
     if (options.retrieval !== "none") {
       try { retrieval = await openConfiguredRetrieval(vaultPath); }
@@ -182,4 +200,44 @@ export async function withVault<T>(
   } finally {
     try { await retrieval?.close(); } finally { db.close(); }
   }
+}
+
+export interface ReadVaultContext extends Omit<VaultContext, "store"> {
+  store: ConnectionStateReader;
+  assertCurrent(): void;
+  /** TUI closes its reader before the separately confirmed writer, then reopens it. */
+  pauseForMutation<T>(work: () => Promise<T>): Promise<T>;
+}
+
+/** Inspection plus optional serving audit; never migrations, runtime binding or identity adoption. */
+export async function withReadVault<T>(
+  io: CliIo,
+  fn: (ctx: ReadVaultContext) => Promise<T>,
+  options: { audit?: boolean; retrieval?: "optional" | "none" } = {},
+): Promise<T> {
+  const path = configPath(io.env);
+  const vaultPath = assertVaultLayout(resolveVault(io.env, readConfig(path), io.vaultOverride));
+  assertVaultControl(vaultPath, { repairPermissions: false });
+  assertBoundVaultId(vaultPath);
+  let binding = openReadyLedgerRead(vaultPath, { audit: options.audit ?? false });
+  let paused = false;
+  try {
+    const retrievalUnavailable = options.retrieval === "optional" && inspectConfiguredRetrieval(vaultPath);
+    const result = await fn({ configPath: path, vaultPath, get db() { binding.assertCurrent(); return binding.db; },
+      store: createConnectionStateReader(join(vaultPath, ".kizuki")), assertCurrent: () => binding.assertCurrent(),
+      async pauseForMutation(work) {
+        if (paused) throw new Error("read context is already paused");
+        binding.assertCurrent(); paused = true; binding.close();
+        try { return await work(); }
+        finally {
+          assertVaultControl(vaultPath, { repairPermissions: false });
+          assertBoundVaultId(vaultPath);
+          binding = openReadyLedgerRead(vaultPath, { audit: options.audit ?? false }); paused = false;
+        }
+      },
+      ...(retrievalUnavailable ? { retrievalUnavailable: "configured-engine-unavailable" as const } : {}),
+    });
+    binding.assertCurrent();
+    return result;
+  } finally { binding.close(); }
 }

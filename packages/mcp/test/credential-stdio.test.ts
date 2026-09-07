@@ -2,7 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { enrollAgent, revokeAgentEnrollment, setGrant, type Grant } from "@kizuki/core";
+import { enrollAgent, revokeAgentEnrollment, setGrant, type CanonChunk, type Grant } from "@kizuki/core";
+import { recordedPage } from "../../core/test/helpers/recorded-page";
 import { mcpFixture, type McpFixture } from "./helpers";
 
 const BIN = join(import.meta.dir, "../src/bin.ts");
@@ -22,7 +23,8 @@ afterEach(async () => {
 
 // Inspect the runner independently of the implementation. Qualified CI must
 // exercise the actual positive process path, never skip because an API threw.
-const qualified = process.platform === "linux" && process.arch === "x64" && (() => {
+const supported = (process.platform === "linux" && process.arch === "x64") || (process.platform === "darwin" && process.arch === "arm64");
+const qualified = supported && (() => {
   const uid = process.geteuid?.();
   if (uid === undefined) return false;
   for (let path = tmpdir();; path = dirname(path)) {
@@ -128,7 +130,7 @@ function denied(reply: Reply, code: string): void {
   expect(reply.result?.structuredContent).toBeUndefined();
 }
 
-test.if(process.env.GITHUB_ACTIONS === "true" && process.platform === "linux" && process.arch === "x64")("file credential stdio proof requires qualified Linux CI custody", () => {
+test.if(process.env.GITHUB_ACTIONS === "true" && supported)("file credential stdio proof requires qualified native CI custody", () => {
   expect(qualified).toBe(true);
 });
 
@@ -144,6 +146,10 @@ test("MCP rejects ambiguous credential selectors without echoing values or falli
 
 test.if(qualified)("two live file-credential processes and reconnects use current Core grants and revocation", async () => {
   fixture = privateFixture();
+  const recorded = await recordedPage(fixture.db, fixture.vaultPath, "entities/credential-ada.md", {
+    id: "person:credential-ada", title: "Credential Ada", type: "person", status: "active",
+    sensitivity: "public", taint: "clean", subjects: ["person:ada"],
+  }, "Ada keeps the kettle warm.", [fixture.eventId]);
   const directory = join(fixture.vaultPath, ".kizuki", "agent-credentials"); mkdirSync(directory, { mode: 0o700 });
   const credential = join(directory, "client.credential");
   const grant: Grant = { ceiling: "personal", types: null, subjects: ["person:ada"], since: null, until: null,
@@ -161,6 +167,10 @@ test.if(qualified)("two live file-credential processes and reconnects use curren
     expect(outcome).toBe("allowed");
     expect(JSON.stringify(reply)).toContain("Ada keeps the kettle warm");
     expect(JSON.stringify(reply).includes("private kettle protocol")).toBe(false);
+    const chunk = (reply.result?.structuredContent as { canon?: CanonChunk[] })?.canon?.find(page => page.page_id === "person:credential-ada");
+    expect(chunk?.sources).toEqual(recorded.sourceIds);
+    expect(chunk?.authority).toBe(recorded.receipt.authority);
+    expect(chunk?.taint).toBe("clean");
   }
   denied(await one.call("get_page", { path: "facts/kettle-private.md" }), "tool_not_granted");
   setGrant(fixture.db, "file-client", { subjects: [] });

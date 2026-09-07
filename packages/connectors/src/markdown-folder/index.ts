@@ -18,6 +18,7 @@ import { KizukiError, notSupported } from "../errors";
 import {
   importHealthReport,
   misconfiguredHealth,
+  summarizeImportErrors,
 } from "../import-report";
 import type { ImportRecordError } from "../import-report";
 import { readBoundedBytes, readReason } from "../read";
@@ -206,21 +207,11 @@ export class MarkdownFolderConnector implements Connector {
       }
     }
 
-    // Phase is a pager hint. `after` is only a file watermark in phase
-    // files — a leftover tombstones cursor must not skip notes that sort
-    // before its deletion identity.
-    const pagingTombstones =
-      previous?.phase === "tombstones" && fileEvents.length === 0;
-    const fileAfter =
-      previous?.phase === "files" && previous.exhausted !== true
-        ? (previous.after ?? null)
-        : null;
-    const fileFrom = indexAfter(fileEvents, fileAfter);
-    const filePage = pagingTombstones
-      ? []
-      : fileEvents.slice(fileFrom, fileFrom + this.pageSize);
-    const filesDone =
-      pagingTombstones || fileFrom + filePage.length >= fileEvents.length;
+    // Each sweep diffs against the durable identities updated by prior pages.
+    // The remaining diff can change between scans, including below `after`.
+    // Keep phase/after as compatible cursor hints, never as exclusion bounds.
+    const filePage = fileEvents.slice(0, this.pageSize);
+    const filesDone = filePage.length >= fileEvents.length;
 
     const processed = new Map(previousFiles);
     for (const event of filePage) {
@@ -253,7 +244,7 @@ export class MarkdownFolderConnector implements Connector {
       const last = filePage[filePage.length - 1];
       return {
         events: filePage,
-        cursor: nextCursor(false, "files", last?.source_record_id ?? fileAfter),
+        cursor: nextCursor(false, "files", last?.source_record_id ?? null),
       };
     }
 
@@ -270,23 +261,25 @@ export class MarkdownFolderConnector implements Connector {
     }
 
     if (tombstones.length === 0) {
+      // Valid pages have already checkpointed. Keep unreadable identities in
+      // that checkpoint and report the incomplete sweep without advancing it.
+      if (scan.errors.length > 0 || scan.truncated) {
+        return {
+          events: [], cursor, status: "unavailable",
+          detail: `partial_import: ${summarizeImportErrors(scan.errors)}${scan.truncated ? "; scan truncated" : ""}`,
+        };
+      }
       return {
         events: [],
         cursor: nextCursor(!scan.truncated, "files", null),
       };
     }
 
-    const tombstoneAfter = pagingTombstones ? (previous?.after ?? null) : null;
-    const tombstoneFrom = indexAfter(tombstones, tombstoneAfter);
-    const tombstonePage = tombstones.slice(
-      tombstoneFrom,
-      tombstoneFrom + this.pageSize,
-    );
+    const tombstonePage = tombstones.slice(0, this.pageSize);
     for (const event of tombstonePage) {
       processed.delete(event.source_record_id);
     }
-    const tombstonesDone =
-      tombstoneFrom + tombstonePage.length >= tombstones.length;
+    const tombstonesDone = tombstonePage.length >= tombstones.length;
     const exhausted = tombstonesDone && !scan.truncated;
     if (exhausted) {
       for (const file of scan.files) {
@@ -299,7 +292,7 @@ export class MarkdownFolderConnector implements Connector {
       cursor: nextCursor(
         exhausted,
         exhausted ? "files" : "tombstones",
-        exhausted ? null : (lastTombstone?.source_record_id ?? tombstoneAfter),
+        exhausted ? null : (lastTombstone?.source_record_id ?? null),
       ),
     };
   }
@@ -758,17 +751,6 @@ function parseCursor(
     after: parsed["after"],
     files,
   };
-}
-
-function indexAfter(
-  events: readonly CaptureEventInput[],
-  after: string | null,
-): number {
-  if (after === null) return 0;
-  const start = events.findIndex(
-    (event) => compareStrings(event.source_record_id, after) > 0,
-  );
-  return start === -1 ? events.length : start;
 }
 
 function sortedPairs(

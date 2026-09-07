@@ -23,4 +23,12 @@ packages/cli/src/app/ui/client.js:bundled local browser client; same-origin fixe
 
 packages/core/test/serve/app-http.test.ts:synthetic loopback app-session authentication and bounded-body tests
 packages/cli/test/app-host.test.ts:synthetic loopback asset and authenticated local app host tests
+packages/cli/test/app-client.test.ts:authenticated requests to the actual ephemeral loopback app for written identity labels and shipped client rendering
 packages/connector-x/src/api/client.ts:explicitly configured X own-post API fixed-origin GET transport; bounded requests and response body, no redirects or media downloads
+packages/cli/test/app-model-journey.test.ts:authenticated actual app requests restricted to its ephemeral loopback host with synthetic model evidence
+packages/cli/test/app-model-settings.test.ts:synthetic model endpoint bound to 127.0.0.1 for settings and fixed-prompt connection tests
+packages/core/test/serve/runtime.test.ts:ephemeral loopback listener and authenticated retrieval requests across real rail runtime lifetimes
+packages/cli/test/app-privacy-races.test.ts:authenticated actual app loopback requests proving correction-purpose withdrawal and revocation while a synthetic model response is held
+packages/cli/test/x-api-enrollment.test.ts:synthetic native OAuth callbacks restricted to 127.0.0.1; provider token and API transport use local fixtures
+packages/cli/test/x-api-recovery.test.ts:synthetic fixed loopback OAuth callbacks and process recovery checks; no real account or provider requests
+packages/cli/test/recovery-public.test.ts:authenticated ephemeral loopback app undo with synthetic canon and pending retrieval state

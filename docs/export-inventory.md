@@ -28,7 +28,75 @@ copied as arbitrary filesystem metadata.
 
 Inspected candidates and payload copies require a regular file with one hard
 link, checked on the opened descriptor before and after reading. This does not
-claim a complete snapshot or protection against every filesystem ancestor race.
+protect against arbitrary manual filesystem edits or every filesystem ancestor
+race.
+
+Export holds the cooperating vault writer from staging through publication and
+cleanup. A top-level immediate SQLite transaction begins before the authoritative
+inventory, selected file copies, database metadata, and every supported database
+stream. All these bytes describe that capture. A database-only writer must wait
+until the capture finishes; its later commits do not enter earlier backup streams.
+Existing caller transactions are refused before callbacks or output effects.
+
+For file-backed databases, export checks the engine's main database path and
+opened-file status against the selected vault ledger, with retained descriptor
+identities checked again before publication. It uses SQLite's
+[`SQLITE_FCNTL_HAS_MOVED`](https://www.sqlite.org/c3ref/c_fcntl_begin_atomic_write.html)
+through Bun's [`fileControl`](https://bun.com/docs/runtime/sqlite) API. An
+engine-confirmed unnamed database remains supported without a physical-file
+affinity claim. SQLite uses an empty engine filename for both
+[memory and private temporary databases](https://www.sqlite.org/c3ref/db_filename.html);
+export does not label all unnamed databases as memory-only. An unavailable
+named file-backed identity check refuses export.
+
+Synchronous progress runs outside SQLite transactions while the cooperating
+writer stays held. The `inventory` notification exposes a pre-copy inventory;
+capture repeats and checks that inventory before copying. Later notifications
+describe the sealed capture. Source policy and its epoch, purge discovery and
+holds, vault/database identity, schema identity, and the staged artifact are
+checked again in a fresh immediate transaction directly before publication.
+There is no intervening progress callback. Options are captured once before
+ownership, and cancellation reads the native `AbortSignal` state.
+Existing source-erasure and purge-recovery refusals also run as an early
+read-only preflight before callbacks, path access or staging.
+
+Completed purge history is preserved in three additive v3 streams for ledger19:
+`ledger/purge_batches.jsonl`, `ledger/purge_batch_receipts.jsonl`, and
+`ledger/purge_ops.jsonl`. New exports always declare all three, including empty
+streams. They retain ready batch identities, exact receipt membership, and done
+operations with their original document IDs, store binding, proof and timestamps.
+Pending work, unresolved batch references and malformed completed proofs refuse
+export. Stored operation ID JSON is bounded to 16 MiB and proof JSON to 64 KiB;
+each operation's event provenance inventory is also bounded to 16 MiB. Larger
+history is refused rather than truncated. Rows are streamed in deterministic
+order without collecting the whole history in memory.
+
+Restore imports the three streams in the existing transaction after purge
+receipts and source grants. It rejects partial stream sets, duplicate identities,
+missing references, unfinished state, invalid proof scope and count mismatches
+before installing the restored vault. A batch without event receipts must have
+its actual completed source-grant anchor. Historical store proofs are retained
+as history: `purge --verify` still checks the recorded store obligation against
+its current binding. An unavailable store cannot become a successful empty
+operation list merely because a backup was restored.
+
+Older supported backups without these streams remain readable. Restore reports
+the missing historical batch and store evidence explicitly. Legitimate legacy
+purge receipts with no recorded batch stay unassigned, including when they occur
+alongside current completed batches; the export inventory and restore report
+state that their historical verification is unavailable. No membership is
+reconstructed from a matching time or reason.
+
+Publication uses the owned destination parent and a no-replace rename. An absent
+destination or the same owner-only empty directory can receive the export.
+The parent must be owned by the current user without group/other write access,
+or a root-owned sticky directory such as ordinary `/tmp`. Unsafe shared parents
+are refused without changing their permissions.
+Refusal and cancellation clean only the identified staging directory. Native
+publication errors retain their explicit publication, durability and cleanup
+state; uncertain entries remain for inspection. If publication and directory
+sync complete but a later transaction or ownership cleanup fails, the error
+reports `publication: "published"` and `durability: "synced"`.
 
 Classification is bounded by 100,000 inspected directory entries and receipt
 rows, 10,000 canon pages, eight path segments, 1 MiB per inspected candidate file,
@@ -46,10 +114,10 @@ does not reinterpret their existing manifests.
 
 `complete: true` retains its existing artifact meaning: the listed files were
 copied and verified. It does not assert complete runtime recovery or a coherent
-snapshot across every writer. The current v3 streams still exclude credentials,
+snapshot across manual filesystem writers. The current v3 streams still exclude credentials,
 opaque connection state and agent enrollment authority; they do not preserve
-all recovery journals, holds, purge operations, or run/access-audit history.
-Connection re-enrollment semantics and a shared canon/database snapshot fence
-remain separate work. Existing durable extraction streams are preserved without
+all recovery journals, holds, or run/access-audit history. Completed purge batches
+and store obligations are preserved; pending purge work refuses export.
+Connection re-enrollment semantics remain separate work. Existing durable extraction streams are preserved without
 another model call. Review the inventory's limits and unavailable archive count
 before relying on an export for recovery.

@@ -9,7 +9,7 @@ import {
 } from "../packages/core/src/index";
 import type { CaptureEvent, Claim, Envelope, RunReceipt, SearchHit } from "../packages/core/src/index";
 import { openLedger } from "../packages/core/src/ledger/db";
-import { verifyChecksumManifest } from "./release-artifacts";
+import { verifyPackageDirectory } from "./release-artifacts";
 import { releaseTarget, requireNativeHost } from "./release-targets";
 import { parseBuildInfo } from "./stranger-proof";
 import {
@@ -21,7 +21,6 @@ import type { QualityCase, QualityCorpus, QualityResponse, QualityResponseSet } 
 const SOURCE_ROOT = resolve(import.meta.dir, "..");
 const PINNED_BUN = readFileSync(join(SOURCE_ROOT, ".bun-version"), "utf8").trim();
 const MODEL = "quality-scripted";
-const ARTIFACT_NAMES = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"];
 const NEGATIVE_QUERY = "zymurgylatticeabsent";
 
 function assert(ok: unknown, message: string): asserts ok { if (!ok) throw new Error(message); }
@@ -67,8 +66,8 @@ export function verifyNativeArtifact(path: string, sourceSha: string) {
   assert(stat.isDirectory() && !stat.isSymbolicLink(), "artifact must be a regular directory");
   const buildPath = join(path, "BUILD.json");
   assert(lstatSync(buildPath).size <= 1_048_576, "artifact BUILD.json exceeds fixture bound");
-  verifyChecksumManifest(path, ARTIFACT_NAMES);
   const build = parseBuildInfo(buildPath);
+  verifyPackageDirectory(path, build);
   requireNativeHost(releaseTarget(build.target));
   assert(Bun.version === PINNED_BUN && build.bun_version === Bun.version, `native fixture and artifact require Bun ${PINNED_BUN}`);
   assert(build.source_sha === sourceSha, "artifact and evaluation source revisions differ");

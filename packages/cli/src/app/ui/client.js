@@ -5,15 +5,18 @@ const SESSION_KEY = 'kizuki.app.session';
 const main = document.getElementById('main');
 const dialog = document.getElementById('dialog');
 const notice = document.getElementById('notification');
-const state = { view: 'memory', status: null, service: null, sources: [], catalog: [], receipts: [], hits: null, query: '', degraded: [], busy: false, operation: null };
+const state = { view: 'memory', status: null, service: null, model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], hits: null, query: '', degraded: [], busy: false, operation: null };
 let bearer = null;
 let noticeTimer;
+let dialogCleanup = null;
 let refreshSequence = 0;
 let searchSequence = 0;
 let pulseRunning = false;
 let privacyGeneration = 0;
 let activitySequence = 0;
 let serviceSequence = 0;
+let modelSequence = 0;
+let agentsSequence = 0;
 let privateViewValid = true;
 const icons = {
   memory: ['M7 3.5h10a2 2 0 0 1 2 2v15l-7-3-7 3v-15a2 2 0 0 1 2-2Z', 'M9 8h6M9 11.5h4'],
@@ -56,7 +59,16 @@ function button(text, run, kind = 'secondary', extra = {}) { return el('button',
 function message(text) { clearTimeout(noticeTimer); notice.textContent = text; notice.hidden = false; noticeTimer = setTimeout(() => { notice.hidden = true; }, 6500); }
 function dateText(value) { if (!value) return 'Not captured yet'; const date = new Date(value); return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date) : 'Time unavailable'; }
 function providerIcon(id) { return id.includes('calendar') ? 'calendar' : id.includes('gmail') ? 'mail' : 'folder'; }
+function subjectLabels(hit) {
+  return Array.isArray(hit.subject_labels) ? hit.subject_labels.filter(label => label && typeof label.subject === 'string' &&
+    (label.display_name === null || typeof label.display_name === 'string') && Array.isArray(label.handles) && label.handles.every(handle => typeof handle === 'string')) : [];
+}
 function resultTitle(hit) {
+  if (hit.scope === 'canon' && (!hit.title || /^[a-f0-9]{64}$/i.test(String(hit.title)))) {
+    const labels = subjectLabels(hit);
+    if (labels.length === 1) return labels[0].display_name || (labels[0].handles.length === 1 ? labels[0].handles[0] : 'Memory page');
+    return 'Memory page';
+  }
   if (hit.scope === 'ledger' && String(hit.title).startsWith('kizuki.')) {
     const first = String(hit.text).split(/\r?\n/, 1)[0].trim();
     if (/^#{1,6}\s+/.test(first)) return first.replace(/^#{1,6}\s+/, '').slice(0, 160);
@@ -73,16 +85,18 @@ function sourceLabel(source) {
 }
 function staleResponse() { return Object.assign(new Error('Response superseded.'), { code: 'stale_response' }); }
 function invalidatePrivateView() {
-  privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++; serviceSequence++;
+  privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++; serviceSequence++; modelSequence++; agentsSequence++;
   privateViewValid = false;
-  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.service = null;
-  if (dialog.open) dialog.close();
+  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.service = null; state.model = null; state.modelError = false; state.agents = null; state.agentsError = false; state.operation = null;
+  clearDialogTransient();
+  if (dialog.open) closeDialog();
   dialog.replaceChildren();
   clearTimeout(noticeTimer); notice.textContent = ''; notice.hidden = true;
   main.replaceChildren();
 }
 function safeCount(value) { return Number.isSafeInteger(value) && value >= 0 ? value.toLocaleString() : '—'; }
 function humanError(code) {
+  if (code === 'recovery_pending') return 'Recovery remains pending. Run kizuki recover --json in a terminal. Inspect any unknown external operation before repeating this change.';
   if (code === 'service_unavailable') return 'Your workspace is saved, but background activity needs attention. Open Settings to check it and retry.';
   if (code === 'invalid_request') return 'Check the selected fields and entered details, then try again.';
   if (code === 'unauthorized') return 'This app session has ended. Open Kizuki again on this device to reconnect.';
@@ -117,7 +131,7 @@ function disconnect() {
   bearer = null;
   try { sessionStorage.removeItem(SESSION_KEY); } catch {}
   state.hits = null; state.sources = []; state.receipts = []; state.status = null; state.operation = null;
-  if (dialog.open) dialog.close();
+  if (dialog.open) closeDialog();
   renderDisconnected();
 }
 function renderDisconnected() {
@@ -125,11 +139,13 @@ function renderDisconnected() {
 }
 function navigate(view, focus = true) {
   if (!['memory', 'sources', 'activity', 'settings'].includes(view)) return;
+  if (dialog.open) closeDialog();
   state.view = view;
   render();
   if (focus) main.focus({ preventScroll: true });
   if (view === 'activity' && state.status?.vault.ready) loadActivity();
-  if (view === 'settings' && state.status?.vault.ready) loadService();
+  if (view === 'settings' && state.status?.vault.ready) { loadService(); loadAgents(); }
+  if (['settings', 'sources'].includes(view) && state.status?.vault.ready) loadModel();
 }
 function renderNavigation() {
   document.getElementById('navigation').replaceChildren(...[['memory', 'Memory'], ['sources', 'Sources'], ['activity', 'Activity'], ['settings', 'Settings']].map(([id, title]) => el('a', { class: 'nav-link', href: `#${id}`, 'aria-current': state.view === id ? 'page' : undefined, onclick: event => { event.preventDefault(); navigate(id); } }, icon(id), title)));
@@ -167,7 +183,7 @@ function renderMemory() {
   if (!state.status?.vault.ready || state.sources.length === 0) return renderWelcome();
   const field = el('input', { id: 'memory-query', type: 'search', placeholder: 'Find something you remember…', 'aria-label': 'Search your memory', autocomplete: 'off', spellcheck: 'false', maxlength: '2000' }); field.value = state.query;
   const form = el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); search(field.value); } }, icon('search'), field, el('button', { class: 'button button-primary', type: 'submit', disabled: state.busy }, 'Search'));
-  const section = el('section', {}, heading('Your memory.', 'The original information, with a clear path back to its source.'), form, el('p', { class: 'search-hint' }, 'Search works on this device. Results reflect your current source permissions.'));
+  const section = el('section', {}, heading('Your memory.', 'The original information, with a clear path back to its source.', button('Organise now', runPass)), form, el('p', { class: 'search-hint' }, 'Search works on this device. Organising memory pages needs a model and separate permission for each source.'));
   if (state.busy) section.append(el('div', { class: 'opening', 'aria-busy': 'true', 'aria-label': 'Searching your memory' }, el('div', { class: 'skeleton skeleton-line' }), el('div', { class: 'skeleton skeleton-panel' })));
   else if (state.hits === null) section.append(empty('A place to find things again.', 'Search for a name, a phrase, or a detail from a source you’ve imported.'));
   else if (!state.hits.length) section.append(empty('Nothing matched this search.', 'Try a more specific word from the original source, or check that the source has finished importing.', button('Check sources', () => navigate('sources'))));
@@ -176,12 +192,91 @@ function renderMemory() {
     const list = el('div', { class: 'result-list' });
     for (const hit of state.hits) {
       const citations = Array.isArray(hit.citations) ? hit.citations : [];
-      list.append(el('article', { class: 'result-item' }, el('div', { class: 'result-meta' }, el('span', { class: 'badge' }, hit.scope === 'canon' ? 'Memory page' : 'Source evidence'), el('span', {}, hit.sensitivity === 'public' ? 'Public' : hit.sensitivity === 'internal' ? 'Internal' : 'Private')), el('h3', {}, resultTitle(hit)), el('p', { class: 'result-text' }, hit.text), el('details', { class: 'result-details' }, el('summary', {}, 'View evidence references'), el('p', {}, 'Use these references to check the original information.'), ...citations.map(id => el('p', {}, el('code', {}, id))))));
+      const labels = subjectLabels(hit);
+      const subjects = labels.length > 0 && el('div', { class: 'result-meta', 'aria-label': 'Recorded subject labels' },
+        ...labels.flatMap(label => [label.display_name && el('span', { class: 'badge' }, label.display_name), ...label.handles.map(handle => el('span', { class: 'badge' }, handle))]));
+      list.append(el('article', { class: 'result-item' }, el('div', { class: 'result-meta' }, el('span', { class: 'badge' }, hit.scope === 'canon' ? 'Memory page' : 'Source evidence'), hit.scope === 'canon' && hit.taint === 'quoted' && el('span', { class: 'badge' }, 'Includes quoted evidence'), el('span', {}, hit.sensitivity === 'public' ? 'Public' : hit.sensitivity === 'internal' ? 'Internal' : 'Private')), el('h3', {}, resultTitle(hit)), subjects, el('p', { class: 'result-text' }, hit.text), el('details', { class: 'result-details' }, el('summary', {}, 'View evidence references'), el('p', {}, 'Use these references to check the original information.'), ...citations.map(id => el('p', {}, el('code', {}, id)))), hit.scope === 'canon' && button('Correct memory', () => correction(hit))));
     }
     section.append(list);
   }
   if (state.degraded.length) section.append(el('div', { class: 'status-note' }, icon('info'), el('p', {}, 'Search is using an available local path. Some optional capabilities are unavailable; these results are not a complete view of every connected source.')));
   return section;
+}
+async function correction(hit) {
+  if (hit.scope !== 'canon' || !privateViewValid || !bearer) return;
+  const content = openDialog('Correct this memory', 'Checking the visible beliefs recorded for this memory page…', 'memory');
+  let claims = [], disposed = false, previewSequence = 0, preview = null;
+  let choice, statement, value, beliefDetails, previewPanel, apply;
+  dialogCleanup = () => {
+    disposed = true; previewSequence++; preview = null; claims.length = 0; claims = [];
+    if (statement) statement.value = ''; if (value) value.value = '';
+    if (choice) { choice.value = ''; choice.replaceChildren(); }
+    beliefDetails?.replaceChildren(); previewPanel?.replaceChildren(); content.replaceChildren();
+  };
+  const current = () => !disposed && privateViewValid && bearer && dialog.open && dialog.contains(content);
+  try {
+    const targets = await api('correction_targets', { page_id: hit.id });
+    if (!current()) return;
+    claims = targets.claims;
+    content.querySelector('.dialog-description').textContent = 'Choose one recorded belief. Corrections change your memory pages; quoted source information stays unchanged.';
+    if (!claims.length) { content.append(el('p', { class: 'status-note' }, 'No correctable beliefs are available for this page under your current permissions.')); return; }
+    if (targets.truncated) content.append(el('p', { class: 'status-note' }, 'This list is limited. Additional beliefs may exist for this page.'));
+    const form = el('form'); content.append(form);
+    choice = el('select', { id: 'correction-claim' }, ...claims.map(claim => el('option', { value: claim.claim_id }, claim.body.slice(0, 120)))); choice.value = claims[0].claim_id;
+    form.append(el('div', { class: 'form-field' }, el('label', { for: 'correction-claim' }, 'Recorded belief'), choice));
+    beliefDetails = el('div', { class: 'belief-details' }); form.append(beliefDetails);
+    const selected = () => claims.find(claim => claim.claim_id === choice.value);
+    const showBelief = () => {
+      const claim = selected(); beliefDetails.replaceChildren(); if (!claim) return;
+      beliefDetails.append(el('blockquote', {}, claim.body), el('dl', { class: 'grant-summary' }, el('div', {}, el('dt', {}, 'Current value'), el('dd', {}, claim.object))), el('details', { class: 'result-details' }, el('summary', {}, 'Belief details'), el('dl', { class: 'grant-summary' }, ...[['Subject', claim.subject], ['Relationship', claim.predicate], ['Belief reference', claim.claim_id]].map(([label, item]) => el('div', {}, el('dt', {}, label), el('dd', {}, el('code', {}, item))))), el('p', {}, `Recorded authority: ${claim.authority} · Privacy: ${claim.sensitivity}`)));
+    }; showBelief();
+    const mode = el('select', { id: 'correction-mode' }, el('option', { value: 'deny' }, 'Deny this belief'), el('option', { value: 'replace' }, 'Replace its value')); mode.value = 'deny';
+    form.append(el('div', { class: 'form-field' }, el('label', { for: 'correction-mode' }, 'What should change?'), mode), el('p', { class: 'model-note' }, 'Deny marks this belief as wrong without asserting a replacement. Replace uses the exact new value you enter below.'));
+    const replacement = el('div'); value = field(replacement, 'New value', 'correction-value', 'The exact replacement value'); value.setAttribute('maxlength', '1024'); replacement.hidden = true; form.append(replacement);
+    statement = el('textarea', { id: 'correction-statement', rows: '3', maxlength: '2000', placeholder: 'Explain the correction in your own words.', autocomplete: 'off' });
+    form.append(el('div', { class: 'form-field' }, el('label', { for: 'correction-statement' }, 'Your correction'), statement));
+    const errorLine = el('p', { class: 'form-error', role: 'alert' });
+    const previewButton = el('button', { type: 'submit', class: 'button button-secondary' }, 'Preview correction');
+    previewPanel = el('div', { class: 'correction-preview', 'aria-live': 'polite', tabindex: '-1' });
+    const invalidatePreview = () => { previewSequence++; preview = null; previewPanel.replaceChildren(); previewButton.disabled = false; if (apply) apply.disabled = true; errorLine.textContent = ''; };
+    for (const input of [choice, mode, statement, value]) { input.addEventListener('input', invalidatePreview); input.addEventListener('change', invalidatePreview); }
+    choice.addEventListener('change', showBelief);
+    mode.addEventListener('change', () => { replacement.hidden = mode.value !== 'replace'; if (replacement.hidden) value.value = ''; });
+    const request = () => {
+      const claim = selected();
+      if (!claim) throw new Error('Choose a recorded belief before previewing.');
+      if (!['deny', 'replace'].includes(mode.value)) throw new Error('Choose whether to deny this belief or replace its value.');
+      if (!statement.value.trim() || statement.value.length > 2000) throw new Error('Explain the correction in your own words, using up to 2,000 characters.');
+      if (mode.value === 'replace' && (!value.value.trim() || value.value.length > 1024)) throw new Error('Enter an explicit new value, using up to 1,024 characters.');
+      return { claim_id: claim.claim_id, statement: statement.value, ...(mode.value === 'replace' ? { object: value.value } : {}) };
+    };
+    apply = button('Apply correction', async () => {
+      if (!current() || !preview) return;
+      let payload; try { payload = request(); } catch (error) { invalidatePreview(); errorLine.textContent = error.message; return; }
+      if (JSON.stringify(payload) !== JSON.stringify(preview.request)) { invalidatePreview(); errorLine.textContent = 'The correction changed. Preview it again before applying.'; return; }
+      await launchOperation('correct', payload, 'Applying your correction', async operation => {
+        await refresh();
+        if (bearer && privateViewValid && state.operation?.id === operation.id) navigate('activity');
+      });
+    }, 'primary', { disabled: true });
+    form.append(errorLine, el('div', { class: 'form-actions' }, button('Cancel', closeDialog), previewButton), previewPanel, el('div', { class: 'form-actions' }, apply));
+    form.addEventListener('submit', async event => {
+      event.preventDefault(); if (!current()) return;
+      invalidatePreview();
+      let payload; try { payload = request(); } catch (error) { errorLine.textContent = error.message; return; }
+      const sequence = ++previewSequence; previewButton.disabled = true;
+      try {
+        const result = await api('correction_preview', payload);
+        if (!current() || sequence !== previewSequence) return;
+        preview = { request: payload };
+        const count = result.affected_pages;
+        previewPanel.replaceChildren(el('h3', {}, 'Preview'), el('p', {}, 'Nothing has changed yet.'), el('p', {}, Object.hasOwn(payload, 'object') ? 'Replace the selected belief’s value with:' : 'Deny the selected belief without adding a replacement.'), ...(Object.hasOwn(payload, 'object') ? [el('blockquote', { class: 'result-text' }, payload.object)] : []), el('p', {}, 'Your correction:'), el('blockquote', { class: 'result-text' }, payload.statement), el('p', {}, Number.isSafeInteger(count) && count >= 0 ? `${safeCount(count)} memory ${count === 1 ? 'page' : 'pages'} currently affected.` : 'Current affected-page count unavailable.'), el('details', { class: 'result-details' }, el('summary', {}, 'Technical preview details'), el('p', { class: 'result-text' }, result.answer)), el('p', { class: 'model-note' }, 'Applying checks your current permissions again. The result may differ if the memory or source permissions change.'));
+        apply.disabled = false;
+        previewPanel.focus({ preventScroll: true }); apply.scrollIntoView({ block: 'nearest' });
+      } catch (error) { if (current() && sequence === previewSequence && error.code !== 'stale_response') errorLine.textContent = error.message; }
+      finally { if (current() && sequence === previewSequence) previewButton.disabled = false; }
+    });
+  } catch (error) { if (current() && error.code !== 'stale_response') content.append(el('p', { class: 'form-error', role: 'alert' }, error.message)); }
 }
 async function search(text) {
   const query = text.trim(); if (!query || state.busy || !privateViewValid || !bearer) return;
@@ -206,7 +301,10 @@ function renderSources() {
       if (active) actions.append(button('Import history', () => capture(source)), button('Privacy', () => privacy(source)));
       else if (removing) actions.append(button('Check removal', () => resumeRemoval(source)));
       else if (source.consent !== 'purged') actions.append(button('Review permission', () => consent(source), 'primary'));
-      row.append(actions); list.append(row);
+      row.append(actions);
+      const card = el('div', { class: 'source-card' }, row);
+      if (active) card.append(sourceModelControls(source));
+      list.append(card);
     }
     section.append(el('div', { class: 'section-header' }, el('h2', {}, 'Connected')), list);
   }
@@ -216,9 +314,14 @@ function renderSources() {
   section.append(catalog, el('div', { class: 'status-note' }, icon('lock'), el('p', {}, 'Nothing is captured just by connecting. You choose the fields and give this source permission before Kizuki imports its history. Provider history and deletion coverage vary.')));
   return section;
 }
+function clearDialogSecrets() { const key = dialog.querySelector('#model-key'); if (key) key.value = ''; }
+function clearDialogTransient() { clearDialogSecrets(); const cleanup = dialogCleanup; dialogCleanup = null; if (cleanup) cleanup(); }
+function closeDialog() { clearDialogTransient(); dialog.close(); }
+dialog.addEventListener('cancel', clearDialogTransient);
+dialog.addEventListener('close', () => { if (!dialog.open) clearDialogTransient(); });
 function openDialog(title, description, symbol = 'info') {
-  if (dialog.open) dialog.close();
-  const content = el('div', {}, el('div', { class: 'dialog-top' }, el('div', {}, el('div', { class: 'source-icon' }, icon(symbol)), el('h2', { id: 'dialog-title' }, title)), el('button', { type: 'button', class: 'icon-button', 'aria-label': 'Close dialog', onclick: () => dialog.close() }, icon('close'))), el('p', { class: 'dialog-description' }, description));
+  if (dialog.open) closeDialog();
+  const content = el('div', {}, el('div', { class: 'dialog-top' }, el('div', {}, el('div', { class: 'source-icon' }, icon(symbol)), el('h2', { id: 'dialog-title' }, title)), el('button', { type: 'button', class: 'icon-button', 'aria-label': 'Close dialog', onclick: () => closeDialog() }, icon('close'))), el('p', { class: 'dialog-description' }, description));
   dialog.replaceChildren(content); dialog.showModal(); return content;
 }
 function field(parent, label, id, placeholder = '', type = 'text') {
@@ -227,7 +330,7 @@ function field(parent, label, id, placeholder = '', type = 'text') {
 }
 function enrollment(provider) {
   const content = openDialog(`Connect ${provider.title}`, provider.detail, providerIcon(provider.id));
-  if (!provider.available) { content.append(el('div', { class: 'form-actions' }, button('Done', () => dialog.close(), 'primary'))); return; }
+  if (!provider.available) { content.append(el('div', { class: 'form-actions' }, button('Done', () => closeDialog(), 'primary'))); return; }
   const form = el('form'); content.append(form);
   let path, calendar;
   if (provider.id === 'markdown') { path = field(form, 'Folder location', 'source-path', '/path/to/your/notes'); form.append(el('small', {}, 'Choose an existing folder of Markdown files outside your Kizuki workspace. Original files stay in place.')); }
@@ -241,7 +344,7 @@ function enrollment(provider) {
   if (provider.id !== 'markdown') content.append(el('p', { class: 'dialog-description' }, provider.id === 'gmail' ? 'Google grants read-only mail access. Kizuki keeps only your selected fields. Sign-in opens Google in your system browser.' : 'Google grants read-only access to events on all calendars. Kizuki reads only the calendar you selected and keeps selected fields plus required identity and schedule metadata.'));
   const errorLine = el('p', { class: 'form-error', role: 'alert' });
   const submit = el('button', { type: 'submit', class: 'button button-primary' }, provider.id === 'markdown' ? 'Connect folder' : 'Continue to Google');
-  form.append(errorLine, el('div', { class: 'form-actions' }, button('Cancel', () => dialog.close()), submit));
+  form.append(errorLine, el('div', { class: 'form-actions' }, button('Cancel', () => closeDialog()), submit));
   form.addEventListener('submit', async event => {
     event.preventDefault();
     if (path && !path.value.trim()) { errorLine.textContent = 'Enter the full path to your notes folder.'; path.focus(); return; }
@@ -258,21 +361,21 @@ function enrollment(provider) {
 }
 function consent(source) {
   const content = openDialog('Choose what Kizuki can use.', `Give ${sourceLabel(source)} permission to store selected information and make it available in your private memory.`, 'lock');
-  content.append(el('div', { class: 'consent-summary' }, ...[['Use', 'Save, find and organise this source'], ['Fields', source.required_fields.join(', ')], ['Privacy', 'Private, on this device'], ['Retention', 'Kept until you remove this source'], ['Backups', 'Included in exports you choose to create']].map(([label, value]) => el('div', {}, el('span', {}, label), el('strong', {}, value)))));
-  content.append(el('p', { class: 'dialog-description' }, 'This permission does not send source data to an external model. Removing this source stops further use and begins removal from Kizuki’s owned stores. Your original files and provider account remain yours.'));
+  content.append(el('div', { class: 'consent-summary' }, ...[['Use', 'Save and find this source'], ['Fields', source.required_fields.join(', ')], ['Privacy', 'Private, on this device'], ['Retention', 'Kept until you remove this source'], ['Backups', 'Included in exports you choose to create']].map(([label, value]) => el('div', {}, el('span', {}, label), el('strong', {}, value)))));
+  content.append(el('p', { class: 'dialog-description' }, 'This permission does not let a model use source data. Removing this source stops further use and begins removal from Kizuki’s owned stores. Your original files and provider account remain yours.'));
   const request = { source_key: source.source_key, expected_revision: source.revision, operation_id: crypto.randomUUID(), policy: { purposes: ['capture','recall','session','correction','audit','derive','extract','export'], allowed_fields: source.required_fields, retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' } };
   const errorLine = el('p', { class: 'form-error', role: 'alert' });
   const allow = button('Allow and import', async () => {
     allow.disabled = true; errorLine.textContent = '';
-    try { await api('consent', request); dialog.close(); await refresh(); await capture(source); }
+    try { await api('consent', request); closeDialog(); await refresh(); await capture(source); }
     catch (error) { errorLine.textContent = error.message; allow.disabled = false; }
   }, 'primary');
-  content.append(errorLine, el('div', { class: 'form-actions' }, button('Not now', () => dialog.close()), allow));
+  content.append(errorLine, el('div', { class: 'form-actions' }, button('Not now', () => closeDialog()), allow));
 }
 async function capture(source) { await launchOperation('capture', { source_key: source.source_key, mode: 'backfill' }, 'Importing your history', async operation => { await refresh(); navigate('memory'); message(operation.counts ? `${safeCount(operation.counts.stored)} saved · ${safeCount(operation.counts.duplicates)} already present${operation.counts.errors ? ` · ${safeCount(operation.counts.errors)} problems reported` : ''}` : 'Capture completed. Check Sources for its latest coverage.'); }); }
 function privacy(source) {
   const content = openDialog('This source stays under your control.', sourceLabel(source), 'lock');
-  content.append(el('div', { class: 'consent-summary' }, ...[['Current permission', source.consent], ['Fields needed by this connection', source.required_fields.join(', ')], ['Last capture', dateText(source.last_run)]].map(([label,value]) => el('div', {}, el('span', {}, label), el('strong', {}, value)))), el('p', { class: 'dialog-description' }, 'Remove this source to stop capture and start deleting its information from Kizuki. Removal may wait for another operation to release a store. The source stops being used immediately; original files and the provider account are unaffected.'), el('div', { class: 'form-actions' }, button('Keep source', () => dialog.close()), button('Remove source', async () => {
+  content.append(el('div', { class: 'consent-summary' }, ...[['Current permission', source.consent], ['Fields needed by this connection', source.required_fields.join(', ')], ['Last capture', dateText(source.last_run)]].map(([label,value]) => el('div', {}, el('span', {}, label), el('strong', {}, value)))), el('p', { class: 'dialog-description' }, 'Remove this source to stop capture and start deleting its information from Kizuki. Removal may wait for another operation to release a store. The source stops being used immediately; original files and the provider account are unaffected.'), el('div', { class: 'form-actions' }, button('Keep source', () => closeDialog()), button('Remove source', async () => {
     const label = sourceLabel(source);
     invalidatePrivateView();
     await launchOperation('revoke', { source_key: source.source_key, expected_revision: source.revision, operation_id: crypto.randomUUID() }, `Removing ${label}`, async () => { await refresh(); navigate('sources'); message('The source is excluded. Check its status for any removal still pending.'); });
@@ -282,11 +385,19 @@ async function resumeRemoval(source) {
   if (!source.revoke_operation) { await refresh(); message('Refresh the source status before continuing removal.'); return; }
   await launchOperation('resume_revocation', { source_key: source.source_key, operation_id: source.revoke_operation }, `Checking removal · ${sourceLabel(source)}`, async () => { await refresh(); navigate('sources'); });
 }
+function activityTitle(action) {
+  switch (action) {
+    case 'create': return 'Memory page created';
+    case 'edit': return 'Memory page updated';
+    case 'archive': return 'Memory page removed';
+    default: return 'Memory change';
+  }
+}
 function renderActivity() {
   const section = el('section', {}, heading('A clear history.', 'See receipted changes to your memory. Undo restores the previous state when its receipt still applies.'));
   if (!state.receipts.length) { section.append(empty('No receipted changes yet.', 'Imported sources are searchable right away. Changes to your memory pages appear here when they happen.')); return section; }
   const list = el('ol', { class: 'activity-list' });
-  for (const receipt of state.receipts) list.append(el('li', { class: 'activity-item' }, el('div', { class: 'activity-top' }, el('div', {}, el('h3', {}, receipt.page || 'Memory change'), el('p', {}, `${dateText(receipt.at)} · ${receipt.reverted ? 'Undone' : receipt.action}`)), !receipt.reverted && button('Undo', () => undo(receipt))), el('details', { class: 'result-details' }, el('summary', {}, 'Receipt reference'), el('code', {}, receipt.id))));
+  for (const receipt of state.receipts) list.append(el('li', { class: 'activity-item' }, el('div', { class: 'activity-top' }, el('div', {}, el('h3', {}, activityTitle(receipt.action)), el('p', {}, `${dateText(receipt.at)}${receipt.reverted ? ' · Undone' : ''}`)), !receipt.reverted && button('Undo', () => undo(receipt))), el('details', { class: 'result-details' }, el('summary', {}, 'Change details'), el('p', {}, 'Page: ', el('code', {}, receipt.page)), el('p', {}, 'Receipt: ', el('code', {}, receipt.id)))));
   section.append(list); return section;
 }
 async function loadActivity() {
@@ -302,7 +413,7 @@ async function loadActivity() {
 }
 function undo(receipt) {
   const content = openDialog('Undo this change?', 'Kizuki will use the saved receipt to restore the previous state. If the page or a dependent change has moved on, the undo will refuse safely.', 'activity');
-  content.append(el('div', { class: 'status-note' }, el('p', {}, receipt.page)), el('div', { class: 'form-actions' }, button('Keep change', () => dialog.close()), button('Undo change', () => launchOperation('undo', { receipt_id: receipt.id, cascade: false }, 'Undoing this change', async () => { state.hits = null; await refresh(); await loadActivity(); message('Change undone.'); }), 'primary')));
+  content.append(el('div', { class: 'status-note' }, el('p', {}, receipt.page)), el('div', { class: 'form-actions' }, button('Keep change', () => closeDialog()), button('Undo change', () => launchOperation('undo', { receipt_id: receipt.id, cascade: false }, 'Undoing this change', async () => { state.hits = null; await refresh(); await loadActivity(); message('Change undone.'); }), 'primary')));
 }
 async function loadService() {
   const sequence = ++serviceSequence;
@@ -317,11 +428,221 @@ async function loadService() {
     if (sequence === serviceSequence && bearer && error.code !== 'stale_response') message(error.message);
   }
 }
+async function loadModel() {
+  if (!bearer || !privateViewValid) return null;
+  const sequence = ++modelSequence;
+  try {
+    const model = await api('model_status');
+    if (sequence !== modelSequence || !bearer || !privateViewValid) return null;
+    state.model = model; state.modelError = false;
+    if (['settings', 'sources'].includes(state.view)) render();
+    return model;
+  } catch (error) {
+    if (sequence === modelSequence && bearer && privateViewValid && error.code !== 'stale_response') {
+      state.model = null; state.modelError = true;
+      if (['settings', 'sources'].includes(state.view)) render();
+      message(error.message);
+    }
+    return null;
+  }
+}
+function modelIdentity(model) {
+  return model?.selection.kind === 'openai_compatible'
+    ? el('div', { class: 'model-identity' }, el('strong', {}, model.selection.model), el('code', {}, model.selection.model_endpoint)) : null;
+}
+function renderModelSettings() {
+  const model = state.model, selected = model?.selection.kind === 'openai_compatible';
+  const test = model?.last_test?.revision === model?.revision ? model?.last_test : null;
+  return el('section', { class: 'model-settings', 'aria-labelledby': 'model-settings-title' },
+    el('div', { class: 'section-header' }, el('h2', { id: 'model-settings-title' }, 'Organise with a model'), el('span', { class: `badge${selected ? ' badge-active' : ''}` }, model ? selected ? 'Model selected' : 'Off' : state.modelError ? 'Setup needs attention' : 'Checking setup')),
+    el('p', {}, 'A model can turn permitted source information into memory pages. Capture and search work with this turned off.'), modelIdentity(model),
+    el('p', { class: 'model-note' }, model?.credential === 'unavailable' ? 'The saved key is unavailable. Replace it in model settings before testing.' : model?.credential === 'configured' ? 'An API key is saved on this device. Its value is never shown here.' : selected ? 'No API key is saved. Some local models do not need one.' : 'Choose an OpenAI-compatible service or a compatible model running on this device.'),
+    test && el('p', { class: 'model-test-result', role: 'status' }, `${test.outcome === 'succeeded' ? 'Connection test passed' : 'Connection test failed'} · ${dateText(test.at)}${test.outcome === 'succeeded' ? ` · ${safeCount(test.latency_ms)} ms` : '. Check your settings and retry'}. This is the last test in this app session.`),
+    el('div', { class: 'model-actions' }, button(model ? 'Model settings' : 'Check model settings', modelSettings, 'primary'), selected && button('Test connection', () => testModel(model))),
+    el('p', { class: 'model-note' }, 'Saving settings or testing the connection gives no source permission. Choose which sources this model may use in Sources.'));
+}
+async function modelSettings() {
+  const loading = openDialog('Model settings', 'Checking the current saved settings…', 'settings');
+  const model = await loadModel();
+  if (!dialog.open || !dialog.contains(loading)) return;
+  if (!model) { loading.append(el('p', { class: 'form-error', role: 'alert' }, 'The saved settings could not be read. Close this panel and retry; existing settings have not been replaced.')); return; }
+  const content = openDialog('Model settings', 'Choose how Kizuki organises memory pages. Saving does not contact the model or let it use any source.', 'settings');
+  const form = el('form');
+  const kind = el('select', { id: 'model-kind' }, el('option', { value: 'none' }, 'Off — capture and search only'), el('option', { value: 'openai_compatible' }, 'OpenAI-compatible model'));
+  kind.value = model.selection.kind;
+  form.append(el('div', { class: 'form-field' }, el('label', { for: 'model-kind' }, 'Model connection'), kind));
+  const base = field(form, 'Base URL', 'model-url', 'https://your-provider.example/v1', 'url');
+  const name = field(form, 'Model name', 'model-name', 'The model ID from your provider');
+  if (model.selection.kind === 'openai_compatible') { base.value = model.selection.base_url; name.value = model.selection.model; }
+  form.append(el('p', { class: 'model-note' }, 'Use the API base URL and exact model name supplied by your service. You can also use a compatible local server.'));
+  const key = field(form, 'API key (optional)', 'model-key', model.credential === 'configured' ? 'Leave blank to keep the saved key' : 'Enter a key if your service needs one', 'password');
+  key.setAttribute('autocomplete', 'new-password'); key.setAttribute('maxlength', '1024');
+  form.append(el('p', { class: 'model-note' }, 'The key is saved privately on this device. This field is cleared when you save or close the panel.'));
+  const clear = el('input', { type: 'checkbox', id: 'model-clear-key' });
+  form.append(el('label', { class: 'check-row', for: 'model-clear-key' }, clear, 'Remove the saved API key'));
+  const updateFields = () => { const off = kind.value === 'none'; base.disabled = off; name.disabled = off; key.disabled = off || clear.checked; if (key.disabled) key.value = ''; };
+  kind.addEventListener('change', updateFields); clear.addEventListener('change', updateFields); updateFields();
+  const errorLine = el('p', { class: 'form-error', role: 'alert' });
+  const save = el('button', { type: 'submit', class: 'button button-primary' }, 'Save model settings');
+  form.append(errorLine, el('div', { class: 'form-actions' }, button('Cancel', closeDialog), save)); content.append(form);
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); if (save.disabled) return;
+    const off = kind.value === 'none';
+    if (!off && (!base.value.trim() || !name.value.trim())) { errorLine.textContent = 'Enter the base URL and model name, or turn the connection off.'; (!base.value.trim() ? base : name).focus(); return; }
+    if (new TextEncoder().encode(key.value).length > 1024) { key.value = ''; errorLine.textContent = 'This key is too long. Use an API key of no more than 1,024 bytes.'; key.focus(); return; }
+    const payload = { expected_revision: model.revision, selection: off ? { kind: 'none' } : { kind: 'openai_compatible', base_url: base.value.trim(), model: name.value.trim() }, credential: clear.checked ? { action: 'clear' } : !off && key.value ? { action: 'replace', value: key.value } : { action: 'keep' } };
+    key.value = ''; save.disabled = true; errorLine.textContent = '';
+    modelSequence++;
+    try {
+      const saved = await api('model_save', payload);
+      if (!bearer || !privateViewValid) return;
+      modelSequence++;
+      state.model = saved; state.modelError = false;
+      // Grants must be re-read from the host after any configuration change.
+      for (const source of state.sources) source.model_consent = 'unavailable';
+      if (dialog.contains(content)) closeDialog(); render();
+      message('Model settings saved. No source permission was granted. Test the connection, then review Sources.');
+      void refresh();
+    } catch (error) { if (error.code !== 'stale_response' && dialog.open && dialog.contains(content)) { errorLine.textContent = error.message; save.disabled = false; } }
+    finally { if (payload.credential.action === 'replace') payload.credential.value = ''; }
+  });
+}
+async function testModel(model) {
+  await launchOperation('model_test', { expected_revision: model.revision }, 'Test your model connection', async () => {});
+  await loadModel();
+}
+function sourceModelControls(source) {
+  const consent = source.model_consent;
+  const detail = consent === 'current' ? 'Model permission granted for the current connection.' : consent === 'different_model' ? 'Permission is for a different model. It does not allow the current connection to use this source.' : consent === 'local_only' ? 'Local only. No model may use this source.' : 'Model permission could not be confirmed. Refresh before relying on it.';
+  return el('div', { class: 'source-model' }, el('div', {}, el('h4', {}, 'Model use'), el('p', {}, detail), state.model?.selection.kind === 'openai_compatible' && el('p', { class: 'model-current-label' }, 'Current connection'), modelIdentity(state.model)), el('div', { class: 'model-actions' },
+    state.model?.selection.kind === 'openai_compatible' && consent !== 'current' && button('Review model permission', () => modelConsent(source, true)),
+    (!state.model || state.model.selection.kind === 'none') && button('Set up a model', () => navigate('settings')),
+    ['current', 'different_model', 'unavailable'].includes(consent) && button('Withdraw model permission', () => modelConsent(source, false))));
+}
+async function modelConsent(source, allow) {
+  const loading = openDialog('Model permission', 'Checking the current model before showing this permission…', 'lock');
+  const model = await loadModel();
+  if (!dialog.open || !dialog.contains(loading)) return;
+  if (!model || (allow && model.selection.kind !== 'openai_compatible')) { loading.append(el('p', { class: 'form-error', role: 'alert' }, 'Choose a model in Settings, then review this permission again.')); return; }
+  const content = openDialog(allow ? 'Allow this model to use this source?' : 'Withdraw model permission?', sourceLabel(source), 'lock');
+  content.append(el('div', {}, modelIdentity(model), el('p', { class: 'dialog-description' }, allow ? 'This source’s permitted information may be sent to the exact model connection shown above to organise memory pages. The model provider controls retention of information it receives. This also applies to a model running on this device.' : 'Stop future model use of this source. Local capture and search stay permitted. This does not recall information a provider has already received.'),
+    source.model_consent === 'different_model' && el('p', { class: 'status-note' }, 'The previous permission belongs to a different model. Allowing this connection replaces that model permission.')));
+  const request = { source_key: source.source_key, expected_revision: source.revision, expected_model_revision: model.revision, operation_id: crypto.randomUUID(), allow };
+  const errorLine = el('p', { class: 'form-error', role: 'alert' });
+  const confirm = button(allow ? 'Allow this model' : 'Withdraw permission', async () => {
+    confirm.disabled = true;
+    try {
+      await api('source_model_consent', request);
+      if (dialog.contains(content)) closeDialog();
+      await refresh();
+      if (bearer && privateViewValid) message(allow ? 'Model permission saved for this source. Use Organise now in Memory to run a processing pass.' : 'Model permission withdrawn. Local capture and search remain available.');
+    } catch (error) { if (error.code !== 'stale_response' && dialog.open && dialog.contains(content)) { errorLine.textContent = error.message; confirm.disabled = false; } }
+  }, allow ? 'primary' : 'danger');
+  content.append(errorLine, el('div', { class: 'form-actions' }, button('Cancel', closeDialog), confirm));
+}
+function runSummary(operation) {
+  const run = operation.result?.run;
+  if (!run) return 'A run receipt has not been returned. Refresh to check the outcome; memory writes are not confirmed.';
+  return `${safeCount(run.canon_writes)} memory ${run.canon_writes === 1 ? 'write' : 'writes'} · ${safeCount(run.claims_extracted)} details extracted · ${safeCount(run.model_calls)} model ${run.model_calls === 1 ? 'call' : 'calls'}. ${run.model_configured ? 'Only sources with matching model permission can be used.' : 'No model was configured; capture and search remain available.'} Run status: ${run.status}.`;
+}
+async function runPass() {
+  await launchOperation('run_pass', {}, 'Organising your memory', async () => { await refresh(); });
+}
+const agentReadTools = [['search', 'Search memory'], ['get_page', 'Read memory pages'], ['query_entities', 'Find entities'], ['timeline', 'Read timelines'], ['context_packet', 'Get relevant context'], ['graph_neighbors', 'Explore connections'], ['system_health', 'Check system health']];
+async function loadAgents() {
+  if (!bearer || !privateViewValid) return;
+  const sequence = ++agentsSequence;
+  try {
+    const result = await api('agents');
+    if (sequence !== agentsSequence || !privateViewValid || !bearer) return;
+    state.agents = result.agents; state.agentsError = false;
+    if (state.view === 'settings') render();
+  } catch (error) {
+    if (sequence === agentsSequence && privateViewValid && bearer && error.code !== 'stale_response') {
+      state.agents = null; state.agentsError = true;
+      if (state.view === 'settings') render();
+      message(error.message);
+    }
+  }
+}
+function grantSummary(grant) {
+  if (!grant) return el('p', {}, 'The current grant is unavailable.');
+  const scope = (items, all) => items === null ? all : items.length ? items.join(', ') : 'None';
+  const rows = [['Sensitivity ceiling', grant.ceiling], ['Record types', scope(grant.types, 'All record types')], ['Subjects', scope(grant.subjects, 'All subjects')], ['From', grant.since || 'No start limit'], ['Until', grant.until || 'No end limit'], ['Tools', grant.tools.length ? grant.tools.map(tool => agentReadTools.find(([id]) => id === tool)?.[1] || tool).join(', ') : 'None'], ['Requests per minute', grant.rate_limit_per_minute], ['Owner correction relay', grant.relay_owner_corrections ? 'On' : 'Off']];
+  return el('dl', { class: 'grant-summary' }, ...rows.map(([label, value]) => el('div', {}, el('dt', {}, label), el('dd', {}, value))));
+}
+function renderAgents() {
+  const section = el('section', { class: 'agent-settings', 'aria-labelledby': 'agent-settings-title' }, el('div', { class: 'section-header' }, el('h2', { id: 'agent-settings-title' }, 'Let an agent read your memory'), button('Set up an agent', agentEnrollment)), el('p', {}, 'Give each assistant its own limited access. Review what it may read, then add its launch configuration to that assistant on this device.'));
+  if (!state.agents) section.append(el('p', { class: 'model-note' }, state.agentsError ? 'Agent access could not be checked. Refresh before relying on its status.' : 'Checking existing agents…'), button('Refresh agents', loadAgents));
+  else if (!state.agents.length) section.append(el('p', { class: 'model-note' }, 'No agents are connected yet. The setup starts with read-only access to public information.'));
+  else for (const agent of state.agents) section.append(el('article', { class: 'agent-row' }, el('div', { class: 'section-header' }, el('h3', {}, agent.name), el('span', { class: 'badge' }, agent.revoked_at ? 'Revoked' : 'Enrolled')), el('details', { class: 'result-details' }, el('summary', {}, 'View all permissions'), grantSummary(agent.grant)), !agent.revoked_at && button('Revoke access', () => agentRevoke(agent))));
+  return section;
+}
+function agentEnrollment() {
+  const content = openDialog('Set up a read-only agent', 'Choose the information this assistant may read. It will have its own identity, separate from your owner access.', 'lock');
+  const form = el('form'); content.append(form);
+  const name = field(form, 'Agent name', 'agent-name', 'research-helper'); name.setAttribute('maxlength', '64');
+  const ceiling = el('select', { id: 'agent-ceiling' }, ...[['public', 'Public only'], ['personal', 'Public and personal'], ['private', 'Public, personal and private']].map(([value, label]) => el('option', { value }, label))); ceiling.value = 'public';
+  form.append(el('div', { class: 'form-field' }, el('label', { for: 'agent-ceiling' }, 'Sensitivity ceiling'), ceiling), el('p', { class: 'model-note' }, 'Imported sources are private by default. A public-only agent may see no source information. A higher ceiling still respects your source permissions.'));
+  const choices = el('fieldset', { class: 'field-choices' }, el('legend', {}, 'Read tools'));
+  const tools = agentReadTools.map(([id, label]) => { const check = el('input', { type: 'checkbox', id: `agent-tool-${id}`, value: id, checked: ['search', 'get_page'].includes(id) }); check.value = id; choices.append(el('label', { class: 'check-row', for: `agent-tool-${id}` }, check, label)); return check; }); form.append(choices);
+  const scopeFields = el('details', { class: 'result-details' }, el('summary', {}, 'Narrow by type, subject or time (optional)')); form.append(scopeFields);
+  const types = field(scopeFields, 'Record types (optional)', 'agent-types', 'person, fact');
+  const subjects = field(scopeFields, 'Subjects (optional)', 'agent-subjects', 'person:ada');
+  scopeFields.append(el('p', { class: 'model-note' }, 'Use exact type or subject IDs, separated by commas. Leave a field blank to include all within the sensitivity ceiling.'));
+  const since = field(scopeFields, 'From (your local time, optional)', 'agent-since', '', 'datetime-local');
+  const until = field(scopeFields, 'Until (your local time, optional)', 'agent-until', '', 'datetime-local');
+  const rate = field(form, 'Requests per minute', 'agent-rate', '60', 'number'); rate.value = '60'; rate.setAttribute('min', '1'); rate.setAttribute('max', '1000'); rate.setAttribute('step', '1');
+  form.append(el('p', { class: 'model-note' }, 'Owner correction relay: off. This setup grants no correction or proposal tools.'));
+  const errorLine = el('p', { class: 'form-error', role: 'alert' });
+  form.append(errorLine, el('div', { class: 'form-actions' }, button('Cancel', closeDialog), el('button', { type: 'submit', class: 'button button-primary' }, 'Review access')));
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(name.value.trim())) { errorLine.textContent = 'Use 2–64 lowercase letters, numbers or hyphens, starting with a letter or number.'; name.focus(); return; }
+    const limit = Number(rate.value);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) { errorLine.textContent = 'Choose between 1 and 1,000 requests per minute.'; rate.focus(); return; }
+    const scope = input => input.value.trim() ? input.value.split(',').map(value => value.trim()).filter(Boolean) : null;
+    let start = null, end = null;
+    try { start = since.value ? new Date(since.value).toISOString() : null; end = until.value ? new Date(until.value).toISOString() : null; } catch { errorLine.textContent = 'Enter a valid start and end time, or leave them blank.'; return; }
+    if (start && end && start > end) { errorLine.textContent = 'The start time must be before the end time.'; since.focus(); return; }
+    const request = { name: name.value.trim(), operation_id: crypto.randomUUID(), grant: { ceiling: ceiling.value, types: scope(types), subjects: scope(subjects), since: start, until: end, tools: tools.filter(check => check.checked).map(check => check.value), rate_limit_per_minute: limit, relay_owner_corrections: false } };
+    const review = openDialog('Review this agent’s access', request.name, 'lock');
+    review.append(grantSummary(request.grant), el('p', { class: 'dialog-description' }, 'Only these permissions will be granted. The next step creates a private credential file on this device; its secret value will not appear in the browser.'), el('div', { class: 'form-actions' }, button('Cancel', closeDialog), button('Create agent', () => launchOperation('agent_enroll', request, 'Creating agent access', async operation => { await loadAgents(); showAgentResult(operation); }), 'primary')));
+  });
+}
+function agentLaunchConfig(mcp) {
+  if (!mcp || typeof mcp.command !== 'string' || !mcp.command || !Array.isArray(mcp.args) || !mcp.args.every(arg => typeof arg === 'string')) return null;
+  if ([mcp.command, ...mcp.args].some(value => /kzk_|--owner|--token(?:=|$)/.test(value))) return null;
+  const refs = mcp.args.filter(arg => arg === '--token-ref').length, at = mcp.args.indexOf('--token-ref');
+  if (refs !== 1 || !mcp.args[at + 1]?.startsWith('file:') || mcp.args[at + 1].length <= 5 || !mcp.args.includes('--vault')) return null;
+  return { command: mcp.command, args: [...mcp.args] };
+}
+function showAgentResult(operation) {
+  if (!bearer || !privateViewValid || state.operation?.id !== operation.id || !operation.result?.agent) return;
+  const { receipt, mcp } = operation.result.agent;
+  const content = openDialog('Agent access result', receipt.name, 'lock');
+  content.append(el('p', { class: 'dialog-description' }, `Access: ${receipt.authority}. Enrollment: ${receipt.status}. Credential file: ${receipt.credential}.`));
+  const config = receipt.authority === 'active' && receipt.credential === 'ready' ? agentLaunchConfig(mcp) : null;
+  if (config) {
+    const serialized = JSON.stringify(config, null, 2);
+    const text = el('textarea', { class: 'launch-config', readonly: '', rows: '8', 'aria-label': 'Agent MCP launch configuration', spellcheck: 'false' }); text.value = serialized;
+    content.append(el('p', { class: 'dialog-description' }, 'Add this launch configuration to your assistant’s MCP settings on this device. It refers to a private file; it contains no secret token. Kizuki has not changed another app’s settings.'), text, button('Copy launch configuration', async () => {
+      try { await navigator.clipboard.writeText(serialized); if (dialog.contains(content) && privateViewValid) message('Launch configuration copied. Add it to your assistant’s MCP settings.'); }
+      catch { if (dialog.contains(content) && privateViewValid) { text.focus(); text.select(); message('Select and copy the launch configuration from this field.'); } }
+    }));
+  } else if (receipt.authority === 'active') content.append(el('p', { class: 'form-error', role: 'alert' }, 'A usable scoped launch configuration was not returned. No owner access will be substituted.'));
+  if (receipt.grant) content.append(grantSummary(receipt.grant));
+  content.append(el('div', { class: 'form-actions' }, button('Done', closeDialog, 'primary')));
+}
+function agentRevoke(agent) {
+  const content = openDialog('Revoke this agent’s access?', agent.name, 'lock');
+  content.append(grantSummary(agent.grant), el('p', { class: 'dialog-description' }, 'This stops the agent’s access, including existing connections. Its name and credential file are retained; it cannot be reused as a new identity.'), el('div', { class: 'form-actions' }, button('Keep access', closeDialog), button('Revoke access', () => launchOperation('agent_revoke', { name: agent.name }, 'Revoking agent access', async operation => { await loadAgents(); showAgentResult(operation); }), 'danger')));
+}
 function renderSettings() {
-  return el('section', {}, heading('Simply yours.', 'A local workspace, clear permissions, and room to grow when you need it.'), el('div', { class: 'settings-list' },
+  return el('section', {}, heading('Simply yours.', 'A local workspace, clear permissions, and room to grow when you need it.'), renderModelSettings(), renderAgents(), el('div', { class: 'settings-list' },
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Workspace'), el('p', {}, 'Your memory stays in a local folder you control.')), el('span', { class: 'settings-value' }, state.status?.vault.name || 'Not created')),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Background activity'), el('p', {}, state.service?.detail || 'Refresh to check background activity.'), state.service && el('small', {}, `Checked ${dateText(state.service.checked_at)}`)), el('div', { class: 'form-actions' }, button('Refresh', loadService), state.service && state.service.state !== 'active' && state.service.kind !== 'none' && button('Enable background activity', () => launchOperation('install_service', {}, 'Setting up background activity', async () => { await refresh(); await loadService(); }), 'primary'))),
-    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Source privacy'), el('p', {}, 'Each source has its own permission. Sources connected here default to private storage and no external model egress.')), button('Manage sources', () => navigate('sources'))),
+    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Source privacy'), el('p', {}, 'Each source has its own permission. Imported content stays on this device unless you separately allow a model to use it.')), button('Manage sources', () => navigate('sources'))),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'App session'), el('p', {}, 'This tab remembers only its local app capability. Search results and source content are not stored in browser storage.')), button('Disconnect tab', disconnect))),
     el('div', { class: 'status-note' }, icon('info'), el('p', {}, 'Search works without a model. Automatic organisation needs a working model and your permission to use each source.')));
 }
@@ -329,9 +650,9 @@ function renderOperation() {
   const operation = state.operation;
   if (!operation) return null;
   const running = operation.state === 'running';
-  const title = running ? 'Working on your source' : operation.state === 'failed' ? 'This step needs attention' : operation.state === 'unknown' ? 'Completion is not yet confirmed' : operation.kind === 'capture' ? 'Import progress saved' : 'Completed';
-  const detail = running ? 'Your source checkpoint keeps progress recoverable. You can continue using the app.' : operation.error ? humanError(operation.error.code) : operation.kind === 'capture' && operation.counts ? `${safeCount(operation.counts.stored)} saved this time. Check Sources for the latest history and any problems.` : 'Check Sources or Activity for the current state.';
-  return el('div', { class: 'job-status', role: 'status' }, icon(running ? 'clock' : operation.state === 'succeeded' ? 'check' : 'info'), el('div', {}, el('h3', {}, title), el('p', {}, detail)));
+  const title = operation.kind === 'correct' ? (running ? 'Applying your correction' : 'Correction result') : operation.kind === 'agent_enroll' || operation.kind === 'agent_revoke' ? (running ? 'Updating agent access' : 'Agent access result') : operation.kind === 'model_test' ? (running ? 'Testing your model connection' : operation.state === 'succeeded' ? 'Connection test completed' : 'Connection test needs attention') : operation.kind === 'run_pass' ? (running ? 'Organising your memory' : operation.state === 'succeeded' ? 'Processing run completed' : 'Processing needs attention') : running ? 'Working on your source' : operation.state === 'failed' ? 'This step needs attention' : operation.state === 'unknown' ? 'Completion is not yet confirmed' : operation.kind === 'capture' ? 'Import progress saved' : 'Completed';
+  const detail = (operation.kind === 'correct' || operation.error?.code === 'recovery_pending') && operation.result ? operation.result.message : operation.result?.agent ? `Access: ${operation.result.agent.receipt.authority}. Enrollment: ${operation.result.agent.receipt.status}.` : operation.kind === 'run_pass' && !running && !operation.error ? runSummary(operation) : operation.kind === 'model_test' && !operation.error ? 'This test uses a made-up prompt. It does not use your imported information or grant source permission.' : running ? 'Your source checkpoint keeps progress recoverable. You can continue using the app.' : operation.error ? humanError(operation.error.code) : operation.kind === 'capture' && operation.counts ? `${safeCount(operation.counts.stored)} saved this time. Check Sources for the latest history and any problems.` : 'Check Sources or Activity for the current state.';
+  return el('div', { class: 'job-status', role: 'status' }, icon(running ? 'clock' : operation.state === 'succeeded' ? 'check' : 'info'), el('div', {}, el('h3', {}, title), el('p', {}, detail), operation.kind === 'correct' && operation.result?.recovery_pending === undefined && Number.isSafeInteger(operation.result?.rewritten_pages) && el('p', {}, `${safeCount(operation.result.rewritten_pages)} memory ${operation.result.rewritten_pages === 1 ? 'page' : 'pages'} rewritten.`), operation.kind === 'correct' && operation.result?.receipt_id && el('details', { class: 'result-details' }, el('summary', {}, 'Correction receipt'), el('code', {}, operation.result.receipt_id)), operation.result?.run?.run_id && el('details', { class: 'result-details' }, el('summary', {}, 'Run receipt'), el('code', {}, operation.result.run.run_id)), operation.result?.agent && button('Agent setup details', () => showAgentResult(operation))));
 }
 function render() {
   renderNavigation();
@@ -367,14 +688,16 @@ async function refresh() {
     searchSequence++; state.busy = false; state.hits = null; state.degraded = [];
     reconcileOperation(status.operations);
     render();
+    if (status.vault.ready && ['settings', 'sources'].includes(state.view)) void loadModel();
+    if (status.vault.ready && state.view === 'settings') void loadAgents();
   } catch (error) { if (bearer && sequence === refreshSequence && error.code !== 'stale_response') { invalidatePrivateView(); main.replaceChildren(empty('Let’s reconnect.', error.message, button('Try again', refresh, 'primary'))); } }
 }
 async function launchOperation(route, payload, title, done) {
   const session = bearer, generation = privacyGeneration;
   const current = () => session === bearer && generation === privacyGeneration;
-  const content = openDialog(title, route === 'enroll' && payload.provider !== 'markdown' ? 'Continue in the Google sign-in window. Kizuki will show the result here when sign-in and local enrollment finish.' : 'Kizuki will confirm the result here. Closing this panel does not cancel an operation that has already started.', 'clock');
+  const content = openDialog(title, route === 'model_test' ? 'This sends one made-up prompt to your saved model. None of your imported information is included, and source permissions stay unchanged.' : route === 'run_pass' ? 'Kizuki will process permitted sources and report the resulting memory writes. A model can use only sources with matching model permission.' : route === 'enroll' && payload.provider !== 'markdown' ? 'Continue in the Google sign-in window. Kizuki will show the result here when sign-in and local enrollment finish.' : 'Kizuki will confirm the result here. Closing this panel does not cancel an operation that has already started.', 'clock');
   const progress = el('div', { class: 'opening', 'aria-busy': 'true' }, el('div', { class: 'skeleton skeleton-line' }), el('p', {}, 'Starting…'));
-  content.append(progress, el('div', { class: 'form-actions' }, button('Close panel', () => dialog.close())));
+  content.append(progress, el('div', { class: 'form-actions' }, button('Close panel', () => closeDialog())));
   try {
     const { operation_id } = await api(route, payload);
     for (let attempt = 0; attempt < 180; attempt++) {
@@ -385,7 +708,7 @@ async function launchOperation(route, payload, title, done) {
       if (operation.state !== 'running') {
         progress.setAttribute('aria-busy', 'false');
         if (route === 'initialize' && operation.error?.code === 'service_unavailable') {
-          if (dialog.open && dialog.contains(content)) dialog.close();
+          if (dialog.open && dialog.contains(content)) closeDialog();
           await refresh();
           if (session === bearer && privateViewValid && state.status?.vault.ready) {
             navigate('settings');
@@ -393,11 +716,11 @@ async function launchOperation(route, payload, title, done) {
           }
           return;
         }
-        if (operation.state !== 'succeeded') throw Object.assign(new Error(operation.error ? humanError(operation.error.code) : 'Completion is not confirmed. Check the source state before trying again.'), { code: operation.error?.code || 'unknown' });
-        if (dialog.open && dialog.contains(content)) dialog.close();
+        if (operation.state !== 'succeeded') throw Object.assign(new Error(operation.error?.code === 'recovery_pending' && operation.result?.message ? operation.result.message : operation.error ? humanError(operation.error.code) : 'Completion is not confirmed. Check the source state before trying again.'), { code: operation.error?.code || 'unknown' });
+        if (dialog.open && dialog.contains(content)) closeDialog();
         await done(operation); return;
       }
-      const line = progress.querySelector('p'); if (line) line.textContent = 'In progress. Your original source stays in place.';
+      const line = progress.querySelector('p'); if (line) line.textContent = route === 'model_test' ? 'Waiting for the model to answer the test prompt…' : route === 'run_pass' ? 'Processing. The completed run will have a receipt.' : 'In progress. Your original source stays in place.';
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
     throw new Error('This is taking longer than expected. Close this panel and refresh to check its current state.');

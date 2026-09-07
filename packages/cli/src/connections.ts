@@ -1,3 +1,6 @@
+import { XApiConnector, createXApiConnector, inspectXApiState, type XApiConfig } from "@kizuki/connectors";
+import { xApiClient, xApiRequiredFields, xApiStateConfig } from "./x-api";
+import type { ConnectionStateReader } from "@kizuki/core";
 import { GoogleCalendarConnector, createGoogleCalendarConnector, inspectGoogleCalendarState, type GoogleCalendarConnectorConfig } from "@kizuki/connector-google-calendar";
 import { googleCalendarClient, googleCalendarRequiredFields, googleCalendarStateConfig } from "./google-calendar";
 import { GmailConnector, createGmailConnector, inspectGmailState, type GmailConnectorConfig } from "@kizuki/connector-gmail";
@@ -140,18 +143,30 @@ export function connectorAuthModes(id: string): readonly string[] | null {
   return null;
 }
 
-/**
- * True only for a connector whose enrolled state can never hold credential
- * material. Sign-in and secret-ref connectors mint real secrets (session
- * tokens, app passwords) into the same opaque connection-state store a
- * `none`-auth connector uses for plain config like a local path; core never
- * distinguishes the two, so a backup that copied every connector's state
- * bytes would put those secrets in the backup. Only the `none`-auth shape is
- * safe to carry across a backup.
- */
-export function connectionStateIsCredentialFree(connectorId: string): boolean {
-  const modes = connectorAuthModes(connectorId);
-  return modes !== null && modes.length === 1 && modes[0] === "none";
+/** Only these host codecs are path-only. Auth-none alone is not sufficient. */
+const PORTABLE_PATH_IDS = Object.freeze([
+  "kizuki.markdown-folder", "kizuki.import-chatgpt", "kizuki.import-claude",
+  "kizuki.import-whatsapp", "kizuki.import-pocket", "kizuki.import-omnivore",
+  "kizuki.import-x-archive", "kizuki.screenpipe",
+]);
+export function portableLocalAdapter(): import("@kizuki/core").PortableLocalAdapter {
+  for (const id of PORTABLE_PATH_IDS) {
+    const manifest = getConnector(id, { path: "/var/empty" }).manifest();
+    if (manifest.auth_modes.length !== 1 || manifest.auth_modes[0] !== "none" || manifest.required_secrets.length !== 0) {
+      throw new ConnectionError("portable local connector contract changed");
+    }
+  }
+  return Object.freeze({
+    connector_ids: PORTABLE_PATH_IDS,
+    decode(id: string, bytes: Uint8Array) {
+      const state = decodeHostState(bytes, id);
+      if (state.config.path === undefined) throw new ConnectionError("portable connection requires a local path");
+      return Object.freeze({ path: state.config.path });
+    },
+    encode(id: string, config: { readonly path: string }) {
+      return encodeHostState({ schema: HOST_STATE_SCHEMA, connector_id: id, config });
+    },
+  });
 }
 
 export function listEnrollableConnectorIds(): string[] {
@@ -159,10 +174,11 @@ export function listEnrollableConnectorIds(): string[] {
     .sort()
     .filter((id) => connectorAuthModes(id)?.includes("none") === true ||
       (id === "kizuki.beeper" && connectorAuthModes(id)?.includes("secret_ref") === true) ||
-      (["kizuki.imap", "kizuki.telegram", "kizuki.gmail", "kizuki.google-calendar"].includes(id) && connectorAuthModes(id)?.includes("sign_in") === true));
+      (["kizuki.imap", "kizuki.telegram", "kizuki.gmail", "kizuki.google-calendar", "kizuki.x"].includes(id) && connectorAuthModes(id)?.includes("sign_in") === true));
 }
 
 function resolveRegisteredId(input: string): string | null {
+  if (input === "x-api") return "kizuki.x";
   if (input in REGISTRY) return input;
   const prefixed = `kizuki.${input}`;
   if (prefixed in REGISTRY) return prefixed;
@@ -193,8 +209,7 @@ export async function enrollHostConnection(
     throw new ConnectionError("connection state connector_id does not match");
   }
   decodeHostState(encodeHostState(state), connectorId);
-  store.recover(db);
-  const enrollment = store.begin();
+  const enrollment = store.beginWithRecovery(db);
   try {
     await enrollment.writer.write(encodeHostState(state));
     return store.save(db, connectorId, enrollment.pending);
@@ -208,12 +223,14 @@ export class DuplicateSourceError extends ConnectionError {
   constructor() { super("source_already_enrolled; select its existing --source KEY to reauthorize; source consent is unchanged"); }
 }
 
-function verifyGoogleEnrollment(connectorId: string): Parameters<typeof enrollConnection>[4] {
+function verifyAccountEnrollment(connectorId: string): Parameters<typeof enrollConnection>[4] {
   const identity = connectorId === "kizuki.gmail"
     ? (bytes: Uint8Array) => JSON.stringify([inspectGmailState(bytes).account_id])
     : connectorId === "kizuki.google-calendar"
       ? (bytes: Uint8Array) => { const state = inspectGoogleCalendarState(bytes); return JSON.stringify([state.account_id, state.calendar_id]); }
-      : undefined;
+      : connectorId === "kizuki.x"
+        ? (bytes: Uint8Array) => { const state = inspectXApiState(bytes); return JSON.stringify([state.account_id, state.app_digest, state.selection]); }
+        : undefined;
   if (identity === undefined) return undefined;
   return (candidate, existing) => {
     const selected = identity(candidate);
@@ -236,7 +253,6 @@ export async function enrollSignedInConnection(
   if (!manifest.auth_modes.includes("sign_in") || connector.signIn === undefined) {
     throw new ConnectionError(`${manifest.connector_id} does not support interactive sign-in`);
   }
-  store.recover(db);
   const existing = listConnections(db, { includeDisconnected: true }).filter(
     (connection) => connection.connector_id === manifest.connector_id,
   );
@@ -252,7 +268,7 @@ export async function enrollSignedInConnection(
   if (previous !== undefined) {
     return store.replace(db, previous, connector, io, verifyReplacement);
   }
-  return enrollConnection(db, store, connector, io, verifyGoogleEnrollment(manifest.connector_id));
+  return enrollConnection(db, store, connector, io, verifyAccountEnrollment(manifest.connector_id));
 }
 
 export interface HostConnection {
@@ -262,17 +278,17 @@ export interface HostConnection {
 }
 
 function inspectConnection(
-  store: ConnectionStateStore,
+  store: ConnectionStateReader,
   connection: Connection,
 ): HostConnection {
   try {
-    if (["kizuki.imap", "kizuki.telegram", "kizuki.gmail", "kizuki.google-calendar"].includes(connection.connector_id)) {
+    if (["kizuki.imap", "kizuki.telegram", "kizuki.gmail", "kizuki.google-calendar", "kizuki.x"].includes(connection.connector_id)) {
       const ref = connection.secret_refs[0];
       if (connection.secret_refs.length !== 1 || ref === undefined) throw new ConnectionError(`${connection.connector_id} connection state is missing`);
-      // Google capture selection is metadata-only. loadConnector admits the
+      // Browser OAuth capture selection is metadata-only. loadConnector admits the
       // source before reading credentials; explicit reauthorization reads its
       // selected prior state in its enrollment command under owner sign-in authority.
-      if (!["kizuki.gmail", "kizuki.google-calendar"].includes(connection.connector_id) && store.read(connection) === null) throw new ConnectionError(`${connection.connector_id} connection state is missing`);
+      if (!["kizuki.gmail", "kizuki.google-calendar", "kizuki.x"].includes(connection.connector_id) && store.read(connection) === null) throw new ConnectionError(`${connection.connector_id} connection state is missing`);
       // Signed-in state is connector-owned opaque bytes. This small in-memory
       // descriptor exposes only the core-minted reference needed to build the
       // connector; it is never encoded or written as host state.
@@ -306,7 +322,7 @@ function inspectConnection(
 
 export function listHostConnections(
   db: Database,
-  store: ConnectionStateStore,
+  store: ConnectionStateReader,
   connectorId?: string,
   opts: { includeDisconnected?: boolean } = {},
 ): HostConnection[] {
@@ -320,7 +336,7 @@ export function listHostConnections(
 
 export function selectConnection(
   db: Database,
-  store: ConnectionStateStore,
+  store: ConnectionStateReader,
   connectorId: string,
   selector: string | undefined,
 ): HostConnection {
@@ -381,12 +397,17 @@ export function blocksEnrollment(state: HealthState): boolean {
   return state !== "ok" && state !== "degraded";
 }
 
+function inspectionSafePersister(db: Database, store: ConnectionStateReader, connection: Connection): ReturnType<typeof createStatePersister>["persist"] {
+  if (store instanceof ConnectionStateStore) return createStatePersister(db, store, connection).persist;
+  return async () => { throw new ConnectionError("connector state mutation requires an explicit write context"); };
+}
+
 export async function loadConnector(
   selected: HostConnection,
-  store: ConnectionStateStore,
+  store: ConnectionStateReader,
   db: Database,
   env: Record<string, string | undefined> = process.env,
-  factory: (id: string, config?: unknown, telegramDeps?: Partial<TelegramDeps>) => Connector = (id, config, deps) => id === "kizuki.telegram" ? new TelegramConnector(config as TelegramConnectorConfig, deps) : id === "kizuki.gmail" ? createGmailConnector(config as GmailConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.google-calendar" ? createGoogleCalendarConnector(config as GoogleCalendarConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : getConnector(id, config),
+  factory: (id: string, config?: unknown, telegramDeps?: Partial<TelegramDeps>) => Connector = (id, config, deps) => id === "kizuki.telegram" ? new TelegramConnector(config as TelegramConnectorConfig, deps) : id === "kizuki.gmail" ? createGmailConnector(config as GmailConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.google-calendar" ? createGoogleCalendarConnector(config as GoogleCalendarConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.x" ? createXApiConnector(config as XApiConfig, deps?.persist ? {persist:deps.persist} : {}) : getConnector(id, config),
 ): Promise<Connector> {
   try { sourceCaptureAdmission(db, selected.connection.connector_id, selected.connection.source_key); }
   catch (error) {
@@ -399,6 +420,34 @@ export async function loadConnector(
     throw new ConnectionError(
       `${selected.connection.connector_id} source=${selected.connection.source_key}: ${selected.problem ?? "state missing"}; reconnect it`,
     );
+  }
+  if (selected.connection.connector_id === "kizuki.x") {
+    const bytes = store.read(selected.connection);
+    if (bytes === null) throw new ConnectionError("X protected state is unavailable.");
+    const identity = inspectXApiState(bytes);
+    const grant = inspectSourceGrant(db, selected.connection.source_key);
+    if (!grant || xApiRequiredFields(identity.selection).some(field => !grant.policy.allowed_fields.includes(field as "text" | "subjects" | "attachments" | "metadata"))) {
+      throw new ConnectionError("source_field_denied; X selected fields are incompatible with this grant. Inspect the source policy and explicitly reconcile consent; projection changes through reauthorization are unsupported.");
+    }
+    if (identity.recovery_required) throw new ConnectionError("credential_recovery_required; X refresh outcome is unknown; use connect recover-x-api for an explicit new authorization.");
+    const client = await xApiClient(env, identity);
+    if (sourceCaptureAdmission(db, selected.connection.connector_id, selected.connection.source_key)?.expected_revision !== grant.revision) {
+      throw new ConnectionError("source_capture_denied; source consent changed during host composition; retry with current policy.");
+    }
+    const ref = selected.connection.secret_refs[0]!;
+    const connector = factory("kizuki.x", xApiStateConfig(bytes, ref, client), {
+      persist: inspectionSafePersister(db, store, selected.connection),
+    });
+    try {
+      await connector.connect(async wanted => {
+        if (wanted !== ref) throw new ConnectionError("unexpected X state reference");
+        return new TextDecoder().decode(bytes);
+      });
+    } catch {
+      await closeHostConnector(connector);
+      throw new ConnectionError("X connection unavailable; check operator configuration and reauthorize the existing source.");
+    }
+    return connector;
   }
   if (selected.connection.connector_id === "kizuki.gmail") {
     const bytes = store.read(selected.connection);
@@ -414,7 +463,7 @@ export async function loadConnector(
     }
     const ref = selected.connection.secret_refs[0]!;
     const connector = factory("kizuki.gmail", gmailStateConfig(bytes, ref, client), {
-      persist: createStatePersister(db, store, selected.connection).persist,
+      persist: inspectionSafePersister(db, store, selected.connection),
     });
     try {
       await connector.connect(async wanted => {
@@ -441,7 +490,7 @@ export async function loadConnector(
     }
     const ref = selected.connection.secret_refs[0]!;
     const connector = factory("kizuki.google-calendar", googleCalendarStateConfig(bytes, ref, client), {
-      persist: createStatePersister(db, store, selected.connection).persist,
+      persist: inspectionSafePersister(db, store, selected.connection),
     });
     try {
       await connector.connect(async wanted => {
@@ -458,7 +507,7 @@ export async function loadConnector(
   const connector = factory(
     selected.connection.connector_id,
     selected.state.config,
-    telegram ? { persist: createStatePersister(db, store, selected.connection).persist } : undefined,
+    telegram ? { persist: inspectionSafePersister(db, store, selected.connection) } : undefined,
   );
   const config = selected.state.config;
   const ref = "state_ref" in config ? config.state_ref : "token_secret_ref" in config
@@ -486,6 +535,7 @@ export async function loadConnector(
 
 /** Local transport/custody cleanup never revokes a provider account. */
 export async function closeHostConnector(connector: Connector): Promise<void> {
+  if (connector instanceof XApiConnector) await connector.closeForHost();
   if (connector instanceof TelegramConnector) await connector.close();
   if (connector instanceof GmailConnector) await connector.close();
   if (connector instanceof GoogleCalendarConnector) await connector.close();

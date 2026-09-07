@@ -1,7 +1,7 @@
 import { inspectSourceGrant, listConnections, resumeSourceRevocation, revokeSourceGrant, setSourceGrant } from "@kizuki/core";
 import { createOwnedRetrievalInventory, OwnedRetrievalInventoryError } from "../owned-retrieval-inventory";
 import { parseArguments, UsageError } from "../args";
-import { withVault } from "../context";
+import { withReadVault, withVault } from "../context";
 import { jsonEnvelope } from "../output";
 import { CONSENT_OPTIONS, consentHint, expectedRevision, readSourcePolicy } from "../source-consent";
 import type { CliIo } from "./index";
@@ -20,7 +20,7 @@ export async function runConnectConsent(io: CliIo, args: string[]): Promise<numb
   const file = parsed.options.get("--policy");
   if (action === "grant" && file === undefined) throw new UsageError("connect grant requires --policy FILE");
   const policy = file === undefined ? undefined : readSourcePolicy(file);
-  return withVault(io, async (ctx) => {
+  return (action === "status" ? withReadVault : withVault)(io, async (ctx) => {
     if (!listConnections(ctx.db).some((connection) => connection.source_key === source)) throw new Error("source_not_enrolled");
     let receipt;
     if (action === "grant") receipt = setSourceGrant(ctx.db, { source_key: source, expected_revision: revision!, operation_id: operation!, policy });

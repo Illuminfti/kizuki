@@ -2,11 +2,11 @@ import { basename, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, serveSearch, setSourceGrant, undoReceipt, withDeadline } from '@kizuki/core';
+import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline } from '@kizuki/core';
 import type { Connector, SourceGrantPolicy } from '@kizuki/core';
 import { createGmailConnector, inspectGmailState, assertSameGmailIdentity } from '@kizuki/connector-gmail';
 import { createGoogleCalendarConnector, inspectGoogleCalendarState, assertSameGoogleCalendarIdentity } from '@kizuki/connector-google-calendar';
-import { withVault, resolveVault } from '../context';
+import { withReadVault, withVault, resolveVault } from '../context';
 import { configPath, readConfig } from '../config';
 import { closeHostConnector, DuplicateSourceError, enrollHostConnection, enrollSignedInConnection, listHostConnections, loadConnector, selectConnection } from '../connections';
 import { gmailClient, gmailFields, gmailRequiredFields, openGmailBrowser, type GmailFactory } from '../gmail';
@@ -16,8 +16,12 @@ import { tryRefreshDerived } from '../derived';
 import { createInitCommand, InitServiceError } from '../commands/init';
 import { detectSupervisorKind } from '@kizuki/core';
 import { serveSupervisorHost } from '../service-host';
+import { createServeRuntime } from '../serve-runtime';
+import { readModelSelection, readModelSettings, saveModelSettings, testModelSettings } from './model-settings';
+import { enrollAppAgentSetup, revokeAppAgent } from './agents';
+import { inspectOwnerPageCorrectionTargets, inspectOwnerCorrectionPageCount, listAgents, serveCorrect, type Grant } from '@kizuki/core';
 import type { CliIo } from '../commands';
-import type { AppCatalogEntry, AppError, AppOperation, AppRoute, AppSource, AppServiceStatus } from './protocol';
+import type { AppCatalogEntry, AppError, AppOperation, AppRoute, AppSource, AppServiceStatus, AppModelStatus, AppModelTest } from './protocol';
 export interface AppHostDeps {
     gmail?: GmailFactory;
     calendar?: GoogleCalendarFactory;
@@ -28,10 +32,17 @@ export interface AppHostDeps {
 class AppFailure extends Error {
     constructor(readonly code: string) { super(code); }
 }
+class AppOperationFailure extends AppFailure {
+    constructor(code: string, readonly result: AppOperation['result']) { super(code); }
+}
 const ROUTES: Record<AppRoute, readonly string[]> = {
     status: [], catalog: [], initialize: ['path', 'no_service'], service_status: [], install_service: [], sources: [], enroll: ['provider', 'path', 'fields', 'calendar_id', 'source_key', 'new_source'],
     consent: ['source_key', 'expected_revision', 'operation_id', 'policy'], capture: ['source_key', 'mode'], query: ['text', 'limit'], activity: ['limit'], undo: ['receipt_id', 'cascade'], operation: ['id'],
     revoke: ['source_key', 'expected_revision', 'operation_id'], resume_revocation: ['source_key', 'operation_id'],
+    model_status: [], model_save: ['expected_revision', 'selection', 'credential'], model_test: ['expected_revision'],
+    source_model_consent: ['source_key', 'expected_revision', 'expected_model_revision', 'operation_id', 'allow'], run_pass: [],
+    agents: [], agent_enroll: ['name', 'grant', 'operation_id'], agent_revoke: ['name'],
+    correction_targets: ['page_id'], correction_preview: ['claim_id', 'statement', 'object'], correct: ['claim_id', 'statement', 'object'],
 };
 function object(value: unknown): Record<string, unknown> { if (value === null || typeof value !== 'object' || Array.isArray(value))
     throw new AppFailure('invalid_request'); return value as Record<string, unknown>; }
@@ -40,6 +51,10 @@ function string(value: unknown, max = 4096): string { if (typeof value !== 'stri
 function boolean(value: unknown): boolean { if (value === undefined)
     return false; if (typeof value !== 'boolean')
     throw new AppFailure('invalid_request'); return value; }
+function correctionText(value: unknown): string {
+    if (typeof value !== 'string' || !value.trim() || value.length > 4096 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value)) throw new AppFailure('invalid_request');
+    return value;
+}
 function limit(value: unknown): number { if (value === undefined)
     return 20; if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > 50)
     throw new AppFailure('invalid_request'); return Number(value); }
@@ -48,10 +63,11 @@ function revision(value: unknown): number { if (!Number.isSafeInteger(value) || 
 function sourceKey(value: unknown): string { const key = string(value, 26); if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(key))
     throw new AppFailure('invalid_request'); return key; }
 function failure(error: unknown): AppError {
+    if (error instanceof CanonRecoveryError) return { code: 'recovery_pending', retryable: false };
     if (error instanceof DuplicateSourceError) return { code: 'duplicate_identity', retryable: false };
     const code = error instanceof AppFailure ? error.code : error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
-    const allowed = ['invalid_request', 'no_vault', 'busy', 'unauthorized', 'consent_required', 'source_capture_denied', 'source_field_denied', 'revision_conflict', 'source_revision_conflict', 'source_not_enrolled', 'misconfigured', 'identity_conflict', 'custody_unknown', 'service_unavailable'];
-    return { code: allowed.includes(code) ? code : 'unavailable', retryable: ['busy', 'unavailable', 'service_unavailable'].includes(code) };
+    const allowed = ['invalid_request', 'no_vault', 'busy', 'writer_busy', 'unauthorized', 'consent_required', 'source_capture_denied', 'source_field_denied', 'revision_conflict', 'source_revision_conflict', 'source_not_enrolled', 'source_not_active', 'misconfigured', 'identity_conflict', 'custody_unknown', 'service_unavailable', 'configuration_invalid', 'configuration_unsupported', 'credential_invalid', 'custody_unavailable', 'transaction_unavailable', 'model_unconfigured', 'model_test_failed', 'processing_failed', 'mcp_unavailable', 'invalid_grant', 'credential_unsafe', 'credential_conflict', 'operation_conflict', 'name_conflict', 'migration_required', 'enrollment_busy', 'recovery_required', 'enrollment_unavailable', 'correction_failed', 'recovery_pending'];
+    return { code: allowed.includes(code) ? code : 'unavailable', retryable: ['busy', 'writer_busy', 'unavailable', 'service_unavailable', 'transaction_unavailable'].includes(code) };
 }
 const fullFields = ['text', 'subjects', 'metadata', 'attachments'];
 export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { noService?: boolean } = {}) {
@@ -61,10 +77,15 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
     let selected = hasSelection ? resolveVault(baseIo.env, config, baseIo.vaultOverride) : join(baseIo.env.HOME ?? homedir(), 'Kizuki');
     const jobs = new Map<string, AppOperation>(), pending = new Set<Promise<void>>(), active = new Set<Connector>();
     let mutation = false, closed = false, initializationIncomplete = false;
+    let lastModelTest: AppModelTest | null = null;
     const io = (): CliIo => ({ ...baseIo, vaultOverride: selected, out: () => { }, err: () => { }, prompt: async () => { throw new AppFailure('unavailable'); } });
     const ready = () => !initializationIncomplete && existsSync(join(selected, '.kizuki', 'kizuki.db'));
-    const context = <T>(fn: Parameters<typeof withVault<T>>[1]) => { if (!ready())
-        throw new AppFailure('no_vault'); return withVault(io(), fn, { retrieval: 'none' }); };
+    const context = <T>(fn: Parameters<typeof withVault<T>>[1], retrieval: 'none' | 'required' = 'none') => { if (!ready())
+        throw new AppFailure('no_vault'); return withVault(io(), fn, { retrieval }); };
+    const readContext = <T>(fn: Parameters<typeof withReadVault<T>>[1], audit = false) => {
+        if (!ready()) throw new AppFailure('no_vault');
+        return withReadVault(io(), fn, { audit, retrieval: audit ? 'optional' : 'none' });
+    };
     function operation(kind: string, work: (job: AppOperation) => Promise<AppOperation['result']>, urgent = false) {
         if (closed || mutation && !urgent)
             throw new AppFailure('busy');
@@ -78,10 +99,18 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
         jobs.set(job.id, job);
         if (!urgent)
             mutation = true;
-        const task = Promise.resolve().then(() => work(job)).then(result => { job.result = result; job.stage = 'complete'; job.state = 'succeeded'; }, error => { job.error = failure(error); job.stage = 'stopped'; job.state = 'failed'; }).finally(() => { if (!urgent)
+        const task = Promise.resolve().then(() => work(job)).then(result => { job.result = result; job.stage = 'complete'; job.state = 'succeeded'; }, error => { if (error instanceof AppOperationFailure) job.result = error.result; job.error = failure(error); job.stage = 'stopped'; job.state = 'failed'; }).finally(() => { if (!urgent)
             mutation = false; pending.delete(task); });
         pending.add(task);
         return { operation_id: job.id };
+    }
+    async function modelStatus(): Promise<AppModelStatus> {
+        const status = await readModelSettings(selected, baseIo.env, { reconcile: false });
+        return { ...status, last_test: lastModelTest?.revision === status.revision ? lastModelTest : null };
+    }
+    function modelSelection() {
+        try { return readModelSelection(selected, { reconcile: false }); }
+        catch { return null; }
     }
     function catalog(): AppCatalogEntry[] {
         return [
@@ -93,10 +122,126 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
     async function execute(route: AppRoute, input: Record<string, unknown>): Promise<unknown> {
         if (route === 'catalog')
             return { sources: catalog() };
+        if (route === 'agents') return readContext(async ctx => {
+            return { agents: listAgents(ctx.db).map(({ agent_id, name, grant, revoked_at }) => ({ agent_id, name, grant, revoked_at })) };
+        });
+        if (route === 'agent_enroll') {
+            const name = string(input.name, 64), id = string(input.operation_id, 64), grant = object(input.grant) as unknown as Grant;
+            return operation('agent_enroll', async () => context(async ctx => {
+                const agent = enrollAppAgentSetup(ctx.vaultPath, { name, grant, operation_id: id });
+                return { agent, message: agent.mcp === null ? 'Setup needs attention. The receipt shows the current access and credential state.' : 'Agent access is ready. Add this configuration to your MCP client on this device.' };
+            }));
+        }
+        if (route === 'agent_revoke') {
+            const name = string(input.name, 64);
+            return operation('agent_revoke', async () => context(async ctx => {
+                const receipt = revokeAppAgent(ctx.vaultPath, name);
+                return { agent: { receipt, mcp: null }, message: receipt.authority === 'revoked' ? 'Agent access was revoked. Existing connections must recheck access on every call.' : 'The receipt shows the current agent access state.' };
+            }), true);
+        }
+        if (route === 'correction_targets') {
+            const page = string(input.page_id, 256);
+            return readContext(async ctx => inspectOwnerPageCorrectionTargets(ctx, page), true);
+        }
+        if (route === 'correction_preview' || route === 'correct') {
+            const args = { target: { claim_id: string(input.claim_id, 128) }, statement: correctionText(input.statement),
+                ...(input.object === undefined ? {} : { object: string(input.object, 4096) }) };
+            if (route === 'correction_preview') return readContext(async ctx => {
+                const result = await serveCorrect({ ...ctx, principal: OWNER }, { ...args, dry_run: true });
+                if (!result.data) throw new AppFailure('correction_failed');
+                return { answer: result.data.answer, affected_pages: inspectOwnerCorrectionPageCount(ctx, result.data.superseded.map(claim => claim.claim_id)) };
+            }, true);
+            return operation('correct', async () => context(async ctx => {
+                initAgents(ctx.db);
+                const result = await serveCorrect({ ...ctx, principal: OWNER }, args);
+                if (!result.data) throw new AppFailure('correction_failed');
+                const pending = result.data.recovery_pending;
+                if (pending === undefined) tryRefreshDerived(ctx.db, ctx.vaultPath);
+                // Jobs outlive source revocation. Keep their durable projection
+                // free of source-derived subject names and page contents.
+                const projection = { message: pending !== undefined
+                    ? 'Correction recorded; canon completion is unconfirmed and recovery remains pending. Run kizuki recover --json before another change.'
+                    : result.data.rewritten.length > 0
+                    ? `Correction recorded. ${result.data.rewritten.length} memory page(s) rewritten.`
+                    : 'Correction is recorded; no memory pages were rewritten.', rewritten_pages: result.data.rewritten.length,
+                    ...(result.data.receipt_id === null ? {} : { receipt_id: result.data.receipt_id }),
+                    ...(pending === undefined ? {} : { recovery_pending: pending.map(({ receipt_id, phase }) => ({ receipt_id, phase })) }) };
+                if (pending !== undefined) throw new AppOperationFailure('recovery_pending', projection);
+                if (result.denied.some(denial => denial.reason === 'error')) throw new AppOperationFailure('correction_failed', projection);
+                return projection;
+            }));
+        }
         if (route === 'status') {
-            const epoch = ready() ? await context(async (ctx) => `${sourcePolicyEpoch(ctx.db)}:${getClaimsEpoch(ctx.db)}`) : 'uninitialized';
+            const epoch = ready() ? await readContext(async (ctx) => `${sourcePolicyEpoch(ctx.db)}:${getClaimsEpoch(ctx.db)}:${modelSelection()?.revision ?? 'model-unavailable'}`) : 'uninitialized';
             return { visibility_epoch: epoch, vault: { ready: ready(), name: basename(selected) }, setup_location: selected, setup_no_service: options.noService === true, setup_supervisor: detectSupervisorKind(baseIo.env), operations: [...jobs.values()] };
         }
+        if (route === 'model_status') return readContext(async () => modelStatus());
+        if (route === 'model_save') {
+            const expected = string(input.expected_revision, 128);
+            return context(async () => {
+                // The backend strictly validates both nested objects and bounds
+                // the write-only key. Neither the request nor raw errors enter jobs.
+                const status = await saveModelSettings(selected, {
+                    expected_revision: expected,
+                    selection: object(input.selection) as Parameters<typeof saveModelSettings>[1]['selection'],
+                    credential: object(input.credential) as Parameters<typeof saveModelSettings>[1]['credential'],
+                }, baseIo.env);
+                lastModelTest = null;
+                return { ...status, last_test: null };
+            });
+        }
+        if (route === 'model_test') {
+            const expected = string(input.expected_revision, 128);
+            return operation('model_test', async job => context(async () => {
+                job.stage = 'testing_connection';
+                const result = await testModelSettings(selected, expected, baseIo.env);
+                if (!closed && modelSelection()?.revision === result.revision) lastModelTest = result;
+                if (result.outcome !== 'succeeded') throw new AppFailure('model_test_failed');
+                return { message: 'The model answered the connection test. No imported information was sent.' };
+            }));
+        }
+        if (route === 'source_model_consent') {
+            const key = sourceKey(input.source_key), expected = revision(input.expected_revision), id = string(input.operation_id, 128);
+            const modelRevision = string(input.expected_model_revision, 128);
+            if (typeof input.allow !== 'boolean') throw new AppFailure('invalid_request');
+            return context(async ctx => {
+                // No await separates the observed configuration and grant CAS.
+                // A later endpoint change leaves this exact grant mismatched.
+                const configured = readModelSelection(selected);
+                if (configured.revision !== modelRevision) throw new AppFailure('revision_conflict');
+                const grant = inspectSourceGrant(ctx.db, key);
+                if (!grant || grant.status !== 'active') throw new AppFailure('source_not_active');
+                if (input.allow && configured.selection.kind !== 'openai_compatible') throw new AppFailure('model_unconfigured');
+                const egress: SourceGrantPolicy['egress'] = input.allow && configured.selection.kind === 'openai_compatible'
+                    ? { model_endpoint: configured.selection.model_endpoint, model: configured.selection.model, external_retention: 'provider_managed' }
+                    : 'local_only';
+                try {
+                    const result = setSourceGrant(ctx.db, { source_key: key, expected_revision: expected, operation_id: id, policy: { ...grant.policy, egress } });
+                    return { source_key: key, revision: result.revision, status: result.status };
+                } catch (error) {
+                    // An intervening policy edit changes the reconstructed request.
+                    // Ask for a fresh revision; never replay it over newer fields.
+                    if (error && typeof error === 'object' && 'code' in error && error.code === 'operation_conflict') throw new AppFailure('source_revision_conflict');
+                    throw error;
+                }
+            });
+        }
+        if (route === 'run_pass') return operation('run_pass', async job => context(async ctx => {
+            job.stage = 'processing';
+            const receipt = await runRail(ctx.db, ctx.vaultPath, 'sync', {
+                acquireRuntime: () => createServeRuntime({ ...ctx, env: baseIo.env, err: () => {} }),
+            });
+            job.counts = { stored: receipt.events_stored, duplicates: receipt.events_duplicate, errors: receipt.errors.length };
+            const result: AppOperation['result'] = {
+                message: receipt.status === 'failed' ? 'Processing stopped. The run receipt records what happened.'
+                    : receipt.model.model_ref === null ? 'Capture pass finished. Choose a model and permit source use to organise imported information.'
+                    : receipt.status === 'ok' ? 'Processing pass finished. The run receipt records its changes.'
+                    : 'Processing finished with items that need attention. Check the run receipt and source permissions.',
+                run: { run_id: receipt.run_id, status: receipt.status, canon_writes: receipt.canon_writes, claims_extracted: receipt.claims_extracted, model_calls: receipt.model.calls, model_configured: receipt.model.model_ref !== null },
+            };
+            if (receipt.status === 'failed') throw new AppOperationFailure('processing_failed', result);
+            return result;
+        }));
         if (route === 'service_status') {
             if (!ready()) throw new AppFailure('no_vault');
             // Keep synchronous supervisor queries off the privacy-epoch polling route.
@@ -154,8 +299,9 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
             });
         }
         if (route === 'sources')
-            return context(async (ctx) => {
+            return readContext(async (ctx) => {
                 const rows = listConnections(ctx.db, { includeDisconnected: true });
+                const configured = modelSelection();
                 if (rows.length > 64)
                     throw new AppFailure('unavailable');
                 return { sources: rows.map(row => {
@@ -174,21 +320,24 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
                                 state = 'needs_attention';
                             }
                         }
-                        const source: AppSource = { source_key: row.source_key, connector_id: row.connector_id, display_name: row.connector_id.replace('kizuki.', ''), state, consent: grant?.status ?? 'required', revision: grant?.revision ?? 0, required_fields: required, last_run: checkpoint?.last_run_at ?? null, stored: checkpoint?.last_result.stored ?? 0, errors: checkpoint?.last_result.errors.length ?? 0, revoke_operation: grant?.revoke_operation ?? null, purge_blockers: grant?.purge_blockers ?? [] };
+                        const modelConsent: AppSource['model_consent'] = !grant || grant.status !== 'active' ? 'unavailable'
+                            : grant.policy.egress === 'local_only' ? 'local_only'
+                            : configured === null ? 'unavailable'
+                            : configured.selection.kind === 'openai_compatible' && configured.selection.model_endpoint === grant.policy.egress.model_endpoint && configured.selection.model === grant.policy.egress.model ? 'current' : 'different_model';
+                        const source: AppSource = { source_key: row.source_key, connector_id: row.connector_id, display_name: row.connector_id.replace('kizuki.', ''), state, consent: grant?.status ?? 'required', revision: grant?.revision ?? 0, required_fields: required, last_run: checkpoint?.last_run_at ?? null, stored: checkpoint?.last_result.stored ?? 0, errors: checkpoint?.last_result.errors.length ?? 0, revoke_operation: grant?.revoke_operation ?? null, purge_blockers: grant?.purge_blockers ?? [], model_consent: modelConsent };
                         return source;
                     }) };
             });
         if (route === 'query') {
             const query = string(input.text, 2000), count = limit(input.limit);
-            return context(async (ctx) => {
-                initAgents(ctx.db);
-                const result = await serveSearch({ db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER }, { query, scope: 'all', limit: count });
-                return { hits: [...result.canon.map(hit => ({ id: hit.page_id, scope: 'canon', title: hit.title, text: hit.excerpt, citations: hit.sources, sensitivity: hit.sensitivity })), ...result.quoted.map(hit => ({ id: hit.event_id, scope: 'ledger', title: hit.connector_id, text: hit.text, citations: [hit.event_id], sensitivity: hit.sensitivity }))], withheld: result.denied.reduce((n, item) => n + item.count, 0), degraded: result.data?.degraded ?? [] };
-            });
+            return readContext(async (ctx) => {
+                const result = await serveSearch({ db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER, ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}) }, { query, scope: 'all', limit: count });
+                return { hits: [...result.canon.map(hit => ({ id: hit.page_id, scope: 'canon', title: hit.title, text: hit.excerpt, citations: hit.sources, sensitivity: hit.sensitivity, taint: hit.taint, ...(hit.subject_labels === undefined ? {} : { subject_labels: hit.subject_labels }) })), ...result.quoted.map(hit => ({ id: hit.event_id, scope: 'ledger', title: hit.connector_id, text: hit.text, citations: [...new Set([hit.event_id, ...(hit.subject_labels ?? []).flatMap(label => label.evidence.flatMap(item => item.sources))])], sensitivity: hit.sensitivity, taint: 'quoted', ...(hit.subject_labels === undefined ? {} : { subject_labels: hit.subject_labels }) }))], withheld: result.denied.reduce((n, item) => n + item.count, 0), degraded: result.data?.degraded ?? [] };
+            }, true);
         }
         if (route === 'activity') {
             const count = limit(input.limit);
-            return context(async (ctx) => ({ receipts: listAuditReceipts(ctx.db, { limit: count }).map(row => ({ id: row.receipt_id, at: row.at, action: row.page_action, page: row.page_path, reverted: row.reverted_by !== null })) }));
+            return readContext(async (ctx) => ({ receipts: listAuditReceipts(ctx.db, { limit: count }).map(row => ({ id: row.receipt_id, at: row.at, action: row.page_action, page: row.page_path, reverted: row.reverted_by !== null })) }));
         }
         if (route === 'consent') {
             const key = sourceKey(input.source_key), expected = revision(input.expected_revision), id = string(input.operation_id, 128);
@@ -224,10 +373,24 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
         if (route === 'undo') {
             const id = string(input.receipt_id, 128), cascade = boolean(input.cascade);
             return operation('undo', async () => context(async (ctx) => {
-                const result = await undoReceipt({ db: ctx.db, vault_path: ctx.vaultPath }, id, { cascade });
+                const original = getCanonReceipt(ctx.db, id);
+                let result;
+                try { result = await undoReceipt({ db: ctx.db, vault_path: ctx.vaultPath, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }) }, id, { cascade }); }
+                catch (error) {
+                    const pending = inspectCanonRecovery(ctx.db);
+                    if (pending.pending && pending.receipt_id !== null && pending.page_path === original?.page_path) {
+                        throw new AppOperationFailure('recovery_pending', { message: 'Undo completion is unconfirmed; recovery remains pending. Run kizuki recover --json before another change.',
+                            recovery_pending: [{ receipt_id: pending.receipt_id, phase: 'write' }] });
+                    }
+                    throw error;
+                }
+                if (result.projection_pending === true) throw new AppOperationFailure('recovery_pending', {
+                    receipt_id: result.receipt_id, message: 'The memory change is undone. Retrieval updates remain pending; run kizuki recover --json before another change.',
+                    recovery_pending: [{ receipt_id: result.receipt_id, phase: 'projection' }],
+                });
                 tryRefreshDerived(ctx.db, ctx.vaultPath);
                 return { receipt_id: result.receipt_id, message: 'Receipt undone.' };
-            }));
+            }, 'required'));
         }
         if (route === 'capture') {
             const key = sourceKey(input.source_key), mode = string(input.mode, 8);

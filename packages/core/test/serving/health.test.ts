@@ -9,8 +9,8 @@ import type { Fixture } from "./helpers";
 
 let fixture: Fixture;
 
-beforeAll(() => {
-  fixture = serveFixture();
+beforeAll(async () => {
+  fixture = await serveFixture();
 });
 
 afterAll(() => {
@@ -31,13 +31,12 @@ describe("serveHealth", () => {
       active: 8,
       labeled: 9,
       stamped: 9,
-      servable: 7,
+      servable: 6,
       held: 1,
     });
     expect(data?.events).toBe(6);
-    // makeHeldPage writes a page then purges its only source. RFC 0002 §13.1
-    // marks that claim purged; nothing live remains until a later file.
-    expect(data?.live_claims).toBe(0);
+    // Seven recorded page claims remain; the held page claim was purged.
+    expect(data?.live_claims).toBe(7);
     // Nothing bound a retrieval port, so nothing is waiting on one.
     expect(data?.pending_retrieval_ops).toBe(0);
     expect(data?.derived.search).not.toBeNull();
@@ -54,7 +53,7 @@ describe("serveHealth", () => {
       subjects: ["person:ada"],
       provenance: [fixture.events["public"] as string],
     });
-    expect(serveHealth(fixture.owner()).data?.live_claims).toBe(1);
+    expect(serveHealth(fixture.owner()).data?.live_claims).toBe(8);
   });
 
   test("an agent sees its own grant and its own servable count", () => {
@@ -91,8 +90,8 @@ describe("serveHealth", () => {
     expect(JSON.stringify({ ...data, runtime: { ...data?.runtime, schema: undefined } })).not.toContain("/");
   });
 
-  test("a corrupt grant still counts and is named once found", () => {
-    const live = serveFixture();
+  test("a corrupt grant still counts and is named once found", async () => {
+    const live = await serveFixture();
     const agentId = getAgent(live.db, "search-only")?.agent_id;
     if (agentId === undefined) throw new Error("search-only fixture is missing");
     live.db

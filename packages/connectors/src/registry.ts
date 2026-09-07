@@ -1,3 +1,4 @@
+import { X_API_CONNECTOR_ID, X_API_CURSOR_SCHEMA, createXApiConnector, type XApiConfig } from "@kizuki/connector-x/api";
 import { GOOGLE_CALENDAR_CONNECTOR_ID, GOOGLE_CALENDAR_CURSOR_SCHEMA, createGoogleCalendarConnector, type GoogleCalendarConnectorConfig } from "@kizuki/connector-google-calendar";
 import {
   PORT_CONTRACTS,
@@ -219,7 +220,7 @@ export function sealConnector(
     revoke: () => connector.revoke(),
     ...(typeof connector.signIn === "function"
       ? {
-          signIn: (io, state) => connector.signIn!(io, state),
+          signIn: (io, state, context) => connector.signIn!(io, state, context),
         }
       : {}),
     purgeSource: (subjectId) => connector.purgeSource(subjectId),
@@ -231,12 +232,13 @@ function describe(
   connectorId: string,
   supports: readonly string[],
   optionalPackage: string | null,
+  minor = 1,
 ): PortDescriptor {
   return validatePortDescriptor({
     id: portId(connectorId),
     kind: "connector",
     contract: PORT_CONTRACTS.connector,
-    contract_minor: 1,
+    contract_minor: minor,
     supports,
     requires_lease: false,
     optional_package: optionalPackage,
@@ -257,7 +259,7 @@ function enroll(
 ): void {
   defaultConnectorRegistry.register(
     connectorId,
-    describe(connectorId, supports, optionalPackage),
+    describe(connectorId, supports, optionalPackage, overlay.contract_minor),
     factory,
     overlay,
   );
@@ -413,6 +415,15 @@ enroll(
   IN_TREE,
   (config) => createOmnivoreImportConnector(config as OmnivoreImportConfig),
   LOCAL,
+);
+// Native enrollment and refresh require explicit trusted host transport/state custody.
+enroll(
+  X_API_CONNECTOR_ID,
+  ["backfill", "sync", "fixture", "sign_in"],
+  "@kizuki/connector-x",
+  config => createXApiConnector(config as XApiConfig),
+  { contract_minor: 3, implementation: "@kizuki/connector-x/api", allowed_egress: ["api.x.com", "x.com"],
+    cursor_schema: X_API_CURSOR_SCHEMA, default_sensitivity: "private", sensitivity_floor: "private" },
 );
 enroll(
   X_ARCHIVE_CONNECTOR_ID,

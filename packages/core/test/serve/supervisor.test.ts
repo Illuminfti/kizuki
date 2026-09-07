@@ -1,29 +1,136 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initVault } from "../../src/vault/init";
 import { installServeService, uninstallServeService, type SupervisorHost } from "../../src/serve/supervisor";
 import { readServeIntent, writeServeIntent } from "../../src/serve/intent";
-import type { SupervisorState } from "../../src/serve/types";
+import type { SupervisorKind, SupervisorState, SupervisorStatus } from "../../src/serve/types";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
-function fixture() {
+for (const mode of ["replace", "disable", "absent", "unknown", "timeout", "later-pid", "bootout-failure", "bootstrap-failure", "startup-delay", "startup-timeout", "startup-unknown"] as const) {
+  test(`launchd replacement waits for observed removal: ${mode}`, () => {
+    const root = mkdtempSync(join(tmpdir(), "kizuki-launchd-fixture-")); roots.push(root);
+    const statePath = join(root, "state.json"), command = join(root, "launchctl");
+    writeFileSync(statePath, JSON.stringify({ calls: [], stopping: false, observations: 0, activationObservations: 0, loaded: false, absent: false }), { mode: 0o600 });
+    // A real disposable executable exercises the native spawn boundary. It never
+    // invokes the platform service manager or depends on module-loader mocking.
+    writeFileSync(command, `#!${process.execPath}
+      import {readFileSync, writeFileSync} from 'node:fs';
+      import assert from 'node:assert/strict';
+      const mode = ${JSON.stringify(mode)}, path = ${JSON.stringify(statePath)};
+      const state = JSON.parse(readFileSync(path, 'utf8')), args = process.argv.slice(2);
+      state.calls.push(args[0]);
+      let code = 0, stdout = '', stderr = '';
+      if (args[0] === 'print') {
+        assert.equal(args[1], 'gui/' + process.getuid() + '/dev.kizuki.synthetic');
+        if (state.loaded) {
+          state.activationObservations++;
+          if (mode === 'startup-unknown') { code = 1; stderr = 'synthetic inspection failure'; }
+          else if (mode === 'startup-timeout' || (mode === 'startup-delay' && state.activationObservations < 3)) stdout = 'state = spawn scheduled';
+          else stdout = 'state = running\\npid = 98765';
+        } else if (mode === 'absent' || mode.startsWith('startup-') || (state.stopping && !['unknown','timeout','later-pid'].includes(mode) && ++state.observations > 1)) {
+          state.absent = true; code = 113; stderr = 'Could not find service "dev.kizuki.synthetic" in domain for user gui';
+        } else if (state.stopping && mode === 'unknown') { code = 1; stderr = 'synthetic inspection failure'; }
+        else stdout = 'state = running\\npid = ' + (state.stopping && mode === 'later-pid' ? 98765 : 5340);
+      } else if (args[0] === 'bootout') {
+        assert.equal(args[1], 'gui/' + process.getuid() + '/dev.kizuki.synthetic');
+        state.stopping = true; code = mode === 'bootout-failure' ? 1 : 0;
+      } else {
+        assert.equal(args[0], 'bootstrap');
+        assert.equal(args[1], 'gui/' + process.getuid());
+        assert.equal(args[2], '/synthetic/unit.plist');
+        assert.equal(state.absent, true, 'bootstrap must follow observed absence');
+        code = mode === 'bootstrap-failure' ? 5 : 0;
+        state.loaded = code === 0;
+      }
+      writeFileSync(path, JSON.stringify(state));
+      process.stdout.write(stdout); process.stderr.write(stderr); process.exit(code);
+    `, {mode: 0o700});
+    const script = `
+      import {readFileSync} from 'node:fs';
+      import assert from 'node:assert/strict';
+      const mode = ${JSON.stringify(mode)}; let elapsed = 0;
+      Object.defineProperty(performance, 'now', {value: () => elapsed});
+      Atomics.wait = (_a, _b, _c, ms) => { elapsed += ['timeout','later-pid','startup-timeout'].includes(mode) ? 1000 : ms; return 'timed-out'; };
+      const {realSupervisorHost} = await import(${JSON.stringify(join(import.meta.dir, "../../src/serve/supervisor.ts"))});
+      const host = realSupervisorHost('launchd', '/synthetic', '/synthetic/kizuki');
+      assert.equal(host.query('synthetic').state, mode === 'absent' || mode.startsWith('startup-') ? 'absent' : 'active');
+      const result = mode === 'disable' ? host.disable('dev.kizuki.synthetic') : host.enable('/synthetic/unit.plist', 'dev.kizuki.synthetic');
+      const state = JSON.parse(readFileSync(${JSON.stringify(statePath)}, 'utf8'));
+      assert.equal(result.ok, ['replace','disable','absent','startup-delay'].includes(mode));
+      assert.equal(state.calls.filter(call => call === 'bootstrap').length, ['replace','absent','bootstrap-failure','startup-delay','startup-timeout','startup-unknown'].includes(mode) ? 1 : 0);
+      if (['replace','disable'].includes(mode)) assert.ok(state.observations > 1, 'old process must be observed before disappearance');
+      if (['timeout','later-pid','startup-timeout'].includes(mode)) assert.equal(elapsed, 5000);
+      if (mode === 'startup-delay') assert.ok(state.activationObservations >= 3, 'bootstrap acknowledgment must not stand in for a running process');
+      if (mode === 'disable') assert.equal(state.absent, true);
+    `;
+    const result = Bun.spawnSync([process.execPath, "--eval", script], {
+      env: {...process.env, PATH: root + ':' + process.env.PATH}, stdout: "pipe", stderr: "pipe", timeout: 15_000,
+    });
+    expect({code: result.exitCode, stderr: result.stderr.toString()}).toEqual({code: 0, stderr: ""});
+  });
+}
+
+function fixture(kind: SupervisorKind = "systemd") {
   const root = mkdtempSync(join(tmpdir(), "kizuki-supervisor-")); roots.push(root);
   const vault = join(root, "vault"); initVault(vault); writeServeIntent(vault, "opted-out");
   let state: SupervisorState = "absent";
   let enabled = false;
   const activated: string[] = [];
+  const enabledWithoutStart: string[] = [];
   const host: SupervisorHost = {
-    kind: "systemd", home: root, execStart: ["/synthetic/kizuki-v1", "serve", "--vault", vault],
-    query: () => ({ kind: "systemd", state, unit: "synthetic", enabled, detail: state }),
+    kind, home: root, execStart: ["/synthetic/kizuki-v1", "serve", "--vault", vault],
+    query: () => ({ kind, state, unit: "synthetic", enabled, detail: state }),
     reload: () => ({ok: true, detail: "reloaded"}),
     enable: path => { activated.push(readFileSync(path, "utf8")); state = "active"; enabled = true; return { ok: true, detail: "active" }; },
     disable: () => { state = "disabled"; enabled = false; return { ok: true, detail: "disabled" }; },
+    ...(kind === "systemd" ? {
+      enableWithoutStart: (name: string) => { enabledWithoutStart.push(name); enabled = true; return { ok: true, detail: "enabled" }; },
+    } : {}),
   };
-  return { root, vault, host, activated, setState: (next: SupervisorState) => { state = next; enabled = next === "active"; } };
+  return {
+    root, vault, host, activated, enabledWithoutStart,
+    setState: (next: SupervisorState) => { state = next; enabled = next === "active"; },
+    observe: (next: SupervisorState, nextEnabled: boolean) => { state = next; enabled = nextEnabled; },
+  };
+}
+
+function ordinaryVault(vault: string): Record<string, string> {
+  const skip = new Set(["serve-intent", "service-change.json", "service-change.lock"]);
+  const files: Record<string, string> = {};
+  const walk = (dir: string, rel: string) => {
+    for (const name of readdirSync(dir).sort()) {
+      if (rel === ".kizuki" && skip.has(name)) continue;
+      const path = join(dir, name);
+      const next = rel ? `${rel}/${name}` : name;
+      if (statSync(path).isDirectory()) walk(path, next);
+      else files[next] = readFileSync(path).toString("hex");
+    }
+  };
+  walk(vault, "");
+  return files;
+}
+
+function journalPath(vault: string): string { return join(vault, ".kizuki", "service-change.json"); }
+
+function withoutEnablementOnly(host: SupervisorHost): SupervisorHost {
+  return { kind: host.kind, home: host.home, ...(host.configHome === undefined ? {} : { configHome: host.configHome }),
+    execStart: host.execStart, query: host.query.bind(host), reload: host.reload.bind(host),
+    enable: host.enable.bind(host), disable: host.disable.bind(host) };
+}
+
+function interruptInstall(f: ReturnType<typeof fixture>, status: Pick<SupervisorStatus, "state" | "enabled">): void {
+  const code = `import { installServeService } from ${JSON.stringify(join(import.meta.dir, "../../src/serve/supervisor.ts"))};
+    installServeService(${JSON.stringify(f.vault)}, {
+      kind: ${JSON.stringify(f.host.kind)}, home: ${JSON.stringify(f.root)}, execStart: ["/synthetic/kizuki-v2", "serve"],
+      query: () => ({kind:${JSON.stringify(f.host.kind)},state:${JSON.stringify(status.state)},unit:"synthetic",enabled:${status.enabled},detail:${JSON.stringify(status.state)}}),
+      reload: () => ({ok:true,detail:"reloaded"}), enable: () => process.exit(86), disable: () => ({ok:true,detail:"disabled"}),
+      enableWithoutStart: () => ({ok:true,detail:"enabled"})
+    });`;
+  expect(Bun.spawnSync([process.execPath, "-e", code], { stdout: "pipe", stderr: "pipe" }).exitCode).toBe(86);
 }
 
 test("activation failure does not record installed intent or leave a new unit", () => {
@@ -200,3 +307,560 @@ test("rollback reloads deletion of a failed first-install definition", () => {
   expect(readServeIntent(f.vault)).toBe("opted-out");
   expect(existsSync(join(f.vault,".kizuki","service-change.json"))).toBe(false);
 });
+
+test("uninstall of an enabled inactive systemd unit confirms disable without activating", () => {
+  const f = fixture(); const first = installServeService(f.vault, f.host);
+  const original = readFileSync(first.unitPath!, "utf8");
+  const before = ordinaryVault(f.vault);
+  f.observe("disabled", true);
+  const trace: string[] = [];
+  const disable = f.host.disable;
+  f.host.disable = name => {
+    expect(readFileSync(first.unitPath!, "utf8")).toBe(original);
+    trace.push("disable before removal");
+    return disable(name);
+  };
+  f.host.reload = () => {
+    expect(f.host.query("synthetic")).toMatchObject({ state: "disabled", enabled: false });
+    expect(existsSync(first.unitPath!)).toBe(false);
+    trace.push("reload after removal");
+    return { ok: true, detail: "reloaded" };
+  };
+  const removed = uninstallServeService(f.vault, f.host);
+  expect(removed.removed).toBe(true);
+  expect(removed.status.enabled).toBe(false);
+  expect(["disabled", "absent", "masked"]).toContain(removed.status.state);
+  expect(existsSync(first.unitPath!)).toBe(false);
+  expect(readServeIntent(f.vault)).toBe("opted-out");
+  expect(existsSync(journalPath(f.vault))).toBe(false);
+  expect(ordinaryVault(f.vault)).toEqual(before);
+  expect(f.activated).toEqual([original]);
+  expect(f.enabledWithoutStart).toEqual([]);
+  expect(trace).toEqual(["disable before removal", "reload after removal"]);
+});
+
+for (const failure of ["disable", "reload"] as const) {
+  test(`one failed ${failure} restores inactive enablement and the prior intent without activation`, () => {
+    const f = fixture(); const first = installServeService(f.vault, f.host);
+    const original = readFileSync(first.unitPath!, "utf8");
+    f.observe("disabled", true);
+    const before = ordinaryVault(f.vault);
+    const operation = f.host[failure];
+    let calls = 0;
+    f.host[failure] = (name: string = "") => ++calls === 1
+      ? { ok: false, detail: "ordinary operation failure" }
+      : operation(name);
+    expect(() => uninstallServeService(f.vault, f.host)).toThrow("previous configuration restored");
+    expect(calls).toBe(2);
+    expect(readFileSync(first.unitPath!, "utf8")).toBe(original);
+    expect(f.host.query("synthetic")).toMatchObject({ state: "disabled", enabled: true });
+    expect(readServeIntent(f.vault)).toBe("installed");
+    expect(existsSync(journalPath(f.vault))).toBe(false);
+    expect(ordinaryVault(f.vault)).toEqual(before);
+    expect(f.activated).toEqual([original]);
+    expect(f.enabledWithoutStart).toHaveLength(1);
+  });
+}
+
+test("failed disable of inactive+enabled stays pending and retry uninstalls without activation", () => {
+  const f = fixture(); const first = installServeService(f.vault, f.host);
+  const original = readFileSync(first.unitPath!, "utf8");
+  f.observe("disabled", true);
+  const disable = f.host.disable;
+  f.host.disable = () => ({ ok: false, detail: "failed" });
+  expect(() => uninstallServeService(f.vault, f.host)).toThrow("recovery is pending");
+  expect(existsSync(journalPath(f.vault))).toBe(true);
+  expect(readFileSync(first.unitPath!, "utf8")).toBe(original);
+  expect(readServeIntent(f.vault)).toBe("installed");
+  f.host.disable = disable;
+  expect(uninstallServeService(f.vault, f.host).removed).toBe(true);
+  expect(readServeIntent(f.vault)).toBe("opted-out");
+  expect(existsSync(journalPath(f.vault))).toBe(false);
+  expect(f.activated).toEqual([original]);
+});
+
+test("failed removal reload of inactive+enabled stays pending and retry uninstalls without activation", () => {
+  const f = fixture(); const first = installServeService(f.vault, f.host);
+  const original = readFileSync(first.unitPath!, "utf8");
+  f.observe("disabled", true);
+  f.host.reload = () => ({ ok: false, detail: "failed" });
+  expect(() => uninstallServeService(f.vault, f.host)).toThrow("recovery is pending");
+  expect(existsSync(journalPath(f.vault))).toBe(true);
+  expect(readFileSync(first.unitPath!, "utf8")).toBe(original);
+  expect(readServeIntent(f.vault)).toBe("installed");
+  f.host.reload = () => ({ ok: true, detail: "reloaded" });
+  expect(uninstallServeService(f.vault, f.host).removed).toBe(true);
+  expect(readServeIntent(f.vault)).toBe("opted-out");
+  expect(existsSync(first.unitPath!)).toBe(false);
+  expect(existsSync(journalPath(f.vault))).toBe(false);
+  expect(f.activated).toEqual([original]);
+});
+
+test("failed enablement restoration retains pending recovery until retry converges", () => {
+  const f = fixture(); const first = installServeService(f.vault, f.host);
+  const original = readFileSync(first.unitPath!, "utf8");
+  f.observe("disabled", true);
+  const enable = f.host.enable;
+  f.host.enable = (path, name) => {
+    if (readFileSync(path, "utf8").includes("kizuki-v2")) return { ok: false, detail: "failed" };
+    return enable(path, name);
+  };
+  f.host.enableWithoutStart = () => ({ ok: false, detail: "failed" });
+  expect(() => installServeService(f.vault, { ...f.host, execStart: ["/synthetic/kizuki-v2", "serve"] })).toThrow("recovery is pending");
+  expect(existsSync(journalPath(f.vault))).toBe(true);
+  expect(readFileSync(first.unitPath!, "utf8")).toBe(original);
+  expect(f.activated).toEqual([original]);
+  f.host.enableWithoutStart = name => { f.enabledWithoutStart.push(name); f.observe("disabled", true); return { ok: true, detail: "enabled" }; };
+  expect(uninstallServeService(f.vault, f.host).removed).toBe(true);
+  expect(readServeIntent(f.vault)).toBe("opted-out");
+  expect(existsSync(journalPath(f.vault))).toBe(false);
+  expect(f.activated).toEqual([original]);
+  expect(f.enabledWithoutStart.length).toBeGreaterThan(0);
+});
+
+test("explicit reinstall of inactive+enabled activates the current definition", () => {
+  const f = fixture(); installServeService(f.vault, f.host);
+  f.observe("disabled", true);
+  const next = installServeService(f.vault, { ...f.host, execStart: ["/synthetic/kizuki-v2", "serve"] });
+  expect(next.status.state).toBe("active");
+  expect(next.status.enabled).toBe(true);
+  expect(f.activated.at(-1)).toContain("kizuki-v2");
+  expect(readServeIntent(f.vault)).toBe("installed");
+});
+
+test("failed reinstall from inactive+enabled restores inactivity and enablement without starting", () => {
+  const f = fixture(); const first = installServeService(f.vault, f.host);
+  const original = readFileSync(first.unitPath!, "utf8");
+  f.observe("disabled", true);
+  const enable = f.host.enable;
+  const upgraded: SupervisorHost = { ...f.host, execStart: ["/synthetic/kizuki-v2", "serve"], enable: (path, name) => {
+    if (readFileSync(path, "utf8").includes("kizuki-v2")) return { ok: false, detail: "failed" };
+    return enable(path, name);
+  } };
+  expect(() => installServeService(f.vault, upgraded)).toThrow("previous configuration restored");
+  expect(readFileSync(first.unitPath!, "utf8")).toBe(original);
+  expect(f.host.query("synthetic")).toMatchObject({ state: "disabled", enabled: true });
+  expect(readServeIntent(f.vault)).toBe("installed");
+  expect(existsSync(journalPath(f.vault))).toBe(false);
+  expect(f.activated).toEqual([original]);
+  expect(f.enabledWithoutStart.length).toBeGreaterThan(0);
+});
+
+test("valid version-2 active and disabled journals recover according to their original meaning", () => {
+  const f = fixture(); const first = installServeService(f.vault, f.host);
+  const original = readFileSync(first.unitPath!, "utf8");
+  interruptInstall(f, { state: "active", enabled: true });
+  const activeJournal = JSON.parse(readFileSync(journalPath(f.vault), "utf8"));
+  expect(activeJournal.version).toBe(3);
+  writeFileSync(journalPath(f.vault), JSON.stringify({
+    version: 2, kind: "systemd", identity_hash: activeJournal.identity_hash,
+    previous_unit: activeJournal.previous_unit, previous_intent: "installed", previous_enabled: true,
+  }));
+  f.setState("disabled"); // The post-interruption state does not redefine v2's prior activity.
+  const recoveredActive = installServeService(f.vault, f.host);
+  expect(recoveredActive.status.state).toBe("active");
+  expect(f.activated.at(-2)).toBe(original);
+  expect(existsSync(journalPath(f.vault))).toBe(false);
+
+  f.setState("disabled"); writeServeIntent(f.vault, "opted-out");
+  interruptInstall(f, { state: "disabled", enabled: false });
+  const disabledJournal = JSON.parse(readFileSync(journalPath(f.vault), "utf8"));
+  writeFileSync(journalPath(f.vault), JSON.stringify({
+    version: 2, kind: "systemd", identity_hash: disabledJournal.identity_hash,
+    previous_unit: disabledJournal.previous_unit, previous_intent: "opted-out", previous_enabled: false,
+  }));
+  f.setState("active");
+  const beforeEnable = f.activated.length;
+  let restoredUnit = "";
+  let restoredStatus: SupervisorStatus | undefined;
+  const recoveredDisabled = installServeService(f.vault, { ...f.host, execStart: ["/synthetic/kizuki-v2", "serve"],
+    reload: () => { restoredUnit = readFileSync(first.unitPath!, "utf8"); restoredStatus = f.host.query("synthetic"); return { ok: true, detail: "reloaded" }; },
+  });
+  expect(restoredUnit).toBe(original);
+  expect(restoredStatus).toMatchObject({ state: "disabled", enabled: false });
+  expect(recoveredDisabled.status.state).toBe("active");
+  expect(f.activated.length).toBe(beforeEnable + 1);
+  expect(f.activated.at(-1)).toContain("kizuki-v2");
+  expect(readServeIntent(f.vault)).toBe("installed");
+});
+
+test("interrupted version-3 inactive+enabled snapshot preserves original activity on later invocation", () => {
+  const f = fixture(); const first = installServeService(f.vault, f.host);
+  const original = readFileSync(first.unitPath!, "utf8");
+  f.observe("disabled", true);
+  interruptInstall(f, { state: "disabled", enabled: true });
+  const snapshot = JSON.parse(readFileSync(journalPath(f.vault), "utf8"));
+  expect(snapshot).toMatchObject({ version: 3, previous_enabled: true, previous_active: false, previous_intent: "installed" });
+  expect(snapshot.previous_unit).toBe(original);
+  let restored: SupervisorStatus | undefined;
+  const next = installServeService(f.vault, { ...f.host, execStart: ["/synthetic/kizuki-v2", "serve"],
+    enable: (path, name) => { restored = f.host.query("synthetic"); return f.host.enable(path, name); },
+  });
+  expect(restored).toMatchObject({ state: "disabled", enabled: true });
+  expect(next.status.state).toBe("active");
+  expect(f.activated.at(-1)).toContain("kizuki-v2");
+  expect(existsSync(journalPath(f.vault))).toBe(false);
+  expect(f.enabledWithoutStart.length).toBeGreaterThan(0);
+});
+
+test("hosts without enablement-only restoration refuse inactive+enabled before mutation and keep active flows", () => {
+  const f = fixture(); const first = installServeService(f.vault, withoutEnablementOnly(f.host));
+  expect(existsSync(first.unitPath!)).toBe(true);
+  const next = installServeService(f.vault, { ...withoutEnablementOnly(f.host), execStart: ["/synthetic/kizuki-v2", "serve"] });
+  expect(next.status.state).toBe("active");
+  expect(uninstallServeService(f.vault, withoutEnablementOnly(f.host)).removed).toBe(true);
+  expect(readServeIntent(f.vault)).toBe("opted-out");
+
+  const g = fixture(); const installed = installServeService(g.vault, g.host);
+  const owned = readFileSync(installed.unitPath!, "utf8");
+  g.observe("disabled", true);
+  let mutations = 0;
+  const incapable: SupervisorHost = {
+    ...withoutEnablementOnly(g.host),
+    enable: (path, name) => { mutations++; return g.host.enable(path, name); },
+    disable: name => { mutations++; return g.host.disable(name); },
+  };
+  expect(() => uninstallServeService(g.vault, incapable)).toThrow("no service change made");
+  expect(() => installServeService(g.vault, incapable)).toThrow("no service change made");
+  expect(mutations).toBe(0);
+  expect(readFileSync(installed.unitPath!, "utf8")).toBe(owned);
+  expect(readServeIntent(g.vault)).toBe("installed");
+  expect(existsSync(journalPath(g.vault))).toBe(false);
+  expect(g.host.query("synthetic")).toMatchObject({ state: "disabled", enabled: true });
+});
+
+test("pending inactive+enabled recovery with an incapable host stays pending without guessing", () => {
+  const f = fixture(); const first = installServeService(f.vault, f.host);
+  const original = readFileSync(first.unitPath!, "utf8");
+  f.observe("disabled", true);
+  interruptInstall(f, { state: "disabled", enabled: true });
+  const snapshot = readFileSync(journalPath(f.vault), "utf8");
+  let mutations = 0;
+  const incapable = withoutEnablementOnly({
+    ...f.host,
+    enable: (path, name) => { mutations++; return f.host.enable(path, name); },
+    disable: name => { mutations++; return f.host.disable(name); },
+  });
+  expect(() => installServeService(f.vault, incapable)).toThrow("cannot restore enablement");
+  expect(mutations).toBe(0);
+  expect(readFileSync(journalPath(f.vault), "utf8")).toBe(snapshot);
+  expect(readFileSync(first.unitPath!, "utf8")).not.toBe(original);
+  expect(installServeService(f.vault, f.host).status.state).toBe("active");
+  expect(existsSync(journalPath(f.vault))).toBe(false);
+});
+
+test("launchd loaded-but-inactive supervision is not admitted as inactive+enabled", () => {
+  const f = fixture("launchd");
+  const first = installServeService(f.vault, f.host);
+  const original = readFileSync(first.unitPath!, "utf8");
+  f.observe("disabled", true);
+  let mutations = 0;
+  const host: SupervisorHost = { ...f.host,
+    enable: (path, name) => { mutations++; return f.host.enable(path, name); },
+    disable: name => { mutations++; return f.host.disable(name); },
+  };
+  expect(() => uninstallServeService(f.vault, host)).toThrow("no service change made");
+  expect(() => installServeService(f.vault, host)).toThrow("no service change made");
+  expect(mutations).toBe(0);
+  expect(readFileSync(first.unitPath!, "utf8")).toBe(original);
+  expect(readServeIntent(f.vault)).toBe("installed");
+  expect(existsSync(journalPath(f.vault))).toBe(false);
+});
+
+test("enablement restoration that starts the unit remains unverified", () => {
+  const f = fixture(); const first = installServeService(f.vault, f.host);
+  const original = readFileSync(first.unitPath!, "utf8");
+  f.observe("disabled", true);
+  const enable = f.host.enable;
+  f.host.enable = (path, name) => {
+    if (readFileSync(path, "utf8").includes("kizuki-v2")) return { ok: false, detail: "failed" };
+    return enable(path, name);
+  };
+  f.host.enableWithoutStart = name => { f.enabledWithoutStart.push(name); f.observe("active", true); return { ok: true, detail: "enabled" }; };
+  expect(() => installServeService(f.vault, { ...f.host, execStart: ["/synthetic/kizuki-v2", "serve"] })).toThrow("recovery is pending");
+  expect(existsSync(journalPath(f.vault))).toBe(true);
+  expect(readFileSync(first.unitPath!, "utf8")).toBe(original);
+  expect(f.activated).toEqual([original]);
+});
+
+test("unsupported journal shapes are retained without mutating the unit", () => {
+  const f = fixture(); const first = installServeService(f.vault, f.host);
+  const original = readFileSync(first.unitPath!, "utf8");
+  interruptInstall(f, { state: "active", enabled: true });
+  const valid = JSON.parse(readFileSync(journalPath(f.vault), "utf8"));
+  let mutations = 0;
+  const host: SupervisorHost = { ...f.host,
+    reload: () => { mutations++; return f.host.reload(); },
+    enable: (path, name) => { mutations++; return f.host.enable(path, name); },
+    disable: name => { mutations++; return f.host.disable(name); },
+  };
+  for (const fields of [
+    { extra: true },
+    { version: 2 }, // v2 cannot carry the additional v3 activity field.
+    { version: 4 },
+    { previous_active: undefined },
+    { previous_active: "false" },
+    { previous_enabled: "true" },
+    { previous_enabled: false, previous_active: true },
+    { previous_unit: null, previous_enabled: true },
+  ]) {
+    const snapshot = JSON.stringify({ ...valid, ...fields });
+    writeFileSync(journalPath(f.vault), snapshot);
+    expect(() => installServeService(f.vault, host)).toThrow("another vault or service location");
+    expect(mutations).toBe(0);
+    expect(readFileSync(journalPath(f.vault), "utf8")).toBe(snapshot);
+    expect(readFileSync(first.unitPath!, "utf8")).not.toBe(original);
+  }
+});
+
+test("version-3 launchd journals cannot claim inactive enablement even with a capable host", () => {
+  const f = fixture("launchd"); const first = installServeService(f.vault, f.host);
+  interruptInstall(f, { state: "active", enabled: true });
+  const prior = JSON.parse(readFileSync(journalPath(f.vault), "utf8"));
+  const snapshot = JSON.stringify({ ...prior, previous_active: false });
+  writeFileSync(journalPath(f.vault), snapshot);
+  const published = readFileSync(first.unitPath!, "utf8");
+  const calls: string[] = [];
+  const host: SupervisorHost = { ...f.host,
+    disable: name => { calls.push("disable"); return f.host.disable(name); },
+    reload: () => { calls.push("reload"); return f.host.reload(); },
+    enableWithoutStart: () => { calls.push("enable without start"); return { ok: true, detail: "enabled" }; },
+  };
+  expect(() => installServeService(f.vault, host)).toThrow("snapshot is invalid");
+  expect(calls).toEqual([]);
+  expect(readFileSync(journalPath(f.vault), "utf8")).toBe(snapshot);
+  expect(readFileSync(first.unitPath!, "utf8")).toBe(published);
+  expect(readServeIntent(f.vault)).toBe("installed");
+});
+
+
+for (const [name, stdout, code, detail] of [
+  ["failed exit", "state = exited\nlast exit code = 78", 0, "failed (last exit code 78)"],
+  ["failed retry", "state = spawn scheduled\nlast exit code = 1", 0, "failed (last exit code 1)"],
+  ["clean stop", "state = not running\nlast exit code = 0", 0, "stopped (last exit code 0)"],
+  ["initial wait", "state = waiting", 0, "loaded but not running"],
+  ["active after failure", "state = running\npid = 98765\nlast exit code = 78", 0, "active"],
+  ["conflicting exit", "state = exited\nlast exit code = 78\nlast exit code = 0", 0, "loaded but not running"],
+  ["duplicate exit", "state = exited\nlast exit code = 78\nlast exit code = 78", 0, "loaded but not running"],
+  ["malformed exit", "state = exited\nlast exit code = PRIVATE_MANAGER_CANARY", 0, "loaded but not running"],
+  ["malformed sibling", "state = exited\nlast exit code = 78\nlast exit code=garbage", 0, "loaded but not running"],
+  ["malformed colon sibling", "state = exited\nlast exit code = 78\nlast exit code: 0", 0, "loaded but not running"],
+  ["oversized print", "state = exited\nlast exit code = 78\n" + "x".repeat(65_536), 0, "loaded but not running"],
+  ["unsafe exit", "state = exited\nlast exit code = 999999999999999999", 0, "loaded but not running"],
+  ["noncanonical exit", "state = exited\nlast exit code = 078", 0, "loaded but not running"],
+  ["out of range exit", "state = exited\nlast exit code = 256", 0, "loaded but not running"],
+  ["nested exit", "\tstate = exited\n\tenvironment = {\n\t\tlast exit code = 78\n\t}", 0, "loaded but not running"],
+  ["failed print", "state = exited\nlast exit code = 78", 1, "supervisor state could not be queried"],
+] as const) {
+  test(`launchd status distinguishes ${name} with bounded diagnostics only`, () => {
+    const root = mkdtempSync(join(tmpdir(), "kizuki-launchd-status-")); roots.push(root);
+    writeFileSync(join(root, "launchctl"), `#!${process.execPath}\nimport assert from 'node:assert/strict';
+      assert.deepEqual(process.argv.slice(2), ['print', 'gui/' + process.getuid() + '/dev.kizuki.synthetic']);
+      process.stdout.write(${JSON.stringify(stdout)}); process.stderr.write('PRIVATE_MANAGER_CANARY'); process.exit(${code});
+`, { mode: 0o700 });
+    const script = `const {realSupervisorHost} = await import(${JSON.stringify(join(import.meta.dir, "../../src/serve/supervisor.ts"))});
+      console.log(JSON.stringify(realSupervisorHost('launchd', '/synthetic', '/synthetic/kizuki').query('synthetic')));`;
+    const result = Bun.spawnSync([process.execPath, "--eval", script], {
+      env: { ...process.env, PATH: root + ":" + process.env.PATH }, stdout: "pipe", stderr: "pipe", timeout: 10_000,
+    });
+    expect(result.exitCode).toBe(0); expect(result.stderr.toString()).toBe("");
+    const status = JSON.parse(result.stdout.toString());
+    expect(status).toEqual({ kind: "launchd", unit: "dev.kizuki.synthetic", enabled: code === 0,
+      state: code !== 0 ? "unknown" : name === "active after failure" ? "active" : "disabled", detail });
+    expect(result.stdout.toString()).not.toContain("PRIVATE_MANAGER_CANARY");
+  });
+}
+
+
+test("uninstall of a positively observed failed launchd job removes it without starting it", () => {
+  const f = fixture("launchd"), installed = installServeService(f.vault, f.host);
+  f.observe("disabled", true);
+  const query = f.host.query; f.host.query = id => { const row = query(id); return row.enabled && row.state === "disabled" ? { ...row, detail: "failed (last exit code 2)" } : row; };
+  const disable = f.host.disable; f.host.disable = unit => { const result = disable(unit); f.observe("absent", false); return result; };
+  const starts = f.activated.length;
+  expect(uninstallServeService(f.vault, f.host).removed).toBe(true);
+  expect(f.activated.length).toBe(starts);
+  expect(existsSync(installed.unitPath!)).toBe(false);
+  expect(readServeIntent(f.vault)).toBe("opted-out");
+});
+
+
+function failedLaunchdFixture() {
+  const f = fixture("launchd"), installed = installServeService(f.vault, f.host);
+  f.observe("disabled", true);
+  const query = f.host.query;
+  f.host.query = id => { const row = query(id); return row.enabled && row.state === "disabled" ? { ...row, detail: "failed (last exit code 2)" } : row; };
+  f.host.disable = () => { f.observe("absent", false); return { ok: true, detail: "unloaded" }; };
+  return { ...f, path: installed.unitPath!, journal: join(f.vault, ".kizuki/service-change.json") };
+}
+
+test("failed launchd stop persists an exact forward decision and retry never starts the job", () => {
+  const f = failedLaunchdFixture(), original = readFileSync(f.path, "utf8"), disable = f.host.disable;
+  f.host.disable = () => ({ ok: false, detail: "failed" });
+  expect(() => uninstallServeService(f.vault, f.host)).toThrow("uninstall is pending");
+  const entry = JSON.parse(readFileSync(f.journal, "utf8"));
+  expect(Object.keys(entry).sort()).toEqual(["identity_hash", "kind", "operation", "previous_intent", "previous_unit", "version"]);
+  expect(entry).toMatchObject({ version: 4, kind: "launchd", operation: "uninstall", previous_unit: original, previous_intent: "installed" });
+  expect(readFileSync(f.path, "utf8")).toBe(original);
+  f.host.disable = disable;
+  uninstallServeService(f.vault, f.host);
+  expect(f.activated).toHaveLength(1); expect(existsSync(f.path)).toBe(false); expect(existsSync(f.journal)).toBe(false);
+  expect(readServeIntent(f.vault)).toBe("opted-out");
+});
+
+for (const point of ["after-stop", "after-remove"] as const) {
+  test(`actual process exit ${point} resumes durable launchd removal without bootstrap`, () => {
+    const f = failedLaunchdFixture(), module = join(import.meta.dir, "../../src/serve/supervisor.ts");
+    const script = `
+      import { uninstallServeService } from ${JSON.stringify(module)};
+      let stopped = false;
+      uninstallServeService(${JSON.stringify(f.vault)}, { kind:'launchd', home:${JSON.stringify(f.root)}, execStart:['/synthetic/kizuki-v1','serve'],
+        query: () => ({kind:'launchd',state:stopped?'absent':'disabled',enabled:!stopped,unit:'synthetic',detail:stopped?'absent':'failed (last exit code 2)'}),
+        disable: () => { stopped=true; ${point === "after-stop" ? "process.exit(86);" : ""} return {ok:true,detail:'stopped'}; },
+        reload: () => { process.exit(87); }, enable: () => { process.exit(99); } });
+    `;
+    const child = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 5000 });
+    expect({ exit: child.exitCode, stderr: child.stderr.toString() }).toEqual({ exit: point === "after-stop" ? 86 : 87, stderr: "" });
+    expect(JSON.parse(readFileSync(f.journal, "utf8")).operation).toBe("uninstall");
+    expect(existsSync(f.path)).toBe(point === "after-stop");
+    f.observe("absent", false); uninstallServeService(f.vault, f.host);
+    expect(f.activated).toHaveLength(1); expect(existsSync(f.path)).toBe(false); expect(existsSync(f.journal)).toBe(false);
+    expect(readServeIntent(f.vault)).toBe("opted-out");
+  });
+}
+
+for (const fault of ["identity", "kind", "operation", "extra", "replacement"] as const) {
+  test(`pending forward removal refuses ${fault} and preserves its journal and unrelated bytes`, () => {
+    const f = failedLaunchdFixture(); f.host.disable = () => ({ ok:false,detail:'failed' });
+    expect(() => uninstallServeService(f.vault, f.host)).toThrow("uninstall is pending");
+    const entry = JSON.parse(readFileSync(f.journal, "utf8"));
+    if (fault === "identity") entry.identity_hash = "foreign";
+    if (fault === "kind") entry.kind = "systemd";
+    if (fault === "operation") entry.operation = "install";
+    if (fault === "extra") entry.extra = true;
+    if (fault === "replacement") writeFileSync(f.path, "unrelated replacement", { mode:0o600 });
+    writeFileSync(f.journal, JSON.stringify(entry), { mode:0o600 });
+    const before = readFileSync(f.path, "utf8"), journal = readFileSync(f.journal, "utf8"); let calls=0;
+    f.host.disable = () => { calls++; return {ok:true,detail:'unexpected'}; };
+    expect(() => uninstallServeService(f.vault, f.host)).toThrow();
+    expect(calls).toBe(0); expect(readFileSync(f.path,"utf8")).toBe(before); expect(readFileSync(f.journal,"utf8")).toBe(journal);
+    expect(f.activated).toHaveLength(1);
+  });
+}
+
+test("forward removal refuses a definition replaced during stop and preserves pending authority", () => {
+  const f=failedLaunchdFixture();
+  f.host.disable=()=>{ writeFileSync(f.path,"replacement during stop",{mode:0o600}); f.observe("absent",false); return {ok:true,detail:"unloaded"}; };
+  expect(()=>uninstallServeService(f.vault,f.host)).toThrow("uninstall is pending");
+  expect(readFileSync(f.path,"utf8")).toBe("replacement during stop"); expect(existsSync(f.journal)).toBe(true); expect(readServeIntent(f.vault)).toBe("installed");
+});
+
+test("later explicit install completes pending forward removal before one requested activation", () => {
+  const f=failedLaunchdFixture(); f.host.reload=()=>({ok:false,detail:"failed"});
+  expect(()=>uninstallServeService(f.vault,f.host)).toThrow("uninstall is pending");
+  expect(existsSync(f.path)).toBe(false); expect(existsSync(f.journal)).toBe(true);
+  f.host.reload=()=>({ok:true,detail:"reloaded"});
+  installServeService(f.vault,f.host);
+  expect(f.activated).toHaveLength(2); expect(readServeIntent(f.vault)).toBe("installed"); expect(existsSync(f.journal)).toBe(false);
+});
+
+for (const detail of ["loaded but not running", "stopped (last exit code 0)", "failed (last exit code 0)", "failed (last exit code 256)", "failed (last exit code 02)", "failed (last exit code 2) trailing"]) {
+  test(`launchd forward removal never admits ambiguous state ${detail}`, () => {
+    const f=failedLaunchdFixture(),query=f.host.query;
+    f.host.query=id=>({...query(id),detail}); let calls=0; f.host.disable=()=>{calls++;return{ok:true,detail:"unexpected"};};
+    expect(()=>uninstallServeService(f.vault,f.host)).toThrow("no service change made");
+    expect(calls).toBe(0); expect(existsSync(f.journal)).toBe(false); expect(existsSync(f.path)).toBe(true);
+  });
+}
+
+test("forward uninstall requires the host and observed status to agree on launchd", () => {
+  const f=fixture("systemd"),installed=installServeService(f.vault,f.host);
+  const original=readFileSync(installed.unitPath!,"utf8"); let mutations=0;
+  const mixed: SupervisorHost={...f.host,
+    query:()=>({kind:"launchd",state:"disabled",enabled:true,unit:"synthetic",detail:"failed (last exit code 2)"}),
+    disable:()=>{mutations++;return{ok:false,detail:"unexpected"};}};
+  expect(()=>uninstallServeService(f.vault,mixed)).toThrow("no service change made");
+  expect(mutations).toBe(0); expect(existsSync(join(f.vault,".kizuki/service-change.json"))).toBe(false);
+  expect(readFileSync(installed.unitPath!,"utf8")).toBe(original);
+});
+
+for (const mode of ["retained-failure", "reset-failure", "reset-no-transition", "reset-reactivates", "rollback-failure", "ordinary"] as const) {
+  test(`systemd uninstall clears only the stopped owned failure before deletion: ${mode}`, () => {
+    const f = fixture(); const first = installServeService(f.vault, f.host);
+    const original = readFileSync(first.unitPath!, "utf8");
+    const ordinary = ordinaryVault(f.vault);
+    const unit = first.unitPath!.split("/").at(-1)!;
+    const statePath = join(f.root, "systemd-state.json");
+    writeFileSync(statePath, JSON.stringify({ mode, enabled: true, failed: mode !== "ordinary", calls: [] }), {mode: 0o600});
+    writeFileSync(join(f.root, "systemctl"), `#!${process.execPath}
+      import {existsSync,readFileSync,writeFileSync} from 'node:fs';
+      import assert from 'node:assert/strict';
+      const path=${JSON.stringify(statePath)}, unitPath=${JSON.stringify(first.unitPath)}, unit=${JSON.stringify(unit)};
+      const s=JSON.parse(readFileSync(path,'utf8')), args=process.argv.slice(2), command=args[1];
+      assert.equal(args[0],'--user');
+      assert.deepEqual(args, command==='daemon-reload' ? ['--user',command] : command==='disable' ? ['--user','disable','--now',unit] : ['--user',command,unit]);
+      s.calls.push(command); let code=0, output='';
+      if(command==='is-enabled') { output=existsSync(unitPath) ? (s.enabled?'enabled':'disabled') : 'not-found'; code=output==='enabled'?0:output==='not-found'?4:1; }
+      else if(command==='is-active') { output=s.active?'active':s.failed?'failed':'inactive'; code=s.active?0:existsSync(unitPath)?3:4; }
+      else if(command==='disable') { s.enabled=false; s.active=false; }
+      else if(command==='reset-failed') {
+        assert.equal(existsSync(unitPath),true,'reset must precede owned definition removal');
+        assert.equal(s.enabled,false,'reset must follow confirmed disable');
+        assert.equal(s.failed,true);
+        if(['reset-failure','rollback-failure'].includes(s.mode))code=1;
+        else if(s.mode!=='reset-no-transition')s.failed=false;
+        if(s.mode==='reset-reactivates')s.active=true;
+      } else if(command==='enable') { if(s.mode==='rollback-failure')code=1; else s.enabled=true; }
+      else assert.equal(command,'daemon-reload','uninstall must never start or restart');
+      writeFileSync(path,JSON.stringify(s)); process.stdout.write(output); process.exit(code);
+    `, {mode: 0o700});
+    const script=`
+      import {realSupervisorHost,uninstallServeService} from ${JSON.stringify(join(import.meta.dir,"../../src/serve/supervisor.ts"))};
+      const host=realSupervisorHost('systemd',${JSON.stringify(f.root)},'/synthetic/kizuki');
+      try { console.log(JSON.stringify({result:uninstallServeService(${JSON.stringify(f.vault)},host)})); }
+      catch(error) { console.log(JSON.stringify({error:error.message})); }
+    `;
+    const result=Bun.spawnSync([process.execPath,'-e',script], {env:{...process.env,PATH:f.root+':'+process.env.PATH},stdout:'pipe',stderr:'pipe',timeout:15_000});
+    expect({code:result.exitCode,stderr:result.stderr.toString()}).toEqual({code:0,stderr:""});
+    const observed=JSON.parse(result.stdout.toString());
+    const state=JSON.parse(readFileSync(statePath,'utf8'));
+    if(mode==='retained-failure'||mode==='ordinary') {
+      expect(observed.error).toBeUndefined(); expect(observed.result.removed).toBe(true);
+      expect(observed.result.status.state).toBe('absent'); expect(observed.result.status.enabled).toBe(false);
+      expect(existsSync(first.unitPath!)).toBe(false); expect(readServeIntent(f.vault)).toBe('opted-out');
+      expect(state.calls.filter((c:string)=>c==='reset-failed').length).toBe(mode==='ordinary'?0:1);
+      expect(state.calls.includes('enable')).toBe(false);
+    } else {
+      expect(observed.error).toContain(mode==='rollback-failure'?'recovery is pending':'previous configuration restored');
+      expect(readFileSync(first.unitPath!,'utf8')).toBe(original); expect(readServeIntent(f.vault)).toBe('installed');
+      expect(existsSync(journalPath(f.vault))).toBe(mode==='rollback-failure');
+      expect(state.calls.filter((c:string)=>c==='reset-failed').length).toBe(1);
+    }
+    expect(ordinaryVault(f.vault)).toEqual(ordinary);
+    if (mode === "rollback-failure") {
+      writeFileSync(statePath, JSON.stringify({...state, mode: "retained-failure"}));
+      const retry=Bun.spawnSync([process.execPath,'-e',script], {env:{...process.env,PATH:f.root+':'+process.env.PATH},stdout:'pipe',stderr:'pipe',timeout:15_000});
+      expect({code:retry.exitCode,stderr:retry.stderr.toString()}).toEqual({code:0,stderr:""});
+      expect(JSON.parse(retry.stdout.toString()).result.removed).toBe(true);
+      expect(existsSync(journalPath(f.vault))).toBe(false); expect(existsSync(first.unitPath!)).toBe(false);
+      expect(readServeIntent(f.vault)).toBe('opted-out'); expect(ordinaryVault(f.vault)).toEqual(ordinary);
+    }
+  });
+}
+
+for (const owned of [true, false]) {
+  test(`failed systemd uninstall refuses unavailable reset capability or definition: owned=${owned}`, () => {
+    const f = fixture(); const first = installServeService(f.vault, f.host);
+    f.observe("disabled", false);
+    const query = f.host.query;
+    f.host.query = id => ({...query(id), detail: "failed"});
+    let resets = 0;
+    if (!owned) {
+      rmSync(first.unitPath!);
+      f.host.resetFailure = () => { resets++; return {ok:true, detail:"unexpected"}; };
+    }
+    expect(() => uninstallServeService(f.vault, f.host)).toThrow("previous configuration restored");
+    expect(resets).toBe(0); expect(existsSync(first.unitPath!)).toBe(owned);
+    expect(readServeIntent(f.vault)).toBe("installed");
+  });
+}

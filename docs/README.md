@@ -19,5 +19,9 @@ Related:
 - [stranger-proof.md](stranger-proof.md) — automated native-artifact isolation prerequisite
 - [wave1/](wave1/) — historical lane specs; many are VOID or superseded
 
-1.0 is not tagged. RFC 0002 §1.3 still requires stranger proof and estate
-cutover. Neither is in this tree.
+1.0 is not tagged. RFC 0002 §1.3, as amended 2026-09-05, still requires
+stranger proof. Estate cutover and seven-/fourteen-day calendar observation
+are not readiness or 1.0 tag prerequisites ([D19](decision-log.md#owner-amendment-to-readiness-2026-09-05)).
+Stranger proof is not in this tree. Product, connector, model, security,
+recovery, platform, independent review, and unfamiliar-human requirements
+remain.

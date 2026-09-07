@@ -152,7 +152,7 @@ export async function collectPieces(
   const withheld: AuditDenial[] = [];
   const grant = ctx.principal.grant;
   const nominated = request.query === undefined || !request.include.includes("canon")
-    ? { ids: [], degraded: ctx.retrievalUnavailable ? ["retrieval-unavailable"] : [] }
+    ? { ids: [], degraded: ctx.retrievalUnavailable ? ["retrieval-unavailable", ...(typeof ctx.retrievalUnavailable === "string" ? [ctx.retrievalUnavailable] : [])] : [] }
     : await retrievalCandidates(ctx, request.query, {
       scope: "canon", limit: CANDIDATE_LIMIT, ceiling: grant.ceiling,
       ...(request.subjects === undefined ? {} : { subjects: request.subjects }),

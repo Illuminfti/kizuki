@@ -9,6 +9,17 @@ import { z } from "zod";
 const SENSITIVITY = z.enum(["public", "personal", "private"]);
 const ID = z.string().min(1).max(64);
 const RFC3339 = z.string().min(20).max(40);
+const AUTHORITY = z.enum(Object.keys(AUTHORITY_TIERS) as [string, ...string[]]);
+const SUBJECT_LABEL = z.strictObject({
+  subject: z.string(),
+  display_name: z.string().nullable(),
+  handles: z.array(z.string()).max(4),
+  evidence: z.array(z.strictObject({
+    claim_id: z.string(),
+    authority: AUTHORITY,
+    sources: z.array(z.string()).min(1).max(64),
+  })).min(1).max(32),
+});
 
 /**
  * Every field the engine puts on a chunk is described here. zod renders the
@@ -22,13 +33,12 @@ const CANON_CHUNK = z.object({
   type: z.string(),
   sensitivity: SENSITIVITY,
   taint: z.enum(PAGE_TAINTS),
-  authority: z
-    .enum(Object.keys(AUTHORITY_TIERS) as [string, ...string[]])
-    .nullable(),
+  authority: AUTHORITY.nullable(),
   subjects: z.array(z.string()),
   sources: z.array(z.string()),
   excerpt: z.string(),
   truncated: z.boolean(),
+  subject_labels: z.array(SUBJECT_LABEL).max(50).optional(),
 });
 
 const QUOTED_CHUNK = z.object({
@@ -40,9 +50,17 @@ const QUOTED_CHUNK = z.object({
   subjects: z.array(z.string()),
   text: z.string(),
   tainted: z.literal(true),
+  subject_labels: z.array(SUBJECT_LABEL).max(50).optional(),
 });
 
 const DENIED = z.object({ reason: z.string(), count: z.int() });
+
+/** Exact object core emits once the source-policy epoch is positive; omitted at epoch 0. */
+const SOURCE_POLICY = z.strictObject({
+  mode: z.literal("enforced"),
+  epoch: z.int().min(1),
+  legacy_unbound: z.literal("owner_only"),
+});
 
 export const ENVELOPE_SHAPE = z.object({
   schema: z.literal(ENVELOPE_SCHEMA),
@@ -52,6 +70,7 @@ export const ENVELOPE_SHAPE = z.object({
   canon: z.array(CANON_CHUNK),
   quoted: z.array(QUOTED_CHUNK),
   denied: z.array(DENIED),
+  source_policy: SOURCE_POLICY.optional(),
   data: z.record(z.string(), z.unknown()).optional(),
 });
 

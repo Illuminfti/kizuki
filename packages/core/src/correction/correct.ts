@@ -1,10 +1,10 @@
 import type { Database } from "bun:sqlite";
-import { existsSync, readFileSync } from "node:fs";
 import { assertStoredPageRelPath } from "../canon/paths";
-import { snapshotCanonIo } from "../canon/io";
-import { containedVaultFile } from "../vault/write";
+import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
+import { readOwnedCanonPage } from "../canon/io";
+import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { toolAllowed } from "../agents/authorization";
-import { applyCanonWrite } from "../canon/apply";
+import { applyCanonWriteOwned } from "../canon/apply";
 import { resolveTarget } from "../canon/arbiter";
 import { BudgetExhausted, createBudgetTracker } from "../canon/budget";
 import { CanonWriteError } from "../canon/errors";
@@ -18,10 +18,11 @@ import type { CaptureEventInput, SubjectRef } from "../contracts/event";
 import { tableExists } from "../ledger/schema";
 import { isRfc3339 } from "../util/time";
 import { ulid } from "../util/ulid";
-import { parseFrontmatter } from "../vault/frontmatter";
 import { unifiedDiff } from "./diff";
 import { bumpClaimsEpoch, initClaimsEpoch } from "./epoch";
 import { CorrectError } from "./errors";
+import { correctionRecoveryPending } from "./recovery";
+import { CanonRecoveryError } from "../canon/write-intent";
 import { hasExactTarget, objectFromStatement, sourceRecordId } from "./parse";
 import {
   CORRECTION_MAX_PAGES,
@@ -69,15 +70,14 @@ function activePagePath(relPath: string): string | null {
   return relPath.startsWith("archive/") ? null : relPath;
 }
 
-function readVaultPage(vaultPath: string, relPath: string): VaultPageBytes | null {
+function readVaultPage(io: CanonIo, relPath: string): VaultPageBytes | null {
   if (activePagePath(relPath) === null) return null;
-  const path = containedVaultFile(vaultPath, relPath);
-  if (!existsSync(path)) return null;
-  const content = readFileSync(path, "utf8");
+  const page = readOwnedCanonPage(io, relPath);
+  if (page === null) return null;
   return {
-    content,
-    hash: new Bun.CryptoHasher("sha256").update(content).digest("hex"),
-    data: parseFrontmatter(content).data,
+    content: page.content,
+    hash: page.hash,
+    data: page.page.data,
   };
 }
 
@@ -262,7 +262,7 @@ function reconstruct(
   );
   const rewritten = receipts.flatMap((receipt) => {
     if (activePagePath(receipt.page_path) === null) return [];
-    const page = readVaultPage(io.vault_path, receipt.page_path);
+    const page = readVaultPage(io, receipt.page_path);
     return [{
       page_path: receipt.page_path,
       before_hash: receipt.before_hash ?? "",
@@ -271,14 +271,20 @@ function reconstruct(
       diff: page === null ? "" : unifiedDiff("", page.content, receipt.page_path),
     }];
   });
+  const pending = correctionRecoveryPending(io.db, winner.claim_id);
+  const knownPaths = [...new Set(superseded.flatMap(row => row.page_path === null ? [] : [row.page_path]))].slice(0, CORRECTION_MAX_PAGES);
+  for (const path of knownPaths) for (const item of correctionRecoveryPending(io.db, winner.claim_id, path)) {
+    if (!pending.some(prior => prior.receipt_id === item.receipt_id)) pending.push(item);
+  }
   return {
+    ...(pending.length === 0 ? {} : { recovery_pending: pending }),
     receipt_id: winner.receipt_id,
     event_id: eventId,
     claim_ids: [winner.claim_id],
     superseded,
     rewritten,
     ambiguous: [],
-    answer: formatAnswer(winner, superseded, rewritten, rewritten.length === 0 ? null : winner.receipt_id, 0),
+    answer: formatAnswer(winner, superseded, rewritten, rewritten.length === 0 ? null : winner.receipt_id, 0, pending.length === 0 ? undefined : pending),
   };
 }
 
@@ -288,6 +294,7 @@ function formatAnswer(
   rewritten: CorrectResult["rewritten"],
   receiptId: string | null,
   remainder: number,
+  pending?: CorrectResult['recovery_pending'],
 ): string {
   const was = superseded[0]?.was;
   const now = winner.object ?? winner.body;
@@ -316,10 +323,10 @@ function formatAnswer(
   return [
     head,
     `Superseded ${superseded.length} claim${superseded.length === 1 ? "" : "s"}.`,
-    pages.length > 0 ? `Rewrote ${pages}.` : "No canon pages rewritten.",
+    pages.length > 0 ? `Rewrote ${pages}.` : pending !== undefined ? "Canon completion is unconfirmed." : "No canon pages rewritten.",
   ]
     .join("\n")
-    .concat(extra, undo);
+    .concat(extra, pending !== undefined ? "\nCanon recovery is pending. Run kizuki recover --json; unknown external operations require inspection before another change." : "", undo);
 }
 
 function acceptOwnerEvent(
@@ -427,7 +434,7 @@ function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPa
     if (claim.claim_key !== null) keys.add(claim.claim_key);
     const path = pagePathForClaim(io.db, claim);
     if (path !== null) {
-      const page = readVaultPage(io.vault_path, path);
+      const page = readVaultPage(io, path);
       const id = page?.data["id"];
       if (typeof id === "string") add(id, path, 1);
     }
@@ -465,7 +472,7 @@ function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPa
       if (!Array.isArray(sources) || !sources.some((id) => typeof id === "string" && provenance.has(id))) {
         continue;
       }
-      const page = readVaultPage(io.vault_path, row.page_path);
+      const page = readVaultPage(io, row.page_path);
       const id = page?.data["id"];
       if (typeof id === "string") add(id, row.page_path, 0.8);
     }
@@ -496,6 +503,24 @@ function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPa
  */
 export async function correct(io: CorrectIo, input: CorrectInput): Promise<CorrectResult> {
   io = snapshotCorrectIo(io);
+  const { statement, target, scope, dry_run } = input;
+  input = Object.freeze({ statement,
+    ...(target === undefined ? {} : { target: Object.freeze({ ...target }) }),
+    ...(scope === undefined ? {} : { scope: Object.freeze({ ...scope }) }),
+    ...(dry_run === undefined ? {} : { dry_run }),
+  });
+  try {
+    return await withCanonMutationAsync(io, (owner, owned) => correctOwned(owner, owned, input));
+  } catch (error) {
+    if (error instanceof VaultMutationError && error.code === "writer_busy") {
+      throw new CorrectError("writer_busy", "canon writer is busy; retry the correction");
+    }
+    throw error;
+  }
+}
+
+async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: CorrectInput): Promise<CorrectResult> {
+  requireCanonFiles(scope, io);
   assertStatement(input.statement);
   assertScope(input.scope);
   assertGrant(io);
@@ -517,8 +542,9 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
 
   if (input.dry_run !== true && accepted.duplicate) {
     const prior = existingCorrection(io.db, accepted.event_id);
-    if (prior !== null && prior.receipt_id !== null) {
-      return reconstruct(io, accepted.event_id, prior);
+    if (prior !== null) {
+      const recorded = reconstruct(io, accepted.event_id, prior);
+      if (prior.receipt_id !== null || recorded.recovery_pending !== undefined) return recorded;
     }
   }
 
@@ -532,7 +558,7 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
     }));
     const previewPages = affectedPages(io, group, seed).slice(0, CORRECTION_MAX_PAGES);
     const rewritten = previewPages.flatMap((page) => {
-      const existing = readVaultPage(io.vault_path, page.rel_path);
+      const existing = readVaultPage(io, page.rel_path);
       if (existing === null) return [];
       const after = existing.content.replace(seed.body, input.statement);
       return [
@@ -589,10 +615,16 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
   const canon = canonIo(io);
   const rewritten: CorrectResult["rewritten"] = [];
   const claimIds = [winner.claim_id];
+  let recoveryPending: CorrectResult["recovery_pending"];
   let receiptId: string | null = null;
 
   for (const [index, page] of chosen.entries()) {
-    const existing = readVaultPage(io.vault_path, page.rel_path);
+    const held = correctionRecoveryPending(io.db, winner.claim_id, page.rel_path);
+    if (held.length > 0) {
+      recoveryPending = [...(recoveryPending ?? []), ...held];
+      continue;
+    }
+    const existing = readVaultPage(io, page.rel_path);
     if (existing === null) continue;
     const before = existing.content;
     let claim = winner;
@@ -645,20 +677,24 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
             rel_path: page.rel_path,
             superseded: superseded.map((row) => row.claim_id),
           };
-    let receipt: ReturnType<typeof applyCanonWrite>;
+    let receipt: ReturnType<typeof applyCanonWriteOwned>;
     try {
-      receipt = applyCanonWrite(canon, stored, writeDecision, {
+      receipt = applyCanonWriteOwned(scope, canon, stored, writeDecision, {
         writer: "correction",
         budget,
       });
     } catch (error) {
+      const pending = correctionRecoveryPending(io.db, stored.claim_id, page.rel_path);
+      if (pending.length > 0 || error instanceof CanonRecoveryError) { recoveryPending = pending; break; }
       if (error instanceof CanonWriteError || error instanceof BudgetExhausted) {
         continue;
       }
       throw error;
     }
     if (receiptId === null) receiptId = receipt.receipt_id;
-    const after = readVaultPage(io.vault_path, receipt.page_path);
+    const pending = correctionRecoveryPending(io.db, stored.claim_id, receipt.page_path);
+    if (pending.length > 0) recoveryPending = [...(recoveryPending ?? []), ...pending];
+    const after = readVaultPage(io, receipt.page_path);
     rewritten.push({
       page_path: receipt.page_path,
       before_hash: receipt.before_hash ?? "",
@@ -679,6 +715,7 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
     superseded,
     rewritten,
     ambiguous: [],
-    answer: formatAnswer(winner, superseded, rewritten, receiptId, remainder),
+    ...(recoveryPending === undefined ? {} : { recovery_pending: recoveryPending }),
+    answer: formatAnswer(winner, superseded, rewritten, receiptId, remainder, recoveryPending),
   };
 }

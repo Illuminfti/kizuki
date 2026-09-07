@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite";
 import {
   closeSync,
   existsSync,
@@ -11,14 +10,19 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { assertReceiptPaths } from "../canon/paths";
+import { CanonAuthorityResolver } from "../canon/authority";
+import { getSourceSurvivorLineage } from "./canon-source-survivor-lineage";
 import { containedVaultFile } from "../vault/write";
 import { isDeepStrictEqual } from "node:util";
 import { applyPurgeRewrite, recoverSourceErasureIntents } from "../canon/apply";
+import { requireCanonFiles } from "../canon/io";
+import { readOwnedCanonPage } from "../canon/io";
+import type { CanonIo } from "../canon";
+import type { VaultMutationScope } from "../vault/mutation-scope";
 import { getClaim } from "../claims/store";
 import type { Claim } from "../contracts/proposal";
-import { parseFrontmatter, type VaultPage } from "../vault/frontmatter";
+import type { VaultPage } from "../vault/frontmatter";
 import { stringArray } from "../vault/pages";
-import { sha256Hex } from "../util/hash";
 import { ulid } from "../util/ulid";
 
 interface Receipt {
@@ -73,10 +77,39 @@ function replacement(
       return false;
   }
   if (independent.length === 0) return null;
-  let body = page.body;
-  for (const claim of present.filter((claim) => affected.has(claim.claim_id)))
-    if (!independent.some((other) => other.body.includes(claim.body.trim())))
-      body = body.split(claim.body.trim()).join("");
+  // A revoked claim can contain an independently supported claim verbatim.
+  // Preserve those exact characters while removing the enclosing claim.
+  const erased = new Uint8Array(page.body.length);
+  const mark = (text: string, value: number): void => {
+    // KMP finds overlapping occurrences in linear time. Write each character
+    // once per distinct body instead of refilling every overlapping span.
+    const prefix = new Uint32Array(text.length);
+    for (let i = 1, matched = 0; i < text.length; i++) {
+      while (matched > 0 && text[i] !== text[matched]) matched = prefix[matched - 1]!;
+      if (text[i] === text[matched]) matched++;
+      prefix[i] = matched;
+    }
+    let matched = 0, coveredUntil = 0;
+    for (let i = 0; i < page.body.length; i++) {
+      while (matched > 0 && page.body[i] !== text[matched]) matched = prefix[matched - 1]!;
+      if (page.body[i] === text[matched]) matched++;
+      if (matched === text.length) {
+        const end = i + 1;
+        erased.fill(value, Math.max(end - text.length, coveredUntil), end);
+        coveredUntil = end;
+        matched = prefix[matched - 1]!;
+      }
+    }
+  };
+  for (const text of new Set(present.filter(claim => affected.has(claim.claim_id)).map(claim => claim.body.trim()))) mark(text, 1);
+  for (const text of new Set(independent.map(claim => claim.body.trim()))) mark(text, 0);
+  let body = "";
+  for (let start = 0; start < page.body.length;) {
+    let end = start + 1;
+    while (end < page.body.length && erased[end] === erased[start]) end++;
+    if (erased[start] === 0) body += page.body.slice(start, end);
+    start = end;
+  }
   const data = { ...page.data };
   for (const [key, value] of Object.entries(data)) {
     if (generated.has(key)) continue;
@@ -98,11 +131,13 @@ function replacement(
 }
 /** All writes use the native canon capability; no payload preimage is made. */
 export function eraseSourceCanon(
-  db: Database,
-  vault: string,
+  scope: VaultMutationScope,
+  io: CanonIo,
   source: string,
 ): boolean {
-  if (!recoverSourceErasureIntents({db,vault_path:vault},source)) return false;
+  requireCanonFiles(scope, io);
+  const { db, vault_path: vault } = io;
+  if (!recoverSourceErasureIntents(scope, io, source)) return false;
   const affected = new Set(
     db
       .query<{ claim_id: string }, [string]>(
@@ -151,25 +186,16 @@ export function eraseSourceCanon(
       safe = false;
       continue;
     }
-    if (!existsSync(path)) continue;
-    const stat = lstatSync(path);
-    if (stat.size > 1024 * 1024) {
-      safe = false;
-      continue;
-    }
-    const bytes = readFileSync(path);
-    const hash = sha256Hex(bytes);
+    let current;
+    try { current = readOwnedCanonPage(io, relative); }
+    catch { safe = false; continue; }
+    if (current === null) continue;
+    const hash = current.hash;
     if (!entry.hashes.has(hash)) {
       safe = false;
       continue;
     }
-    let page: VaultPage;
-    try {
-      page = parseFrontmatter(bytes.toString("utf8"));
-    } catch {
-      safe = false;
-      continue;
-    }
+    const page = current.page;
     if (!stringArray(page.data["sources"]).some((id) => eventIds.has(id)))
       continue;
     const claimRows = db
@@ -191,7 +217,8 @@ export function eraseSourceCanon(
     }
     try {
       applyPurgeRewrite(
-        { db, vault_path: vault },
+        scope,
+        io,
         {
           rel_path: relative,
           purged_event_ids: [...eventIds],
@@ -229,6 +256,19 @@ export function eraseSourceCanon(
     ...receipts.map((row) => row.receipt_id),
     ...all.map((row) => row.receipt_id),
   ]);
+  // On retry, the inventory may include a previously committed survivor.
+  // Keep its current, positively bound path only if its evidence is independent.
+  for (const receipt of receipts) {
+    if (!selected.has(receipt.receipt_id) ||
+        (JSON.parse(receipt.provenance) as string[]).some(id => eventIds.has(id)) ||
+        (JSON.parse(receipt.claim_ids) as string[]).some(id => affected.has(id)) ||
+        getSourceSurvivorLineage(db, receipt.receipt_id) === null) continue;
+    const page = readOwnedCanonPage(io, receipt.page_path);
+    if (page !== null && new CanonAuthorityResolver(db, [receipt.page_path])
+        .basis(receipt.page_path, page.hash)?.receipt_id === receipt.receipt_id) {
+      selected.delete(receipt.receipt_id);
+    }
+  }
   const log = join(vault, ".kizuki", "receipts", "promotions.jsonl");
   if (existsSync(log)) {
     const safeLog = safePath(vault, ".kizuki/receipts/promotions.jsonl");

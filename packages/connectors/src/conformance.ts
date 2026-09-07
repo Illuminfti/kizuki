@@ -20,6 +20,7 @@ import type {
   SignInIo,
   SyncBatch,
 } from "@kizuki/core";
+import { checkPurgeFixture, type PurgeConformanceFactory } from "./purge-conformance";
 import { InMemoryLedger } from "./ledger";
 import { resolveSensitivity } from "./sensitivity";
 import { errorMessage } from "./util";
@@ -36,6 +37,8 @@ export interface UnavailableConformanceHooks {
 }
 
 export interface ConformanceOptions {
+  /** Mandatory for purge planners; never invokes the configured connector purge. */
+  purgeFixture?: PurgeConformanceFactory;
   backfillTwice?: boolean;
   tombstone?: TombstoneConformanceHooks;
   unavailable?: UnavailableConformanceHooks;
@@ -180,26 +183,7 @@ async function runConformanceChecks(
   }
 
   if (manifest.capabilities.purge) {
-    try {
-      const plan = await timed("purgeSource", () =>
-        connector.purgeSource("conformance:subject"),
-      );
-      if (
-        !isPlainObject(plan) ||
-        plan["subject_id"] !== "conformance:subject" ||
-        !Array.isArray(plan["source_record_ids"]) ||
-        !Array.isArray(plan["unreachable_source_record_ids"]) ||
-        !validPurgeCompleteness(plan)
-      ) {
-        failures.push(
-          "purge capability declared but purgeSource() returned an invalid plan",
-        );
-      }
-    } catch (error) {
-      failures.push(
-        `purge capability declared but purgeSource() rejected: ${errorMessage(error)}`,
-      );
-    }
+    await checkPurgeFixture(connector, opts.purgeFixture, timed, failures);
   } else {
     await expectNotSupported(
       "purge",
@@ -322,14 +306,6 @@ async function runConformanceChecks(
   return result(failures);
 }
 
-function validPurgeCompleteness(plan: Record<string, unknown>): boolean {
-  const complete = plan["complete"];
-  const continuation = plan["continuation"];
-  if (complete === undefined && continuation === undefined) return true;
-  if (typeof complete !== "boolean") return false;
-  if (complete) return continuation === undefined;
-  return typeof continuation === "string" && continuation.length > 0;
-}
 
 function parseManifest(raw: unknown, failures: string[]): Manifest | undefined {
   if (!isPlainObject(raw)) {
@@ -531,7 +507,7 @@ async function checkPagination(
       );
       if (fresh.length === 0) break;
       for (const event of fresh) seen.add(event.source_record_id);
-      if (batch.cursor === null) break;
+      if (batch.cursor === null || Object.getOwnPropertyDescriptor(batch, "has_more")?.value === false) break;
       if (batch.cursor === cursor) {
         failures.push(
           "pagination: cursor did not advance while still emitting new records",
@@ -748,8 +724,13 @@ function inspectBatch(
     failures.push(`${label}: did not return a SyncBatch shape`);
     return undefined;
   }
+  const completion = Object.getOwnPropertyDescriptor(raw, "has_more");
+  if (completion !== undefined && (!(Object.hasOwn(completion, "value")) || typeof completion.value !== "boolean")) {
+    failures.push(`${label}: has_more must be an own boolean data property`);
+    return undefined;
+  }
   inspectEvents(raw["events"], label, manifest, failures);
-  return raw as unknown as SyncBatch;
+  return { ...raw, ...(completion === undefined ? {} : { has_more: completion.value }) } as unknown as SyncBatch;
 }
 
 function inspectEvents(

@@ -1,7 +1,7 @@
 import type { SearchHit } from "@kizuki/core";
-import { OWNER, initAgents, retrievalDocId, serveSearch } from "@kizuki/core";
+import { OWNER, retrievalDocId, serveSearch } from "@kizuki/core";
 import { UsageError, parseArguments, requirePositional } from "../args";
-import { withVault } from "../context";
+import { withReadVault } from "../context";
 import { indexFreshness } from "../derived";
 import { clean, jsonEnvelope } from "../output";
 import type { CliIo, Command } from "./index";
@@ -46,7 +46,7 @@ export const queryCommand: Command = {
     const limit = rawLimit === undefined ? 20 : parseLimit(rawLimit);
     const allowDegraded = parsed.flags.has("--degraded");
 
-    return withVault(io, async (ctx) => {
+    return withReadVault(io, async (ctx) => {
       const freshness = indexFreshness(ctx.db, ctx.vaultPath);
       if (!freshness.fresh && !allowDegraded) {
         io.err(
@@ -55,10 +55,9 @@ export const queryCommand: Command = {
         return 1;
       }
 
-      initAgents(ctx.db);
       const envelope = await serveSearch({
         db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER,
-        ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }), ...(ctx.retrievalUnavailable ? { retrievalUnavailable: true as const } : {}),
+        ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }), ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}),
       }, { query: text, scope: rawScope as SearchScope, limit });
       const hits: SearchHit[] = [
         ...envelope.canon.map((chunk, index): SearchHit => ({
@@ -74,6 +73,7 @@ export const queryCommand: Command = {
           connector_id: chunk.connector_id, subjects: chunk.subjects, snippet: chunk.text, rank: index,
         })),
       ];
+      ctx.assertCurrent();
       const withheld = envelope.denied.reduce((sum, item) => sum + item.count, 0);
       const degraded = [...new Set([...freshness.degraded, ...(envelope.data?.degraded ?? [])])];
       if (withheld > 0) io.err(`withheld=${withheld} (excluded by access policy)`);
@@ -95,6 +95,6 @@ export const queryCommand: Command = {
       }
       for (const hit of hits) io.out(formatHit(hit));
       return 0;
-    }, { retrieval: "optional" });
+    }, { audit: true, retrieval: "optional" });
   },
 };

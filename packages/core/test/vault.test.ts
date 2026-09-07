@@ -265,6 +265,15 @@ Unknown frontmatter keys must use the \`x-*\` extension namespace.
     expect(readInitJournal(vault)?.adopt?.policy).toBe("adopt");
     expect(readInitJournal(vault)?.adopt?.entry_count).toBe(1);
     expect(readFileSync(join(vault, "inbox.md"), "utf8")).toBe("a personal note\n");
+
+    const adoptedJournal = readInitJournal(vault);
+    writeFileSync(join(vault, ".gitignore"), "# Owner rules\r\n*.log");
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect(initVault(vault).status).toBe("ready");
+      expect(readInitJournal(vault)).toEqual(adoptedJournal);
+      expect(readFileSync(join(vault, ".gitignore"), "utf8")).toBe("# Owner rules\r\n*.log\r\n/.kizuki/\r\n");
+      expect(readFileSync(join(vault, "inbox.md"), "utf8")).toBe("a personal note\n");
+    }
   });
 
   test("refuses adopt when a reserved name is the wrong kind of entry", () => {

@@ -7,7 +7,7 @@ import {
 } from "@kizuki/core";
 import type { PurgeFilter, PurgePreview } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
-import { withVault } from "../context";
+import { withReadVault, withVault } from "../context";
 import { jsonEnvelope } from "../output";
 import type { CliIo, Command } from "./index";
 
@@ -160,7 +160,7 @@ export const purgeCommand: Command = {
       throw new UsageError(this.usage);
     }
 
-    return withVault(io, async (ctx) => {
+    return (dryRun ? withReadVault : withVault)(io, async (ctx) => {
       let filter: PurgeFilter;
       if (eventId !== undefined) filter = { event_id: eventId };
       else {

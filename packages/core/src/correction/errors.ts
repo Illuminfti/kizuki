@@ -1,4 +1,5 @@
 export const CORRECT_ERROR_CODES = [
+  "writer_busy",
   "target_required",
   "statement_invalid",
   "claim_unknown",

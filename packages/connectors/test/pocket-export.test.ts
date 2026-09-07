@@ -236,6 +236,7 @@ test("a healthy export reports ok", async () => {
     expect((await connector.health()).state).toBe("ok");
     expect((await connector.backfill(null)).events.length).toBe(4);
     expect(await connector.purgeSource("pocket:self")).toEqual({
+      complete: true,
       subject_id: "pocket:self",
       source_record_ids: [],
       unreachable_source_record_ids: [
@@ -246,6 +247,7 @@ test("a healthy export reports ok", async () => {
       ],
     });
     expect(await connector.purgeSource("conformance:subject")).toEqual({
+      complete: true,
       subject_id: "conformance:subject",
       source_record_ids: [],
       unreachable_source_record_ids: [],

@@ -12,9 +12,16 @@ import { initGraph } from "../src/graph/schema";
 import { applyConnectionsV8 } from "../src/ledger/connections-schema";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { tableExists } from "../src/ledger/schema";
+import {
+  SOURCE_SURVIVOR_LINEAGE_COLUMNS,
+  SOURCE_SURVIVOR_LINEAGE_TABLE,
+  assertSourceSurvivorLineageSchema,
+  lineageRowCount,
+} from "../src/ledger/canon-source-survivor-lineage";
 import { initSearch } from "../src/search/schema";
+import { indexEvent } from "../src/search/indexer";
 import { searchResult } from "../src/search/query";
-import { accept, count } from "../src/ledger/ledger";
+import { accept, count, readEvent } from "../src/ledger/ledger";
 import { validEvent } from "./fixtures";
 import { computeLegacyContentHash } from "../src/util/hash";
 
@@ -928,12 +935,17 @@ describe("openLedger migrations", () => {
     db.close();
   });
 
-  test("v10 missing search_docs is projected from the companion", () => {
+  test("v10 missing search_docs restores ledger companions and requires a canon rebuild", () => {
     const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v10-fts-"));
     const path = join(directory, "ledger.sqlite");
     try {
       const first = openLedger(path);
       initSearch(first);
+      const captured = accept(first, { ...validEvent(), text: "ledgerkettleword" });
+      if (captured.status !== "stored") throw new Error("migration fixture capture was not stored");
+      indexEvent(first, captured.event);
+      const ledgerId = `event:${captured.event.event_id}`;
+      const ledgerDocument = first.query("SELECT * FROM search_documents WHERE doc_id=?").get(ledgerId);
       first.exec(`
         INSERT INTO search_documents (
           doc_id, scope, title, body, path, page_type, sensitivity,
@@ -947,7 +959,7 @@ describe("openLedger migrations", () => {
           layer, generation, rebuilt_at, doc_count, source_count, skipped_count,
           status, ledger_watermark, canon_hash, port_id, contract, space
         ) VALUES (
-          'search', 'gen-1', '2026-01-01T00:00:00Z', 1, 1, 0, 'ok',
+          'search', 'gen-1', '2026-01-01T00:00:00Z', 2, 2, 0, 'ok',
           NULL, NULL, 'kizuki.retrieval.fts5', 'kizuki.retrieval/v1', NULL
         );
         DROP TABLE search_docs;
@@ -956,22 +968,32 @@ describe("openLedger migrations", () => {
 
       const reopened = openLedger(path);
       expect(schemaVersion(reopened)).toBe(LEDGER_SCHEMA_VERSION);
+      // The legacy canon payload has no recorded page snapshot or provenance.
       expect(searchResult(reopened, "kettleword", { ceiling: "private" })).toEqual({
+        hits: [],
+        degraded: ["index-degraded"],
+      });
+      expect(searchResult(reopened, "ledgerkettleword", { ceiling: "private" })).toEqual({
         hits: [
           expect.objectContaining({
-            doc_id: "page:fact:tea",
-            title: "Tea",
+            doc_id: ledgerId,
+            title: "fixture message",
           }),
         ],
-        degraded: [],
+        degraded: ["index-degraded"],
       });
+      expect(readEvent(reopened, captured.event.event_id)).toEqual(captured.event);
+      expect(reopened.query("SELECT * FROM search_documents WHERE doc_id=?").get(ledgerId)).toEqual(ledgerDocument);
+      expect(reopened.query("SELECT * FROM search_docs WHERE doc_id=?").get(ledgerId)).toEqual(ledgerDocument);
+      expect(reopened.query("SELECT doc_id FROM search_documents WHERE scope='canon'").all()).toEqual([]);
+      expect(reopened.query("SELECT doc_id FROM search_docs WHERE scope='canon'").all()).toEqual([]);
       expect(
         reopened
-          .query<{ status: string }, []>(
-            "SELECT status FROM derived_meta WHERE layer = 'search'",
+          .query<{ status: string; skipped_count: number; canon_hash: string | null }, []>(
+            "SELECT status,skipped_count,canon_hash FROM derived_meta WHERE layer = 'search'",
           )
-          .get()?.status,
-      ).toBe("ok");
+          .get(),
+      ).toEqual({ status: "degraded", skipped_count: 1, canon_hash: null });
       reopened.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -1068,6 +1090,55 @@ describe("openLedger migrations", () => {
           .get()?.status,
       ).toBeUndefined();
       reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("v20 creates source-survivor lineage without inventing historical checkpoints", () => {
+    const fresh = openLedger(":memory:");
+    expect(schemaVersion(fresh)).toBe(LEDGER_SCHEMA_VERSION);
+    expect(tableExists(fresh, SOURCE_SURVIVOR_LINEAGE_TABLE)).toBe(true);
+    expect(
+      fresh
+        .query<{ name: string }, [string]>("SELECT name FROM pragma_table_info(?) ORDER BY cid")
+        .all(SOURCE_SURVIVOR_LINEAGE_TABLE)
+        .map(({ name }) => name),
+    ).toEqual([...SOURCE_SURVIVOR_LINEAGE_COLUMNS]);
+    expect(lineageRowCount(fresh)).toBe(0);
+    assertSourceSurvivorLineageSchema(fresh);
+    fresh.close();
+
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v20-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const legacy = new Database(path);
+      legacy.exec(V2_SCHEMA);
+      legacy.close();
+      const upgraded = openLedger(path);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
+      expect(tableExists(upgraded, SOURCE_SURVIVOR_LINEAGE_TABLE)).toBe(true);
+      expect(lineageRowCount(upgraded)).toBe(0);
+      assertSourceSurvivorLineageSchema(upgraded);
+      upgraded.exec(
+        `INSERT INTO canon_source_erasure_intents(page_path,source_key,intent,digest)
+         VALUES ('people/legacy.md','source-a','{"version":1}','${"a".repeat(64)}')`,
+      );
+      expect(
+        upgraded
+          .query<{ version: number }, []>(
+            "SELECT json_extract(intent,'$.version') AS version FROM canon_source_erasure_intents",
+          )
+          .get(),
+      ).toEqual({ version: 1 });
+      expect(() =>
+        upgraded.query(
+          `INSERT INTO ${SOURCE_SURVIVOR_LINEAGE_TABLE}
+            (version,kind,child_receipt_id,predecessor_receipt_id,before_hash,after_hash,predecessor_effective_authority,result_authority)
+           VALUES (2,'source_survivor','a','b','${"c".repeat(64)}','${"d".repeat(64)}','connector_evidence','connector_evidence')`,
+        ).run(),
+      ).toThrow();
+      upgraded.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

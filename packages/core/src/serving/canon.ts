@@ -1,4 +1,5 @@
 import { sourceEventsAllowed, sourceSensitivity } from "../ledger/source-grants";
+import { canonPageRecoveryPending, canonReadGeneration } from "../canon/write-intent";
 import { authorize, sensitivity } from "../agents";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import type { AuthorityTier } from "../contracts/proposal";
@@ -13,6 +14,7 @@ import {
   stringArray,
 } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
+import { assessLivePageEvidence, type LivePageEvidence } from "../vault/provenance";
 import { PAGE_TAINTS } from "../vault/schema";
 import type { PageTaint } from "../vault/schema";
 import { ServeError } from "./types";
@@ -20,6 +22,7 @@ import type { CanonChunk, ServeContext } from "./types";
 
 export interface CanonIndex {
   sourceContext: ServeContext;
+  generation: number;
   pages: CanonPage[];
   byId: Map<string, CanonPage>;
   /** Vault-relative path with forward slashes, as the walk produced it. */
@@ -67,6 +70,7 @@ export class CanonUnreadableError extends Error {
  * Schema-invalid and oversized files are withheld and reported by doctor.
  */
 export function loadCanon(ctx: ServeContext): CanonIndex {
+  const generation = canonReadGeneration(ctx.db);
   assertCanonReadAdmission(ctx);
   const report = listCanonPagesReport(ctx.vaultPath);
   const fatal = fatalCanonSkips(report.skipped);
@@ -80,8 +84,10 @@ export function loadCanon(ctx: ServeContext): CanonIndex {
     byPath.set(page.relPath, page);
   }
   assertCanonReadAdmission(ctx);
+  if (canonReadGeneration(ctx.db) !== generation) throw new ServeError("held", "canon changed during request; retry");
   return {
     sourceContext: ctx,
+    generation,
     pages: report.pages,
     byId,
     byPath,
@@ -94,6 +100,7 @@ export function loadCanon(ctx: ServeContext): CanonIndex {
 function canonReadHeld(ctx: ServeContext, page?: CanonPage): boolean {
   if (purgeDiscoveryPending(ctx.db)) return true;
   if (page === undefined) return false;
+  if (canonPageRecoveryPending(ctx.db, page.relPath)) return true;
   if (isHeld(ctx.db, page.relPath)) return true;
   const sources = stringArray(page.data["sources"]).map(eventIdFromReference);
   // A completed rewrite can lift the current hold while an older in-memory
@@ -119,7 +126,7 @@ export function pageServable(index: CanonIndex, page: CanonPage): Servable {
     sensitivity: stringField(page, "sensitivity"),
     ...(type === null ? {} : { type }),
     subjects: stringArray(page.data["subjects"]),
-    held: index.holds.has(page.relPath) || canonReadHeld(index.sourceContext, page),
+    held: index.generation !== canonReadGeneration(index.sourceContext.db) || index.holds.has(page.relPath) || canonReadHeld(index.sourceContext, page),
   };
 }
 
@@ -128,23 +135,25 @@ export function pageDecision(
   grant: Grant,
   page: CanonPage,
 ):
-  | { allow: true; sensitivity: Sensitivity; taint: PageTaint }
+  | { allow: true; sensitivity: Sensitivity; taint: PageTaint; evidence: Extract<LivePageEvidence, { admitted: true }> }
   | { allow: false; reason: DenyReason } {
   // Both labels are read first so the served chunk carries narrowed types
   // instead of casts. A page missing either is withheld from everyone, the
   // owner included: an unstamped page may be verbatim capture, and serving
   // it as canon would hand a reader capture dressed as produced prose.
   const sourceCtx = index.sourceContext;
-  if (canonReadHeld(sourceCtx, page)) return { allow: false, reason: "held" };
-  if (!sourceEventsAllowed(sourceCtx.db, stringArray(page.data["sources"]), { owner: sourceCtx.principal.kind === "owner", purpose: sourceCtx.sourcePurpose ?? "recall" })) return { allow: false, reason: "held" };
+  if (index.generation !== canonReadGeneration(sourceCtx.db) || canonReadHeld(sourceCtx, page)) return { allow: false, reason: "held" };
+  const evidence = assessLivePageEvidence(sourceCtx.db, page);
+  if (!evidence.admitted) return { allow: false, reason: "held" };
+  if (!sourceEventsAllowed(sourceCtx.db, evidence.sourceIds, { owner: sourceCtx.principal.kind === "owner", purpose: sourceCtx.sourcePurpose ?? "recall" })) return { allow: false, reason: "held" };
   const original = sensitivity(page.data["sensitivity"]);
-  const label = original === null ? null : sourceSensitivity(sourceCtx.db, stringArray(page.data["sources"]), original);
+  const label = original === null ? null : sourceSensitivity(sourceCtx.db, evidence.sourceIds, original);
   if (label === null) return { allow: false, reason: "missing_sensitivity" };
   const taint = asTaint(page.data["taint"]);
   if (taint === null) return { allow: false, reason: "missing_taint" };
   const decision = authorize(grant, { ...pageServable(index, page), sensitivity: label });
   return decision.allow
-    ? { allow: true, sensitivity: label, taint }
+    ? { allow: true, sensitivity: label, taint, evidence }
     : { allow: false, reason: decision.reason };
 }
 
@@ -156,6 +165,12 @@ export function canonChunk(
   truncated: boolean,
 ): CanonChunk {
   assertCanonReadAdmission(index.sourceContext, page);
+  if (index.generation !== canonReadGeneration(index.sourceContext.db)) throw new ServeError("held", "canon changed during request; retry");
+  const evidence = assessLivePageEvidence(index.sourceContext.db, page);
+  if (!evidence.admitted || !sourceEventsAllowed(index.sourceContext.db, evidence.sourceIds, {
+    owner: index.sourceContext.principal.kind === "owner",
+    purpose: index.sourceContext.sourcePurpose ?? "recall",
+  })) throw new ServeError("held", "canon evidence unavailable");
   return {
     page_id: page.id,
     path: page.relPath,
@@ -163,7 +178,7 @@ export function canonChunk(
     type: stringField(page, "type") ?? "",
     sensitivity: decision.sensitivity,
     taint: decision.taint,
-    authority: index.authority.get(page.relPath) ?? null,
+    authority: evidence.revision.authority,
     subjects: stringArray(page.data["subjects"]),
     sources: stringArray(page.data["sources"]),
     excerpt,

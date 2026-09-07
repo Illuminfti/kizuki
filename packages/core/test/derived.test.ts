@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { rebuildDerived } from "../src/derived";
 import { readDerivedMeta, stampDerived } from "../src/derived-meta";
 import { openLedger } from "../src/ledger/db";
-import { serializePage } from "../src/vault/frontmatter";
+import { recordedPage } from "./helpers/recorded-page";
 import { searchDb, storedEvent, tempVault } from "./search/helpers";
 
 const disposers: (() => void)[] = [];
@@ -13,28 +13,21 @@ afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose();
 });
 
-function fixture() {
+async function fixture() {
   const db = searchDb();
   const vault = tempVault();
   disposers.push(vault.dispose);
-  writeFileSync(
-    join(vault.path, "facts", "tea.md"),
-    serializePage({
-      data: {
-        id: "fact:tea",
-        title: "Tea",
-        type: "fact",
-        status: "active",
-        sensitivity: "personal",
-        taint: "clean",
-        subjects: ["person:ada"],
-        sources: ["event:source"],
-      },
-      body: "Tea uses a [[Kettle]].",
-    }),
-    "utf8",
-  );
-  storedEvent(db, "event-one", { text: "Ledger tea note." });
+  const event = storedEvent(db, "event-one", { text: "Ledger tea note. Tea uses a Kettle." });
+  await recordedPage(db, vault.path, "facts/tea.md", {
+    id: "fact:tea",
+    title: "Tea",
+    type: "fact",
+    status: "active",
+    sensitivity: "personal",
+    taint: "clean",
+    subjects: ["person:ada"],
+    sources: [event.event_id],
+  }, "Tea uses a [[Kettle]].");
   return { db, vaultPath: vault.path };
 }
 
@@ -56,8 +49,8 @@ function derivedCounts(db: ReturnType<typeof searchDb>) {
 }
 
 describe("rebuildDerived", () => {
-  test("derived_meta is created once and read back per layer", () => {
-    const { db, vaultPath } = fixture();
+  test("derived_meta is created once and read back per layer", async () => {
+    const { db, vaultPath } = await fixture();
     expect(readDerivedMeta(openLedger(":memory:"), "search")).toBeNull();
     rebuildDerived(db, vaultPath);
     expect(readDerivedMeta(db, "search")?.doc_count).toBe(2);
@@ -70,8 +63,8 @@ describe("rebuildDerived", () => {
     expect(readDerivedMeta(db, "graph")?.port_id).toBeNull();
   });
 
-  test("rebuilds search and graph in one call", () => {
-    const { db, vaultPath } = fixture();
+  test("rebuilds search and graph in one call", async () => {
+    const { db, vaultPath } = await fixture();
     const result = rebuildDerived(db, vaultPath);
 
     expect(result.search).toMatchObject({ pages: 1, events: 1 });
@@ -79,8 +72,8 @@ describe("rebuildDerived", () => {
     expect(derivedCounts(db)).toEqual({ search: 2, graph: 3 });
   });
 
-  test("restores identical counts after every derived table is deleted", () => {
-    const { db, vaultPath } = fixture();
+  test("restores identical counts after every derived table is deleted", async () => {
+    const { db, vaultPath } = await fixture();
     rebuildDerived(db, vaultPath);
     const before = derivedCounts(db);
 
@@ -105,8 +98,8 @@ describe("rebuildDerived", () => {
     ]);
   });
 
-  test("is idempotent across repeated one-command rebuilds", () => {
-    const { db, vaultPath } = fixture();
+  test("is idempotent across repeated one-command rebuilds", async () => {
+    const { db, vaultPath } = await fixture();
     const first = rebuildDerived(db, vaultPath);
     const second = rebuildDerived(db, vaultPath);
 
@@ -116,8 +109,8 @@ describe("rebuildDerived", () => {
     expect(second.graph.edges).toBe(first.graph.edges);
   });
 
-  test("malformed canon preserves the last complete search and graph generation", () => {
-    const { db, vaultPath } = fixture();
+  test("malformed canon preserves the last complete search and graph generation", async () => {
+    const { db, vaultPath } = await fixture();
     const prior = rebuildDerived(db, vaultPath);
     const documents = db.query("SELECT * FROM search_documents ORDER BY doc_id").all();
     const edges = db.query("SELECT * FROM graph_edges").all();
@@ -130,8 +123,8 @@ describe("rebuildDerived", () => {
     expect(readDerivedMeta(db, "graph")?.generation).toBe(prior.generation);
   });
 
-  test("rejects a forged derived stamp", () => {
-    const { db } = fixture();
+  test("rejects a forged derived stamp", async () => {
+    const { db } = await fixture();
     expect(() =>
       stampDerived(db, {
         layer: "search",

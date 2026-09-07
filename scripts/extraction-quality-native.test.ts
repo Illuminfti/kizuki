@@ -3,6 +3,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadCorpus, sha256 } from "./evaluate-extraction";
+import { writePackageFixture } from "./release-package-fixture";
 import { checksumManifest } from "./release-artifacts";
 import { nativeReleaseTarget } from "./release-targets";
 import {
@@ -147,3 +148,11 @@ test("the complete offline corpus uses native import, model filing, CLI and MCP 
     expect(result.passed).toBe(false);
   }
 }, 180_000);
+
+
+test("native extraction verifies seven-file provenance without executing synthetic package bytes", () => {
+  const path = artifact(validBuild); writePackageFixture(path, sourceSha, nativeReleaseTarget().target);
+  expect(verifyNativeArtifact(path, sourceSha).build.source_sha).toBe(sourceSha);
+  writeFileSync(join(path, "THIRD-PARTY-NOTICES.txt"), "changed notice");
+  expect(() => verifyNativeArtifact(path, sourceSha)).toThrow();
+});

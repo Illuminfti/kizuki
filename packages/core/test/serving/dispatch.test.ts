@@ -7,8 +7,8 @@ import type { Fixture } from "./helpers";
 
 let fixture: Fixture;
 
-beforeAll(() => {
-  fixture = serveFixture();
+beforeAll(async () => {
+  fixture = await serveFixture();
 });
 
 afterAll(() => {

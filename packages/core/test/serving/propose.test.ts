@@ -18,8 +18,8 @@ import type { Fixture } from "./helpers";
 
 let fixture: Fixture | null = null;
 
-function newFixture(): Fixture {
-  fixture = serveFixture();
+async function newFixture(): Promise<Fixture> {
+  fixture = await serveFixture();
   return fixture;
 }
 
@@ -58,7 +58,7 @@ function agentClaims(live: Fixture): ReturnType<typeof listClaims> {
 
 describe("servePropose files a claim for the receipted writer", () => {
   test("a stored claim is live, stamped with the agent, and needs nobody", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const envelope = await servePropose(
       live.agent("reader-private"),
       candidate(live, "The kettle boiled at dawn."),
@@ -95,7 +95,7 @@ describe("servePropose files a claim for the receipted writer", () => {
   });
 
   test("a bound retrieval port is the one the claim store indexes into", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const port = new ReferenceRetrievalPort({
       vault_path: live.vaultPath,
       data_dir: join(live.vaultPath, ".kizuki", "retrieval", "test"),
@@ -116,7 +116,7 @@ describe("servePropose files a claim for the receipted writer", () => {
   });
 
   test("a refresh that fails degrades the write, it does not fail it", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const port = new ReferenceRetrievalPort({
       vault_path: live.vaultPath,
       data_dir: join(live.vaultPath, ".kizuki", "retrieval", "flaky"),
@@ -159,7 +159,7 @@ describe("servePropose files a claim for the receipted writer", () => {
   });
 
   test("refiling the same candidate is a duplicate, not an error", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const ctx = live.agent("reader-private");
     const args = candidate(live, "The kettle boiled at dawn.");
     const first = await servePropose(ctx, args);
@@ -170,7 +170,7 @@ describe("servePropose files a claim for the receipted writer", () => {
   });
 
   test("the same body under another target is a second claim", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const ctx = live.agent("reader-private");
     const body = "The kettle boiled at dawn.";
     const first = await servePropose(ctx, candidate(live, body));
@@ -184,7 +184,7 @@ describe("servePropose files a claim for the receipted writer", () => {
   });
 
   test("a subject and a registered predicate key the claim", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const ctx = live.agent("reader-private");
     const filed = await servePropose(ctx, {
       ...candidate(live, "Ada works at Acme."),
@@ -200,7 +200,7 @@ describe("servePropose files a claim for the receipted writer", () => {
   });
 
   test("a predicate is refused when it is unknown or cannot be keyed", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const ctx = live.agent("reader-private");
     expect(
       (
@@ -228,7 +228,7 @@ describe("servePropose files a claim for the receipted writer", () => {
   });
 
   test("the owner cannot propose and purge reviews cannot be filed", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     expect(
       (
         await refusal(() =>
@@ -249,7 +249,7 @@ describe("servePropose files a claim for the receipted writer", () => {
   });
 
   test("frontmatter the writer owns is refused up front", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const ctx = live.agent("reader-private");
     for (const key of ["sensitivity", "taint", "id", "status", "sources"]) {
       expect(
@@ -268,7 +268,7 @@ describe("servePropose files a claim for the receipted writer", () => {
   });
 
   test("a frontmatter array the vault cannot write is refused", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const ctx = live.agent("reader-private");
     const mixedBag: unknown = { type: "fact", "x-tags": [1, true] };
     const mixed = {
@@ -299,7 +299,7 @@ describe("servePropose files a claim for the receipted writer", () => {
   });
 
   test("a frontmatter payload is bounded by items and by total size", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const ctx = live.agent("reader-private");
 
     const withTags = (tags: string[], body: string): ProposeArgs => ({
@@ -344,7 +344,7 @@ describe("servePropose files a claim for the receipted writer", () => {
   });
 
   test("a frontmatter bag that is not an object is refused", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const ctx = live.agent("reader-private");
     const before = listClaims(live.db, {}).length;
     const bags: unknown[] = [12, "abc", ["alpha", "beta"], null];
@@ -366,7 +366,7 @@ describe("servePropose files a claim for the receipted writer", () => {
   });
 
   test("provenance must name live events this principal can read", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     expect(
       (
         await refusal(() =>
@@ -402,7 +402,7 @@ describe("servePropose files a claim for the receipted writer", () => {
   });
 
   test("a refusal never echoes what the caller supplied", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     const ctx = live.agent("reader-private");
     const marker = "kettlecode4711";
     const messages = [
@@ -445,7 +445,7 @@ describe("servePropose files a claim for the receipted writer", () => {
   });
 
   test("a scoped grant pins the subjects, the subject and the page type", async () => {
-    const live = newFixture();
+    const live = await newFixture();
     expect(
       (
         await refusal(() =>

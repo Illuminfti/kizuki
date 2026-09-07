@@ -167,19 +167,20 @@ describe("non-interactive state rewrite", () => {
     db.close();
   });
 
-  test("a rewrite that lost the race leaves the winner's bytes", async () => {
+  test("a competing rewrite refuses before its callback and leaves the lease winner's bytes", async () => {
     const directory = temporary();
     const { db, store, connection } = await enrolled(directory, "first-envelope");
     const competitor = new ConnectionStateStore(directory);
 
-    await expect(
-      store.rewrite(db, connection, async (writer) => {
-        await competitor.rewrite(db, connection, (other) =>
-          other.write(new TextEncoder().encode("winner")),
-        );
-        await writer.write(new TextEncoder().encode("loser"));
-      }),
-    ).rejects.toThrow(LedgerError);
+    let loserEntered = 0;
+    await store.rewrite(db, connection, async (writer) => {
+      await expect(competitor.rewrite(db, connection, async other => {
+        loserEntered++;
+        await other.write(new TextEncoder().encode("loser"));
+      })).rejects.toThrow("locked");
+      await writer.write(new TextEncoder().encode("winner"));
+    });
+    expect(loserEntered).toBe(0);
 
     const current = listConnections(db)[0];
     expect(

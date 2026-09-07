@@ -1,11 +1,16 @@
-import { existsSync, readFileSync } from "node:fs";
 import { assertPageRelPath } from "../canon/paths";
-import { containedVaultFile } from "../vault/write";
-import { applyCanonWrite, createBudgetTracker, resolveTarget } from "../canon";
+import { createBudgetTracker, resolveTarget } from "../canon";
+import { applyCanonWriteOwned } from "../canon/apply";
+import { requireCanonFiles } from "../canon/io";
+import { readOwnedCanonPage } from "../canon/io";
+import { assertVaultMutationScope, type VaultMutationScope } from "../vault/mutation-scope";
 import type { CanonIo, PageAction } from "../canon";
 import type { Claim } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
 import { diffLines } from "../util/diff";
+import { correctionRecoveryPending } from "../correction/recovery";
+import { CanonRecoveryError, readCanonWriteIntent } from "../canon/write-intent";
+import type { CanonRecoveryPending } from "../correction/types";
 import type { ServeContext } from "./types";
 
 /**
@@ -28,6 +33,7 @@ export interface RewrittenPage {
 }
 
 export interface CanonRewrite {
+  recovery_pending?: CanonRecoveryPending[];
   receipt_id: string | null;
   rewritten: RewrittenPage[];
   /** Pages a retired claim is bound to that this pass did not reach. */
@@ -43,14 +49,9 @@ const NOTHING: CanonRewrite = {
   failed: false,
 };
 
-function canonIo(ctx: ServeContext): CanonIo {
-  return { db: ctx.db, vault_path: ctx.vaultPath };
-}
-
-function pageText(ctx: ServeContext, relPath: string): string {
+function pageText(io: CanonIo, relPath: string): string {
   assertPageRelPath(relPath);
-  const path = containedVaultFile(ctx.vaultPath, relPath);
-  return existsSync(path) ? readFileSync(path, "utf8") : "";
+  return readOwnedCanonPage(io, relPath)?.content ?? "";
 }
 
 /** A unified body, truncated by line count so one page cannot flood a reply. */
@@ -81,6 +82,22 @@ function boundPages(ctx: ServeContext, claimKeys: string[]): string[] {
     .map((row) => row.rel_path);
 }
 
+/** The caller has authorized this correction claim and its inherited evidence. */
+export function pendingCanonRewrite(ctx: ServeContext, claim: Claim): CanonRecoveryPending[] | undefined {
+  const pending = correctionRecoveryPending(ctx.db, claim.claim_id);
+  const bound = boundPages(ctx, claim.claim_key === null ? [] : [claim.claim_key]);
+  for (const path of bound) {
+    for (const item of correctionRecoveryPending(ctx.db, claim.claim_id, path)) {
+      if (!pending.some(prior => prior.receipt_id === item.receipt_id)) pending.push(item);
+    }
+  }
+  if (pending.length > 0) return pending;
+  // The global writer hold also blocks this unreceipted correction's known
+  // page. Report that fact without attributing the unrelated receipt to it.
+  if (claim.receipt_id === null && bound.length > 0 && readCanonWriteIntent(ctx.db) !== null) return [];
+  return undefined;
+}
+
 /**
  * The correction and the canon rewrite in one pass (RFC 0002 §6.3). The claim
  * is already durable when this runs: a writer failure degrades the answer and
@@ -88,17 +105,23 @@ function boundPages(ctx: ServeContext, claimKeys: string[]): string[] {
  * step would lose the owner's own words.
  */
 export function rewriteCanon(
+  scope: VaultMutationScope,
+  io: CanonIo,
   ctx: ServeContext,
   claim: Claim,
   supersededKeys: string[],
 ): CanonRewrite {
-  const io = canonIo(ctx);
+  requireCanonFiles(scope, io);
+  assertVaultMutationScope(scope, { db: ctx.db, vault_path: ctx.vaultPath });
   const budget = createBudgetTracker({
     canon_writes_per_run: CORRECTION_MAX_PAGES,
   });
   const bound = boundPages(ctx, supersededKeys);
+  let targetPath: string | undefined;
 
   try {
+    const held = pendingCanonRewrite(ctx, claim);
+    if (held !== undefined) return { ...NOTHING, unreached: bound, failed: true, recovery_pending: held };
     const decision = resolveTarget(io, claim);
     // A correction rewrites what exists. It never mints a page for a reading
     // nothing ever materialized: that claim is the writer's own work.
@@ -109,13 +132,16 @@ export function rewriteCanon(
       decision.action === "conflict"
         ? decision.chosen.rel_path
         : decision.rel_path;
-    const before = pageText(ctx, relPath);
-    const receipt = applyCanonWrite(io, claim, decision, {
+    targetPath = relPath;
+    const before = pageText(io, relPath);
+    const receipt = applyCanonWriteOwned(scope, io, claim, decision, {
       writer: "correction",
       budget,
     });
-    const after = pageText(ctx, receipt.page_path);
+    const after = pageText(io, receipt.page_path);
+    const pending = correctionRecoveryPending(io.db, claim.claim_id, receipt.page_path);
     return {
+      ...(pending.length === 0 ? {} : { recovery_pending: pending }),
       receipt_id: receipt.receipt_id,
       rewritten: [
         {
@@ -130,8 +156,12 @@ export function rewriteCanon(
       unreached: bound.filter((path) => path !== receipt.page_path),
       failed: false,
     };
-  } catch {
-    // The cause stays inside core; the caller learns the pages did not move.
-    return { ...NOTHING, unreached: bound, failed: true };
+  } catch (error) {
+    // The claim stays durable. A failed row commit can follow file publication;
+    // only the matching durable recovery record may identify that uncertainty.
+    const pending = correctionRecoveryPending(io.db, claim.claim_id, targetPath);
+    return { ...NOTHING, unreached: bound, failed: true,
+      ...(pending.length > 0 || error instanceof CanonRecoveryError ? { recovery_pending: pending } : {}),
+    };
   }
 }

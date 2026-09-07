@@ -1,28 +1,32 @@
 import type { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   MODEL_PRODUCER_ID,
+  PortError,
   PortRegistry,
+  SourceGrantError,
   bindSourceModelPort,
   isPlainObject,
   registerModelProducerPort,
   runToCompletion,
   readRetrievalDocuments,
+  readAppModelConfiguration,
+  classifyAppModelCredential,
+  readAppModelFileCredential,
   type ClaimsIo,
   type LlmPort,
   type PortContext,
   type ProducerPort,
-  type RailHooks,
+  type RailRuntime,
   type RailSyncResult,
   type RetrievalPort,
 } from "@kizuki/core";
-import { chatCompletionsUrl, parseOpenAiCompatibleConfig, registerLlmPorts } from "@kizuki/llm";
+import { chatCompletionsUrl, parseOpenAiCompatibleConfig, registerLlmPorts, endpointHost, modelRef } from "@kizuki/llm";
 import { listHostConnections, loadConnector, closeHostConnector } from "./connections";
 import { tryRefreshDerived } from "./derived";
 import { tokenResolver } from "./secrets";
 
-const CONFIG_PATH = ".kizuki/serve.toml";
 const NONE_LLM_ID = "kizuki.llm.none";
 const MODEL_LLM_ID = "kizuki.llm.openai-compatible";
 const MAX_SYNC_ERRORS = 32;
@@ -37,29 +41,13 @@ interface LlmSelection {
   readonly secret_ref: string | null;
 }
 
-export interface ServeRuntime {
-  readonly hooks: RailHooks;
-  close(): Promise<void>;
-}
+export type ServeRuntime = RailRuntime;
 
 function runtimeError(message: string): never {
   throw new ServeRuntimeError(`serve model configuration: ${message}`);
 }
 
-function readLlmSelection(vaultPath: string): LlmSelection {
-  const path = join(vaultPath, CONFIG_PATH);
-  if (!existsSync(path)) return { id: NONE_LLM_ID, config: {}, secret_ref: null };
-  let parsed: unknown;
-  try {
-    parsed = Bun.TOML.parse(readFileSync(path, "utf8"));
-  } catch {
-    runtimeError("invalid TOML");
-  }
-  if (!isPlainObject(parsed)) runtimeError("config must be a table");
-  const ports = parsed["ports"];
-  if (ports === undefined) return { id: NONE_LLM_ID, config: {}, secret_ref: null };
-  if (!isPlainObject(ports)) runtimeError("[ports] must be a table");
-  const llm = ports["llm"];
+function parseLlmSelection(llm: unknown): LlmSelection {
   if (llm === undefined || llm === NONE_LLM_ID) {
     return { id: NONE_LLM_ID, config: {}, secret_ref: null };
   }
@@ -86,21 +74,20 @@ function portContext(
   id: string,
   config: Readonly<Record<string, unknown>>,
   secretRef: string | null,
-  env: Record<string, string | undefined>,
+  secret: string | null,
   log: (line: string) => void,
 ): PortContext {
   const data_dir = join(vaultPath, ".kizuki", kind, id);
   mkdirSync(data_dir, { recursive: true, mode: 0o700 });
-  const resolve = secretRef === null ? null : tokenResolver(secretRef, env);
   return {
     vault_path: vaultPath,
     data_dir,
     config,
     secrets: async (requested) => {
-      if (resolve === null || requested !== secretRef) {
+      if (secret === null || requested !== secretRef) {
         runtimeError("secret reference is not bound to the selected model port");
       }
-      return resolve(requested);
+      return secret;
     },
     clock: () => new Date().toISOString(),
     logger: (line) => log(`model ${line.level}: ${line.message}`),
@@ -149,19 +136,47 @@ async function syncConnections(
   return { events_synced, events_stored, events_duplicate, events_self_skipped: 0, errors };
 }
 
-/** Bind the complete model port before any rail is allowed to write canon. */
-export async function createServeRuntime(options: {
+interface ServeRuntimeOptions {
   readonly db: Database;
   readonly vaultPath: string;
   readonly store: Parameters<typeof listHostConnections>[1];
   readonly env: Record<string, string | undefined>;
   readonly retrieval?: RetrievalPort;
   readonly err: (line: string) => void;
-}): Promise<ServeRuntime> {
-  const selected = readLlmSelection(options.vaultPath);
+  /** Strict by default; the daemon can retain its useful local capture floor. */
+  readonly configurationErrorMode?: "throw" | "disable-model";
+}
+
+/** Validate the held configuration and credential without port/runtime initialization. */
+export async function inspectModelBinding(vaultPath: string, env: Record<string, string | undefined>): Promise<string | null> {
+  const document = readAppModelConfiguration(vaultPath, value => { parseLlmSelection(value); }, { reconcile: false });
+  const selected = parseLlmSelection(document.llm);
+  if (selected.id === NONE_LLM_ID) return null;
+  const configured = parseOpenAiCompatibleConfig(selected.config);
+  if (selected.secret_ref !== null) {
+    if (classifyAppModelCredential(vaultPath, selected.secret_ref) === "env") {
+      await tokenResolver(selected.secret_ref, env)(selected.secret_ref);
+    } else readAppModelFileCredential(vaultPath, document.revision, selected.secret_ref, { reconcile: false });
+  }
+  // Recheck after the async environment resolver; never report a superseded model.
+  if (readAppModelConfiguration(vaultPath, value => { parseLlmSelection(value); }, { reconcile: false }).revision !== document.revision) {
+    runtimeError("configuration changed during inspection");
+  }
+  return modelRef(selected.id, configured.model, endpointHost(configured.base_url));
+}
+
+async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; producer?: ProducerPort }> {
+  let document: ReturnType<typeof readAppModelConfiguration>;
+  try {
+    document = readAppModelConfiguration(options.vaultPath, value => { parseLlmSelection(value); });
+  } catch { runtimeError("configuration snapshot unavailable"); }
+  const selected = parseLlmSelection(document.llm);
+  let secret: string | null = null;
   if (selected.secret_ref !== null) {
     try {
-      await tokenResolver(selected.secret_ref, options.env)(selected.secret_ref);
+      secret = classifyAppModelCredential(options.vaultPath, selected.secret_ref) === "env"
+        ? await tokenResolver(selected.secret_ref, options.env)(selected.secret_ref)
+        : readAppModelFileCredential(options.vaultPath, document.revision, selected.secret_ref);
     } catch {
       runtimeError("configured secret reference cannot be resolved");
     }
@@ -171,7 +186,7 @@ export async function createServeRuntime(options: {
   const llm = (await registry.bindFromConfig<LlmPort>(
     "llm",
     { llm: selected.id },
-    portContext(options.vaultPath, "llm", selected.id, selected.config, selected.secret_ref, options.env, options.err),
+    portContext(options.vaultPath, "llm", selected.id, selected.config, selected.secret_ref, secret, options.err),
   )).port;
   let producer: ProducerPort | undefined;
   try {
@@ -180,7 +195,7 @@ export async function createServeRuntime(options: {
       producer = (await registry.bindFromConfig<ProducerPort>(
         "producer",
         { producer: MODEL_PRODUCER_ID },
-        portContext(options.vaultPath, "producer", MODEL_PRODUCER_ID, {}, null, options.env, options.err),
+        portContext(options.vaultPath, "producer", MODEL_PRODUCER_ID, {}, null, null, options.err),
       )).port;
       if (selected.id === MODEL_LLM_ID) {
         const configured = parseOpenAiCompatibleConfig(selected.config);
@@ -191,8 +206,25 @@ export async function createServeRuntime(options: {
       }
     }
   } catch (error) {
-    await llm.close();
+    // A partially bound producer is still owned here. Cleanup failures must
+    // escape, rather than being mistaken for a safe model-disabled runtime.
+    try {
+      try { await producer?.close(); } finally { await llm.close(); }
+    } catch { throw new Error("model runtime cleanup failed"); }
     throw error;
+  }
+  return { llm, ...(producer === undefined ? {} : { producer }) };
+}
+
+/** Bind one immutable model destination and credential for one rail attempt. */
+export async function createServeRuntime(options: ServeRuntimeOptions): Promise<ServeRuntime> {
+  let binding: Awaited<ReturnType<typeof bindModel>> | undefined;
+  let configurationUnavailable = false;
+  try { binding = await bindModel(options); }
+  catch (error) {
+    if (options.configurationErrorMode !== "disable-model" ||
+        !(error instanceof ServeRuntimeError || error instanceof PortError || error instanceof SourceGrantError)) throw error;
+    configurationUnavailable = true;
   }
   const claims: ClaimsIo = { db: options.db,
     ...(options.retrieval === undefined ? {} : { retrieval: options.retrieval }),
@@ -200,10 +232,15 @@ export async function createServeRuntime(options: {
   let closed = false;
   return {
     hooks: {
-      model_ref: llm.model_ref,
-      ...(producer === undefined ? {} : { producer }),
+      model_ref: binding?.llm.model_ref ?? null,
+      ...(binding?.producer === undefined ? {} : { producer: binding.producer }),
       claims,
-      sync: () => syncConnections(options.db, options.vaultPath, options.store, options.env),
+      sync: async () => {
+        const result = await syncConnections(options.db, options.vaultPath, options.store, options.env);
+        return configurationUnavailable
+          ? { ...result, errors: [...result.errors, "model configuration unavailable"] }
+          : result;
+      },
       refresh: async () => {
         const degraded: string[] = [];
         if (options.retrieval !== undefined) {
@@ -223,9 +260,9 @@ export async function createServeRuntime(options: {
       if (closed) return;
       closed = true;
       try {
-        if (producer !== undefined) await producer.close();
+        if (binding?.producer !== undefined) await binding.producer.close();
       } finally {
-        await llm.close();
+        await binding?.llm.close();
       }
     },
   };

@@ -126,6 +126,13 @@ re-walked under the new numbering.
 appears in. It never claims to delete anything at the source, because it
 cannot: this connector is read-only. Delete the mail in your mail client.
 
+A connected search with a valid email selector reports `complete: true` only
+when every configured folder's full search result fits the 10 000-ID per-folder
+bound. Larger results retain the bounded IDs and report `complete: false`.
+Disconnected or invalid selectors also report incomplete. There is no fabricated
+continuation or source-deletion success. This plan is separate from Kizuki's
+local ledger and derived-store erasure protocol.
+
 ## Not implemented
 
 STARTTLS on port 143 (implicit TLS only), `AUTHENTICATE`, XOAUTH2 and OAuth

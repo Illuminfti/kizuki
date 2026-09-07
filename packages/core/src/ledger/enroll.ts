@@ -2,7 +2,6 @@ import type { Database } from "bun:sqlite";
 import type { Connector, SignInIo } from "../contracts/connector";
 import type { ConnectionStateStore } from "./connection-state";
 import type { Connection } from "./connections";
-import { runGuardedSignIn } from "./sign-in-guard";
 
 /** Runs an interactive sign-in and persists only host-minted opaque state. */
 export async function enrollConnection(
@@ -12,10 +11,9 @@ export async function enrollConnection(
   io: SignInIo,
   verifyNew?: Parameters<ConnectionStateStore["save"]>[5],
 ): Promise<Connection> {
-  store.recover(db);
-  const pending = store.begin();
+  const pending = store.beginWithRecovery(db);
   try {
-    await runGuardedSignIn(connector, io, pending.writer, { mode: "new" });
+    await store.signIn(pending.pending, connector, io, { mode: "new" });
     return store.save(
       db,
       connector.manifest().connector_id,

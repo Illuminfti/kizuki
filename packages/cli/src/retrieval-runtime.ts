@@ -20,3 +20,12 @@ export async function openConfiguredRetrieval(vaultPath: string, selected?: stri
   // Only this host-created embedded implementation receives the local capability.
   return id === "kizuki.retrieval.embedded-pg" ? bindLocalSourcePort(bound.port, { store_id: `local:${id}` }) : bound.port;
 }
+
+/** The embedded factory is a writer. Inspection must not acquire it or repair its files. */
+export function inspectConfiguredRetrieval(vaultPath: string): boolean {
+  const selected = loadConfiguredRetrieval(vaultPath).id;
+  if (selected === "kizuki.retrieval.fts5") return false;
+  const registry = new PortRegistry(); registerEmbeddedRetrieval(registry);
+  registry.resolvePort("retrieval", selected);
+  return true;
+}

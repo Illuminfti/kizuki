@@ -49,7 +49,7 @@ describe("kizuki.producer.model", () => {
       id: MODEL_PRODUCER_ID,
       kind: "producer",
       contract: "kizuki.producer/v1",
-      contract_minor: 3,
+      contract_minor: 4,
       supports: ["model"],
       requires_lease: false,
       optional_package: null,
@@ -169,7 +169,7 @@ describe("kizuki.producer.model", () => {
     });
   });
 
-  test("one malformed claim is rejected alone and counted in the log", async () => {
+  test("one malformed claim is rejected alone and returned for durable counting", async () => {
     const llm = scriptedLlm(() =>
       responseText([
         draft(),
@@ -183,7 +183,7 @@ describe("kizuki.producer.model", () => {
         status: "ok",
         claims: [draft(), draft({ object: "runs sales at Acme" })],
         usage: expect.objectContaining({ calls: 1 }),
-        dropped: [],
+        dropped: [{ reason: "schema_invalid" }],
       });
       const rejected = logs.filter((line) => line.message === "extract_claim_rejected");
       expect(rejected).toEqual([
@@ -214,6 +214,18 @@ describe("kizuki.producer.model", () => {
       expect(logs.some((line) => line.message === "extract_schema_invalid")).toBe(true);
       expect(logs.some((line) => line.message === "extract_claim_rejected")).toBe(false);
       expect(JSON.stringify(logs)).not.toContain("professional");
+    });
+  });
+
+  test("a malformed sibling never bypasses valid-draft provenance checks", async () => {
+    const llm = scriptedLlm(() => responseText([
+      draft(), draft({ event_ids: ["01JFABRICATED"] }),
+      draft({ sensitivity: "professional" as never }),
+    ]));
+    await withProducer(llm, async (producer) => {
+      expect(await producer.produce(input([GRACE_EVENT]))).toMatchObject({
+        status: "rejected", reason: "provenance_not_cited", usage: { calls: 1 },
+      });
     });
   });
 

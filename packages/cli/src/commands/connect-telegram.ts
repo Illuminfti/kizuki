@@ -12,10 +12,26 @@ import type { CliIo } from "./index";
 export interface TelegramEnrollmentOptions { source?: string | undefined; sensitivity?: Sensitivity | undefined; json: boolean; }
 const ID = "kizuki.telegram";
 
+const SIGN_IN_CANCELLED = "interactive sign-in cancelled";
+
+function isLocalSignInCancellation(error: unknown): boolean {
+  return error instanceof UsageError && error.message === SIGN_IN_CANCELLED;
+}
+
 /** All answers are secret, including phone and one-time code; provider text is not output. */
 export function telegramSignInIo(io: CliIo) {
+  // The provider adapter may classify a prompt throw; remember local Ctrl-C here.
+  let cancelled = false;
   return {
-    prompt: (question: string) => io.prompt(clean(question).slice(0, 512), { secret: true }),
+    cancelled: () => cancelled,
+    prompt: async (question: string) => {
+      try {
+        return await io.prompt(clean(question).slice(0, 512), { secret: true });
+      } catch (error) {
+        if (isLocalSignInCancellation(error)) cancelled = true;
+        throw error;
+      }
+    },
     notify: (text: string) => {
       // The connector emits this closed vocabulary; never forward account/provider text.
       if (/^(that (?:password|code) was not accepted, try again|nothing was entered, try again|Telegram asked us to wait [0-9]+s)$/.test(text)) io.err(text);
@@ -23,7 +39,8 @@ export function telegramSignInIo(io: CliIo) {
     openUrl: async () => { throw new ConnectionError("Telegram sign-in does not open a browser"); },
   };
 }
-export function telegramFailure(error: unknown): Error {
+export function telegramFailure(error: unknown, cancelled = false): Error {
+  if (cancelled || isLocalSignInCancellation(error)) return new UsageError(SIGN_IN_CANCELLED);
   if (error instanceof TelegramConnectorError) {
     if (error.code === "placeholder_credentials") return new ConnectionError(PLACEHOLDER_CREDENTIALS_MESSAGE);
     if (error.code === "flood_wait" && Number.isSafeInteger(error.retry_after) && error.retry_after! > 0) return new ConnectionError(`Telegram asked you to wait ${error.retry_after}s before retrying.`);
@@ -34,6 +51,7 @@ export function telegramFailure(error: unknown): Error {
       corrupt_state: "Telegram connection state is unreadable. Restore its protected state before re-signing in.",
       unauthenticated: "Telegram authorization was refused. Check the existing account and sign in again.",
       state_persistence_failed: "Telegram cooldown could not be saved. Stop this source and repair protected connection state before retrying.",
+      flood_wait: "Telegram asked you to wait before retrying.",
     };
     return new ConnectionError(notices[error.code] ?? "Telegram sign-in failed. Check connectivity and retry without changing the selected source.");
   }
@@ -56,6 +74,7 @@ export async function runTelegramConnect(
     if (options.source === undefined && existing.length > 1) throw new ConnectionError("Several Telegram connections exist. Select one with --source KEY.");
     checkSensitivity(ctx.db, connector.manifest(), options.sensitivity, selected?.connection);
     let connection: Connection;
+    const signIn = telegramSignInIo(io);
     try {
       if (selected !== undefined) {
         const state = ctx.store.read(selected.connection);
@@ -63,8 +82,8 @@ export async function runTelegramConnect(
         assertTelegramRetryAllowed(state);
       }
       io.err(`Telegram will sign in to read your accessible chats and history. Protected session state is stored under ${clean(ctx.vaultPath)}. Kizuki does not send messages or delete Telegram copies. Press Ctrl-C to cancel.`);
-      connection = await enrollSignedInConnection(ctx.db, ctx.store, connector, telegramSignInIo(io), options.source, assertSameTelegramIdentity);
-    } catch (error) { throw telegramFailure(error); }
+      connection = await enrollSignedInConnection(ctx.db, ctx.store, connector, signIn, options.source, assertSameTelegramIdentity);
+    } catch (error) { throw telegramFailure(error, signIn.cancelled()); }
     finally { await connector.close(); }
     applyConnectionSensitivity(ctx.db, connection, connector.manifest(), options.sensitivity);
     if (options.json) io.out(jsonEnvelope("connect", "ok", { connector_id: ID, source_key: connection.source_key, state: "enrolled", capture_started: false, consent: inspectSourceGrant(ctx.db, connection.source_key)?.status ?? "required", next: inspectSourceGrant(ctx.db, connection.source_key)?.status === "active" ? `kizuki backfill telegram --source ${connection.source_key}` : consentHint(ctx.db, connection.source_key) }));

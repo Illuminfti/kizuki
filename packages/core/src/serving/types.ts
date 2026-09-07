@@ -8,9 +8,9 @@ export const ENVELOPE_SCHEMA = "kizuki.envelope/v1" as const;
 
 export interface ServeContext {
   /**
-   * Ledger, staging, search, graph and agent schemas already initialized.
-   * Rate accounting and audit both key on `agent_audit`, so `initAgents` in
-   * particular must have run before the first served call.
+   * Authoritative ledger and agent schemas are already initialized. Missing
+   * optional indexes are degradation, never repaired by reads. Rate and audit
+   * key on agent_audit; query-only contexts have a separate bound audit capability.
    */
   db: Database;
   vaultPath: string;
@@ -19,7 +19,7 @@ export interface ServeContext {
   /** One host-owned engine nominates IDs; core rechecks current evidence and grants. */
   retrieval?: RetrievalPort;
   /** A configured optional engine could not bind; reads use the deterministic floor. */
-  retrievalUnavailable?: true;
+  retrievalUnavailable?: true | "configured-engine-unavailable";
 }
 
 export interface CanonChunk {
@@ -28,7 +28,7 @@ export interface CanonChunk {
   title: string;
   type: string;
   sensitivity: Sensitivity;
-  /** `quoted` means the body carries verbatim capture inside blockquotes. */
+  /** `quoted` means the body or attached identity includes quoted capture. */
   taint: PageTaint;
   /** Effective authority of the page snapshot, resolved against its byte hash. */
   authority: AuthorityTier | null;
@@ -36,7 +36,18 @@ export interface CanonChunk {
   sources: string[];
   excerpt: string;
   truncated: boolean;
+  subject_labels?: SubjectLabel[];
 }
+
+/** Current, separately admitted identity beliefs; never captured display metadata. */
+export interface SubjectLabel {
+  subject: string;
+  display_name: string | null;
+  handles: string[];
+  evidence: { claim_id: string; authority: AuthorityTier; sources: string[] }[];
+}
+
+export type SubjectLabelDegradation = "subject-labels-ambiguous" | "subject-labels-overflow" | "subject-labels-unavailable";
 
 export interface QuotedChunk {
   event_id: string;
@@ -47,6 +58,7 @@ export interface QuotedChunk {
   subjects: string[];
   text: string;
   tainted: true;
+  subject_labels?: SubjectLabel[];
 }
 
 /** Counts per reason. Ids of withheld items reach only the owner's audit row. */

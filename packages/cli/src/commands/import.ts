@@ -2,7 +2,7 @@ import { CONSENT_OPTIONS, consentHint, expectedRevision, readSourcePolicy } from
 import { resolve } from "node:path";
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { setSourceGrant, applyConnectionSensitivity, runToCompletion, ESTATE_IMPORT_LIMITS, planEstateImport } from "@kizuki/core";
-import { getConnector } from "@kizuki/connectors";
+import { CLAUDE_IMPORT_CONNECTOR_ID, getConnector } from "@kizuki/connectors";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
   ConnectionError,
@@ -125,6 +125,14 @@ export const importCommand: Command = {
 
       if (hasPolicy) setSourceGrant(ctx.db, { source_key: selected.connection.source_key, expected_revision: revision!, operation_id: parsed.options.get("--operation-id")!, policy });
       const connector = await loadConnector(selected, ctx.store, ctx.db);
+      if (connectorId === CLAUDE_IMPORT_CONNECTOR_ID) {
+        const preCaptureHealth = await connector.health();
+        if (preCaptureHealth.state === "degraded") {
+          io.err(
+            "degraded: Claude health check before capture found partial or unsupported content.",
+          );
+        }
+      }
       const result = await runToCompletion(
         ctx.db,
         connector,

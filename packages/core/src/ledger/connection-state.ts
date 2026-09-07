@@ -4,16 +4,19 @@ import {
   constants,
   existsSync,
   mkdirSync,
+  opendirSync,
+  lstatSync,
   openSync,
   readSync,
   readdirSync,
   rmSync,
   closeSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type {
   ConnectionStateWriter,
   Connector,
+  SignInContext,
   SignInIo,
 } from "../contracts/connector";
 import { sha256Hex } from "../util/hash";
@@ -46,6 +49,7 @@ import {
 } from "./connection-state-rows";
 import { LedgerError, getConnection, type Connection } from "./connections";
 import { runGuardedSignIn } from "./sign-in-guard";
+import { acquireConnectionStateLease, type ConnectionStateLease } from "./connection-state-lock";
 
 export { writeAll } from "./connection-state-files";
 export { MAX_CONNECTION_STATE_BYTES };
@@ -72,6 +76,14 @@ interface PendingState {
   byteLength: number;
 }
 
+interface PendingOperation {
+  readonly lease: ConnectionStateLease;
+  readonly writer: ConnectionStateWriter;
+  activeCallbacks: number;
+  discardRequested: boolean;
+  signInStarted: boolean;
+}
+
 export interface StateRecoveryReport {
   repaired: number;
   unresolved: string[];
@@ -82,19 +94,96 @@ export interface StateRecoveryReport {
 /** The caller offered a row the store has already moved past. */
 const STALE_CONNECTION_SNAPSHOT = "connection does not match persisted state";
 
+/** Inspection never creates or repairs the state directory. */
+class ExistingConnectionStateReader implements ConnectionStateReader {
+  readonly directory: string;
+  constructor(controlDirectory: string) { this.directory = join(controlDirectory, "connections"); }
+  protected readStatePath(path: string): Uint8Array {
+    const stats = assertRegularStateFile(path, this.directory);
+    if (stats.size > MAX_CONNECTION_STATE_BYTES) throw new LedgerError("connection state exceeds maximum size");
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const bytes = new Uint8Array(stats.size);
+      let offset = 0;
+      while (offset < bytes.byteLength) {
+        const read = readSync(fd, bytes, offset, bytes.byteLength - offset, offset);
+        if (read <= 0) throw new LedgerError("connection state read made no progress");
+        offset += read;
+      }
+      return bytes;
+    } finally { closeSync(fd); }
+  }
+
+  read(connection: Connection): Uint8Array | null {
+    if (connection.secret_refs.length === 0) return null;
+    if (connection.config.state_ref_index !== 0) {
+      throw new LedgerError("connection config does not permit state resolution");
+    }
+    if (connection.secret_refs.length !== 1) {
+      throw new LedgerError("connection has invalid state references");
+    }
+    const ref = connection.secret_refs[0];
+    if (ref === undefined) {
+      throw new LedgerError("connection has no state reference");
+    }
+    if (sourceJournalNames(this.directory, connection.source_key).length > 0) {
+      throw new LedgerError("connection state journal is unresolved");
+    }
+    const path = connectionStatePath(this.directory, ref);
+    return this.readStatePath(path);
+  }
+
+}
+
+export function createConnectionStateReader(controlDirectory: string): ConnectionStateReader {
+  const reader = new ExistingConnectionStateReader(controlDirectory);
+  return Object.freeze({ read: (connection: Connection) => reader.read(connection) });
+}
+
+/** Pending journals are evidence for recovery, never permission for doctor to repair. */
+export function inspectConnectionStateRecovery(controlDirectory: string): Pick<StateRecoveryReport, "unresolved" | "quarantined"> {
+  const path = join(controlDirectory, "connections");
+  let metadata;
+  try { metadata = lstatSync(path); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return { unresolved: [], quarantined: [] }; throw error; }
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new LedgerError("connection directory is unsafe");
+  const directory = opendirSync(path), unresolved: string[] = [], quarantined: string[] = [];
+  try {
+    for (let count = 0; ; count++) {
+      const item = directory.readSync();
+      if (item === null) break;
+      if (count >= 10_000) throw new LedgerError("connection recovery inspection limit exceeded");
+      if (item.name.endsWith(".journal")) unresolved.push(item.name);
+      if (item.name === "quarantine") {
+        const quarantinePath = join(path, item.name);
+        if (!lstatSync(quarantinePath).isDirectory() || item.isSymbolicLink()) throw new LedgerError("connection quarantine is unsafe");
+        const held = opendirSync(quarantinePath);
+        try {
+          for (let n = 0; ; n++) {
+            const entry = held.readSync(); if (entry === null) break;
+            if (n >= 10_000) throw new LedgerError("connection recovery inspection limit exceeded");
+            if (entry.name.endsWith(".journal")) quarantined.push(entry.name);
+          }
+        } finally { held.closeSync(); }
+      }
+    }
+    return { unresolved, quarantined };
+  } finally { directory.closeSync(); }
+}
+
 /**
  * Core-owned opaque-state store. Connector code gets only a one-shot writer;
  * it never receives a filesystem path or a durable row handle.
  */
-export class ConnectionStateStore implements ConnectionStateReader {
-  readonly directory: string;
+export class ConnectionStateStore extends ExistingConnectionStateReader {
   private readonly minted = new Set<string>();
   private readonly handles = new WeakSet<PendingState>();
   /** Staging paths this store is still writing, so recovery leaves them alone. */
   private readonly staging = new Set<string>();
+  private readonly operations = new WeakMap<PendingState, PendingOperation>();
 
   constructor(controlDirectory: string) {
-    this.directory = join(controlDirectory, "connections");
+    super(controlDirectory);
     mkdirSync(this.directory, { recursive: true, mode: 0o700 });
     chmodSync(this.directory, 0o700);
   }
@@ -119,60 +208,125 @@ export class ConnectionStateStore implements ConnectionStateReader {
       digest: null,
       byteLength: 0,
     };
+    const lease = acquireConnectionStateLease(dirname(this.directory));
     this.minted.add(sourceKey);
     this.handles.add(pending);
-    return {
+    const enrollment = {
       pending,
       writer: {
         write: async (state: Uint8Array): Promise<void> => {
-          if (
-            pending.completed ||
-            !this.handles.has(pending) ||
-            !this.minted.has(pending.sourceKey)
-          ) {
-            throw new LedgerError("connection state writer is no longer active");
-          }
-          if (pending.written) {
-            throw new LedgerError("connection state may only be written once");
-          }
-          if (!(state instanceof Uint8Array)) {
-            throw new LedgerError("connection state must be bytes");
-          }
-          if (state.byteLength > MAX_CONNECTION_STATE_BYTES) {
-            throw new LedgerError("connection state exceeds maximum size");
-          }
-          const digest = sha256Hex(state);
-          const temporary = `${pending.finalPath}.${ulid()}.tmp`;
-          writeDurableFile(temporary, state);
-          pending.temporaryPath = temporary;
-          pending.written = true;
-          pending.digest = digest;
-          pending.byteLength = state.byteLength;
-          this.staging.add(temporary);
+          try {
+            if (
+              pending.completed ||
+              !this.handles.has(pending) ||
+              !this.minted.has(pending.sourceKey)
+            ) {
+              throw new LedgerError("connection state writer is no longer active");
+            }
+            lease.assertCurrent();
+            if (pending.written) {
+              throw new LedgerError("connection state may only be written once");
+            }
+            if (!(state instanceof Uint8Array)) {
+              throw new LedgerError("connection state must be bytes");
+            }
+            if (state.byteLength > MAX_CONNECTION_STATE_BYTES) {
+              throw new LedgerError("connection state exceeds maximum size");
+            }
+            const digest = sha256Hex(state);
+            const temporary = `${pending.finalPath}.${ulid()}.tmp`;
+            writeDurableFile(temporary, state);
+            pending.temporaryPath = temporary;
+            pending.written = true;
+            pending.digest = digest;
+            pending.byteLength = state.byteLength;
+            this.staging.add(temporary);
+          } catch (error) { this.discard(pending); throw error; }
         },
       },
     };
+    this.operations.set(pending, { lease, writer: enrollment.writer, activeCallbacks: 0, discardRequested: false, signInStarted: false });
+    return enrollment;
   }
 
   begin(): { pending: PendingState; writer: ConnectionStateWriter } {
     return this.beginFor(ulid());
   }
 
+  private requireActive(pending: PendingState): PendingOperation {
+    const operation = this.operations.get(pending);
+    if (!this.handles.has(pending) || !this.minted.has(pending.sourceKey) || pending.completed || operation === undefined) {
+      throw new LedgerError("connection state handle is no longer active");
+    }
+    operation.lease.assertCurrent();
+    return operation;
+  }
+
+  private callbackStarted(pending: PendingState): void {
+    this.requireActive(pending).activeCallbacks++;
+  }
+
+  private callbackSettled(pending: PendingState): void {
+    const operation = this.operations.get(pending);
+    if (operation === undefined) return;
+    operation.activeCallbacks--;
+    if (operation.activeCallbacks === 0 && operation.discardRequested) this.discard(pending);
+  }
+
+  /** The pending handle owns actual provider lifetime, including late settlement. */
+  async signIn(pending: PendingState, connector: Connector, io: SignInIo, context: SignInContext): Promise<void> {
+    const operation = this.requireActive(pending);
+    if (operation.signInStarted) throw new LedgerError("connection sign-in is already active or completed");
+    this.callbackStarted(pending);
+    operation.signInStarted = true;
+    try {
+      await runGuardedSignIn(connector, io, operation.writer, context, () => this.callbackSettled(pending));
+    } catch (error) { this.discard(pending); throw error; }
+  }
+
+  /** Recovery and provider admission share one lease without an unlocked gap. */
+  beginWithRecovery(db: Database): { pending: PendingState; writer: ConnectionStateWriter } {
+    if (db.inTransaction) throw new LedgerError("connection enrollment requires a top-level transaction");
+    const next = this.begin();
+    try { this.recoverOwned(db, this.requireActive(next.pending).lease); return next; }
+    catch (error) { this.discard(next.pending); throw error; }
+  }
+
   discard(pending: PendingState): void {
     if (!this.handles.has(pending)) return;
-    const hadTemporary = pending.temporaryPath !== null;
-    if (pending.temporaryPath !== null) {
-      this.staging.delete(pending.temporaryPath);
-      rmSync(pending.temporaryPath, { force: true });
-      pending.temporaryPath = null;
-    }
+    const operation = this.operations.get(pending);
+    if (operation === undefined) return;
     pending.completed = true;
     this.minted.delete(pending.sourceKey);
-    if (hadTemporary) fsyncDirectory(this.directory);
+    if (operation.activeCallbacks > 0) {
+      operation.discardRequested = true;
+      return;
+    }
+    try {
+      operation.lease.assertCurrent();
+      const hadTemporary = pending.temporaryPath !== null;
+      if (pending.temporaryPath !== null) {
+        this.staging.delete(pending.temporaryPath);
+        rmSync(pending.temporaryPath, { force: true });
+        pending.temporaryPath = null;
+      }
+      if (hadTemporary) fsyncDirectory(this.directory);
+    } finally {
+      this.operations.delete(pending);
+      operation.lease.release();
+    }
   }
 
   /** Repairs an interrupted state swap before the next trusted enrollment. */
   recover(db: Database): StateRecoveryReport {
+    if (db.inTransaction) throw new LedgerError("connection recovery requires a top-level transaction");
+    const lease = acquireConnectionStateLease(dirname(this.directory));
+    try { return this.recoverOwned(db, lease); }
+    finally { lease.release(); }
+  }
+
+  private recoverOwned(db: Database, lease: ConnectionStateLease): StateRecoveryReport {
+    lease.assertCurrent();
     const report: StateRecoveryReport = {
       repaired: 0,
       unresolved: [],
@@ -180,6 +334,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
       swept: false,
     };
     writeLocked(db, () => {
+      lease.assertCurrent();
       const journals = readdirSync(this.directory).filter((name) =>
         name.endsWith(".journal"),
       );
@@ -201,6 +356,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
       }
       sweepAbandonedStaging(this.directory, this.staging);
       report.swept = true;
+      lease.assertCurrent();
     });
     return report;
   }
@@ -217,7 +373,28 @@ export class ConnectionStateStore implements ConnectionStateReader {
     expect?: ConnectionExpectation,
     implementationVersion = "",
     verifyNew?: (candidate: Uint8Array, existing: readonly { connection: Connection; state: Uint8Array }[]) => void,
+    replacement?: { previous: Uint8Array; verify: (previous: Uint8Array, candidate: Uint8Array) => void },
   ): Connection {
+    const operation = this.operations.get(pending);
+    if (!this.handles.has(pending) || operation === undefined) throw new LedgerError("connection state handle was not minted by this store");
+    try {
+      operation.lease.assertCurrent();
+      return this.saveOwned(db, connectorId, pending, expect, implementationVersion, verifyNew, replacement);
+    } finally { this.discard(pending); }
+  }
+
+  private saveOwned(
+    db: Database,
+    connectorId: string,
+    pending: PendingState,
+    expect?: ConnectionExpectation,
+    implementationVersion = "",
+    verifyNew?: (candidate: Uint8Array, existing: readonly { connection: Connection; state: Uint8Array }[]) => void,
+    replacement?: { previous: Uint8Array; verify: (previous: Uint8Array, candidate: Uint8Array) => void },
+  ): Connection {
+    // A savepoint can be rolled back after this call returns. Callers use this
+    // return as durable publication before sending provider requests.
+    if (db.inTransaction) throw new LedgerError("connection state publication requires a top-level transaction");
     if (
       !this.handles.has(pending) ||
       !this.minted.has(pending.sourceKey) ||
@@ -234,6 +411,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
       // again outside the lock, where it could take away bytes a recovery in
       // another process had already restored.
       rolledBack = true;
+      this.requireActive(pending);
       const staging = pending.temporaryPath;
       if (staging !== null) {
         this.staging.delete(staging);
@@ -249,6 +427,26 @@ export class ConnectionStateStore implements ConnectionStateReader {
     };
     try {
       writeLocked(db, () => {
+        this.requireActive(pending);
+        if (replacement !== undefined) {
+          if (expect === undefined || !pending.written || pending.temporaryPath === null) throw new LedgerError("replacement verification requires staged state");
+          const current = getConnection(db, connectorId, pending.sourceKey);
+          if (current === null || current.connected_at !== expect.connected_at || current.disconnected_at !== expect.disconnected_at) throw new LedgerError(STALE_CONNECTION_SNAPSHOT);
+          const originalDigest = sha256Hex(replacement.previous);
+          const verifyBytes = () => {
+            const original = this.read(current), candidate = this.readStatePath(pending.temporaryPath!);
+            if (original === null || original.byteLength !== replacement.previous.byteLength || sha256Hex(original) !== originalDigest) throw new LedgerError("replacement original state changed");
+            if (candidate.byteLength !== pending.byteLength || sha256Hex(candidate) !== pending.digest) throw new LedgerError("replacement staged digest mismatch");
+            return candidate;
+          };
+          const candidate = verifyBytes();
+          const result: unknown = replacement.verify(replacement.previous.slice(), candidate);
+          if (result !== undefined) {
+            if (result instanceof Promise) void result.catch(() => {});
+            throw new LedgerError("replacement verifier must complete synchronously");
+          }
+          verifyBytes();
+        }
         if (verifyNew !== undefined) {
           if (expect !== undefined || existsSync(pending.finalPath) || getConnection(db, connectorId, pending.sourceKey) !== null) {
             throw new LedgerError("new enrollment verification cannot replace a source");
@@ -286,6 +484,9 @@ export class ConnectionStateStore implements ConnectionStateReader {
             throw new LedgerError("new enrollment staged digest mismatch");
           }
         }
+        // Trusted verifiers are synchronous but can still invalidate retained
+        // handles. Recheck lifetime and custody after their last callback.
+        this.requireActive(pending);
         const existing = existsSync(pending.finalPath);
         if (existing && !pending.written) {
           throw new LedgerError(
@@ -358,40 +559,6 @@ export class ConnectionStateStore implements ConnectionStateReader {
     return connection;
   }
 
-  private readStatePath(path: string): Uint8Array {
-    const stats = assertRegularStateFile(path, this.directory);
-    if (stats.size > MAX_CONNECTION_STATE_BYTES) throw new LedgerError("connection state exceeds maximum size");
-    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    try {
-      const bytes = new Uint8Array(stats.size);
-      let offset = 0;
-      while (offset < bytes.byteLength) {
-        const read = readSync(fd, bytes, offset, bytes.byteLength - offset, offset);
-        if (read <= 0) throw new LedgerError("connection state read made no progress");
-        offset += read;
-      }
-      return bytes;
-    } finally { closeSync(fd); }
-  }
-
-  read(connection: Connection): Uint8Array | null {
-    if (connection.secret_refs.length === 0) return null;
-    if (connection.config.state_ref_index !== 0) {
-      throw new LedgerError("connection config does not permit state resolution");
-    }
-    if (connection.secret_refs.length !== 1) {
-      throw new LedgerError("connection has invalid state references");
-    }
-    const ref = connection.secret_refs[0];
-    if (ref === undefined) {
-      throw new LedgerError("connection has no state reference");
-    }
-    if (sourceJournalNames(this.directory, connection.source_key).length > 0) {
-      throw new LedgerError("connection state journal is unresolved");
-    }
-    const path = connectionStatePath(this.directory, ref);
-    return this.readStatePath(path);
-  }
 
   /**
    * The one staging path for replacing the state of an existing source: it
@@ -401,7 +568,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
   private async swap(
     db: Database,
     connection: Connection,
-    update: (writer: ConnectionStateWriter, previous: Uint8Array) => Promise<void>,
+    update: (writer: ConnectionStateWriter, previous: Uint8Array, pending: PendingState) => Promise<void>,
     options: {
       missingStateMessage: string;
       refuseDisconnected: boolean;
@@ -409,48 +576,46 @@ export class ConnectionStateStore implements ConnectionStateReader {
       verifyReplacement?: (previous: Uint8Array, candidate: Uint8Array) => void;
     },
   ): Promise<Connection> {
-    this.recover(db);
-    const persisted = getConnection(
-      db,
-      connection.connector_id,
-      connection.source_key,
-    );
-    if (persisted === null) {
-      throw new LedgerError("connection is not persisted for state replacement");
-    }
-    if (
-      persisted.connected_at !== connection.connected_at ||
-      persisted.disconnected_at !== connection.disconnected_at ||
-      persisted.config.state_ref_index !== connection.config.state_ref_index ||
-      persisted.secret_refs.length !== connection.secret_refs.length ||
-      persisted.secret_refs.some((ref, index) => ref !== connection.secret_refs[index])
-    ) {
-      throw new LedgerError(STALE_CONNECTION_SNAPSHOT);
-    }
-    if (
-      persisted.config.state_ref_index !== 0 ||
-      persisted.secret_refs[0] !== stateRefFor(persisted.source_key)
-    ) {
-      throw new LedgerError("connection is not eligible for state replacement");
-    }
-    // save() clears disconnected_at, so an automatic path that accepted a
-    // withdrawn grant would let a background refresh undo an owner's
-    // disconnect. Only an interactive re-sign-in may reconnect a source.
-    if (options.refuseDisconnected && persisted.disconnected_at !== null) {
-      throw new LedgerError("connection is disconnected");
-    }
-    const previous = this.read(persisted);
-    if (previous === null) throw new LedgerError("connection state is missing");
-    const pending = this.beginFor(persisted.source_key);
+    if (db.inTransaction) throw new LedgerError("connection state replacement requires a top-level transaction");
+    const pending = this.beginFor(connection.source_key);
     try {
-      await update(pending.writer, previous);
+      this.recoverOwned(db, this.requireActive(pending.pending).lease);
+      const persisted = getConnection(
+        db,
+        connection.connector_id,
+        connection.source_key,
+      );
+      if (persisted === null) {
+        throw new LedgerError("connection is not persisted for state replacement");
+      }
+      if (
+        persisted.connected_at !== connection.connected_at ||
+        persisted.disconnected_at !== connection.disconnected_at ||
+        persisted.config.state_ref_index !== connection.config.state_ref_index ||
+        persisted.secret_refs.length !== connection.secret_refs.length ||
+        persisted.secret_refs.some((ref, index) => ref !== connection.secret_refs[index])
+      ) {
+        throw new LedgerError(STALE_CONNECTION_SNAPSHOT);
+      }
+      if (
+        persisted.config.state_ref_index !== 0 ||
+        persisted.secret_refs[0] !== stateRefFor(persisted.source_key)
+      ) {
+        throw new LedgerError("connection is not eligible for state replacement");
+      }
+      // save() clears disconnected_at, so an automatic path that accepted a
+      // withdrawn grant would let a background refresh undo an owner's
+      // disconnect. Only an interactive re-sign-in may reconnect a source.
+      if (options.refuseDisconnected && persisted.disconnected_at !== null) {
+        throw new LedgerError("connection is disconnected");
+      }
+      const previous = this.read(persisted);
+      if (previous === null) throw new LedgerError("connection state is missing");
+      this.callbackStarted(pending.pending);
+      try { await update(pending.writer, previous, pending.pending); }
+      finally { this.callbackSettled(pending.pending); }
       if (!pending.pending.written) {
         throw new LedgerError(options.missingStateMessage);
-      }
-      if (options.verifyReplacement !== undefined) {
-        const path = pending.pending.temporaryPath;
-        if (path === null) throw new LedgerError(options.missingStateMessage);
-        options.verifyReplacement(previous, this.readStatePath(path));
       }
       return this.save(
         db,
@@ -461,6 +626,8 @@ export class ConnectionStateStore implements ConnectionStateReader {
           disconnected_at: persisted.disconnected_at,
         },
         options.implementationVersion,
+        undefined,
+        options.verifyReplacement === undefined ? undefined : { previous: previous.slice(), verify: options.verifyReplacement },
       );
     } catch (error) {
       this.discard(pending.pending);
@@ -486,8 +653,8 @@ export class ConnectionStateStore implements ConnectionStateReader {
     return this.swap(
       db,
       connection,
-      async (writer, previous) => {
-        await runGuardedSignIn(connector, io, writer, { mode: "replace", previous_state: previous });
+      async (_writer, previous, pending) => {
+        await this.signIn(pending, connector, io, { mode: "replace", previous_state: previous });
       },
       {
         missingStateMessage:

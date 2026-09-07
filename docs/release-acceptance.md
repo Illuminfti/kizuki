@@ -1,14 +1,18 @@
 # Release acceptance evidence
 
-Evidence date: 6 September 2026. The checked-in acceptance checker inventories
+Evidence date: 7 September 2026. The checked-in acceptance checker inventories
 the fixed RC and 1.0 obligations and validates the supported local evidence.
 The current producer set cannot establish release `GO`: independent review,
-native installed-service execution, live accounts and unfamiliar-user acceptance
-lack reviewed evidence adapters. The current readiness bar is a stranger who
+live accounts and unfamiliar-user acceptance still need their required evidence.
+The online collector can qualify current CI, native packages and complete
+installed-service lifecycle receipts under the contracts below. The current readiness bar is a stranger who
 can install and use the product, zero live P0 findings, and honest installation.
 The [current campaign decision](decision-log.md#owner-amendment-to-readiness-2026-09-05)
-supersedes seven- and fourteen-day calendar gates. Longer observation remains
-an optional diagnostic after readiness; operational cutover requires its own authority.
+supersedes seven- and fourteen-day calendar gates and estate cutover as
+readiness or 1.0 tag prerequisites. Longer observation remains an optional
+diagnostic after readiness; operational cutover requires its own authority.
+Product, connector, model, security, recovery, platform, independent review,
+and unfamiliar-human requirements remain.
 
 This is release tooling. It does not add a canon review or promotion step to
 the product. The owner corrects beliefs and uses receipt undo.
@@ -40,7 +44,113 @@ corrupt or missing index still yields the complete gate inventory with a
 failed index gate. Existing reports are never overwritten. There are no
 waivers, actor declarations, skip flags, threshold overrides or clock flags.
 
+### Observe current GitHub checks
+
+The explicit online collector can establish `candidate.required-checks` by
+reading GitHub during the evaluation. It resolves the fixed public repository
+ID, then orders each candidate workflow by its latest attempt's `run_started_at`.
+An older run that was rerun most recently takes precedence over a newer run
+number. Missing or tied start times cannot establish order. Any pending required
+attempt prevents credit. Earlier failures remain explicit history and review
+obligations; they do not permanently veto a later successful attempt. Every
+required job and authored step must have succeeded. A second inventory and
+latest-attempt read refuses changes during collection.
+
+```bash
+bun scripts/github-release-evidence.ts --profile rc --evidence /absolute/evidence/index.json --checkout /absolute/clean-candidate --out /absolute/new-github-evaluation
+```
+
+The collector uses existing `gh` read access and performs GET requests only.
+Native archive inspection also requires Python 3 with its standard `zipfile`
+module in isolated interpreter mode; downloaded executable bytes are never launched by the collector.
+The candidate checkout must be clean and match the index SHA. It validates
+that checkout's workflow and toolchain files with the current verifier, and
+binds invoked package scripts and associated hooks to the collector's reviewed
+definitions; it
+also binds the collector's separate clean source revision and transitive product
+imports. Both source
+inventories, raw public API responses, and observation hashes are retained in
+the new private output directory alongside `acceptance-report.json`.
+
+There is no repository, host, run, attempt, or passing-facts option. Saved API
+JSON is useful for review but cannot be submitted to establish online credit.
+The offline checker continues to leave raw CI receipts unverified. This online
+path can also establish each `native.<target>` gate from one successful paired
+native workflow attempt. Before collecting native evidence, the candidate's
+build, smoke and artifact-proof harnesses and their complete resolved product
+source closure must match the separately reviewed collector harness bytes.
+Both closures and resolution metadata are retained and checked again before
+credit. This compares evidence producers; product entrypoints executed as test
+subjects may change independently. A changed producer needs a newly reviewed
+collector, and otherwise leaves native evidence unverifiable.
+
+Both exact hosted matrix jobs, authored step results,
+artifact names, repository/run/source identities and API archive digests must
+match. Each artifact's creation time must fall within that attempt's successful
+upload step. Jobs, artifacts and attempts are reread after download; CI is checked
+again before credit. The archive must contain exactly the seven current package
+files, the current artifact proof and the retained lifecycle diagnostic. Bounded
+archive inspection rejects links, paths outside that inventory, duplicates,
+truncation and oversized files, then applies the current package/proof parsers.
+
+Native credit also requires both packages in the supplied v4 index. Each target's
+seven package digests, including `BUILD.json`, and proof digest must equal the
+freshly downloaded native evidence. A missing indexed package leaves native
+credit unverifiable; any mismatch fails it. Matching source revisions alone do
+not bind builds. Artifact and engine gates remain owned by the offline evaluator
+and its current parsers; the online path does not override their decisions.
+
+For a first collection without package references, the verified downloaded files
+remain under `<out>/<target>/package/` and `<out>/<target>/artifact-proof.json`.
+Create a new v4 index referencing both directories and proof files with their
+recorded proof digests, then run the online checker again with that index and a
+new output directory. The second observation must still find the same current
+successful attempt and package bytes. An old or different build cannot supply
+artifact or engine credit for the new native observation.
+
+Legacy lifecycle receipts remain diagnostic evidence. The online collector can
+establish `lifecycle.<target>` only from the same successful paired native run and
+attempt, whose downloaded package and proof digests equal the current offline
+index. Its closed v2 receipt must pass all 17 independent phase checks and complete
+per-unit cleanup. The collector separately binds the candidate and reviewed
+transitive lifecycle producers, baseline builder, recovery and model helpers,
+explicit endpoint child, and four fixed historical fixture files.
+
+This contract covers installed candidate lifecycle, a distinct fixed prior
+candidate binary upgrade, historical schema 15/16 migration and recovery, five
+native states, and synthetic model availability and recovery. Offline recovery
+uses an explicitly recorded synthetic sync due-time adjustment while stopped,
+then a real scheduled receipt after installed-service restart; it does not claim
+that 15 minutes elapsed or an unassisted retry delay was observed. Prior package
+hashes and engine identities are reviewed builder observations; prior bytes are
+not independently downloaded in this nine-file artifact. Released-version
+upgrades, hardware reboot, host network isolation, public distribution, and human
+trials are not asserted. Saved JSON alone cannot establish online lifecycle credit.
+Accounts, independent review, findings and unfamiliar-human acceptance also
+remain separate required evidence. Earlier native failures remain in the history;
+a failed paired attempt cannot contribute a single successful platform as a pass.
+
 ## Index schema
+
+The current `kizuki.acceptance-evidence/v4` index retains the v3 fields and
+limits, and additionally accepts `kizuki.artifact-proof/v3` for seven-file
+Build V2 packages. V1, V2 and V3 index producer sets remain unchanged. New
+proofs bind the license, notices and closed distribution inventory without
+adding release credit for unresolved material or a distribution assessment.
+
+The `kizuki.acceptance-evidence/v3` index extends v2 with a required
+`gate_receipts` array. Each reference names its producer, gate, target, absolute
+receipt path and SHA-256. V3 accepts at most forty references and 32 KiB of index
+bytes. Unsupported evidence families retain their explicit missing-adapter
+status; an arbitrary receipt cannot supply release credit.
+
+The implemented `kizuki.surface-inventory/v1` producer is
+`scripts/capability-proof.ts`. Its receipt binds the exact candidate's public
+commands, MCP tools, connector manifests, C3 inventory and documentation hashes.
+The evaluator independently checks the source and receipt before accepting
+`surface.capabilities-and-docs`. This gate alone cannot establish release GO.
+V1 and v2 remain supported under their original schemas and limits.
+
 
 `kizuki.acceptance-evidence/v2` has exactly four keys: `schema`,
 `candidate_source_sha`, `artifacts` and `fixture_observation`. The candidate
@@ -129,11 +239,11 @@ can set `release_1_0_accepted` after every required row passes.
 | `artifact.<target>` for both targets | Local package and recorded fixture-step consistency; implemented with `automated-fixture-integrity` scope |
 | `engine.<target>` for both targets | Both copied executables report the matching qualified SQLite identity and pinned Bun; v1 is missing, unknown identities fail |
 | `native.<target>` for both targets | Trusted producer revision and native execution attestation; `UNVERIFIABLE` |
-| `lifecycle.<target>` for both targets | Actual normal install, upgrade, restart, reboot and uninstall; `NOT_IMPLEMENTED` |
+| `lifecycle.<target>` for both targets | Online current paired native v2: install, distinct prior candidate upgrade, historical migration/recovery, native states, synthetic model matrix/recovery, restart, uninstall and complete cleanup; saved receipts remain unverified |
 | `candidate.required-checks` | Exact-candidate required CI/check identities; adapter `NOT_IMPLEMENTED` |
 | `candidate.independent-review` | Independent specification/security and regression review; adapter `NOT_IMPLEMENTED` |
 | `candidate.current-p0-disposition` | Complete current-head findings and explicit freshness policy; `UNVERIFIABLE` |
-| `surface.capabilities-and-docs` | Executable capability/legacy-surface inventory and SECURITY/docs/API agreement; adapter `NOT_IMPLEMENTED` |
+| `surface.capabilities-and-docs` | Exact-candidate executable surface and documentation inventory; v3 receipt adapter implemented |
 | `journey.connect-resume` | Complete connector capability, limit, cursor, sensitivity and account/history/edit/delete/restart evidence |
 | `journey.correct-belief` | Correction, supersession, provenance, canon/query/context/MCP agreement and undo |
 | `journey.revoke-purge` | Immediate and restarted denial, retained consumers, all owned stores and pending cleanup |
@@ -156,9 +266,9 @@ evidence support, not whether a product feature exists.
 The frozen C3 catalogue is Telegram user sign-in, Gmail, Google Calendar,
 IMAP, ICS, WHOOP, X API, screenpipe, Markdown folder, ChatGPT export, Claude
 export, X archive, WhatsApp export, Pocket and Omnivore. Report entries include
-the current connector IDs; X API has `connector_id: null` because this candidate
-has no registered API connector. File importers cannot stand in for live
-accounts. Composio and WhatsApp Business API remain explicitly deferred.
+the current connector IDs, including the registered X API connector `kizuki.x`.
+Registration does not establish actual account qualification. File importers
+cannot stand in for live accounts. Composio and WhatsApp Business API remain explicitly deferred.
 
 ## Trust and qualification limits
 
@@ -181,8 +291,9 @@ display actual observed and credited duration, last observation and pending
 boundary rails, with `release_credit: false`. Nothing advances observation
 time, starts a service, opens an account, or calls a model.
 
-The checker has no trusted attempt inventory, actor/account authority source,
-current remote CI status, review source or P0 freshness policy. These gaps
+The offline checker has no trusted attempt inventory or current remote CI status.
+Neither path has an actor/account authority source, review source or P0 freshness
+policy. These gaps
 cannot be filled by a handwritten passing flag or selecting a green rerun.
 Retain failed attempts and unresolved findings with the candidate; future
 adapters must validate their complete disposition before granting acceptance.
@@ -199,7 +310,7 @@ run, and does not itself produce a trusted passing receipt.
 ## Verification
 
 ```bash
-bun test scripts/artifact-proof.test.ts scripts/artifact-engine.test.ts scripts/go-no-go.test.ts scripts/stranger-proof.test.ts scripts/release-artifacts.test.ts scripts/release-targets.test.ts scripts/qualification.test.ts
+bun test scripts/github-release-evidence.test.ts scripts/artifact-proof.test.ts scripts/artifact-engine.test.ts scripts/go-no-go.test.ts scripts/stranger-proof.test.ts scripts/release-artifacts.test.ts scripts/release-targets.test.ts scripts/qualification.test.ts
 bun run typecheck
 bun run verify
 ```

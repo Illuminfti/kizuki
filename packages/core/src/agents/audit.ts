@@ -217,7 +217,7 @@ function shapeArray(
       const property = Object.getOwnPropertyDescriptor(value, String(index));
       if (property === undefined) {
         shaped.push(marker(budget, "hole"));
-      } else if (!("value" in property)) {
+      } else if (!Object.hasOwn(property, "value")) {
         shaped.push(marker(budget, "accessor"));
       } else {
         shaped.push(shapeValue(property.value, depth + 1, budget, ancestors));
@@ -265,7 +265,7 @@ function shapeObject(
     if (root !== undefined) {
       // Structural counters must survive a large nested value, regardless of
       // its insertion order. Inspect only the captured own data descriptors.
-      const scalar = (property: PropertyDescriptor): boolean => "value" in property && isScalar(property.value);
+      const scalar = (property: PropertyDescriptor): boolean => Object.hasOwn(property, "value") && isScalar(property.value);
       entries.sort((left, right) => Number(scalar(right[1])) - Number(scalar(left[1])));
     }
     for (const [index, [key, property]] of entries.entries()) {
@@ -276,7 +276,7 @@ function shapeObject(
         continue;
       }
       const keyResult = shapeKey(key, reserved, index + 1, budget);
-      const nested = !("value" in property)
+      const nested = !Object.hasOwn(property, "value")
         ? marker(budget, "accessor")
         : shapeValue(property.value, depth + 1, budget, ancestors);
       if (keyResult.keyShape !== undefined) chargeNodes(budget, 1);

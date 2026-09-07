@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { TOOLS } from "@kizuki/core";
+import {
+  ENVELOPE_SCHEMA,
+  TOOLS,
+  registerConnection,
+  setSourceGrant,
+  sourcePolicyEpoch,
+  ulid,
+} from "@kizuki/core";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { recordedPage } from "../../core/test/helpers/recorded-page";
+import { ENVELOPE_SHAPE } from "../src/schemas";
 import { call, connectClient, envelopeOf } from "./client";
 import { mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
@@ -52,6 +61,21 @@ describe("the advertised output schema describes what the server sends", () => {
 
   test("the canon chunk schema carries the trust fields the engine emits", async () => {
     const running = live();
+    const recorded = await recordedPage(
+      running.db,
+      running.vaultPath,
+      "entities/schema-canon.md",
+      {
+        id: "person:schema-canon",
+        title: "Schema canon",
+        type: "person",
+        status: "active",
+        sensitivity: "public",
+        taint: "clean",
+        subjects: ["person:schema-canon"],
+      },
+      "Schema canon is a recorded note.",
+    );
     const client = await connectClient(running.owner(), open);
     const tools = (await client.listTools()).tools;
 
@@ -67,9 +91,9 @@ describe("the advertised output schema describes what the server sends", () => {
     expect(canon?.required).toContain("authority");
 
     const chunk = (
-      envelopeOf(await call(client, "get_page", { id: "person:ada" }))[
-        "canon"
-      ] as Record<string, unknown>[]
+      envelopeOf(
+        await call(client, "get_page", { id: "person:schema-canon" }),
+      )["canon"] as Record<string, unknown>[]
     )[0];
     expect(chunk).toBeDefined();
     // Whatever the engine puts on a chunk is described; nothing is advertised
@@ -77,6 +101,9 @@ describe("the advertised output schema describes what the server sends", () => {
     expect(Object.keys(chunk ?? {}).sort()).toEqual(
       [...(canon?.required ?? [])].sort(),
     );
+    expect(chunk?.["page_id"]).toBe("person:schema-canon");
+    expect(chunk?.["sources"]).toEqual(recorded.sourceIds);
+    expect(chunk?.["authority"]).toBe(recorded.receipt.authority);
   });
 
   test("every tool advertises an output schema", async () => {
@@ -85,4 +112,173 @@ describe("the advertised output schema describes what the server sends", () => {
     expect(tools.map((tool) => tool.name)).toEqual([...TOOLS]);
     for (const tool of tools) expect(tool.outputSchema).toBeDefined();
   });
+
+  test("epoch-zero responses omit source_policy and still satisfy a listed client", async () => {
+    const running = live();
+    expect(sourcePolicyEpoch(running.db)).toBe(0);
+    const result = await call(await listed(running), "get_page", {
+      id: "person:ada",
+    });
+    expect(result.isError ?? false).toBe(false);
+    const structured = envelopeOf(result);
+    const text = JSON.parse(result.content[0]?.text ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    expect(structured).not.toHaveProperty("source_policy");
+    expect(text).not.toHaveProperty("source_policy");
+    expect(text).toEqual(structured);
+  });
+
+  test("a listed client accepts an ordinary source-policy envelope on both channels", async () => {
+    const running = live();
+    const source_key = ulid();
+    registerConnection(running.db, "kizuki.fixture", source_key);
+    setSourceGrant(running.db, {
+      source_key,
+      expected_revision: 0,
+      operation_id: "schema-source-policy",
+      policy: {
+        purposes: ["capture"],
+        allowed_fields: ["text"],
+        retention: "persistent_owned_until_revoked",
+        egress: "local_only",
+        sensitivity_floor: "private",
+      },
+    });
+    const epoch = sourcePolicyEpoch(running.db);
+    expect(epoch).toBeGreaterThan(0);
+    const policy = {
+      mode: "enforced" as const,
+      epoch,
+      legacy_unbound: "owner_only" as const,
+    };
+
+    const result = await call(await listed(running), "get_page", {
+      id: "person:ada",
+    });
+    expect(result.isError ?? false).toBe(false);
+    const structured = envelopeOf(result);
+    const text = JSON.parse(result.content[0]?.text ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    expect(structured["source_policy"]).toEqual(policy);
+    expect(text["source_policy"]).toEqual(policy);
+    expect(text).toEqual(structured);
+  });
+
+  test("every tool advertises optional source_policy with the exact three members", async () => {
+    const client = await connectClient(live().owner(), open);
+    const tools = (await client.listTools()).tools;
+    expect(tools.map((tool) => tool.name)).toEqual([...TOOLS]);
+    for (const tool of tools) {
+      const advertised = tool.outputSchema as {
+        required?: string[];
+        properties?: { source_policy?: { required?: string[] } };
+      };
+      expect(advertised.required?.slice().sort()).toEqual(
+        ["at", "canon", "denied", "principal", "quoted", "schema", "tool"],
+      );
+      expect(advertised.properties?.source_policy?.required?.slice().sort()).toEqual(
+        ["epoch", "legacy_unbound", "mode"],
+      );
+    }
+  });
+
+  test("the source_policy object rejects missing, extra, mistyped and invalid members", () => {
+    const envelope = {
+      schema: ENVELOPE_SCHEMA,
+      tool: "search" as const,
+      principal: "owner",
+      at: "2026-02-28T10:00:00.000Z",
+      canon: [],
+      quoted: [],
+      denied: [],
+    };
+    const policy = {
+      mode: "enforced" as const,
+      epoch: 1,
+      legacy_unbound: "owner_only" as const,
+    };
+    expect(ENVELOPE_SHAPE.safeParse(envelope).success).toBe(true);
+    expect(
+      ENVELOPE_SHAPE.safeParse({ ...envelope, source_policy: policy }).success,
+    ).toBe(true);
+    expect(ENVELOPE_SHAPE.safeParse({ ...envelope, tool: undefined }).success).toBe(
+      false,
+    );
+
+    const invalid = [
+      {},
+      { mode: "enforced", epoch: 1 },
+      { mode: "enforced", legacy_unbound: "owner_only" },
+      { epoch: 1, legacy_unbound: "owner_only" },
+      { ...policy, extra: true },
+      { ...policy, mode: "advisory" },
+      { ...policy, epoch: 0 },
+      { ...policy, epoch: -1 },
+      { ...policy, epoch: 1.5 },
+      { ...policy, epoch: "1" },
+      { ...policy, mode: true },
+      { ...policy, legacy_unbound: "anyone" },
+      { ...policy, legacy_unbound: 1 },
+      null,
+      "enforced",
+    ];
+    for (const source_policy of invalid) {
+      expect(
+        ENVELOPE_SHAPE.safeParse({ ...envelope, source_policy }).success,
+      ).toBe(false);
+    }
+  });
+});
+
+import { rebuildDerived } from '@kizuki/core';
+import { LABEL, SUBJECT, labelEvent, writeIdentity } from '../../core/test/serving/subject-label-fixture';
+
+test('a listed validating MCP client accepts real written identity evidence on canonical and quoted results', async () => {
+  const running = live(), written = await writeIdentity({ db: running.db, vault_path: running.vaultPath });
+  rebuildDerived(running.db, running.vaultPath);
+  const client = await listed(running);
+  const entities = envelopeOf(await call(client, 'query_entities', { name: LABEL }));
+  const canon = entities['canon'] as { subject_labels?: { subject: string; display_name: string | null }[] }[];
+  expect(canon).toHaveLength(1);
+  expect(canon[0]?.subject_labels?.[0]).toMatchObject({ subject: SUBJECT, display_name: LABEL });
+  const search = await call(client, 'search', { query: 'orchard', scope: 'all' });
+  expect(search.isError ?? false).toBe(false);
+  const envelope = envelopeOf(search);
+  const quoted = (envelope['quoted'] as { event_id: string; subject_labels?: { display_name: string | null }[] }[]).find(chunk => chunk.event_id === written.event);
+  expect(quoted?.subject_labels?.[0]?.display_name).toBe(LABEL);
+  expect(JSON.parse(search.content[0]!.text)).toEqual(envelope);
+});
+
+test('identity output records are optional and closed at every evidence level', () => {
+  const label = { subject: SUBJECT, display_name: LABEL, handles: ['@ada'], evidence: [{ claim_id: 'synthetic-claim', authority: 'connector_evidence', sources: ['synthetic-source'] }] };
+  const chunk = { event_id: 'synthetic-event', connector_id: 'synthetic', kind: 'message', occurred_at: '2026-02-28T10:00:00Z', sensitivity: 'public', subjects: [SUBJECT], text: 'Synthetic body.', tainted: true };
+  const envelope = { schema: ENVELOPE_SCHEMA, tool: 'search', principal: 'owner', at: '2026-02-28T10:00:00Z', canon: [], quoted: [chunk], denied: [] };
+  const accepts = (subject_labels: unknown) => ENVELOPE_SHAPE.safeParse({ ...envelope, quoted: [{ ...chunk, subject_labels }] }).success;
+  expect(ENVELOPE_SHAPE.safeParse(envelope).success).toBe(true);
+  expect(accepts([label])).toBe(true);
+  expect(accepts([{ ...label, display_name: '𐐀'.repeat(160) }])).toBe(true);
+  for (const invalid of [
+    [{ ...label, extra: true }], [{ ...label, display_name: 7 }], [{ ...label, handles: Array(5).fill('@ada') }],
+    [{ ...label, evidence: [] }], [{ ...label, evidence: Array(33).fill(label.evidence[0]) }],
+    [{ ...label, evidence: [{ ...label.evidence[0], authority: 'invented' }] }],
+    [{ ...label, evidence: [{ ...label.evidence[0], sources: [] }] }],
+    [{ ...label, evidence: [{ ...label.evidence[0], extra: true }] }],
+    [{ subject: SUBJECT, display_name: LABEL, handles: [] }], Array(51).fill(label), null,
+  ]) expect(accepts(invalid)).toBe(false);
+});
+
+test('listed MCP preserves quoted aggregate taint when a clean page gains a separately admitted quoted label', async () => {
+  const running = live();
+  await writeIdentity({ db: running.db, vault_path: running.vaultPath }, { eventId: labelEvent(running.db, SUBJECT, 'public', 'Orchard names Ada Example.'), taint: 'quoted', body: '> Orchard names Ada Example.' });
+  const base = await recordedPage(running.db, running.vaultPath, 'facts/clean-label-base.md', { id: 'fact:clean-label-base', title: 'Clean human title', type: 'fact', status: 'active', sensitivity: 'public', taint: 'clean', subjects: [SUBJECT] }, 'Orchard base prose.');
+  rebuildDerived(running.db, running.vaultPath);
+  const result = await call(await listed(running), 'search', { query: 'orchard', scope: 'canon' });
+  expect(result.isError ?? false).toBe(false);
+  const chunk = (envelopeOf(result)['canon'] as { page_id: string; taint: string; authority: string; subject_labels?: unknown[] }[]).find(chunk => chunk.page_id === 'fact:clean-label-base')!;
+  expect(chunk.taint).toBe('quoted'); expect(chunk.authority).toBe(base.receipt.authority);
+  expect(chunk.subject_labels).toHaveLength(1);
 });

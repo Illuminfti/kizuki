@@ -1,3 +1,6 @@
+import { exportPurgeFixture, imapPurgeFixture, telegramPurgeFixture } from "./purge-fixtures";
+import { XApiFixture } from "@kizuki/connector-x/api/testkit";
+import { X_API_CONNECTOR_ID, createXApiConnector } from "@kizuki/connector-x/api";
 import { GOOGLE_CALENDAR_CONNECTOR_ID, createGoogleCalendarConnector } from "@kizuki/connector-google-calendar";
 import { CalendarFixture } from "../../connector-google-calendar/src/testing";
 import { expect, test } from "bun:test";
@@ -239,17 +242,17 @@ function batteryFor(
           // Pinned so the double backfill is identical on any host.
           timezone: WHATSAPP_FIXTURE_TIMEZONE,
         }),
-        { unavailable: missingPath(WHATSAPP_IMPORT_CONNECTOR_ID) },
+        { unavailable: missingPath(WHATSAPP_IMPORT_CONNECTOR_ID), purgeFixture: () => exportPurgeFixture(WHATSAPP_IMPORT_CONNECTOR_ID) },
       ),
     [POCKET_IMPORT_CONNECTOR_ID]: () =>
       runConformance(
         getConnector(POCKET_IMPORT_CONNECTOR_ID, { path: layout.pocket }),
-        { unavailable: missingPath(POCKET_IMPORT_CONNECTOR_ID) },
+        { unavailable: missingPath(POCKET_IMPORT_CONNECTOR_ID), purgeFixture: () => exportPurgeFixture(POCKET_IMPORT_CONNECTOR_ID) },
       ),
     [OMNIVORE_IMPORT_CONNECTOR_ID]: () =>
       runConformance(
         getConnector(OMNIVORE_IMPORT_CONNECTOR_ID, { path: layout.omnivore }),
-        { unavailable: missingPath(OMNIVORE_IMPORT_CONNECTOR_ID) },
+        { unavailable: missingPath(OMNIVORE_IMPORT_CONNECTOR_ID), purgeFixture: () => exportPurgeFixture(OMNIVORE_IMPORT_CONNECTOR_ID) },
       ),
     [X_ARCHIVE_CONNECTOR_ID]: () =>
       runConformance(
@@ -272,6 +275,7 @@ function batteryFor(
         );
       });
       return runConformance(telegram, {
+        purgeFixture: telegramPurgeFixture,
         unavailable: {
           connector: new TelegramConnector({}, scriptedDeps()),
         },
@@ -280,6 +284,10 @@ function batteryFor(
     [GOOGLE_CALENDAR_CONNECTOR_ID]: async () => {
       const fixture = new CalendarFixture(), connector = await fixture.connected();
       return runConformance(connector, {unavailable:{connector:createGoogleCalendarConnector({})},tombstone:{prepare:async()=>JSON.stringify(JSON.parse(new TextDecoder().decode(fixture.state)).pending.next),mutate:async()=>{fixture.rows=[{id:'allday1',status:'cancelled'}];fixture.version++;}}});
+    },
+    [X_API_CONNECTOR_ID]: async () => {
+      const fixture = new XApiFixture(2), connector = await fixture.connected();
+      return runConformance(connector, { unavailable: { connector: createXApiConnector({}) } });
     },
     [GMAIL_CONNECTOR_ID]: async () => {
       const fixture = new GmailFixture(2);
@@ -303,6 +311,7 @@ function batteryFor(
       );
       await imap.connect(async () => JSON.stringify(fixtureState()));
       return runConformance(imap, {
+        purgeFixture: imapPurgeFixture,
         unavailable: { connector: createImapConnector({}) },
         tombstone: {
           prepare: async () => (await imap.backfill(null)).cursor,
@@ -569,4 +578,32 @@ test("unlabeled events fail conformance", async () => {
   expect(
     result.failures.some((item) => item.includes("default_sensitivity")),
   ).toBe(true);
+});
+
+
+test("completion metadata is additive, boolean and never a connector getter", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "ics-completion-conformance-"));
+  try {
+    const file = path.join(root, "calendar.ics"); await writeFile(file, FIXTURE_ICS);
+    let getters = 0;
+    for (const value of ["absent", false, true, undefined, null, 0, "false", "getter"] as const) {
+      await writeFile(file, FIXTURE_ICS);
+      const connector = createIcsConnector({ path: file }, { now: () => new Date("2026-03-01T00:00:00Z") });
+      const backfill = connector.backfill.bind(connector);
+      connector.backfill = async cursor => {
+        const result = await backfill(cursor); delete result.has_more;
+        if (value !== "absent") Object.defineProperty(result, "has_more", value === "getter"
+          ? { enumerable: true, get: () => { getters++; return false; } }
+          : { enumerable: true, value });
+        return result;
+      };
+      const report = await runConformance(connector, { tombstone: {
+        prepare: async () => (await backfill(null)).cursor,
+        mutate: async () => writeFile(file, "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"),
+      } });
+      if (value === "absent" || typeof value === "boolean") expect(report).toEqual({ pass: true, failures: [] });
+      else expect(report.failures.some(failure => failure.includes("has_more must be an own boolean data property"))).toBe(true);
+    }
+    expect(getters).toBe(0);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

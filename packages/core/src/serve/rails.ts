@@ -1,4 +1,7 @@
-import { tryWriteFlock } from "./flock";
+import { VaultMutationError, withVaultMutationSync } from "../vault/mutation-scope";
+import { recoverCanonWrites } from "../canon/recovery";
+import { inspectCanonRecovery } from "../canon/write-intent";
+import { retryCanonProjectionObligations } from "../canon/projection-obligations";
 import { pidAlive, readBootId } from "./leases";
 import type { Database } from "bun:sqlite";
 import { pendingRetrievalOps, retryRetrievalOps } from "../claims/store";
@@ -43,12 +46,19 @@ export interface RailHooks {
   readonly embedding_backlog?: number;
 }
 
+/** One host binding, owned and released by exactly one rail attempt. */
+export interface RailRuntime {
+  readonly hooks: RailHooks;
+  close(): Promise<void>;
+}
+
 const processInstance = crypto.randomUUID();
 
 export interface RunRailOptions {
   readonly execution?: RunExecution;
   readonly now?: () => string;
   readonly hooks?: RailHooks;
+  readonly acquireRuntime?: () => Promise<RailRuntime>;
   readonly crashAfter?: CrashPoint;
 }
 
@@ -265,9 +275,14 @@ async function runBrief(
 
 async function runDoctorSweep(db: Database, now: string): Promise<Partial<RunReceipt>> {
   const health = inspectPurgeHealth(db, now);
+  const recovery = inspectCanonRecovery(db);
+  const errors = [
+    ...(health.ok ? [] : ["purge-unhealthy"]),
+    ...(recovery.pending || recovery.projection_pending > 0 ? ["canon-recovery-pending"] : []),
+  ];
   return {
-    status: health.ok ? "ok" : "degraded",
-    errors: health.ok ? [] : ["purge-unhealthy"],
+    status: errors.length === 0 ? "ok" : "degraded",
+    errors,
   };
 }
 
@@ -299,15 +314,22 @@ export async function runRail(
     let partial: Partial<RunReceipt> = {};
     let hooks: RailHooks | undefined;
     let budget: BudgetTracker | undefined;
+    let runtime: RailRuntime | undefined;
+    let interrupted = false;
     try {
+      if (options.hooks !== undefined && options.acquireRuntime !== undefined) {
+        throw new Error("rail hooks and acquireRuntime are mutually exclusive");
+      }
       // A failed preflight may append this run's audit receipt only. In particular,
       // do not import older receipt/usage journals before validating a sync decision.
       if (rail === "sync") requireAtomicExtractReplay(db);
       initServe(db);
+      if (rail !== "purge-sweep" && rail !== "doctor-sweep" && inspectCanonRecovery(db).pending) {
+        recoverCanonWrites({ db, vault_path: vaultPath });
+      }
       recoverRunJournal(db, vaultPath);
-      const recoveryLock = tryWriteFlock(vaultPath);
-      if (recoveryLock !== null) {
-        try {
+      try {
+        withVaultMutationSync({ db, vault_path: vaultPath }, () => {
           for (const orphan of db.query<{ run_id: string; holder_pid: number; model_ref: string | null; metrics: string; created_at: string }, []>("SELECT * FROM extract_usage").all()) {
             if (activeRuns.has(orphan.run_id) || (orphan.holder_pid !== process.pid && pidAlive(orphan.holder_pid))) continue;
             const usage = JSON.parse(orphan.metrics) as Pick<RunReceipt, "model" | "claims_rejected" | "claims_extracted">;
@@ -315,11 +337,23 @@ export async function runRail(
               started_at: orphan.created_at, finished_at: orphan.created_at, status: "failed", stopped: null,
               model: { ...usage.model, model_ref: orphan.model_ref }, errors: [usage.model.usage_unknown === true ? "model attempt interrupted; token usage unknown" : "extraction interrupted after model decision"] });
           }
-        } finally { recoveryLock.release(); }
+        });
+      } catch (error) {
+        if (!(error instanceof VaultMutationError) || error.code !== "writer_busy") throw error;
       }
-      hooks = withResolvedModel(options.hooks);
       const config = loadServeConfig(vaultPath);
       budget = createDurableWriteBudget(db, vaultPath, () => budgetDay(now()), config);
+      if (options.acquireRuntime !== undefined) {
+        try { runtime = await options.acquireRuntime(); }
+        catch { throw new Error("rail runtime acquisition failed"); }
+      }
+      hooks = withResolvedModel(runtime?.hooks ?? options.hooks);
+      if (rail === "retrieval-sweep" && inspectCanonRecovery(db).projection_pending > 0) {
+        const result = await retryCanonProjectionObligations({ db, vault_path: vaultPath,
+          ...(hooks?.claims?.retrieval === undefined ? {} : { retrieval: hooks.claims.retrieval }),
+        });
+        if (result.pending > 0) throw new Error("canon projection recovery pending");
+      }
       switch (rail) {
         case "sync":
           partial = await runSyncRail(db, vaultPath, budget, hooks, runId);
@@ -346,9 +380,19 @@ export async function runRail(
           break;
       }
     } catch (error) {
-      if (error instanceof InjectedCrash) throw error;
+      if (error instanceof InjectedCrash) { interrupted = true; throw error; }
       partial = { status: "failed", errors: [redactReceiptError(error)],
         ...(error instanceof LegacyExtractReconciliationError ? { stopped: error.code } : {}) };
+    } finally {
+      // Close before publication so failure cannot leave a successful receipt.
+      // This also releases the binding before any journal persistence can fail.
+      if (runtime !== undefined) {
+        try { await runtime.close(); }
+        catch {
+          if (interrupted) throw new Error("rail runtime close failed after interruption");
+          partial = { ...partial, status: "failed", errors: [...(partial.errors ?? []), "rail runtime close failed"] };
+        }
+      }
     }
 
     const usage = db.query<{ model_ref: string | null; metrics: string }, [string]>("SELECT model_ref,metrics FROM extract_usage WHERE run_id=?").get(runId);

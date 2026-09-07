@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseBuildInfo, parseProofArgs, proofEnvironment, requireFixture, runArtifactProof } from "./stranger-proof";
+import { writePackageFixture } from "./release-package-fixture";
+import { checksumManifest, CURRENT_PACKAGE_FILES } from "./release-artifacts";
+import { nativeReleaseTarget } from "./release-targets";
 import type { StepReceipt } from "./stranger-proof";
 
 const directories: string[] = [];
@@ -80,3 +83,42 @@ describe("artifact proof", () => {
     }
   });
 });
+
+
+test.each(["notice", "missing-license", "extra-member"])("copied proof refuses %s before any child execution", async mutation => {
+  const artifact = temporary(), report = join(temporary(), "report");
+  writePackageFixture(artifact, undefined, nativeReleaseTarget().target);
+  if (mutation === "notice") writeFileSync(join(artifact, "THIRD-PARTY-NOTICES.txt"), "changed notice");
+  if (mutation === "missing-license") rmSync(join(artifact, "LICENSE"));
+  if (mutation === "extra-member") writeFileSync(join(artifact, "extra"), "unexpected");
+  await expect(runArtifactProof({ artifact, report })).rejects.toThrow("artifact proof failed");
+  const receipt = JSON.parse(readFileSync(join(report, "receipt.json"), "utf8"));
+  expect(receipt.steps).toEqual([]);
+  expect(receipt.engine_observations).toEqual({ kizuki: null, kizuki_mcp: null });
+});
+
+test.each(["unchanged", "source", "copy"])("actual CLI/MCP proof refuses a member added after admission: %s", async mutation => {
+  const artifact = temporary(), reportRoot = temporary(), report = join(reportRoot, "report"), witness = join(reportRoot, "fault-observed");
+  writePackageFixture(artifact, undefined, nativeReleaseTarget().target);
+  const shellQuote = (text: string) => "'" + text.replaceAll("'", "'\\''") + "'";
+  const mutate = mutation === "unchanged" ? "" : mutation === "source"
+    ? `if [ "$1" = init ]; then printf synthetic > ${shellQuote(join(artifact, "unexpected-member"))}; fi\n`
+    : 'if [ "$1" = init ]; then printf synthetic > "${0%/*}/unexpected-member" && test -f "${0%/*}/unexpected-member" && printf observed > ' + shellQuote(witness) + '; fi\n';
+  // These launchers execute the real product commands; no engine response or
+  // successful journey output is synthesized. The added member is the fault.
+  writeFileSync(join(artifact, "kizuki"), `#!/bin/sh\n${mutate}exec ${shellQuote(process.execPath)} ${shellQuote(join(import.meta.dir, "../packages/cli/src/main.ts"))} "$@"\n`, { mode: 0o700 });
+  writeFileSync(join(artifact, "kizuki-mcp"), `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(join(import.meta.dir, "../packages/mcp/src/bin.ts"))} "$@"\n`, { mode: 0o700 });
+  chmodSync(join(artifact, "kizuki"), 0o700); chmodSync(join(artifact, "kizuki-mcp"), 0o700);
+  writeFileSync(join(artifact, "SHA256SUMS"), checksumManifest(artifact, CURRENT_PACKAGE_FILES.slice(0, -1)));
+  let failed = false;
+  try { await runArtifactProof({ artifact, report }); } catch { failed = true; }
+  const receipt = JSON.parse(readFileSync(join(report, "receipt.json"), "utf8"));
+  expect(receipt.source_sha).toBe("a".repeat(40));
+  expect(receipt.steps.find((step: StepReceipt) => step.id === "init").passed).toBe(true);
+  if (mutation === "unchanged") {
+    expect(failed).toBe(false); expect(receipt.failures).toEqual([]); expect(receipt.steps).toHaveLength(16);
+  } else {
+    expect(existsSync(mutation === "source" ? join(artifact, "unexpected-member") : witness)).toBe(true);
+    expect(failed).toBe(true); expect(receipt.failures.length).toBeGreaterThan(0);
+  }
+}, 120_000);

@@ -1,11 +1,37 @@
 import type { Database } from "bun:sqlite";
-import { closeSync, constants, fchmodSync, fsyncSync, fstatSync, lstatSync, openSync, readFileSync, writeSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { sha256Hex } from "../util/hash";
+import { isPlainObject } from "../util/validate";
 import { requireSourceEvents } from "../ledger/source-grants";
+import {
+  isLineageHash,
+  isLineageId,
+  isLineageTimestamp,
+  lineageReceiptEarlier,
+  parseSourceSurvivorLineage,
+  type SourceSurvivorLineage,
+} from "../ledger/canon-source-survivor-lineage";
 import type { CanonReceipt } from "./receipts";
-import { RECEIPTS_PATH } from "./receipts";
+import { CanonAuthorityResolver } from "./authority";
 import type { CanonIo } from "./store";
+import { readOwnedCanonPage } from "./io";
+import { openSourceErasureReceiptStream } from "./receipt-stream";
+import { assertPageRelPath } from "./paths";
+import { assertVaultMutationScope, type VaultMutationScope } from "../vault/mutation-scope";
+
+const MAX_INTENT_BYTES = 256 * 1024;
+const FATAL_UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const V1_KEYS = [
+  "original_receipt_digest",
+  "original_receipt_id",
+  "page_id",
+  "path_hash",
+  "policies",
+  "receipt",
+  "source_key",
+  "version",
+] as const;
+const V2_KEYS = [...V1_KEYS, "lineage"] as const;
+
 interface PolicyBinding {
     source_key: string;
     status: string;
@@ -13,7 +39,8 @@ interface PolicyBinding {
     policy_digest: string;
     revoke_operation: string | null;
 }
-export interface SourceErasureIntent {
+
+interface SourceErasureIntentV1 {
     version: 1;
     source_key: string;
     original_receipt_id: string;
@@ -23,6 +50,40 @@ export interface SourceErasureIntent {
     page_id: string | null;
     receipt: CanonReceipt;
 }
+
+interface SourceErasureIntentV2 extends Omit<SourceErasureIntentV1, "version"> {
+    version: 2;
+    lineage: SourceSurvivorLineage | null;
+}
+
+export type SourceErasureIntent = SourceErasureIntentV1 | SourceErasureIntentV2;
+
+function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+    return Object.keys(value).sort().join(",") === [...keys].sort().join(",");
+}
+
+export function isLiveSourceSurvivorPath(path: string): boolean {
+    return path !== "" && !path.startsWith("archive/");
+}
+
+/** Live remaining pages require lineage; archive and deletion keep null lineage. */
+export function isLiveSourceSurvivorReceipt(receipt: CanonReceipt): boolean {
+    return receipt.kind === "purge_rewrite" &&
+        receipt.page_action === "edit" &&
+        receipt.archive_path === null &&
+        receipt.reverts === null &&
+        receipt.writer === "loop" &&
+        receipt.producer === "deterministic" &&
+        receipt.model_ref === null &&
+        isLiveSourceSurvivorPath(receipt.page_path);
+}
+
+function isLiveSurvivorReceipt(receipt: CanonReceipt): boolean {
+    return isLiveSourceSurvivorReceipt(receipt) &&
+        isLineageHash(receipt.before_hash) &&
+        isLineageHash(receipt.after_hash);
+}
+
 function policies(db: Database, ids: readonly string[], denied: readonly string[]): PolicyBinding[] {
     const rows = new Map<string, PolicyBinding>();
     for (const id of ids) {
@@ -37,8 +98,71 @@ function policies(db: Database, ids: readonly string[], denied: readonly string[
     }
     return [...rows.values()].sort((a, b) => a.source_key.localeCompare(b.source_key));
 }
+
+function originalRow(db: Database, receipt: CanonReceipt): Record<string, unknown> {
+    const original = db.query<Record<string, unknown>, [
+        string,
+        string | null,
+        string,
+        string | null
+    ]>("SELECT * FROM canon_receipts WHERE (page_path=? AND after_hash=?) OR (archive_path=? AND before_hash=?) ORDER BY at DESC,receipt_id DESC LIMIT 1").get(receipt.page_path, receipt.before_hash, receipt.page_path, receipt.before_hash);
+    if (original === null)
+        throw Error("source erasure original receipt unavailable");
+    return original;
+}
+
+function liveSurvivorLineage(io: CanonIo, receipt: CanonReceipt, original: Record<string, unknown>): SourceSurvivorLineage {
+    if (!isLiveSurvivorReceipt(receipt))
+        throw Error("source erasure survivor receipt is invalid");
+    try { assertPageRelPath(receipt.page_path); }
+    catch { throw Error("source erasure survivor path is invalid"); }
+    const originalId = original["receipt_id"];
+    if (!isLineageId(originalId))
+        throw Error("source erasure original receipt unavailable");
+    if (original["page_path"] !== receipt.page_path)
+        throw Error("source erasure predecessor is not the live page");
+    const live = readOwnedCanonPage(io, receipt.page_path);
+    if (live === null || live.hash !== receipt.before_hash)
+        throw Error("source erasure preimage changed");
+    const basis = new CanonAuthorityResolver(io.db, [receipt.page_path]).basis(receipt.page_path, live.hash);
+    if (basis === null || basis.receipt_id !== originalId || basis.after_hash !== live.hash)
+        throw Error("source erasure origin has no positive basis");
+    const predecessorAt = original["at"];
+    if (!isLineageTimestamp(predecessorAt) || !isLineageTimestamp(receipt.at) ||
+        !lineageReceiptEarlier({ at: predecessorAt, receipt_id: originalId }, receipt))
+        throw Error("source erasure chronology is invalid");
+    return parseSourceSurvivorLineage({
+        version: 1,
+        kind: "source_survivor",
+        child_receipt_id: receipt.receipt_id,
+        predecessor_receipt_id: originalId,
+        before_hash: receipt.before_hash,
+        after_hash: receipt.after_hash,
+        predecessor_effective_authority: basis.authority,
+        result_authority: receipt.authority,
+    });
+}
+
+function validateShape(intent: SourceErasureIntent): void {
+    if (!isPlainObject(intent))
+        throw Error("source erasure intent invalid");
+    if (intent.version === 1) {
+        if (!exactKeys(intent, V1_KEYS))
+            throw Error("source erasure intent invalid");
+        return;
+    }
+    if (intent.version === 2) {
+        if (!exactKeys(intent, V2_KEYS))
+            throw Error("source erasure intent invalid");
+        if (intent.lineage !== null) parseSourceSurvivorLineage(intent.lineage);
+        return;
+    }
+    throw Error("source erasure intent invalid");
+}
+
 function validate(db: Database, intent: SourceErasureIntent): void {
-    if (intent.version !== 1 || intent.path_hash !== sha256Hex(intent.receipt.page_path) ||
+    validateShape(intent);
+    if (intent.path_hash !== sha256Hex(intent.receipt.page_path) ||
         !intent.policies.some(row => row.source_key === intent.source_key))
         throw Error("source erasure intent invalid");
     const original = db.query("SELECT * FROM canon_receipts WHERE receipt_id=?").get(intent.original_receipt_id);
@@ -53,50 +177,109 @@ function validate(db: Database, intent: SourceErasureIntent): void {
     }
     if (intent.receipt.page_action !== "archive")
         requireSourceEvents(db, intent.receipt.provenance, { owner: true, purpose: "derive" });
+    if (intent.version === 2 && intent.lineage !== null) {
+        const lineage = parseSourceSurvivorLineage(intent.lineage);
+        if (lineage.child_receipt_id !== intent.receipt.receipt_id ||
+            lineage.predecessor_receipt_id !== intent.original_receipt_id ||
+            lineage.before_hash !== intent.receipt.before_hash ||
+            lineage.after_hash !== intent.receipt.after_hash ||
+            lineage.result_authority !== intent.receipt.authority ||
+            !isLiveSurvivorReceipt(intent.receipt))
+            throw Error("source erasure lineage invalid");
+    }
+    if (intent.version === 2 && intent.lineage === null && isLiveSourceSurvivorReceipt(intent.receipt))
+        throw Error("source erasure lineage invalid");
 }
+
+function parseIntentBytes(bytes: Uint8Array, digest: string): SourceErasureIntent {
+    const json = FATAL_UTF8.decode(bytes);
+    if (sha256Hex(json) !== digest)
+        throw Error("source erasure intent corrupt");
+    const parsed: unknown = JSON.parse(json);
+    if (!isPlainObject(parsed))
+        throw Error("source erasure intent invalid");
+    // The caller validates the versioned shape and semantic bindings before use.
+    return parsed as unknown as SourceErasureIntent;
+}
+
+function writeIntent(intent: SourceErasureIntent): string {
+    const json = JSON.stringify(intent);
+    if (Buffer.byteLength(json, "utf8") > MAX_INTENT_BYTES)
+        throw Error("source erasure intent exceeds bound");
+    return json;
+}
+
 export function readSourceErasureIntent(db: Database, path: string): SourceErasureIntent | null {
     const row = db.query<{
-        intent: string;
+        intent: Uint8Array | null;
         digest: string;
         source_key: string;
     }, [
         string
-    ]>("SELECT intent,digest,source_key FROM canon_source_erasure_intents WHERE page_path=?").get(path);
+    ]>(`SELECT CASE WHEN typeof(intent)='text' AND length(CAST(intent AS BLOB))<=${MAX_INTENT_BYTES} THEN CAST(intent AS BLOB) ELSE NULL END AS intent,digest,source_key FROM canon_source_erasure_intents WHERE page_path=?`).get(path);
     if (row === null)
         return null;
-    if (row.intent.length > 256 * 1024 || sha256Hex(row.intent) !== row.digest)
+    if (row.intent === null)
         throw Error("source erasure intent corrupt");
-    const intent = JSON.parse(row.intent) as SourceErasureIntent;
+    const bytes = row.intent instanceof Uint8Array ? row.intent : Buffer.from(row.intent);
+    const intent = parseIntentBytes(bytes, row.digest);
     if (intent.receipt.page_path !== path || intent.source_key !== row.source_key)
         throw Error("source erasure intent identity changed");
     validate(db, intent);
     return intent;
 }
+
+function coreEqual(left: SourceErasureIntent, right: SourceErasureIntent): boolean {
+    return left.source_key === right.source_key &&
+        left.original_receipt_id === right.original_receipt_id &&
+        left.original_receipt_digest === right.original_receipt_digest &&
+        left.path_hash === right.path_hash &&
+        JSON.stringify(left.policies) === JSON.stringify(right.policies) &&
+        left.page_id === right.page_id &&
+        JSON.stringify(left.receipt) === JSON.stringify(right.receipt);
+}
+
 export function stageSourceErasureIntent(io: CanonIo, source: string, ids: readonly string[], receipt: CanonReceipt, pageId: string | null): SourceErasureIntent {
-    const original = io.db.query<{
-        receipt_id: string;
-    }, [
-        string,
-        string | null,
-        string,
-        string | null
-    ]>("SELECT * FROM canon_receipts WHERE (page_path=? AND after_hash=?) OR (archive_path=? AND before_hash=?) ORDER BY at DESC,receipt_id DESC LIMIT 1").get(receipt.page_path, receipt.before_hash, receipt.page_path, receipt.before_hash);
-    if (original === null)
-        throw Error("source erasure original receipt unavailable");
-    const next: SourceErasureIntent = { version: 1, source_key: source, original_receipt_id: original.receipt_id,
-        original_receipt_digest: sha256Hex(JSON.stringify(original)), path_hash: sha256Hex(receipt.page_path),
-        policies: policies(io.db, [...new Set([...ids, ...receipt.provenance])], ids), page_id: pageId, receipt };
+    const original = originalRow(io.db, receipt);
+    const lineage = isLiveSurvivorReceipt(receipt) ? liveSurvivorLineage(io, receipt, original) : null;
+    const next: SourceErasureIntentV2 = {
+        version: 2,
+        source_key: source,
+        original_receipt_id: original["receipt_id"] as string,
+        original_receipt_digest: sha256Hex(JSON.stringify(original)),
+        path_hash: sha256Hex(receipt.page_path),
+        policies: policies(io.db, [...new Set([...ids, ...receipt.provenance])], ids),
+        page_id: pageId,
+        receipt,
+        lineage,
+    };
     const pending = readSourceErasureIntent(io.db, receipt.page_path);
     if (pending !== null) {
         next.receipt = { ...receipt, receipt_id: pending.receipt.receipt_id, at: pending.receipt.at };
+        if (next.lineage !== null) {
+            next.lineage = parseSourceSurvivorLineage({
+                ...next.lineage,
+                child_receipt_id: next.receipt.receipt_id,
+            });
+        }
+        if (pending.version === 1 && isLiveSourceSurvivorReceipt(next.receipt)) {
+            const upgraded = liveSurvivorLineage(io, next.receipt, original);
+            next.lineage = upgraded;
+            if (!coreEqual(pending, next) || pending.original_receipt_id !== next.original_receipt_id)
+                throw Error("source erasure intent changed");
+            validate(io.db, next);
+            const json = writeIntent(next);
+            io.db.query("UPDATE canon_source_erasure_intents SET intent=?,digest=? WHERE page_path=?").run(json, sha256Hex(json), receipt.page_path);
+            return next;
+        }
+        if (pending.version === 1 && next.lineage === null && coreEqual(pending, next))
+            return pending;
         if (JSON.stringify(next) !== JSON.stringify(pending))
             throw Error("source erasure intent changed");
         return pending;
     }
     validate(io.db, next);
-    const json = JSON.stringify(next);
-    if (Buffer.byteLength(json) > 256 * 1024)
-        throw Error("source erasure intent exceeds bound");
+    const json = writeIntent(next);
     io.db.query("INSERT INTO canon_source_erasure_intents(page_path,source_key,intent,digest) VALUES (?,?,?,?)").run(receipt.page_path, source, json, sha256Hex(json));
     return next;
 }
@@ -107,81 +290,30 @@ export interface SourceErasureReceiptStream {
 }
 
 /** The existing receipt stream remains authoritative; retry never adds a second same-ID line. */
-export function appendSourceErasureReceipt(io: CanonIo, receipt: CanonReceipt): SourceErasureReceiptStream {
-    const path = join(io.vault_path, RECEIPTS_PATH);
-    const directory = dirname(path);
-    const limit = 32 * 1024 * 1024;
-    let fd: number | undefined;
-    let parentFd: number | undefined;
-    const close = (): void => {
-        if (fd !== undefined) { const held = fd; fd = undefined; closeSync(held); }
-        if (parentFd !== undefined) { const held = parentFd; parentFd = undefined; closeSync(held); }
-    };
+export function appendSourceErasureReceipt(scope: VaultMutationScope, io: CanonIo, receipt: CanonReceipt): SourceErasureReceiptStream {
+    assertVaultMutationScope(scope, io);
+    const receiptId = receipt.receipt_id, expected = JSON.stringify(receipt);
+    const stream = openSourceErasureReceiptStream(scope, io);
     try {
-        parentFd = openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-        const parent = fstatSync(parentFd);
-        if (!parent.isDirectory() || parent.uid !== process.geteuid?.() || (parent.mode & 0o022) !== 0)
-            throw Error("source erasure receipt directory unavailable");
-        let stat: ReturnType<typeof lstatSync> | null;
-        try { stat = lstatSync(path); }
-        catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-            stat = null;
-        }
-        if (stat !== null && (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.uid !== process.geteuid?.() || stat.size > limit))
-            throw Error("source erasure receipt log unavailable");
-        if (stat !== null && (stat.mode & 0o200) === 0)
-            throw Error("source erasure receipt log is read-only");
-        fd = openSync(path, constants.O_RDWR | constants.O_APPEND | constants.O_NOFOLLOW |
-            (stat === null ? constants.O_CREAT | constants.O_EXCL : 0), 0o600);
-        const held = fstatSync(fd);
-        if (!held.isFile() || held.nlink !== 1 || held.uid !== process.geteuid?.() || held.size > limit ||
-            (stat !== null && (held.ino !== stat.ino || held.dev !== stat.dev)))
-            throw Error("source erasure receipt log unavailable");
-        // Adopt only an already owner-writable native stream; its bytes confer no authority.
-        fchmodSync(fd, 0o600);
-        fsyncSync(fd);
-        let expectedSize = held.size;
-        const verifyBinding = (): void => {
-            if (fd === undefined || parentFd === undefined) throw Error("source erasure receipt stream closed");
-            const current = fstatSync(fd), named = lstatSync(path), namedParent = lstatSync(directory);
-            if (!named.isFile() || named.isSymbolicLink() || named.nlink !== 1 || current.nlink !== 1 ||
-                current.uid !== process.geteuid?.() || (current.mode & 0o777) !== 0o600 ||
-                current.ino !== held.ino || current.dev !== held.dev || named.ino !== held.ino || named.dev !== held.dev ||
-                current.size !== expectedSize || named.size !== expectedSize ||
-                !namedParent.isDirectory() || namedParent.isSymbolicLink() || namedParent.ino !== parent.ino || namedParent.dev !== parent.dev)
-                throw Error("source erasure receipt stream identity changed");
-        };
-        verifyBinding();
-        const content = readFileSync(fd, "utf8");
+        const content = stream.readUtf8();
         let found = false;
         for (const line of content.split("\n")) {
             if (line === "") continue;
             const row = JSON.parse(line);
-            if (row.receipt_id !== receipt.receipt_id) continue;
-            if (found || JSON.stringify(row) !== JSON.stringify(receipt))
+            if (row.receipt_id !== receiptId) continue;
+            if (found || JSON.stringify(row) !== expected)
                 throw Error("source erasure receipt conflict");
             found = true;
         }
-        // A pathname replacement after the read cannot redirect an append or authorize completion.
-        verifyBinding();
-        if (!found) {
-            const bytes = Buffer.from(`${JSON.stringify(receipt)}\n`);
-            if (expectedSize + bytes.byteLength > limit) throw Error("source erasure receipt log exceeds bound");
-            let offset = 0;
-            while (offset < bytes.byteLength) {
-                const written = writeSync(fd, bytes, offset, bytes.byteLength - offset);
-                if (written <= 0) throw Error("source erasure receipt append incomplete");
-                offset += written;
-            }
-            expectedSize += bytes.byteLength;
-            fsyncSync(fd);
-        }
-        fsyncSync(parentFd);
-        verifyBinding();
-        return { verifyBinding, close };
+        stream.verifyBinding();
+        if (!found) stream.append(Buffer.from(`${expected}\n`));
+        stream.sync();
+        return Object.freeze({
+            verifyBinding() { stream.verifyBinding(); },
+            close() { stream.close(); },
+        });
     } catch (error) {
-        close();
+        try { stream.close(); } catch { /* Retain the original refusal. */ }
         throw error;
     }
 }

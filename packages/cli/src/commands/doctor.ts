@@ -12,6 +12,7 @@ import {
   getCanonReceipt,
   getCheckpoint,
   inspectLedgerHealth,
+  inspectCanonRecovery,
   inspectPurgeHealth,
   inspectServeDoctor,
   latestReceiptForPage,
@@ -25,12 +26,12 @@ import { readSqliteRuntime } from "@kizuki/core/internal";
 import type { SqliteRuntime } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
 import { listHostConnections, loadConnector } from "../connections";
-import { withVault } from "../context";
-import type { VaultContext } from "../context";
+import { withReadVault } from "../context";
+import type { ReadVaultContext } from "../context";
 import { countCanonReceiptRows, indexFreshness, walkCanonReceipts } from "../derived";
 import { clean, errorText, jsonEnvelope } from "../output";
 import { effectiveVaultConfig, loadVaultConfig } from "../vault-config";
-import { createServeRuntime } from "../serve-runtime";
+import { inspectModelBinding } from "../serve-runtime";
 import { serveSupervisorHost } from "../service-host";
 import type { CliIo, Command } from "./index";
 
@@ -78,6 +79,7 @@ interface DoctorReport {
   doctrine: { file: string; state: string }[];
   ledger: ReturnType<typeof inspectLedgerHealth>;
   runtime: SqliteRuntime;
+  canon_recovery: ReturnType<typeof inspectCanonRecovery>;
   ok: boolean;
 }
 
@@ -89,7 +91,7 @@ export const doctorCommand: Command = {
     const parsed = parseArguments(args, { flags: ["--json", "--integrity"] });
     if (parsed.positionals.length !== 0) throw new UsageError(this.usage);
 
-    return withVault(io, async (ctx) => {
+    return withReadVault(io, async (ctx) => {
       const report = await collect(
         ctx.configPath,
         ctx.vaultPath,
@@ -97,6 +99,7 @@ export const doctorCommand: Command = {
         io.env,
         parsed.flags.has("--integrity"),
       );
+      ctx.assertCurrent();
       if (parsed.flags.has("--json")) {
         io.out(
           jsonEnvelope("doctor", report.ok ? "ok" : "error", report, {
@@ -136,7 +139,7 @@ async function withDeadline<T>(ms: number, work: () => Promise<T>): Promise<T> {
   }
 }
 
-function reconcileReceipts(vaultPath: string, ctx: VaultContext): string[] {
+function reconcileReceipts(vaultPath: string, ctx: ReadVaultContext): string[] {
   const orphans: string[] = [];
   const path = join(vaultPath, ".kizuki", "receipts", "promotions.jsonl");
   const seen = new Set<string>();
@@ -179,7 +182,7 @@ function reconcileReceipts(vaultPath: string, ctx: VaultContext): string[] {
   return orphans;
 }
 
-function hashDrift(vaultPath: string, ctx: VaultContext): { page: string; error: string }[] {
+function hashDrift(vaultPath: string, ctx: ReadVaultContext): { page: string; error: string }[] {
   const problems: { page: string; error: string }[] = [];
   const pages = listCanonPages(vaultPath).slice(0, HASH_DRIFT_CAP);
   for (const page of pages) {
@@ -209,7 +212,7 @@ function hashDrift(vaultPath: string, ctx: VaultContext): { page: string; error:
 async function collect(
   config: string,
   vaultPath: string,
-  ctx: VaultContext,
+  ctx: ReadVaultContext,
   env: Record<string, string | undefined>,
   fullIntegrity = false,
 ): Promise<DoctorReport> {
@@ -277,6 +280,10 @@ async function collect(
   const problems = vault.pages.flatMap((page) =>
     page.errors.map((error) => ({ page: page.page, error })),
   );
+  const canonRecovery = inspectCanonRecovery(ctx.db);
+  if (canonRecovery.pending || canonRecovery.projection_pending > 0) {
+    problems.push({ page: canonRecovery.page_path ?? "-", error: "canon recovery pending; run: kizuki recover --json" });
+  }
   for (const item of vault.doctrine) {
     if (item.state === "current" || item.state === "owner-edited") continue;
     problems.push({ page: item.file, error: `doctrine ${item.state}` });
@@ -318,15 +325,14 @@ async function collect(
   const host = serveSupervisorHost(env, vaultPath);
   let boundModelRef: string | null = null;
   try {
-    const runtime = await createServeRuntime({ ...ctx, env, err: () => {} });
-    try {
-      boundModelRef = runtime.hooks.model_ref ?? null;
-    } finally {
-      await runtime.close();
+    boundModelRef = await inspectModelBinding(ctx.vaultPath, env);
+  } catch (error) {
+    // Existing invalid/unbound model configuration remains an explicit disabled
+    // writer diagnostic. Pending transactions and custody failures need recovery.
+    if (error instanceof Error && "code" in error &&
+        ["transaction_unavailable", "custody_unavailable"].includes(String(error.code))) {
+      problems.push({ page: "-", error: "model configuration inspection unavailable" });
     }
-  } catch {
-    // Doctor reports raw configuration as unverified below. Binding errors
-    // never make a string configuration look like an enabled writer.
   }
   const serve = inspectServeDoctor(ctx.db, vaultPath, {
     supervisor: host,
@@ -380,6 +386,7 @@ async function collect(
     doctrine: vault.doctrine,
     ledger,
     runtime: readSqliteRuntime(ctx.db),
+    canon_recovery: canonRecovery,
     ok: ok && ledger.ok,
   };
 }

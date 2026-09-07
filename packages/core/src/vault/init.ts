@@ -12,12 +12,11 @@ import {
   openSync,
   readdirSync,
   readFileSync,
-  renameSync,
-  rmSync,
-  unlinkSync,
-  writeSync,
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { assertCanonFiles, type CanonFiles, type CanonFileSnapshot } from "./canon-files";
+import { withMutationFilesSync } from "./mutation-files";
+import { assertVaultMutationScope, VaultMutationError, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "./mutation-scope";
 import { sha256Hex } from "../util/hash";
 
 export const INIT_JOURNAL_SCHEMA = "kizuki.init/v1" as const;
@@ -156,6 +155,7 @@ export const VAULT_INIT_ERROR_CODES = [
   "owner_mismatch",
   "tracked_control_state",
   "git_status_unavailable",
+  "writer_busy",
 ] as const;
 export type VaultInitErrorCode = (typeof VAULT_INIT_ERROR_CODES)[number];
 
@@ -387,28 +387,27 @@ function chmodPrivateFile(path: string): boolean {
   return true;
 }
 
-function writePrivateFile(path: string, content: string | Uint8Array): void {
-  mkdirPrivate(dirname(path));
-  const fd = openSync(path, "w", VAULT_FILE_MODE);
-  try {
-    writeSync(fd, typeof content === "string" ? Buffer.from(content) : content);
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  chmodSync(path, VAULT_FILE_MODE);
+function writeAtomicFile(
+  files: CanonFiles,
+  path: string,
+  content: string | Uint8Array,
+  prior: CanonFileSnapshot | null,
+): CanonFileSnapshot {
+  const parent = dirname(path);
+  if (parent !== ".") files.ensureDirectory(parent);
+  const bytes = Buffer.from(content);
+  if (prior === null) return files.create(path, bytes);
+  // Validate the same snapshot that supplied the decision and output bytes.
+  const temporary = files.create(`${path}.${crypto.randomUUID()}.tmp`, bytes);
+  try { return files.replace(temporary, prior); }
+  catch (error) {
+    try { files.remove(temporary); } catch { /* Preserve a changed temporary and the original failure. */ }
+    throw error;
+  } finally { temporary.close(); }
 }
 
-function writeAtomicFile(path: string, content: string | Uint8Array): void {
-  mkdirPrivate(dirname(path));
-  const temporary = `${path}.tmp`;
-  writePrivateFile(temporary, content);
-  renameSync(temporary, path);
-  chmodSync(path, VAULT_FILE_MODE);
-}
-
-function ensureRootGitIgnore(path: string): boolean {
-  const existing = readFileSync(path);
+function ensureRootGitIgnore(files: CanonFiles, prior: CanonFileSnapshot): boolean {
+  const existing = Buffer.from(prior.bytes);
   const text = existing.toString("utf8");
   let protectedControl = false;
   for (const line of text.split(/\r?\n/)) {
@@ -420,10 +419,10 @@ function ensureRootGitIgnore(path: string): boolean {
   if (protectedControl) return false;
   const newline = text.includes("\r\n") ? "\r\n" : "\n";
   const separator = existing.length === 0 || text.endsWith("\n") ? "" : newline;
-  writeAtomicFile(path, Buffer.concat([
+  writeAtomicFile(files, prior.path, Buffer.concat([
     existing,
     Buffer.from(`${separator}${ROOT_GITIGNORE_RULE}${newline}`),
-  ]));
+  ]), prior).close();
   return true;
 }
 
@@ -465,6 +464,7 @@ function assertControlNotTracked(path: string): void {
     );
   }
 }
+
 
 function listRootNames(root: string): string[] {
   try {
@@ -589,7 +589,6 @@ function reportControlFile(reports: ControlPathReport[], root: string, rel: stri
 export function inspectVaultControl(root: string): ControlPathReport[] {
   assertPermissionPlatform();
   const reports: ControlPathReport[] = [];
-  hardenLedgerFile(join(root, ".kizuki", "kizuki.db"));
   reportControlDir(reports, root, ".kizuki", true);
   for (const rel of CONTROL_LAYOUT) {
     if (rel === ".kizuki") continue;
@@ -645,8 +644,8 @@ export function readInitJournal(root: string): InitJournal | null {
   return parseJournal(readFileSync(path, "utf8"));
 }
 
-function writeJournal(root: string, journal: InitJournal): void {
-  writeAtomicFile(journalPath(root), `${JSON.stringify(journal, null, 2)}\n`);
+function writeJournal(files: CanonFiles, journal: InitJournal, prior: CanonFileSnapshot | null): CanonFileSnapshot {
+  return writeAtomicFile(files, `.kizuki/${JOURNAL_NAME}`, `${JSON.stringify(journal, null, 2)}\n`, prior);
 }
 
 function hardenControlTree(root: string, repaired: string[]): void {
@@ -684,7 +683,7 @@ export function hardenLedgerFile(dbPath: string): void {
   }
 }
 
-export function assertVaultControl(root: string): void {
+export function assertVaultControl(root: string, options: { repairPermissions?: boolean } = {}): void {
   assertPermissionPlatform();
   const control = join(root, ".kizuki");
   const st = lstatOrNull(control);
@@ -705,7 +704,7 @@ export function assertVaultControl(root: string): void {
     );
   }
   const db = join(control, "kizuki.db");
-  hardenLedgerFile(db);
+  if (options.repairPermissions !== false) hardenLedgerFile(db);
   const dbStat = lstatOrNull(db);
   if (dbStat === null) return;
   if (!dbStat.file) {
@@ -760,108 +759,101 @@ function classifyTarget(
 
 export function initVault(path: string, options: InitVaultOptions = {}): InitVaultResult {
   assertPermissionPlatform();
-  const created: string[] = [];
-  const repaired: string[] = [];
-  const upgraded: string[] = [];
+  path = resolve(path);
+  const { adopt, dryRun } = options;
+  options = Object.freeze({ ...(adopt === undefined ? {} : { adopt }), ...(dryRun === undefined ? {} : { dryRun }) });
   const existed = existsSync(path);
-
   if (options.dryRun === true) {
     if (existed) {
       const st = lstatOrNull(path);
-      if (st !== null && st.symlink) {
-        throw new VaultInitError("symlink_escape", "vault path must not be a symlink");
-      }
-      if (st !== null && !st.directory) {
-        throw new VaultInitError("not_a_directory", "vault path exists and is not a directory");
-      }
+      if (st !== null && st.symlink) throw new VaultInitError("symlink_escape", "vault path must not be a symlink");
+      if (st !== null && !st.directory) throw new VaultInitError("not_a_directory", "vault path exists and is not a directory");
     }
     assertControlNotTracked(path);
-    return {
-      created,
-      repaired,
-      upgraded,
-      dry_run: true,
-      status: "dry-run",
-      inventory: existed ? inspectInventory(path) : null,
-    };
+    return { created: [], repaired: [], upgraded: [], dry_run: true, status: "dry-run", inventory: existed ? inspectInventory(path) : null };
   }
-
-  const { inventory, adopt } = classifyTarget(path, options);
+  // Classify before bootstrap creates the writer control directory.
+  const classification = classifyTarget(path, options);
   assertControlNotTracked(path);
-
   const createdRoot = mkdirPrivate(path);
-  if (createdRoot) created.push("./");
-  // Adoption takes ownership of the vault boundary as well as its control
-  // tree. A writable parent would let another user replace the private tree.
-  else if (chmodPrivateDir(path)) repaired.push("./");
-
+  const createdControl = !existsSync(join(path, ".kizuki"));
+  const target = Object.freeze({ vault_path: path });
   try {
-    for (const directory of [...CANON_LAYOUT, ...CONTROL_LAYOUT]) {
-      const target = join(path, directory);
-      if (mkdirPrivate(target)) created.push(`${directory}/`);
-      else if (chmodPrivateDir(target)) repaired.push(`${directory}/`);
-    }
-
-    const previous = readInitJournal(path);
-    writeJournal(path, {
-      schema: INIT_JOURNAL_SCHEMA,
-      status: "in_progress",
-      doctrine_version: DOCTRINE_VERSION,
-      adopt: adopt ?? previous?.adopt ?? null,
-    });
-
-    const files: ReadonlyArray<readonly [string, string]> = [
-      ["CANON.md", CANON_DOCTRINE],
-      ["SCHEMA.md", SCHEMA_DOCTRINE],
-      [".gitignore", ROOT_GITIGNORE],
-      [join(".kizuki", ".gitignore"), CONTROL_GITIGNORE],
-    ];
-    for (const [relativePath, content] of files) {
-      const target = join(path, relativePath);
-      const leftover = `${target}.tmp`;
-      if (existsSync(leftover)) unlinkSync(leftover);
-      if (!existsSync(target)) {
-        writeAtomicFile(target, content);
-        created.push(relativePath);
-        continue;
-      }
-      if (relativePath === ".gitignore") {
-        if (chmodPrivateFile(target)) repaired.push(relativePath);
-        if (ensureRootGitIgnore(target) && !repaired.includes(relativePath)) {
-          repaired.push(relativePath);
-        }
-        continue;
-      }
-      if (relativePath === "CANON.md" || relativePath === "SCHEMA.md") {
-        const existing = readFileSync(target, "utf8");
-        if (classifyDoctrine(existing, relativePath) === "upgradeable") {
-          writeAtomicFile(target, content);
-          upgraded.push(relativePath);
-        }
-      }
-      if (chmodPrivateFile(target)) repaired.push(relativePath);
-    }
-
-    hardenControlTree(path, repaired);
-    writeJournal(path, {
-      schema: INIT_JOURNAL_SCHEMA,
-      status: "ready",
-      doctrine_version: DOCTRINE_VERSION,
-      adopt: adopt ?? previous?.adopt ?? null,
-    });
+    return withVaultMutationSync(target, scope => initVaultOwned(scope, target, classification, createdRoot, createdControl));
   } catch (error) {
-    if (createdRoot && !existed) {
-      rmSync(path, { recursive: true, force: true });
+    if (error instanceof VaultMutationError && error.code === "writer_busy") {
+      throw new VaultInitError("writer_busy", "canon writer is busy; retry vault initialization");
     }
+    // Retain an incomplete bootstrap for repair: removing its active writer
+    // inode could let a concurrent initializer acquire a different lock.
     throw error;
   }
+}
 
-  return {
-    created,
-    repaired,
-    upgraded,
-    dry_run: false,
-    status: "ready",
-    inventory,
-  };
+function initVaultOwned(
+  scope: VaultMutationScope,
+  target: VaultMutationTarget,
+  classification: { inventory: InitInventory | null; adopt: InitJournalAdopt | null },
+  createdRoot: boolean,
+  createdControl: boolean,
+): InitVaultResult {
+  assertVaultMutationScope(scope, target);
+  const path = target.vault_path;
+  assertControlNotTracked(path);
+  const { inventory, adopt } = classification;
+  const created: string[] = createdRoot ? ["./"] : [];
+  const repaired: string[] = [];
+  const upgraded: string[] = [];
+  if (!createdRoot && chmodPrivateDir(path)) repaired.push("./");
+  for (const directory of [...CANON_LAYOUT, ...CONTROL_LAYOUT]) {
+    const directoryPath = join(path, directory);
+    if (mkdirPrivate(directoryPath) || (directory === ".kizuki" && createdControl)) created.push(`${directory}/`);
+    else if (chmodPrivateDir(directoryPath)) repaired.push(`${directory}/`);
+  }
+  // Permission repair precedes opening the owned descriptor capability; every
+  // repair is already within the same writer scope as the subsequent bytes.
+  hardenControlTree(path, repaired);
+  for (const relativePath of ["CANON.md", "SCHEMA.md", ".gitignore"]) {
+    if (existsSync(join(path, relativePath)) && chmodPrivateFile(join(path, relativePath))) repaired.push(relativePath);
+    const leftover = join(path, `${relativePath}.tmp`);
+    if (existsSync(leftover)) chmodPrivateFile(leftover);
+  }
+  return withMutationFilesSync(scope, target, files => {
+    assertVaultMutationScope(scope, target);
+    assertCanonFiles(files, path);
+    let journal = files.read(`.kizuki/${JOURNAL_NAME}`);
+    try {
+      const previous = journal === null ? null : parseJournal(Buffer.from(journal.bytes).toString("utf8"));
+      journal = writeJournal(files, { schema: INIT_JOURNAL_SCHEMA, status: "in_progress", doctrine_version: DOCTRINE_VERSION, adopt: adopt ?? previous?.adopt ?? null }, journal);
+      const entries: ReadonlyArray<readonly [string, string]> = [
+        ["CANON.md", CANON_DOCTRINE], ["SCHEMA.md", SCHEMA_DOCTRINE],
+        [".gitignore", ROOT_GITIGNORE], [".kizuki/.gitignore", CONTROL_GITIGNORE],
+      ];
+      for (const [relativePath, content] of entries) {
+        const leftover = files.read(`${relativePath}.tmp`);
+        if (leftover !== null) {
+          try { files.remove(leftover); } finally { leftover.close(); }
+        }
+        const prior = files.read(relativePath);
+        if (prior === null) {
+          writeAtomicFile(files, relativePath, content, null).close();
+          created.push(relativePath);
+          continue;
+        }
+        try {
+          if (relativePath === ".gitignore") {
+            if (ensureRootGitIgnore(files, prior) && !repaired.includes(relativePath)) repaired.push(relativePath);
+            continue;
+          }
+          if ((relativePath === "CANON.md" || relativePath === "SCHEMA.md") &&
+              classifyDoctrine(Buffer.from(prior.bytes).toString("utf8"), relativePath) === "upgradeable") {
+            writeAtomicFile(files, relativePath, content, prior).close();
+            upgraded.push(relativePath);
+          }
+        } finally { prior.close(); }
+      }
+      journal = writeJournal(files, { schema: INIT_JOURNAL_SCHEMA, status: "ready", doctrine_version: DOCTRINE_VERSION, adopt: adopt ?? previous?.adopt ?? null }, journal);
+      return { created, repaired, upgraded, dry_run: false, status: "ready" as const, inventory };
+    } finally { journal?.close(); }
+  });
 }

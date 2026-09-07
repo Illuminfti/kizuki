@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { AuditDenial, Grant } from "../agents";
+import type { AuditDenial, AuditItem, Grant } from "../agents";
 import { bareRetrievalId } from "../retrieval/ids";
 import { searchResult, searchAuditCandidates } from "../search/query";
 import type { SearchHit, SearchOptions } from "../search/query";
@@ -25,6 +25,7 @@ import {
 import type { CanonChunk, Envelope, QuotedChunk, ServeContext } from "./types";
 import { retrievalCandidates } from "./retrieval";
 import { currentQuotedSource } from "./ledger";
+import { attachSubjectLabels, canonSubjects, projectSubjectLabels } from "./subject-labels";
 
 const SEARCH_SCOPES = ["canon", "ledger", "all"] as const;
 
@@ -112,7 +113,7 @@ export async function serveSearch(
   ctx: ServeContext,
   args: SearchArgs,
 ): Promise<Envelope<SearchData>> {
-  return gateAsync(ctx, "search", auditArguments(args), async ({ ctx }): Promise<Served<SearchData>> => {
+  return gateAsync(ctx, "search", auditArguments(args), async ({ ctx, at }): Promise<Served<SearchData>> => {
     const grant = ctx.principal.grant;
     const query = text("query", args.query, MAX_QUERY_CHARS);
     const scope =
@@ -156,10 +157,11 @@ export async function serveSearch(
       ceiling: grant.ceiling,
     });
     const hiddenHits = searchAuditCandidates(ctx.db, query, base);
+    const narrowed = { ...grant, ...(types === undefined ? {} : { types }), ...(subjects === undefined ? {} : { subjects }), ...(window.since === undefined ? {} : { since: window.since }), ...(window.until === undefined ? {} : { until: window.until }) };
     const served = classify(
       ctx.db,
       index,
-      { ...grant, ...(types === undefined ? {} : { types }), ...(subjects === undefined ? {} : { subjects }), ...(window.since === undefined ? {} : { since: window.since }), ...(window.until === undefined ? {} : { until: window.until }) },
+      narrowed,
       [...nominated.ids.map((doc_id) => ({ doc_id, scope: doc_id.startsWith("page:") ? "canon" : "ledger" } as const)), ...servedHits.hits],
       seen,
       true,
@@ -172,11 +174,18 @@ export async function serveSearch(
       seen,
       false,
     );
-    const degraded = [...new Set([...servedHits.degraded, ...hiddenHits.degraded, ...nominated.degraded])];
+    const canon = served.canon.slice(0, rows), quoted = served.quoted.slice(0, Math.max(0, rows - served.canon.length));
+    const canonicalSubjects = new Map(canon.map(chunk => [chunk.page_id, canonSubjects(index, index.byId.get(chunk.page_id)!)]));
+    const projection = projectSubjectLabels(index, narrowed, at, [...canonicalSubjects.values()].flat().concat(quoted.flatMap(chunk => chunk.subjects)), canon.length + quoted.length);
+    const audit = new Map<string, AuditItem>();
+    for (const chunk of [...canon, ...quoted]) {
+      const subjects = "page_id" in chunk ? canonicalSubjects.get(chunk.page_id)! : chunk.subjects;
+      for (const item of attachSubjectLabels(projection, chunk, subjects)) audit.set(item.id, item);
+    }
+    const degraded = [...new Set([...servedHits.degraded, ...hiddenHits.degraded, ...nominated.degraded, ...projection.degraded])];
 
     return {
-      canon: served.canon.slice(0, rows),
-      quoted: served.quoted.slice(0, Math.max(0, rows - served.canon.length)),
+      canon, quoted, audit_served: [...audit.values()],
       withheld: [...served.withheld, ...hidden.withheld],
       ...(degraded.length === 0 ? {} : { data: { degraded } }),
     };

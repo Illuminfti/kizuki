@@ -5,7 +5,7 @@ import { temporaryPortContext } from "../contracts/fixtures";
 import { serveFixture } from "../serving/helpers";
 
 test("the daemon HTTP surface uses its host retrieval instance and current authorized content", async () => {
-  const f = serveFixture();
+  const f = await serveFixture();
   const temporary = temporaryPortContext(DIRECT_RETRIEVAL_DESCRIPTOR);
   const retrieval = new ReferenceRetrievalPort(temporary.ctx);
   let calls = 0;

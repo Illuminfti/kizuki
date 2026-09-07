@@ -1,10 +1,11 @@
+import { packageFiles, packageFileLimit, verifyPackageDirectory } from "./release-artifacts";
 /** Explicit, one-shot fixture observation. This script never starts a daemon. */
-import { Database } from "bun:sqlite";
+import { Database, SQLiteError } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, parse } from "node:path";
 import { parseBuildInfoValue } from "./stranger-proof";
-import { ARTIFACT_PACKAGE_FILES, ArtifactProofError, parseProofJson, validateArtifactProof } from "./artifact-proof";
+import { ArtifactProofError, parseProofJson, validateArtifactProof } from "./artifact-proof";
 import type { ArtifactPackageFile } from "./artifact-proof";
 import { evaluateQualification, qualificationDate, type QualificationProfile, type QualificationReceipt, type QualificationSample } from "../packages/core/src/serve/qualification";
 import { loadServeConfig } from "../packages/core/src/serve/config";
@@ -81,23 +82,24 @@ function anchor() {
 interface Identity { source_sha: string; binary_sha256: string; build_sha256: string; proof_sha256: string; target: string; }
 function verifyArtifact(artifact: string, proofPath: string): Identity {
   pathCheck(artifact);
-  const buildBytes = read(join(artifact, "BUILD.json"), 65536);
+  const buildBytes = read(join(artifact, "BUILD.json"), packageFileLimit("BUILD.json"));
+  const build = parseBuildInfoValue(parseProofJson(buildBytes)), names = packageFiles(build);
   const checksumBytes = read(join(artifact, "SHA256SUMS"), 65536);
-  const package_sha256 = {} as Record<ArtifactPackageFile, string>;
-  for (const name of ARTIFACT_PACKAGE_FILES) {
+  const package_sha256 = {} as Record<ArtifactPackageFile | "LICENSE" | "THIRD-PARTY-NOTICES.txt", string>;
+  for (const name of names) {
     const bytes = name === "BUILD.json" ? buildBytes : name === "SHA256SUMS" ? checksumBytes
-      : read(join(artifact, name), name === "README.txt" ? 65536 : 256 * 1024 * 1024);
+      : read(join(artifact, name), packageFileLimit(name, build));
     package_sha256[name] = hash(bytes);
   }
-  const checksums = ARTIFACT_PACKAGE_FILES.slice(0, -1).map(name => `${package_sha256[name]}  ${name}`).join("\n") + "\n";
+  const checksums = names.slice(0, -1).map(name => `${package_sha256[name]}  ${name}`).join("\n") + "\n";
   if (checksumBytes.toString() !== checksums) throw new Error("artifact checksum mismatch");
-  const build = parseBuildInfoValue(parseProofJson(buildBytes));
+  verifyPackageDirectory(artifact, build);
   const proofBytes = read(proofPath, 1024 * 1024);
   const validated = validateArtifactProof(parseProofJson(proofBytes), {
-    source_sha: build.source_sha, target: build.target, bun_version: build.bun_version, package_sha256,
+    source_sha: build.source_sha, target: build.target, bun_version: build.bun_version, package_sha256, build,
   });
   // Retained v1 journals keep their original identity and fixture-only scope.
-  if (validated.schema === "kizuki.artifact-proof/v2") {
+  if (validated.schema !== "kizuki.artifact-proof/v1") {
     if (build.bun_version !== SUPPORTED_BUN_VERSION) throw new ArtifactProofError("unsupported-package-bun-version");
     if (validated.engine.status !== "PASS") throw new ArtifactProofError(validated.engine.reason);
   }
@@ -233,7 +235,7 @@ function collect(manifest: Manifest, known: Map<string,string>): QualificationSa
   });
   const current = schedules(manifest.vault);
   if (loadServeConfig(manifest.vault).brief_hour !== manifest.profile.brief_hour) issues.push("schedule-profile-changed");
-  if (JSON.stringify(current.map(({next_run_at, ...r}) => r)) !== JSON.stringify(manifest.profile.rails.map(({next_run_at,...r}) => r))) issues.push("schedule-profile-changed");
+  if (canonical(current.map(({next_run_at, ...r}) => r)) !== canonical(manifest.profile.rails.map(({next_run_at,...r}) => r))) issues.push("schedule-profile-changed");
   let processBinding: QualificationSample["process"] = null;
   const db = openObservationDb(manifest.vault);
   try {
@@ -291,7 +293,7 @@ export function sampleQualification(runInput: string) {
     let rejected = false;
     let failureReason = "artifact-verification-failed";
     try {
-      if (JSON.stringify(verifyArtifact(manifest.artifact,manifest.proof)) !== JSON.stringify(manifest.identity)) throw new Error("artifact or proof identity changed");
+      if (canonical(verifyArtifact(manifest.artifact,manifest.proof)) !== canonical(manifest.identity)) throw new Error("artifact or proof identity changed");
       failureReason = "collector-unexpected-failure";
       const known = new Map(entries.flatMap((e) => e.sample.receipts.map((r) => [r.run_id,r.sha256] as const)));
       sample = collect(manifest,known);
@@ -309,11 +311,51 @@ export function sampleQualification(runInput: string) {
 }
 export function statusQualification(run: string) {
   const {manifest,entries} = load(run);
-  if (JSON.stringify(verifyArtifact(manifest.artifact,manifest.proof)) !== JSON.stringify(manifest.identity)) throw new Error("artifact or proof identity changed");
+  if (canonical(verifyArtifact(manifest.artifact,manifest.proof)) !== canonical(manifest.identity)) throw new Error("artifact or proof identity changed");
   const latest = entries.at(-1)?.sample;
   const now = anchor();
   const age = latest ? qualificationDate(now.at) - qualificationDate(latest.at) : null;
   return {...evaluateQualification(manifest.profile,entries.map((e)=>e.sample)), qualification_id:manifest.qualification_id,policy_sha256:manifest.policy_sha256,identity:manifest.identity, samples:entries.length, last_observed_at:latest?.at ?? null, observation_age_ms:age, continuity_current:latest !== undefined && latest.boot_id === now.boot_id && age !== null && age >= 0 && age <= manifest.profile.max_gap_ms};
+}
+/** Exact local throw literals and reviewed proof reasons. Unknown values stay generic. */
+const QUALIFICATION_CLI_DIAGNOSTICS = new Set([
+  "invalid evidence identifier","invalid evidence object","invalid evidence schema keys","unknown receipt fields",
+  "invalid receipt counter","invalid evidence string","symlink evidence path refused",
+  "evidence file is unsafe or exceeds byte limit","evidence exceeds byte limit",
+  "qualification currently requires Linux boot and process anchors","artifact checksum mismatch",
+  "unsafe manifest identity","invalid qualification manifest","invalid manifest source identity",
+  "invalid manifest digest","invalid manifest rails","manifest policy digest mismatch",
+  "unsafe observation database","unsafe database sidecar","all seven initialized enabled rails are required",
+  "only explicit UTC fixture scope {scope,vault,brief_hour,timezone,supervisor:none} is supported",
+  "scope brief_hour does not match configured morning hour","qualification manifest genesis mismatch",
+  "torn qualification journal","qualification journal row limit","qualification hash chain mismatch",
+  "oversized or torn run journal","run journal row limit","invalid receipt stop reason",
+  "unknown run rail or status","invalid run execution identity fields","invalid run execution identity",
+  "invalid run errors","invalid receipt model identity","invalid receipt model diagnostic",
+  "invalid receipt model reference","invalid run health","conflicting run evidence",
+  "invalid process start identity","process image exceeds limit","artifact or proof identity changed",
+  "qualification journal byte limit","collection rejected; durable interruption recorded",
+  "invalid qualification arguments",
+  "usage: qualification.ts init --artifact DIR --proof FILE --scope FILE --out NEWDIR | sample --run DIR | status --run DIR",
+  "invalid evidence timestamp","unsupported observation scope",
+  "only UTC fixture timing and supervisor-none policy are supported","invalid qualification profile","invalid rail profile",
+]);
+const ARTIFACT_PROOF_CLI_REASONS = new Set([
+  "json-byte-limit","json-depth-limit","duplicate-json-key","invalid-json","invalid-proof-schema",
+  "invalid-proof-string","invalid-proof-digest","invalid-runtime-observation","unknown-proof-schema",
+  "noncanonical-proof-path","proof-isolation-mismatch","proof-identity-mismatch","proof-package-mismatch",
+  "proof-has-failures","invalid-kernel-release","missing-engine-observation","invalid-engine-outcome",
+  "engine-executable-mismatch","engine-bun-mismatch","engine-sqlite-mismatch","proof-step-set-mismatch",
+  "proof-step-failed-or-substituted","missing-engine-proof","effective-sqlite-identity-qualified",
+  "unqualified-sqlite-identity","unsupported-package-bun-version",
+]);
+export function cliDiagnostic(error: unknown): string {
+  if (error instanceof ArtifactProofError) return ARTIFACT_PROOF_CLI_REASONS.has(error.reason) ? error.reason : "qualification failed";
+  if (error instanceof SyntaxError) return "qualification json unreadable";
+  if (error instanceof SQLiteError) return "qualification sqlite unreadable";
+  if (error instanceof Error && typeof (error as NodeJS.ErrnoException).syscall === "string") return "qualification filesystem unreadable";
+  if (error instanceof Error && QUALIFICATION_CLI_DIAGNOSTICS.has(error.message)) return error.message;
+  return "qualification failed";
 }
 if (import.meta.main) {
   try {
@@ -325,5 +367,5 @@ if (import.meta.main) {
     else if ((command === "sample" || command === "status") && [...flags.keys()].join() === "--run") result=command === "sample" ? sampleQualification(flags.get("--run")!) : statusQualification(flags.get("--run")!);
     else throw new Error("usage: qualification.ts init --artifact DIR --proof FILE --scope FILE --out NEWDIR | sample --run DIR | status --run DIR");
     console.log(JSON.stringify(result,null,2));
-  } catch (error) { console.error(error instanceof Error ? error.message : "qualification failed"); process.exitCode=1; }
+  } catch (error) { console.error(cliDiagnostic(error)); process.exitCode=1; }
 }

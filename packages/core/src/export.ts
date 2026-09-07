@@ -1,7 +1,12 @@
+import { capturePortableAdapter, capturePortableLocal, hashPortableLocal, readPortableBackup, restorePortableLocal, PORTABLE_LOCAL_STREAM, type PortableLocalAdapter } from "./portable-local";
+export type { PortableLocalAdapter } from "./portable-local";
+import { assertVaultMutationScope, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "./vault/mutation-scope";
 import { assertReceiptPaths } from "./canon/paths";
+import { canonReadGeneration, inspectCanonRecovery } from "./canon/write-intent";
 import { isRfc3339 } from "./util/time";
 import { sourcePolicyEpoch, inspectSourceGrant, sourceEventsAllowed } from "./ledger/source-grants";
-import type { Database } from "bun:sqlite";
+import { Database, constants as SQLITE_CONSTANTS } from "bun:sqlite";
+import { openOwnedDirectory, OwnedDirectoryPublicationError, type OwnedDirectory, type OwnedDirectoryIdentity } from "./util/owned-directory";
 import {
   type Stats,
   chmodSync,
@@ -34,6 +39,7 @@ import {
 import { contentSignature } from "./claims/hash";
 import { CLAIMS_SCHEMA_VERSION, syncCompatProposals } from "./claims/schema";
 import { canonicalizeProducer, isProducer } from "./contracts/proposal";
+import { validateAbsenceProof, validateProvenanceAbsenceProof } from "./contracts/retrieval";
 import { isPlainObject } from "./util/validate";
 import {
   LEGACY_IDENTITY_EVIDENCE_MAX_BYTES,
@@ -47,6 +53,17 @@ import { isUlid, ulid } from "./util/ulid";
 import { writeRailCursor } from "./ledger/checkpoints";
 import { NULL_CONNECTION_CONFIG } from "./ledger/connection-state";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "./ledger/db";
+import {
+  LINEAGE_UNAVAILABLE_WARNING,
+  MAX_SOURCE_SURVIVOR_LINEAGE_ROW_BYTES,
+  MAX_SOURCE_SURVIVOR_LINEAGE_ROWS,
+  SOURCE_SURVIVOR_LINEAGE_BACKUP,
+  SOURCE_SURVIVOR_LINEAGE_TABLE,
+  assertSourceSurvivorLineageGraph,
+  parseSourceSurvivorLineage,
+  restoreSourceSurvivorLineageRow,
+  sourceSurvivorLineageExportRows,
+} from "./ledger/canon-source-survivor-lineage";
 import { eventFromRow, parseEventRecord, type LegacyEventRecord } from "./ledger/event-record";
 import { bindLegacyEventOrigins, installEventIdentityGuards } from "./ledger/event-identity-schema";
 import { readSchemaVersion } from "./ledger/integrity";
@@ -55,9 +72,9 @@ import { tableExists } from "./ledger/schema";
 import { SENSITIVITY_SCHEMA_VERSION } from "./sensitivity/schema";
 import { SERVE_SCHEMA_VERSION } from "./serve/types";
 import { extractBatchFilingVersion, validateDurableExtractStorage } from "./serve/extract";
-import { readVaultId, vaultIdPath } from "./serve/vault-id";
+import { ensureVaultId, readVaultId, vaultIdPath } from "./serve/vault-id";
 import { doctorVault } from "./vault/doctor";
-import { initVault } from "./vault/init";
+import { hardenLedgerFile, initVault } from "./vault/init";
 import { parseFrontmatter } from "./vault/frontmatter";
 import { MAX_CANON_DEPTH, MAX_CANON_PAGE_BYTES, MAX_CANON_PAGES, MAX_CANON_WALK_BYTES } from "./vault/pages";
 import { validatePage } from "./vault/schema";
@@ -89,6 +106,18 @@ const EXPORT_INVENTORY = "export-inventory.json";
 const MAX_INVENTORY_ENTRIES = 100_000;
 const MAX_ERASURE_REPORT_BYTES = 2_000_000;
 const MAX_SOURCE_INVENTORY_ROW_BYTES = 6 * MAX_ERASURE_REPORT_BYTES + 1_024;
+const PURGE_HISTORY_COLUMNS = {
+  purge_batches: ["batch_id", "state", "created_at"],
+  purge_batch_receipts: ["receipt_id", "batch_id"],
+  purge_ops: ["op_id", "receipt_id", "store", "ids", "state", "proof", "created_at", "done_at"],
+} as const;
+type PurgeHistoryTable = keyof typeof PURGE_HISTORY_COLUMNS;
+const PURGE_HISTORY_TABLES = Object.keys(PURGE_HISTORY_COLUMNS) as PurgeHistoryTable[];
+const MAX_PURGE_IDS_BYTES = 16_777_216;
+const MAX_PURGE_PROOF_BYTES = 65_536;
+// Stored JSON is escaped once more in its enclosing JSONL record.
+const MAX_PURGE_OP_ROW_BYTES = 6 * (MAX_PURGE_IDS_BYTES + MAX_PURGE_PROOF_BYTES) + 65_536;
+const PURGE_HISTORY_RECOVERY_WARNING = "backup lacks complete historical purge batch membership or store evidence; unassigned receipts remain unverifiable and no membership was inferred";
 const FORBIDDEN_KEYS = new Set([
   "resolved_secret",
   "client_secret",
@@ -132,11 +161,31 @@ export interface ExportManifest {
 }
 
 export interface ExportOptions {
+  portableLocal?: PortableLocalAdapter;
   signal?: AbortSignal;
+  /** Synchronous notifications run outside SQLite transactions while the writer
+   * remains owned. Inventory is a pre-copy preview; later phases describe the
+   * sealed capture and cannot alter its database cut. */
   onProgress?: (label: string) => void;
 }
 
+export interface RestoreOptions extends ExportOptions {
+  /** Trusted synchronous host projection rebuild in private, unpublished staging. */
+  rebuildDerived?: (db: Database, stagingPath: string) => void;
+}
+
+/** Publication succeeded even though a later transaction/ownership cleanup failed. */
+class ExportPublicationError extends Error {
+  readonly publication = "published" as const;
+  readonly durability = "synced" as const;
+  constructor(cause: unknown) {
+    super("export was published and synced; subsequent cleanup failed", { cause });
+    this.name = "ExportPublicationError";
+  }
+}
+
 export interface RestoreReport {
+  connection_state: number;
   vault_id: string | null;
   events: number;
   claims: number;
@@ -303,10 +352,109 @@ function posixRel(from: string, to: string): string {
   return relative(from, to).split(sep).join("/");
 }
 
+const SIGNAL_ABORTED = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!;
+const DATABASE_IN_TRANSACTION = Object.getOwnPropertyDescriptor(Database.prototype, "inTransaction")!.get!;
+const DATABASE_QUERY = Database.prototype.query;
+const DATABASE_FILE_CONTROL = Database.prototype.fileControl;
+
 function throwIfAborted(signal: AbortSignal | undefined): void {
-  if (signal?.aborted === true) {
-    throw new Error("export cancelled");
+  // Invoke the native brand-checked getter, never a caller-defined accessor.
+  if (signal !== undefined && SIGNAL_ABORTED.call(signal) === true) throw new Error("export cancelled");
+}
+
+function assertExportTransactionAvailable(db: Database): void {
+  if (!(db instanceof Database)) throw new TypeError("export requires an actual SQLite database");
+  if (DATABASE_IN_TRANSACTION.call(db) !== false) throw new Error("export requires a top-level SQLite transaction");
+}
+
+function nativeMainFilename(db: Database): string {
+  const rows = DATABASE_QUERY.call(db, "PRAGMA database_list").all() as { name: string; file: string }[];
+  const main = rows.find(row => row.name === "main");
+  if (main === undefined || typeof main.file !== "string") throw new Error("export database affinity unavailable");
+  return main.file;
+}
+
+interface ExportSource {
+  readonly control: OwnedDirectory;
+  assertCurrent(): void;
+  close(): void;
+}
+
+/** The file-control query validates SQLite's opened inode, not db.filename. */
+function openExportSource(db: Database, vaultPath: string): ExportSource {
+  assertExportTransactionAvailable(db);
+  const mainFile = nativeMainFilename(db);
+  const expected = join(vaultPath, ".kizuki", "kizuki.db");
+  if (mainFile !== "" && resolveExisting(mainFile) !== resolveExisting(expected)) {
+    throw new Error("export database does not belong to the selected vault");
   }
+  let root: OwnedDirectory | undefined;
+  let control: OwnedDirectory | undefined;
+  let ledgerFd: number | null = null;
+  try {
+    root = openOwnedDirectory(vaultPath);
+    control = openOwnedDirectory(join(vaultPath, ".kizuki"));
+    let ledgerIdentity: { dev: number; ino: number } | null = null;
+    if (mainFile !== "") {
+      ledgerFd = openSync(expected, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const stat = requireSingleLinkRegularFile(ledgerFd);
+      if (!Number.isSafeInteger(stat.dev) || !Number.isSafeInteger(stat.ino)) throw new Error("export database identity unavailable");
+      ledgerIdentity = { dev: stat.dev, ino: stat.ino };
+    }
+    const capturedRoot = root, capturedControl = control, capturedFd = ledgerFd;
+    let closed = false;
+    const source: ExportSource = {
+      control: capturedControl,
+      assertCurrent() {
+        capturedRoot.assertCurrent(); capturedControl.assertCurrent();
+        if (nativeMainFilename(db) !== mainFile) throw new Error("export database affinity changed");
+        // Engine-confirmed unnamed databases have no physical-file affinity.
+        if (capturedFd === null || ledgerIdentity === null) return;
+        const opened = requireSingleLinkRegularFile(capturedFd);
+        const current = capturedControl.inspect(["kizuki.db"]);
+        if (current === null || !current.isFile() || current.nlink !== 1 ||
+            opened.dev !== ledgerIdentity.dev || opened.ino !== ledgerIdentity.ino ||
+            current.dev !== ledgerIdentity.dev || current.ino !== ledgerIdentity.ino) {
+          throw new Error("export database affinity changed");
+        }
+        const moved = new Int32Array([-1]);
+        const result = DATABASE_FILE_CONTROL.call(db, "main", SQLITE_CONSTANTS.SQLITE_FCNTL_HAS_MOVED, moved);
+        if (result !== 0 /* SQLITE_OK */ || moved[0] !== 0) throw new Error("export database affinity unavailable or changed");
+      },
+      close() {
+        if (closed) return;
+        closed = true;
+        const errors: unknown[] = [];
+        for (const close of [() => { if (capturedFd !== null) closeSync(capturedFd); },
+          () => capturedControl.close(), () => capturedRoot.close()]) {
+          try { close(); } catch (error) { errors.push(error); }
+        }
+        if (errors.length !== 0) throw new AggregateError(errors, "export source descriptor cleanup failed");
+      },
+    };
+    source.assertCurrent();
+    return source;
+  } catch (error) {
+    if (ledgerFd !== null) closeSync(ledgerFd);
+    control?.close(); root?.close();
+    throw error;
+  }
+}
+
+function vaultIdentity(source: ExportSource): { value: string | null; bytes: Uint8Array | null } {
+  const bytes = source.control.readFile(["vault-id"], MAX_CANON_PAGE_BYTES);
+  const text = bytes === null ? "" : Buffer.from(bytes).toString("utf8").split("\n")[0]?.trim() ?? "";
+  return { value: text.length === 0 ? null : text, bytes };
+}
+
+function sameBytes(left: Uint8Array | null, right: Uint8Array | null): boolean {
+  return left === null ? right === null : right !== null && Buffer.from(left).equals(right);
+}
+
+function sqliteSchemaCookie(db: Database): number {
+  const row = DATABASE_QUERY.call(db, "PRAGMA main.schema_version").get() as { schema_version: number } | null;
+  if (row === null || !Number.isSafeInteger(row.schema_version)) throw new Error("export schema identity unavailable");
+  return row.schema_version;
 }
 
 function writeAll(fd: number, bytes: Uint8Array): void {
@@ -520,8 +668,9 @@ function vaultInventory(db: Database, root: string): VaultInventory {
     unavailable_archive_references: 0,
     recovery_limits: [
       "The v3 streams exclude credentials, opaque connection state and agent enrollment authority.",
-      "The v3 streams do not preserve all journals, holds, purge operations or run and audit history.",
-      "File inventory and the database streams do not yet share every canon writer's snapshot fence.",
+      "The v3 streams preserve completed purge batches and store obligations; pending purge work is refused. Other journals, holds and run or audit history are not preserved.",
+      ...(hasUnassignedPurgeReceipts(db) ? [PURGE_HISTORY_RECOVERY_WARNING] : []),
+      "Selected files and database streams share one SQLite capture and the cooperating writer fence; manual edits and complete runtime recovery remain outside this guarantee.",
       "A complete manifest verifies this artifact's listed bytes; it does not assert complete runtime recovery.",
     ],
   };
@@ -1072,7 +1221,7 @@ function* pageReceipts(db: Database): Generator<Record<string, unknown>> {
 
 const CONNECTION_RECOVERY_WARNING = "restored connection history is disconnected and has no connector state; further capture requires supported fresh enrollment with a new source key and fresh consent; retained checkpoints will not resume automatically";
 
-function* pageConnections(db: Database): Generator<Record<string, unknown>> {
+function* pageConnections(db: Database, portableKeys: ReadonlySet<string> = new Set()): Generator<Record<string, unknown>> {
   const disconnectedAt = new Date().toISOString();
   let after: { connector_id: string; source_key: string } | null = null;
   while (true) {
@@ -1106,7 +1255,7 @@ function* pageConnections(db: Database): Generator<Record<string, unknown>> {
         config: JSON.parse(NULL_CONNECTION_CONFIG) as unknown,
         secret_refs: [],
         connected_at: row.connected_at,
-        disconnected_at: row.disconnected_at ?? disconnectedAt,
+        disconnected_at: portableKeys.has(row.source_key) ? row.disconnected_at : row.disconnected_at ?? disconnectedAt,
         implementation_version: row.implementation_version,
         consent_required: row.consent_required,
       };
@@ -1367,43 +1516,130 @@ export function exportVault(
   outDir: string,
   options: ExportOptions = {},
 ): ExportManifest {
-  throwIfAborted(options.signal);
-  const sourceEpoch = sourcePolicyEpoch(db);
-  assertSourceExport(db);
-  assertNoPendingPurgeExport(db);
-  const source = resolve(vaultPath);
+  assertExportTransactionAvailable(db);
+  const target = Object.freeze({ db, vault_path: resolve(vaultPath) });
   const destination = resolve(outDir);
-  assertSeparated(source, destination);
+  const { signal, onProgress } = options;
+  const portableLocal = capturePortableAdapter(options.portableLocal);
+  if (onProgress !== undefined && typeof onProgress !== "function") throw new TypeError("export progress listener must be a function");
+  const captured = Object.freeze({ ...(portableLocal === undefined ? {} : { portableLocal }), ...(signal === undefined ? {} : { signal }), ...(onProgress === undefined ? {} : { onProgress }) });
+  throwIfAborted(signal);
+  assertExportTransactionAvailable(db);
+  // Preserve early recovery refusals before callbacks, path access or staging.
+  // Authoritative admission is repeated inside both owned transactions below.
+  assertSourceExport(db); assertNoPendingPurgeExport(db);
+  assertSeparated(target.vault_path, destination);
+  const source = openExportSource(db, target.vault_path);
+  const publication: { synced: boolean; error: OwnedDirectoryPublicationError | null } = { synced: false, error: null };
+  let result: ExportManifest | undefined;
+  let failed = false;
+  let failure: unknown;
+  try {
+    result = withVaultMutationSync(target, scope => {
+      try { return exportVaultOwned(scope, target, destination, captured, source, publication); }
+      finally { source.close(); }
+    });
+  } catch (error) { failed = true; failure = error; }
+  try { source.close(); }
+  catch (error) { failure = failed ? new AggregateError([failure, error], "export ownership cleanup failed") : error; failed = true; }
+  if (failed) {
+    if (publication.synced) throw new ExportPublicationError(failure);
+    if (publication.error !== null && failure !== publication.error) {
+      const prior = publication.error;
+      const error = new OwnedDirectoryPublicationError(prior.reason, {
+        publication: prior.publication, durability: prior.durability, cleanup_safe: false, parked: prior.parked,
+      });
+      Object.defineProperty(error, "cause", { value: new AggregateError([prior, failure], "export ownership cleanup failed") });
+      throw error;
+    }
+    throw failure;
+  }
+  return result!;
+}
+
+function exportVaultOwned(
+  scope: VaultMutationScope,
+  target: VaultMutationTarget & { readonly db: Database },
+  destination: string,
+  options: Readonly<ExportOptions>,
+  source: ExportSource,
+  publication: { synced: boolean; error: OwnedDirectoryPublicationError | null },
+): ExportManifest {
+  assertVaultMutationScope(scope, target);
+  const { db, vault_path: vaultPath } = target;
+  const canonGeneration = canonReadGeneration(db);
+  const assertCanonUnchanged = (): void => {
+    if (canonReadGeneration(db) !== canonGeneration) throw new Error("canon changed during export");
+  };
+  assertExportTransactionAvailable(db);
+  source.assertCurrent();
+  throwIfAborted(options.signal);
   prepareDestination(destination);
   const parent = dirname(destination);
   mkdirPrivate(parent);
-
-  const staging = join(parent, `${basenameSafe(destination)}${STAGING_MARK}${ulid()}.partial`);
-
+  const directory = openOwnedDirectory(parent);
+  const destinationName = basenameSafe(destination);
+  const stagingName = `${destinationName}${STAGING_MARK}${ulid()}.partial`;
+  const staging = join(parent, stagingName);
+  let stagingIdentity: OwnedDirectoryIdentity | undefined;
+  let staged: OwnedDirectory | undefined;
+  let published = false;
+  let publicationUncertain = false;
+  let portable: ReturnType<typeof capturePortableLocal>;
   try {
-    mkdirPrivate(staging);
+    const destinationIdentity = directory.childIdentity(destinationName);
+    stagingIdentity = directory.createStaging(stagingName);
+    staged = openOwnedDirectory(staging);
     writePrivateFile(join(staging, INCOMPLETE), Buffer.from("incomplete\n"));
-    options.onProgress?.("staging");
-    const files: Record<string, ExportManifestEntry> = {};
-    const inventory = vaultInventory(db, source);
-    const inventoryBytes = Buffer.from(`${JSON.stringify(inventory, null, 2)}\n`);
-    writePrivateFile(join(staging, EXPORT_INVENTORY), inventoryBytes);
-    trackFile(files, EXPORT_INVENTORY, 1, hashFile(join(staging, EXPORT_INVENTORY)));
-    options.onProgress?.("inventory");
-    for (const entry of inventory.files) {
+    const marker = staged.inspect([INCOMPLETE]);
+    if (marker === null || !Number.isSafeInteger(marker.dev) || !Number.isSafeInteger(marker.ino)) throw new Error("export staging identity unavailable");
+    const markerIdentity = { dev: BigInt(marker.dev), ino: BigInt(marker.ino) };
+
+    const notify = (label: string): void => {
+      assertExportTransactionAvailable(db);
+      options.onProgress?.(label);
+      // A listener may leave a transaction open; never inherit it as a savepoint.
+      assertExportTransactionAvailable(db);
+      assertCanonUnchanged();
+      assertSourceExport(db);
       throwIfAborted(options.signal);
-      options.onProgress?.("vault");
-      const destFile = join(staging, "vault", entry.path);
-      trackFile(files, `vault/${entry.path}`, 1, copyHashed(join(source, entry.path), destFile, entry));
+      source.assertCurrent(); staged!.assertCurrent(); directory.assertCurrent();
+    };
+    notify("staging");
+    let preview: { bytes: Buffer; epoch: number } | undefined;
+    if (options.onProgress !== undefined) {
+      assertExportTransactionAvailable(db);
+      preview = db.transaction(() => {
+        source.assertCurrent(); assertSourceExport(db); assertNoPendingPurgeExport(db);
+        return { bytes: Buffer.from(`${JSON.stringify(vaultInventory(db, vaultPath), null, 2)}\n`), epoch: sourcePolicyEpoch(db) };
+      }).immediate();
+      writePrivateFile(join(staging, EXPORT_INVENTORY), preview.bytes);
+      notify("inventory");
     }
 
-    options.onProgress?.("ledger");
-    let snapshot!: BackupSnapshot;
-    // Keep ledger, authority, queue, checkpoint, and pending-decision streams
-    // on one SQLite snapshot. A concurrent completion must not produce a
-    // backup whose checkpoint and journal describe different moments.
-    db.transaction(() => {
-      snapshot = snapshotOf(db);
+    assertExportTransactionAvailable(db);
+    const capture = db.transaction(() => {
+      source.assertCurrent(); staged!.assertCurrent();
+      throwIfAborted(options.signal);
+      assertSourceExport(db); assertNoPendingPurgeExport(db);
+      portable = capturePortableLocal(db, vaultPath, options.portableLocal);
+      const sourceEpoch = sourcePolicyEpoch(db);
+      if (preview !== undefined && preview.epoch !== sourceEpoch) throw new Error("source authorization changed during export");
+      const identity = vaultIdentity(source);
+      const schema = supportedSchemaVersions(ledgerSchemaVersion(db));
+      const schemaCookie = sqliteSchemaCookie(db);
+      const inventory = vaultInventory(db, vaultPath);
+      const inventoryBytes = Buffer.from(`${JSON.stringify(inventory, null, 2)}\n`);
+      if (preview !== undefined && !preview.bytes.equals(inventoryBytes)) throw new Error("export inventory file changed before capture");
+      const files: Record<string, ExportManifestEntry> = {};
+      if (preview === undefined) writePrivateFile(join(staging, EXPORT_INVENTORY), inventoryBytes);
+      trackFile(files, EXPORT_INVENTORY, 1, hashFile(join(staging, EXPORT_INVENTORY)));
+      for (const entry of inventory.files) {
+        throwIfAborted(options.signal);
+        const destFile = join(staging, "vault", entry.path);
+        trackFile(files, `vault/${entry.path}`, 1, copyHashed(join(vaultPath, entry.path), destFile, entry));
+      }
+      const snapshot = snapshotOf(db);
       validateExportEventOrigins(db, snapshot);
       writeStream(
         staging,
@@ -1414,7 +1650,7 @@ export function exportVault(
       );
       writeStream(staging, "ledger/event_purges.jsonl", pagePurges(db), files, options.signal);
       for (const table of SOURCE_BACKUP_TABLES) writeStream(staging, `ledger/${table}.jsonl`, sourcePolicyRows(db, table), files, options.signal);
-      options.onProgress?.("claims");
+      for (const table of PURGE_HISTORY_TABLES) writeStream(staging, `ledger/${table}.jsonl`, purgeHistoryRows(db, table), files, options.signal);
       writeStream(staging, "claims/claims.jsonl", pageClaims(db), files, options.signal);
       writeStream(
         staging,
@@ -1438,8 +1674,10 @@ export function exportVault(
         files,
         options.signal,
       );
-      options.onProgress?.("receipts");
       writeStream(staging, "canon/receipts.jsonl", pageReceipts(db), files, options.signal);
+      if (schema.ledger >= 20) {
+        writeStream(staging, SOURCE_SURVIVOR_LINEAGE_BACKUP, sourceSurvivorLineageExportRows(db), files, options.signal);
+      }
       writeStream(
         staging,
         MACHINE_BYTE_INTENTS_BACKUP,
@@ -1450,10 +1688,11 @@ export function exportVault(
       writeStream(
         staging,
         "connections.jsonl",
-        pageConnections(db),
+        pageConnections(db, new Set(portable?.records.map(row => row.source_key))),
         files,
         options.signal,
       );
+      if (portable !== undefined) writeStream(staging, PORTABLE_LOCAL_STREAM, portable.records, files, options.signal);
       writeStream(
         staging,
         "checkpoints.jsonl",
@@ -1468,33 +1707,83 @@ export function exportVault(
       if ((files["ledger/events.jsonl"]?.count ?? 0) !== snapshot.event_count) {
         throw new Error("export event stream drifted from the snapshot");
       }
-      assertSourceExport(db);
+      source.assertCurrent();
+      assertSourceExport(db); assertNoPendingPurgeExport(db);
+      assertCanonUnchanged();
       if (sourcePolicyEpoch(db) !== sourceEpoch) throw new Error("source authorization changed during export");
-    })();
-    assertSourceExport(db);
-    if (sourcePolicyEpoch(db) !== sourceEpoch) throw new Error("source authorization changed during export");
-    const manifest = signManifest({
-      schema: BACKUP_SCHEMA,
-      vault_id: readVaultId(source),
-      created_at: new Date().toISOString(),
-      schema_versions: supportedSchemaVersions(ledgerSchemaVersion(db)),
-      snapshot,
-      complete: true,
-      files: sortedFiles(files),
-    });
-    writePrivateFile(join(staging, "manifest.json"), Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));
-    verifyFiles(staging, manifest);
-    assertSourceExport(db);
-    assertNoPendingPurgeExport(db);
-    unlinkSync(join(staging, INCOMPLETE));
-    fsyncDirectory(staging);
-    installStaging(staging, destination);
-    fsyncDirectory(parent);
-    return manifest;
+      const manifest = signManifest({
+        schema: BACKUP_SCHEMA, vault_id: identity.value, created_at: new Date().toISOString(),
+        schema_versions: schema, snapshot, complete: true, files: sortedFiles(files),
+      });
+      return { manifest, sourceEpoch, identity, schemaCookie, vaultFiles: inventory.files.length };
+    }).immediate();
+    const manifest = capture.manifest;
+    const manifestContent = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
+    writePrivateFile(join(staging, "manifest.json"), manifestContent);
+    // Bound progress bookkeeping by a count, rather than retaining a label per file.
+    for (let file = 0; file < capture.vaultFiles; file += 1) notify("vault");
+    for (const phase of ["ledger", "claims", "receipts"]) notify(phase);
+
+    assertExportTransactionAvailable(db);
+    return db.transaction(() => {
+      staged!.assertCurrent(); directory.assertCurrent();
+      portable?.check();
+      verifyFiles(staging, manifest);
+      // Publication must satisfy the same bounded consumer, including the
+      // connection/grant streams that accompany the optional local records.
+      const stagedPortable = readPortableBackup(staging, manifest, options.portableLocal);
+      stagedPortable?.close();
+      const stagedManifest = readFileSyncNoFollow(join(staging, "manifest.json"), manifestContent.length);
+      if (!manifestContent.equals(stagedManifest)) throw new Error("export staged manifest changed");
+      throwIfAborted(options.signal);
+      source.assertCurrent();
+      assertSourceExport(db); assertNoPendingPurgeExport(db);
+      assertCanonUnchanged();
+      if (sourcePolicyEpoch(db) !== capture.sourceEpoch) throw new Error("source authorization changed during export");
+      if (ledgerSchemaVersion(db) !== manifest.schema_versions.ledger || sqliteSchemaCookie(db) !== capture.schemaCookie) throw new Error("export schema identity changed");
+      if (!sameBytes(vaultIdentity(source).bytes, capture.identity.bytes)) throw new Error("export vault identity changed");
+      prepareDestination(destination);
+      staged!.removeTree(INCOMPLETE, markerIdentity);
+      // No callback separates the fresh admission/identity checks and publication.
+      try {
+        directory.publishStaging(stagingName, stagingIdentity!, destinationName, destinationIdentity);
+        published = true;
+        publication.synced = true;
+      } catch (error) {
+        if (error instanceof OwnedDirectoryPublicationError) {
+          published = error.publication === "published";
+          publicationUncertain = !error.cleanup_safe;
+        } else publicationUncertain = true;
+        throw error;
+      }
+      return manifest;
+    }).immediate();
   } catch (error) {
-    rmSync(staging, { recursive: true, force: true });
+    if (error instanceof OwnedDirectoryPublicationError) publication.error = error;
+    if (!published && !publicationUncertain && stagingIdentity !== undefined) {
+      try { directory.removeTree(stagingName, stagingIdentity); }
+      catch (cleanup) { throw new AggregateError([error, cleanup], "export failed; owned staging cleanup is incomplete"); }
+    }
     throw error;
-  }
+  } finally { try { portable?.close(); } finally { staged?.close(); directory.close(); } }
+}
+
+function readFileSyncNoFollow(path: string, maxBytes: number): Buffer {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const info = requireSingleLinkRegularFile(fd);
+    if (info.size !== maxBytes || (info.mode & 0o777) !== FILE_MODE) throw new Error("export staged manifest changed");
+    const bytes = Buffer.alloc(maxBytes);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = readSync(fd, bytes, offset, bytes.length - offset, offset);
+      if (count === 0) throw new Error("export staged manifest changed");
+      offset += count;
+    }
+    const after = requireSingleLinkRegularFile(fd);
+    if (after.size !== info.size || after.mtimeMs !== info.mtimeMs || after.ctimeMs !== info.ctimeMs) throw new Error("export staged manifest changed");
+    return bytes;
+  } finally { closeSync(fd); }
 }
 
 function basenameSafe(path: string): string {
@@ -1504,6 +1793,7 @@ function basenameSafe(path: string): string {
 
 function verifyFiles(root: string, manifest: ExportManifest): void {
   assertBackupFormat(manifest);
+  hasPurgeHistory(manifest);
   const expectedHash = signManifest({
     schema: manifest.schema,
     vault_id: manifest.vault_id,
@@ -1547,10 +1837,30 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
       manifest.files[RAIL_CURSORS_BACKUP] === undefined) {
     throw new Error("backup extract rail cursor stream is missing");
   }
+  const lineage = manifest.files[SOURCE_SURVIVOR_LINEAGE_BACKUP];
+  if (manifest.schema !== BACKUP_SCHEMA && lineage !== undefined) {
+    throw new Error("legacy backup must not include source-survivor lineage");
+  }
+  if (manifest.schema === BACKUP_SCHEMA && manifest.schema_versions.ledger >= 20) {
+    if (lineage === undefined) throw new Error("backup source-survivor lineage stream is missing");
+    if (!Number.isSafeInteger(lineage.count) || lineage.count < 0 || lineage.count > MAX_SOURCE_SURVIVOR_LINEAGE_ROWS ||
+        !Number.isSafeInteger(lineage.size) || lineage.size < 0) {
+      throw new Error("backup source-survivor lineage stream exceeds its bound");
+    }
+  }
+  if (manifest.schema === BACKUP_SCHEMA && manifest.schema_versions.ledger < 20 && lineage !== undefined) {
+    throw new Error("backup source-survivor lineage stream is incompatible with this ledger version");
+  }
   for (const key of Object.keys(manifest.files).sort(compareCodeUnits)) {
     const entry = manifest.files[key];
     if (entry === undefined) continue;
     const parts = splitBackupPath(key);
+    if (key === PORTABLE_LOCAL_STREAM) {
+      if (entry.mode !== FILE_MODE) throw new Error("portable_local_invalid");
+      const hashed = hashPortableLocal(root);
+      if (hashed.sha256 !== entry.sha256 || hashed.size !== entry.size) throw new Error(`backup file hash mismatch: ${key}`);
+      continue;
+    }
     if (parts[0] === "vault" && parts.some(isControlDir)) {
       throw new Error(`backup must not include the control directory: ${key}`);
     }
@@ -1610,11 +1920,16 @@ function assertBackupFormat(manifest: ExportManifest): void {
     throw new Error("backup schema versions are invalid");
   }
   // Ledger17 adds explicit rail cursors; ledger16 keeps them in checkpoints.
-  // Ledger18 adds local enrollment custody. Ledger19 adds local purge recovery
-  // metadata; pending work is refused by the writer rather than serialized.
+  // Ledger18 adds local enrollment custody. Ledger19 adds purge batches;
+  // their completed history is optional in older v3 backups. Pending work is refused.
+  // Ledger20 adds source-survivor lineage. Ledger21 adds nonportable recovery
+  // payload and a local read generation: current v3 exports require no pending
+  // intent/projection and restore an empty recovery state. No journal is copied.
   // Future migrations must make their own explicit compatibility decision.
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
-      versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 && versions.ledger !== 19) {
+      versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
+      versions.ledger !== 19 && versions.ledger !== 20 &&
+      !(manifest.schema === BACKUP_SCHEMA && versions.ledger === 21)) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -2043,7 +2358,10 @@ function* streamRows(
   const maxRowBytes = relativePath === "ledger/events.jsonl" ? MAX_EVENT_BACKUP_ROW_BYTES
     : relativePath === MACHINE_BYTE_INTENTS_BACKUP ? MAX_MACHINE_BYTE_INTENT_ROW_BYTES
     : relativePath === IDENTITY_BACKUP ? MAX_IDENTITY_BACKUP_ROW_BYTES
-    : relativePath === SOURCE_INVENTORY_BACKUP ? MAX_SOURCE_INVENTORY_ROW_BYTES : Infinity;
+    : relativePath === SOURCE_INVENTORY_BACKUP ? MAX_SOURCE_INVENTORY_ROW_BYTES
+    : relativePath === "ledger/purge_ops.jsonl" ? MAX_PURGE_OP_ROW_BYTES
+    : relativePath === "ledger/purge_batches.jsonl" || relativePath === "ledger/purge_batch_receipts.jsonl" ? 16_384
+    : relativePath === SOURCE_SURVIVOR_LINEAGE_BACKUP ? MAX_SOURCE_SURVIVOR_LINEAGE_ROW_BYTES : Infinity;
   let rows = 0;
   for (const row of readJsonl(path, maxRowBytes)) {
     if (relativePath === IDENTITY_BACKUP && ++rows > LEGACY_IDENTITY_SCAN_MAX_ROWS) {
@@ -2054,27 +2372,33 @@ function* streamRows(
   }
 }
 
-export function verifyBackup(backupDir: string): ExportManifest {
-  const root = resolveExisting(backupDir);
+export function verifyBackup(backupDir: string, options: Pick<ExportOptions, "portableLocal"> = {}): ExportManifest {
+  const adapter = capturePortableAdapter(options.portableLocal);
+  const root = resolve(backupDir);
   if (!existsSync(root) || !statSync(root).isDirectory()) {
     throw new Error(`backup directory is missing: ${backupDir}`);
   }
   const manifest = readManifest(root);
   verifyFiles(root, manifest);
   assertComplete(root, manifest);
+  const portable = readPortableBackup(root, manifest, adapter);
+  portable?.close();
   return manifest;
 }
 
 export function restoreVault(
   backupDir: string,
   targetDir: string,
-  options: ExportOptions = {},
+  options: RestoreOptions = {},
 ): RestoreReport {
+  const adapter = capturePortableAdapter(options.portableLocal);
+  const { rebuildDerived: rebuildHost } = options;
+  if (rebuildHost !== undefined && typeof rebuildHost !== "function") throw new TypeError("restore rebuild listener must be a function");
   throwIfAborted(options.signal);
   const source = resolve(backupDir);
   const destination = resolve(targetDir);
   assertSeparated(source, destination);
-  const manifest = verifyBackup(source);
+  const manifest = verifyBackup(source, adapter === undefined ? {} : { portableLocal: adapter });
   const supported = supportedSchemaVersions();
   if (manifest.schema_versions.ledger > supported.ledger) {
     throw new Error(
@@ -2094,8 +2418,18 @@ export function restoreVault(
     `${basenameSafe(destination)}${STAGING_MARK}${ulid()}.partial`,
   );
 
+  let portable: ReturnType<typeof readPortableBackup>;
+  let parentDirectory: OwnedDirectory | undefined;
+  let stagingIdentity: OwnedDirectoryIdentity | undefined;
+  let staged: OwnedDirectory | undefined;
+  let published = false, publicationUncertain = false;
+  let restoredState: ReturnType<typeof restorePortableLocal>;
   try {
-    mkdirPrivate(staging);
+    portable = readPortableBackup(source, manifest, adapter);
+    parentDirectory = openOwnedDirectory(parent);
+    const destinationIdentity = parentDirectory.childIdentity(basenameSafe(destination));
+    stagingIdentity = parentDirectory.createStaging(basenameSafe(staging));
+    staged = openOwnedDirectory(staging);
     writePrivateFile(join(staging, INCOMPLETE), Buffer.from("incomplete\n"));
     options.onProgress?.("staging");
     for (const key of Object.keys(manifest.files).sort(compareCodeUnits)) {
@@ -2113,6 +2447,9 @@ export function restoreVault(
         writePrivateFile(idPath, Buffer.from(`${manifest.vault_id}\n`));
       }
     }
+    // Restore is the explicit adoption boundary. Keep the manifest identity and
+    // bind this machine before publication; later inspection must never repair it.
+    ensureVaultId(staging);
 
     const db = openLedger(join(staging, CONTROL_DIR, "kizuki.db"));
     try {
@@ -2155,7 +2492,8 @@ export function restoreVault(
         for (const row of streamRows(source, manifest, "canon/receipts.jsonl", true)) {
           insertReceipt(db, row);
         }
-        for (const row of streamRows(source, manifest, "connections.jsonl", true)) {
+        restoreSourceSurvivorLineage(db, source, manifest);
+        for (const row of portable?.connections ?? streamRows(source, manifest, "connections.jsonl", true)) {
           insertConnectionRow(db, row);
         }
         for (const row of streamRows(source, manifest, "checkpoints.jsonl", true)) {
@@ -2179,7 +2517,8 @@ export function restoreVault(
         for (const row of streamRows(source, manifest, "ledger/connector_sensitivity.jsonl", false)) {
           insertConnectorSensitivity(db, row);
         }
-        restoreSourcePolicy(db, source, manifest);
+        restoreSourcePolicy(db, source, manifest, portable?.grants);
+        restorePurgeHistory(db, source, manifest);
         let intentCount = 0;
         for (const row of streamRows(
           source,
@@ -2225,10 +2564,17 @@ export function restoreVault(
       if (events !== manifest.snapshot.event_count) {
         throw new Error("restored event count does not match the snapshot");
       }
+      restoredState = restorePortableLocal(db, staging, portable?.records ?? [], adapter);
       rebuildDerived(db, staging);
       rebuildPageIndex({ db, vault_path: staging });
+      const rebuildResult: unknown = rebuildHost?.(db, staging);
+      if (rebuildResult instanceof Promise) throw new Error("restore rebuild must be synchronous");
+      if (db.inTransaction) throw new Error("restore rebuild left a transaction open");
+      portable?.check(); restoredState?.check(); staged.assertCurrent(); parentDirectory.assertCurrent();
+      hardenLedgerFile(join(staging, CONTROL_DIR, "kizuki.db"));
       const doctor = doctorVault(staging);
       const report: RestoreReport = {
+        connection_state: restoredState?.count ?? 0,
         vault_id: readVaultId(staging),
         events,
         claims:
@@ -2245,10 +2591,16 @@ export function restoreVault(
         ).length,
         doctor: doctor.counts,
         recovery_warnings: [
+          ...(!hasPurgeHistory(manifest) || hasUnassignedPurgeReceipts(db)
+            ? [PURGE_HISTORY_RECOVERY_WARNING]
+            : []),
+          ...(!hasSourceSurvivorLineage(manifest)
+            ? [LINEAGE_UNAVAILABLE_WARNING]
+            : []),
           ...(manifest.schema_versions.serve < 8
             ? ["backup predates durable extraction recovery; an interrupted model decision was not preserved"]
             : []),
-          ...(db.query("SELECT 1 FROM connections LIMIT 1").get() !== null
+          ...(db.query("SELECT 1 FROM connections WHERE disconnected_at IS NOT NULL LIMIT 1").get() !== null
             ? [CONNECTION_RECOVERY_WARNING]
             : []),
         ],
@@ -2256,17 +2608,26 @@ export function restoreVault(
       db.close();
       unlinkSync(join(staging, INCOMPLETE));
       fsyncDirectory(staging);
-      installStaging(staging, destination);
-      fsyncDirectory(parent);
+      portable?.check(); restoredState?.check(); staged.assertCurrent(); parentDirectory.assertCurrent();
+      verifyFiles(source, manifest);
+      prepareDestination(destination);
+      try {
+        parentDirectory.publishStaging(basenameSafe(staging), stagingIdentity, basenameSafe(destination), destinationIdentity);
+        published = true;
+      } catch (error) {
+        if (error instanceof OwnedDirectoryPublicationError) { published = error.publication === "published"; publicationUncertain = !error.cleanup_safe; }
+        else publicationUncertain = true;
+        throw error;
+      }
       return report;
     } catch (error) {
       db.close();
       throw error;
     }
   } catch (error) {
-    rmSync(staging, { recursive: true, force: true });
+    if (!published && !publicationUncertain && stagingIdentity !== undefined) parentDirectory!.removeTree(basenameSafe(staging), stagingIdentity);
     throw error;
-  }
+  } finally { try { restoredState?.close(); } finally { try { portable?.close(); } finally { staged?.close(); parentDirectory?.close(); } } }
 }
 
 const SOURCE_BACKUP_TABLES = ["source_grants", "source_event_bindings", "source_grant_receipts", "native_owner_evidence", "source_retrieval_stores", "source_store_inventory"] as const;
@@ -2347,15 +2708,179 @@ function assertSourceInventoryIdentityErasure(db: Database): void {
   for (const _row of boundedSourceInventoryRows(db)) { /* validate every bounded row */ }
 }
 
+function hasPurgeHistory(manifest: ExportManifest): boolean {
+  const entries = PURGE_HISTORY_TABLES.map(table => manifest.files[`ledger/${table}.jsonl`]);
+  const present = entries.filter(entry => entry !== undefined).length;
+  if (present === 0) return false;
+  if (present !== entries.length || manifest.schema !== BACKUP_SCHEMA ||
+      (manifest.schema_versions.ledger !== 19 && manifest.schema_versions.ledger !== 20 && manifest.schema_versions.ledger !== 21) ||
+      entries.some(entry => entry === undefined || !Number.isSafeInteger(entry.count) || entry.count < 0 ||
+        !Number.isSafeInteger(entry.size) || entry.size < 0)) {
+    throw new Error("backup completed purge history streams are incomplete or incompatible");
+  }
+  return true;
+}
+
+function hasSourceSurvivorLineage(manifest: ExportManifest): boolean {
+  return manifest.schema === BACKUP_SCHEMA && manifest.schema_versions.ledger >= 20 &&
+    manifest.files[SOURCE_SURVIVOR_LINEAGE_BACKUP] !== undefined;
+}
+
+function restoreSourceSurvivorLineage(db: Database, backup: string, manifest: ExportManifest): void {
+  if (!hasSourceSurvivorLineage(manifest)) return;
+  const path = SOURCE_SURVIVOR_LINEAGE_BACKUP;
+  const seen = new Set<string>();
+  let count = 0;
+  for (const row of streamRows(backup, manifest, path, true)) {
+    const lineage = parseSourceSurvivorLineage(row);
+    if (seen.has(lineage.child_receipt_id)) throw new Error("backup source-survivor lineage duplicate");
+    seen.add(lineage.child_receipt_id);
+    restoreSourceSurvivorLineageRow(db, row);
+    count += 1;
+    if (count > MAX_SOURCE_SURVIVOR_LINEAGE_ROWS) throw new Error("backup source-survivor lineage exceeds its bound");
+  }
+  const stored = db.query<{ n: number }, []>(
+    `SELECT COUNT(*) AS n FROM ${SOURCE_SURVIVOR_LINEAGE_TABLE}`,
+  ).get()?.n ?? 0;
+  if (count !== manifest.files[path]!.count || count !== seen.size || count !== stored) {
+    throw new Error("backup source-survivor lineage count mismatch");
+  }
+  assertSourceSurvivorLineageGraph(db);
+}
+
+function purgeColumnLimit(column: string): number {
+  if (column === "ids") return MAX_PURGE_IDS_BYTES;
+  if (column === "proof") return MAX_PURGE_PROOF_BYTES;
+  if (column === "store") return 4_096;
+  if (column === "state") return 16;
+  if (column === "created_at" || column === "done_at") return 64;
+  return 1_024;
+}
+
+function purgeHistoryValues(table: PurgeHistoryTable, row: Record<string, unknown>): string[] {
+  const columns = PURGE_HISTORY_COLUMNS[table];
+  if (Object.keys(row).sort().join() !== [...columns].sort().join()) {
+    throw new Error("invalid completed purge history row");
+  }
+  return columns.map(column => {
+    const value = row[column];
+    if (typeof value !== "string" || value.length === 0 || Buffer.byteLength(value, "utf8") > purgeColumnLimit(column) ||
+        ((column === "created_at" || column === "done_at") && !isRfc3339(value)) ||
+        (column === "state" && value !== (table === "purge_batches" ? "ready" : "done"))) {
+      throw new Error("invalid completed purge history value");
+    }
+    return value;
+  });
+}
+
+function* purgeHistoryRows(db: Database, table: PurgeHistoryTable): Generator<Record<string, unknown>> {
+  // Fixed table/column identifiers only. Refuse oversized stored text before it
+  // crosses into JavaScript, including JSON which must still be parsed below.
+  const fields = PURGE_HISTORY_COLUMNS[table].map(column =>
+    `CASE WHEN typeof(${column})='text' AND length(CAST(${column} AS BLOB))<=${purgeColumnLimit(column)} THEN CAST(${column} AS BLOB) ELSE NULL END AS ${column}`);
+  const order = table === "purge_batches" ? "created_at,batch_id"
+    : table === "purge_batch_receipts" ? "batch_id,receipt_id" : "created_at,op_id";
+  for (const stored of db.query<Record<string, Uint8Array | null>, []>(`SELECT ${fields.join()} FROM ${table} ORDER BY ${order}`).iterate()) {
+    const row: Record<string, unknown> = {};
+    for (const column of PURGE_HISTORY_COLUMNS[table]) {
+      const bytes = stored[column];
+      if (bytes === null || bytes === undefined) throw new Error("invalid completed purge history value");
+      try { row[column] = FATAL_UTF8.decode(bytes); }
+      catch { throw new Error("invalid completed purge history UTF-8"); }
+    }
+    purgeHistoryValues(table, row);
+    if (table === "purge_ops") validateCompletedPurgeOp(db, row);
+    yield row;
+  }
+}
+
+function purgeHistoryEventIds(db: Database, batchId: string): string[] {
+  const ids: string[] = [];
+  let bytes = 0;
+  for (const row of db.query<{ event_id: string | null }, [string, string]>(
+    `SELECT CASE WHEN length(CAST(event_id AS BLOB))<=1024 THEN event_id ELSE NULL END AS event_id FROM (
+       SELECT e.event_id FROM purge_batch_receipts m JOIN event_purges e USING(receipt_id) WHERE m.batch_id=?
+       UNION SELECT b.event_id FROM source_event_bindings b JOIN source_grants g USING(source_key) WHERE g.purge_receipt_id=?
+     ) ORDER BY event_id`,
+  ).iterate(batchId, batchId)) {
+    if (row.event_id === null || row.event_id.length === 0 ||
+        (bytes += Buffer.byteLength(row.event_id, "utf8") + 4) > MAX_PURGE_IDS_BYTES) {
+      throw new Error("completed purge provenance inventory exceeds its bound");
+    }
+    ids.push(row.event_id);
+  }
+  return ids;
+}
+
+function validateCompletedPurgeOp(db: Database, row: Record<string, unknown>): void {
+  let ids: unknown;
+  let raw: unknown;
+  try { ids = JSON.parse(row.ids as string); raw = JSON.parse(row.proof as string); }
+  catch { throw new Error("invalid completed purge operation JSON"); }
+  if (!Array.isArray(ids) || !ids.every(id => typeof id === "string" && id.length > 0 && id.length <= 4_096) ||
+      !isPlainObject(raw) || Object.keys(raw).sort().join() !== "at,checked,found,method,provenance,schema,store" ||
+      raw["schema"] !== "kizuki.purge-proof/v1" || !isPlainObject(raw["provenance"]) ||
+      Object.keys(raw["provenance"]).sort().join() !== "at,checked,found,method,scope,store") {
+    throw new Error("invalid completed purge operation proof");
+  }
+  const proof = validateAbsenceProof(raw, ids);
+  const provenance = validateProvenanceAbsenceProof(raw["provenance"], purgeHistoryEventIds(db, row.receipt_id as string));
+  if (proof.store !== row.store || provenance.store !== row.store || proof.found.length !== 0 || provenance.found.length !== 0) {
+    throw new Error("completed purge operation proof does not match its scope");
+  }
+}
+
+function assertCompletedPurgeHistory(db: Database): void {
+  if (db.query(`SELECT 1 FROM purge_batch_receipts m
+      LEFT JOIN event_purges e USING(receipt_id) LEFT JOIN purge_batches b USING(batch_id)
+      WHERE e.receipt_id IS NULL OR b.batch_id IS NULL LIMIT 1`).get() !== null ||
+      db.query(`SELECT 1 FROM purge_batches b WHERE
+        NOT EXISTS (SELECT 1 FROM purge_batch_receipts m WHERE m.receipt_id=b.batch_id AND m.batch_id=b.batch_id)
+        AND NOT EXISTS (SELECT 1 FROM source_grants g WHERE g.purge_receipt_id=b.batch_id AND g.status='purged') LIMIT 1`).get() !== null ||
+      db.query(`SELECT 1 FROM purge_batch_receipts m JOIN purge_batches b ON b.batch_id=m.receipt_id
+        WHERE m.batch_id!=b.batch_id LIMIT 1`).get() !== null ||
+      db.query(`SELECT 1 FROM purge_ops o LEFT JOIN purge_batches b ON b.batch_id=o.receipt_id
+        WHERE b.batch_id IS NULL LIMIT 1`).get() !== null) {
+    throw new Error("completed purge history has unresolved references");
+  }
+  for (const table of PURGE_HISTORY_TABLES) {
+    for (const _row of purgeHistoryRows(db, table)) { /* validate the current database cut */ }
+  }
+}
+
+function hasUnassignedPurgeReceipts(db: Database): boolean {
+  return db.query(`SELECT 1 FROM event_purges e WHERE NOT EXISTS
+    (SELECT 1 FROM purge_batch_receipts m WHERE m.receipt_id=e.receipt_id) LIMIT 1`).get() !== null;
+}
+
+function restorePurgeHistory(db: Database, backup: string, manifest: ExportManifest): void {
+  if (!hasPurgeHistory(manifest)) return;
+  for (const table of PURGE_HISTORY_TABLES) {
+    const columns = PURGE_HISTORY_COLUMNS[table];
+    const insert = db.query(`INSERT INTO ${table} (${columns.join()}) VALUES (${columns.map(() => "?").join()})`);
+    let count = 0;
+    const path = `ledger/${table}.jsonl`;
+    for (const row of streamRows(backup, manifest, path, true)) {
+      insert.run(...purgeHistoryValues(table, row));
+      count += 1;
+    }
+    if (count !== manifest.files[path]!.count) throw new Error("backup completed purge history count mismatch");
+  }
+  assertCompletedPurgeHistory(db);
+}
+
 function assertNoPendingPurgeExport(db: Database): void {
   if (db.query("SELECT 1 FROM canon_holds LIMIT 1").get() !== null ||
       (tableExists(db, "purge_ops") && db.query("SELECT 1 FROM purge_ops WHERE state!='done' LIMIT 1").get() !== null) ||
       db.query("SELECT 1 FROM purge_batches WHERE state!='ready' LIMIT 1").get() !== null) {
     throw new Error("purge_recovery_pending");
   }
+  assertCompletedPurgeHistory(db);
 }
 
 function assertSourceExport(db: Database): void {
+  const recovery = inspectCanonRecovery(db);
+  if (recovery.pending || recovery.projection_pending > 0) throw new Error("canon_recovery_pending");
   assertSourceInventoryIdentityErasure(db);
   if (db.query("SELECT 1 FROM canon_source_erasure_intents LIMIT 1").get() !== null) throw new Error("source_erasure_recovery_pending");
   if (sourcePolicyEpoch(db) === 0) return;
@@ -2374,12 +2899,12 @@ function assertSourceExport(db: Database): void {
     if (!sourceEventsAllowed(db, [row.event_id], { owner: true, purpose: "export" })) throw new Error("source_export_denied");
   }
 }
-function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManifest): void {
+function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManifest, capturedGrants?: readonly Record<string, unknown>[]): void {
   for (const table of SOURCE_BACKUP_TABLES) {
     const required = manifest.schema_versions.ledger >= (table === "native_owner_evidence" ? 12 : table === "source_store_inventory" ? 14 : table === "source_retrieval_stores" ? 13 : 11);
     const path = `ledger/${table}.jsonl`;
     if (required && manifest.files[path] === undefined) throw new Error("backup source policy stream missing");
-    for (const row of streamRows(backup, manifest, path, required)) {
+    for (const row of table === "source_grants" && capturedGrants !== undefined ? capturedGrants : streamRows(backup, manifest, path, required)) {
       if (table === "native_owner_evidence" && manifest.schema === LEGACY_BACKUP_SCHEMA) {
         if (Object.hasOwn(row, "event_content_hash")) throw new Error("legacy native owner proof contains a current field");
         row["event_content_hash"] = db.query<{ content_hash: string }, [string]>("SELECT content_hash FROM events WHERE event_id=?")

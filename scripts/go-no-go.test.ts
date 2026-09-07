@@ -1,14 +1,24 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { appendFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { COMMANDS } from "../packages/cli/src/commands/index";
+import { printRootHelp } from "../packages/cli/src/help";
 import { evaluateRelease, parseAcceptanceArgs, writeAcceptanceReport } from "./go-no-go";
+import {
+  CAPABILITY_PROOF_FILE, CHECKOUT_LIMITS, CONNECTORS, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, SURFACE_DOC_FILES, SURFACE_GATE, SURFACE_OBSERVED_FILES, SURFACE_PRODUCER, SURFACE_PRODUCER_FILES, TARGETS,
+  assertCheckoutCustody, assertProductCheckoutCustody, bindEvaluatorCheckout, cliVerbSequence, collectProductSources, consumeSurfaceReceipt, evaluateSurfaceReceipt, inspectOptionalVerifier, read, surfaceProducerActive,
+} from "./release-evidence";
+import type { ExpectedSurfaceInventory } from "./release-evidence";
 import { initQualification } from "./qualification";
 import { initVault } from "../packages/core/src/vault/init";
 import { openLedger } from "../packages/core/src/ledger/db";
 import { initServe } from "../packages/core/src/serve/schema";
 import { artifactProofSteps, SQLITE_ENGINE_POLICY } from "./artifact-proof";
+import { writePackageFixture } from "./release-package-fixture";
+import { CURRENT_PACKAGE_FILES } from "./release-artifacts";
+import { distributionIdentity } from "./release-notices";
 import type { SqliteRuntime } from "../packages/core/src/ledger/runtime";
 
 const roots: string[] = [];
@@ -371,4 +381,498 @@ test.each(["1.3.10", "9.9.9"])("self-consistent packages with Bun %s are refused
   expect(gate(result, `artifact.${target}`).evidence_sha256).toBeNull();
   expect(result.supported_bun_version).toBe(readFileSync(join(import.meta.dir, "../.bun-version"), "utf8").trim());
   expect(result.verifier.find(item => item.file === ".bun-version")?.sha256).toBe(digest(readFileSync(join(import.meta.dir, "../.bun-version"))));
+});
+
+function asV3(f: ReturnType<typeof fixture>, receipts: unknown[] = []) {
+  Object.assign(f.index, { schema: "kizuki.acceptance-evidence/v3", gate_receipts: receipts });
+  f.save();
+  return f;
+}
+function receiptRef(producer: string, gate_id: string, target: string | null, path: string, sha256 = "a".repeat(64)) {
+  return { producer, gate_id, target, path, sha256 };
+}
+function git(cwd: string, args: string[]) {
+  const result = Bun.spawnSync(["git", "-c", "core.hooksPath=/dev/null", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  if (result.exitCode !== 0) throw new Error(result.stderr.toString() || result.stdout.toString());
+  return result.stdout.toString().trim();
+}
+function custodyRepo(extra: Record<string, string> = {}) {
+  const created = mkdtempSync(join(tmpdir(), "kizuki-custody-")); roots.push(created);
+  const root = realpathSync(created);
+  const files = { ...Object.fromEntries(SURFACE_OBSERVED_FILES.map(path => [path, `${path}\n`])), ...extra };
+  for (const [path, body] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), body);
+  }
+  git(root, ["-c", "init.defaultBranch=main", "init"]);
+  git(root, ["config", "user.email", "custody@example.test"]);
+  git(root, ["config", "user.name", "custody"]);
+  git(root, ["config", "commit.gpgsign", "false"]);
+  git(root, ["config", "core.excludesFile", "/dev/null"]);
+  git(root, ["config", "core.autocrlf", "false"]);
+  git(root, ["add", "-f", "--", ...Object.keys(files)]);
+  git(root, ["commit", "-m", "synthetic custody candidate", "--no-gpg-sign"]);
+  return { root, sha: git(root, ["rev-parse", "HEAD"]) };
+}
+function reasonOf(run: () => unknown): string {
+  try { run(); throw new Error("expected throw"); }
+  catch (error) {
+    expect(error).toBeInstanceOf(EvidenceError);
+    return (error as EvidenceError).reason;
+  }
+}
+function neutralExpected(): ExpectedSurfaceInventory {
+  return {
+    head_sha: source, checkout_sha: source, bun_version: "1.3.14",
+    cli_verbs: ["app", "init", "version"], retired_verbs: ["review", "promote", "reject"],
+    mcp_tools: ["correct", "search"],
+    connectors_registered: [{
+      connector_id: "kizuki.markdown-folder", port_id: "kizuki.connector.markdown-folder", kind: "connector",
+      contract: "kizuki.port.connector/v1", contract_minor: 1, supports: ["backfill"], requires_lease: false, optional_package: null,
+    }],
+    connectors_c3: CONNECTORS.map(item => ({ id: item.id, connector_id: item.connector_id, evidence: item.evidence })),
+    docs: { files: SURFACE_DOC_FILES.map(path => ({ path, sha256: digest(path) })) },
+    producer_files: [...SURFACE_PRODUCER_FILES], producer_revision: digest("producer-revision"),
+  };
+}
+function surfaceBody(expected: ExpectedSurfaceInventory, patch: Record<string, unknown> = {}) {
+  return {
+    schema: SURFACE_PRODUCER,
+    identity: {
+      candidate_source_sha: expected.head_sha, producer: SURFACE_PRODUCER, producer_revision: expected.producer_revision,
+      producer_files: expected.producer_files, source_class: "candidate-tree-inventory", actor_class: "automated-producer",
+      attempt_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", recorded_at: "2026-09-06T00:00:00.000Z",
+    },
+    outcome: "pass", failures: [] as { code: string }[],
+    head_sha: expected.head_sha, bun_version: expected.bun_version, cli_verbs: expected.cli_verbs,
+    retired_verbs: expected.retired_verbs, mcp_tools: expected.mcp_tools,
+    connectors_registered: expected.connectors_registered, connectors_c3: expected.connectors_c3, docs: expected.docs,
+    disagreements: [] as { code: string; path: string }[],
+    ...patch,
+  };
+}
+
+test("v1 and v2 indexes remain valid after the v3 reader lands", () => {
+  const v1 = fixture(), v2 = engineFixture();
+  expect(gate(evaluateRelease("rc", v1.indexPath), "evidence.index").status).toBe("PASS");
+  expect(gate(evaluateRelease("rc", v2.indexPath), `engine.${target}`).status).toBe("PASS");
+  for (const f of [v1, v2]) {
+    // save() retains this index object; rebinding f.index leaves the file valid.
+    Object.assign(f.index, { gate_receipts: [] }); f.save();
+    expect(JSON.parse(readFileSync(f.indexPath, "utf8")).gate_receipts).toEqual([]);
+    expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index")).toMatchObject({ status: "FAIL", reason: "invalid-schema" });
+  }
+});
+
+test("v3 empty receipts keep artifact credit and do not implement new families", () => {
+  const f = asV3(fixture());
+  const result = evaluateRelease("rc", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, `artifact.${target}`).status).toBe("PASS");
+  expect(gate(result, SURFACE_GATE).status).toBe("NOT_IMPLEMENTED");
+  expect(result.decision).toBe("NO-GO");
+  expect(result.verifier.find(item => item.file === "scripts/release-evidence.ts")?.sha256).toBe(digest(readFileSync(join(import.meta.dir, "release-evidence.ts"))));
+  expect(result.verifier.find(item => item.file === CAPABILITY_PROOF_FILE)).toEqual({ file: CAPABILITY_PROOF_FILE,
+    sha256: digest(readFileSync(join(import.meta.dir, "capability-proof.ts"))), status: "PRESENT" });
+  expect(result.verifier_sha256).toBe(digest(JSON.stringify(result.verifier)));
+});
+
+test("v3 unknown, duplicate and mismatched gate references fail the index without consuming families", () => {
+  const f = fixture(), missing = join(f.root, "absent-receipt.json");
+  asV3(f, [receiptRef("kizuki.unknown/v1", SURFACE_GATE, null, missing)]);
+  const unknown = evaluateRelease("rc", f.indexPath);
+  expect(gate(unknown, "evidence.index")).toMatchObject({ status: "FAIL", reason: "unknown-producer" });
+  expect(gate(unknown, `artifact.${target}`).status).toBe("PASS");
+  expect(gate(unknown, SURFACE_GATE).status).toBe("NOT_IMPLEMENTED");
+  asV3(f, [receiptRef(SURFACE_PRODUCER, SURFACE_GATE, null, missing), receiptRef(SURFACE_PRODUCER, SURFACE_GATE, null, join(f.root, "other.json"))]);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").reason).toBe("duplicate-gate");
+  asV3(f, [receiptRef(SURFACE_PRODUCER, SURFACE_GATE, target, missing)]);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").reason).toBe("mismatched-gate-or-target");
+  asV3(f, [receiptRef("kizuki.native-attestation/v1", `native.${target}`, null, missing)]);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").reason).toBe("mismatched-gate-or-target");
+  asV3(f, [receiptRef("kizuki.journey-proof/v1", "journey.not-a-journey", null, missing)]);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").reason).toBe("mismatched-gate-or-target");
+  asV3(f, [receiptRef("kizuki.connector-evidence/v1", "connector.beeper", null, missing)]);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").reason).toBe("mismatched-gate-or-target");
+  asV3(f, [receiptRef("kizuki.native-attestation/v1", `native.${target}`, "bun-darwin-arm64", missing)]);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").reason).toBe("mismatched-gate-or-target");
+});
+
+test("inactive families keep default states while an active surface producer refuses missing receipts", () => {
+  const f = fixture(), missing = join(f.root, "never-opened.json");
+  const receipts = [
+    ...TARGETS.flatMap(platform => [
+      receiptRef("kizuki.native-attestation/v1", `native.${platform}`, platform, missing),
+      receiptRef("kizuki.native-lifecycle/v1", `lifecycle.${platform}`, platform, missing),
+    ]),
+    receiptRef("kizuki.required-checks/v1", "candidate.required-checks", null, missing),
+    receiptRef("kizuki.independent-review/v1", "candidate.independent-review", null, missing),
+    receiptRef("kizuki.p0-disposition/v1", "candidate.current-p0-disposition", null, missing),
+    receiptRef(SURFACE_PRODUCER, SURFACE_GATE, null, missing),
+    ...JOURNEYS.map(id => receiptRef("kizuki.journey-proof/v1", `journey.${id}`, null, missing)),
+    ...CONNECTORS.map(item => receiptRef("kizuki.connector-evidence/v1", `connector.${item.id}`, null, missing)),
+    receiptRef("kizuki.unfamiliar-user/v1", "human.unfamiliar-user", null, missing),
+    receiptRef("kizuki.owner-rails-observation/v1", "owner.seven-day-rails", null, missing),
+    receiptRef("kizuki.estate-parity-observation/v1", "estate.fourteen-day-parity", null, missing),
+    receiptRef("kizuki.cutover-authority/v1", "owner.final-cutover", null, missing),
+  ];
+  asV3(f, receipts);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, `artifact.${target}`).status).toBe("PASS");
+  for (const platform of TARGETS) {
+    expect(gate(result, `native.${platform}`)).toMatchObject({ status: "UNVERIFIABLE", evidence_sha256: null });
+    expect(gate(result, `lifecycle.${platform}`)).toMatchObject({ status: "UNVERIFIABLE", reason: "trusted-online-lifecycle-observation-required", evidence_sha256: null });
+  }
+  expect(gate(result, "candidate.required-checks").status).toBe("NOT_IMPLEMENTED");
+  expect(gate(result, "candidate.independent-review").status).toBe("NOT_IMPLEMENTED");
+  expect(gate(result, "candidate.current-p0-disposition").status).toBe("UNVERIFIABLE");
+  expect(gate(result, SURFACE_GATE)).toMatchObject({ status: "FAIL", evidence_sha256: null });
+  for (const id of JOURNEYS) expect(gate(result, `journey.${id}`).status).toBe("NOT_IMPLEMENTED");
+  for (const item of CONNECTORS) expect(gate(result, `connector.${item.id}`).status).toBe("NOT_IMPLEMENTED");
+  expect(gate(result, "human.unfamiliar-user").status).toBe("NOT_IMPLEMENTED");
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
+});
+
+test("v3 index byte cap is 32 KiB while v1 stays at 16 KiB", () => {
+  const f = asV3(fixture());
+  const raw = `${readFileSync(f.indexPath, "utf8")}${" ".repeat(20000)}`;
+  writeFileSync(f.indexPath, raw);
+  expect(raw.length).toBeGreaterThan(EVIDENCE_LIMITS.index);
+  expect(raw.length).toBeLessThanOrEqual(EVIDENCE_LIMITS.index_v3);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").status).toBe("PASS");
+  writeFileSync(f.indexPath, `${raw}${" ".repeat(EVIDENCE_LIMITS.index_v3)}`);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").status).toBe("FAIL");
+});
+
+test("optional capability verifier is MISSING until a regular file exists and other errors are fatal", () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-verifier-")); roots.push(root);
+  mkdirSync(join(root, "scripts"));
+  expect(inspectOptionalVerifier(root, CAPABILITY_PROOF_FILE)).toEqual({ file: CAPABILITY_PROOF_FILE, sha256: null, status: "MISSING" });
+  writeFileSync(join(root, CAPABILITY_PROOF_FILE), "export {}\n");
+  expect(inspectOptionalVerifier(root, CAPABILITY_PROOF_FILE)).toEqual({
+    file: CAPABILITY_PROOF_FILE, sha256: digest("export {}\n"), status: "PRESENT",
+  });
+  rmSync(join(root, CAPABILITY_PROOF_FILE));
+  mkdirSync(join(root, CAPABILITY_PROOF_FILE));
+  expect(() => inspectOptionalVerifier(root, CAPABILITY_PROOF_FILE)).toThrow(EvidenceError);
+  rmSync(join(root, CAPABILITY_PROOF_FILE), { recursive: true });
+  symlinkSync(join(root, "scripts"), join(root, "link.ts"));
+  expect(() => inspectOptionalVerifier(root, "link.ts")).toThrow(EvidenceError);
+});
+
+test("cli verb sequence follows the unique printRootHelp command-row order", () => {
+  const width = Math.max(...COMMANDS.map(command => command.name.length));
+  const lines: string[] = [];
+  printRootHelp(line => lines.push(line), COMMANDS);
+  const order: string[] = [];
+  for (const line of lines) {
+    const matched = COMMANDS.filter(command => line === `  ${command.name.padEnd(width)}  ${command.summary}`);
+    expect(matched.length).toBeLessThanOrEqual(1);
+    if (matched[0]) order.push(matched[0].name);
+  }
+  expect(new Set(order).size).toBe(COMMANDS.length);
+  expect(order).toHaveLength(COMMANDS.length);
+  expect(cliVerbSequence()).toEqual(order);
+});
+
+test("surface validator recomputes inventories and refuses a self-declared empty disagreement list", () => {
+  const expected = neutralExpected();
+  expect(evaluateSurfaceReceipt(surfaceBody(expected), expected)).toMatchObject({ status: "PASS", reason: "surface-inventory-agrees", creditDigest: true });
+  expect(() => evaluateSurfaceReceipt(surfaceBody(expected, { bun_version: "0.0.0", disagreements: [] }), expected)).toThrow("surface-disagreement-mismatch");
+  const truthful = surfaceBody(expected, {
+    bun_version: "0.0.0", outcome: "fail", failures: [{ code: "bun-version-mismatch" }],
+    disagreements: [{ code: "bun-version-mismatch", path: "bun_version" }],
+  });
+  expect(evaluateSurfaceReceipt(truthful, expected)).toMatchObject({ status: "FAIL", reason: "surface-outcome-fail", creditDigest: true });
+  expect(() => evaluateSurfaceReceipt(surfaceBody(expected, {
+    bun_version: "0.0.0", disagreements: [{ code: "bun-version-mismatch", path: "bun_version" }],
+  }), expected)).toThrow("invalid-outcome");
+  expect(evaluateSurfaceReceipt(surfaceBody(expected, { outcome: "unresolved" }), expected)).toMatchObject({
+    status: "UNVERIFIABLE", reason: "surface-outcome-unresolved", creditDigest: true,
+  });
+});
+
+test("surface identity, revision, RFC3339 and receipt custody failures do not credit a digest", () => {
+  const expected = neutralExpected();
+  const fail = (patch: Record<string, unknown>, reason: string) => {
+    expect(reasonOf(() => evaluateSurfaceReceipt(surfaceBody(expected, patch), expected))).toBe(reason);
+  };
+  fail({ identity: { ...surfaceBody(expected).identity, candidate_source_sha: "b".repeat(40) } }, "candidate-mismatch");
+  fail({ identity: { ...surfaceBody(expected).identity, producer_revision: "c".repeat(64) } }, "producer-revision-mismatch");
+  fail({ identity: { ...surfaceBody(expected).identity, producer_files: ["scripts/release-evidence.ts"] } }, "producer-files-mismatch");
+  fail({ identity: { ...surfaceBody(expected).identity, source_class: "synthetic-fixture" } }, "invalid-identity");
+  fail({ identity: { ...surfaceBody(expected).identity, recorded_at: "2026-02-30T00:00:00.000Z" } }, "invalid-recorded-at");
+  fail({ identity: { ...surfaceBody(expected).identity, recorded_at: "2026-09-06T00:00:00Z" } }, "invalid-recorded-at");
+  fail({ identity: { ...surfaceBody(expected).identity, attempt_id: "aaaaaaaa-bbbb-5ccc-8ddd-eeeeeeeeeeee" } }, "invalid-identity");
+  const receiptPath = join(mkdtempSync(join(tmpdir(), "kizuki-surface-receipt-")), "surface.json");
+  roots.push(dirname(receiptPath));
+  writeFileSync(receiptPath, JSON.stringify(surfaceBody(expected)));
+  expect(read(receiptPath, EVIDENCE_LIMITS.family_receipt).sha256).toBe(digest(readFileSync(receiptPath)));
+  truncateSync(receiptPath, EVIDENCE_LIMITS.family_receipt + 1);
+  expect(() => read(receiptPath, EVIDENCE_LIMITS.family_receipt)).toThrow("unsafe-file-or-size");
+});
+
+test("checkout custody accepts a clean exact-head candidate and refuses later drift", () => {
+  const repo = custodyRepo();
+  const frame = assertCheckoutCustody(repo.root, repo.sha, SURFACE_OBSERVED_FILES);
+  expect(frame.head).toBe(repo.sha);
+  expect(frame.root).toBe(repo.root);
+  expect(frame.files.map(item => item.path)).toEqual([...SURFACE_OBSERVED_FILES]);
+  frame.unchanged();
+  appendFileSync(join(repo.root, ".bun-version"), "later");
+  expect(reasonOf(() => frame.unchanged())).toBe("candidate-worktree-dirty");
+});
+
+test("checkout custody refuses the wrong HEAD", () => {
+  const repo = custodyRepo();
+  expect(reasonOf(() => assertCheckoutCustody(repo.root, "a".repeat(40), SURFACE_OBSERVED_FILES))).toBe("candidate-head-mismatch");
+});
+
+test("checkout custody refuses unstaged bytes", () => {
+  const repo = custodyRepo();
+  appendFileSync(join(repo.root, ".bun-version"), "dirty");
+  expect(reasonOf(() => assertCheckoutCustody(repo.root, repo.sha, SURFACE_OBSERVED_FILES))).toBe("candidate-worktree-dirty");
+});
+
+test("checkout custody refuses staged bytes", () => {
+  const repo = custodyRepo();
+  writeFileSync(join(repo.root, ".bun-version"), "staged\n");
+  git(repo.root, ["add", ".bun-version"]);
+  expect(reasonOf(() => assertCheckoutCustody(repo.root, repo.sha, SURFACE_OBSERVED_FILES))).toBe("candidate-index-dirty");
+});
+
+test("checkout custody refuses an executable-mode change", () => {
+  const repo = custodyRepo();
+  git(repo.root, ["config", "core.filemode", "false"]);
+  chmodSync(join(repo.root, "scripts/release-evidence.ts"), 0o755);
+  expect(reasonOf(() => assertCheckoutCustody(repo.root, repo.sha, SURFACE_OBSERVED_FILES))).toBe("candidate-mode-mismatch");
+});
+
+test("checkout custody refuses an untracked source or capability producer", () => {
+  const repo = custodyRepo();
+  writeFileSync(join(repo.root, CAPABILITY_PROOF_FILE), "export const SYNTHETIC_SURFACE_PRODUCER = true;\n");
+  expect(inspectOptionalVerifier(repo.root, CAPABILITY_PROOF_FILE).status).toBe("PRESENT");
+  expect(surfaceProducerActive(repo.root)).toBe(false);
+  expect(reasonOf(() => assertCheckoutCustody(repo.root, repo.sha, SURFACE_OBSERVED_FILES))).toBe("candidate-untracked");
+  expect(reasonOf(() => assertCheckoutCustody(repo.root, repo.sha, [...SURFACE_OBSERVED_FILES, CAPABILITY_PROOF_FILE]))).toBe("candidate-untracked");
+});
+
+test("checkout custody refuses a required-path symlink", () => {
+  const repo = custodyRepo();
+  const targetPath = join(repo.root, "docs/CURRENT.md");
+  rmSync(join(repo.root, "README.md"));
+  symlinkSync(targetPath, join(repo.root, "README.md"));
+  git(repo.root, ["add", "-A"]);
+  git(repo.root, ["commit", "-m", "symlink observed path", "--no-gpg-sign"]);
+  const sha = git(repo.root, ["rev-parse", "HEAD"]);
+  expect(reasonOf(() => assertCheckoutCustody(repo.root, sha, SURFACE_OBSERVED_FILES))).toBe("candidate-file-symlink-or-mode");
+});
+
+test("surface inventory derivation rejects product modules resolved outside the candidate", () => {
+  const repo = custodyRepo({ [CAPABILITY_PROOF_FILE]: "export {}\n" });
+  expect(surfaceProducerActive(repo.root)).toBe(true);
+  expect(reasonOf(() => bindEvaluatorCheckout(repo.root, repo.sha, [...SURFACE_OBSERVED_FILES, CAPABILITY_PROOF_FILE]))).toBe("candidate-root-mismatch");
+  expect(reasonOf(() => consumeSurfaceReceipt({ schema: SURFACE_PRODUCER }, repo.root, repo.sha))).toBe("candidate-root-mismatch");
+  expect(EVALUATOR_ROOT).not.toBe(repo.root);
+});
+
+test("product custody follows transitive runtime definitions, metadata and assets", () => {
+  const repo = custodyRepo({
+    "commands/index.ts": 'export { command } from "./entry";\nimport type { Missing } from "./absent-types";\n',
+    "commands/entry.ts": 'import { name } from "./name";\nimport metadata from "./metadata.json";\nexport const command = { name, metadata };\n',
+    "commands/name.ts": 'export const name = "synthetic";\n',
+    "commands/metadata.json": '{"summary":"synthetic"}\n',
+  });
+  const graph = collectProductSources(repo.root, ["commands/index.ts"]);
+  expect(graph.bindings.map(item => item.path)).toEqual(["commands/entry.ts", "commands/index.ts", "commands/metadata.json", "commands/name.ts", "package.json"]);
+  const frame = assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES);
+  frame.unchanged();
+  expect(frame.files.find(item => item.path === "commands/name.ts")?.sha256).toBe(digest('export const name = "synthetic";\n'));
+  appendFileSync(join(repo.root, "commands/name.ts"), "// changed after derivation\n");
+  expect(reasonOf(() => frame.unchanged())).toBe("file-changed");
+});
+
+test("product custody refuses imported raw bytes hidden by Git text normalization", () => {
+  const repo = custodyRepo({
+    ".gitattributes": "commands/*.ts text eol=lf\n",
+    "commands/index.ts": 'export { name } from "./name";\n',
+    "commands/name.ts": 'export const name = "synthetic";\n',
+  });
+  writeFileSync(join(repo.root, "commands/name.ts"), 'export const name = "synthetic";\r\n');
+  git(repo.root, ["add", "commands/name.ts"]);
+  expect(git(repo.root, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe("");
+  // The old direct-file frame misses this imported definition entirely.
+  assertCheckoutCustody(repo.root, repo.sha, SURFACE_OBSERVED_FILES).unchanged();
+  expect(reasonOf(() => assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES))).toBe("candidate-byte-mismatch");
+});
+
+test("product custody refuses an internal import alias canonicalized by Bun", () => {
+  const repo = custodyRepo({
+    "commands/index.ts": 'export { name } from "./alias";\n',
+    "commands/name.ts": 'export const name = "synthetic";\n',
+  });
+  symlinkSync("name.ts", join(repo.root, "commands/alias.ts"));
+  git(repo.root, ["add", "commands/alias.ts"]);
+  git(repo.root, ["commit", "-m", "synthetic import alias", "--no-gpg-sign"]);
+  const sha = git(repo.root, ["rev-parse", "HEAD"]);
+  expect(Bun.resolveSync("./alias", join(repo.root, "commands"))).toBe(join(repo.root, "commands/name.ts"));
+  expect(reasonOf(() => assertProductCheckoutCustody(repo.root, sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES))).toBe("candidate-file-symlink-or-mode");
+});
+
+test.each(["commands/alias.ts", "alias.ts"])("product custody refuses ignored import aliases absent from HEAD: %s", alias => {
+  const repo = custodyRepo({
+    ".gitignore": `${alias}\n`,
+    "commands/index.ts": `export { name } from "${alias.startsWith("commands/") ? "./alias" : "../alias"}";\n`,
+    "commands/name.ts": 'export const name = "synthetic";\n',
+  });
+  symlinkSync(join(repo.root, "commands/name.ts"), join(repo.root, alias));
+  expect(git(repo.root, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe("");
+  expect(Bun.resolveSync(alias.startsWith("commands/") ? "./alias" : "../alias", join(repo.root, "commands"))).toBe(join(repo.root, "commands/name.ts"));
+  expect(reasonOf(() => assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES))).toBe("candidate-file-symlink-or-mode");
+});
+
+test("product custody binds nested resolution metadata before and after derivation", () => {
+  const repo = custodyRepo({
+    ".gitattributes": "commands/definition/package.json text eol=lf\n",
+    "commands/index.ts": 'export { name } from "./definition";\n',
+    "commands/definition/package.json": '{"main":"./value.ts"}\n',
+    "commands/definition/value.ts": 'export const name = "synthetic";\n',
+  });
+  const frame = assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES);
+  expect(frame.files.map(item => item.path)).toContain("commands/definition/package.json");
+  frame.unchanged();
+  writeFileSync(join(repo.root, "commands/definition/package.json"), '{"main":"./value.ts"}\r\n');
+  git(repo.root, ["add", "commands/definition/package.json"]);
+  expect(git(repo.root, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe("");
+  expect(reasonOf(() => frame.unchanged())).toBe("file-changed");
+  expect(reasonOf(() => assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES))).toBe("candidate-byte-mismatch");
+});
+
+test.each([
+  'const source = "./name.ts"; export const name = (await import(source)).name;\n',
+  'const source = "./name.ts"; export const name = require(source).name;\n',
+  'export const name = (await import(`./${"name"}.ts`)).name;\n',
+  'const load = require; export const name = load("./name.ts").name;\n',
+  'import { createRequire } from "node:module"; const load = createRequire(import.meta.url); export const name = load("./name.ts").name;\n',
+])("product custody refuses unsupported dynamic runtime graphs: %s", source => {
+  const repo = custodyRepo({
+    ".gitattributes": "commands/name.ts text eol=lf\n",
+    "commands/index.ts": source,
+    "commands/name.ts": 'export const name = "synthetic";\n',
+  });
+  writeFileSync(join(repo.root, "commands/name.ts"), 'export const name = "synthetic";\r\n');
+  git(repo.root, ["add", "commands/name.ts"]);
+  expect(git(repo.root, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe("");
+  expect(reasonOf(() => assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES))).toBe("candidate-imports-unenumerable");
+});
+
+test.each([
+  'export const name = (await import("./name.ts")).name;\n',
+  'export const name = require("./name.ts").name;\n',
+])("product custody retains literal module loading through cycles: %s", source => {
+  const repo = custodyRepo({
+    "commands/index.ts": source,
+    "commands/name.ts": 'import "./index"; export const name = "synthetic";\n',
+  });
+  const frame = assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES);
+  expect(frame.files.map(item => item.path)).toContain("commands/name.ts");
+  frame.unchanged();
+});
+
+test("product custody bounds ignored resolution directory entries", () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-resolution-bound-")); roots.push(root);
+  mkdirSync(join(root, "commands"));
+  writeFileSync(join(root, "commands/index.ts"), 'export const name = "synthetic";\n');
+  for (let i = 0; i < CHECKOUT_LIMITS.resolution_entries; i++) writeFileSync(join(root, `commands/entry-${i}`), "");
+  expect(reasonOf(() => collectProductSources(root, ["commands/index.ts"]))).toBe("checkout-resolution-bound");
+});
+
+test.each(["@kizuki/synthetic", "synthetic-dependency"])("product custody distinguishes %s from external third-party dependencies", (name) => {
+  const external = mkdtempSync(join(tmpdir(), "kizuki-external-module-")); roots.push(external);
+  const directory = join(external, "node_modules", name);
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "package.json"), JSON.stringify({ name, exports: "./index.ts" }));
+  writeFileSync(join(directory, "index.ts"), 'export const name = "external-synthetic";\n');
+  const repo = custodyRepo({ ".gitignore": "node_modules/\n", "commands/index.ts": `export { name } from ${JSON.stringify(name)};\n` });
+  const installed = join(repo.root, "node_modules", name);
+  mkdirSync(dirname(installed), { recursive: true }); symlinkSync(directory, installed);
+  if (name.startsWith("@kizuki/")) {
+    expect(reasonOf(() => assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES))).toBe("candidate-product-resolution-outside");
+  } else {
+    const frame = assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES);
+    expect(frame.files.some(item => item.path.includes("node_modules"))).toBe(false);
+    frame.unchanged();
+  }
+});
+
+test("product custody refuses an unresolved runtime import", () => {
+  const repo = custodyRepo({ "commands/index.ts": 'export { name } from "./absent";\n' });
+  expect(reasonOf(() => collectProductSources(repo.root, ["commands/index.ts"]))).toBe("candidate-import-unresolved");
+});
+
+test("product custody binds workspace export metadata and imported definitions", () => {
+  const repo = custodyRepo({
+    ".gitignore": "node_modules/\n",
+    "commands/index.ts": 'export { name } from "@kizuki/synthetic";\n',
+    "packages/synthetic/package.json": '{"name":"@kizuki/synthetic","exports":"./src/index.ts"}\n',
+    "packages/synthetic/src/index.ts": 'export { name } from "./name";\n',
+    "packages/synthetic/src/name.ts": 'export const name = "synthetic";\n',
+  });
+  mkdirSync(join(repo.root, "node_modules/@kizuki"), { recursive: true });
+  symlinkSync("../../packages/synthetic", join(repo.root, "node_modules/@kizuki/synthetic"));
+  const frame = assertProductCheckoutCustody(repo.root, repo.sha, ["commands/index.ts"], SURFACE_OBSERVED_FILES);
+  expect(frame.files.map(item => item.path)).toContain("packages/synthetic/package.json");
+  expect(frame.files.map(item => item.path)).toContain("packages/synthetic/src/name.ts");
+  frame.unchanged();
+});
+
+test("product source traversal enforces explicit file and byte bounds", () => {
+  const repo = custodyRepo({ "commands/index.ts": `//${"x".repeat(CHECKOUT_LIMITS.file_bytes)}\n` });
+  expect(reasonOf(() => collectProductSources(repo.root, Array(CHECKOUT_LIMITS.files + 1).fill("commands/index.ts")))).toBe("checkout-file-bound");
+  expect(reasonOf(() => collectProductSources(repo.root, ["commands/index.ts"]))).toBe("unsafe-file-or-size");
+});
+
+test("v3 refuses extra keys and more than forty gate receipts", () => {
+  const f = fixture();
+  writeFileSync(f.indexPath, `{"owner_authorized":true,${JSON.stringify({ ...f.index, schema: "kizuki.acceptance-evidence/v3", gate_receipts: [] }).slice(1)}`);
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").status).toBe("FAIL");
+  asV3(f, Array.from({ length: 41 }, (_, i) => receiptRef("kizuki.required-checks/v1", "candidate.required-checks", null, join(f.root, `r${i}.json`))));
+  const overflow = evaluateRelease("rc", f.indexPath);
+  expect(gate(overflow, "evidence.index").status).toBe("FAIL");
+  expect(gate(overflow, `artifact.${target}`).status).toBe("MISSING");
+});
+
+
+function materialFixture(complete = false) {
+  const f = engineFixture(), build = writePackageFixture(f.artifact, source, target, complete);
+  const hashes = Object.fromEntries(CURRENT_PACKAGE_FILES.map(name => [name, digest(readFileSync(join(f.artifact, name)))]));
+  Object.assign(f.receipt, { schema: "kizuki.artifact-proof/v3", package_sha256: hashes, binary_sha256: hashes.kizuki, distribution_identity: distributionIdentity(build.distribution) });
+  f.receipt.engine_observations.kizuki.executable_sha256 = hashes.kizuki!;
+  f.receipt.engine_observations.kizuki_mcp.executable_sha256 = hashes["kizuki-mcp"]!;
+  f.ref.producer = "kizuki.artifact-proof/v3"; Object.assign(f.index, { schema: "kizuki.acceptance-evidence/v4", gate_receipts: [] }); f.save();
+  return { ...f, build };
+}
+test.each([false, true])("v4 accepts v3 material integrity complete=%s without promoting release GO", complete => {
+  const f = materialFixture(complete), result = evaluateRelease("rc", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, `artifact.${target}`).status).toBe("PASS");
+  expect(gate(result, `engine.${target}`).status).toBe("PASS");
+  expect(result.decision).toBe("NO-GO");
+});
+test.each(["v1", "v2", "v3"])("old index %s never admits v3 producer", version => {
+  const f = materialFixture(); f.index.schema = `kizuki.acceptance-evidence/${version}`;
+  if (version !== "v3") delete (f.index as any).gate_receipts;
+  f.save(); const result = evaluateRelease("rc", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("FAIL");
+  expect(gate(result, `artifact.${target}`).status).toBe("MISSING");
+});
+test.each(["notice", "inventory", "extra-member", "missing-license"])("v4 package refuses %s mutation despite rehashed proof reference", mutation => {
+  const f = materialFixture();
+  if (mutation === "notice") writeFileSync(join(f.artifact, "THIRD-PARTY-NOTICES.txt"), "changed bytes");
+  if (mutation === "inventory") { f.build.distribution.components[0]!.declared_license = "changed"; writeFileSync(join(f.artifact, "BUILD.json"), JSON.stringify(f.build)); }
+  if (mutation === "extra-member") writeFileSync(join(f.artifact, "extra"), "unexpected");
+  if (mutation === "missing-license") rmSync(join(f.artifact, "LICENSE"));
+  f.save(); expect(gate(evaluateRelease("rc", f.indexPath), `artifact.${target}`).status).toBe("FAIL");
 });

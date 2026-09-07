@@ -1,3 +1,4 @@
+import { snapshotCanonIo, withCanonMutationSync } from "../../src/canon/io";
 import { search } from "../../src/search/query";
 import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,6 +9,7 @@ import { serveContextPacket } from "../../src/serving/packet";
 import { exportVault, restoreVault } from "../../src/export";
 import { openLedger } from "../../src/ledger/db";
 import { listCanonPages } from "../../src/vault/pages";
+import { assessLivePageEvidence } from "../../src/vault/provenance";
 import { validatePage } from "../../src/vault/schema";
 import { readPage, CanonPageUnreadable } from "../../src/canon/store";
 import { isAuthorityTier } from "../../src/contracts/proposal";
@@ -43,6 +45,11 @@ function authorities(f: CanonFixture, path: string) {
     ]>("SELECT DISTINCT authority FROM graph_edges WHERE src=(SELECT page_id FROM page_index WHERE rel_path=?)").all(path).map(r => r.authority) };
 }
 function expectAuthority(f: CanonFixture, path: string, authority: AuthorityTier) { expect(authorities(f, path)).toEqual({ serving: authority, search: authority, hit: authority, graph: [authority] }); }
+function expectWithheld(f: CanonFixture, path: string, protection: AuthorityTier = "model_inference") {
+  expect(authorities(f, path)).toEqual({ serving: protection, search: undefined, hit: undefined, graph: [] });
+  const page = listCanonPages(f.vault).find(page => page.relPath === path)!;
+  expect(assessLivePageEvidence(f.db, page).admitted).toBe(false);
+}
 test("model canon has the same authority in incremental serving/search/graph and rebuild", async () => {
   const f = fixture();
   const event = putEvent(f.db);
@@ -73,7 +80,7 @@ test("purge cannot elevate a model page and hand edits do not inherit its receip
   const f = fixture();
   const event = putEvent(f.db);
   const receipt = write(f.io, await storeClaim(f.db, event, { producer: "model", model_ref: "fixture:model", body: "A model note. Grace retained context." }));
-  const purged = applyPurgeRewrite(f.io, { rel_path: receipt.page_path, purged_event_ids: [], purged_claim_ids: [], purged_claim_bodies: ["A model note."] });
+  const purged = withCanonMutationSync(snapshotCanonIo(f.io), (scope, io) => applyPurgeRewrite(scope, io, { rel_path: receipt.page_path, purged_event_ids: [], purged_claim_ids: [], purged_claim_bodies: ["A model note."] }));
   expect(purged.authority).toBe("model_inference");
   expectAuthority(f, receipt.page_path, "model_inference");
   f.db.query("UPDATE canon_receipts SET authority='owner_correction' WHERE receipt_id=?").run(purged.receipt_id);
@@ -82,7 +89,7 @@ test("purge cannot elevate a model page and hand edits do not inherit its receip
   const path = join(f.vault, receipt.page_path);
   writeFileSync(path, readFileSync(path, "utf8") + "\nOwner hand edit.\n");
   rebuildDerived(f.db, f.vault);
-  expectAuthority(f, receipt.page_path, "owner_authored");
+  expectWithheld(f, receipt.page_path, "owner_authored");
 });
 test("public correction, page and context preserve owner correction through purge", async () => {
   const f = fixture();
@@ -94,7 +101,7 @@ test("public correction, page and context preserve owner correction through purg
   const ctx = { db: f.db, vaultPath: f.vault, principal: OWNER };
   expect(serveGetPage(ctx, { path: receipt.page_path }).canon[0]?.authority).toBe("owner_correction");
   expect((await serveContextPacket(ctx, { query: "Grace", budget_tokens: 1000 })).canon.find(page => page.path === receipt.page_path)?.authority).toBe("owner_correction");
-  const purge = applyPurgeRewrite(f.io, { rel_path: receipt.page_path, purged_event_ids: [], purged_claim_ids: [], purged_claim_bodies: ["Northwind"] });
+  const purge = withCanonMutationSync(snapshotCanonIo(f.io), (scope, io) => applyPurgeRewrite(scope, io, { rel_path: receipt.page_path, purged_event_ids: [], purged_claim_ids: [], purged_claim_bodies: ["Northwind"] }));
   expect(purge.authority).toBe("owner_correction");
   rebuildDerived(f.db, f.vault);
   expectAuthority(f, receipt.page_path, "owner_correction");
@@ -110,13 +117,13 @@ test("legacy revert fields and invalid or missing references cannot inflate curr
   expectAuthority(f, first.page_path, "model_inference");
   f.db.query("UPDATE canon_receipts SET reverts=? WHERE receipt_id=?").run(revert.receipt_id, revert.receipt_id);
   rebuildDerived(f.db, f.vault);
-  expectAuthority(f, first.page_path, "model_inference");
+  expectWithheld(f, first.page_path);
   f.db.query("UPDATE canon_receipts SET reverts='missing' WHERE receipt_id=?").run(revert.receipt_id);
   rebuildDerived(f.db, f.vault);
-  expectAuthority(f, first.page_path, "model_inference");
+  expectWithheld(f, first.page_path);
   f.db.query("UPDATE canon_receipts SET receipt_kind='write',authority='invalid' WHERE receipt_id=?").run(revert.receipt_id);
   rebuildDerived(f.db, f.vault);
-  expectAuthority(f, first.page_path, "model_inference");
+  expectWithheld(f, first.page_path);
 });
 test("export, clean restore and rebuild preserve effective model authority", async () => {
   const f = fixture();
@@ -194,8 +201,24 @@ test("prototype property names are never authority tiers in any projection", asy
     f.db.query("UPDATE canon_receipts SET authority=? WHERE receipt_id=?")
       .run(authority, receipt.receipt_id);
     rebuildDerived(f.db, f.vault);
-    expectAuthority(f, receipt.page_path, "model_inference");
+    expectWithheld(f, receipt.page_path);
   }
+});
+
+test("an invalid survivor checkpoint is unavailable and does not fall back to raw receipt authority", async () => {
+  const f = fixture();
+  const event = putEvent(f.db);
+  const receipt = write(f.io, await storeClaim(f.db, event, { producer: "model", model_ref: "fixture:model", body: "A model note. Grace retained context." }));
+  const purged = withCanonMutationSync(snapshotCanonIo(f.io), (scope, io) => applyPurgeRewrite(scope, io, { rel_path: receipt.page_path, purged_event_ids: [], purged_claim_ids: [], purged_claim_bodies: ["A model note."] }));
+  expect(purged.authority).toBe("model_inference");
+  expectAuthority(f, receipt.page_path, "model_inference");
+  f.db.query(
+    `INSERT INTO canon_source_survivor_lineage
+      (version,kind,child_receipt_id,predecessor_receipt_id,before_hash,after_hash,predecessor_effective_authority,result_authority)
+     VALUES (1,'source_survivor',?,?,?,?,'model_inference','owner_correction')`,
+  ).run(purged.receipt_id, receipt.receipt_id, purged.before_hash, purged.after_hash);
+  rebuildDerived(f.db, f.vault);
+  expectWithheld(f, receipt.page_path);
 });
 
 test("a revert must begin at the after-hash of the write it names", async () => {
@@ -216,7 +239,7 @@ test("a revert must begin at the after-hash of the write it names", async () => 
     .run(target.receipt_id, first.after_hash, revert.receipt_id);
   writeFileSync(join(f.vault, first.page_path), originalBytes);
   rebuildDerived(f.db, f.vault);
-  expectAuthority(f, first.page_path, "model_inference");
+  expectWithheld(f, first.page_path);
 });
 
 
@@ -237,5 +260,5 @@ test("equal corrupt revert hashes cannot recover owner authority", async () => {
   f.db.query("UPDATE canon_receipts SET after_hash=? WHERE receipt_id=?").run("not-a-sha256", target.receipt_id);
   f.db.query("UPDATE canon_receipts SET before_hash=? WHERE receipt_id=?").run("not-a-sha256", reverted.receipt_id);
   rebuildDerived(f.db, f.vault);
-  expectAuthority(f, first.page_path, "model_inference");
+  expectWithheld(f, first.page_path);
 });

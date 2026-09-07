@@ -192,7 +192,7 @@ test("the shipped HTTP model consumer writes searchable canon for an explicitly 
 test("new source enrollment with a local_only grant refuses a generic loopback HTTP model", () => exerciseModelJourney("local_only"), 30_000);
 test("an exact source model grant binds the shipped HTTP runtime and mismatched destinations stay offline", () => exerciseModelJourney("model"), 30_000);
 
-test("a malformed configured model fails through the public CLI without leaking its secret or writing canon", () => {
+test("a malformed model degrades daemon capture and fails strict foreground acquisition without leaking secrets", () => {
   const setup = tempVault();
   const canary = "synthetic-model-secret";
   const env = { ...setup.env, MODEL_KEY: canary };
@@ -201,12 +201,19 @@ test("a malformed configured model fails through the public CLI without leaking 
     '[ports.llm]\nid = "kizuki.llm.openai-compatible"\nmodel = "string-is-not-a-binding"\nsecret_ref = "env:MODEL_KEY"\n',
   );
   const command = runCli(env, "serve", "--once", "--no-http");
-  expect(command.exitCode).toBe(1);
-  expect(command.stderr).toContain("base_url is required");
+  expect(command.exitCode).toBe(0);
   expect(command.stderr).not.toContain(canary);
+  const foreground = runCli(env, "serve", "run", "sync", "--json");
+  expect(foreground.exitCode).toBe(1);
+  expect(JSON.parse(foreground.stdout).data.errors).toEqual(["rail runtime acquisition failed"]);
+  expect(JSON.stringify([command, foreground])).not.toContain(canary);
   const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
   try {
     expect(listCanonReceipts(db, { limit: 20 })).toEqual([]);
+    const receipts = listRunReceipts(db, { rail: "sync", limit: 10 });
+    expect(receipts[0]!.status).toBe("degraded");
+    expect(receipts[0]!.errors).toContain("model configuration unavailable");
+    expect(receipts[1]!.status).toBe("failed");
   } finally {
     db.close();
   }

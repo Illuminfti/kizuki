@@ -1,4 +1,6 @@
 import { Database } from "bun:sqlite";
+import { manageDatabaseLifetime } from "./lifetime";
+import { configureLedgerWalLifecycle } from "./wal-lifecycle";
 import { applySourceGrantsV11, applyNativeOwnerEvidenceV12, applySourceStoresV13, applySourceErasureV14, applySourceReceiptIntegrityV15 } from "./source-grants-schema";
 import { applyAgentsV9 } from "../agents/schema";
 import { applyCanonV4, initCanon } from "../canon/schema";
@@ -19,6 +21,8 @@ import { applyPurgeV5 } from "./purge-schema";
 import { applyPurgeBatchesV19 } from "./purge-batch-schema";
 import { applyEventIdentityV16 } from "./event-identity-schema";
 import { applyAgentEnrollmentV18 } from "../agents/enrollment-schema";
+import { applySourceSurvivorLineageV20 } from "./canon-source-survivor-lineage";
+import { applyCanonRecoveryV21 } from "./canon-recovery-schema";
 import { oneShotAll, oneShotRun, tableColumns, tableExists } from "./schema";
 import { applyLedgerV16 } from "./schema-v16";
 
@@ -183,6 +187,8 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 17, apply: applyLedgerV16 },
   { version: 18, apply: applyAgentEnrollmentV18 },
   { version: 19, apply: applyPurgeBatchesV19 },
+  { version: 20, apply: applySourceSurvivorLineageV20 },
+  { version: 21, apply: applyCanonRecoveryV21 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
@@ -267,8 +273,12 @@ function migrate(db: Database): void {
 export function openLedger(dbPath: string, options: { busyTimeoutMs?: number } = {}): Database {
   const timeout = options.busyTimeoutMs ?? LEDGER_BUSY_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 5000) throw new TypeError("invalid ledger busy timeout");
-  const db = new Database(dbPath);
+  const db = manageDatabaseLifetime(new Database(dbPath));
   try {
+    // Apple's SQLite persists WAL/SHM after close by default. Match the normal
+    // last-writer cleanup before using a file-backed connection; SQLite owns
+    // checkpointing and removal. Immutable previews must never repair journals.
+    configureLedgerWalLifecycle(db, dbPath);
     // Apply before migrations: concurrent process startup is a writer too.
     db.exec(`PRAGMA busy_timeout = ${timeout}`);
     db.exec("PRAGMA journal_mode = WAL");

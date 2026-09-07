@@ -528,6 +528,116 @@ function page(index: number, count: number): SyncBatch {
 }
 
 describe("runToCompletion", () => {
+  test("a terminal snapshot commits its nonnull checkpoint without another provider call", async () => {
+    const db = database();
+    try {
+      const terminal = { ...page(1, 1), has_more: false } as SyncBatch;
+      const connector = new ScriptedConnector([terminal, page(99, 1)]);
+      const first = await runToCompletion(db, connector, "fixture", SOURCE, "backfill");
+      expect(first).toMatchObject({ stored: 1, duplicates: 0, errors: [], cursor: "page-1" });
+      expect(connector.cursors).toEqual([null]);
+      expect(getCheckpoint(db, "fixture", SOURCE)?.last_result).toEqual(first);
+      const replay = new ScriptedConnector([terminal, page(99, 1)]);
+      expect(await runToCompletion(db, replay, "fixture", SOURCE, "backfill")).toMatchObject({ stored: 0, duplicates: 1, errors: [], cursor: "page-1" });
+      expect(replay.cursors).toEqual(["page-1"]);
+      expect(Object.keys(first).sort()).toEqual(["stored", "duplicates", "errors", "proposals_created", "withdrawn", "retractions_filed", "cursor"].sort());
+    } finally { db.close(); }
+  });
+
+  test("has_more true preserves bounded pagination and legacy no-progress refusal", async () => {
+    const db = database();
+    try {
+      const connector = new ScriptedConnector([{ ...page(1, 1), has_more: true } as SyncBatch, { ...page(2, 1), has_more: false } as SyncBatch]);
+      expect(await runToCompletion(db, connector, "fixture", SOURCE, "backfill")).toMatchObject({ stored: 2, errors: [], cursor: "page-2" });
+      expect(connector.cursors).toEqual([null, "page-1"]);
+      const stuck = new ScriptedConnector([{ ...page(3, 1), cursor: "page-2", has_more: true } as SyncBatch]);
+      expect((await runToCompletion(db, stuck, "fixture", SOURCE, "backfill")).errors).toEqual(["run made no progress"]);
+    } finally { db.close(); }
+  });
+
+  test("terminal failed and unavailable batches never commit their attempted cursor", async () => {
+    for (const terminal of [
+      { events: [{ ...validEvent(), occurred_at: "not-a-time" }], cursor: "failed", has_more: false },
+      { events: [], cursor: "failed", status: "unavailable", detail: "fixture unavailable", has_more: false },
+    ]) {
+      const db = database();
+      try {
+        await runBackfill(db, new FixtureConnector(page(1, 1)), "fixture", SOURCE);
+        const connector = new ScriptedConnector([terminal as SyncBatch, page(99, 1)]);
+        const result = await runToCompletion(db, connector, "fixture", SOURCE, "backfill");
+        expect(result.errors).toHaveLength(1); expect(result.cursor).toBe("page-1");
+        expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe("page-1");
+        expect(connector.cursors).toEqual(["page-1"]);
+      } finally { db.close(); }
+    }
+  });
+
+  test("the admitted terminal scalar survives provider mutation while events are read", async () => {
+    const db = database();
+    try {
+      const original = page(1, 1), batch = { cursor: original.cursor, has_more: false } as SyncBatch;
+      Object.defineProperty(batch, "events", { get: () => { batch.has_more = true; return original.events; }, enumerable: true });
+      const connector = new ScriptedConnector([batch, page(99, 1)]);
+      expect(await runToCompletion(db, connector, "fixture", SOURCE, "backfill")).toMatchObject({ stored: 1, errors: [], cursor: "page-1" });
+      expect(connector.cursors).toEqual([null]);
+      const inherited = Object.assign(Object.create({ has_more: false }), page(2, 1));
+      inherited.cursor = "page-1";
+      expect((await runToCompletion(db, new FixtureConnector(inherited), "fixture", SOURCE, "backfill")).errors).toEqual(["run made no progress"]);
+    } finally { db.close(); }
+  });
+
+  test("a global inherited completion flag cannot terminate a legacy batch", async () => {
+    const db = database();
+    const original = Object.getOwnPropertyDescriptor(Object.prototype, "has_more");
+    try {
+      Object.defineProperty(Object.prototype, "has_more", { value: false, configurable: true, writable: true });
+      const connector = new ScriptedConnector([page(1, 1), { ...page(2, 1), cursor: "page-1" }]);
+      const result = await runToCompletion(db, connector, "fixture", SOURCE, "backfill");
+      expect(result.errors).toEqual(["run made no progress"]);
+      expect(result.stored).toBe(2); expect(connector.cursors).toEqual([null, "page-1"]);
+    } finally {
+      if (original === undefined) Reflect.deleteProperty(Object.prototype, "has_more");
+      else Object.defineProperty(Object.prototype, "has_more", original);
+      db.close();
+    }
+  });
+
+  test("an inherited descriptor value cannot disguise a completion accessor as data", async () => {
+    const db = database();
+    const original = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+    let reads = 0;
+    const batch = page(1, 1);
+    Object.defineProperty(batch, "has_more", { get: () => { reads++; return false; } });
+    try {
+      Object.defineProperty(Object.prototype, "value", { value: false, configurable: true, writable: true });
+      const result = await runToCompletion(db, new FixtureConnector(batch), "fixture", SOURCE, "backfill");
+      expect(result.errors).toEqual(["sync batch has_more must be an own boolean data property"]);
+      expect(result.stored).toBe(0); expect(result.cursor).toBeNull(); expect(reads).toBe(0);
+    } finally {
+      Reflect.deleteProperty(Object.prototype, "value");
+      if (original !== undefined) Object.defineProperty(Object.prototype, "value", original);
+      db.close();
+    }
+  });
+
+  test("forged completion metadata is refused before events without invoking accessors", async () => {
+    let getterCalls = 0;
+    for (const descriptor of [
+      ...[undefined, null, 0, "false", {}].map(value => ({ value, enumerable: true })),
+      { get: () => { getterCalls++; return false; }, enumerable: true },
+    ]) {
+      const db = database();
+      try {
+        const batch = page(1, 1); Object.defineProperty(batch, "has_more", descriptor);
+        const result = await runToCompletion(db, new FixtureConnector(batch), "fixture", SOURCE, "backfill");
+        expect(result.errors).toEqual(["sync batch has_more must be an own boolean data property"]);
+        expect(result.stored).toBe(0); expect(result.cursor).toBeNull();
+        expect(db.query("SELECT count(*) AS n FROM events").get()).toEqual({ n: 0 });
+      } finally { db.close(); }
+    }
+    expect(getterCalls).toBe(0);
+  });
+
   test("drains every batch and saves the last cursor", async () => {
     const db = database();
     const connector = new ScriptedConnector([

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { recordedPage } from "../helpers/recorded-page";
+import { write } from "../canon/helpers";
 import { insertClaim } from "../../src/claims/store";
 import { validateAbsenceProof } from "../../src/contracts/retrieval";
 import type { AbsenceProof, RetrievalPort } from "../../src/contracts/retrieval";
@@ -18,6 +20,8 @@ import { validEvent } from "../fixtures";
 import { tempVault, writeCanon } from "../helpers/vault";
 
 const AT = "2026-09-06T12:00:00.000Z";
+const RECORDED_AT = new Date(Date.parse(AT) - 2_000).toISOString();
+const MERGED_AT = new Date(Date.parse(AT) - 1_000).toISOString();
 const disposers: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
   for (const dispose of disposers.splice(0).reverse()) await dispose();
@@ -35,18 +39,21 @@ async function fixture() {
   const erased = event("Retired Atlas note");
   const kept = event("Current Atlas note");
   const body = "Retiredword Atlas fixture.";
-  await insertClaim({ db, now: () => AT }, {
-    kind: "claim", target: "facts/atlas", body, provenance: [erased.event_id],
-    producer: "deterministic", confidence: 0.8, sensitivity: "personal", taint: "quoted",
-  });
-  writeCanon(disk.path, "facts/atlas.md", {
+  await recordedPage(db, disk.path, "facts/atlas.md", {
     id: "atlas", title: "Atlas", type: "fact", status: "active", sensitivity: "personal", taint: "quoted",
-    sources: [`event:${erased.event_id}`, kept.event_id], subjects: ["person:ada"],
-  }, `${body}\nCurrent Atlas notes.\n`);
-  writeCanon(disk.path, "facts/reference.md", {
+    subjects: ["person:ada"],
+  }, body, [erased.event_id], { now: () => RECORDED_AT });
+  const current = await insertClaim({ db, now: () => MERGED_AT }, {
+    provenance: [kept.event_id], sensitivity: "personal", confidence: 0.8,
+    kind: "merge", target: "facts/atlas", body: "Current Atlas notes.",
+    subjects: [], subject: null, predicate: null, object: null, frontmatter: {},
+    producer: "model", model_ref: "fixture:synthetic", taint: "quoted",
+  });
+  if (current.outcome !== "stored") throw new Error("current fixture claim was not stored");
+  write({ db, vault_path: disk.path, now: () => MERGED_AT }, current.claim);
+  await recordedPage(db, disk.path, "facts/reference.md", {
     id: "reference", title: "Reference", type: "fact", status: "active", sensitivity: "personal", taint: "quoted",
-    sources: [kept.event_id],
-  }, "See [[Atlas]]. Current reference.\n");
+  }, "See [[Atlas]]. Current reference.", [kept.event_id], { now: () => RECORDED_AT });
   rebuildDerived(db, disk.path);
   const port = createVaultFts5Port(disk.path, () => AT);
   disposers.push(() => port.close());
@@ -147,7 +154,7 @@ describe("purge completion is scoped to validated store evidence", () => {
   });
 });
 
-test("pending canon with event references stays absent through every local rebuild and refresh", async () => {
+test("pending recorded canon stays absent through every local rebuild and refresh", async () => {
   const { db, vaultPath, erased, kept, port, body } = await fixture();
   const pages = listCanonPagesReport(vaultPath).pages;
   const atlas = pages.find(page => page.id === "atlas")!;
@@ -207,10 +214,10 @@ test("pending canon with event references stays absent through every local rebui
 
 test("an ambiguous held title cannot return as an unresolved graph target", async () => {
   const { db, vaultPath, erased, kept, port } = await fixture();
-  writeCanon(vaultPath, "facts/other-atlas.md", {
+  await recordedPage(db, vaultPath, "facts/other-atlas.md", {
     id: "other-atlas", title: "Atlas", type: "fact", status: "active", sensitivity: "personal", taint: "quoted",
     sources: [kept.event_id],
-  }, "Another ordinary Atlas fixture.\n");
+  }, "Another ordinary Atlas fixture.\n", undefined, { now: () => RECORDED_AT });
   rebuildGraph(db, vaultPath);
   purgeEvents(db, vaultPath, { event_id: erased.event_id }, "retire ambiguous fixture", {
     retrieval_store: port.descriptor.id, now: () => AT,
@@ -230,14 +237,14 @@ test("readable inactive held aliases preserve unrelated live graph edges in both
     id: "atlas", title: "Atlas", type: "fact", status: "archived", sensitivity: "personal", taint: "quoted",
     sources: [erased.event_id],
   }, "Retired ordinary Atlas fixture.\n");
-  writeCanon(vaultPath, "facts/keeper.md", {
+  await recordedPage(db, vaultPath, "facts/keeper.md", {
     id: "keeper", title: "Keeper", type: "fact", status: "active", sensitivity: "personal", taint: "quoted",
     sources: [kept.event_id],
-  }, "Current keeper fixture.\n");
-  writeCanon(vaultPath, "facts/reference.md", {
+  }, "Current keeper fixture.\n", undefined, { now: () => RECORDED_AT });
+  await recordedPage(db, vaultPath, "facts/reference.md", {
     id: "reference", title: "Reference", type: "fact", status: "active", sensitivity: "personal", taint: "quoted",
     sources: [kept.event_id],
-  }, "See [[Atlas]] and [[Keeper]].\n");
+  }, "See [[Atlas]] and [[Keeper]].\n", undefined, { now: () => MERGED_AT });
   purgeEvents(db, vaultPath, { event_id: erased.event_id }, "retire inactive fixture", {
     retrieval_store: port.descriptor.id, now: () => AT,
   });
@@ -251,4 +258,19 @@ test("readable inactive held aliases preserve unrelated live graph edges in both
     ]);
     expect(readDerivedMeta(db, "graph")).toMatchObject({ source_count: 2, canon_hash: null, status: "degraded" });
   }
+});
+
+test("unrecorded legacy event references remain in the purge closure", async () => {
+  const { db, vaultPath, erased, port } = await fixture();
+  writeCanon(vaultPath, "facts/legacy.md", {
+    id: "legacy", title: "Legacy", type: "fact", status: "active",
+    sensitivity: "personal", taint: "quoted", sources: [`event:${erased.event_id}`],
+  }, "An unrecorded legacy source reference.");
+  rebuildDerived(db, vaultPath);
+  expect(search(db, "legacy", { scope: "canon", ceiling: "private" })).toEqual([]);
+  const outcome = purgeEvents(db, vaultPath, { event_id: erased.event_id }, "retire legacy fixture", {
+    retrieval_store: port.descriptor.id, now: () => AT,
+  });
+  expect(outcome.canon_holds.map(hold => hold.page_path)).toContain("facts/legacy.md");
+  expect(isHeld(db, "facts/legacy.md")).toBe(true);
 });

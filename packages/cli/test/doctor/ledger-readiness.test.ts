@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers, fixtureConsent } from "../helpers";
 
@@ -16,6 +16,8 @@ type Seeded = ReturnType<typeof tempVault>;
 function seeded(): Seeded {
   const setup = tempVault();
   const imported = runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root));
+  expect(imported.exitCode).toBe(0);
+  expect(imported.stderr).toBe("");
   expect(imported.stdout).toStartWith("events_stored=3 ");
   expect(readMark(setup.vault)).toBe("3\n");
   return setup;
@@ -45,28 +47,32 @@ function parkLedger(setup: Seeded): { restore(): void } {
 }
 
 describe("ledger readiness mark", () => {
-  test("init seals zero and every close reseals the accepted total", () => {
+  test("init and import writers seal while successful reads leave the mark unchanged", () => {
     const setup = tempVault();
     expect(readMark(setup.vault)).toBe("0\n");
     seeded();
     const doctor = runCli(setup.env, "doctor");
     expect(doctor.exitCode).toBe(0);
     expect(readMark(setup.vault)).toBe("0\n");
+    const query = runCli(setup.env, "query", "ada", "--scope", "ledger", "--json");
+    expect(query.exitCode).toBe(0);
+    expect(readMark(setup.vault)).toBe("0\n");
   });
 
-  test("a ledger short of its mark fails closed instead of printing events=0", () => {
+  test.each(["doctor", "query"])("%s refuses a short ledger without printing a successful count", command => {
     const setup = seeded();
     parkLedger(setup);
     const started = Date.now();
-    const doctor = runCli(setup.env, "doctor");
+    const doctor = command === "doctor" ? runCli(setup.env, "doctor") : runCli(setup.env, "query", "ada", "--scope", "ledger", "--json");
     expect(doctor.exitCode).toBe(1);
-    expect(doctor.stderr).toContain("vault ledger not ready: 0 of 3 sealed events readable");
+    expect(doctor.stderr).toContain("vault ledger not ready");
     expect(doctor.stderr).toContain("Do not run kizuki init");
     expect(doctor.stdout).not.toContain("events=");
+    expect(doctor.stdout).not.toContain("\"hits\"");
     expect(Date.now() - started).toBeGreaterThanOrEqual(3_000);
     // A refused read never lowers the bar it was refused against.
     expect(readMark(setup.vault)).toBe("3\n");
-  });
+  }, 15_000);
 
   test("a store that lands inside the deadline is read, not refused", async () => {
     const setup = seeded();
@@ -75,24 +81,94 @@ describe("ledger readiness mark", () => {
     await Bun.sleep(700);
     parked.restore();
     const doctor = await pending;
-    // Connection health probes share doctor's exit code and can time out under
-    // load; the gate's verdict is the empty stderr and the count it printed.
+    expect(doctor.exitCode).toBe(0);
     expect(doctor.stderr).toBe("");
     expect(doctor.stdout).toContain("events=3");
     expect(readMark(setup.vault)).toBe("3\n");
   });
 
-  test("an absent, stale-low, or unreadable mark is tolerated and resealed", () => {
+  test("doctor and query tolerate legacy unsealed marks without creating, repairing or resealing", () => {
     const setup = seeded();
     for (const stale of [null, "1\n", "three\n", "-1\n"]) {
       if (stale === null) rmSync(markPath(setup.vault));
-      else writeFileSync(markPath(setup.vault), stale);
-      const doctor = runCli(setup.env, "doctor");
-      expect(doctor.stderr).toBe("");
-      expect(doctor.stdout).toContain("events=3");
-      expect(readMark(setup.vault)).toBe("3\n");
+      else writeFileSync(markPath(setup.vault), stale, { mode: 0o600 });
+      for (const command of ["doctor", "query"]) {
+        const before = existsSync(markPath(setup.vault)) ? statSync(markPath(setup.vault), { bigint: true }) : null;
+        const result = command === "doctor" ? runCli(setup.env, "doctor") : runCli(setup.env, "query", "ada", "--scope", "ledger", "--json");
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toBe("");
+        if (command === "doctor") expect(result.stdout).toContain("events=3");
+        else expect(JSON.parse(result.stdout).status).toBe("ok");
+        if (stale === null) expect(existsSync(markPath(setup.vault))).toBe(false);
+        else {
+          expect(readMark(setup.vault)).toBe(stale);
+          const after = statSync(markPath(setup.vault), { bigint: true });
+          expect(after.ino).toBe(before!.ino);
+          expect(after.mtimeNs).toBe(before!.mtimeNs);
+        }
+      }
     }
+  }, 15_000);
+
+  test.each(["oversized", "nonprivate", "symlink"])("reads refuse %s marks before normal output", kind => {
+    const setup = seeded();
+    const outside = join(setup.root, "outside-mark");
+    if (kind === "symlink") {
+      writeFileSync(outside, "3\n", { mode: 0o600 });
+      rmSync(markPath(setup.vault));
+      symlinkSync(outside, markPath(setup.vault));
+    } else if (kind === "oversized") writeFileSync(markPath(setup.vault), "1".repeat(18));
+    else chmodSync(markPath(setup.vault), 0o644);
+    for (const command of ["doctor", "query"]) {
+      const result = command === "doctor" ? runCli(setup.env, "doctor") : runCli(setup.env, "query", "ada", "--scope", "ledger", "--json");
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("ledger");
+      expect(result.stdout).not.toContain("events=");
+      expect(result.stdout).not.toContain("\"hits\"");
+    }
+    if (kind === "symlink") expect(readFileSync(outside, "utf8")).toBe("3\n");
   });
+
+  test.each(["nonprivate-root", "nonprivate-mark", "dangling-mark"])("explicit init preserves a present mark when %s refuses admission", kind => {
+    const setup = tempVault();
+    const control = join(setup.vault, ".kizuki");
+    const mark = markPath(setup.vault);
+    const missing = join(setup.root, "missing-mark-target");
+    if (kind === "nonprivate-root") chmodSync(setup.vault, 0o775);
+    else if (kind === "nonprivate-mark") chmodSync(mark, 0o644);
+    else { rmSync(mark); symlinkSync(missing, mark); }
+    const beforeMark = lstatSync(mark, { bigint: true });
+    const beforeMode = statSync(setup.vault).mode;
+    const beforeNames = readdirSync(control).sort();
+    const beforeLedger = readFileSync(ledgerPath(setup.vault));
+    const result = runCli(setup.env, "init", setup.vault, "--adopt", "--no-service", "--no-default");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("ledger_mark_");
+    expect(result.stdout).toBe("");
+    expect(lstatSync(mark, { bigint: true })).toEqual(beforeMark);
+    expect(statSync(setup.vault).mode).toBe(beforeMode);
+    expect(readdirSync(control).sort()).toEqual(beforeNames);
+    expect(readFileSync(ledgerPath(setup.vault))).toEqual(beforeLedger);
+    expect(existsSync(missing)).toBe(false);
+  });
+
+  test("explicit init refuses a high floor before changing the short ledger or service intent", () => {
+    const setup = seeded();
+    parkLedger(setup);
+    const control = join(setup.vault, ".kizuki");
+    const beforeNames = readdirSync(control).sort();
+    const beforeLedger = readFileSync(ledgerPath(setup.vault));
+    const intent = join(control, "serve-intent");
+    const beforeIntent = existsSync(intent) ? readFileSync(intent) : null;
+    const result = runCli(setup.env, "init", setup.vault, "--no-service", "--no-default");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("vault ledger not ready");
+    expect(result.stdout).not.toContain("events=");
+    expect(readMark(setup.vault)).toBe("3\n");
+    expect(readFileSync(ledgerPath(setup.vault))).toEqual(beforeLedger);
+    expect(readdirSync(control).sort()).toEqual(beforeNames);
+    expect(existsSync(intent) ? readFileSync(intent) : null).toEqual(beforeIntent);
+  }, 15_000);
 
   test("purge keeps the mark monotonic so a receipted deletion never trips the gate", () => {
     const setup = seeded();

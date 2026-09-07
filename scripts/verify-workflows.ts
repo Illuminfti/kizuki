@@ -123,38 +123,127 @@ function validateJobs(
   return failures;
 }
 
+const UPLOAD_ARTIFACT_ACTION =
+  "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02";
+const SUCCESS_PRECONDITION = "${{ success() }}";
+const LINUX_PROOF_COMMAND =
+  'bun run build:release\nbun run smoke:release\nbun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-artifact-proof"';
+const LINUX_RECEIPT_CHECK = 'test -f "$RUNNER_TEMP/kizuki-artifact-proof/receipt.json"';
+const LINUX_ARTIFACT_NAME = "linux-x64-${{ github.event.pull_request.head.sha || github.sha }}";
+const LINUX_ARTIFACT_PATH =
+  "dist/kizuki-*/bun-linux-x64-baseline/\n${{ runner.temp }}/kizuki-artifact-proof/receipt.json";
+const MACOS_PROOF_COMMAND =
+  'bun run build:release\nbun run smoke:release\nbun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-macos-artifact-proof"';
+const MACOS_RECEIPT_CHECK = 'test -f "$RUNNER_TEMP/kizuki-macos-artifact-proof/receipt.json"';
+const MACOS_ARTIFACT_NAME = "macos-arm64-${{ github.sha }}";
+const MACOS_ARTIFACT_PATH =
+  "dist/kizuki-*/bun-darwin-arm64/\n${{ runner.temp }}/kizuki-macos-artifact-proof/receipt.json";
+const NATIVE_CONSUMER_TESTS = "bun test packages/core/test/export-portable-local.test.ts packages/cli/test/portable-connection-integrity.test.ts packages/cli/test/restore-connection-state.test.ts scripts/release-download.test.ts scripts/native-sqlite-vendor.test.ts packages/core/test/migration.test.ts packages/core/test/retrieval/fts5.test.ts packages/core/test/retrieval/fts5-erasure.test.ts packages/core/test/ledger-wal.test.ts packages/core/test/serve/boot-id.test.ts packages/cli/test/serve/restart.test.ts packages/core/test/descriptor-custody.test.ts packages/core/test/ledger-lifetime.test.ts packages/connector-ics/test/ingest-completion.test.ts packages/connectors/test/fleet-markdown-lifecycle.test.ts packages/cli/test/import-markdown-lifecycle.test.ts packages/core/test/ledger-identity.test.ts packages/cli/test/vault-identity.test.ts packages/cli/test/serve/supervisor-status.test.ts packages/core/test/serve/supervisor.test.ts packages/cli/test/rebuild.test.ts packages/core/test/ledger-mark.test.ts packages/cli/test/doctor/ledger-readiness.test.ts packages/core/test/canon/canon-files.test.ts packages/core/test/canon/receipt-stream.test.ts packages/core/test/canon/apply.test.ts packages/core/test/vault/mutation-scope.test.ts packages/core/test/vault/mutation-callers.test.ts packages/core/test/agents/credential-file.test.ts packages/core/test/agents/app-enrollment.test.ts packages/core/test/agents/enrollment-flow.test.ts packages/core/test/agents/enrollment-preview.test.ts packages/core/test/agents/enrollment-fault.test.ts packages/core/test/correction/correct.test.ts packages/core/test/correction/source-consent.test.ts packages/core/test/serve/stop-control.test.ts packages/cli/test/serve-stop.test.ts packages/core/test/serve/model-settings.test.ts packages/core/test/serve/model-diagnostics.test.ts packages/core/test/serve/app-http.test.ts packages/cli/test/app-host.test.ts packages/cli/test/app-agents.test.ts packages/cli/test/app-client.test.ts packages/cli/test/app-service.test.ts packages/cli/test/app-browser.test.ts packages/cli/test/app-model-settings.test.ts packages/cli/test/app-model-journey.test.ts packages/cli/test/app-privacy-races.test.ts packages/mcp/test/credential-stdio.test.ts packages/core/test/canon/crash-recovery.test.ts packages/core/test/canon/ordinary-receipt-recovery.test.ts packages/core/test/canon/staged-publication.test.ts packages/core/test/canon/recovery-boundaries.test.ts packages/cli/test/recovery-public.test.ts packages/core/test/serving/read-context.test.ts packages/cli/test/read-context.test.ts packages/core/test/canon/canon-files-ancestry.test.ts scripts/native-service-ancestry.test.ts packages/core/test/connections-operation-lock.test.ts packages/core/test/serve/custody-native.test.ts packages/core/test/serve/custody-observation.test.ts packages/core/test/serve/custody.test.ts packages/cli/test/serve/custody.test.ts";
+const CANONICAL_NATIVE_TMPDIR = "export TMPDIR=\"$(bun -e 'console.log(require(\"node:fs\").realpathSync(process.env.RUNNER_TEMP))')\"\nprintf 'TMPDIR=%s\\n' \"$TMPDIR\" >> \"$GITHUB_ENV\"";
+const FULL_QUALIFICATION = "${{ inputs.native_adapter_only != true }}";
+const ADAPTER_ONLY = "${{ inputs.native_adapter_only == true }}";
+const ADAPTER_RETAIN = "${{ !cancelled() && inputs.native_adapter_only == true }}";
+const ADAPTER_COMMAND =
+  'bun run typecheck\nbun scripts/darwin-native-canary.ts --report "$RUNNER_TEMP/kizuki-darwin-native-canary"\nbun test packages/core/test/util/native-loader.test.ts packages/core/test/util/native-enumeration.test.ts packages/core/test/util/owned-directory.test.ts packages/core/test/util/owned-directory-publication.test.ts';
+const ADAPTER_RECEIPT_CHECK = 'test -f "$RUNNER_TEMP/kizuki-darwin-native-canary/receipt.json"';
+const ADAPTER_ARTIFACT_NAME = "macos-native-adapter-${{ github.sha }}";
+const ADAPTER_ARTIFACT_PATH = "${{ runner.temp }}/kizuki-darwin-native-canary/";
+
+function commandLines(value: unknown): string {
+  return typeof value === "string" ? value.trim().split("\n").map(line => line.trim()).join("\n") : "";
+}
+
+function isBareCommand(step: unknown, command: string): boolean {
+  return isRecord(step) && Object.keys(step).every(key => ["name", "run"].includes(key)) &&
+    commandLines(step["run"]) === command;
+}
+
+function isConditionedCommand(step: unknown, command: string, condition: string): boolean {
+  return isRecord(step) && Object.keys(step).every(key => ["name", "run", "if"].includes(key)) &&
+    step["if"] === condition && commandLines(step["run"]) === command;
+}
+
+function isUploadArtifactStep(step: unknown): boolean {
+  return isRecord(step) && typeof step["uses"] === "string" &&
+    step["uses"].startsWith("actions/upload-artifact@");
+}
+
+function isNativeArtifactUpload(step: unknown, artifactName: string, artifactPath: string, condition = SUCCESS_PRECONDITION): boolean {
+  if (!isRecord(step) || !Object.keys(step).every(key => ["name", "uses", "with", "if"].includes(key)) ||
+      step["uses"] !== UPLOAD_ARTIFACT_ACTION || step["if"] !== condition ||
+      !isRecord(step["with"])) return false;
+  const actual = step["with"];
+  const expected: Record<string, unknown> = {
+    name: artifactName,
+    path: artifactPath,
+    "retention-days": 7,
+    "if-no-files-found": "error",
+  };
+  return Object.keys(actual).length === Object.keys(expected).length &&
+    Object.entries(expected).every(([key, value]) =>
+      typeof value === "string" ? commandLines(actual[key]) === value : actual[key] === value);
+}
+
 // This bounded manual proof has an ordered, closed execution contract. Names are
 // cosmetic; run bodies, action configuration and failure propagation are not.
 function hasMacNativeProof(document: Record<string, unknown>, job: Record<string, unknown>): boolean {
   const steps = job["steps"];
-  if (!Array.isArray(steps) || steps.length !== 8 || document["env"] !== undefined || document["defaults"] !== undefined ||
+  if (!Array.isArray(steps) || steps.length !== 12 || document["env"] !== undefined || document["defaults"] !== undefined ||
       job["defaults"] !== undefined || !isRecord(job["env"]) ||
       Object.keys(job["env"]).join() !== "KIZUKI_TARGET" || job["env"]["KIZUKI_TARGET"] !== "bun-darwin-arm64") return false;
-  const lines = (value: unknown): string => typeof value === "string" ? value.trim().split("\n").map(line => line.trim()).join("\n") : "";
-  const run = (index: number, command: string): boolean => {
-    const step = steps[index];
-    return isRecord(step) && Object.keys(step).every(key => ["name", "run"].includes(key)) && lines(step["run"]) === command;
-  };
   const action = (index: number, prefix: string, settings: Record<string, unknown>, condition?: string): boolean => {
     const step = steps[index];
     if (!isRecord(step) || !Object.keys(step).every(key => ["name", "uses", "with", "if"].includes(key)) ||
         typeof step["uses"] !== "string" || !step["uses"].startsWith(prefix + "@") || step["if"] !== condition || !isRecord(step["with"])) return false;
     const actual = step["with"];
     return Object.keys(actual).length === Object.keys(settings).length && Object.entries(settings).every(([key, value]) =>
-      typeof value === "string" ? lines(actual[key]) === value : actual[key] === value);
+      typeof value === "string" ? commandLines(actual[key]) === value : actual[key] === value);
   };
   return action(0, "actions/checkout", { "fetch-depth": 0, ref: "${{ github.event.pull_request.head.sha || github.sha }}" }) &&
-    run(1, "bash scripts/ci-restrict-origin-refs.sh") &&
+    isBareCommand(steps[1], "bash scripts/ci-restrict-origin-refs.sh") &&
     action(2, "oven-sh/setup-bun", { "bun-version": BUN_VERSION }) &&
-    run(3, "bun scripts/ci-diff-check.ts") &&
-    run(4, 'test "$(uname -s)" = Darwin\ntest "$(uname -m)" = arm64\nbun install --frozen-lockfile') &&
-    run(5, "bun run typecheck\nbun test scripts/release-targets.test.ts scripts/release-artifacts.test.ts scripts/stranger-proof.test.ts packages/core/test/serve/advisory-file-lock.test.ts packages/core/test/serve/flock.test.ts packages/core/test/serve/leases.test.ts packages/core/test/serve/units.test.ts packages/core/test/serve/service-arguments.test.ts packages/cli/test/config.test.ts packages/cli/test/terminal-prompt.test.ts packages/tui/test/terminal.test.ts packages/retrieval-pg/test/contention.test.ts scripts/native-platform.test.ts") &&
-    run(6, 'bun run build:release\nbun run smoke:release\nbun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-macos-artifact-proof"') &&
-    action(7, "actions/upload-artifact", {
-      name: "macos-arm64-${{ github.sha }}",
-      path: "dist/kizuki-*/bun-darwin-arm64/\n${{ runner.temp }}/kizuki-macos-artifact-proof/receipt.json",
-      "retention-days": 7, "if-no-files-found": "error",
-    }, "${{ always() }}");
+    isBareCommand(steps[3], "bun scripts/ci-diff-check.ts") &&
+    isBareCommand(steps[4], 'test "$(uname -s)" = Darwin\ntest "$(uname -m)" = arm64\nbun install --frozen-lockfile\n' + CANONICAL_NATIVE_TMPDIR) &&
+    isConditionedCommand(steps[5], "bun run typecheck\nbun test scripts/release-targets.test.ts scripts/release-artifacts.test.ts scripts/stranger-proof.test.ts packages/core/test/serve/advisory-file-lock.test.ts packages/core/test/serve/flock.test.ts packages/core/test/serve/leases.test.ts packages/core/test/serve/units.test.ts packages/core/test/serve/service-arguments.test.ts packages/cli/test/config.test.ts packages/cli/test/terminal-prompt.test.ts packages/tui/test/terminal.test.ts packages/retrieval-pg/test/contention.test.ts scripts/native-platform.test.ts\n" + NATIVE_CONSUMER_TESTS, FULL_QUALIFICATION) &&
+    isConditionedCommand(steps[6], MACOS_PROOF_COMMAND, FULL_QUALIFICATION) &&
+    isConditionedCommand(steps[7], MACOS_RECEIPT_CHECK, FULL_QUALIFICATION) &&
+    isNativeArtifactUpload(steps[8], MACOS_ARTIFACT_NAME, MACOS_ARTIFACT_PATH, "${{ success() && inputs.native_adapter_only != true }}") &&
+    isConditionedCommand(steps[9], ADAPTER_COMMAND, ADAPTER_RETAIN) &&
+    isConditionedCommand(steps[10], ADAPTER_RECEIPT_CHECK, ADAPTER_RETAIN) &&
+    isNativeArtifactUpload(steps[11], ADAPTER_ARTIFACT_NAME, ADAPTER_ARTIFACT_PATH, ADAPTER_RETAIN);
+}
+
+function hasNativeLifecycleProof(job: unknown): boolean {
+  if (!isRecord(job) || job["if"] !== "${{ inputs.existing_allowance_verified == true && inputs.native_lifecycle_only == true }}" ||
+      job["runs-on"] !== "${{ matrix.os }}" || job["timeout-minutes"] !== 15 || job["env"] !== undefined || job["defaults"] !== undefined ||
+      !isRecord(job["strategy"]) || job["strategy"]["fail-fast"] !== false || !isRecord(job["strategy"]["matrix"]) ||
+      JSON.stringify(job["strategy"]["matrix"]) !== JSON.stringify({ os: ["ubuntu-24.04", "macos-15"] })) return false;
+  const steps = job["steps"];
+  if (!Array.isArray(steps) || steps.length !== 9) return false;
+  const action = (step: unknown, prefix: string, settings: Record<string, unknown>) => isRecord(step) &&
+    Object.keys(step).every(key => ["name", "uses", "with"].includes(key)) && typeof step["uses"] === "string" &&
+    step["uses"].startsWith(prefix + "@") && JSON.stringify(step["with"]) === JSON.stringify(settings);
+  return action(steps[0], "actions/checkout", { "fetch-depth": 0, ref: "${{ github.event.pull_request.head.sha || github.sha }}" }) &&
+    isBareCommand(steps[1], "bash scripts/ci-restrict-origin-refs.sh") &&
+    action(steps[2], "oven-sh/setup-bun", { "bun-version": BUN_VERSION }) &&
+    isBareCommand(steps[3], "bun scripts/ci-diff-check.ts") &&
+    isBareCommand(steps[4], "bun install --frozen-lockfile\n" + CANONICAL_NATIVE_TMPDIR + "\nbun run typecheck\nbun test scripts/native-service-lifecycle.test.ts scripts/native-launchctl-diagnostics.test.ts scripts/native-baseline-package.test.ts scripts/native-model-matrix.test.ts scripts/native-recovery-fixtures.test.ts scripts/native-lifecycle-proof.test.ts\n" + NATIVE_CONSUMER_TESTS) &&
+    isConditionedCommand(steps[5], 'sudo systemctl start "user@$(id -u).service"\nprintf \'XDG_RUNTIME_DIR=/run/user/%s\\n\' "$(id -u)" >> "$GITHUB_ENV"\nprintf \'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus\\n\' "$(id -u)" >> "$GITHUB_ENV"', "${{ runner.os == 'Linux' }}") &&
+    isBareCommand(steps[6], 'bun run build:release\nbun run smoke:release\nbun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-native-artifact-proof"\nbun scripts/native-baseline-package.ts --out "$RUNNER_TEMP/kizuki-native-baseline"') &&
+    isBareCommand(steps[7], 'KIZUKI_NATIVE_MAC_STARTUP_CAPTURE=${{ inputs.mac_startup_capture && \'1\' || \'0\' }} bun scripts/native-service-lifecycle.ts --baseline-artifact "$RUNNER_TEMP/kizuki-native-baseline/package" --report "$RUNNER_TEMP/kizuki-native-service-lifecycle"') &&
+    isNativeArtifactUpload(steps[8], "native-service-lifecycle-${{ matrix.os }}-${{ github.sha }}", "dist/kizuki-*/bun-linux-x64-baseline/\ndist/kizuki-*/bun-darwin-arm64/\n${{ runner.temp }}/kizuki-native-artifact-proof/receipt.json\n${{ runner.temp }}/kizuki-native-service-lifecycle/receipt.json", "${{ !cancelled() }}");
+}
+
+function hasLinuxNativeProof(document: Record<string, unknown>, job: Record<string, unknown>): boolean {
+  const steps = job["steps"];
+  if (!Array.isArray(steps) || steps.length < 4 || document["defaults"] !== undefined ||
+      job["defaults"] !== undefined) return false;
+  const suffix = steps.length - 4;
+  return isBareCommand(steps[suffix], LINUX_PROOF_COMMAND) &&
+    isBareCommand(steps[suffix + 1], "bun scripts/ci-diff-check.ts") &&
+    isBareCommand(steps[suffix + 2], LINUX_RECEIPT_CHECK) &&
+    steps.filter(isUploadArtifactStep).length === 1 &&
+    isNativeArtifactUpload(steps[steps.length - 1], LINUX_ARTIFACT_NAME, LINUX_ARTIFACT_PATH);
 }
 
 export function validateWorkflowText(path: string, text: string): WorkflowFailure[] {
@@ -182,6 +271,14 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
     if (document["name"] !== "ci") {
       failures.push({ path, reason: 'ci.yml name must remain "ci"' });
     }
+    const jobs = document["jobs"];
+    const job = isRecord(jobs) ? jobs["test"] : undefined;
+    if (isRecord(job) && !hasLinuxNativeProof(document, job)) {
+      failures.push({
+        path,
+        reason: "ci test must verify the native proof receipt before retaining the Linux package",
+      });
+    }
   }
 
   if (path.endsWith("/macos-native.yml")) {
@@ -190,14 +287,20 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
     const inputs = isRecord(dispatch) ? dispatch["inputs"] : undefined;
     const allowance = isRecord(inputs) ? inputs["existing_allowance_verified"] : undefined;
     const base = isRecord(inputs) ? inputs["base_sha"] : undefined;
+    const adapterOnly = isRecord(inputs) ? inputs["native_adapter_only"] : undefined;
+    const lifecycleOnly = isRecord(inputs) ? inputs["native_lifecycle_only"] : undefined;
+    const startupCapture = isRecord(inputs) ? inputs["mac_startup_capture"] : undefined;
     const jobs = document["jobs"];
     const job = isRecord(jobs) ? jobs["native-arm64"] : undefined;
     const steps = isRecord(job) ? job["steps"] : undefined;
     if (!isRecord(trigger) || Object.keys(trigger).join() !== "workflow_dispatch" ||
         !isRecord(allowance) || allowance["type"] !== "boolean" || allowance["default"] !== false || allowance["required"] !== true ||
         !isRecord(base) || base["type"] !== "string" || base["required"] !== true ||
-        !isRecord(jobs) || Object.keys(jobs).join() !== "native-arm64" || !isRecord(job) ||
-        job["if"] !== "${{ inputs.existing_allowance_verified == true }}" || job["runs-on"] !== "macos-15" || job["timeout-minutes"] !== 15 || job["strategy"] !== undefined ||
+        !isRecord(adapterOnly) || adapterOnly["type"] !== "boolean" || adapterOnly["default"] !== false || adapterOnly["required"] !== false ||
+        !isRecord(lifecycleOnly) || lifecycleOnly["type"] !== "boolean" || lifecycleOnly["default"] !== false || lifecycleOnly["required"] !== false ||
+        !isRecord(startupCapture) || startupCapture["type"] !== "boolean" || startupCapture["default"] !== false || startupCapture["required"] !== false ||
+        !isRecord(jobs) || Object.keys(jobs).sort().join() !== "native-arm64,native-service" || !isRecord(job) || !hasNativeLifecycleProof(jobs["native-service"]) ||
+        job["if"] !== "${{ inputs.existing_allowance_verified == true && inputs.native_lifecycle_only != true }}" || job["runs-on"] !== "macos-15" || job["timeout-minutes"] !== 15 || job["strategy"] !== undefined ||
         !hasMacNativeProof(document, job) || !Array.isArray(steps) || !steps.some(step => isRecord(step) && step["if"] === undefined && step["run"] === "bun scripts/ci-diff-check.ts") ||
         !steps.some(step => isRecord(step) && typeof step["uses"] === "string" && step["uses"].startsWith("actions/checkout@"))) {
       failures.push({ path, reason: "macOS proof must retain its manual allowance gate, native tests, immutable build and retained artifact proof" });

@@ -21,8 +21,8 @@ import type { Fixture } from "./helpers";
 
 let fixture: Fixture;
 
-beforeAll(() => {
-  fixture = serveFixture();
+beforeAll(async () => {
+  fixture = await serveFixture();
 });
 
 afterAll(() => {
@@ -260,8 +260,8 @@ describe("the serving gate", () => {
 describe("authority is re-read on every served call", () => {
   let live: Fixture;
 
-  beforeEach(() => {
-    live = serveFixture();
+  beforeEach(async () => {
+    live = await serveFixture();
   });
 
   afterEach(() => {

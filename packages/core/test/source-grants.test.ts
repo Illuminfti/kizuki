@@ -22,7 +22,7 @@ import { mineLiveDrafts } from "../src/serve/extract";
 import { claimInput, FixtureVectorPort } from "./claims/helpers";
 import type { ProducerPort, ProduceInput } from "../src/contracts/producer";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -548,7 +548,7 @@ test("source completion stays retryable when identity residue appears after publ
   }
 });
 
-test("native resume cannot drop a revoked citation and expose surviving mixed canon text", async () => {
+test("unrecorded mixed canon remains withheld before and after source revocation", async () => {
   const { db, dir, a, b } = setup();
   try {
     grant(db, a);
@@ -583,7 +583,9 @@ test("native resume cannot drop a revoked citation and expose surviving mixed ca
       "Synthetic mixed source text.",
     );
     const owner = { db, vaultPath: dir, principal: OWNER };
-    expect(serveGetPage(owner, { id: "fact:mixed" }).canon).toHaveLength(1);
+    const original = readFileSync(join(dir, "facts/mixed.md"), "utf8");
+    // A raw page has no recorded revision even while both sources are live.
+    expect(serveGetPage(owner, { id: "fact:mixed" }).canon).toHaveLength(0);
     revokeSourceGrant(db, {
       source_key: a,
       expected_revision: 1,
@@ -596,6 +598,7 @@ test("native resume cannot drop a revoked citation and expose surviving mixed ca
     expect(inspectSourceGrant(db, a)?.purge_blockers).toContain(
       "canon_rewrite_pending",
     );
+    expect(readFileSync(join(dir, "facts/mixed.md"), "utf8")).toBe(original);
   } finally {
     db.close();
   }
@@ -1816,18 +1819,21 @@ for (const replacement of ["symlink", "regular", "during-commit"] as const) {
         fs.writeFileSync(outside, "UNRELATED_OWNER_BYTES\n", { mode: 0o600 });
         const inode = fs.lstatSync(log).ino;
         const originalRead = fs.readFileSync;
+        const originalReadSync = fs.readSync;
         const before = originalRead(log, "utf8");
         let swapped = false;
-        const spy = spyOn(fs, "readFileSync").mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
-            const result = originalRead(...args);
-            if (replacement !== "during-commit" && !swapped && typeof args[0] === "number" && fs.fstatSync(args[0]).ino === inode) {
+        // Native receipt custody reads its checked descriptor with readSync.
+        // Replace the name after the real read, before the stream verifies it again.
+        const spy = spyOn(fs, "readSync").mockImplementation(((...args: Parameters<typeof fs.readSync>) => {
+            const result = originalReadSync(...args);
+            if (replacement !== "during-commit" && !swapped && result > 0 && fs.fstatSync(args[0]).ino === inode) {
                 swapped = true;
                 fs.renameSync(log, old);
                 if (replacement === "symlink") fs.symlinkSync(outside, log);
                 else fs.writeFileSync(log, "", { mode: 0o600 });
             }
             return result;
-        }) as typeof fs.readFileSync);
+        }) as typeof fs.readSync);
         const originalQuery = db.query.bind(db);
         const querySpy = replacement === "during-commit" ? spyOn(db, "query").mockImplementation(((sql: string) => {
             const statement = originalQuery(sql);

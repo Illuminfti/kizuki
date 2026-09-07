@@ -1,4 +1,4 @@
-import { credentialCustodyQualified } from "./custody-fixture";
+import { credentialCustodyQualified, initializeEnrollmentLedger } from "./custody-fixture";
 import { describe, expect, test } from "bun:test";
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,7 +16,7 @@ function request(destination: string) {
 function fixture(): { vault: string; dbPath: string; credentialDir: string; clean(): void } {
   const vault = mkdtempSync(join(tmpdir(), "kizuki-enrollment-preview-"));
   const control = join(vault, ".kizuki"); mkdirSync(control); chmodSync(control, 0o700);
-  const dbPath = join(control, "kizuki.db"); const db = openLedger(dbPath); db.close(true); chmodSync(dbPath, 0o600);
+  const dbPath = join(control, "kizuki.db"); initializeEnrollmentLedger(dbPath);
   const credentialDir = mkdtempSync(join(tmpdir(), "kizuki-enrollment-credential-")); chmodSync(credentialDir, 0o700);
   return { vault, dbPath, credentialDir, clean: () => { rmSync(vault, { recursive: true, force: true }); rmSync(credentialDir, { recursive: true, force: true }); } };
 }
@@ -180,8 +180,27 @@ describe.if(credentialCustodyQualified)("agent enrollment preview", () => {
   test("reads a current initialized ledger without changing it", () => {
     const f = fixture();
     try {
+      expect(readdirSync(join(f.vault, ".kizuki"))).toEqual(["kizuki.db"]);
       const before = [footprint(f.vault), footprint(f.credentialDir)];
       expect(previewAgentEnrollment(f.vault, request(join(f.credentialDir, "credential.json")))).toMatchObject({ status: "preview", authority: "none", credential: "absent" });
+      expect([footprint(f.vault), footprint(f.credentialDir)]).toEqual(before);
+    } finally { f.clean(); }
+  });
+
+  test("refuses preview while an actual writer has committed WAL, then reads after its clean close", () => {
+    const f = fixture();
+    try {
+      const db = openLedger(f.dbPath);
+      try {
+        db.exec("CREATE TABLE preview_active_writer (n INTEGER); INSERT INTO preview_active_writer VALUES (1)");
+        expect(lstatSync(`${f.dbPath}-wal`).size).toBeGreaterThan(0);
+        const before = [footprint(f.vault), footprint(f.credentialDir)];
+        expect(() => previewAgentEnrollment(f.vault, request(join(f.credentialDir, "credential.json")))).toThrow("enrollment_busy");
+        expect([footprint(f.vault), footprint(f.credentialDir)]).toEqual(before);
+      } finally { db.close(true); }
+      expect(readdirSync(join(f.vault, ".kizuki"))).toEqual(["kizuki.db"]);
+      const before = [footprint(f.vault), footprint(f.credentialDir)];
+      expect(previewAgentEnrollment(f.vault, request(join(f.credentialDir, "credential.json"))).status).toBe("preview");
       expect([footprint(f.vault), footprint(f.credentialDir)]).toEqual(before);
     } finally { f.clean(); }
   });

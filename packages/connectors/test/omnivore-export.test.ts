@@ -313,6 +313,7 @@ test("an unzipped export reads from disk exactly as from memory", async () => {
       batch.events.map((event) => ({ ...event, observed_at: "" })),
     ).toEqual(fixture.map((event) => ({ ...event, observed_at: "" })));
     expect(await connector.purgeSource("omnivore:self")).toEqual({
+      complete: true,
       subject_id: "omnivore:self",
       source_record_ids: [],
       unreachable_source_record_ids: [

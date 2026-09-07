@@ -23,7 +23,16 @@ export interface CorrectInput {
   dry_run?: boolean;
 }
 
+export interface CanonRecoveryPending {
+  receipt_id: string;
+  page_path: string;
+  phase: 'write' | 'projection';
+}
+
 export interface CorrectResult {
+  /** Present when completion is held. Entries name only known affected pages;
+   * an empty array reports a blocking hold without disclosing unrelated metadata. */
+  recovery_pending?: CanonRecoveryPending[];
   receipt_id: string | null;
   event_id: string;
   claim_ids: string[];

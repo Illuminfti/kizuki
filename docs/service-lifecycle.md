@@ -16,6 +16,9 @@ intent; the command refuses to claim successful removal.
 Removing or restoring a systemd definition also reloads the manager's definition
 cache and checks the resulting runtime state before finalizing intent. A failed
 reload keeps recovery pending until a later invocation can prove restoration.
+When uninstalling a stopped systemd service that retains a failure record,
+Kizuki resets that unit's failure record before removing the definition. It
+checks the stopped state again; it does not reset failures for other units.
 
 Definitions and service intent use bounded private files, atomic replacement and
 directory synchronization. A process lock serializes changes for one vault. A
@@ -24,11 +27,19 @@ activation or removal is confirmed. Failed changes restore the previous
 configuration when possible. If recovery cannot confirm the service transition,
 the snapshot stays pending and doctor reports it. Retry the same install or
 uninstall operation with the original service home after resolving the reported
-supervisor failure; the command first recovers the previous configuration.
+supervisor failure; the command first resolves the pending transaction.
 Recovery is bound to the original vault identity, vault location and unit location.
 If any changes, recovery retains the journal and refuses to touch another service.
 An unknown or inconsistent prior supervisor state prevents a new change. Invalid
 intent is reported as unknown and unhealthy; it is never silently treated as an opt-out.
+
+Removing a loaded macOS service with a confirmed nonzero exit uses a persistent
+removal request. If removal is interrupted, the next invocation resumes unloading
+the service and removing its definition. It never restarts the failed service as
+part of recovery. The request remains until absence, removal and the opt-out are
+confirmed. A changed definition or unknown manager state retains the request and
+refuses further changes. After recovery finishes, an explicit install may start
+the currently selected executable.
 
 On Linux, a valid absolute `XDG_CONFIG_HOME` selects the configuration root, with
 units in `systemd/user` below it. Otherwise the root is `$HOME/.config`.
@@ -37,11 +48,18 @@ Relative XDG paths are ignored, as required by the
 macOS uses `$HOME/Library/LaunchAgents`.
 
 Symlinked, shared-writable, hardlinked and non-owned service files are refused.
-The native Linux package currently qualifies the process-lock boundary. macOS
-packaging, lock execution, launchd activation and real install/upgrade/restart
-proofs remain required qualification work. Synthetic command-adapter tests do
-not establish that a service is installed on a user's machine.
+Native qualification must run against the exact candidate on both Linux and
+macOS, including process locks, installation, upgrade, restart and removal.
+Synthetic command-adapter tests do not establish that a service is installed on
+a user's machine.
 
-`serve stop` sends a termination request and reports that request. The supervisor
-may restart the daemon according to its configured policy. Use `serve --uninstall`
+`serve stop` queues a private request for the current daemon instance and reports
+`stop request queued`; it does not signal a PID or claim the process has exited.
+The daemon checks the request between rails and within one second while idle,
+finishes an active rail, and releases its runtime, process marker and writer lease.
+Concurrent requests are idempotent. A busy writer is retried for up to one second;
+continued contention reports a retryable error. Malformed, legacy or unsafe
+control files are refused, and requests for an old instance cannot stop a successor.
+The supervisor may restart the daemon according to its configured policy.
+Use `serve --uninstall`
 when the intended result is removal from automatic supervision.

@@ -1,8 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { applyCanonWrite } from "../../src/canon/apply";
+import { recoverCanonWrites } from "../../src/canon/recovery";
 import { createBudgetTracker } from "../../src/canon/budget";
 import { resolveTarget, type TargetDecision } from "../../src/canon/arbiter";
 import { CanonPageUnreadable } from "../../src/canon/store";
@@ -175,7 +177,8 @@ test.each(["before publication", "after publication"] as const)("a second proces
     import { openLedger } from ${JSON.stringify(join(repo, "packages/core/src/ledger/db.ts"))};
     import { accept } from ${JSON.stringify(join(repo, "packages/core/src/ledger/ledger.ts"))};
     import { insertClaim } from ${JSON.stringify(join(repo, "packages/core/src/claims/store.ts"))};
-    import { applyCanonWrite } from ${JSON.stringify(join(repo, "packages/core/src/canon/apply.ts"))};
+    import { applyCanonWriteOwned } from ${JSON.stringify(join(repo, "packages/core/src/canon/apply.ts"))};
+    import { snapshotCanonIo, withCanonMutationSync, requireCanonFiles } from ${JSON.stringify(join(repo, "packages/core/src/canon/io.ts"))};
     import { createBudgetTracker } from ${JSON.stringify(join(repo, "packages/core/src/canon/budget.ts"))};
     const vault = ${JSON.stringify(vault)}, db = openLedger(join(vault, ".kizuki/kizuki.db"));
     if (${JSON.stringify(phase)} === "before publication") {
@@ -198,19 +201,23 @@ test.each(["before publication", "after publication"] as const)("a second proces
     const accepted = accept(db, event); if (accepted.status !== "stored") throw Error("event not stored");
     const filed = await insertClaim({db}, {kind:"claim",target:"people/grace",subject:"person:grace",predicate:"employment.works_at",object:"acme",polarity:"positive",body:"Grace runs partnerships at Acme.",frontmatter:{type:"person",title:"Grace"},provenance:[accepted.event.event_id],subjects:["person:grace"],producer:"deterministic",confidence:.8,sensitivity:"personal",taint:"clean",events:[{event_id:accepted.event.event_id,connector_id:"fixture",taint:"untrusted",text:event.text}]});
     if (filed.outcome !== "stored") throw Error("claim not stored");
-    applyCanonWrite({db,vault_path:vault,now:()=>{ console.log("page-written"); readFileSync(0,"utf8"); return "2026-09-05T00:00:00.000Z";}}, filed.claim, {action:"create",rel_path:"people/grace.md"}, {writer:"loop",budget:createBudgetTracker({canon_writes_per_run:1})});
+    withCanonMutationSync(snapshotCanonIo({db,vault_path:vault,now:()=>"2026-09-05T00:00:00.000Z"}), (scope, owned)=>{
+      const files=requireCanonFiles(scope,owned), publish=files.publish.bind(files);
+      files.publish=(...args)=>{const result=publish(...args); if (${JSON.stringify(phase)} === "after publication") { console.log("page-written"); readFileSync(0,"utf8"); } return result;};
+      applyCanonWriteOwned(scope,owned,filed.claim,{action:"create",rel_path:"people/grace.md"},{writer:"loop",budget:createBudgetTracker({canon_writes_per_run:1})});
+    });
   `], { cwd: repo, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
   const reader = child.stdout.getReader();
   try {
     const ready = await within(reader.read());
     expect(new TextDecoder().decode(ready.value)).toContain(phase === "before publication" ? "intent-committed" : "page-written");
-    const parent = openLedger(join(vault, ".kizuki", "kizuki.db"));
+    // Completion now owns an immediate SQLite transaction across publication.
+    // A concurrent reader can inspect the earlier durable intent; another
+    // writer must wait for completion or process death.
+    const parent = new Database(join(vault, ".kizuki", "kizuki.db"), { readonly: true });
     try {
-      if (phase === "after publication") {
-        const bytes = readFileSync(join(vault, "people/grace.md"), "utf8");
-        expect(accept(parent, { ...validEvent(), source_record_id: "two-process-copy", text: bytes }))
-          .toMatchObject({ status: "stored", event: { origin: "self" } });
-      } else expect(existsSync(join(vault, "people/grace.md"))).toBe(false);
+      expect(() => recoverCanonWrites({ db: parent, vault_path: vault })).toThrow("canon writer is busy");
+      expect(existsSync(join(vault, "people/grace.md"))).toBe(phase === "after publication");
       expect(parent.query("SELECT 1 FROM canon_receipts").get()).toBeNull();
       expect(parent.query("SELECT 1 FROM canon_machine_byte_intents").get()).not.toBeNull();
     } finally { parent.close(); }
@@ -224,6 +231,11 @@ test.each(["before publication", "after publication"] as const)("a second proces
   try {
     expect(recovered.query("SELECT 1 FROM canon_receipts").get()).toBeNull();
     expect(recovered.query("SELECT 1 FROM canon_machine_byte_intents").get()).not.toBeNull();
+    if (phase === "after publication") {
+      const bytes = readFileSync(join(vault, "people/grace.md"), "utf8");
+      expect(accept(recovered, { ...validEvent(), source_record_id: "two-process-copy", text: bytes }))
+        .toMatchObject({ status: "stored", event: { origin: "self" } });
+    }
   } finally { recovered.close(); }
 });
 
@@ -240,7 +252,7 @@ test("an unreadable loop target and nested admission are rejected before a byte 
     const target = resolveTarget({ db, vault_path: vault }, claim);
     expect(() => db.transaction(() => applyCanonWrite({ db, vault_path: vault }, claim, target, {
       writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 4 }),
-    }))()).toThrow("top-level transaction");
+    }))()).toThrow("nested_transaction");
     expect(existsSync(join(vault, targetPath(target)))).toBe(false);
     expect(db.query("SELECT receipt_id FROM canon_machine_byte_intents").all()).toHaveLength(0);
   } finally { db.close(); }
@@ -263,7 +275,7 @@ test("a loop revision refused by an occupied archive retains its committed byte 
     expect(target.action).toBe("edit");
     expect(() => applyCanonWrite({ db, vault_path: vault, ids: () => receiptId }, claim, target, {
       writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 4 }),
-    })).toThrow("Refusing to overwrite an archive copy");
+    })).toThrow("Refusing a changed archive copy");
     const intent = db.query<{ before_hash: string; after_hash: string }, [string]>(
       "SELECT before_hash, after_hash FROM canon_machine_byte_intents WHERE receipt_id = ?",
     ).get(receiptId);

@@ -219,6 +219,7 @@ describe("purge plans", () => {
     const { connector, resolve } = connectorFor(server());
     await connector.connect(resolve);
     const plan = await connector.purgeSource("email:ada@acme.example");
+    expect(plan.complete).toBe(true);
     expect(plan.subject_id).toBe("email:ada@acme.example");
     expect(plan.source_record_ids).toEqual([]);
     expect(plan.unreachable_source_record_ids.length).toBeGreaterThan(0);
@@ -232,10 +233,12 @@ describe("purge plans", () => {
     const { connector, resolve } = connectorFor(server());
     const before = await connector.purgeSource("email:ada@acme.example");
     expect(before.unreachable_source_record_ids).toEqual([]);
+    expect(before.complete).toBe(false);
 
     await connector.connect(resolve);
     const other = await connector.purgeSource("conformance:subject");
     expect(other).toEqual({
+      complete: false,
       subject_id: "conformance:subject",
       source_record_ids: [],
       unreachable_source_record_ids: [],
@@ -247,6 +250,7 @@ describe("purge plans", () => {
     await connector.connect(resolve);
     const plan = await connector.purgeSource('email:a"b@acme.example');
     expect(plan.unreachable_source_record_ids).toEqual([]);
+    expect(plan.complete).toBe(false);
   });
 
   test("a subject id whose code points mask down to CR, LF or SPACE sends nothing", async () => {
@@ -261,8 +265,28 @@ describe("purge plans", () => {
     fake.received.length = 0;
     const plan = await connector.purgeSource(hostile);
     expect(plan.unreachable_source_record_ids).toEqual([]);
+    expect(plan.complete).toBe(false);
     expect(fake.received).toEqual([]);
   });
+
+  for (const count of [10_000, 10_001]) {
+    test(`search match cap reports completeness honestly at ${count} records`, async () => {
+      const fake = server(), folder = fake.folder("INBOX"), sample = folder.messages[0]!;
+      folder.messages = Array.from({ length: count }, (_, index) => ({ ...sample, uid: index + 1 }));
+      folder.uidnext = count + 1;
+      const { connector, resolve } = connectorFor(fake);
+      await connector.connect(resolve);
+      const before = folder.messages.map(message => [message.uid, Buffer.from(message.raw).toString("hex")]);
+      const plan = await connector.purgeSource("email:ada@acme.example");
+      expect(plan.complete).toBe(count <= 10_000);
+      expect(plan.source_record_ids).toEqual([]);
+      expect(plan.unreachable_source_record_ids).toHaveLength(10_000);
+      expect(plan.unreachable_source_record_ids[0]).toBe("42:1:INBOX");
+      expect(plan.unreachable_source_record_ids[9_999]).toBe("42:10000:INBOX");
+      expect(plan.continuation).toBeUndefined();
+      expect(folder.messages.map(message => [message.uid, Buffer.from(message.raw).toString("hex")])).toEqual(before);
+    });
+  }
 
   test("every line a purge sends is one of the sanctioned read-only commands", async () => {
     const fake = server();

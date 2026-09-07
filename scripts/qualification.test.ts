@@ -4,12 +4,14 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, appendFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { checksumManifest } from "./release-artifacts";
-import { initQualification, sampleQualification, statusQualification, strictReceiptProjection } from "./qualification";
+import { writePackageFixture } from "./release-package-fixture";
+import { distributionIdentity } from "./release-notices";
+import { CURRENT_PACKAGE_FILES, checksumManifest } from "./release-artifacts";
+import { cliDiagnostic, initQualification, sampleQualification, statusQualification, strictReceiptProjection } from "./qualification";
 import { initVault } from "../packages/core/src/vault/init";
 import { openLedger } from "../packages/core/src/ledger/db";
 import { initServe } from "../packages/core/src/serve/schema";
-import { ARTIFACT_PACKAGE_FILES, artifactProofSteps, SQLITE_ENGINE_POLICY } from "./artifact-proof";
+import { ARTIFACT_PACKAGE_FILES, ArtifactProofError, artifactProofSteps, SQLITE_ENGINE_POLICY } from "./artifact-proof";
 import type { ArtifactProofSchema } from "./artifact-proof";
 import type { SqliteRuntime } from "../packages/core/src/ledger/runtime";
 const dirs:string[]=[];
@@ -293,4 +295,92 @@ test("model identity digests are strict semantic evidence without copying the mo
  expect(project("a".repeat(64)).sha256).not.toBe(project("b".repeat(64)).sha256);
  expect(JSON.stringify(project("a".repeat(64)))).not.toContain("model_ref_sha256");
  for(const invalid of ["SYNTHETIC_PRIVATE_IDENTITY", "A".repeat(64), "a".repeat(63), null, {}]) expect(()=>project(invalid)).toThrow("invalid receipt model identity");
+});
+
+test("identity and rail policy accept reordered keys and refuse a changed value",()=>{
+ const reverse=(value:Record<string,unknown>)=>Object.fromEntries(Object.entries(value).reverse());
+ const canonical=(value:unknown):string=>JSON.stringify(value,(_key,item)=>item&&typeof item==="object"&&!Array.isArray(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
+ const f=fixture();initQualification(f.artifact,f.proof,f.scope,f.out);
+ const path=join(f.out,"manifest.json"), original=readFileSync(path,"utf8"), manifest=JSON.parse(original);
+ const reordered={...manifest,identity:reverse(manifest.identity),profile:{...manifest.profile,rails:manifest.profile.rails.map((rail:Record<string,unknown>)=>reverse(rail))}};
+ const rewritten=JSON.stringify(reordered)+"\n";
+ expect(rewritten).not.toBe(original);
+ writeFileSync(path,rewritten);
+ expect(statusQualification(f.out).identity.source_sha).toBe("a".repeat(40));
+ expect(sampleQualification(f.out).issues).not.toContain("schedule-profile-changed");
+ const db=openLedger(join(f.vault,".kizuki/kizuki.db"));db.exec("UPDATE schedules SET period_s = period_s + 1");db.close();
+ expect(sampleQualification(f.out).issues).toContain("schedule-profile-changed");
+ const g=fixture();initQualification(g.artifact,g.proof,g.scope,g.out);
+ const changedPath=join(g.out,"manifest.json"), changed=JSON.parse(readFileSync(changedPath,"utf8"));
+ changed.identity.target="synthetic-other-target";
+ writeFileSync(changedPath,JSON.stringify(changed)+"\n");
+ const genesisPath=join(g.out,"genesis.json"), genesis=JSON.parse(readFileSync(genesisPath,"utf8"));
+ genesis.manifest_sha256=hash(canonical(changed));
+ writeFileSync(genesisPath,JSON.stringify(genesis)+"\n");
+ expect(()=>statusQualification(g.out)).toThrow("artifact or proof identity changed");
+});
+
+test("CLI maps JSON, filesystem and SQLite failures to content-free diagnostics",()=>{
+ const sentinel="NEUTRAL_INPUT_SENTINEL";
+ const f=fixture();
+ const cli=(args:string[])=>Bun.spawnSync([process.execPath,join(import.meta.dir,"qualification.ts"),...args],{stdout:"pipe",stderr:"pipe"});
+ const failed=(result:ReturnType<typeof cli>, diagnostic:string)=>{
+  expect(result.exitCode).toBe(1);
+  expect(result.stdout.toString()).toBe("");
+  expect(result.stderr.toString()).toBe(diagnostic+"\n");
+  expect(result.stderr.toString()).not.toContain(sentinel);
+ };
+ writeFileSync(f.scope,sentinel);
+ failed(cli(["init","--artifact",f.artifact,"--proof",f.proof,"--scope",f.scope,"--out",f.out]),"qualification json unreadable");
+ failed(cli(["status","--run",join(f.root,sentinel)]),"qualification filesystem unreadable");
+ writeFileSync(f.scope,JSON.stringify({scope:"fixture",vault:f.vault,brief_hour:7,timezone:"UTC",supervisor:"none"}));
+ for(const suffix of ["-wal","-shm","-journal"]) rmSync(join(f.vault,".kizuki/kizuki.db"+suffix),{force:true});
+ writeFileSync(join(f.vault,".kizuki/kizuki.db"),sentinel);
+ failed(cli(["init","--artifact",f.artifact,"--proof",f.proof,"--scope",f.scope,"--out",f.out]),"qualification sqlite unreadable");
+ const usage=cli([]);
+ expect(usage.exitCode).toBe(1);expect(usage.stdout.toString()).toBe("");expect(usage.stderr.toString()).toContain("usage: qualification.ts");
+});
+
+test("CLI admits only closed local and proof diagnostics",()=>{
+ const sentinel="NEUTRAL_INPUT_SENTINEL";
+ const f=fixture();
+ const cli=(args:string[])=>Bun.spawnSync([process.execPath,join(import.meta.dir,"qualification.ts"),...args],{stdout:"pipe",stderr:"pipe"});
+ const failed=(result:ReturnType<typeof cli>, diagnostic:string)=>{
+  expect(result.exitCode).toBe(1);
+  expect(result.stdout.toString()).toBe("");
+  expect(result.stderr.toString()).toBe(diagnostic+"\n");
+  expect(result.stderr.toString()).not.toContain(sentinel);
+ };
+ failed(cli(["status","--run"]),"invalid qualification arguments");
+ const original=readFileSync(f.proof,"utf8");
+ writeFileSync(f.proof,original.replace('"source_sha":"'+"a".repeat(40),'"source_sha":"'+"b".repeat(40)));
+ failed(cli(["init","--artifact",f.artifact,"--proof",f.proof,"--scope",f.scope,"--out",f.out]),"proof-identity-mismatch");
+ writeFileSync(f.proof,original);
+ writeFileSync(join(f.artifact,"BUILD.json"),JSON.stringify({schema:"kizuki.release-build/v1",extra:sentinel}));
+ writeFileSync(join(f.artifact,"SHA256SUMS"),checksumManifest(f.artifact,ARTIFACT_PACKAGE_FILES.slice(0,-1)));
+ failed(cli(["init","--artifact",f.artifact,"--proof",f.proof,"--scope",f.scope,"--out",f.out]),"qualification failed");
+ expect(cliDiagnostic(new Error(sentinel))).toBe("qualification failed");
+ expect(cliDiagnostic(new ArtifactProofError(sentinel))).toBe("qualification failed");
+ expect(cliDiagnostic(sentinel)).toBe("qualification failed");
+ expect(cliDiagnostic(new Error("proof-identity-mismatch"))).toBe("qualification failed");
+ expect(cliDiagnostic(new ArtifactProofError("proof-identity-mismatch extra"))).toBe("qualification failed");
+ expect(cliDiagnostic(new ArtifactProofError("proof-identity-mismatch"))).toBe("proof-identity-mismatch");
+ expect(cliDiagnostic(new ArtifactProofError("unsupported-package-bun-version"))).toBe("unsupported-package-bun-version");
+ expect(cliDiagnostic(new ArtifactProofError("unqualified-sqlite-identity"))).toBe("unqualified-sqlite-identity");
+ expect(cliDiagnostic(new Error("artifact or proof identity changed"))).toBe("artifact or proof identity changed");
+ expect(cliDiagnostic(new Error("collection rejected; durable interruption recorded"))).toBe("collection rejected; durable interruption recorded");
+ expect(cliDiagnostic(new SyntaxError(sentinel))).toBe("qualification json unreadable");
+});
+
+
+test("v3 seven-file qualification binds material identity but remains fixture-only", () => {
+ const f=fixture("kizuki.artifact-proof/v2"),build=writePackageFixture(f.artifact);
+ const hashes=Object.fromEntries(CURRENT_PACKAGE_FILES.map(name=>[name,hash(readFileSync(join(f.artifact,name)))]));
+ Object.assign(f.receipt,{schema:"kizuki.artifact-proof/v3",package_sha256:hashes,binary_sha256:hashes.kizuki,distribution_identity:distributionIdentity(build.distribution)});
+ f.receipt.engine_observations!.kizuki.executable_sha256=hashes.kizuki!;
+ f.receipt.engine_observations!.kizuki_mcp.executable_sha256=hashes["kizuki-mcp"]!;f.saveProof();
+ expect(initQualification(f.artifact,f.proof,f.scope,f.out).status).toBe("awaiting-observation");
+ expect(statusQualification(f.out)).toMatchObject({release_qualified:false,rail_qualification:"fixture-only",samples:0});
+ appendFileSync(join(f.artifact,"THIRD-PARTY-NOTICES.txt"),"changed");
+ expect(()=>statusQualification(f.out)).toThrow();
 });

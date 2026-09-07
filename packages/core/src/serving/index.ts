@@ -5,6 +5,8 @@ export type {
   Envelope,
   QuotedChunk,
   ServeContext,
+  SubjectLabel,
+  SubjectLabelDegradation,
 } from "./types";
 
 export { dispatchServeTool } from "./dispatch";
@@ -18,7 +20,7 @@ export type { SearchArgs, SearchData } from "./search";
 export { serveGetPage } from "./page";
 export type { GetPageArgs } from "./page";
 export { ENTITY_TYPES, serveEntities } from "./entities";
-export type { EntitiesArgs } from "./entities";
+export type { EntitiesArgs, EntitiesData } from "./entities";
 export { serveTimeline } from "./timeline";
 export type { TimelineArgs } from "./timeline";
 export { serveGraph } from "./graph";

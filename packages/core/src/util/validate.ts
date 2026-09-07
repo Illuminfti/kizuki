@@ -55,7 +55,7 @@ export function snapshotDataRecord(
       return undefined;
     }
     const property = Object.getOwnPropertyDescriptor(value, key);
-    if (property === undefined || !property.enumerable || !("value" in property)) {
+    if (property === undefined || !property.enumerable || !Object.hasOwn(property, "value")) {
       errors.push(`${path}: only enumerable data properties are allowed`);
       return undefined;
     }
@@ -90,7 +90,7 @@ export function snapshotDataArray(
   const items: unknown[] = [];
   for (let index = 0; index < length; index += 1) {
     const property = Object.getOwnPropertyDescriptor(value, String(index));
-    if (property === undefined || !property.enumerable || !("value" in property)) {
+    if (property === undefined || !property.enumerable || !Object.hasOwn(property, "value")) {
       errors.push(`${path}[${index}]: only enumerable data properties are allowed`);
       return undefined;
     }

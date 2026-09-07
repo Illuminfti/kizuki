@@ -1,4 +1,7 @@
 import { eraseSourceCanon } from "./source-canon-erasure";
+import { requireCanonFiles } from "../canon/io";
+import type { CanonIo } from "../canon";
+import type { VaultMutationScope } from "../vault/mutation-scope";
 import type { Database } from "bun:sqlite";
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -127,10 +130,12 @@ function retainedCanon(
 }
 /** Native writer ownership held by caller; no external calls in the SQLite transaction. */
 export function eraseSourcePayload(
-  db: Database,
-  vault: string,
+  scope: VaultMutationScope,
+  io: CanonIo,
   source: string,
 ): SourceErasureReport {
+  requireCanonFiles(scope, io);
+  const { db, vault_path: vault } = io;
   const prior = sourceErasureReport(db, source);
   const ids = new Set<string>();
   for (const row of db.query<{ event_id: string }, [string]>(
@@ -185,7 +190,7 @@ export function eraseSourcePayload(
     report.retained_reasons.push("bounded_record_limit");
   save(db, source, report);
   if (
-    !eraseSourceCanon(db, vault, source) ||
+    !eraseSourceCanon(scope, io, source) ||
     retainedCanon(db, vault, source, ids)
   )
     report.retained_reasons.push("canon_or_archive_payload_retained");

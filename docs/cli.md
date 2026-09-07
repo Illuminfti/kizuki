@@ -31,6 +31,19 @@ Retired verbs `review`, `promote`, and `reject` exit 2 and point at `audit`,
 Binding design for autonomous canon is [RFC 0002](../rfcs/0002-autonomous-canon.md).
 This page documents the verbs that exist on this revision.
 
+## app
+
+```text
+usage: kizuki app [--no-open] [--no-service]
+```
+
+Opens the bundled private local app on a random `127.0.0.1` port. It is a
+client of the existing Core and does not start another writer. `--no-open`
+starts the diagnostic host without launching a browser; the printed address
+alone is not an authenticated session. `--no-service` opts out of installing
+the native background service on first-run setup. This is not an OS
+application installer. See [the local app](local-app.md).
+
 ## init
 
 ```text
@@ -82,18 +95,25 @@ usage: kizuki connect [--list|status] [--json]
        kizuki connect <connector> --source PATH [--sensitivity public|personal|private]
        kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]
        kizuki connect imap [--source KEY] [--sensitivity public|personal|private]
+       kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]
+       kizuki connect x-api --fields relationships,links,media|none --history-start RFC3339 [--source KEY | --new-source] [--json]
+       kizuki connect recover-x-api --source KEY --fields relationships,links,media|none --history-start RFC3339 [--json]
+       kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY | --new-source] [--json]
+       kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY | --new-source] [--json]
 ```
 
 Browse sources, inspect saved sync status, or enroll a source. Local Beeper
 enrollment checks its authenticated Desktop API before saving a secret
 reference. IMAP enrollment uses a local interactive prompt and stores its
 opaque connector state in the owner-only connection-state store. File sources
-remain supported. `connect telegram [--source KEY] [--json]` uses native
-phone/code sign-in and optional two-step verification in an interactive terminal.
-Project app credentials are required; missing credentials refuse before any
-prompt or network connection. Re-sign-in preserves account identity and history.
-Other account sign-in flows are unavailable and labeled in
-the catalog. See [connection setup](connect.md).
+remain supported. `connect telegram` uses native phone/code sign-in and
+optional two-step verification in an interactive terminal. Project app
+credentials are required; missing credentials refuse before any prompt or
+network connection. Re-sign-in preserves account identity and history.
+Gmail and Google Calendar use operator desktop clients and browser sign-in;
+see the flags above and [connection setup](connect.md). Other account sign-in
+connectors except X own-post API are not enrollable through this CLI. None of these sign-in paths
+are live-account qualified.
 
 Sensitivity is optional: trusted connector runs resolve each valid event
 against that connection's default, floor, owner label, and source hint.
@@ -225,24 +245,48 @@ FTS floor. Ceiling is `private`. Unlabeled hits are withheld on stderr
 unless `--degraded` is set. Zero labeled hits and zero withheld prints
 `0 hits` on stderr.
 
+Query and context reads never initialize or repair a vault. They retain the
+required owner access-audit rows, while data queries use a logically query-only
+ledger connection. SQLite may still update its WAL/SHM metadata. `init` creates
+the baseline FTS index; a missing optional index stays missing and is reported
+as degraded. An older or incomplete authoritative schema requires explicit
+`kizuki init <path>` before reads can proceed.
+
+The embedded retrieval factory currently requires writer initialization. CLI
+and app reads therefore use the authorized SQLite floor when it is selected,
+reporting `configured-engine-unavailable` and `retrieval-unavailable`. They
+preserve the configured engine and do not acquire its writer lease, create its
+files, or claim that hybrid retrieval ran. Unknown engine IDs still refuse.
+
 ## doctor
 
 ```text
-usage: kizuki doctor [--json]
+usage: kizuki doctor [--json] [--integrity]
 ```
 
 Vault path, event count, claim counts (filed/live/written/unwritten), live
 claim ids (for `tell --claim`), leftover skipped rows, connections,
 checkpoints, derived-index freshness, writer ROLE stamps, machine vs human
 origin counts, calibration/liveness probes, receipts, holds, serve rails,
-and `canon writing: on|off`. Off when no model is configured. Exit 1 when
-the report is not ok. Every command seals `.kizuki/ledger-mark` with the
-accepted event total when it closes the ledger; a vault whose ledger reads
-below that mark is not ready, so commands wait up to 3s for the store to
-land and then fail closed with `vault ledger not ready` instead of printing
-a count. After a folder import, expect live claims; the writer
+and `canon writing: on|off`. Off when no model is configured. The default
+report runs SQLite `quick_check` and samples ledger events. `--integrity`
+also runs `PRAGMA integrity_check` on the vault ledger; JSON then reports
+that result in `ledger.integrity_check` (otherwise `null`). Exit 1 when
+the report is not ok. Successful CLI writes seal `.kizuki/ledger-mark` with
+the accepted event total, including purge receipts. Reads preserve this file.
+A ledger below its sealed floor waits up to 3 seconds for the store to land,
+then fails with `vault ledger not ready` before reporting counts. Explicit
+init also refuses a ledger below its existing floor. Missing or bounded
+malformed private legacy marks remain unsealed until a successful write. After a folder import, expect live claims; the writer
 still needs a model before those claims become pages. Loop creates land
 under `auto/`; human pages stay where they are.
+
+Doctor validates existing configuration and credentials without constructing a
+model runtime. Pending model or connection-state journals remain untouched and
+make the report degraded; inspecting the vault does not authorize recovery or
+machine-identity adoption. Audit browsing and connection status likewise do not
+initialize storage. A confirmed TUI undo closes its reader, acquires a writer
+through Core's existing undo path, and then resumes inspection.
 
 ## tell
 
@@ -437,8 +481,8 @@ usage: kizuki agent add NAME --grant FILE --token-ref file:/absolute/path --oper
 
 Enroll a scoped agent with a complete explicit grant and a private credential
 file, or revoke its access. The parent directory must already exist and have
-private owner custody. Credential delivery currently requires qualified Linux
-x64 glibc. Preview validates an existing vault without creating an identity,
+private owner custody. Credential delivery requires native local filesystem
+custody; a missing native helper reports `unsupported_platform`. Preview validates an existing vault without creating an identity,
 credential or configuration. An older ledger reports `migration_required`
 without applying that migration during preview. Preview requires a stable,
 checkpointed ledger without journal sidecars; otherwise it reports
@@ -488,3 +532,55 @@ real account access, complete provider history or a live observation period.
 Before an authenticated session exists, initial sign-in has bounded attempts
 and waits but restart-persistent throttling is unproven. Failed cooldown storage
 is a visible failure requiring repair; it is not a successful rate-limit receipt.
+
+## X own-post API enrollment
+
+As of 2026-09-07, `connect x-api` is wired for a public Native App using Core OAuth
+S256 PKCE and an exact registered callback. The operator supplies public
+`KIZUKI_X_CLIENT_ID` and `KIZUKI_X_REDIRECT_URI`; the callback must be exactly
+`http://127.0.0.1:PORT/callback` with an explicit port from 1 through 65535. The
+port must be free on the owner's desktop. The listener binds before browser or
+provider access; there is no client secret or pasted-token enrollment path.
+
+Enrollment saves the public client ID and exact callback with the protected v2
+connection state. A background process uses that saved configuration without
+terminal environment variables. Later environment values cannot override it.
+Legacy v1 state still requires both variables explicitly; reauthorization or the
+first durable refresh intent upgrades it to v2. The catalog checks the
+current environment for **new** enrollment, so an unconfigured catalog entry does
+not mean an existing v2 source needs those variables.
+
+Select `--fields none` for text and baseline metadata, or an explicit comma-separated
+selection from `relationships,links,media`. Set `--history-start` to an RFC3339 lower
+bound at or after 2010-11-06, representable without losing sub-millisecond precision.
+This is a bounded own-post API window, not full history: API caps and missing posts
+report gaps, media means references, and provider deletion coverage is unavailable.
+`--source KEY` reauthorization preserves the app, account, selection, checkpoint,
+pending plan and retry state. `--new-source` requires a distinct account/app/selection;
+duplicates refuse even after local consent withdrawal. Each new source needs its own
+capture grant before `backfill x-api --source KEY` can read protected state or contact X.
+
+Before sending a refresh request, Kizuki durably records a pending intent in the
+same native state store. A valid rotated response replaces only that intent. An
+explicit rate-limit response stores its cooldown and clears the intent; a lost or
+invalid response leaves it pending. Restarting Kizuki does not retry the old token.
+Ordinary capture and `connect x-api` then refuse with
+`credential_recovery_required`.
+
+Use `connect recover-x-api --source KEY --fields FIELDS --history-start RFC3339`
+from an interactive desktop terminal to obtain a new browser grant. Supply the
+source's existing fields and history start. Recovery preserves the pending state
+until the new grant verifies the same account, app and selection and publishes
+against the exact original source state. Failed or competing recovery preserves
+the previous state. A late old response cannot replace a recovered generation.
+This action preserves capture consent, checkpoints and pending history; it does
+not retry old credentials or establish whether the provider invalidated them.
+Pending or completed provider revocation cannot use this recovery action.
+
+The developer app must be configured as a public Native App with the exact registered
+callback and read scopes `tweet.read users.read offline.access`. X API usage credits
+and account eligibility are external prerequisites; no real grant or credit balance
+has been qualified by the synthetic test suite. See X's official
+[native app setup](https://docs.x.com/fundamentals/developer-apps),
+[OAuth authorization code flow](https://docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code)
+and [usage billing](https://docs.x.com/x-api/getting-started/pricing).

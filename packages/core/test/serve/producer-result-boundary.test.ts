@@ -5,13 +5,14 @@ import { join } from "node:path";
 import { createBudgetTracker } from "../../src/canon/budget";
 import type { ProducerPort } from "../../src/contracts/producer";
 import { openLedger } from "../../src/ledger/db";
-import { MODEL_PRODUCER_DESCRIPTOR } from "../../src/producer/model";
+import { createModelProducerPort, MODEL_PRODUCER_DESCRIPTOR } from "../../src/producer/model";
 import { mineLiveDrafts, readExtractCursor } from "../../src/serve/extract";
 import { runRail } from "../../src/serve/rails";
 import { runReceiptsPath } from "../../src/serve/receipts";
 import { runWritePass } from "../../src/serve/write-pass";
 import { initVault } from "../../src/vault/init";
 import { putEvent } from "../claims/helpers";
+import { draft, FIXED_NOW, responseText, scriptedLlm } from "../producer/helpers";
 
 const CANARY = "synthetic-private-port-result-canary";
 const usage = { calls: 1, input_tokens: 10, output_tokens: 3 };
@@ -23,6 +24,49 @@ const badResults = [
   { status: "ok", claims: [], usage: { ...usage, output_tokens: Infinity } },
   { status: "ok", claims: [], usage, dropped: [{ reason: CANARY }] },
 ];
+
+for (const rejectedCount of [1, 2]) {
+  test(`${rejectedCount} malformed model claims are counted once in durable rail receipts without changing sibling authority`, async () => {
+    const path = mkdtempSync(join(tmpdir(), "kizuki-partial-result-"));
+    initVault(path);
+    const db = openLedger(join(path, ".kizuki/kizuki.db"));
+    try {
+      const eventId = putEvent(db);
+      const valid = draft({ subject: "person:ada", event_ids: [eventId] });
+      const llm = scriptedLlm(() => responseText([
+        ...Array.from({ length: rejectedCount + 1 }, (_, i) => ({ ...valid, object: `synthetic role ${i}` })),
+        ...Array.from({ length: rejectedCount }, () => ({ ...valid, sensitivity: CANARY })),
+      ]));
+      const producer = createModelProducerPort({ vault_path: path, data_dir: join(path, ".kizuki/producer"), config: {},
+        secrets: async () => { throw new Error("unused fixture secret"); }, clock: () => FIXED_NOW, logger: () => {},
+      }, { llm });
+      const hooks = { producer, claims: { db }, model_ref: "test.kizuki.llm.scripted:synthetic@127.0.0.1" };
+      const receipt = await runRail(db, path, "sync", { hooks });
+      expect(receipt.claims_extracted).toBe(rejectedCount + 1);
+      expect(receipt.model.calls).toBe(1);
+      expect(receipt.claims_rejected).toEqual({ schema_invalid: rejectedCount });
+      expect(readExtractCursor(db)).not.toBeNull();
+      const claims = db.query<{ authority: string; taint: string }, []>("SELECT authority,taint FROM claims").all();
+      expect(claims.length).toBeGreaterThan(0);
+      // Model drafts remain quoted claims; the source event uses "untrusted".
+      for (const claim of claims) expect(claim).toEqual({ authority: "model_inference", taint: "quoted" });
+
+      const stored = db.query<{ report: string }, [string]>("SELECT report FROM run_receipts WHERE run_id=?").get(receipt.run_id)!;
+      expect(JSON.parse(stored.report).claims_rejected).toEqual({ schema_invalid: rejectedCount });
+      const lines = readFileSync(runReceiptsPath(path), "utf8").trim().split("\n").map(line => JSON.parse(line));
+      expect(lines.find(line => line.run_id === receipt.run_id).claims_rejected).toEqual({ schema_invalid: rejectedCount });
+      expect(stored.report).not.toContain(CANARY);
+      expect(JSON.stringify(lines)).not.toContain(CANARY);
+
+      const next = await runRail(db, path, "sync", { hooks });
+      expect(next.model.calls).toBe(0);
+      expect(next.claims_rejected).toEqual({});
+      expect(llm.requests).toHaveLength(1);
+      expect(db.query<{ report: string }, [string]>("SELECT report FROM run_receipts WHERE run_id=?").get(receipt.run_id)!.report).toBe(stored.report);
+      await producer.close();
+    } finally { db.close(); rmSync(path, { recursive: true, force: true }); }
+  });
+}
 
 for (const seam of ["mine", "write", "rail"] as const) {
   test(`${seam} validates returned failures and throws before reports or durable decisions`, async () => {

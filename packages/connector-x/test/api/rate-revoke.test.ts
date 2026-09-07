@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { XApiFixture } from "../../src/api/testkit";
-import { encodeState, parseState } from "../../src/api/state";
+import { encodeState, parseState, requiresCredentialRecovery } from "../../src/api/state";
 
 function deferred<T>() { let resolve!: (value: T) => void; return { promise: new Promise<T>(r => { resolve = r; }), resolve }; }
 
@@ -23,10 +23,14 @@ for (const when of ["connect", "expired", "401"] as const) test(`token 429 is du
 });
 
 test("token-429 cooldown persistence failure fences the caller instead of keeping an unrecorded session", async () => {
-  const f = new XApiFixture(1), port = await f.connected({ persist: async () => { throw Error("SYNTHETIC_CAS_FAILURE_CANARY"); } });
+  const f = new XApiFixture(1), port = await f.connected({ persist: async bytes => {
+    if (!requiresCredentialRecovery(parseState(bytes))) throw Error("SYNTHETIC_CAS_FAILURE_CANARY");
+    await f.persist(bytes);
+  } });
   f.time = new Date("2027-02-01T00:00:00Z"); f.requests = [];
   f.beforeToken = async () => ({ status: 429, body: {} });
   expect((await port.sync(null)).status).toBe("unavailable"); expect(parseState(f.state).retry_at).toBeNull();
+  expect(requiresCredentialRecovery(parseState(f.state))).toBe(true);
   expect((await port.sync(null)).status).toBe("unavailable"); expect(f.forms).toHaveLength(1); expect(f.requests).toEqual([]); await port.close();
 });
 
@@ -58,7 +62,8 @@ test("GET retry hints persist at the local automatic ceiling instead of centurie
 test("a late token-429 write preserves cooldown through original custody without reviving its caller", async () => {
   const f = new XApiFixture(1), entered = deferred<void>(), blocked = deferred<void>(); let short = false, ticks = 0;
   const port = await f.connected({ clock: () => short ? (++ticks === 1 ? 0 : 44_999) : 0, persist: async bytes => {
-    entered.resolve(); await blocked.promise; await f.persist(bytes);
+    if (!requiresCredentialRecovery(parseState(bytes))) { entered.resolve(); await blocked.promise; }
+    await f.persist(bytes);
   } });
   f.beforeToken = async () => ({ status: 429, body: {} }); f.time = new Date("2027-02-01T00:00:00Z"); f.requests = []; short = true;
   const running = port.sync(null); await entered.promise; expect((await running).detail).toContain("timeout");

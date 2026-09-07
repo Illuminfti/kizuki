@@ -1,4 +1,4 @@
-import type { AuditDenial } from "../agents";
+import type { AuditDenial, AuditItem } from "../agents";
 import { compareText } from "../util/order";
 import type { CanonPage } from "../vault/pages";
 import { enumOf, limit, text } from "./arguments";
@@ -13,7 +13,8 @@ import {
 } from "./canon";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
-import type { CanonChunk, Envelope, ServeContext } from "./types";
+import type { CanonChunk, Envelope, ServeContext, SubjectLabelDegradation } from "./types";
+import { attachSubjectLabels, canonSubjects, labelsFor, projectSubjectLabels } from "./subject-labels";
 
 export const ENTITY_TYPES = [
   "person",
@@ -41,12 +42,14 @@ function matchesName(page: CanonPage, needle: string): boolean {
   );
 }
 
-export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope {
+export interface EntitiesData { degraded: SubjectLabelDegradation[] }
+
+export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope<EntitiesData> {
   return gate(
     ctx,
     "query_entities",
     auditArguments(args),
-    ({ ctx }): Served<undefined> => {
+    ({ ctx, at }): Served<EntitiesData> => {
       const type =
         args.type === undefined
           ? undefined
@@ -66,7 +69,7 @@ export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope {
             return false;
           }
           if (type !== undefined && pageType !== type) return false;
-          return name === undefined || matchesName(page, name);
+          return true;
         })
         .sort(
           (left, right) =>
@@ -78,12 +81,20 @@ export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope {
 
       const canon: CanonChunk[] = [];
       const withheld: AuditDenial[] = [];
-      for (const page of candidates) {
+      const admitted = candidates.flatMap(page => {
         const decision = pageDecision(index, ctx.principal.grant, page);
         if (!decision.allow) {
-          withheld.push({ id: page.id, reason: decision.reason });
-          continue;
+          if (name === undefined || matchesName(page, name)) withheld.push({ id: page.id, reason: decision.reason });
+          return [];
         }
+        return [{ page, decision, subjects: canonSubjects(index, page) }];
+      });
+      const projection = projectSubjectLabels(index, ctx.principal.grant, at, admitted.flatMap(item => item.subjects), Math.min(rows, admitted.length));
+      const audit = new Map<string, AuditItem>();
+      for (const { page, decision, subjects } of admitted) {
+        const labels = labelsFor(projection, subjects);
+        if (name !== undefined && !matchesName(page, name) && !labels.some(label =>
+          [label.display_name, ...label.handles].some(value => value?.toLowerCase().includes(name)))) continue;
         // The scan runs past the limit so a match withheld further down the
         // order is still counted; only the served rows stop at the limit.
         if (canon.length === rows) continue;
@@ -91,10 +102,13 @@ export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope {
           collapseWhitespace(page.body),
           EXCERPT_CHARS,
         );
-        canon.push(canonChunk(index, page, decision, excerpt, truncated));
+        const chunk = canonChunk(index, page, decision, excerpt, truncated);
+        for (const item of attachSubjectLabels(projection, chunk, subjects)) audit.set(item.id, item);
+        canon.push(chunk);
       }
 
-      return { canon, quoted: [], withheld };
+      return { canon, quoted: [], withheld, audit_served: [...audit.values()],
+        ...(projection.degraded.length === 0 ? {} : { data: { degraded: projection.degraded } }) };
     },
   );
 }

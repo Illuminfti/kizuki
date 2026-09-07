@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { ARTIFACT_PACKAGE_FILES, ArtifactProofError, PROOF_JSON_LIMITS, SQLITE_ENGINE_POLICY,
   artifactProofSteps, parseProofJson, validateArtifactProof } from "./artifact-proof";
+import { distributionFixture } from "./release-package-fixture";
+import { distributionIdentity } from "./release-notices";
 import type { ArtifactPackageFile, ArtifactProofSchema } from "./artifact-proof";
 
 function fixture(schema: ArtifactProofSchema = "kizuki.artifact-proof/v2") {
@@ -89,11 +91,33 @@ test.each([0, 1])("v2 qualifies both exact engines while preserving doctor exit 
 
 test("the initial engine policy names the official exact pair", () => {
   const { proof } = fixture();
-  expect(SQLITE_ENGINE_POLICY.accepted).toHaveLength(1);
+  expect(SQLITE_ENGINE_POLICY.schema).toBe("kizuki.sqlite-engine-policy/v2");
+  expect(SQLITE_ENGINE_POLICY.accepted).toHaveLength(2);
   const entry = SQLITE_ENGINE_POLICY.accepted[0];
   expect(proof.engine_observations!.kizuki.runtime.sqlite_version).toBe(entry.sqlite_version);
   expect(proof.engine_observations!.kizuki.runtime.sqlite_source_id).toBe(entry.sqlite_source_id);
   expect(entry.source_url).toBe("https://www.sqlite.org/releaselog/3_53_0.html");
+});
+
+test("the observed Apple vendor identity is restricted to its native target, Bun and kernel", () => {
+  const { proof, expected } = fixture();
+  const entry = SQLITE_ENGINE_POLICY.accepted[1];
+  for (const observation of Object.values(proof.engine_observations!)) {
+    observation.runtime.sqlite_version = entry.sqlite_version;
+    observation.runtime.sqlite_source_id = entry.sqlite_source_id;
+  }
+  proof.host_kernel_release = entry.host_kernel_release;
+  // Equal SQLite strings cannot qualify a Linux package as this Apple build.
+  expect(validateArtifactProof(proof, expected).engine.status).toBe("FAIL");
+  proof.target = expected.target = "bun-darwin-arm64";
+  proof.host_platform = "darwin"; proof.host_arch = "arm64";
+  expect(validateArtifactProof(proof, expected).engine.status).toBe("PASS");
+  proof.host_kernel_release = "24.7.0";
+  expect(validateArtifactProof(proof, expected).engine.status).toBe("FAIL");
+  proof.host_kernel_release = entry.host_kernel_release;
+  proof.bun_version = expected.bun_version = "1.3.15";
+  for (const observation of Object.values(proof.engine_observations!)) observation.runtime.bun_version = "1.3.15";
+  expect(validateArtifactProof(proof, expected).engine.status).toBe("FAIL");
 });
 
 test.each(["version", "source-id"])("matching unknown engine %s stays observable and unqualified", field => {
@@ -131,3 +155,40 @@ for (const [label, mutate] of [
     expect(() => validateArtifactProof(proof, expected)).toThrow(ArtifactProofError);
   });
 }
+
+function v3Fixture(complete = false) {
+  const f = fixture();
+  const build = { schema: "kizuki.release-build/v2" as const, source_sha: f.expected.source_sha, target: f.expected.target,
+    bun_version: f.expected.bun_version, distribution: distributionFixture(complete).distribution };
+  const hashes = { ...f.expected.package_sha256, LICENSE: "6".repeat(64), "THIRD-PARTY-NOTICES.txt": "7".repeat(64) };
+  return { expected: { ...f.expected, build, package_sha256: hashes },
+    proof: { ...f.proof, schema: "kizuki.artifact-proof/v3" as const, package_sha256: hashes, distribution_identity: distributionIdentity(build.distribution) } };
+}
+test.each([false, true])("v3 binds seven members and inventory while keeping exact v2 engine semantics, complete=%s", complete => {
+  const { proof, expected } = v3Fixture(complete);
+  expect(validateArtifactProof(proof, expected)).toEqual({ schema: "kizuki.artifact-proof/v3", engine: { status: "PASS", reason: "effective-sqlite-identity-qualified" } });
+  expect(proof.steps.map(step => step.id)).toEqual(fixture().proof.steps.map(step => step.id));
+  expect(expected.build.distribution.distribution_assessment).toBe("not_performed");
+});
+test.each(["v1", "v2"])("v3 package cannot be downgraded to proof %s", version => {
+  const { proof, expected } = v3Fixture();
+  const old: any = { ...proof, schema: `kizuki.artifact-proof/${version}` };
+  delete old.distribution_identity; delete old.package_sha256.LICENSE; delete old.package_sha256["THIRD-PARTY-NOTICES.txt"];
+  if (version === "v1") { delete old.engine_observations; delete old.host_kernel_release; old.steps = artifactProofSteps(old.schema, proof.paths); }
+  expect(() => validateArtifactProof(old, expected)).toThrow("proof-build-version-mismatch");
+});
+test.each(["missing-notice-hash", "changed-notice-hash", "inventory-drift", "missing-build", "build-source-drift", "unknown-distribution-field"])("v3 refuses %s", mode => {
+  const { proof, expected } = v3Fixture();
+  if (mode === "missing-notice-hash") delete (proof.package_sha256 as any).LICENSE;
+  if (mode === "changed-notice-hash") proof.package_sha256 = { ...proof.package_sha256, LICENSE: "8".repeat(64) };
+  if (mode === "inventory-drift") expected.build.distribution.components[0]!.declared_license = "changed";
+  if (mode === "missing-build") delete (expected as any).build;
+  if (mode === "build-source-drift") expected.build.source_sha = "f".repeat(40);
+  if (mode === "unknown-distribution-field") Object.assign(proof.distribution_identity, { approved: true });
+  expect(() => validateArtifactProof(proof, expected)).toThrow();
+});
+test("legacy BUILD cannot supply v3 distribution proof", () => {
+  const { proof, expected } = v3Fixture();
+  Object.assign(expected, { build: { schema: "kizuki.release-build/v1", source_sha: expected.source_sha, target: expected.target, bun_version: expected.bun_version } });
+  expect(() => validateArtifactProof(proof, expected)).toThrow("proof-build-version-mismatch");
+});

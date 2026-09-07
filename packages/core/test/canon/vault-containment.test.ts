@@ -1,7 +1,9 @@
+import { snapshotCanonIo, withCanonMutationSync } from "../../src/canon/io";
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { applyCanonWrite, applyRevertWrite } from "../../src/canon/apply";
+import { applyCanonWrite, publishOrdinaryCanonIntent } from "../../src/canon/apply";
+import type { CanonWriteIntent } from "../../src/canon/write-intent";
 import { createBudgetTracker } from "../../src/canon/budget";
 import { resolveTarget, type TargetDecision } from "../../src/canon/arbiter";
 import { assertReceiptPaths } from "../../src/canon/paths";
@@ -58,13 +60,11 @@ test("receipt paths preserve ordinary, historical archive, and erased history", 
   expect(getCanonReceipt(db, receipt.receipt_id)?.reverted_by).toBeNull();
 });
 
-test("revert captures stable input before consulting page fields", () => {
+test("journal publisher captures stable input before consulting replay fields", () => {
   const { io, db, vault } = fixture();
   let reads = 0;
-  const input = { receipt_id: "unused", rel_path: "people/sample.md", expected_hash: null,
-    get page() { reads += 1; return null; },
-  };
-  expect(() => applyRevertWrite(io, input)).toThrow("stable JSON data");
+  const input = { get receipt() { reads += 1; return null; } } as unknown as CanonWriteIntent;
+  expect(() => withCanonMutationSync(snapshotCanonIo(io), (scope, owned) => publishOrdinaryCanonIntent(scope, owned, input))).toThrow("stable JSON data");
   expect(reads).toBe(0);
   expect(existsSync(join(vault, "people/sample.md"))).toBe(false);
   expect(db.query<{ n: number }, []>("SELECT count(*) AS n FROM canon_receipts").get()?.n).toBe(0);

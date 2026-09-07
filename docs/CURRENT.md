@@ -34,7 +34,7 @@ MCP `correct`) is the update path a person actually uses.
 
 ## What this revision ships
 
-The public CLI, a Linux x64 baseline local native package, file ingest, FTS
+The public CLI including `app`, a Linux x64 baseline local native package, file ingest, FTS
 query, doctor, tell/undo/audit, serve loopback, context packets, and MCP stdio
 adapter. Capture never writes canon. Local files and exports are enrollable;
 an opt-in Beeper Desktop connection reads local history through an approved
@@ -44,8 +44,16 @@ sign-in with project app credentials and preserves its account identity and
 checkpoint; actual account qualification remains unrun. Native Gmail and Google Calendar
 browser sign-in use operator-configured desktop clients and separate source consent;
 Calendar requires one canonical calendar and explicit fields. Their account and artifact
-qualification remain separate. Other sign-in connectors are not enrollable through this CLI.
-After
+qualification remain separate. ICS enrolls as a local file path; interactive
+calendar URL sign-in is library surface, not a `connect` verb. Other sign-in
+connectors are not enrollable through this CLI except X own-post API native sign-in.
+X requires a public native app, an exact registered fixed loopback callback, explicit
+fields and history start, usage credits and separate source consent; real-account
+qualification remains unrun. Its v2 protected state saves the public native app
+configuration for background use. Unknown refresh outcomes survive restart and
+require `connect recover-x-api --source KEY` with the existing fields and history
+start to obtain a new browser grant; capture consent remains unchanged. WHOOP
+remains an unregistered component. After
 `import`, claims are live and `tell --claim` can name them. Canon writing
 still requires a configured model; without one the sync rail leaves live
 claims unwritten and doctor says so. The automated

@@ -24,17 +24,27 @@ Markdown sources must be separate from the Kizuki vault. See the
 
 ## The registry
 
-| Registry id               | Reads                                                                                                 | Kind                |
-| ------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------- |
-| `kizuki.google-calendar`  | Explicitly selected read-only Google calendar revisions; native CLI, explicit source consent          | Bounded live source |
-| `kizuki.markdown-folder`  | A folder of Markdown files, rescanned each run                                                        | Live source         |
-| `kizuki.screenpipe`       | A local screenpipe SQLite database, read-only and offline (see that package's README before using it) | Live local source   |
-| `kizuki.import-chatgpt`   | The `conversations.json` of a ChatGPT data export                                                     | Snapshot importer   |
-| `kizuki.import-claude`    | The `conversations.json` of a Claude data export                                                      | Snapshot importer   |
-| `kizuki.import-whatsapp`  | An unzipped WhatsApp "Export chat" folder, or the chat `.txt` inside it                               | Snapshot importer   |
-| `kizuki.import-pocket`    | A Pocket CSV export: one `.csv`, or a folder of `part_*.csv`                                          | Snapshot importer   |
-| `kizuki.import-omnivore`  | An unzipped Omnivore export folder                                                                    | Snapshot importer   |
-| `kizuki.import-x-archive` | Owner posts from an unzipped X data archive; local and read-only                                      | Snapshot importer   |
+These ids match `defaultConnectorRegistry.ids()` on this revision.
+
+| Registry id              | Reads                                                                                                 | Kind              |
+| ------------------------ | ----------------------------------------------------------------------------------------------------- | ----------------- |
+| `kizuki.beeper`          | Local Beeper Desktop API history through an approved token reference; synthetic coverage only          | Live local source |
+| `kizuki.gmail`           | Read-only Gmail via operator desktop OAuth client and browser sign-in; live-account qualification unrun | Bounded live source |
+| `kizuki.google-calendar` | Explicitly selected read-only Google calendar revisions; native CLI, explicit source consent | Bounded live source |
+| `kizuki.ics`             | A local iCalendar file. CLI enrolls the file path; URL sign-in is library surface, not a connect verb | Live local source |
+| `kizuki.imap`            | Read-only IMAP mailbox via interactive app-password sign-in                                           | Bounded live source |
+| `kizuki.import-chatgpt`  | The `conversations.json` of a ChatGPT data export                                                     | Snapshot importer |
+| `kizuki.import-claude`   | The `conversations.json` of a Claude data export                                                      | Snapshot importer |
+| `kizuki.import-legacy-events` | Owner-mapped event table or JSONL export; not live sync                                          | Snapshot importer |
+| `kizuki.import-legacy-wiki` | Owner-mapped markdown wiki export; not live sync                                                 | Snapshot importer |
+| `kizuki.import-omnivore` | An unzipped Omnivore export folder                                                                    | Snapshot importer |
+| `kizuki.import-pocket`   | A Pocket CSV export: one `.csv`, or a folder of `part_*.csv`                                          | Snapshot importer |
+| `kizuki.import-whatsapp` | An unzipped WhatsApp "Export chat" folder, or the chat `.txt` inside it                               | Snapshot importer |
+| `kizuki.import-x-archive` | Owner posts from an unzipped X data archive; local and read-only                                       | Snapshot importer |
+| `kizuki.markdown-folder` | A folder of Markdown files, rescanned each run                                                        | Live source       |
+| `kizuki.screenpipe`      | A local screenpipe SQLite database, read-only and offline (see that package's README before using it) | Live local source |
+| `kizuki.telegram`        | Native Telegram user sign-in; accessible dialogs. Project app credentials required; live-account qualification unrun | Bounded live source |
+| `kizuki.x`               | Read-only owner posts through the X API; configured native app and usage credits required; live-account qualification unrun | Bounded live source |
 
 In the examples below, `kizuki` stands for `bun packages/cli/src/main.ts` run
 from the tree, as in the repository README.
@@ -331,14 +341,59 @@ bytes, infers deletion from absence, or contacts X.
 Likes are not inspected. Bookmarks, direct messages, ZIP input, live sync, and
 X API access are not supported by this bounded importer.
 
+## X API
+
+The separate `kizuki.x` connector is registered for native CLI enrollment and
+read-only capture of the authenticated account's own posts. The CLI owns
+browser sign-in, the configured fixed loopback callback and protected OAuth
+state; source consent is a separate step. See the [X API guide](../connector-x/API.md)
+for the enrollment command and prerequisites. Provider enrollment, paid access,
+API compatibility and deletion coverage remain unqualified against a real
+account. The local archive importer above does not supply that qualification.
+
 ## Not here, deliberately
 
 - Live sync of WhatsApp, Pocket, or Omnivore. There is no sanctioned personal
   API for any of the three: the first has none for personal history, and the
   other two are closed services.
-- Live X sync and X API access. This package implements only the bounded local
-  archive slice described above.
+- WHOOP. `@kizuki/connector-whoop` exists as a synthetic-tested component and
+  is not registered here. Native enrollment, live-account qualification, and
+  provider OAuth compatibility are unrun. Local desktop custody of a WHOOP
+  Client Secret is not sanctioned.
 - The WhatsApp Business API, and Composio as an integration provider. Both were
   deferred by an explicit decision.
 - Reading zip archives, downloading or parsing media, and converting saved
   article HTML to text.
+
+
+## Purge conformance for connector authors
+
+A declared purge planner requires a `purgeFixture` factory in `runConformance`.
+The factory creates a fresh connector and disposable synthetic source, names
+known selected and unrelated records, and supplies a source snapshot, an
+executor, an absence verifier and cleanup. See
+[test fixtures](test/purge-fixtures.ts) and the
+[adversarial execution tests](test/purge-conformance.test.ts).
+
+The suite refuses a missing factory before calling the configured connector's
+`purgeSource`. It checks that planning leaves the source unchanged, requires
+`complete: true` and the exact removable/unreachable partition, executes the
+admitted plan, verifies every removable ID is absent, checks that unreachable
+and unrelated records are unchanged, and replans. Missing completeness,
+incomplete continuation, wrong IDs and destructive planning all fail.
+Connectors declaring no purge capability must still reject the method with
+`not_supported`.
+
+This qualifies the synthetic fixture. It does not call a real provider to delete
+data and does not replace Core's separate local erasure protocol. Read-only
+export, IMAP and Telegram fixtures have an empty removable set and must prove
+that all unreachable records survive; the mutable synthetic fixture proves
+actual execution and absence. WhatsApp, Pocket and Omnivore plans report complete
+only after reading their full configured exports. Provider planners state their
+coverage limits in their own README files.
+
+Run the shared and provider checks with:
+
+```sh
+bun test packages/connectors/test packages/connector-imap/test packages/connector-telegram/test
+```

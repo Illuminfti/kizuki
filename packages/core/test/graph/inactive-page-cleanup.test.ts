@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
+import { openLedger } from "../../src/ledger/db";
+import { listCanonPages } from "../../src/vault/pages";
+import type { FrontmatterValue } from "../../src/contracts/proposal";
+import { recordedPage } from "../helpers/recorded-page";
+import { tempVault } from "../helpers/vault";
 import { readDerivedMeta } from "../../src/derived-meta";
 import {
   neighbors,
@@ -10,10 +15,10 @@ import {
 import { serializePage } from "../../src/vault/frontmatter";
 import type { CanonPage } from "../../src/vault/pages";
 
-const databases: Database[] = [];
+const disposers: (() => void)[] = [];
 
 afterEach(() => {
-  for (const db of databases.splice(0)) db.close();
+  for (const dispose of disposers.splice(0)) dispose();
 });
 
 function page(name: string, body: string, extra: Record<string, unknown> = {}): CanonPage {
@@ -43,19 +48,22 @@ function rebuild(db: Database, pages: CanonPage[]): void {
   });
 }
 
-function fixture() {
-  const db = new Database(":memory:");
-  databases.push(db);
-  const target = page("Target", "See [[Anchor]].", {
-    subjects: ["person:target"], sources: ["event:target"],
-  });
-  const origin = page("Origin", "See [[Target]] and [[Anchor]].");
-  const anchor = page("Anchor", "Stable destination.");
-  const skipped = page("Skipped", "See [[Anchor]].", {
-    subjects: ["person:kept"], sources: ["event:kept"],
-  });
-  rebuild(db, [target, origin, anchor, skipped]);
-  return { db, target, origin, anchor, skipped };
+async function fixture() {
+  const db = openLedger(":memory:");
+  const vault = tempVault();
+  disposers.push(() => db.close(), vault.dispose);
+  for (const spec of [
+    page("Target", "See [[Anchor]].", { subjects: ["person:target"] }),
+    page("Origin", "See [[Target]] and [[Anchor]]."),
+    page("Anchor", "Stable destination."),
+    page("Skipped", "See [[Anchor]].", { subjects: ["person:kept"] }),
+  ]) {
+    await recordedPage(db, vault.path, spec.relPath, spec.data as Record<string, FrontmatterValue>, spec.body);
+  }
+  const pages = listCanonPages(vault.path);
+  const named = (id: string) => pages.find(page => page.id === `fact:${id}`)!;
+  rebuild(db, pages);
+  return { db, vault, target: named("target"), origin: named("origin"), anchor: named("anchor"), skipped: named("skipped") };
 }
 
 function rows(db: Database) {
@@ -66,8 +74,8 @@ function rows(db: Database) {
 
 describe("inactive page cleanup during an incomplete graph walk", () => {
   for (const operation of ["archive", "delete"] as const) {
-    test(`${operation} removes incoming and outgoing rows while preserving unrelated relations`, () => {
-      const { db, target, origin, anchor, skipped } = fixture();
+    test(`${operation} removes incoming and outgoing rows while preserving unrelated relations`, async () => {
+      const { db, target, origin, anchor, skipped } = await fixture();
       const beforeRows = rows(db);
       const beforeMeta = readDerivedMeta(db, "graph");
       if (beforeMeta === null) throw new Error("fixture graph metadata is missing");
@@ -87,7 +95,7 @@ describe("inactive page cleanup during an incomplete graph walk", () => {
         (edge) => edge["src"] !== target.id && edge["dst"] !== target.id,
       ));
       expect(neighbors(db, target.id)).toEqual({ id: target.id, edges: [], truncated: false });
-      expect(neighbors(db, origin.id).edges).toEqual([
+      expect(neighbors(db, origin.id, { kinds: ["wikilink"] }).edges).toEqual([
         { src: origin.id, dst: anchor.id, kind: "wikilink" },
       ]);
       expect(readDerivedMeta(db, "graph")).toEqual({
@@ -111,17 +119,21 @@ describe("inactive page cleanup during an incomplete graph walk", () => {
     });
   }
 
-  test("active refresh retains incoming and skipped-page rows while replacing outgoing rows", () => {
-    const { db, target, origin, anchor } = fixture();
+  test("active refresh retains incoming and skipped-page rows while replacing outgoing rows", async () => {
+    const { db, vault, target, origin, anchor, skipped } = await fixture();
     const beforeRows = rows(db);
-    const updated = page("Target", "See [[Origin]].");
+    await recordedPage(db, vault.path, target.relPath,
+      target.data as Record<string, FrontmatterValue>, "See [[Origin]].");
+    const updated = listCanonPages(vault.path).find(page => page.id === target.id)!;
+    // Restore the pre-refresh derived rows after the writer has recorded the edit.
+    rebuild(db, [target, origin, anchor, skipped]);
 
     refreshPageEdges(db, updated, [updated, origin, anchor], 1);
 
     expect(rows(db).filter((edge) => edge["src"] !== target.id)).toEqual(
       beforeRows.filter((edge) => edge["src"] !== target.id),
     );
-    expect(neighbors(db, target.id).edges).toEqual([
+    expect(neighbors(db, target.id, { kinds: ["wikilink"] }).edges).toEqual([
       { src: origin.id, dst: target.id, kind: "wikilink" },
       { src: target.id, dst: origin.id, kind: "wikilink" },
     ]);

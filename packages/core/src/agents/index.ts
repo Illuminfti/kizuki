@@ -51,6 +51,8 @@ export type {
   AgentEnrollmentRequest,
   AgentEnrollmentResult,
 } from "./enrollment";
+export { enrollAppAgent } from "./app-enrollment";
+export type { AppAgentEnrollmentRequest, AppAgentEnrollmentResult } from "./app-enrollment";
 
 export {
   authorize,

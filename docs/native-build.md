@@ -20,9 +20,12 @@ sha256sum -c SHA256SUMS
 ./kizuki-mcp --vault ./vault --owner
 ```
 
-The package contains `kizuki`, `kizuki-mcp`, `README.txt`, `BUILD.json`, and
-`SHA256SUMS`. The checksum manifest covers the four package files. `BUILD.json`
-records the exact source SHA, target, and Bun runtime. The build refuses to
+New packages contain `kizuki`, `kizuki-mcp`, `README.txt`, `LICENSE`,
+`THIRD-PARTY-NOTICES.txt`, `BUILD.json`, and `SHA256SUMS`. The manifest hashes
+the preceding six files. Build V2 records source SHA, target, pinned Bun
+revision and material inventory from both actual compile graphs. Unresolved
+notice, embedded-asset and source information remains explicit; distribution
+has not been assessed. Legacy five-file Build V1 packages remain readable. The build refuses to
 overwrite an existing target and stages output before publishing it.
 
 `bun run smoke:release` exercises the built package with a synthetic vault. It
@@ -31,7 +34,7 @@ packet, one no-HTTP serve pass, and MCP initialization plus `tools/list`.
 
 `bun run proof:artifact -- --report /tmp/kizuki-artifact-proof` copies the
 checksummed package out of the checkout, uses a clean home and Kizuki config,
-and records a v2 receipt for init, the copied CLI and MCP SQLite identities,
+and records a v3 receipt for new packages (v2 for legacy packages) covering init, the copied CLI and MCP SQLite identities,
 import, query, context, export, and clean-target restore. Both child engine
 identities must agree with the exact qualification policy. See the
 [engine evidence contract](stranger-proof.md#effective-sqlite-engine-evidence).
@@ -41,11 +44,17 @@ Linux CI retains this package and its available receipt for seven days.
 
 The closed native registry implements `bun-linux-x64-baseline` (Linux x86_64,
 including older baseline CPUs) and `bun-darwin-arm64` (macOS Apple Silicon).
-Linux x64 has local qualification evidence; macOS arm64 remains an unqualified
-candidate until an actual native receipt exists. Intel macOS, Windows and other
-targets are unsupported. Each executable bundles Kizuki code, workspace
+Each package still needs qualification on its exact native host and revision.
+macOS remains a candidate until the required copied-artifact and installed-service
+checks pass. Intel macOS, Windows and other targets are unsupported. Each executable bundles Kizuki code, workspace
 dependencies and the Bun runtime. It is not statically linked, signed, published
 or qualified by an unfamiliar human.
+
+Canon byte writes have native descriptor backends for Linux x64/glibc and
+macOS arm64. Both retain directory and file identity checks; unsupported hosts
+or unavailable native adapters return a typed refusal without a pathname
+fallback. The Darwin adapter is implemented, but its presence alone does not
+qualify every canon-writing workflow in a copied executable.
 
 The binaries do not automatically load `.env` or `bunfig.toml`. They do not
 contact a network endpoint by themselves. Network access remains limited to
@@ -68,24 +77,39 @@ Intel macOS and other targets remain unsupported. The selected native host is
 the default; `KIZUKI_TARGET` can explicitly select only its matching registry
 entry. macOS checksums use `shasum -a 256 -c SHA256SUMS`.
 
-`.github/workflows/macos-native.yml` is manual-only, with one standard
-`macos-15` arm64 runner and a 15-minute timeout. It requires an exact ancestor
-`base_sha` and binds the checkout to the actual dispatch SHA. The default-false
-`existing_allowance_verified` input must remain false until existing allowance
-and spending limits prove that this run and artifact retention add no cost.
-Usage showing zero billed cost is not proof of remaining allowance. No runner
-was started as part of preparing this change.
+`.github/workflows/macos-native.yml` is manual-only. It requires an exact
+ancestor `base_sha` and binds the checkout to the dispatch SHA. The
+`existing_allowance_verified` input defaults to false and gates every job;
+verify existing allowance and spending limits before dispatch.
 
-The job runs native filesystem, lock, config, terminal and plist checks, builds
-both binaries, and executes the package outside the checkout. It retains the
-package and content-free synthetic proof receipt in this repository for seven
-days. It does not load a launchd service, sign/notarize binaries, publish a
-release, or count as installed-service or human stranger evidence. Actual macOS
-execution is still a required verification gate until an exact-head receipt
-exists. Linux validation does not supply that receipt.
+The default `native-arm64` job uses a standard `macos-15` arm64 runner. It runs
+native filesystem, lock, config, terminal, plist and consumer tests, builds
+both binaries, and executes the copied package outside the checkout. This
+job's plist test does not load a service. `native_adapter_only` selects a
+separate bounded Darwin adapter canary instead of the full product checks.
 
-The shared lock uses the OS system library on each target and retains the same
-native advisory locking and stable-inode ownership protocol. macOS daemon boot
-identity currently falls back to a PID string; this does not satisfy the strict
-calendar qualification UUID contract. macOS calendar qualification remains
-unqualified and no synthetic boot identity is generated here.
+`native_lifecycle_only` selects the `native-service` matrix on `ubuntu-24.04`
+and `macos-15`. It runs the native consumer tests and copied-artifact proof,
+then `scripts/native-service-lifecycle.ts` exercises a temporary owned user
+service through systemd or launchd. That includes real service installation,
+fresh rail health, repeat installation, crash restart, public graceful stop,
+uninstall, and installation from a replacement path containing the same
+package bytes. Failed activation rollback is tested through the native API;
+stopped-vault import, query, export and restore check continued data access.
+Cleanup checks the owned process and unit before removing the fixture.
+
+The workflow retains packages and synthetic receipts for seven days, including
+lifecycle failure receipts. Inspect those exact-revision receipts for current
+results. Neither job signs or notarizes binaries, publishes a release, tests a
+cross-version upgrade, or proves an unfamiliar user's onboarding. Service
+restart checks do not reboot the host. macOS qualification remains pending
+until its required native gates pass; Linux results cannot supply that proof.
+
+The shared lock uses the OS system library on each target and keeps its native
+advisory locking and stable-inode ownership protocol. `readBootId()` reads the
+Linux kernel boot ID or the native `kern.bootsessionuuid` value on macOS arm64.
+Unavailable or malformed native identity falls back conservatively to a PID
+string; that fallback cannot establish a boot-session UUID. The native Mac
+consumer check compares the implementation across processes with the OS value.
+Simulated changed-boot lease recovery and actual host-reboot evidence remain
+distinct checks.

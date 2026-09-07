@@ -80,6 +80,18 @@ function historicalConnection(backup: string, manifest: ExportManifest, source: 
     count: 1, sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"), size: Buffer.byteLength(bytes), mode: 0o600,
   };
   manifest.schema = schema;
+  if (schema === V2_BACKUP_SCHEMA) manifest.schema_versions.ledger = 20;
+  if (schema !== BACKUP_SCHEMA) {
+    for (const table of ["purge_batches", "purge_batch_receipts", "purge_ops"]) {
+      delete manifest.files[`ledger/${table}.jsonl`];
+      unlinkSync(join(backup, "ledger", `${table}.jsonl`));
+    }
+    const lineage = "canon/source-survivor-lineage.v1.jsonl";
+    if (manifest.files[lineage] !== undefined) {
+      delete manifest.files[lineage];
+      unlinkSync(join(backup, lineage));
+    }
+  }
   if (schema === LEGACY_BACKUP_SCHEMA) {
     manifest.schema_versions.ledger = 15;
     delete manifest.files["ledger/canon-machine-byte-intents.jsonl"];
@@ -132,6 +144,7 @@ describe("portable connection history", () => {
       historicalConnection(backup, exportVault(db, vault, backup), source, schema);
       const report = restoreVault(backup, target);
       expect(report.recovery_warnings.join(" ")).toContain("retained checkpoints will not resume automatically");
+      if (schema !== BACKUP_SCHEMA) expect(report.recovery_warnings.join(" ")).toContain("historical purge");
       const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
       try {
         const history = getConnection(restored, "fixture", source)!;
@@ -157,8 +170,12 @@ describe("portable connection history", () => {
         expect(existsSync(join(target, ".kizuki", "connections", `${source}.state`))).toBe(false);
 
         const repeatedBackup = join(root, "backup-again"), repeatedTarget = join(root, "restored-again");
-        expect(exportVault(restored, target, repeatedBackup).schema).toBe(BACKUP_SCHEMA);
+        expect(existsSync(join(target, ".kizuki", "connection-state.lock"))).toBe(true);
+        const repeatedManifest = exportVault(restored, target, repeatedBackup);
+        expect(repeatedManifest.schema).toBe(BACKUP_SCHEMA);
+        expect(Object.keys(repeatedManifest.files).some(path => path.includes("connection-state.lock"))).toBe(false);
         const repeatedReport = restoreVault(repeatedBackup, repeatedTarget);
+        expect(existsSync(join(repeatedTarget, ".kizuki", "connection-state.lock"))).toBe(false);
         expect(repeatedReport.recovery_warnings.join(" ")).toContain("retained checkpoints will not resume automatically");
         const repeated = openLedger(join(repeatedTarget, ".kizuki", "kizuki.db"));
         try {

@@ -96,6 +96,10 @@ function durableUsage(db: Database, vaultPath: string, day: string): number {
 
 /** Run only under the write flock: no reservation can still be writing. */
 export function settleWriteReservations(db: Database, vaultPath: string): void {
+  // A durable ordinary intent can still publish under the same reservation.
+  // It also owns the shared receipt tail, which may be incomplete. Retain all
+  // reservations until that globally serialized transition is reconciled.
+  if (tableExists(db, "canon_write_intents") && db.query("SELECT 1 FROM canon_write_intents LIMIT 1").get() !== null) return;
   const journal = new Set(readReceiptsLog(vaultPath).map(receipt => receipt.receipt_id));
   for (const row of db.query<{ receipt_id: string; day: string; page_path: string; before_hash: string | null }, []>("SELECT * FROM canon_write_reservations").all()) {
     assertPageRelPath(row.page_path);

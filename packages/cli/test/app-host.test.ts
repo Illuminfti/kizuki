@@ -1,12 +1,34 @@
 import { afterEach, expect, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHelpers } from './helpers';
 import { createAppHost } from '../src/app/host';
+import { Database } from 'bun:sqlite';
+import { errorText } from '../src/output';
 import type { CliIo } from '../src/commands';
 const h = createHelpers();
 afterEach(h.cleanup);
 const policy = { purposes: ['capture', 'recall', 'session'], allowed_fields: ['text', 'subjects', 'metadata', 'attachments'], retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' };
+test.each([false, true])('app status refuses ledger replacement during read admission: schema error=%s', async schemaError => {
+    const setup = h.tempVault(), path = join(setup.vault, '.kizuki', 'kizuki.db');
+    const io: CliIo = { env: setup.env, vaultOverride: setup.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out() {}, err() {}, prompt: async () => '' };
+    const host = createAppHost(io), original = Database.prototype.query;
+    let armed = true;
+    Database.prototype.query = function(this: Database, ...args: Parameters<typeof original>) {
+        if (armed && args[0].includes('FROM agents LIMIT 0')) {
+            armed = false;
+            renameSync(path, `${path}.held`);
+            if (schemaError) throw Error('synthetic schema failure after custody replacement');
+        }
+        return original.apply(this, args);
+    } as typeof original;
+    try {
+        const response = await host.handle(new Request('http://127.0.0.1/app/v1/status', { method: 'POST', body: '{}' }));
+        expect(armed).toBe(false);
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ ok: false, error: { code: 'custody_unavailable', retryable: false } });
+    } finally { Database.prototype.query = original; if (!armed) renameSync(`${path}.held`, path); await host.close(); }
+});
 test('native local app enrolls folder, requires consent, captures and queries without a writer daemon', async () => {
     const setup = h.tempVault(), notes = join(setup.vault, '..', 'synthetic-notes');
     mkdirSync(notes);
@@ -99,7 +121,17 @@ test.each(['authenticated', 'asset', 'unauthorized', 'malformed'])('launcher fai
                 connected = observed?.() ?? false;
                 throw Error('synthetic opener failure after request');
             });
-        } catch (error) { expect((error as Error).message).toBe('app_browser_unavailable'); }
+        } catch (error) {
+            expect((error as Error).message).toBe('app_browser_unavailable');
+            const diagnostic = errorText(error);
+            expect(diagnostic).toStartWith('app_browser_unavailable:');
+            expect(diagnostic).toContain(process.platform === 'darwin' ? '/usr/bin/open' : '/usr/bin/xdg-open');
+            expect(diagnostic).toContain('default web browser');
+            expect(diagnostic).toContain('does not sign you in');
+            expect(diagnostic).not.toContain('synthetic opener failure');
+            expect(diagnostic).not.toContain(origin);
+            expect(diagnostic).not.toContain('#token=');
+        }
         expect(connected).toBe(kind === 'authenticated');
         if (kind === 'authenticated') {
             expect(app).toBeDefined();

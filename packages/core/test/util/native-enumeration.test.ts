@@ -10,33 +10,15 @@ function scenario(mode: string, body: string): void {
     import { join } from "node:path";
     import { strict as assert } from "node:assert";
     const mode = ${JSON.stringify(mode)};
-    const root = fs.mkdtempSync("/tmp/kizuki-native-enumeration-");
+    const root = fs.realpathSync(fs.mkdtempSync("/tmp/kizuki-native-enumeration-"));
     const owned = join(root, "owned"), outside = join(root, "outside");
     fs.mkdirSync(owned); fs.mkdirSync(outside); fs.writeFileSync(join(outside, "canary"), "SYNTHETIC_UNOWNED");
     const realDlopen = ffi.dlopen, realCc = ffi.cc;
-    const libc = realDlopen("libc.so.6", { __errno_location: { args: [], returns: ffi.FFIType.ptr } });
-    const errno = new DataView(ffi.toArrayBuffer(libc.symbols.__errno_location(), 0, 4));
+    const errnoName = process.platform === "darwin" ? "__error" : "__errno_location";
+    const libc = realDlopen(process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6", { [errnoName]: { args: [], returns: ffi.FFIType.ptr } });
+    const errno = new DataView(ffi.toArrayBuffer(libc.symbols[errnoName](), 0, 4));
     let injected = 0;
-    mock.module("bun:ffi", () => ({ ...ffi, dlopen(...args) {
-      const library = realDlopen(...args), original = library.symbols;
-      const symbols = { ...original };
-      // Also inject at the pre-fix libc seam so these regressions demonstrate
-      // the original late-errno failure when run against its implementation.
-      if (original.openat) symbols.openat = (...values) => {
-        const name = new ffi.CString(values[1]).toString();
-        if (mode === "present-with-false-enoent" && name === "present") {
-          injected++; errno.setInt32(0, 2, true); return -1;
-        }
-        const result = original.openat(...values);
-        if (mode === "openat-errno" && result < 0) { injected++; errno.setInt32(0, 11, true); }
-        return result;
-      };
-      if (original.readdir) symbols.readdir = (...values) => {
-        const result = original.readdir(...values);
-        if (mode === "eof-errno" && !result) { injected++; errno.setInt32(0, 11, true); }
-        return result;
-      };
-      if (original.syscall) symbols.syscall = (...values) => {
+    function scan(original, values) {
         assert.equal(values[0], 217n);
         assert.equal(typeof values[1], "bigint");
         assert.equal(typeof values[3], "bigint");
@@ -53,21 +35,44 @@ function scenario(mode: string, body: string): void {
           if (mode === "malformed-nul") bytes.fill(97, 19, 24);
           return 24;
         }
-        const result = original.syscall(...values);
+        const result = original(...values);
         if (!injected && mode === "root-rename-during-scan") { injected++; fs.renameSync(owned, join(root, "moved")); fs.mkdirSync(owned); }
         if (mode === "eof-errno" && result === 0) { injected++; errno.setInt32(0, 11, true); }
         return result;
+    }
+    mock.module("bun:ffi", () => ({ ...ffi, dlopen(...args) {
+      const library = realDlopen(...args), original = library.symbols;
+      const symbols = { ...original };
+      // Also inject at the pre-fix libc seam so these regressions demonstrate
+      // the original late-errno failure when run against its implementation.
+      if (process.platform === "linux" && original.openat) symbols.openat = (...values) => {
+        const name = new ffi.CString(values[1]).toString();
+        if (mode === "present-with-false-enoent" && name === "present") {
+          injected++; errno.setInt32(0, 2, true); return -1;
+        }
+        const result = original.openat(...values);
+        if (mode === "openat-errno" && result < 0) { injected++; errno.setInt32(0, 11, true); }
+        return result;
       };
+      if (original.readdir) symbols.readdir = (...values) => {
+        const result = original.readdir(...values);
+        if (mode === "eof-errno" && !result) { injected++; errno.setInt32(0, 11, true); }
+        return result;
+      };
+      if (original.syscall) symbols.syscall = (...values) => scan(original.syscall, values);
       return { ...library, symbols };
     }, cc(options) {
       const library = realCc(options), original = library.symbols.kizuki_open_owned_child;
-      return { ...library, symbols: { ...library.symbols, kizuki_open_owned_child(...values) {
+      return { ...library, symbols: { ...library.symbols,
+        ...(library.symbols.kizuki_read_directory ? { kizuki_read_directory(fd, address, length) {
+          return scan((_number, descriptor, buffer, capacity) => library.symbols.kizuki_read_directory(Number(descriptor), buffer, capacity), [217n, BigInt(fd), address, BigInt(length)]);
+        } } : {}), kizuki_open_owned_child(...values) {
         const name = new ffi.CString(values[1]).toString();
         assert.ok(values[2] === 0 || values[2] === 1);
         if (mode === "present-with-false-enoent" && name === "present") {
           injected++; errno.setInt32(0, 2, true); return -13;
         }
-        if (mode === "opaque-present" && new Uint8Array(ffi.toArrayBuffer(values[1], 0, 1))[0] === 255) {
+        if (mode === "opaque-present" && new Uint8Array(ffi.toArrayBuffer(values[1], 0, 1))[0] === (process.platform === "darwin" ? 195 : 255)) {
           injected++; errno.setInt32(0, 2, true); return -13;
         }
         if (mode === "fresh-open-failed" && name === ".") { injected++; return -13; }
@@ -119,7 +124,7 @@ test("failed opens of present symlinks and non-directory files remain unsafe", (
 test("native erasure preserves opaque names and refuses permission errors", () => {
   scenario("opaque-present", `
     fs.mkdirSync(join(owned, "store"));
-    for (const byte of [255, 254]) fs.writeFileSync(Buffer.concat([Buffer.from(join(owned, "store") + "/"), Buffer.from([byte])]), "synthetic");
+    for (const bytes of (process.platform === "darwin" ? [[195, 191], [195, 190]] : [[255], [254]])) fs.writeFileSync(Buffer.concat([Buffer.from(join(owned, "store") + "/"), Buffer.from(bytes)]), "synthetic");
     assert.throws(() => cap.removeTree("store", cap.childIdentity("store")), /unsafe/);
   `);
 });
@@ -164,3 +169,95 @@ for (const mode of ["count-overrun", "malformed-header", "malformed-length", "ma
 test("the cumulative entry bound refuses a truncated erasure scan", () => {
   scenario("entry-limit", "fs.mkdirSync(join(owned, 'store')); assert.throws(() => cap.removeTree('store', cap.childIdentity('store')), /bounds/); assert.ok(fs.existsSync(join(owned, 'store')));");
 });
+
+for (const mode of ["valid", "valid-padded", "eof", "zero-inode", "short-header", "overrun", "empty-name", "missing-nul", "count-overrun", "misaligned", "nonzero-padding", "oversized-dot"])
+  test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(`Darwin raw directory records preserve bytes or refuse: ${mode}`, () => {
+    const script = `
+      import { mock } from "bun:test";
+      import * as ffi from "bun:ffi";
+      import { strict as assert } from "node:assert";
+      const mode = ${JSON.stringify(mode)}, realDlopen = ffi.dlopen;
+      const callback = new ffi.JSCallback((_fd, pointer, capacity, _position) => {
+        const bytes = Buffer.from(ffi.toArrayBuffer(pointer, 0, Number(capacity))); bytes.fill(0);
+        if (mode === "eof") return 0;
+        if (mode === "short-header") return 23;
+        if (mode === "count-overrun") return Number(capacity) + 1;
+        bytes.writeBigUInt64LE(mode === "zero-inode" ? 0n : 42n, 0);
+        const length = mode === "misaligned" ? 25 : mode === "valid-padded" || mode === "nonzero-padding" ? 32 : 24;
+        bytes.writeUInt16LE(mode === "overrun" ? 32 : length, 16);
+        bytes.writeUInt16LE(mode === "empty-name" ? 0 : 2, 18);
+        bytes[20] = 8; bytes[21] = 195; bytes[22] = 191;
+        if (mode === "missing-nul") bytes[23] = 1;
+        if (mode === "nonzero-padding") bytes[31] = 1;
+        if (mode === "oversized-dot") {
+          bytes.writeUInt16LE(64, 16); bytes.writeUInt16LE(1, 18); bytes[21] = 46; bytes[22] = 0;
+          bytes.writeBigUInt64LE(43n, 32); bytes.writeUInt16LE(32, 48);
+          bytes.writeUInt16LE(1, 50); bytes[52] = 8; bytes[53] = 120;
+          return 64;
+        }
+        return length;
+      }, { args: [ffi.FFIType.i32, ffi.FFIType.ptr, ffi.FFIType.u64, ffi.FFIType.ptr], returns: ffi.FFIType.i64_fast });
+      mock.module("bun:ffi", () => ({ ...ffi, dlopen(...args) {
+        const library = realDlopen(...args), original = library.symbols;
+        return { ...library, symbols: { ...original, dlsym(handle, name) {
+          return new ffi.CString(name).toString() === "__getdirentries64" ? callback.ptr : original.dlsym(handle, name);
+        } } };
+      } }));
+      const { loadOwnedDirectoryNative } = await import(${JSON.stringify(join(import.meta.dir, "../../src/util/owned-directory-native.ts"))});
+      const api = loadOwnedDirectoryNative(), out = Buffer.alloc(16384);
+      try {
+        const status = api.symbols.readDirectory(-1, ffi.ptr(out), out.length);
+        if (mode === "valid" || mode === "valid-padded") {
+          assert.equal(status, 24); assert.equal(out.readUInt16LE(16), 24);
+          assert.deepEqual([...out.subarray(19, 22)], [195, 191, 0]);
+        } else if (mode === "eof") assert.equal(status, 0);
+        else assert.equal(status, -22);
+        process.stdout.write("passed");
+      } finally { api.compiled.close(); api.libc.close(); callback.close(); }
+    `;
+    const result = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    expect(result.stdout.toString()).toBe("passed");
+  });
+
+for (const mode of ["misaligned", "oversized-dot"])
+  test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(`Darwin malformed dot records cannot establish emptiness: ${mode}`, () => {
+    const script = `
+      import { mock } from "bun:test";
+      import * as ffi from "bun:ffi";
+      import * as fs from "node:fs";
+      import { join } from "node:path";
+      import { strict as assert } from "node:assert";
+      const mode = ${JSON.stringify(mode)}, realDlopen = ffi.dlopen;
+      const root = fs.realpathSync(fs.mkdtempSync("/tmp/kizuki-darwin-malformed-dot-"));
+      fs.writeFileSync(join(root, "x"), "SYNTHETIC_PRESENT");
+      let calls = 0;
+      const callback = new ffi.JSCallback((_fd, pointer, capacity, _position) => {
+        if (calls++ > 0) return 0;
+        const bytes = Buffer.from(ffi.toArrayBuffer(pointer, 0, Number(capacity))); bytes.fill(0);
+        bytes.writeBigUInt64LE(42n, 0); bytes.writeUInt16LE(mode === "misaligned" ? 25 : 64, 16);
+        bytes.writeUInt16LE(1, 18); bytes[20] = 4; bytes[21] = 46;
+        if (mode === "misaligned") return 25;
+        bytes.writeBigUInt64LE(43n, 32); bytes.writeUInt16LE(32, 48);
+        bytes.writeUInt16LE(1, 50); bytes[52] = 8; bytes[53] = 120;
+        return 64;
+      }, { args: [ffi.FFIType.i32, ffi.FFIType.ptr, ffi.FFIType.u64, ffi.FFIType.ptr], returns: ffi.FFIType.i64_fast });
+      mock.module("bun:ffi", () => ({ ...ffi, dlopen(...args) {
+        const library = realDlopen(...args), original = library.symbols;
+        return { ...library, symbols: { ...original, dlsym(handle, name) {
+          return new ffi.CString(name).toString() === "__getdirentries64" ? callback.ptr : original.dlsym(handle, name);
+        } } };
+      } }));
+      const { openOwnedDirectory } = await import(${JSON.stringify(join(import.meta.dir, "../../src/util/owned-directory.ts"))});
+      const cap = openOwnedDirectory(root);
+      try {
+        assert.throws(() => cap.isEmpty(), /unsafe/);
+        assert.ok(calls > 0);
+        assert.equal(fs.readFileSync(join(root, "x"), "utf8"), "SYNTHETIC_PRESENT");
+        process.stdout.write("passed");
+      } finally { cap.close(); callback.close(); fs.rmSync(root, { recursive: true, force: true }); }
+    `;
+    const result = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    expect(result.stdout.toString()).toBe("passed");
+  });

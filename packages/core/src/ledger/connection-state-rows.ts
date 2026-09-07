@@ -33,8 +33,9 @@ function isLockedDatabase(error: unknown): boolean {
  * in another process that renamed its own file between this one's rename and
  * its commit would leave the row naming bytes this one's rollback then took
  * away, and a recovery running at the same moment would read a live swap as
- * crash debris. The database's write lock is the only lock both processes
- * already share, so every file move happens while it is held.
+ * crash debris. Every file move therefore holds the database write lock as
+ * well as the surrounding connection-operation lease. The SQL lock remains
+ * short and also coordinates other ledger writers outside enrollment.
  *
  * `rollback` undoes the file moves `work` made and runs under that same lock:
  * released first, it would race a recovery in another process that had already

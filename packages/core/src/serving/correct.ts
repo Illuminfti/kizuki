@@ -1,4 +1,6 @@
 import { sha256Hex } from "../util/hash";
+import { snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
+import { VaultMutationError } from "../vault/mutation-scope";
 import {
   sourcePolicyEpoch,
   requireSourceEvents,
@@ -11,8 +13,9 @@ import { recordNativeCorrection } from "../correction/evidence";
 import { text } from "./arguments";
 import { auditArguments, claimsIo, gateAsync, principalName } from "./gate";
 import type { Served } from "./gate";
-import { rewriteCanon } from "./rewrite";
-import type { RewrittenPage } from "./rewrite";
+import { pendingCanonRewrite, rewriteCanon } from "./rewrite";
+import type { RewrittenPage, CanonRewrite } from "./rewrite";
+import type { CanonRecoveryPending } from "../correction/types";
 import { groupByKey, readable, resolve } from "./target";
 import type { CorrectTarget } from "./target";
 import { ServeError } from "./types";
@@ -42,7 +45,8 @@ export interface CorrectArgs {
 }
 
 export interface CorrectData {
-  /** The receipt for the canon rewrite; null when no page moved. */
+  recovery_pending?: CanonRecoveryPending[];
+  /** The committed canon receipt; null does not rule out a pending publication. */
   receipt_id: string | null;
   /** The statement's ledger event; null when nothing was recorded. */
   event_id: string | null;
@@ -127,7 +131,7 @@ function relayCeiling(ctx: ServeContext): AuthorityTier | undefined {
 function sentence(
   superseded: number,
   subject: string,
-  rewrite: { rewritten: RewrittenPage[]; unreached: string[]; failed: boolean },
+  rewrite: CanonRewrite,
 ): string {
   const retired =
     superseded === 0
@@ -135,7 +139,9 @@ function sentence(
       : `Recorded the correction and retired ${superseded} claim(s) about ${subject}.`;
   const page = rewrite.rewritten[0];
   const written =
-    page === undefined
+    rewrite.recovery_pending !== undefined
+      ? " Canon completion is unconfirmed; recovery is pending. Run kizuki recover --json before another change."
+      : page === undefined
       ? rewrite.failed
         ? " No page was rewritten: the canon writer refused this pass."
         : ""
@@ -157,11 +163,21 @@ export async function serveCorrect(
   ctx: ServeContext,
   args: CorrectArgs,
 ): Promise<Envelope<CorrectData>> {
+  const { statement, target, object, dry_run } = args;
+  args = Object.freeze({ statement,
+    ...(target === undefined ? {} : { target: Object.freeze({ ...target }) }),
+    ...(object === undefined ? {} : { object }),
+    ...(dry_run === undefined ? {} : { dry_run }),
+  });
   return gateAsync(
     ctx,
     "correct",
     auditArguments(args),
     async ({ ctx, at }): Promise<Served<CorrectData>> => {
+      const io = snapshotCanonIo({ db: ctx.db, vault_path: ctx.vaultPath });
+      ctx = Object.freeze({ ...ctx, db: io.db, vaultPath: io.vault_path });
+      try {
+        return await withCanonMutationAsync(io, async (scope, canon) => {
       const grant = ctx.principal.grant;
       const statement = text("statement", args.statement, MAX_STATEMENT_CHARS);
       const replacement =
@@ -207,19 +223,22 @@ export async function serveCorrect(
                 "UPDATE native_owner_evidence SET filing_state='filed' WHERE event_id=?",
               )
               .run(recorded.event_id);
+            const pending = pendingCanonRewrite(ctx, prior);
             return {
               canon: [],
               quoted: [],
-              withheld: [],
+              withheld: pending !== undefined ? [{ id: 'tool:correct', reason: 'error' as const }] : [],
               data: {
+                ...(pending === undefined ? {} : { recovery_pending: pending }),
                 receipt_id: null,
                 event_id: recorded.event_id,
                 claim_id: prior.claim_id,
                 superseded: [],
                 rewritten: [],
                 ambiguous: [],
-                answer:
-                  "That correction was already recorded; nothing changed.",
+                answer: pending !== undefined
+                  ? "That correction is recorded; canon recovery remains pending. Run kizuki recover --json before another change."
+                  : "That correction was already recorded; nothing changed.",
               },
             };
           }
@@ -353,9 +372,9 @@ export async function serveCorrect(
               claim_key: claimKeyValue,
             }))
           : [];
-      const rewrite =
+      const rewrite: CanonRewrite =
         filed.outcome === "stored"
-          ? rewriteCanon(ctx, claim, [claimKeyValue])
+          ? rewriteCanon(scope, canon, ctx, claim, [claimKeyValue])
           : { receipt_id: null, rewritten: [], unreached: [], failed: false };
 
       const answer =
@@ -366,10 +385,11 @@ export async function serveCorrect(
       return {
         canon: [],
         quoted: [],
-        withheld: rewrite.failed
+        withheld: rewrite.failed || rewrite.recovery_pending !== undefined
           ? [{ id: `tool:correct`, reason: "error" }]
           : [],
         data: {
+          ...(rewrite.recovery_pending === undefined ? {} : { recovery_pending: rewrite.recovery_pending }),
           receipt_id: rewrite.receipt_id,
           event_id: eventId,
           claim_id: claim.claim_id,
@@ -385,6 +405,13 @@ export async function serveCorrect(
           ],
         },
       };
+        });
+      } catch (error) {
+        if (error instanceof VaultMutationError && error.code === "writer_busy") {
+          throw new ServeError("error", "canon writer is busy; retry correction", { retry_after_seconds: 1 });
+        }
+        throw error;
+      }
     },
   );
 }

@@ -1,4 +1,3 @@
-import { canonAuthorities } from "./canon/authority";
 import type { Database } from "bun:sqlite";
 import {
   derivedMetaNeedsRebuild,
@@ -85,7 +84,6 @@ export function rebuildDerived(
   const rebuiltAt = new Date().toISOString();
   const input = {
     generation,
-    authorities:canonAuthorities(db,live),
     pages: live,
     skipped: report.skipped,
     rebuilt_at: rebuiltAt,
@@ -111,9 +109,8 @@ export function refreshDerivedPage(
   initGraph(db);
   const report = listCanonPagesReport(vaultPath);
   db.transaction(() => {
-    const authorities=canonAuthorities(db,report.pages);
-    replacePage(db, page,authorities.get(page.relPath)??"model_inference");
-    refreshPageEdges(db, page, report.pages, report.skipped.length,authorities);
+    replacePage(db, page);
+    refreshPageEdges(db, page, report.pages, report.skipped.length);
   }).immediate();
 }
 
