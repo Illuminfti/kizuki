@@ -98,7 +98,11 @@ export function realSupervisorHost(
           else if ((enabled.ok && enabled.stdout === "enabled") ||
             (enabled.exitCode !== null && enabled.exitCode > 0 && enabled.stdout === "disabled")) state = "disabled";
           else if (absent) state = "absent";
-        } else if (absent && active.exitCode === 4 && active.stdout === "unknown") state = "absent";
+        // systemd 255 reports a missing unit as exit 4 with inactive, while
+        // older managers can report unknown. Enablement must independently
+        // confirm not-found; masked/disabled unknown states remain unverified.
+        } else if (absent && active.exitCode === 4 &&
+          (active.stdout === "unknown" || active.stdout === "inactive")) state = "absent";
         return {
           kind,
           state,

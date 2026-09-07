@@ -32,6 +32,7 @@ case "$2" in
   is-active)
     if [ -n "$TEST_SUPERVISOR_ACTIVITY" ]; then printf '%s\\n' "$TEST_SUPERVISOR_ACTIVITY"; exit "\${TEST_SUPERVISOR_ACTIVITY_EXIT:-3}"; fi
     if [ "$state" = active ]; then printf 'active\\n'; exit 0; fi
+    if [ "$state" = absent ]; then printf 'inactive\\n'; exit 4; fi
     printf 'inactive\\n'; exit 3 ;;
   *) exit 1 ;;
 esac
