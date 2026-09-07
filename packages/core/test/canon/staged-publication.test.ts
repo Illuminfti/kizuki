@@ -49,11 +49,18 @@ for (const mode of ["live", "archive"] as const) {
       import { mock } from 'bun:test';
       import * as fs from 'node:fs';
       const realWrite = fs.writeSync, realSync = fs.fsyncSync;
-      mock.module('node:fs', () => ({ ...fs, writeSync(fd, bytes, offset, length, position) {
+      let armed = false;
+      mock.module('node:fs', () => ({ ...fs, writeSync(fd, ...args) {
+        if (!armed) return realWrite(fd, ...args);
+        const [bytes, offset, length, position] = args;
         const count = realWrite(fd, bytes, offset, Math.min(length, 7), position);
         realSync(fd); process.exit(73); return count;
       } }));
       const { grantCanonWrite, writePage } = await import(${JSON.stringify(join(import.meta.dir, "../../src/vault/write.ts"))});
+      const { openCanonFiles } = await import(${JSON.stringify(join(import.meta.dir, "../../src/vault/canon-files.ts"))});
+      // The fault targets the stage bytes, after Darwin's native source pipe loads.
+      openCanonFiles(${JSON.stringify(vault)}).close();
+      armed = true;
       writePage(grantCanonWrite('import', ${JSON.stringify(id)}, ${JSON.stringify(vault)}), ${JSON.stringify(rel)}, ${JSON.stringify(page)},
         ${JSON.stringify(mode === "archive" ? { revision: true, expected_hash: hashBytes(prior) } : {})});
     `;
