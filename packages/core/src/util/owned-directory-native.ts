@@ -279,18 +279,22 @@ function loadDarwinOwnedDirectoryNative() {
   });
   let reader = -1, writer = -1;
   let compiled: ReturnType<typeof cc> | undefined;
+  let phase = "pipe";
   try {
     const descriptors = new Int32Array(2);
     if (libc.symbols.pipe(ptr(descriptors)) !== 0) throw new Error();
     [reader, writer] = [descriptors[0]!, descriptors[1]!];
     const fcntl = libc.symbols.__fcntl_nocancel;
+    phase = "descriptor_flags";
     for (const descriptor of [reader, writer]) {
       if (fcntl(descriptor, 2 /* F_SETFD */, 1n) !== 0 || fcntl(descriptor, 1 /* F_GETFD */, 0n) !== 1) throw new Error();
     }
     if (fcntl(writer, 4 /* F_SETFL */, 4n /* O_NONBLOCK */) !== 0) throw new Error();
+    phase = "source_write";
     const bytes = Buffer.from(darwinSource);
     if (bytes.length > 16384 || writeSync(writer, bytes) !== bytes.length) throw new Error();
     closeSync(writer); writer = -1;
+    phase = "compile";
     const library = cc({
       flags: ["-nostdlib", "-x", "c"],
       source: `/dev/fd/${reader}`,
@@ -311,12 +315,14 @@ function loadDarwinOwnedDirectoryNative() {
       },
     });
     compiled = library;
+    phase = "function_addresses";
     const entries = ["openat", "fstatat", "mkdirat", "renameat", "unlinkat", "renameatx_np", "__getdirentries64", "__fcntl_nocancel", "__error"] as const;
     const addresses = new BigUint64Array(entries.map(name => {
       const address: unknown = Reflect.get(libc.symbols[name], "ptr");
       if (typeof address !== "number" || !Number.isSafeInteger(address) || address <= 0) throw new Error();
       return BigInt(address);
     }));
+    phase = "initialize";
     library.symbols.kizuki_initialize(ptr(addresses));
     return { libc, compiled: library, symbols: {
       unlinkat: libc.symbols.unlinkat,
@@ -336,7 +342,7 @@ function loadDarwinOwnedDirectoryNative() {
     } };
   } catch {
     compiled?.close(); libc.close();
-    throw new Error("owned_directory_native_unavailable");
+    throw new Error("owned_directory_native_unavailable", { cause: new Error(`owned_directory_native_${phase}`) });
   } finally {
     if (writer >= 0) closeSync(writer);
     if (reader >= 0) closeSync(reader);
