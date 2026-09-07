@@ -22,6 +22,16 @@ retain their existing meaning. Observation time is excluded.
 
 A sensitivity or attachment change therefore creates a new revision. Merely
 reordering attachment references or observing the same record again does not.
+
+Re-hosting attachment bytes is separate from ledger identity. The ledger stores
+attachment references and their declared metadata; acceptance does not fetch,
+copy, or re-host the referenced blobs. Changing an attachment ID, media type,
+filename, or declared byte size changes the revision hash. Moving or replacing
+the underlying bytes while keeping every accepted reference field unchanged
+does not: this hash proves the recorded references, not the blob contents.
+Connectors must emit a changed reference or metadata to represent such a source
+revision; the ledger does not infer it from external storage.
+
 Historical version-1 payloads, IDs, timestamps and content hashes remain
 unchanged. An unchanged retry of a version-1 record deduplicates only when its
 complete version-2 representation is equal. Old labels are never rewritten.

@@ -39,22 +39,26 @@ export function parseArguments(
       positionals.push(token);
       continue;
     }
-    if (flagNames.has(token)) {
-      if (flags.has(token)) throw new UsageError(`repeated flag ${token}`);
-      flags.add(token);
+    const separator = token.indexOf("=");
+    const name = separator < 0 ? token : token.slice(0, separator);
+    const inlineValue = separator < 0 ? undefined : token.slice(separator + 1);
+    if (flagNames.has(name)) {
+      if (inlineValue !== undefined) throw new UsageError(`flag ${name} does not take a value`);
+      if (flags.has(name)) throw new UsageError(`repeated flag ${name}`);
+      flags.add(name);
       continue;
     }
-    if (optionNames.has(token)) {
-      if (options.has(token)) throw new UsageError(`repeated option ${token}`);
-      const value = tokens[index + 1];
-      if (value === undefined || value.startsWith("--")) {
-        throw new UsageError(`missing value for ${token}`);
+    if (optionNames.has(name)) {
+      if (options.has(name)) throw new UsageError(`repeated option ${name}`);
+      const value = inlineValue ?? tokens[index + 1];
+      if (value === undefined || (inlineValue === undefined && value.startsWith("--"))) {
+        throw new UsageError(`missing value for ${name}`);
       }
-      options.set(token, value);
-      index += 1;
+      options.set(name, value);
+      if (inlineValue === undefined) index += 1;
       continue;
     }
-    throw new UsageError(`unknown option ${token}`);
+    throw new UsageError(`unknown option ${name}`);
   }
 
   return { options, flags, positionals };
@@ -80,14 +84,15 @@ export function extractVault(tokens: string[]): {
       rest.push(token);
       continue;
     }
-    if (token === "--vault") {
-      const value = tokens[index + 1];
-      if (value === undefined || value.startsWith("--")) {
+    if (token === "--vault" || token.startsWith("--vault=")) {
+      if (vault !== null) throw new UsageError("repeated option --vault");
+      const inlineValue = token === "--vault" ? undefined : token.slice("--vault=".length);
+      const value = inlineValue ?? tokens[index + 1];
+      if (value === undefined || value.length === 0 || (inlineValue === undefined && value.startsWith("--"))) {
         throw new UsageError("missing value for --vault");
       }
-      if (vault !== null) throw new UsageError("repeated option --vault");
       vault = value;
-      index += 1;
+      if (inlineValue === undefined) index += 1;
       continue;
     }
     rest.push(token);

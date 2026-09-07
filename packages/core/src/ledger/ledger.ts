@@ -369,7 +369,8 @@ export function normalizeReplayFilter(filter: ReplayFilter): ReplayFilter {
   return out;
 }
 
-const LIVE_PREDICATE = `
+/** Internal SQL shared by ledger replay and timeline selection, before limits. */
+export const LIVE_PREDICATE = `
   events.deleted = 0
   AND NOT EXISTS (
     SELECT 1 FROM events AS tombstone

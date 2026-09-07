@@ -1,12 +1,17 @@
 import { Database, constants } from "bun:sqlite";
 import { join, resolve } from "node:path";
 import { openLedgerDirectory } from "../vault/canon-files";
+import { assertVaultControl } from "../vault/init";
 import { bindServingAudit } from "../serving/audit-capability";
 import { LEDGER_SCHEMA_VERSION } from "./db";
 import { assertLedgerSchema } from "./integrity";
 import { LEDGER_BUSY_TIMEOUT_MS } from "./limits";
 import { manageDatabaseLifetime } from "./lifetime";
+import { ledgerAccepted, readLedgerMark } from "./mark";
 import { configureLedgerWalLifecycle } from "./wal-lifecycle";
+
+export const LEDGER_READY_DEADLINE_MS = 3_000;
+export const LEDGER_READY_POLL_MS = 250;
 
 export class LedgerReadError extends Error {
   constructor(readonly code: "migration_required" | "custody_unavailable") { super(code); }
@@ -91,4 +96,49 @@ export function openLedgerRead(vaultPath: string, options: { audit?: boolean } =
     }
     return Object.freeze({ db, assertCurrent, close });
   } catch (error) { close(); throw error; }
+}
+
+export function ledgerNotReadyError(vaultPath: string, accepted: number, floor: number): Error {
+  return new Error(
+    `vault ledger not ready: ${accepted} of ${floor} sealed events readable after ${LEDGER_READY_DEADLINE_MS}ms: ${join(vaultPath, ".kizuki", "kizuki.db")}; the store is still restoring or lost kizuki.db-wal. Do not run kizuki init`,
+  );
+}
+
+function readinessPollSleep(deadline: number): number {
+  return Math.min(LEDGER_READY_POLL_MS, Math.max(1, deadline - Date.now()));
+}
+
+function readinessRetry(error: unknown): boolean {
+  if (error instanceof LedgerReadError) return error.code === "custody_unavailable";
+  return error instanceof Error && error.message === "ledger_mark_changed";
+}
+
+/** Reopen each poll so an atomically restored ledger can become visible. A store
+ * landing inside the deadline is read; custody or mark churn during restore retries
+ * until the deadline, then fails closed. */
+export function openReadyLedgerRead(vaultPath: string, options: { audit?: boolean } = {}): LedgerReadContext {
+  const deadline = Date.now() + LEDGER_READY_DEADLINE_MS;
+  let floor = 0;
+  for (;;) {
+    let binding: LedgerReadContext | undefined;
+    let accepted = 0;
+    try {
+      assertVaultControl(vaultPath, { repairPermissions: false });
+      binding = openLedgerRead(vaultPath, options);
+      floor = Math.max(floor, readLedgerMark(vaultPath) ?? 0);
+      accepted = ledgerAccepted(binding.db);
+      binding.assertCurrent();
+      if (accepted >= floor) return binding;
+    } catch (error) {
+      binding?.close();
+      if (readinessRetry(error) && Date.now() < deadline) {
+        Bun.sleepSync(readinessPollSleep(deadline));
+        continue;
+      }
+      throw error;
+    }
+    binding.close();
+    if (Date.now() >= deadline) throw ledgerNotReadyError(vaultPath, accepted, floor);
+    Bun.sleepSync(readinessPollSleep(deadline));
+  }
 }
