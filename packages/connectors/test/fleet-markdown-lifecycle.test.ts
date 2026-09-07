@@ -2,6 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { registerConnection, runToCompletion, setSourceGrant, type SyncBatch } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import {
   MARKDOWN_FOLDER_CONNECTOR_ID,
   createMarkdownFolderConnector,
@@ -40,6 +42,79 @@ function requireCursor(cursor: string | null): string {
   if (cursor === null) throw new Error("expected a resume cursor");
   return cursor;
 }
+
+test("Core completes changing deletion pages before reporting malformed Markdown", async () => {
+  const selected = await syntheticDir("kizuki-markdown-changing-pages-");
+  const db = openLedger(":memory:"), source = "01JJ0000000000000000000001";
+  try {
+    for (const name of ["a", "b", "m", "z"]) {
+      await writeFile(path.join(selected, `${name}.md`), `Synthetic ${name}\n`);
+    }
+    registerConnection(db, MARKDOWN_FOLDER_CONNECTOR_ID, source);
+    setSourceGrant(db, { source_key: source, expected_revision: 0, operation_id: "synthetic-markdown-changing-pages",
+      policy: { purposes: ["capture", "recall", "derive"], allowed_fields: ["text", "subjects", "attachments", "metadata"],
+        retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" } });
+    const connector = createMarkdownFolderConnector({ path: selected, page_size: 1 });
+    const initial = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill");
+    expect(initial.stored).toBe(4); expect(initial.errors).toEqual([]);
+    await unlink(path.join(selected, "b.md")); await unlink(path.join(selected, "z.md"));
+    await writeFile(path.join(selected, "m.md"), Buffer.from([255, 254, 253]));
+    const originalSync = connector.sync.bind(connector), batches: SyncBatch[] = [];
+    connector.sync = async cursor => {
+      if (batches.length === 1) {
+        expect(batches[0]!.events.map(event => event.source_record_id)).toEqual(["b.md"]);
+        expect(JSON.parse(cursor!)).toMatchObject({ phase: "tombstones", after: "b.md", exhausted: false });
+        await writeFile(path.join(selected, "z.md"), "Synthetic z\n");
+        await unlink(path.join(selected, "a.md"));
+      }
+      const batch = await originalSync(cursor); batches.push(batch); return batch;
+    };
+    const changed = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "sync");
+    expect(changed.stored).toBe(2);
+    expect(changed.errors).toEqual(["partial_import: 1 record errors (not_utf8=1)"]);
+    expect(batches.map(batch => batch.events.map(event => [event.source_record_id, event.deleted]))).toEqual([
+      [["b.md", true]], [["a.md", true]], [],
+    ]);
+    expect(batches.at(-1)).toMatchObject({ status: "unavailable", cursor: changed.cursor });
+    const events = () => db.query<{ source_record_id: string; deleted: number }, []>(
+      "SELECT source_record_id,deleted FROM events ORDER BY event_id",
+    ).all();
+    expect(events().filter(event => event.deleted)).toEqual([
+      { source_record_id: "b.md", deleted: 1 }, { source_record_id: "a.md", deleted: 1 },
+    ]);
+    const beforeRepeat = events();
+    connector.sync = originalSync;
+    const repeat = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "sync");
+    expect(repeat).toMatchObject({ stored: 0, duplicates: 0, cursor: changed.cursor, errors: changed.errors });
+    expect(events()).toEqual(beforeRepeat);
+    await writeFile(path.join(selected, "m.md"), "Synthetic repaired m\n");
+    const repaired = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "sync");
+    expect(repaired).toMatchObject({ stored: 1, duplicates: 0, errors: [] });
+    expect(events().at(-1)).toEqual({ source_record_id: "m.md", deleted: 0 });
+    expect(await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "sync"))
+      .toMatchObject({ stored: 0, duplicates: 0, errors: [] });
+    expect(events()).toHaveLength(7);
+  } finally { db.close(); }
+});
+
+test("file pages include new and edited identities below the previous watermark", async () => {
+  const selected = await syntheticDir("kizuki-markdown-lower-keys-");
+  await writeFile(path.join(selected, "m.md"), "Synthetic m before\n");
+  await writeFile(path.join(selected, "z.md"), "Synthetic z\n");
+  const connector = createMarkdownFolderConnector({ path: selected, page_size: 1 });
+  const first = await connector.backfill(null);
+  expect(idsOf(first.events)).toEqual(["m.md"]);
+  expect(JSON.parse(first.cursor!)).toMatchObject({ phase: "files", after: "m.md", exhausted: false });
+  await writeFile(path.join(selected, "a.md"), "Synthetic a new\n");
+  await writeFile(path.join(selected, "m.md"), "Synthetic m edited\n");
+  const second = await connector.backfill(first.cursor);
+  expect(second.events.map(event => [event.source_record_id, event.text])).toEqual([["a.md", "Synthetic a new\n"]]);
+  const third = await connector.backfill(second.cursor);
+  expect(third.events.map(event => [event.source_record_id, event.text])).toEqual([["m.md", "Synthetic m edited\n"]]);
+  const fourth = await connector.backfill(third.cursor);
+  expect(idsOf(fourth.events)).toEqual(["z.md"]);
+  expect((await connector.backfill(fourth.cursor)).events).toEqual([]);
+});
 
 test("selecting an independent folder captures only that folder's ordinary markdown", async () => {
   const parent = await syntheticDir("kizuki-fleet-markdown-select-");
