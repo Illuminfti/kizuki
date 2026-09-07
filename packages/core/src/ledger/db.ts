@@ -70,7 +70,17 @@ const MIGRATIONS: readonly Migration[] = [
   },
   {
     version: 2,
-    sql: `
+    apply(db) {
+      const columns = tableColumns(db, "promotions");
+      const common = ["receipt_id", "proposal_id", "provenance", "sensitivity", "page_path", "at"];
+      const matches = (expected: string[]) => columns.length === expected.length && expected.every(column => columns.includes(column));
+      // The historical staging opener could create v2-shaped receipts before
+      // the ledger had a schema version. Preserve its kind and both hashes.
+      const staged = matches([...common, "kind", "before_hash", "after_hash"]);
+      if (columns.length > 0 && !staged && !matches([...common, "page_hash"])) {
+        throw new LedgerStoreError("corrupt", "historical promotions schema is unsupported");
+      }
+      db.exec(`
       CREATE TABLE connections (
         connector_id TEXT NOT NULL,
         source_key TEXT NOT NULL CHECK (
@@ -139,12 +149,13 @@ const MIGRATIONS: readonly Migration[] = [
         kind, before_hash, after_hash, at
       )
       SELECT receipt_id, proposal_id, provenance, sensitivity, page_path,
-             'claim', NULL, page_hash, at
+             ${staged ? "kind, before_hash, after_hash" : "'claim', NULL, page_hash"}, at
         FROM promotions;
 
       DROP TABLE promotions;
       ALTER TABLE promotions_v2 RENAME TO promotions;
-    `,
+      `);
+    },
   },
   {
     version: 3,
