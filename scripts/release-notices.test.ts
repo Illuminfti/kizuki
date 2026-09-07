@@ -62,3 +62,20 @@ test("real positive-output bundle inputs resolve through module-only package man
   expect(npm[0]!.version_or_revision).toBe(JSON.parse(readFileSync(Bun.resolveSync("zod/package.json", resolve(import.meta.dir, "../packages/mcp")), "utf8")).version);
   expect(() => verifyDistributionTexts(material.distribution, material.license, material.notices)).not.toThrow();
 });
+
+
+test("runtime provenance refuses a substituted HTTPS repository despite identical notice bytes", () => {
+  const { distribution } = distributionFixture();
+  (distribution.components[0]!.source as { url: string }).url = "https://example.com/synthetic/LICENSE.md";
+  expect(() => parsePackageDistribution(distribution)).toThrow();
+});
+test("an identified npm component without text must retain the missing-text reason", () => {
+  const { distribution } = distributionFixture(true);
+  distribution.components.unshift({ kind: "npm", name: "synthetic", version_or_revision: "1.0.0", declared_license: "MIT",
+    source: { kind: "npm", name: "synthetic", version: "1.0.0", integrity: "sha512-" + "A".repeat(86) + "==" },
+    binaries: ["kizuki"], input_identity_sha256: "c".repeat(64), notice_texts: [], unresolved: [] });
+  expect(() => parsePackageDistribution(distribution)).toThrow();
+  distribution.components[0]!.unresolved = ["license_text_missing"];
+  distribution.inventory_status = "observed_with_unresolved_materials";
+  expect(() => parsePackageDistribution(distribution)).not.toThrow();
+});
