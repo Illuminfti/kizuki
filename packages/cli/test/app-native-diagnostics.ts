@@ -43,7 +43,7 @@ export function traceSyntheticAppFailures(vault: string) {
     });
     const spy = spyOn(context, 'withVault').mockImplementation(traced);
     return { saw(code: string) { return errors.some(error => (error as { code: string }).code === code); },
-    report(stage: 'stale-model-consent' | 'privacy-fixture-processing', operation?: { state: string; error: { code: string } | null; result: unknown }) {
+    report(stage: 'stale-model-consent' | 'privacy-fixture-processing' | 'privacy-fixture-source-model-consent', operation?: { state: string; error: { code: string } | null; result: unknown }) {
         console.error('synthetic-app-diagnostic ' + JSON.stringify({ stage,
             operation: operation ? { state: operation.state, code: codes.has(operation.error?.code ?? '') ? operation.error?.code : 'other',
                 has_result: operation.result !== null } : null, errors, current: metadata() }));

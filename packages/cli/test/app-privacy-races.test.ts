@@ -52,7 +52,10 @@ async function fixture() {
         const response = await fetch(app!.url + '/app/v1/' + route, { method: 'POST',
             headers: { origin: app!.url, authorization: 'Bearer ' + bearer, 'content-type': 'application/json' }, body: JSON.stringify(body) });
         const result = await response.json() as { ok: true; data: AppProtocol[R]['response'] } | { ok: false; error: { code: string } };
-        if (!result.ok) throw Error(result.error.code);
+        if (!result.ok) {
+            if (route === 'source_model_consent') diagnostic.report('privacy-fixture-source-model-consent');
+            throw Error(result.error.code);
+        }
         return result.data;
     }
     async function done(id: string): Promise<AppOperation> {
