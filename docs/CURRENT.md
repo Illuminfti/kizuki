@@ -46,8 +46,10 @@ browser sign-in use operator-configured desktop clients and separate source cons
 Calendar requires one canonical calendar and explicit fields. Their account and artifact
 qualification remain separate. ICS enrolls as a local file path; interactive
 calendar URL sign-in is library surface, not a `connect` verb. Other sign-in
-connectors are not enrollable through this CLI. WHOOP and the X API package
-subpath exist as unregistered components; they are not CLI-enrollable. After
+connectors are not enrollable through this CLI except X own-post API native sign-in.
+X requires a public native app, an exact registered fixed loopback callback, explicit
+fields and history start, usage credits and separate source consent; real-account
+qualification remains unrun. WHOOP remains an unregistered component. After
 `import`, claims are live and `tell --claim` can name them. Canon writing
 still requires a configured model; without one the sync rail leaves live
 claims unwritten and doctor says so. The automated

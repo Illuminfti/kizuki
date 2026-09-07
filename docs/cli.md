@@ -96,6 +96,7 @@ usage: kizuki connect [--list|status] [--json]
        kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]
        kizuki connect imap [--source KEY] [--sensitivity public|personal|private]
        kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]
+       kizuki connect x-api --fields relationships,links,media|none --history-start RFC3339 [--source KEY | --new-source] [--json]
        kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY | --new-source] [--json]
        kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY | --new-source] [--json]
 ```
@@ -110,7 +111,7 @@ credentials are required; missing credentials refuse before any prompt or
 network connection. Re-sign-in preserves account identity and history.
 Gmail and Google Calendar use operator desktop clients and browser sign-in;
 see the flags above and [connection setup](connect.md). Other account sign-in
-connectors are not enrollable through this CLI. None of these sign-in paths
+connectors except X own-post API are not enrollable through this CLI. None of these sign-in paths
 are live-account qualified.
 
 Sensitivity is optional: trusted connector runs resolve each valid event
@@ -505,3 +506,30 @@ real account access, complete provider history or a live observation period.
 Before an authenticated session exists, initial sign-in has bounded attempts
 and waits but restart-persistent throttling is unproven. Failed cooldown storage
 is a visible failure requiring repair; it is not a successful rate-limit receipt.
+
+## X own-post API enrollment
+
+As of 2026-09-07, `connect x-api` is wired for a public Native App using Core OAuth
+S256 PKCE and an exact registered callback. The operator supplies public
+`KIZUKI_X_CLIENT_ID` and `KIZUKI_X_REDIRECT_URI`; the callback must be exactly
+`http://127.0.0.1:PORT/callback` with an explicit port from 1 through 65535. The
+port must be free on the owner's desktop. The listener binds before browser or
+provider access; there is no client secret or pasted-token enrollment path.
+
+Select `--fields none` for text and baseline metadata, or an explicit comma-separated
+selection from `relationships,links,media`. Set `--history-start` to an RFC3339 lower
+bound at or after 2010-11-06, representable without losing sub-millisecond precision.
+This is a bounded own-post API window, not full history: API caps and missing posts
+report gaps, media means references, and provider deletion coverage is unavailable.
+`--source KEY` reauthorization preserves the app, account, selection, checkpoint,
+pending plan and retry state. `--new-source` requires a distinct account/app/selection;
+duplicates refuse even after local consent withdrawal. Each new source needs its own
+capture grant before `backfill x-api --source KEY` can read protected state or contact X.
+
+The developer app must be configured as a public Native App with the exact registered
+callback and read scopes `tweet.read users.read offline.access`. X API usage credits
+and account eligibility are external prerequisites; no real grant or credit balance
+has been qualified by the synthetic test suite. See X's official
+[native app setup](https://docs.x.com/fundamentals/developer-apps),
+[OAuth authorization code flow](https://docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code)
+and [usage billing](https://docs.x.com/x-api/getting-started/pricing).

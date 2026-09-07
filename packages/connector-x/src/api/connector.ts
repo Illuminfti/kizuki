@@ -1,4 +1,4 @@
-import { DeadlineError, HealthReport, OAuthSession, freezeManifest, isSecretRef, loopbackTransport, parseOAuthState, revokeToken, signInWithBrowser, withDeadline,
+import { DeadlineError, KizukiError, HealthReport, OAuthSession, freezeManifest, isSecretRef, loopbackTransport, parseOAuthState, revokeToken, signInWithBrowser, withDeadline,
   type Connector, type ConnectionStateWriter, type HealthState, type OAuthProvider, type OAuthTransport, type SecretResolver, type SignInIo, type StatePersister, type SyncBatch } from "@kizuki/core";
 import type { SignInContext } from "@kizuki/core/contracts";
 import { ApiBudget, HttpFailure, X_API_ORIGIN, X_API_REQUEST_MS, fieldsQuery, request, type XApiFetch } from "./client";
@@ -8,12 +8,12 @@ import { MAX_WALK_PAGES, X_API_CONNECTOR_ID, X_API_CURSOR_SCHEMA, X_API_SCOPES, 
 
 export interface XApiConfig { client_id?: string; secret_ref?: string; selection?: XApiSelection; expected_account?: string }
 export interface XApiDeps { persist?: StatePersister; fetch?: XApiFetch; oauth?: OAuthTransport; now?: () => Date; clock?: () => number }
-const COVERAGE = "X own-post API window; history capped; provider deletion coverage and native enrollment unqualified";
+const COVERAGE = "X own-post API window; history capped; provider deletion coverage unavailable; real-account qualification pending";
 function coverageDetail(cursor: string): string { return `${COVERAGE}; ${parseCursor(cursor).phase === "idle" ? "available window drained" : "continuation pending"}`; }
 const MANIFEST = freezeManifest({ schema: "kizuki.connector/v1", connector_id: X_API_CONNECTOR_ID, version: "0.1.0", contract_minor: 2,
   implementation: "@kizuki/connector-x/api", allowed_egress: ["api.x.com", "x.com"], cursor_schema: X_API_CURSOR_SCHEMA, kinds: ["post"],
   capabilities: { backfill: true, sync: true, tombstones: false, purge: false, fixture: true }, required_secrets: [],
-  emits_sensitivity_hint: true, default_sensitivity: "private", sensitivity_floor: "private", auth_modes: ["oauth", "secret_ref"] });
+  emits_sensitivity_hint: true, default_sensitivity: "private", sensitivity_floor: "private", auth_modes: ["oauth", "secret_ref", "sign_in"] });
 interface Custody { state: XApiState; persist: StatePersister }
 interface TokenAdmission { budget: ApiBudget; refusal: ReturnType<typeof failure> | null; rateLimited: boolean }
 
@@ -27,6 +27,12 @@ export class XApiConnector implements Connector {
   private busy = false;
   private disabled = false;
   private reloadRequired = false;
+  private readonly custodyWork = new Set<Promise<unknown>>();
+  private trackCustody<T>(work: Promise<T>): Promise<T> {
+    this.custodyWork.add(work);
+    void work.then(() => this.custodyWork.delete(work), () => this.custodyWork.delete(work));
+    return work;
+  }
   private pendingWrites = 0;
   private pendingTokens = 0;
   private last: HealthState = "misconfigured";
@@ -87,7 +93,7 @@ export class XApiConnector implements Connector {
   private async commitCustody(custody: Custody, next: XApiState, generation: number): Promise<void> {
     this.pendingWrites++;
     try {
-      await custody.persist(encodeState(next)); custody.state = next;
+      await this.trackCustody(Promise.resolve().then(() => custody.persist(encodeState(next)))); custody.state = next;
       if (generation === this.generation && !this.disabled && !this.reloadRequired) this.state = next;
     } finally { this.pendingWrites--; }
   }
@@ -97,8 +103,8 @@ export class XApiConnector implements Connector {
     if (custody === null) throw failure("misconfigured");
     const bytes = encodeState(next), ms = Math.min(X_API_REQUEST_MS, budget.remaining());
     this.pendingWrites++;
-    const pending = Promise.resolve().then(() => { this.live(generation); return custody.persist(bytes); }).then(() => { custody.state = next; })
-      .finally(() => { this.pendingWrites--; });
+    const pending = this.trackCustody(Promise.resolve().then(() => { this.live(generation); return custody.persist(bytes); }).then(() => { custody.state = next; })
+      .finally(() => { this.pendingWrites--; }));
     try { await withDeadline(pending, ms, "X persistence deadline"); this.live(generation); this.state = next; }
     catch (error) { this.invalidate(generation); throw failure(error instanceof DeadlineError ? "timeout" : "unavailable"); }
   }
@@ -162,7 +168,7 @@ export class XApiConnector implements Connector {
       postForm: async (url, form) => {
         if (!active || url !== provider.token_url) throw failure("unavailable");
         this.live(generation); const ms = budget.requestMs(); this.pendingTokens++;
-        const pending = (async () => this.transport.postForm(url, form))().finally(() => { this.pendingTokens--; });
+        const pending = this.trackCustody((async () => this.transport.postForm(url, form))().finally(() => { this.pendingTokens--; }));
         return withDeadline(pending, ms, "X authorization exchange deadline");
       },
     };
@@ -181,7 +187,7 @@ export class XApiConnector implements Connector {
         const bytes = encodeState(state), ms = Math.min(X_API_REQUEST_MS, budget.remaining());
         this.invalidate(generation); const targetGeneration = this.generation; this.pendingWrites++;
         const assertActive = () => { if (!active || this.disabled || this.generation !== targetGeneration) throw failure("unavailable"); };
-        const pending = Promise.resolve().then(() => { assertActive(); return writer.write(bytes); }).finally(() => { this.pendingWrites--; });
+        const pending = this.trackCustody(Promise.resolve().then(() => { assertActive(); return writer.write(bytes); }).finally(() => { this.pendingWrites--; }));
         await withDeadline(pending, ms, "X enrollment persistence deadline"); assertActive();
         return { display: "X account" };
       })();
@@ -192,7 +198,7 @@ export class XApiConnector implements Connector {
   private async token<T>(start: () => Promise<T>, budget: ApiBudget): Promise<T> {
     const generation = this.generation, ms = Math.min(X_API_REQUEST_MS, budget.remaining()), admission: TokenAdmission = { budget, refusal: null, rateLimited: false };
     this.admission = admission; this.pendingTokens++;
-    const pending = Promise.resolve().then(() => { this.live(generation); return start(); }).finally(() => { this.pendingTokens--; });
+    const pending = this.trackCustody(Promise.resolve().then(() => { this.live(generation); return start(); }).finally(() => { this.pendingTokens--; }));
     try { const result = await withDeadline(pending, ms, "X token deadline"); this.live(generation); return result; }
     catch (error) {
       if (admission.refusal !== null) throw admission.refusal;
@@ -268,6 +274,9 @@ export class XApiConnector implements Connector {
   private async run(cursor: string | null): Promise<SyncBatch> {
     if (cursor !== null) parseCursor(cursor);
     if (this.disabled || this.busy || this.pendingTokens > 0 || this.pendingWrites > 0) throw failure("unavailable");
+    // A never-connected registry instance is a typed admission refusal. Fenced
+    // runtime sessions retain their unavailable batch and unchanged cursor.
+    if (this.state === null && !this.reloadRequired) throw failure("unauthenticated");
     this.busy = true;
     const budget = this.budget(); this.operationBudget = budget;
     try {
@@ -312,6 +321,20 @@ export class XApiConnector implements Connector {
   }
   /** Contract revoke is immediate local cessation, including during provider failure. */
   async revoke(): Promise<void> { await this.close(); }
+  /** Drain original CAS work before host DB release; settlement is not a successful-save receipt. */
+  async closeForHost(): Promise<void> {
+    const deadline = Date.now() + 5000;
+    await this.close();
+    try {
+      while (this.custodyWork.size > 0) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw new Error("deadline");
+        await withDeadline(Promise.allSettled([...this.custodyWork]), remaining, "X host close deadline");
+      }
+    } catch {
+      throw new KizukiError("unavailable", "X credential_custody_unknown; shutdown deadline expired; inspect durable state before reauthorization");
+    }
+  }
   async close(): Promise<void> { this.disabled = true; this.generation++; this.session?.forget(); this.session = null; this.state = null; this.custody = null; }
   async purgeSource(_subject: string): Promise<never> { throw failure("not_supported"); }
   async fixture() {

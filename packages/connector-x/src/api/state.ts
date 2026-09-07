@@ -150,3 +150,16 @@ export function parseState(bytes: Uint8Array): XApiState {
 export function encodeState(state: XApiState): Uint8Array {
   const bytes = new TextEncoder().encode(JSON.stringify(state)); parseState(bytes); return bytes;
 }
+
+/** Identity and selection only; never return OAuth tokens, references or pending content. */
+export function inspectXApiState(bytes: Uint8Array): { account_id: string; app_digest: string; selection: XApiSelection; revocation: XApiState["revocation"] } {
+  const state = parseState(bytes);
+  return { account_id: state.oauth.account.id, app_digest: state.app, selection: state.selection, revocation: state.revocation };
+}
+/** Reauthorization replaces credentials, never account, app, projection or history custody. */
+export function assertSameXApiIdentity(previous: Uint8Array, candidate: Uint8Array): void {
+  const a = parseState(previous), b = parseState(candidate);
+  if (a.oauth.account.id !== b.oauth.account.id || a.app !== b.app || digest(a.selection) !== digest(b.selection) ||
+      a.checkpoint !== b.checkpoint || digest(a.pending) !== digest(b.pending) || a.retry_at !== b.retry_at ||
+      a.revocation === "pending" || b.revocation !== "active") throw failure("identity_mismatch");
+}

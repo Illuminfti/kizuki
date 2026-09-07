@@ -124,3 +124,20 @@ test("a snapshot importer without a path is refused", () => {
     }
   }
 });
+
+test('X API registry exposes native sign-in and passes exact Core new/replace context', async () => {
+  const { XApiFixture } = await import('@kizuki/connector-x/api/testkit');
+  const { createXApiConnector } = await import('@kizuki/connector-x/api');
+  const { defaultConnectorRegistry } = await import('../src');
+  const fixture = new XApiFixture(1); fixture.authorize = true;
+  const raw = createXApiConnector(fixture.config(), fixture.deps());
+  const sealed = defaultConnectorRegistry.seal(raw);
+  expect(sealed.manifest()).toMatchObject({ connector_id: 'kizuki.x', contract_minor: 2, implementation: '@kizuki/connector-x/api', auth_modes: ['oauth', 'secret_ref', 'sign_in'], capabilities: { tombstones: false, purge: false } });
+  expect(listConnectorDescriptors().find(item => item.id === 'kizuki.connector.x')).toMatchObject({ contract_minor: 2, supports: ['backfill', 'sync', 'fixture', 'sign_in'] });
+  let state: Uint8Array | undefined;
+  const writer = { write: async (bytes: Uint8Array) => { state = bytes; } };
+  await sealed.signIn!(fixture.io, writer, { mode: 'new' }); expect(state).toBeDefined(); await raw.closeForHost();
+  const replacement = createXApiConnector(fixture.config(), fixture.deps());
+  await defaultConnectorRegistry.seal(replacement).signIn!(fixture.io, writer, { mode: 'replace', previous_state: state! });
+  await replacement.closeForHost();
+});

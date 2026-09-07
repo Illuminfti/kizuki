@@ -1,3 +1,4 @@
+import { xApiClient } from "./x-api";
 import { appCredentials } from "@kizuki/connector-telegram";
 import { REGISTRY } from "@kizuki/connectors";
 import { inspectSourceGrant, getCheckpoint, getConnectorSensitivity } from "@kizuki/core";
@@ -19,6 +20,7 @@ const TITLES: Record<string, string> = {
   "kizuki.import-legacy-events": "Event history migration",
   "kizuki.screenpipe": "Screenpipe",
   "kizuki.ics": "Calendar (ICS)",
+  "kizuki.x": "X own-post browser sign-in",
   "kizuki.gmail": "Gmail read-only browser sign-in",
   "kizuki.google-calendar": "Google Calendar read-only browser sign-in",
   "kizuki.imap": "Email (IMAP)",
@@ -26,15 +28,17 @@ const TITLES: Record<string, string> = {
 };
 
 export function printConnectorCatalog(io: CliIo, json: boolean): number {
+  let xConfigured = false;
+  try { xApiClient(io.env); xConfigured = true; } catch { /* Catalog reports public configuration only. */ }
   const enrollable = new Set(listEnrollableConnectorIds());
   const sources = Object.keys(REGISTRY).sort().map((id) => ({
     id,
     name: TITLES[id] ?? id,
-    mode: id === "kizuki.google-calendar" ? "native account sign-in" : id === "kizuki.telegram" ? "native account sign-in" : id === "kizuki.beeper" ? "local app" : id.includes("import-") ? "export import" :
+    mode: id === "kizuki.x" ? "native account sign-in" : id === "kizuki.google-calendar" ? "native account sign-in" : id === "kizuki.telegram" ? "native account sign-in" : id === "kizuki.beeper" ? "local app" : id.includes("import-") ? "export import" :
       enrollable.has(id) ? "local source" : "account sign-in",
-    available: enrollable.has(id) && (id !== "kizuki.google-calendar" || /^[A-Za-z0-9._-]{1,512}$/.test(io.env.KIZUKI_GOOGLE_CALENDAR_CLIENT_ID ?? "")) && (id !== "kizuki.telegram" || appCredentials() !== null) && (id !== "kizuki.gmail" || /^[A-Za-z0-9._-]{1,512}$/.test(io.env.KIZUKI_GMAIL_CLIENT_ID ?? "")),
+    available: enrollable.has(id) && (id !== "kizuki.x" || xConfigured) && (id !== "kizuki.google-calendar" || /^[A-Za-z0-9._-]{1,512}$/.test(io.env.KIZUKI_GOOGLE_CALENDAR_CLIENT_ID ?? "")) && (id !== "kizuki.telegram" || appCredentials() !== null) && (id !== "kizuki.gmail" || /^[A-Za-z0-9._-]{1,512}$/.test(io.env.KIZUKI_GMAIL_CLIENT_ID ?? "")),
     cli_enrollable: enrollable.has(id),
-    detail: id === "kizuki.google-calendar" ? "CLI wired; operator desktop client, canonical calendar, explicit fields, browser sign-in and separate source consent required; real-account qualification pending" : id === "kizuki.gmail" ? "CLI wired; operator desktop-client configuration, explicit fields, browser sign-in and separate source consent required" : id === "kizuki.telegram" && appCredentials() === null ? "CLI wired; project app credentials missing" : ["kizuki.import-legacy-events", "kizuki.import-legacy-wiki"].includes(id) ? "local export and explicit mapping required; source consent required before capture" : enrollable.has(id) ? "ready to connect" : "not yet available from this CLI",
+    detail: id === "kizuki.x" ? "CLI wired; public native app, exact registered loopback callback, explicit fields/history start, usage credits and separate source consent required; real-account qualification pending" : id === "kizuki.google-calendar" ? "CLI wired; operator desktop client, canonical calendar, explicit fields, browser sign-in and separate source consent required; real-account qualification pending" : id === "kizuki.gmail" ? "CLI wired; operator desktop-client configuration, explicit fields, browser sign-in and separate source consent required" : id === "kizuki.telegram" && appCredentials() === null ? "CLI wired; project app credentials missing" : ["kizuki.import-legacy-events", "kizuki.import-legacy-wiki"].includes(id) ? "local export and explicit mapping required; source consent required before capture" : enrollable.has(id) ? "ready to connect" : "not yet available from this CLI",
   }));
   if (json) {
     io.out(jsonEnvelope("connect", "ok", { sources }));

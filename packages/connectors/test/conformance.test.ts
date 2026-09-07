@@ -1,3 +1,5 @@
+import { XApiFixture } from "@kizuki/connector-x/api/testkit";
+import { X_API_CONNECTOR_ID, createXApiConnector } from "@kizuki/connector-x/api";
 import { GOOGLE_CALENDAR_CONNECTOR_ID, createGoogleCalendarConnector } from "@kizuki/connector-google-calendar";
 import { CalendarFixture } from "../../connector-google-calendar/src/testing";
 import { expect, test } from "bun:test";
@@ -280,6 +282,10 @@ function batteryFor(
     [GOOGLE_CALENDAR_CONNECTOR_ID]: async () => {
       const fixture = new CalendarFixture(), connector = await fixture.connected();
       return runConformance(connector, {unavailable:{connector:createGoogleCalendarConnector({})},tombstone:{prepare:async()=>JSON.stringify(JSON.parse(new TextDecoder().decode(fixture.state)).pending.next),mutate:async()=>{fixture.rows=[{id:'allday1',status:'cancelled'}];fixture.version++;}}});
+    },
+    [X_API_CONNECTOR_ID]: async () => {
+      const fixture = new XApiFixture(2), connector = await fixture.connected();
+      return runConformance(connector, { unavailable: { connector: createXApiConnector({}) } });
     },
     [GMAIL_CONNECTOR_ID]: async () => {
       const fixture = new GmailFixture(2);
