@@ -34,15 +34,55 @@ function fixture() {
   git(repo, ["commit", "--quiet", "--no-gpg-sign", "-m", "Bind actual surface fixture source"]);
   const candidate = git(repo, ["rev-parse", "HEAD"]), out = join(root, "surface.json"), index = join(root, "index.json");
   const emit = (flags = ["--candidate", candidate, "--out", out]) => command([process.execPath, join(repo, CAPABILITY_PROOF_FILE), ...flags], repo);
-  const evaluate = (reference: unknown, candidateSha = candidate) => {
+  const evaluate = (reference: unknown, candidateSha = candidate, evaluatorRoot = repo, candidateRoot?: string) => {
     writeFileSync(index, JSON.stringify({ schema: "kizuki.acceptance-evidence/v3", candidate_source_sha: candidateSha,
       artifacts: [], fixture_observation: null, gate_receipts: [reference] }));
-    const child = command([process.execPath, "--eval", `import { evaluateRelease } from ${JSON.stringify(join(repo, "scripts/go-no-go.ts"))}; process.stdout.write(JSON.stringify(evaluateRelease("rc", ${JSON.stringify(index)})));`], repo);
+    const child = command([process.execPath, "--eval", `import { evaluateRelease } from ${JSON.stringify(join(evaluatorRoot, "scripts/go-no-go.ts"))}; process.stdout.write(JSON.stringify(evaluateRelease("rc", ${JSON.stringify(index)}, ${JSON.stringify({ candidateRoot })})));`], evaluatorRoot);
     expect(child.exitCode, child.stderr.toString()).toBe(0);
     return JSON.parse(child.stdout.toString()) as { decision: string; gates: { id: string; status: string; reason: string; evidence_sha256: string | null }[] };
   };
   return { root, repo, candidate, out, emit, evaluate };
 }
+
+test("separate evaluator consumes the exact candidate surface when its complete observed closure matches", () => {
+  const f = fixture(), child = f.emit();
+  expect(child.exitCode, child.stderr.toString()).toBe(0);
+  expect(f.candidate).not.toBe(git(EVALUATOR_ROOT, ["rev-parse", "HEAD"]));
+  const reference = JSON.parse(child.stdout.toString());
+  const result = f.evaluate(reference, f.candidate, EVALUATOR_ROOT, f.repo);
+  expect(result.decision).toBe("NO-GO");
+  expect(result.gates.filter(row => row.status === "PASS").map(row => row.id)).toEqual(["evidence.index", SURFACE_GATE]);
+  expect(result.gates.find(row => row.id === SURFACE_GATE)).toMatchObject({ status: "PASS", evidence_sha256: reference.sha256 });
+  // The default still evaluates its own checkout, never discovers another one.
+  expect(f.evaluate(reference, f.candidate, EVALUATOR_ROOT).gates.find(row => row.id === SURFACE_GATE))
+    .toMatchObject({ status: "FAIL", reason: "candidate-head-mismatch", evidence_sha256: null });
+}, 30_000);
+
+test.each(["README.md", CAPABILITY_PROOF_FILE, "scripts/release-evidence.ts", "packages/cli/src/commands/app.ts", "packages/connectors/src/index.ts"])("separate surface evaluator refuses a changed reviewed closure: %s", path => {
+  const f = fixture(), child = f.emit();
+  expect(child.exitCode, child.stderr.toString()).toBe(0);
+  const reference = JSON.parse(child.stdout.toString());
+  appendFileSync(join(f.repo, path), "\n/* independently changed candidate bytes */\n");
+  git(f.repo, ["add", path]); git(f.repo, ["commit", "--quiet", "--no-gpg-sign", "-m", "Change observed candidate source"]);
+  const changed = git(f.repo, ["rev-parse", "HEAD"]);
+  expect(f.evaluate(reference, changed, EVALUATOR_ROOT, f.repo).gates.find(row => row.id === SURFACE_GATE))
+    .toMatchObject({ status: "FAIL", reason: "surface-producer-or-product-unreviewed", evidence_sha256: null });
+}, 30_000);
+
+test("separate surface evaluator retains wrong-head, dirty-checkout and receipt-integrity refusals", () => {
+  const f = fixture(), child = f.emit();
+  expect(child.exitCode, child.stderr.toString()).toBe(0);
+  const reference = JSON.parse(child.stdout.toString());
+  expect(f.evaluate(reference, "a".repeat(40), EVALUATOR_ROOT, f.repo).gates.find(row => row.id === SURFACE_GATE))
+    .toMatchObject({ status: "FAIL", reason: "candidate-head-mismatch", evidence_sha256: null });
+  const original = readFileSync(join(f.repo, "README.md"));
+  appendFileSync(join(f.repo, "README.md"), "\ndirty\n");
+  expect(f.evaluate(reference, f.candidate, EVALUATOR_ROOT, f.repo).gates.find(row => row.id === SURFACE_GATE))
+    .toMatchObject({ status: "FAIL", reason: "candidate-worktree-dirty", evidence_sha256: null });
+  writeFileSync(join(f.repo, "README.md"), original);
+  expect(f.evaluate({ ...reference, sha256: "a".repeat(64) }, f.candidate, EVALUATOR_ROOT, f.repo).gates.find(row => row.id === SURFACE_GATE))
+    .toMatchObject({ status: "FAIL", reason: "receipt-digest-mismatch", evidence_sha256: null });
+}, 30_000);
 
 test("surface CLI accepts only an exact candidate and a new absolute output", () => {
   expect(parseCapabilityArgs(["--out", "/tmp/surface.json", "--candidate", "a".repeat(40)])).toEqual({ candidate: "a".repeat(40), out: "/tmp/surface.json" });
