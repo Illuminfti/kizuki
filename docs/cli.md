@@ -245,6 +245,19 @@ FTS floor. Ceiling is `private`. Unlabeled hits are withheld on stderr
 unless `--degraded` is set. Zero labeled hits and zero withheld prints
 `0 hits` on stderr.
 
+Query and context reads never initialize or repair a vault. They retain the
+required owner access-audit rows, while data queries use a logically query-only
+ledger connection. SQLite may still update its WAL/SHM metadata. `init` creates
+the baseline FTS index; a missing optional index stays missing and is reported
+as degraded. An older or incomplete authoritative schema requires explicit
+`kizuki init <path>` before reads can proceed.
+
+The embedded retrieval factory currently requires writer initialization. CLI
+and app reads therefore use the authorized SQLite floor when it is selected,
+reporting `configured-engine-unavailable` and `retrieval-unavailable`. They
+preserve the configured engine and do not acquire its writer lease, create its
+files, or claim that hybrid retrieval ran. Unknown engine IDs still refuse.
+
 ## doctor
 
 ```text
@@ -262,6 +275,13 @@ that result in `ledger.integrity_check` (otherwise `null`). Exit 1 when
 the report is not ok. After a folder import, expect live claims; the writer
 still needs a model before those claims become pages. Loop creates land
 under `auto/`; human pages stay where they are.
+
+Doctor validates existing configuration and credentials without constructing a
+model runtime. Pending model or connection-state journals remain untouched and
+make the report degraded; inspecting the vault does not authorize recovery or
+machine-identity adoption. Audit browsing and connection status likewise do not
+initialize storage. A confirmed TUI undo closes its reader, acquires a writer
+through Core's existing undo path, and then resumes inspection.
 
 ## tell
 

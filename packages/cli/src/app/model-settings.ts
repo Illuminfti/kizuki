@@ -42,28 +42,28 @@ function configured(value: unknown): Configured {
   } catch { invalid(); }
 }
 const validateConfiguration = (value: unknown): void => { configured(value); };
-export function readModelSelection(vaultPath: string): { revision: string; selection: ModelSelection } {
-  const document = readAppModelConfiguration(vaultPath, validateConfiguration);
+export function readModelSelection(vaultPath: string, options: { reconcile?: boolean } = {}): { revision: string; selection: ModelSelection } {
+  const document = readAppModelConfiguration(vaultPath, validateConfiguration, options);
   return { revision: document.revision, selection: configured(document.llm).selection };
 }
-async function credential(vaultPath: string, document: AppModelDocument, selected: Configured, env: Record<string, string | undefined>): Promise<string | null> {
+async function credential(vaultPath: string, document: AppModelDocument, selected: Configured, env: Record<string, string | undefined>, options: { reconcile?: boolean } = {}): Promise<string | null> {
   const ref = selected.secret_ref;
   if (ref === null) return null;
   return classifyAppModelCredential(vaultPath, ref) === "env"
     ? tokenResolver(ref, env)(ref)
-    : readAppModelFileCredential(vaultPath, document.revision, ref);
+    : readAppModelFileCredential(vaultPath, document.revision, ref, options);
 }
-async function status(vaultPath: string, document: AppModelDocument, env: Record<string, string | undefined>): Promise<AppModelSettingsStatus> {
+async function status(vaultPath: string, document: AppModelDocument, env: Record<string, string | undefined>, options: { reconcile?: boolean } = {}): Promise<AppModelSettingsStatus> {
   const selected = configured(document.llm);
   let availability: AppModelSettingsStatus["credential"] = "none";
   if (selected.secret_ref !== null) {
-    try { await credential(vaultPath, document, selected, env); availability = "configured"; }
+    try { await credential(vaultPath, document, selected, env, options); availability = "configured"; }
     catch { availability = "unavailable"; }
   }
   return { revision: document.revision, selection: selected.selection, credential: availability, last_test: null };
 }
-export async function readModelSettings(vaultPath: string, env: Record<string, string | undefined> = {}): Promise<AppModelSettingsStatus> {
-  return status(vaultPath, readAppModelConfiguration(vaultPath, validateConfiguration), env);
+export async function readModelSettings(vaultPath: string, env: Record<string, string | undefined> = {}, options: { reconcile?: boolean } = {}): Promise<AppModelSettingsStatus> {
+  return status(vaultPath, readAppModelConfiguration(vaultPath, validateConfiguration, options), env, options);
 }
 export async function saveModelSettings(vaultPath: string, input: AppModelSaveInput, env: Record<string, string | undefined> = {}): Promise<AppModelSettingsStatus> {
   if (!isPlainObject(input) || Object.keys(input).sort().join() !== "credential,expected_revision,selection" || typeof input.expected_revision !== "string" ||

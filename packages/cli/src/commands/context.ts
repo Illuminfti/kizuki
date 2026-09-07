@@ -1,12 +1,11 @@
 import {
   OWNER,
   PACKET_PURPOSES,
-  initAgents,
   serveContextPacket,
 } from "@kizuki/core";
 import type { PacketPurpose } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
-import { withVault } from "../context";
+import { withReadVault } from "../context";
 import { jsonEnvelope } from "../output";
 import type { CliIo, Command } from "./index";
 
@@ -39,16 +38,16 @@ export const contextCommand: Command = {
     const budget = rawBudget === undefined ? undefined : parseBudget(rawBudget);
     const query = parsed.options.get("--query");
 
-    return withVault(io, async (ctx) => {
-      initAgents(ctx.db);
+    return withReadVault(io, async (ctx) => {
       const envelope = await serveContextPacket(
-        { db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }), ...(ctx.retrievalUnavailable ? { retrievalUnavailable: true as const } : {}) },
+        { db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }), ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}) },
         {
           purpose: rawPurpose as PacketPurpose,
           ...(budget === undefined ? {} : { budget_tokens: budget }),
           ...(query === undefined ? {} : { query }),
         },
       );
+      ctx.assertCurrent();
       const retrievalDegraded = envelope.data?.retrieval_degraded ?? [];
       if (retrievalDegraded.length > 0) io.err(`degraded=${retrievalDegraded.join(",")}`);
       const incomplete = envelope.data === undefined || envelope.denied.some(
@@ -67,6 +66,6 @@ export const contextCommand: Command = {
         io.out(envelope.data.packet_md);
       }
       return incomplete ? 1 : 0;
-    }, { retrieval: "optional" });
+    }, { audit: true, retrieval: "optional" });
   },
 };

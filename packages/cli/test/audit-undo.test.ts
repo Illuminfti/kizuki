@@ -1,7 +1,12 @@
+import { runAudit } from "@kizuki/tui";
+import { withReadVault, withVault } from "../src/context";
+import type { CliIo } from "../src/commands";
+import type { Key } from "../../tui/src/keys";
+import type { Terminal } from "../../tui/src/terminal";
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { accept, applyCanonWrite, createBudgetTracker, insertClaim, resolveTarget } from "@kizuki/core";
+import { accept, undoReceipt, applyCanonWrite, createBudgetTracker, insertClaim, resolveTarget } from "@kizuki/core";
 import type { CaptureEventInput, Claim, InsertClaimInput } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "./helpers";
@@ -405,4 +410,39 @@ describe("kizuki audit pagination", () => {
     expect(page.next_offset).toBe(null);
     expect(page.receipts.length).toBeLessThanOrEqual(5000);
   });
+});
+
+
+test("TUI confirmation closes the reader before reacquiring undo authority, then resumes inspection", async () => {
+  const setup = tempVault(), written = await writeGracePage(setup.vault);
+  const io: CliIo = { env: setup.env, vaultOverride: setup.vault, stdinIsTTY: true, stdoutIsTTY: true, stderrIsTTY: false,
+    out() {}, err() {}, prompt: async () => "" };
+  let keys: ((keys: Key[]) => void) | undefined;
+  let undone = 0;
+  const terminal: Terminal = { isTTY: true, size: () => ({ cols: 100, rows: 24 }), draw() {}, enter() {}, leave() {},
+    onKeys(handler) { keys = handler; return () => { keys = undefined; }; }, onClose: () => () => {}, onResize: () => () => {},
+    suspend: work => work() };
+  const summary = await withReadVault(io, async ctx => {
+    const first = ctx.db;
+    const session = runAudit({ get db() { return ctx.db; }, vaultPath: ctx.vaultPath, terminal,
+      undo: receiptId => ctx.pauseForMutation(async () => {
+        expect(() => first.query("SELECT 1").get()).toThrow();
+        return withVault({ ...io, vaultOverride: ctx.vaultPath }, async writer => {
+          const receipt = await undoReceipt({ db: writer.db, vault_path: writer.vaultPath }, receiptId);
+          undone++; return receipt;
+        });
+      }),
+    });
+    keys!([{ name: "char", ch: "u" }]);
+    expect(undone).toBe(0);
+    keys!([{ name: "char", ch: "y" }, { name: "char", ch: "e" }, { name: "char", ch: "s" }, { name: "enter" }]);
+    for (let n = 0; n < 100 && undone === 0; n++) await Bun.sleep(10);
+    expect(undone).toBe(1);
+    expect(ctx.db).not.toBe(first);
+    expect(ctx.db.query("PRAGMA query_only").get()).toEqual({ query_only: 1 });
+    keys!([{ name: "char", ch: "q" }]);
+    return session;
+  });
+  expect(summary).toEqual({ undone: 1 });
+  expect(sha256File(join(setup.vault, written.pagePath))).toBe(written.editedBefore);
 });

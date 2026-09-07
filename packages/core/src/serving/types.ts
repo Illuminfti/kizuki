@@ -8,9 +8,9 @@ export const ENVELOPE_SCHEMA = "kizuki.envelope/v1" as const;
 
 export interface ServeContext {
   /**
-   * Ledger, staging, search, graph and agent schemas already initialized.
-   * Rate accounting and audit both key on `agent_audit`, so `initAgents` in
-   * particular must have run before the first served call.
+   * Authoritative ledger and agent schemas are already initialized. Missing
+   * optional indexes are degradation, never repaired by reads. Rate and audit
+   * key on agent_audit; query-only contexts have a separate bound audit capability.
    */
   db: Database;
   vaultPath: string;
@@ -19,7 +19,7 @@ export interface ServeContext {
   /** One host-owned engine nominates IDs; core rechecks current evidence and grants. */
   retrieval?: RetrievalPort;
   /** A configured optional engine could not bind; reads use the deterministic floor. */
-  retrievalUnavailable?: true;
+  retrievalUnavailable?: true | "configured-engine-unavailable";
 }
 
 export interface CanonChunk {

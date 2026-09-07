@@ -5,7 +5,7 @@ import { isMachineOriginPath } from "../canon/origin";
 import { formatProducerDiagnostic } from "../producer/diagnostics";
 import { pendingRetrievalOps } from "../claims/store";
 import { readDerivedMeta } from "../derived-meta";
-import { ConnectionStateStore } from "../ledger/connection-state";
+import { inspectConnectionStateRecovery } from "../ledger/connection-state";
 import { inspectCheckpoints, inspectConnections } from "../ledger/connections";
 import { tableExists } from "../ledger/schema";
 import { inspectPurgeHealth } from "../ledger/purge";
@@ -422,7 +422,7 @@ export function inspectServeDoctor(
     failures.push(`orphan run receipts ${stores.orphan_run_receipts.length}`);
   }
   try {
-    const recovery = new ConnectionStateStore(join(vaultPath, ".kizuki")).recover(db);
+    const recovery = inspectConnectionStateRecovery(join(vaultPath, ".kizuki"));
     if (recovery.unresolved.length > 0) {
       failures.push(`connection state journals unresolved ${recovery.unresolved.length}`);
     }
@@ -430,7 +430,7 @@ export function inspectServeDoctor(
       failures.push(`connection state journals quarantined ${recovery.quarantined.length}`);
     }
   } catch {
-    failures.push("connection state recovery failed");
+    failures.push("connection state recovery inspection unavailable");
   }
   for (const item of inspectConnections(db, { includeDisconnected: true })) {
     if (!item.ok) {

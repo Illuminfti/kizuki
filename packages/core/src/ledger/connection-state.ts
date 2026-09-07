@@ -4,6 +4,8 @@ import {
   constants,
   existsSync,
   mkdirSync,
+  opendirSync,
+  lstatSync,
   openSync,
   readSync,
   readdirSync,
@@ -82,19 +84,95 @@ export interface StateRecoveryReport {
 /** The caller offered a row the store has already moved past. */
 const STALE_CONNECTION_SNAPSHOT = "connection does not match persisted state";
 
+/** Inspection never creates or repairs the state directory. */
+class ExistingConnectionStateReader implements ConnectionStateReader {
+  readonly directory: string;
+  constructor(controlDirectory: string) { this.directory = join(controlDirectory, "connections"); }
+  protected readStatePath(path: string): Uint8Array {
+    const stats = assertRegularStateFile(path, this.directory);
+    if (stats.size > MAX_CONNECTION_STATE_BYTES) throw new LedgerError("connection state exceeds maximum size");
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const bytes = new Uint8Array(stats.size);
+      let offset = 0;
+      while (offset < bytes.byteLength) {
+        const read = readSync(fd, bytes, offset, bytes.byteLength - offset, offset);
+        if (read <= 0) throw new LedgerError("connection state read made no progress");
+        offset += read;
+      }
+      return bytes;
+    } finally { closeSync(fd); }
+  }
+
+  read(connection: Connection): Uint8Array | null {
+    if (connection.secret_refs.length === 0) return null;
+    if (connection.config.state_ref_index !== 0) {
+      throw new LedgerError("connection config does not permit state resolution");
+    }
+    if (connection.secret_refs.length !== 1) {
+      throw new LedgerError("connection has invalid state references");
+    }
+    const ref = connection.secret_refs[0];
+    if (ref === undefined) {
+      throw new LedgerError("connection has no state reference");
+    }
+    if (sourceJournalNames(this.directory, connection.source_key).length > 0) {
+      throw new LedgerError("connection state journal is unresolved");
+    }
+    const path = connectionStatePath(this.directory, ref);
+    return this.readStatePath(path);
+  }
+
+}
+
+export function createConnectionStateReader(controlDirectory: string): ConnectionStateReader {
+  const reader = new ExistingConnectionStateReader(controlDirectory);
+  return Object.freeze({ read: (connection: Connection) => reader.read(connection) });
+}
+
+/** Pending journals are evidence for recovery, never permission for doctor to repair. */
+export function inspectConnectionStateRecovery(controlDirectory: string): Pick<StateRecoveryReport, "unresolved" | "quarantined"> {
+  const path = join(controlDirectory, "connections");
+  let metadata;
+  try { metadata = lstatSync(path); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return { unresolved: [], quarantined: [] }; throw error; }
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new LedgerError("connection directory is unsafe");
+  const directory = opendirSync(path), unresolved: string[] = [], quarantined: string[] = [];
+  try {
+    for (let count = 0; ; count++) {
+      const item = directory.readSync();
+      if (item === null) break;
+      if (count >= 10_000) throw new LedgerError("connection recovery inspection limit exceeded");
+      if (item.name.endsWith(".journal")) unresolved.push(item.name);
+      if (item.name === "quarantine") {
+        const quarantinePath = join(path, item.name);
+        if (!lstatSync(quarantinePath).isDirectory() || item.isSymbolicLink()) throw new LedgerError("connection quarantine is unsafe");
+        const held = opendirSync(quarantinePath);
+        try {
+          for (let n = 0; ; n++) {
+            const entry = held.readSync(); if (entry === null) break;
+            if (n >= 10_000) throw new LedgerError("connection recovery inspection limit exceeded");
+            if (entry.name.endsWith(".journal")) quarantined.push(entry.name);
+          }
+        } finally { held.closeSync(); }
+      }
+    }
+    return { unresolved, quarantined };
+  } finally { directory.closeSync(); }
+}
+
 /**
  * Core-owned opaque-state store. Connector code gets only a one-shot writer;
  * it never receives a filesystem path or a durable row handle.
  */
-export class ConnectionStateStore implements ConnectionStateReader {
-  readonly directory: string;
+export class ConnectionStateStore extends ExistingConnectionStateReader {
   private readonly minted = new Set<string>();
   private readonly handles = new WeakSet<PendingState>();
   /** Staging paths this store is still writing, so recovery leaves them alone. */
   private readonly staging = new Set<string>();
 
   constructor(controlDirectory: string) {
-    this.directory = join(controlDirectory, "connections");
+    super(controlDirectory);
     mkdirSync(this.directory, { recursive: true, mode: 0o700 });
     chmodSync(this.directory, 0o700);
   }
@@ -381,40 +459,6 @@ export class ConnectionStateStore implements ConnectionStateReader {
     return connection;
   }
 
-  private readStatePath(path: string): Uint8Array {
-    const stats = assertRegularStateFile(path, this.directory);
-    if (stats.size > MAX_CONNECTION_STATE_BYTES) throw new LedgerError("connection state exceeds maximum size");
-    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    try {
-      const bytes = new Uint8Array(stats.size);
-      let offset = 0;
-      while (offset < bytes.byteLength) {
-        const read = readSync(fd, bytes, offset, bytes.byteLength - offset, offset);
-        if (read <= 0) throw new LedgerError("connection state read made no progress");
-        offset += read;
-      }
-      return bytes;
-    } finally { closeSync(fd); }
-  }
-
-  read(connection: Connection): Uint8Array | null {
-    if (connection.secret_refs.length === 0) return null;
-    if (connection.config.state_ref_index !== 0) {
-      throw new LedgerError("connection config does not permit state resolution");
-    }
-    if (connection.secret_refs.length !== 1) {
-      throw new LedgerError("connection has invalid state references");
-    }
-    const ref = connection.secret_refs[0];
-    if (ref === undefined) {
-      throw new LedgerError("connection has no state reference");
-    }
-    if (sourceJournalNames(this.directory, connection.source_key).length > 0) {
-      throw new LedgerError("connection state journal is unresolved");
-    }
-    const path = connectionStatePath(this.directory, ref);
-    return this.readStatePath(path);
-  }
 
   /**
    * The one staging path for replacing the state of an existing source: it

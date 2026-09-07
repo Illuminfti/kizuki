@@ -6,7 +6,7 @@ import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getCl
 import type { Connector, SourceGrantPolicy } from '@kizuki/core';
 import { createGmailConnector, inspectGmailState, assertSameGmailIdentity } from '@kizuki/connector-gmail';
 import { createGoogleCalendarConnector, inspectGoogleCalendarState, assertSameGoogleCalendarIdentity } from '@kizuki/connector-google-calendar';
-import { withVault, resolveVault } from '../context';
+import { withReadVault, withVault, resolveVault } from '../context';
 import { configPath, readConfig } from '../config';
 import { closeHostConnector, DuplicateSourceError, enrollHostConnection, enrollSignedInConnection, listHostConnections, loadConnector, selectConnection } from '../connections';
 import { gmailClient, gmailFields, gmailRequiredFields, openGmailBrowser, type GmailFactory } from '../gmail';
@@ -82,6 +82,10 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
     const ready = () => !initializationIncomplete && existsSync(join(selected, '.kizuki', 'kizuki.db'));
     const context = <T>(fn: Parameters<typeof withVault<T>>[1], retrieval: 'none' | 'required' = 'none') => { if (!ready())
         throw new AppFailure('no_vault'); return withVault(io(), fn, { retrieval }); };
+    const readContext = <T>(fn: Parameters<typeof withReadVault<T>>[1], audit = false) => {
+        if (!ready()) throw new AppFailure('no_vault');
+        return withReadVault(io(), fn, { audit, retrieval: audit ? 'optional' : 'none' });
+    };
     function operation(kind: string, work: (job: AppOperation) => Promise<AppOperation['result']>, urgent = false) {
         if (closed || mutation && !urgent)
             throw new AppFailure('busy');
@@ -101,11 +105,11 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
         return { operation_id: job.id };
     }
     async function modelStatus(): Promise<AppModelStatus> {
-        const status = await readModelSettings(selected, baseIo.env);
+        const status = await readModelSettings(selected, baseIo.env, { reconcile: false });
         return { ...status, last_test: lastModelTest?.revision === status.revision ? lastModelTest : null };
     }
     function modelSelection() {
-        try { return readModelSelection(selected); }
+        try { return readModelSelection(selected, { reconcile: false }); }
         catch { return null; }
     }
     function catalog(): AppCatalogEntry[] {
@@ -118,8 +122,7 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
     async function execute(route: AppRoute, input: Record<string, unknown>): Promise<unknown> {
         if (route === 'catalog')
             return { sources: catalog() };
-        if (route === 'agents') return context(async ctx => {
-            initAgents(ctx.db);
+        if (route === 'agents') return readContext(async ctx => {
             return { agents: listAgents(ctx.db).map(({ agent_id, name, grant, revoked_at }) => ({ agent_id, name, grant, revoked_at })) };
         });
         if (route === 'agent_enroll') {
@@ -138,17 +141,16 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
         }
         if (route === 'correction_targets') {
             const page = string(input.page_id, 256);
-            return context(async ctx => { initAgents(ctx.db); return inspectOwnerPageCorrectionTargets(ctx, page); });
+            return readContext(async ctx => inspectOwnerPageCorrectionTargets(ctx, page), true);
         }
         if (route === 'correction_preview' || route === 'correct') {
             const args = { target: { claim_id: string(input.claim_id, 128) }, statement: correctionText(input.statement),
                 ...(input.object === undefined ? {} : { object: string(input.object, 4096) }) };
-            if (route === 'correction_preview') return context(async ctx => {
-                initAgents(ctx.db);
+            if (route === 'correction_preview') return readContext(async ctx => {
                 const result = await serveCorrect({ ...ctx, principal: OWNER }, { ...args, dry_run: true });
                 if (!result.data) throw new AppFailure('correction_failed');
                 return { answer: result.data.answer, affected_pages: inspectOwnerCorrectionPageCount(ctx, result.data.superseded.map(claim => claim.claim_id)) };
-            });
+            }, true);
             return operation('correct', async () => context(async ctx => {
                 initAgents(ctx.db);
                 const result = await serveCorrect({ ...ctx, principal: OWNER }, args);
@@ -170,10 +172,10 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
             }));
         }
         if (route === 'status') {
-            const epoch = ready() ? await context(async (ctx) => `${sourcePolicyEpoch(ctx.db)}:${getClaimsEpoch(ctx.db)}:${modelSelection()?.revision ?? 'model-unavailable'}`) : 'uninitialized';
+            const epoch = ready() ? await readContext(async (ctx) => `${sourcePolicyEpoch(ctx.db)}:${getClaimsEpoch(ctx.db)}:${modelSelection()?.revision ?? 'model-unavailable'}`) : 'uninitialized';
             return { visibility_epoch: epoch, vault: { ready: ready(), name: basename(selected) }, setup_location: selected, setup_no_service: options.noService === true, setup_supervisor: detectSupervisorKind(baseIo.env), operations: [...jobs.values()] };
         }
-        if (route === 'model_status') return context(async () => modelStatus());
+        if (route === 'model_status') return readContext(async () => modelStatus());
         if (route === 'model_save') {
             const expected = string(input.expected_revision, 128);
             return context(async () => {
@@ -297,7 +299,7 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
             });
         }
         if (route === 'sources')
-            return context(async (ctx) => {
+            return readContext(async (ctx) => {
                 const rows = listConnections(ctx.db, { includeDisconnected: true });
                 const configured = modelSelection();
                 if (rows.length > 64)
@@ -328,15 +330,14 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
             });
         if (route === 'query') {
             const query = string(input.text, 2000), count = limit(input.limit);
-            return context(async (ctx) => {
-                initAgents(ctx.db);
-                const result = await serveSearch({ db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER }, { query, scope: 'all', limit: count });
+            return readContext(async (ctx) => {
+                const result = await serveSearch({ db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER, ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}) }, { query, scope: 'all', limit: count });
                 return { hits: [...result.canon.map(hit => ({ id: hit.page_id, scope: 'canon', title: hit.title, text: hit.excerpt, citations: hit.sources, sensitivity: hit.sensitivity })), ...result.quoted.map(hit => ({ id: hit.event_id, scope: 'ledger', title: hit.connector_id, text: hit.text, citations: [hit.event_id], sensitivity: hit.sensitivity }))], withheld: result.denied.reduce((n, item) => n + item.count, 0), degraded: result.data?.degraded ?? [] };
-            });
+            }, true);
         }
         if (route === 'activity') {
             const count = limit(input.limit);
-            return context(async (ctx) => ({ receipts: listAuditReceipts(ctx.db, { limit: count }).map(row => ({ id: row.receipt_id, at: row.at, action: row.page_action, page: row.page_path, reverted: row.reverted_by !== null })) }));
+            return readContext(async (ctx) => ({ receipts: listAuditReceipts(ctx.db, { limit: count }).map(row => ({ id: row.receipt_id, at: row.at, action: row.page_action, page: row.page_path, reverted: row.reverted_by !== null })) }));
         }
         if (route === 'consent') {
             const key = sourceKey(input.source_key), expected = revision(input.expected_revision), id = string(input.operation_id, 128);

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { ulid } from "../util/ulid";
 import { VAULT_ID_PATH } from "./types";
-import { assertCanonFiles, type CanonFiles } from "../vault/canon-files";
+import { assertCanonFiles, openCanonFiles, type CanonFiles } from "../vault/canon-files";
 import { withMutationFilesSync } from "../vault/mutation-files";
 import { assertVaultMutationScope, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "../vault/mutation-scope";
 
@@ -73,6 +73,21 @@ function writeOwnedFile(files: CanonFiles, path: string, body: string, exclusive
     catch (error) { try { files.remove(created); } catch { /* Preserve a changed temporary and the original failure. */ } throw error; }
     finally { created.close(); }
   } finally { prior.close(); }
+}
+
+/** Reads never adopt/remint a vault cloned from another machine. */
+export function assertBoundVaultId(vaultPath: string, machineId: string | null = readMachineId()): void {
+  const files = openCanonFiles(resolve(vaultPath));
+  try {
+    const machine = bindingOf(machineId);
+    const id = readOwnedSnapshot(files, VAULT_ID_PATH);
+    const bound = readOwnedSnapshot(files, VAULT_MACHINE_PATH);
+    if (id === null || machine !== null && bound !== machine) {
+      const error = new Error("vault identity requires explicit initialization on this machine");
+      Object.assign(error, { code: "migration_required" });
+      throw error;
+    }
+  } finally { files.close(); }
 }
 
 export function ensureVaultId(vaultPath: string, machineId: string | null = readMachineId()): string {

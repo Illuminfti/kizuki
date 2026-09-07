@@ -3,7 +3,7 @@ import { appCredentials } from "@kizuki/connector-telegram";
 import { REGISTRY } from "@kizuki/connectors";
 import { inspectSourceGrant, getCheckpoint, getConnectorSensitivity } from "@kizuki/core";
 import { listEnrollableConnectorIds, listHostConnections } from "./connections";
-import { withVault } from "./context";
+import { withReadVault } from "./context";
 import { clean, jsonEnvelope, table } from "./output";
 import type { CliIo } from "./commands";
 import { INVOCATION } from "./runtime";
@@ -63,7 +63,7 @@ export function printConnectorCatalog(io: CliIo, json: boolean): number {
 }
 
 export async function printConnectionStatus(io: CliIo, json: boolean): Promise<number> {
-  return withVault(io, async (ctx) => {
+  return withReadVault(io, async (ctx) => {
     const connections = listHostConnections(ctx.db, ctx.store, undefined, { includeDisconnected: true }).map((host) => {
       const row = host.connection;
       const checkpoint = getCheckpoint(ctx.db, row.connector_id, row.source_key);
@@ -82,6 +82,7 @@ export async function printConnectionStatus(io: CliIo, json: boolean): Promise<n
         errors: checkpoint?.last_result.errors.length ?? 0,
       };
     });
+    ctx.assertCurrent();
     if (json) io.out(jsonEnvelope("connect", "ok", { connections }));
     else if (connections.length === 0) {
       io.out("No sources connected yet.");

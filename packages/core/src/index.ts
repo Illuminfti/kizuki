@@ -695,6 +695,7 @@ export { DeadlineError, withDeadline } from "./util/deadline";
 export { sha256Hex } from "./util/hash";
 export {
   ConnectionStateStore,
+  createConnectionStateReader,
   CONNECTION_CONFIG_SCHEMA,
   MAX_CONNECTION_STATE_BYTES,
 } from "./ledger/connection-state";

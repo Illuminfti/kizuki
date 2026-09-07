@@ -6,6 +6,7 @@ import {
   ensureVaultId,
   hardenLedgerFile,
   initVault,
+  initSearch,
   installServeService,
   serveExecHint,
   writeServeIntent,
@@ -68,7 +69,7 @@ export function createInitCommand(supervisor: typeof serveSupervisorHost = serve
     ensureVaultId(vaultPath);
     const ledgerPath = join(vaultPath, ".kizuki", "kizuki.db");
     const ledger = openLedger(ledgerPath);
-    ledger.close();
+    try { initSearch(ledger); } finally { ledger.close(); }
     hardenLedgerFile(ledgerPath);
 
     let wrote = false;

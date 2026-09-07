@@ -684,7 +684,7 @@ export function hardenLedgerFile(dbPath: string): void {
   }
 }
 
-export function assertVaultControl(root: string): void {
+export function assertVaultControl(root: string, options: { repairPermissions?: boolean } = {}): void {
   assertPermissionPlatform();
   const control = join(root, ".kizuki");
   const st = lstatOrNull(control);
@@ -705,7 +705,7 @@ export function assertVaultControl(root: string): void {
     );
   }
   const db = join(control, "kizuki.db");
-  hardenLedgerFile(db);
+  if (options.repairPermissions !== false) hardenLedgerFile(db);
   const dbStat = lstatOrNull(db);
   if (dbStat === null) return;
   if (!dbStat.file) {

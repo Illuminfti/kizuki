@@ -20,6 +20,8 @@ export interface AuditOptions {
   env?: Record<string, string | undefined>;
   now?: () => Date;
   filters?: AuditFilters;
+  /** Host reacquires a write context only after the existing receipt/hash confirmation. */
+  undo?: (receiptId: string) => ReturnType<typeof undoReceipt>;
 }
 
 export type AuditFilters = Omit<NonNullable<Parameters<typeof listAuditReceipts>[1]>, "limit" | "offset">;
@@ -256,7 +258,7 @@ export async function runAudit(opts: AuditOptions): Promise<AuditSummary> {
           return false;
         }
         try {
-          const revert = await undoReceipt(io, effect.receiptId);
+          const revert = await (opts.undo === undefined ? undoReceipt(io, effect.receiptId) : opts.undo(effect.receiptId));
           state = withNotice(state, {
             text: `undone ${effect.receiptId} → ${revert.receipt_id}`,
             tone: "ok",

@@ -15,7 +15,7 @@ export async function retrievalCandidates(
   query: string,
   options: SearchOptions,
 ): Promise<RetrievalCandidates> {
-  if (ctx.retrieval === undefined) return { ids: [], degraded: ctx.retrievalUnavailable ? ["retrieval-unavailable"] : [] };
+  if (ctx.retrieval === undefined) return { ids: [], degraded: ctx.retrievalUnavailable ? ["retrieval-unavailable", ...(typeof ctx.retrievalUnavailable === "string" ? [ctx.retrievalUnavailable] : [])] : [] };
   if (sourcePolicyEpoch(ctx.db) > 0 && !isLocalSourcePort(ctx.retrieval)) return { ids: [], degraded: ["retrieval-source-egress-denied"] };
   // The v1 port has no page-type predicate. Keep that request on the scoped
   // deterministic index rather than spending its window on excluded types.

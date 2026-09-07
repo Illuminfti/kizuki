@@ -179,7 +179,7 @@ function journalPresent(files: CanonFiles): boolean {
 }
 /** Clean snapshots never compete with canon writers. Only an actual journal
  * needs mutation ownership; changed atomic snapshots get one bounded retry. */
-function readOnly<T>(vaultPath: string, work: (files: CanonFiles, vault: string, current: CanonFileSnapshot | null) => T): T {
+function readOnly<T>(vaultPath: string, work: (files: CanonFiles, vault: string, current: CanonFileSnapshot | null) => T, reconcilePending = true): T {
   const vault = resolve(vaultPath);
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -197,13 +197,16 @@ function readOnly<T>(vaultPath: string, work: (files: CanonFiles, vault: string,
           } finally { before?.close(); }
         }
       } finally { files.close(); }
-      if (pending) owned(vault, held => reconcile(held, vault));
+      if (pending) {
+        if (!reconcilePending) fail("transaction_unavailable");
+        owned(vault, held => reconcile(held, vault));
+      }
     }
     fail("revision_conflict");
   } catch (error) { if (error instanceof AppModelSettingsError) throw error; fail("custody_unavailable"); }
 }
-export function readAppModelConfiguration(vaultPath: string, check: AppModelConfigurationValidator): AppModelDocument {
-  return readOnly(vaultPath, (_files, _vault, snapshot) => document(snapshot, check));
+export function readAppModelConfiguration(vaultPath: string, check: AppModelConfigurationValidator, options: { reconcile?: boolean } = {}): AppModelDocument {
+  return readOnly(vaultPath, (_files, _vault, snapshot) => document(snapshot, check), options.reconcile ?? true);
 }
 /** Classification is lexical only. Every file branch must use the bound file
  * reader below; a pathname check cannot prove custody for a later legacy read. */
@@ -227,10 +230,10 @@ export function classifyAppModelCredential(vaultPath: string, reference: string)
 }
 /** File references are resolved once through held no-follow parent descriptors.
  * Direct external files retain their 16 KiB, owner-only and trimming semantics. */
-export function readAppModelFileCredential(vaultPath: string, expectedRevision: string, reference: string): string {
+export function readAppModelFileCredential(vaultPath: string, expectedRevision: string, reference: string, options: { reconcile?: boolean } = {}): string {
   const kind = classifyAppModelCredential(vaultPath, reference);
   if (kind === "env") fail("credential_invalid");
-  if (kind === "managed_file") return readAppManagedModelCredential(vaultPath, expectedRevision, reference);
+  if (kind === "managed_file") return readAppManagedModelCredential(vaultPath, expectedRevision, reference, options);
   return readOnly(vaultPath, (_files, _vault, current) => {
     if (revision(current?.bytes ?? null) !== expectedRevision) fail("revision_conflict");
     const llm = llmOf(parseConfig(current?.bytes ?? null));
@@ -245,10 +248,10 @@ export function readAppModelFileCredential(vaultPath: string, expectedRevision: 
         return value;
       } finally { snapshot.close(); }
     } finally { external.close(); }
-  });
+  }, options.reconcile ?? true);
 }
 /** Resolve only immutable credentials owned by this settings authority. */
-export function readAppManagedModelCredential(vaultPath: string, expectedRevision: string, reference: string): string {
+export function readAppManagedModelCredential(vaultPath: string, expectedRevision: string, reference: string, options: { reconcile?: boolean } = {}): string {
   return readOnly(vaultPath, (files, vault, current) => {
     if (revision(current?.bytes ?? null) !== expectedRevision) fail("revision_conflict");
     const prefix = `file:${join(vault, PRIVATE)}/`, llm = llmOf(parseConfig(current?.bytes ?? null));
@@ -263,7 +266,7 @@ export function readAppManagedModelCredential(vaultPath: string, expectedRevisio
       if (!value || bytes.byteLength > 1024 || /\s|[\x00-\x1f\x7f]/.test(value) || !Buffer.from(value).equals(bytes)) fail("credential_invalid");
       return value;
     } finally { key.close(); }
-  });
+  }, options.reconcile ?? true);
 }
 export function saveAppModelConfiguration(vaultPath: string, update: AppModelSettingsUpdate, check: AppModelConfigurationValidator): AppModelDocument {
   return owned(vaultPath, (files, target, scope) => saveAppModelConfigurationOwned(scope, target, files, update, check));

@@ -22,7 +22,7 @@ import {
   type RailSyncResult,
   type RetrievalPort,
 } from "@kizuki/core";
-import { chatCompletionsUrl, parseOpenAiCompatibleConfig, registerLlmPorts } from "@kizuki/llm";
+import { chatCompletionsUrl, parseOpenAiCompatibleConfig, registerLlmPorts, endpointHost, modelRef } from "@kizuki/llm";
 import { listHostConnections, loadConnector, closeHostConnector } from "./connections";
 import { tryRefreshDerived } from "./derived";
 import { tokenResolver } from "./secrets";
@@ -145,6 +145,24 @@ interface ServeRuntimeOptions {
   readonly err: (line: string) => void;
   /** Strict by default; the daemon can retain its useful local capture floor. */
   readonly configurationErrorMode?: "throw" | "disable-model";
+}
+
+/** Validate the held configuration and credential without port/runtime initialization. */
+export async function inspectModelBinding(vaultPath: string, env: Record<string, string | undefined>): Promise<string | null> {
+  const document = readAppModelConfiguration(vaultPath, value => { parseLlmSelection(value); }, { reconcile: false });
+  const selected = parseLlmSelection(document.llm);
+  if (selected.id === NONE_LLM_ID) return null;
+  const configured = parseOpenAiCompatibleConfig(selected.config);
+  if (selected.secret_ref !== null) {
+    if (classifyAppModelCredential(vaultPath, selected.secret_ref) === "env") {
+      await tokenResolver(selected.secret_ref, env)(selected.secret_ref);
+    } else readAppModelFileCredential(vaultPath, document.revision, selected.secret_ref, { reconcile: false });
+  }
+  // Recheck after the async environment resolver; never report a superseded model.
+  if (readAppModelConfiguration(vaultPath, value => { parseLlmSelection(value); }, { reconcile: false }).revision !== document.revision) {
+    runtimeError("configuration changed during inspection");
+  }
+  return modelRef(selected.id, configured.model, endpointHost(configured.base_url));
 }
 
 async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; producer?: ProducerPort }> {

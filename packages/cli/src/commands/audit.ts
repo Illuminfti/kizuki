@@ -1,7 +1,7 @@
-import { listAuditReceipts } from "@kizuki/core";
+import { listAuditReceipts, undoReceipt } from "@kizuki/core";
 import { runAudit } from "@kizuki/tui";
 import { UsageError, parseArguments } from "../args";
-import { withVault } from "../context";
+import { withReadVault, withVault } from "../context";
 import { jsonEnvelope, table } from "../output";
 import type { CliIo, Command } from "./index";
 
@@ -49,7 +49,7 @@ export const auditCommand: Command = {
       !parsed.options.has("--limit") &&
       !parsed.options.has("--offset");
 
-    return withVault(io, async (ctx) => {
+    return withReadVault(io, async (ctx) => {
       const since = parsed.options.get("--since");
       const page = parsed.options.get("--page");
       const writer = parsed.options.get("--writer");
@@ -63,7 +63,9 @@ export const auditCommand: Command = {
       };
       if (interactive) {
         const summary = await runAudit({
-          db: ctx.db,
+          get db() { return ctx.db; },
+          undo: receiptId => ctx.pauseForMutation(() => withVault({ ...io, vaultOverride: ctx.vaultPath }, async writer =>
+            undoReceipt({ db: writer.db, vault_path: writer.vaultPath, ...(writer.retrieval === undefined ? {} : { retrieval: writer.retrieval }) }, receiptId))),
           vaultPath: ctx.vaultPath,
           filters,
         });
@@ -71,6 +73,7 @@ export const auditCommand: Command = {
         return 0;
       }
 
+      ctx.assertCurrent();
       const fetched = listAuditReceipts(ctx.db, {
         ...filters,
         limit: limit + 1,

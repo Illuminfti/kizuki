@@ -3,15 +3,16 @@ import { existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   ConnectionStateStore,
+  createConnectionStateReader,
   assertVaultControl,
   ensureVaultId,
   initSearch,
   PortError,
   readVaultId,
 } from "@kizuki/core";
-import type { RetrievalPort } from "@kizuki/core";
-import { inspectLedgerIdentity, LedgerIdentityError, openLedger } from "@kizuki/core/internal";
-import { openConfiguredRetrieval } from "./retrieval-runtime";
+import type { ConnectionStateReader, RetrievalPort } from "@kizuki/core";
+import { assertBoundVaultId, openLedgerRead, inspectLedgerIdentity, LedgerIdentityError, openLedger } from "@kizuki/core/internal";
+import { inspectConfiguredRetrieval, openConfiguredRetrieval } from "./retrieval-runtime";
 import type { CliIo } from "./commands/index";
 import {
   type KizukiConfig,
@@ -103,7 +104,7 @@ export interface VaultContext {
   db: Database;
   store: ConnectionStateStore;
   retrieval?: RetrievalPort;
-  retrievalUnavailable?: true;
+  retrievalUnavailable?: true | "configured-engine-unavailable";
 }
 
 export async function withVault<T>(
@@ -138,4 +139,44 @@ export async function withVault<T>(
   } finally {
     try { await retrieval?.close(); } finally { db.close(); }
   }
+}
+
+export interface ReadVaultContext extends Omit<VaultContext, "store"> {
+  store: ConnectionStateReader;
+  assertCurrent(): void;
+  /** TUI closes its reader before the separately confirmed writer, then reopens it. */
+  pauseForMutation<T>(work: () => Promise<T>): Promise<T>;
+}
+
+/** Inspection plus optional serving audit; never migrations, runtime binding or identity adoption. */
+export async function withReadVault<T>(
+  io: CliIo,
+  fn: (ctx: ReadVaultContext) => Promise<T>,
+  options: { audit?: boolean; retrieval?: "optional" | "none" } = {},
+): Promise<T> {
+  const path = configPath(io.env);
+  const vaultPath = resolveVault(io.env, readConfig(path), io.vaultOverride);
+  assertVaultControl(vaultPath, { repairPermissions: false });
+  assertBoundVaultId(vaultPath);
+  let binding = openLedgerRead(vaultPath, { audit: options.audit ?? false });
+  let paused = false;
+  try {
+    const retrievalUnavailable = options.retrieval === "optional" && inspectConfiguredRetrieval(vaultPath);
+    const result = await fn({ configPath: path, vaultPath, get db() { binding.assertCurrent(); return binding.db; },
+      store: createConnectionStateReader(join(vaultPath, ".kizuki")), assertCurrent: () => binding.assertCurrent(),
+      async pauseForMutation(work) {
+        if (paused) throw new Error("read context is already paused");
+        binding.assertCurrent(); paused = true; binding.close();
+        try { return await work(); }
+        finally {
+          assertVaultControl(vaultPath, { repairPermissions: false });
+          assertBoundVaultId(vaultPath);
+          binding = openLedgerRead(vaultPath, { audit: options.audit ?? false }); paused = false;
+        }
+      },
+      ...(retrievalUnavailable ? { retrievalUnavailable: "configured-engine-unavailable" as const } : {}),
+    });
+    binding.assertCurrent();
+    return result;
+  } finally { binding.close(); }
 }

@@ -1,5 +1,6 @@
 import { XApiConnector, createXApiConnector, inspectXApiState, type XApiConfig } from "@kizuki/connectors";
 import { xApiClient, xApiRequiredFields, xApiStateConfig } from "./x-api";
+import type { ConnectionStateReader } from "@kizuki/core";
 import { GoogleCalendarConnector, createGoogleCalendarConnector, inspectGoogleCalendarState, type GoogleCalendarConnectorConfig } from "@kizuki/connector-google-calendar";
 import { googleCalendarClient, googleCalendarRequiredFields, googleCalendarStateConfig } from "./google-calendar";
 import { GmailConnector, createGmailConnector, inspectGmailState, type GmailConnectorConfig } from "@kizuki/connector-gmail";
@@ -253,7 +254,7 @@ export interface HostConnection {
 }
 
 function inspectConnection(
-  store: ConnectionStateStore,
+  store: ConnectionStateReader,
   connection: Connection,
 ): HostConnection {
   try {
@@ -297,7 +298,7 @@ function inspectConnection(
 
 export function listHostConnections(
   db: Database,
-  store: ConnectionStateStore,
+  store: ConnectionStateReader,
   connectorId?: string,
   opts: { includeDisconnected?: boolean } = {},
 ): HostConnection[] {
@@ -311,7 +312,7 @@ export function listHostConnections(
 
 export function selectConnection(
   db: Database,
-  store: ConnectionStateStore,
+  store: ConnectionStateReader,
   connectorId: string,
   selector: string | undefined,
 ): HostConnection {
@@ -372,9 +373,14 @@ export function blocksEnrollment(state: HealthState): boolean {
   return state !== "ok" && state !== "degraded";
 }
 
+function inspectionSafePersister(db: Database, store: ConnectionStateReader, connection: Connection): ReturnType<typeof createStatePersister>["persist"] {
+  if (store instanceof ConnectionStateStore) return createStatePersister(db, store, connection).persist;
+  return async () => { throw new ConnectionError("connector state mutation requires an explicit write context"); };
+}
+
 export async function loadConnector(
   selected: HostConnection,
-  store: ConnectionStateStore,
+  store: ConnectionStateReader,
   db: Database,
   env: Record<string, string | undefined> = process.env,
   factory: (id: string, config?: unknown, telegramDeps?: Partial<TelegramDeps>) => Connector = (id, config, deps) => id === "kizuki.telegram" ? new TelegramConnector(config as TelegramConnectorConfig, deps) : id === "kizuki.gmail" ? createGmailConnector(config as GmailConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.google-calendar" ? createGoogleCalendarConnector(config as GoogleCalendarConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.x" ? createXApiConnector(config as XApiConfig, deps?.persist ? {persist:deps.persist} : {}) : getConnector(id, config),
@@ -406,7 +412,7 @@ export async function loadConnector(
     }
     const ref = selected.connection.secret_refs[0]!;
     const connector = factory("kizuki.x", xApiStateConfig(bytes, ref, client), {
-      persist: createStatePersister(db, store, selected.connection).persist,
+      persist: inspectionSafePersister(db, store, selected.connection),
     });
     try {
       await connector.connect(async wanted => {
@@ -433,7 +439,7 @@ export async function loadConnector(
     }
     const ref = selected.connection.secret_refs[0]!;
     const connector = factory("kizuki.gmail", gmailStateConfig(bytes, ref, client), {
-      persist: createStatePersister(db, store, selected.connection).persist,
+      persist: inspectionSafePersister(db, store, selected.connection),
     });
     try {
       await connector.connect(async wanted => {
@@ -460,7 +466,7 @@ export async function loadConnector(
     }
     const ref = selected.connection.secret_refs[0]!;
     const connector = factory("kizuki.google-calendar", googleCalendarStateConfig(bytes, ref, client), {
-      persist: createStatePersister(db, store, selected.connection).persist,
+      persist: inspectionSafePersister(db, store, selected.connection),
     });
     try {
       await connector.connect(async wanted => {
@@ -477,7 +483,7 @@ export async function loadConnector(
   const connector = factory(
     selected.connection.connector_id,
     selected.state.config,
-    telegram ? { persist: createStatePersister(db, store, selected.connection).persist } : undefined,
+    telegram ? { persist: inspectionSafePersister(db, store, selected.connection) } : undefined,
   );
   const config = selected.state.config;
   const ref = "state_ref" in config ? config.state_ref : "token_secret_ref" in config

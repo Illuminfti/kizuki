@@ -2,11 +2,10 @@ import { purgeReadEpoch } from "../derived-holds";
 import { canonReadGeneration } from "../canon/write-intent";
 import { sourcePolicyEpoch } from "../ledger/source-grants";
 import {
-  reserveAudit,
   resolvePrincipal,
   toolAllowed,
-  updateAudit,
 } from "../agents";
+import { reserveServingAudit as reserveAudit, updateServingAudit as updateAudit } from "./audit-capability";
 import type {
   AuditDenial,
   AuditItem,
