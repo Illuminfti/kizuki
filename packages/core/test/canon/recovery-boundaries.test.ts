@@ -228,3 +228,48 @@ test("withdrawal cannot restore a prior page after its supporting claim changed"
   expect(readCanonWriteIntent(f.db)?.receipt.receipt_id).toBe(pending.receipt.receipt_id);
   expect(readFileSync(join(f.vault, original.page_path))).toEqual(postimage);
 });
+
+for (const change of ["unchanged", "claim", "event", "renewed-grant", "revoked-grant"] as const) {
+  test(`withdrawal retry revalidates an already-restored independent page: ${change}`, async () => {
+    const f = await fixture(true), independentSource = ulid();
+    const policy = inspectSourceGrant(f.db, f.source)!.policy;
+    registerConnection(f.db, "fixture", independentSource);
+    setSourceGrant(f.db, { source_key: independentSource, expected_revision: 0, operation_id: "grant-independent", policy });
+    const accepted = accept(f.db, { ...validEvent(), connector_id: "fixture", source_record_id: "independent-music", text: "Grace studies music." },
+      { source: { source_key: independentSource, expected_revision: 1 } });
+    if (accepted.status !== "stored") throw new Error("independent fixture capture failed");
+    const independent = await storeClaim(f.db, accepted.event.event_id, { predicate: "preference.prefers", object: "music", body: "Grace studies music." });
+    const original = write(f.io, independent), before = readFileSync(join(f.vault, original.page_path));
+    breakRows(f.db); expect(() => write(f.io, f.claim)).toThrow("boundary row failure");
+    const pending = readCanonWriteIntent(f.db)!; allowRows(f.db);
+    revokeSourceGrant(f.db, { source_key: f.source, expected_revision: 1, operation_id: "withdraw-interrupted-joint" });
+    f.db.exec("CREATE TRIGGER boundary_intent_failure BEFORE DELETE ON canon_write_intents BEGIN SELECT RAISE(FAIL,'synthetic intent deletion failure'); END");
+    await expect(resumeSourceRevocation(f.db, f.vault, "withdraw-interrupted-joint")).rejects.toThrow("synthetic intent deletion failure");
+    expect(readCanonWriteIntent(f.db)?.receipt.receipt_id).toBe(pending.receipt.receipt_id);
+    expect(readFileSync(join(f.vault, original.page_path))).toEqual(before);
+    expect(readReceiptsLog(f.vault).some(receipt => receipt.receipt_id === pending.receipt.receipt_id)).toBe(false);
+
+    // Retry from persisted state through another ledger handle. The filesystem
+    // rollback survived the failed SQL transaction; its authority may not have.
+    const db = openLedger(f.path); cleanups.push(() => db.close());
+    if (change === "claim") db.query("UPDATE claims SET body=? WHERE claim_id=?").run("Owner changed the supporting statement.", independent.claim_id);
+    if (change === "event") db.query("DELETE FROM events WHERE event_id=?").run(accepted.event.event_id);
+    if (change === "renewed-grant") setSourceGrant(db, { source_key: independentSource, expected_revision: 1, operation_id: "renew-independent", policy });
+    if (change === "revoked-grant") revokeSourceGrant(db, { source_key: independentSource, expected_revision: 1, operation_id: "revoke-independent" });
+    db.exec("DROP TRIGGER boundary_intent_failure");
+    const result = await resumeSourceRevocation(db, f.vault, "withdraw-interrupted-joint", {
+      ownedRetrieval: { stores: async () => ({ stores: [], absent_store_ids: [] }) },
+    });
+    const unchanged = change === "unchanged", owner = { ...f.owner, db };
+    expect(result.status).toBe(unchanged ? "purged" : "denied");
+    expect(result.purge_blockers.includes("canon_recovery_pending")).toBe(!unchanged);
+    expect(readCanonWriteIntent(db)?.receipt.receipt_id ?? null).toBe(unchanged ? null : pending.receipt.receipt_id);
+    expect(readDerivedHolds(db).paths.has(original.page_path)).toBe(!unchanged);
+    expect(readFileSync(join(f.vault, original.page_path))).toEqual(before);
+    expect(readReceiptsLog(f.vault).some(receipt => receipt.receipt_id === pending.receipt.receipt_id)).toBe(false);
+    const canon = loadCanon(owner), page = canon.byPath.get(original.page_path)!;
+    expect(pageDecision(canon, OWNER_AGENT_GRANT, page).allow).toBe(unchanged);
+    expect((await serveSearch(owner, { query: "music", scope: "canon" })).canon.some(hit => hit.excerpt.includes("music"))).toBe(unchanged);
+    if (unchanged) expect((await resumeSourceRevocation(db, f.vault, "withdraw-interrupted-joint")).status).toBe("purged");
+  });
+}
