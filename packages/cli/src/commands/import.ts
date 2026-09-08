@@ -1,7 +1,9 @@
 import { CONSENT_OPTIONS, consentHint, expectedRevision, readSourcePolicy } from "../source-consent";
 import { resolve } from "node:path";
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
-import { setSourceGrant, applyConnectionSensitivity, runToCompletion, ESTATE_IMPORT_LIMITS, planEstateImport } from "@kizuki/core";
+import { setSourceGrant, applyConnectionSensitivity, disconnect, runToCompletion, ESTATE_IMPORT_LIMITS, planEstateImport } from "@kizuki/core";
+import type { Connection } from "@kizuki/core";
+import type { Database } from "bun:sqlite";
 import { CLAUDE_IMPORT_CONNECTOR_ID, getConnector } from "@kizuki/connectors";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
@@ -37,6 +39,13 @@ function readEstateInput(path: string, limit: number): string {
   } catch {
     throw new UsageError("estate_input_unreadable_or_unsafe");
   } finally { if (fd !== undefined) closeSync(fd); }
+}
+
+function reactivateConnection(db: Database, connection: Connection): void {
+  if (connection.disconnected_at === null) return;
+  db.query(
+    "UPDATE connections SET disconnected_at = NULL WHERE connector_id = ? AND source_key = ? AND disconnected_at IS NOT NULL",
+  ).run(connection.connector_id, connection.source_key);
 }
 
 export const importCommand: Command = {
@@ -86,41 +95,55 @@ export const importCommand: Command = {
       let selected = hosts.find(
         (item) => item.state?.config.path === absolute,
       );
+      let enrolledThisRun = false;
       if (selected === undefined || selected.state === null) {
-        const connector = getConnector(connectorId, { path: absolute });
-        if (!connector.manifest().auth_modes.includes("none")) {
-          throw new ConnectionError(
-            `sign-in for ${connectorId} is not wired yet`,
+        const disconnected = listHostConnections(ctx.db, ctx.store, connectorId, {
+          includeDisconnected: true,
+        }).find((item) => item.state?.config.path === absolute && item.connection.disconnected_at !== null);
+        if (disconnected !== undefined && disconnected.state !== null) {
+          reactivateConnection(ctx.db, disconnected.connection);
+          selected = {
+            ...disconnected,
+            connection: { ...disconnected.connection, disconnected_at: null },
+          };
+          enrolledThisRun = true;
+        } else {
+          const connector = getConnector(connectorId, { path: absolute });
+          if (!connector.manifest().auth_modes.includes("none")) {
+            throw new ConnectionError(
+              `sign-in for ${connectorId} is not wired yet`,
+            );
+          }
+          await connector.connect(refuseSecrets);
+          const health = await connector.health();
+          if (blocksEnrollment(health.state)) {
+            io.err(
+              `error: ${connectorId} health=${health.state}: ${health.detail ?? ""}`,
+            );
+            return 1;
+          }
+          const connection = await enrollHostConnection(
+            ctx.db,
+            ctx.store,
+            connectorId,
+            {
+              schema: "kizuki.cli.connection-state/v1",
+              connector_id: connectorId,
+              config: { path: absolute },
+            },
           );
+          applyConnectionSensitivity(ctx.db, connection, connector.manifest());
+          selected = {
+            connection,
+            state: {
+              schema: "kizuki.cli.connection-state/v1",
+              connector_id: connectorId,
+              config: { path: absolute },
+            },
+            problem: null,
+          };
+          enrolledThisRun = true;
         }
-        await connector.connect(refuseSecrets);
-        const health = await connector.health();
-        if (blocksEnrollment(health.state)) {
-          io.err(
-            `error: ${connectorId} health=${health.state}: ${health.detail ?? ""}`,
-          );
-          return 1;
-        }
-        const connection = await enrollHostConnection(
-          ctx.db,
-          ctx.store,
-          connectorId,
-          {
-            schema: "kizuki.cli.connection-state/v1",
-            connector_id: connectorId,
-            config: { path: absolute },
-          },
-        );
-        applyConnectionSensitivity(ctx.db, connection, connector.manifest());
-        selected = {
-          connection,
-          state: {
-            schema: "kizuki.cli.connection-state/v1",
-            connector_id: connectorId,
-            config: { path: absolute },
-          },
-          problem: null,
-        };
       }
 
       if (hasPolicy) setSourceGrant(ctx.db, { source_key: selected.connection.source_key, expected_revision: revision!, operation_id: parsed.options.get("--operation-id")!, policy });
@@ -141,6 +164,10 @@ export const importCommand: Command = {
         "backfill",
         { vault_path: ctx.vaultPath },
       );
+      if (enrolledThisRun && result.stored === 0 && result.errors.length > 0) {
+        disconnect(ctx.db, selected.connection.connector_id, selected.connection.source_key);
+        io.err("error: initial backfill stored no usable events; connection was not left active");
+      }
       const derived = tryRefreshDerived(ctx.db, ctx.vaultPath);
       io.out(formatRunCounts(result));
       if (result.errors.includes("source_capture_denied")) io.err(consentHint(ctx.db, selected.connection.source_key));

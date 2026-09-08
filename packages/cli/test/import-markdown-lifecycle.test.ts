@@ -23,7 +23,7 @@ function fixture() {
 function state(vault: string) {
   const db = openLedger(join(vault, ".kizuki/kizuki.db"));
   try { return {
-    sources: db.query<{ source_key: string }, []>("SELECT source_key FROM connections").all(),
+    sources: db.query<{ source_key: string; disconnected_at: string | null }, []>("SELECT source_key, disconnected_at FROM connections").all(),
     events: db.query<{ source_record_id: string; deleted: number }, []>("SELECT source_record_id,deleted FROM events ORDER BY event_id").all(),
     runs: db.query<{ status: string; committed_cursor: string | null; errors: string }, []>("SELECT status,committed_cursor,errors FROM connection_runs ORDER BY rowid").all(),
   }; } finally { db.close(); }
@@ -41,7 +41,8 @@ test("Markdown import keeps valid evidence and visibly refuses malformed bytes u
   expect(first.stderr).toContain("partial_import: 1 record errors (not_utf8=1)"); safeDiagnostics(first, o.source);
   expect(readFileSync(invalid)).toEqual(INVALID);
   const initial = state(o.vault);
-  expect(initial.sources).toHaveLength(1); expect(initial.events).toEqual([{ source_record_id: "valid.md", deleted: 0 }]);
+  expect(initial.sources).toHaveLength(1); expect(initial.sources[0]!.disconnected_at).toBeNull();
+  expect(initial.events).toEqual([{ source_record_id: "valid.md", deleted: 0 }]);
   expect(initial.runs.map(run => run.status)).toEqual(["ok", "unavailable"]);
   expect(initial.runs[1]!.committed_cursor).toBe(initial.runs[0]!.committed_cursor);
   expect(JSON.parse(initial.runs[1]!.errors)).toEqual(["partial_import: 1 record errors (not_utf8=1)"]);
@@ -54,7 +55,9 @@ test("Markdown import keeps valid evidence and visibly refuses malformed bytes u
   const repaired = h.runCli(o.env, "import", "kizuki.markdown-folder", "--source", o.source);
   expect(repaired.exitCode, repaired.stderr).toBe(0); expect(repaired.stdout).toContain("events_stored=1");
   expect(repaired.stdout).toContain("duplicates=0"); expect(repaired.stdout).toContain("errors=0"); safeDiagnostics(repaired, o.source);
-  const after = state(o.vault); expect(after.sources).toEqual(initial.sources); expect(after.events).toHaveLength(2);
+  const after = state(o.vault); expect(after.sources.map(source => source.source_key)).toEqual(initial.sources.map(source => source.source_key));
+  expect(after.sources[0]!.disconnected_at).toBeNull();
+  expect(after.events).toHaveLength(2);
   expect(after.events.every(event => event.deleted === 0)).toBe(true);
   const cleanRepeat = h.runCli(o.env, "import", "kizuki.markdown-folder", "--source", o.source);
   expect(cleanRepeat.exitCode).toBe(0); expect(cleanRepeat.stdout).toContain("events_stored=0"); expect(cleanRepeat.stdout).toContain("duplicates=0");
@@ -64,10 +67,14 @@ test("all-malformed Markdown import never commits a completion checkpoint or hid
   const o = fixture(); writeFileSync(join(o.source, NAME), INVALID);
   const first = h.runCli(o.env, "import", "kizuki.markdown-folder", "--source", o.source, ...o.consent);
   expect(first.exitCode).toBe(1); expect(first.stdout).toContain("events_stored=0"); expect(first.stdout).toContain("errors=1");
-  expect(first.stderr).toContain("not_utf8=1"); safeDiagnostics(first, o.source);
+  expect(first.stderr).toContain("not_utf8=1"); expect(first.stderr).toContain("connection was not left active");
+  safeDiagnostics(first, o.source);
   const initial = state(o.vault); expect(initial.events).toEqual([]);
+  expect(initial.sources).toHaveLength(1); expect(initial.sources[0]!.disconnected_at).not.toBeNull();
   expect(initial.runs).toHaveLength(1); expect(initial.runs[0]).toMatchObject({ status: "unavailable", committed_cursor: null });
   const repeat = h.runCli(o.env, "import", "kizuki.markdown-folder", "--source", o.source);
   expect(repeat.exitCode).toBe(1); expect(repeat.stdout).toContain("events_stored=0"); expect(repeat.stderr).toContain("not_utf8=1");
+  expect(repeat.stderr).toContain("connection was not left active");
   safeDiagnostics(repeat, o.source); expect(state(o.vault).runs.at(-1)).toMatchObject({ status: "unavailable", committed_cursor: null });
+  expect(state(o.vault).sources[0]!.disconnected_at).not.toBeNull();
 });
