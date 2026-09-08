@@ -7,11 +7,14 @@ import {
   count,
   indexEvent,
   indexPage,
+  initSearch,
+  isLiveCanonPage,
   isPlainObject,
   listCanonPages,
   listCanonReceipts,
   pendingRetrievalOps,
   readSince,
+  removeDoc,
 } from "@kizuki/core";
 import { writeAtomicFile } from "./atomic-file";
 
@@ -155,6 +158,15 @@ export function countCanonReceiptRows(db: Database): number {
   return n;
 }
 
+function withdrawIndexedCanon(db: Database, pagePath: string, pageId?: string): void {
+  initSearch(db);
+  if (pageId !== undefined && pageId.length > 0) {
+    removeDoc(db, "canon", pageId);
+  }
+  db.query("DELETE FROM search_documents WHERE scope = 'canon' AND path = ?").run(pagePath);
+  db.query("DELETE FROM search_docs WHERE scope = 'canon' AND path = ?").run(pagePath);
+}
+
 export function indexReceiptsFromCursor(
   db: Database,
   vaultPath: string,
@@ -168,9 +180,18 @@ export function indexReceiptsFromCursor(
     seen += 1;
     if (!receiptAfter(cursor.receipt_id, receipt.receipt_id)) continue;
     const page = pages.get(receipt.page_path);
-    if (page !== undefined) {
+    const live =
+      page !== undefined &&
+      isLiveCanonPage(page) &&
+      receipt.page_action !== "archive";
+    if (live) {
       indexPage(db, page);
       indexed += 1;
+    } else {
+      withdrawIndexedCanon(db, receipt.page_path, page?.id);
+      for (const candidate of receipt.candidates) {
+        withdrawIndexedCanon(db, receipt.page_path, candidate.page_id);
+      }
     }
     if (lastId === null || receipt.receipt_id > lastId) lastId = receipt.receipt_id;
   }
