@@ -262,10 +262,28 @@ export function disconnect(
   db: Database,
   connector_id: string,
   source_key: string,
-): void {
-  db.query(
-    "UPDATE connections SET disconnected_at = ? WHERE connector_id = ? AND source_key = ?",
-  ).run(new Date().toISOString(), connector_id, source_key);
+): Connection {
+  const existing = getConnection(db, connector_id, source_key);
+  if (existing === null) {
+    throw new LedgerError("unknown connection");
+  }
+  if (existing.disconnected_at !== null) {
+    throw new LedgerError("connection already disconnected");
+  }
+  const disconnectedAt = new Date().toISOString();
+  const result = db.query(
+    `UPDATE connections
+        SET disconnected_at = ?
+      WHERE connector_id = ? AND source_key = ? AND disconnected_at IS NULL`,
+  ).run(disconnectedAt, connector_id, source_key);
+  if (result.changes !== 1) {
+    throw new LedgerError("connection already disconnected");
+  }
+  const next = getConnection(db, connector_id, source_key);
+  if (next === null || next.disconnected_at === null) {
+    throw new LedgerError("disconnected connection was not found");
+  }
+  return next;
 }
 
 export function requireActiveConnection(
