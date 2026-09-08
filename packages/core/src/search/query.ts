@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
 import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
 import type { RetrievalAuthority } from "../contracts/retrieval";
+import { readDerivedHolds } from "../derived-holds";
 import { readDerivedMeta } from "../derived-meta";
 import { tableExists } from "../ledger/schema";
 import { ceilingSql, instantBound, instantSql, requireCeiling } from "../query/sql";
@@ -171,6 +172,13 @@ function searchPlan(
 
   const clauses = ["search_docs MATCH ?"];
   const bindings: (string | number)[] = [ftsQuery];
+  const heldPaths = [...readDerivedHolds(db).paths];
+  if (heldPaths.length > 0) {
+    clauses.push(
+      `(search_docs.scope != 'canon' OR path NOT IN (${placeholders(heldPaths.length)}))`,
+    );
+    bindings.push(...heldPaths);
+  }
   if (opts.scope !== undefined && opts.scope !== "all") {
     clauses.push("scope = ?");
     bindings.push(opts.scope);
