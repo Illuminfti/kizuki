@@ -204,12 +204,17 @@ export function deleteDoc(db: Database, scope: DocScope, docId: string): void {
   db.query<never, [string]>("DELETE FROM search_docs WHERE doc_id = ?").run(id);
 }
 
+/** Withdraw every canon search row for a vault-relative path, including stale ids. */
+export function removeCanonPath(db: Database, path: string): void {
+  db.query("DELETE FROM search_documents WHERE scope='canon' AND path=?").run(path);
+  db.query("DELETE FROM search_docs WHERE scope='canon' AND path=?").run(path);
+}
+
 export function replacePage(db: Database, page: CanonPage): void {
   assertDerivedDiscoveryReady(db);
   deleteDoc(db, "canon", page.id);
   // A changed frontmatter identity must also withdraw the previous path row.
-  db.query("DELETE FROM search_documents WHERE scope='canon' AND path=?").run(page.relPath);
-  db.query("DELETE FROM search_docs WHERE scope='canon' AND path=?").run(page.relPath);
+  removeCanonPath(db, page.relPath);
   const held = readDerivedHolds(db).paths;
   const evidence = projectablePageEvidence(db, [page]).get(page.relPath);
   if (evidence === undefined || held.has(page.relPath)) {
