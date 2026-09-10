@@ -567,7 +567,6 @@ export {
   MAX_CANON_PAGE_BYTES,
   MAX_CANON_WALK_BYTES,
   SCAN_FAILURE_CODES,
-  findPageById,
   isLiveCanonPage,
   listCanonPages,
   listCanonPagesReport,

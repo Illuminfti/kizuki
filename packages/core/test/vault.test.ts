@@ -21,7 +21,6 @@ import {
   VaultInitError,
   assertVaultControl,
   doctorVault,
-  findPageById,
   initVault,
   listCanonPages,
   listCanonPagesReport,
@@ -31,6 +30,7 @@ import {
   validatePage,
 } from "../src/index";
 import type { VaultPage } from "../src/index";
+import { findPageById } from "../src/vault/pages";
 
 const tempDirs: string[] = [];
 
