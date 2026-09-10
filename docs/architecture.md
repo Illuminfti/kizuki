@@ -186,8 +186,9 @@ Implemented on this revision:
   See [agent enrollment and recovery](agent-enrollment.md).
 
 Enforcement happens in the query engine, below the prompt layer.
-The public core search and timeline APIs require an explicit validated
-sensitivity ceiling; null or unlabeled records are never returned. See the
+Raw search and timeline helpers require an explicit validated sensitivity
+ceiling and live on `@kizuki/core/testing`, not the public core surface.
+Null or unlabeled records are never returned. See the
 [query ceiling contract and compatibility note](query-ceilings.md).
 
 ## Proactive (`kizuki serve`)

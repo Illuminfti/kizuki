@@ -5,7 +5,7 @@ import { openLedger } from "@kizuki/core/testing";
 
 const methods = ["search", "searchResult", "timeline"] as const;
 type Method = (typeof methods)[number];
-const api = { ...testing, timeline: core.timeline };
+const api = testing;
 
 function invoke(method: Method, db: unknown, options: unknown, query = "ceilingprobe"): unknown {
   return Reflect.apply(api[method], undefined, method === "timeline" ? [db, options] : [db, query, options]);
@@ -65,7 +65,7 @@ test("every public query ceiling withholds null, unknown and unlabeled rows in t
       const expected = ["public", ...(ceiling === "public" ? [] : ["personal"]), ...(ceiling === "private" ? ["private"] : [])].sort();
       expect(testing.search(db, "ceilingprobe", { ceiling }).map(hit => hit.sensitivity).sort()).toEqual(expected);
       expect(testing.searchResult(db, "ceilingprobe", { ceiling }).hits.map(hit => hit.sensitivity).sort()).toEqual(expected);
-      expect(core.timeline(db, { ceiling }).map(entry => entry.sensitivity).sort()).toEqual(expected);
+      expect(testing.timeline(db, { ceiling }).map(entry => entry.sensitivity).sort()).toEqual(expected);
     }
     for (const method of methods) {
       let reads = 0;

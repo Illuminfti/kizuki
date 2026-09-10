@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { DEFAULT_GRANT, resolveSensitivity, setSourceGrant, registerConnection, runToCompletion, timeline } from "@kizuki/core";
-import { openLedger } from "@kizuki/core/testing";
+import { DEFAULT_GRANT, resolveSensitivity, setSourceGrant, registerConnection, runToCompletion } from "@kizuki/core";
+import { openLedger, timeline } from "@kizuki/core/testing";
 import { TelegramConnector } from "../src/connector";
 import { TELEGRAM_CONNECTOR_ID } from "../src/map";
 import { scriptedDeps } from "../src/scripted";

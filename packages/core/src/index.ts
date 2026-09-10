@@ -754,7 +754,6 @@ export type {
   NeighborResult,
 } from "./graph";
 
-export { timeline } from "./query";
 export type { TimelineEntry, TimelineOptions } from "./query";
 
 export {
