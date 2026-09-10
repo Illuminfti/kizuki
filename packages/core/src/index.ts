@@ -739,7 +739,6 @@ export type {
   SearchResult,
 } from "./search";
 
-export { initGraph } from "./graph";
 export type {
   GraphEdge,
   GraphEdgeKind,
