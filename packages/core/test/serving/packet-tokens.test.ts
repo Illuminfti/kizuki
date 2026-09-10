@@ -35,6 +35,7 @@ test("the mandatory header refuses an insufficient budget with its numeric minim
 test("the exact header boundary fits and an unchanged marker cannot overflow it", async () => {
   const f = await live();
   const sample = (await serveContextPacket(f.owner(), { budget_tokens: 450, include: [] })).data!;
+  expect(sample.truncated).toBe(false);
   const budget = count(sample.packet_md.replace("budget=450", "budget=55"));
   const first = (await serveContextPacket(f.owner(), { budget_tokens: budget, include: [] })).data!;
   expect(first.tokens_estimate).toBe(count(first.packet_md));
@@ -77,7 +78,11 @@ for (const prose of [
       expect(data.tokenizer).toBe("js-tiktoken@1.0.21/cl100k_base");
       expect(data.tokens_estimate).toBe(count(data.packet_md));
       expect(count(data.packet_md)).toBeLessThanOrEqual(budget);
-      if (budget === 2000) expect(data.packet_md).toContain(prose.slice(0, 12));
+      if (budget === 2000) {
+        expect(data.packet_md).toContain(prose.slice(0, 12));
+        expect(data.truncated).toBe(false);
+      }
+      if (budget === 80) expect(data.truncated).toBe(true);
     }
   });
 }

@@ -72,6 +72,8 @@ export interface ContextPacketData {
   sections: { canon: number; graph: number; timeline: number; claims: number };
   purpose: PacketPurpose;
   delivery: "full" | "unchanged";
+  /** True when packing stopped because a later in-scope chunk would exceed the budget. */
+  truncated: boolean;
   packet_hash: string;
   /** Same digest as packet_hash; named for If-None-Match / retain-prefix clients. */
   etag: string;
@@ -257,6 +259,7 @@ export async function serveContextPacket(
           sections: emptySections,
           purpose,
           delivery: "full",
+          truncated: false,
           packet_hash: hashBody(""),
           etag: hashBody(""),
           tokenizer: PACKET_TOKENIZER_ID,
@@ -288,6 +291,7 @@ export async function serveContextPacket(
       const audit = new Map<string, AuditItem>();
       const sections = { ...emptySections };
       let heading = "";
+      let truncated = false;
       for (const piece of pieces) {
         if (
           types !== undefined &&
@@ -305,12 +309,18 @@ export async function serveContextPacket(
         // Packing stops at the first chunk that does not fit: skipping ahead
         // would make the packet depend on chunk order in a way a reader
         // cannot predict.
-        if (candidateTokens > budget) break;
+        if (candidateTokens > budget) {
+          truncated = true;
+          break;
+        }
         const freshAudit = (piece.audit ?? []).filter((item) => !audit.has(item.id));
         const chunkCount = Number(piece.canon !== undefined) + Number(piece.quoted !== undefined);
         // A compact gap can cite hundreds of intervals. Never serve a unit
         // whose complete provenance audit cannot fit in one bounded row.
-        if (audit.size + canon.length + quoted.length + freshAudit.length + chunkCount > MAX_AUDIT_ITEMS) break;
+        if (audit.size + canon.length + quoted.length + freshAudit.length + chunkCount > MAX_AUDIT_ITEMS) {
+          truncated = true;
+          break;
+        }
         body += rendered;
         heading = piece.heading;
         sections[piece.section] += 1;
@@ -342,6 +352,7 @@ export async function serveContextPacket(
           sections: unchanged ? emptySections : sections,
           purpose,
           delivery: unchanged ? "unchanged" : "full",
+          truncated: unchanged ? false : truncated,
           packet_hash: packetHash,
           etag: packetHash,
           tokenizer: PACKET_TOKENIZER_ID,
