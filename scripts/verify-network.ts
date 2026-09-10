@@ -210,8 +210,7 @@ export function applyAllowlist(
   const allowed = new Set<string>();
   for (const entry of entries) {
     const entryFindings = byPath.get(entry.path) ?? [];
-    const outsidePackages = !entry.path.startsWith("packages/");
-    if (!tracked.has(entry.path) || outsidePackages || entryFindings.length === 0) {
+    if (!tracked.has(entry.path) || entryFindings.length === 0) {
       stale.push(entry);
       continue;
     }
@@ -226,11 +225,14 @@ export function applyAllowlist(
   return { findings: remaining, allowlisted, stale };
 }
 
-async function trackedSourceFiles(): Promise<string[]> {
+const SOURCE_FILE = /\.(?:[cm]?[jt]sx?)$/;
+
+async function trackedSourceFiles(cwd?: string): Promise<string[]> {
   const result = Bun.spawnSync({
-    cmd: ["git", "ls-files", "-z", "--", "packages"],
+    cmd: ["git", "ls-files", "-z", "--"],
     stdout: "pipe",
     stderr: "pipe",
+    ...(cwd === undefined ? {} : { cwd }),
   });
   if (result.exitCode !== 0) {
     throw new Error(
@@ -240,22 +242,27 @@ async function trackedSourceFiles(): Promise<string[]> {
   return result.stdout
     .toString()
     .split("\0")
-    .filter((file) => /\.(?:[cm]?js|jsx|ts|tsx)$/.test(file));
+    .filter((file) => SOURCE_FILE.test(file));
 }
 
 export async function scanTrackedSources(opts?: {
   allowlistPath?: string;
+  cwd?: string;
 }): Promise<TreeScan> {
   const allowlistPath = opts?.allowlistPath ?? DEFAULT_ALLOWLIST_PATH;
-  const allowlistFile = Bun.file(allowlistPath);
+  const cwd = opts?.cwd;
+  const allowlistFile = Bun.file(
+    cwd === undefined ? allowlistPath : `${cwd.replace(/\/$/, "")}/${allowlistPath}`,
+  );
   if (!(await allowlistFile.exists())) {
     throw new Error(`network allowlist missing: ${allowlistPath}`);
   }
   const entries = parseAllowlist(await allowlistFile.text());
-  const trackedFiles = await trackedSourceFiles();
+  const trackedFiles = await trackedSourceFiles(cwd);
   const findings: NetworkFinding[] = [];
   for (const file of trackedFiles) {
-    findings.push(...scanSourceText(file, await Bun.file(file).text()));
+    const absolute = cwd === undefined ? file : `${cwd.replace(/\/$/, "")}/${file}`;
+    findings.push(...scanSourceText(file, await Bun.file(absolute).text()));
   }
   return applyAllowlist(findings, entries, trackedFiles);
 }

@@ -1,6 +1,6 @@
 # Permitted network call sites. Format: <tracked path>:<reason>
-# An entry is stale (and fails the gate) when the path is untracked, outside
-# packages/, or produces zero findings. Do not add a path until the call exists.
+# An entry is stale (and fails the gate) when the path is untracked or
+# produces zero findings. Do not add a path until the call exists.
 packages/core/src/contracts/remote.ts:loopback port adapter; TCP is restricted to loopback and Unix sockets stay local
 packages/core/test/contracts/remote-child.ts:loopback child server for remote adapter parity tests
 packages/llm/src/transport.ts:user-configured model endpoint; the single fetch of @kizuki/llm
@@ -32,3 +32,6 @@ packages/cli/test/app-privacy-races.test.ts:authenticated actual app loopback re
 packages/cli/test/x-api-enrollment.test.ts:synthetic native OAuth callbacks restricted to 127.0.0.1; provider token and API transport use local fixtures
 packages/cli/test/x-api-recovery.test.ts:synthetic fixed loopback OAuth callbacks and process recovery checks; no real account or provider requests
 packages/cli/test/recovery-public.test.ts:authenticated ephemeral loopback app undo with synthetic canon and pending retrieval state
+scripts/extraction-quality-native.ts:loopback synthetic model endpoint for native extraction-quality replay
+scripts/native-model-endpoint.ts:loopback synthetic model endpoint for native service tests
+scripts/native-model-matrix.test.ts:fetch against the owned loopback native model endpoint
