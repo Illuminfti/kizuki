@@ -265,7 +265,7 @@ test("canon admission withholds direct readers and cached snapshots until fresh 
   expect(isHeld(f.db, late.relPath)).toBe(false);
   for (const read of [
     () => serveGetPage(ctx, { id: "late-atlas" }), () => serveEntities(ctx, {}),
-    () => serveGraph(ctx, { id: "late-atlas" }), () => serveHealth(ctx),
+    () => serveHealth(ctx),
     () => canonChunk(cached!, late, { sensitivity: "personal", taint: "quoted" }, late.body, false),
   ]) {
     try { read(); throw new Error("fixture read should be refused"); }
@@ -275,6 +275,7 @@ test("canon admission withholds direct readers and cached snapshots until fresh 
     }
   }
   expect(pageDecision(cached, OWNER.grant, late)).toEqual({ allow: false, reason: "held" });
+  await expect(serveGraph(ctx, { id: "late-atlas" })).rejects.toMatchObject({ code: "held", message: "canon unavailable during purge recovery" });
   await expect(serveSearch(ctx, { query: "Atlas", scope: "canon" })).rejects.toMatchObject({ code: "held" });
   const packet = await serveContextPacket(ctx, { query: "Atlas", include: ["canon"], budget_tokens: 1000 });
   expect(packet.canon).toEqual([]);

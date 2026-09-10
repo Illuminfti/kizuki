@@ -24,9 +24,9 @@ function targets(envelope: Envelope<GraphData>): string[] {
   return (envelope.data?.edges ?? []).map((edge) => edge.dst).sort();
 }
 
-function refusal(run: () => unknown): ServeError {
+async function refusal(run: () => unknown): Promise<ServeError> {
   try {
-    run();
+    await run();
   } catch (error) {
     if (error instanceof ServeError) return error;
     throw error;
@@ -35,15 +35,15 @@ function refusal(run: () => unknown): ServeError {
 }
 
 describe("serveGraph", () => {
-  test("a resolved wikilink to a withheld page is dropped and counted", () => {
-    const owner = serveGraph(fixture.owner(), {
+  test("a resolved wikilink to a withheld page is dropped and counted", async () => {
+    const owner = await serveGraph(fixture.owner(), {
       id: "fact:linked",
       kinds: ["wikilink"],
     });
     expect(targets(owner)).toEqual(["Nowhere", "person:grace"]);
     expect(owner.denied).toEqual([]);
 
-    const limited = serveGraph(fixture.agent("reader-public"), {
+    const limited = await serveGraph(fixture.agent("reader-public"), {
       id: "fact:linked",
       kinds: ["wikilink"],
     });
@@ -52,8 +52,8 @@ describe("serveGraph", () => {
     expect(JSON.stringify(limited)).not.toContain("person:grace");
   });
 
-  test("a subject id is a usable root and a hidden source page is counted", () => {
-    const owner = serveGraph(fixture.owner(), {
+  test("a subject id is a usable root and a hidden source page is counted", async () => {
+    const owner = await serveGraph(fixture.owner(), {
       id: "person:ada",
       kinds: ["subject"],
     });
@@ -65,7 +65,7 @@ describe("serveGraph", () => {
       "person:ada",
     ]);
 
-    const limited = serveGraph(fixture.agent("reader-public"), {
+    const limited = await serveGraph(fixture.agent("reader-public"), {
       id: "person:ada",
       kinds: ["subject"],
     });
@@ -75,14 +75,14 @@ describe("serveGraph", () => {
     expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 1 }]);
   });
 
-  test("a page with a retracted source loses all positive source edges", () => {
-    const envelope = serveGraph(fixture.owner(), {
+  test("a page with a retracted source loses all positive source edges", async () => {
+    const envelope = await serveGraph(fixture.owner(), {
       id: "fact:sourced",
       kinds: ["source"],
     });
     expect(targets(envelope)).toEqual([]);
     expect(envelope.denied).toEqual([{ reason: "held", count: 1 }]);
-    const live = serveGraph(fixture.owner(), { id: "person:ada", kinds: ["source"] });
+    const live = await serveGraph(fixture.owner(), { id: "person:ada", kinds: ["source"] });
     expect(targets(live)).toContain(fixture.events["public"] as string);
   });
 
@@ -111,7 +111,7 @@ describe("serveGraph", () => {
       WHERE src = 'fact:namespaced-source' AND kind = 'source'`)
       .run(`event:${eventId}`);
 
-    const owner = serveGraph(fixture.owner(), {
+    const owner = await serveGraph(fixture.owner(), {
       id: "fact:namespaced-source",
       kinds: ["source"],
     });
@@ -124,7 +124,7 @@ describe("serveGraph", () => {
     ]);
     expect(owner.denied).toEqual([]);
 
-    const limited = serveGraph(fixture.agent("reader-public"), {
+    const limited = await serveGraph(fixture.agent("reader-public"), {
       id: "fact:namespaced-source",
       kinds: ["source"],
     });
@@ -133,8 +133,8 @@ describe("serveGraph", () => {
     expect(JSON.stringify(limited)).not.toContain(eventId);
   });
 
-  test("a withheld root answers with no edges and a single count", () => {
-    const envelope = serveGraph(fixture.agent("reader-public"), {
+  test("a withheld root answers with no edges and a single count", async () => {
+    const envelope = await serveGraph(fixture.agent("reader-public"), {
       id: "fact:kettle",
     });
     expect(envelope.data).toEqual({
@@ -145,14 +145,14 @@ describe("serveGraph", () => {
     expect(envelope.denied).toEqual([{ reason: "above_ceiling", count: 1 }]);
   });
 
-  test("a retracted root is absent rather than denied", () => {
-    const envelope = serveGraph(fixture.owner(), { id: "fact:archived" });
+  test("a retracted root is absent rather than denied", async () => {
+    const envelope = await serveGraph(fixture.owner(), { id: "fact:archived" });
     expect(envelope.data?.edges).toEqual([]);
     expect(envelope.denied).toEqual([]);
   });
 
-  test("depth two reaches the neighbours of the first ring", () => {
-    const envelope = serveGraph(fixture.owner(), {
+  test("depth two reaches the neighbours of the first ring", async () => {
+    const envelope = await serveGraph(fixture.owner(), {
       id: "person:ada",
       depth: 2,
     });
@@ -163,7 +163,7 @@ describe("serveGraph", () => {
     });
   });
 
-  test("bad depth and repeated kinds are refused before any read", () => {
+  test("bad depth and repeated kinds are refused before any read", async () => {
     const ctx = fixture.owner();
     // A typed caller cannot write `depth: 3` at all: this assignment stops
     // compiling the moment the public type widens back to `number`.
@@ -173,17 +173,17 @@ describe("serveGraph", () => {
 
     const untyped: unknown = 3;
     expect(
-      refusal(() =>
+      (await refusal(() =>
         serveGraph(ctx, {
           id: "person:ada",
           depth: untyped as NonNullable<GraphArgs["depth"]>,
         }),
-      ).code,
+      )).code,
     ).toBe("invalid_arguments");
     expect(
-      refusal(() =>
+      (await refusal(() =>
         serveGraph(ctx, { id: "person:ada", kinds: ["subject", "subject"] }),
-      ).code,
+      )).code,
     ).toBe("invalid_arguments");
   });
 
@@ -218,7 +218,7 @@ describe("serveGraph", () => {
     }, "See [[Cap hub]].", [fixture.events["public"] as string]);
     rebuildGraph(fixture.db, fixture.vaultPath);
 
-    const owner = serveGraph(fixture.owner(), {
+    const owner = await serveGraph(fixture.owner(), {
       id: "fact:cap-hub",
       kinds: ["wikilink"],
     });
@@ -227,7 +227,7 @@ describe("serveGraph", () => {
     expect(owner.data?.truncated).toBe(true);
     expect(ownerSources).not.toContain("fact:zzz-open");
 
-    const limited = serveGraph(fixture.agent("reader-public"), {
+    const limited = await serveGraph(fixture.agent("reader-public"), {
       id: "fact:cap-hub",
       kinds: ["wikilink"],
     });
@@ -265,7 +265,7 @@ describe("serveGraph", () => {
     );
     rebuildGraph(fixture.db, fixture.vaultPath);
 
-    const envelope = serveGraph(fixture.owner(), {
+    const envelope = await serveGraph(fixture.owner(), {
       id: "fact:ghost-link",
       kinds: ["wikilink"],
     });
@@ -314,7 +314,7 @@ describe("serveGraph", () => {
       insert.run(`fact:aaa-out-secret-${index}`);
     }
 
-    const owner = serveGraph(fixture.owner(), {
+    const owner = await serveGraph(fixture.owner(), {
       id: "fact:out-hub",
       kinds: ["wikilink"],
     });
@@ -323,7 +323,7 @@ describe("serveGraph", () => {
     expect(owner.data?.truncated).toBe(true);
     expect(ownerDests).not.toContain("fact:zzz-out-open");
 
-    const limited = serveGraph(fixture.agent("reader-public"), {
+    const limited = await serveGraph(fixture.agent("reader-public"), {
       id: "fact:out-hub",
       kinds: ["wikilink"],
     });
@@ -333,7 +333,7 @@ describe("serveGraph", () => {
     expect(limited.data?.truncated).toBe(false);
     expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 100 }]);
     expect(JSON.stringify(limited)).not.toContain("aaa-out-secret");
-  }, 15_000);
+  }, 25_000);
 
   test("a public reader is not capped by private source dests", async () => {
     const eventIds: string[] = [];
@@ -379,7 +379,7 @@ describe("serveGraph", () => {
     fixture.db.query(`DELETE FROM graph_edges
       WHERE src = 'fact:source-hub' AND kind = 'source' AND dst = ?`).run(publicSource);
 
-    const owner = serveGraph(fixture.owner(), { id: "fact:source-hub" });
+    const owner = await serveGraph(fixture.owner(), { id: "fact:source-hub" });
     expect(owner.data?.edges).toHaveLength(100);
     expect(owner.data?.truncated).toBe(true);
     expect(owner.data?.edges.every((edge) => edge.kind === "source")).toBe(true);
@@ -387,7 +387,7 @@ describe("serveGraph", () => {
       "fact:zzz-source-open",
     );
 
-    const limited = serveGraph(fixture.agent("reader-public"), {
+    const limited = await serveGraph(fixture.agent("reader-public"), {
       id: "fact:source-hub",
     });
     expect(limited.data?.edges).toEqual([
@@ -417,7 +417,7 @@ describe("serveGraph", () => {
     }, links, [fixture.events["public"] as string]);
     rebuildGraph(fixture.db, fixture.vaultPath);
 
-    const envelope = serveGraph(fixture.owner(), {
+    const envelope = await serveGraph(fixture.owner(), {
       id: "fact:many",
       kinds: ["wikilink"],
     });

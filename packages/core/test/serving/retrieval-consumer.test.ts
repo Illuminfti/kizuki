@@ -10,6 +10,7 @@ import type {
 import { DIRECT_RETRIEVAL_DESCRIPTOR, ReferenceRetrievalPort } from "../contracts/reference-retrieval";
 import { temporaryPortContext } from "../contracts/fixtures";
 import { serveSearch } from "../../src/serving/search";
+import { serveGraph } from "../../src/serving/graph";
 import { serveContextPacket } from "../../src/serving/packet";
 import { serveFixture, type Fixture } from "./helpers";
 import type { PortDescriptor } from "../../src/contracts/ports";
@@ -186,4 +187,118 @@ test("an unavailable or non-graph engine keeps the offline related pages", async
   expect(relatedSection(packet.data?.packet_md ?? "")).toContain("Grace reviews the kettle log.");
   expect(packet.data?.retrieval_degraded).toContain("retrieval-unavailable");
   expect(JSON.stringify(packet)).not.toContain("PRIVATE_PROVIDER_ERROR");
+});
+
+function graphEdge(entity: EntityRef, to: string, type = "wikilink"): GraphResult {
+  return {
+    entity: entity.entity_id,
+    edges: [{
+      from: entity.entity_id,
+      to,
+      type,
+      weight: 1,
+      provenance: ["STALE_PRIVATE_CACHE_MARKER"],
+    }],
+    truncated: false,
+  };
+}
+
+test("serveGraph consumes engine nominations using current evidence and authority", async () => {
+  const f = await live();
+  const calls: { entity: EntityRef; options: GraphQueryOptions }[] = [];
+  const ctx = f.owner();
+  const retrieval = graphPort(async (entity, options) => {
+    calls.push({ entity, options });
+    return graphEdge(entity, "org:acme");
+  });
+  const envelope = await serveGraph({ ...ctx, retrieval }, { id: "person:ada" });
+  expect(calls).toEqual([{
+    entity: { entity_id: "person:ada" },
+    options: { hops: 1, limit: 100, ceiling: ctx.principal.grant.ceiling },
+  }]);
+  expect(envelope.data?.edges).toContainEqual({
+    src: "person:ada",
+    dst: "org:acme",
+    kind: "wikilink",
+  });
+  expect(JSON.stringify(envelope)).not.toContain("STALE_PRIVATE_CACHE_MARKER");
+});
+
+test("a graph engine cannot disclose private, held, or archived pages through serveGraph", async () => {
+  const f = await live();
+  const retrieval = graphPort(async (entity) => ({
+    entity: entity.entity_id,
+    edges: ["org:acme", "fact:kettle", "fact:held", "fact:archived"].map((to) => ({
+      from: entity.entity_id,
+      to,
+      type: "wikilink",
+      weight: 1,
+      provenance: ["STALE_PRIVATE_CACHE_MARKER"],
+    })),
+    truncated: false,
+  }));
+  const envelope = await serveGraph(
+    { ...f.agent("reader-public"), retrieval },
+    { id: "person:ada" },
+  );
+  const targets = (envelope.data?.edges ?? []).map((edge) => edge.dst);
+  expect(targets).toContain("org:acme");
+  expect(targets).not.toContain("fact:kettle");
+  expect(targets).not.toContain("fact:held");
+  expect(targets).not.toContain("fact:archived");
+  expect(JSON.stringify(envelope)).not.toContain("STALE_PRIVATE_CACHE_MARKER");
+  expect(JSON.stringify(envelope)).not.toContain("The private kettle protocol.");
+});
+
+test("a grant narrowed while serveGraph retrieval is pending refuses the whole response", async () => {
+  const f = await live();
+  const retrieval = graphPort(async (entity) => {
+    setGrant(f.db, "reader-private", { ceiling: "public" });
+    return graphEdge(entity, "org:acme");
+  });
+  await expect(serveGraph(
+    { ...f.agent("reader-private"), retrieval },
+    { id: "person:ada" },
+  )).rejects.toThrow("authority changed during request");
+});
+
+test("an unavailable or non-graph engine keeps the offline serveGraph floor", async () => {
+  const f = await live();
+  const lexical = port(async () => result(["page:person:ada"]));
+  const offline = await serveGraph(
+    { ...f.owner(), retrieval: lexical },
+    { id: "fact:linked", kinds: ["wikilink"] },
+  );
+  expect((offline.data?.edges ?? []).map((edge) => edge.dst).sort()).toEqual(["Nowhere", "person:grace"]);
+
+  const retrieval = graphPort(async () => { throw new Error("PRIVATE_PROVIDER_ERROR"); });
+  const envelope = await serveGraph(
+    { ...f.owner(), retrieval },
+    { id: "fact:linked", kinds: ["wikilink"] },
+  );
+  expect((envelope.data?.edges ?? []).map((edge) => edge.dst).sort()).toEqual(["Nowhere", "person:grace"]);
+  expect(JSON.stringify(envelope)).not.toContain("PRIVATE_PROVIDER_ERROR");
+});
+
+test("kind-filtered serveGraph keeps the deterministic floor", async () => {
+  const f = await live();
+  let calls = 0;
+  const retrieval = graphPort(async (entity) => {
+    calls += 1;
+    return graphEdge(entity, "org:acme");
+  });
+  const envelope = await serveGraph(
+    { ...f.owner(), retrieval },
+    { id: "fact:linked", kinds: ["wikilink"] },
+  );
+  expect(calls).toBe(0);
+  expect((envelope.data?.edges ?? []).map((edge) => edge.dst).sort()).toEqual(["Nowhere", "person:grace"]);
+});
+
+test("serveGraph drops fabricated unresolved wikilink nominations", async () => {
+  const f = await live();
+  const retrieval = graphPort(async (entity) => graphEdge(entity, "NotAPage"));
+  const envelope = await serveGraph({ ...f.owner(), retrieval }, { id: "person:ada" });
+  expect((envelope.data?.edges ?? []).map((edge) => edge.dst)).not.toContain("NotAPage");
+  expect(JSON.stringify(envelope)).not.toContain("STALE_PRIVATE_CACHE_MARKER");
 });
