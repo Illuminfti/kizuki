@@ -714,8 +714,10 @@ export {
 } from "./ingest/run";
 export {
   DETERMINISTIC_PRODUCER_BUDGET,
+  produceForEvent,
   proposalsForEvent,
 } from "./staging/producers";
+export type { DeterministicProduceResult } from "./staging/producers";
 export { BACKUP_SCHEMA, exportVault, restoreVault, verifyBackup } from "./export";
 export type {
   BackupSchemaVersions,

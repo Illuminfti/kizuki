@@ -10,10 +10,20 @@ import { fileProposal, setProposalStatus, StagingError } from "./proposals";
 import type { ProposalInput } from "./proposals";
 import { sourceTombstoneProposal, SourceTombstoneError } from "../canon/source-tombstone";
 import type { SourceTombstoneContext } from "../canon/source-tombstone";
+import type { RejectReason } from "../contracts/producer";
 import { DETERMINISTIC_PRODUCER_BUDGET } from "./budget";
 import { encodeSubjectSegment, namespacedSubjectId } from "./subjects";
 
 export { DETERMINISTIC_PRODUCER_BUDGET };
+
+/**
+ * RFC 0002 §4.2 tri-state for the deterministic floor. Unavailable is not
+ * empty: an empty proposal list is a legitimate advancing result.
+ */
+export type DeterministicProduceResult =
+  | { status: "ok"; proposals: ProposalInput[] }
+  | { status: "unavailable"; reason: string }
+  | { status: "rejected"; reason: RejectReason };
 
 /**
  * The deterministic floor: claims derivable from an event with no model.
@@ -171,6 +181,18 @@ export function proposalsForEvent(
     proposals.push(captureNoteProposal(event));
   }
   return proposals;
+}
+
+/**
+ * Same bytes as `proposalsForEvent`, returned as a tri-state. The
+ * deterministic floor never calls a model and never fails, so the result is
+ * always `ok` — including when there are no proposals.
+ */
+export function produceForEvent(
+  event: CaptureEvent,
+  grants: ProducerGrants = NO_GRANTS,
+): DeterministicProduceResult {
+  return { status: "ok", proposals: proposalsForEvent(event, grants) };
 }
 
 /**

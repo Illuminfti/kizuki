@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { getClaim } from "../../src/claims/store";
 import {
   DETERMINISTIC_PRODUCER_BUDGET,
+  produceForEvent,
   proposalsForEvent,
   withdrawForTombstone,
 } from "../../src/staging/producers";
@@ -293,5 +294,26 @@ describe("deterministic subject identity and capture bounds", () => {
     });
     expect(lowered.outcome).toBe("duplicate");
     expect(getClaim(db, filed.proposal.proposal_id)?.sensitivity).toBe("private");
+  });
+});
+
+describe("produceForEvent", () => {
+  test("unavailable is not empty: no proposals is still ok", () => {
+    const produced = produceForEvent(event({ deleted: true }));
+    expect(produced).toEqual({ status: "ok", proposals: [] });
+    expect(produced.status).not.toBe("unavailable");
+  });
+
+  test("keeps proposalsForEvent bytes on the ok arm", () => {
+    const input = event({
+      subjects: [
+        { subject_id: "person:ada", role: "from", display_name: "Ada" },
+        { subject_id: "person:bob", role: "to" },
+      ],
+    });
+    expect(produceForEvent(input)).toEqual({
+      status: "ok",
+      proposals: proposalsForEvent(input),
+    });
   });
 });
