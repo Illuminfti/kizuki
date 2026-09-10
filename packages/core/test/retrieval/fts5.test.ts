@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runRetrievalConformance } from "../../src/contracts/conformance/retrieval";
 import type { RetrievalConformanceHarness } from "../../src/contracts/conformance/retrieval";
@@ -352,17 +352,67 @@ describe("kizuki.retrieval.fts5", () => {
   });
 });
 
+function engineJson(dataDir: string): {
+  port: string;
+  created_at: string;
+  rebuilt_at: string | null;
+} {
+  return JSON.parse(readFileSync(join(dataDir, FTS5_RETRIEVAL_ENGINE_REL), "utf8")) as {
+    port: string;
+    created_at: string;
+    rebuilt_at: string | null;
+  };
+}
+
 test("FTS atomic rebuild preserves old documents on source failure and accepts unknown update dates", async () => {
-  const { port } = openPort();
+  const { port, ctx } = openPort();
   const original = { ...SYNTHETIC_DOCS[0]!, updated_at: null };
   await port.upsert([original]);
   const before = (await port.search(SYNTHETIC_QUERY)).hits;
+  const beforeEngine = readFileSync(join(ctx.data_dir, FTS5_RETRIEVAL_ENGINE_REL), "utf8");
   async function* failing() {
     yield { ...original, doc_id: "page:replacement" };
     throw new Error("synthetic source failure");
   }
   await expect(port.rebuildFromDocuments!(failing())).rejects.toThrow("synthetic source failure");
   expect((await port.search(SYNTHETIC_QUERY)).hits).toEqual(before);
+  expect(readFileSync(join(ctx.data_dir, FTS5_RETRIEVAL_ENGINE_REL), "utf8")).toBe(beforeEngine);
   await port.rebuildFromDocuments!([original]);
   expect((await port.search(SYNTHETIC_QUERY)).hits).toEqual(before);
+  expect(engineJson(ctx.data_dir).rebuilt_at).toBe("2026-09-02T12:00:00.000Z");
+});
+
+test("FTS rebuild commits rebuilt_at in the store and repairs engine.json on reopen", async () => {
+  const temporary = temporaryPortContext(FTS5_RETRIEVAL_DESCRIPTOR);
+  disposers.push(temporary.cleanup);
+  let now = "2026-09-05T00:00:00.000Z";
+  const ctx = { ...temporary.ctx, clock: () => now };
+  let port = createFts5RetrievalPort(ctx);
+  now = "2026-09-06T00:00:00.000Z";
+  await port.rebuildFromDocuments!([SYNTHETIC_DOCS[0]!]);
+  expect(engineJson(ctx.data_dir)).toMatchObject({
+    port: FTS5_RETRIEVAL_ID,
+    created_at: "2026-09-05T00:00:00.000Z",
+    rebuilt_at: "2026-09-06T00:00:00.000Z",
+  });
+  await port.close();
+  const published = JSON.parse(
+    readFileSync(join(ctx.data_dir, FTS5_RETRIEVAL_ENGINE_REL), "utf8"),
+  ) as Record<string, unknown>;
+  writeFileSync(
+    join(ctx.data_dir, FTS5_RETRIEVAL_ENGINE_REL),
+    `${JSON.stringify({ ...published, rebuilt_at: null })}\n`,
+  );
+  now = "2027-01-01T00:00:00.000Z";
+  port = createFts5RetrievalPort(ctx);
+  disposers.push(() => {
+    void port.close();
+  });
+  expect(engineJson(ctx.data_dir)).toMatchObject({
+    created_at: "2026-09-05T00:00:00.000Z",
+    rebuilt_at: "2026-09-06T00:00:00.000Z",
+  });
+  expect((await port.search(SYNTHETIC_QUERY)).hits.map(({ doc_id }) => doc_id)).toEqual([
+    "page:grace",
+  ]);
 });

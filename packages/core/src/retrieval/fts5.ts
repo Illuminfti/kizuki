@@ -43,6 +43,7 @@ import type {
 } from "../contracts/retrieval";
 import { ceilingSql, instantBound, instantSql } from "../query/sql";
 import { toFtsQuery } from "../search/query";
+import { isRfc3339 } from "../util/time";
 import { isPlainObject } from "../util/validate";
 import {
   FTS5_RETRIEVAL_ENGINE_REL,
@@ -264,7 +265,9 @@ export class Fts5RetrievalPort implements RetrievalPort {
       this.db.transaction(() => {
         this.db.exec("DELETE FROM search_docs; DELETE FROM search_documents");
         this.writeDocs(docs);
+        this.setMeta("rebuilt_at", this.ctx.clock());
       }).immediate();
+      this.projectEngineJson();
     } finally {
       this.rebuilding = false;
     }
@@ -534,6 +537,37 @@ export class Fts5RetrievalPort implements RetrievalPort {
     }
   }
 
+  private meta(key: string): string | null {
+    return this.db.query<{ value: string }, [string]>(
+      "SELECT value FROM retrieval_meta WHERE key = ?",
+    ).get(key)?.value ?? null;
+  }
+
+  private setMeta(key: string, value: string): void {
+    this.db.query("INSERT OR REPLACE INTO retrieval_meta(key, value) VALUES (?, ?)").run(key, value);
+  }
+
+  private committedEngine(): EngineJson {
+    const rebuilt = this.meta("rebuilt_at");
+    return {
+      port: this.descriptor.id,
+      contract: this.descriptor.contract,
+      contract_minor: this.descriptor.contract_minor,
+      space: null,
+      created_at: this.meta("created_at") ?? this.ctx.clock(),
+      rebuilt_at: rebuilt !== null && isRfc3339(rebuilt) ? rebuilt : null,
+    };
+  }
+
+  private projectEngineJson(): void {
+    const path = join(this.ctx.data_dir, FTS5_RETRIEVAL_ENGINE_REL);
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    const content = `${JSON.stringify(this.committedEngine())}\n`;
+    if (!existsSync(path) || readFileSync(path, "utf8") !== content) {
+      writeAtomic(path, content);
+    }
+  }
+
   private ensureEngineJson(): void {
     const path = join(this.ctx.data_dir, FTS5_RETRIEVAL_ENGINE_REL);
     if (existsSync(path)) {
@@ -551,18 +585,12 @@ export class Fts5RetrievalPort implements RetrievalPort {
           false,
         );
       }
-      return;
+      if (this.meta("created_at") === null && isRfc3339(raw["created_at"])) {
+        this.setMeta("created_at", raw["created_at"]);
+      }
     }
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    const engine: EngineJson = {
-      port: this.descriptor.id,
-      contract: this.descriptor.contract,
-      contract_minor: this.descriptor.contract_minor,
-      space: null,
-      created_at: this.ctx.clock(),
-      rebuilt_at: null,
-    };
-    writeAtomic(path, `${JSON.stringify(engine)}\n`);
+    if (this.meta("created_at") === null) this.setMeta("created_at", this.ctx.clock());
+    this.projectEngineJson();
   }
 }
 

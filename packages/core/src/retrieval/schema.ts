@@ -43,6 +43,13 @@ export const FTS5_RETRIEVAL_STORE_REL = "store/retrieval.db";
 export const FTS5_RETRIEVAL_ENGINE_REL = "engine.json";
 export const UNLABELED_SENSITIVITY = "unlabeled";
 
+const FTS5_META_SCHEMA = `
+CREATE TABLE IF NOT EXISTS retrieval_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+) STRICT;
+`;
+
 const FTS5_COLUMNS = `doc_id, kind, title, text, sensitivity, taint, authority,
        subjects, provenance, occurred_at, updated_at`;
 
@@ -59,6 +66,7 @@ export function initFts5RetrievalStore(db: Database): void {
   }
   db.exec(FTS5_DOCUMENTS_SCHEMA);
   db.exec(FTS5_RETRIEVAL_SCHEMA);
+  db.exec(FTS5_META_SCHEMA);
   if (legacy) {
     db.exec(
       `INSERT INTO search_docs (${FTS5_COLUMNS})
