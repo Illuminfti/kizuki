@@ -644,7 +644,6 @@ export {
   listHistoricalConnectorIds,
   normalizePurgeReason,
   previewPurge,
-  purgeEvents,
   readHolds,
   resolvePurgeConnectorId,
   resumePurge,

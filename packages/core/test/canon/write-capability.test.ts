@@ -200,6 +200,7 @@ describe("canon write capability", () => {
     expect(Object.keys(core)).not.toContain("toFtsQuery");
     expect(Object.keys(core)).not.toContain("timeline");
     expect(Object.keys(core)).not.toContain("neighbors");
+    expect(Object.keys(core)).not.toContain("purgeEvents");
     expect(Object.keys(core)).not.toContain("grantCanonWrite");
     expect(Object.keys(core)).not.toContain("openCanonFiles");
     expect(Object.keys(core)).not.toContain("assertCanonFiles");
