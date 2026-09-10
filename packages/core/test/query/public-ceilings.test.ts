@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import * as core from "@kizuki/core";
 import * as testing from "@kizuki/core/testing";
 import { openLedger } from "@kizuki/core/testing";
+import { indexEvent } from "../../src/search/indexer";
 
 const methods = ["search", "searchResult", "timeline"] as const;
 type Method = (typeof methods)[number];
@@ -55,7 +56,7 @@ test("every public query ceiling withholds null, unknown and unlabeled rows in t
         subjects: [{ subject_id: "person:synthetic", role: "from" }], sensitivity_hint: "private", deleted: false, attachments: [], metadata: {},
       });
       if (result.status !== "stored") throw Error("synthetic event must be accepted");
-      core.indexEvent(db, result.event);
+      indexEvent(db, result.event);
       // Corrupt/missing labels are confined to this synthetic fixture.
       db.exec("PRAGMA ignore_check_constraints = ON");
       db.query("UPDATE events SET sensitivity_hint = ? WHERE event_id = ?").run(label, result.event.event_id);
