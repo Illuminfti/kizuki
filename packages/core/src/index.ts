@@ -736,9 +736,6 @@ export {
   initSearch,
   rebuildSearch,
   removeDoc,
-  search,
-  searchResult,
-  toFtsQuery,
 } from "./search";
 export type {
   DocScope,
