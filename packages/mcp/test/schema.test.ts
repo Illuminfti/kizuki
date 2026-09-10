@@ -234,7 +234,7 @@ describe("the advertised output schema describes what the server sends", () => {
   });
 });
 
-import { rebuildDerived } from '@kizuki/core';
+import { rebuildDerived } from '@kizuki/core/internal';
 import { LABEL, SUBJECT, labelEvent, writeIdentity } from '../../core/test/serving/subject-label-fixture';
 
 test('a listed validating MCP client accepts real written identity evidence on canonical and quoted results', async () => {

@@ -419,7 +419,6 @@ describe("public surface", () => {
       "readSince",
       "readVaultId",
       "realSupervisorHost",
-      "rebuildDerived",
       "rebuildPageIndex",
       "rebuildRetrieval",
       "receiptsForClaim",

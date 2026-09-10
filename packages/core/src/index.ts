@@ -746,7 +746,6 @@ export type {
 
 export type { TimelineEntry, TimelineOptions } from "./query";
 
-export { rebuildDerived } from "./derived";
 export type { DerivedRebuildResult } from "./derived";
 
 export { diffLines } from "./util/diff";
