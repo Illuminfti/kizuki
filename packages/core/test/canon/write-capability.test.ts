@@ -191,6 +191,13 @@ describe("canon write capability", () => {
     }
   });
 
+  test("canon page replacement never writes or copies in place", () => {
+    const writeModule = SRC.find(({ path }) => path === WRITE_MODULE) as Source;
+    const files = SRC.find(({ path }) => path === "core/src/vault/canon-files.ts") as Source;
+    expect(writeModule.text).not.toMatch(/\bwriteFileSync\b|\bcopyFileSync\b/);
+    expect(files.text).not.toMatch(/\bwriteFileSync\b|\bcopyFileSync\b/);
+  });
+
   test("the public core surface exports applyCanonWrite and not writePage", () => {
     expect(Object.keys(core)).toContain("applyCanonWrite");
     expect(Object.keys(core)).toContain("undoReceipt");
