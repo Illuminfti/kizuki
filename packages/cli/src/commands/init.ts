@@ -6,12 +6,11 @@ import {
   ensureVaultId,
   hardenLedgerFile,
   initVault,
-  initSearch,
   installServeService,
   serveExecHint,
   writeServeIntent,
 } from "@kizuki/core";
-import { openLedger, sealLedger } from "@kizuki/core/internal";
+import { openLedger, sealLedger, initSearch } from "@kizuki/core/internal";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
   type KizukiConfig,

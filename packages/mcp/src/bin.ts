@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { authenticateAgentCredential, initAgents, initSearch, PortError, PortRegistry, bindLocalSourcePort, loadConfiguredRetrieval } from "@kizuki/core";
+import { authenticateAgentCredential, initAgents, PortError, PortRegistry, bindLocalSourcePort, loadConfiguredRetrieval } from "@kizuki/core";
 import { registerEmbeddedRetrieval } from "@kizuki/retrieval-pg";
-import { openLedger, initGraph } from "@kizuki/core/internal";
+import { openLedger, initGraph, initSearch } from "@kizuki/core/internal";
 import type { Principal, RetrievalPort } from "@kizuki/core";
 import { ownerPrincipal, principalFromToken } from "./principal";
 import { runStdio } from "./stdio";

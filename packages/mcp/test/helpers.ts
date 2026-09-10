@@ -10,7 +10,6 @@ import {
   addAgent,
   authenticate,
   initAgents,
-  initSearch,
   initVault,
   rebuildDerived,
   revokeAgent,
@@ -18,7 +17,7 @@ import {
 } from "@kizuki/core";
 import type { Grant, Principal, ServeContext } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
-import { initGraph } from "@kizuki/core/internal";
+import { initGraph, initSearch } from "@kizuki/core/internal";
 
 export interface McpFixture {
   vaultPath: string;

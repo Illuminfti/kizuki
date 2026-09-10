@@ -728,9 +728,6 @@ export type {
   RestoreReport,
 } from "./export";
 
-export {
-  initSearch,
-} from "./search";
 export type {
   DocScope,
   SearchHit,

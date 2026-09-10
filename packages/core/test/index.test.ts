@@ -291,7 +291,6 @@ describe("public surface", () => {
       "initCanon",
       "initClaims",
       "initClaimsEpoch",
-      "initSearch",
       "initSensitivity",
       "initServe",
       "initVault",

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { initSearch } from "@kizuki/core";
 import { openLedger, search } from "@kizuki/core/testing";
+import { initSearch } from "@kizuki/core/internal";
 import {
   emptyIndexCursor,
   indexReceiptsFromCursor,
