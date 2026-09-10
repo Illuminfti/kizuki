@@ -1,11 +1,18 @@
 import { afterEach, expect, test } from "bun:test";
 import { setGrant } from "../../src/agents";
-import type { RetrievalPort, RetrievalResult } from "../../src/contracts/retrieval";
+import type {
+  EntityRef,
+  GraphQueryOptions,
+  GraphResult,
+  RetrievalPort,
+  RetrievalResult,
+} from "../../src/contracts/retrieval";
 import { DIRECT_RETRIEVAL_DESCRIPTOR, ReferenceRetrievalPort } from "../contracts/reference-retrieval";
 import { temporaryPortContext } from "../contracts/fixtures";
 import { serveSearch } from "../../src/serving/search";
 import { serveContextPacket } from "../../src/serving/packet";
 import { serveFixture, type Fixture } from "./helpers";
+import type { PortDescriptor } from "../../src/contracts/ports";
 
 let fixture: Fixture | undefined;
 const cleanups: (() => void)[] = [];
@@ -17,6 +24,37 @@ function port(search: RetrievalPort["search"]): RetrievalPort {
   const engine = new ReferenceRetrievalPort(temporary.ctx);
   engine.search = search;
   return engine;
+}
+const GRAPH_DESCRIPTOR = {
+  ...DIRECT_RETRIEVAL_DESCRIPTOR,
+  id: "test.kizuki.retrieval.graph",
+  supports: ["lexical", "graph"],
+} as const satisfies PortDescriptor;
+function graphPort(neighbors: RetrievalPort["neighbors"]): RetrievalPort {
+  const temporary = temporaryPortContext(GRAPH_DESCRIPTOR);
+  cleanups.push(temporary.cleanup);
+  const engine = new ReferenceRetrievalPort(temporary.ctx, GRAPH_DESCRIPTOR) as RetrievalPort;
+  engine.neighbors = neighbors;
+  return engine;
+}
+function relatedEdge(entity: EntityRef, to: string): GraphResult {
+  return {
+    entity: entity.entity_id,
+    edges: [{
+      from: entity.entity_id,
+      to,
+      type: "STALE_PRIVATE_CACHE_MARKER",
+      weight: 1,
+      provenance: ["STALE_PRIVATE_CACHE_MARKER"],
+    }],
+    truncated: false,
+  };
+}
+function relatedSection(packet: string): string {
+  const start = packet.indexOf("## related");
+  if (start < 0) return "";
+  const next = packet.indexOf("\n## ", start + 1);
+  return next < 0 ? packet.slice(start) : packet.slice(start, next);
 }
 function result(ids: string[]): RetrievalResult {
   return {
@@ -71,4 +109,81 @@ test("a grant narrowed while retrieval is pending refuses the whole response", a
   });
   await expect(serveSearch({ ...f.agent("reader-private"), retrieval }, { query: "kettle" }))
     .rejects.toThrow("authority changed during request");
+});
+
+test("packets consume graph engine nominations using current evidence and authority", async () => {
+  const f = await live();
+  const calls: { entity: EntityRef; options: GraphQueryOptions }[] = [];
+  const ctx = f.owner();
+  const retrieval = graphPort(async (entity, options) => {
+    calls.push({ entity, options });
+    return relatedEdge(entity, "org:acme");
+  });
+  const packet = await serveContextPacket(
+    { ...ctx, retrieval },
+    { query: "warm", include: ["canon", "graph"], budget_tokens: 2_000 },
+  );
+  expect(calls.some((call) => call.entity.entity_id === "person:ada")).toBe(true);
+  expect(calls.every((call) => call.options.hops === 1 && call.options.ceiling === ctx.principal.grant.ceiling)).toBe(true);
+  const related = relatedSection(packet.data?.packet_md ?? "");
+  expect(related).toContain("Acme ships kettles.");
+  expect(related).toContain("[page:org:acme]");
+  expect(JSON.stringify(packet)).not.toContain("STALE_PRIVATE_CACHE_MARKER");
+});
+
+test("a graph engine cannot disclose private, held, or archived pages", async () => {
+  const f = await live();
+  const retrieval = graphPort(async (entity) => ({
+    entity: entity.entity_id,
+    edges: ["org:acme", "fact:kettle", "fact:held", "fact:archived"].map((to) => ({
+      from: entity.entity_id,
+      to,
+      type: "STALE_PRIVATE_CACHE_MARKER",
+      weight: 1,
+      provenance: ["STALE_PRIVATE_CACHE_MARKER"],
+    })),
+    truncated: false,
+  }));
+  const packet = await serveContextPacket(
+    { ...f.agent("reader-public"), retrieval },
+    { query: "warm", include: ["canon", "graph"], budget_tokens: 2_000 },
+  );
+  const related = relatedSection(packet.data?.packet_md ?? "");
+  expect(related).toContain("Acme ships kettles.");
+  expect(related).not.toContain("The private kettle protocol.");
+  expect(related).not.toContain("A kettle page whose only source was purged.");
+  expect(related).not.toContain("A retracted kettle note.");
+  expect(JSON.stringify(packet)).not.toContain("STALE_PRIVATE_CACHE_MARKER");
+});
+
+test("a grant narrowed while graph retrieval is pending refuses the whole response", async () => {
+  const f = await live();
+  const retrieval = graphPort(async (entity) => {
+    setGrant(f.db, "reader-private", { ceiling: "public" });
+    return relatedEdge(entity, "org:acme");
+  });
+  await expect(serveContextPacket(
+    { ...f.agent("reader-private"), retrieval },
+    { query: "warm", include: ["canon", "graph"], budget_tokens: 2_000 },
+  )).rejects.toThrow("authority changed during request");
+});
+
+test("an unavailable or non-graph engine keeps the offline related pages", async () => {
+  const f = await live();
+  const lexical = port(async () => result(["page:person:ada"]));
+  const offline = await serveContextPacket(
+    { ...f.owner(), retrieval: lexical },
+    { query: "Nowhere", include: ["canon", "graph"], budget_tokens: 2_000 },
+  );
+  expect(relatedSection(offline.data?.packet_md ?? "")).toContain("Grace reviews the kettle log.");
+  expect(offline.data?.retrieval_degraded).toContain("retrieval-graph-unavailable");
+
+  const retrieval = graphPort(async () => { throw new Error("PRIVATE_PROVIDER_ERROR"); });
+  const packet = await serveContextPacket(
+    { ...f.owner(), retrieval },
+    { query: "Nowhere", include: ["canon", "graph"], budget_tokens: 2_000 },
+  );
+  expect(relatedSection(packet.data?.packet_md ?? "")).toContain("Grace reviews the kettle log.");
+  expect(packet.data?.retrieval_degraded).toContain("retrieval-unavailable");
+  expect(JSON.stringify(packet)).not.toContain("PRIVATE_PROVIDER_ERROR");
 });
