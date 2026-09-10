@@ -4,6 +4,7 @@ import {
   mkdirSync,
   openSync,
   readdirSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -54,6 +55,40 @@ describe("local GGUF model install", () => {
       expected_sha256: digest,
     });
     expect(installed.sha256).toBe(digest);
+  });
+
+  test("expected bytes must match the source actually read", () => {
+    const temporary = temporaryEmbed();
+    cleanups.push(temporary.cleanup);
+    const destDir = vaultModelsDir(temporary.vault);
+    const digest = sha256File(temporary.modelPath);
+    const size = statSync(temporary.modelPath).size;
+    const installed = installGgufModel({
+      source_path: temporary.modelPath,
+      dest_dir: destDir,
+      expected_sha256: digest,
+      expected_bytes: size,
+    });
+    expect(installed.bytes).toBe(size);
+    expect(installed.sha256).toBe(digest);
+
+    try {
+      installGgufModel({
+        source_path: temporary.modelPath,
+        dest_dir: destDir,
+        expected_sha256: digest,
+        expected_bytes: size + 1,
+      });
+      throw new Error("expected size mismatch");
+    } catch (error) {
+      expect(error).toBeInstanceOf(PortError);
+      expect((error as PortError).code).toBe("config_invalid");
+      expect((error as PortError).message).toContain("expected bytes");
+    }
+    expect(sha256File(installed.path)).toBe(digest);
+    expect(
+      readdirSync(destDir).filter((name) => name.endsWith(".partial")),
+    ).toEqual([]);
   });
 
   test("hash mismatch and missing source fail closed without a download", () => {

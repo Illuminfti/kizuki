@@ -42,6 +42,7 @@ export interface InstallGgufModelInput {
   readonly source_path: string;
   readonly dest_dir: string;
   readonly expected_sha256?: string;
+  readonly expected_bytes?: number;
 }
 
 export interface InstalledGgufModel {
@@ -100,6 +101,16 @@ export function installGgufModel(
   assertGgufFileSize(stat.size);
 
   const bytes = readFileSync(input.source_path);
+  if (
+    input.expected_bytes !== undefined &&
+    bytes.byteLength !== input.expected_bytes
+  ) {
+    throw new PortError(
+      "config_invalid",
+      "GGUF source size does not match expected bytes",
+      false,
+    );
+  }
   const table = loadEmbeddingTable(parseGguf(bytes));
   const space = spaceFromTable(table);
   const sha256 = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");

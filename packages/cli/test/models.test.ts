@@ -84,4 +84,63 @@ describe("kizuki models pull", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("does not match expected sha256");
   });
+
+  test("matching --bytes copies and reports the size", () => {
+    const setup = tempVault();
+    const source = join(setup.root, "fixture.gguf");
+    const bytes = writeFixtureGguf();
+    writeFileSync(source, bytes);
+    const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+
+    const result = runCli(
+      setup.env,
+      "models",
+      "pull",
+      "--from",
+      source,
+      "--sha256",
+      digest,
+      "--bytes",
+      String(bytes.byteLength),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain(`bytes=${bytes.byteLength}`);
+    expect(result.stdout).toContain(`sha256=${digest}`);
+  });
+
+  test("size mismatch fails closed without replacing the destination", () => {
+    const setup = tempVault();
+    const source = join(setup.root, "fixture.gguf");
+    const bytes = writeFixtureGguf();
+    writeFileSync(source, bytes);
+    const first = runCli(setup.env, "models", "pull", "--from", source);
+    expect(first.exitCode).toBe(0);
+    const dest = join(setup.vault, ".kizuki", "models", "fixture.gguf");
+    const before = readFileSync(dest);
+
+    const result = runCli(
+      setup.env,
+      "models",
+      "pull",
+      "--from",
+      source,
+      "--bytes",
+      String(bytes.byteLength + 1),
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("does not match expected bytes");
+    expect(readFileSync(dest)).toEqual(before);
+  });
+
+  test("invalid --bytes exits 2", () => {
+    const setup = tempVault();
+    const source = join(setup.root, "fixture.gguf");
+    writeFileSync(source, writeFixtureGguf());
+    for (const value of ["0", "-1", "1.5", "foo"]) {
+      const result = runCli(setup.env, "models", "pull", "--from", source, "--bytes", value);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("usage: kizuki models pull --from PATH");
+    }
+  });
 });
