@@ -9,6 +9,7 @@ import {
   readLease,
   reclaimDeadLease,
   releaseLease,
+  thisProcess,
   type LeaseProcess,
 } from "../../src/serve/leases";
 import { ServeDaemonError } from "../../src/serve/types";
@@ -138,5 +139,62 @@ describe("leases", () => {
     releaseLease(db, later);
     expect(readLease(db, "writer")).toBeNull();
     db.close();
+  });
+
+  test("a live holder process is never stolen by another process", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-lease-live-"));
+    dirs.push(directory);
+    const path = join(directory, "ledger.sqlite");
+    const db = openLedger(path);
+    try {
+      expect(acquireLease(db, thisProcess()).acquired).toBe(true);
+      const child = Bun.spawn(
+        [process.execPath, join(import.meta.dir, "lease-child.ts"), path],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const [exit, output, error] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      expect(exit).toBe(0);
+      expect(error).toBe("");
+      expect(JSON.parse(output)).toMatchObject({ acquired: false, reason: "busy" });
+      expect(readLease(db, "writer")?.holder_pid).toBe(process.pid);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a dead holder process is reclaimed after its heartbeat expires", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-lease-dead-"));
+    dirs.push(directory);
+    const path = join(directory, "ledger.sqlite");
+    const child = Bun.spawn(
+      [process.execPath, join(import.meta.dir, "lease-child.ts"), path],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const [exit, output, error] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    expect(exit).toBe(0);
+    expect(error).toBe("");
+    const reported = JSON.parse(output) as { acquired: boolean; pid: number };
+    expect(reported.acquired).toBe(true);
+    const db = openLedger(path);
+    try {
+      expect(readLease(db, "writer")?.holder_pid).toBe(reported.pid);
+      db.query("UPDATE leases SET heartbeat_at = ? WHERE name = 'writer'").run(
+        "2026-01-01T00:00:00.000Z",
+      );
+      const result = acquireLease(db, thisProcess());
+      expect(result.acquired).toBe(true);
+      expect(result.reason).toBe("reclaimed");
+      expect(readLease(db, "writer")?.holder_pid).toBe(process.pid);
+    } finally {
+      db.close();
+    }
   });
 });
