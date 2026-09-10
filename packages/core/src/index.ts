@@ -745,7 +745,7 @@ export type {
   SearchResult,
 } from "./search";
 
-export { initGraph, neighbors, rebuildGraph } from "./graph";
+export { initGraph, rebuildGraph } from "./graph";
 export type {
   GraphEdge,
   GraphEdgeKind,
