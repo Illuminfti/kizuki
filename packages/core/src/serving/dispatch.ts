@@ -40,7 +40,7 @@ export async function dispatchServeTool(
     case "context_packet":
       return serveContextPacket(ctx, args as unknown as ContextPacketArgs);
     case "graph_neighbors":
-      return serveGraph(ctx, args as unknown as GraphArgs);
+      return await serveGraph(ctx, args as unknown as GraphArgs);
     case "system_health":
       return serveHealth(ctx);
     case "propose":

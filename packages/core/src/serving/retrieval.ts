@@ -1,6 +1,8 @@
 import { sourcePolicyEpoch, isLocalSourcePort } from "../ledger/source-grants";
 import { validateGraphResult, validateRetrievalResult } from "../contracts/retrieval";
 import type { RetrievalDocKind, RetrievalQuery } from "../contracts/retrieval";
+import type { GraphEdge, GraphEdgeKind } from "../graph/graph";
+import { bareRetrievalId } from "../retrieval/ids";
 import type { SearchOptions } from "../search/query";
 import type { ServeContext } from "./types";
 
@@ -61,6 +63,92 @@ export async function retrievalCandidates(
 
 function unavailableGraph(reason: string): RetrievalGraphCandidates {
   return { ids: [], degraded: [reason], ok: false };
+}
+
+const GRAPH_EDGE_KINDS = ["wikilink", "subject", "source"] as const;
+
+function graphEdgeKind(value: string): GraphEdgeKind | undefined {
+  return (GRAPH_EDGE_KINDS as readonly string[]).includes(value)
+    ? (value as GraphEdgeKind)
+    : undefined;
+}
+
+/** `ok` means a graph-capable engine answered; otherwise the caller keeps the local floor. */
+export interface RetrievalGraphEdges {
+  ok: boolean;
+  edges: GraphEdge[];
+  truncated: boolean;
+  degraded: string[];
+}
+
+function unavailableEdges(reason: string): RetrievalGraphEdges {
+  return { ok: false, edges: [], truncated: false, degraded: [reason] };
+}
+
+/**
+ * A derived engine nominates graph edges. Provider type, weight, and
+ * provenance never become served evidence; core rechecks live identities.
+ */
+export async function retrievalGraphEdges(
+  ctx: ServeContext,
+  entityId: string,
+  options: { hops: 1 | 2; limit: number; ceiling: SearchOptions["ceiling"] },
+): Promise<RetrievalGraphEdges> {
+  if (ctx.retrieval === undefined) {
+    return {
+      ok: false,
+      edges: [],
+      truncated: false,
+      degraded: ctx.retrievalUnavailable
+        ? ["retrieval-unavailable", ...(typeof ctx.retrievalUnavailable === "string" ? [ctx.retrievalUnavailable] : [])]
+        : [],
+    };
+  }
+  if (sourcePolicyEpoch(ctx.db) > 0 && !isLocalSourcePort(ctx.retrieval)) {
+    return unavailableEdges("retrieval-source-egress-denied");
+  }
+  if (!ctx.retrieval.descriptor.supports.includes("graph")) {
+    return unavailableEdges("retrieval-graph-unavailable");
+  }
+  const limit = Math.min(100, Math.max(0, options.limit));
+  if (limit === 0 || entityId.length === 0) {
+    return { ok: true, edges: [], truncated: false, degraded: [] };
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      ctx.retrieval.neighbors(
+        { entity_id: entityId },
+        { hops: options.hops, limit, ceiling: options.ceiling },
+      ),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("retrieval deadline")), 3_000);
+      }),
+    ]);
+    const validated = validateGraphResult(result);
+    if (validated.entity !== entityId) return unavailableEdges("retrieval-unavailable");
+    const edges: GraphEdge[] = [];
+    for (const edge of validated.edges) {
+      const kind = graphEdgeKind(edge.type);
+      if (kind === undefined) continue;
+      edges.push({
+        src: bareRetrievalId(edge.from),
+        dst: bareRetrievalId(edge.to),
+        kind,
+      });
+      if (edges.length === limit) break;
+    }
+    return {
+      ok: true,
+      edges,
+      truncated: validated.truncated || validated.edges.length > edges.length,
+      degraded: [],
+    };
+  } catch {
+    return unavailableEdges("retrieval-unavailable");
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /** A derived engine nominates related identities. Edge text never becomes served evidence. */

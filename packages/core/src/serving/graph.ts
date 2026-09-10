@@ -4,10 +4,11 @@ import type { GraphEdge, GraphEdgeKind } from "../graph/graph";
 import { enumOf, identifier } from "./arguments";
 import { eligible, loadCanon, pageDecision } from "./canon";
 import type { CanonIndex } from "./canon";
-import { auditArguments, gate } from "./gate";
+import { auditArguments, gateAsync } from "./gate";
 import type { Served } from "./gate";
 import { eventDecision, readServableEvents } from "./ledger";
 import type { ServableEvent } from "./ledger";
+import { retrievalGraphEdges } from "./retrieval";
 import { ServeError } from "./types";
 import type { Envelope, ServeContext } from "./types";
 
@@ -73,6 +74,7 @@ function classifyGraph(
   seen: Set<string>,
   collect: boolean,
   decisions: Map<string, PageDecision>,
+  allowUnresolvedWikilink: boolean,
 ): { kept: GraphEdge[]; withheld: AuditDenial[] } {
   const kept: GraphEdge[] = [];
   const withheld: AuditDenial[] = [];
@@ -103,7 +105,7 @@ function classifyGraph(
         // Raw leftover text is the servable page's own prose. Resolution
         // already happened at index time.
         if (target === undefined) {
-          if (collect) kept.push(edge);
+          if (collect && allowUnresolvedWikilink) kept.push(edge);
           continue;
         }
         if (!eligible(target)) continue;
@@ -143,20 +145,29 @@ function classifyGraph(
   return { kept, withheld };
 }
 
-export function serveGraph(
+export async function serveGraph(
   ctx: ServeContext,
   args: GraphArgs,
-): Envelope<GraphData> {
-  return gate(
+): Promise<Envelope<GraphData>> {
+  return gateAsync(
     ctx,
     "graph_neighbors",
     auditArguments(args),
-    ({ ctx }): Served<GraphData> => {
+    async ({ ctx }): Promise<Served<GraphData>> => {
       const grant: Grant = ctx.principal.grant;
       const id = identifier("id", args.id);
       const depth = depthOf(args.depth);
       const kinds = kindsOf(args.kinds);
 
+      const walked =
+        kinds === undefined
+          ? await retrievalGraphEdges(ctx, id, {
+              hops: depth,
+              limit: MAX_EDGES,
+              ceiling: grant.ceiling,
+            })
+          : { ok: false as const, edges: [], truncated: false, degraded: [] };
+      // Re-read current canon only after the engine finishes.
       const index = loadCanon(ctx);
       const root = index.byId.get(id);
       if (root !== undefined) {
@@ -184,12 +195,18 @@ export function serveGraph(
         limit: MAX_EDGES,
         ...(kinds === undefined ? {} : { kinds }),
       };
-      // Ceiling shapes the served cap. When a ceiling is set, a second walk
-      // without it counts what that filter hid, matching serveSearch.
-      const found = neighbors(ctx.db, id, { ...query, ceiling: grant.ceiling });
+      const found = walked.ok
+        ? {
+            id,
+            edges: walked.edges,
+            truncated: walked.truncated,
+          }
+        : neighbors(ctx.db, id, { ...query, ceiling: grant.ceiling });
       const foundKeys = new Set(found.edges.map(edgeKey));
+      // Ceiling shapes the served cap on the local floor. A configured
+      // engine already applied the requested ceiling; core still authorizes.
       const auditEdges =
-        grant.ceiling === undefined
+        walked.ok || grant.ceiling === undefined
           ? []
           : neighbors(ctx.db, id, query).edges.filter(
               (edge) => !foundKeys.has(edgeKey(edge)),
@@ -210,6 +227,7 @@ export function serveGraph(
         seen,
         true,
         decisions,
+        !walked.ok,
       );
       const hidden = classifyGraph(
         auditEdges,
@@ -219,6 +237,7 @@ export function serveGraph(
         seen,
         false,
         decisions,
+        !walked.ok,
       );
 
       return {
