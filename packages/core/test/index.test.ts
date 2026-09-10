@@ -402,7 +402,6 @@ describe("public surface", () => {
       "previewPurge",
       "proposalsForEvent",
       "pruneRunReceipts",
-      "purgeEvents",
       "queryServeService",
       "raiseConnectorSensitivityFloor",
       "raiseSensitivity",
