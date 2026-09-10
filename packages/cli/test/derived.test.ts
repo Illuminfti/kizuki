@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { openLedger, search } from "@kizuki/core/testing";
 import { initSearch } from "@kizuki/core/internal";
@@ -78,6 +79,11 @@ describe("derived receipt walk", () => {
     } finally {
       db.close();
     }
+  });
+
+  test("CLI derived indexing does not name retrieval tables", () => {
+    const source = readFileSync(join(import.meta.dir, "../src/derived.ts"), "utf8");
+    expect(source).not.toMatch(/\bsearch_documents\b|\bsearch_docs\b/);
   });
 
   test("archive receipts remove the stale search row", () => {

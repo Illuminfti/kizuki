@@ -12,7 +12,7 @@ import {
   pendingRetrievalOps,
   readSince,
 } from "@kizuki/core";
-import { indexEvent, indexPage, initSearch, removeDoc } from "@kizuki/core/internal";
+import { indexEvent, indexPage, initSearch, removeCanonPath, removeDoc } from "@kizuki/core/internal";
 import { writeAtomicFile } from "./atomic-file";
 
 export const INDEX_CURSOR_SCHEMA = "kizuki.cli.index-cursor/v1" as const;
@@ -160,8 +160,7 @@ function withdrawIndexedCanon(db: Database, pagePath: string, pageId?: string): 
   if (pageId !== undefined && pageId.length > 0) {
     removeDoc(db, "canon", pageId);
   }
-  db.query("DELETE FROM search_documents WHERE scope = 'canon' AND path = ?").run(pagePath);
-  db.query("DELETE FROM search_docs WHERE scope = 'canon' AND path = ?").run(pagePath);
+  removeCanonPath(db, pagePath);
 }
 
 export function indexReceiptsFromCursor(
