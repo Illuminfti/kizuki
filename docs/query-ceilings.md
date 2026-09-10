@@ -2,10 +2,12 @@
 
 Evidence date: 2026-09-05. Core `search`, `searchResult`, and `timeline` require
 an explicit ceiling. The only accepted values are the primitive strings
-`public`, `personal`, and `private`.
+`public`, `personal`, and `private`. Adapters query through `serveSearch` and
+`serveTimeline`. The raw helpers live on `@kizuki/core/testing`.
 
 ```ts
-import { searchResult, timeline } from "@kizuki/core";
+import { searchResult } from "@kizuki/core/testing";
+import { timeline } from "@kizuki/core";
 
 const result = searchResult(db, "project notes", {
   ceiling: authenticatedGrant.ceiling,
