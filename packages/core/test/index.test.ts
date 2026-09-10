@@ -395,6 +395,7 @@ describe("public surface", () => {
       "predicateIds",
       "previewAgentEnrollment",
       "previewPurge",
+      "produceForEvent",
       "proposalsForEvent",
       "pruneRunReceipts",
       "queryServeService",

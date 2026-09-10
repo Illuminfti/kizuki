@@ -21,7 +21,7 @@ import { LedgerStoreError } from "../ledger/errors";
 import { accept } from "../ledger/ledger";
 import { resolveSensitivity } from "../sensitivity/resolve";
 import { getConnectorSensitivity } from "../sensitivity/store";
-import { cascadeTombstone, proposalsForEvent } from "../staging/producers";
+import { cascadeTombstone, produceForEvent } from "../staging/producers";
 import type { ProducerGrants } from "../staging/producers";
 import { fileProposal } from "../staging/proposals";
 import type { SourceTombstoneContext } from "../canon/source-tombstone";
@@ -108,7 +108,9 @@ function processEvent(
         result.retractions_filed = cascade.retractions_filed.length;
         return result;
       }
-      for (const proposal of proposalsForEvent(accepted.event, grants)) {
+      const produced = produceForEvent(accepted.event, grants);
+      if (produced.status !== "ok") return result;
+      for (const proposal of produced.proposals) {
         if (fileProposal(db, proposal).outcome === "stored") {
           result.proposals_created += 1;
         }

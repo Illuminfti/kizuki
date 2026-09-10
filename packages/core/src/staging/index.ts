@@ -24,9 +24,10 @@ export { pageCandidateProposal } from "./page-candidate";
 export {
   DETERMINISTIC_PRODUCER_BUDGET,
   cascadeTombstone,
+  produceForEvent,
   proposalsForEvent,
   withdrawForTombstone,
 } from "./producers";
-export type { ProducerGrants, TombstoneCascade } from "./producers";
+export type { DeterministicProduceResult, ProducerGrants, TombstoneCascade } from "./producers";
 export type { SourceTombstoneContext } from "../canon/source-tombstone";
 export { NAMESPACED_SUBJECT_MAX, encodeSubjectSegment, namespacedSubjectId } from "./subjects";
