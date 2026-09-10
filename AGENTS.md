@@ -355,6 +355,7 @@ Open the matching canonical playbook before performing the task:
 | Audit privacy and security boundaries | `.agents/skills/security-privacy-review/SKILL.md` |
 | Write or revise a design RFC | `.agents/skills/write-rfc/SKILL.md` |
 | Stop cleanly or transfer work | `.agents/skills/handoff-work/SKILL.md` |
+| Oracle GPT-6 Pro GitHub backlog cron | `.agents/skills/oracle-backlog/SKILL.md` (board: issue #597) |
 
 Use the smallest set that covers the task. `orient-repository` comes first for
 all non-trivial work; `handoff-work` comes last when work continues elsewhere.
