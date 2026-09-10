@@ -1,6 +1,5 @@
 import { afterEach, expect, setSystemTime, test } from "bun:test";
-import { timeline } from "@kizuki/core";
-import { openLedger } from "@kizuki/core/testing";
+import { openLedger, timeline } from "@kizuki/core/testing";
 import type { CaptureEventInput } from "../../src/contracts/event";
 import { accept, readSince, replayLive } from "../../src/ledger/ledger";
 import { timelineAuditCandidates } from "../../src/query/timeline";
