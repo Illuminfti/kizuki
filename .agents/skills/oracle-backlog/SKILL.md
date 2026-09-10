@@ -2,8 +2,9 @@
 name: oracle-backlog
 description: >-
   Use when the Hermes Oracle GPT-6 Pro cron (or an equivalent session) is
-  draining Illuminfti/kizuki GitHub issues: read the board, consult Oracle,
-  implement a bounded slice, test, merge this lane's PR, write the next pickup.
+  draining Illuminfti/kizuki GitHub work: merge PRs that can be merged, read
+  the board, consult Oracle, implement a bounded slice, test, merge, write
+  the next pickup.
 ---
 
 # Oracle backlog
@@ -30,6 +31,29 @@ gh issue view 597 --repo Illuminfti/kizuki
 
 Treat the issue **body** as current. Comments are history. If the body and
 an open PR disagree, the live `gh pr list` and `git fetch` win.
+
+## Merge drain
+
+Illumi authorized this lane to squash-merge open PRs into `main` when they
+can actually be merged, including other agents' PRs.
+
+Do this before picking new issues. Re-read live GitHub state. Merge only
+when all of these hold:
+
+- not a draft; title not WIP
+- base is `main`
+- `mergeable` is `MERGEABLE`
+- `mergeStateStatus` is not `BLOCKED`, `DIRTY`, `BEHIND`, `DRAFT`, or `UNKNOWN`
+- reviewDecision is not `CHANGES_REQUESTED`
+- every check completed; conclusions only `SUCCESS`, `NEUTRAL`, or `SKIPPED`
+- changed files do not include `.env`, cookies, keys, vaults, or chrome-profile paths
+
+Then `gh pr merge <n> --repo Illuminfti/kizuki --squash --match-head-commit <headRefOid>`.
+Never `--admin`. Verify `mergedAt` before claiming. Cap 10 merges per tick.
+Skip and leave the PR if GitHub refuses.
+
+Merging a green PR is not editing someone else's branch. Do not force-push
+or rewrite their commits.
 
 ## Loop
 
@@ -65,7 +89,9 @@ continue with this session's model. Do not stop the tick.
 
 ## Stop
 
-Do not merge other agents' PRs. Do not force-push. Do not commit `.maestro/`.
+Do not use `--admin`. Do not merge drafts, blocked, conflicting, behind,
+failing, or pending-check PRs. Do not force-push or rewrite someone else's
+branch. Do not commit `.maestro/`.
 Do not close an issue as "already on main" unless the comment names the
 proving files and the exact main SHA. Do not restart Hermes gateways.
 Do not paste credentials or captured personal text onto the board.
