@@ -271,7 +271,6 @@ describe("public surface", () => {
       "evaluateQualification",
       "exportVault",
       "filterServable",
-      "findPageById",
       "freezeManifest",
       "gate",
       "getAgent",
