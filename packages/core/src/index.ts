@@ -742,7 +742,7 @@ export type {
   SearchResult,
 } from "./search";
 
-export { initGraph, rebuildGraph } from "./graph";
+export { initGraph } from "./graph";
 export type {
   GraphEdge,
   GraphEdgeKind,
