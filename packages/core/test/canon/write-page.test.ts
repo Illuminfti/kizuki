@@ -102,6 +102,25 @@ describe("writePage", () => {
     expect(existsSync(path)).toBe(false);
   });
 
+  test("refuses live pages without sources and allows empty sources only on archived pages", () => {
+    const root = vault();
+    const path = join(root, "facts", "note.md");
+    const missing = validData();
+    delete missing["sources"];
+    expect(() => writePage(cap(root), path, { data: missing, body: "Owner note.\n" }))
+      .toThrow(/sources: is required/);
+    expect(existsSync(path)).toBe(false);
+    expect(() => writePage(cap(root), path, { data: validData({ sources: [] }), body: "Owner note.\n" }))
+      .toThrow(/sources: must name at least one event unless archived/);
+    expect(existsSync(path)).toBe(false);
+    const archived = writePage(cap(root), path, {
+      data: validData({ status: "archived", sources: [] }),
+      body: "Historical empty sources.\n",
+    });
+    expect(archived.archive_path).toBeNull();
+    expect(existsSync(path)).toBe(true);
+  });
+
   test("archives a deleted page in place and preserves the prior revision", () => {
     const root = vault();
     const path = join(root, "entities", "ada.md");
