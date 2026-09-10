@@ -3,6 +3,7 @@ import * as core from "@kizuki/core";
 import * as testing from "@kizuki/core/testing";
 import { openLedger } from "@kizuki/core/testing";
 import { indexEvent } from "../../src/search/indexer";
+import { initSearch } from "../../src/search/schema";
 
 const methods = ["search", "searchResult", "timeline"] as const;
 type Method = (typeof methods)[number];
@@ -48,7 +49,7 @@ for (const method of methods) {
 test("every public query ceiling withholds null, unknown and unlabeled rows in the actual ledger/index", () => {
   const db = openLedger(":memory:");
   try {
-    core.initSearch(db);
+    initSearch(db);
     for (const label of ["public", "personal", "private", "unlabeled", "unknown", null]) {
       const result = core.accept(db, {
         schema: "kizuki.event/v1", connector_id: "synthetic", source_record_id: `ceilingprobe:${String(label)}`,

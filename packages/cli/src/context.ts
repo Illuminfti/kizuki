@@ -6,12 +6,11 @@ import {
   createConnectionStateReader,
   assertVaultControl,
   ensureVaultId,
-  initSearch,
   PortError,
   readVaultId,
 } from "@kizuki/core";
 import type { ConnectionStateReader, RetrievalPort } from "@kizuki/core";
-import { assertBoundVaultId, inspectLedgerIdentity, LedgerIdentityError, ledgerNotReadyError, openLedgerRead, openReadyLedgerRead, openLedger, ledgerAccepted, readLedgerMark, sealLedger } from "@kizuki/core/internal";
+import { assertBoundVaultId, inspectLedgerIdentity, LedgerIdentityError, ledgerNotReadyError, openLedgerRead, openReadyLedgerRead, openLedger, ledgerAccepted, readLedgerMark, sealLedger, initSearch } from "@kizuki/core/internal";
 import { inspectConfiguredRetrieval, openConfiguredRetrieval } from "./retrieval-runtime";
 import type { CliIo } from "./commands/index";
 import {

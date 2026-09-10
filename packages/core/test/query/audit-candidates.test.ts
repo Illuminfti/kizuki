@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import * as core from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { indexPage } from "../../src/search/indexer";
+import { initSearch } from "../../src/search/schema";
 import * as publicSearch from "../../src/search";
 import * as publicQuery from "../../src/query";
 import { searchAuditCandidates } from "../../src/search/query";
@@ -21,7 +22,7 @@ test("search audit candidates retain bounded rank/filter order without projectin
   const vault = tempVault("kizuki-search-audit-");
   const db = openLedger(":memory:");
   try {
-    core.initSearch(db);
+    initSearch(db);
     for (const [n, sensitivity] of [[1, "private"], [2, "public"], [3, undefined], [4, "personal"]] as const) {
       await recordedPage(db, vault.path, `facts/${n}.md`, {
         id: `fact:${n}`, type: "fact", title: "PRIVATE_AUDIT_TITLE_CANARY",

@@ -5,7 +5,6 @@ import type { LedgerCursor } from "@kizuki/core";
 import type { CanonReceipt } from "@kizuki/core";
 import {
   count,
-  initSearch,
   isLiveCanonPage,
   isPlainObject,
   listCanonPages,
@@ -13,7 +12,7 @@ import {
   pendingRetrievalOps,
   readSince,
 } from "@kizuki/core";
-import { indexEvent, indexPage, removeDoc } from "@kizuki/core/internal";
+import { indexEvent, indexPage, initSearch, removeDoc } from "@kizuki/core/internal";
 import { writeAtomicFile } from "./atomic-file";
 
 export const INDEX_CURSOR_SCHEMA = "kizuki.cli.index-cursor/v1" as const;
