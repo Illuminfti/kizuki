@@ -128,6 +128,92 @@ function enclosingSymbol(node: ts.Node): string {
   return "(toplevel)";
 }
 
+class BindingScope {
+  private readonly names = new Map<string, string | null>();
+  constructor(private readonly parent: BindingScope | null = null) {}
+  child(): BindingScope {
+    return new BindingScope(this);
+  }
+  set(name: string, value: string | null): void {
+    this.names.set(name, value);
+  }
+  lookup(name: string): string | null | undefined {
+    if (this.names.has(name)) return this.names.get(name);
+    return this.parent?.lookup(name);
+  }
+}
+
+function resolvedNetworkApi(expr: ts.Expression, scope: BindingScope): string | null {
+  const named = expressionName(expr);
+  if (named !== null && networkCalls.has(named)) return named;
+  if (ts.isIdentifier(expr)) {
+    const bound = scope.lookup(expr.text);
+    if (typeof bound === "string") return bound;
+  }
+  return null;
+}
+
+function bindFunctionName(node: ts.Node, scope: BindingScope): void {
+  if (
+    (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) &&
+    node.name !== undefined
+  ) {
+    scope.set(node.name.text, null);
+  }
+}
+
+function bindParameters(node: ts.Node, scope: BindingScope): void {
+  if (
+    !ts.isFunctionDeclaration(node) &&
+    !ts.isFunctionExpression(node) &&
+    !ts.isArrowFunction(node) &&
+    !ts.isMethodDeclaration(node) &&
+    !ts.isConstructorDeclaration(node) &&
+    !ts.isGetAccessorDeclaration(node) &&
+    !ts.isSetAccessorDeclaration(node)
+  ) {
+    return;
+  }
+  for (const parameter of node.parameters) {
+    if (ts.isIdentifier(parameter.name)) scope.set(parameter.name.text, null);
+  }
+}
+
+function bindVariable(decl: ts.VariableDeclaration, scope: BindingScope): void {
+  if (ts.isIdentifier(decl.name)) {
+    const api =
+      decl.initializer === undefined ? null : resolvedNetworkApi(decl.initializer, scope);
+    scope.set(decl.name.text, api);
+    return;
+  }
+  if (
+    !ts.isObjectBindingPattern(decl.name) ||
+    decl.initializer === undefined
+  ) {
+    return;
+  }
+  const owner = expressionName(decl.initializer);
+  if (owner !== "globalThis" && owner !== "window" && owner !== "self") return;
+  for (const element of decl.name.elements) {
+    if (element.dotDotDotToken !== undefined || !ts.isIdentifier(element.name)) continue;
+    const prop = (() => {
+      if (element.propertyName === undefined) return element.name.text;
+      if (ts.isIdentifier(element.propertyName)) return element.propertyName.text;
+      if (ts.isStringLiteral(element.propertyName) || ts.isNoSubstitutionTemplateLiteral(element.propertyName)) {
+        return element.propertyName.text;
+      }
+      return null;
+    })();
+    if (prop === null) continue;
+    const api = networkCalls.has(prop)
+      ? prop
+      : networkCalls.has(`${owner}.${prop}`)
+        ? `${owner}.${prop}`
+        : null;
+    if (api !== null) scope.set(element.name.text, api);
+  }
+}
+
 export function scanSourceText(file: string, source: string): NetworkFinding[] {
   const sourceFile = ts.createSourceFile(
     file,
@@ -149,7 +235,19 @@ export function scanSourceText(file: string, source: string): NetworkFinding[] {
     });
   };
 
-  const visit = (node: ts.Node): void => {
+  const isFunctionLike = (node: ts.Node): boolean =>
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node);
+
+  const visit = (node: ts.Node, scope: BindingScope): void => {
+    bindFunctionName(node, scope);
+    if (ts.isVariableDeclaration(node)) bindVariable(node, scope);
+
     const moduleName = importedModule(node);
     if (moduleName !== null && networkModules.has(moduleName)) {
       add(node, `network module import: ${moduleName}`, `${enclosingSymbol(node)}.import.${siteToken(moduleName)}`);
@@ -167,8 +265,18 @@ export function scanSourceText(file: string, source: string): NetworkFinding[] {
         }
       } else {
         const called = expressionName(node.expression);
-        if (called !== null && networkCalls.has(called)) {
+        const identifier = ts.isIdentifier(node.expression) ? node.expression : undefined;
+        const shadowed = identifier !== undefined && scope.lookup(identifier.text) === null;
+        if (!shadowed && called !== null && networkCalls.has(called)) {
           add(node, `network API call: ${called}`, `${enclosingSymbol(node)}.${siteToken(called)}`);
+        }
+        const aliased = identifier === undefined ? undefined : scope.lookup(identifier.text);
+        if (identifier !== undefined && typeof aliased === "string") {
+          add(
+            node,
+            `network API call: ${aliased}`,
+            `${enclosingSymbol(node)}.${siteToken(identifier.text)}`,
+          );
         }
         if (called === "require" || called === "process.getBuiltinModule") {
           const requiredModule = staticString(node.arguments[0]);
@@ -183,21 +291,33 @@ export function scanSourceText(file: string, source: string): NetworkFinding[] {
       }
     }
 
-    if (ts.isNewExpression(node)) {
+    if (ts.isNewExpression(node) && node.expression !== undefined) {
       const constructed = expressionName(node.expression);
-      if (constructed !== null && networkCalls.has(constructed)) {
+      const identifier = ts.isIdentifier(node.expression) ? node.expression : undefined;
+      const shadowed = identifier !== undefined && scope.lookup(identifier.text) === null;
+      if (!shadowed && constructed !== null && networkCalls.has(constructed)) {
         add(
           node,
           `network API construction: ${constructed}`,
           `${enclosingSymbol(node)}.new.${siteToken(constructed)}`,
         );
       }
+      const aliased = identifier === undefined ? undefined : scope.lookup(identifier.text);
+      if (identifier !== undefined && typeof aliased === "string") {
+        add(
+          node,
+          `network API construction: ${aliased}`,
+          `${enclosingSymbol(node)}.new.${siteToken(identifier.text)}`,
+        );
+      }
     }
 
-    ts.forEachChild(node, visit);
+    const inner = isFunctionLike(node) ? scope.child() : scope;
+    if (inner !== scope) bindParameters(node, inner);
+    ts.forEachChild(node, (child) => visit(child, inner));
   };
 
-  visit(sourceFile);
+  visit(sourceFile, new BindingScope());
   const counts = new Map<string, number>();
   return pending.map((item) => {
     const seen = (counts.get(item.base) ?? 0) + 1;
