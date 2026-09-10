@@ -7,7 +7,7 @@ import type { CliIo, Command } from "./index";
 
 export const modelsCommand: Command = {
   name: "models",
-  usage: "models pull --from PATH [--sha256 HEX]",
+  usage: "models pull --from PATH [--sha256 HEX] [--bytes N]",
   summary: "install a local GGUF into the vault models directory",
   async run(io: CliIo, args: string[]): Promise<number> {
     const verb = args[0];
@@ -17,7 +17,7 @@ export const modelsCommand: Command = {
     }
 
     const parsed = parseArguments(rest, {
-      options: ["--from", "--sha256"],
+      options: ["--from", "--sha256", "--bytes"],
     });
     const from = parsed.options.get("--from");
     if (from === undefined || from.length === 0) {
@@ -36,10 +36,19 @@ export const modelsCommand: Command = {
       resolveVault(io.env, config, io.vaultOverride),
     );
     const expected = parsed.options.get("--sha256");
+    const bytesOpt = parsed.options.get("--bytes");
+    let expectedBytes: number | undefined;
+    if (bytesOpt !== undefined) {
+      if (!/^[1-9][0-9]*$/.test(bytesOpt)) {
+        throw new UsageError(this.usage);
+      }
+      expectedBytes = Number(bytesOpt);
+    }
     const installed = installGgufModel({
       source_path: resolve(from),
       dest_dir: vaultModelsDir(vaultPath),
       ...(expected === undefined ? {} : { expected_sha256: expected }),
+      ...(expectedBytes === undefined ? {} : { expected_bytes: expectedBytes }),
     });
 
     io.out(`path=${installed.path}`);
