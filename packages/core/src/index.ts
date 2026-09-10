@@ -732,7 +732,6 @@ export {
   indexEvent,
   indexPage,
   initSearch,
-  rebuildSearch,
   removeDoc,
 } from "./search";
 export type {

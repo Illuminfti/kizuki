@@ -427,7 +427,6 @@ describe("public surface", () => {
       "rebuildGraph",
       "rebuildPageIndex",
       "rebuildRetrieval",
-      "rebuildSearch",
       "receiptsForClaim",
       "reclaimDeadLease",
       "recordAudit",
