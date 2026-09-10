@@ -18,4 +18,4 @@ export type { SqliteRuntime } from "./ledger/runtime";
 export { assertBoundVaultId } from "./serve/vault-id";
 export { startServiceCustody, runServiceCustodyBroker, validateServiceCustodyLaunch, ServiceCustodyError } from "./serve/custody";
 export type { ServiceCustodyHandle } from "./serve/custody";
-export { indexEvent, indexPage } from "./search";
+export { indexEvent, indexPage, removeDoc } from "./search";
