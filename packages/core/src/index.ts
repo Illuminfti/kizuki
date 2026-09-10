@@ -729,7 +729,6 @@ export type {
 } from "./export";
 
 export {
-  indexPage,
   initSearch,
   removeDoc,
 } from "./search";
