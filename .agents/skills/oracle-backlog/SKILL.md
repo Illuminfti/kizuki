@@ -1,8 +1,8 @@
 ---
 name: oracle-backlog
 description: >-
-  Use when the Hermes Oracle GPT-6 Pro cron (or an equivalent session) is
-  draining Illuminfti/kizuki GitHub issues: read the board, consult Oracle,
+  Use when the Oracle GPT-6 Pro cron (or an equivalent session) is
+  draining issues on https://github.com/Illuminfti/kizuki . Read the board, consult Oracle,
   implement a bounded slice, test, merge this lane's PR, write the next pickup.
 ---
 
@@ -25,7 +25,7 @@ ticket. Never implement it. Never close it.
 Every tick, before editing code:
 
 ```bash
-gh issue view 597 --repo Illuminfti/kizuki
+gh issue view https://github.com/Illuminfti/kizuki/issues/597
 ```
 
 Treat the issue **body** as current. Comments are history. If the body and
@@ -67,5 +67,5 @@ continue with this session's model. Do not stop the tick.
 
 Do not merge other agents' PRs. Do not force-push. Do not commit `.maestro/`.
 Do not close an issue as "already on main" unless the comment names the
-proving files and the exact main SHA. Do not restart Hermes gateways.
+proving files and the exact main SHA. Do not restart the local agent gateway.
 Do not paste credentials or captured personal text onto the board.
