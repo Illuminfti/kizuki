@@ -5,6 +5,7 @@ import { stampDerived } from "../derived-meta";
 import type { DerivedStamp } from "../derived-meta";
 import { assertDerivedDiscoveryReady, markDerivedHeld, readDerivedHolds } from "../derived-holds";
 import { latestLedgerCursor, replayLive } from "../ledger/ledger";
+import { tableExists } from "../ledger/schema";
 import { retrievalDocId } from "../retrieval/ids";
 import { ulid } from "../util/ulid";
 import {
@@ -261,6 +262,41 @@ export function indexEvent(db: Database, event: CaptureEvent): void {
 export function removeDoc(db: Database, scope: DocScope, docId: string): void {
   initSearch(db);
   deleteDoc(db, scope, docId);
+}
+
+/** Withdraw every local search copy matching purged evidence. Caller owns the transaction. */
+export function removeSearchForPurge(
+  db: Database,
+  eventIds: readonly string[],
+  pageIds: readonly string[],
+): string[] {
+  const events = JSON.stringify(eventIds);
+  const documents = JSON.stringify([
+    ...eventIds.map((id) => retrievalDocId("event", id)),
+    ...pageIds.map((id) => retrievalDocId("page", id)),
+  ]);
+  const removed = new Set<string>();
+  // Inspect both copies so an interrupted prior projection cannot hide a row.
+  for (const table of ["search_documents", "search_docs"] as const) {
+    if (!tableExists(db, table)) continue;
+    const rows = db.query<{ doc_id: string }, [string, string]>(
+      `SELECT doc_id FROM ${table}
+        WHERE doc_id IN (SELECT value FROM json_each(?))
+           OR (scope='canon' AND path IN (SELECT page_path FROM canon_holds))
+           OR EXISTS (
+             SELECT 1 FROM json_each(${table}.provenance) AS p
+             JOIN json_each(?) AS e
+               ON p.value = e.value OR p.value = 'event:' || e.value
+           )`,
+    ).all(documents, events);
+    for (const row of rows) removed.add(row.doc_id);
+  }
+  for (const table of ["search_documents", "search_docs"] as const) {
+    if (!tableExists(db, table)) continue;
+    const remove = db.query<never, [string]>(`DELETE FROM ${table} WHERE doc_id = ?`);
+    for (const id of removed) remove.run(id);
+  }
+  return [...removed];
 }
 
 function stampSearch(

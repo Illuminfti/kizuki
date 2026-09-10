@@ -18,6 +18,8 @@ import {
   verifyPurge,
 } from "../../src/ledger/purge";
 import { tableExists } from "../../src/ledger/schema";
+import { initSearch } from "../../src/search/schema";
+import { removeSearchForPurge } from "../../src/search/indexer";
 import { serializePage } from "../../src/vault/frontmatter";
 import { validEvent } from "../fixtures";
 import { tempVault } from "../helpers/vault";
@@ -581,5 +583,110 @@ describe("RFC 0002 purge totality", () => {
       expect(db.query("SELECT 1 FROM events WHERE event_id=?").get(erased.event_id)).not.toBeNull();
       expect(db.query("SELECT 1 FROM identity_links WHERE subject_a='person:erased'").get()).not.toBeNull();
     }
+  });
+
+  test("legacy search purge unions both copies, held paths, and provenance, then rolls back", () => {
+    const { db, vaultPath } = vault();
+    const matched = storeEvent(db, { source_record_id: "search-union.md" });
+    const surviving = storeEvent(db, { source_record_id: "search-keep.md" });
+    initSearch(db);
+    const columns = `doc_id, scope, title, body, path, page_type, sensitivity,
+      taint, authority, occurred_at, connector_id, subjects, provenance`;
+    const insert = (
+      table: "search_documents" | "search_docs",
+      row: { doc_id: string; scope: "canon" | "ledger"; path: string; provenance: string[] },
+    ) => {
+      db.query(
+        `INSERT INTO ${table} (${columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        row.doc_id,
+        row.scope,
+        "title",
+        "body",
+        row.path,
+        "note",
+        "public",
+        "quoted",
+        "connector_evidence",
+        "",
+        "",
+        "[]",
+        JSON.stringify(row.provenance),
+      );
+    };
+    insert("search_documents", {
+      doc_id: `event:${matched.event_id}`,
+      scope: "ledger",
+      path: "",
+      provenance: [matched.event_id],
+    });
+    insert("search_docs", {
+      doc_id: "event:stale-fts-only",
+      scope: "ledger",
+      path: "",
+      provenance: [`event:${matched.event_id}`],
+    });
+    insert("search_documents", {
+      doc_id: "page:held-stale",
+      scope: "canon",
+      path: "people/held.md",
+      provenance: [],
+    });
+    insert("search_docs", {
+      doc_id: "page:held-stale",
+      scope: "canon",
+      path: "people/held.md",
+      provenance: [],
+    });
+    insert("search_documents", {
+      doc_id: `event:${surviving.event_id}`,
+      scope: "ledger",
+      path: "",
+      provenance: [surviving.event_id],
+    });
+    insert("search_docs", {
+      doc_id: `event:${surviving.event_id}`,
+      scope: "ledger",
+      path: "",
+      provenance: [surviving.event_id],
+    });
+    db.query("INSERT INTO canon_holds VALUES (?, ?, ?, ?)").run(
+      "people/held.md",
+      "synthetic-hold",
+      "fixture",
+      AT,
+    );
+
+    const ids = (table: string) =>
+      db.query<{ doc_id: string }, []>(`SELECT doc_id FROM ${table} ORDER BY doc_id`).all().map((row) => row.doc_id);
+
+    expect(() =>
+      db.transaction(() => {
+        removeSearchForPurge(db, [matched.event_id], []);
+        throw new Error("synthetic later failure");
+      })(),
+    ).toThrow("synthetic later failure");
+    expect(ids("search_documents")).toEqual([
+      `event:${matched.event_id}`,
+      `event:${surviving.event_id}`,
+      "page:held-stale",
+    ]);
+    expect(ids("search_docs")).toEqual([
+      `event:${surviving.event_id}`,
+      "event:stale-fts-only",
+      "page:held-stale",
+    ]);
+
+    const outcome = purgeEvents(
+      db,
+      vaultPath,
+      { source_record_id: "search-union.md" },
+      "source deleted",
+      { now: () => AT },
+    );
+    expect(ids("search_documents")).toEqual([`event:${surviving.event_id}`]);
+    expect(ids("search_docs")).toEqual([`event:${surviving.event_id}`]);
+    expect(outcome.purge_ops).toEqual([]);
+    expect(tableExists(db, "search_documents")).toBe(true);
   });
 });
