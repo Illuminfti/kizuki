@@ -41,6 +41,7 @@ index.
 | --- | --- | --- |
 | `epistemic-integrity` | Turning evidence into claims, inferences, perspectives, hypotheses, forecasts, summaries, or context | `architecture-design` or `api-contract-design`; use `test-strategy` for proof |
 | `issue-pickup-execution` | An assigned GitHub issue or work packet needs a bounded lane | `orient-repository` then `implement-change`; use `review-change` and `handoff-work` as applicable |
+| `oracle-backlog` | Hermes Oracle GPT-6 Pro cron draining GitHub issues | Read issue #597 first; compose `issue-pickup-execution` and `handoff-work` |
 | `longitudinal-evaluation` | Designing replay fixtures, memory-quality checks, stale-state tests, outcome learning, or a release gauntlet | `test-strategy`; add `performance-engineering` or `release-readiness` when applicable |
 | `provenance-invalidation` | Changing correction, supersession, purge, source deletion, revisions, dependency graphs, caches, or rebuildability | `architecture-design`, `reliability-engineering`, and `test-strategy` |
 | `ux-dx-ax-parity` | Changing a public capability, CLI/MCP/API contract, error model, or product surface | `api-contract-design`; add `mcp-tool-design` or `cli-terminal-ux` for that surface |
