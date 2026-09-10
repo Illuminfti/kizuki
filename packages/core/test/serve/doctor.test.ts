@@ -7,7 +7,7 @@ import { initVault } from "../../src/vault/init";
 import { inspectServeDoctor } from "../../src/serve/doctor";
 import { persistRunReceipt } from "../../src/serve/receipts";
 import { writeServeIntent } from "../../src/serve/intent";
-import { emptyRunTotals, type SupervisorStatus } from "../../src/serve/types";
+import { emptyRunTotals, RETRIEVAL_SLA_SECONDS, type SupervisorStatus } from "../../src/serve/types";
 import type { SupervisorHost } from "../../src/serve/supervisor";
 
 const dirs: string[] = [];
@@ -195,6 +195,30 @@ describe("serve doctor", () => {
     expect(report.calibration.write_rate).toBeCloseTo(0.4);
     expect(report.calibration.dedup_rate).toBeCloseTo(0.3);
     expect(report.calibration.failures).toEqual([]);
+    db.close();
+  });
+
+  test("a pending retrieval op older than the SLA is a doctor failure", () => {
+    const { path, db } = vault();
+    writeServeIntent(path, "opted-out");
+    db.query(
+      `INSERT INTO retrieval_ops (op_id, store, op, doc_id, state, created_at, done_at)
+       VALUES (?, ?, 'upsert', ?, 'pending', ?, NULL)`,
+    ).run(
+      "op-stale",
+      "kizuki.retrieval.fts5",
+      "page:facts/stale",
+      "2026-09-02T12:00:00.000Z",
+    );
+    const fresh = inspectServeDoctor(db, path, { now: "2026-09-02T12:00:00.000Z" });
+    expect(fresh.failures).not.toContain("retrieval_ops older than SLA");
+    expect(fresh.stores.degraded).not.toContain("retrieval-ops-stale");
+
+    const stale = inspectServeDoctor(db, path, { now: "2026-09-02T12:16:00.000Z" });
+    expect(stale.ok).toBe(false);
+    expect(stale.failures).toContain("retrieval_ops older than SLA");
+    expect(stale.stores.degraded).toContain("retrieval-ops-stale");
+    expect(stale.stores.oldest_retrieval_op_age_s).toBeGreaterThan(RETRIEVAL_SLA_SECONDS);
     db.close();
   });
 });
