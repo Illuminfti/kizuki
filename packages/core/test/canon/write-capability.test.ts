@@ -204,6 +204,7 @@ describe("canon write capability", () => {
     expect(Object.keys(core)).not.toContain("findPageById");
     expect(Object.keys(core)).not.toContain("rebuildSearch");
     expect(Object.keys(core)).not.toContain("rebuildGraph");
+    expect(Object.keys(core)).not.toContain("refreshDerivedPage");
     expect(Object.keys(core)).not.toContain("grantCanonWrite");
     expect(Object.keys(core)).not.toContain("openCanonFiles");
     expect(Object.keys(core)).not.toContain("assertCanonFiles");
