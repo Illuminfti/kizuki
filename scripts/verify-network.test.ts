@@ -138,6 +138,36 @@ describe("network source verification", () => {
     ]);
   });
 
+  test("scanSourceText rejects aliases and destructuring of network APIs", () => {
+    expect(
+      scanSourceText(
+        "packages/example.ts",
+        'const f = fetch; f("https://example.invalid")',
+      ).map((item) => item.reason),
+    ).toEqual(["network API call: fetch"]);
+    expect(
+      scanSourceText(
+        "packages/example.ts",
+        'const {fetch: g} = globalThis; g("https://example.invalid")',
+      ).map((item) => item.reason),
+    ).toEqual(["network API call: fetch"]);
+    expect(
+      scanSourceText(
+        "packages/example.ts",
+        'const f = fetch; const h = f; h("https://example.invalid")',
+      ).map((item) => item.reason),
+    ).toEqual(["network API call: fetch"]);
+  });
+
+  test("scanSourceText does not confuse a shadowed local function with fetch", () => {
+    expect(
+      scanSourceText(
+        "packages/example.ts",
+        'function fetch(url) { return url; } fetch("https://example.invalid")',
+      ),
+    ).toEqual([]);
+  });
+
   test("applyAllowlist accepts reviewed scripts outside packages/", () => {
     const finding = {
       file: "scripts/tool.mjs",
