@@ -209,6 +209,7 @@ describe("canon write capability", () => {
     expect(Object.keys(core)).not.toContain("indexEvent");
     expect(Object.keys(core)).not.toContain("indexPage");
     expect(Object.keys(core)).not.toContain("removeDoc");
+    expect(Object.keys(core)).not.toContain("initGraph");
     expect(Object.keys(core)).not.toContain("grantCanonWrite");
     expect(Object.keys(core)).not.toContain("openCanonFiles");
     expect(Object.keys(core)).not.toContain("assertCanonFiles");
