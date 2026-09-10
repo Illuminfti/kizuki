@@ -9,7 +9,7 @@ import { tempVault } from "../helpers/vault";
 
 const cleanup: (() => void)[] = [];
 afterEach(() => { for (const dispose of cleanup.splice(0)) dispose(); });
-const page = { data: { id: "person:item", title: "Synthetic page", type: "person", status: "active", sensitivity: "private", taint: "quoted" }, body: "Synthetic postimage.\n" };
+const page = { data: { id: "person:item", title: "Synthetic page", type: "person", status: "active", sensitivity: "private", taint: "quoted", sources: ["event:01"] }, body: "Synthetic postimage.\n" };
 const priorPage = { ...page, body: "Synthetic preimage.\n" };
 const post = Buffer.from(serializePage(page)), prior = Buffer.from(serializePage(priorPage));
 const rel = "people/item.md", id = "staged-receipt";

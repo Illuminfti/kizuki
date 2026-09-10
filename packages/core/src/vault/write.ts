@@ -2,7 +2,7 @@ import { lstatSync, readFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { serializePage } from "./frontmatter";
 import type { VaultPage } from "./frontmatter";
-import { validatePage } from "./schema";
+import { parsePageSources, validatePage } from "./schema";
 import { assertPageRelPath, assertStoredPageRelPath } from "../canon/paths";
 import { assertCanonFiles, CanonFilesError, MAX_CANON_FILE_BYTES, openCanonFiles, type CanonFiles, type CanonFileSnapshot } from "./canon-files";
 
@@ -349,6 +349,12 @@ function writeWithFiles(
     }
 
     const errors = validatePage(page.data);
+    // Recovery replays an already-admitted postimage, including purge
+    // rewrites that temporarily empty sources while the page is held.
+    if (opts.recovery !== true) {
+      const sources = parsePageSources(page.data);
+      if (!sources.ok) errors.push(...sources.errors);
+    }
     if (errors.length > 0) {
       throw new CanonWriteRefused("invalid_page", `Invalid page:\n${errors.map(error => `- ${error}`).join("\n")}`);
     }
