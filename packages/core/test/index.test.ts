@@ -287,7 +287,6 @@ describe("public surface", () => {
       "hasFenceLeak",
       "hashClaimBody",
       "heartbeatLease",
-      "indexPage",
       "initAgents",
       "initCanon",
       "initClaims",
