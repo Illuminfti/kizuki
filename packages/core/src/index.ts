@@ -730,7 +730,6 @@ export type {
 
 export {
   initSearch,
-  removeDoc,
 } from "./search";
 export type {
   DocScope,

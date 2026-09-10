@@ -12,9 +12,8 @@ import {
   listCanonReceipts,
   pendingRetrievalOps,
   readSince,
-  removeDoc,
 } from "@kizuki/core";
-import { indexEvent, indexPage } from "@kizuki/core/internal";
+import { indexEvent, indexPage, removeDoc } from "@kizuki/core/internal";
 import { writeAtomicFile } from "./atomic-file";
 
 export const INDEX_CURSOR_SCHEMA = "kizuki.cli.index-cursor/v1" as const;

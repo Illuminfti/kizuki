@@ -440,7 +440,6 @@ describe("public surface", () => {
       "remoteDescribePath",
       "remoteMethodPath",
       "remoteMethodPrefix",
-      "removeDoc",
       "renderLaunchdPlist",
       "renderSystemdUnit",
       "replay",
