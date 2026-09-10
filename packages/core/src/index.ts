@@ -755,7 +755,6 @@ export type { TimelineEntry, TimelineOptions } from "./query";
 
 export {
   rebuildDerived,
-  refreshDerivedPage,
   removeDerivedPage,
 } from "./derived";
 export type { DerivedRebuildResult } from "./derived";

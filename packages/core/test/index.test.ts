@@ -432,7 +432,6 @@ describe("public surface", () => {
       "recoverCanonWrites",
       "recoverRunJournal",
       "redactReceiptError",
-      "refreshDerivedPage",
       "refreshTokens",
       "registerConnection",
       "registerFts5RetrievalPort",
