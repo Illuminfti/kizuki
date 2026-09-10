@@ -20,3 +20,4 @@ export { startServiceCustody, runServiceCustodyBroker, validateServiceCustodyLau
 export type { ServiceCustodyHandle } from "./serve/custody";
 export { indexEvent, indexPage, initSearch, removeDoc } from "./search";
 export { initGraph } from "./graph";
+export { rebuildDerived } from "./derived";
