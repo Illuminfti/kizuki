@@ -43,3 +43,5 @@ For narrowly scoped guidance, use `epistemic-integrity`,
 `provenance-invalidation`, `ux-dx-ax-parity`, `world-model-architecture`, or
 `world-slice-design`. For a GitHub work packet, use
 `issue-pickup-execution` in addition to the canonical workflow it composes.
+The Hermes Oracle GPT-6 Pro backlog cron uses `oracle-backlog` and GitHub
+issue #597 as the message board.
