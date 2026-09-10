@@ -5,6 +5,7 @@ export interface NetworkFinding {
   line: number;
   column: number;
   reason: string;
+  site: string;
 }
 
 const networkModules = new Set([
@@ -93,6 +94,40 @@ function importedModule(node: ts.Node): string | null {
   return null;
 }
 
+function siteToken(value: string): string {
+  return value.replaceAll(":", ".");
+}
+
+function enclosingSymbol(node: ts.Node): string {
+  let current: ts.Node | undefined = node.parent;
+  while (current !== undefined) {
+    if (
+      (ts.isFunctionDeclaration(current) ||
+        ts.isMethodDeclaration(current) ||
+        ts.isGetAccessorDeclaration(current) ||
+        ts.isSetAccessorDeclaration(current)) &&
+      current.name !== undefined &&
+      ts.isIdentifier(current.name)
+    ) {
+      return current.name.text;
+    }
+    if (ts.isConstructorDeclaration(current)) return "constructor";
+    if (ts.isFunctionExpression(current) && current.name !== undefined) {
+      return current.name.text;
+    }
+    if (
+      ts.isVariableDeclaration(current) &&
+      ts.isIdentifier(current.name) &&
+      current.initializer !== undefined &&
+      (ts.isArrowFunction(current.initializer) || ts.isFunctionExpression(current.initializer))
+    ) {
+      return current.name.text;
+    }
+    current = current.parent;
+  }
+  return "(toplevel)";
+}
+
 export function scanSourceText(file: string, source: string): NetworkFinding[] {
   const sourceFile = ts.createSourceFile(
     file,
@@ -101,39 +136,48 @@ export function scanSourceText(file: string, source: string): NetworkFinding[] {
     true,
     scriptKind(file),
   );
-  const findings: NetworkFinding[] = [];
+  const pending: Array<Omit<NetworkFinding, "site"> & { base: string }> = [];
 
-  const add = (node: ts.Node, reason: string): void => {
+  const add = (node: ts.Node, reason: string, base: string): void => {
     const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
-    findings.push({
+    pending.push({
       file,
       line: position.line + 1,
       column: position.character + 1,
       reason,
+      base,
     });
   };
 
   const visit = (node: ts.Node): void => {
     const moduleName = importedModule(node);
     if (moduleName !== null && networkModules.has(moduleName)) {
-      add(node, `network module import: ${moduleName}`);
+      add(node, `network module import: ${moduleName}`, `${enclosingSymbol(node)}.import.${siteToken(moduleName)}`);
     }
 
     if (ts.isCallExpression(node)) {
       if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
         const dynamicModule = staticString(node.arguments[0]);
         if (dynamicModule !== null && networkModules.has(dynamicModule)) {
-          add(node, `dynamic network module import: ${dynamicModule}`);
+          add(
+            node,
+            `dynamic network module import: ${dynamicModule}`,
+            `${enclosingSymbol(node)}.import().${siteToken(dynamicModule)}`,
+          );
         }
       } else {
         const called = expressionName(node.expression);
         if (called !== null && networkCalls.has(called)) {
-          add(node, `network API call: ${called}`);
+          add(node, `network API call: ${called}`, `${enclosingSymbol(node)}.${siteToken(called)}`);
         }
         if (called === "require" || called === "process.getBuiltinModule") {
           const requiredModule = staticString(node.arguments[0]);
           if (requiredModule !== null && networkModules.has(requiredModule)) {
-            add(node, `network module load: ${requiredModule}`);
+            add(
+              node,
+              `network module load: ${requiredModule}`,
+              `${enclosingSymbol(node)}.${siteToken(called)}.${siteToken(requiredModule)}`,
+            );
           }
         }
       }
@@ -142,7 +186,11 @@ export function scanSourceText(file: string, source: string): NetworkFinding[] {
     if (ts.isNewExpression(node)) {
       const constructed = expressionName(node.expression);
       if (constructed !== null && networkCalls.has(constructed)) {
-        add(node, `network API construction: ${constructed}`);
+        add(
+          node,
+          `network API construction: ${constructed}`,
+          `${enclosingSymbol(node)}.new.${siteToken(constructed)}`,
+        );
       }
     }
 
@@ -150,11 +198,23 @@ export function scanSourceText(file: string, source: string): NetworkFinding[] {
   };
 
   visit(sourceFile);
-  return findings;
+  const counts = new Map<string, number>();
+  return pending.map((item) => {
+    const seen = (counts.get(item.base) ?? 0) + 1;
+    counts.set(item.base, seen);
+    return {
+      file: item.file,
+      line: item.line,
+      column: item.column,
+      reason: item.reason,
+      site: `${item.base}#${seen}`,
+    };
+  });
 }
 
 export interface AllowlistEntry {
   path: string;
+  site: string;
   reason: string;
   line: number;
 }
@@ -174,20 +234,27 @@ export function parseAllowlist(text: string): AllowlistEntry[] {
   for (const [index, raw] of lines.entries()) {
     const line = raw.trim();
     if (line.length === 0 || line.startsWith("#")) continue;
-    const colon = line.indexOf(":");
-    if (colon < 0) {
+    const first = line.indexOf(":");
+    if (first < 0) {
       throw new Error(`allowlist line ${index + 1} is missing ':'`);
     }
-    const path = line.slice(0, colon).trim();
-    const reason = line.slice(colon + 1).trim();
-    if (path.length === 0 || reason.length === 0) {
-      throw new Error(`allowlist line ${index + 1} has an empty path or reason`);
+    const path = line.slice(0, first).trim();
+    const rest = line.slice(first + 1);
+    const second = rest.indexOf(":");
+    if (second < 0) {
+      throw new Error(`allowlist line ${index + 1} is missing a call-site fingerprint`);
     }
-    if (seen.has(path)) {
-      throw new Error(`allowlist line ${index + 1} duplicates path ${path}`);
+    const site = rest.slice(0, second).trim();
+    const reason = rest.slice(second + 1).trim();
+    if (path.length === 0 || site.length === 0 || reason.length === 0) {
+      throw new Error(`allowlist line ${index + 1} has an empty path, site, or reason`);
     }
-    seen.add(path);
-    entries.push({ path, reason, line: index + 1 });
+    const key = `${path}\0${site}`;
+    if (seen.has(key)) {
+      throw new Error(`allowlist line ${index + 1} duplicates ${path}:${site}`);
+    }
+    seen.add(key);
+    entries.push({ path, site, reason, line: index + 1 });
   }
   return entries;
 }
@@ -198,31 +265,31 @@ export function applyAllowlist(
   trackedFiles: string[],
 ): TreeScan {
   const tracked = new Set(trackedFiles);
-  const byPath = new Map<string, NetworkFinding[]>();
+  const unused = new Map<string, NetworkFinding[]>();
   for (const finding of findings) {
-    const current = byPath.get(finding.file) ?? [];
+    const current = unused.get(finding.file) ?? [];
     current.push(finding);
-    byPath.set(finding.file, current);
+    unused.set(finding.file, current);
   }
 
   const allowlisted: TreeScan["allowlisted"] = [];
   const stale: AllowlistEntry[] = [];
-  const allowed = new Set<string>();
   for (const entry of entries) {
-    const entryFindings = byPath.get(entry.path) ?? [];
-    if (!tracked.has(entry.path) || entryFindings.length === 0) {
+    const remaining = unused.get(entry.path) ?? [];
+    const matchIndex = remaining.findIndex((finding) => finding.site === entry.site);
+    if (!tracked.has(entry.path) || matchIndex < 0) {
       stale.push(entry);
       continue;
     }
-    allowed.add(entry.path);
-    allowlisted.push({ entry, findings: entryFindings });
+    const match = remaining[matchIndex]!;
+    remaining.splice(matchIndex, 1);
+    unused.set(entry.path, remaining);
+    allowlisted.push({ entry, findings: [match] });
   }
 
-  const remaining: NetworkFinding[] = [];
-  for (const finding of findings) {
-    if (!allowed.has(finding.file)) remaining.push(finding);
-  }
-  return { findings: remaining, allowlisted, stale };
+  const remainingFindings: NetworkFinding[] = [];
+  for (const leftover of unused.values()) remainingFindings.push(...leftover);
+  return { findings: remainingFindings, allowlisted, stale };
 }
 
 const SOURCE_FILE = /\.(?:[cm]?[jt]sx?)$/;
@@ -272,12 +339,12 @@ async function main(): Promise<void> {
   let failed = false;
   for (const finding of scan.findings) {
     console.error(
-      `${finding.file}:${finding.line}:${finding.column}: ${finding.reason}`,
+      `${finding.file}:${finding.line}:${finding.column}: ${finding.site}: ${finding.reason}`,
     );
     failed = true;
   }
   for (const entry of scan.stale) {
-    console.error(`stale allowlist entry: ${entry.path} (line ${entry.line})`);
+    console.error(`stale allowlist entry: ${entry.path}:${entry.site} (line ${entry.line})`);
     failed = true;
   }
   if (failed) {
@@ -286,11 +353,11 @@ async function main(): Promise<void> {
   }
   for (const item of scan.allowlisted) {
     console.log(
-      `allowlisted: ${item.entry.path} (${item.findings.length} findings): ${item.entry.reason}`,
+      `allowlisted: ${item.entry.path}:${item.entry.site}: ${item.entry.reason}`,
     );
   }
   console.log(
-    `network source verification passed (${scan.allowlisted.length} allowlisted files)`,
+    `network source verification passed (${scan.allowlisted.length} allowlisted call sites)`,
   );
 }
 

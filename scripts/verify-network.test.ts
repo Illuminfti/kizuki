@@ -38,42 +38,50 @@ describe("network source verification", () => {
   test("parseAllowlist accepts comments and rejects broken lines", () => {
     expect(parseAllowlist("# none yet\n\n")).toEqual([]);
     expect(
-      parseAllowlist("packages/core/src/net.ts:user-configured model endpoint\n"),
+      parseAllowlist("packages/core/src/net.ts:(toplevel).fetch#1:user-configured model endpoint\n"),
     ).toEqual([
       {
         path: "packages/core/src/net.ts",
+        site: "(toplevel).fetch#1",
         reason: "user-configured model endpoint",
         line: 1,
       },
     ]);
     expect(() => parseAllowlist("no-colon\n")).toThrow("missing ':'");
-    expect(() => parseAllowlist("packages/core/src/net.ts:\n")).toThrow("empty");
+    expect(() => parseAllowlist("packages/core/src/net.ts:fetch#1:\n")).toThrow("empty");
+    expect(() => parseAllowlist("packages/core/src/net.ts:reason-only\n")).toThrow(
+      "call-site fingerprint",
+    );
     expect(() =>
       parseAllowlist(
-        "packages/core/src/net.ts:one\npackages/core/src/net.ts:two\n",
+        "packages/core/src/net.ts:(toplevel).fetch#1:one\npackages/core/src/net.ts:(toplevel).fetch#1:two\n",
       ),
     ).toThrow("duplicates");
   });
 
-  test("applyAllowlist separates findings and marks stale entries", () => {
+  test("applyAllowlist consumes one matching site and marks stale entries", () => {
     const finding = {
       file: "packages/core/src/net.ts",
       line: 1,
       column: 1,
       reason: "network API call: fetch",
+      site: "(toplevel).fetch#1",
     };
     const live = {
       path: "packages/core/src/net.ts",
+      site: "(toplevel).fetch#1",
       reason: "user-configured model endpoint",
       line: 1,
     };
     const staleUntracked = {
       path: "packages/missing/src/net.ts",
+      site: "(toplevel).fetch#1",
       reason: "gone",
       line: 2,
     };
     const staleEmpty = {
       path: "packages/core/src/clean.ts",
+      site: "(toplevel).fetch#1",
       reason: "unused",
       line: 3,
     };
@@ -87,15 +95,60 @@ describe("network source verification", () => {
     expect(scan.stale).toEqual([staleUntracked, staleEmpty]);
   });
 
+  test("applyAllowlist does not let one site cover a second call in the same file", () => {
+    const first = {
+      file: "packages/core/src/net.ts",
+      line: 1,
+      column: 1,
+      reason: "network API call: fetch",
+      site: "(toplevel).fetch#1",
+    };
+    const second = {
+      file: "packages/core/src/net.ts",
+      line: 2,
+      column: 1,
+      reason: "network API call: fetch",
+      site: "(toplevel).fetch#2",
+    };
+    const live = {
+      path: "packages/core/src/net.ts",
+      site: "(toplevel).fetch#1",
+      reason: "user-configured model endpoint",
+      line: 1,
+    };
+    const scan = applyAllowlist([first, second], [live], ["packages/core/src/net.ts"]);
+    expect(scan.findings).toEqual([second]);
+    expect(scan.allowlisted).toEqual([{ entry: live, findings: [first] }]);
+    expect(scan.stale).toEqual([]);
+  });
+
+  test("scanSourceText fingerprints enclosing symbols and duplicate calls", () => {
+    const findings = scanSourceText(
+      "packages/example.ts",
+      `
+        fetch("https://example.invalid/one");
+        fetch("https://example.invalid/two");
+        function send() { fetch("https://example.invalid/three"); }
+      `,
+    );
+    expect(findings.map((item) => item.site)).toEqual([
+      "(toplevel).fetch#1",
+      "(toplevel).fetch#2",
+      "send.fetch#1",
+    ]);
+  });
+
   test("applyAllowlist accepts reviewed scripts outside packages/", () => {
     const finding = {
       file: "scripts/tool.mjs",
       line: 1,
       column: 1,
       reason: "network API call: fetch",
+      site: "(toplevel).fetch#1",
     };
     const live = {
       path: "scripts/tool.mjs",
+      site: "(toplevel).fetch#1",
       reason: "loopback fixture",
       line: 1,
     };
