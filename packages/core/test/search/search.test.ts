@@ -4,7 +4,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MAX_RETRIEVAL_LIMIT } from "../../src/contracts/retrieval";
 import { stampDerived } from "../../src/derived-meta";
-import { indexEvent, indexPage, rebuildSearch, removeDoc } from "../../src/search/indexer";
+import { indexEvent, indexPage, rebuildSearch, removeCanonPath, removeDoc } from "../../src/search/indexer";
 import { search, searchResult, toFtsQuery } from "../../src/search/query";
 import { initSearch } from "../../src/search/schema";
 import { computeContentHash, sha256Hex } from "../../src/util/hash";
@@ -222,6 +222,38 @@ describe("search indexing", () => {
     expect(search(db, "ledger", { ceiling: "private" }).map(({ scope }) => scope)).toEqual(["ledger"]);
     removeDoc(db, "ledger", event.event_id);
     expect(search(db, "ledger", { ceiling: "private" })).toEqual([]);
+  });
+
+  test("removeCanonPath withdraws a stale id even when the path moved", () => {
+    const db = searchDb();
+    const columns = `doc_id, scope, title, body, path, page_type, sensitivity,
+       taint, authority, occurred_at, connector_id, subjects, provenance`;
+    const values = [
+      "page:fact:moved",
+      "canon",
+      "Moved",
+      "movedword leftover",
+      "facts/old.md",
+      "fact",
+      "personal",
+      "clean",
+      "connector_evidence",
+      "",
+      "",
+      "[]",
+      "[]",
+    ];
+    db.query(
+      `INSERT INTO search_documents (${columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(...values);
+    db.query(
+      `INSERT INTO search_docs (${columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(...values);
+    expect(search(db, "movedword", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([
+      "page:fact:moved",
+    ]);
+    removeCanonPath(db, "facts/new.md", "fact:moved");
+    expect(search(db, "movedword", { ceiling: "private" })).toEqual([]);
   });
 });
 

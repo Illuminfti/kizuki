@@ -84,6 +84,7 @@ describe("derived receipt walk", () => {
   test("CLI derived indexing does not name retrieval tables", () => {
     const source = readFileSync(join(import.meta.dir, "../src/derived.ts"), "utf8");
     expect(source).not.toMatch(/\bsearch_documents\b|\bsearch_docs\b/);
+    expect(source).not.toMatch(/\bremoveDoc\b|\binitSearch\b/);
   });
 
   test("archive receipts remove the stale search row", () => {

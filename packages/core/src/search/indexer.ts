@@ -205,7 +205,9 @@ export function deleteDoc(db: Database, scope: DocScope, docId: string): void {
 }
 
 /** Withdraw every canon search row for a vault-relative path, including stale ids. */
-export function removeCanonPath(db: Database, path: string): void {
+export function removeCanonPath(db: Database, path: string, pageId?: string): void {
+  initSearch(db);
+  if (pageId !== undefined && pageId.length > 0) deleteDoc(db, "canon", pageId);
   db.query("DELETE FROM search_documents WHERE scope='canon' AND path=?").run(path);
   db.query("DELETE FROM search_docs WHERE scope='canon' AND path=?").run(path);
 }
