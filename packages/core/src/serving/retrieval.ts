@@ -1,5 +1,5 @@
 import { sourcePolicyEpoch, isLocalSourcePort } from "../ledger/source-grants";
-import { validateRetrievalResult } from "../contracts/retrieval";
+import { validateGraphResult, validateRetrievalResult } from "../contracts/retrieval";
 import type { RetrievalDocKind, RetrievalQuery } from "../contracts/retrieval";
 import type { SearchOptions } from "../search/query";
 import type { ServeContext } from "./types";
@@ -7,6 +7,11 @@ import type { ServeContext } from "./types";
 export interface RetrievalCandidates {
   ids: string[];
   degraded: string[];
+}
+
+/** `ok` means a graph-capable engine answered; otherwise the caller keeps the local floor. */
+export interface RetrievalGraphCandidates extends RetrievalCandidates {
+  ok: boolean;
 }
 
 /** A derived engine nominates identities. Its cached text never becomes served evidence. */
@@ -49,6 +54,65 @@ export async function retrievalCandidates(
     };
   } catch {
     return { ids: [], degraded: ["retrieval-unavailable"] };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+function unavailableGraph(reason: string): RetrievalGraphCandidates {
+  return { ids: [], degraded: [reason], ok: false };
+}
+
+/** A derived engine nominates related identities. Edge text never becomes served evidence. */
+export async function retrievalGraphCandidates(
+  ctx: ServeContext,
+  entityId: string,
+  options: { ceiling: SearchOptions["ceiling"]; limit: number },
+): Promise<RetrievalGraphCandidates> {
+  if (ctx.retrieval === undefined) {
+    return {
+      ids: [],
+      degraded: ctx.retrievalUnavailable
+        ? ["retrieval-unavailable", ...(typeof ctx.retrievalUnavailable === "string" ? [ctx.retrievalUnavailable] : [])]
+        : [],
+      ok: false,
+    };
+  }
+  if (sourcePolicyEpoch(ctx.db) > 0 && !isLocalSourcePort(ctx.retrieval)) {
+    return unavailableGraph("retrieval-source-egress-denied");
+  }
+  if (!ctx.retrieval.descriptor.supports.includes("graph")) {
+    return unavailableGraph("retrieval-graph-unavailable");
+  }
+  const limit = Math.min(100, Math.max(0, options.limit));
+  if (limit === 0 || entityId.length === 0) return { ids: [], degraded: [], ok: true };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      ctx.retrieval.neighbors(
+        { entity_id: entityId },
+        { hops: 1, limit, ceiling: options.ceiling },
+      ),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("retrieval deadline")), 3_000);
+      }),
+    ]);
+    const validated = validateGraphResult(result);
+    if (validated.entity !== entityId) return unavailableGraph("retrieval-unavailable");
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    for (const edge of validated.edges) {
+      for (const end of [edge.from, edge.to]) {
+        if (end === entityId || seen.has(end)) continue;
+        seen.add(end);
+        ids.push(end);
+        if (ids.length === limit) break;
+      }
+      if (ids.length === limit) break;
+    }
+    return { ids, degraded: [], ok: true };
+  } catch {
+    return unavailableGraph("retrieval-unavailable");
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }

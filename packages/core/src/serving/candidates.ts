@@ -28,7 +28,7 @@ import {
   quotedChunk,
   timelineSource,
 } from "./ledger";
-import { retrievalCandidates } from "./retrieval";
+import { retrievalCandidates, retrievalGraphCandidates } from "./retrieval";
 import type { PacketSection } from "./sections";
 import type { CanonChunk, QuotedChunk, ServeContext } from "./types";
 
@@ -222,35 +222,54 @@ export async function collectPieces(
     const roots = pieces
       .filter((piece) => piece.section === "canon")
       .slice(0, GRAPH_ROOTS);
-    let added = 0;
+    const plans: { rootId: string; ids: string[]; fallback: boolean }[] = [];
     for (const root of roots) {
-      if (added === GRAPH_CHUNKS) break;
       const rootId = root.canon?.page_id;
       if (rootId === undefined) continue;
-      for (const edge of neighbors(ctx.db, rootId, {
-        depth: 1,
-        kinds: ["wikilink"],
+      const fromPort = await retrievalGraphCandidates(ctx, rootId, {
         ceiling: grant.ceiling,
-      }).edges) {
+        limit: GRAPH_CHUNKS,
+      });
+      for (const reason of fromPort.degraded) {
+        if (!nominated.degraded.includes(reason)) nominated.degraded.push(reason);
+      }
+      plans.push({ rootId, ids: fromPort.ok ? fromPort.ids : [], fallback: !fromPort.ok });
+    }
+    const liveIndex = loadCanon(ctx);
+    let added = 0;
+    const consider = (targetId: string): void => {
+      if (added === GRAPH_CHUNKS) return;
+      const target = liveIndex.byId.get(bareRetrievalId(targetId));
+      if (target === undefined || packed.has(target.id)) return;
+      if (!eligible(target)) return;
+      const decision = pageDecision(liveIndex, grant, target);
+      if (!decision.allow) return;
+      packed.add(target.id);
+      added += 1;
+      const { excerpt, truncated } = excerptOf(
+        collapseWhitespace(target.body),
+        RELATED_EXCERPT,
+      );
+      const chunk = canonChunk(liveIndex, target, decision, excerpt, truncated);
+      pieces.push({
+        section: "graph",
+        heading: "## related",
+        block: canonBlock(chunk),
+        canon: chunk,
+      });
+    };
+    for (const plan of plans) {
+      if (added === GRAPH_CHUNKS) break;
+      const ids = plan.fallback
+        ? neighbors(ctx.db, plan.rootId, {
+            depth: 1,
+            kinds: ["wikilink"],
+            ceiling: grant.ceiling,
+          }).edges.map((edge) => edge.dst)
+        : plan.ids;
+      for (const id of ids) {
         if (added === GRAPH_CHUNKS) break;
-        const target = index.byId.get(edge.dst);
-        if (target === undefined || packed.has(target.id)) continue;
-        if (!eligible(target)) continue;
-        const decision = pageDecision(index, grant, target);
-        if (!decision.allow) continue;
-        packed.add(target.id);
-        added += 1;
-        const { excerpt, truncated } = excerptOf(
-          collapseWhitespace(target.body),
-          RELATED_EXCERPT,
-        );
-        const chunk = canonChunk(index, target, decision, excerpt, truncated);
-        pieces.push({
-          section: "graph",
-          heading: "## related",
-          block: canonBlock(chunk),
-          canon: chunk,
-        });
+        consider(id);
       }
     }
   }
