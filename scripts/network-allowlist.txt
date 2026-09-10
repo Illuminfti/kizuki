@@ -1,37 +1,84 @@
-# Permitted network call sites. Format: <tracked path>:<reason>
-# An entry is stale (and fails the gate) when the path is untracked or
-# produces zero findings. Do not add a path until the call exists.
-packages/core/src/contracts/remote.ts:loopback port adapter; TCP is restricted to loopback and Unix sockets stay local
-packages/core/test/contracts/remote-child.ts:loopback child server for remote adapter parity tests
-packages/llm/src/transport.ts:user-configured model endpoint; the single fetch of @kizuki/llm
-packages/llm/test/fake-endpoint.ts:loopback fake model endpoint for tests
-packages/connector-ics/src/fetch.ts:owner-configured ICS calendar URL; the single fetch of the ICS connector
-packages/connector-beeper/src/connector.ts:owner-configured local Beeper Desktop API loopback; the single read-only fetch of the Beeper connector
-packages/cli/test/beeper-flow.test.ts:synthetic Beeper API bound to 127.0.0.1 for real CLI enrollment and recall checks
-packages/cli/test/serve/runtime.test.ts:synthetic loopback Beeper and model endpoint for end-to-end daemon composition
-packages/connector-imap/src/transport.ts:owner-configured IMAP server over TLS; the single socket of the IMAP connector
-packages/connector-imap/test/transport.test.ts:loopback TLS server bound by the IMAP transport tests
-packages/core/test/auth/loopback.test.ts:loopback fake authorization server and client for the OAuth sign-in tests
-packages/core/src/auth/loopback.ts:OAuth sign-in loopback listener on 127.0.0.1 and the single token-endpoint fetch of the owner-configured provider
-packages/core/src/serve/http.ts:standing loopback MCP endpoint and authenticated ephemeral local app session in the same HTTP implementation
-packages/core/test/serve/http.test.ts:loopback fetch against the standing serve endpoint
-packages/core/test/serve/http-retrieval.test.ts:synthetic loopback HTTP reads against the host-bound retrieval surface
-packages/connector-gmail/src/api.ts:explicitly enrolled Gmail read-only capture and OIDC identity; fixed Google HTTPS endpoints, no redirects, bounded GET requests
-packages/connector-google-calendar/src/api.ts:explicitly configured read-only Google Calendar fixed-host GET transport
-packages/connector-whoop/src/api.ts:explicitly configured WHOOP fixed-origin and exact-route transport; bounded read-only capture and separately invoked provider-access revocation, no redirects
-packages/cli/src/app/ui/client.js:bundled local browser client; same-origin fixed app API paths only, bearer authentication, no credentials or redirects, bounded request time
-
-packages/core/test/serve/app-http.test.ts:synthetic loopback app-session authentication and bounded-body tests
-packages/cli/test/app-host.test.ts:synthetic loopback asset and authenticated local app host tests
-packages/cli/test/app-client.test.ts:authenticated requests to the actual ephemeral loopback app for written identity labels and shipped client rendering
-packages/connector-x/src/api/client.ts:explicitly configured X own-post API fixed-origin GET transport; bounded requests and response body, no redirects or media downloads
-packages/cli/test/app-model-journey.test.ts:authenticated actual app requests restricted to its ephemeral loopback host with synthetic model evidence
-packages/cli/test/app-model-settings.test.ts:synthetic model endpoint bound to 127.0.0.1 for settings and fixed-prompt connection tests
-packages/core/test/serve/runtime.test.ts:ephemeral loopback listener and authenticated retrieval requests across real rail runtime lifetimes
-packages/cli/test/app-privacy-races.test.ts:authenticated actual app loopback requests proving correction-purpose withdrawal and revocation while a synthetic model response is held
-packages/cli/test/x-api-enrollment.test.ts:synthetic native OAuth callbacks restricted to 127.0.0.1; provider token and API transport use local fixtures
-packages/cli/test/x-api-recovery.test.ts:synthetic fixed loopback OAuth callbacks and process recovery checks; no real account or provider requests
-packages/cli/test/recovery-public.test.ts:authenticated ephemeral loopback app undo with synthetic canon and pending retrieval state
-scripts/extraction-quality-native.ts:loopback synthetic model endpoint for native extraction-quality replay
-scripts/native-model-endpoint.ts:loopback synthetic model endpoint for native service tests
-scripts/native-model-matrix.test.ts:fetch against the owned loopback native model endpoint
+# Permitted network call sites. Format: <tracked path>:<site>:<reason>
+# site is the scanner fingerprint (enclosing symbol, API, occurrence).
+# An entry is stale when the path is untracked or that exact site is absent.
+# Do not add a path or site until the call exists.
+packages/core/src/contracts/remote.ts:(toplevel).import.node.http#1:loopback port adapter; TCP is restricted to loopback and Unix sockets stay local
+packages/core/src/contracts/remote.ts:(toplevel).import.node.http#2:loopback port adapter; TCP is restricted to loopback and Unix sockets stay local
+packages/core/test/contracts/remote-child.ts:(toplevel).import.node.http#1:loopback child server for remote adapter parity tests
+packages/core/test/contracts/remote-child.ts:(toplevel).import.node.http#2:loopback child server for remote adapter parity tests
+packages/llm/src/transport.ts:fetchTransport.fetch#1:user-configured model endpoint; the single fetch of @kizuki/llm
+packages/llm/test/fake-endpoint.ts:startFakeEndpoint.Bun.serve#1:loopback fake model endpoint for tests
+packages/connector-ics/src/fetch.ts:globalFetch.fetch#1:owner-configured ICS calendar URL; the single fetch of the ICS connector
+packages/connector-beeper/src/connector.ts:constructor.fetch#1:owner-configured local Beeper Desktop API loopback; the single read-only fetch of the Beeper connector
+packages/cli/test/beeper-flow.test.ts:(toplevel).Bun.serve#1:synthetic Beeper API bound to 127.0.0.1 for real CLI enrollment and recall checks
+packages/cli/test/beeper-flow.test.ts:(toplevel).Bun.serve#2:synthetic Beeper API bound to 127.0.0.1 for real CLI enrollment and recall checks
+packages/cli/test/beeper-flow.test.ts:(toplevel).Bun.serve#3:synthetic Beeper API bound to 127.0.0.1 for real CLI enrollment and recall checks
+packages/cli/test/serve/runtime.test.ts:exerciseModelJourney.Bun.serve#1:synthetic loopback Beeper and model endpoint for end-to-end daemon composition
+packages/connector-imap/src/transport.ts:dialTls.Bun.connect#1:owner-configured IMAP server over TLS; the single socket of the IMAP connector
+packages/connector-imap/test/transport.test.ts:(toplevel).Bun.listen#1:loopback TLS server bound by the IMAP transport tests
+packages/connector-imap/test/transport.test.ts:(toplevel).Bun.listen#2:loopback TLS server bound by the IMAP transport tests
+packages/connector-imap/test/transport.test.ts:(toplevel).Bun.listen#3:loopback TLS server bound by the IMAP transport tests
+packages/connector-imap/test/transport.test.ts:(toplevel).Bun.listen#4:loopback TLS server bound by the IMAP transport tests
+packages/core/test/auth/loopback.test.ts:(toplevel).fetch#1:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/test/auth/loopback.test.ts:(toplevel).fetch#2:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/test/auth/loopback.test.ts:(toplevel).fetch#3:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/test/auth/loopback.test.ts:(toplevel).fetch#4:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/test/auth/loopback.test.ts:(toplevel).fetch#5:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/test/auth/loopback.test.ts:(toplevel).fetch#6:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/test/auth/loopback.test.ts:(toplevel).fetch#7:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/test/auth/loopback.test.ts:(toplevel).fetch#8:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/test/auth/loopback.test.ts:(toplevel).fetch#9:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/test/auth/loopback.test.ts:(toplevel).fetch#10:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/test/auth/loopback.test.ts:(toplevel).fetch#11:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/test/auth/loopback.test.ts:(toplevel).fetch#12:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/test/auth/loopback.test.ts:(toplevel).fetch#13:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/test/auth/loopback.test.ts:(toplevel).Bun.serve#1:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/test/auth/loopback.test.ts:(toplevel).Bun.serve#2:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/test/auth/loopback.test.ts:(toplevel).Bun.serve#3:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/src/auth/loopback.ts:listen.Bun.serve#1:OAuth sign-in loopback listener on 127.0.0.1 and the single token-endpoint fetch of the owner-configured provider
+packages/core/src/auth/loopback.ts:postForm.fetch#1:OAuth sign-in loopback listener on 127.0.0.1 and the single token-endpoint fetch of the owner-configured provider
+packages/core/src/serve/http.ts:startServeHttp.Bun.serve#1:standing loopback MCP endpoint and authenticated ephemeral local app session in the same HTTP implementation
+packages/core/test/serve/http.test.ts:(toplevel).fetch#1:loopback fetch against the standing serve endpoint
+packages/core/test/serve/http.test.ts:(toplevel).fetch#2:loopback fetch against the standing serve endpoint
+packages/core/test/serve/http.test.ts:(toplevel).fetch#3:loopback fetch against the standing serve endpoint
+packages/core/test/serve/http.test.ts:(toplevel).fetch#4:loopback fetch against the standing serve endpoint
+packages/core/test/serve/http-retrieval.test.ts:(toplevel).fetch#1:synthetic loopback HTTP reads against the host-bound retrieval surface
+packages/connector-gmail/src/api.ts:getJson.fetch#1:explicitly enrolled Gmail read-only capture and OIDC identity; fixed Google HTTPS endpoints, no redirects, bounded GET requests
+packages/connector-google-calendar/src/api.ts:getJson.fetch#1:explicitly configured read-only Google Calendar fixed-host GET transport
+packages/connector-whoop/src/api.ts:request.fetch#1:explicitly configured WHOOP fixed-origin and exact-route transport; bounded read-only capture and separately invoked provider-access revocation, no redirects
+packages/cli/src/app/ui/client.js:api.fetch#1:bundled local browser client; same-origin fixed app API paths only, bearer authentication, no credentials or redirects, bounded request time
+packages/core/test/serve/app-http.test.ts:request.fetch#1:synthetic loopback app-session authentication and bounded-body tests
+packages/core/test/serve/app-http.test.ts:(toplevel).fetch#1:synthetic loopback app-session authentication and bounded-body tests
+packages/core/test/serve/app-http.test.ts:(toplevel).fetch#2:synthetic loopback app-session authentication and bounded-body tests
+packages/core/test/serve/app-http.test.ts:(toplevel).fetch#3:synthetic loopback app-session authentication and bounded-body tests
+packages/core/test/serve/app-http.test.ts:(toplevel).fetch#4:synthetic loopback app-session authentication and bounded-body tests
+packages/core/test/serve/app-http.test.ts:(toplevel).fetch#5:synthetic loopback app-session authentication and bounded-body tests
+packages/cli/test/app-host.test.ts:(toplevel).fetch#1:synthetic loopback asset and authenticated local app host tests
+packages/cli/test/app-host.test.ts:(toplevel).fetch#2:synthetic loopback asset and authenticated local app host tests
+packages/cli/test/app-host.test.ts:(toplevel).fetch#3:synthetic loopback asset and authenticated local app host tests
+packages/cli/test/app-host.test.ts:(toplevel).fetch#4:synthetic loopback asset and authenticated local app host tests
+packages/cli/test/app-host.test.ts:(toplevel).fetch#5:synthetic loopback asset and authenticated local app host tests
+packages/cli/test/app-host.test.ts:(toplevel).fetch#6:synthetic loopback asset and authenticated local app host tests
+packages/cli/test/app-client.test.ts:(toplevel).fetch#1:authenticated requests to the actual ephemeral loopback app for written identity labels and shipped client rendering
+packages/connector-x/src/api/client.ts:request.fetch#1:explicitly configured X own-post API fixed-origin GET transport; bounded requests and response body, no redirects or media downloads
+packages/cli/test/app-model-journey.test.ts:call.fetch#1:authenticated actual app requests restricted to its ephemeral loopback host with synthetic model evidence
+packages/cli/test/app-model-settings.test.ts:endpoint.Bun.serve#1:synthetic model endpoint bound to 127.0.0.1 for settings and fixed-prompt connection tests
+packages/core/test/serve/runtime.test.ts:(toplevel).Bun.serve#1:ephemeral loopback listener and authenticated retrieval requests across real rail runtime lifetimes
+packages/core/test/serve/runtime.test.ts:(toplevel).fetch#1:ephemeral loopback listener and authenticated retrieval requests across real rail runtime lifetimes
+packages/cli/test/app-privacy-races.test.ts:call.fetch#1:authenticated actual app loopback requests proving correction-purpose withdrawal and revocation while a synthetic model response is held
+packages/cli/test/x-api-enrollment.test.ts:unusedCallback.Bun.serve#1:synthetic native OAuth callbacks restricted to 127.0.0.1; provider token and API transport use local fixtures
+packages/cli/test/x-api-enrollment.test.ts:open.fetch#1:synthetic native OAuth callbacks restricted to 127.0.0.1; provider token and API transport use local fixtures
+packages/cli/test/x-api-enrollment.test.ts:(toplevel).fetch#1:synthetic native OAuth callbacks restricted to 127.0.0.1; provider token and API transport use local fixtures
+packages/cli/test/x-api-enrollment.test.ts:(toplevel).Bun.serve#1:synthetic native OAuth callbacks restricted to 127.0.0.1; provider token and API transport use local fixtures
+packages/cli/test/x-api-enrollment.test.ts:(toplevel).fetch#2:synthetic native OAuth callbacks restricted to 127.0.0.1; provider token and API transport use local fixtures
+packages/cli/test/x-api-enrollment.test.ts:(toplevel).fetch#3:synthetic native OAuth callbacks restricted to 127.0.0.1; provider token and API transport use local fixtures
+packages/cli/test/x-api-enrollment.test.ts:(toplevel).fetch#4:synthetic native OAuth callbacks restricted to 127.0.0.1; provider token and API transport use local fixtures
+packages/cli/test/x-api-recovery.test.ts:enrolled.Bun.serve#1:synthetic fixed loopback OAuth callbacks and process recovery checks; no real account or provider requests
+packages/cli/test/x-api-recovery.test.ts:nativeBrowser.fetch#1:synthetic fixed loopback OAuth callbacks and process recovery checks; no real account or provider requests
+packages/cli/test/x-api-recovery.test.ts:(toplevel).fetch#1:synthetic fixed loopback OAuth callbacks and process recovery checks; no real account or provider requests
+packages/cli/test/recovery-public.test.ts:call.fetch#1:authenticated ephemeral loopback app undo with synthetic canon and pending retrieval state
+packages/cli/test/recovery-public.test.ts:call.fetch#2:authenticated ephemeral loopback app undo with synthetic canon and pending retrieval state
+scripts/extraction-quality-native.ts:runNativeQuality.Bun.serve#1:loopback synthetic model endpoint for native extraction-quality replay
+scripts/native-model-endpoint.ts:(toplevel).Bun.serve#1:loopback synthetic model endpoint for native service tests
+scripts/native-model-matrix.test.ts:(toplevel).fetch#1:fetch against the owned loopback native model endpoint
+scripts/native-model-matrix.test.ts:(toplevel).fetch#2:fetch against the owned loopback native model endpoint
