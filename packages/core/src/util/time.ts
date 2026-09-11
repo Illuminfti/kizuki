@@ -4,10 +4,16 @@
  * `Date.parse` is not usable here: it accepts a superset of RFC3339 (bare
  * dates, month 13 rolled into the next year, "2026-02-30", offsets like
  * "+99:00"), so every field is range-checked against a real calendar instead.
+ *
+ * Fractional seconds are capped at nine digits (nanoseconds). Extra digits are
+ * refused rather than rounded, so the accepted instant is unchanged.
  */
 
 const RFC3339 =
   /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(?:([Zz])|([+-])(\d{2}):(\d{2}))$/;
+
+/** Nanosecond precision. Hostile extra digits are not a different instant. */
+export const RFC3339_MAX_FRACTION_DIGITS = 9;
 
 function daysInMonth(year: number, month: number): number {
   if (month === 2) {
@@ -36,6 +42,7 @@ export function isRfc3339(s: unknown): s is string {
   if (minute > 59) return false;
   // 60 is the leap second, permitted by RFC3339 section 5.6.
   if (second > 60) return false;
+  if ((m[7] ?? "").length > RFC3339_MAX_FRACTION_DIGITS) return false;
 
   const sign = m[9];
   if (sign !== undefined) {
