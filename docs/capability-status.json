@@ -1,0 +1,43 @@
+{
+  "schema": "kizuki.capability-status/v1",
+  "entries": [
+    {
+      "id": "cli.query",
+      "status": "shipped",
+      "doc": "docs/cli.md",
+      "heading": "query",
+      "implementation": "packages/cli/src/commands/query.ts",
+      "test": "packages/cli/test/query.test.ts"
+    },
+    {
+      "id": "cli.rebuild",
+      "status": "shipped",
+      "doc": "docs/cli.md",
+      "heading": "rebuild",
+      "implementation": "packages/cli/src/commands/rebuild.ts",
+      "test": "packages/cli/test/rebuild.test.ts"
+    },
+    {
+      "id": "cli.models",
+      "status": "shipped",
+      "doc": "docs/cli.md",
+      "heading": "models",
+      "implementation": "packages/cli/src/commands/models.ts",
+      "test": "packages/cli/test/models.test.ts"
+    },
+    {
+      "id": "cli.doctor",
+      "status": "shipped",
+      "doc": "docs/cli.md",
+      "heading": "doctor",
+      "implementation": "packages/cli/src/commands/doctor.ts",
+      "test": "packages/cli/test/read-context.test.ts"
+    },
+    {
+      "id": "world-model",
+      "status": "direction",
+      "doc": "README.md",
+      "heading": "Status"
+    }
+  ]
+}

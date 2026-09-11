@@ -95,3 +95,44 @@ test("connector registry optional_package names resolve to workspace exports", (
     expect((exports as Record<string, unknown>)[subpath]).toBeDefined();
   }
 });
+
+const STATUSES = new Set(["shipped", "designed", "direction"]);
+
+interface CapabilityStatusEntry {
+  id: string;
+  status: string;
+  doc: string;
+  heading: string;
+  implementation?: string;
+  test?: string;
+}
+
+test("documentation status inventory maps shipped claims to live files", () => {
+  const inventoryPath = join(ROOT, "docs/capability-status.json");
+  const inventory = JSON.parse(readFileSync(inventoryPath, "utf8")) as {
+    schema?: unknown;
+    entries?: unknown;
+  };
+  expect(inventory.schema).toBe("kizuki.capability-status/v1");
+  expect(Array.isArray(inventory.entries)).toBe(true);
+  const entries = inventory.entries as CapabilityStatusEntry[];
+  expect(entries.length).toBeGreaterThan(0);
+  const ids = entries.map((entry) => entry.id);
+  expect(new Set(ids).size).toBe(ids.length);
+
+  for (const entry of entries) {
+    expect(typeof entry.id).toBe("string");
+    expect(entry.id.length).toBeGreaterThan(0);
+    expect(STATUSES.has(entry.status)).toBe(true);
+    const docPath = join(ROOT, entry.doc);
+    expect(existsSync(docPath)).toBe(true);
+    const doc = readFileSync(docPath, "utf8");
+    expect(doc.includes(`## ${entry.heading}`)).toBe(true);
+    if (entry.status === "shipped") {
+      expect(typeof entry.implementation).toBe("string");
+      expect(typeof entry.test).toBe("string");
+      expect(existsSync(join(ROOT, entry.implementation!))).toBe(true);
+      expect(existsSync(join(ROOT, entry.test!))).toBe(true);
+    }
+  }
+});
