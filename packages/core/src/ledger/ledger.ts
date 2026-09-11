@@ -194,7 +194,10 @@ export function accept(
   }
 }
 
-/** Private insertion primitive: callers already own the write transaction. */
+/** Private insertion primitive: callers already own the write transaction.
+ *  `accepted_at` is wall time after BEGIN IMMEDIATE, so lock wait is not
+ *  included. It is not a commit sequence: a backwards clock can invert two
+ *  writers, and replay ties break on `event_id`. */
 function insertBoundEvent(db: Database, input: CaptureEventInput, eventId: string,
   origin: CaptureEvent["origin"], kind: CaptureEvent["origin_binding_kind"], requestDigest: string | null,
 ): void {
