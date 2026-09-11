@@ -128,6 +128,7 @@ assert_required_helpers() {
     "$verify_script_dir/verify-network.ts" \
     "$verify_script_dir/verify-secrets.ts" \
     "$verify_script_dir/verify-rfc-tests.ts" \
+    "$verify_script_dir/verify-dependencies.ts" \
     "$verify_script_dir/verify-workflows.ts" \
     "$verify_script_dir/network-allowlist.txt" \
     "$verify_script_dir/verify-policy.test.sh" \
@@ -243,6 +244,8 @@ main() {
   bun run scripts/verify-network.ts
   gate network
 
+  bun "$verify_script_dir/verify-dependencies.ts"
+  gate lockfile-deps
   assert_no_match "phone-home dependency" git grep -I -n -E "$dependency_re" -- ':(glob)**/package.json'
   gate phone-home
   assert_safe_tracked_paths "$forbidden_identifier_re|$attributed_identifier_re"
