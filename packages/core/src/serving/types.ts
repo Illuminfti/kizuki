@@ -78,6 +78,8 @@ export type Envelope<T = undefined> = {
   canon: CanonChunk[];
   quoted: QuotedChunk[];
   denied: Denied[];
+  /** Owner envelopes only. True when at least one match was withheld. */
+  has_withheld?: true;
   source_policy?: { mode: "enforced"; epoch: number; legacy_unbound: "owner_only" };
   data?: T;
 };
