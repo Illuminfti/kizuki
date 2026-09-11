@@ -1,5 +1,9 @@
-import { resolve } from "node:path";
+import { randomBytes } from "node:crypto";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import {
+  MAX_GGUF_FILE_BYTES,
   installGgufModel,
   listInstalledGgufModels,
   removeInstalledGgufModel,
@@ -10,12 +14,61 @@ import { assertVault, resolveVault } from "../context";
 import { configPath, readConfig } from "../config";
 import type { CliIo, Command } from "./index";
 
-const USAGE = "models <list | pull --from PATH [--sha256 HEX] [--bytes N] | remove NAME>";
+const USAGE =
+  "models <list | pull --from PATH|URL [--sha256 HEX] [--bytes N] | remove NAME>";
 
 function modelsDir(io: CliIo): string {
   const path = configPath(io.env);
   const config = readConfig(path);
   return vaultModelsDir(assertVault(resolveVault(io.env, config, io.vaultOverride)));
+}
+
+function remotePullUrl(from: string): URL | null {
+  let url: URL;
+  try {
+    url = new URL(from);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  return url;
+}
+
+async function downloadRemoteGguf(
+  url: URL,
+  expectedBytes: number,
+  expectedSha256: string,
+): Promise<string> {
+  if (expectedBytes > MAX_GGUF_FILE_BYTES) {
+    throw new Error(`GGUF source size does not match expected bytes`);
+  }
+  const filename = basename(url.pathname);
+  if (!filename.endsWith(".gguf") || filename.includes("\0")) {
+    throw new UsageError(USAGE);
+  }
+  const response = await fetch(url, {
+    redirect: "error",
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!response.ok) {
+    throw new Error(`models pull failed: HTTP ${response.status}`);
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.byteLength !== expectedBytes) {
+    throw new Error("GGUF source size does not match expected bytes");
+  }
+  const sha256 = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+  if (sha256 !== expectedSha256) {
+    throw new Error("GGUF source hash does not match expected sha256");
+  }
+  const dir = join(
+    tmpdir(),
+    `kizuki-model.${process.pid}.${randomBytes(8).toString("hex")}`,
+  );
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const temp = join(dir, filename);
+  writeFileSync(temp, bytes, { mode: 0o600 });
+  return temp;
 }
 
 export const modelsCommand: Command = {
@@ -68,17 +121,38 @@ export const modelsCommand: Command = {
       }
       expectedBytes = Number(bytesOpt);
     }
-    const installed = installGgufModel({
-      source_path: resolve(from),
-      dest_dir: modelsDir(io),
-      ...(expected === undefined ? {} : { expected_sha256: expected }),
-      ...(expectedBytes === undefined ? {} : { expected_bytes: expectedBytes }),
-    });
 
-    io.out(`path=${installed.path}`);
-    io.out(`bytes=${installed.bytes}`);
-    io.out(`sha256=${installed.sha256}`);
-    io.out(`space=${installed.space.id}`);
-    return 0;
+    const remote = remotePullUrl(from);
+    let sourcePath = resolve(from);
+    let cleanup: string | undefined;
+    if (remote !== null) {
+      if (expected === undefined || expectedBytes === undefined) {
+        io.err(
+          "error: models pull from a URL requires --sha256 and --bytes; this command does not download weights without them",
+        );
+        throw new UsageError(this.usage);
+      }
+      cleanup = await downloadRemoteGguf(remote, expectedBytes, expected);
+      sourcePath = cleanup;
+    }
+
+    try {
+      const installed = installGgufModel({
+        source_path: sourcePath,
+        dest_dir: modelsDir(io),
+        ...(expected === undefined ? {} : { expected_sha256: expected }),
+        ...(expectedBytes === undefined ? {} : { expected_bytes: expectedBytes }),
+      });
+
+      io.out(`path=${installed.path}`);
+      io.out(`bytes=${installed.bytes}`);
+      io.out(`sha256=${installed.sha256}`);
+      io.out(`space=${installed.space.id}`);
+      return 0;
+    } finally {
+      if (cleanup !== undefined) {
+        rmSync(dirname(cleanup), { recursive: true, force: true });
+      }
+    }
   },
 };
