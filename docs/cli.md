@@ -448,7 +448,7 @@ in place.
 ## rebuild
 
 ```text
-usage: kizuki rebuild [--layer all|graph] [--prune-old] [--json]
+usage: kizuki rebuild [--layer all|graph] [--port ID] [--prune-old] [--json]
 ```
 
 Reconstructs derived retrieval from the vault. `--layer all` rebuilds the
@@ -457,8 +457,10 @@ rebuilds only the SQLite graph floor and does not refresh search; a configured
 retrieval engine refuses that partial layer and exits 1. `--prune-old` removes
 inactive owned retrieval generations under `.kizuki/retrieval/` and leaves the
 currently configured engine, or the SQLite floor when no engine is bound.
-`--port` and other layers are not implemented and exit 2. `--prune-old` cannot
-be combined with `--layer`.
+`--port ID` names the bound store (`kizuki.retrieval.fts5` for the SQLite floor,
+or the configured engine id) and refuses any other id. Other layers are not
+implemented and exit 2. `--prune-old` cannot be combined with `--layer` or
+`--port`.
 
 The result identifies `backend` (`sqlite-floor` or `retrieval-port`), `store`,
 `documents`, `floor_documents`, and the floor's `generation`. With default
