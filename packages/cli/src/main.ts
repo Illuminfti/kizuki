@@ -177,7 +177,18 @@ async function dispatch(argv: string[]): Promise<number> {
     return 2;
   }
   if (verb === "help" || verb === "--help") {
-    const name = args[0];
+    const json = args.includes("--json");
+    const names = args.filter((token) => token !== "--json");
+    if (names.length === 0) {
+      printRootHelp(io.out, COMMANDS);
+      return 0;
+    }
+    if (names.length !== 1) {
+      io.err("error: invalid arguments");
+      io.err("usage: kizuki help [verb] [--json]");
+      return 2;
+    }
+    const name = names[0];
     if (name === undefined) {
       printRootHelp(io.out, COMMANDS);
       return 0;
@@ -192,7 +203,7 @@ async function dispatch(argv: string[]): Promise<number> {
       printRootHelp(io.err, COMMANDS);
       return 2;
     }
-    printCommandHelp(io.out, command);
+    printCommandHelp(io.out, command, { json });
     return 0;
   }
 
@@ -208,8 +219,12 @@ async function dispatch(argv: string[]): Promise<number> {
     return 2;
   }
 
-  if (args.length === 1 && args[0] === "--help") {
-    printCommandHelp(io.out, command);
+  if (args.includes("--help")) {
+    if (!args.every((token) => token === "--help" || token === "--json")) {
+      for (const line of usageLines(command, new UsageError("invalid arguments"))) io.err(line);
+      return 2;
+    }
+    printCommandHelp(io.out, command, { json: args.includes("--json") });
     return 0;
   }
 

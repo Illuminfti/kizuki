@@ -4,7 +4,7 @@ import { UsageError, parseArguments, requirePositional } from "../args";
 import { withReadVault } from "../context";
 import { indexFreshness } from "../derived";
 import { clean, jsonEnvelope } from "../output";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 const SCOPES = ["canon", "ledger", "all"] as const;
 type SearchScope = (typeof SCOPES)[number];
@@ -26,24 +26,32 @@ function formatHit(hit: SearchHit): string {
   return `event ${hit.doc_id} ${hit.connector_id} ${hit.occurred_at} ${snippet}`;
 }
 
+export const QUERY_SCHEMA = {
+  options: ["--scope", "--limit"],
+  flags: ["--json", "--degraded"],
+  defaults: { "--scope": "all", "--limit": "20" },
+  bounds: { "--scope": "canon|ledger|all", "--limit": "1..50" },
+} as const satisfies CommandHelpSchema;
+
 export const queryCommand: Command = {
   name: "query",
   usage: "query <text> [--scope canon|ledger|all] [--limit 1..50] [--json] [--degraded]",
   summary: "search current authorized evidence through configured retrieval and the lexical floor",
+  schema: QUERY_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
-      options: ["--scope", "--limit"],
-      flags: ["--json", "--degraded"],
+      options: [...QUERY_SCHEMA.options],
+      flags: [...QUERY_SCHEMA.flags],
     });
     const [text] = requirePositional(parsed.positionals, 1);
     if (text === undefined) throw new UsageError(this.usage);
 
-    const rawScope = parsed.options.get("--scope") ?? "all";
+    const rawScope = parsed.options.get("--scope") ?? QUERY_SCHEMA.defaults["--scope"];
     if (!(SCOPES as readonly string[]).includes(rawScope)) {
       throw new UsageError(this.usage);
     }
     const rawLimit = parsed.options.get("--limit");
-    const limit = rawLimit === undefined ? 20 : parseLimit(rawLimit);
+    const limit = rawLimit === undefined ? Number(QUERY_SCHEMA.defaults["--limit"]) : parseLimit(rawLimit);
     const allowDegraded = parsed.flags.has("--degraded");
 
     return withReadVault(io, async (ctx) => {

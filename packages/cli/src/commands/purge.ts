@@ -9,7 +9,7 @@ import type { PurgeFilter, PurgePreview } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { withReadVault, withVault } from "../context";
 import { jsonEnvelope } from "../output";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 export const PURGE_IRREVERSIBLE =
   "Purge physically deletes event evidence. Undo cannot resurrect purged events. Canon rewrites stay reversible by receipt.";
@@ -59,24 +59,23 @@ function printPreview(io: CliIo, preview: PurgePreview): void {
   }
 }
 
+export const PURGE_SCHEMA = {
+  options: ["--event", "--subject", "--source", "--connector", "--record", "--reason", "--verify"],
+  flags: ["--include-aliases", "--json", "--dry-run", "--confirm", "--allow-empty"],
+  irreversible: true,
+} as const satisfies CommandHelpSchema;
+
 export const purgeCommand: Command = {
   name: "purge",
   usage:
     "purge (--event ID | --connector ID [--record ID | --subject ID [--source KEY] [--include-aliases]] | --verify RECEIPT) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json]",
   summary:
     "physically delete matching events, hold affected pages, and prove absence",
+  schema: PURGE_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
-      options: [
-        "--event",
-        "--subject",
-        "--source",
-        "--connector",
-        "--record",
-        "--reason",
-        "--verify",
-      ],
-      flags: ["--include-aliases", "--json", "--dry-run", "--confirm", "--allow-empty"],
+      options: [...PURGE_SCHEMA.options],
+      flags: [...PURGE_SCHEMA.flags],
     });
     if (parsed.positionals.length !== 0) throw new UsageError(this.usage);
     const asJson = parsed.flags.has("--json");

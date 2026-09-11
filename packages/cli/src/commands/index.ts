@@ -31,10 +31,19 @@ export interface CliIo {
   prompt(question: string, opts?: { secret?: boolean }): Promise<string>;
 }
 
+export interface CommandHelpSchema {
+  options: readonly string[];
+  flags: readonly string[];
+  defaults?: Readonly<Record<string, string>>;
+  bounds?: Readonly<Record<string, string>>;
+  irreversible?: boolean;
+}
+
 export interface Command {
   name: string;
   usage: string;
   summary: string;
+  schema?: CommandHelpSchema;
   run(io: CliIo, args: string[]): Promise<number>;
 }
 
