@@ -16,6 +16,8 @@ import { PortError } from "@kizuki/core";
 import { MAX_GGUF_FILE_BYTES } from "../src/gguf";
 import {
   GGUF_MODEL_CATALOG,
+  catalogRemoteAcquisition,
+  findGgufCatalogEntry,
   fixtureSpaceId,
   installGgufModel,
   installPartialPath,
@@ -290,6 +292,54 @@ describe("local GGUF model inventory", () => {
       expect((error as PortError).message).toContain("regular installed GGUF file");
     }
     expect(existsSync(join(destDir, "model.gguf"))).toBe(true);
+  });
+});
+
+describe("GGUF catalog remote acquisition", () => {
+  test("the shipped fixture has no remote pins", () => {
+    const entry = findGgufCatalogEntry("kizuki-fixture-embed");
+    expect(catalogRemoteAcquisition(entry)).toBeNull();
+  });
+
+  test("unknown ids fail closed", () => {
+    expect(() => findGgufCatalogEntry("no-such-model")).toThrow(PortError);
+    expect(() => findGgufCatalogEntry("../escape")).toThrow(PortError);
+  });
+
+  test("a complete synthetic entry yields the pinned remote", () => {
+    const sha256 = "a".repeat(64);
+    const entry = {
+      id: "synthetic-remote",
+      filename: "synthetic-remote.gguf",
+      architecture: "kizuki.embed.table",
+      dims: 8,
+      notes: "test",
+      url: "https://example.invalid/synthetic-remote.gguf",
+      sha256,
+      bytes: 128,
+    };
+    const remote = catalogRemoteAcquisition(entry);
+    expect(remote?.url.href).toBe("https://example.invalid/synthetic-remote.gguf");
+    expect(remote?.sha256).toBe(sha256);
+    expect(remote?.bytes).toBe(128);
+    expect(remote?.filename).toBe("synthetic-remote.gguf");
+  });
+
+  test("partial or invalid remote metadata fails closed", () => {
+    const base = findGgufCatalogEntry("kizuki-fixture-embed");
+    expect(() => catalogRemoteAcquisition({ ...base, url: "https://example.invalid/kizuki-fixture-embed.gguf" })).toThrow(PortError);
+    expect(() => catalogRemoteAcquisition({
+      ...base,
+      url: "https://example.invalid/kizuki-fixture-embed.gguf",
+      sha256: "not-a-hash",
+      bytes: 12,
+    })).toThrow(PortError);
+    expect(() => catalogRemoteAcquisition({
+      ...base,
+      url: "https://example.invalid/other.gguf",
+      sha256: "b".repeat(64),
+      bytes: 12,
+    })).toThrow(PortError);
   });
 });
 

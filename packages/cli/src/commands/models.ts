@@ -3,19 +3,23 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
+  GGUF_MODEL_CATALOG,
   MAX_GGUF_FILE_BYTES,
+  catalogRemoteAcquisition,
+  findGgufCatalogEntry,
   installGgufModel,
   listInstalledGgufModels,
   removeInstalledGgufModel,
   vaultModelsDir,
 } from "@kizuki/embed-gguf";
+import { PortError } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { assertVault, resolveVault } from "../context";
 import { configPath, readConfig } from "../config";
 import type { CliIo, Command } from "./index";
 
 const USAGE =
-  "models <list | pull --from PATH|URL [--sha256 HEX] [--bytes N] | remove NAME>";
+  "models <list [--catalog] | pull <CATALOG_ID | --from PATH|URL [--sha256 HEX] [--bytes N]> | remove NAME>";
 
 function modelsDir(io: CliIo): string {
   const path = configPath(io.env);
@@ -79,7 +83,19 @@ export const modelsCommand: Command = {
     const verb = args[0];
     const rest = args.slice(1);
     if (verb === "list") {
-      if (rest.length > 0) throw new UsageError(this.usage);
+      const parsed = parseArguments(rest, { flags: ["--catalog"] });
+      if (parsed.positionals.length > 0) throw new UsageError(this.usage);
+      if (parsed.flags.has("--catalog")) {
+        for (const entry of GGUF_MODEL_CATALOG) {
+          io.out(`id=${entry.id}`);
+          io.out(`filename=${entry.filename}`);
+          io.out(`architecture=${entry.architecture}`);
+          io.out(`dims=${entry.dims}`);
+          const remote = catalogRemoteAcquisition(entry);
+          io.out(remote === null ? "remote=no" : "remote=yes");
+        }
+        return 0;
+      }
       for (const model of listInstalledGgufModels(modelsDir(io))) {
         io.out(`filename=${model.filename}`);
         io.out(`path=${model.path}`);
@@ -102,13 +118,18 @@ export const modelsCommand: Command = {
       options: ["--from", "--sha256", "--bytes"],
     });
     const from = parsed.options.get("--from");
-    if (from === undefined || from.length === 0) {
-      io.err(
-        "error: models pull requires --from PATH; this command does not download weights",
-      );
+    const catalogId = parsed.positionals[0];
+    if (parsed.positionals.length > 1) {
       throw new UsageError(this.usage);
     }
-    if (parsed.positionals.length > 0) {
+    if (catalogId !== undefined && from !== undefined) {
+      io.err("error: models pull CATALOG_ID cannot be combined with --from");
+      throw new UsageError(this.usage);
+    }
+    if (catalogId === undefined && (from === undefined || from.length === 0)) {
+      io.err(
+        "error: models pull requires a catalog id or --from PATH; this command does not download weights",
+      );
       throw new UsageError(this.usage);
     }
 
@@ -122,10 +143,33 @@ export const modelsCommand: Command = {
       expectedBytes = Number(bytesOpt);
     }
 
-    const remote = remotePullUrl(from);
-    let sourcePath = resolve(from);
+    const remote = remotePullUrl(from ?? "");
+    let sourcePath = from === undefined ? "" : resolve(from);
     let cleanup: string | undefined;
-    if (remote !== null) {
+    if (catalogId !== undefined) {
+      if (expected !== undefined || expectedBytes !== undefined) {
+        io.err("error: models pull CATALOG_ID cannot override catalog pins");
+        throw new UsageError(this.usage);
+      }
+      let acquisition;
+      try {
+        acquisition = catalogRemoteAcquisition(findGgufCatalogEntry(catalogId));
+      } catch (error) {
+        if (error instanceof PortError && error.code === "config_invalid") {
+          io.err(`error: ${error.message}`);
+          throw new UsageError(this.usage);
+        }
+        throw error;
+      }
+      if (acquisition === null) {
+        io.err(
+          "error: catalog entry has no remote acquisition pins; this command does not download weights",
+        );
+        throw new UsageError(this.usage);
+      }
+      cleanup = await downloadRemoteGguf(acquisition.url, acquisition.bytes, acquisition.sha256);
+      sourcePath = cleanup;
+    } else if (remote !== null) {
       if (expected === undefined || expectedBytes === undefined) {
         io.err(
           "error: models pull from a URL requires --sha256 and --bytes; this command does not download weights without them",

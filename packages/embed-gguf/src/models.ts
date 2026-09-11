@@ -28,6 +28,9 @@ export interface GgufModelCatalogEntry {
   readonly architecture: string;
   readonly dims: number;
   readonly notes: string;
+  readonly url?: string;
+  readonly sha256?: string;
+  readonly bytes?: number;
 }
 
 export const GGUF_MODEL_CATALOG: readonly GgufModelCatalogEntry[] = Object.freeze([
@@ -39,6 +42,47 @@ export const GGUF_MODEL_CATALOG: readonly GgufModelCatalogEntry[] = Object.freez
     notes: "Synthetic table-embedding fixture. Not a downloaded weight file.",
   },
 ]);
+
+export interface CatalogRemoteAcquisition {
+  readonly url: URL;
+  readonly sha256: string;
+  readonly bytes: number;
+  readonly filename: string;
+}
+
+export function findGgufCatalogEntry(
+  id: string,
+  catalog: readonly GgufModelCatalogEntry[] = GGUF_MODEL_CATALOG,
+): GgufModelCatalogEntry {
+  if (id.length === 0 || id.includes("/") || id.includes("\\") || id.includes("\0")) {
+    invalid("unknown model catalog id");
+  }
+  const entry = catalog.find((item) => item.id === id);
+  if (entry === undefined) invalid("unknown model catalog id");
+  return entry;
+}
+
+export function catalogRemoteAcquisition(
+  entry: GgufModelCatalogEntry,
+): CatalogRemoteAcquisition | null {
+  if (entry.url === undefined && entry.sha256 === undefined && entry.bytes === undefined) {
+    return null;
+  }
+  if (entry.url === undefined || entry.sha256 === undefined || entry.bytes === undefined) {
+    invalid("catalog entry has no remote acquisition pins");
+  }
+  if (!/^[0-9a-f]{64}$/.test(entry.sha256)) invalid("catalog entry sha256 is invalid");
+  if (!Number.isInteger(entry.bytes) || entry.bytes < 1) invalid("catalog entry bytes is invalid");
+  let url: URL;
+  try {
+    url = new URL(entry.url);
+  } catch {
+    invalid("catalog entry url is invalid");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") invalid("catalog entry url is invalid");
+  if (basename(url.pathname) !== entry.filename) invalid("catalog entry url filename does not match");
+  return { url, sha256: entry.sha256, bytes: entry.bytes, filename: entry.filename };
+}
 
 export interface InstallGgufModelInput {
   readonly source_path: string;

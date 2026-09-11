@@ -361,13 +361,17 @@ reports a complete binding as `on` and an incomplete configuration as
 ## models
 
 ```text
-usage: kizuki models <list | pull --from PATH [--sha256 HEX] [--bytes N] | remove NAME>
+usage: kizuki models <list [--catalog] | pull <CATALOG_ID | --from PATH|URL [--sha256 HEX] [--bytes N]> | remove NAME>
 ```
 
 Lists, copies, or removes local GGUF files in the vault models directory.
-Does not download weights. `list` reports installed regular `.gguf` files.
+`list` reports installed regular `.gguf` files. `list --catalog` prints the
+local catalog without network access. `pull CATALOG_ID` uses that entry's
+pinned URL, hash and size; the shipped fixture has no remote pins.
 `remove NAME` deletes one exact installed filename. `--bytes N` checks the
-source size before publishing a copy.
+source size before publishing a copy. Direct URL pulls still require
+`--sha256` and `--bytes`. The command does not download weights without
+those pins.
 
 ## purge
 
