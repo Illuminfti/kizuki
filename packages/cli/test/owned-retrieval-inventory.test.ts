@@ -5,7 +5,7 @@ import { createFts5RetrievalPort, FTS5_RETRIEVAL_ID, setSourceGrant, tryAdvisory
 import { openLedger } from "@kizuki/core/testing";
 import type { PortContext } from "@kizuki/core";
 import { openEmbeddedRetrievalPort, EMBEDDED_RETRIEVAL_ID } from "@kizuki/retrieval-pg";
-import { createOwnedRetrievalInventory } from "../src/owned-retrieval-inventory";
+import { createOwnedRetrievalInventory, pruneOldOwnedRetrieval } from "../src/owned-retrieval-inventory";
 import { createHelpers } from "./helpers";
 import { SYNTHETIC_DOCS } from "../../core/test/contracts/fixtures";
 const h = createHelpers(); afterEach(h.cleanup);
@@ -29,6 +29,18 @@ test("inventory covers historical roots independently of config and closes both 
     expect(existsSync(join(ctx(f.vault, FTS5_RETRIEVAL_ID).data_dir, "store"))).toBe(false);
     expect(existsSync(join(ctx(f.vault, EMBEDDED_RETRIEVAL_ID).data_dir, "store"))).toBe(false);
   } finally { await inventory.close(); await pg.close(); }
+}, 30_000);
+
+test("prune-old erases inactive FTS and keeps the current embedded generation", async () => {
+  const f = h.tempVault(), pg = await openEmbeddedRetrievalPort(ctx(f.vault, EMBEDDED_RETRIEVAL_ID)), fts = createFts5RetrievalPort(ctx(f.vault, FTS5_RETRIEVAL_ID));
+  await pg.upsert(SYNTHETIC_DOCS); await fts.upsert(SYNTHETIC_DOCS); await fts.close();
+  const result = await pruneOldOwnedRetrieval(f.vault, pg);
+  expect(result.pending).toEqual([]);
+  expect(result.kept).toBe(EMBEDDED_RETRIEVAL_ID);
+  expect(result.pruned).toContain(FTS5_RETRIEVAL_ID);
+  expect(existsSync(join(ctx(f.vault, FTS5_RETRIEVAL_ID).data_dir, "store"))).toBe(false);
+  expect(existsSync(join(ctx(f.vault, EMBEDDED_RETRIEVAL_ID).data_dir, "store"))).toBe(true);
+  await pg.close();
 }, 30_000);
 
 test("inventory proves only known absent roots and refuses unknown or symlink roots", async () => {
