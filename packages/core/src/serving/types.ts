@@ -61,7 +61,7 @@ export interface QuotedChunk {
   subject_labels?: SubjectLabel[];
 }
 
-/** Counts per reason. Ids of withheld items reach only the owner's audit row. */
+/** Counts per reason on owner envelopes. Agent envelopes omit counts. Ids of withheld items reach only the owner's audit row. */
 export interface Denied {
   reason: DenyReason;
   count: number;

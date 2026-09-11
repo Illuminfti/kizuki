@@ -55,10 +55,7 @@ describe("serveTimeline", () => {
       day: "2026-02-28",
     });
     expect(eventIds(envelope)).toEqual([fixture.events["public"] as string]);
-    expect(envelope.denied).toContainEqual({
-      reason: "above_ceiling",
-      count: 2,
-    });
+    expect(envelope.denied).toEqual([]);
   });
 
   test("a subject outside a scoped grant is refused", () => {
@@ -80,10 +77,7 @@ describe("serveTimeline", () => {
       fixture.events["public"] as string,
       fixture.events["personal"] as string,
     ]);
-    expect(envelope.denied).toContainEqual({
-      reason: "subject_out_of_scope",
-      count: 1,
-    });
+    expect(envelope.denied).toEqual([]);
   });
 
   test("a types-scoped grant restricts ledger events by kind", () => {
@@ -94,10 +88,7 @@ describe("serveTimeline", () => {
     ).toBe("type_out_of_scope");
     const envelope = serveTimeline(ctx, { day: "2026-02-28" });
     expect(envelope.quoted).toEqual([]);
-    expect(envelope.denied).toContainEqual({
-      reason: "type_out_of_scope",
-      count: 3,
-    });
+    expect(envelope.denied).toEqual([]);
   });
 
   test("a connector filter and an explicit subject both narrow the answer", () => {

@@ -94,7 +94,8 @@ describe("serveGetPage", () => {
       id: "fact:kettle",
     });
     expect(envelope.canon).toEqual([]);
-    expect(envelope.denied).toEqual([{ reason: "above_ceiling", count: 1 }]);
+    expect(envelope.denied).toEqual([]);
+    expect("has_withheld" in envelope).toBe(false);
   });
 
   test("a long body is truncated on a code point, never inside a pair", async () => {

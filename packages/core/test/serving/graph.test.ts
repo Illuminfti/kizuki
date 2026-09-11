@@ -48,7 +48,7 @@ describe("serveGraph", () => {
       kinds: ["wikilink"],
     });
     expect(targets(limited)).toEqual(["Nowhere"]);
-    expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 1 }]);
+    expect(limited.denied).toEqual([]);
     expect(JSON.stringify(limited)).not.toContain("person:grace");
   });
 
@@ -72,7 +72,7 @@ describe("serveGraph", () => {
     expect(limited.data?.edges.map((edge) => edge.src)).not.toContain(
       "fact:kettle",
     );
-    expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 1 }]);
+    expect(limited.denied).toEqual([]);
   });
 
   test("a page with a retracted source loses all positive source edges", async () => {
@@ -129,11 +129,11 @@ describe("serveGraph", () => {
       kinds: ["source"],
     });
     expect(limited.data?.edges).toEqual([]);
-    expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 1 }]);
+    expect(limited.denied).toEqual([]);
     expect(JSON.stringify(limited)).not.toContain(eventId);
   });
 
-  test("a withheld root answers with no edges and a single count", async () => {
+  test("a withheld root answers with no edges and no leaked identity", async () => {
     const envelope = await serveGraph(fixture.agent("reader-public"), {
       id: "fact:kettle",
     });
@@ -142,7 +142,7 @@ describe("serveGraph", () => {
       edges: [],
       truncated: false,
     });
-    expect(envelope.denied).toEqual([{ reason: "above_ceiling", count: 1 }]);
+    expect(envelope.denied).toEqual([]);
   });
 
   test("a retracted root is absent rather than denied", async () => {
@@ -235,7 +235,7 @@ describe("serveGraph", () => {
       "fact:zzz-open",
     ]);
     expect(limited.data?.truncated).toBe(false);
-    expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 100 }]);
+    expect(limited.denied).toEqual([]);
     expect(JSON.stringify(limited)).not.toContain("aaa-secret");
   }, 15_000);
 
@@ -331,7 +331,7 @@ describe("serveGraph", () => {
       "fact:zzz-out-open",
     ]);
     expect(limited.data?.truncated).toBe(false);
-    expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 100 }]);
+    expect(limited.denied).toEqual([]);
     expect(JSON.stringify(limited)).not.toContain("aaa-out-secret");
   }, 25_000);
 
@@ -398,7 +398,7 @@ describe("serveGraph", () => {
       },
     ]);
     expect(limited.data?.truncated).toBe(false);
-    expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 100 }]);
+    expect(limited.denied).toEqual([]);
     expect(JSON.stringify(limited)).not.toContain(eventIds[0]);
   });
 
