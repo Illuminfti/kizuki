@@ -361,11 +361,13 @@ reports a complete binding as `on` and an incomplete configuration as
 ## models
 
 ```text
-usage: kizuki models pull --from PATH [--sha256 HEX] [--bytes N]
+usage: kizuki models <list | pull --from PATH [--sha256 HEX] [--bytes N] | remove NAME>
 ```
 
-Copies a local GGUF into the vault models directory. Does not download
-weights. `--bytes N` checks the source size before publishing the copy.
+Lists, copies, or removes local GGUF files in the vault models directory.
+Does not download weights. `list` reports installed regular `.gguf` files.
+`remove NAME` deletes one exact installed filename. `--bytes N` checks the
+source size before publishing a copy.
 
 ## purge
 

@@ -35,13 +35,13 @@ describe("kizuki models pull", () => {
     expect(result.exitCode).toBe(2);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("does not download weights");
-    expect(result.stderr).toContain("usage: kizuki models pull --from PATH");
+    expect(result.stderr).toContain("usage: kizuki models");
   });
 
   test("unknown models verb exits 2", () => {
     const result = runCli(isolatedEnv(), "models", "fetch");
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("usage: kizuki models pull --from PATH");
+    expect(result.stderr).toContain("usage: kizuki models");
   });
 
   test("matching --sha256 copies and reports the digest", () => {
@@ -140,7 +140,51 @@ describe("kizuki models pull", () => {
     for (const value of ["0", "-1", "1.5", "foo"]) {
       const result = runCli(setup.env, "models", "pull", "--from", source, "--bytes", value);
       expect(result.exitCode).toBe(2);
-      expect(result.stderr).toContain("usage: kizuki models pull --from PATH");
+      expect(result.stderr).toContain("usage: kizuki models");
     }
+  });
+});
+
+describe("kizuki models list and remove", () => {
+  test("lists an installed fixture and removes only that file", () => {
+    const setup = tempVault();
+    const source = join(setup.root, "fixture.gguf");
+    const bytes = writeFixtureGguf();
+    writeFileSync(source, bytes);
+    const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+    expect(runCli(setup.env, "models", "pull", "--from", source).exitCode).toBe(0);
+
+    const listed = runCli(setup.env, "models", "list");
+    expect(listed.exitCode).toBe(0);
+    expect(listed.stderr).toBe("");
+    expect(listed.stdout).toContain("filename=fixture.gguf");
+    expect(listed.stdout).toContain(`bytes=${bytes.byteLength}`);
+    expect(listed.stdout).toContain(`sha256=${digest}`);
+
+    const sibling = join(setup.root, "sentinel.txt");
+    writeFileSync(sibling, "keep");
+    const removed = runCli(setup.env, "models", "remove", "fixture.gguf");
+    expect(removed.exitCode).toBe(0);
+    expect(removed.stdout).toContain(`removed=${setup.vault}/.kizuki/models/fixture.gguf`);
+    expect(existsSync(join(setup.vault, ".kizuki", "models", "fixture.gguf"))).toBe(false);
+    expect(readFileSync(sibling, "utf8")).toBe("keep");
+
+    const empty = runCli(setup.env, "models", "list");
+    expect(empty.exitCode).toBe(0);
+    expect(empty.stdout).toBe("");
+  });
+
+  test("refuses traversal, extra arguments, and unknown names", () => {
+    const setup = tempVault();
+    const missing = runCli(setup.env, "models", "remove", "missing.gguf");
+    expect(missing.exitCode).toBe(1);
+    expect(missing.stderr).toContain("GGUF model is missing");
+
+    const traversal = runCli(setup.env, "models", "remove", "../fixture.gguf");
+    expect(traversal.exitCode).toBe(1);
+    expect(traversal.stderr).toContain("exact installed filename");
+
+    expect(runCli(setup.env, "models", "list", "extra").exitCode).toBe(2);
+    expect(runCli(setup.env, "models", "remove").exitCode).toBe(2);
   });
 });

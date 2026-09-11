@@ -1,10 +1,13 @@
 import {
   closeSync,
+  existsSync,
   ftruncateSync,
   mkdirSync,
   openSync,
   readdirSync,
+  readFileSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -16,6 +19,8 @@ import {
   fixtureSpaceId,
   installGgufModel,
   installPartialPath,
+  listInstalledGgufModels,
+  removeInstalledGgufModel,
   sha256File,
   vaultModelsDir,
   writeFixtureGguf,
@@ -230,6 +235,61 @@ describe("local GGUF model install", () => {
     expect(
       readdirSync(destDir).filter((name) => name.endsWith(".partial")),
     ).toEqual([]);
+  });
+});
+
+describe("local GGUF model inventory", () => {
+  test("lists installed files and removes only the named GGUF", () => {
+    const temporary = temporaryEmbed();
+    cleanups.push(temporary.cleanup);
+    const destDir = vaultModelsDir(temporary.vault);
+    const first = installGgufModel({ source_path: temporary.modelPath, dest_dir: destDir });
+    const sibling = join(destDir, "notes.txt");
+    mkdirSync(destDir, { recursive: true });
+    writeFileSync(sibling, "keep");
+    expect(listInstalledGgufModels(destDir)).toEqual([
+      {
+        filename: "model.gguf",
+        path: first.path,
+        bytes: first.bytes,
+        sha256: first.sha256,
+      },
+    ]);
+    expect(removeInstalledGgufModel(destDir, "model.gguf")).toBe(first.path);
+    expect(existsSync(first.path)).toBe(false);
+    expect(readFileSync(sibling, "utf8")).toBe("keep");
+    expect(listInstalledGgufModels(destDir)).toEqual([]);
+  });
+
+  test("an absent models directory is an empty inventory", () => {
+    const temporary = temporaryEmbed();
+    cleanups.push(temporary.cleanup);
+    expect(listInstalledGgufModels(vaultModelsDir(temporary.vault))).toEqual([]);
+  });
+
+  test("refuses traversal and symlink targets", () => {
+    const temporary = temporaryEmbed();
+    cleanups.push(temporary.cleanup);
+    const destDir = vaultModelsDir(temporary.vault);
+    installGgufModel({ source_path: temporary.modelPath, dest_dir: destDir });
+    try {
+      removeInstalledGgufModel(destDir, "../model.gguf");
+      throw new Error("expected refusal");
+    } catch (error) {
+      expect(error).toBeInstanceOf(PortError);
+      expect((error as PortError).message).toContain("exact installed filename");
+    }
+    const linked = join(destDir, "linked.gguf");
+    symlinkSync(join(destDir, "model.gguf"), linked);
+    expect(listInstalledGgufModels(destDir).map((row) => row.filename)).toEqual(["model.gguf"]);
+    try {
+      removeInstalledGgufModel(destDir, "linked.gguf");
+      throw new Error("expected refusal");
+    } catch (error) {
+      expect(error).toBeInstanceOf(PortError);
+      expect((error as PortError).message).toContain("regular installed GGUF file");
+    }
+    expect(existsSync(join(destDir, "model.gguf"))).toBe(true);
   });
 });
 
