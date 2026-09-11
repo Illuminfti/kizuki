@@ -40,8 +40,8 @@ export function isRfc3339(s: unknown): s is string {
   if (day < 1 || day > daysInMonth(year, month)) return false;
   if (hour > 23) return false;
   if (minute > 59) return false;
-  // 60 is the leap second, permitted by RFC3339 section 5.6.
-  if (second > 60) return false;
+  // RFC3339 §5.6 leap seconds are second 60 of minute 59 only.
+  if (second > 60 || (second === 60 && minute !== 59)) return false;
   if ((m[7] ?? "").length > RFC3339_MAX_FRACTION_DIGITS) return false;
 
   const sign = m[9];
