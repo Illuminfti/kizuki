@@ -233,6 +233,12 @@ interface PurgeRow {
   purged_at: string;
 }
 
+interface PurgeProofRow {
+  receipt_id: string;
+  content_hash: string;
+  source_record_id: string;
+}
+
 interface ClaimRow {
   claim_id: string;
   kind: string;
@@ -1055,6 +1061,24 @@ function* pagePurges(db: Database): Generator<PurgeRow> {
   }
 }
 
+function* pagePurgeProofs(db: Database): Generator<PurgeProofRow> {
+  if (!tableExists(db, "event_purge_proofs")) return;
+  let after = "";
+  while (true) {
+    const rows = db
+      .query<PurgeProofRow, [string, number]>(
+        `SELECT receipt_id, content_hash, source_record_id FROM event_purge_proofs
+         WHERE receipt_id > ? ORDER BY receipt_id LIMIT ?`,
+      )
+      .all(after, PAGE);
+    if (rows.length === 0) break;
+    yield* rows;
+    const last = rows.at(-1);
+    if (last === undefined || rows.length < PAGE) break;
+    after = last.receipt_id;
+  }
+}
+
 function* pageClaims(db: Database): Generator<Record<string, unknown>> {
   if (!tableExists(db, "claims")) return;
   let cursor: { created_at: string; claim_id: string } | null = null;
@@ -1651,6 +1675,7 @@ function exportVaultOwned(
         options.signal,
       );
       writeStream(staging, "ledger/event_purges.jsonl", pagePurges(db), files, options.signal);
+      writeStream(staging, "ledger/event_purge_proofs.jsonl", pagePurgeProofs(db), files, options.signal);
       for (const table of SOURCE_BACKUP_TABLES) writeStream(staging, `ledger/${table}.jsonl`, sourcePolicyRows(db, table), files, options.signal);
       for (const table of PURGE_HISTORY_TABLES) writeStream(staging, `ledger/${table}.jsonl`, purgeHistoryRows(db, table), files, options.signal);
       writeStream(staging, "claims/claims.jsonl", pageClaims(db), files, options.signal);
@@ -2017,6 +2042,19 @@ function insertPurge(db: Database, raw: Record<string, unknown>): void {
 }
 
 const CLAIM_CONTENT_HASH = /^[0-9a-f]{64}$/;
+
+function insertPurgeProof(db: Database, raw: Record<string, unknown>): void {
+  const hash = asString(raw.content_hash, "content_hash");
+  if (!CLAIM_CONTENT_HASH.test(hash)) throw new Error("content_hash: must be a sha256 hex digest");
+  const sourceRecordId = asString(raw.source_record_id, "source_record_id");
+  if (sourceRecordId.length < 1 || sourceRecordId.length > EVENT_LIMITS.sourceRecordIdBytes) {
+    throw new Error("source_record_id: invalid length");
+  }
+  db.query(
+    `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id)
+     VALUES (?, ?, ?)`,
+  ).run(asString(raw.receipt_id, "receipt_id"), hash, sourceRecordId);
+}
 
 function restoreClaimContentHash(raw: Record<string, unknown>): string {
   const recorded = raw.content_hash;
@@ -2476,6 +2514,9 @@ export function restoreVault(
         }
         for (const row of streamRows(source, manifest, "ledger/event_purges.jsonl", true)) {
           insertPurge(db, row);
+        }
+        for (const row of streamRows(source, manifest, "ledger/event_purge_proofs.jsonl", false)) {
+          insertPurgeProof(db, row);
         }
         for (const row of streamRows(source, manifest, "claims/claims.jsonl", false)) {
           insertClaimRow(db, row);

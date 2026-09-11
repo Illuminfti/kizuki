@@ -390,6 +390,7 @@ describe("exportVault", () => {
     expect(manifest.files["ledger/events.jsonl"]?.count).toBe(1);
     expect(manifest.files["ledger/canon-machine-byte-intents.jsonl"]?.count).toBe(0);
     expect(manifest.files["ledger/event_purges.jsonl"]?.count).toBe(1);
+    expect(manifest.files["ledger/event_purge_proofs.jsonl"]?.count).toBe(1);
     expect(manifest.files["connections.jsonl"]?.count).toBe(1);
     expect(manifest.files["checkpoints.jsonl"]?.count).toBe(1);
     expect(manifest.files["rail_cursors.jsonl"]?.count).toBe(0);
@@ -652,6 +653,11 @@ describe("restoreVault", () => {
     expect(
       restored
         .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM event_purges")
+        .get()?.count,
+    ).toBe(1);
+    expect(
+      restored
+        .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM event_purge_proofs")
         .get()?.count,
     ).toBe(1);
     expect(
