@@ -22,7 +22,7 @@ beforeEach(() => {
 });
 
 describe("audit reducer", () => {
-  test("the reducer emits only undo, open, filter, page, and quit", () => {
+  test("the reducer emits only undo, open, filter and quit", () => {
     const start = state([
       item({ page_path: "people/grace.md" }),
       item({ page_path: "people/linus.md", writer: "correction" }),
@@ -122,7 +122,7 @@ describe("audit reducer", () => {
     expect(result.state.notice?.text).toContain("already reverted");
   });
 
-  test("no reducer path invokes a canon writer or approval action", () => {
+  test("no reducer path calls a canon writer", () => {
     const model = source("model.ts");
     const app = source("app.ts");
     expect(model).not.toMatch(/\b(promote|reject|ownerPromote|writePage|applyCanonWrite)\b/);
