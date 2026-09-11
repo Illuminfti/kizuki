@@ -34,7 +34,7 @@ async function fixture(options: { disconnected?: boolean; capture?: boolean; gra
   if (options.grant !== false) setSourceGrant(db, { source_key: connection.source_key, expected_revision: 0, operation_id: "fixture-grant",
     policy: { ...policy, purposes: options.capture === false ? ["export"] : policy.purposes } });
   if (options.disconnected) db.query("UPDATE connections SET disconnected_at=? WHERE source_key=?").run("2026-01-02T00:00:00.000Z", connection.source_key);
-  db.query("INSERT INTO checkpoints VALUES (?,?,?,?,?,?,?)").run("fixture", connection.source_key, "synthetic-checkpoint", "sync", "2026-01-02T00:00:00.000Z", "2026-01-02T00:00:00.000Z", JSON.stringify({ stored: 0, duplicates: 0, errors: [], proposals_created: 0, withdrawn: 0, retractions_filed: 0, cursor: "synthetic-checkpoint" }));
+  db.query("INSERT INTO checkpoints(connector_id,source_key,cursor,mode,updated_at,last_run_at,last_result) VALUES (?,?,?,?,?,?,?)").run("fixture", connection.source_key, "synthetic-checkpoint", "sync", "2026-01-02T00:00:00.000Z", "2026-01-02T00:00:00.000Z", JSON.stringify({ stored: 0, duplicates: 0, errors: [], proposals_created: 0, withdrawn: 0, retractions_filed: 0, cursor: "synthetic-checkpoint" }));
   const statePath = join(vault, ".kizuki/connections", `${connection.source_key}.state`);
   return { root, vault, db, backup, target, connection, statePath, options: { portableLocal: adapter } };
 }

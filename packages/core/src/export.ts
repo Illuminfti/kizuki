@@ -283,6 +283,7 @@ interface CheckpointRow {
   updated_at: string;
   last_run_at: string;
   last_result: string;
+  backfill_complete: number;
 }
 
 interface RailCursorRow {
@@ -1297,6 +1298,7 @@ function* pageCheckpoints(db: Database): Generator<Record<string, unknown>> {
         updated_at: row.updated_at,
         last_run_at: row.last_run_at,
         last_result: JSON.parse(row.last_result) as unknown,
+        backfill_complete: row.backfill_complete === 1 ? 1 : 0,
       };
     }
     const last: CheckpointRow | undefined = rows.at(-1);
@@ -1926,11 +1928,12 @@ function assertBackupFormat(manifest: ExportManifest): void {
   // payload and a local read generation: current v3 exports require no pending
   // intent/projection and restore an empty recovery state. No journal is copied.
   // Ledger22 adds event_purge_proofs beside existing event_purges rows.
+  // Ledger23 adds sticky checkpoint backfill_complete; omitted rows restore as 0.
   // Future migrations must make their own explicit compatibility decision.
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
       versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
       versions.ledger !== 19 && versions.ledger !== 20 &&
-      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22))) {
+      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23))) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -2269,10 +2272,14 @@ function insertCheckpointRow(db: Database, raw: Record<string, unknown>): void {
     if (cursor !== null) writeRailCursor(db, connectorId, sourceKey, cursor);
     return;
   }
+  const complete = raw.backfill_complete;
+  if (complete !== undefined && complete !== 0 && complete !== 1) {
+    throw new Error("backfill_complete must be 0 or 1");
+  }
   db.query(
     `INSERT INTO checkpoints
-       (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result, backfill_complete)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     connectorId,
     sourceKey,
@@ -2281,6 +2288,7 @@ function insertCheckpointRow(db: Database, raw: Record<string, unknown>): void {
     asString(raw.updated_at, "updated_at"),
     asString(raw.last_run_at, "last_run_at"),
     JSON.stringify(raw.last_result ?? {}),
+    complete === 1 ? 1 : 0,
   );
 }
 
@@ -2714,7 +2722,7 @@ function hasPurgeHistory(manifest: ExportManifest): boolean {
   const present = entries.filter(entry => entry !== undefined).length;
   if (present === 0) return false;
   if (present !== entries.length || manifest.schema !== BACKUP_SCHEMA ||
-      (manifest.schema_versions.ledger < 19 || manifest.schema_versions.ledger > 22) ||
+      (manifest.schema_versions.ledger < 19 || manifest.schema_versions.ledger > LEDGER_SCHEMA_VERSION) ||
       entries.some(entry => entry === undefined || !Number.isSafeInteger(entry.count) || entry.count < 0 ||
         !Number.isSafeInteger(entry.size) || entry.size < 0)) {
     throw new Error("backup completed purge history streams are incomplete or incompatible");

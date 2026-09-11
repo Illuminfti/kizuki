@@ -214,6 +214,7 @@ describe("openLedger migrations", () => {
       { name: "updated_at", notnull: 1, pk: 0 },
       { name: "last_run_at", notnull: 1, pk: 0 },
       { name: "last_result", notnull: 1, pk: 0 },
+      { name: "backfill_complete", notnull: 1, pk: 0 },
     ]);
     expect(columns("connections").map(({ name, pk }) => ({ name, pk }))).toEqual([
       { name: "connector_id", pk: 1 },

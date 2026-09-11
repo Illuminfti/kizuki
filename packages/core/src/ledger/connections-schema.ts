@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { tableColumns } from "./schema";
 
 /** Ledger v8: connection identity, unique source keys, append-only run history. */
 export function applyConnectionsV8(db: Database): void {
@@ -26,5 +27,15 @@ export function applyConnectionsV8(db: Database): void {
     ) STRICT;
     CREATE INDEX connection_runs_source_finished
       ON connection_runs(connector_id, source_key, finished_at);
+  `);
+}
+
+/** Ledger v23: sticky backfill completion that sync cannot overwrite. */
+export function applyCheckpointBackfillCompleteV23(db: Database): void {
+  if (tableColumns(db, "checkpoints").includes("backfill_complete")) return;
+  db.exec(`
+    ALTER TABLE checkpoints
+      ADD COLUMN backfill_complete INTEGER NOT NULL DEFAULT 0
+      CHECK (backfill_complete IN (0, 1));
   `);
 }

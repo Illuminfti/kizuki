@@ -322,19 +322,33 @@ function persistCheckpointRow(
   cursor: string | null,
   mode: "backfill" | "sync",
   result: RunResult,
+  backfillComplete: boolean,
 ): Checkpoint {
   const at = new Date().toISOString();
   db.query(
     `INSERT INTO checkpoints
-       (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+       (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result, backfill_complete)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (connector_id, source_key) DO UPDATE SET
        cursor = excluded.cursor,
        mode = excluded.mode,
        updated_at = excluded.updated_at,
        last_run_at = excluded.last_run_at,
-       last_result = excluded.last_result`,
-  ).run(connector_id, source_key, cursor, mode, at, at, JSON.stringify(result));
+       last_result = excluded.last_result,
+       backfill_complete = CASE
+         WHEN excluded.backfill_complete = 1 THEN 1
+         ELSE checkpoints.backfill_complete
+       END`,
+  ).run(
+    connector_id,
+    source_key,
+    cursor,
+    mode,
+    at,
+    at,
+    JSON.stringify(result),
+    backfillComplete ? 1 : 0,
+  );
   const checkpoint = getCheckpoint(db, connector_id, source_key);
   if (checkpoint === null) throw new LedgerError("saved checkpoint was not found");
   return checkpoint;
@@ -354,6 +368,7 @@ function persistRun(
   attempted_cursor: string | null,
   result: RunResult,
   status: ConnectionRunStatus,
+  backfillComplete = false,
 ): RunResult {
   const committed_cursor =
     status === "ok" ? assertCursorSize(attempted_cursor, "attempted_cursor") : previous_cursor;
@@ -377,6 +392,7 @@ function persistRun(
         committed_cursor,
         mode,
         storedResult,
+        backfillComplete,
       );
       const run: ConnectionRun = {
         run_id: ulid(),
@@ -532,6 +548,7 @@ async function runConnector(
     batch.cursor,
     processed,
     status,
+    mode === "backfill" && status === "ok" && hasMore === false,
   );
   return { result, terminal: status === "ok" && hasMore === false };
 }

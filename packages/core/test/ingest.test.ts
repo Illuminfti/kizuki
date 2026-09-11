@@ -453,9 +453,56 @@ describe("connector runs", () => {
     expect(connector.syncCursors).toEqual(["resume-here"]);
     expect(synced.cursor).toBe("after-sync");
     expect(getCheckpoint(db, "fixture", SOURCE)?.mode).toBe("sync");
+    expect(getCheckpoint(db, "fixture", SOURCE)?.backfill_complete).toBe(false);
     expect(getCheckpoint(db, "fixture", SOURCE)?.last_result).toEqual(
       synced,
     );
+    db.close();
+  });
+
+  test("a drained backfill stays complete after sync overwrites the mode", async () => {
+    const db = database();
+    const connector = new FixtureConnector(
+      { events: [validEvent()], cursor: "drained", has_more: false },
+      {
+        events: [{ ...validEvent(), source_record_id: "rec-2" }],
+        cursor: "after-sync",
+      },
+    );
+    await runBackfill(db, connector, "fixture", SOURCE);
+    expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+      mode: "backfill",
+      backfill_complete: true,
+    });
+    const synced = await runSync(db, connector, "fixture", SOURCE);
+    expect(synced.errors).toEqual([]);
+    expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+      mode: "sync",
+      cursor: "after-sync",
+      backfill_complete: true,
+    });
+    db.close();
+  });
+
+  test("sync cannot mark an incomplete backfill complete", async () => {
+    const db = database();
+    const connector = new FixtureConnector(
+      { events: [validEvent()], cursor: "more", has_more: true },
+      {
+        events: [{ ...validEvent(), source_record_id: "rec-2" }],
+        cursor: "after-sync",
+      },
+    );
+    await runBackfill(db, connector, "fixture", SOURCE);
+    expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+      mode: "backfill",
+      backfill_complete: false,
+    });
+    await runSync(db, connector, "fixture", SOURCE);
+    expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+      mode: "sync",
+      backfill_complete: false,
+    });
     db.close();
   });
 
