@@ -366,4 +366,28 @@ if ! grep -F 'missing section 15' "$rfc_fixture/err" >/dev/null; then
 fi
 rm -rf -- "$rfc_fixture"
 
+if ! grep -F 'verify-dependencies.ts' "$script_dir/verify.sh" >/dev/null; then
+  printf 'policy test failed: lockfile dependency gate is not invoked\n' >&2
+  exit 1
+fi
+if bun "$script_dir/verify-dependencies.ts" >/dev/null; then
+  :
+else
+  printf 'policy test failed: live lockfile dependency gate failed\n' >&2
+  exit 1
+fi
+deps_fixture="$(mktemp -d)"
+printf '{ "lockfileVersion": 1, "packages": { "harmless": ["@sentry/node@7.0.0"] } }\n' >"$deps_fixture/bun.lock"
+if bun "$script_dir/verify-dependencies.ts" "$deps_fixture" >/dev/null 2>"$deps_fixture/err"; then
+  printf 'policy test failed: denied lockfile dependency passed\n' >&2
+  rm -rf -- "$deps_fixture"
+  exit 1
+fi
+if ! grep -F '@sentry/node' "$deps_fixture/err" >/dev/null; then
+  printf 'policy test failed: lockfile dependency failure was not propagated\n' >&2
+  rm -rf -- "$deps_fixture"
+  exit 1
+fi
+rm -rf -- "$deps_fixture"
+
 printf 'verification policy tests passed\n'
