@@ -46,6 +46,7 @@ function addHistory(db: ReturnType<typeof openLedger>, options: { opaque?: boole
     last_result: {
       stored: 0, duplicates: 0, errors: [], proposals_created: 0, withdrawn: 0, retractions_filed: 0, cursor: "historical-cursor",
     },
+    backfill_complete: false,
   };
   db.query(`INSERT INTO checkpoints
     (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result)

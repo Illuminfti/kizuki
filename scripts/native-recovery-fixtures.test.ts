@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { realpathSync } from "node:fs";
 import { historicalRecoveryInput, replayHistoricalRecoverySql, HISTORICAL_RECOVERY_INPUTS, inspectRecoveryFixture, NATIVE_RECOVERY_PHASE_IDS } from "./native-recovery-fixtures";
-import { openLedger } from "../packages/core/src/ledger/db";
+import { LEDGER_SCHEMA_VERSION, openLedger } from "../packages/core/src/ledger/db";
 import { manageDatabaseLifetime } from "../packages/core/src/ledger/lifetime";
 import { configureLedgerWalLifecycle } from "../packages/core/src/ledger/wal-lifecycle";
 
@@ -26,7 +26,7 @@ test("historical registry binds four genuine writer inputs and six distinct nati
 });
 for(const id of ["ledger15","ledger16"]) test(`managed ${id} observation is nonmutating and migration preserves all original event and claim columns`,()=>{
  const {vault,path}=fixture(id),before=inspectRecoveryFixture(vault);expect(inspectRecoveryFixture(vault)).toEqual(before);
- const db=openLedger(path);db.close();const after=inspectRecoveryFixture(vault);expect(after.summary.schema_version).toBe(21);
+ const db=openLedger(path);db.close();const after=inspectRecoveryFixture(vault);expect(after.summary.schema_version).toBe(LEDGER_SCHEMA_VERSION);
  for(const table of ["events","claims"]){const prior=before.tables[table]??[];expect(after.tables[table]).toHaveLength(prior.length);for(const row of prior){const key=table==="events"?"event_id":"claim_id";const next=after.tables[table]!.find(value=>value[key]===row[key]);for(const field of Object.keys(row))expect(next?.[field]).toEqual(row[field]);}}
 });
 test("invalid historical text is rejected before completion and leaves every original row and schema object unchanged",()=>{

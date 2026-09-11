@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { OWNER, OWNER_AGENT_GRANT } from "../../src/agents";
-import { openLedger } from "../../src/ledger/db";
+import { LEDGER_SCHEMA_VERSION, openLedger } from "../../src/ledger/db";
 import { registerConnection } from "../../src/ledger/connections";
 import { accept } from "../../src/ledger/ledger";
 import { bindLocalSourcePort, inspectSourceGrant, resumeSourceRevocation, revokeSourceGrant, setSourceGrant } from "../../src/ledger/source-grants";
@@ -98,7 +98,7 @@ test("clean v21 backup restores canon with an empty private recovery ledger and 
   const out = `${f.vault}-backup`, target = `${f.vault}-restored`;
   cleanups.push(() => rmSync(out, { recursive: true, force: true }), () => rmSync(target, { recursive: true, force: true }));
   const manifest = exportVault(f.db, f.vault, out);
-  expect(manifest.schema_versions.ledger).toBe(21);
+  expect(manifest.schema_versions.ledger).toBe(LEDGER_SCHEMA_VERSION);
   expect(Object.keys(manifest.files).some(path => /canon_(write_intent|projection|read_generation)/.test(path))).toBe(false);
   restoreVault(out, target);
   const restored = openLedger(join(target, ".kizuki", "kizuki.db")); cleanups.push(() => restored.close());

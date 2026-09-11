@@ -98,7 +98,7 @@ describe("checkpoints", () => {
       db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM checkpoints").get(),
     ).toEqual({ count: 1 });
     expect(() =>
-      db.query("INSERT INTO checkpoints VALUES ('missing', ?, NULL, 'sync', 't', 't', '{}')").run(source),
+      db.query("INSERT INTO checkpoints(connector_id,source_key,cursor,mode,updated_at,last_run_at,last_result) VALUES ('missing', ?, NULL, 'sync', 't', 't', '{}')").run(source),
     ).toThrow();
     db.close();
   });

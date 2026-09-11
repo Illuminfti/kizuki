@@ -8,7 +8,7 @@ import { applyClaimsV3 } from "../claims/schema";
 import { applyDerivedV10 } from "../derived";
 import { applyServeV7, initServe } from "../serve/schema";
 import { applySensitivityV6 } from "../sensitivity/schema";
-import { applyConnectionsV8 } from "./connections-schema";
+import { applyCheckpointBackfillCompleteV23, applyConnectionsV8 } from "./connections-schema";
 import { LedgerStoreError } from "./errors";
 import {
   assertLedgerSchema,
@@ -190,6 +190,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 20, apply: applySourceSurvivorLineageV20 },
   { version: 21, apply: applyCanonRecoveryV21 },
   { version: 22, apply: applyEventPurgeIntegrityV22 },
+  { version: 23, apply: applyCheckpointBackfillCompleteV23 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
