@@ -159,6 +159,43 @@ describe("network source verification", () => {
     ).toEqual(["network API call: fetch"]);
   });
 
+  test("scanSourceText rejects computed keys, eval, Function, and network subprocesses", () => {
+    expect(
+      scanSourceText("packages/example.ts", "globalThis[name](\"https://example.invalid\")").map(
+        (item) => item.reason,
+      ),
+    ).toEqual(["dynamic network property access: globalThis"]);
+    expect(
+      scanSourceText("packages/example.ts", 'eval("fetch(\\"https://example.invalid\\")")').map(
+        (item) => item.reason,
+      ),
+    ).toEqual(["dynamic code: eval"]);
+    expect(
+      scanSourceText("packages/example.ts", 'new Function("return fetch")').map((item) => item.reason),
+    ).toEqual(["dynamic code: Function"]);
+    expect(
+      scanSourceText("packages/example.ts", 'Function("return fetch")').map((item) => item.reason),
+    ).toEqual(["dynamic code: Function"]);
+    expect(
+      scanSourceText(
+        "packages/example.ts",
+        'Bun.spawn(["curl", "https://example.invalid"])',
+      ).map((item) => item.reason),
+    ).toEqual(["network subprocess: curl"]);
+    expect(
+      scanSourceText(
+        "packages/example.ts",
+        'Bun.spawnSync({ cmd: ["wget", "https://example.invalid"] })',
+      ).map((item) => item.reason),
+    ).toEqual(["network subprocess: wget"]);
+    expect(
+      scanSourceText("packages/example.ts", 'spawn("nc", ["-l"])').map((item) => item.reason),
+    ).toEqual(["network subprocess: nc"]);
+    expect(
+      scanSourceText("packages/example.ts", 'Bun.spawn(["git", "status"])'),
+    ).toEqual([]);
+  });
+
   test("scanSourceText does not confuse a shadowed local function with fetch", () => {
     expect(
       scanSourceText(
