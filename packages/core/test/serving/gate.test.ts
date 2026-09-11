@@ -8,9 +8,9 @@ import {
   test,
 } from "bun:test";
 import { listAudit, revokeAgent, setGrant, TOOLS } from "../../src/agents";
-import type { AuditDenial } from "../../src/agents";
+import type { AuditDenial, DenyReason } from "../../src/agents";
 import { listClaims } from "../../src/claims/store";
-import { gate } from "../../src/serving/gate";
+import { gate, gateAsync } from "../../src/serving/gate";
 import { servePropose } from "../../src/serving/propose";
 import { serveSearch } from "../../src/serving/search";
 import type { Served } from "../../src/serving/gate";
@@ -227,7 +227,7 @@ describe("the serving gate", () => {
     ]);
   });
 
-  test("a long withheld list is bounded in the audit but exact in the envelope", () => {
+  test("a long withheld list is bounded in the audit and omitted from agent envelopes", () => {
     const ctx = fixture.agent("reader-private");
     const withheld: AuditDenial[] = [];
     for (let index = 0; index < 250; index += 1) {
@@ -242,10 +242,9 @@ describe("the serving gate", () => {
       { query: "kettle" },
       (): Served<undefined> => ({ canon: [], quoted: [], withheld }),
     );
-    expect(envelope.denied).toEqual([
-      { reason: "above_ceiling", count: 125 },
-      { reason: "missing_sensitivity", count: 125 },
-    ]);
+    expect(envelope.denied).toEqual([]);
+    expect("has_withheld" in envelope).toBe(false);
+    expect(JSON.stringify(envelope)).not.toContain("page-0");
 
     const row = listAudit(fixture.db, "reader-private", { limit: 1 })[0];
     const audited = row?.denied ?? [];
@@ -254,6 +253,74 @@ describe("the serving gate", () => {
       { id: "more:25", reason: "above_ceiling" },
       { id: "more:25", reason: "missing_sensitivity" },
     ]);
+  });
+});
+
+function withheldList(count: number): AuditDenial[] {
+  const withheld: AuditDenial[] = [];
+  for (let index = 0; index < count; index += 1) {
+    withheld.push({
+      id: `secret-page-${index}`,
+      reason: index % 2 === 0 ? "above_ceiling" : "missing_sensitivity",
+    });
+  }
+  return withheld;
+}
+
+function expectedOwnerDenied(count: number): { reason: DenyReason; count: number }[] {
+  if (count === 0) return [];
+  const above = Math.ceil(count / 2);
+  const missing = Math.floor(count / 2);
+  const denied: { reason: DenyReason; count: number }[] = [];
+  if (above > 0) denied.push({ reason: "above_ceiling", count: above });
+  if (missing > 0) denied.push({ reason: "missing_sensitivity", count: missing });
+  return denied;
+}
+
+describe("agent envelopes omit withheld counts", () => {
+  test.each([
+    { count: 0, via: "gate" as const },
+    { count: 1, via: "gate" as const },
+    { count: 250, via: "gate" as const },
+    { count: 0, via: "gateAsync" as const },
+    { count: 1, via: "gateAsync" as const },
+    { count: 250, via: "gateAsync" as const },
+  ])("agents receive empty denials via $via with $count withheld items", async ({ count, via }) => {
+    const withheld = withheldList(count);
+    const run = (): Served<undefined> => ({ canon: [], quoted: [], withheld });
+    const envelope = via === "gate"
+      ? gate(fixture.agent("reader-private"), "search", { query: "kettle" }, run)
+      : await gateAsync(fixture.agent("reader-private"), "search", { query: "kettle" }, async () => run());
+    expect(envelope.denied).toEqual([]);
+    expect("has_withheld" in envelope).toBe(false);
+    const json = JSON.stringify(envelope);
+    expect(json).not.toContain("secret-page-");
+    expect(json).not.toContain("has_withheld");
+  });
+
+  test.each([
+    { count: 0, via: "gate" as const },
+    { count: 1, via: "gate" as const },
+    { count: 250, via: "gate" as const },
+    { count: 0, via: "gateAsync" as const },
+    { count: 1, via: "gateAsync" as const },
+    { count: 250, via: "gateAsync" as const },
+  ])("owner envelopes keep counts via $via with $count withheld items", async ({ count, via }) => {
+    const withheld = withheldList(count);
+    const run = (): Served<undefined> => ({ canon: [], quoted: [], withheld });
+    const envelope = via === "gate"
+      ? gate(fixture.owner(), "search", { query: "kettle" }, run)
+      : await gateAsync(fixture.owner(), "search", { query: "kettle" }, async () => run());
+    expect(envelope.denied).toEqual(expectedOwnerDenied(count));
+    if (count > 0) expect(envelope.has_withheld).toBe(true);
+    else expect("has_withheld" in envelope).toBe(false);
+    const json = JSON.stringify(envelope);
+    expect(json).not.toContain("secret-page-");
+    const row = listAudit(fixture.db, "owner", { limit: 1 })[0];
+    if (count === 0) expect(row?.denied).toEqual([]);
+    else if (count <= 200) expect(row?.denied).toHaveLength(count);
+    else expect(row?.denied).toHaveLength(202);
+    expect(JSON.stringify(row?.denied ?? [])).not.toContain("secret-page-");
   });
 });
 

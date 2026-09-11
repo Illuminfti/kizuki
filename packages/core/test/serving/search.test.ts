@@ -44,10 +44,8 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
       query: "kettle",
     }));
     expect(pageIds(personal)).not.toContain("fact:kettle");
-    expect(personal.denied).toContainEqual({
-      reason: "above_ceiling",
-      count: 1,
-    });
+    expect(personal.denied).toEqual([]);
+    expect("has_withheld" in personal).toBe(false);
 
     const priv = (await serveSearch(fixture.agent("reader-private"), {
       query: "kettle",
@@ -89,7 +87,7 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
     const json = JSON.stringify(envelope);
     expect(json).not.toContain("fact:kettle");
     expect(json).not.toContain("Kettle protocol");
-    expect(envelope.denied.every((entry) => entry.count > 0)).toBe(true);
+    expect(envelope.denied).toEqual([]);
   });
 
   test("ledger hits arrive as quoted capture stamped tainted", async () => {
@@ -119,9 +117,7 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
       scope: "ledger",
     }));
     expect(envelope.quoted).toEqual([]);
-    expect(envelope.denied).toEqual([
-      { reason: "missing_sensitivity", count: 1 },
-    ]);
+    expect(envelope.denied).toEqual([]);
     expect("has_withheld" in envelope).toBe(false);
 
     const owner = (await serveSearch(fixture.owner(), {
@@ -129,6 +125,9 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
       scope: "ledger",
     }));
     expect(owner.has_withheld).toBe(true);
+    expect(owner.denied).toEqual([
+      { reason: "missing_sensitivity", count: 1 },
+    ]);
   });
 
   test("a types-scoped grant sees only its own page type", async () => {
@@ -248,7 +247,7 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
     );
   });
 
-  test("a withheld match past the limit is still counted", async () => {
+  test("a withheld match past the limit stays unnamed on the agent envelope", async () => {
     const isolated = await serveFixture();
     try {
       const source = isolated.events["public"] as string;
@@ -308,7 +307,7 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
         limit: 1,
       });
       expect(pageIds(envelope)).toEqual(["fact:zzza"]);
-      expect(envelope.denied).toContainEqual({ reason: "above_ceiling", count: 1 });
+      expect(envelope.denied).toEqual([]);
       expect("has_withheld" in envelope).toBe(false);
       expect(JSON.stringify(envelope)).not.toContain("fact:zzzb");
       expect(JSON.stringify(envelope)).not.toContain("Bbb zzzwalltoken");

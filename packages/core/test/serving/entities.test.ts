@@ -43,14 +43,15 @@ describe("serveEntities", () => {
     expect(titles(envelope)).toEqual(["Acme"]);
   });
 
-  test("a withheld match past the limit is still counted", () => {
+  test("a withheld match past the limit stays unnamed on the agent envelope", () => {
     const envelope = serveEntities(fixture.agent("reader-public"), {
       limit: 1,
     });
     // Acme fills the limit, Ada is servable but past it, and Grace sorts last
     // and is withheld: the count has to survive the limit being reached.
     expect(titles(envelope)).toEqual(["Acme"]);
-    expect(envelope.denied).toEqual([{ reason: "above_ceiling", count: 1 }]);
+    expect(envelope.denied).toEqual([]);
+    expect("has_withheld" in envelope).toBe(false);
     expect(JSON.stringify(envelope)).not.toContain("Grace");
   });
 
@@ -59,7 +60,8 @@ describe("serveEntities", () => {
       type: "person",
     });
     expect(titles(envelope)).toEqual(["Ada"]);
-    expect(envelope.denied).toEqual([{ reason: "above_ceiling", count: 1 }]);
+    expect(envelope.denied).toEqual([]);
+    expect("has_withheld" in envelope).toBe(false);
     expect(JSON.stringify(envelope)).not.toContain("Grace");
   });
 

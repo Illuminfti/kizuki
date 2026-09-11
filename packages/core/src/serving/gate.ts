@@ -26,7 +26,7 @@ import type {
   ServeContext,
 } from "./types";
 
-/** Keeps one audit row bounded while the envelope counts stay exact. */
+/** Keeps one audit row bounded while owner envelope counts stay exact. */
 const AUDIT_DENIAL_CAP = 200;
 
 /**
@@ -49,7 +49,7 @@ const TRUNCATION_KEY = "+truncated";
 export interface Served<T> {
   canon: CanonChunk[];
   quoted: QuotedChunk[];
-  /** Ids and reasons: audited in full, collapsed to counts for the caller. */
+  /** Ids and reasons: audited in full, collapsed to counts for the owner. */
   withheld: AuditDenial[];
   data?: T;
   /** Ids the call created, merged into the audited arguments. */
@@ -324,7 +324,7 @@ function envelopeOf<T>(
     at,
     canon: served.canon,
     quoted: served.quoted,
-    denied: collapse(served.withheld),
+    denied: live.principal.kind === "owner" ? collapse(served.withheld) : [],
     ...(live.principal.kind === "owner" && served.withheld.length > 0 ? { has_withheld: true as const } : {}),
     ...(sourcePolicyEpoch(live.db) === 0 ? {} : { source_policy: { mode: "enforced" as const, epoch: sourcePolicyEpoch(live.db), legacy_unbound: "owner_only" as const } }),
     ...(data === undefined ? {} : { data }),
