@@ -261,6 +261,27 @@ export function inspectLedgerHealth(
     }
   }
 
+  if (
+    schemaVersion !== null &&
+    schemaVersion >= 22 &&
+    tableExists(db, "event_purges") &&
+    tableExists(db, "event_purge_proofs")
+  ) {
+    const missing = oneShotGet<{ receipt_id: string }>(
+      db,
+      `SELECT p.receipt_id AS receipt_id FROM event_purges p
+       LEFT JOIN event_purge_proofs x ON x.receipt_id = p.receipt_id
+       WHERE x.receipt_id IS NULL LIMIT 1`,
+    );
+    if (missing !== null) {
+      failures.push({
+        kind: "row",
+        table: "event_purge_proofs",
+        detail: `receipt ${missing.receipt_id} has no content-hash proof`,
+      });
+    }
+  }
+
   return {
     ok: failures.length === 0,
     schema_version: schemaVersion,

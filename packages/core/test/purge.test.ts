@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CaptureEventInput } from "../src/contracts/event";
 import { initGraph } from "../src/graph/schema";
-import { openLedger } from "../src/ledger/db";
+import { inspectOpenLedgerHealth, openLedger } from "../src/ledger/db";
 import { accept, count, readSince } from "../src/ledger/ledger";
 import {
   PURGE_REASON_MAX_BYTES,
@@ -93,6 +93,14 @@ describe("purgeEvents", () => {
       content_hash: target.content_hash,
       source_record_id: target.source_record_id,
     });
+    db.exec("DELETE FROM event_purge_proofs");
+    const health = inspectOpenLedgerHealth(db);
+    expect(health.ok).toBe(false);
+    expect(health.failures.some((failure) => (
+      failure.kind === "row" &&
+      failure.table === "event_purge_proofs" &&
+      failure.detail.includes("has no content-hash proof")
+    ))).toBe(true);
     db.close();
   });
 
