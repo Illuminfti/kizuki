@@ -21,12 +21,13 @@ function instant(value: string, field: string): Instant {
   date.setUTCFullYear(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
   date.setUTCHours(Number(match[4]), Number(match[5]), Math.min(second, 59), 0);
   let epochSecond = Math.trunc(date.getTime() / 1_000);
-  if (second === 60) epochSecond += 1;
+  // Leap seconds stay in the stated minute, matching query/sql.ts.
+  const fraction = second === 60 ? "9".repeat(9) : (match[7] ?? "");
 
   const offsetSeconds = Number(match[10] ?? 0) * 3_600 + Number(match[11] ?? 0) * 60;
   if (match[9] === "+") epochSecond -= offsetSeconds;
   if (match[9] === "-") epochSecond += offsetSeconds;
-  return { epochSecond, fraction: match[7] ?? "" };
+  return { epochSecond, fraction };
 }
 
 export function compareRfc3339(

@@ -145,15 +145,7 @@ function observedStart(db: Database, eventIds: readonly string[]): string {
     ).get(id);
     if (event === null) throw new Error("produced claim source observation is unavailable");
     const observed = event.observed_at;
-    let compared = compareRfc3339(observed, "source observed_at", latest ?? observed, "source observed_at");
-    // The shared comparator aliases a leap second to the following second.
-    // At that boundary the leap second always precedes the ordinary second,
-    // regardless of either fractional part.
-    const observedLeap = /:60(?:\.|[Zz+-])/.test(observed);
-    if (latest !== undefined && observedLeap !== /:60(?:\.|[Zz+-])/.test(latest) &&
-        compareRfc3339(observed.replace(/\.\d+/, ""), "source observed_at", latest.replace(/\.\d+/, ""), "source observed_at") === 0) {
-      compared = observedLeap ? -1 : 1;
-    }
+    const compared = compareRfc3339(observed, "source observed_at", latest ?? observed, "source observed_at");
     // A multi-source claim is known as of its latest supporting observation.
     // Equivalent instants use a stable original spelling, independent of citation order.
     if (latest === undefined || compared > 0 || (compared === 0 && observed < latest)) latest = observed;
