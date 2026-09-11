@@ -127,6 +127,7 @@ assert_required_helpers() {
     "$verify_script_dir/verify-tracked-text.ts" \
     "$verify_script_dir/verify-network.ts" \
     "$verify_script_dir/verify-secrets.ts" \
+    "$verify_script_dir/verify-rfc-tests.ts" \
     "$verify_script_dir/verify-workflows.ts" \
     "$verify_script_dir/network-allowlist.txt" \
     "$verify_script_dir/verify-policy.test.sh" \
@@ -231,6 +232,8 @@ main() {
 
   bun install --frozen-lockfile
   gate install
+  bun "$verify_script_dir/verify-rfc-tests.ts"
+  gate rfc-tests
   bun run typecheck
   gate typecheck
   bun test

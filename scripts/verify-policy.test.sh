@@ -341,4 +341,29 @@ fi
 
 rm -f -- "$history_messages"
 
+if ! grep -F 'verify-rfc-tests.ts' "$script_dir/verify.sh" >/dev/null; then
+  printf 'policy test failed: rfc inventory gate is not invoked\n' >&2
+  exit 1
+fi
+if bun "$script_dir/verify-rfc-tests.ts" >/dev/null; then
+  :
+else
+  printf 'policy test failed: live rfc inventory gate failed\n' >&2
+  exit 1
+fi
+rfc_fixture="$(mktemp -d)"
+mkdir -p "$rfc_fixture/rfcs"
+printf '# RFC\n\n## 16. Worked examples\n' >"$rfc_fixture/rfcs/0002-autonomous-canon.md"
+if bun "$script_dir/verify-rfc-tests.ts" "$rfc_fixture" >/dev/null 2>"$rfc_fixture/err"; then
+  printf 'policy test failed: malformed rfc inventory passed\n' >&2
+  rm -rf -- "$rfc_fixture"
+  exit 1
+fi
+if ! grep -F 'missing section 15' "$rfc_fixture/err" >/dev/null; then
+  printf 'policy test failed: rfc inventory failure was not propagated\n' >&2
+  rm -rf -- "$rfc_fixture"
+  exit 1
+fi
+rm -rf -- "$rfc_fixture"
+
 printf 'verification policy tests passed\n'
