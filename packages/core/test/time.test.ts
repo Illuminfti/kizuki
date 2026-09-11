@@ -35,6 +35,7 @@ describe("isRfc3339", () => {
     ["offset hour 24", "2026-01-02T03:04:05+24:00"],
     ["offset minute 60", "2026-01-02T03:04:05+00:60"],
     ["an empty fraction", "2026-01-02T03:04:05.Z"],
+    ["ten fractional digits", "2026-01-02T03:04:05.1234567890Z"],
     ["trailing text", "2026-01-02T03:04:05Z "],
     ["year 0000", "0000-01-02T03:04:05Z"],
   ];
