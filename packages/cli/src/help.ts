@@ -10,7 +10,7 @@ const GROUPS: readonly { title: string; names: readonly string[] }[] = [
   { title: "Sources", names: ["connect", "backfill", "sync"] },
   { title: "Correct", names: ["tell", "undo", "audit"] },
   { title: "Run", names: ["serve", "models", "agent"] },
-  { title: "Custody", names: ["purge", "export", "restore"] },
+  { title: "Custody", names: ["purge", "export", "restore", "rebuild", "recover"] },
   { title: "Meta", names: ["version"] },
 ];
 
@@ -69,6 +69,8 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
     `${INVOCATION} restore --from ./export --verify`,
     `${INVOCATION} restore --from ./export --into ./restored`,
   ],
+  rebuild: [`${INVOCATION} rebuild`, `${INVOCATION} rebuild --prune-old`],
+  recover: [`${INVOCATION} recover`],
   version: [`${INVOCATION} version`],
 };
 

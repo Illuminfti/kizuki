@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { COMMANDS } from "../src/commands/index";
 import { createHelpers } from "./helpers";
 
@@ -32,6 +34,13 @@ describe("help", () => {
     expect(COMMANDS.map((command) => command.name)).toEqual(
       expect.arrayContaining([...IMPLEMENTED_NON_GATE_VERBS]),
     );
+  });
+
+  test("docs/cli.md documents a usage line for every live command", () => {
+    const docs = readFileSync(join(import.meta.dir, "../../../docs/cli.md"), "utf8");
+    for (const command of COMMANDS) {
+      expect(docs).toContain(`usage: kizuki ${command.name}`);
+    }
   });
 
   test("help and --help print every non-gate verb to stdout and exit 0", () => {
