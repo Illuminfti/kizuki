@@ -1925,11 +1925,12 @@ function assertBackupFormat(manifest: ExportManifest): void {
   // Ledger20 adds source-survivor lineage. Ledger21 adds nonportable recovery
   // payload and a local read generation: current v3 exports require no pending
   // intent/projection and restore an empty recovery state. No journal is copied.
+  // Ledger22 adds event_purge_proofs beside existing event_purges rows.
   // Future migrations must make their own explicit compatibility decision.
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
       versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
       versions.ledger !== 19 && versions.ledger !== 20 &&
-      !(manifest.schema === BACKUP_SCHEMA && versions.ledger === 21)) {
+      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22))) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -2713,7 +2714,7 @@ function hasPurgeHistory(manifest: ExportManifest): boolean {
   const present = entries.filter(entry => entry !== undefined).length;
   if (present === 0) return false;
   if (present !== entries.length || manifest.schema !== BACKUP_SCHEMA ||
-      (manifest.schema_versions.ledger !== 19 && manifest.schema_versions.ledger !== 20 && manifest.schema_versions.ledger !== 21) ||
+      (manifest.schema_versions.ledger < 19 || manifest.schema_versions.ledger > 22) ||
       entries.some(entry => entry === undefined || !Number.isSafeInteger(entry.count) || entry.count < 0 ||
         !Number.isSafeInteger(entry.size) || entry.size < 0)) {
     throw new Error("backup completed purge history streams are incomplete or incompatible");

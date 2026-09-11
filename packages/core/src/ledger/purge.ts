@@ -186,6 +186,8 @@ export interface PurgeHealth {
 interface PurgeCandidate {
   event_id: string;
   connector_id: string;
+  content_hash: string;
+  source_record_id: string;
 }
 
 interface PageFingerprint {
@@ -520,7 +522,7 @@ function loadCandidates(
   const { where, bindings } = selector(db, filter, includeAliases);
   return db
     .query<PurgeCandidate, string[]>(
-      `SELECT events.event_id, events.connector_id
+      `SELECT events.event_id, events.connector_id, events.content_hash, events.source_record_id
          FROM events
         WHERE ${where}
         ORDER BY events.accepted_at, events.event_id`,
@@ -998,6 +1000,10 @@ function purgeEventsOwned(
          (receipt_id, event_id, connector_id, reason, purged_at)
        VALUES (?, ?, ?, ?, ?)`,
     );
+    const insertProof = db.query<never, [string, string, string]>(
+      `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id)
+       VALUES (?, ?, ?)`,
+    );
     const deleteEvent = db.query<never, [string]>(
       "DELETE FROM events WHERE event_id = ?",
     );
@@ -1028,6 +1034,7 @@ function purgeEventsOwned(
         receipt.reason,
         receipt.purged_at,
       );
+      insertProof.run(receipt.receipt_id, candidate.content_hash, candidate.source_record_id);
       db.query("INSERT INTO purge_batch_receipts VALUES(?,?)").run(receipt.receipt_id, batchReceipt);
       const deleted = deleteEvent.run(candidate.event_id);
       assertDeleted(deleted.changes, candidate.event_id);

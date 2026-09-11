@@ -83,6 +83,16 @@ describe("purgeEvents", () => {
     expect(readSince(db, null, 10).events.map(
       ({ source_record_id }) => source_record_id,
     )).toEqual(["keep"]);
+    const proof = db
+      .query<{ content_hash: string; source_record_id: string }, [string]>(
+        `SELECT content_hash, source_record_id FROM event_purge_proofs
+          WHERE receipt_id = (SELECT receipt_id FROM event_purges WHERE event_id = ?)`,
+      )
+      .get(target.event_id);
+    expect(proof).toEqual({
+      content_hash: target.content_hash,
+      source_record_id: target.source_record_id,
+    });
     db.close();
   });
 
