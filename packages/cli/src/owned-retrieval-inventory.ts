@@ -111,3 +111,37 @@ export function createOwnedRetrievalInventory(vaultPath: string, current?: Retri
     },
   };
 }
+
+function storeName(storeId: string): string {
+  return storeId.startsWith("local:") ? storeId.slice("local:".length) : storeId;
+}
+
+/** Remove inactive owned retrieval generations. The current port, if any, is left on disk. */
+export async function pruneOldOwnedRetrieval(vaultPath: string, current?: RetrievalPort): Promise<{
+  pruned: string[];
+  kept: string | null;
+  pending: string[];
+}> {
+  const inventory = createOwnedRetrievalInventory(vaultPath, current);
+  try {
+    const listing = await inventory.stores();
+    const kept = current?.descriptor.id ?? null;
+    const pruned: string[] = [];
+    const pending: string[] = [];
+    for (const store of listing.stores) {
+      const id = storeName(store.id);
+      if (kept !== null && id === kept) continue;
+      const hadStore = present(join(resolve(vaultPath), ".kizuki/retrieval", id, "store"));
+      if (store.maintain === undefined) {
+        pending.push(id);
+        continue;
+      }
+      const result = await store.maintain();
+      if (result.owned_file_maintenance !== "complete") pending.push(id);
+      else if (hadStore) pruned.push(id);
+    }
+    return { pruned, kept, pending };
+  } finally {
+    await inventory.close();
+  }
+}

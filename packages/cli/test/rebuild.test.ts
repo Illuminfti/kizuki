@@ -2,7 +2,7 @@ import { fixtureConsent } from "./helpers";
 import { openLedgerRead } from "@kizuki/core/internal";
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHelpers } from "./helpers";
 const helpers = createHelpers();
@@ -45,7 +45,6 @@ test("offline public configured-engine rebuild preserves query results and survi
   expect(ids(retained.stdout)).toEqual(ids(after.stdout));
   expect(run("rebuild", "--layer", "vector").exitCode).toBe(2);
   expect(run("rebuild", "--port", "kizuki.retrieval.fts5").exitCode).toBe(2);
-  expect(run("rebuild", "--prune-old").exitCode).toBe(2);
 }, 120_000);
 
 
@@ -122,4 +121,43 @@ test("graph-only rebuild restores graph without refreshing search", () => {
   expect(after.cursor).toEqual(before.cursor);
   expect(after.graph).toEqual(before.graph);
   expect(helpers.runCli(setup.env, "rebuild", "--layer", "vector").exitCode).toBe(2);
+}, 60_000);
+
+test("prune-old removes an inactive FTS generation and keeps the lexical floor", async () => {
+  const setup = helpers.tempVault();
+  expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode).toBe(0);
+  expect(helpers.runCli(setup.env, "rebuild", "--json").exitCode).toBe(0);
+  const { createFts5RetrievalPort, FTS5_RETRIEVAL_ID } = await import("@kizuki/core");
+  const { SYNTHETIC_DOCS } = await import("../../core/test/contracts/fixtures");
+  const dataDir = join(setup.vault, ".kizuki/retrieval", FTS5_RETRIEVAL_ID);
+  const port = createFts5RetrievalPort({
+    vault_path: setup.vault, data_dir: dataDir, config: {},
+    clock: () => new Date().toISOString(), secrets: async () => "", logger: () => {},
+  });
+  await port.upsert(SYNTHETIC_DOCS);
+  await port.close();
+  expect(existsSync(join(dataDir, "store"))).toBe(true);
+  const reader = openLedgerRead(setup.vault);
+  let floor: unknown[] = [];
+  try { floor = reader.db.query("SELECT * FROM search_documents ORDER BY doc_id").all(); }
+  finally { reader.close(); }
+  const pruned = helpers.runCli(setup.env, "rebuild", "--prune-old", "--json");
+  expect(pruned.exitCode, pruned.stdout + pruned.stderr).toBe(0);
+  const report = JSON.parse(pruned.stdout).data;
+  expect(report).toMatchObject({ mode: "prune-old", kept: null });
+  expect(report.pruned).toContain(FTS5_RETRIEVAL_ID);
+  expect(existsSync(join(dataDir, "store"))).toBe(false);
+  const after = openLedgerRead(setup.vault);
+  try { expect(after.db.query("SELECT * FROM search_documents ORDER BY doc_id").all()).toEqual(floor); }
+  finally { after.close(); }
+  const again = helpers.runCli(setup.env, "rebuild", "--prune-old");
+  expect(again.exitCode).toBe(0);
+  expect(again.stdout).toContain("pruned=none");
+  expect(helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.fts5").exitCode).toBe(2);
+  expect(helpers.runCli(setup.env, "rebuild", "--prune-old", "--layer", "all").exitCode).toBe(2);
+  mkdirSync(join(dataDir, "store"), { recursive: true });
+  writeFileSync(join(dataDir, "store", "unknown"), "SYNTHETIC_KEEP");
+  const refused = helpers.runCli(setup.env, "rebuild", "--prune-old", "--json");
+  expect(refused.exitCode).not.toBe(0);
+  expect(readFileSync(join(dataDir, "store", "unknown"), "utf8")).toBe("SYNTHETIC_KEEP");
 }, 60_000);
