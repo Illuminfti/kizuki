@@ -83,3 +83,5 @@ scripts/native-model-endpoint.ts:(toplevel).Bun.serve#1:loopback synthetic model
 scripts/native-model-matrix.test.ts:(toplevel).fetch#1:fetch against the owned loopback native model endpoint
 scripts/native-model-matrix.test.ts:(toplevel).fetch#2:fetch against the owned loopback native model endpoint
 scripts/ci-gitleaks.sh:(toplevel).curl#1:pinned linux-x64 gitleaks CLI download with checksum
+packages/cli/src/commands/models.ts:downloadRemoteGguf.fetch#1:explicit models pull from an owner-supplied URL; requires --sha256 and --bytes, no redirects
+packages/cli/test/models.test.ts:(toplevel).Bun.serve#1:loopback synthetic GGUF for models pull tests
