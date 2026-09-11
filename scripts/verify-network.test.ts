@@ -197,6 +197,39 @@ describe("network source verification", () => {
     ).toEqual([]);
   });
 
+  test("scanSourceText rejects network subprocesses bound through variables", () => {
+    expect(
+      scanSourceText(
+        "packages/example.ts",
+        'const bin = "curl"; Bun.spawn([bin, "https://example.invalid"])',
+      ).map((item) => item.reason),
+    ).toEqual(["network subprocess: curl"]);
+    expect(
+      scanSourceText(
+        "packages/example.ts",
+        'const args = ["wget", "https://example.invalid"]; Bun.spawn(args)',
+      ).map((item) => item.reason),
+    ).toEqual(["network subprocess: wget"]);
+    expect(
+      scanSourceText(
+        "packages/example.ts",
+        'const run = Bun.spawn; run(["nc", "-l"])',
+      ).map((item) => item.reason),
+    ).toEqual(["network subprocess: nc"]);
+    expect(
+      scanSourceText(
+        "packages/example.ts",
+        'const cmd = "curl"; spawn(cmd, ["https://example.invalid"])',
+      ).map((item) => item.reason),
+    ).toEqual(["network subprocess: curl"]);
+    expect(
+      scanSourceText(
+        "packages/example.ts",
+        'const bin = "git"; Bun.spawn([bin, "status"])',
+      ),
+    ).toEqual([]);
+  });
+
   test("scanSourceText does not confuse a shadowed local function with fetch", () => {
     expect(
       scanSourceText(

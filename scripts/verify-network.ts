@@ -139,15 +139,22 @@ function networkBinaryName(value: string): string | null {
   return networkBinaries.has(base) ? base : null;
 }
 
-function networkBinaryFromArg(expr: ts.Expression | undefined): string | null {
+function networkBinaryFromArg(
+  expr: ts.Expression | undefined,
+  scope: BindingScope,
+  seen: Set<string> = new Set(),
+): string | null {
   if (expr === undefined) return null;
   const direct = staticString(expr);
   if (direct !== null) return networkBinaryName(direct);
+  if (ts.isIdentifier(expr)) {
+    if (seen.has(expr.text)) return null;
+    seen.add(expr.text);
+    return networkBinaryFromArg(scope.lookupValue(expr.text), scope, seen);
+  }
   if (ts.isArrayLiteralExpression(expr)) {
     for (const element of expr.elements) {
-      const name = staticString(element);
-      if (name === null) continue;
-      const binary = networkBinaryName(name);
+      const binary = networkBinaryFromArg(element, scope, seen);
       if (binary !== null) return binary;
     }
     return null;
@@ -159,7 +166,7 @@ function networkBinaryFromArg(expr: ts.Expression | undefined): string | null {
         ? property.name.text
         : staticString(property.name as ts.Expression);
       if (key === "cmd" || key === "file") {
-        const found = networkBinaryFromArg(property.initializer);
+        const found = networkBinaryFromArg(property.initializer, scope, seen);
         if (found !== null) return found;
       }
     }
@@ -199,6 +206,8 @@ function enclosingSymbol(node: ts.Node): string {
 
 class BindingScope {
   private readonly names = new Map<string, string | null>();
+  private readonly spawn = new Map<string, string>();
+  private readonly values = new Map<string, ts.Expression>();
   constructor(private readonly parent: BindingScope | null = null) {}
   child(): BindingScope {
     return new BindingScope(this);
@@ -206,9 +215,23 @@ class BindingScope {
   set(name: string, value: string | null): void {
     this.names.set(name, value);
   }
+  setSpawn(name: string, value: string): void {
+    this.spawn.set(name, value);
+  }
+  setValue(name: string, value: ts.Expression): void {
+    this.values.set(name, value);
+  }
   lookup(name: string): string | null | undefined {
     if (this.names.has(name)) return this.names.get(name);
     return this.parent?.lookup(name);
+  }
+  lookupSpawn(name: string): string | undefined {
+    if (this.spawn.has(name)) return this.spawn.get(name);
+    return this.parent?.lookupSpawn(name);
+  }
+  lookupValue(name: string): ts.Expression | undefined {
+    if (this.values.has(name)) return this.values.get(name);
+    return this.parent?.lookupValue(name);
   }
 }
 
@@ -218,6 +241,16 @@ function resolvedNetworkApi(expr: ts.Expression, scope: BindingScope): string | 
   if (ts.isIdentifier(expr)) {
     const bound = scope.lookup(expr.text);
     if (typeof bound === "string") return bound;
+  }
+  return null;
+}
+
+function resolvedSpawn(expr: ts.Expression, scope: BindingScope): string | null {
+  const named = expressionName(expr);
+  if (named !== null && spawnCalls.has(named)) return named;
+  if (ts.isIdentifier(expr)) {
+    const bound = scope.lookupSpawn(expr.text);
+    if (bound !== undefined) return bound;
   }
   return null;
 }
@@ -253,6 +286,11 @@ function bindVariable(decl: ts.VariableDeclaration, scope: BindingScope): void {
     const api =
       decl.initializer === undefined ? null : resolvedNetworkApi(decl.initializer, scope);
     scope.set(decl.name.text, api);
+    if (decl.initializer !== undefined) {
+      const spawn = resolvedSpawn(decl.initializer, scope);
+      if (spawn !== null) scope.setSpawn(decl.name.text, spawn);
+      scope.setValue(decl.name.text, decl.initializer);
+    }
     return;
   }
   if (
@@ -364,13 +402,14 @@ export function scanSourceText(file: string, source: string): NetworkFinding[] {
             `${enclosingSymbol(node)}.${siteToken(called)}`,
           );
         }
-        if (called !== null && spawnCalls.has(called)) {
-          const binary = networkBinaryFromArg(node.arguments[0]);
+        const spawn = resolvedSpawn(node.expression, scope);
+        if (spawn !== null) {
+          const binary = networkBinaryFromArg(node.arguments[0], scope);
           if (binary !== null) {
             add(
               node,
               `network subprocess: ${binary}`,
-              `${enclosingSymbol(node)}.${siteToken(called)}.${binary}`,
+              `${enclosingSymbol(node)}.${siteToken(spawn)}.${binary}`,
             );
           }
         }
