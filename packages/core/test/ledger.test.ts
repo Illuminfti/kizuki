@@ -219,4 +219,18 @@ describe("replay", () => {
     )).toEqual(["b", "c"]);
     db.close();
   });
+
+  test("since compares offset-equivalent instants, not lexical timestamp text", () => {
+    const db = openLedger(":memory:");
+    storedEvent(db, event("offset-inside", {
+      occurred_at: "2026-02-02T23:30:00-02:00",
+    }));
+    storedEvent(db, event("utc-before", {
+      occurred_at: "2026-02-02T22:00:00Z",
+    }));
+    expect([...replay(db, { since: "2026-02-03T00:00:00Z" })].map(
+      ({ source_record_id }) => source_record_id,
+    )).toEqual(["offset-inside"]);
+    db.close();
+  });
 });

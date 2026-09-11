@@ -6,6 +6,7 @@ import type {
   CaptureEventInput,
 } from "../contracts/event";
 import { canonicalSerialize, computeContentHash, computeLegacyContentHash, sha256Hex } from "../util/hash";
+import { instantBound, instantSql } from "../query/sql";
 import { isRfc3339 } from "../util/time";
 import { isUlid, ulid } from "../util/ulid";
 import { EventRecordError, eventFromRow as fromRow, type EventRow } from "./event-record";
@@ -406,8 +407,8 @@ function replayWhere(
     bindings.push(filter.kind);
   }
   if (filter.since !== undefined) {
-    conditions.push("events.occurred_at >= ?");
-    bindings.push(filter.since);
+    conditions.push(`${instantSql("events.occurred_at")} >= julianday(?)`);
+    bindings.push(instantBound(filter.since, "since"));
   }
   if (liveOnly) conditions.push(LIVE_PREDICATE);
   if (cursor !== null) {
