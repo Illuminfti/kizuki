@@ -295,6 +295,60 @@ describe("correct", () => {
     expect(getClaimsEpoch(fixture.db)).toBe(1);
   });
 
+  test("scope.since compares claim valid_from as instants, not strings", async () => {
+    const fixture = canonFixture();
+    fixtures.push(fixture);
+    const eventId = putEvent(fixture.db, { text: "Grace runs partnerships at Acme." });
+    const live = await storeClaim(fixture.db, eventId, {
+      valid_from: "2026-02-02T23:30:00-02:00",
+    });
+    applyCanonWrite(fixture.io, live, resolveTarget(fixture.io, live), {
+      writer: "loop",
+      budget: budget(),
+    });
+
+    const included = await correct(
+      { db: fixture.db, vault_path: fixture.vault, now: () => AT },
+      {
+        statement: STATEMENT,
+        target: { claim_id: live.claim_id },
+        scope: { since: "2026-02-03T00:00:00Z" },
+      },
+    );
+    expect(included.superseded.map((row) => row.claim_id)).toEqual([live.claim_id]);
+  });
+
+  test("scope.since excludes a later-looking offset that is still before the bound", async () => {
+    const fixture = canonFixture();
+    fixtures.push(fixture);
+    const eventId = putEvent(fixture.db, { text: "Grace runs partnerships at Acme." });
+    const live = await storeClaim(fixture.db, eventId, {
+      valid_from: "2026-02-03T10:00:00+12:00",
+    });
+    applyCanonWrite(fixture.io, live, resolveTarget(fixture.io, live), {
+      writer: "loop",
+      budget: budget(),
+    });
+
+    let caught: unknown;
+    try {
+      await correct(
+        { db: fixture.db, vault_path: fixture.vault, now: () => AT },
+        {
+          statement: STATEMENT,
+          target: { claim_id: live.claim_id },
+          scope: { since: "2026-02-03T00:00:00Z" },
+        },
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(CorrectError);
+    if (!(caught instanceof CorrectError)) return;
+    expect(caught.code).toBe("claim_unknown");
+    expect(getClaim(fixture.db, live.claim_id)?.status).toBe("live");
+  });
+
   test("relay_owner_corrections false cannot overturn a live owner correction", async () => {
     const { fixture, claimId } = await writtenGrace();
     const first = await correct(

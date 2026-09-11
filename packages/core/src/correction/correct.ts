@@ -4,6 +4,7 @@ import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../c
 import { readOwnedCanonPage } from "../canon/io";
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { toolAllowed } from "../agents/authorization";
+import { compareRfc3339 } from "../agents/time";
 import { applyCanonWriteOwned } from "../canon/apply";
 import { resolveTarget } from "../canon/arbiter";
 import { BudgetExhausted, createBudgetTracker } from "../canon/budget";
@@ -134,8 +135,12 @@ function assertGrant(io: CorrectIo): void {
 
 function inScope(claim: Claim, scope: CorrectInput["scope"]): boolean {
   if (scope === undefined) return true;
-  if (scope.since !== undefined && claim.valid_from < scope.since) return false;
-  if (scope.until !== undefined && claim.valid_from > scope.until) return false;
+  if (scope.since !== undefined && compareRfc3339(claim.valid_from, "valid_from", scope.since, "since") < 0) {
+    return false;
+  }
+  if (scope.until !== undefined && compareRfc3339(claim.valid_from, "valid_from", scope.until, "until") > 0) {
+    return false;
+  }
   return true;
 }
 
