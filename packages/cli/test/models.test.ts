@@ -38,6 +38,31 @@ describe("kizuki models pull", () => {
     expect(result.stderr).toContain("usage: kizuki models");
   });
 
+  test("an unknown catalog id makes no request and exits 2", () => {
+    const setup = tempVault();
+    const result = runCli(setup.env, "models", "pull", "no-such-model");
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("unknown model catalog id");
+  });
+
+  test("the shipped fixture catalog id has no remote pins", () => {
+    const setup = tempVault();
+    const result = runCli(setup.env, "models", "pull", "kizuki-fixture-embed");
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("no remote acquisition pins");
+  });
+
+  test("a catalog id cannot be combined with --from", () => {
+    const setup = tempVault();
+    const source = join(setup.root, "fixture.gguf");
+    writeFileSync(source, writeFixtureGguf());
+    const result = runCli(setup.env, "models", "pull", "kizuki-fixture-embed", "--from", source);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("cannot be combined with --from");
+  });
+
   test("unknown models verb exits 2", () => {
     const result = runCli(isolatedEnv(), "models", "fetch");
     expect(result.exitCode).toBe(2);
@@ -224,6 +249,15 @@ describe("kizuki models list and remove", () => {
     const empty = runCli(setup.env, "models", "list");
     expect(empty.exitCode).toBe(0);
     expect(empty.stdout).toBe("");
+  });
+
+  test("list --catalog is offline and names the shipped fixture", () => {
+    const listed = runCli(isolatedEnv(), "models", "list", "--catalog");
+    expect(listed.exitCode).toBe(0);
+    expect(listed.stderr).toBe("");
+    expect(listed.stdout).toContain("id=kizuki-fixture-embed");
+    expect(listed.stdout).toContain("filename=kizuki-fixture-embed.gguf");
+    expect(listed.stdout).toContain("remote=no");
   });
 
   test("refuses traversal, extra arguments, and unknown names", () => {

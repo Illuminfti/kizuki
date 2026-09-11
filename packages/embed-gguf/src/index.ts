@@ -31,6 +31,8 @@ export {
 } from "./space";
 export {
   GGUF_MODEL_CATALOG,
+  catalogRemoteAcquisition,
+  findGgufCatalogEntry,
   installGgufModel,
   installPartialPath,
   listInstalledGgufModels,
@@ -39,6 +41,7 @@ export {
   vaultModelsDir,
 } from "./models";
 export type {
+  CatalogRemoteAcquisition,
   GgufModelCatalogEntry,
   InstallGgufModelInput,
   InstalledGgufModel,

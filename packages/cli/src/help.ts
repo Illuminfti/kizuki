@@ -52,6 +52,8 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
   ],
   models: [
     `${INVOCATION} models list`,
+    `${INVOCATION} models list --catalog`,
+    `${INVOCATION} models pull kizuki-fixture-embed`,
     `${INVOCATION} models pull --from ./model.gguf`,
     `${INVOCATION} models remove model.gguf`,
   ],
