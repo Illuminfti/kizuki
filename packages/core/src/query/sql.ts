@@ -3,14 +3,11 @@ import type { Sensitivity } from "../agents/types";
 import { isRfc3339 } from "../util/time";
 
 /**
- * `julianday(...)` over an RFC3339 column normalized the way the frozen event
- * contract allows: lowercase `t`/`z` upper-cased, a leap second `:60` mapped
- * to `:59.999` of its own minute. `column` MUST be a column reference; it is
- * substituted several times, so a `?` placeholder is not allowed here.
- *
- * `agents/time.ts` maps a leap second to the next second for grant windows.
- * This helper maps it to the last representable instant of the stated minute
- * so window membership stays inside the stated second.
+ * `julianday(...)` over an RFC3339 column: lowercase `t`/`z` upper-cased, a
+ * leap second `:60` mapped to `:59.999` of its own minute. `column` MUST be a
+ * column reference; it is substituted several times, so a `?` placeholder is
+ * not allowed here. `agents/time.ts` uses the same minute-preserving order
+ * for grant windows.
  */
 export function instantSql(column: string): string {
   return `julianday(
@@ -33,11 +30,11 @@ export function instantSql(column: string): string {
 }
 
 function normalizeInstant(value: string): string {
-  const leap =
-    value.slice(17, 19) === "60"
-      ? `${value.slice(0, 17)}59.999${value.slice(19)}`
-      : value;
-  return leap.replace("t", "T").replace(/z$/i, "Z");
+  if (value.slice(17, 19) === "60") {
+    const suffix = /[zZ]$/.test(value) ? "Z" : value.slice(-6);
+    value = `${value.slice(0, 17)}59.999${suffix}`;
+  }
+  return value.replace("t", "T").replace(/z$/i, "Z");
 }
 
 export function instantBound(value: string, label: string): string {
