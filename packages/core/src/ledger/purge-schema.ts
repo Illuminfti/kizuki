@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { EVENT_LIMITS } from "../contracts/event";
 import { tableExists } from "./schema";
 
 /**
@@ -29,4 +30,16 @@ export function applyPurgeV5(db: Database): void {
 export function initPurgeOps(db: Database): void {
   if (tableExists(db, "purge_ops")) return;
   applyPurgeV5(db);
+}
+
+export function applyEventPurgeIntegrityV22(db: Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS event_purge_proofs (
+      receipt_id TEXT PRIMARY KEY REFERENCES event_purges(receipt_id),
+      content_hash TEXT NOT NULL CHECK (
+        length(content_hash) = 64 AND content_hash NOT GLOB '*[^0-9a-f]*'
+      ),
+      source_record_id TEXT NOT NULL CHECK (length(source_record_id) BETWEEN 1 AND ${EVENT_LIMITS.sourceRecordIdBytes})
+    ) STRICT;
+  `);
 }

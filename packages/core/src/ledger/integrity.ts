@@ -170,6 +170,11 @@ export function assertLedgerSchema(db: Database, expectedVersion: number): void 
   if (expectedVersion >= 19) assertPurgeBatchSchema(db);
   if (expectedVersion >= 20) assertSourceSurvivorLineageSchema(db);
   if (expectedVersion >= 21) assertCanonRecoverySchema(db);
+  if (expectedVersion >= 22) {
+    if (!tableExists(db, "event_purge_proofs")) {
+      throw new LedgerStoreError("corrupt", "event_purge_proofs is missing");
+    }
+  }
 }
 
 function boundedCheck(db: Database, pragma: "quick_check" | "integrity_check"): string {
