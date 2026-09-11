@@ -437,11 +437,14 @@ decision.
 ## rebuild
 
 ```text
-usage: kizuki rebuild [--layer all] [--json]
+usage: kizuki rebuild [--layer all|graph] [--json]
 ```
 
-Reconstructs the configured retrieval store and the SQLite search/graph floor
-from the vault. Only `--layer all` is supported; partial layers exit 2.
+Reconstructs derived retrieval from the vault. `--layer all` rebuilds the
+configured retrieval store and the SQLite search/graph floor. `--layer graph`
+rebuilds only the SQLite graph floor and does not refresh search; a configured
+retrieval engine refuses that partial layer and exits 1. Other layers, `--port`,
+and `--prune-old` are not implemented and exit 2.
 
 The result identifies `backend` (`sqlite-floor` or `retrieval-port`), `store`,
 `documents`, `floor_documents`, and the floor's `generation`. With default
