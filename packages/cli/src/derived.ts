@@ -1,8 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
-import type { LedgerCursor } from "@kizuki/core";
-import type { CanonReceipt } from "@kizuki/core";
+import type { CanonReceipt, CaptureEvent, LedgerCursor, RetrievalPort } from "@kizuki/core";
 import {
   count,
   isLiveCanonPage,
@@ -12,7 +11,7 @@ import {
   pendingRetrievalOps,
   readSince,
 } from "@kizuki/core";
-import { indexEvent, indexPage, removeCanonPath } from "@kizuki/core/internal";
+import { indexEvent, indexPage, publishLedgerEvent, removeCanonPath } from "@kizuki/core/internal";
 import { writeAtomicFile } from "./atomic-file";
 
 export const INDEX_CURSOR_SCHEMA = "kizuki.cli.index-cursor/v1" as const;
@@ -100,7 +99,11 @@ function eventSince(cursor: IndexCursor): LedgerCursor | null {
   return { accepted_at: cursor.accepted_at, event_id: cursor.event_id };
 }
 
-export function indexEventsFromCursor(db: Database, cursor: IndexCursor): {
+export function indexEventsFromCursor(
+  db: Database,
+  cursor: IndexCursor,
+  onEvent?: (event: CaptureEvent) => void,
+): {
   indexed: number;
   cursor: IndexCursor;
 } {
@@ -112,6 +115,7 @@ export function indexEventsFromCursor(db: Database, cursor: IndexCursor): {
     if (page.events.length === 0) break;
     for (const event of page.events) {
       indexEvent(db, event);
+      onEvent?.(event);
       indexed += 1;
     }
     if (page.cursor !== null) {
@@ -190,9 +194,13 @@ export function indexReceiptsFromCursor(
   return { indexed, cursor: { ...cursor, receipt_id: lastId, receipts_seen: seen } };
 }
 
-export function refreshDerived(db: Database, vaultPath: string): IndexReport {
+export function refreshDerived(
+  db: Database,
+  vaultPath: string,
+  onEvent?: (event: CaptureEvent) => void,
+): IndexReport {
   const start = readIndexCursor(vaultPath);
-  const events = indexEventsFromCursor(db, start);
+  const events = indexEventsFromCursor(db, start, onEvent);
   const pages = indexReceiptsFromCursor(db, vaultPath, events.cursor);
   const cursor: IndexCursor = {
     ...pages.cursor,
@@ -217,6 +225,39 @@ export function tryRefreshDerived(db: Database, vaultPath: string): IndexReport 
       cursor: readIndexCursor(vaultPath),
       degraded: [
         `derived-index: ${error instanceof Error ? error.message : String(error)}`,
+      ],
+    };
+  }
+}
+
+/** Floor index plus v1 event publication when a retrieval port is bound. */
+export async function refreshAndPublishDerived(
+  db: Database,
+  vaultPath: string,
+  retrieval: RetrievalPort | undefined,
+): Promise<IndexReport> {
+  if (retrieval === undefined) return tryRefreshDerived(db, vaultPath);
+  const pending: CaptureEvent[] = [];
+  let report: IndexReport;
+  try {
+    report = refreshDerived(db, vaultPath, (event) => pending.push(event));
+  } catch (error) {
+    return {
+      events: 0,
+      pages: 0,
+      cursor: readIndexCursor(vaultPath),
+      degraded: [`derived-index: ${error instanceof Error ? error.message : String(error)}`],
+    };
+  }
+  try {
+    for (const event of pending) await publishLedgerEvent(retrieval, event);
+    return report;
+  } catch (error) {
+    return {
+      ...report,
+      degraded: [
+        ...report.degraded,
+        `retrieval-publish: ${error instanceof Error ? error.message : String(error)}`,
       ],
     };
   }
