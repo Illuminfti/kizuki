@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   applyAllowlist,
   parseAllowlist,
+  scanPackageJsonScripts,
   scanShellText,
   scanSourceText,
   scanTrackedSources,
@@ -265,6 +266,27 @@ describe("network source verification", () => {
     ]);
   });
 
+  test("scanPackageJsonScripts rejects curl in scripts, not descriptions", () => {
+    expect(
+      scanPackageJsonScripts(
+        "package.json",
+        JSON.stringify({
+          description: "uses curl internally",
+          scripts: { fetch: "curl -fsSL https://example.invalid" },
+        }),
+      ).map((item) => item.reason),
+    ).toEqual(["network subprocess: curl"]);
+    expect(
+      scanPackageJsonScripts(
+        "package.json",
+        JSON.stringify({
+          description: "uses curl internally",
+          scripts: { test: "bun test" },
+        }),
+      ),
+    ).toEqual([]);
+  });
+
   test("scanShellText rejects curl in shell and workflow commands, not comments", () => {
     expect(
       scanShellText("scripts/tool.sh", "# curl https://example.invalid\ncurl -fsSL https://example.invalid\n").map(
@@ -295,6 +317,10 @@ describe("network source verification", () => {
       writeFileSync(join(root, "scripts", "tool.mjs"), 'fetch("https://example.invalid")\n');
       writeFileSync(join(root, "nested", "tool.cts"), 'fetch("https://example.invalid")\n');
       writeFileSync(join(root, "untracked.ts"), 'fetch("https://example.invalid")\n');
+      writeFileSync(
+        join(root, "package.json"),
+        `${JSON.stringify({ description: "uses curl internally", scripts: { fetch: "curl -fsSL https://example.invalid" } })}\n`,
+      );
       writeFileSync(join(root, "scripts", "network-allowlist.txt"), "# none\n");
       const git = (args: string[]) => {
         const result = Bun.spawnSync({
@@ -310,7 +336,7 @@ describe("network source verification", () => {
       git(["init"]);
       git(["config", "user.email", "scan@example.invalid"]);
       git(["config", "user.name", "scan"]);
-      git(["add", "root.ts", "scripts/tool.mjs", "nested/tool.cts", "scripts/network-allowlist.txt"]);
+      git(["add", "root.ts", "scripts/tool.mjs", "nested/tool.cts", "package.json", "scripts/network-allowlist.txt"]);
       git(["commit", "-m", "fixture"]);
       const scan = await scanTrackedSources({
         cwd: root,
@@ -318,6 +344,7 @@ describe("network source verification", () => {
       });
       expect(scan.findings.map((item) => item.file).sort()).toEqual([
         "nested/tool.cts",
+        "package.json",
         "root.ts",
         "scripts/tool.mjs",
       ]);

@@ -558,9 +558,15 @@ export function applyAllowlist(
 const SOURCE_FILE = /\.(?:[cm]?[jt]sx?)$/;
 const SHELL_FILE = /\.(?:sh|bash)$/;
 const WORKFLOW_FILE = /^\.github\/workflows\/.+\.ya?ml$/;
+const PACKAGE_JSON_FILE = /(?:^|\/)package\.json$/;
 
 function isScannedFile(file: string): boolean {
-  return SOURCE_FILE.test(file) || SHELL_FILE.test(file) || WORKFLOW_FILE.test(file);
+  return (
+    SOURCE_FILE.test(file) ||
+    SHELL_FILE.test(file) ||
+    WORKFLOW_FILE.test(file) ||
+    PACKAGE_JSON_FILE.test(file)
+  );
 }
 
 export function scanShellText(file: string, source: string): NetworkFinding[] {
@@ -600,6 +606,35 @@ export function scanShellText(file: string, source: string): NetworkFinding[] {
   });
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Scan npm/bun `scripts` values; descriptions and other JSON fields stay out. */
+export function scanPackageJsonScripts(file: string, source: string): NetworkFinding[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    throw new Error(`${file} is not valid JSON`);
+  }
+  if (!isPlainObject(parsed)) return [];
+  const scripts = parsed["scripts"];
+  if (!isPlainObject(scripts)) return [];
+  const findings: NetworkFinding[] = [];
+  for (const command of Object.values(scripts)) {
+    if (typeof command !== "string") continue;
+    findings.push(...scanShellText(file, command));
+  }
+  return findings;
+}
+
+function scanFile(file: string, text: string): NetworkFinding[] {
+  if (SOURCE_FILE.test(file)) return scanSourceText(file, text);
+  if (PACKAGE_JSON_FILE.test(file)) return scanPackageJsonScripts(file, text);
+  return scanShellText(file, text);
+}
+
 async function trackedSourceFiles(cwd?: string): Promise<string[]> {
   const result = Bun.spawnSync({
     cmd: ["git", "ls-files", "-z", "--"],
@@ -636,7 +671,7 @@ export async function scanTrackedSources(opts?: {
   for (const file of trackedFiles) {
     const absolute = cwd === undefined ? file : `${cwd.replace(/\/$/, "")}/${file}`;
     const text = await Bun.file(absolute).text();
-    findings.push(...(SOURCE_FILE.test(file) ? scanSourceText(file, text) : scanShellText(file, text)));
+    findings.push(...scanFile(file, text));
   }
   return applyAllowlist(findings, entries, trackedFiles);
 }
