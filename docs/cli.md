@@ -434,6 +434,17 @@ model again. Backups whose serve schema predates version 8 did not carry this
 recovery state; restore reports that limitation instead of inventing a pending
 decision.
 
+## recover
+
+```text
+usage: kizuki recover [--json]
+```
+
+Resumes interrupted memory writes and their retrieval updates. Exits 0 when
+nothing remains pending. If recovery is still pending, stderr names the
+reason when known and points at `kizuki doctor --json`. Existing holds stay
+in place.
+
 ## rebuild
 
 ```text
