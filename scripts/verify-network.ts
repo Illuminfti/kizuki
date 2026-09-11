@@ -517,6 +517,49 @@ export function applyAllowlist(
 }
 
 const SOURCE_FILE = /\.(?:[cm]?[jt]sx?)$/;
+const SHELL_FILE = /\.(?:sh|bash)$/;
+const WORKFLOW_FILE = /^\.github\/workflows\/.+\.ya?ml$/;
+
+function isScannedFile(file: string): boolean {
+  return SOURCE_FILE.test(file) || SHELL_FILE.test(file) || WORKFLOW_FILE.test(file);
+}
+
+export function scanShellText(file: string, source: string): NetworkFinding[] {
+  const pending: Array<Omit<NetworkFinding, "site"> & { base: string }> = [];
+  const lines = source.split(/\r?\n/);
+  const command = /(?:^|[`$;&|(\s])(curl|wget|ncat|netcat|nc)(?=\s|$)/g;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    const trimmed = line.trim();
+    if (trimmed.length === 0 || trimmed.startsWith("#")) continue;
+    const commandLine = trimmed.replace(/\s+#.*$/, "");
+    command.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = command.exec(commandLine)) !== null) {
+      const cmd = match[1]!;
+      const column = line.indexOf(cmd) + 1;
+      pending.push({
+        file,
+        line: index + 1,
+        column: column > 0 ? column : 1,
+        reason: `network subprocess: ${cmd}`,
+        base: `(toplevel).${cmd}`,
+      });
+    }
+  }
+  const counts = new Map<string, number>();
+  return pending.map((item) => {
+    const seen = (counts.get(item.base) ?? 0) + 1;
+    counts.set(item.base, seen);
+    return {
+      file: item.file,
+      line: item.line,
+      column: item.column,
+      reason: item.reason,
+      site: `${item.base}#${seen}`,
+    };
+  });
+}
 
 async function trackedSourceFiles(cwd?: string): Promise<string[]> {
   const result = Bun.spawnSync({
@@ -533,7 +576,7 @@ async function trackedSourceFiles(cwd?: string): Promise<string[]> {
   return result.stdout
     .toString()
     .split("\0")
-    .filter((file) => SOURCE_FILE.test(file));
+    .filter((file) => isScannedFile(file));
 }
 
 export async function scanTrackedSources(opts?: {
@@ -553,7 +596,8 @@ export async function scanTrackedSources(opts?: {
   const findings: NetworkFinding[] = [];
   for (const file of trackedFiles) {
     const absolute = cwd === undefined ? file : `${cwd.replace(/\/$/, "")}/${file}`;
-    findings.push(...scanSourceText(file, await Bun.file(absolute).text()));
+    const text = await Bun.file(absolute).text();
+    findings.push(...(SOURCE_FILE.test(file) ? scanSourceText(file, text) : scanShellText(file, text)));
   }
   return applyAllowlist(findings, entries, trackedFiles);
 }

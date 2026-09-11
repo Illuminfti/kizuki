@@ -82,3 +82,4 @@ scripts/extraction-quality-native.ts:runNativeQuality.Bun.serve#1:loopback synth
 scripts/native-model-endpoint.ts:(toplevel).Bun.serve#1:loopback synthetic model endpoint for native service tests
 scripts/native-model-matrix.test.ts:(toplevel).fetch#1:fetch against the owned loopback native model endpoint
 scripts/native-model-matrix.test.ts:(toplevel).fetch#2:fetch against the owned loopback native model endpoint
+scripts/ci-gitleaks.sh:(toplevel).curl#1:pinned linux-x64 gitleaks CLI download with checksum

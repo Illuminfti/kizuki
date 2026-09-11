@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   applyAllowlist,
   parseAllowlist,
+  scanShellText,
   scanSourceText,
   scanTrackedSources,
 } from "./verify-network";
@@ -229,6 +230,21 @@ describe("network source verification", () => {
     expect(scanSourceText("scripts/nested/tool.cts", 'fetch("https://example.invalid")')).toEqual([
       expect.objectContaining({ reason: expect.stringContaining("fetch") }),
     ]);
+  });
+
+  test("scanShellText rejects curl in shell and workflow commands, not comments", () => {
+    expect(
+      scanShellText("scripts/tool.sh", "# curl https://example.invalid\ncurl -fsSL https://example.invalid\n").map(
+        (item) => item.reason,
+      ),
+    ).toEqual(["network subprocess: curl"]);
+    expect(
+      scanShellText(
+        ".github/workflows/ci.yml",
+        "jobs:\n  test:\n    steps:\n      - run: wget https://example.invalid\n",
+      ).map((item) => item.reason),
+    ).toEqual(["network subprocess: wget"]);
+    expect(scanShellText("scripts/tool.sh", "echo curling tonight\n")).toEqual([]);
   });
 
   test("the tracked tree has no unallowlisted network calls or stale entries", async () => {
