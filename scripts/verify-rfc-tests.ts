@@ -77,10 +77,45 @@ export function verifyRfcTestInventory(root: string): string[] {
   return report.paths;
 }
 
+export const RETIRED_OWNER_GATE_VERBS = ["review", "promote", "reject"] as const;
+export const CLI_COMMANDS_REL = "packages/cli/src/commands/index.ts";
+export const CLI_MAIN_REL = "packages/cli/src/main.ts";
+export const TUI_MODEL_REL = "packages/tui/src/model.ts";
+export const CORE_INDEX_REL = "packages/core/src/index.ts";
+
+function readRequired(root: string, rel: string): string {
+  const path = join(root, rel);
+  if (!existsSync(path) || !lstatSync(path).isFile()) fail(`missing ${rel}`);
+  return readFileSync(path, "utf8");
+}
+
+/** Public seams must keep retired owner-gate effects out of live dispatch. */
+export function verifyRetiredEffects(root: string): void {
+  const commands = readRequired(root, CLI_COMMANDS_REL);
+  for (const verb of RETIRED_OWNER_GATE_VERBS) {
+    if (new RegExp(`\\b${verb}Command\\b`).test(commands)) {
+      fail(`retired owner-gate verb ${verb} is registered as a live CLI command`);
+    }
+  }
+  const main = readRequired(root, CLI_MAIN_REL);
+  if (!main.includes("isRetiredOwnerGateVerb") || !main.includes("retiredOwnerGateMessage")) {
+    fail("CLI main does not refuse retired owner-gate verbs");
+  }
+  const tui = readRequired(root, TUI_MODEL_REL);
+  if (/type:\s*"promote"/.test(tui) || /type:\s*"reject"/.test(tui) || /type:\s*"review"/.test(tui)) {
+    fail("TUI Effect includes a retired owner-gate write");
+  }
+  const core = readRequired(root, CORE_INDEX_REL);
+  if (/\bwritePage\b/.test(core)) fail("public core exports writePage");
+}
+
 function main(): void {
   try {
-    const paths = verifyRfcTestInventory(resolve(process.argv[2] ?? process.cwd()));
+    const root = resolve(process.argv[2] ?? process.cwd());
+    const paths = verifyRfcTestInventory(root);
+    verifyRetiredEffects(root);
     console.log(`rfc test inventory passed (${paths.length} named suites)`);
+    console.log("rfc retired-effect seams passed");
   } catch (error) {
     const message = error instanceof Error ? error.message : "rfc test inventory failed";
     console.error(`verification failed: ${message}`);
