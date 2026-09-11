@@ -46,6 +46,14 @@
       "heading": "Product identity"
     },
     {
+      "id": "stranger-proof.sqlite-engine",
+      "status": "shipped",
+      "doc": "docs/stranger-proof.md",
+      "heading": "Effective SQLite engine evidence",
+      "implementation": "scripts/artifact-proof.ts",
+      "test": "scripts/artifact-proof.test.ts"
+    },
+    {
       "id": "world-model",
       "status": "direction",
       "doc": "README.md",

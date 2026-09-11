@@ -44,6 +44,8 @@ see [native-build.md](native-build.md).
 
 ## Effective SQLite engine evidence
 
+Status: shipped
+
 New packages use `kizuki.artifact-proof/v3`; legacy five-file packages retain
 `kizuki.artifact-proof/v2`. Both run the same engine and journey checks. After initialization, before
 importing the synthetic source, it runs the copied `kizuki doctor --json` and
