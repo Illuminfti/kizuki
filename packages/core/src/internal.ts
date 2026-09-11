@@ -19,5 +19,6 @@ export { assertBoundVaultId } from "./serve/vault-id";
 export { startServiceCustody, runServiceCustodyBroker, validateServiceCustodyLaunch, ServiceCustodyError } from "./serve/custody";
 export type { ServiceCustodyHandle } from "./serve/custody";
 export { indexEvent, indexPage, initSearch, removeCanonPath, removeDoc } from "./search";
+export { eventRetrievalDoc, publishLedgerEvent } from "./retrieval/events";
 export { initGraph } from "./graph";
 export { rebuildDerived } from "./derived";

@@ -22,5 +22,6 @@ export {
   eraseOwnedFts5Generation,
   registerFts5RetrievalPort,
 } from "./fts5";
+export { eventRetrievalDoc, publishLedgerEvent } from "./events";
 
 registerFts5RetrievalPort();

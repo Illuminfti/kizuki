@@ -9,7 +9,7 @@ import {
   selectConnection,
 } from "../connections";
 import { withVault } from "../context";
-import { tryRefreshDerived } from "../derived";
+import { refreshAndPublishDerived } from "../derived";
 import { formatRunCounts } from "../output";
 import { createServeRuntime } from "../serve-runtime";
 import type { CliIo, Command } from "./index";
@@ -78,7 +78,7 @@ export const syncCommand: Command = {
               "sync",
               { vault_path: ctx.vaultPath },
             );
-            const derived = tryRefreshDerived(ctx.db, ctx.vaultPath);
+            const derived = await refreshAndPublishDerived(ctx.db, ctx.vaultPath, ctx.retrieval);
             io.out(
               `${selected.connection.connector_id} source=${selected.connection.source_key} ${formatRunCounts(result)}`,
             );
@@ -96,6 +96,6 @@ export const syncCommand: Command = {
         }
       }
       return failed ? 1 : 0;
-    }, { retrieval: parsed.flags.has("--once") ? "required" : "none" });
+    }, { retrieval: parsed.flags.has("--once") ? "required" : "optional" });
   },
 };

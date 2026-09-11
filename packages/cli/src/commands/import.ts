@@ -16,7 +16,7 @@ import {
   resolveConnectorId,
 } from "../connections";
 import { withVault } from "../context";
-import { tryRefreshDerived } from "../derived";
+import { refreshAndPublishDerived } from "../derived";
 import { formatRunCounts } from "../output";
 import type { CliIo, Command } from "./index";
 
@@ -168,12 +168,12 @@ export const importCommand: Command = {
         disconnect(ctx.db, selected.connection.connector_id, selected.connection.source_key);
         io.err("error: initial backfill stored no usable events; connection was not left active");
       }
-      const derived = tryRefreshDerived(ctx.db, ctx.vaultPath);
+      const derived = await refreshAndPublishDerived(ctx.db, ctx.vaultPath, ctx.retrieval);
       io.out(formatRunCounts(result));
       if (result.errors.includes("source_capture_denied")) io.err(consentHint(ctx.db, selected.connection.source_key));
       for (const text of result.errors) io.err(`error: ${text}`);
       for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
       return result.errors.length > 0 ? 1 : 0;
-    }, { retrieval: "none" });
+    }, { retrieval: "optional" });
   },
 };
