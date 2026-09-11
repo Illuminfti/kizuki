@@ -1,26 +1,29 @@
 import { SENSITIVITY_ORDER, isSensitivity } from "../agents/types";
 import type { Sensitivity } from "../agents/types";
+import { rfc3339Instant } from "../agents/time";
 import { isRfc3339 } from "../util/time";
 
 /**
- * `julianday(...)` over an RFC3339 column: lowercase `t`/`z` upper-cased, a
- * leap second `:60` mapped to `:59.999` of its own minute. `column` MUST be a
- * column reference; it is substituted several times, so a `?` placeholder is
- * not allowed here. `agents/time.ts` uses the same minute-preserving order
- * for grant windows.
+ * Integer UTC seconds plus nanoseconds for an RFC3339 column. Leap second
+ * `:60` maps to nanosecond 999999999 of minute 59. `column` MUST be a column
+ * reference; it is substituted several times, so a `?` placeholder is not
+ * allowed here. `agents/time.ts` uses the same minute-preserving order for
+ * grant windows.
  */
-export function instantSql(column: string): string {
-  return `julianday(
+function timezoneSuffixSql(column: string): string {
+  return `CASE WHEN lower(substr(${column}, -1)) = 'z' THEN 'Z' ELSE substr(${column}, -6) END`;
+}
+
+export function instantSecondSql(column: string): string {
+  const tz = timezoneSuffixSql(column);
+  return `unixepoch(
   replace(
     replace(
       CASE
         WHEN substr(${column}, 18, 2) = '60' THEN
-          substr(${column}, 1, 17) || '59.999' ||
-          CASE
-            WHEN lower(substr(${column}, -1)) = 'z' THEN 'Z'
-            ELSE substr(${column}, -6)
-          END
-        ELSE ${column}
+          substr(${column}, 1, 17) || '59' || ${tz}
+        ELSE
+          substr(${column}, 1, 19) || ${tz}
       END,
       't', 'T'
     ),
@@ -29,19 +32,35 @@ export function instantSql(column: string): string {
 )`;
 }
 
-function normalizeInstant(value: string): string {
-  if (value.slice(17, 19) === "60") {
-    const suffix = /[zZ]$/.test(value) ? "Z" : value.slice(-6);
-    value = `${value.slice(0, 17)}59.999${suffix}`;
-  }
-  return value.replace("t", "T").replace(/z$/i, "Z");
+export function instantNanoSql(column: string): string {
+  return `CASE
+  WHEN substr(${column}, 18, 2) = '60' THEN 999999999
+  WHEN substr(${column}, 20, 1) = '.' THEN CAST(substr((
+    CASE
+      WHEN lower(substr(${column}, -1)) = 'z' THEN substr(${column}, 21, length(${column}) - 21)
+      ELSE substr(${column}, 21, length(${column}) - 26)
+    END
+  ) || '000000000', 1, 9) AS INTEGER)
+  ELSE 0
+END`;
 }
 
-export function instantBound(value: string, label: string): string {
+export function instantPairSql(column: string): string {
+  return `(${instantSecondSql(column)}, ${instantNanoSql(column)})`;
+}
+
+export function instantBoundPair(value: string, label: string): [number, number] {
   if (!isRfc3339(value)) {
     throw new RangeError(`${label} must be an RFC3339 timestamp`);
   }
-  return new Date(normalizeInstant(value)).toISOString();
+  const parsed = rfc3339Instant(value, label);
+  return [parsed.epochSecond, parsed.nanos];
+}
+
+/** Millisecond ISO form for grant-window Date comparisons. */
+export function instantBound(value: string, label: string): string {
+  const [seconds, nanos] = instantBoundPair(value, label);
+  return new Date(seconds * 1_000 + Math.trunc(nanos / 1_000_000)).toISOString();
 }
 
 export function ceilingSql(column: string): string {

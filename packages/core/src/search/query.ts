@@ -5,7 +5,7 @@ import type { RetrievalAuthority } from "../contracts/retrieval";
 import { readDerivedHolds } from "../derived-holds";
 import { readDerivedMeta } from "../derived-meta";
 import { tableExists } from "../ledger/schema";
-import { ceilingSql, instantBound, instantSql, requireCeiling } from "../query/sql";
+import { ceilingSql, instantBoundPair, instantPairSql, requireCeiling } from "../query/sql";
 import { placeholders } from "../util/sql";
 import type { DocScope } from "./indexer";
 
@@ -46,7 +46,7 @@ interface SearchRow extends Omit<SearchHit, "subjects"> {
 }
 
 const BOOLEAN_OPERATORS = new Set(["AND", "OR", "NOT", "NEAR"]);
-const OCCURRED_AT_INSTANT = instantSql("search_docs.occurred_at");
+const OCCURRED_AT_PAIR = instantPairSql("search_docs.occurred_at");
 const HAS_TOKEN_CHAR = /[\p{L}\p{N}]/u;
 const MAX_QUERY_CHARS = 32_000;
 const MAX_FILTER = 1_000;
@@ -193,15 +193,15 @@ function searchPlan(
   }
   if (opts.since !== undefined) {
     clauses.push(
-      `(search_docs.scope = 'canon' OR ${OCCURRED_AT_INSTANT} >= julianday(?))`,
+      `(search_docs.scope = 'canon' OR ${OCCURRED_AT_PAIR} >= (?, ?))`,
     );
-    bindings.push(instantBound(opts.since, "search since"));
+    bindings.push(...instantBoundPair(opts.since, "search since"));
   }
   if (opts.until !== undefined) {
     clauses.push(
-      `(search_docs.scope = 'canon' OR ${OCCURRED_AT_INSTANT} < julianday(?))`,
+      `(search_docs.scope = 'canon' OR ${OCCURRED_AT_PAIR} < (?, ?))`,
     );
-    bindings.push(instantBound(opts.until, "search until"));
+    bindings.push(...instantBoundPair(opts.until, "search until"));
   }
   if (subjects !== undefined) {
     clauses.push(`EXISTS (

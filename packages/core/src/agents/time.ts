@@ -30,6 +30,12 @@ function instant(value: string, field: string): Instant {
   return { epochSecond, fraction };
 }
 
+export function rfc3339Instant(value: string, field: string): { epochSecond: number; nanos: number } {
+  const parsed = instant(value, field);
+  const nanos = Number((parsed.fraction + "000000000").slice(0, 9));
+  return { epochSecond: parsed.epochSecond, nanos: Number.isFinite(nanos) ? nanos : 0 };
+}
+
 export function compareRfc3339(
   left: string,
   leftField: string,

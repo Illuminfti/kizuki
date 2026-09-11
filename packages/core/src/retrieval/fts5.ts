@@ -41,7 +41,7 @@ import type {
   RetrievalQuery,
   RetrievalResult,
 } from "../contracts/retrieval";
-import { ceilingSql, instantBound, instantSql } from "../query/sql";
+import { ceilingSql, instantBoundPair, instantPairSql } from "../query/sql";
 import { toFtsQuery } from "../search/query";
 import { isRfc3339 } from "../util/time";
 import { isPlainObject } from "../util/validate";
@@ -69,7 +69,7 @@ export const FTS5_RETRIEVAL_DESCRIPTOR = {
   optional_package: null,
 } as const satisfies PortDescriptor;
 
-const OCCURRED_AT_INSTANT = instantSql("search_docs.occurred_at");
+const OCCURRED_AT_PAIR = instantPairSql("search_docs.occurred_at");
 const LOOKUP_CHUNK = 500;
 const SNIPPET_TOKENS = 24;
 const MATCH_ALL_SNIPPET = 160;
@@ -341,15 +341,15 @@ export class Fts5RetrievalPort implements RetrievalPort {
     }
     if (validated.scope.since !== undefined) {
       clauses.push(
-        `(search_docs.occurred_at != '' AND ${OCCURRED_AT_INSTANT} >= julianday(?))`,
+        `(search_docs.occurred_at != '' AND ${OCCURRED_AT_PAIR} >= (?, ?))`,
       );
-      bindings.push(instantBound(validated.scope.since, "retrieval since"));
+      bindings.push(...instantBoundPair(validated.scope.since, "retrieval since"));
     }
     if (validated.scope.until !== undefined) {
       clauses.push(
-        `(search_docs.occurred_at != '' AND ${OCCURRED_AT_INSTANT} < julianday(?))`,
+        `(search_docs.occurred_at != '' AND ${OCCURRED_AT_PAIR} < (?, ?))`,
       );
-      bindings.push(instantBound(validated.scope.until, "retrieval until"));
+      bindings.push(...instantBoundPair(validated.scope.until, "retrieval until"));
     }
     bindings.push(validated.limit);
 

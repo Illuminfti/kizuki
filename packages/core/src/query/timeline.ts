@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
 import { LIVE_PREDICATE } from "../ledger/ledger";
-import { ceilingSql, instantBound, instantSql, requireCeiling } from "./sql";
+import { ceilingSql, instantBoundPair, instantPairSql, instantSecondSql, instantNanoSql, requireCeiling } from "./sql";
 
 export interface TimelineOptions {
   day?: string;
@@ -38,7 +38,8 @@ interface TimelineRow {
 }
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
-const OCCURRED_AT_INSTANT = instantSql("events.occurred_at");
+const OCCURRED_AT_PAIR = instantPairSql("events.occurred_at");
+const OCCURRED_AT_ORDER = `${instantSecondSql("events.occurred_at")}, ${instantNanoSql("events.occurred_at")}`;
 const PREVIEW_CODE_POINTS = 160;
 
 function dayWindow(day: string): { since: string; until: string } {
@@ -81,18 +82,18 @@ function timelinePlan(
   if (opts.day !== undefined) {
     const window = dayWindow(opts.day);
     clauses.push(
-      `${OCCURRED_AT_INSTANT} >= julianday(?)`,
-      `${OCCURRED_AT_INSTANT} < julianday(?)`,
+      `${OCCURRED_AT_PAIR} >= (?, ?)`,
+      `${OCCURRED_AT_PAIR} < (?, ?)`,
     );
-    bindings.push(window.since, window.until);
+    bindings.push(...instantBoundPair(window.since, "timeline day start"), ...instantBoundPair(window.until, "timeline day end"));
   }
   if (opts.since !== undefined) {
-    clauses.push(`${OCCURRED_AT_INSTANT} >= julianday(?)`);
-    bindings.push(instantBound(opts.since, "timeline since"));
+    clauses.push(`${OCCURRED_AT_PAIR} >= (?, ?)`);
+    bindings.push(...instantBoundPair(opts.since, "timeline since"));
   }
   if (opts.until !== undefined) {
-    clauses.push(`${OCCURRED_AT_INSTANT} < julianday(?)`);
-    bindings.push(instantBound(opts.until, "timeline until"));
+    clauses.push(`${OCCURRED_AT_PAIR} < (?, ?)`);
+    bindings.push(...instantBoundPair(opts.until, "timeline until"));
   }
   if (opts.subject !== undefined) {
     clauses.push(`EXISTS (
@@ -117,7 +118,7 @@ function timelinePlan(
   bindings.push(limit);
 
   return {
-    tail: `FROM events WHERE ${clauses.join(" AND ")} ORDER BY ${OCCURRED_AT_INSTANT}, events.event_id LIMIT ?`,
+    tail: `FROM events WHERE ${clauses.join(" AND ")} ORDER BY ${OCCURRED_AT_ORDER}, events.event_id LIMIT ?`,
     bindings,
   };
 }

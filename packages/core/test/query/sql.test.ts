@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { SENSITIVITY_ORDER } from "../../src/agents/types";
-import { ceilingSql, instantBound, instantSql } from "../../src/query/sql";
+import { rfc3339Instant } from "../../src/agents/time";
+import {
+  ceilingSql,
+  instantBound,
+  instantBoundPair,
+  instantNanoSql,
+  instantSecondSql,
+} from "../../src/query/sql";
 
 const CONTRACT_INSTANTS = [
   "2026-02-02T23:30:00-02:00",
@@ -14,20 +21,23 @@ const CONTRACT_INSTANTS = [
 ] as const;
 
 describe("instant helpers", () => {
-  test("instantBound and instantSql agree on every contract-valid form", () => {
+  test("instantBoundPair and column SQL agree on every contract-valid form", () => {
     const db = new Database(":memory:");
     db.exec("CREATE TABLE t (v TEXT)");
     const insert = db.query<never, [string]>("INSERT INTO t (v) VALUES (?)");
-    const column = db.query<{ bound: number | null; column: number | null }, [string]>(
-      `SELECT julianday(?) AS bound, ${instantSql("t.v")} AS column FROM t`,
+    const column = db.query<{ seconds: number | null; nanos: number | null }, []>(
+      `SELECT ${instantSecondSql("t.v")} AS seconds, ${instantNanoSql("t.v")} AS nanos FROM t`,
     );
     for (const value of CONTRACT_INSTANTS) {
       db.exec("DELETE FROM t");
       insert.run(value);
-      const row = column.get(instantBound(value, "instant"));
-      expect(row?.bound).not.toBeNull();
-      expect(row?.column).not.toBeNull();
-      expect(row?.bound).toBe(row?.column);
+      const [seconds, nanos] = instantBoundPair(value, "instant");
+      const row = column.get();
+      expect(row?.seconds).toBe(seconds);
+      expect(row?.nanos).toBe(nanos);
+      const parsed = rfc3339Instant(value, "instant");
+      expect(row?.seconds).toBe(parsed.epochSecond);
+      expect(row?.nanos).toBe(parsed.nanos);
     }
   });
 
