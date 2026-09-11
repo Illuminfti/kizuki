@@ -50,7 +50,11 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
     `${INVOCATION} serve --once --no-http`,
     `${INVOCATION} serve status`,
   ],
-  models: [`${INVOCATION} models pull --from ./model.gguf`],
+  models: [
+    `${INVOCATION} models list`,
+    `${INVOCATION} models pull --from ./model.gguf`,
+    `${INVOCATION} models remove model.gguf`,
+  ],
   agent: [
     `${INVOCATION} agent add assistant --grant GRANT.json --token-ref file:/absolute/private/credential --operation-id assistant-setup-1 --dry-run`,
     `${INVOCATION} agent add assistant --grant GRANT.json --token-ref file:/absolute/private/credential --operation-id assistant-setup-1`,

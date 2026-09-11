@@ -33,6 +33,8 @@ export {
   GGUF_MODEL_CATALOG,
   installGgufModel,
   installPartialPath,
+  listInstalledGgufModels,
+  removeInstalledGgufModel,
   sha256File,
   vaultModelsDir,
 } from "./models";
@@ -40,6 +42,7 @@ export type {
   GgufModelCatalogEntry,
   InstallGgufModelInput,
   InstalledGgufModel,
+  ListedGgufModel,
 } from "./models";
 export {
   FIXTURE_DIMS,

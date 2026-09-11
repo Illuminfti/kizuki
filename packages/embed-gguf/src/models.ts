@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
 import {
   closeSync,
+  lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   statSync,
@@ -52,6 +54,13 @@ export interface InstalledGgufModel {
   readonly space: EmbeddingSpace;
 }
 
+export interface ListedGgufModel {
+  readonly filename: string;
+  readonly path: string;
+  readonly bytes: number;
+  readonly sha256: string;
+}
+
 function invalid(message: string): never {
   throw new PortError("config_invalid", message, false);
 }
@@ -79,6 +88,80 @@ export function sha256File(path: string): string {
 export function vaultModelsDir(vaultPath: string): string {
   if (!isAbsolute(vaultPath)) invalid("vault path must be absolute");
   return join(vaultPath, ".kizuki", "models");
+}
+
+function ownedGgufFilename(name: string): string {
+  if (name !== basename(name) || name.includes("\0") || name === "." || name === "..") {
+    invalid("model name must be an exact installed filename");
+  }
+  if (!name.endsWith(".gguf")) invalid("model name must be an exact installed GGUF filename");
+  return name;
+}
+
+function ownedModelPath(destDir: string, filename: string): string {
+  if (!isAbsolute(destDir)) invalid("model destination directory must be absolute");
+  let stat;
+  try {
+    stat = lstatSync(destDir);
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") unavailable(`GGUF model is missing: ${filename}`);
+    throw error;
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    invalid("models directory must be a regular directory");
+  }
+  return join(destDir, filename);
+}
+
+export function listInstalledGgufModels(destDir: string): ListedGgufModel[] {
+  if (!isAbsolute(destDir)) invalid("model destination directory must be absolute");
+  let dirStat;
+  try {
+    dirStat = lstatSync(destDir);
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") return [];
+    throw error;
+  }
+  if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+    invalid("models directory must be a regular directory");
+  }
+  const listed: ListedGgufModel[] = [];
+  for (const entry of readdirSync(destDir, { withFileTypes: true })) {
+    if (!entry.name.endsWith(".gguf") || entry.name.includes("\0")) continue;
+    const path = join(destDir, entry.name);
+    let stat;
+    try {
+      stat = lstatSync(path);
+    } catch {
+      continue;
+    }
+    if (!stat.isFile() || stat.isSymbolicLink()) continue;
+    listed.push({
+      filename: entry.name,
+      path,
+      bytes: stat.size,
+      sha256: sha256File(path),
+    });
+  }
+  listed.sort((left, right) => (left.filename < right.filename ? -1 : left.filename > right.filename ? 1 : 0));
+  return listed;
+}
+
+export function removeInstalledGgufModel(destDir: string, filename: string): string {
+  const name = ownedGgufFilename(filename);
+  const dest = ownedModelPath(destDir, name);
+  let stat;
+  try {
+    stat = lstatSync(dest);
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") unavailable(`GGUF model is missing: ${name}`);
+    throw error;
+  }
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    invalid("model name must name a regular installed GGUF file");
+  }
+  unlinkSync(dest);
+  return dest;
 }
 
 export function installGgufModel(
