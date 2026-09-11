@@ -656,6 +656,7 @@ export type {
   PurgeHealth,
   PurgeHealthFailure,
   PurgeOp,
+  PurgeOperationResult,
   PurgeOutcome,
   PurgePhaseOptions,
   PurgePreview,

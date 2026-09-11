@@ -105,20 +105,21 @@ export const purgeCommand: Command = {
           io.out(
             jsonEnvelope("purge", report.ok ? "ok" : "error", {
               ...report,
-              ops: report.proofs.map((proof) => ({
-                store: proof.store,
-                state: proof.found.length === 0 && proof.provenance.found.length === 0 ? "done" : "pending",
-                checked: proof.checked,
-                found: proof.found,
-                provenance: proof.provenance,
+              ops: report.operations.map((op) => ({
+                op_id: op.op_id,
+                store: op.store,
+                state: op.state,
+                checked: op.proof?.checked ?? 0,
+                found: op.proof?.found ?? [],
+                provenance: op.proof?.provenance ?? { checked: 0, found: [] },
               })),
             }),
           );
         } else {
-          for (const proof of report.proofs) {
-            const status = proof.found.length === 0 && proof.provenance.found.length === 0 ? "done" : "pending";
+          for (const op of report.operations) {
+            const proof = op.proof;
             io.out(
-              `${pad(proof.store, 23)} checked ${proof.checked}  found ${proof.found.length}   ${status}   provenance checked ${proof.provenance.checked}  found ${proof.provenance.found.length}`,
+              `${pad(op.store, 23)} checked ${proof?.checked ?? 0}  found ${proof?.found.length ?? 0}   ${op.state}   provenance checked ${proof?.provenance.checked ?? 0}  found ${proof?.provenance.found.length ?? 0}`,
             );
           }
           const hold = report.hold_lifted ? "hold lifted" : "hold remains";

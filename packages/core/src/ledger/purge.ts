@@ -166,10 +166,19 @@ export interface PurgeRunOptions extends PurgePhaseOptions {
 
 export interface PurgeVerifyReport {
   receipt_id: string;
+  batch_id: string | null;
   proofs: PurgeProof[];
+  operations: PurgeOperationResult[];
   pages_rewritten: number;
   hold_lifted: boolean;
   ok: boolean;
+}
+
+export interface PurgeOperationResult {
+  op_id: string;
+  store: string;
+  state: "pending" | "done";
+  proof: PurgeProof | null;
 }
 
 export interface PurgeHealthFailure {
@@ -1441,6 +1450,27 @@ export async function verifyPurge(
   return underPurgeFence(db, vaultPath, options, (scope, io) => verifyPurgeOwned(scope, io, receiptId, options));
 }
 
+function emptyVerifyReport(receiptId: string, batchId: string | null = null): PurgeVerifyReport {
+  return {
+    receipt_id: receiptId,
+    batch_id: batchId,
+    proofs: [],
+    operations: [],
+    pages_rewritten: 0,
+    hold_lifted: false,
+    ok: false,
+  };
+}
+
+function operationsFromOps(ops: readonly PurgeOp[], attempted?: ReadonlyMap<string, PurgeProof>): PurgeOperationResult[] {
+  return ops.map((op) => ({
+    op_id: op.op_id,
+    store: op.store,
+    state: op.state,
+    proof: op.state === "done" ? op.proof : attempted?.get(op.op_id) ?? op.proof,
+  }));
+}
+
 async function verifyPurgeOwned(
   scope: VaultMutationScope,
   io: CanonIo,
@@ -1453,7 +1483,7 @@ async function verifyPurgeOwned(
   const clock = options.now ?? (() => new Date().toISOString());
   const batch = readBatch(db, receiptId);
   if (batch === null || batch.state !== "ready") {
-    return { receipt_id: receiptId, proofs: [], pages_rewritten: 0, hold_lifted: false, ok: false };
+    return emptyVerifyReport(receiptId, batch?.batch_id ?? null);
   }
   const batchId = batch.batch_id;
   const eventIds = batchEventIds(db, batchId);
@@ -1461,7 +1491,7 @@ async function verifyPurgeOwned(
   let closePending = binding.owned;
   try {
   const ops = listOps(db, batchId);
-  const proofs: PurgeProof[] = [];
+  const attempted = new Map<string, PurgeProof>();
   let ok = true;
   for (const op of ops) {
     try {
@@ -1471,7 +1501,7 @@ async function verifyPurgeOwned(
         requirePurgeStore(binding.port, op);
       }
       const proof = checkedPurgeProof(owned ?? await proveOperation(binding.port!, op, eventIds, clock, false), op, eventIds);
-      proofs.push(proof);
+      attempted.set(op.op_id, proof);
       if (!proofIsEmpty(proof)) throw new PurgeError("absence_failed", "purge retrieval documents remain");
       const completed = db.query(
         `UPDATE purge_ops
@@ -1510,9 +1540,12 @@ async function verifyPurgeOwned(
         const proved = ops.find(prior => prior.op_id === op.op_id);
         return op.state !== "done" || proved === undefined || JSON.stringify(proved.ids) !== JSON.stringify(op.ids);
       })) ok = false;
+  const operations = operationsFromOps(finalOps, attempted);
   return {
     receipt_id: receiptId,
-    proofs,
+    batch_id: batchId,
+    proofs: operations.flatMap((op) => (op.state === "done" && op.proof !== null ? [op.proof] : [])),
+    operations,
     pages_rewritten: pagesRewritten,
     hold_lifted: holdLifted,
     ok,
@@ -1529,7 +1562,7 @@ export async function resumePurge(db: Database, vaultPath: string, receiptId: st
   ensureSourceBatch(db, receiptId);
   const batch = readBatch(db, receiptId);
   if (batch === null || batch.state === "legacy_unresolved") {
-    return { receipt_id: receiptId, proofs: [], pages_rewritten: 0, hold_lifted: false, ok: false };
+    return emptyVerifyReport(receiptId, batch?.batch_id ?? null);
   }
   catchUpHolds(db, vaultPath, batch.batch_id);
   const binding = bindRetrieval(vaultPath, options.retrieval, clock);
