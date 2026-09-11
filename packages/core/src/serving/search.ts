@@ -1,7 +1,8 @@
 import type { Database } from "bun:sqlite";
 import type { AuditDenial, AuditItem, Grant } from "../agents";
+import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
 import { bareRetrievalId } from "../retrieval/ids";
-import { searchResult, searchAuditCandidates } from "../search/query";
+import { searchAuditCandidates } from "../search/query";
 import type { SearchHit, SearchOptions } from "../search/query";
 import {
   enumOf,
@@ -20,7 +21,6 @@ import type { Served } from "./gate";
 import {
   eventDecision,
   quotedChunk,
-  readServableEvents,
 } from "./ledger";
 import type { CanonChunk, Envelope, QuotedChunk, ServeContext } from "./types";
 import { retrievalCandidates } from "./retrieval";
@@ -51,10 +51,8 @@ interface Classification {
 }
 
 /**
- * Classifies one pass of identities. `collect` is false for audit candidates,
- * whose only job is to say how much policy hid: a row that would be
- * served there is already in the served pass or was pushed out by the limit,
- * and either way it is not a denial.
+ * Classifies one pass of identities. The scan runs past the served limit so a
+ * match withheld further down the rank order is still counted.
  */
 function classify(
   db: Database,
@@ -62,13 +60,8 @@ function classify(
   grant: Grant,
   hits: Pick<SearchHit, "doc_id" | "scope">[],
   seen: Set<string>,
-  collect: boolean,
 ): Classification {
   const result: Classification = { canon: [], quoted: [], withheld: [] };
-  const auditFacts = collect ? null : readServableEvents(
-    db,
-    hits.filter((hit) => hit.scope === "ledger").map((hit) => bareRetrievalId(hit.doc_id)),
-  );
 
   for (const hit of hits) {
     if (seen.has(hit.doc_id)) continue;
@@ -83,23 +76,20 @@ function classify(
         result.withheld.push({ id: page.id, reason: decision.reason });
         continue;
       }
-      if (collect) {
-        result.canon.push(
-          canonChunk(index, page, decision, excerptOf(page.body, 600).excerpt, page.body.length > 600),
-        );
-      }
+      result.canon.push(
+        canonChunk(index, page, decision, excerptOf(page.body, 600).excerpt, page.body.length > 600),
+      );
       continue;
     }
 
-    const quoted = collect ? currentQuotedSource(db, bareRetrievalId(hit.doc_id)) : null;
-    const source = quoted ?? auditFacts?.get(bareRetrievalId(hit.doc_id));
-    if (source === undefined) continue;
-    const decision = eventDecision(grant, source, index.sourceContext);
+    const quoted = currentQuotedSource(db, bareRetrievalId(hit.doc_id));
+    if (quoted === null) continue;
+    const decision = eventDecision(grant, quoted, index.sourceContext);
     if (!decision.allow) {
-      result.withheld.push({ id: source.event_id, reason: decision.reason });
+      result.withheld.push({ id: quoted.event_id, reason: decision.reason });
       continue;
     }
-    if (quoted !== null) result.quoted.push(quotedChunk(quoted, decision.sensitivity));
+    result.quoted.push(quotedChunk(quoted, decision.sensitivity));
   }
 
   return result;
@@ -152,29 +142,19 @@ export async function serveSearch(
     const index = loadCanon(ctx);
     base.excludePaths = [...index.holds];
     const seen = new Set<string>();
-    const servedHits = searchResult(ctx.db, query, {
+    const ranked = searchAuditCandidates(ctx.db, query, {
       ...base,
-      ceiling: grant.ceiling,
+      limit: MAX_RETRIEVAL_LIMIT,
     });
-    const hiddenHits = searchAuditCandidates(ctx.db, query, base);
     const narrowed = { ...grant, ...(types === undefined ? {} : { types }), ...(subjects === undefined ? {} : { subjects }), ...(window.since === undefined ? {} : { since: window.since }), ...(window.until === undefined ? {} : { until: window.until }) };
-    const served = classify(
+    const classified = classify(
       ctx.db,
       index,
       narrowed,
-      [...nominated.ids.map((doc_id) => ({ doc_id, scope: doc_id.startsWith("page:") ? "canon" : "ledger" } as const)), ...servedHits.hits],
+      [...nominated.ids.map((doc_id) => ({ doc_id, scope: doc_id.startsWith("page:") ? "canon" : "ledger" } as const)), ...ranked.candidates],
       seen,
-      true,
     );
-    const hidden = classify(
-      ctx.db,
-      index,
-      grant,
-      hiddenHits.candidates,
-      seen,
-      false,
-    );
-    const canon = served.canon.slice(0, rows), quoted = served.quoted.slice(0, Math.max(0, rows - served.canon.length));
+    const canon = classified.canon.slice(0, rows), quoted = classified.quoted.slice(0, Math.max(0, rows - classified.canon.length));
     const canonicalSubjects = new Map(canon.map(chunk => [chunk.page_id, canonSubjects(index, index.byId.get(chunk.page_id)!)]));
     const projection = projectSubjectLabels(index, narrowed, at, [...canonicalSubjects.values()].flat().concat(quoted.flatMap(chunk => chunk.subjects)), canon.length + quoted.length);
     const audit = new Map<string, AuditItem>();
@@ -182,11 +162,11 @@ export async function serveSearch(
       const subjects = "page_id" in chunk ? canonicalSubjects.get(chunk.page_id)! : chunk.subjects;
       for (const item of attachSubjectLabels(projection, chunk, subjects)) audit.set(item.id, item);
     }
-    const degraded = [...new Set([...servedHits.degraded, ...hiddenHits.degraded, ...nominated.degraded, ...projection.degraded])];
+    const degraded = [...new Set([...ranked.degraded, ...nominated.degraded, ...projection.degraded])];
 
     return {
       canon, quoted, audit_served: [...audit.values()],
-      withheld: [...served.withheld, ...hidden.withheld],
+      withheld: classified.withheld,
       ...(degraded.length === 0 ? {} : { data: { degraded } }),
     };
   });

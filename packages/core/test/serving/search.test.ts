@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { rebuildDerived } from "../../src/derived";
 import { stampDerived } from "../../src/derived-meta";
 import { serveGetPage } from "../../src/serving/page";
 import { serveSearch } from "../../src/serving/search";
 import type { SearchData } from "../../src/serving/search";
 import { ServeError } from "../../src/serving/types";
 import type { Envelope } from "../../src/serving/types";
+import { recordedPage } from "../helpers/recorded-page";
 import { serveFixture } from "./helpers";
 import type { Fixture } from "./helpers";
 
@@ -237,5 +239,73 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
     expect(serveGetPage(fixture.owner(), { id: "fact:untainted" }).canon).toEqual(
       [],
     );
+  });
+
+  test("a withheld match past the limit is still counted", async () => {
+    const isolated = await serveFixture();
+    try {
+      const source = isolated.events["public"] as string;
+      const token = "zzzwalltoken";
+      await recordedPage(
+        isolated.db,
+        isolated.vaultPath,
+        "facts/zzza.md",
+        {
+          sources: [source],
+          id: "fact:zzza",
+          title: "Aaa zzzwalltoken",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+          subjects: ["person:ada"],
+        },
+        token,
+      );
+      await recordedPage(
+        isolated.db,
+        isolated.vaultPath,
+        "facts/zzzb.md",
+        {
+          sources: [source],
+          id: "fact:zzzb",
+          title: "Bbb zzzwalltoken",
+          type: "fact",
+          status: "active",
+          sensitivity: "private",
+          taint: "clean",
+          subjects: ["person:ada"],
+        },
+        token,
+      );
+      await recordedPage(
+        isolated.db,
+        isolated.vaultPath,
+        "facts/zzzc.md",
+        {
+          sources: [source],
+          id: "fact:zzzc",
+          title: "Ccc zzzwalltoken",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+          subjects: ["person:ada"],
+        },
+        token,
+      );
+      rebuildDerived(isolated.db, isolated.vaultPath);
+
+      const envelope = await serveSearch(isolated.agent("reader-public"), {
+        query: token,
+        limit: 1,
+      });
+      expect(pageIds(envelope)).toEqual(["fact:zzza"]);
+      expect(envelope.denied).toContainEqual({ reason: "above_ceiling", count: 1 });
+      expect(JSON.stringify(envelope)).not.toContain("fact:zzzb");
+      expect(JSON.stringify(envelope)).not.toContain("Bbb zzzwalltoken");
+    } finally {
+      isolated.dispose();
+    }
   });
 });
