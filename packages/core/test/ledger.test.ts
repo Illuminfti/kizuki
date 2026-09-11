@@ -233,4 +233,21 @@ describe("replay", () => {
     )).toEqual(["offset-inside"]);
     db.close();
   });
+
+  test("since distinguishes nanoseconds inside one millisecond", () => {
+    const db = openLedger(":memory:");
+    storedEvent(db, event("before", {
+      occurred_at: "2026-01-01T00:00:00.123456788Z",
+    }));
+    storedEvent(db, event("middle", {
+      occurred_at: "2026-01-01T00:00:00.123456789Z",
+    }));
+    storedEvent(db, event("after", {
+      occurred_at: "2026-01-01T00:00:00.123456790Z",
+    }));
+    expect([...replay(db, { since: "2026-01-01T00:00:00.123456789Z" })].map(
+      ({ source_record_id }) => source_record_id,
+    )).toEqual(["middle", "after"]);
+    db.close();
+  });
 });
