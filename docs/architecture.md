@@ -69,6 +69,8 @@ connectors → event ledger → extraction (deterministic → model)
 
 ## Contracts
 
+Status: designed
+
 ### kizuki.event/v1 — the frozen thin ingress
 
 ```ts

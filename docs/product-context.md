@@ -6,6 +6,8 @@ Product stage: single-person private brain first; 1.0 is not tagged
 
 ## Product identity
 
+Status: direction
+
 Kizuki is a local-first personal intelligence substrate. It is not an agent
 harness and does not own an agent loop. Harnesses, assistants, automations,
 and future interfaces connect to Kizuki as clients.

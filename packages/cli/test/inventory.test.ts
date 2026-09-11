@@ -136,3 +136,99 @@ test("documentation status inventory maps shipped claims to live files", () => {
     }
   }
 });
+
+const TAGGED_SECTIONS = [
+  {
+    id: "architecture.contracts",
+    status: "designed",
+    doc: "docs/architecture.md",
+    heading: "Contracts",
+  },
+  {
+    id: "product.identity",
+    status: "direction",
+    doc: "docs/product-context.md",
+    heading: "Product identity",
+  },
+] as const;
+
+function sectionStatus(doc: string, heading: string): string | null {
+  const marker = `## ${heading}`;
+  const start = doc.indexOf(`\n${marker}\n`);
+  const at = start >= 0 ? start + 1 : doc.startsWith(`${marker}\n`) ? 0 : -1;
+  if (at < 0) return null;
+  const rest = doc.slice(at + marker.length);
+  const next = rest.search(/\n## /);
+  const section = next < 0 ? rest : rest.slice(0, next);
+  const match = section.match(/^Status: (shipped|designed|direction)\s*$/m);
+  return match?.[1] ?? null;
+}
+
+function taggedSectionErrors(
+  entries: CapabilityStatusEntry[],
+  files: Map<string, string>,
+  required: readonly { id: string; status: string; doc: string; heading: string }[],
+): string[] {
+  const errors: string[] = [];
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  for (const want of required) {
+    const entry = byId.get(want.id);
+    if (entry === undefined) {
+      errors.push(`missing inventory entry ${want.id}`);
+      continue;
+    }
+    if (entry.status !== want.status || entry.doc !== want.doc || entry.heading !== want.heading) {
+      errors.push(`inventory ${want.id} does not match the tagged section`);
+    }
+    const doc = files.get(want.doc);
+    if (doc === undefined) {
+      errors.push(`missing document ${want.doc}`);
+      continue;
+    }
+    const label = sectionStatus(doc, want.heading);
+    if (label === null) errors.push(`missing status tag for ${want.id}`);
+    else if (label !== entry.status) errors.push(`status tag for ${want.id} is ${label}, inventory is ${entry.status}`);
+  }
+  return errors;
+}
+
+test("tagged architecture and product sections agree with the inventory", () => {
+  const inventory = JSON.parse(readFileSync(join(ROOT, "docs/capability-status.json"), "utf8")) as {
+    entries: CapabilityStatusEntry[];
+  };
+  const files = new Map(
+    TAGGED_SECTIONS.map((section) => [section.doc, readFileSync(join(ROOT, section.doc), "utf8")]),
+  );
+  expect(taggedSectionErrors(inventory.entries, files, TAGGED_SECTIONS)).toEqual([]);
+});
+
+test.each([
+  {
+    name: "missing tag",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("Status: designed\n\n", ""));
+      return entries;
+    },
+  },
+  {
+    name: "mismatched status",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("Status: designed", "Status: shipped"));
+      return entries;
+    },
+  },
+  {
+    name: "missing inventory entry",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "architecture.contracts"),
+  },
+])("$name fails the tagged-section check", ({ mutate }) => {
+  const inventory = JSON.parse(readFileSync(join(ROOT, "docs/capability-status.json"), "utf8")) as {
+    entries: CapabilityStatusEntry[];
+  };
+  const files = new Map(
+    TAGGED_SECTIONS.map((section) => [section.doc, readFileSync(join(ROOT, section.doc), "utf8")]),
+  );
+  const entries = mutate(files, [...inventory.entries]);
+  expect(taggedSectionErrors(entries, files, TAGGED_SECTIONS).length).toBeGreaterThan(0);
+});
