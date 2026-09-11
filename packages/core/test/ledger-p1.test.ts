@@ -267,6 +267,31 @@ describe("ledger p1 store", () => {
     expect(typeof core.LedgerStoreError).toBe("function");
   });
 
+  test("accepted_at is stamped after the write transaction holds the lock", () => {
+    const db = openLedger(":memory:");
+    const original = Date.prototype.toISOString;
+    let inTransaction = false;
+    Date.prototype.toISOString = function toISOString(this: Date) {
+      inTransaction = db.inTransaction;
+      return original.call(this);
+    };
+    try {
+      const first = stored(db, "rec-a");
+      expect(inTransaction).toBe(true);
+      const second = stored(db, "rec-b");
+      const stamps = db.query<{ event_id: string; accepted_at: string }, []>(
+        "SELECT event_id, accepted_at FROM events ORDER BY accepted_at, event_id",
+      ).all();
+      expect(stamps.map((row) => row.event_id)).toEqual([first.event_id, second.event_id]);
+      expect(stamps[0]!.accepted_at <= stamps[1]!.accepted_at).toBe(true);
+      const page = readSince(db, null, 10);
+      expect(page.events.map((event) => event.event_id)).toEqual([first.event_id, second.event_id]);
+    } finally {
+      Date.prototype.toISOString = original;
+      db.close();
+    }
+  });
+
   test("a claims write leaves close(true) possible", async () => {
     const db = openLedger(":memory:");
     try {
