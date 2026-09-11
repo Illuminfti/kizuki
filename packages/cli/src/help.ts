@@ -1,7 +1,8 @@
-import type { Command } from "./commands/index";
+import type { Command, CommandHelpSchema } from "./commands/index";
 import { UsageError } from "./args";
 import { RETIRED_OWNER_GATE_VERBS } from "./retired";
 import { INVOCATION, IS_COMPILED } from "./runtime";
+import { jsonEnvelope } from "./output";
 export { INVOCATION } from "./runtime";
 
 const GROUPS: readonly { title: string; names: readonly string[] }[] = [
@@ -133,13 +134,81 @@ export function printRootHelp(
   write(IS_COMPILED ? "Setup guide: README.txt beside these executables." : "Docs: README.md · docs/cli.md · docs/architecture.md");
 }
 
+const EXIT_CODES = [
+  { code: 0, meaning: "ok" },
+  { code: 1, meaning: "runtime error" },
+  { code: 2, meaning: "usage error" },
+] as const;
+
+function schemaOf(command: Command): CommandHelpSchema {
+  return command.schema ?? { options: [], flags: [] };
+}
+
+export function commandHelpData(command: Command): {
+  name: string;
+  usage: string;
+  summary: string;
+  options: readonly string[];
+  flags: readonly string[];
+  defaults: Readonly<Record<string, string>>;
+  bounds: Readonly<Record<string, string>>;
+  irreversible: boolean;
+  examples: readonly string[];
+  exit_codes: readonly { code: number; meaning: string }[];
+} {
+  const schema = schemaOf(command);
+  return {
+    name: command.name,
+    usage: command.usage,
+    summary: command.summary,
+    options: schema.options,
+    flags: schema.flags,
+    defaults: schema.defaults ?? {},
+    bounds: schema.bounds ?? {},
+    irreversible: schema.irreversible === true,
+    examples: EXAMPLES[command.name] ?? [],
+    exit_codes: EXIT_CODES,
+  };
+}
+
 export function printCommandHelp(
   write: (line: string) => void,
   command: Command,
+  options: { json?: boolean } = {},
 ): void {
+  if (options.json === true) {
+    write(jsonEnvelope("help", "ok", commandHelpData(command)));
+    return;
+  }
   write(`usage: kizuki ${command.usage}`);
   write("");
   write(command.summary);
+  const schema = schemaOf(command);
+  if (schema.options.length > 0) {
+    write("");
+    write("Options");
+    for (const name of schema.options) {
+      const parts = [name];
+      const bounds = schema.bounds?.[name];
+      const fallback = schema.defaults?.[name];
+      if (bounds !== undefined) parts.push(bounds);
+      if (fallback !== undefined) parts.push(`default ${fallback}`);
+      write(`  ${parts.join("  ")}`);
+    }
+  }
+  if (schema.flags.length > 0) {
+    write("");
+    write("Flags");
+    for (const name of schema.flags) write(`  ${name}`);
+  }
+  if (schema.irreversible === true) {
+    write("");
+    write("Irreversible");
+    write("  Physical event deletion cannot be undone. Canon rewrites stay reversible by receipt.");
+  }
+  write("");
+  write("Exit codes");
+  for (const item of EXIT_CODES) write(`  ${item.code}  ${item.meaning}`);
   const examples = EXAMPLES[command.name];
   if (examples === undefined || examples.length === 0) return;
   write("");

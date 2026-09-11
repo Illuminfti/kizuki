@@ -153,4 +153,77 @@ describe("help", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("0.1.0\n");
   });
+
+  test("query --help names defaults, bounds, flags, and exit codes", () => {
+    const result = runCli(isolatedEnv(), "query", "--help");
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("usage: kizuki query <text>");
+    expect(result.stdout).toContain("--scope  canon|ledger|all  default all");
+    expect(result.stdout).toContain("--limit  1..50  default 20");
+    expect(result.stdout).toContain("--degraded");
+    expect(result.stdout).toContain("Exit codes");
+    expect(result.stdout).toContain("2  usage error");
+    expect(result.stdout).not.toContain("Irreversible");
+  });
+
+  test("query --help --json emits the command schema", () => {
+    const result = runCli(isolatedEnv(), "query", "--help", "--json");
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    const body = JSON.parse(result.stdout) as {
+      schema: string;
+      status: string;
+      data: {
+        name: string;
+        options: string[];
+        flags: string[];
+        defaults: Record<string, string>;
+        bounds: Record<string, string>;
+        irreversible: boolean;
+        exit_codes: { code: number; meaning: string }[];
+      };
+    };
+    expect(body.schema).toBe("kizuki.cli.help/v1");
+    expect(body.status).toBe("ok");
+    expect(body.data.name).toBe("query");
+    expect(body.data.options).toEqual(["--scope", "--limit"]);
+    expect(body.data.flags).toEqual(["--json", "--degraded"]);
+    expect(body.data.defaults).toEqual({ "--scope": "all", "--limit": "20" });
+    expect(body.data.bounds).toEqual({ "--scope": "canon|ledger|all", "--limit": "1..50" });
+    expect(body.data.irreversible).toBe(false);
+    expect(body.data.exit_codes.map((item) => item.code)).toEqual([0, 1, 2]);
+  });
+
+  test("help purge --json marks selector options irreversible", () => {
+    const text = runCli(isolatedEnv(), "purge", "--help");
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("Irreversible");
+    expect(text.stdout).toContain("--event");
+    expect(text.stdout).toContain("--verify");
+    const result = runCli(isolatedEnv(), "help", "purge", "--json");
+    expect(result.exitCode).toBe(0);
+    const body = JSON.parse(result.stdout) as {
+      data: { name: string; irreversible: boolean; options: string[]; flags: string[] };
+    };
+    expect(body.data.name).toBe("purge");
+    expect(body.data.irreversible).toBe(true);
+    expect(body.data.options).toEqual([
+      "--event",
+      "--subject",
+      "--source",
+      "--connector",
+      "--record",
+      "--reason",
+      "--verify",
+    ]);
+    expect(body.data.flags).toContain("--dry-run");
+  });
+
+  test("command help --json with extra arguments is usage", () => {
+    const result = runCli(isolatedEnv(), "query", "--help", "--json", "extra");
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("error: invalid arguments");
+    expect(result.stderr).toContain("usage: kizuki query");
+  });
 });
