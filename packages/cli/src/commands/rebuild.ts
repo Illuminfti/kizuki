@@ -1,4 +1,4 @@
-import { rebuildRetrieval } from "@kizuki/core";
+import { FTS5_RETRIEVAL_ID, rebuildRetrieval } from "@kizuki/core";
 import { parseArguments, UsageError } from "../args";
 import { withVault } from "../context";
 import { jsonEnvelope } from "../output";
@@ -8,17 +8,18 @@ import type { Command } from "./index";
 
 export const rebuildCommand: Command = {
   name: "rebuild",
-  usage: "rebuild [--layer all|graph] [--prune-old] [--json]",
+  usage: "rebuild [--layer all|graph] [--port ID] [--prune-old] [--json]",
   summary: "rebuild configured retrieval and the lexical floor, or prune inactive retrieval stores",
   async run(io, args) {
-    const parsed = parseArguments(args, { options: ["--layer"], flags: ["--json", "--prune-old"] });
+    const parsed = parseArguments(args, { options: ["--layer", "--port"], flags: ["--json", "--prune-old"] });
     const layer = parsed.options.get("--layer") ?? "all";
     const pruneOld = parsed.flags.has("--prune-old");
+    const portId = parsed.options.get("--port");
     if (parsed.positionals.length > 0 || (layer !== "all" && layer !== "graph")) {
       throw new UsageError("rebuild supports --layer all or graph; other partial layers are not implemented");
     }
-    if (pruneOld && parsed.options.has("--layer")) {
-      throw new UsageError("rebuild --prune-old cannot be combined with --layer");
+    if (pruneOld && (parsed.options.has("--layer") || portId !== undefined)) {
+      throw new UsageError("rebuild --prune-old cannot be combined with --layer or --port");
     }
     return withVault(io, async ctx => {
       if (pruneOld) {
@@ -30,6 +31,10 @@ export const rebuildCommand: Command = {
           ? jsonEnvelope("rebuild", "ok", { mode: "prune-old", ...result })
           : `pruned=${result.pruned.join(",") || "none"} kept=${result.kept ?? "sqlite-floor"}`);
         return 0;
+      }
+      const bound = ctx.retrieval?.descriptor.id ?? FTS5_RETRIEVAL_ID;
+      if (portId !== undefined && portId !== bound) {
+        throw new UsageError(`rebuild --port must name the bound store (${bound})`);
       }
       const result = await rebuildRetrieval(ctx.db, ctx.vaultPath, ctx.retrieval, { layer });
       if (layer === "all") refreshDerived(ctx.db, ctx.vaultPath);

@@ -64,6 +64,10 @@ test("default rebuild JSON and text identify the actual SQLite floor count", () 
     expect(text.exitCode).toBe(0);
     expect(text.stdout).toContain(`rebuilt=${actual} backend=sqlite-floor`);
     expect(text.stdout).toContain(`floor_documents=${actual}`);
+    const named = helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.fts5", "--json");
+    expect(named.exitCode, named.stdout + named.stderr).toBe(0);
+    expect(JSON.parse(named.stdout).data.store).toBe("kizuki.retrieval.fts5");
+    expect(helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.embedded-pg").exitCode).toBe(2);
   } finally { reader.close(); }
 });
 
@@ -153,8 +157,9 @@ test("prune-old removes an inactive FTS generation and keeps the lexical floor",
   const again = helpers.runCli(setup.env, "rebuild", "--prune-old");
   expect(again.exitCode).toBe(0);
   expect(again.stdout).toContain("pruned=none");
-  expect(helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.fts5").exitCode).toBe(2);
+  expect(helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.no-such").exitCode).toBe(2);
   expect(helpers.runCli(setup.env, "rebuild", "--prune-old", "--layer", "all").exitCode).toBe(2);
+  expect(helpers.runCli(setup.env, "rebuild", "--prune-old", "--port", "kizuki.retrieval.fts5").exitCode).toBe(2);
   mkdirSync(join(dataDir, "store"), { recursive: true });
   writeFileSync(join(dataDir, "store", "unknown"), "SYNTHETIC_KEEP");
   const refused = helpers.runCli(setup.env, "rebuild", "--prune-old", "--json");

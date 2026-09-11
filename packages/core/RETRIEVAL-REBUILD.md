@@ -1,6 +1,6 @@
 # Public authoritative retrieval rebuild
 
-`kizuki rebuild [--layer all|graph] [--prune-old] [--json]` reconstructs derived retrieval
+`kizuki rebuild [--layer all|graph] [--port ID] [--prune-old] [--json]` reconstructs derived retrieval
 from the named vault. `--layer all` rebuilds the configured retrieval store and
 the SQLite lexical/search/graph floor. With the default FTS selection, only the
 existing lexical floor is rebuilt; no second FTS store is opened. `--layer graph`
@@ -17,11 +17,11 @@ rows and the port's authorized projection can have different counts; serving
 still applies current authority and access checks to either backend's results.
 `--prune-old` does not rebuild. It erases inactive owned retrieval generations
 and leaves the currently bound engine, or the SQLite floor when none is bound.
-Unsafe or busy roots stay pending and refuse the command. Other
-`--layer` values and `--port` are explicitly refused. RFC 0002
-sections 9.6 and 18.3 describe layer-specific rebuilds; this implementation
-provides full reconstruction, graph-only SQLite floor rebuild, and prune-old,
-not port switching.
+Unsafe or busy roots stay pending and refuse the command. `--port ID` must name
+the currently bound store and does not switch engines. Other `--layer` values
+are explicitly refused. RFC 0002 sections 9.6 and 18.3 describe layer-specific
+rebuilds; this implementation provides full reconstruction, graph-only SQLite
+floor rebuild, bound-port naming, and prune-old.
 
 `readRetrievalDocuments(db, vaultPath)` is the shared projection boundary. It
 reads current canon bytes and their hash-bound receipt authority, live events
