@@ -75,6 +75,7 @@ export const queryCommand: Command = {
       ];
       ctx.assertCurrent();
       const withheld = envelope.denied.reduce((sum, item) => sum + item.count, 0);
+      const hasWithheld = envelope.has_withheld === true;
       const degraded = [...new Set([...freshness.degraded, ...(envelope.data?.degraded ?? [])])];
       if (withheld > 0) io.err(`withheld=${withheld} (excluded by access policy)`);
       if (degraded.length > 0) io.err(`degraded=${degraded.join(",")}`);
@@ -84,7 +85,7 @@ export const queryCommand: Command = {
           jsonEnvelope(
             "query",
             degraded.length === 0 ? "ok" : "degraded",
-            { hits, withheld },
+            { hits, withheld, ...(hasWithheld ? { has_withheld: true } : {}) },
             { degraded },
           ),
         );

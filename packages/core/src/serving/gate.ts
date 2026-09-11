@@ -325,6 +325,7 @@ function envelopeOf<T>(
     canon: served.canon,
     quoted: served.quoted,
     denied: collapse(served.withheld),
+    ...(live.principal.kind === "owner" && served.withheld.length > 0 ? { has_withheld: true as const } : {}),
     ...(sourcePolicyEpoch(live.db) === 0 ? {} : { source_policy: { mode: "enforced" as const, epoch: sourcePolicyEpoch(live.db), legacy_unbound: "owner_only" as const } }),
     ...(data === undefined ? {} : { data }),
   };

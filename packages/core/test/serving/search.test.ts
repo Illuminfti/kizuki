@@ -122,6 +122,13 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
     expect(envelope.denied).toEqual([
       { reason: "missing_sensitivity", count: 1 },
     ]);
+    expect("has_withheld" in envelope).toBe(false);
+
+    const owner = (await serveSearch(fixture.owner(), {
+      query: "unhinted",
+      scope: "ledger",
+    }));
+    expect(owner.has_withheld).toBe(true);
   });
 
   test("a types-scoped grant sees only its own page type", async () => {
@@ -302,6 +309,7 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
       });
       expect(pageIds(envelope)).toEqual(["fact:zzza"]);
       expect(envelope.denied).toContainEqual({ reason: "above_ceiling", count: 1 });
+      expect("has_withheld" in envelope).toBe(false);
       expect(JSON.stringify(envelope)).not.toContain("fact:zzzb");
       expect(JSON.stringify(envelope)).not.toContain("Bbb zzzwalltoken");
     } finally {
