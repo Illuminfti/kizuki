@@ -1,20 +1,25 @@
 # Public authoritative retrieval rebuild
 
-`kizuki rebuild [--layer all] [--json]` reconstructs the configured retrieval
-store and the SQLite lexical/search/graph floor from the named vault. With the
-default FTS selection, only the existing lexical floor is rebuilt; no second
-FTS store is opened. The legacy floor indexes page and event rows; an optional
-retrieval port receives the validated projection, including readable live
-claims. The report identifies `backend` as `sqlite-floor` or `retrieval-port`.
+`kizuki rebuild [--layer all|graph] [--json]` reconstructs derived retrieval
+from the named vault. `--layer all` rebuilds the configured retrieval store and
+the SQLite lexical/search/graph floor. With the default FTS selection, only the
+existing lexical floor is rebuilt; no second FTS store is opened. `--layer graph`
+rebuilds only the SQLite graph floor and does not refresh search or the FTS
+index. A configured retrieval engine refuses that partial layer. The legacy
+floor indexes page and event rows; an optional retrieval port receives the
+validated projection, including readable live claims. The report identifies
+`backend` as `sqlite-floor` or `retrieval-port`.
 `documents` counts the actual selected store's corpus, while `floor_documents`
-always counts the rebuilt SQLite page/event rows. `store` retains the selected
-store ID; `generation` identifies the floor rebuild. The floor's candidate
+always counts the rebuilt SQLite page/event rows for `--layer all`, or graph
+pages for `--layer graph`. `store` retains the selected store ID; `generation`
+identifies the floor rebuild. The floor's candidate
 rows and the port's authorized projection can have different counts; serving
 still applies current authority and access checks to either backend's results.
 Other
-`--layer` values are explicitly refused. RFC 0002 sections 9.6 and 18.3 describe
-layer-specific rebuilds; this implementation provides the full reconstruction
-path and does not claim partial layers are implemented.
+`--layer` values, `--port`, and `--prune-old` are explicitly refused. RFC 0002
+sections 9.6 and 18.3 describe layer-specific rebuilds; this implementation
+provides full reconstruction and graph-only SQLite floor rebuild, not port
+switching or prune-old.
 
 `readRetrievalDocuments(db, vaultPath)` is the shared projection boundary. It
 reads current canon bytes and their hash-bound receipt authority, live events

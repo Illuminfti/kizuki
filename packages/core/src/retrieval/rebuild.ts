@@ -10,12 +10,13 @@ import { PortError } from "../contracts/ports";
 import { validateRetrievalDoc, validateAbsenceProof } from "../contracts/retrieval";
 import type { RetrievalDoc, RetrievalPort } from "../contracts/retrieval";
 import { rebuildDerived } from "../derived";
+import { rebuildGraph } from "../graph/graph";
 import { loadCanon, pageDecision } from "../serving/canon";
 import { claimReader } from "../serving/claims";
 import { currentQuotedSource, eventDecision } from "../serving/ledger";
 import { sha256Hex } from "../util/hash";
 import { isRfc3339 } from "../util/time";
-import { isLiveCanonPage, stringArray } from "../vault/pages";
+import { fatalCanonSkips, isLiveCanonPage, listCanonPagesReport, stringArray } from "../vault/pages";
 
 export const MAX_REBUILD_RECORDS = 10_000;
 const MAX_SOURCE_BYTES = 64 * 1024 * 1024;
@@ -115,9 +116,40 @@ export function readRetrievalDocuments(db: Database, vaultPath: string): Retriev
   return readRebuildSnapshot(db, vaultPath).docs;
 }
 
+export type RebuildLayer = "all" | "graph";
+
+function graphFloorReport(db: Database, vaultPath: string) {
+  boundCanon(vaultPath);
+  const report = listCanonPagesReport(vaultPath);
+  if (fatalCanonSkips(report.skipped).length > 0) {
+    throw new Error("canon is unreadable; derived rebuild refused");
+  }
+  const graph = rebuildGraph(db, vaultPath);
+  return {
+    backend: "sqlite-floor" as const,
+    documents: graph.pages,
+    floor_documents: graph.pages,
+    store: "kizuki.retrieval.fts5",
+    generation: graph.generation,
+  };
+}
+
 /** Atomic inside each derived store; the stores do not share a distributed transaction. */
-async function rebuildUnderFence(scope: VaultMutationScope, db: Database, vaultPath: string, port: RetrievalPort | undefined, expired: () => boolean) {
+async function rebuildUnderFence(
+  scope: VaultMutationScope,
+  db: Database,
+  vaultPath: string,
+  port: RetrievalPort | undefined,
+  expired: () => boolean,
+  layer: RebuildLayer,
+) {
   assertVaultMutationScope(scope, { db, vault_path: vaultPath });
+  if (layer === "graph") {
+    if (port !== undefined) {
+      throw new PortError("config_invalid", "partial layer rebuild is not supported for a configured retrieval engine", false);
+    }
+    return graphFloorReport(db, vaultPath);
+  }
   if (port !== undefined && sourcePolicyEpoch(db) > 0 && !isLocalSourcePort(port)) throw new PortError("unavailable", "source egress authorization unavailable", false);
   const snapshot = readRebuildSnapshot(db, vaultPath);
   const { docs } = snapshot;
@@ -175,13 +207,22 @@ async function rebuildUnderFence(scope: VaultMutationScope, db: Database, vaultP
 }
 
 /** The bounded caller response may expire, but the writer fence remains until the late write and cleanup settle. */
-export async function rebuildRetrieval(db: Database, vaultPath: string, port?: RetrievalPort) {
+export async function rebuildRetrieval(
+  db: Database,
+  vaultPath: string,
+  port?: RetrievalPort,
+  options?: { layer?: RebuildLayer },
+) {
   vaultPath = resolve(vaultPath);
+  const layer = options?.layer ?? "all";
+  if (layer !== "all" && layer !== "graph") {
+    throw new PortError("config_invalid", "rebuild supports --layer all or graph only", false);
+  }
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const configured = port?.descriptor?.method_timeouts_ms?.["rebuildFromDocuments"];
   const deadline = typeof configured === "number" && Number.isFinite(configured) && configured > 0 ? Math.min(configured, 30_000) : 30_000;
-  const operation = withVaultMutationAsync({ db, vault_path: vaultPath }, scope => rebuildUnderFence(scope, db, vaultPath, port, () => timedOut))
+  const operation = withVaultMutationAsync({ db, vault_path: vaultPath }, scope => rebuildUnderFence(scope, db, vaultPath, port, () => timedOut, layer))
     .catch(error => {
       if (error instanceof VaultMutationError && error.code === "writer_busy") {
         throw new PortError("unavailable", "canon writer is busy; retry rebuild", true);
