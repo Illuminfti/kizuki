@@ -150,6 +150,12 @@ const TAGGED_SECTIONS = [
     doc: "docs/product-context.md",
     heading: "Product identity",
   },
+  {
+    id: "stranger-proof.sqlite-engine",
+    status: "shipped",
+    doc: "docs/stranger-proof.md",
+    heading: "Effective SQLite engine evidence",
+  },
 ] as const;
 
 function sectionStatus(doc: string, heading: string): string | null {
@@ -188,6 +194,11 @@ function taggedSectionErrors(
     const label = sectionStatus(doc, want.heading);
     if (label === null) errors.push(`missing status tag for ${want.id}`);
     else if (label !== entry.status) errors.push(`status tag for ${want.id} is ${label}, inventory is ${entry.status}`);
+    if (want.status === "shipped") {
+      if (typeof entry.implementation !== "string" || typeof entry.test !== "string") {
+        errors.push(`missing shipped paths for ${want.id}`);
+      }
+    }
   }
   return errors;
 }
@@ -221,6 +232,15 @@ test.each([
     name: "missing inventory entry",
     mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
       entries.filter((entry) => entry.id !== "architecture.contracts"),
+  },
+  {
+    name: "missing shipped paths",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.map((entry) =>
+        entry.id === "stranger-proof.sqlite-engine"
+          ? { id: entry.id, status: entry.status, doc: entry.doc, heading: entry.heading }
+          : entry,
+      ),
   },
 ])("$name fails the tagged-section check", ({ mutate }) => {
   const inventory = JSON.parse(readFileSync(join(ROOT, "docs/capability-status.json"), "utf8")) as {
