@@ -98,6 +98,75 @@ function siteToken(value: string): string {
   return value.replaceAll(":", ".");
 }
 
+const dynamicCodeCalls = new Set([
+  "eval",
+  "Function",
+  "globalThis.eval",
+  "globalThis.Function",
+  "window.eval",
+  "window.Function",
+  "self.eval",
+  "self.Function",
+]);
+
+const spawnCalls = new Set([
+  "spawn",
+  "spawnSync",
+  "exec",
+  "execSync",
+  "execFile",
+  "execFileSync",
+  "Bun.spawn",
+  "Bun.spawnSync",
+  "child_process.spawn",
+  "child_process.spawnSync",
+  "child_process.exec",
+  "child_process.execSync",
+  "child_process.execFile",
+  "child_process.execFileSync",
+  "node.child_process.spawn",
+  "node.child_process.spawnSync",
+  "node.child_process.exec",
+  "node.child_process.execSync",
+  "node.child_process.execFile",
+  "node.child_process.execFileSync",
+]);
+
+const networkBinaries = new Set(["curl", "wget", "nc", "ncat", "netcat", "ssh", "telnet"]);
+
+function networkBinaryName(value: string): string | null {
+  const base = value.replaceAll("\\", "/").split("/").pop() ?? value;
+  return networkBinaries.has(base) ? base : null;
+}
+
+function networkBinaryFromArg(expr: ts.Expression | undefined): string | null {
+  if (expr === undefined) return null;
+  const direct = staticString(expr);
+  if (direct !== null) return networkBinaryName(direct);
+  if (ts.isArrayLiteralExpression(expr)) {
+    for (const element of expr.elements) {
+      const name = staticString(element);
+      if (name === null) continue;
+      const binary = networkBinaryName(name);
+      if (binary !== null) return binary;
+    }
+    return null;
+  }
+  if (ts.isObjectLiteralExpression(expr)) {
+    for (const property of expr.properties) {
+      if (!ts.isPropertyAssignment(property)) continue;
+      const key = ts.isIdentifier(property.name)
+        ? property.name.text
+        : staticString(property.name as ts.Expression);
+      if (key === "cmd" || key === "file") {
+        const found = networkBinaryFromArg(property.initializer);
+        if (found !== null) return found;
+      }
+    }
+  }
+  return null;
+}
+
 function enclosingSymbol(node: ts.Node): string {
   let current: ts.Node | undefined = node.parent;
   while (current !== undefined) {
@@ -288,6 +357,34 @@ export function scanSourceText(file: string, source: string): NetworkFinding[] {
             );
           }
         }
+        if (!shadowed && called !== null && dynamicCodeCalls.has(called)) {
+          add(
+            node,
+            `dynamic code: ${called}`,
+            `${enclosingSymbol(node)}.${siteToken(called)}`,
+          );
+        }
+        if (called !== null && spawnCalls.has(called)) {
+          const binary = networkBinaryFromArg(node.arguments[0]);
+          if (binary !== null) {
+            add(
+              node,
+              `network subprocess: ${binary}`,
+              `${enclosingSymbol(node)}.${siteToken(called)}.${binary}`,
+            );
+          }
+        }
+      }
+    }
+
+    if (ts.isElementAccessExpression(node)) {
+      const owner = expressionName(node.expression);
+      if ((owner === "globalThis" || owner === "Bun") && staticString(node.argumentExpression) === null) {
+        add(
+          node,
+          `dynamic network property access: ${owner}`,
+          `${enclosingSymbol(node)}.${siteToken(owner)}[]`,
+        );
       }
     }
 
@@ -308,6 +405,13 @@ export function scanSourceText(file: string, source: string): NetworkFinding[] {
           node,
           `network API construction: ${aliased}`,
           `${enclosingSymbol(node)}.new.${siteToken(identifier.text)}`,
+        );
+      }
+      if (constructed !== null && dynamicCodeCalls.has(constructed)) {
+        add(
+          node,
+          `dynamic code: ${constructed}`,
+          `${enclosingSymbol(node)}.new.${siteToken(constructed)}`,
         );
       }
     }
