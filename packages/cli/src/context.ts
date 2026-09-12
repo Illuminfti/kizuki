@@ -10,7 +10,7 @@ import {
   readVaultId,
 } from "@kizuki/core";
 import type { ConnectionStateReader, RetrievalPort } from "@kizuki/core";
-import { assertBoundVaultId, inspectLedgerIdentity, LedgerIdentityError, ledgerNotReadyError, openLedgerRead, openReadyLedgerRead, openLedger, ledgerAccepted, readLedgerMark, sealLedger, initSearch } from "@kizuki/core/internal";
+import { assertBoundVaultId, inspectLedgerIdentity, LedgerIdentityError, LEDGER_SCHEMA_VERSION, ledgerNotReadyError, openLedgerRead, openReadyLedgerRead, openLedger, ledgerAccepted, readLedgerMark, sealLedger, initSearch } from "@kizuki/core/internal";
 import { inspectConfiguredRetrieval, openConfiguredRetrieval } from "./retrieval-runtime";
 import type { CliIo } from "./commands/index";
 import {
@@ -77,6 +77,10 @@ export function assertSealedLedgerReady(vaultPath: string): void {
   }
   const floor = readLedgerMark(vaultPath);
   if (floor === null || floor === 0) return;
+  // A sealed historical ledger is safe to migrate only after its identity has
+  // been read without mutation. The current-schema readiness reader correctly
+  // refuses old versions, but init is the explicit migration writer.
+  if (inspectLedgerIdentity(vaultPath).schemaVersion < LEDGER_SCHEMA_VERSION) return;
   const binding = openReadyLedgerRead(vaultPath);
   binding.close();
 }

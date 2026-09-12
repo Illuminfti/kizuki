@@ -2,7 +2,7 @@
  * Composition-root opener. Not the public policy boundary: callers still go
  * through accept, purge, ingest, and the receipted writer for mutation.
  */
-export { openLedger } from "./ledger/db";
+export { LEDGER_SCHEMA_VERSION, openLedger } from "./ledger/db";
 export { ledgerAccepted, readLedgerMark, sealLedger } from "./ledger/mark";
 export {
   LEDGER_READY_DEADLINE_MS,

@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { chmodSync, existsSync, readFileSync, renameSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "../helpers";
 import { LEDGER_SCHEMA_VERSION } from "../../../core/src/ledger/db";
@@ -20,6 +20,9 @@ test("doctor JSON accepts a genuine migrated v1 event without hiding unrelated h
   expect(existsSync(`${ledgerPath}-shm`)).toBe(false);
   renameSync(oldPath, ledgerPath);
   chmodSync(ledgerPath, 0o600);
+  // The release-upgrade fixture has accepted evidence, so its readiness mark
+  // is positive. Explicit init must still be able to migrate it.
+  writeFileSync(join(setup.vault, ".kizuki", "ledger-mark"), "1\n", { mode: 0o600 });
   const refused = runCli(setup.env, "doctor", "--json", "--integrity");
   expect(refused.exitCode).toBe(1); expect(refused.stdout).toBe("");
   expect(refused.stderr).toContain("migration_required");
