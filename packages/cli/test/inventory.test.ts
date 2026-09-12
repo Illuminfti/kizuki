@@ -157,6 +157,12 @@ const TAGGED_SECTIONS = [
     heading: "Product identity",
   },
   {
+    id: "product.progressive-ingestion",
+    status: "direction",
+    doc: "docs/product-context.md",
+    heading: "Progressive ingestion",
+  },
+  {
     id: "stranger-proof.sqlite-engine",
     status: "shipped",
     doc: "docs/stranger-proof.md",
@@ -304,6 +310,32 @@ test.each([
     name: "architecture.layers tag only in adjacent Contracts",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Layers\n\nStatus: designed\n\n", "## Layers\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "product.progressive-ingestion tag removed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Progressive ingestion\n\nStatus: direction\n\n", "## Progressive ingestion\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "product.progressive-ingestion tag shipped",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Progressive ingestion\n\nStatus: direction", "## Progressive ingestion\n\nStatus: shipped"));
+      return entries;
+    },
+  },
+  {
+    name: "product.progressive-ingestion inventory entry removed",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "product.progressive-ingestion"),
+  },
+  {
+    name: "product.progressive-ingestion tag only in adjacent Taste",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Progressive ingestion\n\nStatus: direction\n\n", "## Progressive ingestion\n\n"));
       return entries;
     },
   },

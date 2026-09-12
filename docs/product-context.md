@@ -124,6 +124,8 @@ task, including confidence, source, and freshness where available.
 
 ## Progressive ingestion
 
+Status: direction
+
 Ingestion should become useful before a complete historical import finishes.
 Recent and high-value material can be processed first, older history can
 backfill progressively, and checkpoints can resume safely. New events,
