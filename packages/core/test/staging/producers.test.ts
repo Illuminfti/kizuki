@@ -48,6 +48,34 @@ describe("proposalsForEvent", () => {
     expect(ada?.authority).toBe("connector_evidence");
   });
 
+  test("entity stub body is source-reference prose, not a raw identifier", () => {
+    const rawIdentifier = "0123456789abcdef".repeat(4);
+    const captured = event({
+      subjects: [{ subject_id: rawIdentifier, role: "about" }],
+    });
+    const [entity] = proposalsForEvent(captured);
+    const subjectRef = namespacedSubjectId(captured.connector_id, rawIdentifier);
+
+    expect(entity?.kind).toBe("entity");
+    expect(entity?.body).toBe("Referenced in a captured source.");
+    expect(entity?.body.includes(subjectRef)).toBe(false);
+    expect(entity?.body.includes(rawIdentifier)).toBe(false);
+    expect(entity?.target).toBe(subjectRef);
+    expect(entity?.subjects).toEqual([subjectRef]);
+    expect(entity?.frontmatter).toEqual({
+      type: "topic",
+      title: rawIdentifier,
+      "x-handle": rawIdentifier,
+      "x-subject-id": rawIdentifier,
+      "x-connector": "fixture",
+    });
+    expect(entity?.producer).toBe("deterministic");
+    expect(entity?.provenance).toEqual(["01ARZ3NDEKTSV4RRFFQ69G5FAV"]);
+    expect(entity?.confidence).toBe(0.5);
+    expect(entity?.taint).toBe("quoted");
+    expect(entity?.authority).toBe("connector_evidence");
+  });
+
   test("a subject with no display name falls back to the handle", () => {
     const [subject] = proposalsForEvent(
       event({ subjects: [{ subject_id: "person:bob", role: "about" }] }),
