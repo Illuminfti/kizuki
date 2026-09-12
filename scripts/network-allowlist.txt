@@ -85,3 +85,4 @@ scripts/native-model-matrix.test.ts:(toplevel).fetch#2:fetch against the owned l
 scripts/ci-gitleaks.sh:(toplevel).curl#1:pinned linux-x64 gitleaks CLI download with checksum
 packages/cli/src/commands/models.ts:downloadRemoteGguf.fetch#1:explicit models pull from an owner-supplied URL; requires --sha256 and --bytes, no redirects
 packages/cli/test/models.test.ts:(toplevel).Bun.serve#1:loopback synthetic GGUF for models pull tests
+packages/cli/test/fixtures/startup-with-websocket.ts:(toplevel).new.WebSocket#1:synthetic denied WebSocket for CLI startup egress proof; the constructor is intercepted and never connected
