@@ -326,4 +326,27 @@ describe("exdates, rdates and bounds", () => {
     expect(result.truncated).toBe(true);
     expect(result.instances).toHaveLength(5);
   });
+
+  test("a civil UNTIL is compared in the same local domain as candidates", () => {
+    const result = expand(
+      {
+        freq: "DAILY",
+        interval: 1,
+        wkst: 1,
+        until: { kind: "floating", local: "20260302T100000" },
+      },
+      parseLocal("20260301T100000"),
+      {
+        windowEnd: parseLocal("20260310T000000"),
+        maxInstances: 10,
+        exdates: new Set(),
+        rdates: [],
+        maxSteps: 100,
+      },
+    );
+    expect(result.instances.map((instance) => formatLocal(instance))).toEqual([
+      "20260301T100000",
+      "20260302T100000",
+    ]);
+  });
 });

@@ -15,6 +15,7 @@ import { createIcsConnector } from "../src/connector";
 import { FIXTURE_ICS, FIXTURE_NOW } from "../src/fixture";
 import { parseIcsState } from "../src/state";
 import { memoryFetcher, okResult } from "../src/testing/memory-fetch";
+import { MAX_ICS_CHARS } from "../src/unfold";
 
 const URL_UNDER_TEST = "https://calendar.acme.example/private/abc123.ics";
 const REF = "file:connections/01ABCDEFGHJKMNPQRSTVWXYZ00.state";
@@ -292,6 +293,16 @@ describe("file mode", () => {
     expect(
       second.events.filter((event) => event.deleted).map((event) => event.source_record_id),
     ).toEqual([target]);
+  });
+
+  test("an oversized calendar file is refused as a parse error", async () => {
+    const path = join(temporary(), "huge.ics");
+    await Bun.write(path, "x".repeat(MAX_ICS_CHARS + 1));
+    const connector = createIcsConnector({ path }, { now: NOW });
+    const error = await connector.backfill(null).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(KizukiError);
+    expect((error as KizukiError).code).toBe("parse_error");
+    expect((error as KizukiError).message).toMatch(/too long/);
   });
 
   test("a truncated file refuses the sync instead of tombstoning everything", async () => {

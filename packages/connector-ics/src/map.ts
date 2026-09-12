@@ -5,12 +5,12 @@ import type {
   SubjectRef,
 } from "@kizuki/core";
 import {
-  formatLocal,
   formatLocalDate,
+  instantLocal,
   intlZones,
   msToLocal,
+  occurrenceStamp,
   parseDateTime,
-  parseLocal,
   toUtc,
 } from "./datetime";
 import type { IcsInstant, LocalDateTime, ZoneResolver } from "./datetime";
@@ -223,9 +223,7 @@ export function instantOf(line: ContentLine | undefined): IcsInstant | null {
 }
 
 export function localOf(instant: IcsInstant): LocalDateTime {
-  if (instant.kind === "date") return parseLocal(instant.date);
-  if (instant.kind === "utc") return msToLocal(Date.parse(instant.iso));
-  return parseLocal(instant.local);
+  return instantLocal(instant);
 }
 
 export function textFor(event: RawVEvent): string {
@@ -278,6 +276,16 @@ export function emit(input: EmitInput): CaptureEventInput {
       : durationEndMs !== null && Number.isFinite(new Date(durationEndMs).getTime())
         ? new Date(durationEndMs).toISOString()
         : null;
+  // All-day DTEND is exclusive. Recurring instances shift that date with
+  // the instance rather than repeating the master's DTEND.
+  const endsOn =
+    allDay &&
+    durationEndMs !== null &&
+    Number.isFinite(durationEndMs)
+      ? formatLocalDate(msToLocal(durationEndMs))
+      : allDay && endInstant?.kind === "date"
+        ? endInstant.date
+        : undefined;
 
   const subjects = new SubjectList();
   const organizer = firstValue(input.event, "ORGANIZER");
@@ -295,7 +303,7 @@ export function emit(input: EmitInput): CaptureEventInput {
   const expanded = input.recurrence?.["expanded"] === true;
   const suffix = !expanded
     ? ""
-    : `#${input.suffixKey ?? (allDay ? formatLocalDate(localOf(input.start)) : formatLocal(localOf(input.start)))}`;
+    : `#${input.suffixKey ?? occurrenceStamp(input.start, localOf(input.start))}`;
 
   const tzid = input.start.kind === "zoned" ? input.start.tzid : undefined;
   const created = instantOf(firstValue(input.event, "CREATED"));
@@ -344,9 +352,7 @@ export function emit(input: EmitInput): CaptureEventInput {
         ) || null,
       ends_at: endsAt,
       all_day: allDay,
-      ...(allDay && endInstant?.kind === "date"
-        ? { ends_on: endInstant.date }
-        : {}),
+      ...(endsOn !== undefined ? { ends_on: endsOn } : {}),
       ...(input.duration !== null ? { duration: input.duration } : {}),
       tz: {
         ...(tzid !== undefined ? { tzid } : {}),

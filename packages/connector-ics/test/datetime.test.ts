@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { KizukiError } from "@kizuki/core";
 import {
+  civilLocal,
   intlZones,
+  occurrenceStamp,
   parseDateTime,
+  parseLocal,
   toUtc,
+  utcMsToLocal,
   vtimezoneFixedOffset,
 } from "../src/datetime";
 import type { ZoneInfo } from "../src/parse";
@@ -133,6 +137,70 @@ describe("zone resolution", () => {
     // just past the gap rather than failing or picking an arbitrary offset.
     expect(gap.approximation).toBe("none");
     expect(gap.iso).toBe("2026-03-29T01:30:00.000Z");
+  });
+
+  test("resolves an ambiguous fall-back time deterministically", () => {
+    const overlap = toUtc(
+      { kind: "zoned", local: "20261025T023000", tzid: "Europe/Berlin" },
+      intlZones,
+      NO_ZONES,
+    );
+    // 02:30 occurs twice; two-pass resolution picks the later (CET) instant.
+    expect(overlap.approximation).toBe("none");
+    expect(overlap.iso).toBe("2026-10-25T01:30:00.000Z");
+  });
+
+  test("a UTC instant converts to civil time in the series zone", () => {
+    const winter = utcMsToLocal(
+      Date.parse("2026-03-25T09:00:00.000Z"),
+      "Europe/Berlin",
+      intlZones,
+      NO_ZONES,
+    );
+    const summer = utcMsToLocal(
+      Date.parse("2026-04-01T08:00:00.000Z"),
+      "Europe/Berlin",
+      intlZones,
+      NO_ZONES,
+    );
+    expect(winter).toEqual({
+      year: 2026,
+      month: 3,
+      day: 25,
+      hour: 10,
+      minute: 0,
+      second: 0,
+    });
+    expect(summer).toEqual({
+      year: 2026,
+      month: 4,
+      day: 1,
+      hour: 10,
+      minute: 0,
+      second: 0,
+    });
+    const series = {
+      kind: "zoned" as const,
+      local: "20260318T100000",
+      tzid: "Europe/Berlin",
+    };
+    expect(
+      civilLocal(
+        { kind: "utc", iso: "2026-03-25T09:00:00.000Z" },
+        series,
+        intlZones,
+        NO_ZONES,
+      ),
+    ).toEqual(winter);
+    expect(
+      occurrenceStamp(series, parseLocal("20260325T100000")),
+    ).toBe("20260325T100000");
+    expect(
+      occurrenceStamp(
+        { kind: "date", date: "20260511" },
+        parseLocal("20260525"),
+      ),
+    ).toBe("20260525");
   });
 
   test("falls back to the file's VTIMEZONE for a zone the platform lacks", () => {
