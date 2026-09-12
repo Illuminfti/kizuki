@@ -556,6 +556,19 @@ export function pendingRetrievalOps(
     .all(store ?? null, store ?? null, limit);
 }
 
+/** Honest pending count. Listing helpers stay bounded for sweep work. */
+export function countPendingRetrievalOps(db: Database, store?: string): number {
+  if (!tableExists(db, "retrieval_ops")) return 0;
+  return (
+    db
+      .query<{ n: number }, [string | null, string | null]>(
+        `SELECT COUNT(*) AS n FROM retrieval_ops
+          WHERE state = 'pending' AND (? IS NULL OR store=?)`,
+      )
+      .get(store ?? null, store ?? null)?.n ?? 0
+  );
+}
+
 /**
  * Retries what the last pass could not land. Upsert is idempotent, so a
  * replay of an operation that in fact succeeded costs one write and changes

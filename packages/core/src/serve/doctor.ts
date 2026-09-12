@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { inspectPageIndex } from "../canon";
 import { isMachineOriginPath } from "../canon/origin";
 import { formatProducerDiagnostic } from "../producer/diagnostics";
-import { pendingRetrievalOps } from "../claims/store";
+import { countPendingRetrievalOps } from "../claims/store";
 import { readDerivedMeta } from "../derived-meta";
 import { inspectConnectionStateRecovery } from "../ledger/connection-state";
 import { inspectCheckpoints, inspectConnections } from "../ledger/connections";
@@ -296,9 +296,9 @@ function storeDoctor(
   vaultPath: string,
   now: string,
 ): StoreDoctor {
-  const pendingRetrieval = pendingRetrievalOps(db, 10_000);
+  const pendingRetrieval = countPendingRetrievalOps(db);
   const oldestRetrieval =
-    tableExists(db, "retrieval_ops") && pendingRetrieval.length > 0
+    tableExists(db, "retrieval_ops") && pendingRetrieval > 0
       ? db
           .query<{ created_at: string }, []>(
             `SELECT created_at FROM retrieval_ops
@@ -332,7 +332,7 @@ function storeDoctor(
   const search = readDerivedMeta(db, "search");
   const graph = readDerivedMeta(db, "graph");
   return {
-    pending_retrieval_ops: pendingRetrieval.length,
+    pending_retrieval_ops: pendingRetrieval,
     oldest_retrieval_op_age_s: oldestRetrievalAge,
     pending_purge_ops: pendingPurge,
     oldest_purge_op_age_s: ageSeconds(oldestPurge, now),
