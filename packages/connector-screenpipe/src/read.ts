@@ -228,7 +228,10 @@ function mapTranscriptionRow(
       row.transcription_engine,
       "audio_transcriptions.transcription_engine",
     ),
-    start_time: nullableFiniteNumber(row.start_time),
+    start_time: optionalFiniteNumber(
+      row.start_time,
+      "audio_transcriptions.start_time",
+    ),
     end_time: nullableFiniteNumber(row.end_time),
   };
 }
@@ -255,7 +258,8 @@ function maxIdBefore(
       const id = requiredCursorId(row.id);
       afterId = id;
       const resolved = resolveTimestamp(row.timestamp, timeZone);
-      if ("iso" in resolved && resolved.iso < since) maxId = id;
+      if (!("iso" in resolved) || resolved.iso >= since) return maxId;
+      maxId = id;
     }
     if (rows.length < PLAN_PAGE) break;
   }
@@ -326,6 +330,13 @@ function nullableBoolean(value: unknown): boolean | null {
   if (value === 0 || value === 0n) return false;
   if (value === 1 || value === 1n) return true;
   return null;
+}
+
+function optionalFiniteNumber(value: unknown, column: string): number | null {
+  if (value === null) return null;
+  const converted = nullableFiniteNumber(value);
+  if (converted === null) invalidColumn(column);
+  return converted;
 }
 
 function nullableFiniteNumber(value: unknown): number | null {

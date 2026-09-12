@@ -8,7 +8,7 @@ import type {
   SecretResolver,
   SyncBatch,
 } from "@kizuki/core";
-import { HealthReport } from "@kizuki/core";
+import { HealthReport, freezeManifest } from "@kizuki/core";
 import {
   SCREENPIPE_CONNECTOR_ID,
   parseConfig,
@@ -40,7 +40,7 @@ import {
   createTranscriptionWalker,
 } from "./walk";
 
-const MANIFEST: Manifest = {
+const MANIFEST: Manifest = freezeManifest({
   schema: "kizuki.connector/v1",
   connector_id: SCREENPIPE_CONNECTOR_ID,
   version: "0.1.0",
@@ -57,7 +57,7 @@ const MANIFEST: Manifest = {
   default_sensitivity: "private",
   sensitivity_floor: "private",
   auth_modes: ["none"],
-};
+});
 
 export class ScreenpipeConnector implements Connector {
   readonly #config: ParsedScreenpipeConfig;
@@ -198,92 +198,106 @@ export class ScreenpipeConnector implements Connector {
     mode: "backfill" | "sync",
   ): Promise<SyncBatch> {
     try {
-      const batch = this.#withDatabase((db) => {
-      assertSchema(db);
-      const identity = inspectIdentity(db, this.#config.path);
-      const current =
-        cursor === null
-          ? initialCursor(
-              identity,
-              this.#config.since === null
-                ? undefined
-                : seedAfterIds(db, this.#config.since, this.#config.timezone),
-            )
-          : parseCursor(cursor);
-      if (cursor !== null) {
-        assertCompatibleIdentity(current, identity);
-      }
-      if (mode === "sync") {
-        current.snapshot_frame_max = Math.max(
-          current.snapshot_frame_max,
-          identity.max_frame_id,
-        );
-        current.snapshot_transcription_max = Math.max(
-          current.snapshot_transcription_max,
-          identity.max_transcription_id,
-        );
-        if (current.phase === "exhausted") current.phase = "continue";
-      }
-      current.high_water_frame = Math.max(
-        current.high_water_frame,
-        identity.max_frame_id,
-      );
-      current.high_water_transcription = Math.max(
-        current.high_water_transcription,
-        identity.max_transcription_id,
-      );
+      const batch = this.#withDatabase((db) =>
+        inReadSnapshot(db, () => {
+          assertSchema(db);
+          const identity = inspectIdentity(db, this.#config.path);
+          const current =
+            cursor === null
+              ? initialCursor(
+                  identity,
+                  this.#config.since === null
+                    ? undefined
+                    : seedAfterIds(db, this.#config.since, this.#config.timezone),
+                )
+              : parseCursor(cursor);
+          if (cursor !== null) {
+            assertCompatibleIdentity(current, identity);
+          }
+          if (mode === "sync") {
+            current.snapshot_frame_max = Math.max(
+              current.snapshot_frame_max,
+              identity.max_frame_id,
+            );
+            current.snapshot_transcription_max = Math.max(
+              current.snapshot_transcription_max,
+              identity.max_transcription_id,
+            );
+            if (current.phase === "exhausted") current.phase = "continue";
+          }
+          current.high_water_frame = Math.max(
+            current.high_water_frame,
+            identity.max_frame_id,
+          );
+          current.high_water_transcription = Math.max(
+            current.high_water_transcription,
+            identity.max_transcription_id,
+          );
 
-      const now = this.#deps.now();
-      const observedAt = new Date(now).toISOString();
-      const boundary = new Date(
-        now - this.#config.settle_seconds * 1_000,
-      ).toISOString();
-      const events: CaptureEventInput[] = [];
-      const frames = createFrameWalker(
-        db,
-        current,
-        boundary,
-        observedAt,
-        this.#config,
-      );
-      const transcriptions = createTranscriptionWalker(
-        db,
-        current,
-        boundary,
-        observedAt,
-        this.#config,
-      );
-      while (events.length < BATCH_LIMIT) {
-        const frame = frames.peek();
-        const audio = transcriptions.peek();
-        if (
-          frame !== null &&
-          (audio === null || comparePrepared(frame, audio) <= 0)
-        ) {
-          events.push(frame.event);
-          frames.take();
-        } else if (audio !== null) {
-          events.push(audio.event);
-          transcriptions.take();
-        } else {
-          break;
-        }
-      }
+          const now = this.#deps.now();
+          const observedAt = new Date(now).toISOString();
+          const boundary = new Date(
+            now - this.#config.settle_seconds * 1_000,
+          ).toISOString();
+          const events: CaptureEventInput[] = [];
+          const frames = createFrameWalker(
+            db,
+            current,
+            boundary,
+            observedAt,
+            this.#config,
+          );
+          const transcriptions = createTranscriptionWalker(
+            db,
+            current,
+            boundary,
+            observedAt,
+            this.#config,
+          );
+          while (events.length < BATCH_LIMIT) {
+            const frame = frames.peek();
+            const audio = transcriptions.peek();
+            if (
+              frame !== null &&
+              (audio === null || comparePrepared(frame, audio) <= 0)
+            ) {
+              events.push(frame.event);
+              frames.take();
+            } else if (audio !== null) {
+              events.push(audio.event);
+              transcriptions.take();
+            } else {
+              break;
+            }
+          }
 
-      current.phase = batchPhase(
-        events.length,
-        frames.paused || transcriptions.paused,
-        frames.done && transcriptions.done,
+          current.phase = batchPhase(
+            events.length,
+            frames.paused || transcriptions.paused,
+            frames.done && transcriptions.done,
+          );
+          return {
+            events,
+            cursor: encodeCursor(current),
+            has_more: current.phase !== "exhausted",
+            observedAt,
+            skipped: { ...current.skipped },
+            oldestSkippedFrameId: current.oldest_skipped_frame_id,
+            oldestSkippedTranscriptionId:
+              current.oldest_skipped_transcription_id,
+          };
+        }),
       );
-      this.#lastSuccessAt = observedAt;
+      this.#lastSuccessAt = batch.observedAt;
       this.#lastFailure = undefined;
-      this.#totalSkipped = { ...current.skipped };
-      this.#oldestSkippedFrameId = current.oldest_skipped_frame_id;
-      this.#oldestSkippedTranscriptionId =
-        current.oldest_skipped_transcription_id;
-      return { events, cursor: encodeCursor(current) };
-      });
-      return batch;
+      this.#totalSkipped = batch.skipped;
+      this.#oldestSkippedFrameId = batch.oldestSkippedFrameId;
+      this.#oldestSkippedTranscriptionId = batch.oldestSkippedTranscriptionId;
+      return {
+        events: batch.events,
+        cursor: batch.cursor,
+        has_more: batch.has_more,
+      };
     } catch (error) {
       const mapped = classifyDatabaseError(error, this.#config.path);
       if (mapped.code === "parse_error") this.#lastFailure = mapped.message;
@@ -325,13 +339,29 @@ export function createScreenpipeConnector(
   return new ScreenpipeConnector(config);
 }
 
+function inReadSnapshot<T>(db: Database, operation: () => T): T {
+  db.exec("BEGIN");
+  try {
+    const result = operation();
+    db.exec("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // BEGIN may have failed, or SQLite already closed the transaction.
+    }
+    throw error;
+  }
+}
+
 function batchPhase(
   eventCount: number,
   paused: boolean,
   bothDone: boolean,
 ): ScreenpipeCursor["phase"] {
-  if (eventCount === BATCH_LIMIT) return "continue";
   if (bothDone) return "exhausted";
+  if (eventCount === BATCH_LIMIT) return "continue";
   if (paused) return "caught_up";
   return "continue";
 }

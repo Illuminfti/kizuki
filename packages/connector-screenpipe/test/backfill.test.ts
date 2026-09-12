@@ -41,6 +41,7 @@ describe("ScreenpipeConnector backfill", () => {
     expect(cursor.last_transcription_id).toBe(3);
     expect(cursor.skipped.frames_bad_timestamp).toBe(0);
     expect(cursor.phase).toBe("exhausted");
+    expect(batch.has_more).toBe(false);
     expect(cursor.db_path).toBe(path.resolve(fixture.path));
     expect(cursor.db_fingerprint).toMatch(/^[0-9a-f]{64}$/);
     await connector.revoke();
@@ -63,14 +64,17 @@ describe("ScreenpipeConnector backfill", () => {
     );
 
     const counts: number[] = [];
+    const more: Array<boolean | undefined> = [];
     let cursor: string | null = null;
     for (let call = 0; call < 4; call += 1) {
       const batch = await connector.backfill(cursor);
       counts.push(batch.events.length);
+      more.push(batch.has_more);
       cursor = batch.cursor;
     }
 
     expect(counts).toEqual([BATCH_LIMIT, BATCH_LIMIT, 200, 0]);
+    expect(more).toEqual([true, true, false, false]);
     if (cursor === null) throw new Error("expected a screenpipe cursor");
     expect(parseCursor(cursor).last_frame_id).toBe(1_200);
     await connector.revoke();
