@@ -402,13 +402,17 @@ export function authenticate(db: Database, token: string): Principal | null {
     return null;
   }
   const candidateHash = hashAgentToken(token);
-  using statement = db.prepare<AgentGrantRow, []>(`${AGENT_GRANT_SELECT} ORDER BY a.agent_id`);
-  const rows = statement.all();
-  let match: AgentGrantRow | null = null;
-  for (const row of rows) {
-    if (constantTimeHashEqual(row.token_hash, candidateHash)) match = row;
-  }
-  if (match === null) return null;
+  // The unique index looks up the full hash of a random 256-bit token, never
+  // an enumerable agent name or token prefix. Verify hits and misses alike.
+  using statement = db.prepare<AgentGrantRow, [string]>(
+    `${AGENT_GRANT_SELECT} WHERE a.token_hash = ?`,
+  );
+  const match = statement.get(candidateHash);
+  const verified = constantTimeHashEqual(
+    match?.token_hash ?? "0".repeat(TOKEN_BYTES * 2),
+    candidateHash,
+  );
+  if (match === null || !verified) return null;
   const principal = principalFromRow(match);
   if (principal !== null) return principal;
   if (match.revoked_at === null && match.quarantined_at === null) {
