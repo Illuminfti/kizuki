@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   CLAUDE_IMPORT_CONNECTOR_ID,
   KizukiError,
+  createChatGptImportConnector,
   createClaudeImportConnector,
   parseClaudeExport,
 } from "../src";
@@ -248,6 +249,56 @@ describe("ClaudeImportConnector", () => {
           .filter((event) => event.deleted)
           .map((event) => event.source_record_id),
       ).toEqual([encodeSourceRecordId(["conversation-42", "message-2"])]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("Claude sync rejects a ChatGPT snapshot cursor without changing its own resume state", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-claude-foreign-"));
+    try {
+      const chatgptFile = path.join(root, "chatgpt.json");
+      const claudeFile = path.join(root, "claude.json");
+      await writeFile(
+        chatgptFile,
+        JSON.stringify([
+          {
+            id: "conversation-foreign",
+            mapping: {
+              n: {
+                message: {
+                  author: { role: "user" },
+                  content: { parts: ["foreign-cursor-fixture"] },
+                  create_time: 1_700_000_000,
+                },
+              },
+            },
+          },
+        ]),
+      );
+      await writeFile(claudeFile, JSON.stringify(INLINE_EXPORT));
+      const chatgptCursor = (
+        await createChatGptImportConnector({ path: chatgptFile }).backfill(null)
+      ).cursor;
+      expect(typeof chatgptCursor).toBe("string");
+      const claude = createClaudeImportConnector({ path: claudeFile });
+      const own = await claude.backfill(null);
+      expect(own.events.length).toBeGreaterThan(0);
+      try {
+        await claude.sync(chatgptCursor);
+        throw new Error("expected Claude sync to reject a ChatGPT cursor");
+      } catch (error) {
+        expect(error).toBeInstanceOf(KizukiError);
+        if (!(error instanceof KizukiError)) return;
+        expect(error.code).toBe("parse_error");
+        expect(error.message).toContain("snapshot cursor does not match this source");
+        expect(error.message).not.toContain(chatgptFile);
+        expect(error.message).not.toContain(claudeFile);
+        expect(error.message).not.toContain("foreign-cursor-fixture");
+      }
+      const resume = await claude.sync(own.cursor);
+      expect(resume.events).toEqual([]);
+      expect(resume.cursor).toBe(own.cursor);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
