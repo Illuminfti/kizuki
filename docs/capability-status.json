@@ -52,6 +52,12 @@
       "heading": "Contracts"
     },
     {
+      "id": "architecture.security",
+      "status": "designed",
+      "doc": "docs/architecture.md",
+      "heading": "Security"
+    },
+    {
       "id": "product.identity",
       "status": "direction",
       "doc": "docs/product-context.md",

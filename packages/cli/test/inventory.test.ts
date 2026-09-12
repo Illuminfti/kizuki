@@ -157,6 +157,12 @@ const TAGGED_SECTIONS = [
     heading: "Contracts",
   },
   {
+    id: "architecture.security",
+    status: "designed",
+    doc: "docs/architecture.md",
+    heading: "Security",
+  },
+  {
     id: "product.identity",
     status: "direction",
     doc: "docs/product-context.md",
@@ -326,6 +332,9 @@ test.each([
     name: "architecture.storage tag removed",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Storage\n\nStatus: designed\n\n", "## Storage\n\n"));
+    name: "architecture.security tag removed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Security\n\nStatus: designed\n\n", "## Security\n\n"));
       return entries;
     },
   },
@@ -336,6 +345,9 @@ test.each([
     name: "architecture.storage tag shipped",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Storage\n\nStatus: designed", "## Storage\n\nStatus: shipped"));
+    name: "architecture.security tag shipped",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Security\n\nStatus: designed", "## Security\n\nStatus: shipped"));
       return entries;
     },
   },
@@ -356,6 +368,14 @@ test.each([
     name: "architecture.storage tag only in adjacent Contracts",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Storage\n\nStatus: designed\n\n", "## Storage\n\n"));
+    name: "architecture.security inventory entry removed",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "architecture.security"),
+  },
+  {
+    name: "architecture.security tag only in adjacent Proactive",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Security\n\nStatus: designed\n\n", "## Security\n\n"));
       return entries;
     },
   },

@@ -214,6 +214,8 @@ design behind `kizuki.notifier/v1`; the shipped notifier is the file writer.
 
 ## Security
 
+Status: designed
+
 Threat model in [SECURITY.md](../SECURITY.md): host-trust interim stance
 (plaintext canon, versioned encryption seam reserved in the ledger), prompt
 injection (invariant 7), agent overreach (grants + audit), connector supply
