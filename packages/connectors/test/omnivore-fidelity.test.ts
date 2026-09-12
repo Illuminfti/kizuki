@@ -11,17 +11,32 @@ import {
   setSourceGrant,
   validateEventInput,
   type CaptureEvent,
+  type CaptureEventInput,
 } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { KizukiError } from "../src/errors";
 import { FIXTURE_OBSERVED_AT } from "../src/util";
 import {
+  OMNIVORE_CURSOR_SCHEMA,
   OMNIVORE_IMPORT_CONNECTOR_ID,
   createOmnivoreImportConnector,
   mapOmnivoreFiles,
   omnivoreEvents,
   pageOmnivoreEvents,
 } from "../src/import-omnivore";
+
+/** The old ambiguous encoding lets one highlight impersonate two records. */
+function delimiterJoinedFingerprint(events: readonly CaptureEventInput[]): string {
+  return events.map((event) => [
+    event.source_record_id,
+    event.occurred_at,
+    event.text,
+    JSON.stringify(event.metadata),
+    event.attachments.map((attachment) =>
+      `${attachment.attachment_id}:${attachment.byte_size ?? 0}`,
+    ).join(","),
+  ].join("\n")).join("\n\n");
+}
 
 const SOURCE_KEY = "01JJ0000000000000000000004";
 const HTML_SENTINEL = "SYNTHETIC_HTML_BODY";
@@ -230,6 +245,62 @@ test("a changed export restarts instead of skipping later records", async () => 
     "new-a",
     "new-b",
   ]);
+});
+
+test("a delimiter-colliding one-row highlight restarts a paused page at record a", async () => {
+  const original = await omnivoreEvents(
+    mapOmnivoreFiles({
+      ...metadataFile([
+        { id: "a", slug: "a", savedAt: "2026-01-01T09:00:00Z" },
+        { id: "b", slug: "b", savedAt: "2026-01-02T09:00:00Z" },
+      ]),
+      "highlights/a.md": "note-a",
+      "highlights/b.md": "note-b",
+    }),
+    FIXTURE_OBSERVED_AT,
+  );
+  const paused = pageOmnivoreEvents(original, null, { maxEvents: 1 });
+  expect(paused.events.map((event) => event.source_record_id)).toEqual(["a"]);
+  expect(paused.cursor).not.toBeNull();
+  expect(JSON.parse(paused.cursor ?? "")).toMatchObject({
+    schema: OMNIVORE_CURSOR_SCHEMA,
+    connector_id: OMNIVORE_IMPORT_CONNECTOR_ID,
+    after: 1,
+  });
+
+  const first = original[0]!;
+  const second = original[1]!;
+  const collidingHighlight = [
+    [
+      first.text,
+      JSON.stringify(first.metadata),
+      first.attachments
+        .map(
+          (attachment) =>
+            `${attachment.attachment_id}:${attachment.byte_size ?? 0}`,
+        )
+        .join(","),
+    ].join("\n"),
+    [second.source_record_id, second.occurred_at, second.text].join("\n"),
+  ].join("\n\n");
+  const changed = await omnivoreEvents(
+    mapOmnivoreFiles({
+      ...metadataFile([
+        { id: "a", slug: "a", savedAt: "2026-01-01T09:00:00Z" },
+      ]),
+      "highlights/a.md": collidingHighlight,
+    }),
+    FIXTURE_OBSERVED_AT,
+  );
+  expect(changed.map((event) => event.source_record_id)).toEqual(["a"]);
+  expect(delimiterJoinedFingerprint(changed)).toBe(
+    delimiterJoinedFingerprint(original),
+  );
+
+  const resumed = pageOmnivoreEvents(changed, paused.cursor, { maxEvents: 1 });
+  expect(resumed.events.map((event) => event.source_record_id)).toEqual(["a"]);
+  expect(resumed.events[0]?.text).toBe(collidingHighlight);
+  expect(resumed.cursor).toBeNull();
 });
 
 test("a corrupt resume cursor is refused rather than treated as the start", async () => {

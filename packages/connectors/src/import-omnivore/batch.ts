@@ -25,23 +25,21 @@ interface OmnivoreCursor {
 }
 
 function fingerprintOf(events: readonly CaptureEventInput[]): string {
+  // JSON tuples are injective. Joining with `\n` let a highlight splice a
+  // later record into the snapshot hash and resume past a one-row export.
   return sha256Hex(
-    events
-      .map((event) =>
-        [
-          event.source_record_id,
-          event.occurred_at,
-          event.text,
-          JSON.stringify(event.metadata),
-          event.attachments
-            .map(
-              (attachment) =>
-                `${attachment.attachment_id}:${attachment.byte_size ?? 0}`,
-            )
-            .join(","),
-        ].join("\n"),
-      )
-      .join("\n\n"),
+    JSON.stringify(
+      events.map((event) => [
+        event.source_record_id,
+        event.occurred_at,
+        event.text,
+        event.metadata,
+        event.attachments.map((attachment) => [
+          attachment.attachment_id,
+          attachment.byte_size ?? 0,
+        ]),
+      ]),
+    ),
   );
 }
 
