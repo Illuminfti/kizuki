@@ -136,6 +136,40 @@ describe("kizuki tell", () => {
     expect(canon[0].authority).toBe("model_inference");
   }, 60_000);
 
+  test("tell a new statement at a superseded --claim fails closed without rewriting", async () => {
+    const setup = tempVault();
+    const claimId = await writeGraceClaim(setup.vault);
+    const first = runCli(
+      setup.env,
+      "tell",
+      "grace is at initech now, not acme",
+      "--claim",
+      claimId,
+    );
+    expect(first.exitCode).toBe(0);
+    const before = readFileSync(join(setup.vault, "people/grace.md"), "utf8");
+    const replay = runCli(
+      setup.env,
+      "tell",
+      "grace is at initech now, not acme",
+      "--claim",
+      claimId,
+    );
+    expect(replay.exitCode).toBe(0);
+    expect(readFileSync(join(setup.vault, "people/grace.md"), "utf8")).toBe(before);
+    const denied = runCli(
+      setup.env,
+      "tell",
+      "grace is at contoso now, not initech",
+      "--claim",
+      claimId,
+    );
+    expect(denied.exitCode).toBe(1);
+    expect(denied.stdout).toBe("");
+    expect(denied.stderr).toContain("claim_not_live");
+    expect(readFileSync(join(setup.vault, "people/grace.md"), "utf8")).toBe(before);
+  });
+
   test("tell without --claim fails closed and prints the resolving flags", () => {
     const setup = tempVault();
     const result = runCli(setup.env, "tell", "grace is at initech now, not acme");

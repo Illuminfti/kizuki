@@ -16,7 +16,35 @@ import { claimInput, putEvent } from "../claims/helpers";
 import type { CanonFixture } from "../canon/helpers";
 
 const STATEMENT = "grace is at initech now, not acme";
+const LATER = "grace is at contoso now, not initech";
 const AT = "2026-09-02T15:00:00.000Z";
+const LATER_AT = "2026-09-02T16:00:00.000Z";
+
+function durableCorrectionState(fixture: CanonFixture) {
+  return {
+    events: fixture.db.query<{ n: number }, []>("SELECT count(*) AS n FROM events").get()?.n,
+    ownerEvents: fixture.db
+      .query<{ n: number }, []>(
+        "SELECT count(*) AS n FROM events WHERE connector_id = 'kizuki.owner'",
+      )
+      .get()?.n,
+    claims: fixture.db
+      .query<
+        { claim_id: string; status: string; superseded_by: string | null; object: string | null },
+        []
+      >(
+        "SELECT claim_id, status, superseded_by, object FROM claims ORDER BY created_at, claim_id",
+      )
+      .all(),
+    receipts: fixture.db.query<{ n: number }, []>("SELECT count(*) AS n FROM canon_receipts").get()?.n,
+    evidence: fixture.db
+      .query<{ n: number }, []>("SELECT count(*) AS n FROM native_owner_evidence")
+      .get()?.n,
+    supersessions: listSupersessions(fixture.db),
+    epoch: getClaimsEpoch(fixture.db),
+    page: readFileSync(join(fixture.vault, "people/grace.md"), "utf8"),
+  };
+}
 
 const fixtures: CanonFixture[] = [];
 
@@ -379,6 +407,176 @@ describe("correct", () => {
     if (!(caught instanceof CorrectError)) return;
     expect(caught.code).toBe("below_authority");
     expect(getClaim(fixture.db, winnerId ?? "")?.status).toBe("live");
+  });
+
+  test("a new statement against a superseded claim_id is claim_not_live and mutates nothing", async () => {
+    const { fixture, claimId } = await writtenGrace();
+    await correct(
+      { db: fixture.db, vault_path: fixture.vault, now: () => AT },
+      { statement: STATEMENT, target: { claim_id: claimId } },
+    );
+    expect(getClaim(fixture.db, claimId)?.status).toBe("superseded");
+    const before = durableCorrectionState(fixture);
+
+    let caught: unknown;
+    try {
+      await correct(
+        { db: fixture.db, vault_path: fixture.vault, now: () => LATER_AT },
+        { statement: LATER, target: { claim_id: claimId } },
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(CorrectError);
+    if (!(caught instanceof CorrectError)) return;
+    expect(caught.code).toBe("claim_not_live");
+    expect(durableCorrectionState(fixture)).toEqual(before);
+  });
+
+  test("the same statement and superseded claim_id reconstructs the recorded correction", async () => {
+    const { fixture, claimId } = await writtenGrace();
+    const first = await correct(
+      { db: fixture.db, vault_path: fixture.vault, now: () => AT },
+      { statement: STATEMENT, target: { claim_id: claimId } },
+    );
+    const recordedId = first.claim_ids[0];
+    expect(recordedId).toBeDefined();
+    if (recordedId === undefined) return;
+    expect(getClaim(fixture.db, claimId)?.status).toBe("superseded");
+
+    const retry = await correct(
+      { db: fixture.db, vault_path: fixture.vault, now: () => "2026-09-02T15:01:00.000Z" },
+      { statement: STATEMENT, target: { claim_id: claimId } },
+    );
+    expect(retry.event_id).toBe(first.event_id);
+    expect(retry.claim_ids).toEqual([recordedId]);
+    expect(retry.receipt_id).toBe(first.receipt_id);
+    expect(listClaims(fixture.db, { status: "live" }).map((row) => row.claim_id)).toEqual([
+      recordedId,
+    ]);
+
+    const later = await correct(
+      { db: fixture.db, vault_path: fixture.vault, now: () => LATER_AT },
+      { statement: LATER, target: { claim_id: recordedId } },
+    );
+    const laterId = later.claim_ids[0];
+    expect(laterId).toBeDefined();
+    if (laterId === undefined) return;
+    expect(getClaim(fixture.db, recordedId)?.status).toBe("superseded");
+    expect(getClaim(fixture.db, laterId)?.status).toBe("live");
+    const afterLater = durableCorrectionState(fixture);
+
+    const replay = await correct(
+      { db: fixture.db, vault_path: fixture.vault, now: () => "2026-09-02T16:01:00.000Z" },
+      { statement: STATEMENT, target: { claim_id: claimId } },
+    );
+    expect(replay.event_id).toBe(first.event_id);
+    expect(replay.claim_ids).toEqual([recordedId]);
+    expect(replay.receipt_id).toBe(first.receipt_id);
+    expect(getClaim(fixture.db, laterId)?.status).toBe("live");
+    expect(durableCorrectionState(fixture)).toEqual(afterLater);
+  });
+
+  test("the same statement and superseded claim_id reconstructs a pending rewrite", async () => {
+    const { fixture, claimId } = await writtenGrace();
+    fixture.db.exec(
+      "CREATE TRIGGER synthetic_correction_receipt_failure BEFORE INSERT ON canon_receipts BEGIN SELECT RAISE(FAIL,'synthetic-correction-receipt-failure'); END",
+    );
+    const first = await correct(
+      { db: fixture.db, vault_path: fixture.vault, now: () => AT },
+      { statement: STATEMENT, target: { claim_id: claimId } },
+    );
+    expect(first.recovery_pending?.length).toBeGreaterThan(0);
+    expect(getClaim(fixture.db, claimId)?.status).toBe("superseded");
+    const recordedId = first.claim_ids[0];
+    expect(recordedId).toBeDefined();
+    if (recordedId === undefined) return;
+    const before = durableCorrectionState(fixture);
+
+    const retry = await correct(
+      { db: fixture.db, vault_path: fixture.vault, now: () => "2026-09-02T15:01:00.000Z" },
+      { statement: STATEMENT, target: { claim_id: claimId } },
+    );
+    expect(retry.event_id).toBe(first.event_id);
+    expect(retry.claim_ids).toEqual([recordedId]);
+    expect(retry.recovery_pending).toEqual(first.recovery_pending);
+    expect(durableCorrectionState(fixture)).toEqual(before);
+  });
+
+  test("repeating a below_authority correction keeps the live winner", async () => {
+    const { fixture, claimId } = await writtenGrace();
+    const first = await correct(
+      { db: fixture.db, vault_path: fixture.vault, now: () => AT },
+      { statement: STATEMENT, target: { claim_id: claimId } },
+    );
+    const winnerId = first.claim_ids[0];
+    expect(winnerId).toBeDefined();
+    if (winnerId === undefined) return;
+    const input = {
+      db: fixture.db,
+      vault_path: fixture.vault,
+      now: () => LATER_AT,
+      relay_owner_corrections: false as const,
+    };
+    const attempt = { statement: LATER, target: { claim_id: winnerId } };
+
+    let firstCaught: unknown;
+    try {
+      await correct(input, attempt);
+    } catch (error) {
+      firstCaught = error;
+    }
+    expect(firstCaught).toBeInstanceOf(CorrectError);
+    if (!(firstCaught instanceof CorrectError)) return;
+    expect(firstCaught.code).toBe("below_authority");
+    expect(getClaim(fixture.db, winnerId)?.status).toBe("live");
+    expect(listClaims(fixture.db, { status: "skipped" }).length).toBeGreaterThan(0);
+    const before = durableCorrectionState(fixture);
+
+    let secondCaught: unknown;
+    try {
+      await correct(input, attempt);
+    } catch (error) {
+      secondCaught = error;
+    }
+    expect(secondCaught).toBeInstanceOf(CorrectError);
+    if (!(secondCaught instanceof CorrectError)) return;
+    expect(secondCaught.code).toBe("below_authority");
+    expect(getClaim(fixture.db, winnerId)?.status).toBe("live");
+    expect(durableCorrectionState(fixture)).toEqual(before);
+  });
+
+  test("claim_key still corrects the live group after a named claim_id is superseded", async () => {
+    const { fixture, claimId } = await writtenGrace();
+    const key = getClaim(fixture.db, claimId)?.claim_key;
+    expect(key).toBeString();
+    if (key === undefined || key === null) return;
+    const first = await correct(
+      { db: fixture.db, vault_path: fixture.vault, now: () => AT },
+      { statement: STATEMENT, target: { claim_id: claimId } },
+    );
+    const recordedId = first.claim_ids[0];
+    expect(recordedId).toBeDefined();
+    if (recordedId === undefined) return;
+    expect(getClaim(fixture.db, claimId)?.status).toBe("superseded");
+
+    const later = await correct(
+      { db: fixture.db, vault_path: fixture.vault, now: () => LATER_AT },
+      { statement: LATER, target: { claim_key: key } },
+    );
+    const laterId = later.claim_ids[0];
+    expect(laterId).toBeDefined();
+    if (laterId === undefined) return;
+    expect(later.superseded.map((row) => row.claim_id)).toContain(recordedId);
+    expect(getClaim(fixture.db, recordedId)?.status).toBe("superseded");
+    expect(getClaim(fixture.db, laterId)?.status).toBe("live");
+    expect(getClaim(fixture.db, laterId)?.object).toBe("contoso");
+    expect(listClaims(fixture.db, { status: "live", claim_key: key }).map((row) => row.claim_id)).toEqual([
+      laterId,
+    ]);
+    expect(later.receipt_id).toBeString();
+    expect(later.rewritten.map((row) => row.page_path)).toContain("people/grace.md");
+    expect(readFileSync(join(fixture.vault, "people/grace.md"), "utf8")).toContain(LATER);
   });
 });
 
