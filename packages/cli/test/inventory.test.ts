@@ -391,3 +391,21 @@ test.each([
   const entries = mutate(files, [...inventory.entries]);
   expect(taggedSectionErrors(entries, files, TAGGED_SECTIONS).length).toBeGreaterThan(0);
 });
+
+const TRUTH_MAINTENANCE_DOCS = ["docs/lifeos-capability-gap.md", "docs/product-context.md"] as const;
+const CANON_APPROVAL_PHRASES = [
+  /explicit human approval for consequential truth/i,
+  /human approval for consequential truth/i,
+  /owner approval for (?:canon|consequential truth)/i,
+];
+
+test("truth-maintenance docs do not treat human approval as the canon path", () => {
+  const hits: string[] = [];
+  for (const rel of TRUTH_MAINTENANCE_DOCS) {
+    const text = readFileSync(join(ROOT, rel), "utf8");
+    for (const phrase of CANON_APPROVAL_PHRASES) {
+      if (phrase.test(text)) hits.push(`${rel}: ${phrase}`);
+    }
+  }
+  expect(hits).toEqual([]);
+});
