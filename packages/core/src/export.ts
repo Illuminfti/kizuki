@@ -291,6 +291,8 @@ interface CheckpointRow {
   last_run_at: string;
   last_result: string;
   backfill_complete: number;
+  backfill_cursor: string | null;
+  sync_cursor: string | null;
 }
 
 interface RailCursorRow {
@@ -1324,6 +1326,8 @@ function* pageCheckpoints(db: Database): Generator<Record<string, unknown>> {
         last_run_at: row.last_run_at,
         last_result: JSON.parse(row.last_result) as unknown,
         backfill_complete: row.backfill_complete === 1 ? 1 : 0,
+        backfill_cursor: row.backfill_cursor,
+        sync_cursor: row.sync_cursor,
       };
     }
     const last: CheckpointRow | undefined = rows.at(-1);
@@ -1956,11 +1960,12 @@ function assertBackupFormat(manifest: ExportManifest): void {
   // Ledger22 adds event_purge_proofs beside existing event_purges rows.
   // Ledger23 adds sticky checkpoint backfill_complete; omitted rows restore as 0.
   // Ledger24 adds optional event-only selector_kind on proofs; omitted rows restore as NULL.
+  // Ledger25 adds independent checkpoint backfill_cursor and sync_cursor; omitted rows restore as NULL.
   // Future migrations must make their own explicit compatibility decision.
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
       versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
       versions.ledger !== 19 && versions.ledger !== 20 &&
-      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24))) {
+      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25))) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -2325,10 +2330,12 @@ function insertCheckpointRow(db: Database, raw: Record<string, unknown>): void {
   if (complete !== undefined && complete !== 0 && complete !== 1) {
     throw new Error("backfill_complete must be 0 or 1");
   }
+  const backfillCursor = asStringOrNull(raw.backfill_cursor, "backfill_cursor");
+  const syncCursor = asStringOrNull(raw.sync_cursor, "sync_cursor");
   db.query(
     `INSERT INTO checkpoints
-       (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result, backfill_complete)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result, backfill_complete, backfill_cursor, sync_cursor)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     connectorId,
     sourceKey,
@@ -2338,6 +2345,8 @@ function insertCheckpointRow(db: Database, raw: Record<string, unknown>): void {
     asString(raw.last_run_at, "last_run_at"),
     JSON.stringify(raw.last_result ?? {}),
     complete === 1 ? 1 : 0,
+    backfillCursor,
+    syncCursor,
   );
 }
 

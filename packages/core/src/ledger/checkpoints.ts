@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Cursor } from "../contracts/connector";
-import { assertCursorSize, getCheckpoint, LedgerError } from "./connections";
+import { assertCursorSize, checkpointModeCursor, getCheckpoint, LedgerError } from "./connections";
 
 /**
  * Persisted resume tokens, one per (connector, source). The cursor is opaque:
@@ -14,6 +14,15 @@ export function readCheckpoint(
   sourceKey: string,
 ): Cursor | null {
   return getCheckpoint(db, connectorId, sourceKey)?.cursor ?? null;
+}
+
+export function readModeCursor(
+  db: Database,
+  connectorId: string,
+  sourceKey: string,
+  mode: "backfill" | "sync",
+): Cursor | null {
+  return checkpointModeCursor(getCheckpoint(db, connectorId, sourceKey), mode);
 }
 
 export function readRailCursor(

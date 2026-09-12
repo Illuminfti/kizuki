@@ -10,6 +10,7 @@ import {
 import { KizukiError } from "../contracts/errors";
 import {
   assertCursorSize,
+  checkpointModeCursor,
   getCheckpoint,
   LedgerError,
   type Checkpoint,
@@ -327,8 +328,8 @@ function persistCheckpointRow(
   const at = new Date().toISOString();
   db.query(
     `INSERT INTO checkpoints
-       (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result, backfill_complete)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result, backfill_complete, backfill_cursor, sync_cursor)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (connector_id, source_key) DO UPDATE SET
        cursor = excluded.cursor,
        mode = excluded.mode,
@@ -338,6 +339,14 @@ function persistCheckpointRow(
        backfill_complete = CASE
          WHEN excluded.backfill_complete = 1 THEN 1
          ELSE checkpoints.backfill_complete
+       END,
+       backfill_cursor = CASE
+         WHEN excluded.mode = 'backfill' THEN excluded.cursor
+         ELSE checkpoints.backfill_cursor
+       END,
+       sync_cursor = CASE
+         WHEN excluded.mode = 'sync' THEN excluded.cursor
+         ELSE checkpoints.sync_cursor
        END`,
   ).run(
     connector_id,
@@ -348,6 +357,8 @@ function persistCheckpointRow(
     at,
     JSON.stringify(result),
     backfillComplete ? 1 : 0,
+    mode === "backfill" ? cursor : null,
+    mode === "sync" ? cursor : null,
   );
   const checkpoint = getCheckpoint(db, connector_id, source_key);
   if (checkpoint === null) throw new LedgerError("saved checkpoint was not found");
@@ -450,7 +461,7 @@ async function runConnector(
   mode: "backfill" | "sync",
   context?: SourceTombstoneContext,
 ): Promise<ConnectorStep> {
-  const previous = getCheckpoint(db, connector_id, source_key)?.cursor ?? null;
+  const previous = checkpointModeCursor(getCheckpoint(db, connector_id, source_key), mode);
   let admission: SourceAdmission | null;
   try {
     requireActiveConnection(db, connector_id, source_key);
@@ -618,7 +629,7 @@ export async function runToCompletion(
     throw new TypeError("runToCompletion: maxBatches must be a positive integer");
   }
   const stored = (): string | null =>
-    getCheckpoint(db, connector_id, source_key)?.cursor ?? null;
+    checkpointModeCursor(getCheckpoint(db, connector_id, source_key), mode);
   const total: RunResult = emptyResult(stored());
   const context = opts?.vault_path === undefined ? undefined : { vault_path: opts.vault_path };
   for (let batch = 0; batch < maxBatches; batch += 1) {

@@ -205,7 +205,7 @@ test.if(credentialCustodyQualified)("current writer excludes completed enrollmen
 });
 
 for (const schema of ["kizuki.backup/v2", "kizuki.backup/v3"] as const) {
-  for (const ledger of schema === "kizuki.backup/v3" ? [16, 17, 18, 19, 20, 21, 22, 23, 24] : [16, 17, 18, 19, 20]) {
+  for (const ledger of schema === "kizuki.backup/v3" ? [16, 17, 18, 19, 20, 21, 22, 23, 24, 25] : [16, 17, 18, 19, 20]) {
     test(`${schema} explicitly accepts the supported streams at ledger${ledger}`, () => {
       const { root, backup, manifest } = materialize();
       // Dispatch fixture: ledger17+ has a separate rail stream. The preceding
@@ -238,7 +238,7 @@ for (const schema of ["kizuki.backup/v2", "kizuki.backup/v3"] as const) {
       expect(existsSync(target)).toBe(false);
     });
   }
-  for (const ledger of [0, 15, ...(schema === "kizuki.backup/v2" ? [21, 22, 23, 24] : [25]), 99, 16.5, "16"]) {
+  for (const ledger of [0, 15, ...(schema === "kizuki.backup/v2" ? [21, 22, 23, 24, 25] : [26]), 99, 16.5, "16"]) {
     test(`${schema} refuses unsupported ledger version ${JSON.stringify(ledger)} before target publication`, () => {
       const { root, backup, manifest } = materialize();
       resign(backup, { ...manifest, schema, schema_versions: { ...manifest.schema_versions, ledger: ledger as number } });

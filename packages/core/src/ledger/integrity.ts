@@ -178,6 +178,12 @@ export function assertLedgerSchema(db: Database, expectedVersion: number): void 
       throw new LedgerStoreError("corrupt", "event_purge_proofs is missing selector_kind");
     }
   }
+  if (expectedVersion >= 25) {
+    const names = tableColumns(db, "checkpoints");
+    if (!names.includes("backfill_cursor") || !names.includes("sync_cursor")) {
+      throw new LedgerStoreError("corrupt", "checkpoints are missing mode cursors");
+    }
+  }
 }
 
 function boundedCheck(db: Database, pragma: "quick_check" | "integrity_check"): string {

@@ -8,7 +8,7 @@ import { applyClaimsV3 } from "../claims/schema";
 import { applyDerivedV10 } from "../derived";
 import { applyServeV7, initServe } from "../serve/schema";
 import { applySensitivityV6 } from "../sensitivity/schema";
-import { applyCheckpointBackfillCompleteV23, applyConnectionsV8 } from "./connections-schema";
+import { applyCheckpointBackfillCompleteV23, applyCheckpointModeCursorsV25, applyConnectionsV8 } from "./connections-schema";
 import { LedgerStoreError } from "./errors";
 import {
   assertLedgerSchema,
@@ -192,6 +192,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 22, apply: applyEventPurgeIntegrityV22 },
   { version: 23, apply: applyCheckpointBackfillCompleteV23 },
   { version: 24, apply: applyEventPurgeSelectorKindV24 },
+  { version: 25, apply: applyCheckpointModeCursorsV25 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

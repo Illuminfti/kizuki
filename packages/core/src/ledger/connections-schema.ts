@@ -39,3 +39,29 @@ export function applyCheckpointBackfillCompleteV23(db: Database): void {
       CHECK (backfill_complete IN (0, 1));
   `);
 }
+
+/** Ledger v25: independent backfill and sync resume tokens. */
+export function applyCheckpointModeCursorsV25(db: Database): void {
+  if (tableColumns(db, "checkpoints").includes("backfill_cursor")) return;
+  db.exec(`
+    ALTER TABLE checkpoints ADD COLUMN backfill_cursor TEXT;
+    ALTER TABLE checkpoints ADD COLUMN sync_cursor TEXT;
+    UPDATE checkpoints SET
+      backfill_cursor = (
+        SELECT r.committed_cursor FROM connection_runs r
+         WHERE r.connector_id = checkpoints.connector_id
+           AND r.source_key = checkpoints.source_key
+           AND r.mode = 'backfill' AND r.status = 'ok'
+         ORDER BY r.finished_at DESC, r.run_id DESC
+         LIMIT 1
+      ),
+      sync_cursor = (
+        SELECT r.committed_cursor FROM connection_runs r
+         WHERE r.connector_id = checkpoints.connector_id
+           AND r.source_key = checkpoints.source_key
+           AND r.mode = 'sync' AND r.status = 'ok'
+         ORDER BY r.finished_at DESC, r.run_id DESC
+         LIMIT 1
+      );
+  `);
+}
