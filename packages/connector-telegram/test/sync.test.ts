@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { computeContentHash } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
-import { MAX_DIALOGS, parseCursor } from "../src/cursor";
+import { BATCH_LIMIT, MAX_DIALOGS, parseCursor } from "../src/cursor";
 import {
   fixtureAccount,
 } from "../src/fixture";
@@ -11,11 +11,18 @@ import { connected, drain } from "./helpers";
 const FEBRUARY = Date.parse("2026-02-01T00:00:00.000Z");
 const LATER = Math.floor(Date.UTC(2026, 1, 2, 9, 0, 0) / 1000);
 
+function ownHasMore(batch: { has_more?: boolean }, value: boolean): void {
+  const descriptor = Object.getOwnPropertyDescriptor(batch, "has_more");
+  expect(descriptor && Object.hasOwn(descriptor, "value")).toBe(true);
+  expect(descriptor?.value).toBe(value);
+}
+
 async function caughtUp() {
   const built = await connected({ now: FEBRUARY });
   const drained = await drain(built.connector, "backfill");
   const settled = await built.connector.sync(drained.cursor);
   expect(settled.events).toEqual([]);
+  ownHasMore(settled, false);
   return { built, backfilled: drained.events, cursor: settled.cursor as string };
 }
 
@@ -33,6 +40,7 @@ test("a sync with nothing new returns an empty batch and keeps its cursor", asyn
   expect(again.events).toEqual([]);
   expect(parseCursor(again.cursor as string).pass).toBeNull();
   expect(again.cursor).toBe(cursor);
+  ownHasMore(again, false);
 });
 
 test("an edit older than the last completed pass is not re-emitted", async () => {
@@ -71,6 +79,7 @@ test("messages that arrived since the last pass are emitted", async () => {
   const batch = await built.connector.sync(cursor);
   expect(ids(batch.events)).toEqual(["1002:6"]);
   expect(parseCursor(batch.cursor as string).dialogs["1002"]?.last_id).toBe(6);
+  ownHasMore(batch, false);
 });
 
 test("a dialog that appeared after the last pass is walked from its start", async () => {
@@ -104,6 +113,7 @@ test("a dialog that appeared after the last pass is walked from its start", asyn
   const batch = await built.connector.sync(cursor);
   expect(ids(batch.events)).toEqual(["-100999:1", "-100999:2"]);
   expect(batch.events[0]?.sensitivity_hint).toBe("private");
+  ownHasMore(batch, false);
 });
 
 test("a pass interrupted by a reported wait resumes at the dialog it stopped on", async () => {
@@ -117,11 +127,13 @@ test("a pass interrupted by a reported wait resumes at the dialog it stopped on"
   expect(ids(partial.events)).toEqual(["-42:10"]);
   const stopped = parseCursor(partial.cursor as string);
   expect(stopped.pass?.next_peer).toBe("-42");
+  ownHasMore(partial, true);
 
   built.api.calls.length = 0;
   built.clock.now += 5_000;
   const finished = await built.connector.sync(partial.cursor);
   expect(parseCursor(finished.cursor as string).pass).toBeNull();
+  ownHasMore(finished, false);
   const visited = built.api.calls
     .filter((call) => call.method === "messages")
     .map((call) => call.args[0]);
@@ -132,9 +144,68 @@ test("a pass interrupted by a reported wait resumes at the dialog it stopped on"
 test("a sync with no cursor behaves exactly as a first backfill", async () => {
   const built = await connected({ now: FEBRUARY });
   const backfill = await built.connector.backfill(null);
-  const sync = await built.connector.sync(null);
-  expect(sync).toEqual(backfill);
+  ownHasMore(backfill, false);
+  const cold = await connected({ now: FEBRUARY });
+  const coldBatch = await cold.connector.sync(null);
+  expect(coldBatch).toEqual(backfill);
+  ownHasMore(coldBatch, false);
+  // Same instance, after a finished walk: still a cold start. Process memory
+  // is not a checkpoint.
+  const again = await built.connector.sync(null);
+  expect(again).toEqual(backfill);
+  ownHasMore(again, false);
 });
+
+test("sync of a completed backfill cursor after reconnect is incremental", async () => {
+  const built = await connected({ now: FEBRUARY });
+  const drained = await drain(built.connector, "backfill");
+  expect(parseCursor(drained.cursor).phase).toBe("synced");
+
+  const restarted = await built.restart();
+  built.clock.now += 3_600_000;
+  built.api.calls.length = 0;
+  const batch = await restarted.sync(drained.cursor);
+  expect(ids(batch.events)).toEqual([]);
+  expect(parseCursor(batch.cursor as string).phase).toBe("synced");
+  ownHasMore(batch, false);
+  const history = built.api.calls
+    .filter((call) => call.method === "messages")
+    .map((call) => call.args[1] as { min_id: number; max_id?: number })
+    .filter((query) => query.max_id === undefined);
+  expect(history).toHaveLength(3);
+  expect(history.every((query) => query.min_id > 0)).toBe(true);
+});
+
+test("sync continues a partial backfill cursor from last_id after reconnect", async () => {
+  const account = fixtureAccount();
+  account.dialogs = [
+    {
+      peer_id: "1",
+      peer_type: "user",
+      title: "grace",
+      top_message_id: 1000,
+    },
+  ];
+  account.messages = { "1": bulk("1", 1, 1000) };
+  const built = await connected({ account, now: FEBRUARY });
+  const first = await built.connector.backfill(null);
+  expect(first.events).toHaveLength(BATCH_LIMIT);
+  expect(parseCursor(first.cursor as string).phase).toBe("backfill");
+  expect(parseCursor(first.cursor as string).dialogs["1"]?.last_id).toBe(
+    BATCH_LIMIT,
+  );
+  ownHasMore(first, true);
+
+  const restarted = await built.restart();
+  const batch = await restarted.sync(first.cursor);
+  expect(ids(batch.events)[0]).toBe(`1:${BATCH_LIMIT + 1}`);
+  expect(ids(batch.events)).not.toContain("1:1");
+  expect(parseCursor(batch.cursor as string).phase).toBe("backfill");
+  expect(parseCursor(batch.cursor as string).dialogs["1"]?.last_id).toBe(
+    BATCH_LIMIT * 2,
+  );
+  ownHasMore(batch, true);
+}, 15_000);
 
 function bulk(peer_id: string, from: number, to: number): TelegramMessage[] {
   const messages: TelegramMessage[] = [];
@@ -168,6 +239,7 @@ async function settled(account = twoDialogs()) {
   const drained = await drain(built.connector, "backfill");
   const first = await built.connector.sync(drained.cursor);
   expect(first.events).toEqual([]);
+  ownHasMore(first, false);
   return { built, cursor: first.cursor as string };
 }
 
@@ -182,6 +254,7 @@ test("an edit is still found when an earlier dialog nearly filled the batch", as
 
   const first = await built.connector.sync(cursor);
   expect(parseCursor(first.cursor as string).pass?.next_peer).toBe("2");
+  ownHasMore(first, true);
   const rest = await drain(built.connector, "sync", first.cursor);
   const seen = ids([...first.events, ...rest.events]);
   expect(seen).toContain("2:5");
@@ -193,16 +266,20 @@ test("a dialog that fills the batch keeps the pass on itself", async () => {
   for (const message of bulk("1", 2, 1201)) built.api.append("1", message);
 
   const sizes: number[] = [];
+  const more: Array<boolean | undefined> = [];
   let current = cursor;
   for (let round = 0; round < 4; round += 1) {
     const batch = await built.connector.sync(current);
     sizes.push(batch.events.length);
+    ownHasMore(batch, round < 2);
+    more.push(batch.has_more);
     current = batch.cursor as string;
     if (round === 0) {
       expect(parseCursor(current).pass?.next_peer).toBe("1");
     }
   }
-  expect(sizes).toEqual([500, 500, 200, 0]);
+  expect(sizes).toEqual([BATCH_LIMIT, BATCH_LIMIT, 200, 0]);
+  expect(more).toEqual([true, true, false, false]);
   expect(parseCursor(current).pass).toBeNull();
   expect(parseCursor(current).dialogs["1"]?.last_id).toBe(1201);
 });
@@ -250,7 +327,9 @@ test("the cursor never tracks more dialogs than a listing may return", async () 
   expect(ids(batch.events)).toEqual(["9999999:1"]);
 
   // And it keeps working: the checkpoint it just wrote is still walkable.
-  expect((await built.connector.sync(batch.cursor)).events).toEqual([]);
+  const idle = await built.connector.sync(batch.cursor);
+  expect(idle.events).toEqual([]);
+  ownHasMore(idle, false);
 });
 
 test("edits are found even when the batch fills before the scan ends", async () => {

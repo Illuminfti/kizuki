@@ -54,7 +54,7 @@ export interface TelegramDeps extends SessionDeps {
   persist: StatePersister;
 }
 
-const MANIFEST: Manifest = freezeManifest({
+const TELEGRAM_MANIFEST = {
   schema: "kizuki.connector/v1",
   connector_id: TELEGRAM_CONNECTOR_ID,
   version: TELEGRAM_CONNECTOR_VERSION,
@@ -71,13 +71,18 @@ const MANIFEST: Manifest = freezeManifest({
     tombstones: false,
     purge: true,
     fixture: true,
+    // First sync with a null mode cursor may reuse the committed backfill token.
+    // Direct `sync(null)` stays a cold walk.
+    sync_from_backfill_before_first_success: true,
   },
   // The session is created by sign-in, not required up front.
   required_secrets: [],
   emits_sensitivity_hint: true,
   ...policyForConnector(TELEGRAM_CONNECTOR_ID),
   auth_modes: ["sign_in"],
-});
+} satisfies Manifest;
+
+const MANIFEST: Manifest = freezeManifest(TELEGRAM_MANIFEST);
 
 export class TelegramConnector implements Connector {
   readonly #stateRef: string | null;
@@ -245,9 +250,9 @@ export class TelegramConnector implements Connector {
   }
 
   sync(cursor: Cursor | null): Promise<SyncBatch> {
-    return cursor === null
-      ? this.#advance(null, "backfill")
-      : this.#advance(cursor, "sync");
+    // A missing token is a cold historical walk. Any resume token, including a
+    // backfill snapshot the host hands over, is an incremental pass.
+    return this.#advance(cursor, cursor === null ? "backfill" : "sync");
   }
 
   async revoke(): Promise<void> {
@@ -336,9 +341,6 @@ export class TelegramConnector implements Connector {
         }
       }
       return batch;
-    } catch (error) {
-      this.#coverage = null;
-      throw error;
     } finally { this.#activeWalks--; }
   }
 
