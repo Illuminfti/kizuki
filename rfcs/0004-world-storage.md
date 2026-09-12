@@ -370,6 +370,20 @@ Final coordinated allocation:
 
 A1 may reuse canon 5 and purge 6 only if those versions already contain the generic terminal receipt and erasure-intent mechanisms. If its implementation changes either schema, it must consume the next version rather than write different DDL under the same number.
 
+### Current-main compatibility
+
+<!-- world-allocation-compatibility -->
+
+The coordinated allocation table above is a **historical baseline** at `a96c5f4a4455d22fb4b40537c308c6d019a36d0d`. It is not an executable reservation on current main.
+
+Current `packages/core/src/ledger/db.ts` already applies ledger versions 17, 18, and 19, and continues through version 26. Those occupied numbers are historical, not available world-model reservations:
+
+- ledger 17 is occupied by `applyLedgerV16`
+- ledger 18 is occupied by `applyAgentEnrollmentV18`
+- ledger 19 is occupied by `applyPurgeBatchesV19`
+
+World-model implementation must allocate fresh versions through the existing serialized migration process after integration. This note does not choose or reserve the next version.
+
 ## Identifier origin and accepted native restore
 
 Allocator origin is an immutable fact recorded on the existing authoritative
