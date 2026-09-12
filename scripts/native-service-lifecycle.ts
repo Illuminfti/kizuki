@@ -1,3 +1,4 @@
+import { LEDGER_SCHEMA_VERSION } from "../packages/core/src/ledger/db";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, release } from "node:os";
@@ -196,7 +197,7 @@ export function statePhasePassed(id: NativeStatePhase["id"], e: NativeStateEvide
 export function upgradePhasePassed(e: NativeUpgradeEvidence): boolean {
   return e.baseline_source_sha === BASELINE_SOURCE_SHA && e.candidate_source_sha !== BASELINE_SOURCE_SHA &&
     e.baseline_binary_sha256 !== e.candidate_binary_sha256 && e.baseline_instance_id !== e.candidate_instance_id &&
-    e.baseline_pid > 1 && e.candidate_pid > 1 && e.baseline_schema === 21 && e.candidate_schema === 21 &&
+    e.baseline_pid > 1 && e.candidate_pid > 1 && e.baseline_schema === 21 && e.candidate_schema === LEDGER_SCHEMA_VERSION &&
     e.before_event_sha256 === e.after_event_sha256 && e.baseline_stopped && e.candidate_active &&
     e.baseline_query_preserved && e.candidate_query_preserved && e.backup_verified;
 }

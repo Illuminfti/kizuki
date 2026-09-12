@@ -1,3 +1,4 @@
+import { LEDGER_SCHEMA_VERSION } from "../packages/core/src/ledger/db";
 import { expect, test } from "bun:test";
 import { CURRENT_PACKAGE_FILES } from "./release-artifacts";
 import { lifecycleFixture } from "./native-lifecycle-proof-fixture";
@@ -25,6 +26,10 @@ const mutations: [string,(f:any)=>void][]=[
  ["baseline current source",f=>f.qualification.baseline.source_sha=f.source_sha],
  ["upgrade wrong prior bytes",f=>phase(f,"cross-binary-upgrade").baseline_binary_sha256="e".repeat(64)],
  ["upgrade lost event",f=>phase(f,"cross-binary-upgrade").after_event_sha256="e".repeat(64)],
+ ["upgrade retains obsolete schema",f=>phase(f,"cross-binary-upgrade").candidate_schema=LEDGER_SCHEMA_VERSION-1],
+ ["upgrade claims unknown future schema",f=>phase(f,"cross-binary-upgrade").candidate_schema=LEDGER_SCHEMA_VERSION+1],
+ ["restore retains obsolete schema",f=>phase(f,"restore-backup16").snapshots[0].value.schema_version=LEDGER_SCHEMA_VERSION-1],
+ ["recovered service retains obsolete schema",f=>f.qualification.recovery_services[0].ledger_schema=LEDGER_SCHEMA_VERSION-1],
  ["upgrade old instance reused",f=>phase(f,"cross-binary-upgrade").candidate_instance_id="prior-instance"],
  ["failed active state",f=>phase(f,"state-failed").manager_pid=99],
  ["failed enabled state omitted",f=>phase(f,"state-failed").public_enabled=false],

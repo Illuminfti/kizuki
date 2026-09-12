@@ -1,3 +1,4 @@
+import { LEDGER_SCHEMA_VERSION } from "../packages/core/src/ledger/db";
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -309,11 +310,11 @@ test("native state evidence refuses misleading healthy, enabled and failed obser
 });
 
 test("cross-binary fixture evidence refuses same bytes, same instance and damaged original data", () => {
-  const e: NativeUpgradeEvidence = { baseline_source_sha: BASELINE_SOURCE_SHA, candidate_source_sha: "b".repeat(40), baseline_binary_sha256: "a".repeat(64), candidate_binary_sha256: "b".repeat(64), baseline_schema: 21, candidate_schema: 21,
+  const e: NativeUpgradeEvidence = { baseline_source_sha: BASELINE_SOURCE_SHA, candidate_source_sha: "b".repeat(40), baseline_binary_sha256: "a".repeat(64), candidate_binary_sha256: "b".repeat(64), baseline_schema: 21, candidate_schema: LEDGER_SCHEMA_VERSION,
     baseline_instance_id: "old", candidate_instance_id: "new", baseline_pid: 40, candidate_pid: 41, unit: "kizuki@synthetic.service", vault_id: "synthetic", before_event_sha256: "e".repeat(64), after_event_sha256: "e".repeat(64),
     baseline_stopped: true, candidate_active: true, baseline_query_preserved: true, candidate_query_preserved: true, backup_verified: true, backup_manifest_sha256: "c".repeat(64), unit_sha256: "d".repeat(64) };
   expect(upgradePhasePassed(e)).toBe(true);
-  for (const change of [{ candidate_binary_sha256: e.baseline_binary_sha256 }, { candidate_instance_id: e.baseline_instance_id }, { after_event_sha256: "f".repeat(64) }, { baseline_stopped: false }, { candidate_active: false }, { backup_verified: false }, { baseline_schema: 15 }])
+  for (const change of [{ candidate_binary_sha256: e.baseline_binary_sha256 }, { candidate_instance_id: e.baseline_instance_id }, { after_event_sha256: "f".repeat(64) }, { baseline_stopped: false }, { candidate_active: false }, { backup_verified: false }, { baseline_schema: 15 }, { candidate_schema: LEDGER_SCHEMA_VERSION - 1 }, { candidate_schema: LEDGER_SCHEMA_VERSION + 1 }])
     expect(upgradePhasePassed({ ...e, ...change })).toBe(false);
 });
 

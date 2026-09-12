@@ -295,7 +295,7 @@ export async function runNativeRecoveryFixtures(options: NativeRecoveryOptions):
         }
         command("restore-verify",["restore","--from",backup,"--verify"]);
         command("restore",["restore","--from",backup,"--into",vault]);
-        const after = inspectRecoveryFixture(vault); evidence.snapshots.push({role:"restored",value:after.summary}); requireThat(after.summary.schema_version === 21 && after.summary.events === 1, "restored-shape");
+        const after = inspectRecoveryFixture(vault); evidence.snapshots.push({role:"restored",value:after.summary}); requireThat(after.summary.schema_version === LEDGER_SCHEMA_VERSION && after.summary.events === 1, "restored-shape");
         const events = Object.entries(fixture.files).filter(([path]) => path === "ledger/events.jsonl").flatMap(([,text]) => String(text).trim().split("\n").filter(Boolean).map(line=>JSON.parse(line)));
         const claims = String(fixture.files["claims/claims.jsonl"] ?? "").trim().split("\n").filter(Boolean).map(line=>JSON.parse(line));
         // Backup event rows are a public serialization; prove preserved event/claim
