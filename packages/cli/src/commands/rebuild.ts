@@ -1,9 +1,10 @@
-import { FTS5_RETRIEVAL_ID, rebuildRetrieval } from "@kizuki/core";
+import { rebuildRetrieval, type RetrievalPort } from "@kizuki/core";
 import { parseArguments, UsageError } from "../args";
 import { withVault } from "../context";
 import { jsonEnvelope } from "../output";
 import { refreshDerived } from "../derived";
 import { pruneOldOwnedRetrieval } from "../owned-retrieval-inventory";
+import { openConfiguredRetrieval } from "../retrieval-runtime";
 import type { Command } from "./index";
 
 export const rebuildCommand: Command = {
@@ -32,15 +33,19 @@ export const rebuildCommand: Command = {
           : `pruned=${result.pruned.join(",") || "none"} kept=${result.kept ?? "sqlite-floor"}`);
         return 0;
       }
-      const bound = ctx.retrieval?.descriptor.id ?? FTS5_RETRIEVAL_ID;
-      if (portId !== undefined && portId !== bound) {
-        throw new UsageError(`rebuild --port must name the bound store (${bound})`);
+      let selected: RetrievalPort | undefined;
+      try {
+        selected = portId === undefined
+          ? ctx.retrieval
+          : await openConfiguredRetrieval(ctx.vaultPath, portId);
+        const result = await rebuildRetrieval(ctx.db, ctx.vaultPath, selected, { layer });
+        if (layer === "all") refreshDerived(ctx.db, ctx.vaultPath);
+        io.out(parsed.flags.has("--json") ? jsonEnvelope("rebuild", "ok", result)
+          : `rebuilt=${result.documents} backend=${result.backend} store=${result.store} floor_documents=${result.floor_documents} generation=${result.generation}`);
+        return 0;
+      } finally {
+        if (portId !== undefined) await selected?.close();
       }
-      const result = await rebuildRetrieval(ctx.db, ctx.vaultPath, ctx.retrieval, { layer });
-      if (layer === "all") refreshDerived(ctx.db, ctx.vaultPath);
-      io.out(parsed.flags.has("--json") ? jsonEnvelope("rebuild", "ok", result)
-        : `rebuilt=${result.documents} backend=${result.backend} store=${result.store} floor_documents=${result.floor_documents} generation=${result.generation}`);
-      return 0;
-    });
+    }, portId === undefined ? {} : { retrieval: "none" });
   },
 };

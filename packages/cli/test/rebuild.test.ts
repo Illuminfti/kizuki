@@ -44,7 +44,6 @@ test("offline public configured-engine rebuild preserves query results and survi
   expect(retained.exitCode).toBe(0);
   expect(ids(retained.stdout)).toEqual(ids(after.stdout));
   expect(run("rebuild", "--layer", "vector").exitCode).toBe(2);
-  expect(run("rebuild", "--port", "kizuki.retrieval.fts5").exitCode).toBe(2);
 }, 120_000);
 
 
@@ -67,7 +66,6 @@ test("default rebuild JSON and text identify the actual SQLite floor count", () 
     const named = helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.fts5", "--json");
     expect(named.exitCode, named.stdout + named.stderr).toBe(0);
     expect(JSON.parse(named.stdout).data.store).toBe("kizuki.retrieval.fts5");
-    expect(helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.embedded-pg").exitCode).toBe(2);
   } finally { reader.close(); }
 });
 
@@ -157,7 +155,7 @@ test("prune-old removes an inactive FTS generation and keeps the lexical floor",
   const again = helpers.runCli(setup.env, "rebuild", "--prune-old");
   expect(again.exitCode).toBe(0);
   expect(again.stdout).toContain("pruned=none");
-  expect(helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.no-such").exitCode).toBe(2);
+  expect(helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.no-such").exitCode).not.toBe(0);
   expect(helpers.runCli(setup.env, "rebuild", "--prune-old", "--layer", "all").exitCode).toBe(2);
   expect(helpers.runCli(setup.env, "rebuild", "--prune-old", "--port", "kizuki.retrieval.fts5").exitCode).toBe(2);
   mkdirSync(join(dataDir, "store"), { recursive: true });
@@ -166,3 +164,57 @@ test("prune-old removes an inactive FTS generation and keeps the lexical floor",
   expect(refused.exitCode).not.toBe(0);
   expect(readFileSync(join(dataDir, "store", "unknown"), "utf8")).toBe("SYNTHETIC_KEEP");
 }, 60_000);
+
+test("rebuild --port targets an unbound installed engine without rewriting the default", async () => {
+  const setup = helpers.tempVault();
+  expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode).toBe(0);
+  const configPath = join(setup.vault, ".kizuki", "serve.toml");
+  expect(existsSync(configPath)).toBe(false);
+
+  const first = helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.embedded-pg", "--json");
+  expect(first.exitCode, first.stdout + first.stderr).toBe(0);
+  expect(JSON.parse(first.stdout).data).toMatchObject({
+    backend: "retrieval-port",
+    store: "kizuki.retrieval.embedded-pg",
+  });
+  expect(existsSync(configPath)).toBe(false);
+
+  const { openConfiguredRetrieval } = await import("../src/retrieval-runtime");
+  const port = await openConfiguredRetrieval(setup.vault, "kizuki.retrieval.embedded-pg");
+  expect(port).toBeDefined();
+  try {
+    const hits = await port!.search({
+      text: "acme",
+      mode: "lexical",
+      scope: {},
+      ceiling: "private",
+      limit: 10,
+      deadline_ms: 5_000,
+    });
+    expect(hits.hits.some((hit) => hit.snippet.toLowerCase().includes("acme"))).toBe(true);
+  } finally {
+    await port?.close();
+  }
+
+  const retry = helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.embedded-pg", "--json");
+  expect(retry.exitCode, retry.stdout + retry.stderr).toBe(0);
+  expect(existsSync(configPath)).toBe(false);
+
+  writeFileSync(configPath, '[ports]\nretrieval = "kizuki.retrieval.embedded-pg"\n');
+  const floor = helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.fts5", "--json");
+  expect(floor.exitCode, floor.stdout + floor.stderr).toBe(0);
+  expect(JSON.parse(floor.stdout).data).toMatchObject({ backend: "sqlite-floor", store: "kizuki.retrieval.fts5" });
+  expect(readFileSync(configPath, "utf8")).toBe('[ports]\nretrieval = "kizuki.retrieval.embedded-pg"\n');
+
+  const held = await openConfiguredRetrieval(setup.vault, "kizuki.retrieval.embedded-pg");
+  expect(held).toBeDefined();
+  try {
+    const busy = helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.embedded-pg");
+    expect(busy.exitCode).not.toBe(0);
+    expect((await held!.health()).status).toBe("ready");
+  } finally {
+    await held?.close();
+  }
+  expect(helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.no-such").exitCode).not.toBe(0);
+  expect(helpers.runCli(setup.env, "rebuild", "--layer", "graph", "--port", "kizuki.retrieval.embedded-pg").exitCode).toBe(1);
+}, 120_000);
