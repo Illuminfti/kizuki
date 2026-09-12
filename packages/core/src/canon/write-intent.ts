@@ -207,6 +207,19 @@ export function assertCanonAdmission(db: Database, intent: CanonWriteIntent): vo
   requireSourceEvents(db, intent.admission.derive_ids, { owner: true, purpose: "derive" });
 }
 
+/** Restoring a committed independent page does not complete the pending intent. */
+export function assertIndependentSurvivorAdmission(db: Database, intent: CanonWriteIntent, survivor: Buffer): void {
+  const current = captureCanonAdmission(db, intent.receipt, intent.completion, survivor, decodeCanonImage(intent.after_base64), intent.admission.claims.map(claim => claim.id));
+  for (const key of ["claims", "predecessor_digest", "original_digest", "page_index_digest", "supersessions_digest", "claim_bindings_digest"] as const) {
+    if (JSON.stringify(current[key]) !== JSON.stringify(intent.admission[key])) recoveryFailure("authority_changed", intent.receipt.receipt_id);
+  }
+  const ids = new Set(pageSources(survivor));
+  const selected = (events: CanonAdmission["events"]) => events.filter(event => ids.has(event.id));
+  if (JSON.stringify(selected(current.events)) !== JSON.stringify(selected(intent.admission.events))) recoveryFailure("authority_changed", intent.receipt.receipt_id);
+  try { requireSourceEvents(db, [...ids], { owner: true, purpose: "derive" }); }
+  catch { recoveryFailure("authority_changed", intent.receipt.receipt_id); }
+}
+
 export function canonReadGeneration(db: Database): number {
   const row = db.query<{ generation: number }, []>("SELECT generation FROM canon_read_generation WHERE singleton=1").get();
   if (row === null || !Number.isSafeInteger(row.generation) || row.generation < 0) recoveryFailure("intent_invalid");

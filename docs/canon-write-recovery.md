@@ -95,6 +95,11 @@ denial and file custody. When a failed joint write replaced an independent
 committed page, withdrawal restores that exact preimage only after rechecking
 its current source permission, supporting claims and predecessor state. This
 rollback does not complete the withdrawn write or mint a positive receipt.
+A pending revert is not an uncommitted write: if its postimage is an
+independent survivor, withdrawal rewrites the live page to those bytes, keeps
+the revert intent, and reports the recovery hold rather than deleting the
+survivor or completing under withdrawn derive authority. Completing that hold
+into source-erasure lineage remains a dependency of the purge-binding schema.
 If rollback publishes the preimage but intent deletion fails, every retry
 rechecks that same authority before clearing the hold, even when no file move
 is needed. Changed authority preserves the bytes and the pending intent.

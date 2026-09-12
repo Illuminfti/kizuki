@@ -9,8 +9,8 @@ import { insertReceiptRow, deletePageIndex, markReceiptReverted, upsertPageIndex
 import { canonStageRelPath } from "../vault/write";
 import { publishOrdinaryCanonIntent } from "./apply";
 import {
-  advanceCanonReadGeneration, assertCanonAdmission, captureCanonAdmission, decodeCanonImage,
-  inspectCanonRecovery, persistCanonWriteIntent, readCanonWriteIntent, recoveryFailure,
+  advanceCanonReadGeneration, assertCanonAdmission, assertIndependentSurvivorAdmission, captureCanonAdmission, decodeCanonImage,
+  inspectCanonRecovery, persistCanonWriteIntent, readCanonWriteIntent, recoveryFailure, CanonRecoveryError,
   type CanonCompletion, type CanonWriteIntent,
 } from "./write-intent";
 import { enqueueCanonProjection, refreshCanonProjectionFloor } from "./projection-obligations";
@@ -156,7 +156,17 @@ export function recoverCanonWritesOwned(scope: VaultMutationScope, io: CanonIo):
   const completed: string[] = [];
   if (intent !== null) {
     const stream = openOrdinaryRecoveryReceiptStream(scope, io);
-    try { finish(scope, io, intent, stream); completed.push(intent.receipt.receipt_id); }
+    try {
+      try { finish(scope, io, intent, stream); completed.push(intent.receipt.receipt_id); }
+      catch (error) {
+        const after = decodeCanonImage(intent.after_base64);
+        if (!(error instanceof CanonRecoveryError) || error.reason !== "authority_changed" ||
+            intent.receipt.kind !== "revert" || intent.completion.mode !== "revert" || after === null) throw error;
+        // Independent revert survivor: do not complete under withdrawn derive
+        // ids or invent a purge-lineage rewrite. Leave the original intent.
+        assertIndependentSurvivorAdmission(io.db, intent, after);
+      }
+    }
     finally { stream.close(); }
   }
   const summary = inspectCanonRecovery(io.db);

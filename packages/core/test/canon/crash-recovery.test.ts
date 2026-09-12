@@ -16,7 +16,7 @@ import { getClaim } from "../../src/claims/store";
 import { createDurableWriteBudget, readDailyBudget, settleWriteReservations } from "../../src/serve/budget-ledger";
 import { registerConnection } from "../../src/ledger/connections";
 import { accept } from "../../src/ledger/ledger";
-import { bindLocalSourcePort, revokeSourceGrant, setSourceGrant } from "../../src/ledger/source-grants";
+import { bindLocalSourcePort, inspectSourceGrant, resumeSourceRevocation, revokeSourceGrant, setSourceGrant } from "../../src/ledger/source-grants";
 import { createFts5RetrievalPort, FTS5_RETRIEVAL_DESCRIPTOR } from "../../src/retrieval/fts5";
 import { temporaryPortContext } from "../contracts/fixtures";
 import { validEvent } from "../fixtures";
@@ -375,4 +375,70 @@ test("child death after real engine mutation retains unknown execution even afte
   await expect(undoReceipt({ ...f.io, retrieval: port }, receipt.receipt_id)).rejects.toThrow("projection_pending");
   expect(getCanonReceipt(f.db, receipt.receipt_id)?.reverted_by).toBeNull();
   expect(readCanonProjectionObligation(f.db, receipt.receipt_id)?.value.external_execution).toEqual(["started"]);
+});
+
+test("pending revert after admit-before-stage crash restores independent B survivor on A revocation", async () => {
+  const vault = tempVault("canon-crash-revert-"); cleanup.push(vault.dispose);
+  const dbPath = join(vault.path, ".kizuki", "kizuki.db");
+  let db = openLedger(dbPath); cleanup.push(() => db.close());
+  const policy = {
+    purposes: ["capture", "recall", "session", "derive", "extract", "export"],
+    allowed_fields: ["text", "subjects", "attachments", "metadata"],
+    retention: "persistent_owned_until_revoked",
+    egress: "local_only",
+    sensitivity_floor: "private",
+  } as const;
+  const sourceA = ulid(), sourceB = ulid();
+  registerConnection(db, "fixture", sourceA);
+  registerConnection(db, "fixture", sourceB);
+  setSourceGrant(db, { source_key: sourceA, expected_revision: 0, operation_id: "grant-a", policy });
+  setSourceGrant(db, { source_key: sourceB, expected_revision: 0, operation_id: "grant-b", policy });
+  const storedB = accept(db, { ...validEvent(), connector_id: "fixture", source_record_id: "b-music", text: "Grace studies music." },
+    { source: { source_key: sourceB, expected_revision: 1 } });
+  const storedA = accept(db, { ...validEvent(), connector_id: "fixture", source_record_id: "a-edit", text: "A overwrites music." },
+    { source: { source_key: sourceA, expected_revision: 1 } });
+  if (storedB.status !== "stored" || storedA.status !== "stored") throw new Error("fixture capture failed");
+  const io = { db, vault_path: vault.path };
+  const original = write(io, await storeClaim(db, storedB.event.event_id, { predicate: "preference.prefers", object: "music", body: "Grace studies music." }));
+  const edited = write(io, await storeClaim(db, storedA.event.event_id, { kind: "edit", predicate: null, object: null, body: "A overwrites music.", frontmatter: {} }));
+  const src = join(import.meta.dir, "../../src");
+  const script = `
+    import { openLedger } from ${JSON.stringify(join(src, "ledger/db.ts"))};
+    import { undoReceiptOwned } from ${JSON.stringify(join(src, "canon/undo.ts"))};
+    import { withCanonMutationAsync, snapshotCanonIo, requireCanonFiles } from ${JSON.stringify(join(src, "canon/io.ts"))};
+    const io=snapshotCanonIo({db:openLedger(${JSON.stringify(dbPath)}),vault_path:${JSON.stringify(vault.path)}});
+    await withCanonMutationAsync(io,async(scope,owned)=>{
+      const files=requireCanonFiles(scope,owned);
+      files.create=()=>{process.exit(73);};
+      await undoReceiptOwned(scope,owned,${JSON.stringify(edited.receipt_id)},{});
+    });
+    process.exit(74);
+  `;
+  const child = spawnSync(process.execPath, ["--eval", script], { encoding: "utf8", timeout: 15000 });
+  expect({ code: child.status, stderr: child.stderr }).toEqual({ code: 73, stderr: "" });
+  db.close(); db = openLedger(dbPath);
+  const pending = readCanonWriteIntent(db)!;
+  expect(pending.receipt.kind).toBe("revert");
+  expect(pending.receipt.reverts).toBe(edited.receipt_id);
+  expect(readFileSync(join(vault.path, original.page_path), "utf8")).toContain("A overwrites music.");
+  expect(readFileSync(join(vault.path, original.page_path), "utf8")).not.toContain("Grace studies music.");
+  revokeSourceGrant(db, { source_key: sourceA, expected_revision: 1, operation_id: "revoke-pending-revert" });
+  const grant = await resumeSourceRevocation(db, vault.path, "revoke-pending-revert", {
+    ownedRetrieval: { stores: async () => ({ stores: [], absent_store_ids: [] }) },
+  });
+  expect(grant.status).toBe("denied");
+  expect(grant.purge_blockers).toContain("canon_recovery_pending");
+  expect(inspectSourceGrant(db, sourceA)!.purge_blockers).toContain("canon_recovery_pending");
+  expect(readFileSync(join(vault.path, original.page_path), "utf8")).toContain("Grace studies music.");
+  expect(readFileSync(join(vault.path, original.page_path), "utf8")).not.toContain("A overwrites music.");
+  expect(getCanonReceipt(db, original.receipt_id)?.page_path).toBe(original.page_path);
+  expect(readReceiptsLog(vault.path).some(row => row.receipt_id === original.receipt_id && row.page_path === original.page_path)).toBe(true);
+  const held = readCanonWriteIntent(db);
+  expect(held?.receipt.kind).toBe("revert");
+  expect(held?.receipt.receipt_id).toBe(pending.receipt.receipt_id);
+  expect(recoverCanonWrites({ db, vault_path: vault.path })).toMatchObject({ completed: [], pending: true });
+  expect(readCanonWriteIntent(db)?.receipt.receipt_id).toBe(pending.receipt.receipt_id);
+  expect(readFileSync(join(vault.path, original.page_path), "utf8")).toContain("Grace studies music.");
+  expect(readFileSync(join(vault.path, original.page_path), "utf8")).not.toContain("A overwrites music.");
+  expect(getCanonReceipt(db, original.receipt_id)?.page_path).toBe(original.page_path);
 });
