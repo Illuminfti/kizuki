@@ -3,7 +3,7 @@ import { exportVault } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { portableLocalAdapter } from "../connections";
 import { withVault } from "../context";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 function countPrefix(
   files: Record<string, { count: number }>,
@@ -19,12 +19,21 @@ function countFile(
   return files[key]?.count ?? 0;
 }
 
+export const EXPORT_SCHEMA = {
+  options: ["--out"],
+  flags: [],
+} as const satisfies CommandHelpSchema;
+
 export const exportCommand: Command = {
   name: "export",
   usage: "export --out DIR",
   summary: "dump vault files and ledger tables into an empty directory",
+  schema: EXPORT_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
-    const parsed = parseArguments(args, { options: ["--out"] });
+    const parsed = parseArguments(args, {
+      options: [...EXPORT_SCHEMA.options],
+      flags: [...EXPORT_SCHEMA.flags],
+    });
     if (parsed.positionals.length !== 0) throw new UsageError(this.usage);
     const out = parsed.options.get("--out");
     if (out === undefined) throw new UsageError(this.usage);
