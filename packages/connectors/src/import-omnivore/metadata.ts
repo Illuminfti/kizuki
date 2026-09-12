@@ -1,11 +1,6 @@
-import { isPlainObject } from "@kizuki/core";
+import { EVENT_LIMITS, isPlainObject, isRfc3339 } from "@kizuki/core";
 import { KizukiError } from "../errors";
-import {
-  MAX_RECORDS,
-  MAX_RECORD_BYTES,
-  isoToRfc3339,
-  parseJsonArray,
-} from "../util";
+import { MAX_RECORDS, MAX_RECORD_BYTES, parseJsonArray } from "../util";
 
 export interface OmnivoreItem {
   id: string;
@@ -40,10 +35,10 @@ function stringOr(value: unknown, fallback: string, where: string): string {
 }
 
 /**
- * Labels are bounded as one field, while they are being collected. Bounding
- * each of them on its own left the list itself unbounded, so an export could
- * spend several times the record budget on labels no single one of which was
- * too long.
+ * Labels are bounded as one field, while they are being collected: count,
+ * per-name bytes, and total bytes. Bounding each name on its own left the
+ * list itself unbounded, so an export could spend several times the record
+ * budget on labels no single one of which was too long.
  */
 function labelsOf(value: unknown, where: string): string[] {
   if (!Array.isArray(value)) return [];
@@ -57,7 +52,20 @@ function labelsOf(value: unknown, where: string): string[] {
           ? label["name"]
           : "";
     if (name.length === 0) continue;
-    bytes += Buffer.byteLength(name, "utf8");
+    const size = Buffer.byteLength(name, "utf8");
+    if (size > EVENT_LIMITS.metadataStringBytes) {
+      throw new KizukiError(
+        "parse_error",
+        `${where}: exceeds ${EVENT_LIMITS.metadataStringBytes} bytes`,
+      );
+    }
+    if (labels.length >= EVENT_LIMITS.metadataArrayLength) {
+      throw new KizukiError(
+        "parse_error",
+        `${where}: more than ${EVENT_LIMITS.metadataArrayLength} labels`,
+      );
+    }
+    bytes += size;
     if (bytes > MAX_RECORD_BYTES) {
       throw new KizukiError(
         "parse_error",
@@ -69,10 +77,23 @@ function labelsOf(value: unknown, where: string): string[] {
   return labels;
 }
 
+/**
+ * `Date.parse` accepts rolled calendar dates and timezone-less strings.
+ * Ingress timestamps have to be real RFC3339 so `occurred_at` is the instant
+ * the export wrote, not a host-local guess.
+ */
+function requiredTimestamp(value: unknown, where: string): string {
+  if (typeof value === "string" && isRfc3339(value)) {
+    const normalized = new Date(value).toISOString();
+    if (isRfc3339(normalized)) return normalized;
+  }
+  throw new KizukiError("parse_error", `${where}: invalid timestamp`);
+}
+
 function optionalTimestamp(value: unknown, where: string): string | null {
   if (value === undefined || value === null) return null;
   try {
-    return isoToRfc3339(value, where);
+    return requiredTimestamp(value, where);
   } catch {
     // A publication date the source could not state is absent, not fatal.
     return null;
@@ -113,7 +134,7 @@ export function parseOmnivoreMetadata(
       url: stringOr(element["url"], "", `${at}.url`),
       state: stringOr(element["state"], "", `${at}.state`),
       labels: labelsOf(element["labels"], `${at}.labels`),
-      saved_at: isoToRfc3339(element["savedAt"], `${at}.savedAt`),
+      saved_at: requiredTimestamp(element["savedAt"], `${at}.savedAt`),
       published_at: optionalTimestamp(
         element["publishedAt"],
         `${at}.publishedAt`,

@@ -1,7 +1,11 @@
 import { join } from "node:path";
 import { lstat } from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import type { CaptureEventInput } from "@kizuki/core";
+import {
+  EVENT_LIMITS,
+  validateEventInput,
+  type CaptureEventInput,
+} from "@kizuki/core";
 import { KizukiError } from "../errors";
 import { resolveSensitivity } from "../sensitivity";
 import type { SensitivityPolicy } from "../sensitivity";
@@ -138,7 +142,7 @@ export async function omnivoreEvents(
         `export holds more than ${maxBytes} bytes of item text`,
       );
     }
-    events.push({
+    const event: CaptureEventInput = {
       schema: "kizuki.event/v1",
       connector_id: OMNIVORE_IMPORT_CONNECTOR_ID,
       source_record_id: ids[index] ?? item.id,
@@ -161,17 +165,36 @@ export async function omnivoreEvents(
               },
             ],
       metadata: {
-        title: item.title,
-        url: item.url,
-        author: item.author,
-        state: item.state,
+        title: metadataString(item.title),
+        url: metadataString(item.url),
+        author: metadataString(item.author),
+        state: metadataString(item.state),
         labels: item.labels,
         published_at: item.published_at,
         has_highlights: highlights.length > 0,
       },
-    });
+    };
+    const validated = validateEventInput(event);
+    if (!validated.ok) {
+      throw new KizukiError(
+        "parse_error",
+        `${at}: ${validated.errors[0] ?? "event is not valid ingress"}`,
+      );
+    }
+    events.push(event);
   }
   return events;
+}
+
+/** Metadata strings share the ledger's per-value budget; the full field stays in text. */
+function metadataString(value: string): string {
+  const max = EVENT_LIMITS.metadataStringBytes;
+  if (Buffer.byteLength(value, "utf8") <= max) return value;
+  let chars = Math.min(value.length, max);
+  while (chars > 0 && Buffer.byteLength(value.slice(0, chars), "utf8") > max) {
+    chars -= 1;
+  }
+  return value.slice(0, chars);
 }
 
 /** The metadata files of an export, and the folder they were listed in. */

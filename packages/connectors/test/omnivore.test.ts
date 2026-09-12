@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { validateEventInput } from "@kizuki/core";
+import { EVENT_LIMITS, validateEventInput } from "@kizuki/core";
 import { KizukiError } from "../src/errors";
 import { FIXTURE_OBSERVED_AT, MAX_RECORD_BYTES } from "../src/util";
 import {
@@ -173,6 +173,9 @@ test("a malformed item names its file and index, never its title", () => {
     { id: "x", title, savedAt: "2026-01-01T09:00:00Z" },
     { id: "x", slug: "quartz-heron-notes", title, savedAt: "never" },
     { id: "x", slug: "quartz-heron-notes", title },
+    { id: "x", slug: "quartz-heron-notes", title, savedAt: "2026-02-30T09:00:00Z" },
+    { id: "x", slug: "quartz-heron-notes", title, savedAt: "2026-01-01" },
+    { id: "x", slug: "quartz-heron-notes", title, savedAt: "2026-01-01T09:00:00" },
   ]) {
     const error = thrown(() =>
       parseOmnivoreMetadata(
@@ -210,9 +213,10 @@ test("an oversize field names its position and never its value", () => {
 });
 
 test("a labels list is bounded as a field, not label by label", () => {
-  // Every label is small; there are simply too many of them for the record
-  // budget, which bounding each of them on its own never noticed.
-  const labels = Array.from({ length: 300_000 }, (_, index) => `l${index}`);
+  // Every label is under the per-value metadata budget; together they still
+  // exceed the record budget, which bounding each of them on its own never
+  // noticed.
+  const labels = Array.from({ length: 600 }, () => "l".repeat(2048));
   const error = thrown(() =>
     parseOmnivoreMetadata(
       JSON.stringify([
@@ -229,6 +233,30 @@ test("a labels list is bounded as a field, not label by label", () => {
   expect(error.code).toBe("parse_error");
   expect(error.message).toBe(
     `metadata_0_to_9.json[0].labels: exceeds ${MAX_RECORD_BYTES} bytes`,
+  );
+});
+
+test("a labels list cannot exceed the ledger array bound", () => {
+  const labels = Array.from(
+    { length: EVENT_LIMITS.metadataArrayLength + 1 },
+    (_, index) => `l${index}`,
+  );
+  const error = thrown(() =>
+    parseOmnivoreMetadata(
+      JSON.stringify([
+        {
+          id: "x",
+          slug: "x",
+          labels,
+          savedAt: "2026-01-01T09:00:00Z",
+        },
+      ]),
+      "metadata_0_to_9.json",
+    ),
+  );
+  expect(error.code).toBe("parse_error");
+  expect(error.message).toBe(
+    `metadata_0_to_9.json[0].labels: more than ${EVENT_LIMITS.metadataArrayLength} labels`,
   );
 });
 
@@ -252,4 +280,85 @@ test("an assembled record beyond the bound names its item", async () => {
   );
   expect(error.code).toBe("parse_error");
   expect(error.message).toContain("metadata_0_to_9.json item 1");
+});
+
+test("missing optional fields still produce a valid bookmark", async () => {
+  const events = await omnivoreEvents(
+    mapOmnivoreFiles(
+      metadataFile([
+        { id: "only-required", slug: "only-required", savedAt: "2026-01-01T09:00:00Z" },
+      ]),
+    ),
+    FIXTURE_OBSERVED_AT,
+  );
+  expect(events).toHaveLength(1);
+  expect(events[0]?.source_record_id).toBe("only-required");
+  expect(events[0]?.text).toBe("");
+  expect(events[0]?.occurred_at).toBe("2026-01-01T09:00:00.000Z");
+  expect(events[0]?.metadata).toEqual({
+    title: "",
+    url: "",
+    author: "",
+    state: "",
+    labels: [],
+    published_at: null,
+    has_highlights: false,
+  });
+  expect(validateEventInput(events[0]!).ok).toBe(true);
+});
+
+test("a non-object array member is skipped rather than dropping its neighbours", async () => {
+  const events = await omnivoreEvents(
+    mapOmnivoreFiles(
+      metadataFile([
+        { id: "first", slug: "first", savedAt: "2026-01-01T09:00:00Z" },
+        "not-an-item",
+        null,
+        { id: "second", slug: "second", savedAt: "2026-01-02T09:00:00Z" },
+      ]),
+    ),
+    FIXTURE_OBSERVED_AT,
+  );
+  expect(events.map((event) => event.source_record_id)).toEqual(["first", "second"]);
+});
+
+test("a malformed publication date is absent, not a refusal", async () => {
+  const events = await omnivoreEvents(
+    mapOmnivoreFiles(
+      metadataFile([
+        {
+          id: "dated",
+          slug: "dated",
+          savedAt: "2026-01-01T09:00:00Z",
+          publishedAt: "2026-02-30T00:00:00Z",
+        },
+      ]),
+    ),
+    FIXTURE_OBSERVED_AT,
+  );
+  expect(events[0]?.metadata["published_at"]).toBeNull();
+  expect(validateEventInput(events[0]!).ok).toBe(true);
+});
+
+test("a title past the metadata string budget still stores in text", async () => {
+  const title = "T".repeat(EVENT_LIMITS.metadataStringBytes + 24);
+  const events = await omnivoreEvents(
+    mapOmnivoreFiles(
+      metadataFile([
+        {
+          id: "long-title",
+          slug: "long-title",
+          title,
+          url: "https://example.com/long-title",
+          savedAt: "2026-01-01T09:00:00Z",
+        },
+      ]),
+    ),
+    FIXTURE_OBSERVED_AT,
+  );
+  expect(events[0]?.text.startsWith(title)).toBe(true);
+  expect(events[0]?.metadata["title"]).toBe(
+    title.slice(0, EVENT_LIMITS.metadataStringBytes),
+  );
+  expect(validateEventInput(events[0]!).ok).toBe(true);
 });
