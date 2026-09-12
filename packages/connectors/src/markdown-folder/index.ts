@@ -1,6 +1,5 @@
-import { constants } from "node:fs";
+import { closeSync, constants, fstatSync } from "node:fs";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
-import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import {
@@ -10,7 +9,9 @@ import {
   MAX_SYNC_BATCH_EVENTS,
   freezeManifest,
   isPlainObject,
+  openSourceChild,
   policyForConnector,
+  SourceReadError,
 } from "@kizuki/core";
 import type {
   CaptureEventInput,
@@ -30,7 +31,7 @@ import {
   summarizeImportErrors,
 } from "../import-report";
 import type { ImportRecordError } from "../import-report";
-import { readBoundedBytes, readReason } from "../read";
+import { readBoundedFd, readReason } from "../read";
 import {
   compareStrings,
   errorMessage,
@@ -475,6 +476,103 @@ async function assertOutsideVault(directory: string): Promise<void> {
   throw new KizukiError("misconfigured", "source_path_depth: source ancestry exceeds the verification bound");
 }
 
+function underPinnedRoot(root: string, resolved: string): boolean {
+  const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  return resolved === root || resolved.startsWith(prefix);
+}
+
+function isErrno(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === code
+  );
+}
+
+function replacedDirectoryError(): Error {
+  return Object.assign(
+    new Error("the listed directory was replaced while it was read"),
+    { code: "ELOOP" },
+  );
+}
+
+async function classifyReplacedDirectory(directory: string): Promise<void> {
+  let resolved: string;
+  try {
+    resolved = await realpath(directory);
+  } catch {
+    return;
+  }
+  await assertOutsideVault(resolved);
+}
+
+/** The listed parent inode is the authority. The child is opened with openat. */
+async function openPinnedChild(
+  parent: RootIdentity,
+  name: string,
+): Promise<number> {
+  const directory = await open(
+    parent.realpath,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  );
+  try {
+    const info = await directory.stat();
+    if (
+      !info.isDirectory() ||
+      info.dev !== parent.dev ||
+      info.ino !== parent.ino
+    ) {
+      throw replacedDirectoryError();
+    }
+    return openSourceChild(directory.fd, name);
+  } finally {
+    await directory.close().catch(() => undefined);
+  }
+}
+
+// Between lstat and readdir a child can be replaced with a symlink. Keep the
+// listing only when this path still resolves under the pinned source; a
+// vault-child target refuses the batch so earlier files are not published.
+async function pinnedDescent(
+  root: string,
+  directory: string,
+): Promise<
+  | { kind: "directory"; realpath: string; dev: number; ino: number }
+  | { kind: "symlink" }
+  | { kind: "unreadable"; reason: string }
+> {
+  let info;
+  try {
+    info = await lstat(directory);
+  } catch (error) {
+    return { kind: "unreadable", reason: readReason(error) };
+  }
+  if (info.isSymbolicLink()) {
+    let resolved: string;
+    try {
+      resolved = await realpath(directory);
+    } catch {
+      return { kind: "symlink" };
+    }
+    await assertOutsideVault(resolved);
+    return { kind: "symlink" };
+  }
+  if (!info.isDirectory()) {
+    return { kind: "unreadable", reason: "path is not a directory" };
+  }
+  let resolved: string;
+  try {
+    resolved = await realpath(directory);
+  } catch (error) {
+    return { kind: "unreadable", reason: readReason(error) };
+  }
+  if (!underPinnedRoot(root, resolved)) {
+    await assertOutsideVault(resolved);
+    return { kind: "symlink" };
+  }
+  return { kind: "directory", realpath: resolved, dev: info.dev, ino: info.ino };
+}
+
 async function scanMarkdownFiles(
   root: RootIdentity,
   exclude: readonly string[],
@@ -505,9 +603,28 @@ async function scanMarkdownFiles(
       });
       return;
     }
-    // Refuse the complete batch before reading entries in a discovered vault.
-    // Returning a partial scan would publish earlier files or infer deletions.
+    // The listing may already have followed a replacement symlink. A nested
+    // vault marker on that listing must abort before any of these names are
+    // published, including when the path is later skipped as a symlink.
     if (entries.some(entry => entry.name === ".kizuki")) refuseVaultSource();
+    const descent = await pinnedDescent(root.realpath, directory);
+    if (descent.kind !== "directory") {
+      errors.push({
+        location: relpathOf(root.realpath, directory) || ".",
+        code: descent.kind === "symlink" ? "symlink" : "unreadable",
+        reason: descent.kind === "symlink" ? "symlink skipped" : descent.reason,
+      });
+      return;
+    }
+    if (depth === 0 && (descent.dev !== root.dev || descent.ino !== root.ino)) {
+      await classifyReplacedDirectory(descent.realpath);
+      errors.push({
+        location: ".",
+        code: "unreadable",
+        reason: "root was replaced while it was read",
+      });
+      return;
+    }
     entries.sort((left, right) => compareStrings(left.name, right.name));
     for (const entry of entries) {
       if (truncated) return;
@@ -515,14 +632,14 @@ async function scanMarkdownFiles(
       if (considered > MAX_SCAN_ENTRIES) {
         truncated = true;
         errors.push({
-          location: relpathOf(root.realpath, directory) || ".",
+          location: relpathOf(root.realpath, descent.realpath) || ".",
           code: "scan_limit",
           reason: "scan exceeded the entry bound",
         });
         return;
       }
       if (shouldSkipName(entry.name, exclude)) continue;
-      const absolute = path.join(directory, entry.name);
+      const absolute = path.join(descent.realpath, entry.name);
       let info;
       try {
         info = await lstat(absolute);
@@ -547,17 +664,17 @@ async function scanMarkdownFiles(
         continue;
       }
       if (!info.isFile() || !isMarkdownName(entry.name)) continue;
+      const relpath = relpathOf(root.realpath, absolute);
       if (files.length >= MAX_FILES) {
         truncated = true;
         errors.push({
-          location: relpathOf(root.realpath, absolute),
+          location: relpath,
           code: "file_limit",
           reason: "scan exceeded the file bound",
         });
         return;
       }
-      const relpath = relpathOf(root.realpath, absolute);
-      const read = await readStableMarkdown(absolute, relpath);
+      const read = await readStableMarkdown(descent, entry.name, relpath);
       if ("error" in read) {
         errors.push(read.error);
         continue;
@@ -573,17 +690,15 @@ async function scanMarkdownFiles(
 }
 
 async function readStableMarkdown(
-  absolute: string,
+  parent: RootIdentity,
+  name: string,
   relpath: string,
 ): Promise<{ file: MarkdownFile } | { error: ImportRecordError }> {
   for (let attempt = 0; attempt < STABLE_READ_ATTEMPTS; attempt += 1) {
-    let handle: FileHandle | undefined;
+    let fd: number | undefined;
     try {
-      handle = await open(
-        absolute,
-        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-      );
-      const before = await handle.stat();
+      fd = await openPinnedChild(parent, name);
+      const before = fstatSync(fd);
       if (!before.isFile()) {
         return {
           error: {
@@ -602,14 +717,14 @@ async function readStableMarkdown(
           },
         };
       }
-      const bytes = await readBoundedBytes(
-        handle,
+      const bytes = readBoundedFd(
+        fd,
         MAX_FILE_BYTES,
         MARKDOWN_FOLDER_CONNECTOR_ID,
         "file",
         before.size,
       );
-      const after = await handle.stat();
+      const after = fstatSync(fd);
       if (
         after.size !== before.size ||
         after.mtimeMs !== before.mtimeMs ||
@@ -640,15 +755,30 @@ async function readStableMarkdown(
         },
       };
     } catch (error) {
+      if (error instanceof KizukiError) throw error;
+      if (
+        (error instanceof SourceReadError && error.reason === "symlink") ||
+        isErrno(error, "ELOOP") ||
+        isErrno(error, "ENOTDIR")
+      ) {
+        await classifyReplacedDirectory(parent.realpath);
+        return {
+          error: {
+            location: relpath,
+            code: "symlink",
+            reason: "symlink skipped",
+          },
+        };
+      }
       return {
         error: {
           location: relpath,
           code: "unreadable",
-          reason: readReason(error),
+          reason: error instanceof SourceReadError ? error.reason : readReason(error),
         },
       };
     } finally {
-      if (handle !== undefined) await handle.close().catch(() => undefined);
+      if (fd !== undefined) try { closeSync(fd); } catch { /* The descriptor is already gone. */ }
     }
   }
   return {

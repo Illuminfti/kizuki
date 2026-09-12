@@ -19,8 +19,15 @@ separate source folder. These events remain in the ledger but cannot support
 model extraction or new model claims. A one-byte change is a different text
 hash; the check does not prove general authorship. See
 [Event identity and origin](event-identity-origin.md) for the separate Core
-check and its limits. Hostile concurrent ancestor replacement remains outside
-the folder marker check.
+check and its limits. The folder marker check does not close concurrent
+ancestor replacement by itself. The final file open verifies the listed parent
+directory's device and inode, then reads the child through a descriptor-relative
+`openat` of that held parent on the supported native platforms (Linux x64 and
+Darwin arm64). There is no pathname fallback when that primitive is unavailable;
+the file is left unread rather than opened by name. A replaced parent is not
+published as source bytes and does not become a tombstone. A path-only
+realpath precheck is not that guarantee. Listing still uses path `readdir`; this
+boundary does not claim that every replacement race on every platform is closed.
 
 Native CLI and app capture injects an optional factory dependency,
 `committedFiles`, after source capture admission. That reader returns this

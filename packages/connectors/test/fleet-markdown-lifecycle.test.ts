@@ -1,8 +1,12 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import { readFileSync, renameSync, symlinkSync } from "node:fs";
+import * as filesystem from "node:fs/promises";
 import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  count,
+  initVault,
   MAX_CURSOR_BYTES,
   MAX_SYNC_BATCH_BYTES,
   getCheckpoint,
@@ -660,4 +664,203 @@ test("files that appear between host-backed pages are still emitted", async () =
       ["a.md", "Synthetic a new\n"],
     ]);
   } finally { db.close(); }
+});
+
+test("a nested directory replaced with a vault auto or archive symlink stores nothing", async () => {
+  const parent = await syntheticDir("kizuki-markdown-vault-race-");
+  const vault = path.join(parent, "vault");
+  initVault(vault);
+  await mkdir(path.join(vault, "auto"));
+  await writeFile(path.join(vault, "auto", "leak.md"), "MUST_NOT_CAPTURE\n");
+  await writeFile(path.join(vault, "archive", "leak.md"), "MUST_NOT_CAPTURE\n");
+  for (const [index, child] of (["auto", "archive"] as const).entries()) {
+    const selected = path.join(parent, `notes-${child}`);
+    const nested = path.join(selected, "nested");
+    await mkdir(nested, { recursive: true });
+    await writeFile(path.join(selected, "own.md"), "SYNTHETIC_OWN\n");
+    await writeFile(path.join(nested, "inside.md"), "inside\n");
+    const pinnedNested = path.join(await filesystem.realpath(selected), "nested");
+    const original = filesystem.readdir;
+    let replaced = false;
+    const listing = spyOn(filesystem, "readdir").mockImplementation(((
+      ...args: Parameters<typeof original>
+    ) => {
+      if (!replaced && path.resolve(String(args[0])) === path.resolve(pinnedNested)) {
+        replaced = true;
+        renameSync(pinnedNested, `${pinnedNested}.replaced`);
+        symlinkSync(path.join(vault, child), pinnedNested);
+      }
+      return original(...args);
+    }) as typeof original);
+    const db = openLedger(":memory:");
+    const source = index === 0 ? "01JJ0000000000000000000010" : "01JJ0000000000000000000011";
+    try {
+      registerConnection(db, MARKDOWN_FOLDER_CONNECTOR_ID, source);
+      setSourceGrant(db, {
+        source_key: source, expected_revision: 0, operation_id: `synthetic-markdown-vault-race-${child}`,
+        policy: { purposes: ["capture", "recall", "derive"], allowed_fields: ["text", "subjects", "attachments", "metadata"],
+          retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" },
+      });
+      const result = await runToCompletion(
+        db,
+        createMarkdownFolderConnector({ path: selected }),
+        MARKDOWN_FOLDER_CONNECTOR_ID,
+        source,
+        "backfill",
+      );
+      expect(result.stored).toBe(0);
+      expect(result.errors.join("\n")).toContain("source_contains_kizuki_vault");
+      expect(count(db)).toBe(0);
+      expect(JSON.stringify(db.query("SELECT * FROM events").all())).not.toContain("MUST_NOT_CAPTURE");
+    } finally {
+      listing.mockRestore();
+      db.close();
+    }
+  }
+});
+
+test("a nested directory replaced at the final open stores no vault bytes and no false tombstones", async () => {
+  const parent = await syntheticDir("kizuki-markdown-vault-final-open-");
+  const vault = path.join(parent, "vault");
+  initVault(vault);
+  await mkdir(path.join(vault, "auto"));
+  await writeFile(path.join(vault, "auto", "inside.md"), "MUST_NOT_CAPTURE\n");
+  await writeFile(path.join(vault, "auto", "leak.md"), "MUST_NOT_CAPTURE\n");
+  const selected = path.join(parent, "notes-final-open");
+  const nested = path.join(selected, "nested");
+  await mkdir(nested, { recursive: true });
+  await writeFile(path.join(selected, "own.md"), "SYNTHETIC_OWN\n");
+  await writeFile(path.join(nested, "inside.md"), "inside\n");
+  const db = openLedger(":memory:");
+  const source = "01JJ0000000000000000000012";
+  try {
+    registerConnection(db, MARKDOWN_FOLDER_CONNECTOR_ID, source);
+    setSourceGrant(db, {
+      source_key: source, expected_revision: 0, operation_id: "synthetic-markdown-vault-final-open",
+      policy: { purposes: ["capture", "recall", "derive"], allowed_fields: ["text", "subjects", "attachments", "metadata"],
+        retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" },
+    });
+    const connector = createMarkdownFolderConnector({ path: selected });
+    const first = await runToCompletion(
+      db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill",
+    );
+    expect(first.stored).toBe(2);
+    expect(JSON.stringify(db.query("SELECT * FROM events").all())).not.toContain("MUST_NOT_CAPTURE");
+    const pinnedNested = path.join(await filesystem.realpath(selected), "nested");
+    const original = filesystem.open;
+    let replaced = false;
+    const pinnedFile = path.join(path.resolve(pinnedNested), "inside.md");
+    const opening = spyOn(filesystem, "open").mockImplementation(((
+      ...args: Parameters<typeof original>
+    ) => {
+      const candidate = String(args[0]);
+      const resolved = path.resolve(candidate);
+      if (
+        !replaced &&
+        (resolved === path.resolve(pinnedNested) ||
+          resolved === pinnedFile ||
+          (candidate.startsWith("/proc/self/fd/") && candidate.endsWith("/inside.md")))
+      ) {
+        replaced = true;
+        renameSync(pinnedNested, `${pinnedNested}.replaced`);
+        symlinkSync(path.join(vault, "auto"), pinnedNested);
+      }
+      return original(...args);
+    }) as typeof original);
+    try {
+      const changed = await runToCompletion(
+        db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "sync",
+      );
+      expect(readFileSync(path.join(pinnedNested, "inside.md"), "utf8")).toBe("MUST_NOT_CAPTURE\n");
+      expect(JSON.stringify(changed)).not.toContain("MUST_NOT_CAPTURE");
+      expect(JSON.stringify(db.query("SELECT * FROM events").all())).not.toContain("MUST_NOT_CAPTURE");
+      const deleted = db.query<{ source_record_id: string }, []>(
+        "SELECT source_record_id FROM events WHERE deleted = 1",
+      ).all();
+      expect(deleted.map((row) => row.source_record_id)).not.toContain("nested/inside.md");
+    } finally {
+      opening.mockRestore();
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test("a no-proc nested directory replaced after the inode pin stores no vault bytes and no false tombstones", async () => {
+  const parent = await syntheticDir("kizuki-markdown-vault-noproc-open-");
+  const vault = path.join(parent, "vault");
+  initVault(vault);
+  await mkdir(path.join(vault, "auto"));
+  await writeFile(path.join(vault, "auto", "inside.md"), "MUST_NOT_CAPTURE\n");
+  await writeFile(path.join(vault, "auto", "leak.md"), "MUST_NOT_CAPTURE\n");
+  const selected = path.join(parent, "notes-noproc-final-open");
+  const nested = path.join(selected, "nested");
+  await mkdir(nested, { recursive: true });
+  await writeFile(path.join(selected, "own.md"), "SYNTHETIC_OWN\n");
+  await writeFile(path.join(nested, "inside.md"), "inside\n");
+  const db = openLedger(":memory:");
+  const source = "01JJ0000000000000000000013";
+  try {
+    registerConnection(db, MARKDOWN_FOLDER_CONNECTOR_ID, source);
+    setSourceGrant(db, {
+      source_key: source, expected_revision: 0, operation_id: "synthetic-markdown-vault-noproc-open",
+      policy: { purposes: ["capture", "recall", "derive"], allowed_fields: ["text", "subjects", "attachments", "metadata"],
+        retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" },
+    });
+    const connector = createMarkdownFolderConnector({ path: selected });
+    const first = await runToCompletion(
+      db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill",
+    );
+    expect(first.stored).toBe(2);
+    expect(JSON.stringify(db.query("SELECT * FROM events").all())).not.toContain("MUST_NOT_CAPTURE");
+    const pinnedNested = path.join(await filesystem.realpath(selected), "nested");
+    const originalOpen = filesystem.open;
+    const originalStat = filesystem.stat;
+    let replaced = false;
+    const opening = spyOn(filesystem, "open").mockImplementation(((
+      ...args: Parameters<typeof originalOpen>
+    ) => {
+      const candidate = String(args[0]);
+      if (/^\/(?:proc\/self|dev)\/fd\/\d+\//.test(candidate)) {
+        const error = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        return Promise.reject(error);
+      }
+      const opened = originalOpen(...args);
+      return Promise.resolve(opened).then((handle) => {
+        if (!replaced && path.resolve(String(args[0])) === path.resolve(pinnedNested)) {
+          replaced = true;
+          renameSync(pinnedNested, `${pinnedNested}.replaced`);
+          symlinkSync(path.join(vault, "auto"), pinnedNested);
+        }
+        return handle;
+      });
+    }) as typeof originalOpen);
+    const stating = spyOn(filesystem, "stat").mockImplementation(((
+      ...args: Parameters<typeof originalStat>
+    ) => {
+      const candidate = String(args[0]);
+      if (candidate === "/proc/self/fd" || candidate === "/dev/fd") {
+        const error = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        return Promise.reject(error);
+      }
+      return originalStat(...args);
+    }) as typeof originalStat);
+    try {
+      const changed = await runToCompletion(
+        db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "sync",
+      );
+      expect(readFileSync(path.join(pinnedNested, "inside.md"), "utf8")).toBe("MUST_NOT_CAPTURE\n");
+      expect(JSON.stringify(changed)).not.toContain("MUST_NOT_CAPTURE");
+      expect(JSON.stringify(db.query("SELECT * FROM events").all())).not.toContain("MUST_NOT_CAPTURE");
+      const deleted = db.query<{ source_record_id: string }, []>(
+        "SELECT source_record_id FROM events WHERE deleted = 1",
+      ).all();
+      expect(deleted.map((row) => row.source_record_id)).not.toContain("nested/inside.md");
+    } finally {
+      opening.mockRestore();
+      stating.mockRestore();
+    }
+  } finally {
+    db.close();
+  }
 });

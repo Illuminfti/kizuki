@@ -1043,6 +1043,8 @@ export type { OwnedSourceRetrievalInventory, OwnedSourceRetrievalStore, SourceSt
 
 export { openOwnedDirectory } from "./util/owned-directory";
 export type { OwnedDirectory, OwnedDirectoryIdentity } from "./util/owned-directory";
+export { openSourceChild, SourceReadError } from "./util/source-read";
+export type { SourceReadFailure } from "./util/source-read";
 export { inspectOwnerPageCorrectionTargets, inspectOwnerCorrectionPageCount } from "./serving/owner-correction-targets";
 
 export { AppModelSettingsError, readAppModelConfiguration, saveAppModelConfiguration, readAppManagedModelCredential, classifyAppModelCredential, readAppModelFileCredential } from "./serve/model-settings";

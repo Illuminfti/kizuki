@@ -1,4 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import { readFileSync, renameSync, symlinkSync } from "node:fs";
 import * as filesystem from "node:fs/promises";
 import {
   chmod,
@@ -50,6 +51,105 @@ function packedCursor(base: string, files: unknown): string {
     base,
     gzipSync(Buffer.from(JSON.stringify(files))).toString("base64"),
   );
+}
+
+function replaceDirectoryWithSymlinkOnReaddir(
+  directory: string,
+  target: string,
+): ReturnType<typeof spyOn> {
+  const original = filesystem.readdir;
+  let replaced = false;
+  return spyOn(filesystem, "readdir").mockImplementation(((
+    ...args: Parameters<typeof original>
+  ) => {
+    if (!replaced && path.resolve(String(args[0])) === path.resolve(directory)) {
+      replaced = true;
+      renameSync(directory, `${directory}.replaced`);
+      symlinkSync(target, directory);
+    }
+    return original(...args);
+  }) as typeof original);
+}
+
+function replaceDirectoryOnOpen(
+  directory: string,
+  target: string,
+  filePath: string,
+  mode: "symlink" | "directory" = "symlink",
+): ReturnType<typeof spyOn> {
+  const original = filesystem.open;
+  let replaced = false;
+  const pinnedDirectory = path.resolve(directory);
+  const pinnedFile = path.resolve(filePath);
+  const fileName = path.basename(filePath);
+  return spyOn(filesystem, "open").mockImplementation(((
+    ...args: Parameters<typeof original>
+  ) => {
+    const candidate = String(args[0]);
+    const resolved = path.resolve(candidate);
+    if (
+      !replaced &&
+      (resolved === pinnedDirectory ||
+        resolved === pinnedFile ||
+        (candidate.startsWith("/proc/self/fd/") && candidate.endsWith(`/${fileName}`)) ||
+        (candidate.startsWith("/dev/fd/") && candidate.endsWith(`/${fileName}`)))
+    ) {
+      replaced = true;
+      renameSync(directory, `${directory}.replaced`);
+      if (mode === "symlink") symlinkSync(target, directory);
+      else renameSync(target, directory);
+    }
+    return original(...args);
+  }) as typeof original);
+}
+
+function hideDescriptorPathsAndReplaceAfterParentOpen(
+  directory: string,
+  target: string,
+  mode: "symlink" | "directory" = "symlink",
+): { restore(): void; opened: string[] } {
+  const originalOpen = filesystem.open;
+  const originalStat = filesystem.stat;
+  let replaced = false;
+  const pinnedDirectory = path.resolve(directory);
+  const openedPaths: string[] = [];
+  const opening = spyOn(filesystem, "open").mockImplementation(((
+    ...args: Parameters<typeof originalOpen>
+  ) => {
+    const candidate = String(args[0]);
+    openedPaths.push(candidate);
+    if (/^\/(?:proc\/self|dev)\/fd\/\d+\//.test(candidate)) {
+      const error = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      return Promise.reject(error);
+    }
+    const opened = originalOpen(...args);
+    return Promise.resolve(opened).then((handle) => {
+      if (!replaced && path.resolve(String(args[0])) === pinnedDirectory) {
+        replaced = true;
+        renameSync(directory, `${directory}.replaced`);
+        if (mode === "symlink") symlinkSync(target, directory);
+        else renameSync(target, directory);
+      }
+      return handle;
+    });
+  }) as typeof originalOpen);
+  const stating = spyOn(filesystem, "stat").mockImplementation(((
+    ...args: Parameters<typeof originalStat>
+  ) => {
+    const candidate = String(args[0]);
+    if (candidate === "/proc/self/fd" || candidate === "/dev/fd") {
+      const error = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      return Promise.reject(error);
+    }
+    return originalStat(...args);
+  }) as typeof originalStat);
+  return {
+    opened: openedPaths,
+    restore() {
+      opening.mockRestore();
+      stating.mockRestore();
+    },
+  };
 }
 
 describe("MarkdownFolderConnector", () => {
@@ -633,6 +733,281 @@ describe("special entries inside the source", () => {
       expect(health.state).toBe("degraded");
       expect(health.detail ?? "").toContain("symlink");
     } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  test("a nested directory symlink is skipped and its target is not captured", async () => {
+    const parent = await makeTempDir();
+    try {
+      const source = path.join(parent, "source");
+      const outside = path.join(parent, "outside");
+      await mkdir(source);
+      await mkdir(outside);
+      await writeFile(path.join(source, "own.md"), "captured\n");
+      await writeFile(path.join(outside, "leak.md"), "MUST_NOT_CAPTURE\n");
+      await symlink(outside, path.join(source, "nested"));
+      const connector = createMarkdownFolderConnector({ path: source });
+      const batch = await connector.backfill(null);
+      expect(batch.events.map((event) => event.text)).toEqual(["captured\n"]);
+      expect(JSON.stringify(batch.events)).not.toContain("MUST_NOT_CAPTURE");
+      const health = await connector.health();
+      expect(health.state).toBe("degraded");
+      expect(health.detail ?? "").toContain("symlink");
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  test("replacing a nested directory at the final open does not emit outside bytes", async () => {
+    const parent = await makeTempDir();
+    let opening: ReturnType<typeof spyOn> | undefined;
+    try {
+      const source = path.join(parent, "source");
+      const nested = path.join(source, "nested");
+      const outside = path.join(parent, "outside");
+      await mkdir(source);
+      await mkdir(nested);
+      await mkdir(outside);
+      await writeFile(path.join(source, "own.md"), "captured\n");
+      await writeFile(path.join(nested, "inside.md"), "inside\n");
+      await writeFile(path.join(outside, "inside.md"), "MUST_NOT_CAPTURE\n");
+      await writeFile(path.join(outside, "leak.md"), "MUST_NOT_CAPTURE\n");
+      const pinnedNested = path.join(await filesystem.realpath(source), "nested");
+      opening = replaceDirectoryOnOpen(
+        pinnedNested,
+        outside,
+        path.join(pinnedNested, "inside.md"),
+      );
+      const batch = await createMarkdownFolderConnector({ path: source }).backfill(
+        null,
+      );
+      expect(readFileSync(path.join(pinnedNested, "inside.md"), "utf8")).toBe("MUST_NOT_CAPTURE\n");
+      expect(JSON.stringify(batch.events)).not.toContain("MUST_NOT_CAPTURE");
+      expect(batch.events.some((event) => event.source_record_id === "own.md" && event.text === "captured\n")).toBe(true);
+      const inside = batch.events.find((event) => event.source_record_id === "nested/inside.md");
+      if (inside !== undefined) expect(inside.text).toBe("inside\n");
+      expect(batch.events.some((event) => event.deleted)).toBe(false);
+    } finally {
+      opening?.mockRestore();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  test("replacing a nested directory with a real outside directory at the final open does not emit outside bytes", async () => {
+    const parent = await makeTempDir();
+    let opening: ReturnType<typeof spyOn> | undefined;
+    try {
+      const source = path.join(parent, "source");
+      const nested = path.join(source, "nested");
+      const outside = path.join(parent, "outside");
+      await mkdir(source);
+      await mkdir(nested);
+      await mkdir(outside);
+      await writeFile(path.join(source, "own.md"), "captured\n");
+      await writeFile(path.join(nested, "inside.md"), "inside\n");
+      await writeFile(path.join(outside, "inside.md"), "MUST_NOT_CAPTURE\n");
+      const pinnedNested = path.join(await filesystem.realpath(source), "nested");
+      opening = replaceDirectoryOnOpen(
+        pinnedNested,
+        outside,
+        path.join(pinnedNested, "inside.md"),
+        "directory",
+      );
+      const batch = await createMarkdownFolderConnector({ path: source }).backfill(
+        null,
+      );
+      expect(readFileSync(path.join(pinnedNested, "inside.md"), "utf8")).toBe("MUST_NOT_CAPTURE\n");
+      expect(JSON.stringify(batch.events)).not.toContain("MUST_NOT_CAPTURE");
+      expect(batch.events.some((event) => event.source_record_id === "own.md" && event.text === "captured\n")).toBe(true);
+      const inside = batch.events.find((event) => event.source_record_id === "nested/inside.md");
+      if (inside !== undefined) expect(inside.text).toBe("inside\n");
+      expect(batch.events.some((event) => event.deleted)).toBe(false);
+    } finally {
+      opening?.mockRestore();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  test("a final-open parent swap does not tombstone the pinned nested file", async () => {
+    const parent = await makeTempDir();
+    let opening: ReturnType<typeof spyOn> | undefined;
+    try {
+      const source = path.join(parent, "source");
+      const nested = path.join(source, "nested");
+      const outside = path.join(parent, "outside");
+      await mkdir(source);
+      await mkdir(nested);
+      await mkdir(outside);
+      await writeFile(path.join(source, "own.md"), "captured\n");
+      await writeFile(path.join(nested, "inside.md"), "inside\n");
+      await writeFile(path.join(outside, "inside.md"), "MUST_NOT_CAPTURE\n");
+      const connector = createMarkdownFolderConnector({ path: source });
+      const first = await connector.backfill(null);
+      expect(first.events.map((event) => event.source_record_id).sort()).toEqual([
+        "nested/inside.md",
+        "own.md",
+      ]);
+      const pinnedNested = path.join(await filesystem.realpath(source), "nested");
+      opening = replaceDirectoryOnOpen(
+        pinnedNested,
+        outside,
+        path.join(pinnedNested, "inside.md"),
+      );
+      const second = await connector.sync(first.cursor);
+      expect(readFileSync(path.join(pinnedNested, "inside.md"), "utf8")).toBe("MUST_NOT_CAPTURE\n");
+      expect(JSON.stringify(second)).not.toContain("MUST_NOT_CAPTURE");
+      expect(second.events.filter((event) => event.deleted).map((event) => event.source_record_id))
+        .not.toContain("nested/inside.md");
+      expect(JSON.parse(second.cursor ?? "{}").files.map(([relpath]: [string]) => relpath))
+        .toContain("nested/inside.md");
+    } finally {
+      opening?.mockRestore();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  test("a no-proc parent swap after the inode pin does not emit outside bytes", async () => {
+    const parent = await makeTempDir();
+    let opening: { restore(): void; opened: string[] } | undefined;
+    try {
+      const source = path.join(parent, "source");
+      const nested = path.join(source, "nested");
+      const outside = path.join(parent, "outside");
+      await mkdir(source);
+      await mkdir(nested);
+      await mkdir(outside);
+      await writeFile(path.join(source, "own.md"), "captured\n");
+      await writeFile(path.join(nested, "inside.md"), "inside\n");
+      await writeFile(path.join(outside, "inside.md"), "MUST_NOT_CAPTURE\n");
+      await writeFile(path.join(outside, "leak.md"), "MUST_NOT_CAPTURE\n");
+      const pinnedNested = path.join(await filesystem.realpath(source), "nested");
+      opening = hideDescriptorPathsAndReplaceAfterParentOpen(pinnedNested, outside);
+      const batch = await createMarkdownFolderConnector({ path: source }).backfill(
+        null,
+      );
+      expect(readFileSync(path.join(pinnedNested, "inside.md"), "utf8")).toBe("MUST_NOT_CAPTURE\n");
+      expect(JSON.stringify(batch)).not.toContain("MUST_NOT_CAPTURE");
+      expect(opening!.opened.some((candidate) => path.resolve(candidate) === path.join(pinnedNested, "inside.md"))).toBe(false);
+      expect(batch.events.some((event) => event.source_record_id === "own.md" && event.text === "captured\n")).toBe(true);
+      const inside = batch.events.find((event) => event.source_record_id === "nested/inside.md");
+      if (inside !== undefined) expect(inside.text).toBe("inside\n");
+      expect(batch.events.some((event) => event.deleted)).toBe(false);
+    } finally {
+      opening?.restore();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  test("a no-proc rename of a real outside directory after the inode pin does not emit outside bytes", async () => {
+    const parent = await makeTempDir();
+    let opening: { restore(): void; opened: string[] } | undefined;
+    try {
+      const source = path.join(parent, "source");
+      const nested = path.join(source, "nested");
+      const outside = path.join(parent, "outside");
+      await mkdir(source);
+      await mkdir(nested);
+      await mkdir(outside);
+      await writeFile(path.join(source, "own.md"), "captured\n");
+      await writeFile(path.join(nested, "inside.md"), "inside\n");
+      await writeFile(path.join(outside, "inside.md"), "MUST_NOT_CAPTURE\n");
+      const pinnedNested = path.join(await filesystem.realpath(source), "nested");
+      opening = hideDescriptorPathsAndReplaceAfterParentOpen(
+        pinnedNested,
+        outside,
+        "directory",
+      );
+      const batch = await createMarkdownFolderConnector({ path: source }).backfill(
+        null,
+      );
+      expect(readFileSync(path.join(pinnedNested, "inside.md"), "utf8")).toBe("MUST_NOT_CAPTURE\n");
+      expect(JSON.stringify(batch)).not.toContain("MUST_NOT_CAPTURE");
+      expect(opening!.opened.some((candidate) => path.resolve(candidate) === path.join(pinnedNested, "inside.md"))).toBe(false);
+      expect(batch.events.some((event) => event.source_record_id === "own.md" && event.text === "captured\n")).toBe(true);
+      const inside = batch.events.find((event) => event.source_record_id === "nested/inside.md");
+      if (inside !== undefined) expect(inside.text).toBe("inside\n");
+      expect(batch.events.some((event) => event.deleted)).toBe(false);
+    } finally {
+      opening?.restore();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  test("a no-proc parent swap after the inode pin does not tombstone the pinned nested file", async () => {
+    const parent = await makeTempDir();
+    let opening: { restore(): void; opened: string[] } | undefined;
+    try {
+      const source = path.join(parent, "source");
+      const nested = path.join(source, "nested");
+      const outside = path.join(parent, "outside");
+      await mkdir(source);
+      await mkdir(nested);
+      await mkdir(outside);
+      await writeFile(path.join(source, "own.md"), "captured\n");
+      await writeFile(path.join(nested, "inside.md"), "inside\n");
+      await writeFile(path.join(outside, "inside.md"), "MUST_NOT_CAPTURE\n");
+      const connector = createMarkdownFolderConnector({ path: source });
+      const first = await connector.backfill(null);
+      expect(first.events.map((event) => event.source_record_id).sort()).toEqual([
+        "nested/inside.md",
+        "own.md",
+      ]);
+      const pinnedNested = path.join(await filesystem.realpath(source), "nested");
+      opening = hideDescriptorPathsAndReplaceAfterParentOpen(pinnedNested, outside);
+      const second = await connector.sync(first.cursor);
+      expect(readFileSync(path.join(pinnedNested, "inside.md"), "utf8")).toBe("MUST_NOT_CAPTURE\n");
+      expect(JSON.stringify(second)).not.toContain("MUST_NOT_CAPTURE");
+      expect(opening!.opened.some((candidate) => path.resolve(candidate) === path.join(pinnedNested, "inside.md"))).toBe(false);
+      expect(second.events.filter((event) => event.deleted).map((event) => event.source_record_id))
+        .not.toContain("nested/inside.md");
+      expect(JSON.parse(second.cursor ?? "{}").files.map(([relpath]: [string]) => relpath))
+        .toContain("nested/inside.md");
+    } finally {
+      opening?.restore();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  test("a group-writable source folder is still captured", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "note.md"), "shared\n");
+      await chmod(root, 0o775);
+      await chmod(path.join(root, "note.md"), 0o664);
+      const batch = await createMarkdownFolderConnector({ path: root }).backfill(null);
+      expect(batch.events.map((event) => event.text)).toEqual(["shared\n"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("replacing a nested directory with an outside symlink between lstat and readdir does not capture it", async () => {
+    const parent = await makeTempDir();
+    let listing: ReturnType<typeof spyOn> | undefined;
+    try {
+      const source = path.join(parent, "source");
+      const nested = path.join(source, "nested");
+      const outside = path.join(parent, "outside");
+      await mkdir(source);
+      await mkdir(nested);
+      await mkdir(outside);
+      await writeFile(path.join(source, "own.md"), "captured\n");
+      await writeFile(path.join(nested, "inside.md"), "inside\n");
+      await writeFile(path.join(outside, "leak.md"), "MUST_NOT_CAPTURE\n");
+      const pinnedSource = await filesystem.realpath(source);
+      const pinnedNested = path.join(pinnedSource, "nested");
+      listing = replaceDirectoryWithSymlinkOnReaddir(pinnedNested, outside);
+      const batch = await createMarkdownFolderConnector({ path: source }).backfill(
+        null,
+      );
+      expect(JSON.stringify(batch.events)).not.toContain("MUST_NOT_CAPTURE");
+      expect(batch.events.map((event) => event.text)).toEqual(["captured\n"]);
+      expect(batch.events.map((event) => event.source_record_id)).toEqual([
+        "own.md",
+      ]);
+    } finally {
+      listing?.mockRestore();
       await rm(parent, { recursive: true, force: true });
     }
   });
