@@ -293,6 +293,50 @@ describe("help", () => {
     }
   });
 
+  test("context structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["context", "--help", "--json"], ["help", "context", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: {
+          name: string;
+          options: string[];
+          flags: string[];
+          defaults: Record<string, string>;
+          bounds: Record<string, string>;
+          irreversible: boolean;
+        };
+      };
+      expect(body.data.name).toBe("context");
+      expect(body.data.options).toEqual(["--purpose", "--budget", "--query"]);
+      expect(body.data.flags).toEqual(["--json"]);
+      expect(body.data.defaults).toEqual({ "--purpose": "session" });
+      expect(body.data.bounds).toEqual({
+        "--purpose": "session|recall|correction|audit",
+        "--budget": "50..2000",
+      });
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "context", "--help");
+    expect(text.stdout).toContain("--purpose  session|recall|correction|audit  default session");
+    expect(text.stdout).toContain("--budget  50..2000");
+    for (const [args, diagnostic] of [
+      [["context", "--nope"], "unknown option --nope"],
+      [["context", "--json", "--json"], "repeated flag --json"],
+      [["context", "--json=true"], "flag --json does not take a value"],
+      [["context", "--purpose"], "missing value for --purpose"],
+      [["context", "extra"], "invalid arguments"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki context");
+    }
+  });
+
   test("recover structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["recover", "--help", "--json"], ["help", "recover", "--json"]] as const) {
