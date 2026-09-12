@@ -36,7 +36,7 @@ process.stdout.write(stdout); process.stderr.write(stderr); process.exit(code);
 test("public install and uninstall refuse failed supervisor transitions", () => {
   const setup = tempVault();
   const env = { ...fakeSystemd(setup.root, setup.env), KIZUKI_SUPERVISOR: "systemd" };
-  const failed = runCli({ ...env, TEST_SUPERVISOR_FAIL: "restart" }, "serve", "--install", "--json");
+  const failed = runCli({ ...env, TEST_SUPERVISOR_FAIL: "start" }, "serve", "--install", "--json");
   expect(failed.exitCode).toBe(1);
   expect(failed.stdout).not.toContain('"status":"ok"');
   expect(readFileSync(join(setup.vault, ".kizuki", "serve-intent"), "utf8").trim()).toBe("opted-out");
@@ -82,6 +82,7 @@ for (const [enablement, activity, exit, expected] of [
     ["disabled", "unknown", "4", "unknown"],
     ["masked", "unknown", "4", "unknown"],
     ["disabled", "deactivating", "3", "unknown"],
+    ["enabled", "activating", "3", "unknown"],
   ] as const) {
   test(`${enablement} enablement with ${activity} activity cannot prove a service stopped`, () => {
     const setup = tempVault();
@@ -192,6 +193,8 @@ test("public uninstall of an enabled inactive unit preserves vault bytes and doe
   expect(commands.some(line => line.includes("restart"))).toBe(false);
   expect(commands.some(line => /(^|\s)enable(\s|$)/.test(line))).toBe(false);
   expect(original).toContain("ExecStart=");
+  expect(original).toContain("TimeoutStartSec=");
+  expect(original).toContain("TimeoutStopSec=90s");
 });
 
 test("public reinstall of an enabled inactive unit still activates the current definition", () => {
@@ -219,7 +222,7 @@ test("failed reinstall from enabled inactive restores original inactivity withou
   const original = readFileSync(unit, "utf8");
   const before = ordinaryVault(setup.vault);
   writeFileSync(env.TEST_SUPERVISOR_FILE!, "enabled\n");
-  const failed = runCli({ ...env, TEST_SUPERVISOR_FAIL: "restart" }, "serve", "--install", "--json");
+  const failed = runCli({ ...env, TEST_SUPERVISOR_FAIL: "start" }, "serve", "--install", "--json");
   expect(failed.exitCode).toBe(1);
   expect(failed.stdout).not.toContain('"status":"ok"');
   expect(failed.stderr).toContain("previous configuration restored");
@@ -231,6 +234,39 @@ test("failed reinstall from enabled inactive restores original inactivity withou
   expect(JSON.parse(status.stdout).data.supervisor.state).toBe("disabled");
   expect(JSON.parse(status.stdout).data.supervisor.enabled).toBe(true);
 });
+
+test("public install waits for start past the default command timeout without rollback", () => {
+  const setup = tempVault();
+  const env = { ...fakeSystemd(setup.root, setup.env), KIZUKI_SUPERVISOR: "systemd", TEST_SUPERVISOR_SLEEP: "start" };
+  assertSyntheticSystemctl(setup.root, env);
+  const started = Date.now();
+  const installed = runCli(env, "serve", "--install", "--json");
+  expect(Date.now() - started).toBeGreaterThan(5_000);
+  expect(installed.exitCode).toBe(0);
+  expect(installed.stdout).toContain('"status":"ok"');
+  const status = JSON.parse(installed.stdout).data.status;
+  expect(status.state).toBe("active");
+  expect(status.enabled).toBe(true);
+  expect(readFileSync(join(setup.vault, ".kizuki", "serve-intent"), "utf8").trim()).toBe("installed");
+  expect(existsSync(join(setup.vault, ".kizuki", "service-change.json"))).toBe(false);
+}, 20_000);
+
+test("public uninstall waits for disable past the default command timeout without rollback", () => {
+  const setup = tempVault();
+  const env = { ...fakeSystemd(setup.root, setup.env), KIZUKI_SUPERVISOR: "systemd" };
+  assertSyntheticSystemctl(setup.root, env);
+  expect(runCli(env, "serve", "--install").exitCode).toBe(0);
+  const started = Date.now();
+  const removed = runCli({ ...env, TEST_SUPERVISOR_SLEEP: "disable" }, "serve", "--uninstall", "--json");
+  expect(Date.now() - started).toBeGreaterThan(5_000);
+  expect(removed.exitCode).toBe(0);
+  expect(removed.stdout).toContain('"status":"ok"');
+  const status = JSON.parse(removed.stdout).data.status;
+  expect(status.enabled).toBe(false);
+  expect(["disabled", "absent", "masked"]).toContain(status.state);
+  expect(readFileSync(join(setup.vault, ".kizuki", "serve-intent"), "utf8").trim()).toBe("opted-out");
+  expect(existsSync(join(setup.vault, ".kizuki", "service-change.json"))).toBe(false);
+}, 20_000);
 
 test("ordinary failed recovery from enabled inactive returns nonzero and later converges", () => {
   const setup = tempVault();

@@ -3,8 +3,18 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, s
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initVault } from "../../src/vault/init";
-import { installServeService, uninstallServeService, type SupervisorHost } from "../../src/serve/supervisor";
+import {
+  installServeService, realSupervisorHost, SUPERVISOR_COMMAND_TIMEOUT_MS,
+  SYSTEMD_RESTART_TIMEOUT_MS, SYSTEMD_START_TIMEOUT_MS, SYSTEMD_STOP_TIMEOUT_MS,
+  systemdCommandTimeoutMs, uninstallServeService,
+  type SupervisorCommandResult, type SupervisorHost, type SupervisorTimeoutAdapter,
+} from "../../src/serve/supervisor";
 import { readServeIntent, writeServeIntent } from "../../src/serve/intent";
+import {
+  SERVICE_BROKER_REAP_SECONDS, SERVICE_READY_SECONDS, SERVICE_START_SECONDS,
+  SERVICE_STOP_SECONDS, systemdUnitName, systemdUnitPath,
+} from "../../src/serve/units";
+import { ensureVaultId } from "../../src/serve/vault-id";
 import type { SupervisorKind, SupervisorState, SupervisorStatus } from "../../src/serve/types";
 
 const roots: string[] = [];
@@ -549,6 +559,26 @@ test("pending inactive+enabled recovery with an incapable host stays pending wit
   expect(existsSync(journalPath(f.vault))).toBe(false);
 });
 
+test("launchd recovery unloads a loaded inactive job before restoring", () => {
+  const f = fixture("launchd");
+  const first = installServeService(f.vault, f.host);
+  interruptInstall(f, { state: "active", enabled: true });
+  f.observe("disabled", true);
+  let disables = 0;
+  const host: SupervisorHost = {
+    ...f.host,
+    disable: (name) => { disables += 1; return f.host.disable(name); },
+  };
+  const resumed = installServeService(f.vault, {
+    ...host,
+    execStart: ["/synthetic/kizuki-v2", "serve"],
+  });
+  expect(resumed.status).toMatchObject({ state: "active", enabled: true });
+  expect(disables).toBe(1);
+  expect(existsSync(journalPath(f.vault))).toBe(false);
+  expect(readFileSync(first.unitPath!, "utf8")).toContain("kizuki-v2");
+});
+
 test("launchd loaded-but-inactive supervision is not admitted as inactive+enabled", () => {
   const f = fixture("launchd");
   const first = installServeService(f.vault, f.host);
@@ -1056,3 +1086,341 @@ for (const owned of [true, false]) {
     expect(readServeIntent(f.vault)).toBe("installed");
   });
 }
+
+const LIFECYCLE_CLIENT_OVERLAP_MS = 6_000;
+const REAL_CLIENT_CASE_MS = 20_000;
+
+test("systemd client deadlines cover READY plus reap, stop, and restart without 100s tests", () => {
+  expect(SERVICE_START_SECONDS).toBe(SERVICE_READY_SECONDS + SERVICE_BROKER_REAP_SECONDS + 1);
+  expect(SYSTEMD_START_TIMEOUT_MS).toBe(SERVICE_START_SECONDS * 1_000 + SUPERVISOR_COMMAND_TIMEOUT_MS);
+  expect(SYSTEMD_STOP_TIMEOUT_MS).toBe(SERVICE_STOP_SECONDS * 1_000 + SUPERVISOR_COMMAND_TIMEOUT_MS);
+  expect(SYSTEMD_RESTART_TIMEOUT_MS).toBe(SYSTEMD_STOP_TIMEOUT_MS + SYSTEMD_START_TIMEOUT_MS - SUPERVISOR_COMMAND_TIMEOUT_MS);
+  expect(SYSTEMD_START_TIMEOUT_MS).toBeGreaterThan((SERVICE_READY_SECONDS + SERVICE_BROKER_REAP_SECONDS) * 1_000);
+  expect(SYSTEMD_STOP_TIMEOUT_MS).toBeGreaterThan(SERVICE_STOP_SECONDS * 1_000);
+  expect(systemdCommandTimeoutMs("is-active")).toBe(SUPERVISOR_COMMAND_TIMEOUT_MS);
+  expect(systemdCommandTimeoutMs("daemon-reload")).toBe(SUPERVISOR_COMMAND_TIMEOUT_MS);
+  expect(systemdCommandTimeoutMs("start")).toBe(SYSTEMD_START_TIMEOUT_MS);
+  expect(systemdCommandTimeoutMs("stop")).toBe(SYSTEMD_STOP_TIMEOUT_MS);
+  expect(systemdCommandTimeoutMs("disable")).toBe(SYSTEMD_STOP_TIMEOUT_MS);
+  expect(systemdCommandTimeoutMs("restart")).toBe(SYSTEMD_RESTART_TIMEOUT_MS);
+  expect(LIFECYCLE_CLIENT_OVERLAP_MS).toBeGreaterThan(SUPERVISOR_COMMAND_TIMEOUT_MS);
+  expect(LIFECYCLE_CLIENT_OVERLAP_MS).toBeLessThan(SYSTEMD_START_TIMEOUT_MS);
+  expect(REAL_CLIENT_CASE_MS).toBeLessThan(100_000);
+});
+
+test("systemd start waits past the default command timeout without rollback", () => {
+  const f = fixture();
+  const vaultId = ensureVaultId(f.vault);
+  const unit = systemdUnitName(vaultId);
+  const unitPath = systemdUnitPath(f.root, vaultId);
+  const statePath = join(f.root, "systemd-state.json");
+  writeFileSync(statePath, JSON.stringify({ enabled: false, active: false, calls: [] }), { mode: 0o600 });
+  writeFileSync(join(f.root, "systemctl"), `#!${process.execPath}
+    import {existsSync,readFileSync,writeFileSync} from 'node:fs';
+    import assert from 'node:assert/strict';
+    const path=${JSON.stringify(statePath)}, unitPath=${JSON.stringify(unitPath)}, unit=${JSON.stringify(unit)};
+    const s=JSON.parse(readFileSync(path,'utf8')), args=process.argv.slice(2), command=args[1];
+    assert.equal(args[0],'--user');
+    assert.deepEqual(args, command==='daemon-reload' ? ['--user',command] : command==='disable' ? ['--user','disable','--now',unit] : ['--user',command,unit]);
+    s.calls.push(command); let code=0, output='';
+    if(command==='is-enabled') { output=existsSync(unitPath) ? (s.enabled?'enabled':'disabled') : 'not-found'; code=output==='enabled'?0:output==='not-found'?4:1; }
+    else if(command==='is-active') { output=s.active?'active':'inactive'; code=s.active?0:existsSync(unitPath)?3:4; }
+    else if(command==='enable') s.enabled=true;
+    else if(command==='stop') s.active=false;
+    else if(command==='start') {
+      s.enabled=true; s.active=true; writeFileSync(path,JSON.stringify(s));
+      Bun.sleepSync(${LIFECYCLE_CLIENT_OVERLAP_MS});
+    } else assert.equal(command,'daemon-reload');
+    writeFileSync(path,JSON.stringify(s)); process.stdout.write(output); process.exit(code);
+  `, { mode: 0o700 });
+  const script = `
+    import {readFileSync} from 'node:fs';
+    import {installServeService,realSupervisorHost} from ${JSON.stringify(join(import.meta.dir,"../../src/serve/supervisor.ts"))};
+    import {readServeIntent} from ${JSON.stringify(join(import.meta.dir,"../../src/serve/intent.ts"))};
+    const host=realSupervisorHost('systemd',${JSON.stringify(f.root)},${JSON.stringify(f.host.execStart)});
+    try {
+      const installed=installServeService(${JSON.stringify(f.vault)},host);
+      console.log(JSON.stringify({installed:installed.status,intent:readServeIntent(${JSON.stringify(f.vault)}),calls:JSON.parse(readFileSync(${JSON.stringify(statePath)},'utf8')).calls}));
+    } catch(error) { console.log(JSON.stringify({error:error.message,intent:readServeIntent(${JSON.stringify(f.vault)})})); }
+  `;
+  const started = Date.now();
+  const result = Bun.spawnSync([process.execPath, "-e", script], {
+    env: { ...process.env, PATH: f.root + ":" + (process.env.PATH ?? "/usr/bin:/bin") },
+    stdout: "pipe", stderr: "pipe", timeout: REAL_CLIENT_CASE_MS,
+  });
+  expect({ code: result.exitCode, stderr: result.stderr.toString() }).toEqual({ code: 0, stderr: "" });
+  expect(Date.now() - started).toBeGreaterThan(SUPERVISOR_COMMAND_TIMEOUT_MS);
+  const observed = JSON.parse(result.stdout.toString());
+  expect(observed.error).toBeUndefined();
+  expect(existsSync(journalPath(f.vault))).toBe(false);
+  expect(observed.intent).toBe("installed");
+  expect(observed.installed).toMatchObject({ state: "active", enabled: true });
+  expect(existsSync(unitPath)).toBe(true);
+  expect(readServeIntent(f.vault)).toBe("installed");
+  const startAt = observed.calls.indexOf("start");
+  expect(observed.calls.indexOf("stop")).toBeGreaterThan(-1);
+  expect(startAt).toBeGreaterThan(observed.calls.indexOf("stop"));
+}, REAL_CLIENT_CASE_MS);
+
+function okResult(stdout = ""): SupervisorCommandResult {
+  return { ok: true, exitCode: 0, stdout, stderr: "", timedOut: false };
+}
+function failResult(stdout = "", exitCode: number | null = 1): SupervisorCommandResult {
+  return { ok: false, exitCode, stdout, stderr: "", timedOut: false };
+}
+
+function systemdAdapter(handler: (command: string, timeout: number, argv: readonly string[]) => SupervisorCommandResult): {
+  adapter: SupervisorTimeoutAdapter; now: { value: number }; timeouts: Record<string, number>;
+} {
+  const now = { value: 0 };
+  const timeouts: Record<string, number> = {};
+  return {
+    now, timeouts,
+    adapter: {
+      now: () => now.value,
+      run(argv, timeout) {
+        const command = argv[2] ?? "";
+        timeouts[command] = timeout;
+        return handler(command, timeout, argv);
+      },
+    },
+  };
+}
+
+test("adapter restart stops before start and budgets query/reload at 5s", () => {
+  const f = fixture();
+  const calls: string[] = [];
+  let enabled = false, active = false, activity = "inactive";
+  const { adapter, timeouts } = systemdAdapter((command) => {
+    calls.push(command);
+    if (command === "daemon-reload" || command === "enable") { if (command === "enable") enabled = true; return okResult(); }
+    if (command === "stop") { active = false; activity = "inactive"; return okResult(); }
+    if (command === "start") { enabled = true; active = true; activity = "active"; return okResult(); }
+    if (command === "is-enabled") return enabled ? okResult("enabled") : failResult("not-found", 4);
+    if (command === "is-active") return active ? okResult("active") : failResult(activity, activity === "inactive" ? 3 : 4);
+    return failResult();
+  });
+  const host = realSupervisorHost("systemd", f.root, f.host.execStart, { adapter });
+  const installed = installServeService(f.vault, host);
+  expect(installed.status).toMatchObject({ state: "active", enabled: true });
+  expect(calls.indexOf("start")).toBeGreaterThan(calls.indexOf("stop"));
+  expect(calls.includes("restart")).toBe(false);
+  expect(timeouts["is-active"]).toBe(SUPERVISOR_COMMAND_TIMEOUT_MS);
+  expect(timeouts["daemon-reload"]).toBe(SUPERVISOR_COMMAND_TIMEOUT_MS);
+  expect(timeouts.stop).toBe(SYSTEMD_STOP_TIMEOUT_MS);
+  expect(timeouts.start).toBe(SYSTEMD_START_TIMEOUT_MS);
+});
+
+test("client timeout while activating keeps the journal and does not inverse rollback", () => {
+  const f = fixture();
+  const calls: string[] = [];
+  let enabled = false, activity = "inactive";
+  const { adapter, now } = systemdAdapter((command) => {
+    calls.push(command);
+    if (command === "daemon-reload" || command === "enable" || command === "stop") {
+      if (command === "enable") enabled = true;
+      return okResult();
+    }
+    if (command === "start") {
+      activity = "activating";
+      now.value += SYSTEMD_START_TIMEOUT_MS;
+      return failResult("", null);
+    }
+    if (command === "disable") return okResult();
+    if (command === "is-enabled") return enabled ? okResult("enabled") : failResult("not-found", 4);
+    if (command === "is-active") {
+      if (activity === "activating") return failResult("activating", 3);
+      if (activity === "active") return okResult("active");
+      return failResult(activity, 3);
+    }
+    return failResult();
+  });
+  const host = realSupervisorHost("systemd", f.root, f.host.execStart, { adapter });
+  expect(() => installServeService(f.vault, host)).toThrow("recovery is pending");
+  expect(existsSync(journalPath(f.vault))).toBe(true);
+  expect(host.query(ensureVaultId(f.vault))).toMatchObject({ state: "unknown", enabled: true, detail: "activating" });
+  expect(calls.includes("disable")).toBe(false);
+  expect(readServeIntent(f.vault)).toBe("opted-out");
+});
+
+test("client timeout while deactivating keeps the journal and does not inverse rollback", () => {
+  const f = fixture();
+  installServeService(f.vault, f.host);
+  const calls: string[] = [];
+  let enabled = true, activity = "active";
+  const { adapter, now } = systemdAdapter((command) => {
+    calls.push(command);
+    if (command === "daemon-reload") return okResult();
+    if (command === "enable") { enabled = true; return okResult(); }
+    if (command === "disable") {
+      activity = "deactivating";
+      now.value += SYSTEMD_STOP_TIMEOUT_MS;
+      return failResult("", null);
+    }
+    if (command === "is-enabled") return enabled ? okResult("enabled") : failResult("disabled", 1);
+    if (command === "is-active") {
+      if (activity === "deactivating") return failResult("deactivating", 3);
+      if (activity === "active") return okResult("active");
+      return failResult("inactive", 3);
+    }
+    return failResult();
+  });
+  const host = realSupervisorHost("systemd", f.root, f.host.execStart, { adapter });
+  expect(() => uninstallServeService(f.vault, host)).toThrow("recovery is pending");
+  expect(existsSync(journalPath(f.vault))).toBe(true);
+  expect(host.query(ensureVaultId(f.vault))).toMatchObject({ state: "unknown", enabled: true, detail: "deactivating" });
+  expect(calls.filter(command => command === "disable")).toHaveLength(1);
+  expect(readServeIntent(f.vault)).toBe("installed");
+});
+
+test("confirmed start failure still rolls back; timeout is not that failure", () => {
+  const f = fixture();
+  let enabled = false, activity = "inactive";
+  const { adapter } = systemdAdapter((command) => {
+    if (command === "daemon-reload" || command === "enable" || command === "stop") {
+      if (command === "enable") enabled = true;
+      return okResult();
+    }
+    if (command === "start") { activity = "failed"; return failResult(); }
+    if (command === "disable") { enabled = false; activity = "inactive"; return okResult(); }
+    if (command === "is-enabled") return enabled ? okResult("enabled") : failResult("disabled", 1);
+    if (command === "is-active") return activity === "failed" ? failResult("failed", 3) : failResult("inactive", 3);
+    return failResult();
+  });
+  const host = realSupervisorHost("systemd", f.root, f.host.execStart, { adapter });
+  expect(() => installServeService(f.vault, host)).toThrow("previous configuration restored");
+  expect(existsSync(journalPath(f.vault))).toBe(false);
+  expect(readServeIntent(f.vault)).toBe("opted-out");
+});
+
+test("timeout re-query treats a later confirmed active start as success", () => {
+  const f = fixture();
+  let enabled = false, activity = "inactive", starts = 0;
+  const { adapter, now } = systemdAdapter((command) => {
+    if (command === "daemon-reload" || command === "enable" || command === "stop") {
+      if (command === "enable") enabled = true;
+      return okResult();
+    }
+    if (command === "start") {
+      starts++;
+      now.value += SYSTEMD_START_TIMEOUT_MS;
+      activity = "active";
+      enabled = true;
+      return { ok: false, exitCode: null, stdout: "", stderr: "", timedOut: true };
+    }
+    if (command === "is-enabled") return enabled ? okResult("enabled") : failResult("not-found", 4);
+    if (command === "is-active") return activity === "active" ? okResult("active") : failResult("inactive", 3);
+    return failResult();
+  });
+  const host = realSupervisorHost("systemd", f.root, f.host.execStart, { adapter });
+  const installed = installServeService(f.vault, host);
+  expect(starts).toBe(1);
+  expect(installed.status).toMatchObject({ state: "active", enabled: true });
+  expect(existsSync(journalPath(f.vault))).toBe(false);
+  expect(readServeIntent(f.vault)).toBe("installed");
+});
+
+test("timeout-bearing inactive and not-found output stays unknown, never stopped or absent", () => {
+  const f = fixture();
+  const vaultId = ensureVaultId(f.vault);
+  for (const [enabled, active] of [
+    [
+      { ok: false, exitCode: 4, stdout: "not-found", stderr: "", timedOut: true },
+      { ok: false, exitCode: 3, stdout: "inactive", stderr: "", timedOut: true },
+    ],
+    [
+      { ok: false, exitCode: 4, stdout: "not-found", stderr: "", timedOut: true },
+      { ok: false, exitCode: 3, stdout: "inactive", stderr: "", timedOut: false },
+    ],
+    [
+      { ok: true, exitCode: 0, stdout: "enabled", stderr: "", timedOut: false },
+      { ok: false, exitCode: 3, stdout: "inactive", stderr: "", timedOut: true },
+    ],
+  ] as const) {
+    const { adapter } = systemdAdapter((command) => {
+      if (command === "is-enabled") return enabled;
+      if (command === "is-active") return active;
+      return failResult();
+    });
+    const status = realSupervisorHost("systemd", f.root, f.host.execStart, { adapter }).query(vaultId);
+    expect(status.state).toBe("unknown");
+    expect(["absent", "disabled", "masked"]).not.toContain(status.state);
+    expect(status.detail).toBe("supervisor state could not be queried");
+  }
+});
+
+test("elapsed-deadline success is timedOut and is not accepted as a successful command", () => {
+  const f = fixture();
+  const unit = systemdUnitName(ensureVaultId(f.vault));
+  const { adapter: reloadAdapter, now: reloadNow } = systemdAdapter((command, timeout) => {
+    if (command === "daemon-reload") {
+      reloadNow.value += timeout;
+      return okResult();
+    }
+    return failResult();
+  });
+  expect(realSupervisorHost("systemd", f.root, f.host.execStart, { adapter: reloadAdapter }).reload())
+    .toEqual({ ok: false, detail: "service reload failed" });
+
+  let enabled = false, activity = "inactive";
+  const { adapter, now } = systemdAdapter((command, timeout) => {
+    if (command === "daemon-reload" || command === "enable" || command === "stop") {
+      if (command === "enable") enabled = true;
+      if (command === "stop") activity = "inactive";
+      return okResult();
+    }
+    if (command === "start") {
+      now.value += timeout;
+      return okResult();
+    }
+    if (command === "is-enabled") return enabled ? okResult("enabled") : failResult("not-found", 4);
+    if (command === "is-active") return activity === "active" ? okResult("active") : failResult(activity, 3);
+    return failResult();
+  });
+  expect(realSupervisorHost("systemd", f.root, f.host.execStart, { adapter }).enable("/synthetic/unit", unit))
+    .toEqual({ ok: false, detail: "service start timed out" });
+});
+
+test("enable re-queries after an ok stop and starts only from stopped or inactiveEnabled", () => {
+  const f = fixture();
+  const unit = systemdUnitName(ensureVaultId(f.vault));
+  for (const activity of ["active", "unknown", "activating", "deactivating"] as const) {
+    const calls: string[] = [];
+    let enabled = false;
+    const { adapter } = systemdAdapter((command) => {
+      calls.push(command);
+      if (command === "daemon-reload") return okResult();
+      if (command === "enable") { enabled = true; return okResult(); }
+      if (command === "stop") return okResult();
+      if (command === "start") return okResult();
+      if (command === "is-enabled") return enabled ? okResult("enabled") : failResult("not-found", 4);
+      if (command === "is-active") {
+        if (activity === "active") return okResult("active");
+        if (activity === "unknown") return failResult("unknown", 4);
+        return failResult(activity, 3);
+      }
+      return failResult();
+    });
+    const result = realSupervisorHost("systemd", f.root, f.host.execStart, { adapter }).enable("/synthetic/unit", unit);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toBe(activity === "active" ? "service replacement stop failed" : "service stop timed out");
+    expect(calls.includes("stop")).toBe(true);
+    expect(calls.includes("start")).toBe(false);
+  }
+
+  const calls: string[] = [];
+  let enabled = false, activity = "active";
+  const { adapter } = systemdAdapter((command) => {
+    calls.push(command);
+    if (command === "daemon-reload") return okResult();
+    if (command === "enable") { enabled = true; return okResult(); }
+    if (command === "stop") { activity = "inactive"; return okResult(); }
+    if (command === "start") { activity = "active"; return okResult(); }
+    if (command === "is-enabled") return enabled ? okResult("enabled") : failResult("not-found", 4);
+    if (command === "is-active") return activity === "active" ? okResult("active") : failResult("inactive", 3);
+    return failResult();
+  });
+  const started = realSupervisorHost("systemd", f.root, f.host.execStart, { adapter }).enable("/synthetic/unit", unit);
+  expect(started).toEqual({ ok: true, detail: "activated current definition" });
+  expect(calls.indexOf("start")).toBeGreaterThan(calls.indexOf("stop"));
+});

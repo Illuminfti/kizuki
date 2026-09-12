@@ -2,6 +2,14 @@ import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS, type ServeConfig } from ".
 
 /** A dead writer's fresh lease remains protected until its reclaim window ends. */
 export const SERVICE_RESTART_SECONDS = HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS + 1;
+/** Shared ExecStartPost READY handshake. */
+export const SERVICE_READY_SECONDS = 15;
+/** Shared SIGTERM-to-SIGKILL reap after a failed READY broker. */
+export const SERVICE_BROKER_REAP_SECONDS = 2;
+/** TimeoutStartSec: READY plus reap plus a 1s margin. */
+export const SERVICE_START_SECONDS = SERVICE_READY_SECONDS + SERVICE_BROKER_REAP_SECONDS + 1;
+/** Rendered TimeoutStopSec. */
+export const SERVICE_STOP_SECONDS = 90;
 
 export interface UnitSpec {
   readonly vaultPath: string;
@@ -45,7 +53,8 @@ export function renderSystemdUnit(spec: UnitSpec): string {
     "Type=simple",
     "ExitType=main",
     "KillMode=control-group",
-    "TimeoutStopSec=90s",
+    `TimeoutStartSec=${SERVICE_START_SECONDS}s`,
+    `TimeoutStopSec=${SERVICE_STOP_SECONDS}s`,
     `ExecStart=${exec} --service-custody ${spec.vaultId}`,
     // The metadata broker needs original namespace UID interpretation. '+'
     // affects this command only; the broker reinstates NNP and AF_UNIX-only

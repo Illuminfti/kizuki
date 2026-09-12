@@ -1,4 +1,4 @@
-import { ServiceCustodyError, validateServiceCustodyLaunch } from "@kizuki/core/internal";
+import { SERVICE_BROKER_REAP_SECONDS, SERVICE_READY_SECONDS, ServiceCustodyError, validateServiceCustodyLaunch } from "@kizuki/core/internal";
 import { serveArgs } from "./runtime";
 
 /** ExecStartPost must exit after readiness while its broker remains in the
@@ -26,7 +26,7 @@ export async function launchServiceCustodyBroker(
         if (!received.equals(expected) || child.exitCode !== null) throw new ServiceCustodyError();
       })(),
       child.exited.then(() => { throw new ServiceCustodyError(); }),
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new ServiceCustodyError()), 15_000); }),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new ServiceCustodyError()), SERVICE_READY_SECONDS * 1_000); }),
     ]);
     ready = true;
     child.unref();
@@ -40,7 +40,7 @@ export async function launchServiceCustodyBroker(
       let killTimer: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([child.exited, new Promise<void>(resolve => {
-          killTimer = setTimeout(() => { child.kill("SIGKILL"); resolve(); }, 2_000);
+          killTimer = setTimeout(() => { child.kill("SIGKILL"); resolve(); }, SERVICE_BROKER_REAP_SECONDS * 1_000);
         })]);
         await child.exited;
       } finally { if (killTimer !== undefined) clearTimeout(killTimer); }

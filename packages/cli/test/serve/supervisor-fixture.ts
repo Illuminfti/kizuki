@@ -20,8 +20,21 @@ case "$2" in
     fi
     exit 0 ;;
   enable) printf 'enabled\\n' > "$TEST_SUPERVISOR_FILE"; exit 0 ;;
-  restart) printf 'active\\n' > "$TEST_SUPERVISOR_FILE"; exit 0 ;;
-  disable) printf 'disabled\\n' > "$TEST_SUPERVISOR_FILE"; exit 0 ;;
+  stop)
+    printf 'enabled\\n' > "$TEST_SUPERVISOR_FILE"
+    exit 0 ;;
+  start)
+    printf 'active\\n' > "$TEST_SUPERVISOR_FILE"
+    if [ "$TEST_SUPERVISOR_SLEEP" = start ] || [ "$TEST_SUPERVISOR_SLEEP" = restart ]; then sleep 6; fi
+    exit 0 ;;
+  restart)
+    printf 'active\\n' > "$TEST_SUPERVISOR_FILE"
+    if [ "$TEST_SUPERVISOR_SLEEP" = restart ]; then sleep 6; fi
+    exit 0 ;;
+  disable)
+    printf 'disabled\\n' > "$TEST_SUPERVISOR_FILE"
+    if [ "$TEST_SUPERVISOR_SLEEP" = disable ]; then sleep 6; fi
+    exit 0 ;;
   is-enabled)
     case "$state" in
       active|enabled) printf 'enabled\\n'; exit 0 ;;

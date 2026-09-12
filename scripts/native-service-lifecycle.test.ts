@@ -3,7 +3,9 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cleanupOwnedNativeFixtures, runNativeExtensionCommand, managerPid, nativeServiceStopped, nativeWaitTimeout, observeInstalledNativeHealth, waitForNativeState } from "./native-service-lifecycle";
+import { cleanupOwnedNativeFixtures, nativeLifecycleCommandTimeout, runNativeExtensionCommand, managerPid, nativeServiceStopped, nativeWaitTimeout, observeInstalledNativeHealth, waitForNativeState } from "./native-service-lifecycle";
+import { SUPERVISOR_COMMAND_TIMEOUT_MS, SYSTEMD_RESTART_TIMEOUT_MS, SYSTEMD_START_TIMEOUT_MS, SYSTEMD_STOP_TIMEOUT_MS } from "../packages/core/src/serve/supervisor";
+import { SERVICE_BROKER_REAP_SECONDS, SERVICE_READY_SECONDS, SERVICE_START_SECONDS } from "../packages/core/src/serve/units";
 import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS } from "../packages/core/src/serve/types";
 import { RAIL_IDS, emptyRunTotals } from "../packages/core/src/serve/types";
 import { installedRailsHealth, readNativeRailDiagnostics, recordInstalledHealth, waitForFreshRails } from "./native-service-health";
@@ -333,4 +335,23 @@ test("actual extension signal failure remains observable and never becomes expec
   const failure: any[] = [];
   expect(() => runNativeExtensionCommand([process.execPath, "-e", 'process.kill(process.pid,"SIGTERM")'], import.meta.dir, { PATH: "/usr/bin:/bin" }, 0, value => failure.push(value))).toThrow("extension command failed");
   expect(failure).toHaveLength(1); expect(failure[0].signal).toBe("SIGTERM");
+});
+
+test("native lifecycle command deadlines cover systemd protocol bounds without a blanket increase", () => {
+  expect(SERVICE_START_SECONDS).toBe(SERVICE_READY_SECONDS + SERVICE_BROKER_REAP_SECONDS + 1);
+  const install = nativeLifecycleCommandTimeout(["serve", "--install", "--json", "--vault", "/synthetic"]);
+  const reinstall = nativeLifecycleCommandTimeout(["kizuki", "serve", "--install", "--json"]);
+  const uninstall = nativeLifecycleCommandTimeout(["serve", "--uninstall", "--json", "--vault", "/synthetic"]);
+  const init = nativeLifecycleCommandTimeout(["init", "/synthetic", "--no-default"]);
+  const skipped = nativeLifecycleCommandTimeout(["init", "/synthetic", "--no-service", "--no-default"]);
+  const query = nativeLifecycleCommandTimeout(["query", "Ada", "--degraded", "--vault", "/synthetic"]);
+  expect(install).toBe(SYSTEMD_RESTART_TIMEOUT_MS + SUPERVISOR_COMMAND_TIMEOUT_MS * 2);
+  expect(reinstall).toBe(install);
+  expect(init).toBe(install);
+  expect(install).toBeGreaterThanOrEqual(SYSTEMD_STOP_TIMEOUT_MS + SYSTEMD_START_TIMEOUT_MS);
+  expect(uninstall).toBe(SYSTEMD_STOP_TIMEOUT_MS + SUPERVISOR_COMMAND_TIMEOUT_MS * 2);
+  expect(uninstall).toBeGreaterThan(SYSTEMD_STOP_TIMEOUT_MS);
+  expect(skipped).toBe(30_000);
+  expect(query).toBe(30_000);
+  expect(install).toBeLessThan(200_000);
 });
