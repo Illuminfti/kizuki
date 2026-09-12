@@ -1,5 +1,6 @@
 import { closeSync, constants, fstatSync } from "node:fs";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import {
@@ -506,11 +507,10 @@ async function classifyReplacedDirectory(directory: string): Promise<void> {
   await assertOutsideVault(resolved);
 }
 
-/** The listed parent inode is the authority. The child is opened with openat. */
-async function openPinnedChild(
+/** The listed parent inode is the authority for all children opened through it. */
+async function openPinnedDirectory(
   parent: RootIdentity,
-  name: string,
-): Promise<number> {
+): Promise<FileHandle> {
   const directory = await open(
     parent.realpath,
     constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
@@ -524,9 +524,10 @@ async function openPinnedChild(
     ) {
       throw replacedDirectoryError();
     }
-    return openSourceChild(directory.fd, name);
-  } finally {
+    return directory;
+  } catch (error) {
     await directory.close().catch(() => undefined);
+    throw error;
   }
 }
 
@@ -625,61 +626,77 @@ async function scanMarkdownFiles(
       });
       return;
     }
-    entries.sort((left, right) => compareStrings(left.name, right.name));
-    for (const entry of entries) {
-      if (truncated) return;
-      considered += 1;
-      if (considered > MAX_SCAN_ENTRIES) {
-        truncated = true;
-        errors.push({
-          location: relpathOf(root.realpath, descent.realpath) || ".",
-          code: "scan_limit",
-          reason: "scan exceeded the entry bound",
-        });
-        return;
+    let parent: FileHandle;
+    try {
+      parent = await openPinnedDirectory(descent);
+    } catch (error) {
+      await classifyReplacedDirectory(descent.realpath);
+      errors.push({
+        location: relpathOf(root.realpath, directory) || ".",
+        code: "unreadable",
+        reason: readReason(error),
+      });
+      return;
+    }
+    try {
+      entries.sort((left, right) => compareStrings(left.name, right.name));
+      for (const entry of entries) {
+        if (truncated) return;
+        considered += 1;
+        if (considered > MAX_SCAN_ENTRIES) {
+          truncated = true;
+          errors.push({
+            location: relpathOf(root.realpath, descent.realpath) || ".",
+            code: "scan_limit",
+            reason: "scan exceeded the entry bound",
+          });
+          return;
+        }
+        if (shouldSkipName(entry.name, exclude)) continue;
+        const absolute = path.join(descent.realpath, entry.name);
+        let info;
+        try {
+          info = await lstat(absolute);
+        } catch (error) {
+          errors.push({
+            location: relpathOf(root.realpath, absolute),
+            code: "unreadable",
+            reason: readReason(error),
+          });
+          continue;
+        }
+        if (info.isSymbolicLink()) {
+          errors.push({
+            location: relpathOf(root.realpath, absolute),
+            code: "symlink",
+            reason: "symlink skipped",
+          });
+          continue;
+        }
+        if (info.isDirectory()) {
+          await walk(absolute, depth + 1);
+          continue;
+        }
+        if (!info.isFile() || !isMarkdownName(entry.name)) continue;
+        const relpath = relpathOf(root.realpath, absolute);
+        if (files.length >= MAX_FILES) {
+          truncated = true;
+          errors.push({
+            location: relpath,
+            code: "file_limit",
+            reason: "scan exceeded the file bound",
+          });
+          return;
+        }
+        const read = await readStableMarkdown(parent.fd, entry.name, relpath);
+        if ("error" in read) {
+          errors.push(read.error);
+          continue;
+        }
+        files.push(read.file);
       }
-      if (shouldSkipName(entry.name, exclude)) continue;
-      const absolute = path.join(descent.realpath, entry.name);
-      let info;
-      try {
-        info = await lstat(absolute);
-      } catch (error) {
-        errors.push({
-          location: relpathOf(root.realpath, absolute),
-          code: "unreadable",
-          reason: readReason(error),
-        });
-        continue;
-      }
-      if (info.isSymbolicLink()) {
-        errors.push({
-          location: relpathOf(root.realpath, absolute),
-          code: "symlink",
-          reason: "symlink skipped",
-        });
-        continue;
-      }
-      if (info.isDirectory()) {
-        await walk(absolute, depth + 1);
-        continue;
-      }
-      if (!info.isFile() || !isMarkdownName(entry.name)) continue;
-      const relpath = relpathOf(root.realpath, absolute);
-      if (files.length >= MAX_FILES) {
-        truncated = true;
-        errors.push({
-          location: relpath,
-          code: "file_limit",
-          reason: "scan exceeded the file bound",
-        });
-        return;
-      }
-      const read = await readStableMarkdown(descent, entry.name, relpath);
-      if ("error" in read) {
-        errors.push(read.error);
-        continue;
-      }
-      files.push(read.file);
+    } finally {
+      await parent.close().catch(() => undefined);
     }
   };
 
@@ -690,14 +707,14 @@ async function scanMarkdownFiles(
 }
 
 async function readStableMarkdown(
-  parent: RootIdentity,
+  parentFd: number,
   name: string,
   relpath: string,
 ): Promise<{ file: MarkdownFile } | { error: ImportRecordError }> {
   for (let attempt = 0; attempt < STABLE_READ_ATTEMPTS; attempt += 1) {
     let fd: number | undefined;
     try {
-      fd = await openPinnedChild(parent, name);
+      fd = openSourceChild(parentFd, name);
       const before = fstatSync(fd);
       if (!before.isFile()) {
         return {
@@ -761,7 +778,6 @@ async function readStableMarkdown(
         isErrno(error, "ELOOP") ||
         isErrno(error, "ENOTDIR")
       ) {
-        await classifyReplacedDirectory(parent.realpath);
         return {
           error: {
             location: relpath,
