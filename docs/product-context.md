@@ -89,6 +89,8 @@ budget, not in who presses a button.
 
 ## Agent and harness experience
 
+Status: direction
+
 Kizuki should serve harness-neutral, purpose-bounded context packets rather
 than require every agent to understand the entire vault. An authorized agent
 should be able to retrieve relevant evidence and knowledge through full-text,
@@ -171,6 +173,8 @@ state. Access alone never creates authority.
 
 ## Deployment direction
 
+Status: direction
+
 The first product is one person's private brain. Local custody, provenance,
 reversibility, and a readable exit remain the foundation.
 
@@ -181,6 +185,8 @@ is not decided here.
 
 ## Explicit non-decisions
 
+Status: direction
+
 This context does not decide:
 
 - the federation protocol or shared-world permission model;
@@ -188,11 +194,15 @@ This context does not decide:
 - the representation and compilation format for reusable agent skills; or
 - the confidence, review, and expiry rules for inferred taste.
 
+## Settled design decisions
+
+Status: designed
+
 RFC 0002 decided the former open items: materiality uses `CONFLICT_MARGIN`
 (§5.4); semantic retrieval is a port with a lexical floor and an optional
 embedded engine (§9); working-model updates and canon writes are one
 receipted path (§4); provider precedence follows the authority order in
 §5.
 
-Those decisions require their own evidence and acceptance criteria. Agents
-must not infer them from this product context.
+This section records the binding design. Implementation status requires
+separate evidence and acceptance criteria.

@@ -55,6 +55,12 @@ function applyPromotionsV2(db: Database): void {
     return;
   }
   const columns = tableColumns(db, "promotions");
+  if (columns.includes("page_hash") && columns.includes("after_hash")) {
+    throw new LedgerStoreError(
+      "corrupt",
+      "promotions table has both page_hash and after_hash",
+    );
+  }
   if (columns.includes("after_hash")) return;
   if (!columns.includes("page_hash")) {
     throw new LedgerStoreError(

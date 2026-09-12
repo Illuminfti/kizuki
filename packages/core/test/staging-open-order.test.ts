@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { contentSignature, hashBody } from "../src/claims/hash";
 import { insertClaim } from "../src/claims/store";
 import { inspectOpenLedgerHealth, LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
+import { LedgerStoreError } from "../src/ledger/errors";
 import { readSchemaVersion } from "../src/ledger/integrity";
 import { accept } from "../src/ledger/ledger";
 import { tableExists } from "../src/ledger/schema";
@@ -265,5 +266,43 @@ test("an unknown leftover promotions table fails closed", async () => {
   await withTempDb((path) => {
     plant(path, "CREATE TABLE promotions (receipt_id TEXT PRIMARY KEY) STRICT;");
     expect(() => openLedger(path)).toThrow(/missing page_hash and after_hash/);
+  });
+});
+
+test("a mixed page_hash and after_hash promotions table fails closed without changing its schema or receipt", async () => {
+  await withTempDb((path) => {
+    plant(path, `
+      CREATE TABLE schema_version (version INTEGER NOT NULL) STRICT;
+      INSERT INTO schema_version VALUES (0);
+      ${V2_PROMOTIONS}
+      ALTER TABLE promotions ADD COLUMN page_hash TEXT NOT NULL;
+      INSERT INTO promotions VALUES (
+        'receipt-1', 'proposal-1', '["event-1"]', 'personal',
+        'facts/legacy.md', 'edit', '${HASH_BEFORE}', '${HASH_AFTER}',
+        '2026-01-01T00:00:00Z', '${HASH_V1}'
+      );
+    `);
+    const original = new Database(path, { readonly: true });
+    let schema: unknown[];
+    let receipts: unknown[];
+    try {
+      schema = original.query("SELECT * FROM sqlite_schema ORDER BY name").all();
+      receipts = original.query("SELECT * FROM promotions").all();
+    } finally { original.close(); }
+
+    let failure: unknown;
+    try { openLedger(path).close(); } catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(LedgerStoreError);
+    expect(failure).toMatchObject({ code: "corrupt", retryable: false });
+    expect((failure as LedgerStoreError).message).toMatch(/both page_hash and after_hash/);
+
+    const unchanged = new Database(path, { readonly: true });
+    try {
+      expect(unchanged.query("SELECT * FROM sqlite_schema ORDER BY name").all()).toEqual(schema);
+      expect(unchanged.query("SELECT * FROM promotions").all()).toEqual(receipts);
+      expect(readSchemaVersion(unchanged)).toBe(0);
+      expect(tableExists(unchanged, "promotions_v2")).toBe(false);
+      expect(tableExists(unchanged, "canon_receipts")).toBe(false);
+    } finally { unchanged.close(); }
   });
 });
