@@ -365,6 +365,8 @@ reports a complete binding as `on` and an incomplete configuration as
 
 ## models
 
+Status: shipped
+
 ```text
 usage: kizuki models <list [--catalog] | pull <CATALOG_ID | --from PATH|URL [--sha256 HEX] [--bytes N]> | remove NAME>
 ```

@@ -280,6 +280,12 @@ const TAGGED_SECTIONS = [
     doc: "README.md",
     heading: "The vision",
   },
+  {
+    id: "cli.models",
+    status: "shipped",
+    doc: "docs/cli.md",
+    heading: "models",
+  },
 ] as const;
 
 function sectionStatus(doc: string, heading: string): string | null {
@@ -548,6 +554,33 @@ test.each([
     name: "product.settled-decisions inventory entry removed",
     mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
       entries.filter((entry) => entry.id !== "product.settled-decisions"),
+  },
+  {
+    name: "cli.models tag removed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/cli.md", docs.get("docs/cli.md")!.replace("## models\n\nStatus: shipped\n\n", "## models\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "cli.models tag designed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/cli.md", docs.get("docs/cli.md")!.replace("## models\n\nStatus: shipped", "## models\n\nStatus: designed"));
+      return entries;
+    },
+  },
+  {
+    name: "cli.models inventory entry removed",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "cli.models"),
+  },
+  {
+    name: "cli.models tag only in adjacent purge",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      const cli = docs.get("docs/cli.md")!.replace("## models\n\nStatus: shipped\n\n", "## models\n\n");
+      docs.set("docs/cli.md", cli.replace("## purge\n\n", "## purge\n\nStatus: shipped\n\n"));
+      return entries;
+    },
   },
 ])("$name fails the tagged-section check", ({ mutate }) => {
   const inventory = JSON.parse(readFileSync(join(ROOT, "docs/capability-status.json"), "utf8")) as {
