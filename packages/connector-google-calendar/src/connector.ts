@@ -23,7 +23,7 @@ export interface GoogleCalendarConnectorDeps {
     fetch?: CalendarFetch;
     now?: () => Date;
 }
-const MANIFEST = freezeManifest({ schema: "kizuki.connector/v1", connector_id: ID, version: "0.1.0", contract_minor: 1, implementation: "@kizuki/connector-google-calendar", allowed_egress: ["accounts.google.com", "oauth2.googleapis.com", "openidconnect.googleapis.com", "www.googleapis.com"], cursor_schema: CURSOR, kinds: ["calendar_event"], capabilities: { backfill: true, sync: true, tombstones: true, purge: false, fixture: true }, required_secrets: [], emits_sensitivity_hint: true, default_sensitivity: "private", sensitivity_floor: "private", auth_modes: ["oauth", "sign_in"] });
+const MANIFEST = freezeManifest({ schema: "kizuki.connector/v1", connector_id: ID, version: "0.1.0", contract_minor: 1, implementation: "@kizuki/connector-google-calendar", allowed_egress: ["accounts.google.com", "oauth2.googleapis.com", "openidconnect.googleapis.com", "www.googleapis.com"], cursor_schema: CURSOR, kinds: ["calendar_event"], capabilities: { backfill: true, sync: true, tombstones: true, purge: false, fixture: true, sync_from_backfill_before_first_success: true }, required_secrets: [], emits_sensitivity_hint: true, default_sensitivity: "private", sensitivity_floor: "private", auth_modes: ["oauth", "sign_in"] });
 class CapacityGap extends Error {
     constructor(readonly reason: "initial_scan_capacity" | "cancellation_anchor_capacity") { super(reason); }
 }

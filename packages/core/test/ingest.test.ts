@@ -16,7 +16,7 @@ import {
   PAGE_CANDIDATE_KEY,
   PAGE_CANDIDATE_SCHEMA,
 } from "../src/contracts/page-candidate";
-import { getCheckpoint, registerConnection } from "../src/ledger/connections";
+import { getCheckpoint, listConnectionRuns, registerConnection } from "../src/ledger/connections";
 import { openLedger } from "../src/ledger/db";
 import {
   runBackfill,
@@ -32,6 +32,7 @@ import { tempVault } from "./helpers/vault";
 
 type ManifestOverrides = Partial<Pick<Manifest, "connector_id" | "kinds">> & {
   page_candidates?: boolean;
+  sync_from_backfill_before_first_success?: boolean;
 };
 
 class FixtureConnector implements Connector {
@@ -59,6 +60,12 @@ class FixtureConnector implements Connector {
         ...(this.declared.page_candidates === undefined
           ? {}
           : { page_candidates: this.declared.page_candidates }),
+        ...(this.declared.sync_from_backfill_before_first_success === undefined
+          ? {}
+          : {
+              sync_from_backfill_before_first_success:
+                this.declared.sync_from_backfill_before_first_success,
+            }),
       },
       required_secrets: [],
       emits_sensitivity_hint: true,
@@ -237,13 +244,15 @@ function candidate(over: Partial<CaptureEventInput> = {}): CaptureEventInput {
 
 const SOURCE = "01JJ0000000000000000000001";
 
-function database() {
-  const db = openLedger(":memory:");
+function database(path = ":memory:") {
+  const db = openLedger(path);
   initStaging(db);
   registerConnection(db, "fixture", SOURCE);
   setSourceGrant(db, { source_key: SOURCE, expected_revision: 0, operation_id: "fixture-" + SOURCE, policy: { purposes: ["capture", "recall", "derive"], allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public" } });
   return db;
 }
+
+const OPT_IN = { sync_from_backfill_before_first_success: true } as const;
 
 describe("runBatch", () => {
   test("accepts events and files deterministic proposals", () => {
@@ -595,6 +604,220 @@ describe("connector runs", () => {
     });
     reopened.close();
     rmSync(directory, { recursive: true, force: true });
+  });
+
+  test("default fixture first sync after backfill still receives null", async () => {
+    const db = database();
+    const connector = new FixtureConnector(
+      { events: [], cursor: "B1" },
+      { events: [], cursor: "S1" },
+    );
+    await runBackfill(db, connector, "fixture", SOURCE);
+    await runSync(db, connector, "fixture", SOURCE);
+    expect(connector.syncCursors).toEqual([null]);
+    expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+      backfill_cursor: "B1",
+      sync_cursor: "S1",
+    });
+    db.close();
+  });
+
+  test("opt-in first sync after backfill reopen receives the backfill token", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-sync-bootstrap-"));
+    let db = database(join(directory, "ledger.sqlite"));
+    try {
+      const connector = new FixtureConnector(
+        { events: [], cursor: "B1" },
+        { events: [], cursor: "S1" },
+        OPT_IN,
+      );
+      await runBackfill(db, connector, "fixture", SOURCE);
+      db.close();
+      db = openLedger(join(directory, "ledger.sqlite"));
+      initStaging(db);
+      await runSync(db, connector, "fixture", SOURCE);
+      expect(connector.syncCursors).toEqual(["B1"]);
+      expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+        backfill_cursor: "B1",
+        sync_cursor: "S1",
+      });
+    } finally {
+      db.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("opt-in interleaved backfill and sync keep independent B1/B2 and S1/S2 tokens", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-optin-mode-cursors-"));
+    let db = database(join(directory, "ledger.sqlite"));
+    const received = { backfill: [] as (string | null)[], sync: [] as (string | null)[] };
+    const connector = new FixtureConnector({ events: [], cursor: null }, undefined, OPT_IN);
+    connector.backfill = async (cursor) => {
+      received.backfill.push(cursor);
+      return { events: [], cursor: cursor === null ? "B1" : "B2" };
+    };
+    connector.sync = async (cursor) => {
+      received.sync.push(cursor);
+      return { events: [], cursor: cursor === "S1" ? "S2" : "S1" };
+    };
+    try {
+      await runBackfill(db, connector, "fixture", SOURCE);
+      await runSync(db, connector, "fixture", SOURCE);
+      db.close();
+      db = openLedger(join(directory, "ledger.sqlite"));
+      initStaging(db);
+      await runBackfill(db, connector, "fixture", SOURCE);
+      await runSync(db, connector, "fixture", SOURCE);
+      expect(received.backfill).toEqual([null, "B1"]);
+      expect(received.sync).toEqual(["B1", "S1"]);
+      expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+        backfill_cursor: "B2",
+        sync_cursor: "S2",
+        backfill_complete: false,
+      });
+    } finally {
+      db.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("a successful null sync suppresses backfill bootstrap after restart", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-null-sync-bootstrap-"));
+    let db = database(join(directory, "ledger.sqlite"));
+    try {
+      const first = new FixtureConnector(
+        { events: [validEvent()], cursor: "B1", has_more: false },
+        { events: [], cursor: null },
+        OPT_IN,
+      );
+      await runBackfill(db, first, "fixture", SOURCE);
+      expect(getCheckpoint(db, "fixture", SOURCE)?.backfill_complete).toBe(true);
+      const synced = await runSync(db, first, "fixture", SOURCE);
+      expect(first.syncCursors).toEqual(["B1"]);
+      expect(synced).toMatchObject({ errors: [], cursor: null });
+      expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+        backfill_cursor: "B1",
+        sync_cursor: null,
+        backfill_complete: true,
+      });
+      expect(
+        listConnectionRuns(db, "fixture", SOURCE).some(
+          (run) => run.mode === "sync" && run.status === "ok",
+        ),
+      ).toBe(true);
+      db.close();
+      db = openLedger(join(directory, "ledger.sqlite"));
+      initStaging(db);
+      const second = new FixtureConnector(
+        { events: [], cursor: "B1" },
+        { events: [], cursor: "S1" },
+        OPT_IN,
+      );
+      await runSync(db, second, "fixture", SOURCE);
+      expect(second.syncCursors).toEqual([null]);
+      expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+        backfill_cursor: "B1",
+        sync_cursor: "S1",
+        backfill_complete: true,
+      });
+    } finally {
+      db.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("opt-in first sync failure preserves the bootstrap token for retry", async () => {
+    const db = database();
+    try {
+      const failing = new (class extends FixtureConnector {
+        override sync(cursor: string | null): Promise<SyncBatch> {
+          this.syncCursors.push(cursor);
+          return Promise.reject(new Error("provider down"));
+        }
+      })({ events: [validEvent()], cursor: "B1", has_more: false }, undefined, OPT_IN);
+      await runBackfill(db, failing, "fixture", SOURCE);
+      expect(getCheckpoint(db, "fixture", SOURCE)?.backfill_complete).toBe(true);
+      const failed = await runSync(db, failing, "fixture", SOURCE);
+      expect(failed.errors).toEqual(["provider down"]);
+      expect(failed.cursor).toBe("B1");
+      expect(failing.syncCursors).toEqual(["B1"]);
+      expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+        backfill_cursor: "B1",
+        sync_cursor: "B1",
+        backfill_complete: true,
+      });
+      expect(
+        listConnectionRuns(db, "fixture", SOURCE).filter((run) => run.mode === "sync"),
+      ).toMatchObject([{ status: "failed", committed_cursor: "B1" }]);
+      const later = new FixtureConnector(
+        { events: [], cursor: "B2" },
+        { events: [], cursor: "S2" },
+        OPT_IN,
+      );
+      await runBackfill(db, later, "fixture", SOURCE);
+      expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+        backfill_cursor: "B2",
+        sync_cursor: "B1",
+        backfill_complete: true,
+      });
+      await runSync(db, later, "fixture", SOURCE);
+      expect(later.syncCursors).toEqual(["B1"]);
+      expect(getCheckpoint(db, "fixture", SOURCE)?.sync_cursor).toBe("S2");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("opt-in first sync unavailable preserves the bootstrap token for retry", async () => {
+    const db = database();
+    try {
+      const connector = new FixtureConnector(
+        { events: [validEvent()], cursor: "B1", has_more: false },
+        {
+          events: [],
+          cursor: "attempted",
+          status: "unavailable",
+          detail: "provider is down",
+        },
+        OPT_IN,
+      );
+      await runBackfill(db, connector, "fixture", SOURCE);
+      const result = await runSync(db, connector, "fixture", SOURCE);
+      expect(result.errors).toEqual(["provider is down"]);
+      expect(result.cursor).toBe("B1");
+      expect(connector.syncCursors).toEqual(["B1"]);
+      expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+        backfill_cursor: "B1",
+        sync_cursor: "B1",
+        backfill_complete: true,
+      });
+      const retry = new FixtureConnector(
+        { events: [], cursor: "B1" },
+        { events: [], cursor: "S1" },
+        OPT_IN,
+      );
+      await runSync(db, retry, "fixture", SOURCE);
+      expect(retry.syncCursors).toEqual(["B1"]);
+      expect(getCheckpoint(db, "fixture", SOURCE)?.sync_cursor).toBe("S1");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("opt-in without a backfill cursor still starts sync at null", async () => {
+    const db = database();
+    try {
+      const connector = new FixtureConnector(
+        { events: [], cursor: "B1" },
+        { events: [], cursor: "S1" },
+        OPT_IN,
+      );
+      await runSync(db, connector, "fixture", SOURCE);
+      expect(connector.syncCursors).toEqual([null]);
+      expect(connector.backfillCursors).toEqual([]);
+    } finally {
+      db.close();
+    }
   });
 });
 

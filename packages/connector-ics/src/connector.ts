@@ -65,6 +65,7 @@ const MANIFEST: Manifest = freezeManifest({
     tombstones: true,
     purge: false,
     fixture: true,
+    sync_from_backfill_before_first_success: true,
   },
   required_secrets: [],
   emits_sensitivity_hint: true,

@@ -12,6 +12,7 @@ import {
   assertCursorSize,
   checkpointModeCursor,
   getCheckpoint,
+  hasSuccessfulSyncRun,
   LedgerError,
   type Checkpoint,
   type ConnectionRun,
@@ -461,37 +462,48 @@ async function runConnector(
   mode: "backfill" | "sync",
   context?: SourceTombstoneContext,
 ): Promise<ConnectorStep> {
-  const previous = checkpointModeCursor(getCheckpoint(db, connector_id, source_key), mode);
+  const checkpoint = getCheckpoint(db, connector_id, source_key);
+  const storedPrevious = checkpointModeCursor(checkpoint, mode);
   let admission: SourceAdmission | null;
   try {
     requireActiveConnection(db, connector_id, source_key);
     admission = sourceCaptureAdmission(db, connector_id, source_key);
   } catch (error) {
-    return { result: refusedRun(errorText(error), previous), terminal: false };
+    return { result: refusedRun(errorText(error), storedPrevious), terminal: false };
   }
 
   const manifest = connector.manifest();
   if (manifest.connector_id !== connector_id) {
     const result = refusedRun(
       `${connector_id}: manifest connector_id does not match the enrolled connection`,
-      previous,
+      storedPrevious,
     );
-    return { result: persistRun(db, connector_id, source_key, mode, previous, previous, result, "refused"), terminal: false };
+    return { result: persistRun(db, connector_id, source_key, mode, storedPrevious, storedPrevious, result, "refused"), terminal: false };
   }
   if (mode === "backfill" && manifest.capabilities.backfill !== true) {
     const result = refusedRun(
       `${connector_id}: manifest does not declare backfill`,
-      previous,
+      storedPrevious,
     );
-    return { result: persistRun(db, connector_id, source_key, mode, previous, previous, result, "refused"), terminal: false };
+    return { result: persistRun(db, connector_id, source_key, mode, storedPrevious, storedPrevious, result, "refused"), terminal: false };
   }
   if (mode === "sync" && manifest.capabilities.sync !== true) {
     const result = refusedRun(
       `${connector_id}: manifest does not declare sync`,
-      previous,
+      storedPrevious,
     );
-    return { result: persistRun(db, connector_id, source_key, mode, previous, previous, result, "refused"), terminal: false };
+    return { result: persistRun(db, connector_id, source_key, mode, storedPrevious, storedPrevious, result, "refused"), terminal: false };
   }
+
+  const previous =
+    mode === "sync" &&
+    storedPrevious === null &&
+    manifest.capabilities.sync_from_backfill_before_first_success === true &&
+    checkpoint !== null &&
+    checkpoint.backfill_cursor !== null &&
+    !hasSuccessfulSyncRun(db, connector_id, source_key)
+      ? checkpoint.backfill_cursor
+      : storedPrevious;
 
   let batch: SyncBatch;
   let hasMore: boolean | undefined;

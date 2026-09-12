@@ -154,4 +154,30 @@ describe("Connector shape", () => {
     }).toThrow();
     expect(frozen.kinds).toEqual(["message"]);
   });
+
+  test("freezeManifest keeps additive sync bootstrap compatibility frozen", () => {
+    const frozen = freezeManifest({
+      ...manifest,
+      capabilities: {
+        ...manifest.capabilities,
+        sync_from_backfill_before_first_success: true,
+      },
+    });
+    expect(frozen.capabilities.sync_from_backfill_before_first_success).toBe(true);
+    expect(() => {
+      frozen.capabilities.sync_from_backfill_before_first_success = false;
+    }).toThrow();
+  });
+
+  test("freezeManifest refuses a non-boolean sync bootstrap flag", () => {
+    expect(() =>
+      freezeManifest({
+        ...manifest,
+        capabilities: {
+          ...manifest.capabilities,
+          sync_from_backfill_before_first_success: "true" as unknown as boolean,
+        },
+      }),
+    ).toThrow(/sync_from_backfill_before_first_success must be a boolean/);
+  });
 });
