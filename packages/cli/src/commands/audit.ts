@@ -3,7 +3,7 @@ import { runAudit } from "@kizuki/tui";
 import { UsageError, parseArguments } from "../args";
 import { withReadVault, withVault } from "../context";
 import { jsonEnvelope, table } from "../output";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 /** Public page size; the internal limit+1 peek stays inside core's 10000-row bound. */
 const MAX_LIMIT = 5000;
@@ -22,15 +22,23 @@ function parseBoundedInt(raw: string, flag: string, min: number, max: number): n
   return value;
 }
 
+export const AUDIT_SCHEMA = {
+  options: ["--since", "--page", "--writer", "--limit", "--offset"],
+  flags: ["--contested", "--ambiguous", "--reverted", "--json", "--list"],
+  defaults: { "--limit": "5000", "--offset": "0" },
+  bounds: { "--since": "TIME", "--limit": "1..5000", "--offset": "N" },
+} as const satisfies CommandHelpSchema;
+
 export const auditCommand: Command = {
   name: "audit",
   usage:
     "audit [--since TIME] [--page PATH] [--writer NAME] [--contested] [--ambiguous] [--reverted] [--limit 1..5000] [--offset N] [--list] [--json]",
   summary: "see what changed, inspect its sources, and undo a write",
+  schema: AUDIT_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
-      options: ["--since", "--page", "--writer", "--limit", "--offset"],
-      flags: ["--contested", "--ambiguous", "--reverted", "--json", "--list"],
+      options: [...AUDIT_SCHEMA.options],
+      flags: [...AUDIT_SCHEMA.flags],
     });
     if (parsed.positionals.length !== 0) throw new UsageError(this.usage);
 
