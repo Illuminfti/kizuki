@@ -1095,6 +1095,210 @@ describe("ChatGPT export fidelity", () => {
     for (const event of result.events) assertIngressOnly(event);
   });
 
+  test("oversize optional metadata is omitted; parent text, exact ids, and a raw unsupported token still pass Core", () => {
+    const oversize = "x".repeat(EVENT_LIMITS.metadataStringBytes + 1);
+    const exact = "y".repeat(EVENT_LIMITS.metadataStringBytes);
+    const result = parseChatGptExport(
+      JSON.stringify([
+        {
+          id: "bound-thread",
+          title: oversize,
+          current_node: oversize,
+          mapping: {
+            prompt: {
+              message: {
+                author: { role: "user" },
+                content: {
+                  parts: [
+                    "keep the parent",
+                    {
+                      content_type: "image_asset_pointer",
+                      asset_pointer: "file-service://parent-shot",
+                      size_bytes: 4,
+                    },
+                  ],
+                },
+                create_time: 1_704_067_200,
+              },
+              parent: oversize,
+            },
+            reply: {
+              message: {
+                author: { role: "assistant" },
+                content: {
+                  parts: [
+                    "see",
+                    { content_type: oversize, text: "quoted passage" },
+                  ],
+                },
+                create_time: 1_704_067_260,
+              },
+              parent: "prompt",
+            },
+          },
+        },
+        {
+          id: "exact-thread",
+          title: exact,
+          current_node: exact,
+          mapping: {
+            n: {
+              message: {
+                author: { role: "user" },
+                content: { parts: ["exact bounds"] },
+                create_time: 1_704_067_320,
+              },
+              parent: exact,
+            },
+          },
+        },
+      ]),
+      OBSERVED_AT,
+    );
+    const prompt = result.events.find(
+      (event) =>
+        event.source_record_id ===
+        encodeSourceRecordId(["bound-thread", "prompt"]),
+    );
+    const reply = result.events.find(
+      (event) =>
+        event.source_record_id ===
+        encodeSourceRecordId(["bound-thread", "reply"]),
+    );
+    const bounded = result.events.find(
+      (event) =>
+        event.source_record_id === encodeSourceRecordId(["exact-thread", "n"]),
+    );
+    expect(result.events).toHaveLength(3);
+    expect(prompt?.text).toBe("keep the parent");
+    expect(prompt?.source_record_id).toBe(
+      encodeSourceRecordId(["bound-thread", "prompt"]),
+    );
+    expect(prompt?.attachments).toEqual([
+      {
+        attachment_id: "file-service://parent-shot",
+        media_type: "image/*",
+        byte_size: 4,
+      },
+    ]);
+    expect(prompt?.metadata["conversation_title"]).toBeUndefined();
+    expect(prompt?.metadata["parent"]).toBeUndefined();
+    expect(prompt?.metadata["current_node"]).toBeUndefined();
+    expect(prompt?.metadata["unsupported_parts"]).toEqual([
+      "oversize_conversation_title",
+      "oversize_parent",
+      "oversize_current_node",
+    ]);
+    expect(reply?.text).toBe("see\nquoted passage");
+    expect(reply?.metadata["parent"]).toBe("prompt");
+    expect(reply?.metadata["conversation_title"]).toBeUndefined();
+    expect(reply?.metadata["current_node"]).toBeUndefined();
+    expect(reply?.metadata["unsupported_parts"]).toEqual([
+      "oversize_content_type",
+      "oversize_conversation_title",
+      "oversize_current_node",
+    ]);
+    expect(bounded?.text).toBe("exact bounds");
+    expect(bounded?.metadata["conversation_title"]).toBe(exact);
+    expect(bounded?.metadata["parent"]).toBe(exact);
+    expect(bounded?.metadata["current_node"]).toBe(exact);
+    expect(bounded?.metadata["unsupported_parts"]).toEqual([]);
+    expect(byLocationCode(result.errors)).toEqual(
+      byLocationCode([
+        {
+          location: "bound-thread/prompt",
+          code: "unsupported_part",
+          reason:
+            "unsupported content parts: oversize_conversation_title,oversize_parent,oversize_current_node",
+        },
+        {
+          location: "bound-thread/reply",
+          code: "unsupported_part",
+          reason:
+            "unsupported content parts: oversize_content_type,oversize_conversation_title,oversize_current_node",
+        },
+      ]),
+    );
+    const serialized = JSON.stringify({
+      events: result.events,
+      errors: result.errors,
+    });
+    expect(serialized.includes(oversize)).toBe(false);
+    for (const event of result.events) assertIngressOnly(event);
+  });
+
+  test("a rejected attachment-only node is a dirty empty parse, not a clean omission", () => {
+    const oversizeId = ` ${"a".repeat(EVENT_LIMITS.attachmentIdBytes + 50)}`;
+    const result = parseChatGptExport(
+      JSON.stringify([
+        {
+          id: "ref-thread",
+          mapping: {
+            badfile: {
+              message: {
+                author: { role: "user" },
+                content: {
+                  parts: [
+                    {
+                      content_type: "image_asset_pointer",
+                      asset_pointer: oversizeId,
+                    },
+                  ],
+                },
+                create_time: 1_704_067_200,
+              },
+            },
+            listed: {
+              message: {
+                author: { role: "user" },
+                content: { parts: [] },
+                create_time: 1_704_067_260,
+                metadata: {
+                  attachments: [
+                    {
+                      id: " file-bad",
+                      name: "notes.pdf",
+                      mimeType: "application/pdf",
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      ]),
+      OBSERVED_AT,
+    );
+    expect(result.events).toEqual([]);
+    expect(byLocationCode(result.errors)).toEqual(
+      byLocationCode([
+        {
+          location: "ref-thread/badfile",
+          code: "empty_content",
+          reason: "message has no text or attachments",
+        },
+        {
+          location: "ref-thread/badfile",
+          code: "unsupported_part",
+          reason: "unsupported content parts: image_asset_pointer",
+        },
+        {
+          location: "ref-thread/listed",
+          code: "empty_content",
+          reason: "message has no text or attachments",
+        },
+        {
+          location: "ref-thread/listed",
+          code: "unsupported_part",
+          reason: "unsupported content parts: invalid_attachment",
+        },
+      ]),
+    );
+    expect(JSON.stringify(result.errors).includes(oversizeId.trim())).toBe(
+      false,
+    );
+  });
+
   test("occurred_at stays the message timestamp; fractional seconds are kept", () => {
     const result = parseChatGptExport(
       JSON.stringify([

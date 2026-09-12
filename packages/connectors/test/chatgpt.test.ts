@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { validateEventInput } from "@kizuki/core";
+import { EVENT_LIMITS, validateEventInput } from "@kizuki/core";
 import {
   CHATGPT_IMPORT_CONNECTOR_ID,
   KizukiError,
@@ -463,6 +463,225 @@ describe("ChatGptImportConnector", () => {
       createChatGptImportConnector({ path: "/nonexistent.json" }).manifest()
         .capabilities.tombstones,
     ).toBe(false);
+  });
+
+  test("oversize optional descriptors still store the parent message in Core", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
+    try {
+      const oversize = "x".repeat(EVENT_LIMITS.metadataStringBytes + 1);
+      const file = path.join(root, "conversations.json");
+      await writeFile(
+        file,
+        JSON.stringify([
+          {
+            id: "bound-thread",
+            title: oversize,
+            current_node: oversize,
+            mapping: {
+              prompt: {
+                message: {
+                  author: { role: "user" },
+                  content: {
+                    parts: [
+                      "keep the parent",
+                      {
+                        content_type: "image_asset_pointer",
+                        asset_pointer: "file-service://parent-shot",
+                        size_bytes: 4,
+                      },
+                    ],
+                  },
+                  create_time: 1_704_067_200,
+                },
+                parent: oversize,
+              },
+              reply: {
+                message: {
+                  author: { role: "assistant" },
+                  content: {
+                    parts: [
+                      "see",
+                      { content_type: oversize, text: "quoted passage" },
+                    ],
+                  },
+                  create_time: 1_704_067_260,
+                },
+                parent: "prompt",
+              },
+            },
+          },
+        ]),
+      );
+      const connector = createChatGptImportConnector({ path: file });
+      expect((await connector.health()).state).toBe("degraded");
+      const first = await connector.backfill(null);
+      expect(first.status ?? "ok").toBe("ok");
+      expect(first.events).toHaveLength(2);
+      const parentEvent = first.events.find(
+        (event) =>
+          event.source_record_id ===
+          encodeSourceRecordId(["bound-thread", "prompt"]),
+      );
+      expect(parentEvent?.text).toBe("keep the parent");
+      expect(parentEvent?.metadata["parent"]).toBeUndefined();
+      expect(parentEvent?.metadata["conversation_title"]).toBeUndefined();
+      expect(parentEvent?.metadata["current_node"]).toBeUndefined();
+      expect(parentEvent?.attachments).toEqual([
+        {
+          attachment_id: "file-service://parent-shot",
+          media_type: "image/*",
+          byte_size: 4,
+        },
+      ]);
+      expect(validateEventInput(parentEvent).ok).toBe(true);
+      const replyEvent = first.events.find(
+        (event) =>
+          event.source_record_id ===
+          encodeSourceRecordId(["bound-thread", "reply"]),
+      );
+      expect(replyEvent?.text).toBe("see\nquoted passage");
+      expect(replyEvent?.metadata["parent"]).toBe("prompt");
+      expect(validateEventInput(replyEvent).ok).toBe(true);
+      const ledger = new InMemoryLedger();
+      const stored = ledger.accept(parentEvent);
+      expect(stored.status).toBe("stored");
+      if (stored.status !== "stored") return;
+      expect(stored.event.text).toBe("keep the parent");
+      expect(stored.event.source_record_id).toBe(
+        encodeSourceRecordId(["bound-thread", "prompt"]),
+      );
+      expect(stored.event.metadata["parent"]).toBeUndefined();
+      expect(stored.event.attachments).toEqual([
+        {
+          attachment_id: "file-service://parent-shot",
+          media_type: "image/*",
+          byte_size: 4,
+        },
+      ]);
+      expect(ledger.accept(replyEvent).status).toBe("stored");
+      const drain = await connector.backfill(first.cursor);
+      expect(drain).toEqual({ events: [], cursor: first.cursor, has_more: false });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a rejected attachment-only export is a dirty parse, not a clean empty snapshot", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
+    try {
+      const file = path.join(root, "conversations.json");
+      await writeFile(
+        file,
+        JSON.stringify([
+          {
+            id: "c-attach",
+            mapping: {
+              n1: {
+                message: {
+                  author: { role: "user" },
+                  content: {
+                    parts: [
+                      {
+                        content_type: "image_asset_pointer",
+                        asset_pointer: ` ${"a".repeat(EVENT_LIMITS.attachmentIdBytes + 50)}`,
+                      },
+                    ],
+                  },
+                  create_time: 1_700_000_000,
+                },
+              },
+            },
+          },
+        ]),
+      );
+      const connector = createChatGptImportConnector({ path: file });
+      expect((await connector.health()).state).toBe("degraded");
+      const first = await connector.backfill(null);
+      expect(first.status).toBe("unavailable");
+      expect(first.events).toEqual([]);
+      expect(first.detail).toContain("empty_content=1");
+      expect(first.detail).toContain("unsupported_part=1");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a rejected attachment-only later export does not tombstone a prior attachment record", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
+    try {
+      const file = path.join(root, "conversations.json");
+      await writeFile(
+        file,
+        JSON.stringify([
+          {
+            id: "c-attach",
+            mapping: {
+              n1: {
+                message: {
+                  author: { role: "user" },
+                  content: {
+                    parts: [
+                      {
+                        content_type: "image_asset_pointer",
+                        asset_pointer: "file-service://img-kept",
+                        size_bytes: 4,
+                      },
+                    ],
+                  },
+                  create_time: 1_700_000_000,
+                },
+              },
+            },
+          },
+        ]),
+      );
+      const connector = createChatGptImportConnector({ path: file });
+      const first = await connector.backfill(null);
+      expect(first.status ?? "ok").toBe("ok");
+      expect(first.events).toHaveLength(1);
+      const kept = first.events[0]!.source_record_id;
+      expect(kept).toBe(encodeSourceRecordId(["c-attach", "n1"]));
+      const ledger = new InMemoryLedger();
+      expect(ledger.accept(first.events[0]).status).toBe("stored");
+
+      await writeFile(
+        file,
+        JSON.stringify([
+          {
+            id: "c-attach",
+            mapping: {
+              n1: {
+                message: {
+                  author: { role: "user" },
+                  content: {
+                    parts: [
+                      {
+                        content_type: "image_asset_pointer",
+                        asset_pointer: ` ${"a".repeat(EVENT_LIMITS.attachmentIdBytes + 50)}`,
+                      },
+                    ],
+                  },
+                  create_time: 1_700_000_000,
+                },
+              },
+            },
+          },
+        ]),
+      );
+      const second = await connector.sync(first.cursor);
+      expect(second.status).toBe("unavailable");
+      expect(second.events).toEqual([]);
+      expect(second.cursor).toBe(first.cursor);
+      expect(second.detail).toContain("empty_content");
+      const dirtyCursor = JSON.parse(second.cursor ?? "{}") as {
+        offset: number;
+        exhausted: boolean;
+      };
+      expect(dirtyCursor.offset).toBe(1);
+      expect(dirtyCursor.exhausted).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("unsupported parts preserve supported events and the existing health-only degradation", async () => {

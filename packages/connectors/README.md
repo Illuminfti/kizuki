@@ -145,11 +145,12 @@ Known limits:
 - The conversation tree is flattened. A regenerated answer is stored beside
   the answer it replaced, each under its own node id. The node's parent is
   recorded when the export names one. `current_node` is the conversation's
-  selected leaf at import time, copied onto every event from that
-  conversation; it is not a live pointer. Snapshot hashing ignores metadata,
-  so a later export that only moves the leaf does not refresh it on unchanged
-  older rows. New messages receive the new leaf; old ones keep the first
-  import.
+  selected leaf in that imported export, copied onto every event from that
+  conversation; it is not a live pointer. A clean changed export is parsed as
+  a new bounded snapshot under the connector's shared cursor. Event hashing
+  includes metadata, so moving the selected leaf writes a new revision for
+  affected nodes; an unchanged complete event remains a duplicate. This
+  snapshot import does not infer tombstones from a changed selected leaf.
 - Image, file and audio parts become attachment references by their asset
   pointer; files listed on the message become references when those fields
   already satisfy the event contract. A `file-service://` pointer and the
@@ -157,6 +158,11 @@ Known limits:
   Any other structured part, or a listed file that cannot be represented, is
   listed under `unsupported_parts` and reported; the text around it still
   imports.
+- Optional metadata (`conversation_title`, `parent`, `current_node`, and
+  unsupported part names) is kept only when each string fits Core's metadata
+  bound. An oversize field is omitted and named under `unsupported_parts`.
+  Message text and exact record and attachment ids stay as they are; the
+  importer does not shorten those strings.
 - A message with no `create_time`, or one with no text and no attachments, is
   reported and not stored. Import time is never substituted for message time.
 - Two nodes sharing an id are reported: as a duplicate when they agree, as a
