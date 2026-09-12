@@ -408,6 +408,7 @@ describe("public surface", () => {
       "readAppModelConfiguration",
       "readAppModelFileCredential",
       "readBootId",
+      "readCanonPage",
       "readCheckpoint",
       "readDailyBudget",
       "readDerivedMeta",

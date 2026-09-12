@@ -1,5 +1,5 @@
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { hashBytes } from "./write";
 import { parseFrontmatter } from "./frontmatter";
 import { validatePage } from "./schema";
@@ -257,6 +257,30 @@ export function listCanonPagesReport(vaultPath: string): CanonPageReport {
 
 export function listCanonPages(vaultPath: string): CanonPage[] {
   return listCanonPagesReport(vaultPath).pages;
+}
+
+/**
+ * Read one vault-relative Markdown page without walking the rest of the vault.
+ * Unsafe, missing, or invalid paths return null.
+ */
+export function readCanonPage(vaultPath: string, relPath: string): CanonPage | null {
+  if (typeof relPath !== "string" || !isCanonPagePath(relPath)) return null;
+  const parts = relPath.split("/");
+  if (parts.length === 0 || parts.length > MAX_CANON_DEPTH) return null;
+  if (parts.some((part) => part.length === 0 || part === "." || part === "..")) return null;
+  const root = resolve(vaultPath);
+  const target = resolve(join(vaultPath, ...parts));
+  if (target !== root && !target.startsWith(`${root}${sep}`)) return null;
+  const state: WalkState = {
+    pages: [],
+    skipped: [],
+    seen: new Map(),
+    files: 0,
+    bytes: 0,
+    truncated: false,
+  };
+  considerFile(state, target, relPath);
+  return state.pages[0] ?? null;
 }
 
 /**

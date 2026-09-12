@@ -6,12 +6,12 @@ import {
   count,
   isLiveCanonPage,
   isPlainObject,
-  listCanonPages,
   listCanonReceipts,
   pendingRetrievalOps,
+  readCanonPage,
   readSince,
 } from "@kizuki/core";
-import { indexEvent, indexPage, publishLedgerEvent, removeCanonPath } from "@kizuki/core/internal";
+import { indexEvent, indexPage, pageIndexByPath, publishLedgerEvent, removeCanonPath } from "@kizuki/core/internal";
 import { writeAtomicFile } from "./atomic-file";
 
 export const INDEX_CURSOR_SCHEMA = "kizuki.cli.index-cursor/v1" as const;
@@ -167,26 +167,27 @@ export function indexReceiptsFromCursor(
   db: Database,
   vaultPath: string,
   cursor: IndexCursor,
-  listPages: typeof listCanonPages = listCanonPages,
+  loadPage: (vaultPath: string, relPath: string) => ReturnType<typeof readCanonPage> = readCanonPage,
 ): { indexed: number; cursor: IndexCursor } {
-  let pages: Map<string, ReturnType<typeof listCanonPages>[number]> | undefined;
+  const loaded = new Map<string, ReturnType<typeof readCanonPage>>();
   let indexed = 0;
   let lastId = cursor.receipt_id;
   let seen = 0;
   for (const receipt of walkCanonReceipts(db)) {
     seen += 1;
     if (!receiptAfter(cursor.receipt_id, receipt.receipt_id)) continue;
-    pages ??= new Map(listPages(vaultPath).map((page) => [page.relPath, page]));
-    const page = pages.get(receipt.page_path);
-    const live =
-      page !== undefined &&
-      isLiveCanonPage(page) &&
-      receipt.page_action !== "archive";
-    if (live) {
+    const indexedPath = pageIndexByPath(db, receipt.page_path);
+    const relPath = indexedPath?.rel_path ?? receipt.page_path;
+    let page = loaded.get(relPath);
+    if (!loaded.has(relPath)) {
+      page = loadPage(vaultPath, relPath);
+      loaded.set(relPath, page);
+    }
+    if (page != null && isLiveCanonPage(page) && receipt.page_action !== "archive") {
       indexPage(db, page);
       indexed += 1;
     } else {
-      withdrawIndexedCanon(db, receipt.page_path, page?.id);
+      withdrawIndexedCanon(db, receipt.page_path, page?.id ?? indexedPath?.page_id);
       for (const candidate of receipt.candidates) {
         withdrawIndexedCanon(db, receipt.page_path, candidate.page_id);
       }

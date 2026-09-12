@@ -8,7 +8,7 @@ import {
   indexReceiptsFromCursor,
   walkCanonReceipts,
 } from "../src/derived";
-import { listCanonPages } from "@kizuki/core";
+import { readCanonPage } from "@kizuki/core";
 import { createHelpers } from "./helpers";
 
 const { cleanup, tempVault } = createHelpers();
@@ -92,9 +92,9 @@ describe("derived receipt walk", () => {
         db,
         setup.vault,
         { ...emptyIndexCursor(), receipt_id: "01IDLE00000000000000000001" },
-        (vaultPath) => {
+        (vaultPath, relPath) => {
           listed += 1;
-          return listCanonPages(vaultPath);
+          return readCanonPage(vaultPath, relPath);
         },
       );
       expect(listed).toBe(0);
@@ -106,24 +106,52 @@ describe("derived receipt walk", () => {
     }
   });
 
-  test("receipt refresh with new receipts scans canon once", () => {
+  test("receipt refresh with new receipts loads each changed path once", () => {
     const setup = tempVault();
     const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
     try {
       insertReceipt(db, "01NEW000000000000000000001", "facts/a.md");
       insertReceipt(db, "01NEW000000000000000000002", "facts/b.md");
-      let listed = 0;
+      insertReceipt(db, "01NEW000000000000000000003", "facts/b.md");
+      const loaded: string[] = [];
       const result = indexReceiptsFromCursor(
         db,
         setup.vault,
         { ...emptyIndexCursor(), receipt_id: "01NEW000000000000000000001" },
-        (vaultPath) => {
-          listed += 1;
-          return listCanonPages(vaultPath);
+        (_vaultPath, relPath) => {
+          loaded.push(relPath);
+          return null;
         },
       );
-      expect(listed).toBe(1);
-      expect(result.cursor.receipt_id).toBe("01NEW000000000000000000002");
+      expect(loaded).toEqual(["facts/b.md"]);
+      expect(result.cursor.receipt_id).toBe("01NEW000000000000000000003");
+      expect(result.cursor.receipts_seen).toBe(3);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("changed-path lookup uses page_index without a vault-wide list", () => {
+    const setup = tempVault();
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    try {
+      insertReceipt(db, "01IDX000000000000000000001", "facts/keep.md");
+      insertReceipt(db, "01IDX000000000000000000002", "facts/changed.md");
+      db.query(
+        `INSERT INTO page_index (page_id, rel_path, subject_key, last_receipt, last_hash)
+         VALUES ('fact:changed', 'facts/changed.md', NULL, '01IDX000000000000000000002', 'aaa')`,
+      ).run();
+      const loaded: string[] = [];
+      const result = indexReceiptsFromCursor(
+        db,
+        setup.vault,
+        { ...emptyIndexCursor(), receipt_id: "01IDX000000000000000000001" },
+        (_vaultPath, relPath) => {
+          loaded.push(relPath);
+          return null;
+        },
+      );
+      expect(loaded).toEqual(["facts/changed.md"]);
       expect(result.cursor.receipts_seen).toBe(2);
     } finally {
       db.close();
@@ -134,6 +162,7 @@ describe("derived receipt walk", () => {
     const source = readFileSync(join(import.meta.dir, "../src/derived.ts"), "utf8");
     expect(source).not.toMatch(/\bsearch_documents\b|\bsearch_docs\b/);
     expect(source).not.toMatch(/\bremoveDoc\b|\binitSearch\b/);
+    expect(source).not.toMatch(/\blistCanonPages\b/);
   });
 
   test("archive receipts remove the stale search row", () => {
