@@ -302,6 +302,9 @@ describe("help", () => {
   test("restore structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["restore", "--help", "--json"], ["help", "restore", "--json"]] as const) {
+  test("context structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["context", "--help", "--json"], ["help", "context", "--json"]] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
@@ -346,6 +349,34 @@ describe("help", () => {
       [["restore", "--verify=true"], "flag --verify does not take a value"],
       [["restore", "--from"], "missing value for --from"],
       [["restore", "extra"], "invalid arguments"],
+        data: {
+          name: string;
+          options: string[];
+          flags: string[];
+          defaults: Record<string, string>;
+          bounds: Record<string, string>;
+          irreversible: boolean;
+        };
+      };
+      expect(body.data.name).toBe("context");
+      expect(body.data.options).toEqual(["--purpose", "--budget", "--query"]);
+      expect(body.data.flags).toEqual(["--json"]);
+      expect(body.data.defaults).toEqual({ "--purpose": "session" });
+      expect(body.data.bounds).toEqual({
+        "--purpose": "session|recall|correction|audit",
+        "--budget": "50..2000",
+      });
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "context", "--help");
+    expect(text.stdout).toContain("--purpose  session|recall|correction|audit  default session");
+    expect(text.stdout).toContain("--budget  50..2000");
+    for (const [args, diagnostic] of [
+      [["context", "--nope"], "unknown option --nope"],
+      [["context", "--json", "--json"], "repeated flag --json"],
+      [["context", "--json=true"], "flag --json does not take a value"],
+      [["context", "--purpose"], "missing value for --purpose"],
+      [["context", "extra"], "invalid arguments"],
     ] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(2);
@@ -354,6 +385,7 @@ describe("help", () => {
       expect(result.stderr).toContain("usage: kizuki doctor");
       expect(result.stderr).toContain("usage: kizuki export");
       expect(result.stderr).toContain("usage: kizuki restore");
+      expect(result.stderr).toContain("usage: kizuki context");
     }
   });
 
