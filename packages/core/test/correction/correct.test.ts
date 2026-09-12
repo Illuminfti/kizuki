@@ -341,20 +341,27 @@ describe("correct", () => {
 
   test("a refused canon write keeps the owner claim", async () => {
     const { fixture, claimId } = await writtenGrace();
-    const result = await correct(
-      {
-        db: fixture.db,
-        vault_path: fixture.vault,
-        now: () => AT,
-        budget: budget(0),
-      },
-      { statement: STATEMENT, target: { claim_id: claimId } },
-    );
-    expect(result.rewritten).toHaveLength(0);
-    expect(result.receipt_id).toBeNull();
-    expect(getClaim(fixture.db, result.claim_ids[0] ?? "")?.status).toBe("live");
+    let caught: unknown;
+    try {
+      await correct(
+        {
+          db: fixture.db,
+          vault_path: fixture.vault,
+          now: () => AT,
+          budget: budget(0),
+        },
+        { statement: STATEMENT, target: { claim_id: claimId } },
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(CorrectError);
+    if (!(caught instanceof CorrectError)) return;
+    expect(caught.code).toBe("budget_exhausted");
+    expect(caught.message).toContain("budget:canon_writes_per_run");
+    expect(listClaims(fixture.db, { status: "live" })).toHaveLength(1);
     expect(getClaim(fixture.db, claimId)?.status).toBe("superseded");
-    expect(getClaimsEpoch(fixture.db)).toBe(1);
+    expect(getClaimsEpoch(fixture.db)).toBe(0);
   });
 
   test("scope.since compares claim valid_from as instants, not strings", async () => {

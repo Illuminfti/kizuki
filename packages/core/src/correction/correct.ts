@@ -730,7 +730,10 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
     } catch (error) {
       const pending = correctionRecoveryPending(io.db, stored.claim_id, page.rel_path);
       if (pending.length > 0 || error instanceof CanonRecoveryError) { recoveryPending = pending; break; }
-      if (error instanceof CanonWriteError || error instanceof BudgetExhausted) {
+      if (error instanceof BudgetExhausted) {
+        throw new CorrectError("budget_exhausted", error.stopped, { cause: error });
+      }
+      if (error instanceof CanonWriteError) {
         continue;
       }
       throw error;

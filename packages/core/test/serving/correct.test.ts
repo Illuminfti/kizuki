@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   applyCanonWrite,
@@ -7,6 +7,7 @@ import {
   getCanonReceipt,
   resolveTarget,
 } from "../../src/canon";
+import { ordinaryDailyOccupancy } from "../../src/canon/budget";
 import { DEFAULT_GRANT, listAudit, setGrant } from "../../src/agents";
 import {
   getClaim,
@@ -783,6 +784,59 @@ describe("serveCorrect retires what the owner says is wrong", () => {
     expect(stored?.after_hash).toBe(rewritten[0]?.after_hash ?? "");
     expect(corrected.data?.answer).toContain(receipt.page_path);
     expect(corrected.data?.answer).toContain(rewritten[0]?.receipt_id ?? "");
+  });
+
+  test("a loop-filled daily cap withholds the rewrite instead of returning stale canon as success", async () => {
+    const live = await newFixture();
+    const day = new Date().toISOString().slice(0, 10);
+    const dailyLimit = ordinaryDailyOccupancy(live.db, day) + 1;
+    writeFileSync(
+      join(live.vaultPath, ".kizuki", "serve.toml"),
+      `[budget]\ncanon_writes_per_run = 8\ncanon_writes_per_day = ${dailyLimit}\n`,
+    );
+    const filed = await insertClaim(
+      { db: live.db },
+      {
+        kind: "claim",
+        target: "facts:workplace",
+        body: "Linus works at acme.",
+        frontmatter: { type: "fact", title: "Where Linus works" },
+        subjects: ["person:linus"],
+        subject: "person:linus",
+        predicate: "employment.works_at",
+        object: "acme",
+        provenance: [live.events["public"] as string],
+        producer: "deterministic",
+        confidence: 1,
+      },
+    );
+    if (filed.outcome !== "stored") throw new Error(filed.outcome);
+    const io = { db: live.db, vault_path: live.vaultPath };
+    const receipt = applyCanonWrite(
+      io,
+      filed.claim,
+      resolveTarget(io, filed.claim),
+      {
+        writer: "loop",
+        budget: createBudgetTracker({ canon_writes_per_run: 4 }),
+      },
+    );
+    const pagePath = join(live.vaultPath, receipt.page_path);
+    const before = readFileSync(pagePath, "utf8");
+    expect(ordinaryDailyOccupancy(live.db, day)).toBe(dailyLimit);
+
+    const corrected = await serveCorrect(live.owner(), {
+      statement: "Linus works at the workshop, not at acme.",
+      target: { claim_id: filed.claim.claim_id },
+      object: "the workshop",
+    });
+
+    expect(corrected.has_withheld).toBe(true);
+    expect(corrected.denied).toEqual([{ reason: "error", count: 1 }]);
+    expect(corrected.data?.rewritten ?? []).toEqual([]);
+    expect(corrected.data?.receipt_id).toBeNull();
+    expect(corrected.data?.answer).toContain("the canon writer refused this pass");
+    expect(readFileSync(pagePath, "utf8")).toBe(before);
   });
 
   test("a grant without the tool cannot relay a correction", async () => {

@@ -1,10 +1,10 @@
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "../canon/source-tombstone";
 import { inheritSourcePortBindings } from "../ledger/source-grants";
 import { SelfOriginError, requireExternalEvents } from "../ledger/event-origin";
-import { readReceiptsLog } from "../canon/receipts";
 import { settleWriteReservations } from "./budget-ledger";
 import { recoverCanonWritesOwned } from "../canon/recovery";
 import { inspectCanonRecovery } from "../canon/write-intent";
+import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import type { Database } from "bun:sqlite";
 import {
@@ -153,6 +153,8 @@ export interface WritePassOptions {
   readonly model_ref?: string | null;
   readonly producer?: ProducerPort;
   readonly claims?: ClaimsIo;
+  /** RFC3339 clock shared with rails, receipt timestamps, and reservation days. */
+  readonly now?: () => string;
 }
 
 function modelConfigured(options: WritePassOptions): boolean {
@@ -191,14 +193,14 @@ export async function runWritePass(
   vaultPath: string,
   options: WritePassOptions,
 ): Promise<WritePassResult> {
-  const { budget, run_id, model_ref, producer, claims } = options;
+  const { budget, run_id, model_ref, producer, claims, now } = options;
   let capturedClaims: ClaimsIo | undefined;
   if (claims !== undefined) {
-    const { db: claimsDb, retrieval, vault_path, now, historical_source_write } = claims;
+    const { db: claimsDb, retrieval, vault_path, now: claimsNow, historical_source_write } = claims;
     capturedClaims = Object.freeze({ db: claimsDb,
       ...(retrieval === undefined ? {} : { retrieval }),
       ...(vault_path === undefined ? {} : { vault_path }),
-      ...(now === undefined ? {} : { now }),
+      ...(claimsNow === undefined ? {} : { now: claimsNow }),
       ...(historical_source_write === undefined ? {} : { historical_source_write }),
     });
   }
@@ -207,10 +209,14 @@ export async function runWritePass(
     ...(model_ref === undefined ? {} : { model_ref }),
     ...(producer === undefined ? {} : { producer }),
     ...(capturedClaims === undefined ? {} : { claims: capturedClaims }),
+    ...(now === undefined ? {} : { now }),
   });
   if (options.claims !== undefined && options.claims.db !== db) throw new Error("claims ledger does not match write pass");
   requireAtomicExtractReplay(db);
-  const io = snapshotCanonIo({ db, vault_path: vaultPath });
+  const io = snapshotCanonIo({
+    db, vault_path: vaultPath,
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
   try {
     return await withCanonMutationAsync(io, async (scope, owned) => {
       if (inspectCanonRecovery(owned.db).pending) recoverCanonWritesOwned(scope, owned);
@@ -243,7 +249,7 @@ async function runWritePassOwned(
   options: WritePassOptions,
 ): Promise<WritePassResult> {
   requireCanonFiles(scope, io);
-  const { db, vault_path: vaultPath } = io;
+  const { db } = io;
   const revived = reviveUncontestedSkipped(db);
   let extracted = 0;
   let written = 0;
@@ -352,27 +358,30 @@ async function runWritePassOwned(
   const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN);
   for (const claim of pending) {
     if (canonWrites >= WRITE_PASS_LIMIT) break;
-    const receiptsBefore = loopReceiptCount(db, vaultPath);
     try {
       if (requiresSourceTombstoneBinding(db, claim)) requireSourceTombstoneProposal(db, claim, io);
       else requireExternalEvents(db, claim.provenance);
       const decision = segregateLoopDecision(resolveTarget(io, claim));
       if (decision.action === "skip") continue;
-      applyCanonWriteOwned(scope, io, claim, decision, {
-        writer: "loop",
-        budget: options.budget,
-      });
-      const committed = loopReceiptCount(db, vaultPath) - receiptsBefore;
-      canonWrites += committed;
-      written += committed;
+      const before = occupyingWriteIds(db);
+      try {
+        applyCanonWriteOwned(scope, io, claim, decision, {
+          writer: "loop",
+          budget: options.budget,
+        });
+        canonWrites += 1;
+        written += 1;
+      } catch (error) {
+        // File/JSONL can land before the receipt row; count the SQLite slot.
+        if (!(error instanceof BudgetExhausted)) {
+          const committed = newOccupyingWrites(before, occupyingWriteIds(db));
+          canonWrites += committed;
+          written += committed;
+        }
+        throw error;
+      }
     } catch (error) {
       if (error instanceof SelfOriginError) continue;
-      // Derived refresh happens after the canon receipt is durable.  Count a
-      // committed write even when that optional follow-up fails, so the run
-      // receipt and budget cannot hide it.
-      const committed = loopReceiptCount(db, vaultPath) - receiptsBefore;
-      canonWrites += committed;
-      written += committed;
       if (error instanceof BudgetExhausted) {
         stopped = error.stopped;
         break;
@@ -394,14 +403,39 @@ async function runWritePassOwned(
   };
 }
 
-function loopReceiptCount(db: Database, vaultPath: string): number {
-  const ids = new Set(db.query<{ receipt_id: string }, []>(
-    "SELECT receipt_id FROM canon_receipts WHERE writer = 'loop'",
-  ).all().map(row => row.receipt_id));
-  for (const receipt of readReceiptsLog(vaultPath)) {
-    if (receipt.writer === "loop") ids.add(receipt.receipt_id);
+/** SQLite receipts, live reservations, and pending intents — never the JSONL log. */
+function occupyingWriteIds(db: Database): Set<string> {
+  const ids = new Set<string>();
+  if (tableExists(db, "canon_receipts")) {
+    for (const row of db.query<{ receipt_id: string }, []>(
+      "SELECT receipt_id FROM canon_receipts WHERE writer = 'loop'",
+    ).all()) {
+      ids.add(row.receipt_id);
+    }
   }
-  return ids.size;
+  if (tableExists(db, "canon_write_reservations")) {
+    for (const row of db.query<{ receipt_id: string }, []>(
+      "SELECT receipt_id FROM canon_write_reservations",
+    ).all()) {
+      ids.add(row.receipt_id);
+    }
+  }
+  if (tableExists(db, "canon_write_intents")) {
+    for (const row of db.query<{ receipt_id: string }, []>(
+      "SELECT receipt_id FROM canon_write_intents",
+    ).all()) {
+      ids.add(row.receipt_id);
+    }
+  }
+  return ids;
+}
+
+function newOccupyingWrites(before: Set<string>, after: Set<string>): number {
+  let added = 0;
+  for (const id of after) {
+    if (!before.has(id)) added += 1;
+  }
+  return added;
 }
 
 async function fileProducedDrafts(

@@ -1,8 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { applyCanonWrite } from "../../src/canon/apply";
+import { resolveTarget } from "../../src/canon/arbiter";
+import { createBudgetTracker } from "../../src/canon/budget";
 import { getClaim } from "../../src/claims/store";
+import { correct } from "../../src/correction/correct";
+import { CorrectError } from "../../src/correction/errors";
 import type { ProduceResult, ProducerPort } from "../../src/contracts/producer";
 import { openLedger } from "../../src/ledger/db";
 import {
@@ -10,6 +15,7 @@ import {
   createModelProducerPort,
   MODEL_PRODUCER_DESCRIPTOR,
 } from "../../src/producer/model";
+import { settleWriteReservations } from "../../src/serve/budget-ledger";
 import { listRunReceipts } from "../../src/serve/receipts";
 import { runRail } from "../../src/serve/rails";
 import { fileProposal } from "../../src/staging/proposals";
@@ -163,6 +169,73 @@ test("a stopped run records stopped as budget:<name> and resumes next pass", asy
   expect(existsSync(join(path, "auto", "people", "ada.md"))).toBe(true);
   expect(getClaim(db, secondId)?.receipt_id).toBeString();
   expect(getClaim(db, firstId)?.receipt_id).toBe(firstReceipt);
+  db.close();
+});
+
+test("a correction rewrite consumes the daily ceiling across reopen", async () => {
+  const { path, db } = vault(
+    "[budget]\ncanon_writes_per_run = 8\ncanon_writes_per_day = 1\n",
+  );
+  const graceId = filePerson(db, putEvent(db, { source_record_id: "budget-correct-grace" }), "grace");
+  filePerson(db, putEvent(db, { source_record_id: "budget-correct-ada" }), "ada");
+  const yesterday = { db, vault_path: path, now: () => "2026-08-27T12:00:00.000Z" };
+  const grace = getClaim(db, graceId);
+  if (grace === null) throw new Error("expected filed claim");
+  applyCanonWrite(yesterday, grace, resolveTarget(yesterday, grace), {
+    writer: "loop",
+    budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+  });
+
+  const today = { db, vault_path: path, now: () => NOW };
+  const rewritten = await correct(today, {
+    statement: "Grace works at Northwind.",
+    target: { claim_id: graceId },
+  });
+  expect(rewritten.rewritten).toHaveLength(1);
+  db.close();
+
+  const reopened = openLedger(join(path, ".kizuki", "kizuki.db"));
+  const second = await runRail(reopened, path, "sync", {
+    now: () => "2026-08-28T18:00:00.000Z",
+    hooks: writeHooks(reopened),
+  });
+  expect(second.canon_writes).toBe(0);
+  expect(second.stopped).toBe("budget:canon_writes_per_day");
+  expect(existsSync(join(path, "auto", "people", "ada.md"))).toBe(false);
+  reopened.close();
+});
+
+test("a loop-filled daily cap fails correct() instead of leaving unrepaired canon as success", async () => {
+  const { path, db } = vault(
+    "[budget]\ncanon_writes_per_run = 8\ncanon_writes_per_day = 1\n",
+  );
+  const graceId = filePerson(db, putEvent(db, { source_record_id: "budget-loop-then-correct-grace" }), "grace");
+  const today = { db, vault_path: path, now: () => NOW };
+  const grace = getClaim(db, graceId);
+  if (grace === null) throw new Error("expected filed claim");
+  applyCanonWrite(today, grace, resolveTarget(today, grace), {
+    writer: "loop",
+    budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+  });
+  settleWriteReservations(db, path);
+  const pagePath = join(path, "people", "grace.md");
+  const before = readFileSync(pagePath, "utf8");
+
+  let caught: unknown;
+  try {
+    await correct(today, {
+      statement: "Grace works at Northwind.",
+      target: { claim_id: graceId },
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(CorrectError);
+  if (!(caught instanceof CorrectError)) return;
+  expect(caught.code).toBe("budget_exhausted");
+  expect(caught.message).toContain("budget:canon_writes_per_day");
+  expect(readFileSync(pagePath, "utf8")).toBe(before);
+  expect(getClaim(db, graceId)?.receipt_id).toBeString();
   db.close();
 });
 

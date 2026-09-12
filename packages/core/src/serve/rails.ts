@@ -12,7 +12,7 @@ import { inspectPurgeHealth, listPurgeRecoveryReceipts, resumePurge } from "../l
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import { serializePage } from "../vault/frontmatter";
-import { createDurableWriteBudget, budgetDay } from "./budget-ledger";
+import { createDurableWriteBudget } from "./budget-ledger";
 import { loadServeConfig } from "./config";
 import { createFileNotifier, briefPath } from "./notifier-file";
 import { recoverRunJournal, getRunReceipt, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
@@ -103,6 +103,7 @@ async function runSyncRail(
   budget: BudgetTracker,
   hooks: RailHooks | undefined,
   runId: string,
+  now: () => string,
 ): Promise<Partial<RunReceipt>> {
   const synced =
     hooks?.sync === undefined
@@ -117,6 +118,7 @@ async function runSyncRail(
   const written = await runWritePass(db, vaultPath, {
     budget,
     run_id: runId,
+    now,
     ...(hooks?.model_ref === undefined ? {} : { model_ref: hooks.model_ref }),
     ...(hooks?.producer === undefined ? {} : { producer: hooks.producer }),
     ...(hooks?.claims === undefined ? {} : { claims: hooks.claims }),
@@ -342,7 +344,7 @@ export async function runRail(
         if (!(error instanceof VaultMutationError) || error.code !== "writer_busy") throw error;
       }
       const config = loadServeConfig(vaultPath);
-      budget = createDurableWriteBudget(db, vaultPath, () => budgetDay(now()), config);
+      budget = createDurableWriteBudget(db, now, config);
       if (options.acquireRuntime !== undefined) {
         try { runtime = await options.acquireRuntime(); }
         catch { throw new Error("rail runtime acquisition failed"); }
@@ -356,7 +358,7 @@ export async function runRail(
       }
       switch (rail) {
         case "sync":
-          partial = await runSyncRail(db, vaultPath, budget, hooks, runId);
+          partial = await runSyncRail(db, vaultPath, budget, hooks, runId, now);
           break;
         case "retrieval-sweep":
           partial = await runRetrievalSweep(db, hooks);

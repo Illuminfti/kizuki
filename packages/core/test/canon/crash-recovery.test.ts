@@ -100,7 +100,7 @@ test("top-level admission rejects enclosing transaction rollback before bytes fo
 test("durable reservation is retained through failed completion and charged once after recovery", async () => {
   const f = await fixture(), day = "2026-09-07";
   const io = { ...f.io, now: () => `${day}T00:00:00.000Z` };
-  const budget = createDurableWriteBudget(f.db, f.vault, day, { canon_writes_per_run: 2, canon_writes_per_day: 2 });
+  const budget = createDurableWriteBudget(f.db, day, { canon_writes_per_run: 2, canon_writes_per_day: 2 });
   failRow(f.db);
   expect(() => applyCanonWrite(io, f.claim, resolveTarget(io, f.claim), { writer: "loop", budget })).toThrow();
   const id = readCanonWriteIntent(f.db)!.receipt.receipt_id;

@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { applyCanonWrite } from "../../src/canon/apply";
 import { resolveTarget } from "../../src/canon/arbiter";
 import { BudgetExhausted, createBudgetTracker } from "../../src/canon/budget";
 import { CanonWriteError } from "../../src/canon/errors";
 import { RECEIPTS_PATH, listCanonReceipts, readReceiptsLog } from "../../src/canon/receipts";
+import { recoverCanonWrites } from "../../src/canon/recovery";
+import { undoReceipt } from "../../src/canon/undo";
+import { readDailyBudget, settleWriteReservations } from "../../src/serve/budget-ledger";
 import { getClaim } from "../../src/claims/store";
 import type { Claim } from "../../src/contracts/proposal";
 import { proposalsForEvent } from "../../src/staging/producers";
@@ -125,6 +128,178 @@ describe("applyCanonWrite", () => {
       )),
     ).toBe("nothing_to_write");
     expect(untouched.usage().canon_writes_per_run.used).toBe(0);
+  });
+
+  test("every ordinary writer consumes the durable daily budget", async () => {
+    for (const writer of ["loop", "correction", "import"] as const) {
+      const { db, io, vault } = fixture();
+      writeFileSync(
+        join(vault, ".kizuki", "serve.toml"),
+        "[budget]\ncanon_writes_per_run = 8\ncanon_writes_per_day = 1\n",
+      );
+      const eventId = putEvent(db);
+      const first = await storeClaim(db, eventId, {
+        target: `people/${writer}`,
+        subject: `person:${writer}`,
+        subjects: [`person:${writer}`],
+        body: `${writer} keeps the notes.`,
+        frontmatter: { type: "person", title: writer },
+      });
+      const second = await storeClaim(db, eventId, {
+        target: `people/${writer}-next`,
+        subject: `person:${writer}-next`,
+        subjects: [`person:${writer}-next`],
+        body: `${writer} also keeps a second page.`,
+        frontmatter: { type: "person", title: `${writer} next` },
+      });
+      const budget = createBudgetTracker({ canon_writes_per_run: 8 });
+      applyCanonWrite(io, first, resolveTarget(io, first), { writer, budget });
+      const stopped = attempt(() =>
+        applyCanonWrite(io, second, resolveTarget(io, second), { writer, budget }),
+      );
+      expect(stopped).toBeInstanceOf(BudgetExhausted);
+      expect((stopped as BudgetExhausted).stopped).toBe("budget:canon_writes_per_day");
+      expect(existsSync(join(vault, "people", `${writer}-next.md`))).toBe(false);
+      expect(getClaim(db, second.claim_id)?.receipt_id).toBeNull();
+    }
+  });
+
+  test("undo does not refund the original daily write", async () => {
+    const { db, io: base, vault } = fixture();
+    const day = "2026-09-12";
+    const io = { ...base, now: () => `${day}T12:00:00.000Z` };
+    writeFileSync(
+      join(vault, ".kizuki", "serve.toml"),
+      "[budget]\ncanon_writes_per_run = 8\ncanon_writes_per_day = 1\n",
+    );
+    const eventId = putEvent(db);
+    const first = await storeClaim(db, eventId);
+    const second = await storeClaim(db, eventId, {
+      target: "people/linus",
+      subject: "person:linus",
+      subjects: ["person:linus"],
+      body: "Linus keeps the kernel notes.",
+      frontmatter: { type: "person", title: "Linus" },
+    });
+    const budget = createBudgetTracker({ canon_writes_per_run: 8 });
+    const receipt = applyCanonWrite(io, first, resolveTarget(io, first), { writer: "loop", budget });
+    await undoReceipt(io, receipt.receipt_id);
+    settleWriteReservations(db, vault);
+    expect(listCanonReceipts(db).map((row) => row.kind)).toEqual(["write", "revert"]);
+    const stopped = attempt(() =>
+      applyCanonWrite(io, second, resolveTarget(io, second), { writer: "loop", budget }),
+    );
+    expect(stopped).toBeInstanceOf(BudgetExhausted);
+    expect((stopped as BudgetExhausted).stopped).toBe("budget:canon_writes_per_day");
+    expect(existsSync(join(vault, "people", "linus.md"))).toBe(false);
+    expect(getClaim(db, second.claim_id)?.receipt_id).toBeNull();
+  });
+
+  test("a revert adds no daily charge so a second ordinary write fits under cap 2", async () => {
+    const { db, io: base, vault } = fixture();
+    const day = "2026-09-12";
+    const io = { ...base, now: () => `${day}T12:00:00.000Z` };
+    writeFileSync(
+      join(vault, ".kizuki", "serve.toml"),
+      "[budget]\ncanon_writes_per_run = 8\ncanon_writes_per_day = 2\n",
+    );
+    const eventId = putEvent(db);
+    const first = await storeClaim(db, eventId);
+    const second = await storeClaim(db, eventId, {
+      target: "people/linus",
+      subject: "person:linus",
+      subjects: ["person:linus"],
+      body: "Linus keeps the kernel notes.",
+      frontmatter: { type: "person", title: "Linus" },
+    });
+    const third = await storeClaim(db, eventId, {
+      target: "people/ada",
+      subject: "person:ada",
+      subjects: ["person:ada"],
+      body: "Ada keeps the notes.",
+      frontmatter: { type: "person", title: "Ada" },
+    });
+    const budget = createBudgetTracker({ canon_writes_per_run: 8 });
+    const receipt = applyCanonWrite(io, first, resolveTarget(io, first), { writer: "loop", budget });
+    await undoReceipt(io, receipt.receipt_id);
+    settleWriteReservations(db, vault);
+    expect(
+      attempt(() => applyCanonWrite(io, second, resolveTarget(io, second), { writer: "loop", budget })),
+    ).toBeUndefined();
+    expect(existsSync(join(vault, "people", "linus.md"))).toBe(true);
+    const stopped = attempt(() =>
+      applyCanonWrite(io, third, resolveTarget(io, third), { writer: "loop", budget }),
+    );
+    expect(stopped).toBeInstanceOf(BudgetExhausted);
+    expect((stopped as BudgetExhausted).stopped).toBe("budget:canon_writes_per_day");
+    expect(existsSync(join(vault, "people", "ada.md"))).toBe(false);
+  });
+
+  test("admission failure does not reserve a daily slot", async () => {
+    const { db, io, vault } = fixture();
+    writeFileSync(
+      join(vault, ".kizuki", "serve.toml"),
+      "[budget]\ncanon_writes_per_run = 8\ncanon_writes_per_day = 1\n",
+    );
+    const eventId = putEvent(db);
+    const claim = await storeClaim(db, eventId);
+    const budget = createBudgetTracker({ canon_writes_per_run: 8 });
+    const ghost: Claim = { ...claim, claim_id: "01GHOST00000000000000000000" };
+    expect(
+      code(attempt(() =>
+        applyCanonWrite(io, ghost, { action: "create", rel_path: "people/ghost.md" }, {
+          writer: "loop",
+          budget,
+        }),
+      )),
+    ).toBe("claim_unknown");
+    expect(budget.usage().canon_writes_per_run.used).toBe(0);
+    expect(db.query("SELECT 1 FROM canon_write_reservations").get()).toBeNull();
+    expect(
+      attempt(() => applyCanonWrite(io, claim, resolveTarget(io, claim), { writer: "loop", budget })),
+    ).toBeUndefined();
+    expect(existsSync(join(vault, "people", "grace.md"))).toBe(true);
+  });
+
+  test("a file-effect failure keeps one daily reservation through recovery", async () => {
+    const { db, vault } = fixture();
+    const day = "2026-09-12";
+    const io = { db, vault_path: vault, now: () => `${day}T00:00:00.000Z` };
+    writeFileSync(
+      join(vault, ".kizuki", "serve.toml"),
+      "[budget]\ncanon_writes_per_run = 8\ncanon_writes_per_day = 1\n",
+    );
+    const eventId = putEvent(db);
+    const first = await storeClaim(db, eventId);
+    const second = await storeClaim(db, eventId, {
+      target: "people/linus",
+      subject: "person:linus",
+      subjects: ["person:linus"],
+      body: "Linus keeps the kernel notes.",
+      frontmatter: { type: "person", title: "Linus" },
+    });
+    const budget = createBudgetTracker({ canon_writes_per_run: 8 });
+    const failing = { ...io, db: failingOnReceiptRow(db) };
+    expect(() =>
+      applyCanonWrite(failing, first, resolveTarget(io, first), { writer: "loop", budget }),
+    ).toThrow(/synthetic storage failure/);
+    expect(existsSync(join(vault, "people", "grace.md"))).toBe(true);
+    expect(
+      db.query<{ n: number }, []>("SELECT count(*) AS n FROM canon_write_reservations").get()?.n,
+    ).toBe(1);
+
+    recoverCanonWrites(io);
+    settleWriteReservations(db, vault);
+    expect(readDailyBudget(db, day, "canon_writes_per_day")).toBe(1);
+    expect(db.query("SELECT 1 FROM canon_write_reservations").get()).toBeNull();
+
+    const retry = attempt(() =>
+      applyCanonWrite(io, second, resolveTarget(io, second), { writer: "correction", budget }),
+    );
+    expect(retry).toBeInstanceOf(BudgetExhausted);
+    expect((retry as BudgetExhausted).stopped).toBe("budget:canon_writes_per_day");
+    expect(existsSync(join(vault, "people", "linus.md"))).toBe(false);
+    expect(readDailyBudget(db, day, "canon_writes_per_day")).toBe(1);
   });
 
   test("the order of effects is file, JSONL receipt, then database row", async () => {
