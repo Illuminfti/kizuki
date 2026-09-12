@@ -320,6 +320,9 @@ describe("help", () => {
   test("init structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["init", "--help", "--json"], ["help", "init", "--json"]] as const) {
+  test("sync structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["sync", "--help", "--json"], ["help", "sync", "--json"]] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
@@ -468,6 +471,19 @@ describe("help", () => {
       [["init", "./vault", "--nope"], "unknown option --nope"],
       [["init", "./vault", "--dry-run", "--dry-run"], "repeated flag --dry-run"],
       [["init", "./vault", "--no-service=true"], "flag --no-service does not take a value"],
+      expect(body.data.name).toBe("sync");
+      expect(body.data.options).toEqual(["--source"]);
+      expect(body.data.flags).toEqual(["--once"]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "sync", "--help");
+    expect(text.stdout).toContain("--source");
+    expect(text.stdout).toContain("--once");
+    for (const [args, diagnostic] of [
+      [["sync", "--nope"], "unknown option --nope"],
+      [["sync", "--once", "--once"], "repeated flag --once"],
+      [["sync", "--once=true"], "flag --once does not take a value"],
+      [["sync", "--source"], "missing value for --source"],
     ] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(2);
@@ -489,6 +505,7 @@ describe("help", () => {
       expect(result.stderr).toContain("usage: kizuki app");
       expect(result.stderr).toContain("usage: kizuki backfill");
       expect(result.stderr).toContain("usage: kizuki init");
+      expect(result.stderr).toContain("usage: kizuki sync");
     }
   });
 

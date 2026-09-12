@@ -12,14 +12,23 @@ import { withVault } from "../context";
 import { refreshAndPublishDerived } from "../derived";
 import { formatRunCounts } from "../output";
 import { createServeRuntime } from "../serve-runtime";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
+
+export const SYNC_SCHEMA = {
+  options: ["--source"],
+  flags: ["--once"],
+} as const satisfies CommandHelpSchema;
 
 export const syncCommand: Command = {
   name: "sync",
   usage: "sync [connector] [--source PATH|KEY] | sync --once",
   summary: "refresh selected sources until each connector reports exhaustion",
+  schema: SYNC_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
-    const parsed = parseArguments(args, { flags: ["--once"], options: ["--source"] });
+    const parsed = parseArguments(args, {
+      options: [...SYNC_SCHEMA.options],
+      flags: [...SYNC_SCHEMA.flags],
+    });
     if (parsed.positionals.length > 1) throw new UsageError(this.usage);
     const rawId = parsed.positionals[0];
     const source = parsed.options.get("--source");
