@@ -462,7 +462,7 @@ describe("search policy and filters", () => {
     ).toEqual([`event:${later.event_id}`]);
   });
 
-  test("compares since and until as instants, not raw strings", async () => {
+  test("compares time bounds as instants without exempting canon", async () => {
     const db = searchDb();
     const offset = storedEvent(db, "offset", {
       text: "windowword",
@@ -478,12 +478,15 @@ describe("search policy and filters", () => {
       })
         .map(({ doc_id, scope }) => `${scope}:${doc_id}`)
         .sort(),
-    ).toEqual([`canon:page:fact:empty`, `ledger:event:${offset.event_id}`].sort());
+    ).toEqual([`ledger:event:${offset.event_id}`]);
     expect(
       search(db, "windowword", { ceiling: "private", since: "2026-02-03T00:00:00Z" }).map(
         ({ scope }) => scope,
       ),
-    ).toContain("canon");
+    ).not.toContain("canon");
+    expect(searchResult(db, "windowword", {
+      ceiling: "private", since: "2026-02-03T00:00:00Z",
+    }).degraded).toContain("canon-time-scope-unsupported");
   });
 
   test("rejects a garbage search time bound instead of matching nothing", () => {
