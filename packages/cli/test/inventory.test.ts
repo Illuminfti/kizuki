@@ -139,6 +139,12 @@ test("documentation status inventory maps shipped claims to live files", () => {
 
 const TAGGED_SECTIONS = [
   {
+    id: "architecture.invariants",
+    status: "designed",
+    doc: "docs/architecture.md",
+    heading: "Invariants (CI-enforced where possible)",
+  },
+  {
     id: "architecture.layers",
     status: "designed",
     doc: "docs/architecture.md",
@@ -304,6 +310,32 @@ test.each([
     name: "architecture.layers tag only in adjacent Contracts",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Layers\n\nStatus: designed\n\n", "## Layers\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "architecture.invariants tag removed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Invariants (CI-enforced where possible)\n\nStatus: designed\n\n", "## Invariants (CI-enforced where possible)\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "architecture.invariants tag shipped",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Invariants (CI-enforced where possible)\n\nStatus: designed", "## Invariants (CI-enforced where possible)\n\nStatus: shipped"));
+      return entries;
+    },
+  },
+  {
+    name: "architecture.invariants inventory entry removed",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "architecture.invariants"),
+  },
+  {
+    name: "architecture.invariants tag only in adjacent Layers",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Invariants (CI-enforced where possible)\n\nStatus: designed\n\n", "## Invariants (CI-enforced where possible)\n\n"));
       return entries;
     },
   },

@@ -34,6 +34,12 @@
       "test": "packages/cli/test/read-context.test.ts"
     },
     {
+      "id": "architecture.invariants",
+      "status": "designed",
+      "doc": "docs/architecture.md",
+      "heading": "Invariants (CI-enforced where possible)"
+    },
+    {
       "id": "architecture.layers",
       "status": "designed",
       "doc": "docs/architecture.md",

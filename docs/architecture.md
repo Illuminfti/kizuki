@@ -11,6 +11,8 @@ accepted design that is not a public command yet, it says so.
 
 ## Invariants (CI-enforced where possible)
 
+Status: designed
+
 1. Canon is Markdown files on the owner's disk, forever. Deleting Kizuki
    leaves a readable vault.
 2. Derived layers (search index, embeddings, graph) are rebuildable from the
