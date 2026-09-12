@@ -96,6 +96,23 @@ test("connector registry optional_package names resolve to workspace exports", (
   }
 });
 
+test("README and connect inventory match the live workspace and registry", () => {
+  const readme = readFileSync(join(ROOT, "README.md"), "utf8");
+  const connect = readFileSync(join(ROOT, "docs/connect.md"), "utf8");
+  expect(readme.toLowerCase()).not.toContain("four packages");
+  expect(readme.toLowerCase()).not.toContain("three registered connectors");
+  expect(readme).toContain("Screenpipe");
+  expect(connect).toContain("## Screenpipe");
+  expect(workspacePackages().length).toBeGreaterThan(4);
+  const missing = listConnectorDescriptors()
+    .map((port) => port.id)
+    .filter((id) => {
+      const published = id.replace(".connector.", ".");
+      return !connect.includes(`\`${published}\``) && !connect.includes(`\`${id}\``);
+    });
+  expect(missing).toEqual([]);
+});
+
 const STATUSES = new Set(["shipped", "designed", "direction"]);
 
 interface CapabilityStatusEntry {
