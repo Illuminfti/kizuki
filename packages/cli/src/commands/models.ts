@@ -16,7 +16,12 @@ import { PortError } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { assertVault, resolveVault } from "../context";
 import { configPath, readConfig } from "../config";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
+
+export const MODELS_SCHEMA = {
+  options: ["--from", "--sha256", "--bytes"],
+  flags: ["--catalog"],
+} as const satisfies CommandHelpSchema;
 
 const USAGE =
   "models <list [--catalog] | pull <CATALOG_ID | --from PATH|URL [--sha256 HEX] [--bytes N]> | remove NAME>";
@@ -79,11 +84,12 @@ export const modelsCommand: Command = {
   name: "models",
   usage: USAGE,
   summary: "list, install, or remove local GGUF files in the vault models directory",
+  schema: MODELS_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
     const verb = args[0];
     const rest = args.slice(1);
     if (verb === "list") {
-      const parsed = parseArguments(rest, { flags: ["--catalog"] });
+      const parsed = parseArguments(rest, { flags: [...MODELS_SCHEMA.flags] });
       if (parsed.positionals.length > 0) throw new UsageError(this.usage);
       if (parsed.flags.has("--catalog")) {
         for (const entry of GGUF_MODEL_CATALOG) {
@@ -115,7 +121,7 @@ export const modelsCommand: Command = {
     }
 
     const parsed = parseArguments(rest, {
-      options: ["--from", "--sha256", "--bytes"],
+      options: [...MODELS_SCHEMA.options],
     });
     const from = parsed.options.get("--from");
     const catalogId = parsed.positionals[0];

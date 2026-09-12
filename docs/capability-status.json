@@ -34,6 +34,12 @@
       "test": "packages/cli/test/read-context.test.ts"
     },
     {
+      "id": "architecture.storage",
+      "status": "designed",
+      "doc": "docs/architecture.md",
+      "heading": "Storage"
+    },
+    {
       "id": "architecture.layers",
       "status": "designed",
       "doc": "docs/architecture.md",
@@ -44,6 +50,12 @@
       "status": "designed",
       "doc": "docs/architecture.md",
       "heading": "Contracts"
+    },
+    {
+      "id": "architecture.security",
+      "status": "designed",
+      "doc": "docs/architecture.md",
+      "heading": "Security"
     },
     {
       "id": "product.identity",
@@ -70,6 +82,36 @@
       "status": "direction",
       "doc": "README.md",
       "heading": "The vision"
+    },
+    {
+      "id": "architecture.invariants",
+      "status": "designed",
+      "doc": "docs/architecture.md",
+      "heading": "Invariants (CI-enforced where possible)"
+    },
+    {
+      "id": "architecture.serving",
+      "status": "designed",
+      "doc": "docs/architecture.md",
+      "heading": "Serving \u2014 agents as first-class citizens"
+    },
+    {
+      "id": "product.proactive-intelligence",
+      "status": "direction",
+      "doc": "docs/product-context.md",
+      "heading": "Proactive intelligence"
+    },
+    {
+      "id": "product.progressive-ingestion",
+      "status": "direction",
+      "doc": "docs/product-context.md",
+      "heading": "Progressive ingestion"
+    },
+    {
+      "id": "product.autonomy-modes",
+      "status": "direction",
+      "doc": "docs/product-context.md",
+      "heading": "Autonomy modes"
     }
   ]
 }

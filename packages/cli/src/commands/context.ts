@@ -7,7 +7,7 @@ import type { PacketPurpose } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { withReadVault } from "../context";
 import { jsonEnvelope } from "../output";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 function parseBudget(raw: string): number {
   if (!/^[0-9]+$/.test(raw)) throw new UsageError("invalid --budget");
@@ -18,19 +18,30 @@ function parseBudget(raw: string): number {
   return value;
 }
 
+export const CONTEXT_SCHEMA = {
+  options: ["--purpose", "--budget", "--query"],
+  flags: ["--json"],
+  defaults: { "--purpose": "session" },
+  bounds: {
+    "--purpose": "session|recall|correction|audit",
+    "--budget": "50..2000",
+  },
+} as const satisfies CommandHelpSchema;
+
 export const contextCommand: Command = {
   name: "context",
   usage:
     "context [--purpose session|recall|correction|audit] [--budget N] [--query TEXT] [--json]",
   summary: "give your agent relevant context, with sources and a token budget",
+  schema: CONTEXT_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
-      options: ["--purpose", "--budget", "--query"],
-      flags: ["--json"],
+      options: [...CONTEXT_SCHEMA.options],
+      flags: [...CONTEXT_SCHEMA.flags],
     });
     if (parsed.positionals.length !== 0) throw new UsageError(this.usage);
 
-    const rawPurpose = parsed.options.get("--purpose") ?? "session";
+    const rawPurpose = parsed.options.get("--purpose") ?? CONTEXT_SCHEMA.defaults["--purpose"];
     if (!(PACKET_PURPOSES as readonly string[]).includes(rawPurpose)) {
       throw new UsageError(this.usage);
     }

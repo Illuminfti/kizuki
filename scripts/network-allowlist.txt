@@ -87,3 +87,4 @@ packages/cli/src/commands/models.ts:downloadRemoteGguf.fetch#1:explicit models p
 packages/cli/test/models.test.ts:(toplevel).Bun.serve#1:loopback synthetic GGUF for models pull tests
 packages/cli/test/fixtures/startup-with-socket.ts:(toplevel).Bun.connect#1:synthetic denied Bun.connect for CLI startup egress proof; the call is intercepted and never connected
 packages/cli/test/fixtures/widget-runtime.ts:(toplevel).fetch#1:synthetic denied fetch for CLI startup egress proof; the call is intercepted and never sent
+packages/cli/test/fixtures/startup-with-websocket.ts:(toplevel).new.WebSocket#1:synthetic denied WebSocket for CLI startup egress proof; the constructor is intercepted and never connected

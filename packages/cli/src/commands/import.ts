@@ -18,7 +18,12 @@ import {
 import { withVault } from "../context";
 import { refreshAndPublishDerived } from "../derived";
 import { formatRunCounts } from "../output";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
+
+export const IMPORT_SCHEMA = {
+  options: ["--source", "--authorization", "--policy", "--expected-revision", "--operation-id"],
+  flags: ["--dry-run", "--json"],
+} as const satisfies CommandHelpSchema;
 
 function readEstateInput(path: string, limit: number): string {
   let fd: number | undefined;
@@ -52,8 +57,12 @@ export const importCommand: Command = {
   name: "import",
   usage: "import <connector> --source PATH [--policy FILE --expected-revision N --operation-id ID] | import estate-slice --source FILE --authorization FILE --dry-run [--json]",
   summary: "import a file source, or dry-run an estate slice without writing records",
+  schema: IMPORT_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
-    const parsed = parseArguments(args, { options: ["--source", "--authorization", ...CONSENT_OPTIONS], flags: ["--dry-run", "--json"] });
+    const parsed = parseArguments(args, {
+      options: [...IMPORT_SCHEMA.options],
+      flags: [...IMPORT_SCHEMA.flags],
+    });
     const [rawId] = requirePositional(parsed.positionals, 1);
     const source = parsed.options.get("--source");
     if (rawId === undefined || source === undefined) {

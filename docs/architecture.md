@@ -11,6 +11,8 @@ accepted design that is not a public command yet, it says so.
 
 ## Invariants (CI-enforced where possible)
 
+Status: designed
+
 1. Canon is Markdown files on the owner's disk, forever. Deleting Kizuki
    leaves a readable vault.
 2. Derived layers (search index, embeddings, graph) are rebuildable from the
@@ -160,6 +162,8 @@ the presence of a secret reference.
 
 ## Storage
 
+Status: designed
+
 Bun + TypeScript (strict). Authoritative state is one SQLite database (`bun:sqlite`, WAL) per vault
 under `<vault>/.kizuki/`: events, purge receipts and purge operations,
 claims, canon receipts, checkpoints, schedules, run receipts, leases,
@@ -171,6 +175,8 @@ machine-validated frontmatter: closed type enum, required `sensitivity`,
 required `taint`, provenance `sources`, free `x-*` extension namespace.
 
 ## Serving — agents as first-class citizens
+
+Status: designed
 
 Implemented on this revision:
 
@@ -211,6 +217,8 @@ reported as failures. Telegram / email / webhook notifiers are accepted
 design behind `kizuki.notifier/v1`; the shipped notifier is the file writer.
 
 ## Security
+
+Status: designed
 
 Threat model in [SECURITY.md](../SECURITY.md): host-trust interim stance
 (plaintext canon, versioned encryption seam reserved in the ledger), prompt

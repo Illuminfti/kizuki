@@ -3,7 +3,11 @@ import { parseArguments, UsageError } from '../args';
 import { createAppHost } from '../app/host';
 import { openAppBrowser } from '../app/browser';
 import { appAssets } from '../app/assets';
-import type { CliIo, Command } from './index';
+import type { CliIo, Command, CommandHelpSchema } from './index';
+export const APP_SCHEMA = {
+    options: [],
+    flags: ['--no-open', '--no-service'],
+} as const satisfies CommandHelpSchema;
 export async function startApp(io: CliIo, options: {
     open?: boolean;
     noService?: boolean;
@@ -25,8 +29,11 @@ export async function startApp(io: CliIo, options: {
     }
     return { url: server.url, async close() { await server.stop(); await host.close(); } };
 }
-export const appCommand: Command = { name: 'app', usage: 'app [--no-open] [--no-service]', summary: 'open the private local app without starting another writer', async run(io, args) {
-        const parsed = parseArguments(args, { flags: ['--no-open', '--no-service'] });
+export const appCommand: Command = { name: 'app', usage: 'app [--no-open] [--no-service]', summary: 'open the private local app without starting another writer', schema: APP_SCHEMA, async run(io, args) {
+        const parsed = parseArguments(args, {
+            options: [...APP_SCHEMA.options],
+            flags: [...APP_SCHEMA.flags],
+        });
         if (parsed.positionals.length)
             throw new UsageError(this.usage);
         const app = await startApp(io, { open: !parsed.flags.has('--no-open'), noService: parsed.flags.has('--no-service') });

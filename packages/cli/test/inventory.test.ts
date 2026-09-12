@@ -139,6 +139,48 @@ test("documentation status inventory maps shipped claims to live files", () => {
 
 const TAGGED_SECTIONS = [
   {
+    id: "architecture.storage",
+    status: "designed",
+    doc: "docs/architecture.md",
+    heading: "Storage",
+  },
+  {
+    id: "architecture.invariants",
+    status: "designed",
+    doc: "docs/architecture.md",
+    heading: "Invariants (CI-enforced where possible)",
+  },
+  {
+    id: "architecture.security",
+    status: "designed",
+    doc: "docs/architecture.md",
+    heading: "Security",
+  },
+  {
+    id: "architecture.serving",
+    status: "designed",
+    doc: "docs/architecture.md",
+    heading: "Serving — agents as first-class citizens",
+  },
+  {
+    id: "product.proactive-intelligence",
+    status: "direction",
+    doc: "docs/product-context.md",
+    heading: "Proactive intelligence",
+  },
+  {
+    id: "product.progressive-ingestion",
+    status: "direction",
+    doc: "docs/product-context.md",
+    heading: "Progressive ingestion",
+  },
+  {
+    id: "product.autonomy-modes",
+    status: "direction",
+    doc: "docs/product-context.md",
+    heading: "Autonomy modes",
+  },
+  {
     id: "architecture.layers",
     status: "designed",
     doc: "docs/architecture.md",

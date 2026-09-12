@@ -126,6 +126,8 @@ task, including confidence, source, and freshness where available.
 
 ## Progressive ingestion
 
+Status: direction
+
 Ingestion should become useful before a complete historical import finishes.
 Recent and high-value material can be processed first, older history can
 backfill progressively, and checkpoints can resume safely. New events,
@@ -133,6 +135,8 @@ corrections, revisions, and source deletions should continue to update the
 working model without requiring a full rebuild of the user's experience.
 
 ## Proactive intelligence
+
+Status: direction
 
 The product direction includes:
 
@@ -148,6 +152,8 @@ scenario or prediction is an analysis, not a fact merely because Kizuki
 generated it.
 
 ## Autonomy modes
+
+Status: direction
 
 The intended autonomy model has three modes:
 
