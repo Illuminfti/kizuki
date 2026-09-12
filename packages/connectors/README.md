@@ -274,6 +274,12 @@ to: …` — is indistinguishable from a message and is captured as one, with
   at all, become one handle and therefore one subject, which a purge aimed at
   that handle reaches together. The display names are kept whole on every
   event, so the evidence still says who wrote what.
+- `whatsapp:self` is only the configured owner. A sender whose ordinary handle
+  would be `self` — including `self` and `Self!` — is filed under
+  `whatsapp:participant:` plus a digest of the normalized display name, so
+  those people stay distinct from each other and from the owner, and a slug
+  cannot mint a colon namespace. With no configured owner, nobody receives
+  `whatsapp:self`.
 
 ## Pocket CSV export
 

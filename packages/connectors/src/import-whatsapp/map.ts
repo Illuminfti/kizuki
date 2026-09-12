@@ -52,11 +52,15 @@ function subjectIdFor(namespace: string, name: string): string {
 /**
  * `whatsapp:self` is the owner: an export names every participant by whatever
  * they set on their own profile, so which of those names is the owner's comes
- * from configuration rather than from the file.
+ * from configuration rather than from the file. An ordinary slug of `self`
+ * would mint that reserved id, so any other such name is filed under
+ * `whatsapp:participant:` plus a digest of the normalized display name — a
+ * colon namespace no slug can produce, and distinct for `self` and `Self!`.
  */
 function senderSubjectId(sender: string, self: string | undefined): string {
   if (self !== undefined && sender === self) return "whatsapp:self";
-  return subjectIdFor("whatsapp", sender);
+  if (subjectSlug(sender) !== "self") return subjectIdFor("whatsapp", sender);
+  return `whatsapp:participant:${digest(subjectName(sender), 16)}`;
 }
 
 /**
