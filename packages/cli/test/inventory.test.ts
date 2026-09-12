@@ -156,6 +156,12 @@ const TAGGED_SECTIONS = [
     doc: "docs/stranger-proof.md",
     heading: "Effective SQLite engine evidence",
   },
+  {
+    id: "world-model",
+    status: "direction",
+    doc: "README.md",
+    heading: "The vision",
+  },
 ] as const;
 
 function sectionStatus(doc: string, heading: string): string | null {
@@ -241,6 +247,33 @@ test.each([
           ? { id: entry.id, status: entry.status, doc: entry.doc, heading: entry.heading }
           : entry,
       ),
+  },
+  {
+    name: "world-model tag removed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("README.md", docs.get("README.md")!.replace("Status: direction\n\n", ""));
+      return entries;
+    },
+  },
+  {
+    name: "world-model tag shipped",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("README.md", docs.get("README.md")!.replace("Status: direction", "Status: shipped"));
+      return entries;
+    },
+  },
+  {
+    name: "world-model inventory entry removed",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "world-model"),
+  },
+  {
+    name: "world-model tag in adjacent Status section",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      const readme = docs.get("README.md")!.replace("## The vision\n\nStatus: direction\n\n", "## The vision\n\n");
+      docs.set("README.md", readme.replace("## Status\n\n", "## Status\n\nStatus: direction\n\n"));
+      return entries;
+    },
   },
 ])("$name fails the tagged-section check", ({ mutate }) => {
   const inventory = JSON.parse(readFileSync(join(ROOT, "docs/capability-status.json"), "utf8")) as {
