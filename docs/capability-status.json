@@ -46,6 +46,12 @@
       "heading": "Contracts"
     },
     {
+      "id": "architecture.serving",
+      "status": "designed",
+      "doc": "docs/architecture.md",
+      "heading": "Serving — agents as first-class citizens"
+    },
+    {
       "id": "product.identity",
       "status": "direction",
       "doc": "docs/product-context.md",

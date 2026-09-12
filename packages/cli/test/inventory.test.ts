@@ -151,6 +151,12 @@ const TAGGED_SECTIONS = [
     heading: "Contracts",
   },
   {
+    id: "architecture.serving",
+    status: "designed",
+    doc: "docs/architecture.md",
+    heading: "Serving — agents as first-class citizens",
+  },
+  {
     id: "product.identity",
     status: "direction",
     doc: "docs/product-context.md",
@@ -304,6 +310,32 @@ test.each([
     name: "architecture.layers tag only in adjacent Contracts",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Layers\n\nStatus: designed\n\n", "## Layers\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "architecture.serving tag removed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Serving — agents as first-class citizens\n\nStatus: designed\n\n", "## Serving — agents as first-class citizens\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "architecture.serving tag shipped",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Serving — agents as first-class citizens\n\nStatus: designed", "## Serving — agents as first-class citizens\n\nStatus: shipped"));
+      return entries;
+    },
+  },
+  {
+    name: "architecture.serving inventory entry removed",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "architecture.serving"),
+  },
+  {
+    name: "architecture.serving tag only in adjacent Proactive",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Serving — agents as first-class citizens\n\nStatus: designed\n\n", "## Serving — agents as first-class citizens\n\n"));
       return entries;
     },
   },

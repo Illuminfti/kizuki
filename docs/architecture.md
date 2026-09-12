@@ -172,6 +172,8 @@ required `taint`, provenance `sources`, free `x-*` extension namespace.
 
 ## Serving — agents as first-class citizens
 
+Status: designed
+
 Implemented on this revision:
 
 - **CLI query.** `kizuki query` is the public read verb. Timeline, entity
