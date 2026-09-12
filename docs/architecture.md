@@ -58,6 +58,8 @@ accepted design that is not a public command yet, it says so.
 
 ## Layers
 
+Status: designed
+
 ```
 connectors → event ledger → extraction (deterministic → model)
           → claims (provenance · confidence · sensitivity · authority)
