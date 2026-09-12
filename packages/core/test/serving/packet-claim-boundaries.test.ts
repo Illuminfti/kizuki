@@ -2,10 +2,11 @@ import { afterEach, expect, test } from "bun:test";
 import { sha256 } from "../../src/agents/hash";
 import { listAudit } from "../../src/agents/audit";
 import { getClaim, insertClaim, supersedeLiveGroup, type InsertClaimInput } from "../../src/claims/store";
+import { bindSourceEvent, setSourceGrant, sourceCaptureAdmission } from "../../src/ledger/source-grants";
 import { seedConnectorSensitivity } from "../../src/sensitivity/store";
 import { serveContextPacket } from "../../src/serving/packet";
 import { claimInput } from "../claims/helpers";
-import { serveFixture, type Fixture } from "./helpers";
+import { serveFixture, storeEvent, type Fixture } from "./helpers";
 
 let live: Fixture | undefined;
 afterEach(() => { live?.dispose(); live = undefined; });
@@ -18,12 +19,15 @@ async function fixture(): Promise<Fixture> {
   return live;
 }
 
-async function claim(f: Fixture, object: string, overrides: Partial<InsertClaimInput> = {}) {
-  const result = await insertClaim({ db: f.db }, claimInput(f.events["public"] as string, {
-    subject: "person:ada", subjects: ["person:ada"],
-    predicate: "employment.works_at", object, body: `Ada works at ${object}.`,
-    sensitivity: "public", ...overrides,
-  }));
+async function claim(f: Fixture, object: string, overrides: Partial<InsertClaimInput> = {}, at?: string) {
+  const result = await insertClaim(
+    { db: f.db, ...(at === undefined ? {} : { now: () => at }) },
+    claimInput(f.events["public"] as string, {
+      subject: "person:ada", subjects: ["person:ada"],
+      predicate: "employment.works_at", object, body: `Ada works at ${object}.`,
+      sensitivity: "public", ...overrides,
+    }),
+  );
   if (result.outcome === "contested") return result.incoming;
   if (result.outcome !== "stored") throw new Error(`fixture claim: ${result.outcome}`);
   return result.claim;
@@ -50,6 +54,91 @@ test("working claims and conflict identifiers honor the reader's ceiling", async
   expect(audit?.denied).toContainEqual({ id: sha256(secret.claim_id), reason: "above_ceiling" });
   expect(JSON.stringify(audit)).not.toContain("private-orchard-plan");
 });
+
+test("a denied prefix of live keyed claims cannot hide a later allowed claim", async () => {
+  const f = await fixture();
+  let firstFillerId = "";
+  let lastFillerId = "";
+  for (let index = 0; index < 401; index += 1) {
+    const planted = await claim(f, `private-orchard-filler-${index}`, {
+      subject: `person:filler-${index}`,
+      subjects: [`person:filler-${index}`],
+      frontmatter: { type: "org" },
+      sensitivity: "private",
+    }, new Date(Date.UTC(2026, 8, 5, 0, 0, 0, index)).toISOString());
+    if (index === 0) firstFillerId = planted.claim_id;
+    lastFillerId = planted.claim_id;
+  }
+
+  setSourceGrant(f.db, {
+    source_key: f.sourceKey,
+    expected_revision: 0,
+    operation_id: "grant-packet-claims",
+    policy: {
+      purposes: ["capture", "recall", "derive"],
+      allowed_fields: ["text", "subjects", "attachments", "metadata"],
+      retention: "persistent_owned_until_revoked",
+      egress: "local_only",
+      sensitivity_floor: "public",
+    },
+  });
+  const granted = storeEvent(
+    f.db, "rec-granted", "2026-02-28T15:00:00Z",
+    "the granted kettle is on", "person:ada", "public",
+  );
+  bindSourceEvent(f.db, granted, sourceCaptureAdmission(f.db, "fixture", f.sourceKey)!);
+  const at = (offset: number) => new Date(Date.UTC(2026, 8, 5, 0, 1, 0, offset)).toISOString();
+  const hiddenPrivate = await claim(f, "bound-private-orchard", {
+    provenance: [granted], frontmatter: { type: "person" }, sensitivity: "private",
+    predicate: "employment.role", body: "Ada's role is bound-private-orchard.",
+  }, at(0));
+  const hiddenSubject = await claim(f, "bound-other-subject-plan", {
+    provenance: [granted], subject: "person:grace", subjects: ["person:grace"],
+    frontmatter: { type: "person" },
+  }, at(1));
+  const hiddenType = await claim(f, "bound-org-type-plan", {
+    provenance: [granted], frontmatter: { type: "org" },
+    predicate: "location.based_in", body: "Ada is based in bound-org-type-plan.",
+  }, at(2));
+  const visible = await claim(f, "visible-lighthouse-plan", {
+    provenance: [granted], frontmatter: { type: "person" },
+  }, at(3));
+
+  const owner = await packet(f);
+  expect(owner.data?.packet_md).toContain("private-orchard-filler-0");
+  expect(owner.data?.packet_md).not.toContain("visible-lighthouse-plan");
+  expect(owner.source_policy?.mode).toBe("enforced");
+
+  for (const reader of ["reader-public", "subjected", "typed"] as const) {
+    const envelope = await packet(f, reader);
+    const body = JSON.stringify(envelope);
+    expect(envelope.data?.packet_md).toContain("visible-lighthouse-plan");
+    expect(envelope.data?.packet_md).toContain(visible.claim_id);
+    expect(envelope.denied).toEqual([]);
+    expect(envelope.source_policy?.mode).toBe("enforced");
+    expect(body).not.toContain("private-orchard-filler");
+    expect(body).not.toContain(firstFillerId);
+    expect(body).not.toContain(lastFillerId);
+    if (reader === "reader-public") {
+      expect(body).not.toContain("bound-private-orchard");
+      expect(body).not.toContain(hiddenPrivate.claim_id);
+      const audit = listAudit(f.db, "reader-public", { kind: "access" })[0];
+      expect(audit?.served).toContainEqual(expect.objectContaining({
+        id: sha256(visible.claim_id), sensitivity: "public",
+      }));
+      expect(JSON.stringify(audit)).not.toContain("private-orchard-filler");
+      expect(JSON.stringify(audit)).not.toContain("visible-lighthouse-plan");
+    }
+    if (reader === "subjected") {
+      expect(body).not.toContain("bound-other-subject-plan");
+      expect(body).not.toContain(hiddenSubject.claim_id);
+    }
+    if (reader === "typed") {
+      expect(body).not.toContain("bound-org-type-plan");
+      expect(body).not.toContain(hiddenType.claim_id);
+    }
+  }
+}, 30_000);
 
 test("visible conflicting claims remain available with an accurate visible count", async () => {
   const f = await fixture();

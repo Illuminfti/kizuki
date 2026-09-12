@@ -83,10 +83,13 @@ export interface PieceRequest {
   until: string;
 }
 
-/** Narrow in SQL. A default page filtered in memory misses later subjects. */
+/**
+ * Narrow in SQL, then authorize in the store cursor before the accepted-result
+ * cap. Filtering a default page after LIMIT hides later allowed rows.
+ */
 function loadWorkingClaims(db: Database, wanted: string[] | undefined, canRead: (claim: Claim) => boolean) {
   if (wanted === undefined || wanted.length === 0) {
-    return listClaims(db, { status: "live", keyed: true, limit: 400 }).filter(canRead).slice(0, CANDIDATE_LIMIT);
+    return listClaims(db, { status: "live", keyed: true, limit: 400, filter: canRead }).slice(0, CANDIDATE_LIMIT);
   }
   const seen = new Set<string>();
   const out: ReturnType<typeof listClaims> = [];
@@ -96,7 +99,8 @@ function loadWorkingClaims(db: Database, wanted: string[] | undefined, canRead: 
       keyed: true,
       subject,
       limit: 400,
-    }).filter(canRead).slice(0, CANDIDATE_LIMIT)) {
+      filter: canRead,
+    }).slice(0, CANDIDATE_LIMIT)) {
       if (seen.has(claim.claim_id)) continue;
       seen.add(claim.claim_id);
       out.push(claim);
