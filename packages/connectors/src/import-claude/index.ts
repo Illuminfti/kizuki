@@ -260,9 +260,12 @@ export function parseClaudeExport(
         });
       }
       const sourceRecordId = encodeSourceRecordId([conversationId, messageId]);
-      const fingerprint = `${occurredAt}\n${extracted.text}\n${extracted.attachments
-        .map((attachment) => attachment.attachment_id)
-        .join(",")}`;
+      const fingerprint = JSON.stringify({
+        attachments: extracted.attachments,
+        occurred_at: occurredAt,
+        text: extracted.text,
+        unsupported: extracted.unsupported,
+      });
       const prior = seen.get(sourceRecordId);
       if (prior !== undefined) {
         errors.push({
@@ -316,11 +319,33 @@ function extractClaudeContent(
 ): ExtractedContent {
   const attachments: AttachmentRef[] = [];
   const unsupported: string[] = [];
-  const lines: string[] = [];
+  const byId = new Map<string, AttachmentRef>();
+  let unnamedDocuments = 0;
+  let unnamedImages = 0;
+  const textBlocks: string[] = [];
 
-  if (typeof rawMessage["text"] === "string" && rawMessage["text"].length > 0) {
-    lines.push(rawMessage["text"]);
-  }
+  const remember = (candidate: AttachmentRef): void => {
+    let id = candidate.attachment_id;
+    const existing = byId.get(id);
+    if (existing !== undefined) {
+      if (
+        existing.media_type === candidate.media_type &&
+        existing.filename === candidate.filename &&
+        existing.byte_size === candidate.byte_size
+      ) {
+        return;
+      }
+      let suffix = 1;
+      while (byId.has(`${candidate.attachment_id}:${suffix}`)) suffix += 1;
+      id = `${candidate.attachment_id}:${suffix}`;
+    }
+    const stored =
+      id === candidate.attachment_id
+        ? candidate
+        : { ...candidate, attachment_id: id };
+    byId.set(id, stored);
+    attachments.push(stored);
+  };
 
   const blocks = rawMessage["content"];
   if (blocks !== undefined && !Array.isArray(blocks)) {
@@ -336,32 +361,44 @@ function extractClaudeContent(
     };
   }
   if (Array.isArray(blocks)) {
-    blocks.forEach((block, index) => {
+    blocks.forEach((block) => {
       if (!isPlainObject(block)) {
         unsupported.push("non_object_block");
         return;
       }
       const type =
         typeof block["type"] === "string" ? block["type"] : "unknown";
-      if (type === "text" && typeof block["text"] === "string") {
-        if (typeof rawMessage["text"] === "string" && block["text"] === rawMessage["text"]) {
+      if (type === "text") {
+        if (typeof block["text"] === "string") {
+          textBlocks.push(block["text"]);
           return;
         }
-        lines.push(block["text"]);
+        unsupported.push("malformed_text");
         return;
       }
       if (type === "image" || type === "document") {
-        const id =
+        const source = isPlainObject(block["source"])
+          ? block["source"]
+          : undefined;
+        const named =
           nonEmptyString(block["id"]) ??
-          nonEmptyString(
-            isPlainObject(block["source"])
-              ? block["source"]["media_type"]
-              : undefined,
-          ) ??
-          `${type}:${index}`;
-        attachments.push({
-          attachment_id: id,
-          media_type: type === "image" ? "image/*" : "application/octet-stream",
+          nonEmptyString(block["file_id"]) ??
+          nonEmptyString(block["file_name"]) ??
+          nonEmptyString(block["filename"]);
+        const filename =
+          nonEmptyString(block["file_name"]) ??
+          nonEmptyString(block["filename"]);
+        remember({
+          attachment_id:
+            named ??
+            `${type}:${type === "image" ? unnamedImages++ : unnamedDocuments++}`,
+          media_type:
+            nonEmptyString(
+              source !== undefined ? source["media_type"] : undefined,
+            ) ??
+            nonEmptyString(block["media_type"]) ??
+            (type === "image" ? "image/*" : "application/octet-stream"),
+          ...(filename !== undefined ? { filename } : {}),
         });
         return;
       }
@@ -369,38 +406,80 @@ function extractClaudeContent(
         unsupported.push(type);
         return;
       }
-      if (type !== "text") unsupported.push(type);
+      unsupported.push(type);
     });
   }
 
-  const listed = rawMessage["attachments"];
-  if (listed !== undefined && !Array.isArray(listed)) {
-    unsupported.push("malformed_attachments");
-  } else if (Array.isArray(listed)) {
-    listed.forEach((attachment, index) => {
-      if (!isPlainObject(attachment)) {
-        unsupported.push("non_object_attachment");
+  const topLevel =
+    typeof rawMessage["text"] === "string" ? rawMessage["text"] : "";
+  const text = claudeMessageText(topLevel, textBlocks);
+  const lines: string[] = text.length > 0 ? [text] : [];
+
+  const appendExtracted = (value: unknown): void => {
+    if (typeof value !== "string" || value.trim().length === 0) return;
+    const current = lines.join("\n");
+    if (value === current || lines.includes(value)) return;
+    lines.push(value);
+  };
+
+  const readListed = (
+    listed: unknown,
+    kind: "attachments" | "files",
+  ): void => {
+    if (listed === undefined) return;
+    if (!Array.isArray(listed)) {
+      unsupported.push(
+        kind === "attachments" ? "malformed_attachments" : "malformed_files",
+      );
+      return;
+    }
+    listed.forEach((item, index) => {
+      if (!isPlainObject(item)) {
+        unsupported.push(
+          kind === "attachments"
+            ? "non_object_attachment"
+            : "non_object_file",
+        );
         return;
       }
       const name =
-        nonEmptyString(attachment["file_name"]) ??
-        nonEmptyString(attachment["filename"]) ??
-        `attachment:${index}`;
-      attachments.push({
+        nonEmptyString(item["file_name"]) ??
+        nonEmptyString(item["filename"]) ??
+        `${kind === "files" ? "file" : "attachment"}:${index}`;
+      const byteSize =
+        typeof item["file_size"] === "number" &&
+        Number.isSafeInteger(item["file_size"]) &&
+        item["file_size"] >= 0
+          ? item["file_size"]
+          : undefined;
+      remember({
         attachment_id: name,
         media_type:
-          typeof attachment["file_type"] === "string"
-            ? attachment["file_type"]
-            : "application/octet-stream",
+          nonEmptyString(item["file_type"]) ?? "application/octet-stream",
         filename: name,
-        ...(typeof attachment["file_size"] === "number"
-          ? { byte_size: attachment["file_size"] }
-          : {}),
+        ...(byteSize !== undefined ? { byte_size: byteSize } : {}),
       });
+      appendExtracted(item["extracted_content"]);
     });
-  }
+  };
+
+  readListed(rawMessage["attachments"], "attachments");
+  readListed(rawMessage["files"], "files");
 
   return { text: lines.join("\n"), attachments, unsupported };
+}
+
+/** `text` is the message; content blocks that restate a prefix of it are not stored twice. */
+function claudeMessageText(topLevel: string, blockTexts: string[]): string {
+  if (blockTexts.length === 0) return topLevel;
+  const joined = blockTexts.join("\n");
+  if (topLevel.length === 0 || topLevel === joined) return joined;
+  let prefix = "";
+  for (const block of blockTexts) {
+    prefix = prefix.length === 0 ? block : `${prefix}\n${block}`;
+    if (prefix === topLevel) return joined;
+  }
+  return `${topLevel}\n${joined}`;
 }
 
 function messageFingerprint(messages: unknown): string {

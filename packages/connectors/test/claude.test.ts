@@ -304,6 +304,42 @@ describe("ClaudeImportConnector", () => {
     }
   });
 
+  test("unsupported parts preserve supported events and the existing health-only degradation", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-claude-unsupported-"));
+    try {
+      const file = path.join(root, "conversations.json");
+      await writeFile(
+        file,
+        JSON.stringify([
+          {
+            uuid: "supported",
+            chat_messages: [
+              {
+                uuid: "m1",
+                sender: "human",
+                text: "supported text",
+                created_at: "2026-01-01T00:00:00Z",
+                content: [
+                  { type: "text", text: "supported text" },
+                  { type: "tool_use", name: "search" },
+                ],
+              },
+            ],
+          },
+        ]),
+      );
+      const connector = createClaudeImportConnector({ path: file });
+      expect((await connector.health()).state).toBe("degraded");
+      const first = await connector.backfill(null);
+      expect(first.status ?? "ok").toBe("ok");
+      expect(first.events).toHaveLength(1);
+      const drain = await connector.backfill(first.cursor);
+      expect(drain).toEqual({ events: [], cursor: first.cursor });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("an export that drops uuids does not tombstone the prior records", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-claude-"));
     try {
@@ -409,6 +445,31 @@ describe("export fidelity", () => {
     );
     expect(result.errors).toEqual([]);
     expect(result.events[0]?.text).toBe("Answer\nFootnote");
+  });
+
+  test("top-level text that already concatenates content blocks is stored once", () => {
+    const result = parseClaudeExport(
+      JSON.stringify([
+        {
+          uuid: "c1",
+          chat_messages: [
+            {
+              uuid: "m1",
+              sender: "assistant",
+              text: "first paragraph\nsecond paragraph",
+              created_at: "2026-01-01T00:00:01Z",
+              content: [
+                { type: "text", text: "first paragraph" },
+                { type: "text", text: "second paragraph" },
+              ],
+            },
+          ],
+        },
+      ]),
+      OBSERVED_AT,
+    );
+    expect(result.errors).toEqual([]);
+    expect(result.events[0]?.text).toBe("first paragraph\nsecond paragraph");
   });
 
   test("a sender outside human or assistant is reported and not stored", () => {
