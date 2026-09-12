@@ -14,6 +14,9 @@ export const GITHUB_REPOSITORY_ID = 1353875622;
 interface GithubRepository { id: typeof GITHUB_REPOSITORY_ID; full_name: string; }
 const PAGE_SIZE = 25;
 const LIMITS = { json_bytes: 1_048_576, pages: 20, attempts: 10, jobs: 100, requests: 256, total_ms: 300_000, timeout_ms: 30_000 } as const;
+const P0_LABEL = "severity:p0";
+const P0_OBSERVATION_MAX_MS = 60_000;
+const P0_CLOCK_SKEW_MS = 5_000;
 const REQUIRED = [
   { path: ".github/workflows/ci.yml", jobs: ["test", "secrets"] },
   { path: ".github/workflows/workflows.yml", jobs: ["workflows"] },
@@ -37,6 +40,11 @@ export interface GithubCandidateObservation {
   schema: "kizuki.github-candidate-observation/v1"; repository: GithubRepository; candidate_source_sha: string;
   inventory: Run[]; attempts: { run_id: number; attempt: number; status: string; conclusion: string | null; path: string; run_started_at: string; created_at: string; updated_at: string }[];
   required: { path: string; run: Run | null; jobs: Job[]; status: "PASS" | "FAIL" | "MISSING"; reason: string }[];
+}
+interface GithubP0Issue { id: number; number: number; updated_at: string; labels: { name: string }[]; }
+export interface GithubP0Observation {
+  candidate_source_sha: string; main_sha_before: string; main_sha_after: string;
+  inventory: GithubP0Issue[]; count: number; started_at: string; completed_at: string;
 }
 
 const PACKAGE_COMMANDS = ["verify", "typecheck", "build:release", "smoke:release", "proof:artifact"] as const;
@@ -364,8 +372,123 @@ export function inspectGithubLifecycleIndexBinding(targets: Awaited<ReturnType<t
   return { status: "PASS" as const, reason: "github-current-native-candidate-lifecycle" };
 }
 
+async function arrayPages(get: GetJson, path: string): Promise<unknown[]> {
+  const rows: unknown[] = [];
+  for (let page = 1; page <= LIMITS.pages; page++) {
+    const value = await get(`${path}${path.includes("?") ? "&" : "?"}per_page=${PAGE_SIZE}&page=${page}`);
+    if (!Array.isArray(value) || value.length > PAGE_SIZE) reject("github-p0-invalid-page");
+    if (rows.length + value.length > PAGE_SIZE * LIMITS.pages) reject("github-p0-inventory-limit");
+    rows.push(...value);
+    if (value.length !== PAGE_SIZE) return rows;
+  }
+  reject("github-p0-inventory-limit");
+}
+function p0Issue(value: unknown, expectedRepository: GithubRepository): GithubP0Issue {
+  const row = object(value);
+  if ("pull_request" in row) reject("github-p0-pull-request");
+  if (row.state !== "open") reject("github-p0-not-open");
+  if (row.repository !== undefined) repository(row.repository, expectedRepository);
+  if (row.repository_url !== undefined &&
+      string(row.repository_url, 512) !== `https://api.github.com/repos/${expectedRepository.full_name}`) reject("github-p0-repository-mismatch");
+  const id = integer(row.id), number = integer(row.number), updated_at = timestamp(row.updated_at);
+  if (!Array.isArray(row.labels) || row.labels.length > 32) reject("github-p0-invalid-schema");
+  const labels = row.labels.map(item => ({ name: string(object(item).name, 64) }));
+  if (new Set(labels.map(label => label.name)).size !== labels.length) reject("github-p0-duplicate-label");
+  if (!labels.some(label => label.name === P0_LABEL)) reject("github-p0-label-mismatch");
+  return { id, number, updated_at, labels };
+}
+function p0Inventory(rows: unknown[], expectedRepository: GithubRepository): GithubP0Issue[] {
+  const issues = rows.map(row => p0Issue(row, expectedRepository));
+  if (new Set(issues.map(row => row.id)).size !== issues.length || new Set(issues.map(row => row.number)).size !== issues.length)
+    reject("github-p0-duplicate-issue");
+  return issues.sort((a, b) => a.number - b.number);
+}
+function mainCommit(value: unknown): string {
+  const row = object(value);
+  if (row.ref !== "refs/heads/main") reject("github-p0-main-ref-invalid");
+  const target = object(row.object);
+  if (target.type !== "commit") reject("github-p0-main-ref-invalid");
+  return digest(target.sha, 40);
+}
+function assertMainAncestor(root: string, mainSha: string, candidateSha: string) {
+  try {
+    execFileSync("git", ["-C", root, "merge-base", "--is-ancestor", mainSha, candidateSha],
+      { encoding: "utf8", timeout: LIMITS.timeout_ms, stdio: ["ignore", "pipe", "pipe"] });
+  } catch (error) {
+    if (error instanceof EvidenceError) throw error;
+    reject("github-p0-main-not-ancestor");
+  }
+}
+function publicP0Repository(value: unknown): GithubRepository {
+  const repo = object(value);
+  if (repo.id !== GITHUB_REPOSITORY_ID || repo.private !== false || typeof repo.full_name !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(repo.full_name)) reject("github-p0-repository-mismatch");
+  return { id: GITHUB_REPOSITORY_ID, full_name: repo.full_name };
+}
+function rethrowP0(error: unknown): never {
+  if (error instanceof EvidenceError) {
+    if (error.reason.startsWith("github-p0-")) throw error;
+    if (error.reason.startsWith("github-")) reject(`github-p0-${error.reason.slice(7)}`);
+    if (error.reason === "invalid-digest") reject("github-p0-invalid-identity");
+  }
+  reject("github-p0-observation-unavailable");
+}
+
+/** Synthetic P0 analysis has no gate authority. Only evaluateReleaseOnline
+ * overlays candidate.current-p0-disposition from a live fixed-transport collection. */
+export async function inspectGithubCurrentP0(transport: GetJson, candidate: string, candidateRoot: string, now: () => Date = () => new Date()): Promise<GithubP0Observation> {
+  try {
+    digest(candidate, 40);
+    let requests = 0; const window = performance.now();
+    const get: GetJson = async endpoint => {
+      if (++requests > LIMITS.requests || performance.now() - window > LIMITS.total_ms) reject("github-p0-observation-limit");
+      return transport(endpoint);
+    };
+    const startedAt = now();
+    const expectedRepository = publicP0Repository(await get(`/repositories/${GITHUB_REPOSITORY_ID}`));
+    const prefix = `/repos/${expectedRepository.full_name}`;
+    const mainBefore = mainCommit(await get(`${prefix}/git/ref/heads/main`));
+    assertMainAncestor(candidateRoot, mainBefore, candidate);
+    const issuesPath = `${prefix}/issues?state=open&labels=severity%3Ap0`;
+    const initial = p0Inventory(await arrayPages(get, issuesPath), expectedRepository);
+    const finalInventory = p0Inventory(await arrayPages(get, issuesPath), expectedRepository);
+    if (!same(initial, finalInventory)) reject("github-p0-inventory-changed");
+    const mainAfter = mainCommit(await get(`${prefix}/git/ref/heads/main`));
+    if (mainAfter !== mainBefore) reject("github-p0-main-changed");
+    const completedAt = now();
+    const startedMs = startedAt.getTime(), completedMs = completedAt.getTime();
+    if (!Number.isFinite(startedMs) || !Number.isFinite(completedMs)) reject("github-p0-invalid-timestamp");
+    if (completedMs < startedMs) reject("github-p0-observation-time-order");
+    if (completedMs - startedMs > P0_OBSERVATION_MAX_MS) reject("github-p0-observation-stale");
+    if (completedMs - Date.now() > P0_CLOCK_SKEW_MS) reject("github-p0-observation-future");
+    return {
+      candidate_source_sha: candidate, main_sha_before: mainBefore, main_sha_after: mainAfter,
+      inventory: initial, count: initial.length, started_at: startedAt.toISOString(), completed_at: completedAt.toISOString(),
+    };
+  } catch (error) { rethrowP0(error); }
+}
+
+/** Pure mapping, not authority. Only evaluateReleaseOnline may overlay the gate. */
+export function inspectGithubP0Disposition(observation: GithubP0Observation): { status: "PASS" | "FAIL"; reason: string } {
+  return observation.count === 0 && observation.inventory.length === 0
+    ? { status: "PASS", reason: "github-current-p0-inventory-clear" }
+    : { status: "FAIL", reason: "github-current-p0-findings-open" };
+}
+
+function allowedGithubEndpoint(endpoint: string): boolean {
+  if (!/^[/A-Za-z0-9_.?=&%-]+$/.test(endpoint)) return false;
+  if (endpoint === `/repositories/${GITHUB_REPOSITORY_ID}`) return true;
+  const names = "^/repos/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}";
+  if (new RegExp(`${names}/actions/`).test(endpoint)) return true;
+  if (new RegExp(`${names}/git/ref/heads/main$`).test(endpoint)) return true;
+  const issues = endpoint.match(new RegExp(`${names}/issues\\?state=open&labels=severity%3Ap0&per_page=${PAGE_SIZE}&page=([1-9][0-9]*)$`));
+  if (!issues) return false;
+  const page = Number(issues[1]);
+  return Number.isSafeInteger(page) && page >= 1 && page <= LIMITS.pages;
+}
+
 function ghJson(endpoint: string, binary = false): Buffer {
-  if ((endpoint !== `/repositories/${GITHUB_REPOSITORY_ID}` && !/^\/repos\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/actions\//.test(endpoint)) || !/^[/A-Za-z0-9_.?=&-]+$/.test(endpoint)) reject("github-endpoint-refused");
+  if (!allowedGithubEndpoint(endpoint)) reject("github-endpoint-refused");
   try {
     return execFileSync("gh", ["api", "--hostname", "github.com", "--method", "GET", "-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2022-11-28", endpoint],
       { maxBuffer: binary ? GITHUB_ARCHIVE_LIMIT : LIMITS.json_bytes, timeout: LIMITS.timeout_ms, stdio: ["ignore", "pipe", "pipe"] });
@@ -399,6 +522,8 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
   let nativeProducer: ReturnType<typeof bindGithubNativeProducer> | null = null;
   let lifecycleProducer: ReturnType<typeof bindGithubLifecycleProducer> | null = null;
   let lifecycleFailure: string | null = null;
+  let p0: GithubP0Observation | null = null;
+  let p0Failure: string | null = null;
   let onlineRequests = 0; const onlineStarted = performance.now();
   const bounded = () => { if (++onlineRequests > LIMITS.requests || performance.now() - onlineStarted > LIMITS.total_ms) reject("github-observation-limit"); };
   const get: GetJson = async endpoint => {
@@ -420,6 +545,10 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
     } catch (error) { nativeFailure = error instanceof EvidenceError ? error.reason : "github-native-observation-unavailable"; }
     // Native downloads may take time: CI credit must still describe current facts.
     if (!same(observation, await inspectGithubCandidate(get, candidate, workflows))) reject("github-required-checks-changed");
+    try { p0 = await inspectGithubCurrentP0(get, candidate, root); }
+    catch (error) {
+      p0Failure = error instanceof EvidenceError && error.reason.startsWith("github-p0-") ? error.reason : "github-p0-observation-unavailable";
+    }
     candidateFrame.unchanged(); collectorFrame.unchanged(); nativeProducer?.unchanged(); lifecycleProducer?.unchanged(); index.unchanged(); checkOutput();
   } catch (error) { failure = error instanceof EvidenceError ? error.reason : "github-observation-unavailable"; }
   const retained = { schema: "kizuki.github-collection/v1", candidate_source_sha: candidate, collector_source_sha: collectorHead,
@@ -428,6 +557,7 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
     lifecycle_failure: lifecycleFailure,
     lifecycle_producer: lifecycleProducer === null ? null : { candidate_files: lifecycleProducer.candidate_files, reviewed_files: lifecycleProducer.reviewed_files },
     native_producer: nativeProducer === null ? null : { candidate_files: nativeProducer.candidate_files, reviewed_files: nativeProducer.reviewed_files },
+    p0, p0_failure: p0Failure,
     trust_scope: "fresh GitHub HTTPS observation under local operator custody; saved JSON alone is not an authenticated input" };
   const receiptPath = join(output, "github-observation.json");
   writeFileSync(receiptPath, JSON.stringify(retained, null, 2) + "\n", { flag: "wx", mode: 0o600 });
@@ -458,9 +588,16 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
     const status = lifecycleBinding?.status ?? (nativeBinding?.status === "FAIL" ? "FAIL" : "UNVERIFIABLE");
     Object.assign(row, { status, reason: lifecycleBinding?.reason ?? lifecycleFailure ?? nativeBinding?.reason ?? failure ?? nativeFailure ?? "github-current-lifecycle-not-observed", evidence_sha256: status === "PASS" ? receipt.sha256 : null });
   }
+  const p0Gate = report.gates.find(row => row.id === "candidate.current-p0-disposition")!;
+  if (failure !== null || p0Failure !== null || p0 === null) {
+    Object.assign(p0Gate, { status: "UNVERIFIABLE", reason: p0Failure ?? "github-p0-observation-unavailable", evidence_sha256: null });
+  } else {
+    const binding = inspectGithubP0Disposition(p0);
+    Object.assign(p0Gate, { status: binding.status, reason: binding.reason, evidence_sha256: receipt.sha256 });
+  }
   const result = { ...report, schema: "kizuki.online-acceptance-report/v1", ...releaseDecision(profile, report.gates), github_observation_sha256: receipt.sha256,
-    trust_scope: `${report.trust_scope}; candidate.required-checks and native target facts additionally observed from GitHub during this evaluation; native lifecycle additionally requires independently reviewed producer closure and all17 v2 phases; released-version upgrades, hardware reboot, distribution and human trials are not asserted`,
-    online_policy_sha256: hash(JSON.stringify({ schema: "kizuki.github-evidence-policy/v1", repository_id: GITHUB_REPOSITORY_ID, required: REQUIRED, native_targets: NATIVE_TARGETS, native_archive_bytes: GITHUB_ARCHIVE_LIMIT, native_index_binding: "same-target-v3-proof-and-all-seven-package-digests", package_commands: PACKAGE_COMMANDS, native_producer_entrypoints: NATIVE_PRODUCER_ENTRYPOINTS, lifecycle_producer_entrypoints: LIFECYCLE_PRODUCER_ENTRYPOINTS, lifecycle_producer_data: LIFECYCLE_PRODUCER_DATA, lifecycle_registry_sha256: LIFECYCLE_REGISTRY_SHA256, limits: LIMITS, selection: "latest-attempt-start-no-pending-ambiguous-refused" })),
+    trust_scope: `${report.trust_scope}; candidate.required-checks, native target facts and current open severity:p0 inventory additionally observed from GitHub during this evaluation; native lifecycle additionally requires independently reviewed producer closure and all17 v2 phases; released-version upgrades, hardware reboot, distribution and human trials are not asserted`,
+    online_policy_sha256: hash(JSON.stringify({ schema: "kizuki.github-evidence-policy/v1", repository_id: GITHUB_REPOSITORY_ID, required: REQUIRED, native_targets: NATIVE_TARGETS, native_archive_bytes: GITHUB_ARCHIVE_LIMIT, native_index_binding: "same-target-v3-proof-and-all-seven-package-digests", package_commands: PACKAGE_COMMANDS, native_producer_entrypoints: NATIVE_PRODUCER_ENTRYPOINTS, lifecycle_producer_entrypoints: LIFECYCLE_PRODUCER_ENTRYPOINTS, lifecycle_producer_data: LIFECYCLE_PRODUCER_DATA, lifecycle_registry_sha256: LIFECYCLE_REGISTRY_SHA256, limits: LIMITS, p0_label: P0_LABEL, p0_observation_max_ms: P0_OBSERVATION_MAX_MS, p0_clock_skew_ms: P0_CLOCK_SKEW_MS, selection: "latest-attempt-start-no-pending-ambiguous-refused" })),
     online_verifier_sha256: hash(JSON.stringify(retained.collector_files)) };
   receipt.unchanged();
   writeAcceptanceReport(join(output, "acceptance-report.json"), result);
