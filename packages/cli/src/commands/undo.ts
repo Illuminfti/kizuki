@@ -2,14 +2,23 @@ import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, UndoError, u
 import { UsageError, parseArguments, requirePositional } from "../args";
 import { withVault } from "../context";
 import { tryRefreshDerived } from "../derived";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
+
+export const UNDO_SCHEMA = {
+  options: [],
+  flags: ["--cascade"],
+} as const satisfies CommandHelpSchema;
 
 export const undoCommand: Command = {
   name: "undo",
   usage: "undo <receipt_id> [--cascade]",
   summary: "restore prior canon bytes from a write receipt",
+  schema: UNDO_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
-    const parsed = parseArguments(args, { flags: ["--cascade"] });
+    const parsed = parseArguments(args, {
+      options: [...UNDO_SCHEMA.options],
+      flags: [...UNDO_SCHEMA.flags],
+    });
     const [receiptId] = requirePositional(parsed.positionals, 1);
     if (receiptId === undefined) throw new UsageError(this.usage);
 
