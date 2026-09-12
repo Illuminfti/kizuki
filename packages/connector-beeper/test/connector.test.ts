@@ -24,9 +24,11 @@ test("reads the local search API, paginates backward, and uses stable source ide
       : reply({ items: [deleted], hasMore: false });
   });
   const one = await value.backfill(null);
+  expect(one.has_more).toBe(true);
   expect(one.events[0]?.source_record_id).toBe('["a1","c1","m1"]');
   expect(one.events[0]?.metadata).toEqual({ source_kind: "beeper", account_id: "a1", chat_id: "c1", message_id: "m1", sender_id: "u1", sort_key: "001", edited_timestamp: null });
   const two = await value.backfill(one.cursor);
+  expect(two.has_more).toBe(false);
   expect(two.cursor).toBeNull();
   expect(two.events[0]).toMatchObject({ deleted: true, text: "" });
   expect(seen.map((url) => [url.pathname, url.searchParams.get("direction"), url.searchParams.get("limit"), url.searchParams.get("cursor")])).toEqual([["/v1/messages/search", "before", "20", null], ["/v1/messages/search", "before", "20", "older"]]);

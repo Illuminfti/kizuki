@@ -90,7 +90,7 @@ export class BeeperConnector implements Connector {
     const next = page.hasMore ? page.oldestCursor : undefined;
     if (page.hasMore && (next === undefined || next === prior)) throw new KizukiError("parse_error", "kizuki.beeper: invalid pagination cursor");
     this.#lastSuccessAt = observed;
-    return { events, cursor: next === undefined ? null : encodeBeeperCursor(next) };
+    return { events, cursor: next === undefined ? null : encodeBeeperCursor(next), has_more: page.hasMore };
   }
   async #read(cursor: string | null): Promise<Page> {
     const url = new URL("/v1/messages/search", this.#config.baseUrl);
