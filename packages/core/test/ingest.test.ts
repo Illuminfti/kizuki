@@ -18,6 +18,7 @@ import {
 } from "../src/contracts/page-candidate";
 import { getCheckpoint, listConnectionRuns, registerConnection } from "../src/ledger/connections";
 import { openLedger } from "../src/ledger/db";
+import { accept } from "../src/ledger/ledger";
 import {
   runBackfill,
   runBatch,
@@ -894,14 +895,36 @@ describe("runToCompletion", () => {
     }
   });
 
-  test("the admitted terminal scalar survives provider mutation while events are read", async () => {
+  test("an events accessor is refused before it can mutate the admitted completion scalar", async () => {
     const db = database();
     try {
-      const original = page(1, 1), batch = { cursor: original.cursor, has_more: false } as SyncBatch;
-      Object.defineProperty(batch, "events", { get: () => { batch.has_more = true; return original.events; }, enumerable: true });
-      const connector = new ScriptedConnector([batch, page(99, 1)]);
-      expect(await runToCompletion(db, connector, "fixture", SOURCE, "backfill")).toMatchObject({ stored: 1, errors: [], cursor: "page-1" });
-      expect(connector.cursors).toEqual([null]);
+      const original = page(1, 1);
+      const batch = { cursor: original.cursor, has_more: false } as SyncBatch;
+      let reads = 0;
+      Object.defineProperty(batch, "events", {
+        enumerable: true,
+        get() {
+          reads += 1;
+          batch.has_more = true;
+          return original.events;
+        },
+      });
+      const result = await runToCompletion(db, new FixtureConnector(batch), "fixture", SOURCE, "backfill");
+      expect(result.errors).toEqual(["sync batch events must be an own data property"]);
+      expect(result.stored).toBe(0);
+      expect(result.cursor).toBeNull();
+      expect(reads).toBe(0);
+      expect(batch.has_more).toBe(false);
+      expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBeNull();
+    } finally { db.close(); }
+  });
+
+  test("an inherited completion flag on a later page cannot terminate a legacy batch", async () => {
+    const db = database();
+    try {
+      expect(await runToCompletion(db, new ScriptedConnector([page(1, 1)]), "fixture", SOURCE, "backfill")).toMatchObject({
+        stored: 1, errors: [], cursor: "page-1",
+      });
       const inherited = Object.assign(Object.create({ has_more: false }), page(2, 1));
       inherited.cursor = "page-1";
       expect((await runToCompletion(db, new FixtureConnector(inherited), "fixture", SOURCE, "backfill")).errors).toEqual(["run made no progress"]);
@@ -1215,6 +1238,193 @@ describe("a batch that does not match the enrolled connection", () => {
     const [staged] = listProposals(db);
     expect(staged?.target).toBe("entities/injected");
     expect(staged?.body).toBe("UNQUOTED BODY");
+    db.close();
+  });
+});
+
+describe("hostile live event records", () => {
+  const CANARY = "private-body\u0007SECRET";
+
+  function leakless(value: unknown) {
+    const encoded = JSON.stringify(value);
+    expect(encoded).not.toContain("private-body");
+    expect(encoded).not.toContain("SECRET");
+    expect(encoded).not.toContain("\u0007");
+  }
+
+  const shapes: [string, (hits: { n: number }) => CaptureEventInput][] = [
+    [
+      "text accessor",
+      (hits) => {
+        const event = { ...validEvent(), text: CANARY };
+        Object.defineProperty(event, "text", {
+          configurable: true,
+          enumerable: true,
+          get() {
+            hits.n += 1;
+            throw new Error(CANARY);
+          },
+        });
+        return event as CaptureEventInput;
+      },
+    ],
+    [
+      "enumerable toJSON",
+      (hits) => {
+        const event = { ...validEvent(), text: CANARY };
+        Object.defineProperty(event, "toJSON", {
+          configurable: true,
+          enumerable: true,
+          value() {
+            hits.n += 1;
+            throw new Error(CANARY);
+          },
+        });
+        return event as CaptureEventInput;
+      },
+    ],
+  ];
+
+  for (const [name, make] of shapes) {
+    test(`accept, runBatch, runBackfill and runSync refuse ${name} without executing or leaking`, async () => {
+      const hits = { n: 0 };
+      const event = make(hits);
+
+      const direct = openLedger(":memory:");
+      try {
+        const accepted = accept(direct, event);
+        expect(accepted.status).toBe("error");
+        if (accepted.status !== "error") throw new Error("unreachable");
+        expect(accepted.kind).toBe("validation");
+        leakless(accepted);
+        expect(direct.query("SELECT count(*) AS n FROM events").get()).toEqual({ n: 0 });
+      } finally {
+        direct.close();
+      }
+      expect(hits.n).toBe(0);
+
+      const batched = database();
+      try {
+        const result = runBatch(
+          batched,
+          { events: [event, { ...validEvent(), source_record_id: "rec-2" }], cursor: "stolen" },
+          NOTHING,
+        );
+        expect(result.stored).toBe(0);
+        expect(result.cursor).toBeNull();
+        expect(result.errors.length).toBeGreaterThan(0);
+        leakless(result);
+        expect(batched.query("SELECT count(*) AS n FROM events").get()).toEqual({ n: 0 });
+      } finally {
+        batched.close();
+      }
+      expect(hits.n).toBe(0);
+
+      const backfillDb = database();
+      try {
+        const result = await runBackfill(
+          backfillDb,
+          new FixtureConnector({ events: [event], cursor: "stolen" }),
+          "fixture",
+          SOURCE,
+        );
+        expect(result.stored).toBe(0);
+        expect(result.cursor).toBeNull();
+        leakless(result);
+        leakless(getCheckpoint(backfillDb, "fixture", SOURCE));
+        leakless(listConnectionRuns(backfillDb, "fixture", SOURCE));
+        expect(getCheckpoint(backfillDb, "fixture", SOURCE)?.cursor).toBeNull();
+      } finally {
+        backfillDb.close();
+      }
+      expect(hits.n).toBe(0);
+
+      const syncDb = database();
+      try {
+        expect(
+          (await runBackfill(
+            syncDb,
+            new FixtureConnector({ events: [validEvent()], cursor: "kept" }),
+            "fixture",
+            SOURCE,
+          )).stored,
+        ).toBe(1);
+        const result = await runSync(
+          syncDb,
+          new FixtureConnector({ events: [], cursor: null }, { events: [event], cursor: "stolen" }),
+          "fixture",
+          SOURCE,
+        );
+        expect(result.stored).toBe(0);
+        expect(result.cursor).toBeNull();
+        leakless(result);
+        leakless(getCheckpoint(syncDb, "fixture", SOURCE));
+        expect(getCheckpoint(syncDb, "fixture", SOURCE)?.backfill_cursor).toBe("kept");
+        expect(getCheckpoint(syncDb, "fixture", SOURCE)?.sync_cursor).toBeNull();
+      } finally {
+        syncDb.close();
+      }
+      expect(hits.n).toBe(0);
+    });
+  }
+
+  test("events-array toJSON and cursor accessors are refused without execution", async () => {
+    const hits = { n: 0 };
+    const events = [validEvent()];
+    Object.defineProperty(events, "toJSON", {
+      enumerable: true,
+      value() {
+        hits.n += 1;
+        throw new Error(CANARY);
+      },
+    });
+    const cursorBatch = { events: [validEvent()], cursor: "stolen" } as SyncBatch;
+    Object.defineProperty(cursorBatch, "cursor", {
+      enumerable: true,
+      get() {
+        hits.n += 1;
+        throw new Error(CANARY);
+      },
+    });
+
+    const db = database();
+    try {
+      const arrayResult = runBatch(db, { events, cursor: "stolen" }, NOTHING);
+      expect(arrayResult.stored).toBe(0);
+      leakless(arrayResult);
+      expect(hits.n).toBe(0);
+
+      const cursorResult = runBatch(db, cursorBatch, NOTHING);
+      expect(cursorResult.stored).toBe(0);
+      leakless(cursorResult);
+      expect(hits.n).toBe(0);
+
+      const backfill = await runBackfill(
+        db,
+        new FixtureConnector({ events, cursor: "stolen" }),
+        "fixture",
+        SOURCE,
+      );
+      expect(backfill.stored).toBe(0);
+      expect(backfill.cursor).toBeNull();
+      leakless(backfill);
+      expect(hits.n).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a later plain batch still stores and is not mutated after a hostile refusal", () => {
+    const db = database();
+    const hits = { n: 0 };
+    const hostile = shapes[0]![1](hits);
+    expect(runBatch(db, { events: [hostile], cursor: "nope" }, NOTHING).stored).toBe(0);
+    const plain = validEvent();
+    const before = JSON.stringify(plain);
+    const result = runBatch(db, { events: [plain], cursor: "ok" }, NOTHING);
+    expect(result).toMatchObject({ stored: 1, errors: [], cursor: "ok" });
+    expect(JSON.stringify(plain)).toBe(before);
+    expect(hits.n).toBe(0);
     db.close();
   });
 });

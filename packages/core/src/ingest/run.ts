@@ -1,7 +1,11 @@
 import { sourceCaptureAdmission, type SourceAdmission } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import type { Connector, Manifest, SyncBatch } from "../contracts/connector";
-import { validateEventInput } from "../contracts/event";
+import {
+  EVENT_LIMITS,
+  validateEventInput,
+  type CaptureEventInput,
+} from "../contracts/event";
 import {
   CONNECTOR_OPERATION_DEADLINE_MS,
   MAX_SYNC_BATCH_BYTES,
@@ -29,6 +33,7 @@ import { fileProposal } from "../staging/proposals";
 import type { SourceTombstoneContext } from "../canon/source-tombstone";
 import { DeadlineError, withDeadline } from "../util/deadline";
 import { ulid } from "../util/ulid";
+import { cloneExactJson } from "../util/validate";
 
 /**
  * What the manifest of the connector a batch came from grants that source.
@@ -122,33 +127,112 @@ function processEvent(
     .immediate();
 }
 
-/** Read completion once without executing connector-owned accessors. */
-function batchHasMore(batch: SyncBatch): boolean | undefined {
-  const descriptor = Object.getOwnPropertyDescriptor(batch, "has_more");
-  if (descriptor === undefined) return undefined;
-  if (!(Object.hasOwn(descriptor, "value")) || typeof descriptor.value !== "boolean") {
-    throw new TypeError("sync batch has_more must be an own boolean data property");
-  }
-  return descriptor.value;
+const HAS_MORE_ERROR = "sync batch has_more must be an own boolean data property";
+
+/** Envelope JSON bounds: deep enough for a valid event, capped at the batch byte ceiling. */
+const BATCH_JSON_LIMITS = {
+  maxDepth: EVENT_LIMITS.metadataDepth + 2,
+  maxKeysPerObject: EVENT_LIMITS.metadataKeysPerObject,
+  maxArrayLength: Math.max(MAX_SYNC_BATCH_EVENTS, EVENT_LIMITS.metadataArrayLength),
+  maxStringBytes: MAX_SYNC_BATCH_BYTES,
+  maxKeyBytes: EVENT_LIMITS.metadataKeyBytes,
+  maxTotalBytes: MAX_SYNC_BATCH_BYTES,
+} as const;
+
+/** Own data property only; accessors return null without executing. */
+function ownData(
+  object: object,
+  key: string,
+): { present: false } | { present: true; value: unknown } | null {
+  const property = Object.getOwnPropertyDescriptor(object, key);
+  if (property === undefined) return { present: false };
+  if (!Object.hasOwn(property, "value")) return null;
+  return { present: true, value: property.value };
 }
 
-function batchBudgetRefusal(batch: SyncBatch): string | null {
-  try { batchHasMore(batch); } catch (error) { return errorText(error); }
-  if (batch.events.length > MAX_SYNC_BATCH_EVENTS) {
-    return `sync batch exceeds ${MAX_SYNC_BATCH_EVENTS} events`;
-  }
-  const encoded = new TextEncoder().encode(JSON.stringify(batch.events));
-  if (encoded.byteLength > MAX_SYNC_BATCH_BYTES) {
-    return `sync batch exceeds ${MAX_SYNC_BATCH_BYTES} bytes`;
-  }
-  if (batch.cursor !== null) {
-    try {
-      assertCursorSize(batch.cursor, "cursor");
-    } catch (error) {
-      return errorText(error);
+function batchShapeError(errors: string[]): string {
+  for (const error of errors) {
+    if (error.includes(`exceeds ${MAX_SYNC_BATCH_BYTES}`)) {
+      return `sync batch exceeds ${MAX_SYNC_BATCH_BYTES} bytes`;
     }
   }
-  return null;
+  return errors[0] ?? "sync batch could not be read as plain data";
+}
+
+/**
+ * Snapshot a connector batch into frozen exact JSON before any live inspect
+ * or serialize. Accessors and toJSON stay unexecuted; failures are content-free.
+ */
+function ingressBatch(
+  batch: SyncBatch,
+): { ok: true; value: SyncBatch } | { ok: false; error: string } {
+  try {
+    const hasMoreField = ownData(batch, "has_more");
+    if (hasMoreField === null || (hasMoreField.present && typeof hasMoreField.value !== "boolean")) {
+      return { ok: false, error: HAS_MORE_ERROR };
+    }
+    const eventsField = ownData(batch, "events");
+    if (eventsField === null || !eventsField.present) {
+      return { ok: false, error: "sync batch events must be an own data property" };
+    }
+    const cursorField = ownData(batch, "cursor");
+    if (cursorField === null || !cursorField.present) {
+      return { ok: false, error: "sync batch cursor must be an own data property" };
+    }
+    const statusField = ownData(batch, "status");
+    if (statusField === null) {
+      return { ok: false, error: "sync batch status must be an own data property" };
+    }
+    const detailField = ownData(batch, "detail");
+    if (detailField === null) {
+      return { ok: false, error: "sync batch detail must be an own data property" };
+    }
+
+    let cursor: string | null;
+    try {
+      cursor = assertCursorSize(cursorField.value as string | null, "cursor");
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof LedgerError ? error.message : "cursor is not a cursor",
+      };
+    }
+
+    const eventsValue = eventsField.value;
+    if (!Array.isArray(eventsValue)) {
+      return { ok: false, error: "events: must be an array" };
+    }
+    const length = Object.getOwnPropertyDescriptor(eventsValue, "length")?.value;
+    if (typeof length === "number" && length > MAX_SYNC_BATCH_EVENTS) {
+      return { ok: false, error: `sync batch exceeds ${MAX_SYNC_BATCH_EVENTS} events` };
+    }
+
+    const errors: string[] = [];
+    const cloned = cloneExactJson(eventsValue, "events", BATCH_JSON_LIMITS, errors);
+    if (cloned === undefined || !Array.isArray(cloned)) {
+      return { ok: false, error: batchShapeError(errors) };
+    }
+    const encoded = new TextEncoder().encode(JSON.stringify(cloned));
+    if (encoded.byteLength > MAX_SYNC_BATCH_BYTES) {
+      return { ok: false, error: `sync batch exceeds ${MAX_SYNC_BATCH_BYTES} bytes` };
+    }
+
+    // The snapshot must not inherit hostile completion/status fields from Object.prototype.
+    const snapshot = Object.assign(Object.create(null), {
+      events: cloned as unknown as CaptureEventInput[],
+      cursor,
+      ...(hasMoreField.present ? { has_more: hasMoreField.value as boolean } : {}),
+      ...(statusField.present && (statusField.value === "ok" || statusField.value === "unavailable")
+        ? { status: statusField.value }
+        : {}),
+      ...(detailField.present && typeof detailField.value === "string"
+        ? { detail: detailField.value }
+        : {}),
+    }) as SyncBatch;
+    return { ok: true, value: Object.freeze(snapshot) };
+  } catch {
+    return { ok: false, error: "sync batch could not be read as plain data" };
+  }
 }
 
 /**
@@ -163,6 +247,9 @@ export function runBatch(
   source?: SourceAdmission,
   context?: SourceTombstoneContext,
 ): RunResult {
+  const ingress = ingressBatch(batch);
+  if (!ingress.ok) return refusedRun(ingress.error, null);
+
   const result: RunResult = {
     stored: 0,
     duplicates: 0,
@@ -170,16 +257,10 @@ export function runBatch(
     proposals_created: 0,
     withdrawn: 0,
     retractions_filed: 0,
-    cursor: batch.cursor,
+    cursor: ingress.value.cursor,
   };
 
-  const budget = batchBudgetRefusal(batch);
-  if (budget !== null) {
-    result.errors.push(budget);
-    return result;
-  }
-
-  for (const input of batch.events) {
+  for (const input of ingress.value.events) {
     try {
       const event = processEvent(db, input, grants, source, context);
       result.stored += event.stored;
@@ -229,7 +310,7 @@ function batchRefusal(
       return `${connector_id}: batch carries a kind the manifest does not declare`;
     }
   }
-  return batchBudgetRefusal(batch);
+  return null;
 }
 
 function refusedRun(reason: string, cursor: string | null): RunResult {
@@ -505,26 +586,15 @@ async function runConnector(
       ? checkpoint.backfill_cursor
       : storedPrevious;
 
-  let batch: SyncBatch;
-  let hasMore: boolean | undefined;
+  let received: SyncBatch;
   try {
-    const received = await withDeadline(
+    received = await withDeadline(
       mode === "backfill"
         ? connector.backfill(previous)
         : connector.sync(previous),
       CONNECTOR_OPERATION_DEADLINE_MS,
       `${mode} timed out`,
     );
-    hasMore = batchHasMore(received);
-    // Retain the accepted scalar rather than consulting the provider again
-    // after event/receipt processing has begun.
-    batch = Object.freeze({
-      events: received.events,
-      cursor: received.cursor,
-      ...(received.status === undefined ? {} : { status: received.status }),
-      ...(received.detail === undefined ? {} : { detail: received.detail }),
-      ...(hasMore === undefined ? {} : { has_more: hasMore }),
-    });
   } catch (error) {
     const result = refusedRun(errorText(error), previous);
     const status: ConnectionRunStatus = isUnavailable(error, null)
@@ -533,19 +603,20 @@ async function runConnector(
     return { result: persistRun(db, connector_id, source_key, mode, previous, previous, result, status), terminal: false };
   }
 
+  const ingress = ingressBatch(received);
+  if (!ingress.ok) {
+    const result = refusedRun(ingress.error, previous);
+    return { result: persistRun(db, connector_id, source_key, mode, previous, previous, result, "refused"), terminal: false };
+  }
+  const batch = ingress.value;
+  const hasMore = batch.has_more;
+
   if (batch.status === "unavailable") {
     const result = refusedRun(
       batch.detail ?? `${connector_id}: connector unavailable`,
       previous,
     );
     return { result: persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "unavailable"), terminal: false };
-  }
-
-  try {
-    assertCursorSize(batch.cursor, "cursor");
-  } catch (error) {
-    const result = refusedRun(errorText(error), previous);
-    return { result: persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "refused"), terminal: false };
   }
 
   const refusal = batchRefusal(manifest, connector_id, batch);
