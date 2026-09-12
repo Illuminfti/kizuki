@@ -290,7 +290,11 @@ export function inspectLedgerHealth(
       });
     }
     if (schemaVersion >= 24) {
-      const allowed = schemaVersion >= 26 ? "('event', 'connector')" : "('event')";
+      const allowed = schemaVersion >= 27
+        ? "('event', 'connector', 'record')"
+        : schemaVersion >= 26
+          ? "('event', 'connector')"
+          : "('event')";
       const invalidKind = oneShotGet<{ receipt_id: string }>(
         db,
         `SELECT receipt_id FROM event_purge_proofs

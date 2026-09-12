@@ -224,6 +224,38 @@ describe("purgeEvents", () => {
     db.close();
   });
 
+  test("purges by source_record_id and records selector_kind=record", () => {
+    const db = openLedger(":memory:");
+    const target = storedEvent(db, event("record-target"));
+    storedEvent(db, event("keep"));
+    const receipts = purgeEvents(
+      db,
+      temporaryVault(),
+      { source_record_id: "record-target" },
+      "record request",
+    ).receipts;
+    expect(receipts.map(({ event_id }) => event_id)).toEqual([target.event_id]);
+    expect(count(db)).toBe(1);
+    expect(
+      db.query<{ selector_kind: string | null }, []>(
+        "SELECT selector_kind FROM event_purge_proofs ORDER BY receipt_id",
+      ).all().map(({ selector_kind }) => selector_kind),
+    ).toEqual(["record"]);
+    expect(() =>
+      db.query(
+        `INSERT INTO event_purges (receipt_id, event_id, connector_id, reason, purged_at)
+         VALUES ('01JCPURGEPROOF0000000000009', '01JCPURGEEVENT0000000000009', 'fixture', 'legacy', '2026-09-06T12:00:00.000Z')`,
+      ).run(),
+    ).not.toThrow();
+    expect(() =>
+      db.query(
+        `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
+         VALUES ('01JCPURGEPROOF0000000000009', ?, 'legacy-record', 'subject')`,
+      ).run("d".repeat(64)),
+    ).toThrow();
+    db.close();
+  });
+
   test("purges only events matching a subject handle", () => {
     const db = openLedger(":memory:");
     const matching = storedEvent(db, event("matching", {
