@@ -342,6 +342,19 @@ function emptyOutcome(): PurgeOutcome {
   };
 }
 
+function recordedSelectorKind(filter: PurgeFilter): "event" | null {
+  if (filter.event_id === undefined) return null;
+  if (
+    filter.source_key !== undefined ||
+    filter.connector_id !== undefined ||
+    filter.subject_handle !== undefined ||
+    filter.source_record_id !== undefined
+  ) {
+    return null;
+  }
+  return "event";
+}
+
 function assertAliasExpansionUnavailable(filter: PurgeFilter, includeAliases: boolean): void {
   if (includeAliases && filter.subject_handle !== undefined) {
     throw new PurgeError(
@@ -1009,9 +1022,9 @@ function purgeEventsOwned(
          (receipt_id, event_id, connector_id, reason, purged_at)
        VALUES (?, ?, ?, ?, ?)`,
     );
-    const insertProof = db.query<never, [string, string, string]>(
-      `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id)
-       VALUES (?, ?, ?)`,
+    const insertProof = db.query<never, [string, string, string, string | null]>(
+      `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
+       VALUES (?, ?, ?, ?)`,
     );
     const deleteEvent = db.query<never, [string]>(
       "DELETE FROM events WHERE event_id = ?",
@@ -1028,6 +1041,7 @@ function purgeEventsOwned(
       left.page_path < right.page_path ? -1 : left.page_path > right.page_path ? 1 : 0,
     );
 
+    const selectorKind = recordedSelectorKind(filter);
     for (const candidate of candidates) {
       const receipt: PurgeReceipt = {
         receipt_id: receipts.length === 0 ? batchReceipt : mint(options.ids),
@@ -1043,7 +1057,7 @@ function purgeEventsOwned(
         receipt.reason,
         receipt.purged_at,
       );
-      insertProof.run(receipt.receipt_id, candidate.content_hash, candidate.source_record_id);
+      insertProof.run(receipt.receipt_id, candidate.content_hash, candidate.source_record_id, selectorKind);
       db.query("INSERT INTO purge_batch_receipts VALUES(?,?)").run(receipt.receipt_id, batchReceipt);
       const deleted = deleteEvent.run(candidate.event_id);
       assertDeleted(deleted.changes, candidate.event_id);

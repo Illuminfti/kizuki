@@ -174,6 +174,9 @@ export function assertLedgerSchema(db: Database, expectedVersion: number): void 
     if (!tableExists(db, "event_purge_proofs")) {
       throw new LedgerStoreError("corrupt", "event_purge_proofs is missing");
     }
+    if (expectedVersion >= 24 && !tableColumns(db, "event_purge_proofs").includes("selector_kind")) {
+      throw new LedgerStoreError("corrupt", "event_purge_proofs is missing selector_kind");
+    }
   }
 }
 
@@ -279,6 +282,20 @@ export function inspectLedgerHealth(
         table: "event_purge_proofs",
         detail: `receipt ${missing.receipt_id} has no content-hash proof`,
       });
+    }
+    if (schemaVersion >= 24) {
+      const invalidKind = oneShotGet<{ receipt_id: string }>(
+        db,
+        `SELECT receipt_id FROM event_purge_proofs
+          WHERE selector_kind IS NOT NULL AND selector_kind != 'event' LIMIT 1`,
+      );
+      if (invalidKind !== null) {
+        failures.push({
+          kind: "row",
+          table: "event_purge_proofs",
+          detail: `receipt ${invalidKind.receipt_id} has an invalid selector_kind`,
+        });
+      }
     }
   }
 

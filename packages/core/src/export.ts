@@ -237,6 +237,7 @@ interface PurgeProofRow {
   receipt_id: string;
   content_hash: string;
   source_record_id: string;
+  selector_kind: string | null;
 }
 
 interface ClaimRow {
@@ -1067,7 +1068,7 @@ function* pagePurgeProofs(db: Database): Generator<PurgeProofRow> {
   while (true) {
     const rows = db
       .query<PurgeProofRow, [string, number]>(
-        `SELECT receipt_id, content_hash, source_record_id FROM event_purge_proofs
+        `SELECT receipt_id, content_hash, source_record_id, selector_kind FROM event_purge_proofs
          WHERE receipt_id > ? ORDER BY receipt_id LIMIT ?`,
       )
       .all(after, PAGE);
@@ -1954,11 +1955,12 @@ function assertBackupFormat(manifest: ExportManifest): void {
   // intent/projection and restore an empty recovery state. No journal is copied.
   // Ledger22 adds event_purge_proofs beside existing event_purges rows.
   // Ledger23 adds sticky checkpoint backfill_complete; omitted rows restore as 0.
+  // Ledger24 adds optional event-only selector_kind on proofs; omitted rows restore as NULL.
   // Future migrations must make their own explicit compatibility decision.
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
       versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
       versions.ledger !== 19 && versions.ledger !== 20 &&
-      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23))) {
+      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24))) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -2050,10 +2052,19 @@ function insertPurgeProof(db: Database, raw: Record<string, unknown>): void {
   if (sourceRecordId.length < 1 || sourceRecordId.length > EVENT_LIMITS.sourceRecordIdBytes) {
     throw new Error("source_record_id: invalid length");
   }
+  const selectorKind = raw.selector_kind;
+  if (selectorKind !== undefined && selectorKind !== null && selectorKind !== "event") {
+    throw new Error("selector_kind: must be event or omitted");
+  }
   db.query(
-    `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id)
-     VALUES (?, ?, ?)`,
-  ).run(asString(raw.receipt_id, "receipt_id"), hash, sourceRecordId);
+    `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
+     VALUES (?, ?, ?, ?)`,
+  ).run(
+    asString(raw.receipt_id, "receipt_id"),
+    hash,
+    sourceRecordId,
+    selectorKind === "event" ? "event" : null,
+  );
 }
 
 function restoreClaimContentHash(raw: Record<string, unknown>): string {

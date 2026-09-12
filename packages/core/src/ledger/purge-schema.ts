@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { EVENT_LIMITS } from "../contracts/event";
-import { tableExists } from "./schema";
+import { tableColumns, tableExists } from "./schema";
 
 /**
  * RFC 0002 §18.1 v5 fragment owned by purge-totality: `purge_ops` only.
@@ -41,5 +41,15 @@ export function applyEventPurgeIntegrityV22(db: Database): void {
       ),
       source_record_id TEXT NOT NULL CHECK (length(source_record_id) BETWEEN 1 AND ${EVENT_LIMITS.sourceRecordIdBytes})
     ) STRICT;
+  `);
+}
+
+/** Ledger v24: event-only selector provenance. Other families stay unrecorded. */
+export function applyEventPurgeSelectorKindV24(db: Database): void {
+  if (tableColumns(db, "event_purge_proofs").includes("selector_kind")) return;
+  db.exec(`
+    ALTER TABLE event_purge_proofs
+      ADD COLUMN selector_kind TEXT
+      CHECK (selector_kind IS NULL OR selector_kind = 'event');
   `);
 }
