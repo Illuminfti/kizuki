@@ -329,6 +329,9 @@ describe("help", () => {
   test("import structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["import", "--help", "--json"], ["help", "import", "--json"]] as const) {
+  test("models structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["models", "--help", "--json"], ["help", "models", "--json"]] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
@@ -527,6 +530,21 @@ describe("help", () => {
       [["import", "estate-slice", "--dry-run", "--dry-run"], "repeated flag --dry-run"],
       [["import", "estate-slice", "--json=true"], "flag --json does not take a value"],
       [["import", "markdown-folder", "--source"], "missing value for --source"],
+      expect(body.data.name).toBe("models");
+      expect(body.data.options).toEqual(["--from", "--sha256", "--bytes"]);
+      expect(body.data.flags).toEqual(["--catalog"]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "models", "--help");
+    expect(text.stdout).toContain("--from");
+    expect(text.stdout).toContain("--sha256");
+    expect(text.stdout).toContain("--bytes");
+    expect(text.stdout).toContain("--catalog");
+    for (const [args, diagnostic] of [
+      [["models", "list", "--nope"], "unknown option --nope"],
+      [["models", "list", "--catalog", "--catalog"], "repeated flag --catalog"],
+      [["models", "list", "--catalog=true"], "flag --catalog does not take a value"],
+      [["models", "pull", "--from"], "missing value for --from"],
     ] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(2);
@@ -552,6 +570,7 @@ describe("help", () => {
       expect(result.stderr).toContain("invalid_request:");
       expect(result.stderr).toContain("usage: agent");
       expect(result.stderr).toContain("usage: kizuki import");
+      expect(result.stderr).toContain("usage: kizuki models");
     }
   });
 
