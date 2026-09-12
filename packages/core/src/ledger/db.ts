@@ -4,7 +4,7 @@ import { configureLedgerWalLifecycle } from "./wal-lifecycle";
 import { applySourceGrantsV11, applyNativeOwnerEvidenceV12, applySourceStoresV13, applySourceErasureV14, applySourceReceiptIntegrityV15 } from "./source-grants-schema";
 import { applyAgentsV9 } from "../agents/schema";
 import { applyCanonV4, initCanon } from "../canon/schema";
-import { applyClaimsV3 } from "../claims/schema";
+import { applyClaimsV3, repairClaimsCompatibility } from "../claims/schema";
 import { applyDerivedV10 } from "../derived";
 import { applyServeV7, initServe } from "../serve/schema";
 import { applySensitivityV6 } from "../sensitivity/schema";
@@ -280,6 +280,7 @@ function migrate(db: Database): void {
   if (pending.length === 0) {
     db.transaction(() => {
       applyDerivedV10(db);
+      repairClaimsCompatibility(db);
     }).immediate();
     assertLedgerSchema(db, latest);
     return;
@@ -291,8 +292,25 @@ function migrate(db: Database): void {
       migration.apply?.(db);
       writeSchemaVersion(db, migration.version);
     }
+    repairClaimsCompatibility(db);
   }).immediate();
   assertLedgerSchema(db, latest);
+}
+
+export function ensureLedgerInitialized(
+  db: Database,
+  options: { busyTimeoutMs?: number } = {},
+): void {
+  const timeout = options.busyTimeoutMs ?? LEDGER_BUSY_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 5000) {
+    throw new TypeError("invalid ledger busy timeout");
+  }
+  db.exec(`PRAGMA busy_timeout = ${timeout}`);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA foreign_keys = ON");
+  migrate(db);
+  initServe(db);
+  initCanon(db);
 }
 
 export function openLedger(dbPath: string, options: { busyTimeoutMs?: number } = {}): Database {
@@ -305,12 +323,7 @@ export function openLedger(dbPath: string, options: { busyTimeoutMs?: number } =
     // checkpointing and removal. Immutable previews must never repair journals.
     configureLedgerWalLifecycle(db, dbPath);
     // Apply before migrations: concurrent process startup is a writer too.
-    db.exec(`PRAGMA busy_timeout = ${timeout}`);
-    db.exec("PRAGMA journal_mode = WAL");
-    db.exec("PRAGMA foreign_keys = ON");
-    migrate(db);
-    initServe(db);
-    initCanon(db);
+    ensureLedgerInitialized(db, { busyTimeoutMs: timeout });
     return db;
   } catch (error) {
     db.close();

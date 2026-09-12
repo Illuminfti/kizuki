@@ -1,7 +1,10 @@
 import type { Database } from "bun:sqlite";
+import { createRequire } from "node:module";
 import { tableExists } from "../ledger/schema";
 import { canonicalizeProducer, isProducer } from "../contracts/proposal";
 import { claimKey, contentSignature } from "./hash";
+
+const requireFromClaims = createRequire(import.meta.url);
 
 /** RFC 0002 §18.1 — claims-core widens durable state to schema v3. */
 export const CLAIMS_SCHEMA_VERSION = 3;
@@ -564,12 +567,20 @@ function emptyLiveSignature(db: Database): boolean {
   }
 }
 
-/** Cheap no-op once v3 exists. `applyClaimsV3` stays the migration path. */
+/**
+ * Low-level claims compatibility repairs. The ledger migrator is the only
+ * schema owner; `initClaims` must not call these directly.
+ */
+export function repairClaimsCompatibility(db: Database): void {
+  if (!claimsSurfaceReady(db)) applyClaimsV3(db);
+  if (!stagingIdempotencyReady(db)) applyLegacyStagingIdempotency(db);
+}
+
+/** Cheap no-op on a healthy current ledger. Otherwise request the migrator. */
 export function initClaims(db: Database): void {
-  if (!claimsSurfaceReady(db)) {
-    applyClaimsV3(db);
-  }
-  if (!stagingIdempotencyReady(db)) {
-    applyLegacyStagingIdempotency(db);
-  }
+  if (claimsSurfaceReady(db) && stagingIdempotencyReady(db)) return;
+  const { ensureLedgerInitialized } = requireFromClaims("../ledger/db") as {
+    ensureLedgerInitialized: (database: Database) => void;
+  };
+  ensureLedgerInitialized(db);
 }
