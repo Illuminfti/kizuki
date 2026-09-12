@@ -213,6 +213,10 @@ export class ScriptedTelegramApi implements TelegramApi {
     this.#reachable = false;
   }
 
+  reconnectNetwork(): void {
+    this.#reachable = true;
+  }
+
   async #collect(
     flow: SignInFlow,
     script: ScriptedSignIn,
