@@ -194,11 +194,15 @@ This context does not decide:
 - the representation and compilation format for reusable agent skills; or
 - the confidence, review, and expiry rules for inferred taste.
 
+## Settled design decisions
+
+Status: designed
+
 RFC 0002 decided the former open items: materiality uses `CONFLICT_MARGIN`
 (§5.4); semantic retrieval is a port with a lexical floor and an optional
 embedded engine (§9); working-model updates and canon writes are one
 receipted path (§4); provider precedence follows the authority order in
 §5.
 
-Those decisions require their own evidence and acceptance criteria. Agents
-must not infer them from this product context.
+This section records the binding design. Implementation status requires
+separate evidence and acceptance criteria.

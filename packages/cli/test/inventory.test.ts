@@ -96,6 +96,21 @@ test("connector registry optional_package names resolve to workspace exports", (
   }
 });
 
+function connectorInventoryErrors(markdown: string): string[] {
+  const section = markdown.split(/^## CLI-enrollable sources\r?$/m)[1]?.split(/^## /m)[0] ?? "";
+  const documented = [...section.matchAll(/^\|[ \t]*`([^`]+)`[ \t]*\|/gm)].map((match) => match[1]!);
+  const registered = new Set(listConnectorDescriptors().map(({ id }) => id.replace(/^kizuki\.connector\./, "kizuki.")));
+  const errors: string[] = [];
+  for (const id of documented) {
+    if (!registered.has(id)) errors.push(`unregistered documented connector ${id}`);
+  }
+  for (const id of registered) {
+    if (!documented.includes(id)) errors.push(`undocumented registered connector ${id}`);
+  }
+  if (new Set(documented).size !== documented.length) errors.push("duplicate documented connector IDs");
+  return errors.sort();
+}
+
 test("README and connect inventory match the live workspace and registry", () => {
   const readme = readFileSync(join(ROOT, "README.md"), "utf8");
   const connect = readFileSync(join(ROOT, "docs/connect.md"), "utf8");
@@ -104,13 +119,21 @@ test("README and connect inventory match the live workspace and registry", () =>
   expect(readme).toContain("Screenpipe");
   expect(connect).toContain("## Screenpipe");
   expect(workspacePackages().length).toBeGreaterThan(4);
-  const missing = listConnectorDescriptors()
-    .map((port) => port.id)
-    .filter((id) => {
-      const published = id.replace(".connector.", ".");
-      return !connect.includes(`\`${published}\``) && !connect.includes(`\`${id}\``);
-    });
-  expect(missing).toEqual([]);
+  expect(connectorInventoryErrors(connect)).toEqual([]);
+});
+
+test("a stale connector inventory row is rejected while every live row remains", () => {
+  const connect = readFileSync(join(ROOT, "docs/connect.md"), "utf8");
+  const stale = connect.replace("| `kizuki.markdown-folder`", "| `kizuki.retired-source` | retired | unsupported |\n| `kizuki.markdown-folder`");
+  expect(connectorInventoryErrors(stale)).toEqual(["unregistered documented connector kizuki.retired-source"]);
+});
+
+test("a connector mentioned outside the inventory cannot replace a missing live row", () => {
+  const connect = readFileSync(join(ROOT, "docs/connect.md"), "utf8");
+  const missing = connect.replace(/^\| `kizuki\.beeper` \|.*\n/m, "");
+  expect(connectorInventoryErrors(`${missing}\nHistorical mention: \`kizuki.beeper\`.\n`)).toEqual([
+    "undocumented registered connector kizuki.beeper",
+  ]);
 });
 
 const STATUSES = new Set(["shipped", "designed", "direction"]);
@@ -238,6 +261,12 @@ const TAGGED_SECTIONS = [
     status: "direction",
     doc: "docs/product-context.md",
     heading: "Explicit non-decisions",
+  },
+  {
+    id: "product.settled-decisions",
+    status: "designed",
+    doc: "docs/product-context.md",
+    heading: "Settled design decisions",
   },
   {
     id: "stranger-proof.sqlite-engine",
@@ -494,6 +523,32 @@ test.each([
       return entries;
     },
   },
+  {
+    name: "product.settled-decisions tag removed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Settled design decisions\n\nStatus: designed\n\n", "## Settled design decisions\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "product.settled-decisions tag shipped",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Settled design decisions\n\nStatus: designed", "## Settled design decisions\n\nStatus: shipped"));
+      return entries;
+    },
+  },
+  {
+    name: "product.settled-decisions tag direction",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Settled design decisions\n\nStatus: designed", "## Settled design decisions\n\nStatus: direction"));
+      return entries;
+    },
+  },
+  {
+    name: "product.settled-decisions inventory entry removed",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "product.settled-decisions"),
+  },
 ])("$name fails the tagged-section check", ({ mutate }) => {
   const inventory = JSON.parse(readFileSync(join(ROOT, "docs/capability-status.json"), "utf8")) as {
     entries: CapabilityStatusEntry[];
@@ -512,13 +567,27 @@ const CANON_APPROVAL_PHRASES = [
   /owner approval for (?:canon|consequential truth)/i,
 ];
 
+function canonApprovalPhrases(text: string): RegExp[] {
+  const normalized = text.replace(/\s+/g, " ");
+  return CANON_APPROVAL_PHRASES.filter((phrase) => phrase.test(normalized));
+}
+
 test("truth-maintenance docs do not treat human approval as the canon path", () => {
   const hits: string[] = [];
   for (const rel of TRUTH_MAINTENANCE_DOCS) {
     const text = readFileSync(join(ROOT, rel), "utf8");
-    for (const phrase of CANON_APPROVAL_PHRASES) {
-      if (phrase.test(text)) hits.push(`${rel}: ${phrase}`);
+    for (const phrase of canonApprovalPhrases(text)) {
+      hits.push(`${rel}: ${phrase}`);
     }
   }
   expect(hits).toEqual([]);
+});
+
+test.each([
+  "explicit human\napproval\tfor consequential truth",
+  "human approval for\nconsequential truth",
+  "owner\napproval for canon",
+  "owner approval for consequential\ntruth",
+])("wrapped canon approval language is rejected: %j", (text) => {
+  expect(canonApprovalPhrases(text).length).toBeGreaterThan(0);
 });
