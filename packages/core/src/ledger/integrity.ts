@@ -290,10 +290,11 @@ export function inspectLedgerHealth(
       });
     }
     if (schemaVersion >= 24) {
+      const allowed = schemaVersion >= 26 ? "('event', 'connector')" : "('event')";
       const invalidKind = oneShotGet<{ receipt_id: string }>(
         db,
         `SELECT receipt_id FROM event_purge_proofs
-          WHERE selector_kind IS NOT NULL AND selector_kind != 'event' LIMIT 1`,
+          WHERE selector_kind IS NOT NULL AND selector_kind NOT IN ${allowed} LIMIT 1`,
       );
       if (invalidKind !== null) {
         failures.push({

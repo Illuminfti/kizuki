@@ -126,6 +126,12 @@ describe("purgeEvents", () => {
         .get(eventId)?.selector_kind ?? null;
     expect(kinds(target.event_id)).toBe("event");
     expect(kinds(lone.event_id)).toBeNull();
+    const keep = db
+      .query<{ event_id: string }, [string, string]>(
+        "SELECT event_id FROM event_purges WHERE event_id NOT IN (?, ?) ORDER BY event_id",
+      )
+      .get(target.event_id, lone.event_id);
+    expect(kinds(keep!.event_id)).toBe("connector");
     const mailProofs = db
       .query<{ selector_kind: string | null }, []>(
         "SELECT selector_kind FROM event_purge_proofs ORDER BY receipt_id",
@@ -133,7 +139,8 @@ describe("purgeEvents", () => {
       .all()
       .map((row) => row.selector_kind);
     expect(mailProofs.filter((kind) => kind === "event")).toEqual(["event"]);
-    expect(mailProofs.filter((kind) => kind === null).length).toBe(2);
+    expect(mailProofs.filter((kind) => kind === "connector")).toEqual(["connector"]);
+    expect(mailProofs.filter((kind) => kind === null)).toEqual([null]);
     db.close();
     const reopened = openLedger(path);
     expect(
@@ -152,6 +159,14 @@ describe("purgeEvents", () => {
         )
         .get(lone.event_id),
     ).toEqual({ selector_kind: null });
+    expect(
+      reopened
+        .query<{ selector_kind: string | null }, [string]>(
+          `SELECT selector_kind FROM event_purge_proofs
+            WHERE receipt_id = (SELECT receipt_id FROM event_purges WHERE event_id = ?)`,
+        )
+        .get(keep!.event_id),
+    ).toEqual({ selector_kind: "connector" });
     reopened.close();
   });
 
@@ -193,6 +208,11 @@ describe("purgeEvents", () => {
     expect(receipts.every(({ receipt_id }) => ULID.test(receipt_id))).toBe(true);
     expect(receipts.every(({ connector_id }) => connector_id === "mail")).toBe(true);
     expect(count(db)).toBe(1);
+    expect(
+      db.query<{ selector_kind: string | null }, []>(
+        "SELECT selector_kind FROM event_purge_proofs ORDER BY receipt_id",
+      ).all().map(({ selector_kind }) => selector_kind),
+    ).toEqual(["connector", "connector"]);
     expect(
       db
         .query<{ receipt_id: string }, []>(
