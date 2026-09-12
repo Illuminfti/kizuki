@@ -106,10 +106,10 @@ describe("completed purge history backup", () => {
     expect(leftover.connector_id).toBe("fixture");
     await runPurge(f.db, f.vault, { event_id: event.event_id }, "retire fixture");
     await runPurge(f.db, f.vault, { connector_id: "fixture", event_id: other.event_id }, "retire fixture");
-    await runPurge(f.db, f.vault, { connector_id: "fixture" }, "retire fixture");
+    await runPurge(f.db, f.vault, { source_record_id: leftover.source_record_id }, "retire fixture");
     const before = f.db.query("SELECT receipt_id, selector_kind FROM event_purge_proofs ORDER BY receipt_id").all();
     expect(before.map((row) => (row as { selector_kind: string | null }).selector_kind).sort()).toEqual(
-      ["event", "connector", null].sort(),
+      ["event", "record", null].sort(),
     );
     exportVault(f.db, f.vault, f.backup);
     restoreVault(f.backup, f.restored);

@@ -76,3 +76,26 @@ export function applyEventPurgeSelectorKindV26(db: Database): void {
     ALTER TABLE event_purge_proofs_v26 RENAME TO event_purge_proofs;
   `);
 }
+
+/** Ledger v27: source-record-only selector provenance. Compound selectors stay unrecorded. */
+export function applyEventPurgeSelectorKindV27(db: Database): void {
+  if (!tableExists(db, "event_purge_proofs")) return;
+  const sql = db.query<{ sql: string | null }, []>(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'event_purge_proofs'",
+  ).get()?.sql ?? "";
+  if (sql.includes("'record'")) return;
+  db.exec(`
+    CREATE TABLE event_purge_proofs_v27 (
+      receipt_id TEXT PRIMARY KEY REFERENCES event_purges(receipt_id),
+      content_hash TEXT NOT NULL CHECK (
+        length(content_hash) = 64 AND content_hash NOT GLOB '*[^0-9a-f]*'
+      ),
+      source_record_id TEXT NOT NULL CHECK (length(source_record_id) BETWEEN 1 AND ${EVENT_LIMITS.sourceRecordIdBytes}),
+      selector_kind TEXT CHECK (selector_kind IS NULL OR selector_kind IN ('event', 'connector', 'record'))
+    ) STRICT;
+    INSERT INTO event_purge_proofs_v27 (receipt_id, content_hash, source_record_id, selector_kind)
+      SELECT receipt_id, content_hash, source_record_id, selector_kind FROM event_purge_proofs;
+    DROP TABLE event_purge_proofs;
+    ALTER TABLE event_purge_proofs_v27 RENAME TO event_purge_proofs;
+  `);
+}
