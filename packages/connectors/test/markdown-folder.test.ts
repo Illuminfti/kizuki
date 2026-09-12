@@ -713,11 +713,13 @@ describe("markdown folder packed cursor", () => {
       expect(idle.events).toEqual([]);
       expect(JSON.parse(idle.cursor ?? "{}")).toHaveProperty("pack");
 
-      await unlink(path.join(root, names[0]!));
+      const deletedName = names[0];
+      if (deletedName === undefined) throw new Error("expected a captured file");
+      await unlink(path.join(root, deletedName));
       const removed = await connector.sync(idle.cursor);
       expect(
         removed.events.map((event) => [event.source_record_id, event.deleted]),
-      ).toEqual([[names[0], true]]);
+      ).toEqual([[deletedName, true]]);
       const again = await connector.sync(removed.cursor);
       expect(again.events).toEqual([]);
     } finally {
