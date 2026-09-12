@@ -8,6 +8,55 @@ import { createHelpers } from "./helpers";
 const helpers = createHelpers();
 afterEach(helpers.cleanup);
 
+function authoritativeState(vault: string) {
+  const ctx = openLedgerRead(vault);
+  try {
+    return {
+      events: ctx.db.query("SELECT event_id, source_record_id, content_hash FROM events ORDER BY event_id").all(),
+      claims: ctx.db.query("SELECT claim_id FROM claims ORDER BY claim_id").all(),
+      receipts: ctx.db.query("SELECT receipt_id FROM canon_receipts ORDER BY receipt_id").all(),
+    };
+  } finally {
+    ctx.close();
+  }
+}
+
+function eventDocIds(vault: string): Record<string, string> {
+  const ctx = openLedgerRead(vault);
+  try {
+    return Object.fromEntries(
+      ctx.db.query<{ source_record_id: string; event_id: string }, []>(
+        "SELECT source_record_id, event_id FROM events",
+      ).all().map((row) => [row.source_record_id, `event:${row.event_id}`]),
+    );
+  } finally {
+    ctx.close();
+  }
+}
+
+async function lexicalEventIds(
+  port: { search: (query: {
+    text: string;
+    mode: "lexical";
+    scope: { kinds: ["event"] };
+    ceiling: "private";
+    limit: number;
+    deadline_ms: number;
+  }) => Promise<{ hits: { doc_id: string }[] }> },
+  text: string,
+  limit: number,
+): Promise<string[]> {
+  const result = await port.search({
+    text,
+    mode: "lexical",
+    scope: { kinds: ["event"] },
+    ceiling: "private",
+    limit,
+    deadline_ms: 5_000,
+  });
+  return result.hits.map((hit) => hit.doc_id);
+}
+
 test("offline public configured-engine rebuild preserves query results and survives refused rebuild", () => {
   const setup = helpers.tempVault();
   expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode).toBe(0);
@@ -178,11 +227,31 @@ test("rebuild --port targets an unbound installed engine without rewriting the d
     store: "kizuki.retrieval.embedded-pg",
   });
   expect(existsSync(configPath)).toBe(false);
+  const beforeState = authoritativeState(setup.vault);
+  const docs = eventDocIds(setup.vault);
+  expect(docs["ada.md"]).toBeDefined();
+  expect(docs["grace.md"]).toBeDefined();
+  expect(docs["linus.md"]).toBeDefined();
+  const expectedGrace = [docs["ada.md"]!, docs["grace.md"]!].sort();
+  const expectedLibrary = [docs["ada.md"]!];
+  const expectedLinus = [docs["linus.md"]!];
 
   const { openConfiguredRetrieval } = await import("../src/retrieval-runtime");
+  const searchGolden = async (port: NonNullable<Awaited<ReturnType<typeof openConfiguredRetrieval>>>) => {
+    const grace = await lexicalEventIds(port, "grace", 2);
+    const library = await lexicalEventIds(port, "library", 2);
+    const linus = await lexicalEventIds(port, "linus", 2);
+    expect([...grace].sort()).toEqual(expectedGrace);
+    expect(library).toEqual(expectedLibrary);
+    expect(linus).toEqual(expectedLinus);
+    return { grace, library, linus };
+  };
+
   const port = await openConfiguredRetrieval(setup.vault, "kizuki.retrieval.embedded-pg");
   expect(port).toBeDefined();
+  let firstRecall: { grace: string[]; library: string[]; linus: string[] };
   try {
+    firstRecall = await searchGolden(port!);
     const hits = await port!.search({
       text: "acme",
       mode: "lexical",
@@ -199,6 +268,16 @@ test("rebuild --port targets an unbound installed engine without rewriting the d
   const retry = helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.embedded-pg", "--json");
   expect(retry.exitCode, retry.stdout + retry.stderr).toBe(0);
   expect(existsSync(configPath)).toBe(false);
+  expect(authoritativeState(setup.vault)).toEqual(beforeState);
+
+  const reopened = await openConfiguredRetrieval(setup.vault, "kizuki.retrieval.embedded-pg");
+  expect(reopened).toBeDefined();
+  try {
+    const secondRecall = await searchGolden(reopened!);
+    expect(secondRecall).toEqual(firstRecall);
+  } finally {
+    await reopened?.close();
+  }
 
   writeFileSync(configPath, '[ports]\nretrieval = "kizuki.retrieval.embedded-pg"\n');
   const floor = helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.fts5", "--json");
