@@ -293,6 +293,48 @@ describe("help", () => {
     }
   });
 
+  test("audit structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["audit", "--help", "--json"], ["help", "audit", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: {
+          name: string;
+          options: string[];
+          flags: string[];
+          defaults: Record<string, string>;
+          bounds: Record<string, string>;
+          irreversible: boolean;
+        };
+      };
+      expect(body.data.name).toBe("audit");
+      expect(body.data.options).toEqual(["--since", "--page", "--writer", "--limit", "--offset"]);
+      expect(body.data.flags).toEqual(["--contested", "--ambiguous", "--reverted", "--json", "--list"]);
+      expect(body.data.defaults).toEqual({ "--limit": "5000", "--offset": "0" });
+      expect(body.data.bounds).toEqual({ "--since": "TIME", "--limit": "1..5000", "--offset": "N" });
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "audit", "--help");
+    expect(text.stdout).toContain("--since  TIME");
+    expect(text.stdout).toContain("--limit  1..5000  default 5000");
+    expect(text.stdout).toContain("--contested");
+    for (const [args, diagnostic] of [
+      [["audit", "--nope"], "unknown option --nope"],
+      [["audit", "--json", "--json"], "repeated flag --json"],
+      [["audit", "--list=true"], "flag --list does not take a value"],
+      [["audit", "--since"], "missing value for --since"],
+      [["audit", "extra"], "invalid arguments"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki audit");
+    }
+  });
+
   test("recover structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["recover", "--help", "--json"], ["help", "recover", "--json"]] as const) {
