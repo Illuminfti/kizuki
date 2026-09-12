@@ -293,6 +293,40 @@ describe("help", () => {
     }
   });
 
+  test("agent structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["agent", "--help", "--json"], ["help", "agent", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
+      expect(body.data.name).toBe("agent");
+      expect(body.data.options).toEqual(["--grant", "--token-ref", "--operation-id"]);
+      expect(body.data.flags).toEqual(["--dry-run", "--json"]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "agent", "--help");
+    expect(text.stdout).toContain("--grant");
+    expect(text.stdout).toContain("--token-ref");
+    expect(text.stdout).toContain("--operation-id");
+    expect(text.stdout).toContain("--dry-run");
+    expect(text.stdout).toContain("--json");
+    for (const args of [
+      ["agent", "add", "--nope"],
+      ["agent", "add", "assistant", "--dry-run", "--dry-run"],
+      ["agent", "add", "--dry-run=true"],
+      ["agent", "add", "--grant"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("invalid_request:");
+      expect(result.stderr).toContain("usage: agent");
+    }
+  });
+
   test("recover structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["recover", "--help", "--json"], ["help", "recover", "--json"]] as const) {

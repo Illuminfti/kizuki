@@ -12,7 +12,12 @@ import { UsageError, parseArguments } from "../args";
 import { configPath, readConfig } from "../config";
 import { resolveVault } from "../context";
 import { jsonEnvelope } from "../output";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
+
+export const AGENT_SCHEMA = {
+  options: ["--grant", "--token-ref", "--operation-id"],
+  flags: ["--dry-run", "--json"],
+} as const satisfies CommandHelpSchema;
 
 const USAGE = "agent add NAME --grant FILE --token-ref file:/absolute/path --operation-id ID [--dry-run] [--json] | agent revoke NAME [--json]";
 const MAX_GRANT_BYTES = 32 * 1024;
@@ -79,13 +84,14 @@ export const agentCommand: Command = {
   name: "agent",
   usage: USAGE,
   summary: "connect a scoped agent through a private credential file, or revoke its access",
+  schema: AGENT_SCHEMA,
   async run(io, args): Promise<number> {
     const json = args.includes("--json");
     try {
       const action = args[0];
       if (action !== "add" && action !== "revoke") throw new UsageError(USAGE);
       const parsed = parseArguments(args.slice(1), action === "add" ? {
-        options: ["--grant", "--token-ref", "--operation-id"], flags: ["--dry-run", "--json"],
+        options: [...AGENT_SCHEMA.options], flags: [...AGENT_SCHEMA.flags],
       } : { flags: ["--json"] });
       if (parsed.positionals.length !== 1) throw new UsageError(USAGE);
       const name = parsed.positionals[0]!;
