@@ -1,4 +1,4 @@
-import { XApiConnector, createXApiConnector, inspectXApiState, type XApiConfig } from "@kizuki/connectors";
+import { XApiConnector, createXApiConnector, inspectXApiState, type XApiConfig, createMarkdownFolderConnector, MARKDOWN_FOLDER_CONNECTOR_ID, MAX_FILES, LEGACY_EVENTS_AUTH_MODES, LEGACY_EVENTS_CONNECTOR_ID, LEGACY_WIKI_AUTH_MODES, LEGACY_WIKI_CONNECTOR_ID, REGISTRY, getConnector, type MarkdownFolderConfig, type MarkdownFolderDeps } from "@kizuki/connectors";
 import { xApiClient, xApiRequiredFields, xApiStateConfig } from "./x-api";
 import type { ConnectionStateReader } from "@kizuki/core";
 import { GoogleCalendarConnector, createGoogleCalendarConnector, inspectGoogleCalendarState, type GoogleCalendarConnectorConfig } from "@kizuki/connector-google-calendar";
@@ -16,6 +16,7 @@ import type {
 } from "@kizuki/core";
 import {
   ConnectionStateStore,
+  EVENT_LIMITS,
   createStatePersister,
   enrollConnection,
   isPlainObject,
@@ -23,7 +24,6 @@ import {
   sourceCaptureAdmission,
   inspectSourceGrant,
 } from "@kizuki/core";
-import { LEGACY_EVENTS_AUTH_MODES, LEGACY_EVENTS_CONNECTOR_ID, LEGACY_WIKI_AUTH_MODES, LEGACY_WIKI_CONNECTOR_ID, REGISTRY, getConnector } from "@kizuki/connectors";
 import { TelegramConnector, type TelegramConnectorConfig, type TelegramDeps } from "@kizuki/connector-telegram";
 import { errorText } from "./output";
 import { tokenResolver, validTokenRef } from "./secrets";
@@ -46,6 +46,78 @@ export class ConnectionError extends Error {
 }
 
 const SOURCE_KEY = /^[0-9A-HJKMNPQRSTVWXYZ]{26}$/;
+const MARKDOWN_SHA256 = /^[0-9a-f]{64}$/;
+
+type HostConnectorFactoryDeps = Partial<TelegramDeps> & Partial<MarkdownFolderDeps>;
+
+/**
+ * Latest live Markdown identities for one enrolled source. Identifier and
+ * metadata only; never event text. Fail closed on an incompatible inventory.
+ */
+export function markdownCommittedIdentities(
+  db: Database,
+  sourceKey: string,
+): Array<[string, { sha256: string; size: number }]> {
+  if (!SOURCE_KEY.test(sourceKey)) {
+    throw new ConnectionError("markdown committed identities require a source key");
+  }
+  let rows: Array<{ relpath: string; sha256: unknown; size: unknown }>;
+  try {
+    rows = db
+      .query<{ relpath: string; sha256: unknown; size: unknown }, [string, string, number]>(
+        `SELECT relpath, sha256, size FROM (
+           SELECT e.source_record_id AS relpath,
+                  json_extract(e.metadata, '$.sha256') AS sha256,
+                  json_extract(e.metadata, '$.size') AS size,
+                  e.deleted,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY e.source_record_id
+                    ORDER BY e.accepted_at DESC, e.event_id DESC
+                  ) AS rn
+             FROM events e
+             JOIN source_event_bindings b ON b.event_id = e.event_id
+            WHERE b.source_key = ?
+              AND e.connector_id = ?
+         )
+         WHERE rn = 1 AND deleted = 0
+         LIMIT ?`,
+      )
+      .all(sourceKey, MARKDOWN_FOLDER_CONNECTOR_ID, MAX_FILES + 1);
+  } catch (error) {
+    throw new ConnectionError(
+      `markdown committed identities are unreadable: ${errorText(error)}`,
+    );
+  }
+  if (rows.length > MAX_FILES) {
+    throw new ConnectionError("markdown committed identities exceed the scan bound");
+  }
+  const files: Array<[string, { sha256: string; size: number }]> = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const relpath = row.relpath;
+    const sha256 = row.sha256;
+    const size = row.size;
+    if (
+      typeof relpath !== "string" ||
+      relpath.length === 0 ||
+      new TextEncoder().encode(relpath).byteLength > EVENT_LIMITS.sourceRecordIdBytes ||
+      seen.has(relpath) ||
+      typeof sha256 !== "string" ||
+      !MARKDOWN_SHA256.test(sha256) ||
+      typeof size !== "number" ||
+      !Number.isInteger(size) ||
+      size < 0 ||
+      size > EVENT_LIMITS.textBytes
+    ) {
+      throw new ConnectionError(
+        "markdown committed identities are incompatible with scan policy",
+      );
+    }
+    seen.add(relpath);
+    files.push([relpath, { sha256, size }]);
+  }
+  return files;
+}
 
 export function encodeHostState(state: HostConnectionState): Uint8Array {
   return new TextEncoder().encode(
@@ -407,7 +479,7 @@ export async function loadConnector(
   store: ConnectionStateReader,
   db: Database,
   env: Record<string, string | undefined> = process.env,
-  factory: (id: string, config?: unknown, telegramDeps?: Partial<TelegramDeps>) => Connector = (id, config, deps) => id === "kizuki.telegram" ? new TelegramConnector(config as TelegramConnectorConfig, deps) : id === "kizuki.gmail" ? createGmailConnector(config as GmailConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.google-calendar" ? createGoogleCalendarConnector(config as GoogleCalendarConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.x" ? createXApiConnector(config as XApiConfig, deps?.persist ? {persist:deps.persist} : {}) : getConnector(id, config),
+  factory: (id: string, config?: unknown, deps?: HostConnectorFactoryDeps) => Connector = (id, config, deps) => id === "kizuki.telegram" ? new TelegramConnector(config as TelegramConnectorConfig, deps) : id === "kizuki.gmail" ? createGmailConnector(config as GmailConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.google-calendar" ? createGoogleCalendarConnector(config as GoogleCalendarConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.x" ? createXApiConnector(config as XApiConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.markdown-folder" ? createMarkdownFolderConnector(config as MarkdownFolderConfig, deps?.committedFiles ? { committedFiles: deps.committedFiles } : {}) : getConnector(id, config),
 ): Promise<Connector> {
   try { sourceCaptureAdmission(db, selected.connection.connector_id, selected.connection.source_key); }
   catch (error) {
@@ -504,10 +576,18 @@ export async function loadConnector(
     return connector;
   }
   const telegram = selected.connection.connector_id === "kizuki.telegram";
+  const markdown = selected.connection.connector_id === "kizuki.markdown-folder";
   const connector = factory(
     selected.connection.connector_id,
     selected.state.config,
-    telegram ? { persist: inspectionSafePersister(db, store, selected.connection) } : undefined,
+    telegram
+      ? { persist: inspectionSafePersister(db, store, selected.connection) }
+      : markdown
+        ? {
+            committedFiles: () =>
+              markdownCommittedIdentities(db, selected.connection.source_key),
+          }
+        : undefined,
   );
   const config = selected.state.config;
   const ref = "state_ref" in config ? config.state_ref : "token_secret_ref" in config

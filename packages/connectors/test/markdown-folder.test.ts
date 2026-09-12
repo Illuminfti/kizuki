@@ -13,6 +13,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
+import { MAX_CURSOR_BYTES, MAX_SYNC_BATCH_EVENTS } from "@kizuki/core";
 import {
   MARKDOWN_FOLDER_CONNECTOR_ID,
   createMarkdownFolderConnector,
@@ -828,6 +829,260 @@ describe("markdown folder packed cursor", () => {
           ]),
         ),
       ).rejects.toThrow("invalid cursor file identity");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("markdown folder committed identities", () => {
+  function compactOf(base: string): string {
+    const parsed = JSON.parse(base) as Record<string, unknown>;
+    delete parsed.files;
+    delete parsed.pack;
+    parsed.committed_identities = true;
+    return JSON.stringify(parsed);
+  }
+
+  test("host-backed pages emit a compact cursor and never cache completion", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "a.md"), "a\n");
+      await writeFile(path.join(root, "b.md"), "b\n");
+      let reads = 0;
+      const connector = createMarkdownFolderConnector(
+        { path: root, page_size: 1 },
+        {
+          committedFiles: () => {
+            reads += 1;
+            return [];
+          },
+        },
+      );
+      const first = await connector.backfill(null);
+      expect(reads).toBe(0);
+      expect(first.events.map((event) => event.source_record_id)).toEqual(["a.md"]);
+      const cursor = JSON.parse(first.cursor ?? "{}") as {
+        committed_identities?: unknown;
+        files?: unknown;
+        pack?: unknown;
+      };
+      expect(cursor.committed_identities).toBe(true);
+      expect(cursor.files).toBeUndefined();
+      expect(cursor.pack).toBeUndefined();
+      expect(new TextEncoder().encode(first.cursor ?? "").byteLength).toBeLessThanOrEqual(
+        MAX_CURSOR_BYTES,
+      );
+      const second = await connector.backfill(first.cursor);
+      expect(reads).toBe(1);
+      expect(second.events.map((event) => event.source_record_id)).toEqual(["a.md"]);
+      expect(JSON.parse(second.cursor ?? "")).toMatchObject({ committed_identities: true });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a compact cursor without the dependency fails closed", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "note.md"), "note\n");
+      const host = createMarkdownFolderConnector(
+        { path: root },
+        { committedFiles: () => [] },
+      );
+      const first = await host.backfill(null);
+      await expect(
+        createMarkdownFolderConnector({ path: root }).sync(first.cursor),
+      ).rejects.toThrow("committed identities required");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("null input never tombstones even when committed identities exist", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "kept.md"), "kept\n");
+      const prior = identityOf("removed\n");
+      let reads = 0;
+      const connector = createMarkdownFolderConnector(
+        { path: root },
+        {
+          committedFiles: () => {
+            reads += 1;
+            return [
+              ["kept.md", identityOf("kept\n")],
+              ["removed.md", prior],
+            ];
+          },
+        },
+      );
+      const orphan = await connector.sync(null);
+      expect(reads).toBe(0);
+      expect(orphan.events.some((event) => event.deleted)).toBe(false);
+      expect(orphan.events.map((event) => event.source_record_id)).toEqual(["kept.md"]);
+      const resumed = await connector.sync(orphan.cursor);
+      expect(reads).toBe(1);
+      expect(
+        resumed.events.map((event) => [event.source_record_id, event.deleted]),
+      ).toEqual([["removed.md", true]]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("host-backed capture can consume a packed cursor then emit compact", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "note.md"), "note\n");
+      const standalone = createMarkdownFolderConnector({ path: root });
+      const first = await standalone.backfill(null);
+      if (first.cursor === null) throw new Error("expected a snapshot cursor");
+      expect(JSON.parse(first.cursor).files).toEqual([
+        ["note.md", identityOf("note\n")],
+      ]);
+      const host = createMarkdownFolderConnector(
+        { path: root },
+        { committedFiles: () => [["note.md", identityOf("note\n")]] },
+      );
+      const idle = await host.sync(first.cursor);
+      expect(idle.events).toEqual([]);
+      expect(JSON.parse(idle.cursor ?? "")).toMatchObject({
+        committed_identities: true,
+        exhausted: true,
+      });
+      expect(JSON.parse(idle.cursor ?? "")).not.toHaveProperty("files");
+      expect(JSON.parse(idle.cursor ?? "")).not.toHaveProperty("pack");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("emitted pages clamp to Core's event bound while config may exceed it", async () => {
+    const root = await makeTempDir();
+    try {
+      await Promise.all(
+        Array.from({ length: MAX_SYNC_BATCH_EVENTS + 1 }, (_, index) =>
+          writeFile(
+            path.join(root, `n-${String(index).padStart(4, "0")}.md`),
+            "n\n",
+          ),
+        ),
+      );
+      const connector = createMarkdownFolderConnector(
+        { path: root, page_size: 10_000 },
+        { committedFiles: () => [] },
+      );
+      const first = await connector.backfill(null);
+      expect(first.events).toHaveLength(MAX_SYNC_BATCH_EVENTS);
+      expect(first.has_more).toBe(true);
+      expect(JSON.parse(first.cursor ?? "")).toMatchObject({
+        options: { page_size: 10_000 },
+        committed_identities: true,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an unreadable subtree does not tombstone committed identities", async () => {
+    const root = await makeTempDir();
+    const nested = path.join(root, "nested");
+    let listing: ReturnType<typeof spyOn> | undefined;
+    try {
+      await mkdir(nested);
+      await writeFile(path.join(root, "kept.md"), "kept\n");
+      await writeFile(path.join(nested, "hidden.md"), "hidden\n");
+      const identities = [
+        ["kept.md", identityOf("kept\n")],
+        ["nested/hidden.md", identityOf("hidden\n")],
+      ] as const;
+      const connector = createMarkdownFolderConnector(
+        { path: root },
+        { committedFiles: () => identities },
+      );
+      const first = await connector.backfill(null);
+      const original = filesystem.readdir;
+      listing = spyOn(filesystem, "readdir").mockImplementation(((
+        ...args: Parameters<typeof original>
+      ) =>
+        String(args[0]) === nested
+          ? Promise.reject(Object.assign(new Error("EACCES"), { code: "EACCES" }))
+          : original(...args)) as typeof original);
+      const second = await connector.sync(first.cursor);
+      expect(second.events.some((event) => event.deleted)).toBe(false);
+      expect(second.events.map((event) => event.source_record_id)).not.toContain(
+        "nested/hidden.md",
+      );
+      expect(second).toEqual({
+        events: [],
+        cursor: first.cursor,
+        status: "unavailable",
+        detail: "partial_import: 1 record errors (unreadable=1)",
+      });
+    } finally {
+      listing?.mockRestore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("same-mtime edits still emit against committed identities", async () => {
+    const root = await makeTempDir();
+    try {
+      const file = path.join(root, "note.md");
+      await writeFile(file, "before\n");
+      const stamp = new Date("2026-01-01T00:00:00Z");
+      await utimes(file, stamp, stamp);
+      const connector = createMarkdownFolderConnector(
+        { path: root },
+        { committedFiles: () => [["note.md", identityOf("before\n")]] },
+      );
+      const first = await connector.backfill(null);
+      await writeFile(file, "after\n");
+      await utimes(file, stamp, stamp);
+      const second = await connector.sync(first.cursor);
+      expect(second.events.map((event) => event.text)).toEqual(["after\n"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a compact cursor still rejects a foreign root", async () => {
+    const firstRoot = await makeTempDir();
+    const secondRoot = await makeTempDir();
+    try {
+      await writeFile(path.join(firstRoot, "a.md"), "a\n");
+      await writeFile(path.join(secondRoot, "a.md"), "a\n");
+      const first = await createMarkdownFolderConnector(
+        { path: firstRoot },
+        { committedFiles: () => [] },
+      ).backfill(null);
+      await expect(
+        createMarkdownFolderConnector(
+          { path: secondRoot },
+          { committedFiles: () => [] },
+        ).sync(first.cursor),
+      ).rejects.toThrow("does not belong to this root");
+    } finally {
+      await rm(firstRoot, { recursive: true, force: true });
+      await rm(secondRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("a handwritten compact cursor is readable when the dependency is present", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "note.md"), "note\n");
+      const standalone = createMarkdownFolderConnector({ path: root });
+      const first = await standalone.backfill(null);
+      if (first.cursor === null) throw new Error("expected a snapshot cursor");
+      const host = createMarkdownFolderConnector(
+        { path: root },
+        { committedFiles: () => [["note.md", identityOf("note\n")]] },
+      );
+      const idle = await host.sync(compactOf(first.cursor));
+      expect(idle.events).toEqual([]);
+      expect(JSON.parse(idle.cursor ?? "")).toMatchObject({ committed_identities: true });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

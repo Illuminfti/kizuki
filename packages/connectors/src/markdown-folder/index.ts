@@ -7,6 +7,7 @@ import {
   EVENT_LIMITS,
   MAX_CURSOR_BYTES,
   MAX_SYNC_BATCH_BYTES,
+  MAX_SYNC_BATCH_EVENTS,
   freezeManifest,
   isPlainObject,
   policyForConnector,
@@ -74,6 +75,24 @@ export interface MarkdownFolderConfig {
   exclude?: string[];
 }
 
+export interface MarkdownFileIdentity {
+  sha256: string;
+  size: number;
+}
+
+type FileIdentity = MarkdownFileIdentity;
+
+/** Factory-only. Never serialized into connection config or protected state. */
+export interface MarkdownFolderDeps {
+  /**
+   * Latest live `[relativePath, {sha256,size}]` identities for this source.
+   * Called on every non-null capture page; null input must not consult it.
+   */
+  committedFiles?: () =>
+    | ReadonlyArray<readonly [string, MarkdownFileIdentity]>
+    | Promise<ReadonlyArray<readonly [string, MarkdownFileIdentity]>>;
+}
+
 interface MarkdownFile {
   content: string;
   sha256: string;
@@ -86,11 +105,6 @@ interface RootIdentity {
   realpath: string;
   dev: number;
   ino: number;
-}
-
-interface FileIdentity {
-  sha256: string;
-  size: number;
 }
 
 export interface MarkdownCursor {
@@ -137,12 +151,14 @@ export class MarkdownFolderConnector implements Connector {
   readonly path: string;
   readonly pageSize: number;
   readonly exclude: readonly string[];
+  private readonly committedFiles: MarkdownFolderDeps["committedFiles"];
 
-  constructor(config: MarkdownFolderConfig) {
+  constructor(config: MarkdownFolderConfig, deps: MarkdownFolderDeps = {}) {
     this.path = requirePathConfig(config, MARKDOWN_FOLDER_CONNECTOR_ID);
     requireKnownKeys(config, MARKDOWN_FOLDER_CONNECTOR_ID, CONFIG_KEYS);
     this.pageSize = parsePageSize(config.page_size);
     this.exclude = parseExclude(config.exclude);
+    this.committedFiles = deps.committedFiles;
   }
 
   manifest(): Manifest {
@@ -191,14 +207,17 @@ export class MarkdownFolderConnector implements Connector {
 
   private async sweep(cursor: Cursor | null): Promise<SyncBatch> {
     const root = await rootIdentity(this.path);
-    const previous = cursor === null ? undefined : parseCursor(cursor, root, this);
+    const previous =
+      cursor === null ? undefined : parseCursor(cursor, root, this, this.committedFiles !== undefined);
+    const previousFiles = await this.snapshotIdentities(previous);
     const scan = await scanMarkdownFiles(root, this.exclude);
     const observedAt = new Date().toISOString();
     const current = new Map(
       scan.files.map((file) => [file.relpath, file] as const),
     );
-    const previousFiles = new Map(previous?.files ?? []);
     const scanErrors = [...scan.errors];
+    const hostBacked = this.committedFiles !== undefined;
+    const emitPageSize = Math.min(this.pageSize, MAX_SYNC_BATCH_EVENTS);
 
     const fileEvents: CaptureEventInput[] = [];
     for (const file of scan.files) {
@@ -239,7 +258,7 @@ export class MarkdownFolderConnector implements Connector {
     // Keep phase/after as compatible cursor hints, never as exclusion bounds.
     const { page: filePage, rest: fileRest } = takePage(
       fileEvents,
-      this.pageSize,
+      emitPageSize,
     );
     const filesDone = fileRest.length === 0;
     const pendingRefusal = scanErrors.length > 0 || scan.truncated;
@@ -260,16 +279,26 @@ export class MarkdownFolderConnector implements Connector {
       phase: "files" | "tombstones",
       after: string | null,
     ): Cursor | undefined => {
-      const encoded = encodeCursor({
-        schema: MARKDOWN_CURSOR_SCHEMA,
-        connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
-        root,
-        options: { page_size: this.pageSize, exclude: [...this.exclude] },
-        exhausted,
-        phase,
-        after,
-        files: sortedPairs(processed),
-      });
+      const encoded = hostBacked
+        ? encodeCompactCursor({
+            schema: MARKDOWN_CURSOR_SCHEMA,
+            connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
+            root,
+            options: { page_size: this.pageSize, exclude: [...this.exclude] },
+            exhausted,
+            phase,
+            after,
+          })
+        : encodeCursor({
+            schema: MARKDOWN_CURSOR_SCHEMA,
+            connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
+            root,
+            options: { page_size: this.pageSize, exclude: [...this.exclude] },
+            exhausted,
+            phase,
+            after,
+            files: sortedPairs(processed),
+          });
       return utf8Bytes(encoded) > MAX_CURSOR_BYTES ? undefined : encoded;
     };
 
@@ -327,7 +356,7 @@ export class MarkdownFolderConnector implements Connector {
 
     const { page: tombstonePage, rest: tombstoneRest } = takePage(
       tombstones,
-      this.pageSize,
+      emitPageSize,
     );
     for (const event of tombstonePage) {
       processed.delete(event.source_record_id);
@@ -352,12 +381,21 @@ export class MarkdownFolderConnector implements Connector {
       has_more: !exhausted || pendingRefusal,
     };
   }
+
+  private async snapshotIdentities(
+    previous: MarkdownCursor | undefined,
+  ): Promise<Map<string, FileIdentity>> {
+    if (previous === undefined) return new Map();
+    if (this.committedFiles === undefined) return new Map(previous.files);
+    return new Map(parseCommittedIdentities(await this.committedFiles()));
+  }
 }
 
 export function createMarkdownFolderConnector(
   config: MarkdownFolderConfig,
+  deps: MarkdownFolderDeps = {},
 ): MarkdownFolderConnector {
-  return new MarkdownFolderConnector(config);
+  return new MarkdownFolderConnector(config, deps);
 }
 
 function parsePageSize(value: unknown): number {
@@ -727,10 +765,26 @@ function encodeCursor(cursor: MarkdownCursor): Cursor {
   });
 }
 
+function encodeCompactCursor(
+  header: Omit<MarkdownCursor, "files">,
+): Cursor {
+  return JSON.stringify({
+    schema: header.schema,
+    connector_id: header.connector_id,
+    root: header.root,
+    options: header.options,
+    exhausted: header.exhausted,
+    phase: header.phase,
+    after: header.after,
+    committed_identities: true,
+  });
+}
+
 function parseCursor(
   cursor: Cursor,
   root: RootIdentity,
   connector: MarkdownFolderConnector,
+  committedReader: boolean,
 ): MarkdownCursor {
   let parsed: unknown;
   try {
@@ -765,7 +819,32 @@ function parseCursor(
   const packed = parsed["pack"];
   const hasPack = typeof packed === "string";
   const hasFiles = Array.isArray(parsed["files"]);
-  if (hasPack === hasFiles) {
+  const committed = parsed["committed_identities"] === true;
+  if (Object.hasOwn(parsed, "committed_identities") && !committed) {
+    throw new KizukiError(
+      "parse_error",
+      `${MARKDOWN_FOLDER_CONNECTOR_ID}: invalid cursor snapshot`,
+    );
+  }
+  if (committed) {
+    if (
+      hasPack ||
+      hasFiles ||
+      Object.hasOwn(parsed, "files") ||
+      Object.hasOwn(parsed, "pack")
+    ) {
+      throw new KizukiError(
+        "parse_error",
+        `${MARKDOWN_FOLDER_CONNECTOR_ID}: invalid cursor snapshot`,
+      );
+    }
+    if (!committedReader) {
+      throw new KizukiError(
+        "parse_error",
+        `${MARKDOWN_FOLDER_CONNECTOR_ID}: committed identities required`,
+      );
+    }
+  } else if (hasPack === hasFiles) {
     throw new KizukiError(
       "parse_error",
       `${MARKDOWN_FOLDER_CONNECTOR_ID}: invalid cursor snapshot`,
@@ -791,8 +870,9 @@ function parseCursor(
       `${MARKDOWN_FOLDER_CONNECTOR_ID}: cursor does not match this configuration`,
     );
   }
-  const files =
-    typeof packed === "string"
+  const files = committed
+    ? []
+    : typeof packed === "string"
       ? parsePackedFiles(packed)
       : parseFilePairs(parsed["files"]);
   return {
@@ -842,6 +922,23 @@ function takePage(
     index += 1;
   }
   return { page, rest: events.slice(index) };
+}
+
+function parseCommittedIdentities(
+  value: unknown,
+): Array<[string, FileIdentity]> {
+  try {
+    return parseFilePairs(value);
+  } catch (error) {
+    if (error instanceof KizukiError) {
+      throw new KizukiError(
+        "parse_error",
+        `${MARKDOWN_FOLDER_CONNECTOR_ID}: invalid committed identities`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }
 
 function parsePackedFiles(pack: string): Array<[string, FileIdentity]> {
