@@ -139,6 +139,12 @@ test("documentation status inventory maps shipped claims to live files", () => {
 
 const TAGGED_SECTIONS = [
   {
+    id: "architecture.layers",
+    status: "designed",
+    doc: "docs/architecture.md",
+    heading: "Layers",
+  },
+  {
     id: "architecture.contracts",
     status: "designed",
     doc: "docs/architecture.md",
@@ -272,6 +278,32 @@ test.each([
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       const readme = docs.get("README.md")!.replace("## The vision\n\nStatus: direction\n\n", "## The vision\n\n");
       docs.set("README.md", readme.replace("## Status\n\n", "## Status\n\nStatus: direction\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "architecture.layers tag removed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Layers\n\nStatus: designed\n\n", "## Layers\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "architecture.layers tag shipped",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Layers\n\nStatus: designed", "## Layers\n\nStatus: shipped"));
+      return entries;
+    },
+  },
+  {
+    name: "architecture.layers inventory entry removed",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "architecture.layers"),
+  },
+  {
+    name: "architecture.layers tag only in adjacent Contracts",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Layers\n\nStatus: designed\n\n", "## Layers\n\n"));
       return entries;
     },
   },
