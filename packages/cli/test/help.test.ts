@@ -293,6 +293,44 @@ describe("help", () => {
     }
   });
 
+  test("init structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["init", "--help", "--json"], ["help", "init", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
+      expect(body.data.name).toBe("init");
+      expect(body.data.options).toEqual([]);
+      expect(body.data.flags).toEqual([
+        "--default",
+        "--no-default",
+        "--no-service",
+        "--adopt",
+        "--dry-run",
+      ]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "init", "--help");
+    expect(text.stdout).toContain("--default");
+    expect(text.stdout).toContain("--no-service");
+    expect(text.stdout).toContain("--adopt");
+    expect(text.stdout).toContain("--dry-run");
+    for (const [args, diagnostic] of [
+      [["init", "./vault", "--nope"], "unknown option --nope"],
+      [["init", "./vault", "--dry-run", "--dry-run"], "repeated flag --dry-run"],
+      [["init", "./vault", "--no-service=true"], "flag --no-service does not take a value"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki init");
+    }
+  });
+
   test("recover structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["recover", "--help", "--json"], ["help", "recover", "--json"]] as const) {
