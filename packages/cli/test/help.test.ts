@@ -226,4 +226,32 @@ describe("help", () => {
     expect(result.stderr).toContain("error: invalid arguments");
     expect(result.stderr).toContain("usage: kizuki query");
   });
+
+  test("undo structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["undo", "--help", "--json"], ["help", "undo", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
+      expect(body.data.name).toBe("undo");
+      expect(body.data.options).toEqual([]);
+      expect(body.data.flags).toEqual(["--cascade"]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    expect(runCli(env, "undo", "--help").stdout).toContain("--cascade");
+    for (const [args, diagnostic] of [
+      [["undo", "01JCRECEIPT000000000000000", "--nope"], "unknown option --nope"],
+      [["undo", "01JCRECEIPT000000000000000", "--cascade", "--cascade"], "repeated flag --cascade"],
+      [["undo", "01JCRECEIPT000000000000000", "--cascade=true"], "flag --cascade does not take a value"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki undo");
+    }
+  });
 });
