@@ -157,6 +157,12 @@ const TAGGED_SECTIONS = [
     heading: "Product identity",
   },
   {
+    id: "product.proactive-intelligence",
+    status: "direction",
+    doc: "docs/product-context.md",
+    heading: "Proactive intelligence",
+  },
+  {
     id: "stranger-proof.sqlite-engine",
     status: "shipped",
     doc: "docs/stranger-proof.md",
@@ -304,6 +310,32 @@ test.each([
     name: "architecture.layers tag only in adjacent Contracts",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Layers\n\nStatus: designed\n\n", "## Layers\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "product.proactive-intelligence tag removed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Proactive intelligence\n\nStatus: direction\n\n", "## Proactive intelligence\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "product.proactive-intelligence tag shipped",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Proactive intelligence\n\nStatus: direction", "## Proactive intelligence\n\nStatus: shipped"));
+      return entries;
+    },
+  },
+  {
+    name: "product.proactive-intelligence inventory entry removed",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "product.proactive-intelligence"),
+  },
+  {
+    name: "product.proactive-intelligence tag only in adjacent identity",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Proactive intelligence\n\nStatus: direction\n\n", "## Proactive intelligence\n\n"));
       return entries;
     },
   },

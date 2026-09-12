@@ -52,6 +52,12 @@
       "heading": "Product identity"
     },
     {
+      "id": "product.proactive-intelligence",
+      "status": "direction",
+      "doc": "docs/product-context.md",
+      "heading": "Proactive intelligence"
+    },
+    {
       "id": "stranger-proof.sqlite-engine",
       "status": "shipped",
       "doc": "docs/stranger-proof.md",
