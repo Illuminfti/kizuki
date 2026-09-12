@@ -3,6 +3,8 @@ import { PORT_CONTRACTS, PortError } from "@kizuki/core";
 import type { PortDescriptor } from "@kizuki/core";
 import { FIXTURE_ICS, memoryFetcher, okResult } from "@kizuki/connector-ics/testing";
 import {
+  CHATGPT_IMPORT_CONNECTOR_ID,
+  CLAUDE_IMPORT_CONNECTOR_ID,
   ConnectorRegistry,
   ICS_CONNECTOR_ID,
   KizukiError,
@@ -40,6 +42,8 @@ test("getConnector rejects an unknown connector id", () => {
 
 test("getConnector builds every snapshot importer", () => {
   const cases: [string, Record<string, unknown>][] = [
+    [CHATGPT_IMPORT_CONNECTOR_ID, { path: "/exports/chatgpt.json" }],
+    [CLAUDE_IMPORT_CONNECTOR_ID, { path: "/exports/claude.json" }],
     [WHATSAPP_IMPORT_CONNECTOR_ID, { path: "/exports/chat" }],
     [POCKET_IMPORT_CONNECTOR_ID, { path: "/exports/pocket.csv" }],
     [OMNIVORE_IMPORT_CONNECTOR_ID, { path: "/exports/omnivore" }],
@@ -47,6 +51,34 @@ test("getConnector builds every snapshot importer", () => {
   ];
   for (const [id, config] of cases) {
     expect(getConnector(id, config).manifest().connector_id).toBe(id);
+  }
+});
+
+test("ChatGPT and Claude snapshot importers do not claim tombstones", () => {
+  for (const [id, config, portId] of [
+    [
+      CHATGPT_IMPORT_CONNECTOR_ID,
+      { path: "/exports/chatgpt.json" },
+      "kizuki.connector.import-chatgpt",
+    ],
+    [
+      CLAUDE_IMPORT_CONNECTOR_ID,
+      { path: "/exports/claude.json" },
+      "kizuki.connector.import-claude",
+    ],
+  ] as const) {
+    expect(getConnector(id, config).manifest().capabilities).toMatchObject({
+      backfill: true,
+      sync: true,
+      tombstones: false,
+      purge: false,
+      fixture: true,
+    });
+    expect(
+      listConnectorDescriptors().find((port) => port.id === portId),
+    ).toMatchObject({
+      supports: ["backfill", "sync", "fixture"],
+    });
   }
 });
 
@@ -146,6 +178,8 @@ test("duplicate connector ids and contract mismatches are hard failures", () => 
 
 test("a snapshot importer without a path is refused", () => {
   for (const id of [
+    CHATGPT_IMPORT_CONNECTOR_ID,
+    CLAUDE_IMPORT_CONNECTOR_ID,
     WHATSAPP_IMPORT_CONNECTOR_ID,
     POCKET_IMPORT_CONNECTOR_ID,
     OMNIVORE_IMPORT_CONNECTOR_ID,

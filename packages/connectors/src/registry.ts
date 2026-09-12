@@ -324,14 +324,14 @@ enroll(
 );
 enroll(
   CHATGPT_IMPORT_CONNECTOR_ID,
-  ["backfill", "sync", "tombstones", "fixture"],
+  ["backfill", "sync", "fixture"],
   IN_TREE,
   (config) => createChatGptImportConnector(config as ChatGptImportConfig),
   { ...LOCAL, cursor_schema: IMPORT_SNAPSHOT_CURSOR_SCHEMA },
 );
 enroll(
   CLAUDE_IMPORT_CONNECTOR_ID,
-  ["backfill", "sync", "tombstones", "fixture"],
+  ["backfill", "sync", "fixture"],
   IN_TREE,
   (config) => createClaudeImportConnector(config as ClaudeImportConfig),
   { ...LOCAL, cursor_schema: IMPORT_SNAPSHOT_CURSOR_SCHEMA },

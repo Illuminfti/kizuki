@@ -458,6 +458,13 @@ describe("ChatGptImportConnector", () => {
     }
   });
 
+  test("the importer does not claim tombstones", () => {
+    expect(
+      createChatGptImportConnector({ path: "/nonexistent.json" }).manifest()
+        .capabilities.tombstones,
+    ).toBe(false);
+  });
+
   test("unsupported parts preserve supported events and the existing health-only degradation", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
     try {
@@ -542,7 +549,7 @@ describe("ChatGptImportConnector", () => {
     }
   });
 
-  test("sync tombstones a conversation removed from a later export", async () => {
+  test("sync does not tombstone a conversation removed from a later export", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
     try {
       const file = path.join(root, "conversations.json");
@@ -564,18 +571,14 @@ describe("ChatGptImportConnector", () => {
         ]),
       );
       const second = await connector.sync(first.cursor);
-      expect(second.events.some((event) => event.deleted)).toBe(true);
-      expect(
-        second.events
-          .filter((event) => event.deleted)
-          .map((event) => event.source_record_id),
-      ).toEqual([encodeSourceRecordId(["conversation-42", "message-b"])]);
+      expect(second.events).toEqual([]);
+      expect(second.events.some((event) => event.deleted)).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("a dirty later export keeps prior ids until a clean parse can tombstone them", async () => {
+  test("a dirty later export keeps prior ids and a later clean shorter export still emits no tombstone", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
     try {
       const file = path.join(root, "conversations.json");
@@ -624,11 +627,8 @@ describe("ChatGptImportConnector", () => {
         ]),
       );
       const clean = await connector.sync(dirty.cursor);
-      expect(
-        clean.events
-          .filter((event) => event.deleted)
-          .map((event) => event.source_record_id),
-      ).toEqual([dropped]);
+      expect(clean.events).toEqual([]);
+      expect(clean.events.some((event) => event.deleted)).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

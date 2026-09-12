@@ -7,6 +7,14 @@ import { setSourceGrant, registerConnection, replay, runBackfill, runSync } from
 import type { CaptureEvent, Connector } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import {
+  CHATGPT_FIXTURE_EXPORT,
+  createChatGptImportConnector,
+} from "../src/import-chatgpt";
+import {
+  CLAUDE_FIXTURE_EXPORT,
+  createClaudeImportConnector,
+} from "../src/import-claude";
+import {
   OMNIVORE_FIXTURE_FILES,
   createOmnivoreImportConnector,
 } from "../src/import-omnivore";
@@ -89,6 +97,43 @@ async function pocketScenario(root: string): Promise<Scenario> {
     // wrote them, so the records that survive keep their identity.
     subset: () =>
       writeFile(file, `${[lines[0], lines[2], lines[3]].join("\n")}\n`),
+  };
+}
+
+async function chatgptScenario(root: string): Promise<Scenario> {
+  const file = path.join(root, "conversations.json");
+  const connector = createChatGptImportConnector({ path: file });
+  return {
+    connector,
+    connector_id: connector.manifest().connector_id,
+    fullCount: 3,
+    subsetCount: 2,
+    full: () => writeFile(file, JSON.stringify(CHATGPT_FIXTURE_EXPORT)),
+    subset: () =>
+      writeFile(file, JSON.stringify(CHATGPT_FIXTURE_EXPORT.slice(0, 1))),
+  };
+}
+
+async function claudeScenario(root: string): Promise<Scenario> {
+  const file = path.join(root, "conversations.json");
+  const connector = createClaudeImportConnector({ path: file });
+  const conversation = CLAUDE_FIXTURE_EXPORT[0];
+  return {
+    connector,
+    connector_id: connector.manifest().connector_id,
+    fullCount: 2,
+    subsetCount: 1,
+    full: () => writeFile(file, JSON.stringify(CLAUDE_FIXTURE_EXPORT)),
+    subset: () =>
+      writeFile(
+        file,
+        JSON.stringify([
+          {
+            ...conversation,
+            chat_messages: conversation?.chat_messages.slice(0, 1),
+          },
+        ]),
+      ),
   };
 }
 
@@ -217,6 +262,99 @@ for (const { name, build } of scenarios) {
         expect(ids).toContain(id);
       }
       expect(ids.length).toBe(scenario.fullCount);
+    });
+  });
+}
+
+const snapshotScenarios: {
+  name: string;
+  build: (root: string) => Promise<Scenario>;
+}[] = [
+  { name: "chatgpt", build: chatgptScenario },
+  { name: "claude", build: claudeScenario },
+];
+
+for (const { name, build } of snapshotScenarios) {
+  test(`${name}: a smaller re-import emits no deletion and Core withdraws nothing`, async () => {
+    await withScenario(build, async (scenario, db) => {
+      await scenario.full();
+      const first = await runBackfill(
+        db,
+        scenario.connector,
+        scenario.connector_id,
+        SOURCE_KEY,
+      );
+      expect(first.stored).toBe(scenario.fullCount);
+      expect(first.errors).toEqual([]);
+      expect(first.proposals_created).toBeGreaterThan(0);
+      expect(first.withdrawn).toBe(0);
+      expect(first.retractions_filed).toBe(0);
+      expect(first.cursor).not.toBeNull();
+
+      await scenario.subset();
+      const emitted = await scenario.connector.sync(first.cursor);
+      expect(emitted.events.some((event) => event.deleted)).toBe(false);
+
+      const smaller = await runSync(
+        db,
+        scenario.connector,
+        scenario.connector_id,
+        SOURCE_KEY,
+      );
+      expect(smaller.stored).toBe(0);
+      expect(smaller.errors).toEqual([]);
+      expect(smaller.withdrawn).toBe(0);
+      expect(smaller.retractions_filed).toBe(0);
+
+      const rows = stored(db);
+      expect(rows.length).toBe(scenario.fullCount);
+      expect(rows.some((event) => event.deleted)).toBe(false);
+
+      await scenario.full();
+      const again = await runSync(
+        db,
+        scenario.connector,
+        scenario.connector_id,
+        SOURCE_KEY,
+      );
+      expect(again.stored).toBe(0);
+      expect(again.withdrawn).toBe(0);
+      expect(again.retractions_filed).toBe(0);
+      expect(stored(db).length).toBe(scenario.fullCount);
+      expect(stored(db).some((event) => event.deleted)).toBe(false);
+    });
+  });
+
+  test(`${name}: a larger re-import stores only what is new`, async () => {
+    await withScenario(build, async (scenario, db) => {
+      await scenario.subset();
+      const small = await runBackfill(
+        db,
+        scenario.connector,
+        scenario.connector_id,
+        SOURCE_KEY,
+      );
+      expect(small.stored).toBe(scenario.subsetCount);
+      const overlapping = stored(db).map((event) => event.source_record_id);
+
+      await scenario.full();
+      const large = await runSync(
+        db,
+        scenario.connector,
+        scenario.connector_id,
+        SOURCE_KEY,
+      );
+      expect(large.stored).toBe(scenario.fullCount - scenario.subsetCount);
+      expect(large.duplicates).toBe(scenario.subsetCount);
+      expect(large.withdrawn).toBe(0);
+      expect(large.retractions_filed).toBe(0);
+
+      const ids = stored(db).map((event) => event.source_record_id);
+      for (const id of overlapping) {
+        expect(ids).toContain(id);
+      }
+      expect(ids.length).toBe(scenario.fullCount);
+      expect(stored(db).some((event) => event.deleted)).toBe(false);
     });
   });
 }

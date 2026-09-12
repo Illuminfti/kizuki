@@ -21,7 +21,6 @@ export const IMPORT_SNAPSHOT_CURSOR_SCHEMA =
 
 export interface SnapshotParse {
   parse(source: string, observedAt: string): ImportParseResult;
-  kind: CaptureEventInput["kind"];
   connectorId: string;
 }
 
@@ -100,32 +99,10 @@ function parseCursor(cursor: Cursor, connectorId: string): ImportSnapshotCursor 
   };
 }
 
-function tombstoneEvent(
-  connectorId: string,
-  sourceRecordId: string,
-  observedAt: string,
-  kind: CaptureEventInput["kind"],
-): CaptureEventInput {
-  return {
-    schema: "kizuki.event/v1",
-    connector_id: connectorId,
-    source_record_id: sourceRecordId,
-    kind,
-    occurred_at: observedAt,
-    observed_at: observedAt,
-    text: "",
-    subjects: [],
-    deleted: true,
-    attachments: [],
-    metadata: { snapshot: "absent" },
-  };
-}
-
 function drain(
   text: string,
   parsed: ImportParseResult,
   cursor: Cursor | null,
-  observedAt: string,
   spec: SnapshotParse,
 ): SyncBatch {
   const identity = exportIdentity(text);
@@ -174,21 +151,13 @@ function drain(
   if (dirty && events.length === 0) return incomplete();
 
   // A dirty parse cannot prove a record is gone. Keep prior identities so a
-  // later clean export can still tombstone them.
+  // later clean export still has hashes for records this attempt could not
+  // confirm.
   const records = new Map<string, string>(
     dirty && previous !== undefined ? previous.records : [],
   );
   for (const [sourceRecordId, hash] of current) {
     records.set(sourceRecordId, hash);
-  }
-
-  if (previous !== undefined && !dirty) {
-    for (const [sourceRecordId] of previous.records) {
-      if (current.has(sourceRecordId)) continue;
-      events.push(
-        tombstoneEvent(spec.connectorId, sourceRecordId, observedAt, spec.kind),
-      );
-    }
   }
 
   const next: ImportSnapshotCursor = {
@@ -217,6 +186,7 @@ async function readExport(
   return { text: file.text, parsed: spec.parse(file.text, observedAt) };
 }
 
+/** Re-read one export file. Records missing from a later export are not tombstones. */
 export async function runSnapshot(
   path: string,
   cursor: Cursor | null,
@@ -224,7 +194,7 @@ export async function runSnapshot(
 ): Promise<SyncBatch> {
   const observedAt = new Date().toISOString();
   const { text, parsed } = await readExport(path, observedAt, spec);
-  return drain(text, parsed, cursor, observedAt, spec);
+  return drain(text, parsed, cursor, spec);
 }
 
 export async function snapshotHealth(

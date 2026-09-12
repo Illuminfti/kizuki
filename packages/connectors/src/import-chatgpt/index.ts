@@ -101,7 +101,9 @@ const MANIFEST: Manifest = freezeManifest({
   capabilities: {
     backfill: true,
     sync: true,
-    tombstones: true,
+    // A shorter export is not a deletion, and the importer cannot tell the
+    // difference, so it never claims one.
+    tombstones: false,
     purge: false,
     fixture: true,
   },
@@ -113,7 +115,6 @@ const MANIFEST: Manifest = freezeManifest({
 
 const SNAPSHOT: SnapshotParse = {
   connectorId: CHATGPT_IMPORT_CONNECTOR_ID,
-  kind: "message",
   parse: parseChatGptExport,
 };
 

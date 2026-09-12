@@ -189,46 +189,20 @@ function batteryFor(
           mutate: async () => unlink(layout.deletedMarkdown),
         },
       }),
-    [CHATGPT_IMPORT_CONNECTOR_ID]: () => {
-      const chatgpt = getConnector(CHATGPT_IMPORT_CONNECTOR_ID, {
-        path: layout.chatGpt,
-      });
-      return runConformance(chatgpt, {
-        unavailable: missingPath(CHATGPT_IMPORT_CONNECTOR_ID),
-        tombstone: {
-          prepare: async () => (await chatgpt.backfill(null)).cursor,
-          mutate: async () =>
-            writeFile(
-              layout.chatGpt,
-              JSON.stringify(CHATGPT_FIXTURE_EXPORT.slice(0, 1)),
-            ),
-        },
-      });
-    },
-    [CLAUDE_IMPORT_CONNECTOR_ID]: () => {
-      const claude = getConnector(CLAUDE_IMPORT_CONNECTOR_ID, {
-        path: layout.claude,
-      });
-      return runConformance(claude, {
-        unavailable: missingPath(CLAUDE_IMPORT_CONNECTOR_ID),
-        tombstone: {
-          prepare: async () => (await claude.backfill(null)).cursor,
-          mutate: async () =>
-            writeFile(
-              layout.claude,
-              JSON.stringify([
-                {
-                  ...CLAUDE_FIXTURE_EXPORT[0],
-                  chat_messages: CLAUDE_FIXTURE_EXPORT[0]?.chat_messages.slice(
-                    0,
-                    1,
-                  ),
-                },
-              ]),
-            ),
-        },
-      });
-    },
+    [CHATGPT_IMPORT_CONNECTOR_ID]: () =>
+      runConformance(
+        getConnector(CHATGPT_IMPORT_CONNECTOR_ID, {
+          path: layout.chatGpt,
+        }),
+        { unavailable: missingPath(CHATGPT_IMPORT_CONNECTOR_ID) },
+      ),
+    [CLAUDE_IMPORT_CONNECTOR_ID]: () =>
+      runConformance(
+        getConnector(CLAUDE_IMPORT_CONNECTOR_ID, {
+          path: layout.claude,
+        }),
+        { unavailable: missingPath(CLAUDE_IMPORT_CONNECTOR_ID) },
+      ),
     [SCREENPIPE_CONNECTOR_ID]: () =>
       runConformance(
         getConnector(SCREENPIPE_CONNECTOR_ID, {

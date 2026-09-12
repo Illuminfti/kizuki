@@ -212,6 +212,13 @@ describe("parseClaudeExport", () => {
 });
 
 describe("ClaudeImportConnector", () => {
+  test("the importer does not claim tombstones", () => {
+    expect(
+      createClaudeImportConnector({ path: "/nonexistent.json" }).manifest()
+        .capabilities.tombstones,
+    ).toBe(false);
+  });
+
   test("health probes the export and refuses a non-array", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-claude-"));
     try {
@@ -225,7 +232,7 @@ describe("ClaudeImportConnector", () => {
     }
   });
 
-  test("sync tombstones a message removed from a later export", async () => {
+  test("sync does not tombstone a message removed from a later export", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-claude-"));
     try {
       const file = path.join(root, "conversations.json");
@@ -244,11 +251,8 @@ describe("ClaudeImportConnector", () => {
         ]),
       );
       const second = await connector.sync(first.cursor);
-      expect(
-        second.events
-          .filter((event) => event.deleted)
-          .map((event) => event.source_record_id),
-      ).toEqual([encodeSourceRecordId(["conversation-42", "message-2"])]);
+      expect(second.events).toEqual([]);
+      expect(second.events.some((event) => event.deleted)).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
