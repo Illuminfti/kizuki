@@ -109,4 +109,18 @@ describe("fetch bodies", () => {
     expect(error).toBeInstanceOf(KizukiError);
     expect((error as KizukiError).message).toBe("server sent an unrequested body");
   });
+
+  test("treats a NIL body as missing rather than empty bytes", async () => {
+    const session = await ImapSession.open(
+      dialer(() => [
+        "* 1 FETCH (UID 7 BODY[] NIL)\r\n",
+        '* 2 FETCH (UID 8 BODY[] {2}\r\nhi)\r\n',
+        "{tag} OK done\r\n",
+      ]),
+      STATE,
+    );
+    const bodies = await session.fetchBodies([7, 8], "");
+    expect(bodies.has(7)).toBe(false);
+    expect(new TextDecoder().decode(bodies.get(8))).toBe("hi");
+  });
 });

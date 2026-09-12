@@ -98,6 +98,26 @@ describe("backfill paging", () => {
     expect(seen[449]).toBe(450);
   });
 
+  test("a full page says there is more; a finished mailbox does not", async () => {
+    const server = new FakeImapServer([folder("INBOX", 450)]);
+    const walkDeps = deps(server, state(["INBOX"]));
+    const first = await walkMailboxes(walkDeps, null, "backfill");
+    expect(first.batch.events).toHaveLength(BATCH);
+    expect(first.batch.has_more).toBe(true);
+
+    const second = await walkMailboxes(walkDeps, first.batch.cursor, "backfill");
+    expect(second.batch.has_more).toBe(true);
+
+    const third = await walkMailboxes(walkDeps, second.batch.cursor, "backfill");
+    expect(third.batch.events).toHaveLength(50);
+    expect(third.batch.has_more).toBe(false);
+
+    const idle = await walkMailboxes(walkDeps, third.batch.cursor, "backfill");
+    expect(idle.batch.events).toEqual([]);
+    expect(idle.batch.has_more).toBe(false);
+    expect(idle.batch.cursor).toBe(third.batch.cursor);
+  });
+
   test("a completed backfill returns an empty batch and an unchanged cursor", async () => {
     const server = new FakeImapServer([folder("INBOX", 3)]);
     const walkDeps = deps(server, state(["INBOX"]));
@@ -231,9 +251,30 @@ describe("sync", () => {
     expect(second.batch.events).toHaveLength(2);
     expect(second.batch.events.every((event) => event.deleted)).toBe(true);
     expect(uidsOf(second.batch.events)).toEqual([2, 3]);
+    expect(second.batch.has_more).toBe(false);
     expect(
       decodeCursor(second.batch.cursor ?? "").folders["INBOX"]?.known,
     ).toBe("1,4");
+  });
+
+  test("an expunge is still tombstoned when new mail arrives on the same walk", async () => {
+    const server = new FakeImapServer([folder("INBOX", 4)]);
+    const walkDeps = deps(server, state(["INBOX"]));
+    const first = await walkMailboxes(walkDeps, null, "backfill");
+    server.expunge("INBOX", 2);
+    server.append("INBOX", "Subject: fresh\r\n\r\nnew mail\r\n");
+
+    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    const tombstones = second.batch.events.filter((event) => event.deleted);
+    const fresh = second.batch.events.filter((event) => !event.deleted);
+    expect(tombstones.map((event) => event.source_record_id)).toEqual([
+      "5:2:INBOX",
+    ]);
+    expect(uidsOf(fresh)).toEqual([5]);
+    expect(
+      decodeCursor(second.batch.cursor ?? "").folders["INBOX"]?.known,
+    ).toBe("1,3:5");
+    expect(second.batch.has_more).toBe(false);
   });
 
   test("a uidvalidity reset tombstones the old ids then re-emits", async () => {
@@ -259,6 +300,7 @@ describe("sync", () => {
       "6:3:INBOX",
     ]);
     expect(second.notes).toEqual(["uidvalidity changed: INBOX"]);
+    expect(second.batch.has_more).toBe(false);
   });
 
   test("a body the server withholds is retried, not walked past", async () => {
@@ -324,6 +366,26 @@ describe("sync", () => {
     expect(second.batch.events).toHaveLength(BATCH);
     const advanced = decodeCursor(second.batch.cursor ?? "").folders["INBOX"];
     expect(advanced?.scan_from).toBe(BATCH + holes + 1);
+  });
+
+  test("a BODY[] NIL is retried, not stored as a blank message", async () => {
+    const server = new FakeImapServer([folder("INBOX", 3)]);
+    const walkDeps = deps(server, state(["INBOX"]));
+    server.nilBody("INBOX", 2);
+
+    const first = await walkMailboxes(walkDeps, null, "backfill");
+    expect(uidsOf(first.batch.events)).toEqual([1, 3]);
+    expect(first.notes).toEqual(["message bodies not returned: INBOX (1)"]);
+    expect(first.batch.has_more).toBe(true);
+    const held = decodeCursor(first.batch.cursor ?? "").folders["INBOX"];
+    expect(held?.known).toBe("1,3");
+    expect(held?.pending).toBe("2");
+
+    server.restoreBody("INBOX", 2);
+    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    expect(uidsOf(second.batch.events)).toEqual([2]);
+    expect(second.notes).toEqual([]);
+    expect(second.batch.has_more).toBe(false);
   });
 
   test("a message expunged before its body arrived leaves the retry list", async () => {
@@ -399,6 +461,7 @@ describe("sync", () => {
     const first = await walkMailboxes(walkDeps, cursor, "sync");
     expect(first.batch.events).toHaveLength(BATCH);
     expect(first.batch.events.every((event) => event.deleted)).toBe(true);
+    expect(first.batch.has_more).toBe(true);
     expect(decodeCursor(first.batch.cursor ?? "").folders["INBOX"]?.known).toBe(
       "201:300",
     );
@@ -429,6 +492,7 @@ describe("sync", () => {
     expect(
       first.batch.events.every((event) => event.metadata["uidvalidity_reset"]),
     ).toBe(true);
+    expect(first.batch.has_more).toBe(true);
     expect(uidsOf(first.batch.events)).toEqual(
       Array.from({ length: BATCH }, (_unused, index) => index + 1),
     );
