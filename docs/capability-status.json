@@ -52,6 +52,12 @@
       "heading": "Product identity"
     },
     {
+      "id": "product.taste",
+      "status": "direction",
+      "doc": "docs/product-context.md",
+      "heading": "Taste as source-linked working knowledge"
+    },
+    {
       "id": "stranger-proof.sqlite-engine",
       "status": "shipped",
       "doc": "docs/stranger-proof.md",

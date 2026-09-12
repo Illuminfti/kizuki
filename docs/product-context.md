@@ -112,6 +112,8 @@ direction, not a claim that skill compilation is implemented.
 
 ## Taste as source-linked working knowledge
 
+Status: direction
+
 Taste is first-class working knowledge. Kizuki should learn from demonstrated
 preferences, recurring creative standards, accepted and rejected outputs,
 corrections, and the contexts and evidence behind those choices. This should
