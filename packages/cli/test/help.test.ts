@@ -831,6 +831,20 @@ describe("help", () => {
     }
   });
 
+  test("connect x-api field errors name retained author identity", () => {
+    const env = isolatedEnv();
+    for (const args of [
+      ["connect", "x-api"],
+      ["connect", "x-api", "--fields", "text", "--history-start", "2026-01-01T00:00:00Z"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("author identity");
+      expect(result.stderr).toContain("always included");
+    }
+  });
+
   test("recover structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["recover", "--help", "--json"], ["help", "recover", "--json"]] as const) {

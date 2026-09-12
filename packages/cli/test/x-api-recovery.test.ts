@@ -30,7 +30,7 @@ async function enrolled(expired = true) {
   const db = openLedger(dbPath(setup)), store = stateStore(setup), pending = store.begin();
   await pending.writer.write(f.state); const connection = store.save(db, ID, pending.pending);
   setSourceGrant(db, { source_key: connection.source_key, expected_revision: 0, operation_id: 'synthetic-recovery-grant', policy: {
-    purposes: ['capture'], allowed_fields: ['text', 'metadata'], retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private',
+    purposes: ['capture'], allowed_fields: ['text', 'subjects', 'metadata'], retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private',
   } }); db.close();
   return { setup, f, source: connection.source_key, redirect: state.native_client.redirect_uri, ...ownerIo(setup) };
 }
