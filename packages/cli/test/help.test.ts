@@ -293,6 +293,35 @@ describe("help", () => {
     }
   });
 
+  test("export structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["export", "--help", "--json"], ["help", "export", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
+      expect(body.data.name).toBe("export");
+      expect(body.data.options).toEqual(["--out"]);
+      expect(body.data.flags).toEqual([]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    expect(runCli(env, "export", "--help").stdout).toContain("--out");
+    for (const [args, diagnostic] of [
+      [["export", "--nope"], "unknown option --nope"],
+      [["export", "--out", "./export", "--out", "./other"], "repeated option --out"],
+      [["export", "--out"], "missing value for --out"],
+      [["export", "extra"], "invalid arguments"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki export");
+    }
+  });
+
   test("recover structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["recover", "--help", "--json"], ["help", "recover", "--json"]] as const) {
