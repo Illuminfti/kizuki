@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureVaultId, readVaultId, vaultIdPath } from "../../src/serve/vault-id";
@@ -13,11 +13,15 @@ function vault(): string {
 }
 
 function cloneIdentity(from: string, to: string): void {
-  mkdirSync(join(to, ".kizuki"), { recursive: true });
+  const control = join(to, ".kizuki");
+  mkdirSync(control, { recursive: true, mode: 0o700 });
+  chmodSync(control, 0o700);
   for (const name of ["vault-id", "vault-machine"]) {
     const source = join(from, ".kizuki", name);
     try {
-      writeFileSync(join(to, ".kizuki", name), readFileSync(source));
+      const destination = join(control, name);
+      writeFileSync(destination, readFileSync(source), { mode: 0o600 });
+      chmodSync(destination, 0o600);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
@@ -63,7 +67,9 @@ describe("vault identity", () => {
   test("an existing unbound id is adopted rather than rotated", () => {
     const path = vault();
     mkdirSync(join(path, ".kizuki"), { recursive: true, mode: 0o700 });
+    chmodSync(join(path, ".kizuki"), 0o700);
     writeFileSync(vaultIdPath(path), "01adoptedvaultid000000000001\n", { mode: 0o600 });
+    chmodSync(vaultIdPath(path), 0o600);
     expect(ensureVaultId(path, "machine-a")).toBe("01adoptedvaultid000000000001");
     expect(ensureVaultId(path, "machine-a")).toBe("01adoptedvaultid000000000001");
     const fork = vault();

@@ -1,4 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
+import { chmodSync } from "node:fs";
+import { join } from "node:path";
 import { hashBody } from "../../src/claims/hash";
 import type { RetrievalDoc } from "../../src/contracts/retrieval";
 import { openLedger } from "../../src/ledger/db";
@@ -60,6 +62,7 @@ test("a real remote adapter proves a closure above 10,000 IDs in bounded chunks 
   writeCanon(disk.path, "facts/atlas.md", {
     id: "atlas", title: "Atlas", type: "fact", status: "active", sensitivity: "personal", taint: "quoted", sources: [erased],
   }, "Atlas fixture ordinary-10024.\n");
+  chmodSync(join(disk.path, "facts/atlas.md"), 0o600);
   const port = await remote();
   const independent = `page:${erased}`;
   await port.upsert([

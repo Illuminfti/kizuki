@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBudgetTracker } from "../../src/canon/budget";
@@ -225,9 +225,11 @@ describe("write pass", () => {
 
   test("an edit of a human page stays on that page", async () => {
     const { path, db } = vault();
-    mkdirSync(join(path, "people"), { recursive: true });
+    mkdirSync(join(path, "people"), { recursive: true, mode: 0o700 });
+    chmodSync(join(path, "people"), 0o700);
+    const ownerPage = join(path, "people", "grace.md");
     writeFileSync(
-      join(path, "people", "grace.md"),
+      ownerPage,
       [
         "---",
         "id: person:grace",
@@ -241,7 +243,9 @@ describe("write pass", () => {
         "Grace keeps the partnership notes.",
         "",
       ].join("\n"),
+      { mode: 0o600 },
     );
+    chmodSync(ownerPage, 0o600);
     const eventId = putEvent(db);
     fileProposal(db, {
       kind: "claim",
@@ -292,11 +296,13 @@ describe("write pass", () => {
 
   test("skipped owner pages do not stall later writeable claims", async () => {
     const { path, db } = vault();
-    mkdirSync(join(path, "people"), { recursive: true });
+    mkdirSync(join(path, "people"), { recursive: true, mode: 0o700 });
+    chmodSync(join(path, "people"), 0o700);
     for (let index = 0; index < 32; index += 1) {
       const slug = `skip-${String(index).padStart(2, "0")}`;
+      const ownerPage = join(path, "people", `${slug}.md`);
       writeFileSync(
-        join(path, "people", `${slug}.md`),
+        ownerPage,
         [
           "---",
           `id: person:${slug}`,
@@ -310,7 +316,9 @@ describe("write pass", () => {
           `${slug} keeps owner notes.`,
           "",
         ].join("\n"),
+        { mode: 0o600 },
       );
+      chmodSync(ownerPage, 0o600);
       fileProposal(db, {
         kind: "claim",
         target: `people/${slug}`,

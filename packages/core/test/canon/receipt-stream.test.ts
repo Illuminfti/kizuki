@@ -31,9 +31,11 @@ function receipt(): CanonReceipt {
 
 test("standalone readPage returns matching bytes, hash and parse and retains its directory error", () => {
   const f = fixture(), path = join(f.vault, "people/item.md");
-  mkdirSync(join(f.vault, "people"));
+  mkdirSync(join(f.vault, "people"), { mode: 0o700 });
+  chmodSync(join(f.vault, "people"), 0o700);
   const content = serializePage({ data: { title: "Synthetic page", type: "person" }, body: "Owner text.\n" });
   writeFileSync(path, content, { mode: 0o600 });
+  chmodSync(path, 0o600);
   const found = readPage(f.io, "people/item.md")!;
   expect(found.path).toBe(path); expect(found.content).toBe(content);
   expect(found.hash).toBe(hashBytes(Buffer.from(content))); expect(found.page.data.title).toBe("Synthetic page");
