@@ -231,10 +231,13 @@ pasted access token.
 kizuki connect x-api --fields none --history-start 2026-01-01T00:00:00Z
 ```
 
-`--fields none` selects text and baseline metadata. Additional selections are
-`relationships`, `links` and `media`; media captures references. Enrollment
-captures no history. Grant the new source's policy before running
-`kizuki backfill x-api --source KEY`.
+`--fields none` still captures post text, author identity as a `from` subject,
+and baseline metadata. It does not omit author subjects. Additional selections
+are `relationships`, `links` and `media`; media captures attachment references.
+Compatible source grants always require `text`, `subjects`, and `metadata`;
+selecting `media` additionally requires `attachments`. A narrower policy is
+refused; grants are not widened automatically. Enrollment captures no history.
+Grant the new source's policy before running `kizuki backfill x-api --source KEY`.
 
 The protected v2 state saves the public app configuration for background
 capture, so later processes need no terminal exports. Existing sources retain

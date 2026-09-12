@@ -73,7 +73,10 @@ the previous capture checkpoint, pending page plan, and cooldown. Legacy
 two-argument connectors retain their host behavior through the additive argument.
 
 The host must approve the source capture grant before calling its ingestion
-runner. Event sensitivity defaults to `private` and has a `private` floor.
+runner. Compatible grants always require `text`, `subjects`, and `metadata`.
+Selecting `media` additionally requires `attachments`. A narrower policy is
+refused (`source_field_denied`); the host does not widen grants to match the
+projection. Event sensitivity defaults to `private` and has a `private` floor.
 Configuration, saved scopes, client identity, and selected fields are checked
 before API requests; account identity is verified before every capture call.
 History starts normalize to UTC only when millisecond precision preserves the
@@ -86,22 +89,32 @@ Only fixed `https://api.x.com` routes are used: `/2/users/me`,
 token and revocation endpoints. GET redirects are refused. No likes, bookmarks,
 DMs, foreign timeline expansion, browser scraping, or media downloads occur.
 
-Each post keeps its native ID (`post:{id}`), owner identity, provider occurrence
-time, full long-post text when supplied, edit-history IDs, and selected optional
-relationships, links, and media references. No provider error prose is copied
-into events or failure receipts. A response containing partial errors, a foreign
-author, missing required fields, conflicting aliases, or incomplete selected
-media references refuses the whole page.
+Each post keeps its native ID (`post:{id}`), owner identity as a `from` subject,
+provider occurrence time, full long-post text when supplied, edit-history IDs,
+and selected optional relationships, links, and media references. `--fields none`
+(an empty optional-field list) still persists text, author subjects, and
+metadata; it does not omit author identity. Unselected optional payloads are
+dropped. No provider error prose is copied into events or failure receipts. A
+response containing partial errors, a foreign author, missing required fields,
+conflicting aliases, or incomplete selected media references refuses the whole
+page.
 
 Selected mentions use inline native IDs or the documented same-page
-`entities.mentions.username` user expansion, requested with `user.fields=id,username`.
-Username-only mentions require an unambiguous native ID in `includes.users`;
-missing or conflicting bindings refuse. At most 6,400 expanded user identities
-are examined within the same 2 MiB response bound. Expanded profile prose is
-discarded. No extra user-lookup request or guessed username identity is used.
+`entities.mentions.username` user expansion. That expansion and
+`user.fields=id,username` are requested only when `relationships` is selected;
+`user.fields` is absent for `none` and `links`. Username-only mentions require
+an unambiguous native ID in `includes.users`; missing or conflicting bindings
+refuse. At most 6,400 expanded user identities are examined within the same
+2 MiB response bound. Expanded profile prose is discarded. No extra user-lookup
+request or guessed username identity is used.
 
-`tweet-v2` explicitly selects the official timeline integration guide's
-`tweet.fields` query and `/tweets` routes. The parser accepts documented
+`tweet-v2` uses the official timeline integration guide's `/tweets` routes and a
+selection-dependent `tweet.fields` query. Every capture GET includes
+`id,text,author_id,created_at,edit_history_tweet_ids,note_tweet`. `entities` is
+included if and only if `links` or `relationships` is selected. `attachments`
+and the `attachments.media_keys` expansion are included if and only if `media`
+is selected. Field selection does not change the OAuth scopes
+`tweet.read`, `users.read`, and `offline.access`. The parser accepts documented
 `note_post`/`note_tweet`, `referenced_posts`/`referenced_tweets`, and
 `edit_history_post_ids`/`edit_history_tweet_ids` aliases when their normalized
 values agree. It never retries an alternative field dialect automatically.
@@ -189,7 +202,8 @@ neither tombstones nor purge, and `purgeSource` returns `not_supported`.
 
 All provider fixtures and credentials are synthetic. Tests include real PKCE
 callbacks, parser aliases, frozen pagination, exact replay after partial ledger
-acceptance, an actual child exit after durable plan write, request/body limits,
+acceptance, selection-dependent capture GET query entities from the client
+fixture, an actual child exit after durable plan write, request/body limits,
 same-session token admission retry, late rotation, and native state replacement
 for both the same and a different account. Additional cases cover token 429,
 late/stale cooldown persistence, cumulative restart limits, bounded headers,

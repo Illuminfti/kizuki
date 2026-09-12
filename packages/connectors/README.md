@@ -371,10 +371,14 @@ X API access are not supported by this bounded importer.
 The separate `kizuki.x` connector is registered for native CLI enrollment and
 read-only capture of the authenticated account's own posts. The CLI owns
 browser sign-in, the configured fixed loopback callback and protected OAuth
-state; source consent is a separate step. See the [X API guide](../connector-x/API.md)
-for the enrollment command and prerequisites. Provider enrollment, paid access,
-API compatibility and deletion coverage remain unqualified against a real
-account. The local archive importer above does not supply that qualification.
+state; source consent is a separate step. Every captured post keeps the owner as
+a `from` subject; `--fields none` does not omit author identity. Compatible
+grants always need `text`, `subjects`, and `metadata`, plus `attachments` when
+`media` is selected. Grants are not auto-widened. See the
+[X API guide](../connector-x/API.md) for the enrollment command, selection-dependent
+GET query, and prerequisites. Provider enrollment, paid access, API compatibility
+and deletion coverage remain unqualified against a real account. The local
+archive importer above does not supply that qualification.
 
 ## Not here, deliberately
 

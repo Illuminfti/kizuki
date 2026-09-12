@@ -147,14 +147,13 @@ test('app host reports native X selection fields, grants exactly them, and flags
   }
 });
 
-test('X none/links grants retain author subjects and media/relationships unions require them before capture', async () => {
-  const author = { subject_id: 'x:user:7', role: 'from' as const };
+for (const [fields, required, subjects, urls] of [
+  ['none', ['text', 'subjects', 'metadata'], [{ subject_id: 'x:user:7', role: 'from' as const }], false],
+  ['links', ['text', 'subjects', 'metadata'], [{ subject_id: 'x:user:7', role: 'from' as const }], true],
+  ['media', ['text', 'subjects', 'metadata', 'attachments'], [{ subject_id: 'x:user:7', role: 'from' as const }], false],
+  ['media,relationships', ['text', 'subjects', 'metadata', 'attachments'], [{ subject_id: 'x:user:7', role: 'from' as const }, { subject_id: 'x:user:9', role: 'to' as const }, { subject_id: 'x:user:8', role: 'about' as const }], false],
+] as const) test(`X ${fields} grant admits only its required fields before capture`, async () => {
   const includes = { media: [{ media_key: '3_100', type: 'photo', url: 'https://pbs.twimg.com/media/synthetic.jpg' }] };
-  for (const [fields, required, subjects, urls] of [
-    ['none', ['text', 'subjects', 'metadata'], [author], false],
-    ['links', ['text', 'subjects', 'metadata'], [author], true],
-    ['media,relationships', ['text', 'subjects', 'metadata', 'attachments'], [author, { subject_id: 'x:user:9', role: 'to' }, { subject_id: 'x:user:8', role: 'about' }], false],
-  ] as const) {
     expect(xApiRequiredFields(xApiSelection(fields, historyStart))).toEqual([...required]);
     const needsAttachments = required.some(field => field === 'attachments');
     const setup = h.tempVault(), f = new XApiFixture(1, 1, xApiSelection(fields, historyStart));
@@ -201,13 +200,21 @@ test('X none/links grants retain author subjects and media/relationships unions 
       expect(event.metadata.references).toEqual(fields.includes('relationships') ? [] : undefined);
       expect(event.metadata.media_refs === undefined).toBe(!fields.includes('media'));
       const list = f.requests.find(request => new URL(request.url).pathname === `/2/users/${f.account}/tweets`)!;
-      const tweetFields = new URL(list.url).searchParams.get('tweet.fields') ?? '';
-      expect(tweetFields).toContain('author_id');
-      expect(tweetFields.includes('referenced_tweets')).toBe(fields.includes('relationships'));
-      expect((new URL(list.url).searchParams.get('expansions') ?? '').includes('entities.mentions.username')).toBe(fields.includes('relationships'));
+      expect(list.method).toBe('GET');
+      const query = new URL(list.url).searchParams;
+      const tweetFields = new Set((query.get('tweet.fields') ?? '').split(','));
+      const expansions = new Set((query.get('expansions') ?? '').split(',').filter(Boolean));
+      expect(tweetFields.has('author_id')).toBe(true);
+      expect(tweetFields.has('entities')).toBe(fields.includes('links') || fields.includes('relationships'));
+      expect(tweetFields.has('attachments')).toBe(fields.includes('media'));
+      expect(tweetFields.has('referenced_tweets')).toBe(fields.includes('relationships'));
+      expect(expansions.has('entities.mentions.username')).toBe(fields.includes('relationships'));
+      expect(expansions.has('attachments.media_keys')).toBe(fields.includes('media'));
+      expect(query.get('user.fields')).toBe(fields.includes('relationships') ? 'id,username' : null);
+      expect(query.has('media.fields')).toBe(fields.includes('media'));
+      if (!fields.includes('relationships') && !fields.includes('media')) expect(query.has('expansions')).toBe(false);
       expect(o.auth().searchParams.get('scope')).toBe(X_API_SCOPES.join(' '));
     } finally { db.close(); }
-  }
 });
 
 test('held X state snapshot resolves only its original reference and stale runtime writes cannot overwrite replacement', async () => {
