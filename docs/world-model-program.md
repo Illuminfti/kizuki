@@ -21,6 +21,47 @@ Help a person resume real work with another authorized client using current, evi
 
 Every capability has one canonical Core implementation and one versioned semantic contract. Human, developer and agent surfaces project that contract within each principal's current grant. UX, DX and AX must agree on meaning, provenance, uncertainty, freshness, errors and correction; different grants can legitimately produce different data.
 
+### Error-semantics example: authorization refusal before mutation
+
+This is a design acceptance example, not a shipped public surface. It does not add a CLI, MCP, HTTP, or Situation API. For one principal, the human, developer, and agent projections of the same Core refusal must agree on four obligations: what happened, whether state changed, whether an identical blind retry is useful, and the next safe recovery path. None of them may disclose whether a hidden target exists.
+
+<!-- situation-error-parity-example -->
+```json
+{
+  "id": "authorization-refusal-before-mutation",
+  "evaluation_state": "design_only",
+  "principal": "agent.alpha",
+  "projections": {
+    "ux": {
+      "happened": "authorization_refused",
+      "state_changed": false,
+      "blind_retry_useful": false,
+      "recovery": "resolve_authorization",
+      "hidden_target_disclosed": false,
+      "summary": "Authorization failed. Nothing was written. Retrying the same request will not help until access is granted."
+    },
+    "dx": {
+      "happened": "authorization_refused",
+      "state_changed": false,
+      "blind_retry_useful": false,
+      "recovery": "resolve_authorization",
+      "hidden_target_disclosed": false,
+      "code": "authorization_refused"
+    },
+    "ax": {
+      "happened": "authorization_refused",
+      "state_changed": false,
+      "blind_retry_useful": false,
+      "recovery": "resolve_authorization",
+      "hidden_target_disclosed": false,
+      "code": "authorization_refused"
+    }
+  }
+}
+```
+
+A counterexample fails this law when any projection reports success, a state change, a useful blind retry, or whether a hidden target exists.
+
 ## Delivery map
 
 Follow issue #497 for the current dependency graph. The groups below explain the sequence without maintaining another exhaustive task list.
