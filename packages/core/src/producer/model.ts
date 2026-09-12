@@ -26,7 +26,7 @@ import { registerPort } from "../contracts/registry";
 import type { PortRegistry } from "../contracts/registry";
 import { isRfc3339 } from "../util/time";
 import { isNonEmptyString, isPlainObject } from "../util/validate";
-import { escapeFenceText, hasFenceLeak, newFenceNonce } from "./fence";
+import { escapeFenceText, hasFenceLeak, hasParsedFenceLeak, newFenceNonce } from "./fence";
 import { buildExtractionMessages } from "./prompt";
 import {
   MAX_EVENT_ID_CHARS,
@@ -495,6 +495,9 @@ export function createModelProducerPort(
             detail: { detail: parsed.detail },
           });
           return { status: "rejected", reason: "schema_invalid", usage, diagnostic: parsed.diagnostic };
+        }
+        if (hasParsedFenceLeak(parsed.claims, batch.nonce)) {
+          return { status: "rejected", reason: "fence_leak", usage };
         }
         for (const rejection of parsed.rejected) {
           dropped.push({ reason: "schema_invalid" });

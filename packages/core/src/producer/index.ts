@@ -4,6 +4,7 @@ export {
   escapeFenceText,
   fenceBlock,
   hasFenceLeak,
+  hasParsedFenceLeak,
   isFenceNonce,
   newFenceNonce,
 } from "./fence";

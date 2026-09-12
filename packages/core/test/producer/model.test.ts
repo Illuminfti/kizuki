@@ -3,6 +3,10 @@ import { PortError } from "../../src/contracts/ports";
 import type { ProducerPort } from "../../src/contracts/producer";
 import { PortRegistry } from "../../src/contracts/registry";
 import {
+  FENCE_OPEN,
+  hasFenceLeak,
+} from "../../src/producer/fence";
+import {
   EXTRACT_BATCH,
   EXTRACT_INPUT_CHARS,
   MODEL_PRODUCER_DESCRIPTOR,
@@ -42,6 +46,24 @@ function withProducer<T>(
   });
 }
 type PortLogLineList = ReturnType<typeof temporaryProducerContext>["logs"];
+
+function jsonUnicodeEscape(text: string): string {
+  let escaped = "";
+  for (let index = 0; index < text.length; index += 1) {
+    escaped += `\\u${text.charCodeAt(index).toString(16).padStart(4, "0")}`;
+  }
+  return escaped;
+}
+
+function responseWithUnicodeEscapedField(
+  claim: ReturnType<typeof draft>,
+  field: "body" | "object",
+  decoded: string,
+): string {
+  const placeholder = "KZ_UNICODE_FIELD";
+  const encoded = JSON.stringify({ claims: [{ ...claim, [field]: placeholder }] });
+  return encoded.replace(`"${placeholder}"`, `"${jsonUnicodeEscape(decoded)}"`);
+}
 
 describe("kizuki.producer.model", () => {
   test("descriptor is the producer contract with the model capability only", () => {
@@ -153,6 +175,63 @@ describe("kizuki.producer.model", () => {
       const result = await producer.produce(input([GRACE_EVENT]));
       expect(result.status).toBe("rejected");
       if (result.status === "rejected") expect(result.reason).toBe("fence_leak");
+    });
+  });
+
+  test("a unicode-escaped nonce in a parsed extraction string is rejected as fence_leak", async () => {
+    let raw = "";
+    let nonce = "";
+    const llm = scriptedLlm((request) => {
+      const user = request.messages[1]!.content;
+      nonce = /<<<KZ-QUOTE ([0-9a-f]{32}) /.exec(user)![1]!;
+      raw = responseWithUnicodeEscapedField(draft(), "body", nonce);
+      return raw;
+    });
+    await withProducer(llm, async (producer) => {
+      const result = await producer.produce(input([GRACE_EVENT]));
+      expect(hasFenceLeak(raw, nonce)).toBe(false);
+      expect(JSON.parse(raw).claims[0].body).toBe(nonce);
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected") expect(result.reason).toBe("fence_leak");
+    });
+  });
+
+  test("a unicode-escaped fence marker in a parsed extraction string is rejected as fence_leak", async () => {
+    let raw = "";
+    let nonce = "";
+    const llm = scriptedLlm((request) => {
+      const user = request.messages[1]!.content;
+      nonce = /<<<KZ-QUOTE ([0-9a-f]{32}) /.exec(user)![1]!;
+      raw = responseWithUnicodeEscapedField(draft(), "object", FENCE_OPEN);
+      return raw;
+    });
+    await withProducer(llm, async (producer) => {
+      const result = await producer.produce(input([GRACE_EVENT]));
+      expect(hasFenceLeak(raw, nonce)).toBe(false);
+      expect(JSON.parse(raw).claims[0].object).toBe(FENCE_OPEN);
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected") expect(result.reason).toBe("fence_leak");
+    });
+  });
+
+  test("benign unicode-escaped extraction text that does not decode to the nonce or a marker is accepted", async () => {
+    const claim = draft();
+    let raw = "";
+    let nonce = "";
+    const llm = scriptedLlm((request) => {
+      const user = request.messages[1]!.content;
+      nonce = /<<<KZ-QUOTE ([0-9a-f]{32}) /.exec(user)![1]!;
+      raw = responseWithUnicodeEscapedField(claim, "body", claim.body);
+      return raw;
+    });
+    await withProducer(llm, async (producer) => {
+      const result = await producer.produce(input([GRACE_EVENT]));
+      expect(raw).toContain("\\u");
+      expect(raw).not.toContain(claim.body);
+      expect(hasFenceLeak(raw, nonce)).toBe(false);
+      expect(JSON.parse(raw).claims[0].body).toBe(claim.body);
+      expect(result.status).toBe("ok");
+      if (result.status === "ok") expect(result.claims).toEqual([claim]);
     });
   });
 

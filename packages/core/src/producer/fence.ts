@@ -62,11 +62,41 @@ export function fenceBlock(
 /**
  * True when a model response carries the nonce or either marker. The check
  * runs on the raw response text before any parsing, so a leak inside a JSON
- * string, a code fence, or trailing prose is caught the same way.
+ * string, a code fence, or trailing prose is caught the same way. JSON
+ * `\uXXXX` sequences that decode into the nonce or a marker are not visible
+ * here; apply the same rule to parsed extraction strings after schema parse.
  */
 export function hasFenceLeak(response: string, nonce: string): boolean {
   if (!isFenceNonce(nonce)) {
     throw new RangeError("fence nonce must be 32 lowercase hex characters");
   }
   return response.includes(nonce) || FENCE_MARKER.test(response);
+}
+
+function parsedExtractionStrings(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) {
+    const strings: string[] = [];
+    for (const item of value) strings.push(...parsedExtractionStrings(item));
+    return strings;
+  }
+  if (value !== null && typeof value === "object") {
+    const strings: string[] = [];
+    for (const item of Object.values(value as { readonly [key: string]: unknown })) {
+      strings.push(...parsedExtractionStrings(item));
+    }
+    return strings;
+  }
+  return [];
+}
+
+/**
+ * Same nonce and marker rule as `hasFenceLeak`, applied to decoded strings
+ * from a schema-parsed extraction payload. JSON `\uXXXX` is visible here.
+ */
+export function hasParsedFenceLeak(parsed: unknown, nonce: string): boolean {
+  if (!isFenceNonce(nonce)) {
+    throw new RangeError("fence nonce must be 32 lowercase hex characters");
+  }
+  return parsedExtractionStrings(parsed).some((text) => hasFenceLeak(text, nonce));
 }
