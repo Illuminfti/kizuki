@@ -314,6 +314,9 @@ describe("help", () => {
   test("app structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["app", "--help", "--json"], ["help", "app", "--json"]] as const) {
+  test("backfill structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["backfill", "--help", "--json"], ["help", "backfill", "--json"]] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
@@ -431,6 +434,17 @@ describe("help", () => {
       [["app", "--no-service", "--no-service"], "repeated flag --no-service"],
       [["app", "--no-open=true"], "flag --no-open does not take a value"],
       [["app", "extra"], "invalid arguments"],
+      expect(body.data.name).toBe("backfill");
+      expect(body.data.options).toEqual(["--source"]);
+      expect(body.data.flags).toEqual([]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "backfill", "--help");
+    expect(text.stdout).toContain("--source");
+    for (const [args, diagnostic] of [
+      [["backfill", "markdown-folder", "--nope"], "unknown option --nope"],
+      [["backfill", "markdown-folder", "--source", "a", "--source", "b"], "repeated option --source"],
+      [["backfill", "markdown-folder", "--source"], "missing value for --source"],
     ] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(2);
@@ -450,6 +464,7 @@ describe("help", () => {
     expect(extra.stderr).toContain("error: rebuild supports --layer all or graph");
     expect(extra.stderr).toContain("usage: kizuki rebuild");
       expect(result.stderr).toContain("usage: kizuki app");
+      expect(result.stderr).toContain("usage: kizuki backfill");
     }
   });
 

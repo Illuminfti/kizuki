@@ -6,14 +6,23 @@ import { loadConnector, resolveConnectorId, selectConnection } from "../connecti
 import { withVault } from "../context";
 import { refreshAndPublishDerived } from "../derived";
 import { formatRunCounts } from "../output";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
+
+export const BACKFILL_SCHEMA = {
+  options: ["--source"],
+  flags: [],
+} as const satisfies CommandHelpSchema;
 
 export const backfillCommand: Command = {
   name: "backfill",
   usage: "backfill <connector> [--source PATH|KEY]",
   summary: "drain a historical sweep until the selected connection is exhausted",
+  schema: BACKFILL_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
-    const parsed = parseArguments(args, { options: ["--source"] });
+    const parsed = parseArguments(args, {
+      options: [...BACKFILL_SCHEMA.options],
+      flags: [...BACKFILL_SCHEMA.flags],
+    });
     const [rawId] = requirePositional(parsed.positionals, 1);
     if (rawId === undefined) throw new UsageError(this.usage);
     const connectorId = resolveConnectorId(rawId);
