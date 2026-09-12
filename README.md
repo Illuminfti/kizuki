@@ -27,6 +27,8 @@ Then you open a new agent and explain your world again.
 
 ## The vision
 
+Status: direction
+
 Models are increasingly interchangeable intelligence. Agent harnesses are increasingly interchangeable execution. What does not automatically move between them is **a durable, high-fidelity model of reality**: who you are, who is around you, what you know, what you are learning, what is happening, what matters, what has changed, what remains uncertain, and why any of it is believed.
 
 Kizuki is building that layer.
