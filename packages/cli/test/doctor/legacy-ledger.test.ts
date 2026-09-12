@@ -55,3 +55,25 @@ test("doctor JSON accepts a genuine migrated v1 event without hiding unrelated h
   expect(envelope.data.connections.some((connection: { health: string }) => connection.health !== "ok")).toBe(true);
   expect(result.stdout).not.toContain("Neutral synthetic compatibility event.");
 });
+
+test("init migrates a sealed historical event and purge when its acceptance floor matches", () => {
+  const setup = tempVault(), ledgerPath = join(setup.vault, ".kizuki/kizuki.db");
+  const oldPath = join(setup.root, "legacy-purge.sqlite"), old = new Database(oldPath);
+  try {
+    old.exec(readFileSync(join(import.meta.dir, "../../../core/test/fixtures/doctor-ledger15-legacy.sql"), "utf8"));
+    const eventId = old.query<{ event_id: string }, []>("SELECT event_id FROM events LIMIT 1").get()?.event_id;
+    if (eventId === undefined) throw new Error("legacy fixture event missing");
+    old.query(
+      "INSERT INTO event_purges(receipt_id,event_id,connector_id,reason,purged_at) VALUES(?,?,?,?,?)",
+    ).run("legacy-purge-receipt", eventId, "fixture", "historical purge", "2026-09-01T00:00:00.000Z");
+  } finally { old.close(true); }
+  renameSync(oldPath, ledgerPath); chmodSync(ledgerPath, 0o600);
+  writeFileSync(join(setup.vault, ".kizuki", "ledger-mark"), "2\n", { mode: 0o600 });
+  expect(runCli(setup.env, "init", setup.vault, "--no-service").exitCode).toBe(0);
+  const migrated = new Database(ledgerPath, { readonly: true });
+  try {
+    expect(migrated.query("SELECT version FROM schema_version").get()).toEqual({ version: LEDGER_SCHEMA_VERSION });
+    expect(migrated.query("SELECT COUNT(*) AS count FROM events").get()).toEqual({ count: 1 });
+    expect(migrated.query("SELECT COUNT(*) AS count FROM event_purges").get()).toEqual({ count: 1 });
+  } finally { migrated.close(true); }
+});

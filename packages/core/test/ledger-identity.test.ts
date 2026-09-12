@@ -45,7 +45,7 @@ test("closed ledger identity reads bounded schema and acceptance counts without 
     expect(identity.schemaVersion).toBeGreaterThan(0);
     expect(identity.accepted).toBe(0);
     expect(Object.keys(identity)).toEqual(["schemaVersion", "accepted"]);
-    expect(queries).toHaveLength(3);
+    expect(queries).toHaveLength(4);
     expect(queries[1]).toContain("LIMIT 2");
     if (process.platform === "darwin") expect(closedFootprint(f)).toEqual(before);
   } finally { Database.prototype.query = original; f.close(); }

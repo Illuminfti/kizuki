@@ -59,9 +59,9 @@ const sidecars = ["kizuki.db-wal", "kizuki.db-shm", "kizuki.db-journal"] as cons
 
 function readIdentity(db: Database): { schemaVersion: number; accepted: number } {
   const tables = atPhase("tables", () => db.query<{ name: string }, []>(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('schema_version', 'events')",
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('schema_version', 'events', 'event_purges')",
   ).all());
-  if (tables.length !== 2) throw new LedgerIdentityError("invalid_ledger", undefined,
+  if (!tables.some(({ name }) => name === "schema_version") || !tables.some(({ name }) => name === "events")) throw new LedgerIdentityError("invalid_ledger", undefined,
     { phase: "tables", kind: "semantic", reason: "missing_tables" });
   const versions = atPhase("version", () => db.query<{ version: number }, []>("SELECT version FROM schema_version LIMIT 2").all());
   if (versions.length !== 1 || !Number.isSafeInteger(versions[0]?.version) || (versions[0]?.version ?? 0) < 1) {
