@@ -12,7 +12,7 @@ import { initGraph } from "../src/graph/schema";
 import { applyCheckpointModeCursorsV25, applyConnectionsV8 } from "../src/ledger/connections-schema";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { tableColumns, tableExists } from "../src/ledger/schema";
-import { applyEventPurgeIntegrityV22, applyEventPurgeSelectorKindV24 } from "../src/ledger/purge-schema";
+import { applyEventPurgeIntegrityV22, applyEventPurgeSelectorKindV24, applyEventPurgeSelectorKindV26 } from "../src/ledger/purge-schema";
 import {
   SOURCE_SURVIVOR_LINEAGE_COLUMNS,
   SOURCE_SURVIVOR_LINEAGE_TABLE,
@@ -1239,6 +1239,56 @@ describe("openLedger migrations", () => {
         "SELECT backfill_cursor, sync_cursor FROM checkpoints",
       ).get(),
     ).toEqual({ backfill_cursor: "B-token", sync_cursor: null });
+    db.close();
+  });
+
+  test("v26 widens selector_kind to connector without rewriting proofs", () => {
+    const db = new Database(":memory:");
+    db.exec(`
+      CREATE TABLE event_purges (
+        receipt_id TEXT PRIMARY KEY,
+        event_id TEXT NOT NULL,
+        connector_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        purged_at TEXT NOT NULL
+      ) STRICT;
+    `);
+    applyEventPurgeIntegrityV22(db);
+    db.query(
+      `INSERT INTO event_purges VALUES ('01JCPURGEPROOF0000000000000','01JCPURGEEVENT0000000000000','fixture','legacy','2026-09-06T12:00:00.000Z')`,
+    ).run();
+    db.query(
+      `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id)
+       VALUES ('01JCPURGEPROOF0000000000000', ?, 'legacy-record')`,
+    ).run("a".repeat(64));
+    applyEventPurgeSelectorKindV24(db);
+    applyEventPurgeSelectorKindV26(db);
+    applyEventPurgeSelectorKindV26(db);
+    expect(
+      db.query<{ selector_kind: string | null }, []>("SELECT selector_kind FROM event_purge_proofs").get(),
+    ).toEqual({ selector_kind: null });
+    db.query(
+      `INSERT INTO event_purges VALUES ('01JCPURGEPROOF0000000000001','01JCPURGEEVENT0000000000001','mail','legacy','2026-09-06T12:00:00.000Z')`,
+    ).run();
+    expect(() =>
+      db.query(
+        `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
+         VALUES ('01JCPURGEPROOF0000000000001', ?, 'mail-record', 'connector')`,
+      ).run("b".repeat(64)),
+    ).not.toThrow();
+    db.query(
+      `INSERT INTO event_purges VALUES ('01JCPURGEPROOF0000000000002','01JCPURGEEVENT0000000000002','mail','legacy','2026-09-06T12:00:00.000Z')`,
+    ).run();
+    expect(() =>
+      db.query(
+        `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
+         VALUES ('01JCPURGEPROOF0000000000002', ?, 'mail-record', 'subject')`,
+      ).run("c".repeat(64)),
+    ).toThrow();
+    const fresh = openLedger(":memory:");
+    expect(schemaVersion(fresh)).toBe(LEDGER_SCHEMA_VERSION);
+    expect(schemaVersion(fresh)).toBe(26);
+    fresh.close();
     db.close();
   });
 });

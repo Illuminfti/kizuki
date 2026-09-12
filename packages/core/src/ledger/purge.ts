@@ -342,17 +342,17 @@ function emptyOutcome(): PurgeOutcome {
   };
 }
 
-function recordedSelectorKind(filter: PurgeFilter): "event" | null {
-  if (filter.event_id === undefined) return null;
-  if (
-    filter.source_key !== undefined ||
-    filter.connector_id !== undefined ||
-    filter.subject_handle !== undefined ||
-    filter.source_record_id !== undefined
-  ) {
-    return null;
-  }
-  return "event";
+function recordedSelectorKind(filter: PurgeFilter): "event" | "connector" | null {
+  const event = filter.event_id !== undefined;
+  const source = filter.source_key !== undefined;
+  const connector = filter.connector_id !== undefined;
+  const subject = filter.subject_handle !== undefined;
+  const record = filter.source_record_id !== undefined;
+  const n = Number(event) + Number(source) + Number(connector) + Number(subject) + Number(record);
+  if (n !== 1) return null;
+  if (event) return "event";
+  if (connector) return "connector";
+  return null;
 }
 
 function assertAliasExpansionUnavailable(filter: PurgeFilter, includeAliases: boolean): void {
