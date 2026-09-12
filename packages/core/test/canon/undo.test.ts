@@ -6,10 +6,9 @@ import { UndoError } from "../../src/canon/errors";
 import { getCanonReceipt, listCanonReceipts } from "../../src/canon/receipts";
 import { undoReceipt } from "../../src/canon/undo";
 import { retryCanonProjectionObligations, readCanonProjectionObligation } from "../../src/canon/projection-obligations";
-import { getClaim } from "../../src/claims/store";
+import { getClaim, supersedeLiveGroup } from "../../src/claims/store";
 import { ABSENT_PAGE_HASH } from "../../src/vault/write";
-import { FixtureVectorPort } from "../claims/helpers";
-import { corroboratedFacts } from "../claims/helpers";
+import { corroboratedFacts, FixtureVectorPort, nativeOwnerEvent } from "../claims/helpers";
 import {
   canonFixture,
   putEvent,
@@ -475,6 +474,99 @@ describe("undoReceipt", () => {
     expect(again?.superseded_by).toBe(incoming.claim_id);
     expect(again?.valid_to).toBe(afterWrite?.valid_to);
     expect(getClaim(db, incoming.claim_id)?.status).toBe("live");
+  });
+
+  test("undo of a revert restores the mixed-offset supersession clip, not the lexicographic min", async () => {
+    const { db, io } = fixture();
+    const sources = twoSources(db);
+    // 2026-02-03T01:00:00+12:00 is 2026-02-02T13:00:00Z, inside the Zulu window.
+    const priorTo = "2026-02-02T23:00:00.000Z";
+    const incomingFrom = "2026-02-03T01:00:00+12:00";
+    const live = await storeClaim(db, sources.ids[0] as string, {
+      provenance: sources.ids,
+      events: sources.events,
+      confidence: 0.6,
+      valid_from: "2026-01-01T00:00:00.000Z",
+      valid_to: priorTo,
+    });
+    write(io, live);
+
+    const incoming = await storeClaim(db, sources.ids[0] as string, {
+      provenance: sources.ids,
+      events: sources.events,
+      object: "initech",
+      body: "Grace moved to partnerships lead at Initech.",
+      confidence: 0.9,
+      valid_from: incomingFrom,
+    });
+    const receipt = write(io, incoming, { decision: resolveTarget(io, incoming) });
+    const afterWrite = getClaim(db, live.claim_id);
+    expect(afterWrite?.status).toBe("superseded");
+    expect(afterWrite?.valid_to).toBe(incomingFrom);
+    expect(priorTo < incomingFrom).toBe(true);
+
+    const revert = await undoReceipt(io, receipt.receipt_id);
+    expect(getClaim(db, live.claim_id)?.valid_to).toBe(priorTo);
+
+    await undoReceipt(io, revert.receipt_id);
+    const again = getClaim(db, live.claim_id);
+    expect(again?.status).toBe("superseded");
+    expect(again?.superseded_by).toBe(incoming.claim_id);
+    expect(again?.valid_to).toBe(afterWrite?.valid_to);
+    expect(again?.valid_to).toBe(incomingFrom);
+    expect(again?.valid_to).not.toBe(priorTo);
+    expect(getClaim(db, incoming.claim_id)?.status).toBe("live");
+  });
+
+  test("undo of a revert restores an R5 mixed-offset clip that is later as a string", async () => {
+    const { db, io } = fixture();
+    const eventId = putEvent(db);
+    // 2026-02-03T01:00:00+12:00 is 2026-02-02T13:00:00Z, earlier than 23:00Z.
+    const priorTo = "2026-02-03T01:00:00+12:00";
+    const correctionFrom = "2026-02-02T23:00:00.000Z";
+    const live = await storeClaim(db, eventId, {
+      valid_from: "2026-01-01T00:00:00.000Z",
+      valid_to: priorTo,
+    });
+    write(io, live);
+
+    const ownerEvent = nativeOwnerEvent(db, "Grace now works at Initech.");
+    const correction = await storeClaim(db, ownerEvent, {
+      provenance: [ownerEvent],
+      body: "Grace now works at Initech.",
+      object: "initech",
+      producer: "owner",
+      intent: "correct",
+      confidence: 1,
+      valid_from: correctionFrom,
+      events: [
+        {
+          event_id: ownerEvent,
+          connector_id: "kizuki.owner",
+          taint: "owner",
+          text: "Grace now works at Initech.",
+        },
+      ],
+    });
+    expect(getClaim(db, live.claim_id)?.status).toBe("live");
+    supersedeLiveGroup(db, correction, "2026-09-02T12:00:00.000Z");
+    const afterClip = getClaim(db, live.claim_id);
+    expect(afterClip?.status).toBe("superseded");
+    expect(afterClip?.valid_to).toBe(priorTo);
+    expect(correctionFrom < priorTo).toBe(true);
+
+    const receipt = write(io, correction, { decision: resolveTarget(io, correction) });
+    const revert = await undoReceipt(io, receipt.receipt_id);
+    expect(getClaim(db, live.claim_id)?.valid_to).toBe(priorTo);
+
+    await undoReceipt(io, revert.receipt_id);
+    const again = getClaim(db, live.claim_id);
+    expect(again?.status).toBe("superseded");
+    expect(again?.superseded_by).toBe(correction.claim_id);
+    expect(again?.valid_to).toBe(afterClip?.valid_to);
+    expect(again?.valid_to).toBe(priorTo);
+    expect(again?.valid_to).not.toBe(correctionFrom);
+    expect(getClaim(db, correction.claim_id)?.status).toBe("live");
   });
 
   test("unknown receipts and import writes without an archive refuse precisely", async () => {

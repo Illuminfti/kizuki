@@ -2,7 +2,7 @@ import type { VaultMutationScope } from "../vault/mutation-scope";
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationSync } from "./io";
 import { openOrdinaryRecoveryReceiptStream } from "./receipt-stream";
 import { commitMachineByteIntent } from "../ledger/event-origin";
-import { getClaim, markClaimReverted, reinstateClaim, resupersedeClaim, supersessionsForReceipt } from "../claims/store";
+import { getClaim, markClaimReverted, minTimestamp, reinstateClaim, resupersedeClaim, supersessionsForReceipt } from "../claims/store";
 import { tableExists } from "../ledger/schema";
 import { getCanonReceipt, type CanonReceipt } from "./receipts";
 import { insertReceiptRow, deletePageIndex, markReceiptReverted, upsertPageIndex, type CanonIo } from "./store";
@@ -53,11 +53,6 @@ function currentState(scope: VaultMutationScope, io: CanonIo, intent: CanonWrite
   recoveryFailure("page_changed", intent.receipt.receipt_id);
 }
 
-function earlier(left: string | null, right: string | null): string | null {
-  if (left === null || left === "") return right;
-  if (right === null || right === "") return left;
-  return left < right ? left : right;
-}
 function restoreClaimLifecycle(io: CanonIo, original: CanonReceipt, at: string): void {
   if (original.kind === "revert") {
     for (const id of original.claim_ids) {
@@ -69,7 +64,7 @@ function restoreClaimLifecycle(io: CanonIo, original: CanonReceipt, at: string):
     const prior = new Map(rows.map(row => [row.loser, row.prior_valid_to]));
     const winner = winnerId === undefined ? null : getClaim(io.db, winnerId);
     for (const ref of original.superseded) if (winnerId !== undefined) {
-      resupersedeClaim(io.db, ref.claim_id, winnerId, at, earlier(prior.get(ref.claim_id) ?? null, winner?.valid_from ?? null));
+      resupersedeClaim(io.db, ref.claim_id, winnerId, at, minTimestamp(prior.get(ref.claim_id) ?? null, winner?.valid_from ?? null));
     }
   } else {
     for (const id of original.claim_ids) markClaimReverted(io.db, id, at);
