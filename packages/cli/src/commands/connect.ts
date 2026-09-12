@@ -41,7 +41,7 @@ import { tokenResolver, validTokenRef } from "../secrets";
 import { clean, jsonEnvelope } from "../output";
 import { INVOCATION } from "../runtime";
 import { withVault } from "../context";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 function parseSensitivityFlag(raw: string | undefined): Sensitivity | undefined {
   if (raw === undefined) return undefined;
@@ -109,15 +109,21 @@ export function imapSignInNotice(vaultPath: string): string {
   return `IMAP will receive read-only access to the mailbox you enter. Protected local connection state is stored under ${clean(vaultPath)}. Press Ctrl-C to cancel before any connection is changed.`;
 }
 
+export const CONNECT_SCHEMA = {
+  options: ["--source", "--sensitivity", "--endpoint", "--token-ref", "--fields", "--calendar", "--history-start"],
+  flags: ["--list", "--json", "--new-source"],
+} as const satisfies CommandHelpSchema;
+
 export const connectCommand: Command = {
   name: "connect",
   usage: "connect [--list|status] [--json]\n       kizuki connect status --source KEY [--json]\n       kizuki connect grant --source KEY --policy FILE --expected-revision N --operation-id ID [--json]\n       kizuki connect revoke --source KEY --expected-revision N --operation-id ID [--json]\n       kizuki connect resume-revocation --source KEY --operation-id ID [--json]\n       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]\n       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]\n       kizuki connect imap [--source KEY] [--sensitivity public|personal|private]\n       kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY | --new-source] [--json]\n       kizuki connect recover-x-api --source KEY --fields relationships,links,media|none --history-start RFC3339 [--json]\n       kizuki connect x-api --fields relationships,links,media|none --history-start RFC3339 [--source KEY | --new-source] [--json]\n       kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY | --new-source] [--json]\n       kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]",
   summary: "enroll a supported source and check consent or sync status",
+  schema: CONNECT_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
     if (["grant", "revoke", "resume-revocation"].includes(args[0] ?? "") || (args[0] === "status" && args.includes("--source"))) return runConnectConsent(io, args);
     const parsed = parseArguments(args, {
-      options: ["--source", "--sensitivity", "--endpoint", "--token-ref", "--fields", "--calendar", "--history-start"],
-      flags: ["--list", "--json", "--new-source"],
+      options: [...CONNECT_SCHEMA.options],
+      flags: [...CONNECT_SCHEMA.flags],
     });
     const json = parsed.flags.has("--json");
     const newSource = parsed.flags.has("--new-source");

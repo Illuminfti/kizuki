@@ -335,6 +335,9 @@ describe("help", () => {
   test("serve structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["serve", "--help", "--json"], ["help", "serve", "--json"]] as const) {
+  test("connect structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["connect", "--help", "--json"], ["help", "connect", "--json"]] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
@@ -569,6 +572,29 @@ describe("help", () => {
       [["serve", "--once", "--once"], "repeated flag --once"],
       [["serve", "--json=true"], "flag --json does not take a value"],
       [["serve", "--port"], "missing value for --port"],
+      expect(body.data.name).toBe("connect");
+      expect(body.data.options).toEqual([
+        "--source",
+        "--sensitivity",
+        "--endpoint",
+        "--token-ref",
+        "--fields",
+        "--calendar",
+        "--history-start",
+      ]);
+      expect(body.data.flags).toEqual(["--list", "--json", "--new-source"]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "connect", "--help");
+    expect(text.stdout).toContain("--source");
+    expect(text.stdout).toContain("--token-ref");
+    expect(text.stdout).toContain("--json");
+    expect(text.stdout).toContain("--new-source");
+    for (const [args, diagnostic] of [
+      [["connect", "--nope"], "unknown option --nope"],
+      [["connect", "--json", "--json"], "repeated flag --json"],
+      [["connect", "--list=true"], "flag --list does not take a value"],
+      [["connect", "--source"], "missing value for --source"],
     ] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(2);
@@ -596,6 +622,7 @@ describe("help", () => {
       expect(result.stderr).toContain("usage: kizuki import");
       expect(result.stderr).toContain("usage: kizuki models");
       expect(result.stderr).toContain("usage: kizuki serve");
+      expect(result.stderr).toContain("usage: kizuki connect");
     }
   });
 
