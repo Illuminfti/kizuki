@@ -6,11 +6,13 @@ import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getCl
 import type { Connector, SourceGrantPolicy } from '@kizuki/core';
 import { createGmailConnector, inspectGmailState, assertSameGmailIdentity } from '@kizuki/connector-gmail';
 import { createGoogleCalendarConnector, inspectGoogleCalendarState, assertSameGoogleCalendarIdentity } from '@kizuki/connector-google-calendar';
+import { inspectXApiState } from '@kizuki/connectors';
 import { withReadVault, withVault, resolveVault } from '../context';
 import { configPath, readConfig } from '../config';
 import { closeHostConnector, DuplicateSourceError, enrollHostConnection, enrollSignedInConnection, listHostConnections, loadConnector, selectConnection } from '../connections';
 import { gmailClient, gmailFields, gmailRequiredFields, openGmailBrowser, type GmailFactory } from '../gmail';
 import { googleCalendarClient, googleCalendarFields, googleCalendarRequiredFields, googleCalendarId, openGoogleCalendarBrowser, type GoogleCalendarFactory } from '../google-calendar';
+import { xApiRequiredFields } from '../x-api';
 import { createOwnedRetrievalInventory } from '../owned-retrieval-inventory';
 import { tryRefreshDerived } from '../derived';
 import { createInitCommand, InitServiceError } from '../commands/init';
@@ -307,13 +309,13 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
                 return { sources: rows.map(row => {
                         const grant = inspectSourceGrant(ctx.db, row.source_key), checkpoint = getCheckpoint(ctx.db, row.connector_id, row.source_key);
                         let required = ['text', 'subjects', 'metadata'], state = row.disconnected_at ? 'disconnected' : 'enrolled';
-                        if (row.connector_id === 'kizuki.gmail' || row.connector_id === 'kizuki.google-calendar') {
+                        if (row.connector_id === 'kizuki.gmail' || row.connector_id === 'kizuki.google-calendar' || row.connector_id === 'kizuki.x') {
                             // Explicit authenticated owner inspection; never reused for capture admission.
                             try {
                                 const bytes = ctx.store.read(row);
                                 if (!bytes)
                                     throw new Error();
-                                required = row.connector_id === 'kizuki.gmail' ? gmailRequiredFields(inspectGmailState(bytes).fields) : googleCalendarRequiredFields(inspectGoogleCalendarState(bytes).fields);
+                                required = row.connector_id === 'kizuki.gmail' ? gmailRequiredFields(inspectGmailState(bytes).fields) : row.connector_id === 'kizuki.google-calendar' ? googleCalendarRequiredFields(inspectGoogleCalendarState(bytes).fields) : xApiRequiredFields(inspectXApiState(bytes).selection);
                             }
                             catch {
                                 required = [];

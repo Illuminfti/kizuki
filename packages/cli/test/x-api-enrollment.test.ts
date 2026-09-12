@@ -11,6 +11,7 @@ import { runXApiConnect } from '../src/commands/connect-x-api';
 import { closeHostConnector, listHostConnections, loadConnector, selectConnection } from '../src/connections';
 import { xApiClient, xApiRequiredFields, xApiSelection } from '../src/x-api';
 import { printConnectorCatalog } from '../src/connect-catalog';
+import { createAppHost } from '../src/app/host';
 import { createHelpers } from './helpers';
 import type { CliIo } from '../src/commands';
 const h = createHelpers(); afterEach(h.cleanup);
@@ -119,6 +120,31 @@ test('X runtime rejects incompatible fields and consent revision races before co
     await expect(loadConnector(selectConnection(db, store, ID, source), store, db, env, () => { factories++; throw Error(); })).rejects.toThrow('source_capture_denied');
     expect(factories).toBe(0);
   } finally { db.close(); }
+});
+
+test('app host reports native X selection fields, grants exactly them, and flags corrupt protected state', async () => {
+  for (const [fields, required] of [
+    ['none', ['text', 'subjects', 'metadata']],
+    ['links', ['text', 'subjects', 'metadata']],
+    ['media', ['text', 'subjects', 'metadata', 'attachments']],
+  ] as const) {
+    const setup = h.tempVault(), o = await owner(setup), host = createAppHost(o.io);
+    const call = async (route: string, body: unknown = {}) => (await host.handle(new Request(`http://127.0.0.1/app/v1/${route}`, { method: 'POST', body: JSON.stringify(body) }))).json() as Promise<any>;
+    let db: ReturnType<typeof openLedger> | undefined;
+    try {
+      expect(await runXApiConnect(o.io, { fields, historyStart, json: true }, () => {}, o.create, o.open)).toBe(0);
+      ({ db } = ledger(setup));
+      const connection = listConnections(db)[0]!, source = connection.source_key;
+      expect((await call('sources')).data.sources).toEqual([expect.objectContaining({ source_key: source, state: 'enrolled', consent: 'required', required_fields: required })]);
+      const consent = await call('consent', { source_key: source, expected_revision: 0, operation_id: `app-x-${fields}`, policy: { purposes: ['capture'], allowed_fields: required, retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' } });
+      expect(consent.ok).toBe(true);
+      const stored = new ConnectionStateStore(join(setup.vault, '.kizuki'));
+      const loaded = await loadConnector(selectConnection(db, stored, ID, source), stored, db, o.io.env, runtime(o.f));
+      await closeHostConnector(loaded);
+      writeFileSync(join(setup.vault, '.kizuki', connection.secret_refs[0]!.slice(5)), 'corrupt X state');
+      expect((await call('sources')).data.sources).toEqual([expect.objectContaining({ source_key: source, state: 'needs_attention', required_fields: [] })]);
+    } finally { db?.close(); await host.close(); }
+  }
 });
 
 test('X none/links grants retain author subjects and media/relationships unions require them before capture', async () => {

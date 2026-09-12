@@ -18,3 +18,5 @@ dialog .form-field+.model-note{margin-top:9px}
 .result-item>.button{margin-top:16px}.belief-details{margin-top:16px;padding:15px;border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow-wrap:anywhere}.belief-details blockquote{margin:0;font-size:14px;line-height:1.6}.belief-details .grant-summary{margin:15px 0 0}.belief-details .result-details{font-size:12px}.form-field textarea{width:100%;min-height:96px;padding:12px;border:1px solid var(--line);border-radius:9px;background:var(--canvas);color:var(--ink);font:inherit;font-size:14px;line-height:1.6;resize:vertical}.correction-preview:not(:empty){padding:18px;margin-top:20px;border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow-wrap:anywhere}.correction-preview h3{margin-bottom:10px}.correction-preview p{font-size:13px;line-height:1.6;margin-top:8px}
 
 .result-item{min-width:0;overflow-wrap:anywhere}.result-item h3{overflow-wrap:anywhere}
+.setup-form{margin:0}
+summary:focus-visible{outline:3px solid #2463bd65;outline-offset:4px}

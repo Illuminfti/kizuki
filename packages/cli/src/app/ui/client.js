@@ -5,10 +5,13 @@ const SESSION_KEY = 'kizuki.app.session';
 const main = document.getElementById('main');
 const dialog = document.getElementById('dialog');
 const notice = document.getElementById('notification');
-const state = { view: 'memory', status: null, service: null, model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], hits: null, query: '', degraded: [], busy: false, operation: null };
+const state = { view: 'memory', status: null, service: null, model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], hits: null, query: '', degraded: [], busy: false, operation: null, setupError: null };
 let bearer = null;
 let noticeTimer;
 let dialogCleanup = null;
+let dialogReturnFocus = null;
+let dialogGeneration = 0;
+let closingDialogGeneration = null;
 let refreshSequence = 0;
 let searchSequence = 0;
 let pulseRunning = false;
@@ -49,13 +52,31 @@ function el(tag, attrs = {}, ...children) {
   for (const [key, value] of Object.entries(attrs)) {
     if (key === 'class') node.className = value;
     else if (key.startsWith('on') && typeof value === 'function') node.addEventListener(key.slice(2), value);
-    else if (key === 'disabled' || key === 'checked') node[key] = !!value;
+    else if (key === 'disabled' || key === 'checked' || key === 'open') node[key] = !!value;
     else if (value !== undefined && value !== null) node.setAttribute(key, String(value));
   }
   for (const child of children.flat()) if (child !== null && child !== undefined && child !== false && child !== true) node.append(child instanceof Node ? child : document.createTextNode(String(child)));
   return node;
 }
 function button(text, run, kind = 'secondary', extra = {}) { return el('button', { type: 'button', class: `button button-${kind}`, onclick: run, ...extra }, text); }
+function nodeTag(node) { return node.tagName.toLowerCase(); }
+function firstFocusable(root) {
+  let input = null, primary = null, other = null;
+  const visit = node => {
+    const tag = nodeTag(node), close = node.getAttribute && node.getAttribute('aria-label') === 'Close dialog';
+    if (!node.disabled && !close) {
+      if (['input', 'select', 'textarea'].includes(tag)) input ??= node;
+      else if (tag === 'button') {
+        if (/button-primary|button-danger/.test(node.className || '')) primary ??= node;
+        else other ??= node;
+      }
+    }
+    for (const child of node.children || []) visit(child);
+  };
+  visit(root);
+  return input || primary || other;
+}
+function focusDialog(root) { firstFocusable(root)?.focus({ preventScroll: true }); }
 function message(text) { clearTimeout(noticeTimer); notice.textContent = text; notice.hidden = false; noticeTimer = setTimeout(() => { notice.hidden = true; }, 6500); }
 function dateText(value) { if (!value) return 'Not captured yet'; const date = new Date(value); return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date) : 'Time unavailable'; }
 function providerIcon(id) { return id.includes('calendar') ? 'calendar' : id.includes('gmail') ? 'mail' : 'folder'; }
@@ -169,15 +190,23 @@ function welcomeIllustration() {
 function renderWelcome() {
   const ready = state.status?.vault.ready;
   return el('section', { class: 'welcome' }, el('div', { class: 'eyebrow' }, 'A little less to remember'), el('h1', {}, 'Make room for', el('br'), 'what matters.'), el('p', {}, 'Bring your notes and everyday information into one private place. Find the original, see what changed, and stay in control.'), welcomeIllustration(),
-    el('div', { class: 'setup-card' }, el('div', { class: 'setup-card-body' }, el('div', {}, el('h2', {}, ready ? 'Start with one source.' : 'Your memory starts here.'), el('p', {}, ready ? 'Choose a folder or an account. You decide what Kizuki can keep before anything is imported.' : 'Create a private workspace on this device. You can connect your first source when you’re ready.')), button(ready ? 'Connect a source' : 'Create my Kizuki', () => ready ? navigate('sources') : initialize(), 'primary')), el('div', { class: 'setup-card-footer' }, icon('lock'), ready ? 'Your files stay yours. No model is needed to capture and search.' : `Saved on this device${state.status?.setup_location ? ` · ${state.status.setup_location}` : ''}`)),
-    !ready && el('p', {}, state.status?.setup_supervisor === 'none' ? 'Background activity is unavailable on this device. You can capture and search while the app is open.' : state.status?.setup_no_service ? 'Background activity is turned off for this setup. You can enable it later in Settings.' : 'Kizuki will keep your permitted sources up to date in the background, even after you close the app.'),
-    !ready && el('details', { class: 'result-details' }, el('summary', {}, 'Setup options'), el('div', { class: 'form-field' }, el('label', { for: 'setup-path' }, 'Workspace folder'), el('input', { id: 'setup-path', type: 'text', placeholder: state.status?.setup_location || 'Full folder path', autocomplete: 'off', spellcheck: 'false' }), el('small', {}, 'Use a new empty folder. Existing folders are never adopted automatically.')), el('label', { class: 'check-row', for: 'setup-no-service' }, el('input', { id: 'setup-no-service', type: 'checkbox', checked: state.status?.setup_no_service, disabled: state.status?.setup_no_service }), 'Turn off background activity for now')),
+    el('form', { class: 'setup-form', onsubmit: event => { event.preventDefault(); return ready ? navigate('sources') : initialize(); } },
+      el('div', { class: 'setup-card' }, el('div', { class: 'setup-card-body' }, el('div', {}, el('h2', {}, ready ? 'Start with one source.' : 'Your memory starts here.'), el('p', {}, ready ? 'Choose a folder or an account. You decide what Kizuki can keep before anything is imported.' : 'Create a private workspace on this device. You can connect your first source when you’re ready.')), el('button', { type: 'submit', class: 'button button-primary' }, ready ? 'Connect a source' : 'Create my Kizuki')), el('div', { class: 'setup-card-footer' }, icon('lock'), ready ? 'Your files stay yours. No model is needed to capture and search.' : `Saved on this device${state.status?.setup_location ? ` · ${state.status.setup_location}` : ''}`)),
+      !ready && el('p', {}, state.status?.setup_supervisor === 'none' ? 'Background activity is unavailable on this device. You can capture and search while the app is open.' : state.status?.setup_no_service ? 'Background activity is turned off for this setup. You can enable it later in Settings.' : 'Kizuki will keep your permitted sources up to date in the background, even after you close the app.'),
+      !ready && state.setupError && el('p', { class: 'form-error', id: 'setup-error', role: 'alert' }, state.setupError),
+      !ready && el('details', { class: 'result-details', open: !!state.setupError }, el('summary', {}, 'Setup options'), el('div', { class: 'form-field' }, el('label', { for: 'setup-path' }, 'Workspace folder'), el('input', { id: 'setup-path', type: 'text', placeholder: state.status?.setup_location || 'Full folder path', autocomplete: 'off', spellcheck: 'false', 'aria-describedby': state.setupError ? 'setup-error setup-path-help' : 'setup-path-help', 'aria-invalid': state.setupError ? 'true' : undefined }), el('small', { id: 'setup-path-help' }, 'Use a new empty folder. Existing folders are never adopted automatically.')), el('label', { class: 'check-row', for: 'setup-no-service' }, el('input', { id: 'setup-no-service', type: 'checkbox', checked: state.status?.setup_no_service, disabled: state.status?.setup_no_service }), 'Turn off background activity for now'))),
     el('div', { class: 'getting-started' }, ...[['01', 'Connect once', 'Choose the information you want to bring along.'], ['02', 'Find it again', 'Search your saved sources, even without a model.'], ['03', 'Keep control', 'Inspect changes, undo them, or remove a source.']].map(([n,t,d]) => el('div', {}, el('span', { class: 'step-number' }, n), el('h3', {}, t), el('p', {}, d)))));
 }
 async function initialize() {
+  state.setupError = null;
   const path = document.getElementById('setup-path')?.value.trim();
   const no_service = document.getElementById('setup-no-service')?.checked === true;
-  await launchOperation('initialize', { ...(path ? { path } : {}), no_service }, 'Creating your workspace', async () => { await refresh(); message('Your Kizuki is ready. Choose your first source. Background activity is shown in Settings.'); navigate('sources'); });
+  await launchOperation('initialize', { ...(path ? { path } : {}), no_service }, 'Creating your workspace', async () => {
+    await refresh();
+    message('Your Kizuki is ready. Choose your first source. Background activity is shown in Settings.');
+    navigate('sources', false);
+    (main.querySelector('.button-primary') || main).focus({ preventScroll: true });
+  });
 }
 function renderMemory() {
   if (!state.status?.vault.ready || state.sources.length === 0) return renderWelcome();
@@ -185,7 +214,15 @@ function renderMemory() {
   const form = el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); search(field.value); } }, icon('search'), field, el('button', { class: 'button button-primary', type: 'submit', disabled: state.busy }, 'Search'));
   const section = el('section', {}, heading('Your memory.', 'The original information, with a clear path back to its source.', button('Organise now', runPass)), form, el('p', { class: 'search-hint' }, 'Search works on this device. Organising memory pages needs a model and separate permission for each source.'));
   if (state.busy) section.append(el('div', { class: 'opening', 'aria-busy': 'true', 'aria-label': 'Searching your memory' }, el('div', { class: 'skeleton skeleton-line' }), el('div', { class: 'skeleton skeleton-panel' })));
-  else if (state.hits === null) section.append(empty('A place to find things again.', 'Search for a name, a phrase, or a detail from a source you’ve imported.'));
+  else if (state.hits === null) {
+    const pending = state.sources.find(source => source.consent !== 'active' && source.consent !== 'denied' && source.consent !== 'purged');
+    const waiting = state.sources.find(source => source.consent === 'active' && !source.last_run);
+    section.append(pending
+      ? empty('Permission comes before import.', 'Choose what Kizuki may keep from this source. Nothing is imported until you allow it.', button('Review permission', () => consent(pending), 'primary'))
+      : waiting
+        ? empty('Import this source to search it.', 'Capture reads your Markdown in place and leaves the original files untouched. Search works without a model.', button('Import history', () => capture(waiting), 'primary'))
+        : empty('A place to find things again.', 'Search for a name, a phrase, or a detail from a source you’ve imported.'));
+  }
   else if (!state.hits.length) section.append(empty('Nothing matched this search.', 'Try a more specific word from the original source, or check that the source has finished importing.', button('Check sources', () => navigate('sources'))));
   else {
     section.append(el('div', { class: 'section-header' }, el('h2', {}, 'From your sources'), el('span', {}, `${state.hits.length} ${state.hits.length === 1 ? 'result' : 'results'}`)));
@@ -219,7 +256,7 @@ async function correction(hit) {
     if (!current()) return;
     claims = targets.claims;
     content.querySelector('.dialog-description').textContent = 'Choose one recorded belief. Corrections change your memory pages; quoted source information stays unchanged.';
-    if (!claims.length) { content.append(el('p', { class: 'status-note' }, 'No correctable beliefs are available for this page under your current permissions.')); return; }
+    if (!claims.length) { content.append(el('p', { class: 'status-note' }, 'No correctable beliefs are available for this page under your current permissions.')); focusDialog(content); return; }
     if (targets.truncated) content.append(el('p', { class: 'status-note' }, 'This list is limited. Additional beliefs may exist for this page.'));
     const form = el('form'); content.append(form);
     choice = el('select', { id: 'correction-claim' }, ...claims.map(claim => el('option', { value: claim.claim_id }, claim.body.slice(0, 120)))); choice.value = claims[0].claim_id;
@@ -260,6 +297,7 @@ async function correction(hit) {
       });
     }, 'primary', { disabled: true });
     form.append(errorLine, el('div', { class: 'form-actions' }, button('Cancel', closeDialog), previewButton), previewPanel, el('div', { class: 'form-actions' }, apply));
+    focusDialog(content);
     form.addEventListener('submit', async event => {
       event.preventDefault(); if (!current()) return;
       invalidatePreview();
@@ -316,25 +354,41 @@ function renderSources() {
 }
 function clearDialogSecrets() { const key = dialog.querySelector('#model-key'); if (key) key.value = ''; }
 function clearDialogTransient() { clearDialogSecrets(); const cleanup = dialogCleanup; dialogCleanup = null; if (cleanup) cleanup(); }
-function closeDialog() { clearDialogTransient(); dialog.close(); }
+function restoreDialogFocus() {
+  const target = dialogReturnFocus;
+  dialogReturnFocus = null;
+  if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
+}
+function closeDialog() {
+  closingDialogGeneration = dialogGeneration;
+  clearDialogTransient(); dialog.close(); restoreDialogFocus();
+}
 dialog.addEventListener('cancel', clearDialogTransient);
-dialog.addEventListener('close', () => { if (!dialog.open) clearDialogTransient(); });
+dialog.addEventListener('close', () => {
+  // Native close events can be queued after openDialog replaces a prior panel.
+  if (dialog.open || closingDialogGeneration !== dialogGeneration) return;
+  closingDialogGeneration = null; clearDialogTransient(); restoreDialogFocus();
+});
 function openDialog(title, description, symbol = 'info') {
   if (dialog.open) closeDialog();
-  const content = el('div', {}, el('div', { class: 'dialog-top' }, el('div', {}, el('div', { class: 'source-icon' }, icon(symbol)), el('h2', { id: 'dialog-title' }, title)), el('button', { type: 'button', class: 'icon-button', 'aria-label': 'Close dialog', onclick: () => closeDialog() }, icon('close'))), el('p', { class: 'dialog-description' }, description));
-  dialog.replaceChildren(content); dialog.showModal(); return content;
+  dialogGeneration++;
+  const active = document.activeElement;
+  dialogReturnFocus = active && active !== dialog && typeof active.focus === 'function' ? active : null;
+  const content = el('div', {}, el('div', { class: 'dialog-top' }, el('div', {}, el('div', { class: 'source-icon' }, icon(symbol)), el('h2', { id: 'dialog-title' }, title)), el('button', { type: 'button', class: 'icon-button', 'aria-label': 'Close dialog', onclick: () => closeDialog() }, icon('close'))), el('p', { class: 'dialog-description', id: 'dialog-description' }, description));
+  dialog.replaceChildren(content); dialog.setAttribute('aria-describedby', 'dialog-description'); dialog.showModal();
+  return content;
 }
-function field(parent, label, id, placeholder = '', type = 'text') {
-  const input = el('input', { id, type, placeholder, autocomplete: 'off', spellcheck: 'false' });
-  parent.append(el('div', { class: 'form-field' }, el('label', { for: id }, label), input)); return input;
+function field(parent, label, id, placeholder = '', type = 'text', help) {
+  const input = el('input', { id, type, placeholder, autocomplete: 'off', spellcheck: 'false', ...(help ? { 'aria-describedby': `${id}-help` } : {}) });
+  parent.append(el('div', { class: 'form-field' }, el('label', { for: id }, label), input, help && el('small', { id: `${id}-help` }, help))); return input;
 }
 function enrollment(provider) {
   const content = openDialog(`Connect ${provider.title}`, provider.detail, providerIcon(provider.id));
-  if (!provider.available) { content.append(el('div', { class: 'form-actions' }, button('Done', () => closeDialog(), 'primary'))); return; }
+  if (!provider.available) { content.append(el('div', { class: 'form-actions' }, button('Done', () => closeDialog(), 'primary'))); focusDialog(content); return; }
   const form = el('form'); content.append(form);
   let path, calendar;
-  if (provider.id === 'markdown') { path = field(form, 'Folder location', 'source-path', '/path/to/your/notes'); form.append(el('small', {}, 'Choose an existing folder of Markdown files outside your Kizuki workspace. Original files stay in place.')); }
-  if (provider.id === 'google-calendar') { calendar = field(form, 'Calendar ID', 'calendar-id', 'The calendar’s exact ID'); form.append(el('small', {}, 'Find this in Google Calendar settings under Integrate calendar. Calendar discovery is not available yet.')); }
+  if (provider.id === 'markdown') path = field(form, 'Folder location', 'source-path', '/path/to/your/notes', 'text', 'Choose an existing folder of Markdown files outside your Kizuki workspace. Original files stay in place.');
+  if (provider.id === 'google-calendar') calendar = field(form, 'Calendar ID', 'calendar-id', 'The calendar’s exact ID', 'text', 'Find this in Google Calendar settings under Integrate calendar. Calendar discovery is not available yet.');
   const selected = [];
   if (provider.id !== 'markdown' && provider.fields.length) {
     const choices = el('fieldset', { class: 'field-choices' }, el('legend', {}, 'Information to keep'));
@@ -358,19 +412,24 @@ function enrollment(provider) {
       if (source) consent(source); else { navigate('sources'); message('Connected. Review this source’s permission to import it.'); }
     });
   });
+  focusDialog(content);
 }
 function consent(source) {
   const content = openDialog('Choose what Kizuki can use.', `Give ${sourceLabel(source)} permission to store selected information and make it available in your private memory.`, 'lock');
   content.append(el('div', { class: 'consent-summary' }, ...[['Use', 'Save and find this source'], ['Fields', source.required_fields.join(', ')], ['Privacy', 'Private, on this device'], ['Retention', 'Kept until you remove this source'], ['Backups', 'Included in exports you choose to create']].map(([label, value]) => el('div', {}, el('span', {}, label), el('strong', {}, value)))));
   content.append(el('p', { class: 'dialog-description' }, 'This permission does not let a model use source data. Removing this source stops further use and begins removal from Kizuki’s owned stores. Your original files and provider account remain yours.'));
   const request = { source_key: source.source_key, expected_revision: source.revision, operation_id: crypto.randomUUID(), policy: { purposes: ['capture','recall','session','correction','audit','derive','extract','export'], allowed_fields: source.required_fields, retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' } };
+  const form = el('form'); content.append(form);
   const errorLine = el('p', { class: 'form-error', role: 'alert' });
-  const allow = button('Allow and import', async () => {
+  const allow = el('button', { type: 'submit', class: 'button button-primary' }, 'Allow and import');
+  form.append(errorLine, el('div', { class: 'form-actions' }, button('Not now', () => closeDialog()), allow));
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); if (allow.disabled) return;
     allow.disabled = true; errorLine.textContent = '';
     try { await api('consent', request); closeDialog(); await refresh(); await capture(source); }
     catch (error) { errorLine.textContent = error.message; allow.disabled = false; }
-  }, 'primary');
-  content.append(errorLine, el('div', { class: 'form-actions' }, button('Not now', () => closeDialog()), allow));
+  });
+  focusDialog(content);
 }
 async function capture(source) { await launchOperation('capture', { source_key: source.source_key, mode: 'backfill' }, 'Importing your history', async operation => { await refresh(); navigate('memory'); message(operation.counts ? `${safeCount(operation.counts.stored)} saved · ${safeCount(operation.counts.duplicates)} already present${operation.counts.errors ? ` · ${safeCount(operation.counts.errors)} problems reported` : ''}` : 'Capture completed. Check Sources for its latest coverage.'); }); }
 function privacy(source) {
@@ -380,6 +439,7 @@ function privacy(source) {
     invalidatePrivateView();
     await launchOperation('revoke', { source_key: source.source_key, expected_revision: source.revision, operation_id: crypto.randomUUID() }, `Removing ${label}`, async () => { await refresh(); navigate('sources'); message('The source is excluded. Check its status for any removal still pending.'); });
   }, 'danger')));
+  focusDialog(content);
 }
 async function resumeRemoval(source) {
   if (!source.revoke_operation) { await refresh(); message('Refresh the source status before continuing removal.'); return; }
@@ -414,6 +474,7 @@ async function loadActivity() {
 function undo(receipt) {
   const content = openDialog('Undo this change?', 'Kizuki will use the saved receipt to restore the previous state. If the page or a dependent change has moved on, the undo will refuse safely.', 'activity');
   content.append(el('div', { class: 'status-note' }, el('p', {}, receipt.page)), el('div', { class: 'form-actions' }, button('Keep change', () => closeDialog()), button('Undo change', () => launchOperation('undo', { receipt_id: receipt.id, cascade: false }, 'Undoing this change', async () => { state.hits = null; await refresh(); await loadActivity(); message('Change undone.'); }), 'primary')));
+  focusDialog(content);
 }
 async function loadService() {
   const sequence = ++serviceSequence;
@@ -465,7 +526,7 @@ async function modelSettings() {
   const loading = openDialog('Model settings', 'Checking the current saved settings…', 'settings');
   const model = await loadModel();
   if (!dialog.open || !dialog.contains(loading)) return;
-  if (!model) { loading.append(el('p', { class: 'form-error', role: 'alert' }, 'The saved settings could not be read. Close this panel and retry; existing settings have not been replaced.')); return; }
+  if (!model) { loading.append(el('p', { class: 'form-error', role: 'alert' }, 'The saved settings could not be read. Close this panel and retry; existing settings have not been replaced.')); focusDialog(loading); return; }
   const content = openDialog('Model settings', 'Choose how Kizuki organises memory pages. Saving does not contact the model or let it use any source.', 'settings');
   const form = el('form');
   const kind = el('select', { id: 'model-kind' }, el('option', { value: 'none' }, 'Off — capture and search only'), el('option', { value: 'openai_compatible' }, 'OpenAI-compatible model'));
@@ -506,6 +567,7 @@ async function modelSettings() {
     } catch (error) { if (error.code !== 'stale_response' && dialog.open && dialog.contains(content)) { errorLine.textContent = error.message; save.disabled = false; } }
     finally { if (payload.credential.action === 'replace') payload.credential.value = ''; }
   });
+  focusDialog(content);
 }
 async function testModel(model) {
   await launchOperation('model_test', { expected_revision: model.revision }, 'Test your model connection', async () => {});
@@ -523,7 +585,7 @@ async function modelConsent(source, allow) {
   const loading = openDialog('Model permission', 'Checking the current model before showing this permission…', 'lock');
   const model = await loadModel();
   if (!dialog.open || !dialog.contains(loading)) return;
-  if (!model || (allow && model.selection.kind !== 'openai_compatible')) { loading.append(el('p', { class: 'form-error', role: 'alert' }, 'Choose a model in Settings, then review this permission again.')); return; }
+  if (!model || (allow && model.selection.kind !== 'openai_compatible')) { loading.append(el('p', { class: 'form-error', role: 'alert' }, 'Choose a model in Settings, then review this permission again.')); focusDialog(loading); return; }
   const content = openDialog(allow ? 'Allow this model to use this source?' : 'Withdraw model permission?', sourceLabel(source), 'lock');
   content.append(el('div', {}, modelIdentity(model), el('p', { class: 'dialog-description' }, allow ? 'This source’s permitted information may be sent to the exact model connection shown above to organise memory pages. The model provider controls retention of information it receives. This also applies to a model running on this device.' : 'Stop future model use of this source. Local capture and search stay permitted. This does not recall information a provider has already received.'),
     source.model_consent === 'different_model' && el('p', { class: 'status-note' }, 'The previous permission belongs to a different model. Allowing this connection replaces that model permission.')));
@@ -539,6 +601,7 @@ async function modelConsent(source, allow) {
     } catch (error) { if (error.code !== 'stale_response' && dialog.open && dialog.contains(content)) { errorLine.textContent = error.message; confirm.disabled = false; } }
   }, allow ? 'primary' : 'danger');
   content.append(errorLine, el('div', { class: 'form-actions' }, button('Cancel', closeDialog), confirm));
+  focusDialog(content);
 }
 function runSummary(operation) {
   const run = operation.result?.run;
@@ -608,7 +671,9 @@ function agentEnrollment() {
     const request = { name: name.value.trim(), operation_id: crypto.randomUUID(), grant: { ceiling: ceiling.value, types: scope(types), subjects: scope(subjects), since: start, until: end, tools: tools.filter(check => check.checked).map(check => check.value), rate_limit_per_minute: limit, relay_owner_corrections: false } };
     const review = openDialog('Review this agent’s access', request.name, 'lock');
     review.append(grantSummary(request.grant), el('p', { class: 'dialog-description' }, 'Only these permissions will be granted. The next step creates a private credential file on this device; its secret value will not appear in the browser.'), el('div', { class: 'form-actions' }, button('Cancel', closeDialog), button('Create agent', () => launchOperation('agent_enroll', request, 'Creating agent access', async operation => { await loadAgents(); showAgentResult(operation); }), 'primary')));
+    focusDialog(review);
   });
+  focusDialog(content);
 }
 function agentLaunchConfig(mcp) {
   if (!mcp || typeof mcp.command !== 'string' || !mcp.command || !Array.isArray(mcp.args) || !mcp.args.every(arg => typeof arg === 'string')) return null;
@@ -633,10 +698,12 @@ function showAgentResult(operation) {
   } else if (receipt.authority === 'active') content.append(el('p', { class: 'form-error', role: 'alert' }, 'A usable scoped launch configuration was not returned. No owner access will be substituted.'));
   if (receipt.grant) content.append(grantSummary(receipt.grant));
   content.append(el('div', { class: 'form-actions' }, button('Done', closeDialog, 'primary')));
+  focusDialog(content);
 }
 function agentRevoke(agent) {
   const content = openDialog('Revoke this agent’s access?', agent.name, 'lock');
   content.append(grantSummary(agent.grant), el('p', { class: 'dialog-description' }, 'This stops the agent’s access, including existing connections. Its name and credential file are retained; it cannot be reused as a new identity.'), el('div', { class: 'form-actions' }, button('Keep access', closeDialog), button('Revoke access', () => launchOperation('agent_revoke', { name: agent.name }, 'Revoking agent access', async operation => { await loadAgents(); showAgentResult(operation); }), 'danger')));
+  focusDialog(content);
 }
 function renderSettings() {
   return el('section', {}, heading('Simply yours.', 'A local workspace, clear permissions, and room to grow when you need it.'), renderModelSettings(), renderAgents(), el('div', { class: 'settings-list' },
@@ -649,6 +716,7 @@ function renderSettings() {
 function renderOperation() {
   const operation = state.operation;
   if (!operation) return null;
+  if ((operation.kind === 'initialize' || operation.kind === 'enroll') && operation.state !== 'running') return null;
   const running = operation.state === 'running';
   const title = operation.kind === 'correct' ? (running ? 'Applying your correction' : 'Correction result') : operation.kind === 'agent_enroll' || operation.kind === 'agent_revoke' ? (running ? 'Updating agent access' : 'Agent access result') : operation.kind === 'model_test' ? (running ? 'Testing your model connection' : operation.state === 'succeeded' ? 'Connection test completed' : 'Connection test needs attention') : operation.kind === 'run_pass' ? (running ? 'Organising your memory' : operation.state === 'succeeded' ? 'Processing run completed' : 'Processing needs attention') : running ? 'Working on your source' : operation.state === 'failed' ? 'This step needs attention' : operation.state === 'unknown' ? 'Completion is not yet confirmed' : operation.kind === 'capture' ? 'Import progress saved' : 'Completed';
   const detail = (operation.kind === 'correct' || operation.error?.code === 'recovery_pending') && operation.result ? operation.result.message : operation.result?.agent ? `Access: ${operation.result.agent.receipt.authority}. Enrollment: ${operation.result.agent.receipt.status}.` : operation.kind === 'run_pass' && !running && !operation.error ? runSummary(operation) : operation.kind === 'model_test' && !operation.error ? 'This test uses a made-up prompt. It does not use your imported information or grant source permission.' : running ? 'Your source checkpoint keeps progress recoverable. You can continue using the app.' : operation.error ? humanError(operation.error.code) : operation.kind === 'capture' && operation.counts ? `${safeCount(operation.counts.stored)} saved this time. Check Sources for the latest history and any problems.` : 'Check Sources or Activity for the current state.';
@@ -692,12 +760,52 @@ async function refresh() {
     if (status.vault.ready && state.view === 'settings') void loadAgents();
   } catch (error) { if (bearer && sequence === refreshSequence && error.code !== 'stale_response') { invalidatePrivateView(); main.replaceChildren(empty('Let’s reconnect.', error.message, button('Try again', refresh, 'primary'))); } }
 }
+function initializeFailureMessage(code) {
+  if (code === 'invalid_request') return 'A workspace already exists for this app session. Refresh to use it, or choose a new empty folder.';
+  return 'Use a new empty folder. Existing folders are never adopted automatically. Check the path in Setup options, then try again.';
+}
+function operationErrorMessage(route, operation, payload) {
+  const code = operation.error?.code;
+  if (code === 'recovery_pending' && operation.result?.message) return operation.result.message;
+  if (route === 'initialize') return initializeFailureMessage(code);
+  if (route === 'enroll' && (!code || code === 'unavailable') && payload?.provider === 'markdown') return 'This folder could not be connected. Use an existing Markdown folder outside your Kizuki workspace, then try again.';
+  if (route === 'capture' && (!code || code === 'unavailable')) return 'Import did not finish. Refresh this source, then try Import history again. Your original files are unchanged.';
+  if (code) return humanError(code);
+  return 'Completion is not confirmed. Check the source state before trying again.';
+}
+function showSetupFailure(text) {
+  const path = document.getElementById('setup-path')?.value || '';
+  const noService = document.getElementById('setup-no-service')?.checked === true;
+  state.setupError = text;
+  if (dialog.open) closeDialog();
+  if (state.status?.vault.ready || !bearer) return;
+  render();
+  const details = main.querySelector('details');
+  if (details) details.open = true;
+  const input = main.querySelector('#setup-path');
+  if (input) { input.value = path; input.focus({ preventScroll: true }); }
+  const optOut = main.querySelector('#setup-no-service');
+  if (optOut && !optOut.disabled) optOut.checked = noService;
+}
+function restoreEnrollment(payload, text) {
+  const provider = state.catalog.find(item => item.id === payload.provider);
+  if (!provider) return false;
+  enrollment(provider);
+  const pathInput = dialog.querySelector('#source-path'), calendarInput = dialog.querySelector('#calendar-id');
+  if (pathInput && payload.path) pathInput.value = payload.path;
+  if (calendarInput && payload.calendar_id) calendarInput.value = payload.calendar_id;
+  const errorLine = dialog.querySelector('.form-error');
+  if (errorLine) errorLine.textContent = text;
+  (pathInput || calendarInput || firstFocusable(dialog))?.focus({ preventScroll: true });
+  return true;
+}
 async function launchOperation(route, payload, title, done) {
   const session = bearer, generation = privacyGeneration;
   const current = () => session === bearer && generation === privacyGeneration;
   const content = openDialog(title, route === 'model_test' ? 'This sends one made-up prompt to your saved model. None of your imported information is included, and source permissions stay unchanged.' : route === 'run_pass' ? 'Kizuki will process permitted sources and report the resulting memory writes. A model can use only sources with matching model permission.' : route === 'enroll' && payload.provider !== 'markdown' ? 'Continue in the Google sign-in window. Kizuki will show the result here when sign-in and local enrollment finish.' : 'Kizuki will confirm the result here. Closing this panel does not cancel an operation that has already started.', 'clock');
   const progress = el('div', { class: 'opening', 'aria-busy': 'true' }, el('div', { class: 'skeleton skeleton-line' }), el('p', {}, 'Starting…'));
   content.append(progress, el('div', { class: 'form-actions' }, button('Close panel', () => closeDialog())));
+  focusDialog(content);
   try {
     const { operation_id } = await api(route, payload);
     for (let attempt = 0; attempt < 180; attempt++) {
@@ -708,17 +816,20 @@ async function launchOperation(route, payload, title, done) {
       if (operation.state !== 'running') {
         progress.setAttribute('aria-busy', 'false');
         if (route === 'initialize' && operation.error?.code === 'service_unavailable') {
-          if (dialog.open && dialog.contains(content)) closeDialog();
+          const ownsDialog = dialog.open && dialog.contains(content);
+          if (ownsDialog) closeDialog();
           await refresh();
-          if (session === bearer && privateViewValid && state.status?.vault.ready) {
+          if (ownsDialog && session === bearer && privateViewValid && state.status?.vault.ready) {
             navigate('settings');
             message(humanError('service_unavailable'));
-          }
+          } else if (current()) message('Workspace creation completed, but background activity needs attention.');
           return;
         }
-        if (operation.state !== 'succeeded') throw Object.assign(new Error(operation.error?.code === 'recovery_pending' && operation.result?.message ? operation.result.message : operation.error ? humanError(operation.error.code) : 'Completion is not confirmed. Check the source state before trying again.'), { code: operation.error?.code || 'unknown' });
-        if (dialog.open && dialog.contains(content)) closeDialog();
-        await done(operation); return;
+        if (operation.state !== 'succeeded') throw Object.assign(new Error(operationErrorMessage(route, operation, payload)), { code: operation.error?.code || 'unknown' });
+        const ownsDialog = dialog.open && dialog.contains(content);
+        if (ownsDialog) { closeDialog(); await done(operation); }
+        else { await refresh(); if (current()) message('The operation completed. The panel you opened remains unchanged.'); }
+        return;
       }
       const line = progress.querySelector('p'); if (line) line.textContent = route === 'model_test' ? 'Waiting for the model to answer the test prompt…' : route === 'run_pass' ? 'Processing. The completed run will have a receipt.' : 'In progress. Your original source stays in place.';
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -726,14 +837,28 @@ async function launchOperation(route, payload, title, done) {
     throw new Error('This is taking longer than expected. Close this panel and refresh to check its current state.');
   } catch (error) {
     if (!current() || error.code === 'stale_response') return;
-    progress.setAttribute('aria-busy', 'false'); progress.replaceChildren(el('p', { class: 'form-error', role: 'alert' }, error.message));
-    if (!dialog.open || !dialog.contains(content)) message(error.message);
+    const text = error.message;
+    const ownsDialog = dialog.open && dialog.contains(content);
+    if (route === 'revoke') await refresh();
+    if (route === 'initialize' && ownsDialog) { showSetupFailure(text); return; }
+    if (route === 'enroll' && ownsDialog && restoreEnrollment(payload, text)) return;
+    progress.setAttribute('aria-busy', 'false'); progress.replaceChildren(el('p', { class: 'form-error', role: 'alert' }, text));
+    if (route === 'capture') {
+      const actions = content.querySelector('.form-actions');
+      if (actions) actions.replaceChildren(button('Close panel', () => closeDialog()), button('Try again', () => launchOperation(route, payload, title, done), 'primary'));
+      if (ownsDialog) firstFocusable(content)?.focus({ preventScroll: true });
+    }
+    if (!dialog.open || !dialog.contains(content)) message(text);
   }
 }
 document.getElementById('refresh').addEventListener('click', refresh);
 document.querySelector('.wordmark').addEventListener('click', event => { event.preventDefault(); navigate('memory'); });
 document.addEventListener('keydown', event => {
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); navigate('memory', false); document.getElementById('memory-query')?.focus(); }
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    if (!state.status?.vault.ready || dialog.open) return;
+    navigate('memory', false); document.getElementById('memory-query')?.focus();
+  }
 });
 try {
   const token = new URLSearchParams(location.hash.slice(1)).get('token');

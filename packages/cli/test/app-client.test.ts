@@ -16,8 +16,10 @@ class Element {
     hidden = false;
     checked = false;
     disabled = false;
+    focused = false;
     namespaceURI = 'http://www.w3.org/2000/svg';
     constructor(public tag = 'div') {}
+    get tagName() { return this.tag.toUpperCase(); }
     set textContent(text: string) { this.ownText = text; this.children = []; }
     get textContent(): string { return this.ownText + this.children.map(child => child.textContent).join(''); }
     append(...nodes: Element[]) { for (const node of nodes) { node.parent = this; this.children.push(node); } }
@@ -26,13 +28,14 @@ class Element {
     replaceWith(node: Element) { if (this.parent) { const at = this.parent.children.indexOf(this); this.parent.children[at] = node; node.parent = this.parent; } }
     remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); }
     setAttribute(key: string, value: string) { this.attributes[key] = value; if (key === 'class') this.className = value; }
+    getAttribute(key: string) { return this.attributes[key] ?? null; }
     addEventListener(name: string, fn: (event: any) => unknown) { (this.listeners[name] ??= []).push(fn); }
     fire(name: string, event: unknown = {}) { return Promise.all((this.listeners[name] ?? []).map(fn => fn(event))); }
     contains(node: Element): boolean { return this === node || this.children.some(child => child.contains(node)); }
     querySelector(selector: string): Element | null { return this.children.find(child => selector.startsWith('.') ? child.className.split(' ').includes(selector.slice(1)) : selector.startsWith('#') ? child.attributes.id === selector.slice(1) : child.tag === selector) ?? this.children.map(child => child.querySelector(selector)).find(Boolean) ?? null; }
     showModal() { this.open = true; }
-    close() { this.open = false; }
-    focus() {}
+    close() { this.open = false; queueMicrotask(() => { void this.fire('close'); }); }
+    focus() { this.focused = true; }
     scrollIntoView() {}
 }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
@@ -143,6 +146,163 @@ test('setup does not promise background updates when the host has no supervisor'
     f.evaluate(`state.status={vault:{ready:false},setup_supervisor:'none',setup_no_service:false}; render();`);
     expect(f.main.textContent).toContain('Background activity is unavailable on this device');
     expect(f.main.textContent).not.toContain('even after you close the app');
+});
+
+test('first-run setup is a labeled form so Enter creates the workspace', async () => {
+    const f = fixture();
+    f.evaluate(`state.status={vault:{ready:false},setup_location:'/tmp/kizuki-empty',setup_no_service:false}; render();`);
+    const path = f.main.querySelector('#setup-path')!;
+    expect(f.main.querySelector('form')!.className).toBe('setup-form');
+    expect(path.attributes['aria-describedby']).toBe('setup-path-help');
+    expect(f.main.querySelector('#setup-path-help')!.textContent).toContain('new empty folder');
+    expect(findLabelFor(f.main, 'setup-path')?.attributes.for).toBe('setup-path');
+    path.value = '/tmp/kizuki-empty';
+    f.main.querySelector('#setup-no-service')!.checked = true;
+    const work = f.main.querySelector('form')!.fire('submit', { preventDefault() {} });
+    await tick();
+    expect(f.requests[0]!.route).toBe('initialize');
+    expect(f.requests[0]!.payload).toEqual({ path: '/tmp/kizuki-empty', no_service: true });
+    f.reply('initialize', { operation_id: 'init' }); await tick();
+    f.reply('operation', { id: 'init', kind: 'initialize', state: 'failed', error: { code: 'unavailable' } });
+    await work;
+});
+
+test('failed workspace creation returns to setup options instead of a modal dead end', async () => {
+    const f = fixture();
+    f.evaluate(`state.status={vault:{ready:false},setup_location:'/tmp/kizuki-empty',visibility_epoch:'uninitialized',operations:[]}; render();`);
+    f.main.querySelector('#setup-path')!.value = '/tmp/existing-notes';
+    const work = f.evaluate<Promise<void>>('initialize()');
+    f.reply('initialize', { operation_id: 'init' }); await tick();
+    f.reply('operation', { id: 'init', kind: 'initialize', state: 'failed', error: { code: 'unavailable' } });
+    await work; await tick();
+    expect(f.dialog.open).toBe(false);
+    expect(f.main.querySelector('details')!.open).toBe(true);
+    expect(f.main.textContent).toContain('new empty folder');
+    expect(f.main.querySelector('#setup-error')!.textContent).toContain('never adopted automatically');
+    expect(f.main.querySelector('#setup-path')!.value).toBe('/tmp/existing-notes');
+    expect(f.main.querySelector('#setup-path')!.focused).toBe(true);
+    expect(f.main.querySelector('#setup-path')!.attributes['aria-invalid']).toBe('true');
+    expect(f.main.textContent).not.toContain('Completed');
+});
+
+test('successful setup opens sources without a stale completed banner and focuses Connect', async () => {
+    const f = fixture();
+    f.evaluate(`state.status={vault:{ready:false},visibility_epoch:'uninitialized',operations:[]}; state.sources=[]; render();`);
+    const work = f.evaluate<Promise<void>>('initialize()');
+    f.reply('initialize', { operation_id: 'init' }); await tick();
+    const job = { id: 'init', kind: 'initialize', state: 'succeeded', result: { message: 'Workspace created' } };
+    f.reply('operation', job); await tick();
+    f.reply('status', { vault: { ready: true }, visibility_epoch: '1', operations: [job] }); await tick();
+    f.reply('catalog', { sources: [{ id: 'markdown', title: 'Local notes', available: true, detail: 'Synthetic', fields: [], required_fields: ['text'] }] });
+    f.reply('sources', { sources: [] }); await work; await tick();
+    expect(f.evaluate<string>('state.view')).toBe('sources');
+    expect(f.main.textContent).toContain('Choose your first source');
+    expect(f.main.textContent).not.toContain('Completed');
+    expect(findAction(f.main, 'Connect').focused).toBe(true);
+});
+
+test('memory keeps Markdown onboarding when a source still needs permission or import', () => {
+    const f = fixture();
+    f.evaluate(`state.view='memory'; state.hits=null; state.sources[0].consent='required'; state.sources[0].last_run=null; render();`);
+    expect(f.main.textContent).toContain('Permission comes before import');
+    expect(findAction(f.main, 'Review permission')).toBeTruthy();
+    f.evaluate(`state.sources[0].consent='active'; state.sources[0].last_run=null; state.sources[0].stored=0; render();`);
+    expect(f.main.textContent).toContain('Import this source to search it');
+    expect(findAction(f.main, 'Import history')).toBeTruthy();
+});
+
+test('source enrollment focuses the labeled folder field instead of the close control', () => {
+    const f = fixture();
+    f.evaluate(`enrollment({id:'markdown',title:'Local notes',detail:'Synthetic',available:true,fields:[],required_fields:['text']})`);
+    const path = f.dialog.querySelector('#source-path')!;
+    expect(path.focused).toBe(true);
+    expect(path.attributes['aria-describedby']).toBe('source-path-help');
+    expect(f.dialog.querySelector('#source-path-help')!.textContent).toContain('outside your Kizuki workspace');
+    expect(f.dialog.querySelector('.icon-button')!.focused).toBe(false);
+});
+
+test('source permission can be granted from the keyboard submit path', async () => {
+    const f = fixture();
+    f.evaluate('consent(state.sources[0])');
+    expect(f.dialog.querySelector('form')).toBeTruthy();
+    expect(findAction(f.dialog, 'Allow and import').focused).toBe(true);
+    const work = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+    await tick();
+    expect(f.requests[0]!.route).toBe('consent');
+    expect(f.requests[0]!.payload.source_key).toBe('source-a');
+    f.reply('consent', { source_key: 'source-a', revision: 1, status: 'active' }); await tick();
+    f.reply('status', status()); await tick();
+    f.reply('catalog', { sources: [] });
+    f.reply('sources', { sources: [{ source_key: 'source-a', connector_id: 'kizuki.markdown-folder', display_name: 'markdown-folder', consent: 'active', required_fields: ['text'], stored: 0, errors: 0 }] });
+    await tick();
+    expect(f.requests.some(request => request.route === 'capture')).toBe(true);
+    f.reply('capture', { operation_id: 'cap' }); await tick();
+    f.reply('operation', { id: 'cap', kind: 'capture', state: 'succeeded', counts: { stored: 1, duplicates: 0, errors: 0 } }); await tick();
+    f.reply('status', status()); await tick();
+    f.reply('catalog', { sources: [] });
+    f.reply('sources', { sources: [] });
+    await work;
+});
+
+test('failed first capture offers a retry of the same source', async () => {
+    const f = fixture();
+    const work = f.evaluate<Promise<void>>('capture(state.sources[0])');
+    f.reply('capture', { operation_id: 'cap' }); await tick();
+    f.reply('operation', { id: 'cap', kind: 'capture', state: 'failed', error: { code: 'unavailable' } });
+    await work; await tick();
+    expect(f.dialog.textContent).toContain('Import did not finish');
+    expect(f.dialog.textContent).toContain('Try again');
+    const retry = findAction(f.dialog, 'Try again').fire('click'); await tick();
+    expect(f.requests[0]!.route).toBe('capture');
+    expect(f.requests[0]!.payload).toEqual({ source_key: 'source-a', mode: 'backfill' });
+    f.reply('capture', { operation_id: 'cap2' }); await tick();
+    f.reply('operation', { id: 'cap2', kind: 'capture', state: 'succeeded', counts: { stored: 1, duplicates: 0, errors: 0 } }); await tick();
+    f.reply('status', status()); await tick();
+    f.reply('catalog', { sources: [] });
+    f.reply('sources', { sources: [] });
+    await retry;
+});
+
+test('failed folder enrollment restores the labeled path instead of leaving a close-only panel', async () => {
+    const f = fixture();
+    f.evaluate(`state.catalog=[{id:'markdown',title:'Local notes',detail:'Synthetic',available:true,fields:[],required_fields:['text']}]; enrollment(state.catalog[0]); dialog.querySelector('#source-path').value='/tmp/notes';`);
+    const work = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+    f.reply('enroll', { operation_id: 'enroll-1' }); await tick();
+    f.reply('operation', { id: 'enroll-1', kind: 'enroll', state: 'failed', error: { code: 'unavailable' } });
+    await work; await tick();
+    expect(f.dialog.querySelector('#source-path')!.value).toBe('/tmp/notes');
+    expect(f.dialog.querySelector('#source-path')!.focused).toBe(true);
+    expect(f.dialog.querySelector('.form-error')!.textContent).toContain('outside your Kizuki workspace');
+    expect(f.dialog.textContent).toContain('Connect folder');
+});
+
+test('a queued native close and late success leave a newly opened dialog intact', async () => {
+    const f = fixture();
+    f.evaluate(`state.catalog=[{id:'markdown',title:'Local notes',detail:'Synthetic',available:true,fields:[],required_fields:['text']}]; enrollment(state.catalog[0]); dialog.querySelector('#source-path').value='/tmp/old';`);
+    const work = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+    f.reply('enroll', { operation_id: 'enroll-newer' }); await tick();
+    f.evaluate(`closeDialog(); enrollment(state.catalog[0]); dialog.querySelector('#source-path').value='/tmp/new';`);
+    await tick();
+    f.reply('operation', { id: 'enroll-newer', kind: 'enroll', state: 'succeeded', result: { source_key: 'source-a' } }); await tick();
+    f.reply('status', status()); await tick(); f.reply('catalog', { sources: [] }); f.reply('sources', { sources: [] });
+    await work; await tick();
+    expect(f.dialog.open).toBe(true);
+    expect(f.dialog.querySelector('#source-path')!.value).toBe('/tmp/new');
+    expect(f.dialog.querySelector('#source-path')!.focused).toBe(true);
+    expect(f.dialog.textContent).toContain('Connect folder');
+});
+
+test('a closed enrollment panel is not reopened by its later failure', async () => {
+    const f = fixture();
+    f.evaluate(`state.catalog=[{id:'markdown',title:'Local notes',detail:'Synthetic',available:true,fields:[],required_fields:['text']}]; enrollment(state.catalog[0]); dialog.querySelector('#source-path').value='/tmp/notes';`);
+    const work = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+    f.reply('enroll', { operation_id: 'enroll-late' }); await tick();
+    f.evaluate('closeDialog()');
+    f.reply('operation', { id: 'enroll-late', kind: 'enroll', state: 'failed', error: { code: 'unavailable' } });
+    await work; await tick();
+    expect(f.dialog.open).toBe(false);
+    expect(f.dialog.textContent).not.toContain('Connect folder');
+    expect(f.notice.textContent).toContain('This folder could not be connected');
 });
 
 test('partial initialization refreshes the saved vault and opens background recovery in Settings', async () => {
@@ -292,6 +452,12 @@ function findAction(node: Element, label: string): Element {
     const found = node.tag === 'button' && node.textContent === label ? node : node.children.map(child => { try { return findAction(child, label); } catch { return null; } }).find(Boolean);
     if (!found) throw Error(`Missing action ${label}`);
     return found;
+}
+
+function findLabelFor(node: Element, target: string): Element | undefined {
+    return node.tag === 'label' && node.attributes.for === target
+        ? node
+        : node.children.map(child => findLabelFor(child, target)).find(Boolean);
 }
 
 test('model save sends exact revision and transient replacement key without testing or granting a source', async () => {
