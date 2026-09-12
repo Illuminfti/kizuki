@@ -293,6 +293,45 @@ describe("help", () => {
     }
   });
 
+  test("serve structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["serve", "--help", "--json"], ["help", "serve", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
+      expect(body.data.name).toBe("serve");
+      expect(body.data.options).toEqual([
+        "--port",
+        "--crash-after",
+        "--service-custody",
+        "--custody-broker-launch",
+        "--custody-broker-child",
+      ]);
+      expect(body.data.flags).toEqual(["--once", "--no-http", "--json", "--install", "--uninstall"]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "serve", "--help");
+    expect(text.stdout).toContain("--port");
+    expect(text.stdout).toContain("--once");
+    expect(text.stdout).toContain("--no-http");
+    expect(text.stdout).toContain("--install");
+    for (const [args, diagnostic] of [
+      [["serve", "--nope"], "unknown option --nope"],
+      [["serve", "--once", "--once"], "repeated flag --once"],
+      [["serve", "--json=true"], "flag --json does not take a value"],
+      [["serve", "--port"], "missing value for --port"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki serve");
+    }
+  });
+
   test("recover structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["recover", "--help", "--json"], ["help", "recover", "--json"]] as const) {

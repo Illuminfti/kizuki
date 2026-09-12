@@ -17,22 +17,28 @@ import {
 import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
 import { jsonEnvelope } from "../output";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
 import { serveSupervisorHost } from "../service-host";
 import { createServeRuntime } from "../serve-runtime";
 import { runServiceCustodyBroker, startServiceCustody, ServiceCustodyError, type ServiceCustodyHandle } from "@kizuki/core/internal";
 import { launchServiceCustodyBroker } from "../service-custody";
 import { isAbsolute, resolve } from "node:path";
 
+export const SERVE_SCHEMA = {
+  options: ["--port", "--crash-after", "--service-custody", "--custody-broker-launch", "--custody-broker-child"],
+  flags: ["--once", "--no-http", "--json", "--install", "--uninstall"],
+} as const satisfies CommandHelpSchema;
+
 export const serveCommand: Command = {
   name: "serve",
   usage:
     "serve [--once] [--no-http] [--port N] [--json] [--install] [--uninstall] | serve status [--json] | serve stop | serve run <rail> [--json]",
   summary: "run the always-on loop, or install it as a user service",
+  schema: SERVE_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
-      flags: ["--once", "--no-http", "--json", "--install", "--uninstall"],
-      options: ["--port", "--crash-after", "--service-custody", "--custody-broker-launch", "--custody-broker-child"],
+      options: [...SERVE_SCHEMA.options],
+      flags: [...SERVE_SCHEMA.flags],
     });
     const [verb, rail] = parsed.positionals;
     const modes = ["--service-custody", "--custody-broker-launch", "--custody-broker-child"]
