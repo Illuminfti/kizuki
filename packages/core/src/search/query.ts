@@ -5,6 +5,7 @@ import type { RetrievalAuthority } from "../contracts/retrieval";
 import { readDerivedHolds } from "../derived-holds";
 import { readDerivedMeta } from "../derived-meta";
 import { tableExists } from "../ledger/schema";
+import { sourceServingSql, type SourcePurpose } from "../ledger/source-grants";
 import { ceilingSql, instantBoundPair, instantPairSql, requireCeiling } from "../query/sql";
 import { placeholders } from "../util/sql";
 import type { DocScope } from "./indexer";
@@ -118,6 +119,15 @@ function validLimit(limit: number): number {
   return limit;
 }
 
+/** Internal ranked-window skip. Not a public search cursor. */
+function validOffset(offset: number | undefined): number {
+  if (offset === undefined) return 0;
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new RangeError("search offset must be a non-negative integer");
+  }
+  return offset;
+}
+
 function validQueryText(query: string): string {
   if (query.length > MAX_QUERY_CHARS) {
     throw new RangeError(
@@ -148,6 +158,8 @@ function searchPlan(
   query: string,
   opts: Omit<SearchOptions, "ceiling">,
   ceiling: number | null,
+  source?: { owner: boolean; purpose?: SourcePurpose },
+  offset?: number,
 ): SearchPlan {
   const ftsQuery = toFtsQuery(validQueryText(query));
   const degraded: string[] = [];
@@ -155,6 +167,7 @@ function searchPlan(
     return { tail: null, bindings: [], degraded: ["query-empty"] };
   }
   const limit = validLimit(opts.limit ?? 50);
+  const skip = validOffset(offset);
   const types = validFilters(opts.types, "types");
   const subjects = validFilters(opts.subjects, "subjects");
   const excludePaths = validFilters(opts.excludePaths, "excludePaths");
@@ -215,10 +228,27 @@ function searchPlan(
     clauses.push(`path NOT IN (${placeholders(excludePaths.length)})`);
     bindings.push(...excludePaths);
   }
+  if (source !== undefined) {
+    const predicate = sourceServingSql(db, source, ceiling);
+    if (predicate !== null) {
+      // Ledger rows correlate to events so LIMIT counts authorized identities.
+      // Canon live provenance is vault-admitted, not an FTS primitive.
+      clauses.push(`(search_docs.scope != 'ledger' OR EXISTS (
+        SELECT 1 FROM events
+         WHERE events.event_id = CASE
+           WHEN search_docs.doc_id LIKE 'event:%' THEN substr(search_docs.doc_id, 7)
+           ELSE search_docs.doc_id
+         END
+           AND ${predicate.sql}
+      ))`);
+      bindings.push(...predicate.bindings);
+    }
+  }
   bindings.push(limit);
+  if (skip !== 0) bindings.push(skip);
 
   return {
-    tail: `FROM search_docs WHERE ${clauses.join(" AND ")} ORDER BY ${RANK_SQL}, scope, doc_id LIMIT ?`,
+    tail: `FROM search_docs WHERE ${clauses.join(" AND ")} ORDER BY ${RANK_SQL}, scope, doc_id LIMIT ?${skip === 0 ? "" : " OFFSET ?"}`,
     bindings,
     degraded,
   };
@@ -266,9 +296,14 @@ export function searchResult(
 export function searchAuditCandidates(
   db: Database,
   query: string,
-  opts: Omit<SearchOptions, "ceiling">,
+  opts: Omit<SearchOptions, "ceiling"> & {
+    source?: { owner: boolean; purpose?: SourcePurpose };
+    /** Ranked-window skip for serving. Absent from SearchOptions and public search(). */
+    offset?: number;
+  },
 ): { candidates: Pick<SearchHit, "doc_id" | "scope">[]; degraded: string[] } {
-  const plan = searchPlan(db, query, opts, null);
+  const { source, offset, ...rest } = opts;
+  const plan = searchPlan(db, query, rest, null, source, offset);
   return {
     candidates: plan.tail === null ? [] : db
       .query<Pick<SearchHit, "doc_id" | "scope">, (string | number)[]>(`SELECT doc_id, scope ${plan.tail}`)

@@ -1,11 +1,18 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { MAX_RETRIEVAL_LIMIT } from "../../src/contracts/retrieval";
 import { rebuildDerived } from "../../src/derived";
 import { stampDerived } from "../../src/derived-meta";
+import { registerConnection } from "../../src/ledger/connections";
+import { accept } from "../../src/ledger/ledger";
+import { revokeSourceGrant, setSourceGrant } from "../../src/ledger/source-grants";
+import { search, searchAuditCandidates } from "../../src/search/query";
 import { serveGetPage } from "../../src/serving/page";
 import { serveSearch } from "../../src/serving/search";
 import type { SearchData } from "../../src/serving/search";
 import { ServeError } from "../../src/serving/types";
 import type { Envelope } from "../../src/serving/types";
+import { ulid } from "../../src/util/ulid";
+import { validEvent } from "../fixtures";
 import { recordedPage } from "../helpers/recorded-page";
 import { serveFixture } from "./helpers";
 import type { Fixture } from "./helpers";
@@ -315,4 +322,365 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
       isolated.dispose();
     }
   });
+});
+
+const SOURCE_STARVE_TOKEN = "sourcewalltoken";
+const CANON_STARVE_TOKEN = "canonwalltoken";
+const MIXED_STARVE_TOKEN = "mixedwalltoken";
+
+function recallPolicy(purposes: string[]) {
+  return {
+    purposes,
+    allowed_fields: ["text", "subjects", "attachments", "metadata"],
+    retention: "persistent_owned_until_revoked" as const,
+    egress: "local_only" as const,
+    sensitivity_floor: "public" as const,
+  };
+}
+
+function grantSource(live: Fixture, sourceKey: string, operation: string, purposes: string[]) {
+  registerConnection(live.db, "fixture", sourceKey);
+  setSourceGrant(live.db, {
+    source_key: sourceKey,
+    expected_revision: 0,
+    operation_id: operation,
+    policy: recallPolicy(purposes),
+  });
+}
+
+async function recordedStarvePage(
+  live: Fixture,
+  relPath: string,
+  id: string,
+  title: string,
+  sourceId: string,
+  token: string,
+) {
+  await recordedPage(
+    live.db,
+    live.vaultPath,
+    relPath,
+    {
+      sources: [sourceId],
+      id,
+      title,
+      type: "fact",
+      status: "active",
+      sensitivity: "public",
+      taint: "clean",
+      subjects: ["person:ada"],
+    },
+    token,
+  );
+}
+
+function boundEvent(
+  live: Fixture,
+  sourceKey: string,
+  sourceRecordId: string,
+  occurredAt: string,
+) {
+  const result = accept(
+    live.db,
+    {
+      ...validEvent(),
+      source_record_id: sourceRecordId,
+      occurred_at: occurredAt,
+      text: SOURCE_STARVE_TOKEN,
+      sensitivity_hint: "public",
+    },
+    { source: { source_key: sourceKey, expected_revision: 1 } },
+  );
+  if (result.status !== "stored") {
+    throw new Error(`expected stored event, got ${result.status}`);
+  }
+  return result.event.event_id;
+}
+
+describe("serveSearch authorization starvation", () => {
+  test("source-policy is not starved by more than 100 earlier denied ledger hits", async () => {
+    const live = await serveFixture();
+    try {
+      const deniedKey = ulid();
+      const allowedKey = ulid();
+      grantSource(live, deniedKey, "grant-denied-source", ["capture"]);
+      grantSource(live, allowedKey, "grant-allowed-source", [
+        "capture",
+        "recall",
+        "session",
+      ]);
+      const denied: string[] = [];
+      for (let index = 0; index < MAX_RETRIEVAL_LIMIT + 1; index += 1) {
+        denied.push(
+          boundEvent(
+            live,
+            deniedKey,
+            `rec-denied-${index}`,
+            `2026-02-28T${String(7 + Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}:00Z`,
+          ),
+        );
+      }
+      const allowed = boundEvent(
+        live,
+        allowedKey,
+        "rec-allowed-later",
+        "2026-02-28T16:00:00Z",
+      );
+      rebuildDerived(live.db, live.vaultPath);
+
+      const prefix = searchAuditCandidates(live.db, SOURCE_STARVE_TOKEN, {
+        scope: "ledger",
+        limit: MAX_RETRIEVAL_LIMIT,
+      });
+      expect(prefix.candidates).toHaveLength(MAX_RETRIEVAL_LIMIT);
+      expect(
+        prefix.candidates.some((hit) => hit.doc_id === `event:${allowed}`),
+      ).toBe(false);
+      expect(
+        search(live.db, SOURCE_STARVE_TOKEN, {
+          ceiling: "private",
+          scope: "ledger",
+          limit: 1,
+        })[0]?.doc_id,
+      ).not.toBe(`event:${allowed}`);
+
+      const ranked = searchAuditCandidates(live.db, SOURCE_STARVE_TOKEN, {
+        scope: "ledger",
+        limit: MAX_RETRIEVAL_LIMIT,
+        source: { owner: false, purpose: "recall" },
+      });
+      expect(ranked.candidates.map((hit) => hit.doc_id)).toEqual([
+        `event:${allowed}`,
+      ]);
+
+      const envelope = await serveSearch(live.agent("reader-private"), {
+        query: SOURCE_STARVE_TOKEN,
+        scope: "all",
+        limit: 1,
+      });
+      expect(eventIds(envelope)).toEqual([allowed]);
+      expect(envelope.canon).toEqual([]);
+      expect(envelope.denied).toEqual([]);
+      const rendered = JSON.stringify(envelope);
+      expect(rendered).toContain(allowed);
+      for (const id of denied) {
+        expect(rendered).not.toContain(id);
+      }
+    } finally {
+      live.dispose();
+    }
+  }, 20_000);
+
+  test("source-policy is not starved by exactly 101 earlier denied canon pages", async () => {
+    const live = await serveFixture();
+    try {
+      const deniedKey = ulid();
+      const allowedKey = ulid();
+      grantSource(live, deniedKey, "grant-denied-canon-source", ["capture", "derive"]);
+      grantSource(live, allowedKey, "grant-allowed-canon-source", [
+        "capture",
+        "recall",
+        "session",
+        "derive",
+      ]);
+      const deniedEvent = boundEvent(
+        live,
+        deniedKey,
+        "rec-denied-canon",
+        "2026-02-28T07:00:00Z",
+      );
+      const allowedEvent = boundEvent(
+        live,
+        allowedKey,
+        "rec-allowed-canon",
+        "2026-02-28T16:00:00Z",
+      );
+      const denied: string[] = [];
+      for (let index = 0; index < MAX_RETRIEVAL_LIMIT + 1; index += 1) {
+        const label = String(index).padStart(3, "0");
+        const id = `fact:canonstarve-${label}`;
+        denied.push(id);
+        await recordedStarvePage(
+          live,
+          `facts/canonstarve-${label}.md`,
+          id,
+          `${CANON_STARVE_TOKEN} ${CANON_STARVE_TOKEN} Aaa`,
+          deniedEvent,
+          CANON_STARVE_TOKEN,
+        );
+      }
+      const allowedId = "fact:canonstarve-allowed";
+      await recordedStarvePage(
+        live,
+        "facts/canonstarve-allowed.md",
+        allowedId,
+        `${CANON_STARVE_TOKEN} Zzz`,
+        allowedEvent,
+        CANON_STARVE_TOKEN,
+      );
+      rebuildDerived(live.db, live.vaultPath);
+
+      const prefix = searchAuditCandidates(live.db, CANON_STARVE_TOKEN, {
+        scope: "canon",
+        limit: MAX_RETRIEVAL_LIMIT,
+      });
+      expect(prefix.candidates).toHaveLength(MAX_RETRIEVAL_LIMIT);
+      expect(prefix.candidates.some((hit) => hit.doc_id === `page:${allowedId}`)).toBe(false);
+      expect(
+        search(live.db, CANON_STARVE_TOKEN, {
+          ceiling: "private",
+          scope: "canon",
+          limit: 1,
+        })[0]?.doc_id,
+      ).not.toBe(`page:${allowedId}`);
+
+      const ranked = searchAuditCandidates(live.db, CANON_STARVE_TOKEN, {
+        scope: "canon",
+        limit: MAX_RETRIEVAL_LIMIT,
+        source: { owner: false, purpose: "recall" },
+      });
+      expect(ranked.candidates).toHaveLength(MAX_RETRIEVAL_LIMIT);
+      expect(ranked.candidates.some((hit) => hit.doc_id === `page:${allowedId}`)).toBe(false);
+
+      const continued = searchAuditCandidates(live.db, CANON_STARVE_TOKEN, {
+        scope: "canon",
+        limit: MAX_RETRIEVAL_LIMIT,
+        offset: MAX_RETRIEVAL_LIMIT,
+        source: { owner: false, purpose: "recall" },
+      });
+      expect(continued.candidates.some((hit) => hit.doc_id === `page:${allowedId}`)).toBe(true);
+
+      const envelope = await serveSearch(live.agent("reader-private"), {
+        query: CANON_STARVE_TOKEN,
+        scope: "canon",
+        limit: 1,
+      });
+      expect(pageIds(envelope)).toEqual([allowedId]);
+      expect(envelope.quoted).toEqual([]);
+      expect(envelope.denied).toEqual([]);
+      expect("has_withheld" in envelope).toBe(false);
+      const rendered = JSON.stringify(envelope);
+      expect(rendered).toContain(allowedId);
+      expect(rendered).not.toContain(deniedEvent);
+      for (const id of denied) {
+        expect(rendered).not.toContain(id);
+      }
+
+      const owner = await serveSearch(live.owner(), {
+        query: CANON_STARVE_TOKEN,
+        scope: "canon",
+        limit: 1,
+      });
+      expect(pageIds(owner)).toEqual([allowedId]);
+      expect(owner.has_withheld).toBe(true);
+      expect(owner.denied).toEqual([{ reason: "held", count: MAX_RETRIEVAL_LIMIT + 1 }]);
+      const ownerJson = JSON.stringify(owner);
+      expect(ownerJson).not.toContain(deniedEvent);
+      for (const id of denied) {
+        expect(ownerJson).not.toContain(id);
+      }
+    } finally {
+      live.dispose();
+    }
+  }, 120_000);
+
+  test("mixed allowed and revoked live provenance never leaks even when FTS looks allowed", async () => {
+    const live = await serveFixture();
+    try {
+      const allowedKey = ulid();
+      const revokedKey = ulid();
+      grantSource(live, allowedKey, "grant-mixed-allowed", [
+        "capture",
+        "recall",
+        "session",
+        "derive",
+      ]);
+      grantSource(live, revokedKey, "grant-mixed-revoked", [
+        "capture",
+        "recall",
+        "session",
+        "derive",
+      ]);
+      const allowedEvent = boundEvent(
+        live,
+        allowedKey,
+        "rec-mixed-allowed",
+        "2026-02-28T07:00:00Z",
+      );
+      const revokedEvent = boundEvent(
+        live,
+        revokedKey,
+        "rec-mixed-revoked",
+        "2026-02-28T08:00:00Z",
+      );
+      const mixedId = "fact:mixedwall-aaa";
+      const allowedId = "fact:mixedwall-zzz";
+      await recordedPage(
+        live.db,
+        live.vaultPath,
+        "facts/mixedwall-aaa.md",
+        {
+          sources: [allowedEvent, revokedEvent],
+          id: mixedId,
+          title: `${MIXED_STARVE_TOKEN} ${MIXED_STARVE_TOKEN} Aaa`,
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+          subjects: ["person:ada"],
+        },
+        MIXED_STARVE_TOKEN,
+      );
+      await recordedStarvePage(
+        live,
+        "facts/mixedwall-zzz.md",
+        allowedId,
+        `${MIXED_STARVE_TOKEN} Zzz`,
+        allowedEvent,
+        MIXED_STARVE_TOKEN,
+      );
+      rebuildDerived(live.db, live.vaultPath);
+      revokeSourceGrant(live.db, {
+        source_key: revokedKey,
+        expected_revision: 1,
+        operation_id: "revoke-mixed-source",
+      });
+      const mixedDoc = `page:${mixedId}`;
+      const stale = JSON.stringify([allowedEvent]);
+      const columns = `doc_id, scope, title, body, path, page_type, sensitivity,
+       taint, authority, occurred_at, connector_id, subjects, provenance`;
+      live.db.query("UPDATE search_documents SET provenance = ? WHERE doc_id = ?").run(stale, mixedDoc);
+      live.db.query("DELETE FROM search_docs WHERE doc_id = ?").run(mixedDoc);
+      live.db.query(
+        `INSERT INTO search_docs (${columns}) SELECT ${columns} FROM search_documents WHERE doc_id = ?`,
+      ).run(mixedDoc);
+
+      const ranked = searchAuditCandidates(live.db, MIXED_STARVE_TOKEN, {
+        scope: "canon",
+        limit: MAX_RETRIEVAL_LIMIT,
+        source: { owner: false, purpose: "recall" },
+      });
+      expect(ranked.candidates.some((hit) => hit.doc_id === mixedDoc)).toBe(true);
+
+      for (const ctx of [live.agent("reader-private"), live.owner()]) {
+        const envelope = await serveSearch(ctx, {
+          query: MIXED_STARVE_TOKEN,
+          scope: "all",
+          limit: 2,
+        });
+        expect(pageIds(envelope)).toEqual([allowedId]);
+        expect(envelope.quoted).toEqual([]);
+        if (ctx.principal.kind === "agent") {
+          expect(envelope.denied).toEqual([]);
+          expect("has_withheld" in envelope).toBe(false);
+        }
+        const rendered = JSON.stringify(envelope);
+        expect(rendered).toContain(allowedId);
+        expect(rendered).not.toContain(mixedId);
+        expect(rendered).not.toContain(revokedEvent);
+      }
+    } finally {
+      live.dispose();
+    }
+  }, 20_000);
 });
