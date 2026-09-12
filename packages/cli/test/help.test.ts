@@ -293,6 +293,50 @@ describe("help", () => {
     }
   });
 
+  test("rebuild structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["rebuild", "--help", "--json"], ["help", "rebuild", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: {
+          name: string;
+          options: string[];
+          flags: string[];
+          defaults: Record<string, string>;
+          bounds: Record<string, string>;
+          irreversible: boolean;
+        };
+      };
+      expect(body.data.name).toBe("rebuild");
+      expect(body.data.options).toEqual(["--layer", "--port"]);
+      expect(body.data.flags).toEqual(["--json", "--prune-old"]);
+      expect(body.data.defaults).toEqual({ "--layer": "all" });
+      expect(body.data.bounds).toEqual({ "--layer": "all|graph" });
+      expect(body.data.irreversible).toBe(false);
+    }
+    expect(runCli(env, "rebuild", "--help").stdout).toContain("--layer  all|graph  default all");
+    expect(runCli(env, "rebuild", "--help").stdout).toContain("--prune-old");
+    for (const [args, diagnostic] of [
+      [["rebuild", "--nope"], "unknown option --nope"],
+      [["rebuild", "--json", "--json"], "repeated flag --json"],
+      [["rebuild", "--prune-old=true"], "flag --prune-old does not take a value"],
+      [["rebuild", "--port"], "missing value for --port"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki rebuild");
+    }
+    const extra = runCli(env, "rebuild", "extra");
+    expect(extra.exitCode).toBe(2);
+    expect(extra.stdout).toBe("");
+    expect(extra.stderr).toContain("error: rebuild supports --layer all or graph");
+    expect(extra.stderr).toContain("usage: kizuki rebuild");
+  });
+
   test("recover structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["recover", "--help", "--json"], ["help", "recover", "--json"]] as const) {
