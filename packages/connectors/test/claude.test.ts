@@ -244,7 +244,7 @@ describe("ClaudeImportConnector", () => {
     }
   });
 
-  test("sync does not tombstone a message removed from a later export", async () => {
+  test("a later smaller export does not tombstone removed messages", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-claude-"));
     try {
       const file = path.join(root, "conversations.json");
@@ -263,8 +263,10 @@ describe("ClaudeImportConnector", () => {
         ]),
       );
       const second = await connector.sync(first.cursor);
-      expect(second.events).toEqual([]);
       expect(second.events.some((event) => event.deleted)).toBe(false);
+      expect(second.events.map((event) => event.source_record_id)).toEqual([
+        encodeSourceRecordId(["conversation-42", "message-1"]),
+      ]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -350,7 +352,7 @@ describe("ClaudeImportConnector", () => {
       expect(first.status ?? "ok").toBe("ok");
       expect(first.events).toHaveLength(1);
       const drain = await connector.backfill(first.cursor);
-      expect(drain).toEqual({ events: [], cursor: first.cursor });
+      expect(drain).toEqual({ events: [], cursor: first.cursor, has_more: false });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -381,11 +383,8 @@ describe("ClaudeImportConnector", () => {
       );
       const second = await connector.sync(first.cursor);
       expect(second.events.some((event) => event.deleted)).toBe(false);
-      const cursor = JSON.parse(second.cursor ?? "{}") as {
-        records: Array<[string, string]>;
-      };
-      expect(priorIds.every((id) => cursor.records.some(([kept]) => kept === id))).toBe(
-        true,
+      expect(second.events.map((event) => event.source_record_id).length).toBe(
+        priorIds.length,
       );
     } finally {
       await rm(root, { recursive: true, force: true });

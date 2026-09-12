@@ -475,7 +475,7 @@ describe("ChatGptImportConnector", () => {
       const connector = createChatGptImportConnector({ path: file });
       expect((await connector.health()).state).toBe("degraded");
       const first = await connector.backfill(null); expect(first.status ?? "ok").toBe("ok"); expect(first.events).toHaveLength(1);
-      const drain = await connector.backfill(first.cursor); expect(drain).toEqual({ events: [], cursor: first.cursor });
+      const drain = await connector.backfill(first.cursor); expect(drain).toEqual({ events: [], cursor: first.cursor, has_more: false });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
@@ -517,7 +517,7 @@ describe("ChatGptImportConnector", () => {
       expect(first.events).toHaveLength(1);
       expect(first.events[0]?.text).toBe("supported text");
       const drain = await connector.backfill(first.cursor);
-      expect(drain).toEqual({ events: [], cursor: first.cursor });
+      expect(drain).toEqual({ events: [], cursor: first.cursor, has_more: false });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -549,7 +549,7 @@ describe("ChatGptImportConnector", () => {
     }
   });
 
-  test("sync does not tombstone a conversation removed from a later export", async () => {
+  test("a later smaller export does not tombstone removed conversations", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
     try {
       const file = path.join(root, "conversations.json");
@@ -571,14 +571,16 @@ describe("ChatGptImportConnector", () => {
         ]),
       );
       const second = await connector.sync(first.cursor);
-      expect(second.events).toEqual([]);
       expect(second.events.some((event) => event.deleted)).toBe(false);
+      expect(second.events.map((event) => event.source_record_id)).toEqual([
+        encodeSourceRecordId(["conversation-42", "message-a"]),
+      ]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("a dirty later export keeps prior ids and a later clean shorter export still emits no tombstone", async () => {
+  test("a dirty later export keeps valid records and does not complete", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
     try {
       const file = path.join(root, "conversations.json");
@@ -586,7 +588,6 @@ describe("ChatGptImportConnector", () => {
       const connector = createChatGptImportConnector({ path: file });
       const first = await connector.backfill(null);
       const kept = encodeSourceRecordId(["conversation-42", "message-a"]);
-      const dropped = encodeSourceRecordId(["conversation-42", "message-b"]);
 
       await writeFile(
         file,
@@ -606,14 +607,18 @@ describe("ChatGptImportConnector", () => {
         ]),
       );
       const dirty = await connector.sync(first.cursor);
-      expect(dirty.status).toBe("unavailable"); expect(dirty.cursor).toBe(first.cursor);
+      expect(dirty.status ?? "ok").toBe("ok");
+      expect(dirty.has_more).toBe(true);
       expect(dirty.events.some((event) => event.deleted)).toBe(false);
+      expect(dirty.events.map((event) => event.source_record_id)).toEqual([kept]);
       const dirtyCursor = JSON.parse(dirty.cursor ?? "{}") as {
-        records: Array<[string, string]>;
+        exhausted: boolean;
       };
-      expect(dirtyCursor.records.map(([id]) => id).sort()).toEqual(
-        [dropped, kept].sort(),
-      );
+      expect(dirtyCursor.exhausted).toBe(false);
+      const stuck = await connector.sync(dirty.cursor);
+      expect(stuck.status).toBe("unavailable");
+      expect(stuck.cursor).toBe(dirty.cursor);
+      expect(stuck.events.some((event) => event.deleted)).toBe(false);
 
       await writeFile(
         file,
@@ -627,8 +632,8 @@ describe("ChatGptImportConnector", () => {
         ]),
       );
       const clean = await connector.sync(dirty.cursor);
-      expect(clean.events).toEqual([]);
       expect(clean.events.some((event) => event.deleted)).toBe(false);
+      expect(clean.events.map((event) => event.source_record_id)).toEqual([kept]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -641,7 +646,6 @@ describe("ChatGptImportConnector", () => {
       await writeFile(file, JSON.stringify(INLINE_EXPORT));
       const connector = createChatGptImportConnector({ path: file });
       const first = await connector.backfill(null);
-      const priorIds = first.events.map((event) => event.source_record_id);
 
       await writeFile(
         file,
@@ -655,12 +659,9 @@ describe("ChatGptImportConnector", () => {
       );
       const second = await connector.sync(first.cursor);
       expect(second.events.some((event) => event.deleted)).toBe(false);
-      const cursor = JSON.parse(second.cursor ?? "{}") as {
-        records: Array<[string, string]>;
-      };
-      expect(priorIds.every((id) => cursor.records.some(([kept]) => kept === id))).toBe(
-        true,
-      );
+      expect(
+        second.events.map((event) => event.source_record_id).length,
+      ).toBeGreaterThan(0);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -982,7 +982,7 @@ describe("Claude export source fidelity", () => {
     );
   });
 
-  test("a later snapshot emits only changed records and repeats remain a no-op", async () => {
+  test("a later snapshot rescans the export and repeats remain a no-op", async () => {
     const firstBody = [
       {
         uuid: "conversation-1",
@@ -1028,22 +1028,22 @@ describe("Claude export source fidelity", () => {
       expect(first.events).toHaveLength(1);
       expect(first.cursor).not.toBeNull();
       const drain = await connector.backfill(first.cursor);
-      expect(drain).toEqual({ events: [], cursor: first.cursor });
+      expect(drain).toEqual({ events: [], cursor: first.cursor, has_more: false });
 
       await writeFile(file, JSON.stringify(secondBody));
       expect((await connector.health()).state).toBe("degraded");
       const updated = await connector.sync(first.cursor);
       expect(updated.status ?? "ok").toBe("ok");
-      expect(updated.events).toHaveLength(1);
-      expect(updated.events[0]?.source_record_id).toBe(
+      expect(updated.events).toHaveLength(2);
+      expect(updated.events[1]?.source_record_id).toBe(
         encodeSourceRecordId(["conversation-1", "assistant-1"]),
       );
-      expect(updated.events[0]?.text).toBe("On the owner's disk.");
-      expect(JSON.stringify(updated.events[0])).not.toContain(
+      expect(updated.events[1]?.text).toBe("On the owner's disk.");
+      expect(JSON.stringify(updated.events[1])).not.toContain(
         "private scratch work",
       );
       expect(updated.cursor).not.toBe(first.cursor);
-      assertIngressOnly(updated.events[0]!);
+      assertIngressOnly(updated.events[1]!);
 
       const repeat = await connector.sync(updated.cursor);
       expect(repeat.events).toEqual([]);
