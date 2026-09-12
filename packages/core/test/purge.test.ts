@@ -84,14 +84,15 @@ describe("purgeEvents", () => {
       ({ source_record_id }) => source_record_id,
     )).toEqual(["keep"]);
     const proof = db
-      .query<{ content_hash: string; source_record_id: string }, [string]>(
-        `SELECT content_hash, source_record_id FROM event_purge_proofs
+      .query<{ content_hash: string; source_record_id: string; selector_kind: string | null }, [string]>(
+        `SELECT content_hash, source_record_id, selector_kind FROM event_purge_proofs
           WHERE receipt_id = (SELECT receipt_id FROM event_purges WHERE event_id = ?)`,
       )
       .get(target.event_id);
     expect(proof).toEqual({
       content_hash: target.content_hash,
       source_record_id: target.source_record_id,
+      selector_kind: "event",
     });
     db.exec("DELETE FROM event_purge_proofs");
     const health = inspectOpenLedgerHealth(db);
@@ -101,6 +102,79 @@ describe("purgeEvents", () => {
       failure.table === "event_purge_proofs" &&
       failure.detail.includes("has no content-hash proof")
     ))).toBe(true);
+    db.close();
+  });
+
+  test("event-only selector provenance survives deletion and reopen", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-purge-selector-"));
+    directories.push(directory);
+    const path = join(directory, "ledger.sqlite");
+    const db = openLedger(path);
+    const target = storedEvent(db, event("target"));
+    const lone = storedEvent(db, event("lone-mail", { connector_id: "mail" }));
+    storedEvent(db, event("keep-mail", { connector_id: "mail" }));
+    const vault = temporaryVault();
+    purgeEvents(db, vault, { event_id: target.event_id }, "record request");
+    purgeEvents(db, vault, { connector_id: "mail", event_id: lone.event_id }, "compound request");
+    purgeEvents(db, vault, { connector_id: "mail" }, "connector request");
+    const kinds = (eventId: string) =>
+      db
+        .query<{ selector_kind: string | null }, [string]>(
+          `SELECT selector_kind FROM event_purge_proofs
+            WHERE receipt_id = (SELECT receipt_id FROM event_purges WHERE event_id = ?)`,
+        )
+        .get(eventId)?.selector_kind ?? null;
+    expect(kinds(target.event_id)).toBe("event");
+    expect(kinds(lone.event_id)).toBeNull();
+    const mailProofs = db
+      .query<{ selector_kind: string | null }, []>(
+        "SELECT selector_kind FROM event_purge_proofs ORDER BY receipt_id",
+      )
+      .all()
+      .map((row) => row.selector_kind);
+    expect(mailProofs.filter((kind) => kind === "event")).toEqual(["event"]);
+    expect(mailProofs.filter((kind) => kind === null).length).toBe(2);
+    db.close();
+    const reopened = openLedger(path);
+    expect(
+      reopened
+        .query<{ selector_kind: string | null }, [string]>(
+          `SELECT selector_kind FROM event_purge_proofs
+            WHERE receipt_id = (SELECT receipt_id FROM event_purges WHERE event_id = ?)`,
+        )
+        .get(target.event_id),
+    ).toEqual({ selector_kind: "event" });
+    expect(
+      reopened
+        .query<{ selector_kind: string | null }, [string]>(
+          `SELECT selector_kind FROM event_purge_proofs
+            WHERE receipt_id = (SELECT receipt_id FROM event_purges WHERE event_id = ?)`,
+        )
+        .get(lone.event_id),
+    ).toEqual({ selector_kind: null });
+    reopened.close();
+  });
+
+  test("invalid selector tags and injected proof failure stay closed", () => {
+    const db = openLedger(":memory:");
+    const target = storedEvent(db, event("target"));
+    db.query(
+      `INSERT INTO event_purges (receipt_id, event_id, connector_id, reason, purged_at)
+       VALUES ('01JCPURGEPROOF0000000000000', '01JCPURGEEVENT0000000000000', 'fixture', 'legacy', '2026-09-06T12:00:00.000Z')`,
+    ).run();
+    expect(() =>
+      db.query(
+        `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
+         VALUES ('01JCPURGEPROOF0000000000000', ?, 'legacy-record', 'subject')`,
+      ).run("a".repeat(64)),
+    ).toThrow();
+    db.exec(
+      "CREATE TRIGGER fail_proof BEFORE INSERT ON event_purge_proofs BEGIN SELECT RAISE(ABORT, 'injected'); END",
+    );
+    expect(() => purgeEvents(db, temporaryVault(), { event_id: target.event_id }, "record request")).toThrow();
+    expect(count(db)).toBe(1);
+    expect(db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM event_purges").get()).toEqual({ n: 1 });
+    expect(db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM event_purge_proofs").get()).toEqual({ n: 0 });
     db.close();
   });
 

@@ -11,7 +11,8 @@ import { neighbors } from "../src/graph/graph";
 import { initGraph } from "../src/graph/schema";
 import { applyConnectionsV8 } from "../src/ledger/connections-schema";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
-import { tableExists } from "../src/ledger/schema";
+import { tableColumns, tableExists } from "../src/ledger/schema";
+import { applyEventPurgeIntegrityV22, applyEventPurgeSelectorKindV24 } from "../src/ledger/purge-schema";
 import {
   SOURCE_SURVIVOR_LINEAGE_COLUMNS,
   SOURCE_SURVIVOR_LINEAGE_TABLE,
@@ -1143,5 +1144,42 @@ describe("openLedger migrations", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  test("v24 adds nullable event-only selector_kind without rewriting proofs", () => {
+    const db = new Database(":memory:");
+    db.exec(`
+      CREATE TABLE event_purges (
+        receipt_id TEXT PRIMARY KEY,
+        event_id TEXT NOT NULL,
+        connector_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        purged_at TEXT NOT NULL
+      ) STRICT;
+    `);
+    applyEventPurgeIntegrityV22(db);
+    db.query(
+      `INSERT INTO event_purges VALUES ('01JCPURGEPROOF0000000000000','01JCPURGEEVENT0000000000000','fixture','legacy','2026-09-06T12:00:00.000Z')`,
+    ).run();
+    db.query(
+      `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id)
+       VALUES ('01JCPURGEPROOF0000000000000', ?, 'legacy-record')`,
+    ).run("a".repeat(64));
+    applyEventPurgeSelectorKindV24(db);
+    applyEventPurgeSelectorKindV24(db);
+    expect(tableColumns(db, "event_purge_proofs")).toEqual([
+      "receipt_id",
+      "content_hash",
+      "source_record_id",
+      "selector_kind",
+    ]);
+    expect(
+      db.query<{ selector_kind: string | null }, []>("SELECT selector_kind FROM event_purge_proofs").get(),
+    ).toEqual({ selector_kind: null });
+    const fresh = openLedger(":memory:");
+    expect(schemaVersion(fresh)).toBe(LEDGER_SCHEMA_VERSION);
+    expect(tableColumns(fresh, "event_purge_proofs")).toContain("selector_kind");
+    fresh.close();
+    db.close();
   });
 });
