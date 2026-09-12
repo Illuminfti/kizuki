@@ -326,6 +326,9 @@ describe("help", () => {
   test("agent structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["agent", "--help", "--json"], ["help", "agent", "--json"]] as const) {
+  test("import structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["import", "--help", "--json"], ["help", "import", "--json"]] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
@@ -503,6 +506,27 @@ describe("help", () => {
       ["agent", "add", "assistant", "--dry-run", "--dry-run"],
       ["agent", "add", "--dry-run=true"],
       ["agent", "add", "--grant"],
+      expect(body.data.name).toBe("import");
+      expect(body.data.options).toEqual([
+        "--source",
+        "--authorization",
+        "--policy",
+        "--expected-revision",
+        "--operation-id",
+      ]);
+      expect(body.data.flags).toEqual(["--dry-run", "--json"]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "import", "--help");
+    expect(text.stdout).toContain("--source");
+    expect(text.stdout).toContain("--authorization");
+    expect(text.stdout).toContain("--policy");
+    expect(text.stdout).toContain("--dry-run");
+    for (const [args, diagnostic] of [
+      [["import", "markdown-folder", "--nope"], "unknown option --nope"],
+      [["import", "estate-slice", "--dry-run", "--dry-run"], "repeated flag --dry-run"],
+      [["import", "estate-slice", "--json=true"], "flag --json does not take a value"],
+      [["import", "markdown-folder", "--source"], "missing value for --source"],
     ] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(2);
@@ -527,6 +551,7 @@ describe("help", () => {
       expect(result.stderr).toContain("usage: kizuki sync");
       expect(result.stderr).toContain("invalid_request:");
       expect(result.stderr).toContain("usage: agent");
+      expect(result.stderr).toContain("usage: kizuki import");
     }
   });
 
