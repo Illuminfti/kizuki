@@ -293,6 +293,45 @@ describe("help", () => {
     }
   });
 
+  test("import structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["import", "--help", "--json"], ["help", "import", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
+      expect(body.data.name).toBe("import");
+      expect(body.data.options).toEqual([
+        "--source",
+        "--authorization",
+        "--policy",
+        "--expected-revision",
+        "--operation-id",
+      ]);
+      expect(body.data.flags).toEqual(["--dry-run", "--json"]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "import", "--help");
+    expect(text.stdout).toContain("--source");
+    expect(text.stdout).toContain("--authorization");
+    expect(text.stdout).toContain("--policy");
+    expect(text.stdout).toContain("--dry-run");
+    for (const [args, diagnostic] of [
+      [["import", "markdown-folder", "--nope"], "unknown option --nope"],
+      [["import", "estate-slice", "--dry-run", "--dry-run"], "repeated flag --dry-run"],
+      [["import", "estate-slice", "--json=true"], "flag --json does not take a value"],
+      [["import", "markdown-folder", "--source"], "missing value for --source"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki import");
+    }
+  });
+
   test("recover structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["recover", "--help", "--json"], ["help", "recover", "--json"]] as const) {
