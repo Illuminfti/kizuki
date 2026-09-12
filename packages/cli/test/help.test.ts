@@ -293,6 +293,39 @@ describe("help", () => {
     }
   });
 
+  test("models structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["models", "--help", "--json"], ["help", "models", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
+      expect(body.data.name).toBe("models");
+      expect(body.data.options).toEqual(["--from", "--sha256", "--bytes"]);
+      expect(body.data.flags).toEqual(["--catalog"]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "models", "--help");
+    expect(text.stdout).toContain("--from");
+    expect(text.stdout).toContain("--sha256");
+    expect(text.stdout).toContain("--bytes");
+    expect(text.stdout).toContain("--catalog");
+    for (const [args, diagnostic] of [
+      [["models", "list", "--nope"], "unknown option --nope"],
+      [["models", "list", "--catalog", "--catalog"], "repeated flag --catalog"],
+      [["models", "list", "--catalog=true"], "flag --catalog does not take a value"],
+      [["models", "pull", "--from"], "missing value for --from"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki models");
+    }
+  });
+
   test("recover structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["recover", "--help", "--json"], ["help", "recover", "--json"]] as const) {
