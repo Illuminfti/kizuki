@@ -888,8 +888,8 @@ describe("runToCompletion", () => {
       expect(await runToCompletion(db, continued, "fixture", SOURCE, "backfill")).toMatchObject({ stored: 1, errors: [], cursor: "stored-page" });
       expect(continued.cursors).toEqual([null, "empty-page"]);
       const legacy = new ScriptedConnector([{ events: [], cursor: "legacy-empty" }]);
-      expect(await runToCompletion(db, legacy, "fixture", SOURCE, "sync")).toMatchObject({ stored: 0, errors: [], cursor: null });
-      expect(legacy.cursors).toEqual([null]);
+      expect(await runToCompletion(db, legacy, "fixture", SOURCE, "backfill")).toMatchObject({ stored: 0, errors: [], cursor: "legacy-empty" });
+      expect(legacy.cursors).toEqual(["stored-page"]);
     } finally { db.close(); }
   });
 

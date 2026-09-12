@@ -533,7 +533,7 @@ function persistRun(
     .immediate();
 }
 
-interface ConnectorStep { result: RunResult; terminal: boolean; }
+interface ConnectorStep { result: RunResult; terminal: boolean; continue_empty?: boolean; }
 
 async function runConnector(
   db: Database,
