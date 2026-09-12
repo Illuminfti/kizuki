@@ -222,6 +222,24 @@ const TAGGED_SECTIONS = [
     heading: "Taste as source-linked working knowledge",
   },
   {
+    id: "product.agent-harness",
+    status: "direction",
+    doc: "docs/product-context.md",
+    heading: "Agent and harness experience",
+  },
+  {
+    id: "product.deployment-direction",
+    status: "direction",
+    doc: "docs/product-context.md",
+    heading: "Deployment direction",
+  },
+  {
+    id: "product.explicit-non-decisions",
+    status: "direction",
+    doc: "docs/product-context.md",
+    heading: "Explicit non-decisions",
+  },
+  {
     id: "stranger-proof.sqlite-engine",
     status: "shipped",
     doc: "docs/stranger-proof.md",
@@ -395,6 +413,84 @@ test.each([
     name: "product.taste tag only in adjacent Progressive ingestion",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Taste as source-linked working knowledge\n\nStatus: direction\n\n", "## Taste as source-linked working knowledge\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "product.agent-harness tag removed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Agent and harness experience\n\nStatus: direction\n\n", "## Agent and harness experience\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "product.agent-harness tag shipped",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Agent and harness experience\n\nStatus: direction", "## Agent and harness experience\n\nStatus: shipped"));
+      return entries;
+    },
+  },
+  {
+    name: "product.agent-harness inventory entry removed",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "product.agent-harness"),
+  },
+  {
+    name: "product.agent-harness tag only in adjacent Taste",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Agent and harness experience\n\nStatus: direction\n\n", "## Agent and harness experience\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "product.deployment-direction tag removed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Deployment direction\n\nStatus: direction\n\n", "## Deployment direction\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "product.deployment-direction tag shipped",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Deployment direction\n\nStatus: direction", "## Deployment direction\n\nStatus: shipped"));
+      return entries;
+    },
+  },
+  {
+    name: "product.deployment-direction inventory entry removed",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "product.deployment-direction"),
+  },
+  {
+    name: "product.deployment-direction tag only in adjacent Explicit non-decisions",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Deployment direction\n\nStatus: direction\n\n", "## Deployment direction\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "product.explicit-non-decisions tag removed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Explicit non-decisions\n\nStatus: direction\n\n", "## Explicit non-decisions\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "product.explicit-non-decisions tag shipped",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Explicit non-decisions\n\nStatus: direction", "## Explicit non-decisions\n\nStatus: shipped"));
+      return entries;
+    },
+  },
+  {
+    name: "product.explicit-non-decisions inventory entry removed",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "product.explicit-non-decisions"),
+  },
+  {
+    name: "product.explicit-non-decisions tag only after Autonomy modes",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Explicit non-decisions\n\nStatus: direction\n\n", "## Explicit non-decisions\n\n"));
       return entries;
     },
   },

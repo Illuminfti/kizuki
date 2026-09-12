@@ -89,6 +89,8 @@ budget, not in who presses a button.
 
 ## Agent and harness experience
 
+Status: direction
+
 Kizuki should serve harness-neutral, purpose-bounded context packets rather
 than require every agent to understand the entire vault. An authorized agent
 should be able to retrieve relevant evidence and knowledge through full-text,
@@ -171,6 +173,8 @@ state. Access alone never creates authority.
 
 ## Deployment direction
 
+Status: direction
+
 The first product is one person's private brain. Local custody, provenance,
 reversibility, and a readable exit remain the foundation.
 
@@ -180,6 +184,8 @@ identity, conflict, revocation, and data-boundary protocol for shared worlds
 is not decided here.
 
 ## Explicit non-decisions
+
+Status: direction
 
 This context does not decide:
 
