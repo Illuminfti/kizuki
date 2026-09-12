@@ -3,8 +3,8 @@ export class UsageError extends Error {
 }
 
 export interface ArgSpec {
-  options?: string[];
-  flags?: string[];
+  options?: readonly string[];
+  flags?: readonly string[];
 }
 
 export interface ParsedArguments {

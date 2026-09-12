@@ -2,18 +2,19 @@ import { inspectSourceGrant, listConnections, resumeSourceRevocation, revokeSour
 import { createOwnedRetrievalInventory, OwnedRetrievalInventoryError } from "../owned-retrieval-inventory";
 import { parseArguments, UsageError } from "../args";
 import { withReadVault, withVault } from "../context";
+import { connectConsentSchema } from "../option-schema";
 import { jsonEnvelope } from "../output";
-import { CONSENT_OPTIONS, consentHint, expectedRevision, readSourcePolicy } from "../source-consent";
+import { consentHint, expectedRevision, readSourcePolicy } from "../source-consent";
 import type { CliIo } from "./index";
 
 export async function runConnectConsent(io: CliIo, args: string[]): Promise<number> {
   const action = args[0];
-  const options = action === "grant" ? ["--source", ...CONSENT_OPTIONS] :
-    action === "revoke" ? ["--source", "--expected-revision", "--operation-id"] :
-    action === "resume-revocation" ? ["--source", "--operation-id"] : ["--source"];
-  const parsed = parseArguments(args.slice(1), { options, flags: ["--json"] });
+  const schema = connectConsentSchema(action);
+  if (schema === undefined) throw new UsageError("invalid arguments");
+  const parsed = parseArguments(args.slice(1), schema);
   const source = parsed.options.get("--source");
-  if (parsed.positionals.length !== 0 || source === undefined || !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(source)) throw new UsageError("connect consent requires --source KEY");
+  if (parsed.positionals.length !== 0) throw new UsageError("invalid arguments");
+  if (source === undefined || !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(source)) throw new UsageError("connect consent requires --source KEY");
   const operation = parsed.options.get("--operation-id");
   if (action !== "status" && (operation === undefined || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(operation) || operation.startsWith("complete:"))) throw new UsageError("--operation-id requires a unique identifier (1-128 ASCII letters, digits, _, ., :, -)");
   const revision = action === "grant" || action === "revoke" ? expectedRevision(parsed.options.get("--expected-revision")) : undefined;
