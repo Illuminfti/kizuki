@@ -9,6 +9,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -28,6 +29,7 @@ import { accept } from "../src/ledger/ledger";
 import { revokeSourceGrant, resumeSourceRevocation, setSourceGrant } from "../src/ledger/source-grants";
 import { purgeEvents } from "../src/ledger/purge";
 import { listSubjectAliases } from "../src/claims/identity";
+import { hashBody } from "../src/claims/hash";
 import { fileProposal } from "../src/staging/proposals";
 import { readVaultId } from "../src/serve/vault-id";
 import { serializePage } from "../src/vault/frontmatter";
@@ -40,6 +42,12 @@ function temporary(prefix: string): string {
   const path = mkdtempSync(join(tmpdir(), prefix));
   directories.push(path);
   return path;
+}
+
+function jsonlRestoreSpools(): string[] {
+  return readdirSync(tmpdir())
+    .filter((name) => name.startsWith("kizuki-restore-jsonl-"))
+    .sort();
 }
 
 afterEach(() => {
@@ -142,7 +150,7 @@ function insertFixtureClaim(
     0.9,
     "live",
     at,
-    "bodyhash",
+    hashBody(body),
     "person:ada",
     "employment.works_at",
     "acme",
@@ -1245,6 +1253,163 @@ describe("restoreVault", () => {
     expect(
       readdirSync(parent).some((name) => name.includes(".kizuki-backup-")),
     ).toBe(false);
+    db.close();
+  });
+
+  test("refuses vault members substituted after backup verify and restored before publication", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const source = join(backup, "vault", "people", "Ada.md");
+    const original = readFileSync(source);
+    const evil = Buffer.from(serializePage({
+      data: {
+        id: "ada",
+        title: "Ada",
+        type: "person",
+        status: "active",
+        sensitivity: "public",
+        taint: "clean",
+      },
+      body: "evil substituted vault bytes\n",
+    }));
+    const parent = temporary("kizuki-restore-parent-");
+    const target = join(parent, "vault");
+    const spools = jsonlRestoreSpools();
+    expect(() =>
+      restoreVault(backup, target, {
+        onProgress: (label) => {
+          if (label === "vault") {
+            writeFileSync(source, evil);
+            chmodSync(source, 0o600);
+          }
+        },
+        rebuildDerived() {
+          writeFileSync(source, original);
+          chmodSync(source, 0o600);
+        },
+      }),
+    ).toThrow("inventory file changed");
+    expect(existsSync(target)).toBe(false);
+    expect(existsSync(join(target, "people", "Ada.md"))).toBe(false);
+    expect(readdirSync(parent).some((name) => name.includes(".kizuki-backup-"))).toBe(false);
+    expect(jsonlRestoreSpools()).toEqual(spools);
+    db.close();
+  });
+
+  test("refuses JSONL streams substituted after backup verify and restored before publication", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const source = join(backup, "ledger", "events.jsonl");
+    const original = readFileSync(source);
+    if (original[0] !== 0x7b) throw new Error("expected an exported JSON object");
+    // Same JSONL row count as the snapshot so restore reaches digest binding.
+    const evil = Buffer.concat([Buffer.from("{ "), original.subarray(1)]);
+    const parent = temporary("kizuki-restore-parent-");
+    const target = join(parent, "vault");
+    const spools = jsonlRestoreSpools();
+    expect(() =>
+      restoreVault(backup, target, {
+        onProgress: (label) => {
+          if (label === "ledger") {
+            writeFileSync(source, evil);
+            chmodSync(source, 0o600);
+          }
+        },
+        rebuildDerived() {
+          writeFileSync(source, original);
+          chmodSync(source, 0o600);
+        },
+      }),
+    ).toThrow("inventory file changed");
+    expect(existsSync(target)).toBe(false);
+    expect(readdirSync(parent).some((name) => name.includes(".kizuki-backup-"))).toBe(false);
+    expect(jsonlRestoreSpools()).toEqual(spools);
+    db.close();
+  });
+
+  test("streams multi-chunk vault members and JSONL without retaining the snapshot size", () => {
+    const { db, vaultPath } = populated();
+    const chunk = 65_536;
+    const vaultBody = "v".repeat(chunk * 3);
+    mkdirSync(join(vaultPath, "facts"), { recursive: true });
+    writeFileSync(
+      join(vaultPath, "facts", "stream.md"),
+      serializePage({
+        data: {
+          id: "stream",
+          title: "Stream",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+        },
+        body: vaultBody,
+      }),
+    );
+    const jsonlBody = "s".repeat(4_096);
+    const jsonlBodies = Array.from({ length: 64 }, (_, i) => `${jsonlBody} ${i}`);
+    for (const [i, body] of jsonlBodies.entries()) {
+      insertFixtureClaim(db, body, `01EXPORTSTREAM${String(i).padStart(12, "0")}`);
+    }
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const jsonlSize = statSync(join(backup, "claims", "claims.jsonl")).size;
+    const vaultSize = statSync(join(backup, "vault", "facts", "stream.md")).size;
+    expect(jsonlSize).toBeGreaterThan(chunk * 3);
+    expect(vaultSize).toBeGreaterThan(chunk * 3);
+    expect(jsonlSize).not.toBe(vaultSize);
+    const parent = temporary("kizuki-restore-parent-");
+    const target = join(parent, "vault");
+    const spools = jsonlRestoreSpools();
+    const alloc = spyOn(Buffer, "alloc");
+    let beforeLedger = 0;
+    try {
+      restoreVault(backup, target, {
+        onProgress(label) {
+          if (label === "ledger") beforeLedger = alloc.mock.calls.length;
+        },
+      });
+      expect(beforeLedger).toBeGreaterThan(0);
+      // Derived rebuild may read a bounded Markdown page after copying finishes.
+      expect(alloc.mock.calls.slice(0, beforeLedger).some(([size]) => size === vaultSize)).toBe(false);
+      expect(alloc.mock.calls.some(([size]) => size === jsonlSize)).toBe(false);
+    } finally {
+      alloc.mockRestore();
+    }
+    expect(readFileSync(join(target, "facts", "stream.md"), "utf8")).toContain(vaultBody);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    expect(
+      restored
+        .query<{ body: string }, []>("SELECT body FROM claims ORDER BY claim_id")
+        .all().map((row) => row.body),
+    ).toEqual(jsonlBodies);
+    restored.close();
+    expect(jsonlRestoreSpools()).toEqual(spools);
+    expect(readdirSync(parent).some((name) => name.includes(".kizuki-backup-"))).toBe(false);
+    db.close();
+  });
+
+  test("removes JSONL snapshot spools when restore is cancelled during ingest", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const parent = temporary("kizuki-restore-parent-");
+    const target = join(parent, "vault");
+    const spools = jsonlRestoreSpools();
+    const controller = new AbortController();
+    expect(() =>
+      restoreVault(backup, target, {
+        signal: controller.signal,
+        onProgress(label) {
+          if (label === "ledger") controller.abort();
+        },
+      }),
+    ).toThrow("export cancelled");
+    expect(existsSync(target)).toBe(false);
+    expect(readdirSync(parent).some((name) => name.includes(".kizuki-backup-"))).toBe(false);
+    expect(jsonlRestoreSpools()).toEqual(spools);
     db.close();
   });
 
