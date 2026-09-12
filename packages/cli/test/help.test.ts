@@ -293,6 +293,37 @@ describe("help", () => {
     }
   });
 
+  test("sync structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["sync", "--help", "--json"], ["help", "sync", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
+      expect(body.data.name).toBe("sync");
+      expect(body.data.options).toEqual(["--source"]);
+      expect(body.data.flags).toEqual(["--once"]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "sync", "--help");
+    expect(text.stdout).toContain("--source");
+    expect(text.stdout).toContain("--once");
+    for (const [args, diagnostic] of [
+      [["sync", "--nope"], "unknown option --nope"],
+      [["sync", "--once", "--once"], "repeated flag --once"],
+      [["sync", "--once=true"], "flag --once does not take a value"],
+      [["sync", "--source"], "missing value for --source"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki sync");
+    }
+  });
+
   test("recover structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["recover", "--help", "--json"], ["help", "recover", "--json"]] as const) {
