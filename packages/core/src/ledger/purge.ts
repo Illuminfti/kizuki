@@ -33,8 +33,8 @@ import { isUlid, ulid } from "../util/ulid";
 import { parseFrontmatter } from "../vault/frontmatter";
 import { listCanonPagesReport } from "../vault/pages";
 import type { CanonPage } from "../vault/pages";
-import { initPurgeOps, PURGE_SLA_SECONDS } from "./purge-schema";
-import { tableExists } from "./schema";
+import { eventPurgeProofDigest, initPurgeOps, PURGE_SLA_SECONDS } from "./purge-schema";
+import { tableColumns, tableExists } from "./schema";
 
 export { PURGE_SLA_SECONDS, PURGE_SCHEMA_VERSION, applyPurgeV5 } from "./purge-schema";
 
@@ -342,7 +342,10 @@ function emptyOutcome(): PurgeOutcome {
   };
 }
 
-function recordedSelectorKind(filter: PurgeFilter): "event" | "connector" | "record" | null {
+const RECORDED_SELECTOR_KINDS = ["event", "connector", "record", "source"] as const;
+type RecordedSelectorKind = (typeof RECORDED_SELECTOR_KINDS)[number];
+
+function recordedSelectorKind(filter: PurgeFilter): RecordedSelectorKind | null {
   const event = filter.event_id !== undefined;
   const source = filter.source_key !== undefined;
   const connector = filter.connector_id !== undefined;
@@ -353,6 +356,7 @@ function recordedSelectorKind(filter: PurgeFilter): "event" | "connector" | "rec
   if (event) return "event";
   if (connector) return "connector";
   if (record) return "record";
+  if (source) return "source";
   return null;
 }
 
@@ -937,6 +941,97 @@ function recognizedPurgeReceipt(db: Database, receiptId: string): boolean {
   return readBatch(db, receiptId)?.state === "ready";
 }
 
+function anyPurgedEventPresent(db: Database, eventIds: readonly string[]): boolean {
+  if (!tableExists(db, "events")) return false;
+  for (const ids of proofChunks(eventIds)) {
+    if (
+      db.query(
+        `SELECT 1 FROM events WHERE event_id IN (${ids.map(() => "?").join(",")}) LIMIT 1`,
+      ).get(...ids) !== null
+    ) return true;
+  }
+  return false;
+}
+
+function batchHasEventPurges(db: Database, batchId: string): boolean {
+  return tableExists(db, "purge_batch_receipts") && tableExists(db, "event_purges") &&
+    db.query(
+      `SELECT 1 FROM purge_batch_receipts m
+        JOIN event_purges e USING(receipt_id)
+       WHERE m.batch_id = ?
+       LIMIT 1`,
+    ).get(batchId) !== null;
+}
+
+function eventPurgeIntegrityOk(db: Database, batchId: string): boolean {
+  const hasEventPurges = batchHasEventPurges(db, batchId);
+  if (
+    !tableExists(db, "event_purge_proofs") ||
+    !tableExists(db, "event_purges") ||
+    !tableColumns(db, "event_purges").includes("proof_digest")
+  ) {
+    return !hasEventPurges;
+  }
+  if (!tableExists(db, "purge_batch_receipts")) return true;
+  if (
+    db.query(
+      `SELECT 1 FROM purge_batch_receipts m
+        JOIN event_purges e USING(receipt_id)
+        LEFT JOIN event_purge_proofs x ON x.receipt_id = m.receipt_id
+       WHERE m.batch_id = ? AND x.receipt_id IS NULL
+       LIMIT 1`,
+    ).get(batchId) !== null
+  ) return false;
+  if (
+    db.query(
+      `SELECT 1 FROM purge_batch_receipts m
+        JOIN event_purge_proofs x USING(receipt_id)
+       WHERE m.batch_id = ?
+         AND (
+           length(x.content_hash) != 64 OR x.content_hash GLOB '*[^0-9a-f]*'
+           OR length(x.source_record_id) NOT BETWEEN 1 AND ${EVENT_LIMITS.sourceRecordIdBytes}
+           OR (
+             x.selector_kind IS NOT NULL
+             AND x.selector_kind NOT IN (${RECORDED_SELECTOR_KINDS.map((kind) => `'${kind}'`).join(", ")})
+           )
+         )
+       LIMIT 1`,
+    ).get(batchId) !== null
+  ) return false;
+  const proofs = db.query<{
+    proof_digest: string | null;
+    content_hash: string;
+    source_record_id: string;
+    selector_kind: string | null;
+  }, [string]>(
+    `SELECT e.proof_digest AS proof_digest, x.content_hash AS content_hash,
+            x.source_record_id AS source_record_id, x.selector_kind AS selector_kind
+       FROM purge_batch_receipts m
+       JOIN event_purges e USING(receipt_id)
+       JOIN event_purge_proofs x USING(receipt_id)
+      WHERE m.batch_id = ?`,
+  ).all(batchId);
+  for (const proof of proofs) {
+    if (
+      proof.proof_digest !==
+      eventPurgeProofDigest(proof.content_hash, proof.source_record_id, proof.selector_kind)
+    ) {
+      return false;
+    }
+  }
+  return db.query(
+    `SELECT 1 FROM purge_batch_receipts m
+      JOIN event_purges e USING(receipt_id)
+      JOIN event_purge_proofs x USING(receipt_id)
+      JOIN events live
+        ON live.connector_id = e.connector_id
+       AND live.source_record_id = x.source_record_id
+       AND live.content_hash = x.content_hash
+     WHERE m.batch_id = ?
+     LIMIT 1`,
+  ).get(batchId) === null;
+}
+
 /**
  * Phase 1 — short SQLite transaction (RFC 0002 §13.1). Canon is scanned
  * before the write lock. Holds land before derived stores are touched.
@@ -1017,11 +1112,11 @@ function purgeEventsOwned(
     const receipts: PurgeReceipt[] = [];
     const insertReceipt = db.query<
       never,
-      [string, string, string, string, string]
+      [string, string, string, string, string, string]
     >(
       `INSERT INTO event_purges
-         (receipt_id, event_id, connector_id, reason, purged_at)
-       VALUES (?, ?, ?, ?, ?)`,
+         (receipt_id, event_id, connector_id, reason, purged_at, proof_digest)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     );
     const insertProof = db.query<never, [string, string, string, string | null]>(
       `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
@@ -1057,6 +1152,7 @@ function purgeEventsOwned(
         receipt.connector_id,
         receipt.reason,
         receipt.purged_at,
+        eventPurgeProofDigest(candidate.content_hash, candidate.source_record_id, selectorKind),
       );
       insertProof.run(receipt.receipt_id, candidate.content_hash, candidate.source_record_id, selectorKind);
       db.query("INSERT INTO purge_batch_receipts VALUES(?,?)").run(receipt.receipt_id, batchReceipt);
@@ -1550,6 +1646,7 @@ async function verifyPurgeOwned(
   const holdLifted = !readHolds(db).some(hold => hold.proposal_id === batchId);
   const finalOps = listOps(db, batchId);
   if (!holdLifted || !recognizedPurgeReceipt(db, receiptId) || !legacyIdentityAbsenceProvable(db) ||
+      !eventPurgeIntegrityOk(db, batchId) || anyPurgedEventPresent(db, eventIds) ||
       JSON.stringify(batchEventIds(db, batchId)) !== JSON.stringify(eventIds) ||
       finalOps.length !== ops.length || finalOps.some(op => {
         const proved = ops.find(prior => prior.op_id === op.op_id);

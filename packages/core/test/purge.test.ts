@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CaptureEventInput } from "../src/contracts/event";
 import { initGraph } from "../src/graph/schema";
+import { registerConnection } from "../src/ledger/connections";
 import { inspectOpenLedgerHealth, openLedger } from "../src/ledger/db";
+import { LEDGER_DOCTOR_ROW_CAP } from "../src/ledger/limits";
 import { accept, count, readSince } from "../src/ledger/ledger";
 import {
   PURGE_REASON_MAX_BYTES,
@@ -18,8 +20,12 @@ import {
   resolvePurgeConnectorId,
   runPurge,
   setAfterCanonSnapshot,
+  verifyPurge,
 } from "../src/ledger/purge";
+import { eventPurgeProofDigest } from "../src/ledger/purge-schema";
 import { tableExists } from "../src/ledger/schema";
+import { setSourceGrant } from "../src/ledger/source-grants";
+import { ulid } from "../src/util/ulid";
 import { indexEvent } from "../src/search/indexer";
 import { initSearch } from "../src/search/schema";
 import {
@@ -60,10 +66,32 @@ function event(
   return { ...validEvent(), source_record_id: sourceRecordId, ...overrides };
 }
 
-function storedEvent(db: Database, input: CaptureEventInput) {
-  const result = accept(db, input);
+function storedEvent(db: Database, input: CaptureEventInput, sourceKey?: string) {
+  const result = accept(
+    db,
+    input,
+    sourceKey === undefined ? {} : { source: { source_key: sourceKey, expected_revision: 1 } },
+  );
   if (result.status !== "stored") throw new Error("expected stored event");
   return result.event;
+}
+
+function grantedSource(db: Database, connectorId = "fixture"): string {
+  const key = ulid();
+  registerConnection(db, connectorId, key);
+  setSourceGrant(db, {
+    source_key: key,
+    expected_revision: 0,
+    operation_id: `grant-${key}`,
+    policy: {
+      purposes: ["capture", "recall"],
+      allowed_fields: ["text", "subjects", "attachments", "metadata"],
+      retention: "persistent_owned_until_revoked",
+      egress: "local_only",
+      sensitivity_floor: "private",
+    },
+  });
+  return key;
 }
 
 describe("purgeEvents", () => {
@@ -94,6 +122,11 @@ describe("purgeEvents", () => {
       source_record_id: target.source_record_id,
       selector_kind: "event",
     });
+    expect(
+      db.query<{ proof_digest: string | null }, [string]>(
+        "SELECT proof_digest FROM event_purges WHERE event_id = ?",
+      ).get(target.event_id)?.proof_digest,
+    ).toBe(eventPurgeProofDigest(target.content_hash, target.source_record_id, "event"));
     db.exec("DELETE FROM event_purge_proofs");
     const health = inspectOpenLedgerHealth(db);
     expect(health.ok).toBe(false);
@@ -102,6 +135,41 @@ describe("purgeEvents", () => {
       failure.table === "event_purge_proofs" &&
       failure.detail.includes("has no content-hash proof")
     ))).toBe(true);
+    db.close();
+  });
+
+  test("doctor reports a proof_digest mismatch beyond the first doctor page", () => {
+    const db = openLedger(":memory:");
+    const hash = "a".repeat(64);
+    const digest = eventPurgeProofDigest(hash, "legacy-record", "event");
+    const matching = LEDGER_DOCTOR_ROW_CAP + 1;
+    for (let index = 0; index < matching; index++) {
+      const receiptId = `01JC${String(index).padStart(22, "0")}`;
+      db.query(
+        `INSERT INTO event_purges (receipt_id, event_id, connector_id, reason, purged_at, proof_digest)
+         VALUES (?, ?, 'fixture', 'legacy', '2026-09-06T12:00:00.000Z', ?)`,
+      ).run(receiptId, `01JE${String(index).padStart(22, "0")}`, digest);
+      db.query(
+        `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
+         VALUES (?, ?, 'legacy-record', 'event')`,
+      ).run(receiptId, hash);
+    }
+    const mismatchedId = `01JD${"0".repeat(22)}`;
+    db.query(
+      `INSERT INTO event_purges (receipt_id, event_id, connector_id, reason, purged_at, proof_digest)
+       VALUES (?, '01JF0000000000000000000000', 'fixture', 'legacy', '2026-09-06T12:00:00.000Z', ?)`,
+    ).run(mismatchedId, "0".repeat(64));
+    db.query(
+      `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
+       VALUES (?, ?, 'legacy-record', 'event')`,
+    ).run(mismatchedId, hash);
+    const health = inspectOpenLedgerHealth(db);
+    expect(health.ok).toBe(false);
+    expect(health.failures).toEqual([{
+      kind: "row",
+      table: "event_purges",
+      detail: `receipt ${mismatchedId} proof does not match proof_digest`,
+    }]);
     db.close();
   });
 
@@ -253,6 +321,178 @@ describe("purgeEvents", () => {
          VALUES ('01JCPURGEPROOF0000000000009', ?, 'legacy-record', 'subject')`,
       ).run("d".repeat(64)),
     ).toThrow();
+    db.close();
+  });
+
+  test("purges by source_key and records selector_kind=source", () => {
+    const db = openLedger(":memory:");
+    const source = grantedSource(db);
+    const other = grantedSource(db);
+    const target = storedEvent(db, event("source-target"), source);
+    storedEvent(db, event("source-keep"), other);
+    const receipts = purgeEvents(
+      db,
+      temporaryVault(),
+      { source_key: source },
+      "source request",
+    ).receipts;
+    expect(receipts.map(({ event_id }) => event_id)).toEqual([target.event_id]);
+    expect(count(db)).toBe(1);
+    expect(
+      db.query<{ selector_kind: string | null }, []>(
+        "SELECT selector_kind FROM event_purge_proofs ORDER BY receipt_id",
+      ).all().map(({ selector_kind }) => selector_kind),
+    ).toEqual(["source"]);
+    const compound = storedEvent(db, event("source-compound"), source);
+    purgeEvents(
+      db,
+      temporaryVault(),
+      { source_key: source, event_id: compound.event_id },
+      "compound source request",
+    );
+    expect(
+      db.query<{ selector_kind: string | null }, [string]>(
+        `SELECT selector_kind FROM event_purge_proofs
+          WHERE receipt_id = (SELECT receipt_id FROM event_purges WHERE event_id = ?)`,
+      ).get(compound.event_id),
+    ).toEqual({ selector_kind: null });
+    expect(() =>
+      db.query(
+        `INSERT INTO event_purges (receipt_id, event_id, connector_id, reason, purged_at)
+         VALUES ('01JCPURGEPROOF000000000000A', '01JCPURGEEVENT000000000000A', 'fixture', 'legacy', '2026-09-06T12:00:00.000Z')`,
+      ).run(),
+    ).not.toThrow();
+    expect(() =>
+      db.query(
+        `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
+         VALUES ('01JCPURGEPROOF000000000000A', ?, 'legacy-record', 'source')`,
+      ).run("e".repeat(64)),
+    ).not.toThrow();
+    expect(() =>
+      db.query(
+        `INSERT INTO event_purges (receipt_id, event_id, connector_id, reason, purged_at)
+         VALUES ('01JCPURGEPROOF000000000000B', '01JCPURGEEVENT000000000000B', 'fixture', 'legacy', '2026-09-06T12:00:00.000Z')`,
+      ).run(),
+    ).not.toThrow();
+    expect(() =>
+      db.query(
+        `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
+         VALUES ('01JCPURGEPROOF000000000000B', ?, 'legacy-record', 'subject')`,
+      ).run("f".repeat(64)),
+    ).toThrow();
+    db.close();
+  });
+
+  test("source-only absence proofs cannot be laundered to PASS", async () => {
+    const db = openLedger(":memory:");
+    const vaultPath = temporaryVault();
+    const source = grantedSource(db);
+    const other = grantedSource(db);
+    const target = storedEvent(db, event("source-verify"), source);
+    const kept = storedEvent(db, event("source-keep"), other);
+    const outcome = purgeEvents(db, vaultPath, { source_key: source }, "source request");
+    const receipt = outcome.receipts[0]!.receipt_id;
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(true);
+    expect((await verifyPurge(db, vaultPath, "01JCPURGEFAKE00000000000000")).ok).toBe(false);
+    expect(
+      db.query<{ proof_digest: string | null }, [string]>(
+        "SELECT proof_digest FROM event_purges WHERE receipt_id = ?",
+      ).get(receipt)?.proof_digest,
+    ).toBe(eventPurgeProofDigest(target.content_hash, target.source_record_id, "source"));
+
+    const restoreProof = () =>
+      db.query(
+        "UPDATE event_purge_proofs SET content_hash = ?, source_record_id = ?, selector_kind = ? WHERE receipt_id = ?",
+      ).run(target.content_hash, target.source_record_id, "source", receipt);
+
+    const ghostHash = "0".repeat(64);
+    db.query("UPDATE event_purge_proofs SET content_hash = ? WHERE receipt_id = ?").run(
+      ghostHash,
+      receipt,
+    );
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(false);
+    expect(inspectOpenLedgerHealth(db).ok).toBe(false);
+
+    const resurrected = storedEvent(db, event("source-verify"), source);
+    expect(resurrected.event_id).not.toBe(target.event_id);
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(false);
+    restoreProof();
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(false);
+    db.query("DELETE FROM events WHERE event_id = ?").run(resurrected.event_id);
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(true);
+
+    db.query("UPDATE event_purge_proofs SET source_record_id = ? WHERE receipt_id = ?").run(
+      "never-existed",
+      receipt,
+    );
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(false);
+    restoreProof();
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(true);
+
+    db.query("UPDATE event_purge_proofs SET selector_kind = ? WHERE receipt_id = ?").run(
+      "event",
+      receipt,
+    );
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(false);
+    db.query("UPDATE event_purge_proofs SET selector_kind = NULL WHERE receipt_id = ?").run(receipt);
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(false);
+    restoreProof();
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(true);
+
+    db.query(
+      "UPDATE event_purge_proofs SET content_hash = ?, source_record_id = ? WHERE receipt_id = ?",
+    ).run(kept.content_hash, kept.source_record_id, receipt);
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(false);
+    db.query(
+      "UPDATE event_purge_proofs SET content_hash = ?, source_record_id = ? WHERE receipt_id = ?",
+    ).run(target.content_hash, target.source_record_id, receipt);
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(true);
+
+    db.exec("PRAGMA ignore_check_constraints = ON");
+    db.query("UPDATE event_purge_proofs SET content_hash = ? WHERE receipt_id = ?").run(
+      "z".repeat(64),
+      receipt,
+    );
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(false);
+    db.query("UPDATE event_purge_proofs SET content_hash = ? WHERE receipt_id = ?").run(
+      target.content_hash,
+      receipt,
+    );
+    db.query("UPDATE event_purge_proofs SET source_record_id = ? WHERE receipt_id = ?").run(
+      "",
+      receipt,
+    );
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(false);
+    db.query("UPDATE event_purge_proofs SET source_record_id = ? WHERE receipt_id = ?").run(
+      target.source_record_id,
+      receipt,
+    );
+    db.query("UPDATE event_purge_proofs SET selector_kind = ? WHERE receipt_id = ?").run(
+      "subject",
+      receipt,
+    );
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(false);
+    db.query("UPDATE event_purge_proofs SET selector_kind = ? WHERE receipt_id = ?").run(
+      "source",
+      receipt,
+    );
+    db.exec("PRAGMA ignore_check_constraints = OFF");
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(true);
+
+    db.exec("DELETE FROM event_purge_proofs");
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(false);
+    db.close();
+  });
+
+  test("missing event_purge_proofs table fails closed when a batch has event purges", async () => {
+    const db = openLedger(":memory:");
+    const vaultPath = temporaryVault();
+    const source = grantedSource(db);
+    storedEvent(db, event("source-verify"), source);
+    const receipt = purgeEvents(db, vaultPath, { source_key: source }, "source request").receipts[0]!.receipt_id;
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(true);
+    db.exec("DROP TABLE event_purge_proofs");
+    expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(false);
     db.close();
   });
 

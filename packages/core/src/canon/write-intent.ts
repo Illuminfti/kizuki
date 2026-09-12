@@ -169,7 +169,7 @@ function eventDigest(db: Database, eventId: string): string {
     db.query("SELECT * FROM source_event_bindings WHERE event_id=?").get(eventId),
     db.query("SELECT * FROM native_owner_evidence WHERE event_id=?").get(eventId),
     db.query("SELECT g.* FROM source_grants g JOIN source_event_bindings b ON b.source_key=g.source_key WHERE b.event_id=?").get(eventId),
-    boundedRows(db, "SELECT * FROM event_purges WHERE event_id=? ORDER BY receipt_id", eventId),
+    boundedRows(db, "SELECT receipt_id,event_id,connector_id,reason,purged_at FROM event_purges WHERE event_id=? ORDER BY receipt_id", eventId),
   ]);
 }
 function pageSources(bytes: Buffer | null): string[] {

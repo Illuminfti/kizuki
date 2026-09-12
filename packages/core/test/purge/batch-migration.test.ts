@@ -29,7 +29,7 @@ async function legacyFixture(ambiguous = false) {
   });
   // Remove all later metadata to reconstruct v18. No historical program is executed.
   db.exec("DROP TABLE IF EXISTS event_purge_proofs; DROP TABLE canon_projection_sources; DROP TABLE canon_projection_obligations; DROP TABLE canon_write_intent_sources; DROP TABLE canon_write_intents; DROP TABLE canon_read_generation; DROP TABLE canon_source_survivor_lineage; DROP TABLE purge_batch_receipts; DROP TABLE purge_batches; UPDATE schema_version SET version=18");
-  const receipt = db.query("INSERT INTO event_purges VALUES(?,?, 'fixture','ordinary retired fixture',?)");
+  const receipt = db.query("INSERT INTO event_purges(receipt_id, event_id, connector_id, reason, purged_at) VALUES(?,?, 'fixture','ordinary retired fixture',?)");
   receipt.run("ordinary-first-receipt", first.event_id, AT);
   receipt.run("ordinary-second-receipt", second.event_id, AT);
   db.query("DELETE FROM events WHERE event_id IN (?,?)").run(first.event_id, second.event_id);

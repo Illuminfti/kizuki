@@ -2,8 +2,17 @@ import { fixtureConsent } from "./helpers";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { accept, createVaultFts5Port, insertClaim, readSince, serializePage } from "@kizuki/core";
+import {
+  accept,
+  createVaultFts5Port,
+  insertClaim,
+  readSince,
+  registerConnection,
+  serializePage,
+  setSourceGrant,
+} from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
+import { purgeEvents } from "../../core/src/ledger/purge";
 import { createHelpers } from "./helpers";
 
 const { cleanup, runCli, tempVault } = createHelpers();
@@ -46,7 +55,7 @@ describe("RFC 0002 §16.4 purge and undo", () => {
         },
         body: "Grace runs partnerships at Acme.\n",
       }),
-      "utf8",
+      { encoding: "utf8", mode: 0o600 },
     );
 
     const claim = await insertClaim(
@@ -218,7 +227,7 @@ describe("RFC 0002 §16.4 purge and undo", () => {
   test("dry-run no-match does not list leftover unreadable pages as uncertain", () => {
     const setup = tempVault();
     mkdirSync(join(setup.vault, "facts"), { recursive: true });
-    writeFileSync(join(setup.vault, "facts", "orphan.md"), "no frontmatter\n");
+    writeFileSync(join(setup.vault, "facts", "orphan.md"), "no frontmatter\n", { mode: 0o600 });
     const preview = runCli(
       setup.env,
       "purge",
@@ -304,5 +313,108 @@ describe("RFC 0002 §16.4 purge and undo", () => {
     );
     expect(refused.exitCode).toBe(2);
     expect(refused.stderr).toContain("--confirm");
+  });
+
+  test("source-only --verify refuses laundered proofs", () => {
+    const setup = tempVault();
+    const source = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const other = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    let receipt = "";
+    let keptHash = "";
+    let keptRecord = "";
+    let purgedHash = "";
+    let purgedRecord = "";
+    try {
+      for (const key of [source, other]) {
+        registerConnection(db, "fixture", key);
+        setSourceGrant(db, {
+          source_key: key,
+          expected_revision: 0,
+          operation_id: `grant-${key}`,
+          policy: {
+            purposes: ["capture", "recall"],
+            allowed_fields: ["text", "subjects", "attachments", "metadata"],
+            retention: "persistent_owned_until_revoked",
+            egress: "local_only",
+            sensitivity_floor: "private",
+          },
+        });
+      }
+      const stored = (record: string, key: string) => {
+        const result = accept(db, {
+          schema: "kizuki.event/v1",
+          connector_id: "fixture",
+          source_record_id: record,
+          kind: "message",
+          occurred_at: "2026-02-28T10:30:00Z",
+          observed_at: "2026-03-01T00:00:00Z",
+          text: `synthetic ${record}`,
+          subjects: [{ subject_id: "person:ada", role: "from" }],
+          deleted: false,
+          attachments: [],
+          metadata: {},
+        }, { source: { source_key: key, expected_revision: 1 } });
+        if (result.status !== "stored") throw new Error("synthetic fixture event was not stored");
+        return result.event;
+      };
+      const target = stored("source-target", source);
+      const kept = stored("source-keep", other);
+      purgedHash = target.content_hash;
+      purgedRecord = target.source_record_id;
+      keptHash = kept.content_hash;
+      keptRecord = kept.source_record_id;
+      receipt = purgeEvents(db, setup.vault, { source_key: source }, "source request").receipts[0]!.receipt_id;
+    } finally {
+      db.close();
+    }
+
+    const verified = runCli(setup.env, "purge", "--verify", receipt);
+    expect(verified.exitCode, verified.stderr).toBe(0);
+
+    const ghosted = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    try {
+      ghosted.query("UPDATE event_purge_proofs SET content_hash = ? WHERE receipt_id = ?").run(
+        "0".repeat(64),
+        receipt,
+      );
+    } finally {
+      ghosted.close();
+    }
+    expect(runCli(setup.env, "purge", "--verify", receipt).exitCode).toBe(1);
+
+    const unghosted = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    try {
+      unghosted.query(
+        "UPDATE event_purge_proofs SET content_hash = ?, source_record_id = ? WHERE receipt_id = ?",
+      ).run(purgedHash, purgedRecord, receipt);
+    } finally {
+      unghosted.close();
+    }
+    expect(runCli(setup.env, "purge", "--verify", receipt).exitCode).toBe(0);
+
+    const forged = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    try {
+      forged.query(
+        "UPDATE event_purge_proofs SET content_hash = ?, source_record_id = ? WHERE receipt_id = ?",
+      ).run(keptHash, keptRecord, receipt);
+    } finally {
+      forged.close();
+    }
+    const laundered = runCli(setup.env, "purge", "--verify", receipt);
+    expect(laundered.exitCode).toBe(1);
+
+    const restored = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    try {
+      restored.query(
+        "UPDATE event_purge_proofs SET content_hash = ?, source_record_id = ? WHERE receipt_id = ?",
+      ).run(purgedHash, purgedRecord, receipt);
+    } finally {
+      restored.close();
+    }
+    expect(runCli(setup.env, "purge", "--verify", receipt).exitCode).toBe(0);
+
+    const invalid = runCli(setup.env, "purge", "--verify", receipt, "--source", other);
+    expect(invalid.exitCode).toBe(2);
   });
 });

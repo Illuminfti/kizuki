@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, symlinkSync, truncateSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../../src/ledger/db";
+import { purgeEvents, resumePurge } from "../../src/ledger/purge";
 import { applyCanonWrite } from "../../src/canon/apply";
 import { resolveTarget } from "../../src/canon/arbiter";
 import { createBudgetTracker } from "../../src/canon/budget";
@@ -223,6 +224,47 @@ test("historical unrecorded bytes are refused rather than granted a synthetic re
   const other = await storeClaim(f.db, f.eventId, { kind: "edit", predicate: null, object: null, body: "A new claim.", frontmatter: {} });
   expect(() => applyCanonWrite(f.io, other, { action: "edit", page_id: intent.completion.page_id!, rel_path: intent.receipt.page_path, reason: "explicit" }, { writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 1 }) })).toThrow("historical_orphan");
   expect(listCanonReceipts(f.db)).toEqual([]);
+});
+
+test("v27 pending write recovers the same receipt after v28 migration", async () => {
+  const f = await fixture();
+  f.db.exec("ALTER TABLE event_purges DROP COLUMN proof_digest");
+  f.db.query("UPDATE schema_version SET version = 27").run();
+  failRow(f.db);
+  expect(() => write(f.io, f.claim)).toThrow("synthetic receipt storage failure");
+  const pending = readCanonWriteIntent(f.db)!;
+  expect(pending.receipt.kind).toBe("write");
+  f.reopen();
+  allowRow(f.db);
+  expect(f.db.query("SELECT version FROM schema_version").get()).toEqual({ version: LEDGER_SCHEMA_VERSION });
+  expect(recoverCanonWrites(f.io).completed).toEqual([pending.receipt.receipt_id]);
+  expect(readCanonWriteIntent(f.db)).toBeNull();
+  expect(listCanonReceipts(f.db)).toEqual([pending.receipt]);
+  expect(recoverCanonWrites(f.io).completed).toEqual([]);
+});
+
+test("v27 pending purge-rewrite citing a purge receipt recovers the same receipt after v28 migration", async () => {
+  const f = await fixture();
+  const original = write(f.io, f.claim);
+  const purged = purgeEvents(f.db, f.vault, { event_id: f.eventId }, "retire fixture");
+  expect(purged.receipts).toHaveLength(1);
+  f.db.exec("ALTER TABLE event_purges DROP COLUMN proof_digest");
+  f.db.query("UPDATE schema_version SET version = 27").run();
+  failRow(f.db);
+  await expect(resumePurge(f.db, f.vault, purged.receipts[0]!.receipt_id)).rejects.toThrow(
+    "synthetic receipt storage failure",
+  );
+  const pending = readCanonWriteIntent(f.db)!;
+  expect(pending.receipt.kind).toBe("purge_rewrite");
+  expect(pending.admission.events.map((item) => item.id)).toContain(f.eventId);
+  expect(listCanonReceipts(f.db)).toEqual([original]);
+  f.reopen();
+  allowRow(f.db);
+  expect(f.db.query("SELECT version FROM schema_version").get()).toEqual({ version: LEDGER_SCHEMA_VERSION });
+  expect(recoverCanonWrites(f.io).completed).toEqual([pending.receipt.receipt_id]);
+  expect(readCanonWriteIntent(f.db)).toBeNull();
+  expect(listCanonReceipts(f.db)).toEqual([original, pending.receipt]);
+  expect(recoverCanonWrites(f.io).completed).toEqual([]);
 });
 
 test("v20 migration preserves canon and creates a closed empty v21 recovery ledger", async () => {

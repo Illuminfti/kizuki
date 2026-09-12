@@ -67,7 +67,7 @@ import {
 import { eventFromRow, parseEventRecord, type LegacyEventRecord } from "./ledger/event-record";
 import { bindLegacyEventOrigins, installEventIdentityGuards } from "./ledger/event-identity-schema";
 import { readSchemaVersion } from "./ledger/integrity";
-import { PURGE_SCHEMA_VERSION } from "./ledger/purge-schema";
+import { bindStoredEventPurgeProofs, findMismatchedEventPurgeProof, PURGE_SCHEMA_VERSION } from "./ledger/purge-schema";
 import { tableExists } from "./ledger/schema";
 import { SENSITIVITY_SCHEMA_VERSION } from "./sensitivity/schema";
 import { SERVE_SCHEMA_VERSION } from "./serve/types";
@@ -231,6 +231,7 @@ interface PurgeRow {
   connector_id: string;
   reason: string;
   purged_at: string;
+  proof_digest: string | null;
 }
 
 interface PurgeProofRow {
@@ -1041,14 +1042,14 @@ function* pagePurges(db: Database): Generator<PurgeRow> {
     if (cursor === null) {
       rows = db
         .query<PurgeRow, [number]>(
-          `SELECT receipt_id, event_id, connector_id, reason, purged_at
+          `SELECT receipt_id, event_id, connector_id, reason, purged_at, proof_digest
            FROM event_purges ORDER BY purged_at, receipt_id LIMIT ?`,
         )
         .all(PAGE);
     } else {
       rows = db
         .query<PurgeRow, [string, string, string, number]>(
-          `SELECT receipt_id, event_id, connector_id, reason, purged_at
+          `SELECT receipt_id, event_id, connector_id, reason, purged_at, proof_digest
            FROM event_purges
            WHERE purged_at > ?
               OR (purged_at = ? AND receipt_id > ?)
@@ -1963,11 +1964,15 @@ function assertBackupFormat(manifest: ExportManifest): void {
   // Ledger25 adds independent checkpoint backfill_cursor and sync_cursor; omitted rows restore as NULL.
   // Ledger26 widens selector_kind to event|connector; omitted and compound rows restore as NULL.
   // Ledger27 widens selector_kind to event|connector|record; omitted and compound rows restore as NULL.
+  // Ledger28 widens selector_kind to event|connector|record|source; omitted and compound rows restore as NULL.
+  // Ledger28 also stores proof_digest on event_purges. Omitted digests bind currently stored
+  // proof bytes as a restore baseline, not retroactive authentication. Mismatched explicit
+  // digests are refused.
   // Future migrations must make their own explicit compatibility decision.
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
       versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
       versions.ledger !== 19 && versions.ledger !== 20 &&
-      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27))) {
+      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27 || versions.ledger === 28))) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -2036,21 +2041,27 @@ function insertEvent(
   );
 }
 
+const CLAIM_CONTENT_HASH = /^[0-9a-f]{64}$/;
+
 function insertPurge(db: Database, raw: Record<string, unknown>): void {
+  let digest: string | null = null;
+  if (raw.proof_digest !== undefined && raw.proof_digest !== null) {
+    digest = asString(raw.proof_digest, "proof_digest");
+    if (!CLAIM_CONTENT_HASH.test(digest)) throw new Error("proof_digest: must be a sha256 hex digest");
+  }
   db.query(
     `INSERT INTO event_purges
-       (receipt_id, event_id, connector_id, reason, purged_at)
-     VALUES (?, ?, ?, ?, ?)`,
+       (receipt_id, event_id, connector_id, reason, purged_at, proof_digest)
+     VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(
     asString(raw.receipt_id, "receipt_id"),
     asString(raw.event_id, "event_id"),
     asString(raw.connector_id, "connector_id"),
     asString(raw.reason, "reason"),
     asString(raw.purged_at, "purged_at"),
+    digest,
   );
 }
-
-const CLAIM_CONTENT_HASH = /^[0-9a-f]{64}$/;
 
 function insertPurgeProof(db: Database, raw: Record<string, unknown>): void {
   const hash = asString(raw.content_hash, "content_hash");
@@ -2065,9 +2076,10 @@ function insertPurgeProof(db: Database, raw: Record<string, unknown>): void {
     selectorKind !== null &&
     selectorKind !== "event" &&
     selectorKind !== "connector" &&
-    selectorKind !== "record"
+    selectorKind !== "record" &&
+    selectorKind !== "source"
   ) {
-    throw new Error("selector_kind: must be event, connector, record, or omitted");
+    throw new Error("selector_kind: must be event, connector, record, source, or omitted");
   }
   db.query(
     `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
@@ -2076,7 +2088,9 @@ function insertPurgeProof(db: Database, raw: Record<string, unknown>): void {
     asString(raw.receipt_id, "receipt_id"),
     hash,
     sourceRecordId,
-    selectorKind === "event" || selectorKind === "connector" || selectorKind === "record" ? selectorKind : null,
+    selectorKind === "event" || selectorKind === "connector" || selectorKind === "record" || selectorKind === "source"
+      ? selectorKind
+      : null,
   );
 }
 
@@ -2545,6 +2559,10 @@ export function restoreVault(
         }
         for (const row of streamRows(source, manifest, "ledger/event_purge_proofs.jsonl", false)) {
           insertPurgeProof(db, row);
+        }
+        bindStoredEventPurgeProofs(db);
+        if (findMismatchedEventPurgeProof(db, PAGE) !== null) {
+          throw new Error("event purge proof does not match receipt proof_digest");
         }
         for (const row of streamRows(source, manifest, "claims/claims.jsonl", false)) {
           insertClaimRow(db, row);
