@@ -29,6 +29,7 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
   context: [
     `${INVOCATION} context --purpose session --query "acme"`,
     `${INVOCATION} context --purpose recall --query "acme" --budget 1200`,
+    `${INVOCATION} context --since 2020-01-01T00:00:00.000Z --until 2030-01-01T00:00:00.000Z --query "Atlas"`,
     `${INVOCATION} context --json`,
   ],
   doctor: [`${INVOCATION} doctor`, `${INVOCATION} doctor --json`],

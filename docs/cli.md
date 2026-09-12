@@ -311,7 +311,7 @@ when a receipt is minted.
 ## context
 
 ```text
-usage: kizuki context [--purpose session|recall|correction|audit] [--budget N] [--query TEXT] [--json]
+usage: kizuki context [--purpose session|recall|correction|audit] [--budget N] [--query TEXT] [--since RFC3339] [--until RFC3339] [--json]
 ```
 
 Purpose-scoped compilation of canon, graph, timeline, and working-knowledge
@@ -319,7 +319,12 @@ claims with provenance stamps and a token budget. Same engine as MCP
 `context_packet`. Does not write canon. Empty packets keep the machine header
 on stdout and offer a next step on stderr. If gathering fails, the CLI returns
 exit 1 and reports `degraded` in JSON instead of presenting the header as a
-complete packet. Claims and derived statements follow the live grant and
+complete packet. Omitting `--since`/`--until` keeps the purpose profile's
+recent window (session is seven days). Explicit RFC3339 bounds pass through to
+Core's existing request fields; timeline evidence uses each source's
+`occurred_at`. Malformed timestamps and an inverted window are usage errors
+before the vault is opened. Grant-bound clamping and denial stay in Core.
+Claims and derived statements follow the live grant and
 [context privacy rules](context-privacy.md), including fail-closed provenance
 and bounded audit coverage.
 

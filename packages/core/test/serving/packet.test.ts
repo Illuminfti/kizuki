@@ -17,6 +17,7 @@ import { serveSearch } from "../../src/serving/search";
 import { serveTimeline } from "../../src/serving/timeline";
 import { ServeError } from "../../src/serving/types";
 import { CanonUnreadableError } from "../../src/serving/canon";
+import { accept } from "../../src/ledger/ledger";
 import { canonFixture } from "../canon/helpers";
 import { page, recordedPage, serveFixture, storeEvent } from "./helpers";
 import type { Fixture } from "./helpers";
@@ -395,6 +396,75 @@ describe("the packet is scoped by the grant, not by the request", () => {
       direct.quoted.map((chunk) => chunk.occurred_at),
     );
     expect(packet.data?.sections.timeline).toBe(2);
+  });
+
+  test("session defaults to the recent occurred_at window; a restricted grant still clamps a wider request", async () => {
+    const live = await newFixture();
+    const occurredAt = "2020-06-15T12:00:00.000Z";
+    const stored = accept(live.db, {
+      schema: "kizuki.event/v1",
+      connector_id: "fixture",
+      source_record_id: "rec-atlas-2020",
+      kind: "message",
+      occurred_at: occurredAt,
+      observed_at: new Date().toISOString(),
+      text: "Mira leads Project Atlas.",
+      subjects: [{ subject_id: "person:ada", role: "from" }],
+      sensitivity_hint: "public",
+      deleted: false,
+      attachments: [],
+      metadata: {},
+    });
+    if (stored.status !== "stored") throw new Error(`atlas event: ${stored.status}`);
+    rebuildDerived(live.db, live.vaultPath);
+
+    const session = await serveContextPacket(live.owner(), {
+      purpose: "session",
+      query: "Atlas",
+      budget_tokens: 2_000,
+    });
+    expect(session.quoted.every((chunk) => chunk.occurred_at !== occurredAt)).toBe(true);
+    expect(session.data?.packet_md ?? "").not.toContain("Atlas");
+
+    const widened = await serveContextPacket(live.owner(), {
+      purpose: "session",
+      query: "Atlas",
+      since: "2020-01-01T00:00:00.000Z",
+      until: "2030-01-01T00:00:00.000Z",
+      budget_tokens: 2_000,
+    });
+    expect(
+      widened.quoted.some(
+        (chunk) => chunk.text.includes("Atlas") && chunk.occurred_at === occurredAt,
+      ),
+    ).toBe(true);
+    expect(widened.data?.sections.timeline ?? 0).toBeGreaterThan(0);
+
+    const restricted = await serveContextPacket(live.agent("windowed"), {
+      purpose: "session",
+      query: "Atlas",
+      since: "2020-01-01T00:00:00.000Z",
+      until: "2030-01-01T00:00:00.000Z",
+      budget_tokens: 2_000,
+      include: ["timeline" as const],
+    });
+    expect(restricted.quoted.every((chunk) => chunk.occurred_at !== occurredAt)).toBe(true);
+    expect(restricted.quoted.map((chunk) => chunk.occurred_at)).toEqual([
+      "2026-02-28T11:00:00Z",
+      "2026-02-28T12:00:00Z",
+    ]);
+  });
+
+  test("malformed packet timestamps are invalid arguments", async () => {
+    const ctx = (await newFixture()).owner();
+    expect(
+      (await refusal(async () => serveContextPacket(ctx, { since: "not-a-time" }))).code,
+    ).toBe("invalid_arguments");
+    expect(
+      (await refusal(async () =>
+        serveContextPacket(ctx, { until: "2026-02-30T00:00:00Z" }),
+      )).code,
+    ).toBe("invalid_arguments");
   });
 
   test("a type-scoped agent is not starved by candidates it may not read", async () => {

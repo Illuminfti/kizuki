@@ -1,6 +1,8 @@
 import {
   OWNER,
   PACKET_PURPOSES,
+  compareRfc3339,
+  isRfc3339,
   serveContextPacket,
 } from "@kizuki/core";
 import type { PacketPurpose } from "@kizuki/core";
@@ -18,20 +20,42 @@ function parseBudget(raw: string): number {
   return value;
 }
 
+function parseWindowBound(field: "since" | "until", raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  if (!isRfc3339(raw)) {
+    throw new UsageError(`invalid arguments: ${field}: must be an RFC3339 timestamp`);
+  }
+  return raw;
+}
+
+function parseContextWindow(options: Map<string, string>): { since?: string; until?: string } {
+  const since = parseWindowBound("since", options.get("--since"));
+  const until = parseWindowBound("until", options.get("--until"));
+  if (since !== undefined && until !== undefined && compareRfc3339(since, "since", until, "until") > 0) {
+    throw new UsageError("invalid arguments: since: must not be after until");
+  }
+  return {
+    ...(since === undefined ? {} : { since }),
+    ...(until === undefined ? {} : { until }),
+  };
+}
+
 export const CONTEXT_SCHEMA = {
-  options: ["--purpose", "--budget", "--query"],
+  options: ["--purpose", "--budget", "--query", "--since", "--until"],
   flags: ["--json"],
   defaults: { "--purpose": "session" },
   bounds: {
     "--purpose": "session|recall|correction|audit",
     "--budget": "50..2000",
+    "--since": "RFC3339",
+    "--until": "RFC3339",
   },
 } as const satisfies CommandHelpSchema;
 
 export const contextCommand: Command = {
   name: "context",
   usage:
-    "context [--purpose session|recall|correction|audit] [--budget N] [--query TEXT] [--json]",
+    "context [--purpose session|recall|correction|audit] [--budget N] [--query TEXT] [--since RFC3339] [--until RFC3339] [--json]",
   summary: "give your agent relevant context, with sources and a token budget",
   schema: CONTEXT_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
@@ -48,6 +72,7 @@ export const contextCommand: Command = {
     const rawBudget = parsed.options.get("--budget");
     const budget = rawBudget === undefined ? undefined : parseBudget(rawBudget);
     const query = parsed.options.get("--query");
+    const window = parseContextWindow(parsed.options);
 
     return withReadVault(io, async (ctx) => {
       const envelope = await serveContextPacket(
@@ -56,6 +81,7 @@ export const contextCommand: Command = {
           purpose: rawPurpose as PacketPurpose,
           ...(budget === undefined ? {} : { budget_tokens: budget }),
           ...(query === undefined ? {} : { query }),
+          ...window,
         },
       );
       ctx.assertCurrent();
@@ -67,7 +93,7 @@ export const contextCommand: Command = {
       if (incomplete) {
         io.err("Context could not be gathered completely. Run kizuki doctor to check the vault.");
       } else if (envelope.data !== undefined && Object.values(envelope.data.sections).every((count) => count === 0)) {
-        io.err("No matching context fits this packet. Try a broader --query or a larger --budget; use kizuki doctor to check your sources.");
+        io.err("No matching context fits this packet. Try a broader --query, a larger --budget, or an explicit --since/--until window; use kizuki doctor to check your sources.");
       }
       if (parsed.flags.has("--json")) {
         io.out(jsonEnvelope("context", incomplete || retrievalDegraded.length > 0 ? "degraded" : "ok", envelope, {

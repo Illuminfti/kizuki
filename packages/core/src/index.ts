@@ -586,6 +586,7 @@ export type {
 } from "./derived-meta";
 
 export { canonicalSerialize, computeContentHash } from "./util/hash";
+export { compareRfc3339 } from "./agents/time";
 export { isRfc3339 } from "./util/time";
 export { isUlid, ulid } from "./util/ulid";
 export { isNonEmptyString, isPlainObject } from "./util/validate";

@@ -408,23 +408,30 @@ describe("help", () => {
         };
       };
       expect(body.data.name).toBe("context");
-      expect(body.data.options).toEqual(["--purpose", "--budget", "--query"]);
+      expect(body.data.options).toEqual(["--purpose", "--budget", "--query", "--since", "--until"]);
       expect(body.data.flags).toEqual(["--json"]);
       expect(body.data.defaults).toEqual({ "--purpose": "session" });
       expect(body.data.bounds).toEqual({
         "--purpose": "session|recall|correction|audit",
         "--budget": "50..2000",
+        "--since": "RFC3339",
+        "--until": "RFC3339",
       });
       expect(body.data.irreversible).toBe(false);
     }
     const text = runCli(env, "context", "--help");
     expect(text.stdout).toContain("--purpose  session|recall|correction|audit  default session");
     expect(text.stdout).toContain("--budget  50..2000");
+    expect(text.stdout).toContain("--since  RFC3339");
+    expect(text.stdout).toContain("--until  RFC3339");
+    expect(text.stdout).toContain("--since 2020-01-01T00:00:00.000Z --until 2030-01-01T00:00:00.000Z --query \"Atlas\"");
     for (const [args, diagnostic] of [
       [["context", "--nope"], "unknown option --nope"],
       [["context", "--json", "--json"], "repeated flag --json"],
       [["context", "--json=true"], "flag --json does not take a value"],
       [["context", "--purpose"], "missing value for --purpose"],
+      [["context", "--since"], "missing value for --since"],
+      [["context", "--until"], "missing value for --until"],
       [["context", "extra"], "invalid arguments"],
     ] as const) {
       const result = runCli(env, ...args);

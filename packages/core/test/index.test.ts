@@ -233,6 +233,7 @@ describe("public surface", () => {
       "claimRetrievalDoc",
       "claimsConflict",
       "classifyAppModelCredential",
+      "compareRfc3339",
       "computeContentHash",
       "conformanceContext",
       "connectRemotePort",
