@@ -4,16 +4,22 @@ import { sealLedger } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
 import { portableLocalAdapter } from "../connections";
 import { refreshDerived } from "../derived";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
+
+export const RESTORE_SCHEMA = {
+  options: ["--from", "--into"],
+  flags: ["--verify"],
+} as const satisfies CommandHelpSchema;
 
 export const restoreCommand: Command = {
   name: "restore",
   usage: "restore --from DIR [--into DIR] [--verify]",
   summary: "verify a backup and restore it into an empty directory",
+  schema: RESTORE_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
-      options: ["--from", "--into"],
-      flags: ["--verify"],
+      options: [...RESTORE_SCHEMA.options],
+      flags: [...RESTORE_SCHEMA.flags],
     });
     if (parsed.positionals.length !== 0) throw new UsageError(this.usage);
     const from = parsed.options.get("--from");

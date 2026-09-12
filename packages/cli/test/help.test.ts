@@ -299,6 +299,9 @@ describe("help", () => {
   test("export structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["export", "--help", "--json"], ["help", "export", "--json"]] as const) {
+  test("restore structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["restore", "--help", "--json"], ["help", "restore", "--json"]] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
@@ -330,6 +333,19 @@ describe("help", () => {
       [["export", "--out", "./export", "--out", "./other"], "repeated option --out"],
       [["export", "--out"], "missing value for --out"],
       [["export", "extra"], "invalid arguments"],
+      expect(body.data.name).toBe("restore");
+      expect(body.data.options).toEqual(["--from", "--into"]);
+      expect(body.data.flags).toEqual(["--verify"]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    expect(runCli(env, "restore", "--help").stdout).toContain("--from");
+    expect(runCli(env, "restore", "--help").stdout).toContain("--verify");
+    for (const [args, diagnostic] of [
+      [["restore", "--nope"], "unknown option --nope"],
+      [["restore", "--verify", "--verify"], "repeated flag --verify"],
+      [["restore", "--verify=true"], "flag --verify does not take a value"],
+      [["restore", "--from"], "missing value for --from"],
+      [["restore", "extra"], "invalid arguments"],
     ] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(2);
@@ -337,6 +353,7 @@ describe("help", () => {
       expect(result.stderr).toContain(`error: ${diagnostic}`);
       expect(result.stderr).toContain("usage: kizuki doctor");
       expect(result.stderr).toContain("usage: kizuki export");
+      expect(result.stderr).toContain("usage: kizuki restore");
     }
   });
 
