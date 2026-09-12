@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "./helpers";
@@ -77,4 +77,65 @@ test("all-malformed Markdown import never commits a completion checkpoint or hid
   expect(repeat.stderr).toContain("connection was not left active");
   safeDiagnostics(repeat, o.source); expect(state(o.vault).runs.at(-1)).toMatchObject({ status: "unavailable", committed_cursor: null });
   expect(state(o.vault).sources[0]!.disconnected_at).not.toBeNull();
+});
+
+test("Markdown import preserves nested Unicode frontmatter and records later edits and deletions", () => {
+  const o = fixture();
+  const nested = join(o.source, "journal", "café");
+  mkdirSync(nested, { recursive: true });
+  const note = join(nested, "note.md");
+  const body = [
+    "---",
+    "title: synthetic-frontmatter",
+    "tags: [ada, café]",
+    "---",
+    "",
+    "SYNTHETIC_NESTED_UNICODE 日本語\n",
+  ].join("\n");
+  writeFileSync(join(o.source, "root.markdown"), "SYNTHETIC_MARKDOWN_EXT\n");
+  writeFileSync(note, body);
+  const first = h.runCli(o.env, "import", "kizuki.markdown-folder", "--source", o.source, ...o.consent);
+  expect(first.exitCode, first.stderr).toBe(0);
+  expect(first.stdout).toContain("events_stored=2");
+  expect(first.stdout).toContain("errors=0");
+  safeDiagnostics(first, o.source);
+  expect(state(o.vault).events.map((event) => event.source_record_id).sort()).toEqual([
+    "journal/café/note.md",
+    "root.markdown",
+  ]);
+  const repeat = h.runCli(o.env, "import", "kizuki.markdown-folder", "--source", o.source);
+  expect(repeat.exitCode).toBe(0);
+  expect(repeat.stdout).toContain("events_stored=0");
+  expect(repeat.stdout).toContain("duplicates=0");
+  writeFileSync(note, `${body}edited\n`);
+  const edited = h.runCli(o.env, "import", "kizuki.markdown-folder", "--source", o.source);
+  expect(edited.exitCode, edited.stderr).toBe(0);
+  expect(edited.stdout).toContain("events_stored=1");
+  expect(edited.stdout).toContain("duplicates=0");
+  unlinkSync(note);
+  const removed = h.runCli(o.env, "import", "kizuki.markdown-folder", "--source", o.source);
+  expect(removed.exitCode, removed.stderr).toBe(0);
+  expect(removed.stdout).toContain("events_stored=1");
+  const after = state(o.vault);
+  expect(after.events.filter((event) => event.source_record_id === "journal/café/note.md").at(-1)).toEqual({
+    source_record_id: "journal/café/note.md",
+    deleted: 1,
+  });
+  expect(after.events.some((event) => event.source_record_id === "root.markdown" && event.deleted === 0)).toBe(true);
+});
+
+test("Markdown import skips a symlink and a bounded oversize file without dropping the sibling", () => {
+  const o = fixture();
+  const outside = join(o.root, "outside.md");
+  writeFileSync(outside, "SYNTHETIC_OUTSIDE_TARGET\n");
+  writeFileSync(join(o.source, "own.md"), BODY);
+  symlinkSync(outside, join(o.source, "link.md"));
+  writeFileSync(join(o.source, "huge.md"), Buffer.alloc(1_048_577, 0x61));
+  const first = h.runCli(o.env, "import", "kizuki.markdown-folder", "--source", o.source, ...o.consent);
+  expect(first.exitCode).toBe(1);
+  expect(first.stdout).toContain("events_stored=1");
+  expect(first.stderr).toContain("too_large");
+  expect(first.stderr).toContain("symlink");
+  safeDiagnostics(first, o.source);
+  expect(state(o.vault).events).toEqual([{ source_record_id: "own.md", deleted: 0 }]);
 });

@@ -12,14 +12,43 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 import {
   MARKDOWN_FOLDER_CONNECTOR_ID,
   createMarkdownFolderConnector,
 } from "../src";
-import { MAX_DEPTH, MAX_SCAN_ENTRIES } from "../src/markdown-folder";
+import {
+  MAX_DEPTH,
+  MAX_FILE_BYTES,
+  MAX_FILES,
+  MAX_PACK_DECODED_BYTES,
+  MAX_SCAN_ENTRIES,
+} from "../src/markdown-folder";
 
 async function makeTempDir(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), "kizuki-markdown-"));
+}
+
+function identityOf(text: string): { sha256: string; size: number } {
+  const bytes = Buffer.from(text);
+  return {
+    sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
+    size: bytes.byteLength,
+  };
+}
+
+function cursorWithPack(base: string, pack: string): string {
+  const parsed = JSON.parse(base) as Record<string, unknown>;
+  delete parsed.files;
+  parsed.pack = pack;
+  return JSON.stringify(parsed);
+}
+
+function packedCursor(base: string, files: unknown): string {
+  return cursorWithPack(
+    base,
+    gzipSync(Buffer.from(JSON.stringify(files))).toString("base64"),
+  );
 }
 
 describe("MarkdownFolderConnector", () => {
@@ -253,6 +282,7 @@ describe("MarkdownFolderConnector", () => {
       expect(batch.events.map((event) => event.source_record_id)).toEqual([
         "good.md",
       ]);
+      expect(batch.has_more).toBe(true);
       const health = await connector.health();
       expect(health.state).toBe("degraded");
       expect(health.detail ?? "").toContain("not_utf8");
@@ -348,6 +378,7 @@ describe("MarkdownFolderConnector", () => {
         phase: string;
       };
       expect(first.events).toHaveLength(2);
+      expect(first.has_more).toBe(true);
       expect(firstCursor.exhausted).toBe(false);
 
       const second = await connector.backfill(first.cursor);
@@ -355,10 +386,12 @@ describe("MarkdownFolderConnector", () => {
         exhausted: boolean;
       };
       expect(second.events).toHaveLength(2);
+      expect(second.has_more).toBe(false);
       expect(secondCursor.exhausted).toBe(true);
 
       const third = await connector.backfill(second.cursor);
       expect(third.events).toEqual([]);
+      expect(third.has_more).toBe(false);
       expect(JSON.parse(third.cursor ?? "{}")).toMatchObject({ exhausted: true });
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -372,6 +405,7 @@ describe("MarkdownFolderConnector", () => {
         null,
       );
       expect(batch.events).toEqual([]);
+      expect(batch.has_more).toBe(false);
       expect(JSON.parse(batch.cursor ?? "{}")).toMatchObject({
         exhausted: true,
         files: [],
@@ -479,6 +513,66 @@ describe("MarkdownFolderConnector", () => {
     }
   });
 
+  test("a UTF-8 BOM is stripped from captured text", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(
+        path.join(root, "bom.md"),
+        Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("hello\n")]),
+      );
+      const batch = await createMarkdownFolderConnector({ path: root }).backfill(
+        null,
+      );
+      expect(batch.events.map((event) => event.text)).toEqual(["hello\n"]);
+      expect(batch.has_more).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("YAML frontmatter stays in the captured text", async () => {
+    const root = await makeTempDir();
+    try {
+      const text = "---\ntitle: synthetic\n---\n\nbody\n";
+      await writeFile(path.join(root, "note.md"), text);
+      const batch = await createMarkdownFolderConnector({ path: root }).backfill(
+        null,
+      );
+      expect(batch.events).toHaveLength(1);
+      expect(batch.events[0]?.text).toBe(text);
+      expect(batch.events[0]?.metadata).toEqual(
+        expect.objectContaining({ relpath: "note.md" }),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a file past the per-file bound is skipped and does not abort siblings", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "ok.md"), "ok\n");
+      await writeFile(
+        path.join(root, "huge.md"),
+        Buffer.alloc(MAX_FILE_BYTES + 1, 0x61),
+      );
+      const connector = createMarkdownFolderConnector({ path: root });
+      const batch = await connector.backfill(null);
+      expect(batch.events.map((event) => event.source_record_id)).toEqual([
+        "ok.md",
+      ]);
+      expect(batch.has_more).toBe(true);
+      expect(await connector.backfill(batch.cursor)).toEqual({
+        events: [],
+        cursor: batch.cursor,
+        status: "unavailable",
+        detail: "partial_import: 1 record errors (too_large=1)",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("an unreadable file does not abort the rest of the scan", async () => {
     const root = await makeTempDir();
     try {
@@ -556,6 +650,182 @@ describe("special entries inside the source", () => {
       expect(batch.events.map((event) => event.source_record_id)).toEqual([
         "real.md",
       ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("markdown folder packed cursor", () => {
+  test("a small snapshot stays plain JSON and a matching pack resumes identically", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "note.md"), "note\n");
+      const connector = createMarkdownFolderConnector({ path: root });
+      const first = await connector.backfill(null);
+      if (first.cursor === null) throw new Error("expected a snapshot cursor");
+      const plain = JSON.parse(first.cursor) as {
+        pack?: unknown;
+        files: Array<[string, { sha256: string; size: number }]>;
+      };
+      const { files: plainFiles, ...header } = plain;
+      expect(plain.pack).toBeUndefined();
+      expect(plainFiles.map(([relpath]) => relpath)).toEqual(["note.md"]);
+
+      const idle = await connector.sync(first.cursor);
+      expect(idle.events).toEqual([]);
+
+      const packed = packedCursor(first.cursor, plainFiles);
+      expect(JSON.parse(packed)).toEqual({
+        ...header,
+        pack: expect.any(String),
+      });
+      const fromPack = await connector.sync(packed);
+      expect(fromPack.events).toEqual([]);
+      expect(fromPack.has_more).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an encoder-packed snapshot tombstones a deletion without repeating files", async () => {
+    const root = await makeTempDir();
+    try {
+      const names = Array.from(
+        { length: 120 },
+        (_, index) => `n-${String(index).padStart(3, "0")}.md`,
+      );
+      await Promise.all(
+        names.map((name) => writeFile(path.join(root, name), "n\n")),
+      );
+      const connector = createMarkdownFolderConnector({ path: root });
+      const first = await connector.backfill(null);
+      if (first.cursor === null) throw new Error("expected a snapshot cursor");
+      const snapshot = JSON.parse(first.cursor) as {
+        pack?: string;
+        files?: unknown;
+      };
+      expect(snapshot.pack).toEqual(expect.any(String));
+      expect(snapshot.files).toBeUndefined();
+      expect(first.events).toHaveLength(120);
+
+      const idle = await connector.sync(first.cursor);
+      expect(idle.events).toEqual([]);
+      expect(JSON.parse(idle.cursor ?? "{}")).toHaveProperty("pack");
+
+      await unlink(path.join(root, names[0]!));
+      const removed = await connector.sync(idle.cursor);
+      expect(
+        removed.events.map((event) => [event.source_record_id, event.deleted]),
+      ).toEqual([[names[0], true]]);
+      const again = await connector.sync(removed.cursor);
+      expect(again.events).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a well-formed stale packed hash still diffs instead of failing parse", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "note.md"), "note\n");
+      const connector = createMarkdownFolderConnector({ path: root });
+      const first = await connector.backfill(null);
+      if (first.cursor === null) throw new Error("expected a snapshot cursor");
+      const stale = packedCursor(first.cursor, [
+        ["note.md", { sha256: "ab".repeat(32), size: identityOf("note\n").size }],
+      ]);
+      const batch = await connector.sync(stale);
+      expect(batch.events.map((event) => event.source_record_id)).toEqual([
+        "note.md",
+      ]);
+      expect(batch.events[0]?.deleted).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a tiny gzip bomb of valid identity JSON fails closed before materializing the expansion", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "note.md"), "note\n");
+      const connector = createMarkdownFolderConnector({ path: root });
+      const first = await connector.backfill(null);
+      if (first.cursor === null) throw new Error("expected a snapshot cursor");
+
+      const oversizeJson = `[["${"x".repeat(MAX_PACK_DECODED_BYTES)}",{"sha256":"${"ab".repeat(32)}","size":0}]]`;
+      expect(Buffer.byteLength(oversizeJson)).toBeGreaterThan(MAX_PACK_DECODED_BYTES);
+      const compressed = gzipSync(Buffer.from(oversizeJson), { level: 9 });
+      expect(compressed.byteLength * 100).toBeLessThan(Buffer.byteLength(oversizeJson));
+
+      await expect(
+        connector.sync(cursorWithPack(first.cursor, compressed.toString("base64"))),
+      ).rejects.toThrow("malformed cursor pack");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("malformed packs and hostile identity lists fail closed", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "note.md"), "note\n");
+      const connector = createMarkdownFolderConnector({ path: root });
+      const first = await connector.backfill(null);
+      if (first.cursor === null) throw new Error("expected a snapshot cursor");
+      const note = identityOf("note\n");
+      const valid = [["note.md", note]] as const;
+
+      await expect(connector.sync(cursorWithPack(first.cursor, "not-gzip"))).rejects.toThrow(
+        "malformed cursor pack",
+      );
+      await expect(
+        connector.sync(
+          cursorWithPack(
+            first.cursor,
+            gzipSync(Buffer.from("not-json")).toString("base64"),
+          ),
+        ),
+      ).rejects.toThrow("malformed cursor pack");
+      await expect(
+        connector.sync(
+          cursorWithPack(
+            first.cursor,
+            gzipSync(Buffer.from(JSON.stringify(valid))).subarray(0, 8).toString("base64"),
+          ),
+        ),
+      ).rejects.toThrow("malformed cursor pack");
+      await expect(
+        connector.sync(
+          packedCursor(first.cursor, { files: valid }),
+        ),
+      ).rejects.toThrow("invalid cursor file identity");
+
+      const tooMany = Array.from({ length: MAX_FILES + 1 }, () => valid[0]);
+      await expect(connector.sync(packedCursor(first.cursor, tooMany))).rejects.toThrow(
+        "invalid cursor file identity",
+      );
+      await expect(
+        connector.sync(packedCursor(first.cursor, [valid[0], valid[0]])),
+      ).rejects.toThrow("invalid cursor file identity");
+      await expect(
+        connector.sync(packedCursor(first.cursor, [["", note]])),
+      ).rejects.toThrow("invalid cursor file identity");
+      await expect(
+        connector.sync(packedCursor(first.cursor, [["note.md", { sha256: "zz", size: 1 }]])),
+      ).rejects.toThrow("invalid cursor file identity");
+      await expect(
+        connector.sync(
+          packedCursor(first.cursor, [["note.md", { sha256: note.sha256, size: -1 }]]),
+        ),
+      ).rejects.toThrow("invalid cursor file identity");
+      await expect(
+        connector.sync(
+          packedCursor(first.cursor, [
+            ["note.md", { sha256: note.sha256, size: MAX_FILE_BYTES + 1 }],
+          ]),
+        ),
+      ).rejects.toThrow("invalid cursor file identity");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

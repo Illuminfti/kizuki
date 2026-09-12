@@ -1,13 +1,22 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { registerConnection, runToCompletion, setSourceGrant, type SyncBatch } from "@kizuki/core";
+import {
+  MAX_CURSOR_BYTES,
+  MAX_SYNC_BATCH_BYTES,
+  getCheckpoint,
+  registerConnection,
+  runToCompletion,
+  setSourceGrant,
+  type SyncBatch,
+} from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import {
   MARKDOWN_FOLDER_CONNECTOR_ID,
   createMarkdownFolderConnector,
 } from "../src";
+import { MAX_FILE_BYTES } from "../src/markdown-folder";
 
 const roots: string[] = [];
 
@@ -43,6 +52,22 @@ function requireCursor(cursor: string | null): string {
   return cursor;
 }
 
+function grantMarkdown(db: ReturnType<typeof openLedger>, source: string, operation: string): void {
+  registerConnection(db, MARKDOWN_FOLDER_CONNECTOR_ID, source);
+  setSourceGrant(db, {
+    source_key: source,
+    expected_revision: 0,
+    operation_id: operation,
+    policy: {
+      purposes: ["capture", "recall", "derive"],
+      allowed_fields: ["text", "subjects", "attachments", "metadata"],
+      retention: "persistent_owned_until_revoked",
+      egress: "local_only",
+      sensitivity_floor: "private",
+    },
+  });
+}
+
 test("Core completes changing deletion pages before reporting malformed Markdown", async () => {
   const selected = await syntheticDir("kizuki-markdown-changing-pages-");
   const db = openLedger(":memory:"), source = "01JJ0000000000000000000001";
@@ -50,26 +75,30 @@ test("Core completes changing deletion pages before reporting malformed Markdown
     for (const name of ["a", "b", "m", "z"]) {
       await writeFile(path.join(selected, `${name}.md`), `Synthetic ${name}\n`);
     }
-    registerConnection(db, MARKDOWN_FOLDER_CONNECTOR_ID, source);
-    setSourceGrant(db, { source_key: source, expected_revision: 0, operation_id: "synthetic-markdown-changing-pages",
-      policy: { purposes: ["capture", "recall", "derive"], allowed_fields: ["text", "subjects", "attachments", "metadata"],
-        retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" } });
+    grantMarkdown(db, source, "synthetic-markdown-changing-pages");
     const connector = createMarkdownFolderConnector({ path: selected, page_size: 1 });
     const initial = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill");
     expect(initial.stored).toBe(4); expect(initial.errors).toEqual([]);
+    // Separate backfill/sync cursors: the snapshot lives on backfill_cursor.
+    // Core's first sync is null; tombstones require this populated snapshot.
+    expect(getCheckpoint(db, MARKDOWN_FOLDER_CONNECTOR_ID, source)).toMatchObject({
+      backfill_cursor: initial.cursor,
+      sync_cursor: null,
+      backfill_complete: true,
+    });
     await unlink(path.join(selected, "b.md")); await unlink(path.join(selected, "z.md"));
     await writeFile(path.join(selected, "m.md"), Buffer.from([255, 254, 253]));
-    const originalSync = connector.sync.bind(connector), batches: SyncBatch[] = [];
-    connector.sync = async cursor => {
+    const originalBackfill = connector.backfill.bind(connector), batches: SyncBatch[] = [];
+    connector.backfill = async cursor => {
       if (batches.length === 1) {
         expect(batches[0]!.events.map(event => event.source_record_id)).toEqual(["b.md"]);
         expect(JSON.parse(cursor!)).toMatchObject({ phase: "tombstones", after: "b.md", exhausted: false });
         await writeFile(path.join(selected, "z.md"), "Synthetic z\n");
         await unlink(path.join(selected, "a.md"));
       }
-      const batch = await originalSync(cursor); batches.push(batch); return batch;
+      const batch = await originalBackfill(cursor); batches.push(batch); return batch;
     };
-    const changed = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "sync");
+    const changed = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill");
     expect(changed.stored).toBe(2);
     expect(changed.errors).toEqual(["partial_import: 1 record errors (not_utf8=1)"]);
     expect(batches.map(batch => batch.events.map(event => [event.source_record_id, event.deleted]))).toEqual([
@@ -83,15 +112,15 @@ test("Core completes changing deletion pages before reporting malformed Markdown
       { source_record_id: "b.md", deleted: 1 }, { source_record_id: "a.md", deleted: 1 },
     ]);
     const beforeRepeat = events();
-    connector.sync = originalSync;
-    const repeat = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "sync");
+    connector.backfill = originalBackfill;
+    const repeat = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill");
     expect(repeat).toMatchObject({ stored: 0, duplicates: 0, cursor: changed.cursor, errors: changed.errors });
     expect(events()).toEqual(beforeRepeat);
     await writeFile(path.join(selected, "m.md"), "Synthetic repaired m\n");
-    const repaired = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "sync");
+    const repaired = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill");
     expect(repaired).toMatchObject({ stored: 1, duplicates: 0, errors: [] });
     expect(events().at(-1)).toEqual({ source_record_id: "m.md", deleted: 0 });
-    expect(await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "sync"))
+    expect(await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill"))
       .toMatchObject({ stored: 0, duplicates: 0, errors: [] });
     expect(events()).toHaveLength(7);
   } finally { db.close(); }
@@ -249,4 +278,178 @@ test("ordinary files with identical text keep distinct stable identities", async
     requireCursor(first.cursor),
   );
   expect(idle.events).toEqual([]);
+  expect(idle.has_more).toBe(false);
 });
+
+test("nested Unicode frontmatter notes round-trip through Core backfill", async () => {
+  const selected = await syntheticDir("kizuki-markdown-unicode-");
+  const db = openLedger(":memory:"), source = "01JJ0000000000000000000002";
+  const nested = path.join(selected, "journal", "café");
+  const body = [
+    "---",
+    "title: synthetic-frontmatter",
+    "tags: [ada, café]",
+    "---",
+    "",
+    "SYNTHETIC_UNICODE_BODY 日本語 🧬\n",
+  ].join("\n");
+  try {
+    await mkdir(nested, { recursive: true });
+    await writeFile(path.join(nested, "note.md"), body);
+    await writeFile(path.join(selected, "root.markdown"), "SYNTHETIC_MARKDOWN_EXT\n");
+    grantMarkdown(db, source, "synthetic-markdown-unicode");
+    const connector = createMarkdownFolderConnector({ path: selected });
+    const first = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill");
+    expect(first).toMatchObject({ stored: 2, duplicates: 0, errors: [] });
+    expect(getCheckpoint(db, MARKDOWN_FOLDER_CONNECTOR_ID, source)?.backfill_complete).toBe(true);
+    const events = db.query<{ source_record_id: string; text: string }, []>(
+      "SELECT source_record_id, text FROM events ORDER BY source_record_id",
+    ).all();
+    expect(events.map((event) => event.source_record_id)).toEqual([
+      "journal/café/note.md",
+      "root.markdown",
+    ]);
+    expect(events[0]?.text).toBe(body);
+    expect(events[0]?.text).toContain("title: synthetic-frontmatter");
+    expect(await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill"))
+      .toMatchObject({ stored: 0, duplicates: 0, errors: [] });
+    await writeFile(path.join(nested, "note.md"), `${body}edited\n`);
+    expect(await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill"))
+      .toMatchObject({ stored: 1, duplicates: 0, errors: [] });
+    await unlink(path.join(nested, "note.md"));
+    const removed = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill");
+    expect(removed).toMatchObject({ stored: 1, duplicates: 0, errors: [] });
+    expect(db.query<{ deleted: number }, []>(
+      "SELECT deleted FROM events WHERE source_record_id = 'journal/café/note.md' ORDER BY event_id DESC LIMIT 1",
+    ).get()).toEqual({ deleted: 1 });
+  } finally { db.close(); }
+});
+
+test("a bounded oversize note is isolated while its sibling still imports", async () => {
+  const selected = await syntheticDir("kizuki-markdown-oversize-");
+  const db = openLedger(":memory:"), source = "01JJ0000000000000000000003";
+  try {
+    await writeFile(path.join(selected, "kept.md"), "SYNTHETIC_KEPT_BOUNDED\n");
+    await writeFile(path.join(selected, "huge.md"), Buffer.alloc(MAX_FILE_BYTES + 1, 0x61));
+    grantMarkdown(db, source, "synthetic-markdown-oversize");
+    const connector = createMarkdownFolderConnector({ path: selected });
+    const first = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill");
+    expect(first.stored).toBe(1);
+    expect(first.errors).toEqual(["partial_import: 1 record errors (too_large=1)"]);
+    expect(db.query<{ source_record_id: string }, []>(
+      "SELECT source_record_id FROM events",
+    ).all()).toEqual([{ source_record_id: "kept.md" }]);
+    await writeFile(path.join(selected, "huge.md"), "SYNTHETIC_REPAIRED_HUGE\n");
+    const repaired = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill");
+    expect(repaired).toMatchObject({ stored: 1, duplicates: 0, errors: [] });
+  } finally { db.close(); }
+});
+
+test("file pages stay inside the host sync batch byte bound", async () => {
+  const selected = await syntheticDir("kizuki-markdown-batch-bytes-");
+  const db = openLedger(":memory:"), source = "01JJ0000000000000000000005";
+  const payload = "x".repeat(850_000);
+  try {
+    for (const name of ["a.md", "b.md", "c.md", "d.md", "e.md"]) {
+      await writeFile(path.join(selected, name), payload);
+    }
+    grantMarkdown(db, source, "synthetic-markdown-batch-bytes");
+    const connector = createMarkdownFolderConnector({ path: selected });
+    const first = await connector.backfill(null);
+    expect(first.events.length).toBeGreaterThan(0);
+    expect(first.events.length).toBeLessThan(5);
+    expect(first.has_more).toBe(true);
+    expect(new TextEncoder().encode(JSON.stringify(first.events)).byteLength)
+      .toBeLessThanOrEqual(MAX_SYNC_BATCH_BYTES);
+    const drained = await runToCompletion(
+      db,
+      connector,
+      MARKDOWN_FOLDER_CONNECTOR_ID,
+      source,
+      "backfill",
+    );
+    expect(drained.stored).toBe(5);
+    expect(drained.errors).toEqual([]);
+  } finally { db.close(); }
+});
+
+test("a many-file folder keeps a resume cursor inside Core's bound", async () => {
+  const selected = await syntheticDir("kizuki-markdown-many-");
+  const db = openLedger(":memory:"), source = "01JJ0000000000000000000004";
+  try {
+    await Promise.all(
+      Array.from({ length: 120 }, (_, index) =>
+        writeFile(path.join(selected, `n-${String(index).padStart(3, "0")}.md`), "n\n"),
+      ),
+    );
+    grantMarkdown(db, source, "synthetic-markdown-many");
+    const connector = createMarkdownFolderConnector({ path: selected });
+    const first = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill");
+    expect(first.stored).toBe(120);
+    expect(first.errors).toEqual([]);
+    expect(utf8CursorBytes(first.cursor)).toBeLessThanOrEqual(MAX_CURSOR_BYTES);
+    expect(await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill"))
+      .toMatchObject({ stored: 0, duplicates: 0, errors: [] });
+  } finally { db.close(); }
+});
+
+test("a snapshot that cannot fit the resume cursor fails closed", async () => {
+  const selected = await syntheticDir("kizuki-markdown-cursor-limit-");
+  await Promise.all(
+    Array.from({ length: 200 }, () => {
+      const name = `${crypto.randomUUID()}.md`;
+      return writeFile(path.join(selected, name), `${name}\n`);
+    }),
+  );
+  const connector = createMarkdownFolderConnector({ path: selected });
+  const batch = await connector.backfill(null);
+  expect(batch.events).toEqual([]);
+  expect(batch).toMatchObject({
+    status: "unavailable",
+    cursor: null,
+  });
+  expect(batch.detail).toContain("cursor_limit");
+});
+
+test("tombstones require a snapshot cursor, not a null sync", async () => {
+  const selected = await syntheticDir("kizuki-markdown-null-sync-");
+  await writeFile(path.join(selected, "kept.md"), "SYNTHETIC_KEPT\n");
+  await writeFile(path.join(selected, "removed.md"), "SYNTHETIC_REMOVED\n");
+  const connector = createMarkdownFolderConnector({ path: selected });
+  const first = await connector.backfill(null);
+  await unlink(path.join(selected, "removed.md"));
+  const orphan = await connector.sync(null);
+  expect(orphan.events.some((event) => event.deleted)).toBe(false);
+  expect(idsOf(orphan.events)).toEqual(["kept.md"]);
+  const resumed = await connector.sync(requireCursor(first.cursor));
+  expect(resumed.events.map((event) => [event.source_record_id, event.deleted])).toEqual([
+    ["removed.md", true],
+  ]);
+});
+
+test("a symlink inside the folder is skipped without capturing its target", async () => {
+  const parent = await syntheticDir("kizuki-markdown-symlink-");
+  const selected = path.join(parent, "notes");
+  const outside = path.join(parent, "outside.md");
+  await mkdir(selected);
+  await writeFile(outside, "SYNTHETIC_OUTSIDE_TARGET\n");
+  await writeFile(path.join(selected, "own.md"), "SYNTHETIC_OWN\n");
+  await symlink(outside, path.join(selected, "link.md"));
+  const connector = createMarkdownFolderConnector({ path: selected });
+  const first = await connector.backfill(null);
+  expect(idsOf(first.events)).toEqual(["own.md"]);
+  expect(first.events[0]?.text).toBe("SYNTHETIC_OWN\n");
+  expect(first.has_more).toBe(true);
+  const terminal = await connector.backfill(requireCursor(first.cursor));
+  expect(terminal).toEqual({
+    events: [],
+    cursor: first.cursor,
+    status: "unavailable",
+    detail: "partial_import: 1 record errors (symlink=1)",
+  });
+});
+
+function utf8CursorBytes(cursor: string | null): number {
+  if (cursor === null) throw new Error("expected a resume cursor");
+  return new TextEncoder().encode(cursor).byteLength;
+}
