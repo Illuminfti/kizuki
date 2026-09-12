@@ -32,6 +32,50 @@ interface Migration {
   apply?: (db: Database) => void;
 }
 
+const PROMOTIONS_V2_COLUMNS = `
+  receipt_id TEXT PRIMARY KEY,
+  proposal_id TEXT NOT NULL UNIQUE,
+  provenance TEXT NOT NULL,
+  sensitivity TEXT NOT NULL,
+  page_path TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'claim',
+  before_hash TEXT,
+  after_hash TEXT NOT NULL,
+  at TEXT NOT NULL
+`;
+
+/**
+ * v1 leftovers have `page_hash`. A leftover v2-shaped table (historical
+ * staging-first open) already has `after_hash` and must not be rewritten
+ * through `CREATE TABLE IF NOT EXISTS` plus `SELECT page_hash`.
+ */
+function applyPromotionsV2(db: Database): void {
+  if (!tableExists(db, "promotions")) {
+    db.exec(`CREATE TABLE promotions (${PROMOTIONS_V2_COLUMNS}) STRICT;`);
+    return;
+  }
+  const columns = tableColumns(db, "promotions");
+  if (columns.includes("after_hash")) return;
+  if (!columns.includes("page_hash")) {
+    throw new LedgerStoreError(
+      "corrupt",
+      "promotions table is missing page_hash and after_hash",
+    );
+  }
+  db.exec(`
+    CREATE TABLE promotions_v2 (${PROMOTIONS_V2_COLUMNS}) STRICT;
+    INSERT INTO promotions_v2 (
+      receipt_id, proposal_id, provenance, sensitivity, page_path,
+      kind, before_hash, after_hash, at
+    )
+    SELECT receipt_id, proposal_id, provenance, sensitivity, page_path,
+           'claim', NULL, page_hash, at
+      FROM promotions;
+    DROP TABLE promotions;
+    ALTER TABLE promotions_v2 RENAME TO promotions;
+  `);
+}
+
 const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -111,40 +155,8 @@ const MIGRATIONS: readonly Migration[] = [
         held_at TEXT NOT NULL,
         PRIMARY KEY (page_path, proposal_id)
       ) STRICT;
-
-      CREATE TABLE IF NOT EXISTS promotions (
-        receipt_id TEXT PRIMARY KEY,
-        proposal_id TEXT NOT NULL UNIQUE,
-        provenance TEXT NOT NULL,
-        sensitivity TEXT NOT NULL,
-        page_path TEXT NOT NULL,
-        page_hash TEXT NOT NULL,
-        at TEXT NOT NULL
-      ) STRICT;
-
-      CREATE TABLE promotions_v2 (
-        receipt_id TEXT PRIMARY KEY,
-        proposal_id TEXT NOT NULL UNIQUE,
-        provenance TEXT NOT NULL,
-        sensitivity TEXT NOT NULL,
-        page_path TEXT NOT NULL,
-        kind TEXT NOT NULL DEFAULT 'claim',
-        before_hash TEXT,
-        after_hash TEXT NOT NULL,
-        at TEXT NOT NULL
-      ) STRICT;
-
-      INSERT INTO promotions_v2 (
-        receipt_id, proposal_id, provenance, sensitivity, page_path,
-        kind, before_hash, after_hash, at
-      )
-      SELECT receipt_id, proposal_id, provenance, sensitivity, page_path,
-             'claim', NULL, page_hash, at
-        FROM promotions;
-
-      DROP TABLE promotions;
-      ALTER TABLE promotions_v2 RENAME TO promotions;
     `,
+    apply: applyPromotionsV2,
   },
   {
     version: 3,
