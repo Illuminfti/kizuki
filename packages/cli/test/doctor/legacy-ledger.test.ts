@@ -27,6 +27,13 @@ test("doctor JSON accepts a genuine migrated v1 event without hiding unrelated h
   expect(refused.exitCode).toBe(1); expect(refused.stdout).toBe("");
   expect(refused.stderr).toContain("migration_required");
   // Migration is an explicit initialization effect, never doctor startup.
+  const beforeRejectedLedger = readFileSync(ledgerPath);
+  writeFileSync(join(setup.vault, ".kizuki", "ledger-mark"), "2\n", { mode: 0o600 });
+  const incomplete = runCli(setup.env, "init", setup.vault, "--no-service");
+  expect(incomplete.exitCode).toBe(1); expect(incomplete.stderr).toContain("vault ledger not ready");
+  expect(readFileSync(ledgerPath)).toEqual(beforeRejectedLedger);
+  expect(readFileSync(join(setup.vault, ".kizuki", "ledger-mark"), "utf8")).toBe("2\n");
+  writeFileSync(join(setup.vault, ".kizuki", "ledger-mark"), "1\n", { mode: 0o600 });
   expect(runCli(setup.env, "init", setup.vault, "--no-service").exitCode).toBe(0);
 
 

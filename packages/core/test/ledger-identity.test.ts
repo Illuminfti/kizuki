@@ -33,7 +33,7 @@ function beforeIdentityQuery(action: () => void): () => void {
   return () => { Database.prototype.query = original; };
 }
 
-test("closed ledger identity uses two bounded queries and leaves the Darwin ledger unchanged", () => {
+test("closed ledger identity reads bounded schema and acceptance counts without changing the Darwin ledger", () => {
   const f = fixture(), before = closedFootprint(f), original = Database.prototype.query;
   const queries: string[] = [];
   Database.prototype.query = function(this: Database, ...args: Parameters<typeof original>) {
@@ -43,8 +43,9 @@ test("closed ledger identity uses two bounded queries and leaves the Darwin ledg
     const identity = inspectLedgerIdentity(f.root);
     expect(Number.isInteger(identity.schemaVersion)).toBe(true);
     expect(identity.schemaVersion).toBeGreaterThan(0);
-    expect(Object.keys(identity)).toEqual(["schemaVersion"]);
-    expect(queries).toHaveLength(2);
+    expect(identity.accepted).toBe(0);
+    expect(Object.keys(identity)).toEqual(["schemaVersion", "accepted"]);
+    expect(queries).toHaveLength(3);
     expect(queries[1]).toContain("LIMIT 2");
     if (process.platform === "darwin") expect(closedFootprint(f)).toEqual(before);
   } finally { Database.prototype.query = original; f.close(); }
@@ -60,7 +61,7 @@ test("identity reads committed WAL frames while another writer remains open", ()
       constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI | constants.SQLITE_OPEN_NOFOLLOW);
     try { expect((mainOnly.query("SELECT version FROM schema_version").get() as { version: number }).version).not.toBe(1001); }
     finally { mainOnly.close(true); }
-    expect(inspectLedgerIdentity(f.root)).toEqual({ schemaVersion: 1001 });
+    expect(inspectLedgerIdentity(f.root)).toEqual({ schemaVersion: 1001, accepted: 0 });
     expect(writer.query("SELECT version FROM schema_version").get()).toEqual({ version: 1001 });
   } finally { writer.close(true); f.close(); }
 });
@@ -79,7 +80,7 @@ test("identity keeps one readonly snapshot when another connection changes the s
       }
       return original.apply(this, args);
     } as typeof original;
-    expect(inspectLedgerIdentity(f.root)).toEqual({ schemaVersion: version });
+    expect(inspectLedgerIdentity(f.root)).toEqual({ schemaVersion: version, accepted: 0 });
     expect(changed).toBe(true);
     expect(writer.query("SELECT version FROM schema_version").get()).toEqual({ version: 1001 });
     expect(writer.query("SELECT name FROM sqlite_master WHERE name = 'events'").all()).toEqual([]);

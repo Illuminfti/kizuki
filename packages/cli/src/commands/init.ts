@@ -54,7 +54,7 @@ export function createInitCommand(supervisor: typeof serveSupervisorHost = serve
     }
 
     const vaultPath = resolve(rawPath);
-    if (!parsed.flags.has("--dry-run")) assertSealedLedgerReady(vaultPath);
+    if (!parsed.flags.has("--dry-run")) assertSealedLedgerReady(vaultPath, { allowMigration: true });
     let result;
     try {
       result = initVault(vaultPath, {
