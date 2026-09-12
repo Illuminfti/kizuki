@@ -317,6 +317,8 @@ export class GmailConnector implements Connector {
             else if (!plan || plan.input !== digest(input) || plan.items.length === 0 && encodeCursor(plan.next) === input) {
                 plan = await this.plan(input, cursor ?? await this.initial(budget), budget);
             }
+            if (!plan)
+                throw failure();
             const previous = plan.fence;
             if (previous !== null && offset !== previous.offset && offset !== previous.offset + previous.fingerprints.length ||
                 previous === null && offset !== 0)
@@ -367,7 +369,7 @@ export class GmailConnector implements Connector {
             const next = consumed < plan.items.length ? { ...plan.base, unresolved: plan.base.unresolved || cursor?.unresolved === true || missing, plan: planIdentity(plan), offset: consumed } : { ...plan.next, unresolved: plan.next.unresolved || cursor?.unresolved === true || missing };
             const detail = ["bounded_capture", ...(next.gap ? ["history_gap_deletions_unreconciled"] : []), ...(next.capped ? ["backfill_cap_partial"] : []), ...(next.unresolved ? ["message_unavailable_no_deletion_inferred"] : [])].join("; ");
             this.last = next.gap || next.capped || next.unresolved ? "degraded" : "ok";
-            return { events, cursor: encodeCursor(next), detail };
+            return { events, cursor: encodeCursor(next), detail, has_more: consumed < plan.items.length || next.page !== null };
         }
         catch (error) {
             this.last = error instanceof KizukiError && error.code === "rate_limited" ? "rate_limited" : "degraded";

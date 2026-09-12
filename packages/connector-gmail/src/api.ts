@@ -3,6 +3,8 @@ export type GmailFetch = (request: Request) => Promise<Response>;
 export const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me/";
 export const USERINFO = "https://openidconnect.googleapis.com/v1/userinfo";
 export const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+/** One capture method. Empty continuation is host-owned via SyncBatch.has_more. */
+export const MAX_REQUESTS = 25;
 export class HttpFailure extends Error {
     constructor(readonly status: number) { super("Gmail HTTP request refused"); }
 }
@@ -11,10 +13,17 @@ export class Budget {
     readonly deadline: number;
     constructor(durationMs = 45000) { this.deadline = Date.now() + durationMs; }
     private calls = 0;
-    remaining(): number { const left = this.deadline - Date.now(); if (left <= 0)
-        throw failure("timeout"); return left; }
-    requestMs(): number { if (++this.calls > 25)
-        throw failure("unavailable"); return Math.min(5000, this.remaining()); }
+    remaining(): number {
+        const left = this.deadline - Date.now();
+        if (left <= 0)
+            throw failure("timeout");
+        return left;
+    }
+    requestMs(): number {
+        if (++this.calls > MAX_REQUESTS)
+            throw failure("unavailable");
+        return Math.min(5000, this.remaining());
+    }
 }
 async function read(response: Response): Promise<unknown> {
     const length = response.headers.get("content-length");

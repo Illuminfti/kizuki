@@ -3,6 +3,7 @@ import { KizukiError, validateEventInput, type OAuthTransport } from "@kizuki/co
 import { createGmailConnector, GMAIL_SCOPES } from "../src/index";
 import { GmailFixture } from "../src/testing";
 import { FIELDS, parseState, encodeState } from "../src/state";
+import { MAX_REQUESTS } from "../src/api";
 const config = { client: { id: "synthetic-desktop-client" }, secret_ref: "file:synthetic", fields: FIELDS };
 test("untrusted typed transport and resolver errors are redacted", async () => {
     const fixture = new GmailFixture(1);
@@ -45,7 +46,7 @@ test("backfill stops at 1000 records and reports partial instead of false comple
         stored += result.events.length;
         cursor = result.cursor;
         detail = result.detail ?? "";
-        if (result.events.length === 0)
+        if (result.has_more !== true)
             break;
     }
     expect(stored).toBe(1000);
@@ -60,9 +61,11 @@ test("multiple history pages do not advance anchor before their last page", asyn
         fixture.change(`m${i}`, "messagesDeleted");
     const first = await connector.sync(base.cursor);
     expect(first.events).toHaveLength(20);
+    expect(first.has_more).toBe(true);
     expect(JSON.parse(first.cursor!).anchor).toBe("100");
     const second = await connector.sync(first.cursor);
     expect(second.events).toHaveLength(5);
+    expect(second.has_more).toBe(false);
     expect(JSON.parse(second.cursor!).anchor).toBe("125");
     expect(new Set([...first.events, ...second.events].map(e => e.source_record_id)).size).toBe(25);
 });
@@ -93,6 +96,69 @@ test("rotated OAuth tokens persist before use and cannot be silently memory-only
     await connector.connect(async () => new TextDecoder().decode(fixture.state));
     expect(posts).toBe(1);
     expect(parseState(fixture.state).oauth.tokens.refresh_token).toBe("synthetic-rotated-refresh");
+});
+test("404-only list page reports has_more so the host can continue without inferring deletion", async () => {
+    const fixture = new GmailFixture(25);
+    for (let n = 1; n <= 20; n++)
+        fixture.missing.add(`m${n}`);
+    const connector = await fixture.connected();
+    const first = await connector.backfill(null);
+    expect(first.status).not.toBe("unavailable");
+    expect(first.has_more).toBe(true);
+    expect(first.events).toEqual([]);
+    expect(first.detail).toContain("message_unavailable_no_deletion_inferred");
+    expect(JSON.parse(first.cursor!).unresolved).toBe(true);
+    const second = await connector.backfill(first.cursor);
+    expect(second.has_more).toBe(false);
+    expect(second.events.every(event => !event.deleted)).toBe(true);
+    expect(second.events.map(event => event.metadata.message_id)).toEqual(["m21", "m22", "m23", "m24", "m25"]);
+});
+test("404-only history page reports has_more so the host can continue later deletions without inferring 404 deletion", async () => {
+    const fixture = new GmailFixture(25), connector = await fixture.connected();
+    let cursor = (await connector.backfill(null)).cursor;
+    cursor = (await connector.backfill(cursor)).cursor;
+    for (let n = 1; n <= 20; n++) {
+        fixture.change(`m${n}`, "labelsAdded");
+        fixture.missing.add(`m${n}`);
+    }
+    for (let n = 21; n <= 25; n++)
+        fixture.change(`m${n}`, "messagesDeleted");
+    const first = await connector.sync(cursor);
+    expect(first.status).not.toBe("unavailable");
+    expect(first.has_more).toBe(true);
+    expect(first.events).toEqual([]);
+    expect(first.detail).toContain("message_unavailable_no_deletion_inferred");
+    const second = await connector.sync(first.cursor);
+    expect(second.has_more).toBe(false);
+    expect(second.events.every(event => event.deleted)).toBe(true);
+    expect(second.events.map(event => event.metadata.message_id)).toEqual(["m21", "m22", "m23", "m24", "m25"]);
+});
+test("empty intermediate list pages return has_more within the request cap", async () => {
+    const fixture = new GmailFixture(1);
+    let pages = 0;
+    const connector = createGmailConnector({ client: { id: "synthetic-desktop-client" }, secret_ref: "file:synthetic", fields: FIELDS }, {
+        persist: fixture.persist, now: fixture.now, fetch: async (request) => {
+            const url = new URL(request.url);
+            if (url.hostname === "openidconnect.googleapis.com" || url.pathname.includes("/profile"))
+                return fixture.fetch(request);
+            pages++;
+            return Response.json({ messages: [], nextPageToken: `p${pages}` });
+        },
+    });
+    await connector.connect(async () => new TextDecoder().decode(fixture.state));
+    const result = await connector.backfill(null);
+    expect(pages).toBe(1);
+    expect(pages).toBeLessThan(MAX_REQUESTS);
+    expect(result.status).not.toBe("unavailable");
+    expect(result.has_more).toBe(true);
+    expect(result.cursor).not.toBeNull();
+    expect(result.events).toEqual([]);
+    expect(JSON.parse(result.cursor!).page).toBe("p1");
+    expect(parseState(fixture.state).pending).not.toBeNull();
+    const continued = await connector.backfill(result.cursor);
+    expect(pages).toBe(2);
+    expect(continued.has_more).toBe(true);
+    expect(continued.events).toEqual([]);
 });
 test("missing-message coverage survives subsequent successful empty sync", async () => {
     const fixture = new GmailFixture(1), connector = await fixture.connected();

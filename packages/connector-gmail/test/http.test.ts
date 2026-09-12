@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Budget, GMAIL_API, MAX_RESPONSE_BYTES, getJson } from "../src/api";
+import { Budget, GMAIL_API, MAX_REQUESTS, MAX_RESPONSE_BYTES, getJson } from "../src/api";
 import { GmailFixture } from "../src/testing";
 test("fixed endpoint, redirect and JSON byte bounds are enforced before trusted output", async () => {
     let calls = 0;
@@ -13,14 +13,15 @@ test("fixed endpoint, redirect and JSON byte bounds are enforced before trusted 
     })).rejects.toMatchObject({ status: 302 });
     await expect(getJson(new URL(`${GMAIL_API}profile`), "synthetic", new Budget(), async () => new Response('"' + "x".repeat(MAX_RESPONSE_BYTES) + '"'))).rejects.toMatchObject({ code: "source_schema" });
 });
-test("request-count bound never opens the twenty-sixth request", async () => {
+test("request-count bound never opens a request past the capture budget", async () => {
+    expect(MAX_REQUESTS).toBe(25);
     const budget = new Budget();
     let calls = 0;
     const transport = async () => { calls++; return Response.json({}); };
-    for (let i = 0; i < 25; i++)
+    for (let i = 0; i < MAX_REQUESTS; i++)
         await getJson(new URL(`${GMAIL_API}profile`), "synthetic", budget, transport);
     await expect(getJson(new URL(`${GMAIL_API}profile`), "synthetic", budget, transport)).rejects.toMatchObject({ code: "unavailable" });
-    expect(calls).toBe(25);
+    expect(calls).toBe(MAX_REQUESTS);
 });
 test("oversized history page refuses without persisting a partial change list", async () => {
     const fixture = new GmailFixture(1), connector = await fixture.connected();
