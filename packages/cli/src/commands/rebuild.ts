@@ -5,15 +5,26 @@ import { jsonEnvelope } from "../output";
 import { refreshDerived } from "../derived";
 import { pruneOldOwnedRetrieval } from "../owned-retrieval-inventory";
 import { openConfiguredRetrieval } from "../retrieval-runtime";
-import type { Command } from "./index";
+import type { Command, CommandHelpSchema } from "./index";
+
+export const REBUILD_SCHEMA = {
+  options: ["--layer", "--port"],
+  flags: ["--json", "--prune-old"],
+  defaults: { "--layer": "all" },
+  bounds: { "--layer": "all|graph" },
+} as const satisfies CommandHelpSchema;
 
 export const rebuildCommand: Command = {
   name: "rebuild",
   usage: "rebuild [--layer all|graph] [--port ID] [--prune-old] [--json]",
   summary: "rebuild configured retrieval and the lexical floor, or prune inactive retrieval stores",
+  schema: REBUILD_SCHEMA,
   async run(io, args) {
-    const parsed = parseArguments(args, { options: ["--layer", "--port"], flags: ["--json", "--prune-old"] });
-    const layer = parsed.options.get("--layer") ?? "all";
+    const parsed = parseArguments(args, {
+      options: [...REBUILD_SCHEMA.options],
+      flags: [...REBUILD_SCHEMA.flags],
+    });
+    const layer = parsed.options.get("--layer") ?? REBUILD_SCHEMA.defaults["--layer"];
     const pruneOld = parsed.flags.has("--prune-old");
     const portId = parsed.options.get("--port");
     if (parsed.positionals.length > 0 || (layer !== "all" && layer !== "graph")) {

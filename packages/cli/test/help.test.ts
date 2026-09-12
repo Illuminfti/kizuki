@@ -308,6 +308,9 @@ describe("help", () => {
   test("audit structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["audit", "--help", "--json"], ["help", "audit", "--json"]] as const) {
+  test("rebuild structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["rebuild", "--help", "--json"], ["help", "rebuild", "--json"]] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
@@ -397,6 +400,20 @@ describe("help", () => {
       [["audit", "--list=true"], "flag --list does not take a value"],
       [["audit", "--since"], "missing value for --since"],
       [["audit", "extra"], "invalid arguments"],
+      expect(body.data.name).toBe("rebuild");
+      expect(body.data.options).toEqual(["--layer", "--port"]);
+      expect(body.data.flags).toEqual(["--json", "--prune-old"]);
+      expect(body.data.defaults).toEqual({ "--layer": "all" });
+      expect(body.data.bounds).toEqual({ "--layer": "all|graph" });
+      expect(body.data.irreversible).toBe(false);
+    }
+    expect(runCli(env, "rebuild", "--help").stdout).toContain("--layer  all|graph  default all");
+    expect(runCli(env, "rebuild", "--help").stdout).toContain("--prune-old");
+    for (const [args, diagnostic] of [
+      [["rebuild", "--nope"], "unknown option --nope"],
+      [["rebuild", "--json", "--json"], "repeated flag --json"],
+      [["rebuild", "--prune-old=true"], "flag --prune-old does not take a value"],
+      [["rebuild", "--port"], "missing value for --port"],
     ] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(2);
@@ -408,6 +425,13 @@ describe("help", () => {
       expect(result.stderr).toContain("usage: kizuki context");
       expect(result.stderr).toContain("usage: kizuki audit");
     }
+      expect(result.stderr).toContain("usage: kizuki rebuild");
+    }
+    const extra = runCli(env, "rebuild", "extra");
+    expect(extra.exitCode).toBe(2);
+    expect(extra.stdout).toBe("");
+    expect(extra.stderr).toContain("error: rebuild supports --layer all or graph");
+    expect(extra.stderr).toContain("usage: kizuki rebuild");
   });
 
   test("recover structured help matches its parser", () => {
