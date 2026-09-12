@@ -292,6 +292,22 @@ test('a queued native close and late success leave a newly opened dialog intact'
     expect(f.dialog.textContent).toContain('Connect folder');
 });
 
+test('enrollment completion cannot present after refresh when a newer dialog opens', async () => {
+    const f = fixture();
+    f.evaluate(`state.catalog=[{id:'markdown',title:'Local notes',detail:'Synthetic',available:true,fields:[],required_fields:['text']}]; enrollment(state.catalog[0]); dialog.querySelector('#source-path').value='/tmp/old';`);
+    const work = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+    f.reply('enroll', { operation_id: 'enroll-refresh' }); await tick();
+    f.reply('operation', { id: 'enroll-refresh', kind: 'enroll', state: 'succeeded', result: { source_key: 'source-a' } }); await tick();
+    expect(f.requests[0]!.route).toBe('status');
+    f.evaluate(`enrollment(state.catalog[0]); dialog.querySelector('#source-path').value='/tmp/new';`);
+    f.reply('status', status()); await tick(); f.reply('catalog', { sources: [] });
+    f.reply('sources', { sources: [{ source_key: 'source-a', connector_id: 'kizuki.markdown-folder', display_name: 'markdown-folder', consent: 'required', required_fields: ['text'], stored: 0, errors: 0 }] });
+    await work; await tick();
+    expect(f.dialog.open).toBe(true);
+    expect(f.dialog.querySelector('#source-path')!.value).toBe('/tmp/new');
+    expect(f.dialog.textContent).toContain('Connect folder');
+});
+
 test('a closed enrollment panel is not reopened by its later failure', async () => {
     const f = fixture();
     f.evaluate(`state.catalog=[{id:'markdown',title:'Local notes',detail:'Synthetic',available:true,fields:[],required_fields:['text']}]; enrollment(state.catalog[0]); dialog.querySelector('#source-path').value='/tmp/notes';`);

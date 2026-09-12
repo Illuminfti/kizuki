@@ -201,8 +201,8 @@ async function initialize() {
   state.setupError = null;
   const path = document.getElementById('setup-path')?.value.trim();
   const no_service = document.getElementById('setup-no-service')?.checked === true;
-  await launchOperation('initialize', { ...(path ? { path } : {}), no_service }, 'Creating your workspace', async () => {
-    await refresh();
+  await launchOperation('initialize', { ...(path ? { path } : {}), no_service }, 'Creating your workspace', async (_operation, present) => {
+    await refresh(); if (!present()) return;
     message('Your Kizuki is ready. Choose your first source. Background activity is shown in Settings.');
     navigate('sources', false);
     (main.querySelector('.button-primary') || main).focus({ preventScroll: true });
@@ -291,9 +291,9 @@ async function correction(hit) {
       if (!current() || !preview) return;
       let payload; try { payload = request(); } catch (error) { invalidatePreview(); errorLine.textContent = error.message; return; }
       if (JSON.stringify(payload) !== JSON.stringify(preview.request)) { invalidatePreview(); errorLine.textContent = 'The correction changed. Preview it again before applying.'; return; }
-      await launchOperation('correct', payload, 'Applying your correction', async operation => {
+      await launchOperation('correct', payload, 'Applying your correction', async (operation, present) => {
         await refresh();
-        if (bearer && privateViewValid && state.operation?.id === operation.id) navigate('activity');
+        if (present() && state.operation?.id === operation.id) navigate('activity');
       });
     }, 'primary', { disabled: true });
     form.append(errorLine, el('div', { class: 'form-actions' }, button('Cancel', closeDialog), previewButton), previewPanel, el('div', { class: 'form-actions' }, apply));
@@ -406,8 +406,8 @@ function enrollment(provider) {
     if (provider.id === 'gmail' && !selected.some(x => x.checked)) { errorLine.textContent = 'Choose at least one kind of information to keep.'; selected[0]?.focus(); return; }
     const payload = { provider: provider.id, ...(provider.id !== 'markdown' ? { new_source: true } : {}), ...(path ? { path: path.value.trim() } : {}), ...(calendar ? { calendar_id: calendar.value.trim() } : {}), ...(selected.length ? { fields: selected.filter(x => x.checked).map(x => x.value) } : {}) };
     submit.disabled = true;
-    await launchOperation('enroll', payload, provider.id === 'markdown' ? 'Connecting your folder' : 'Waiting for Google sign-in', async operation => {
-      await refresh();
+    await launchOperation('enroll', payload, provider.id === 'markdown' ? 'Connecting your folder' : 'Waiting for Google sign-in', async (operation, present) => {
+      await refresh(); if (!present()) return;
       const source = state.sources.find(x => x.source_key === operation.result?.source_key);
       if (source) consent(source); else { navigate('sources'); message('Connected. Review this source’s permission to import it.'); }
     });
@@ -431,19 +431,19 @@ function consent(source) {
   });
   focusDialog(content);
 }
-async function capture(source) { await launchOperation('capture', { source_key: source.source_key, mode: 'backfill' }, 'Importing your history', async operation => { await refresh(); navigate('memory'); message(operation.counts ? `${safeCount(operation.counts.stored)} saved · ${safeCount(operation.counts.duplicates)} already present${operation.counts.errors ? ` · ${safeCount(operation.counts.errors)} problems reported` : ''}` : 'Capture completed. Check Sources for its latest coverage.'); }); }
+async function capture(source) { await launchOperation('capture', { source_key: source.source_key, mode: 'backfill' }, 'Importing your history', async (operation, present) => { await refresh(); if (!present()) return; navigate('memory'); message(operation.counts ? `${safeCount(operation.counts.stored)} saved · ${safeCount(operation.counts.duplicates)} already present${operation.counts.errors ? ` · ${safeCount(operation.counts.errors)} problems reported` : ''}` : 'Capture completed. Check Sources for its latest coverage.'); }); }
 function privacy(source) {
   const content = openDialog('This source stays under your control.', sourceLabel(source), 'lock');
   content.append(el('div', { class: 'consent-summary' }, ...[['Current permission', source.consent], ['Fields needed by this connection', source.required_fields.join(', ')], ['Last capture', dateText(source.last_run)]].map(([label,value]) => el('div', {}, el('span', {}, label), el('strong', {}, value)))), el('p', { class: 'dialog-description' }, 'Remove this source to stop capture and start deleting its information from Kizuki. Removal may wait for another operation to release a store. The source stops being used immediately; original files and the provider account are unaffected.'), el('div', { class: 'form-actions' }, button('Keep source', () => closeDialog()), button('Remove source', async () => {
     const label = sourceLabel(source);
     invalidatePrivateView();
-    await launchOperation('revoke', { source_key: source.source_key, expected_revision: source.revision, operation_id: crypto.randomUUID() }, `Removing ${label}`, async () => { await refresh(); navigate('sources'); message('The source is excluded. Check its status for any removal still pending.'); });
+    await launchOperation('revoke', { source_key: source.source_key, expected_revision: source.revision, operation_id: crypto.randomUUID() }, `Removing ${label}`, async (_operation, present) => { await refresh(); if (!present()) return; navigate('sources'); message('The source is excluded. Check its status for any removal still pending.'); });
   }, 'danger')));
   focusDialog(content);
 }
 async function resumeRemoval(source) {
   if (!source.revoke_operation) { await refresh(); message('Refresh the source status before continuing removal.'); return; }
-  await launchOperation('resume_revocation', { source_key: source.source_key, operation_id: source.revoke_operation }, `Checking removal · ${sourceLabel(source)}`, async () => { await refresh(); navigate('sources'); });
+  await launchOperation('resume_revocation', { source_key: source.source_key, operation_id: source.revoke_operation }, `Checking removal · ${sourceLabel(source)}`, async (_operation, present) => { await refresh(); if (present()) navigate('sources'); });
 }
 function activityTitle(action) {
   switch (action) {
@@ -473,7 +473,7 @@ async function loadActivity() {
 }
 function undo(receipt) {
   const content = openDialog('Undo this change?', 'Kizuki will use the saved receipt to restore the previous state. If the page or a dependent change has moved on, the undo will refuse safely.', 'activity');
-  content.append(el('div', { class: 'status-note' }, el('p', {}, receipt.page)), el('div', { class: 'form-actions' }, button('Keep change', () => closeDialog()), button('Undo change', () => launchOperation('undo', { receipt_id: receipt.id, cascade: false }, 'Undoing this change', async () => { state.hits = null; await refresh(); await loadActivity(); message('Change undone.'); }), 'primary')));
+  content.append(el('div', { class: 'status-note' }, el('p', {}, receipt.page)), el('div', { class: 'form-actions' }, button('Keep change', () => closeDialog()), button('Undo change', () => launchOperation('undo', { receipt_id: receipt.id, cascade: false }, 'Undoing this change', async (_operation, present) => { state.hits = null; await refresh(); await loadActivity(); if (present()) message('Change undone.'); }), 'primary')));
   focusDialog(content);
 }
 async function loadService() {
@@ -609,7 +609,7 @@ function runSummary(operation) {
   return `${safeCount(run.canon_writes)} memory ${run.canon_writes === 1 ? 'write' : 'writes'} · ${safeCount(run.claims_extracted)} details extracted · ${safeCount(run.model_calls)} model ${run.model_calls === 1 ? 'call' : 'calls'}. ${run.model_configured ? 'Only sources with matching model permission can be used.' : 'No model was configured; capture and search remain available.'} Run status: ${run.status}.`;
 }
 async function runPass() {
-  await launchOperation('run_pass', {}, 'Organising your memory', async () => { await refresh(); });
+  await launchOperation('run_pass', {}, 'Organising your memory', async (_operation, _present) => { await refresh(); });
 }
 const agentReadTools = [['search', 'Search memory'], ['get_page', 'Read memory pages'], ['query_entities', 'Find entities'], ['timeline', 'Read timelines'], ['context_packet', 'Get relevant context'], ['graph_neighbors', 'Explore connections'], ['system_health', 'Check system health']];
 async function loadAgents() {
@@ -670,7 +670,7 @@ function agentEnrollment() {
     if (start && end && start > end) { errorLine.textContent = 'The start time must be before the end time.'; since.focus(); return; }
     const request = { name: name.value.trim(), operation_id: crypto.randomUUID(), grant: { ceiling: ceiling.value, types: scope(types), subjects: scope(subjects), since: start, until: end, tools: tools.filter(check => check.checked).map(check => check.value), rate_limit_per_minute: limit, relay_owner_corrections: false } };
     const review = openDialog('Review this agent’s access', request.name, 'lock');
-    review.append(grantSummary(request.grant), el('p', { class: 'dialog-description' }, 'Only these permissions will be granted. The next step creates a private credential file on this device; its secret value will not appear in the browser.'), el('div', { class: 'form-actions' }, button('Cancel', closeDialog), button('Create agent', () => launchOperation('agent_enroll', request, 'Creating agent access', async operation => { await loadAgents(); showAgentResult(operation); }), 'primary')));
+    review.append(grantSummary(request.grant), el('p', { class: 'dialog-description' }, 'Only these permissions will be granted. The next step creates a private credential file on this device; its secret value will not appear in the browser.'), el('div', { class: 'form-actions' }, button('Cancel', closeDialog), button('Create agent', () => launchOperation('agent_enroll', request, 'Creating agent access', async (operation, present) => { await loadAgents(); if (present()) showAgentResult(operation); }), 'primary')));
     focusDialog(review);
   });
   focusDialog(content);
@@ -702,13 +702,13 @@ function showAgentResult(operation) {
 }
 function agentRevoke(agent) {
   const content = openDialog('Revoke this agent’s access?', agent.name, 'lock');
-  content.append(grantSummary(agent.grant), el('p', { class: 'dialog-description' }, 'This stops the agent’s access, including existing connections. Its name and credential file are retained; it cannot be reused as a new identity.'), el('div', { class: 'form-actions' }, button('Keep access', closeDialog), button('Revoke access', () => launchOperation('agent_revoke', { name: agent.name }, 'Revoking agent access', async operation => { await loadAgents(); showAgentResult(operation); }), 'danger')));
+  content.append(grantSummary(agent.grant), el('p', { class: 'dialog-description' }, 'This stops the agent’s access, including existing connections. Its name and credential file are retained; it cannot be reused as a new identity.'), el('div', { class: 'form-actions' }, button('Keep access', closeDialog), button('Revoke access', () => launchOperation('agent_revoke', { name: agent.name }, 'Revoking agent access', async (operation, present) => { await loadAgents(); if (present()) showAgentResult(operation); }), 'danger')));
   focusDialog(content);
 }
 function renderSettings() {
   return el('section', {}, heading('Simply yours.', 'A local workspace, clear permissions, and room to grow when you need it.'), renderModelSettings(), renderAgents(), el('div', { class: 'settings-list' },
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Workspace'), el('p', {}, 'Your memory stays in a local folder you control.')), el('span', { class: 'settings-value' }, state.status?.vault.name || 'Not created')),
-    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Background activity'), el('p', {}, state.service?.detail || 'Refresh to check background activity.'), state.service && el('small', {}, `Checked ${dateText(state.service.checked_at)}`)), el('div', { class: 'form-actions' }, button('Refresh', loadService), state.service && state.service.state !== 'active' && state.service.kind !== 'none' && button('Enable background activity', () => launchOperation('install_service', {}, 'Setting up background activity', async () => { await refresh(); await loadService(); }), 'primary'))),
+    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Background activity'), el('p', {}, state.service?.detail || 'Refresh to check background activity.'), state.service && el('small', {}, `Checked ${dateText(state.service.checked_at)}`)), el('div', { class: 'form-actions' }, button('Refresh', loadService), state.service && state.service.state !== 'active' && state.service.kind !== 'none' && button('Enable background activity', () => launchOperation('install_service', {}, 'Setting up background activity', async (_operation, present) => { await refresh(); if (present()) await loadService(); }), 'primary'))),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Source privacy'), el('p', {}, 'Each source has its own permission. Imported content stays on this device unless you separately allow a model to use it.')), button('Manage sources', () => navigate('sources'))),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'App session'), el('p', {}, 'This tab remembers only its local app capability. Search results and source content are not stored in browser storage.')), button('Disconnect tab', disconnect))),
     el('div', { class: 'status-note' }, icon('info'), el('p', {}, 'Search works without a model. Automatic organisation needs a working model and your permission to use each source.')));
@@ -803,6 +803,8 @@ async function launchOperation(route, payload, title, done) {
   const session = bearer, generation = privacyGeneration;
   const current = () => session === bearer && generation === privacyGeneration;
   const content = openDialog(title, route === 'model_test' ? 'This sends one made-up prompt to your saved model. None of your imported information is included, and source permissions stay unchanged.' : route === 'run_pass' ? 'Kizuki will process permitted sources and report the resulting memory writes. A model can use only sources with matching model permission.' : route === 'enroll' && payload.provider !== 'markdown' ? 'Continue in the Google sign-in window. Kizuki will show the result here when sign-in and local enrollment finish.' : 'Kizuki will confirm the result here. Closing this panel does not cancel an operation that has already started.', 'clock');
+  const presentationGeneration = dialogGeneration;
+  const canPresent = () => session === bearer && dialogGeneration === presentationGeneration;
   const progress = el('div', { class: 'opening', 'aria-busy': 'true' }, el('div', { class: 'skeleton skeleton-line' }), el('p', {}, 'Starting…'));
   content.append(progress, el('div', { class: 'form-actions' }, button('Close panel', () => closeDialog())));
   focusDialog(content);
@@ -819,7 +821,7 @@ async function launchOperation(route, payload, title, done) {
           const ownsDialog = dialog.open && dialog.contains(content);
           if (ownsDialog) closeDialog();
           await refresh();
-          if (ownsDialog && session === bearer && privateViewValid && state.status?.vault.ready) {
+          if (ownsDialog && canPresent() && privateViewValid && state.status?.vault.ready) {
             navigate('settings');
             message(humanError('service_unavailable'));
           } else if (current()) message('Workspace creation completed, but background activity needs attention.');
@@ -827,7 +829,7 @@ async function launchOperation(route, payload, title, done) {
         }
         if (operation.state !== 'succeeded') throw Object.assign(new Error(operationErrorMessage(route, operation, payload)), { code: operation.error?.code || 'unknown' });
         const ownsDialog = dialog.open && dialog.contains(content);
-        if (ownsDialog) { closeDialog(); await done(operation); }
+        if (ownsDialog) { closeDialog(); await done(operation, canPresent); }
         else { await refresh(); if (current()) message('The operation completed. The panel you opened remains unchanged.'); }
         return;
       }
