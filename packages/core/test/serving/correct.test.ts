@@ -43,6 +43,28 @@ function ownerEvents(live: Fixture): number {
   );
 }
 
+function ownerIntent(live: Fixture, statement: string): number {
+  return (
+    live.db
+      .query<{ count: number }, [string, string]>(
+        `SELECT count(*) AS count
+           FROM events e JOIN native_owner_evidence n ON n.event_id = e.event_id
+          WHERE e.connector_id = ? AND e.text = ?`,
+      )
+      .get("kizuki.owner", statement)?.count ?? -1
+  );
+}
+
+function skippedCorrections(live: Fixture): number {
+  return (
+    live.db
+      .query<{ count: number }, []>(
+        "SELECT count(*) AS count FROM claims WHERE status = 'skipped' AND target LIKE 'correction:%'",
+      )
+      .get()?.count ?? -1
+  );
+}
+
 async function refusal(run: () => Promise<unknown>): Promise<ServeError> {
   try {
     await run();
@@ -492,6 +514,150 @@ describe("serveCorrect retires what the owner says is wrong", () => {
     );
     expect(typed.code).toBe("type_out_of_scope");
     expect(getClaim(live.db, wrong)?.status).toBe("live");
+  });
+
+  test("a downgraded relay cannot half-commit against a live owner correction", async () => {
+    const live = await newFixture();
+    const wrong = await fileClaim(
+      live,
+      "Ada works at Acme.",
+      "employment.works_at",
+      "Acme",
+    );
+    const first = await serveCorrect(live.owner(), {
+      statement: "Ada left Acme.",
+      target: { claim_id: wrong },
+    });
+    const winnerId = first.data?.claim_id ?? "";
+    const winner = getClaim(live.db, winnerId);
+    expect(winner?.authority).toBe("owner_correction");
+    expect(winner?.status).toBe("live");
+    const key = winner?.claim_key ?? "";
+    const args: CorrectArgs = {
+      statement: "Ada works at the workshop now.",
+      target: { claim_key: key },
+      object: "the workshop",
+    };
+
+    const rehearsal = await serveCorrect(live.agent("downgraded"), {
+      ...args,
+      dry_run: true,
+    });
+    expect(rehearsal.data?.claim_id).toBeNull();
+    expect(rehearsal.data?.event_id).toBeNull();
+    expect(ownerIntent(live, args.statement)).toBe(0);
+    expect(getClaim(live.db, winnerId)?.status).toBe("live");
+
+    const denied = await refusal(() =>
+      serveCorrect(live.agent("downgraded"), args),
+    );
+    expect(denied.code).toBe("held");
+    expect(denied.message).toBe(
+      "correction is below the live claim's authority",
+    );
+    expect(getClaim(live.db, winnerId)?.status).toBe("live");
+    expect(ownerIntent(live, args.statement)).toBe(0);
+    expect(skippedCorrections(live)).toBe(0);
+    expect(ownerEvents(live)).toBe(1);
+
+    const retried = await refusal(() =>
+      serveCorrect(live.agent("downgraded"), args),
+    );
+    expect(retried.code).toBe("held");
+    expect(getClaim(live.db, winnerId)?.status).toBe("live");
+    expect(getClaim(live.db, winnerId)?.authority).toBe("owner_correction");
+    expect(ownerIntent(live, args.statement)).toBe(0);
+    expect(skippedCorrections(live)).toBe(0);
+
+    const replaced = await serveCorrect(live.owner(), args);
+    const nextId = replaced.data?.claim_id ?? "";
+    expect(nextId).not.toBe("");
+    expect(nextId).not.toBe(winnerId);
+    expect(getClaim(live.db, winnerId)?.status).toBe("superseded");
+    const next = getClaim(live.db, nextId);
+    expect(next?.status).toBe("live");
+    expect(next?.authority).toBe("owner_correction");
+    expect(next?.object).toBe("the workshop");
+    expect(ownerIntent(live, args.statement)).toBe(1);
+
+    const after = await serveCorrect(live.agent("downgraded"), args);
+    expect(after.data?.claim_id).toBe(nextId);
+    expect(getClaim(live.db, nextId)?.status).toBe("live");
+    expect(getClaim(live.db, nextId)?.authority).toBe("owner_correction");
+
+    const takeover = await refusal(() =>
+      serveCorrect(live.agent("downgraded"), {
+        statement: "Ada works at Contoso now.",
+        target: { claim_key: key },
+        object: "Contoso",
+      }),
+    );
+    expect(takeover.code).toBe("held");
+    expect(getClaim(live.db, nextId)?.status).toBe("live");
+    expect(getClaim(live.db, nextId)?.object).toBe("the workshop");
+    expect(ownerIntent(live, "Ada works at Contoso now.")).toBe(0);
+    expect(skippedCorrections(live)).toBe(0);
+    expect(
+      listClaims(live.db, { claim_key: key, status: "live" }).map(
+        (claim) => claim.authority,
+      ),
+    ).toEqual(["owner_correction"]);
+  });
+
+  test("a mixed-authority group denies only the relay that cannot beat the owner reading", async () => {
+    const live = await newFixture();
+    const github = await fileClaim(
+      live,
+      "Ada's handle is github.com/ada.",
+      "identity.handle_on",
+      "github.com/ada",
+    );
+    await serveCorrect(live.owner(), {
+      statement: "Ada also uses x.com/ada.",
+      target: { claim_id: github },
+      object: "x.com/ada",
+    });
+    const liveHandles = listClaims(live.db, {
+      status: "live",
+      subject: "person:ada",
+      keyed: true,
+    }).filter((claim) => claim.predicate === "identity.handle_on");
+    expect(
+      liveHandles.map((claim) => claim.authority).sort(),
+    ).toEqual(["model_inference", "owner_correction"]);
+
+    const denial = "Ada has none of those handles.";
+    const denied = await refusal(() =>
+      serveCorrect(live.agent("downgraded"), {
+        statement: denial,
+        target: { claim_id: github },
+      }),
+    );
+    expect(denied.code).toBe("held");
+    expect(ownerIntent(live, denial)).toBe(0);
+    expect(skippedCorrections(live)).toBe(0);
+    expect(getClaim(live.db, github)?.status).toBe("live");
+
+    const relayed = await serveCorrect(live.agent("downgraded"), {
+      statement: "Ada also uses gitlab.com/ada.",
+      target: { claim_id: github },
+      object: "gitlab.com/ada",
+    });
+    expect(getClaim(live.db, relayed.data?.claim_id ?? "")?.authority).toBe(
+      "owner_authored",
+    );
+    expect(getClaim(live.db, github)?.status).toBe("live");
+    expect(
+      listClaims(live.db, {
+        status: "live",
+        subject: "person:ada",
+        keyed: true,
+      }).some(
+        (claim) =>
+          claim.predicate === "identity.handle_on" &&
+          claim.authority === "owner_correction",
+      ),
+    ).toBe(true);
   });
 
   test("a grant that may not speak as the owner files one tier down", async () => {
