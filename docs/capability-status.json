@@ -82,6 +82,12 @@
       "status": "direction",
       "doc": "README.md",
       "heading": "The vision"
+    },
+    {
+      "id": "architecture.invariants",
+      "status": "designed",
+      "doc": "docs/architecture.md",
+      "heading": "Invariants (CI-enforced where possible)"
     }
   ]
 }
