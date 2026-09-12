@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { listAudit, OWNER } from "../../src/agents";
+import { addAgent, authenticate, listAudit, OWNER, OWNER_AGENT_GRANT } from "../../src/agents";
 import { insertClaim } from "../../src/claims/store";
 import { rebuildDerived } from "../../src/derived";
 import { eventFacts } from "../claims/helpers";
@@ -18,7 +18,11 @@ import { serveTimeline } from "../../src/serving/timeline";
 import { ServeError } from "../../src/serving/types";
 import { CanonUnreadableError } from "../../src/serving/canon";
 import { accept } from "../../src/ledger/ledger";
+import { registerConnection } from "../../src/ledger/connections";
+import { setSourceGrant } from "../../src/ledger/source-grants";
+import { ulid } from "../../src/util/ulid";
 import { canonFixture } from "../canon/helpers";
+import { validEvent } from "../fixtures";
 import { page, recordedPage, serveFixture, storeEvent } from "./helpers";
 import type { Fixture } from "./helpers";
 
@@ -682,5 +686,170 @@ describe("LifeOS-calibre packet compilation", () => {
       })).data?.packet_md ?? "";
     expect(packet).toContain("## counterevidence");
     expect(packet).toContain("gap key=");
+  });
+});
+
+const TIMELINE_CANDIDATE_LIMIT = 20;
+
+function recallPolicy(purposes: string[]) {
+  return {
+    purposes,
+    allowed_fields: ["text", "subjects", "attachments", "metadata"],
+    retention: "persistent_owned_until_revoked" as const,
+    egress: "local_only" as const,
+    sensitivity_floor: "public" as const,
+  };
+}
+
+function grantSource(live: Fixture, sourceKey: string, operation: string, purposes: string[]) {
+  registerConnection(live.db, "fixture", sourceKey);
+  setSourceGrant(live.db, {
+    source_key: sourceKey,
+    expected_revision: 0,
+    operation_id: operation,
+    policy: recallPolicy(purposes),
+  });
+}
+
+function boundEvent(
+  live: Fixture,
+  sourceKey: string,
+  sourceRecordId: string,
+  occurredAt: string,
+) {
+  const result = accept(
+    live.db,
+    {
+      ...validEvent(),
+      source_record_id: sourceRecordId,
+      occurred_at: occurredAt,
+      sensitivity_hint: "public",
+    },
+    { source: { source_key: sourceKey, expected_revision: 1 } },
+  );
+  if (result.status !== "stored") {
+    throw new Error(`expected stored event, got ${result.status}`);
+  }
+  return result.event.event_id;
+}
+
+describe("context timeline authorization starvation", () => {
+  test("a subject grant is not starved by earlier in-scope rows of another granted subject", async () => {
+    const live = await newFixture();
+    for (let index = 0; index < TIMELINE_CANDIDATE_LIMIT; index += 1) {
+      storeEvent(
+        live.db,
+        `rec-grace-fill-${index}`,
+        `2026-02-28T07:${String(index).padStart(2, "0")}:00Z`,
+        `grace kettle filler ${index}`,
+        "person:grace",
+        "public",
+      );
+    }
+    const allowed = storeEvent(
+      live.db,
+      "rec-ada-later",
+      "2026-02-28T16:00:00Z",
+      "the ada kettle is later",
+      "person:ada",
+      "public",
+    );
+    const token = addAgent(live.db, "scoped-pair", {
+      ...OWNER_AGENT_GRANT,
+      ceiling: "private",
+      types: null,
+      subjects: ["person:grace", "person:ada"],
+      tools: ["timeline", "context_packet"],
+    }).token;
+    const principal = authenticate(live.db, token);
+    if (principal === null) throw new Error("scoped-pair agent is not live");
+    const envelope = await serveContextPacket(
+      { db: live.db, vaultPath: live.vaultPath, principal },
+      {
+        include: ["timeline"],
+        since: "2026-02-28T00:00:00Z",
+        until: "2026-03-01T00:00:00Z",
+        budget_tokens: 2_000,
+      },
+    );
+    expect(envelope.quoted.map((chunk) => chunk.event_id)).toContain(allowed);
+    expect(envelope.denied).toEqual([]);
+    expect(envelope.data?.packet_md).toContain(allowed);
+    expect(envelope.data?.truncated).toBe(false);
+  });
+
+  test("source-policy is not starved by earlier denied live rows and keeps denials private", async () => {
+    const live = await newFixture();
+    const deniedKey = ulid();
+    const allowedKey = ulid();
+    grantSource(live, deniedKey, "grant-denied-source", ["capture"]);
+    grantSource(live, allowedKey, "grant-allowed-source", [
+      "capture",
+      "recall",
+      "session",
+    ]);
+    const denied: string[] = [];
+    for (let index = 0; index < TIMELINE_CANDIDATE_LIMIT; index += 1) {
+      denied.push(
+        boundEvent(
+          live,
+          deniedKey,
+          `rec-denied-${index}`,
+          `2026-02-28T07:${String(index).padStart(2, "0")}:00Z`,
+        ),
+      );
+    }
+    const allowed = boundEvent(live, allowedKey, "rec-allowed-later", "2026-02-28T16:00:00Z");
+    const envelope = await serveContextPacket(live.agent("reader-private"), {
+      include: ["timeline"],
+      since: "2026-02-28T00:00:00Z",
+      until: "2026-03-01T00:00:00Z",
+      budget_tokens: 2_000,
+    });
+    expect(envelope.quoted.map((chunk) => chunk.event_id)).toEqual([allowed]);
+    expect(envelope.denied).toEqual([]);
+    const rendered = JSON.stringify(envelope);
+    expect(envelope.data?.packet_md).toContain(allowed);
+    for (const id of denied) {
+      expect(rendered).not.toContain(id);
+    }
+  });
+
+  test("all requested subjects are served, including a later second subject", async () => {
+    const live = await newFixture();
+    const ada: string[] = [];
+    for (let index = 0; index < TIMELINE_CANDIDATE_LIMIT; index += 1) {
+      ada.push(
+        storeEvent(
+          live.db,
+          `rec-ada-fill-${index}`,
+          `2026-02-28T07:${String(index).padStart(2, "0")}:00Z`,
+          `ada kettle filler ${index}`,
+          "person:ada",
+          "public",
+        ),
+      );
+    }
+    const grace = storeEvent(
+      live.db,
+      "rec-grace-later",
+      "2026-02-28T16:00:00Z",
+      "the grace kettle is later",
+      "person:grace",
+      "public",
+    );
+    const envelope = await serveContextPacket(live.owner(), {
+      include: ["timeline"],
+      subjects: ["person:ada", "person:grace"],
+      since: "2026-02-28T00:00:00Z",
+      until: "2026-03-01T00:00:00Z",
+      budget_tokens: 2_000,
+    });
+    const ids = envelope.quoted.map((chunk) => chunk.event_id);
+    expect(ids).toContain(grace);
+    expect(ids.some((id) => ada.includes(id))).toBe(true);
+    expect(envelope.data?.packet_md).toContain(grace);
+    expect(envelope.data?.packet_md).toContain("the grace kettle is later");
+    expect(envelope.data?.truncated).toBe(false);
   });
 });

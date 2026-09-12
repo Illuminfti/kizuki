@@ -3,8 +3,9 @@ import { liveEventIds } from "../ledger/ledger";
 import { sourceEventsAllowed, sourceSensitivity } from "../ledger/source-grants";
 import type { ServeContext } from "./types";
 import { authorize } from "../agents";
-import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
-import type { TimelineEntry } from "../query/timeline";
+import type { AuditDenial, DenyReason, Grant, Sensitivity, Servable } from "../agents";
+import { timeline } from "../query/timeline";
+import type { TimelineEntry, TimelineOptions } from "../query/timeline";
 import { bareRetrievalId, retrievalDocId } from "../retrieval/ids";
 import type { SearchHit } from "../search/query";
 import { placeholders } from "../util/sql";
@@ -141,6 +142,74 @@ export function timelineSource(entry: TimelineEntry): QuotedSource {
     subjects: entry.subjects,
     text: entry.text_preview,
   };
+}
+
+/**
+ * Each SQL page is the caller-visible cap. Compatible grant and source-policy
+ * filters run before LIMIT; extra pages only skip residual denials.
+ */
+const TIMELINE_AUTH_PAGES = 8;
+
+export function collectAuthorizedTimeline(
+  ctx: ServeContext,
+  opts: Omit<TimelineOptions, "ceiling">,
+  limit: number,
+): { quoted: QuotedChunk[]; withheld: AuditDenial[]; seen: Set<string> } {
+  const quoted: QuotedChunk[] = [];
+  const withheld: AuditDenial[] = [];
+  const seen = new Set<string>();
+  if (limit === 0) return { quoted, withheld, seen };
+
+  const grant = ctx.principal.grant;
+  const grantSubjects =
+    opts.subject !== undefined || opts.subjects !== undefined
+      ? undefined
+      : grant.subjects === null
+        ? undefined
+        : [...grant.subjects];
+  const grantKinds =
+    opts.kind !== undefined || opts.kinds !== undefined
+      ? undefined
+      : grant.types === null
+        ? undefined
+        : [...grant.types];
+  let after: TimelineOptions["after"];
+
+  for (let page = 0; page < TIMELINE_AUTH_PAGES && quoted.length < limit; page += 1) {
+    const entries = timeline(ctx.db, {
+      ...opts,
+      ceiling: grant.ceiling,
+      limit,
+      source: {
+        owner: ctx.principal.kind === "owner",
+        purpose: ctx.sourcePurpose ?? "recall",
+      },
+      ...(grantSubjects === undefined ? {} : { subjects: grantSubjects }),
+      ...(grantKinds === undefined ? {} : { kinds: grantKinds }),
+      ...(after === undefined ? {} : { after }),
+    });
+    if (entries.length === 0) break;
+    const live = liveEventIds(
+      ctx.db,
+      entries.map((entry) => entry.event_id),
+    );
+    for (const entry of entries) {
+      seen.add(entry.event_id);
+      if (!live.has(entry.event_id)) continue;
+      const source = timelineSource(entry);
+      const decision = eventDecision(grant, source, ctx);
+      if (!decision.allow) {
+        withheld.push({ id: entry.event_id, reason: decision.reason });
+        continue;
+      }
+      quoted.push(quotedChunk(source, decision.sensitivity));
+      if (quoted.length >= limit) break;
+    }
+    const last = entries[entries.length - 1];
+    if (last === undefined || entries.length < limit) break;
+    after = { occurred_at: last.occurred_at, event_id: last.event_id };
+  }
+  return { quoted, withheld, seen };
 }
 
 export function ledgerHitSource(hit: SearchHit): QuotedSource {

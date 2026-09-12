@@ -17,6 +17,7 @@ import {
   type SourceStoreStatus,
 } from "./source-stores";
 import type { Database } from "bun:sqlite";
+import { SENSITIVITY_ORDER } from "../agents/types";
 import type { CaptureEventInput, SensitivityHint } from "../contracts/event";
 import { raiseSensitivity } from "../contracts/event";
 import type { RetrievalPort } from "../contracts/retrieval";
@@ -815,6 +816,83 @@ export function sourceEventsAllowed(
   }
   return true;
 }
+
+function allowedFieldSql(field: (typeof SOURCE_FIELDS)[number]): string {
+  const empty =
+    field === "text"
+      ? "length(events.text) = 0"
+      : field === "metadata"
+        ? "(SELECT count(*) FROM json_each(events.metadata)) = 0"
+        : `json_array_length(events.${field}) = 0`;
+  return `(${empty} OR EXISTS (
+      SELECT 1 FROM json_each(json_extract(g.policy, '$.allowed_fields')) AS allowed
+      WHERE allowed.value = '${field}'
+    ))`;
+}
+
+/**
+ * Serving-read source policy as a SQL predicate so LIMIT counts authorized
+ * rows. Epoch 0 is a no-op. Missing grant tables deny every row.
+ */
+export function sourceServingSql(
+  db: Database,
+  scope: { owner: boolean; purpose?: SourcePurpose },
+  ceiling: number | null,
+): { sql: string; bindings: (string | number)[] } | null {
+  if (sourcePolicyEpoch(db) === 0) return null;
+  if (!tableExists(db, "source_event_bindings") || !tableExists(db, "source_grants")) {
+    return { sql: "0", bindings: [] };
+  }
+  const purpose = scope.purpose ?? "recall";
+  if (!(SOURCE_PURPOSES as readonly string[]).includes(purpose)) {
+    return { sql: "0", bindings: [] };
+  }
+  const floor =
+    ceiling === null
+      ? "1"
+      : `CASE json_extract(g.policy, '$.sensitivity_floor')
+           WHEN 'public' THEN ${SENSITIVITY_ORDER.public}
+           WHEN 'personal' THEN ${SENSITIVITY_ORDER.personal}
+           WHEN 'private' THEN ${SENSITIVITY_ORDER.private}
+           ELSE ${SENSITIVITY_ORDER.private}
+         END <= ?`;
+  const native = tableExists(db, "native_owner_evidence")
+    ? ` OR EXISTS (
+          SELECT 1 FROM native_owner_evidence AS n
+          WHERE n.event_id = events.event_id AND n.origin = 'correction'
+        )`
+    : "";
+  const sql = `(
+    EXISTS (
+      SELECT 1
+        FROM source_event_bindings AS b
+        JOIN source_grants AS g ON g.source_key = b.source_key
+       WHERE b.event_id = events.event_id
+         AND g.status = 'active'
+         AND EXISTS (
+           SELECT 1 FROM json_each(json_extract(g.policy, '$.purposes')) AS purpose
+           WHERE purpose.value = ?
+         )
+         AND ${allowedFieldSql("text")}
+         AND ${allowedFieldSql("subjects")}
+         AND ${allowedFieldSql("attachments")}
+         AND ${allowedFieldSql("metadata")}
+         AND ${floor}
+    )
+    OR (
+      NOT EXISTS (
+        SELECT 1 FROM source_event_bindings AS b
+        WHERE b.event_id = events.event_id
+      )
+      AND (? = 1${native})
+    )
+  )`;
+  const bindings: (string | number)[] = [purpose];
+  if (ceiling !== null) bindings.push(ceiling);
+  bindings.push(scope.owner ? 1 : 0);
+  return { sql, bindings };
+}
+
 export function requireSourceEvents(
   db: Database,
   ids: readonly string[],
