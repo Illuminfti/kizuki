@@ -32,45 +32,50 @@ interface Migration {
   apply?: (db: Database) => void;
 }
 
-const MIGRATIONS: readonly Migration[] = [
-  {
-    version: 1,
-    sql: `
-      CREATE TABLE events (
-        event_id TEXT PRIMARY KEY,
-        connector_id TEXT NOT NULL,
-        source_record_id TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        occurred_at TEXT NOT NULL,
-        observed_at TEXT NOT NULL,
-        text TEXT NOT NULL,
-        subjects TEXT NOT NULL,
-        sensitivity_hint TEXT,
-        deleted INTEGER NOT NULL,
-        attachments TEXT NOT NULL,
-        metadata TEXT NOT NULL,
-        content_hash TEXT NOT NULL,
-        accepted_at TEXT NOT NULL,
-        UNIQUE(connector_id, source_record_id, content_hash)
-      );
-
-      CREATE TABLE event_purges (
+const PROMOTIONS_V2_TABLE = `
+      CREATE TABLE promotions (
         receipt_id TEXT PRIMARY KEY,
-        event_id TEXT NOT NULL,
-        connector_id TEXT NOT NULL,
-        reason TEXT NOT NULL,
-        purged_at TEXT NOT NULL
-      );
+        proposal_id TEXT NOT NULL UNIQUE,
+        provenance TEXT NOT NULL,
+        sensitivity TEXT NOT NULL,
+        page_path TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'claim',
+        before_hash TEXT,
+        after_hash TEXT NOT NULL,
+        at TEXT NOT NULL
+      ) STRICT;`;
 
-      CREATE INDEX events_accepted_order_idx
-        ON events(accepted_at, event_id);
-      CREATE INDEX events_connector_idx ON events(connector_id);
-      CREATE INDEX events_kind_idx ON events(kind);
-    `,
-  },
-  {
-    version: 2,
-    sql: `
+const PROMOTIONS_V2_RENAME_TABLE = PROMOTIONS_V2_TABLE.replace(
+  "CREATE TABLE promotions (",
+  "CREATE TABLE promotions_v2 (",
+);
+
+function applyPromotionsV2(db: Database): void {
+  if (!tableExists(db, "promotions")) {
+    db.exec(PROMOTIONS_V2_TABLE);
+    return;
+  }
+  const cols = new Set(tableColumns(db, "promotions"));
+  if (cols.has("after_hash") && !cols.has("page_hash")) return;
+  if (!cols.has("page_hash") || cols.has("after_hash")) {
+    throw new LedgerStoreError("corrupt", "promotions table has an unsupported shape");
+  }
+  db.exec(PROMOTIONS_V2_RENAME_TABLE);
+  db.exec(`
+      INSERT INTO promotions_v2 (
+        receipt_id, proposal_id, provenance, sensitivity, page_path,
+        kind, before_hash, after_hash, at
+      )
+      SELECT receipt_id, proposal_id, provenance, sensitivity, page_path,
+             'claim', NULL, page_hash, at
+        FROM promotions;
+      DROP TABLE promotions;
+      ALTER TABLE promotions_v2 RENAME TO promotions;
+  `);
+}
+
+function applyLedgerV2(db: Database): void {
+  db.exec(`
       CREATE TABLE connections (
         connector_id TEXT NOT NULL,
         source_key TEXT NOT NULL CHECK (
@@ -111,40 +116,49 @@ const MIGRATIONS: readonly Migration[] = [
         held_at TEXT NOT NULL,
         PRIMARY KEY (page_path, proposal_id)
       ) STRICT;
+  `);
+  applyPromotionsV2(db);
+}
 
-      CREATE TABLE IF NOT EXISTS promotions (
+const MIGRATIONS: readonly Migration[] = [
+  {
+    version: 1,
+    sql: `
+      CREATE TABLE events (
+        event_id TEXT PRIMARY KEY,
+        connector_id TEXT NOT NULL,
+        source_record_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        observed_at TEXT NOT NULL,
+        text TEXT NOT NULL,
+        subjects TEXT NOT NULL,
+        sensitivity_hint TEXT,
+        deleted INTEGER NOT NULL,
+        attachments TEXT NOT NULL,
+        metadata TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        accepted_at TEXT NOT NULL,
+        UNIQUE(connector_id, source_record_id, content_hash)
+      );
+
+      CREATE TABLE event_purges (
         receipt_id TEXT PRIMARY KEY,
-        proposal_id TEXT NOT NULL UNIQUE,
-        provenance TEXT NOT NULL,
-        sensitivity TEXT NOT NULL,
-        page_path TEXT NOT NULL,
-        page_hash TEXT NOT NULL,
-        at TEXT NOT NULL
-      ) STRICT;
+        event_id TEXT NOT NULL,
+        connector_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        purged_at TEXT NOT NULL
+      );
 
-      CREATE TABLE promotions_v2 (
-        receipt_id TEXT PRIMARY KEY,
-        proposal_id TEXT NOT NULL UNIQUE,
-        provenance TEXT NOT NULL,
-        sensitivity TEXT NOT NULL,
-        page_path TEXT NOT NULL,
-        kind TEXT NOT NULL DEFAULT 'claim',
-        before_hash TEXT,
-        after_hash TEXT NOT NULL,
-        at TEXT NOT NULL
-      ) STRICT;
-
-      INSERT INTO promotions_v2 (
-        receipt_id, proposal_id, provenance, sensitivity, page_path,
-        kind, before_hash, after_hash, at
-      )
-      SELECT receipt_id, proposal_id, provenance, sensitivity, page_path,
-             'claim', NULL, page_hash, at
-        FROM promotions;
-
-      DROP TABLE promotions;
-      ALTER TABLE promotions_v2 RENAME TO promotions;
+      CREATE INDEX events_accepted_order_idx
+        ON events(accepted_at, event_id);
+      CREATE INDEX events_connector_idx ON events(connector_id);
+      CREATE INDEX events_kind_idx ON events(kind);
     `,
+  },
+  {
+    version: 2,
+    apply: applyLedgerV2,
   },
   {
     version: 3,

@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -61,3 +62,47 @@ for (const claimCount of [0, 2]) {
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 }
+
+test("opening a current-shape promotions table before the ledger preserves the receipt", () => {
+  const directory = mkdtempSync(join(tmpdir(), "kizuki-staging-current-promotions-"));
+  const path = join(directory, "ledger.sqlite");
+  const afterHash = "a".repeat(64);
+  try {
+    const staging = new Database(path, { create: true });
+    try {
+      staging.exec(`
+        CREATE TABLE promotions (
+          receipt_id TEXT PRIMARY KEY,
+          proposal_id TEXT NOT NULL UNIQUE,
+          provenance TEXT NOT NULL,
+          sensitivity TEXT NOT NULL,
+          page_path TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'claim',
+          before_hash TEXT,
+          after_hash TEXT NOT NULL,
+          at TEXT NOT NULL
+        ) STRICT;
+      `);
+      staging.query(`
+        INSERT INTO promotions (
+          receipt_id, proposal_id, provenance, sensitivity, page_path,
+          kind, before_hash, after_hash, at
+        ) VALUES (?, ?, '[]', 'private', 'facts/current.md', 'claim', NULL, ?, ?)
+      `).run("receipt-current", "proposal-current", afterHash, "2026-09-06T00:00:00.000Z");
+    } finally { staging.close(); }
+
+    const ledger = openLedger(path);
+    try {
+      expect(readSchemaVersion(ledger)).toBe(LEDGER_SCHEMA_VERSION);
+      expect(inspectOpenLedgerHealth(ledger, { full: true })).toMatchObject({
+        ok: true, failures: [], quick_check: "ok", integrity_check: "ok",
+      });
+      expect(tableExists(ledger, "promotions")).toBe(false);
+      expect(
+        ledger.query<{ page_path: string; after_hash: string }, []>(
+          "SELECT page_path, after_hash FROM canon_receipts",
+        ).get(),
+      ).toEqual({ page_path: "facts/current.md", after_hash: afterHash });
+    } finally { ledger.close(); }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
