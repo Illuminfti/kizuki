@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { rebuildPageIndex } from "../src/canon/store";
 import { ownerEdited } from "../src/canon/arbiter";
@@ -34,7 +34,9 @@ function data(id: string, sources: unknown, status = "active") {
 function seed(vault: string, name: string, frontmatter: Record<string, unknown>) {
   const path = join(vault, "facts", `${name}.md`);
   const bytes = serializePage({ data: frontmatter, body: "Owner-controlled synthetic prose.\n" });
-  writeFileSync(path, bytes);
+  // Native page reads refuse group/world-writable files; writeFileSync mode is umask-masked.
+  writeFileSync(path, bytes, { mode: 0o600 });
+  chmodSync(path, 0o600);
   return { path, bytes };
 }
 
