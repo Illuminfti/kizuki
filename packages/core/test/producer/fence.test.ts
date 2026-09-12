@@ -140,4 +140,11 @@ describe("nonce fence", () => {
     expect(hasParsedFenceLeak(wrap("ordinary text"), NONCE)).toBe(false);
   });
 
+  test.each(["<<<KZ-QUOTEx", "<<<kz-end_"])("marker substrings remain leaks before a word character: %s", marker => {
+    expect(hasFenceLeak(marker, NONCE)).toBe(true);
+    const encoded = `{"value":"${jsonUnicodeEscape(marker)}"}`;
+    expect(hasParsedFenceLeak(JSON.parse(encoded), NONCE)).toBe(true);
+    expect(hasFenceLeak(escapeFenceText(marker), NONCE)).toBe(false);
+  });
+
 });

@@ -18,7 +18,7 @@ const FENCE_LOOKALIKE = /<<<KZ-/gi;
 function escapeLookalike(match: string): string {
   return `${match.slice(0, -1)}\\-`;
 }
-const FENCE_MARKER = /<<<KZ-(?:QUOTE|END)\b/i;
+const FENCE_MARKER = /<<<KZ-(?:QUOTE|END)/i;
 
 /** Labels are producer-chosen and bounded; never derived from captured text. */
 const FENCE_LABEL = /^[A-Za-z][A-Za-z0-9:_.-]{0,79}$/;

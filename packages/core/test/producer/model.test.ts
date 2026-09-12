@@ -301,6 +301,22 @@ describe("kizuki.producer.model", () => {
     });
   });
 
+
+  for (const marker of ["<<<KZ-QUOTEx", "<<<kz-end_"]) {
+    for (const encoded of [false, true]) {
+      test(`a marker suffix remains a call-level fence leak: ${marker} encoded=${encoded}`, async () => {
+        const llm = scriptedLlm(() => encoded
+          ? responseWithUnicodeEscapedField(draft(), "object", marker)
+          : responseText([draft({ object: marker })]));
+        await withProducer(llm, async producer => {
+          expect(await producer.produce(input([GRACE_EVENT]))).toEqual({
+            status: "rejected", reason: "fence_leak", usage: expect.objectContaining({ calls: 1 }),
+          });
+        });
+      });
+    }
+  }
+
   test("benign unicode-escaped extraction text that does not decode to the nonce or a marker is accepted", async () => {
     const claim = draft();
     let raw = "";
