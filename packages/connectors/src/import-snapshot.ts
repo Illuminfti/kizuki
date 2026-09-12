@@ -141,6 +141,9 @@ function takePage(
     const event = events[index];
     if (event === undefined) break;
     const extra = utf8Bytes(JSON.stringify(event)) + (page.length === 0 ? 0 : 1);
+    if (page.length === 0 && encoded + extra > MAX_SYNC_BATCH_BYTES) {
+      throw new KizukiError("parse_error", "snapshot event exceeds the capture page bound");
+    }
     if (
       page.length > 0 &&
       (page.length >= MAX_SYNC_BATCH_EVENTS ||
@@ -199,9 +202,12 @@ function drain(
   const dirty = parsed.errors.some((error) => error.code !== "unsupported_part");
   const matched =
     previous !== undefined && sameExport(previous.export, identity);
+  if (matched && previous !== undefined && previous.offset > parsed.events.length) {
+    throw new KizukiError("parse_error", "snapshot cursor offset exceeds this export");
+  }
   const start =
     matched && previous !== undefined
-      ? Math.min(previous.offset, parsed.events.length)
+      ? previous.offset
       : 0;
   if (
     cursor !== null &&

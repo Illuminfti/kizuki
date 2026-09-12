@@ -21,7 +21,7 @@ import {
   KizukiError,
   createChatGptImportConnector,
 } from "../src";
-import { IMPORT_SNAPSHOT_CURSOR_SCHEMA } from "../src/import-snapshot";
+import { IMPORT_SNAPSHOT_CURSOR_SCHEMA, runSnapshot } from "../src/import-snapshot";
 import { sha256Hex } from "../src/source-id";
 
 const SOURCE_KEY = "01JJ0000000000000000000019";
@@ -443,4 +443,29 @@ test("a corrupt snapshot cursor is refused", async () => {
     expect(error.code).toBe("parse_error");
     expect(error.message).toContain("malformed snapshot cursor");
   }
+});
+
+test("an offset beyond the matching export is refused instead of completing it", async () => {
+  const file = path.join(await syntheticDir(), "conversations.json");
+  await writeConversations(file, 1, () => "keep");
+  const connector = createChatGptImportConnector({ path: file });
+  const captured = await connector.backfill(null);
+  const cursor = snapshotCursor(captured.cursor);
+  cursor.offset += 1;
+  cursor.exhausted = false;
+  await expect(connector.backfill(JSON.stringify(cursor))).rejects.toMatchObject({
+    code: "parse_error",
+  });
+});
+
+test("one oversized parser event never escapes the snapshot byte bound", async () => {
+  const file = path.join(await syntheticDir(), "conversations.json");
+  await writeConversations(file, 1, () => "keep");
+  const connector = createChatGptImportConnector({ path: file });
+  const event = (await connector.backfill(null)).events[0];
+  if (!event) throw new Error("missing fixture event");
+  await expect(runSnapshot(file, null, {
+    connectorId: CHATGPT_IMPORT_CONNECTOR_ID,
+    parse: () => ({ events: [{ ...event, text: "x".repeat(MAX_SYNC_BATCH_BYTES) }], errors: [] }),
+  })).rejects.toMatchObject({ code: "parse_error" });
 });

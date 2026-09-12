@@ -275,7 +275,7 @@ const LOCAL: ManifestOverlay = {
 
 enroll(
   BEEPER_CONNECTOR_ID,
-  ["backfill", "sync", "fixture"],
+  ["backfill", "sync", "tombstones", "fixture"],
   "@kizuki/connector-beeper",
   (config) => createBeeperConnector(config as BeeperConnectorConfig),
   {
@@ -317,7 +317,7 @@ enroll(
 );
 enroll(
   MARKDOWN_FOLDER_CONNECTOR_ID,
-  ["backfill", "sync", "fixture"],
+  ["backfill", "sync", "tombstones", "fixture"],
   IN_TREE,
   (config) => createMarkdownFolderConnector(config as MarkdownFolderConfig),
   { ...LOCAL, cursor_schema: MARKDOWN_CURSOR_SCHEMA },
