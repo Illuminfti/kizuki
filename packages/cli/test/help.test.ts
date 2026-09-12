@@ -243,16 +243,22 @@ describe("help", () => {
         };
       };
       expect(body.data.name).toBe("tell");
-      expect(body.data.options).toEqual(["--about", "--claim", "--page", "--since", "--until"]);
+      expect(body.data.options).toEqual(["--claim", "--since", "--until"]);
       expect(body.data.flags).toEqual(["--dry-run", "--json", "--verbose"]);
       expect(body.data.bounds).toEqual({ "--since": "TIME", "--until": "TIME" });
       expect(body.data.irreversible).toBe(false);
     }
     const text = runCli(env, "tell", "--help");
     expect(text.stdout).toContain("--claim");
+    expect(text.stdout).toContain("--since");
+    expect(text.stdout).toContain("--until");
     expect(text.stdout).toContain("--dry-run");
+    expect(text.stdout).not.toContain("--about");
+    expect(text.stdout).not.toContain("--page");
     for (const [args, diagnostic] of [
       [["tell", "the name is Ada", "--nope"], "unknown option --nope"],
+      [["tell", "the name is Ada", "--about", "person:ada"], "unknown option --about"],
+      [["tell", "the name is Ada", "--page", "people/ada.md"], "unknown option --page"],
       [["tell", "the name is Ada", "--json", "--json"], "repeated flag --json"],
       [["tell", "the name is Ada", "--json=true"], "flag --json does not take a value"],
       [["tell", "the name is Ada", "--claim"], "missing value for --claim"],

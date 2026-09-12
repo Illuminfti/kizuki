@@ -6,7 +6,7 @@ import { jsonEnvelope } from "../output";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 export const TELL_SCHEMA = {
-  options: ["--about", "--claim", "--page", "--since", "--until"],
+  options: ["--claim", "--since", "--until"],
   flags: ["--dry-run", "--json", "--verbose"],
   bounds: { "--since": "TIME", "--until": "TIME" },
 } as const satisfies CommandHelpSchema;
@@ -27,19 +27,9 @@ export const tellCommand: Command = {
       throw new UsageError(this.usage);
     }
 
-    const about = parsed.options.get("--about");
     const claim = parsed.options.get("--claim");
-    const page = parsed.options.get("--page");
     const since = parsed.options.get("--since");
     const until = parsed.options.get("--until");
-    const target =
-      about === undefined && claim === undefined && page === undefined
-        ? undefined
-        : {
-            ...(claim === undefined ? {} : { claim_id: claim }),
-            ...(page === undefined ? {} : { page_id: page }),
-            ...(about === undefined ? {} : { subject: about }),
-          };
 
     return withVault(io, async (ctx) => {
       try {
@@ -47,7 +37,7 @@ export const tellCommand: Command = {
           { db: ctx.db, vault_path: ctx.vaultPath, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }) },
           {
             statement,
-            ...(target === undefined ? {} : { target }),
+            ...(claim === undefined ? {} : { target: { claim_id: claim } }),
             ...(since === undefined && until === undefined
               ? {}
               : { scope: { ...(since === undefined ? {} : { since }), ...(until === undefined ? {} : { until }) } }),

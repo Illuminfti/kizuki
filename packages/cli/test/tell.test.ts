@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { accept, applyCanonWrite, createBudgetTracker, insertClaim, resolveTarget } from "@kizuki/core";
 import type { CaptureEventInput, Claim, InsertClaimInput } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "./helpers";
 
-const { cleanup, runCli, tempVault } = createHelpers();
+const { cleanup, isolatedEnv, runCli, tempDir, tempVault } = createHelpers();
 afterEach(cleanup);
 
 function fixtureEvent(): CaptureEventInput {
@@ -145,6 +145,30 @@ describe("kizuki tell", () => {
     expect(result.stderr).toContain("--claim");
     expect(result.stderr).not.toContain("--about");
     expect(result.stderr).not.toContain("--page");
+  });
+
+  test("tell rejects --about and --page as usage before opening a vault", () => {
+    const env = isolatedEnv();
+    const root = tempDir();
+    const absent = join(root, "absent");
+    const before = readdirSync(root);
+    for (const [flag, extra] of [
+      ["--about", ["--about", "person:ada"]],
+      ["--page", ["--page", "people/ada.md"]],
+      ["--about", ["--claim", "synthetic-claim", "--about", "person:ada"]],
+      ["--page", ["--claim", "synthetic-claim", "--page", "people/ada.md"]],
+    ] as const) {
+      const result = runCli(env, "--vault", absent, "tell", "the name is Ada", ...extra);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: unknown option ${flag}`);
+      expect(result.stderr).toContain("usage: kizuki tell");
+      expect(result.stderr).not.toContain("vault is not initialized");
+      expect(result.stderr).not.toContain("no vault configured");
+      expect(result.stderr).not.toContain("target_required");
+    }
+    expect(readdirSync(root)).toEqual(before);
+    expect(existsSync(absent)).toBe(false);
   });
 
   test("tell --json prints the CorrectResult and --verbose prints the diff", async () => {
