@@ -5,6 +5,8 @@ describe("YTD parser", () => {
   test("parses only the exact data assignment as JSON", () => {
     expect(parseYtd('window.YTD.tweets.part0 = [{"tweet":{"id_str":"1"}}];', "tweets", 0))
       .toHaveLength(1);
+    expect(parseYtd('\uFEFFwindow.YTD.tweets.part0 = [{"tweet":{"id_str":"1"}}];', "tweets", 0))
+      .toHaveLength(1);
   });
 
   test.each([

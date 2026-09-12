@@ -28,6 +28,60 @@ function optionalString(value: unknown, field: string, maximum: number): string 
   return value;
 }
 
+function optionalObject(
+  record: Record<string, unknown>,
+  key: string,
+  field: string,
+): Record<string, unknown> | null {
+  const value = record[key];
+  if (value === undefined || value === null) return null;
+  return requiredObject(value, field);
+}
+
+function requiredText(value: unknown, field: string): string {
+  if (typeof value !== "string" || byteLength(value) > MAX_TEXT_BYTES) {
+    throw archiveError("parse_error", `${field} is missing or exceeds ${MAX_TEXT_BYTES} bytes`);
+  }
+  return value;
+}
+
+function entitiesOf(
+  primary: Record<string, unknown>,
+  fallback: Record<string, unknown>,
+  where: string,
+): Record<string, unknown> | null {
+  const raw = primary["entities"] !== undefined ? primary["entities"] : fallback["entities"];
+  if (raw === undefined) return null;
+  if (!isPlainObject(raw)) {
+    throw archiveError("parse_error", `${where}.entities must be an object`);
+  }
+  return raw;
+}
+
+function postBody(
+  tweet: Record<string, unknown>,
+  where: string,
+): { text: string; entities: Record<string, unknown> | null } {
+  const note = optionalObject(tweet, "note_tweet", `${where}.note_tweet`);
+  if (note !== null) {
+    return {
+      text: requiredText(note["text"], `${where}.note_tweet.text`),
+      entities: entitiesOf(note, tweet, where),
+    };
+  }
+  const extended = optionalObject(tweet, "extended_tweet", `${where}.extended_tweet`);
+  if (extended !== null) {
+    return {
+      text: requiredText(extended["full_text"], `${where}.extended_tweet.full_text`),
+      entities: entitiesOf(extended, tweet, where),
+    };
+  }
+  return {
+    text: requiredText(tweet["full_text"] ?? tweet["text"], `${where} text`),
+    entities: entitiesOf(tweet, tweet, where),
+  };
+}
+
 function urlsFrom(entities: Record<string, unknown> | null, where: string): string[] {
   const raw = entities?.["urls"];
   if (raw === undefined) return [];
@@ -65,19 +119,24 @@ function mentionsFrom(
   where: string,
   selfId: string,
 ): SubjectRef[] {
-  const raw = entities?.["user_mentions"];
+  const field = entities?.["user_mentions"] !== undefined ? "user_mentions" : "mentions";
+  const raw = entities?.[field];
   if (raw === undefined) return [];
   if (!Array.isArray(raw) || raw.length > MAX_MENTIONS) {
-    throw archiveError("parse_error", `${where}.entities.user_mentions is invalid`);
+    throw archiveError("parse_error", `${where}.entities.${field} is invalid`);
   }
   const result: SubjectRef[] = [];
   const seen = new Set<string>([selfId]);
   raw.forEach((value, index) => {
-    const item = requiredObject(value, `${where}.entities.user_mentions[${index}]`);
-    const id = nativeId(item["id_str"] ?? item["id"], `${where}.entities.user_mentions[${index}].id`);
+    const item = requiredObject(value, `${where}.entities.${field}[${index}]`);
+    const id = nativeId(item["id_str"] ?? item["id"], `${where}.entities.${field}[${index}].id`);
     if (seen.has(id)) return;
     seen.add(id);
-    const username = optionalString(item["screen_name"], `${where}.entities.user_mentions[${index}].screen_name`, 64);
+    const username = optionalString(
+      item["screen_name"] ?? item["username"],
+      `${where}.entities.${field}[${index}].screen_name`,
+      64,
+    );
     result.push({
       subject_id: userSubjectId(id),
       role: "about",
@@ -104,19 +163,33 @@ export function mapPost(
   const envelope = requiredObject(raw, where);
   const tweet = requiredObject(envelope["tweet"], `${where}.tweet`);
   const id = nativeId(tweet["id_str"] ?? tweet["id"], `${where} post id`);
-  const textValue = tweet["full_text"] ?? tweet["text"];
-  if (typeof textValue !== "string" || byteLength(textValue) > MAX_TEXT_BYTES) {
-    throw archiveError("parse_error", `${where} text is missing or exceeds ${MAX_TEXT_BYTES} bytes`);
-  }
+  const body = postBody(tweet, where);
   const occurredAt = parseArchiveDate(tweet["created_at"]);
-  const entitiesValue = tweet["entities"];
-  const entities = entitiesValue === undefined ? null :
-    isPlainObject(entitiesValue) ? entitiesValue :
-      (() => { throw archiveError("parse_error", `${where}.entities must be an object`); })();
-  const urls = urlsFrom(entities, where);
-  const mentions = mentionsFrom(entities, where, self.account_id);
-  const inReplyToPostId = optionalNativeId(tweet["in_reply_to_status_id_str"], `${where}.in_reply_to_status_id_str`);
-  const inReplyToUserId = optionalNativeId(tweet["in_reply_to_user_id_str"], `${where}.in_reply_to_user_id_str`);
+  const urls = urlsFrom(body.entities, where);
+  const mentions = mentionsFrom(body.entities, where, self.account_id);
+  const inReplyToPostId = optionalNativeId(
+    tweet["in_reply_to_status_id_str"] ?? tweet["in_reply_to_status_id"],
+    `${where}.in_reply_to_status_id_str`,
+  );
+  const inReplyToUserId = optionalNativeId(
+    tweet["in_reply_to_user_id_str"] ?? tweet["in_reply_to_user_id"],
+    `${where}.in_reply_to_user_id_str`,
+  );
+  const quotedDirect = optionalNativeId(
+    tweet["quoted_status_id_str"] ?? tweet["quoted_status_id"],
+    `${where}.quoted_status_id_str`,
+  );
+  const quotedNestedRaw = tweet["quoted_status"];
+  const quotedNested = quotedNestedRaw === undefined || quotedNestedRaw === null
+    ? null
+    : requiredObject(quotedNestedRaw, `${where}.quoted_status`);
+  const quotedNestedId = quotedNested === null
+    ? null
+    : optionalNativeId(quotedNested["id_str"] ?? quotedNested["id"], `${where}.quoted_status id`);
+  if (quotedDirect !== null && quotedNestedId !== null && quotedDirect !== quotedNestedId) {
+    throw archiveError("parse_error", `${where}.quoted_status id conflicts with quoted_status_id_str`);
+  }
+  const quotedStatusId = quotedDirect ?? quotedNestedId;
   const lang = optionalString(tweet["lang"], `${where}.lang`, 32);
   const media = mediaByPost.get(id) ?? [];
   const selfSubject: SubjectRef = {
@@ -133,7 +206,7 @@ export function mapPost(
     kind: "post",
     occurred_at: occurredAt,
     observed_at: observedAt ?? occurredAt,
-    text: textValue,
+    text: body.text,
     subjects: [selfSubject, ...replySubject, ...mentions],
     sensitivity_hint: "personal",
     deleted: false,
@@ -150,6 +223,7 @@ export function mapPost(
       post_id: id,
       in_reply_to_post_id: inReplyToPostId,
       in_reply_to_user_id: inReplyToUserId,
+      ...(quotedStatusId === null ? {} : { quoted_status_id: quotedStatusId }),
       lang,
       urls,
     },
