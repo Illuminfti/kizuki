@@ -160,6 +160,8 @@ the presence of a secret reference.
 
 ## Storage
 
+Status: designed
+
 Bun + TypeScript (strict). Authoritative state is one SQLite database (`bun:sqlite`, WAL) per vault
 under `<vault>/.kizuki/`: events, purge receipts and purge operations,
 claims, canon receipts, checkpoints, schedules, run receipts, leases,

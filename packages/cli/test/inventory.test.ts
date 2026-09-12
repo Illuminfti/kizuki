@@ -139,6 +139,12 @@ test("documentation status inventory maps shipped claims to live files", () => {
 
 const TAGGED_SECTIONS = [
   {
+    id: "architecture.storage",
+    status: "designed",
+    doc: "docs/architecture.md",
+    heading: "Storage",
+  },
+  {
     id: "architecture.layers",
     status: "designed",
     doc: "docs/architecture.md",
@@ -317,6 +323,9 @@ test.each([
     name: "product.taste tag removed",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Taste as source-linked working knowledge\n\nStatus: direction\n\n", "## Taste as source-linked working knowledge\n\n"));
+    name: "architecture.storage tag removed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Storage\n\nStatus: designed\n\n", "## Storage\n\n"));
       return entries;
     },
   },
@@ -324,6 +333,9 @@ test.each([
     name: "product.taste tag shipped",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Taste as source-linked working knowledge\n\nStatus: direction", "## Taste as source-linked working knowledge\n\nStatus: shipped"));
+    name: "architecture.storage tag shipped",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Storage\n\nStatus: designed", "## Storage\n\nStatus: shipped"));
       return entries;
     },
   },
@@ -336,6 +348,14 @@ test.each([
     name: "product.taste tag only in adjacent Progressive ingestion",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Taste as source-linked working knowledge\n\nStatus: direction\n\n", "## Taste as source-linked working knowledge\n\n"));
+    name: "architecture.storage inventory entry removed",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "architecture.storage"),
+  },
+  {
+    name: "architecture.storage tag only in adjacent Contracts",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Storage\n\nStatus: designed\n\n", "## Storage\n\n"));
       return entries;
     },
   },
