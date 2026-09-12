@@ -293,6 +293,38 @@ describe("help", () => {
     }
   });
 
+  test("doctor structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["doctor", "--help", "--json"], ["help", "doctor", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
+      expect(body.data.name).toBe("doctor");
+      expect(body.data.options).toEqual([]);
+      expect(body.data.flags).toEqual(["--json", "--integrity"]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "doctor", "--help");
+    expect(text.stdout).toContain("--json");
+    expect(text.stdout).toContain("--integrity");
+    for (const [args, diagnostic] of [
+      [["doctor", "--nope"], "unknown option --nope"],
+      [["doctor", "--json", "--json"], "repeated flag --json"],
+      [["doctor", "--integrity", "--integrity"], "repeated flag --integrity"],
+      [["doctor", "--json=true"], "flag --json does not take a value"],
+      [["doctor", "extra"], "invalid arguments"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki doctor");
+    }
+  });
+
   test("recover structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["recover", "--help", "--json"], ["help", "recover", "--json"]] as const) {

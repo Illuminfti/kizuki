@@ -33,7 +33,7 @@ import { clean, errorText, jsonEnvelope } from "../output";
 import { effectiveVaultConfig, loadVaultConfig } from "../vault-config";
 import { inspectModelBinding } from "../serve-runtime";
 import { serveSupervisorHost } from "../service-host";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 const HEALTH_DEADLINE_MS = 3_000;
 const HASH_DRIFT_CAP = 64;
@@ -84,12 +84,21 @@ interface DoctorReport {
   ok: boolean;
 }
 
+export const DOCTOR_SCHEMA = {
+  options: [],
+  flags: ["--json", "--integrity"],
+} as const satisfies CommandHelpSchema;
+
 export const doctorCommand: Command = {
   name: "doctor",
   usage: "doctor [--json] [--integrity]",
   summary: "verify vault identity, receipts, indexes, rails, and connection health",
+  schema: DOCTOR_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
-    const parsed = parseArguments(args, { flags: ["--json", "--integrity"] });
+    const parsed = parseArguments(args, {
+      options: [...DOCTOR_SCHEMA.options],
+      flags: [...DOCTOR_SCHEMA.flags],
+    });
     if (parsed.positionals.length !== 0) throw new UsageError(this.usage);
 
     return withReadVault(io, async (ctx) => {
