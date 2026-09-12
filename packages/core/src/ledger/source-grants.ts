@@ -12,6 +12,7 @@ import {
   sourceStoreStatuses,
   sourceStoresPending,
   eraseOwnedSourceStores,
+  invalidateSourceStoreGeneration,
   type OwnedSourceRetrievalInventory,
   type SourceStoreStatus,
 } from "./source-stores";
@@ -415,6 +416,8 @@ export function setSourceGrant(
       if ((current?.revision ?? 0) !== request.expected_revision)
         fail("source_revision_conflict");
       if (current?.status === "denied") fail("source_purge_pending");
+      if (current?.status === "purged")
+        invalidateSourceStoreGeneration(db, request.source_key);
       const at = new Date().toISOString();
       const revision = request.expected_revision + 1;
       const policyDigest = sha256Hex(JSON.stringify(policy));
