@@ -47,12 +47,15 @@ function addHistory(db: ReturnType<typeof openLedger>, options: { opaque?: boole
       stored: 0, duplicates: 0, errors: [], proposals_created: 0, withdrawn: 0, retractions_filed: 0, cursor: "historical-cursor",
     },
     backfill_complete: false,
+    backfill_cursor: null,
+    sync_cursor: "historical-cursor",
   };
   db.query(`INSERT INTO checkpoints
-    (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result, backfill_cursor, sync_cursor)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(checkpoint.connector_id, checkpoint.source_key, checkpoint.cursor, checkpoint.mode,
-      checkpoint.updated_at, checkpoint.last_run_at, JSON.stringify(checkpoint.last_result));
+      checkpoint.updated_at, checkpoint.last_run_at, JSON.stringify(checkpoint.last_result),
+      checkpoint.backfill_cursor, checkpoint.sync_cursor);
   db.query("UPDATE connections SET config=?,secret_refs=?,connected_at=?,disconnected_at=? WHERE source_key=?").run(
     options.opaque ? STATE_CONNECTION_CONFIG : NULL_CONNECTION_CONFIG,
     options.opaque ? JSON.stringify([`file:connections/${source}.state`]) : "[]",

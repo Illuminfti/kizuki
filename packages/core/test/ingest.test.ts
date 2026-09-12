@@ -143,7 +143,8 @@ test("a refused retraction rolls back tombstone admission and retries before adv
     expect(refused).toMatchObject({ stored: 0, duplicates: 0, retractions_filed: 0,
       errors: ["source_tombstone_vault_required"] });
     expect(db.query("SELECT count(*) AS n FROM events WHERE deleted=1").get()).toEqual({ n: 0 });
-    expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe("before-delete");
+    expect(getCheckpoint(db, "fixture", SOURCE)?.backfill_cursor).toBe("before-delete");
+    expect(getCheckpoint(db, "fixture", SOURCE)?.sync_cursor).toBeNull();
     const retried = await runToCompletion(db, connector, "fixture", SOURCE, "sync", io);
     expect(retried).toMatchObject({ stored: 1, duplicates: 0, retractions_filed: 1, errors: [] });
     expect(db.query("SELECT count(*) AS n FROM events WHERE deleted=1").get()).toEqual({ n: 1 });
@@ -178,7 +179,8 @@ for (const promoted of [false, true]) {
       if (promoted) {
         expect(result).toMatchObject({ stored: 0, withdrawn: 0, retractions_filed: 0, errors: ["source_access_denied"] });
         expect(db.query("SELECT 1 FROM events WHERE deleted=1").get()).toBeNull();
-        expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe("before-delete");
+        expect(getCheckpoint(db, "fixture", SOURCE)?.backfill_cursor).toBe("before-delete");
+        expect(getCheckpoint(db, "fixture", SOURCE)?.sync_cursor).toBeNull();
         expect(["claims", "proposals", "canon_receipts"].map(table => db.query(`SELECT * FROM ${table}`).all())).toEqual(before);
         replaceSourcePurposes(db, ["capture", "derive"], 2);
         expect(await runSync(db, connector, "fixture", SOURCE, io)).toMatchObject({ stored: 1, withdrawn: 1, retractions_filed: 1, errors: [] });
@@ -450,9 +452,11 @@ describe("connector runs", () => {
     );
     await runBackfill(db, connector, "fixture", SOURCE);
     const synced = await runSync(db, connector, "fixture", SOURCE);
-    expect(connector.syncCursors).toEqual(["resume-here"]);
+    expect(connector.syncCursors).toEqual([null]);
     expect(synced.cursor).toBe("after-sync");
     expect(getCheckpoint(db, "fixture", SOURCE)?.mode).toBe("sync");
+    expect(getCheckpoint(db, "fixture", SOURCE)?.backfill_cursor).toBe("resume-here");
+    expect(getCheckpoint(db, "fixture", SOURCE)?.sync_cursor).toBe("after-sync");
     expect(getCheckpoint(db, "fixture", SOURCE)?.backfill_complete).toBe(false);
     expect(getCheckpoint(db, "fixture", SOURCE)?.last_result).toEqual(
       synced,
@@ -527,22 +531,70 @@ describe("connector runs", () => {
 
     const failed = await runSync(db, connector, "fixture", SOURCE);
     expect(failed.errors).toEqual(["forced cascade failure"]);
-    expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe(
+    expect(getCheckpoint(db, "fixture", SOURCE)?.backfill_cursor).toBe(
       "before-tombstone",
     );
+    expect(getCheckpoint(db, "fixture", SOURCE)?.sync_cursor).toBeNull();
 
     db.exec("DROP TRIGGER fail_withdraw");
     const retried = await runSync(db, connector, "fixture", SOURCE);
     expect(retried.errors).toEqual([]);
     expect(retried.withdrawn).toBe(2);
     expect(connector.syncCursors).toEqual([
-      "before-tombstone",
-      "before-tombstone",
+      null,
+      null,
     ]);
-    expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe(
+    expect(getCheckpoint(db, "fixture", SOURCE)?.sync_cursor).toBe(
       "after-tombstone",
     );
+    expect(getCheckpoint(db, "fixture", SOURCE)?.backfill_cursor).toBe(
+      "before-tombstone",
+    );
     db.close();
+  });
+
+  test("interleaved backfill and sync resume independently across restart", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-mode-cursors-"));
+    const path = join(directory, "ledger.sqlite");
+    const db = openLedger(path);
+    initStaging(db);
+    registerConnection(db, "fixture", SOURCE);
+    setSourceGrant(db, {
+      source_key: SOURCE, expected_revision: 0, operation_id: "fixture-" + SOURCE,
+      policy: {
+        purposes: ["capture", "recall", "derive"],
+        allowed_fields: ["text", "subjects", "attachments", "metadata"],
+        retention: "persistent_owned_until_revoked",
+        egress: "local_only",
+        sensitivity_floor: "public",
+      },
+    });
+    const received = { backfill: [] as (string | null)[], sync: [] as (string | null)[] };
+    const connector = new FixtureConnector({ events: [], cursor: null });
+    connector.backfill = async (cursor) => {
+      received.backfill.push(cursor);
+      return { events: [], cursor: cursor === null ? "B1" : "B2" };
+    };
+    connector.sync = async (cursor) => {
+      received.sync.push(cursor);
+      return { events: [], cursor: cursor === null ? "S1" : "S2" };
+    };
+    await runBackfill(db, connector, "fixture", SOURCE);
+    await runSync(db, connector, "fixture", SOURCE);
+    db.close();
+    const reopened = openLedger(path);
+    initStaging(reopened);
+    await runBackfill(reopened, connector, "fixture", SOURCE);
+    await runSync(reopened, connector, "fixture", SOURCE);
+    expect(received.backfill).toEqual([null, "B1"]);
+    expect(received.sync).toEqual([null, "S1"]);
+    expect(getCheckpoint(reopened, "fixture", SOURCE)).toMatchObject({
+      backfill_cursor: "B2",
+      sync_cursor: "S2",
+      backfill_complete: false,
+    });
+    reopened.close();
+    rmSync(directory, { recursive: true, force: true });
   });
 });
 

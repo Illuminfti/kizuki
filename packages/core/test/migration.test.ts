@@ -9,7 +9,7 @@ import { getCanonReceipt } from "../src/canon/receipts";
 import { applyClaimsV3, initClaims } from "../src/claims/schema";
 import { neighbors } from "../src/graph/graph";
 import { initGraph } from "../src/graph/schema";
-import { applyConnectionsV8 } from "../src/ledger/connections-schema";
+import { applyCheckpointModeCursorsV25, applyConnectionsV8 } from "../src/ledger/connections-schema";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { tableColumns, tableExists } from "../src/ledger/schema";
 import { applyEventPurgeIntegrityV22, applyEventPurgeSelectorKindV24 } from "../src/ledger/purge-schema";
@@ -216,6 +216,8 @@ describe("openLedger migrations", () => {
       { name: "last_run_at", notnull: 1, pk: 0 },
       { name: "last_result", notnull: 1, pk: 0 },
       { name: "backfill_complete", notnull: 1, pk: 0 },
+      { name: "backfill_cursor", notnull: 0, pk: 0 },
+      { name: "sync_cursor", notnull: 0, pk: 0 },
     ]);
     expect(columns("connections").map(({ name, pk }) => ({ name, pk }))).toEqual([
       { name: "connector_id", pk: 1 },
@@ -1180,6 +1182,63 @@ describe("openLedger migrations", () => {
     expect(schemaVersion(fresh)).toBe(LEDGER_SCHEMA_VERSION);
     expect(tableColumns(fresh, "event_purge_proofs")).toContain("selector_kind");
     fresh.close();
+    db.close();
+  });
+
+  test("v25 seeds mode cursors from successful runs, not last-run mode", () => {
+    const db = new Database(":memory:");
+    db.exec(`
+      CREATE TABLE connections (
+        connector_id TEXT NOT NULL,
+        source_key TEXT NOT NULL,
+        PRIMARY KEY (connector_id, source_key)
+      );
+      CREATE TABLE checkpoints (
+        connector_id TEXT NOT NULL,
+        source_key TEXT NOT NULL,
+        cursor TEXT,
+        mode TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_run_at TEXT NOT NULL,
+        last_result TEXT NOT NULL,
+        backfill_complete INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (connector_id, source_key)
+      );
+      CREATE TABLE connection_runs (
+        run_id TEXT PRIMARY KEY,
+        connector_id TEXT NOT NULL,
+        source_key TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        finished_at TEXT NOT NULL,
+        previous_cursor TEXT,
+        attempted_cursor TEXT,
+        committed_cursor TEXT,
+        stored INTEGER NOT NULL,
+        duplicates INTEGER NOT NULL,
+        errors TEXT NOT NULL,
+        status TEXT NOT NULL
+      );
+    `);
+    db.query(
+      `INSERT INTO connections VALUES ('fixture', '01JJ0000000000000000000001')`,
+    ).run();
+    db.query(
+      `INSERT INTO checkpoints VALUES ('fixture', '01JJ0000000000000000000001', 'B-token', 'sync', 't', 't', '{}', 0)`,
+    ).run();
+    db.query(
+      `INSERT INTO connection_runs VALUES ('run-ok', 'fixture', '01JJ0000000000000000000001', 'backfill', 't1', 't2', NULL, 'B-token', 'B-token', 1, 0, '[]', 'ok')`,
+    ).run();
+    db.query(
+      `INSERT INTO connection_runs VALUES ('run-fail', 'fixture', '01JJ0000000000000000000001', 'sync', 't3', 't4', NULL, 'S-token', 'B-token', 0, 0, '[]', 'failed')`,
+    ).run();
+    applyCheckpointModeCursorsV25(db);
+    applyCheckpointModeCursorsV25(db);
+    expect(
+      db.query<{ backfill_cursor: string | null; sync_cursor: string | null }, []>(
+        "SELECT backfill_cursor, sync_cursor FROM checkpoints",
+      ).get(),
+    ).toEqual({ backfill_cursor: "B-token", sync_cursor: null });
     db.close();
   });
 });

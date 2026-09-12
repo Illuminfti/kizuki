@@ -29,6 +29,8 @@ export interface Checkpoint {
   last_result: RunResult;
   /** True once a backfill batch reports has_more=false. Sync cannot clear it. */
   backfill_complete: boolean;
+  backfill_cursor: string | null;
+  sync_cursor: string | null;
 }
 
 export type ConnectionRunStatus = "ok" | "failed" | "unavailable" | "refused";
@@ -76,6 +78,8 @@ interface CheckpointRow {
   last_run_at: string;
   last_result: string;
   backfill_complete: number;
+  backfill_cursor: string | null;
+  sync_cursor: string | null;
 }
 
 interface ConnectionRunRow {
@@ -209,6 +213,8 @@ function checkpointFromRow(row: CheckpointRow): Checkpoint {
     last_run_at: row.last_run_at,
     last_result,
     backfill_complete: row.backfill_complete === 1,
+    backfill_cursor: decodeCursor(row.backfill_cursor, "backfill_cursor"),
+    sync_cursor: decodeCursor(row.sync_cursor, "sync_cursor"),
   };
 }
 
@@ -329,6 +335,14 @@ export function getCheckpoint(
     )
     .get(connector_id, source_key);
   return row === null ? null : checkpointFromRow(row);
+}
+
+export function checkpointModeCursor(
+  checkpoint: Checkpoint | null,
+  mode: "backfill" | "sync",
+): string | null {
+  if (checkpoint === null) return null;
+  return mode === "backfill" ? checkpoint.backfill_cursor : checkpoint.sync_cursor;
 }
 
 export function inspectCheckpoints(db: Database): Inspected<Checkpoint>[] {

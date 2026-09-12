@@ -181,8 +181,9 @@ describe("ingest capability, budget, and unavailable", () => {
       SOURCE,
     );
     expect(result.errors).toEqual(["provider is down"]);
-    expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe("page-1");
-    expect(getCheckpoint(db, "fixture", SOURCE)?.last_result.cursor).toBe("page-1");
+    expect(getCheckpoint(db, "fixture", SOURCE)?.backfill_cursor).toBe("page-1");
+    expect(getCheckpoint(db, "fixture", SOURCE)?.sync_cursor).toBeNull();
+    expect(getCheckpoint(db, "fixture", SOURCE)?.last_result.cursor).toBeNull();
     expect(listConnectionRuns(db, "fixture", SOURCE).at(-1)?.status).toBe("unavailable");
     db.close();
   });
@@ -253,8 +254,9 @@ describe("ingest capability, budget, and unavailable", () => {
     );
     expect(result.stored).toBe(0);
     expect(result.errors.some((error) => error.includes("SQLITE_IOERR"))).toBe(true);
-    expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe("page-1");
-    expect(getCheckpoint(db, "fixture", SOURCE)?.last_result.cursor).toBe("page-1");
+    expect(getCheckpoint(db, "fixture", SOURCE)?.backfill_cursor).toBe("page-1");
+    expect(getCheckpoint(db, "fixture", SOURCE)?.sync_cursor).toBeNull();
+    expect(getCheckpoint(db, "fixture", SOURCE)?.last_result.cursor).toBeNull();
     expect(listConnectionRuns(db, "fixture", SOURCE).at(-1)?.status).toBe("failed");
     db.close();
   });
