@@ -480,7 +480,7 @@ function completeForwardRemoval(vaultPath: string, host: SupervisorHost, paths: 
   } catch { throw new Error("service uninstall is pending; retry with the same service home"); }
 }
 
-function recoverChange(vaultPath: string, host: SupervisorHost, paths: ReturnType<typeof servicePaths>): void {
+function recoverChange(vaultPath: string, host: SupervisorHost, paths: ReturnType<typeof servicePaths>, clearFailedSystemd = false): void {
   const raw = serviceFile(paths.journal);
   if (raw === null) return;
   let entry: RecoveredChange | ForwardRemoval;
@@ -496,8 +496,18 @@ function recoverChange(vaultPath: string, host: SupervisorHost, paths: ReturnTyp
   if (current.kind === "systemd" && !observedStable(current)) {
     throw new Error("service recovery could not confirm stop; previous configuration retained");
   }
-  if (!confirmedStopped(current)) {
-    if (!host.disable(paths.unit).ok || !confirmedStopped(host.query(paths.vaultId))) throw new Error("service recovery could not confirm stop; previous configuration retained");
+  let stopped = current;
+  if (!confirmedStopped(stopped)) {
+    if (!host.disable(paths.unit).ok) throw new Error("service recovery could not confirm stop; previous configuration retained");
+    stopped = host.query(paths.vaultId);
+  }
+  if (!confirmedStopped(stopped)) throw new Error("service recovery could not confirm stop; previous configuration retained");
+  // A failed systemd unit can remain at its start limit after disable. Clear
+  // that retained failure before trying to reactivate the restored definition.
+  if (clearFailedSystemd && host.kind === "systemd" && stopped.detail === "failed") {
+    if (!host.resetFailure?.(paths.unit).ok) throw new Error("service recovery could not clear failed state; previous configuration retained");
+    const cleared = host.query(paths.vaultId);
+    if (!confirmedStopped(cleared) || cleared.detail === "failed") throw new Error("service recovery could not clear failed state; previous configuration retained");
   }
   replaceServiceFile(paths.path, entry.previous_unit);
   if (!host.reload().ok) throw new Error("previous service definition reload remains unverified");
@@ -517,12 +527,12 @@ function recoverChange(vaultPath: string, host: SupervisorHost, paths: ReturnTyp
 }
 
 function changeService<T>(vaultPath: string, host: SupervisorHost, operation: (paths: ReturnType<typeof servicePaths>) => T,
-  forwardRemoval?: (paths: ReturnType<typeof servicePaths>, entry: ForwardRemoval) => T): T {
+  forwardRemoval?: (paths: ReturnType<typeof servicePaths>, entry: ForwardRemoval) => T, clearFailedSystemd = false): T {
   const paths = servicePaths(vaultPath, host);
   const lock = tryAdvisoryFileLock(join(vaultPath, ".kizuki", "service-change.lock"));
   if (lock === null) throw new Error("another service change is in progress");
   try {
-    recoverChange(vaultPath, host, paths);
+    recoverChange(vaultPath, host, paths, clearFailedSystemd);
     const previous = host.query(paths.vaultId);
     if (forwardRemoval && host.kind === "launchd" && confirmedFailedLaunchd(previous)) {
       const previous_unit = serviceFile(paths.path);
@@ -550,7 +560,7 @@ function changeService<T>(vaultPath: string, host: SupervisorHost, operation: (p
       replaceServiceFile(paths.journal, null);
       return result;
     } catch {
-      try { recoverChange(vaultPath, host, paths); }
+      try { recoverChange(vaultPath, host, paths, clearFailedSystemd); }
       catch { throw new Error("service change failed; recovery is pending; retry with the same service home"); }
       throw new Error("service change failed; previous configuration restored");
     }
@@ -575,7 +585,7 @@ export function installServeService(
     if (!confirmedActive(status)) throw new Error("service activation was not confirmed");
     writeServeIntent(vaultPath, "installed");
     return { status, unitPath: paths.path, wrote: true };
-  });
+  }, undefined, true);
 }
 
 export function uninstallServeService(

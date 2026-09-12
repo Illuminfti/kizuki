@@ -1275,22 +1275,73 @@ test("client timeout while deactivating keeps the journal and does not inverse r
 
 test("confirmed start failure still rolls back; timeout is not that failure", () => {
   const f = fixture();
-  let enabled = false, activity = "inactive";
+  let enabled = false, activity = "inactive", starts = 0, resets = 0;
   const { adapter } = systemdAdapter((command) => {
     if (command === "daemon-reload" || command === "enable" || command === "stop") {
       if (command === "enable") enabled = true;
+      if (command === "stop" && activity === "active") activity = "inactive";
       return okResult();
     }
-    if (command === "start") { activity = "failed"; return failResult(); }
-    if (command === "disable") { enabled = false; activity = "inactive"; return okResult(); }
+    if (command === "start") {
+      starts++;
+      if (starts === 2 || (starts === 3 && activity === "failed")) { activity = "failed"; return failResult(); }
+      activity = "active"; return okResult();
+    }
+    // A failed unit can lose enablement while retaining its failed/start-limit
+    // state; recovery must reset that state before it starts the old unit.
+    if (command === "disable") { enabled = false; return okResult(); }
+    if (command === "reset-failed") { resets++; activity = "inactive"; return okResult(); }
     if (command === "is-enabled") return enabled ? okResult("enabled") : failResult("disabled", 1);
-    if (command === "is-active") return activity === "failed" ? failResult("failed", 3) : failResult("inactive", 3);
+    if (command === "is-active") return activity === "active" ? okResult("active") : activity === "failed" ? failResult("failed", 3) : failResult("inactive", 3);
     return failResult();
   });
   const host = realSupervisorHost("systemd", f.root, f.host.execStart, { adapter });
-  expect(() => installServeService(f.vault, host)).toThrow("previous configuration restored");
+  const first = installServeService(f.vault, host);
+  const original = readFileSync(first.unitPath!, "utf8");
+  const replacement = realSupervisorHost("systemd", f.root, ["/synthetic/kizuki-v2", "serve"], { adapter });
+  expect(() => installServeService(f.vault, replacement)).toThrow("previous configuration restored");
+  expect(resets).toBe(1);
+  expect(starts).toBe(3);
+  expect(readFileSync(first.unitPath!, "utf8")).toBe(original);
+  expect(host.query(ensureVaultId(f.vault))).toMatchObject({ state: "active", enabled: true });
   expect(existsSync(journalPath(f.vault))).toBe(false);
-  expect(readServeIntent(f.vault)).toBe("opted-out");
+  expect(readServeIntent(f.vault)).toBe("installed");
+});
+
+test.each(["stop-requery-unknown", "reset-fails", "reset-remains-failed", "reset-reactivates", "restored-start-fails"])("failed replacement preserves recovery journal when %s", mode => {
+  const f = fixture();
+  let enabled = false, activity = "inactive", starts = 0, resets = 0;
+  const { adapter } = systemdAdapter((command) => {
+    if (command === "daemon-reload" || command === "enable" || command === "stop") {
+      if (command === "enable") enabled = true;
+      if (command === "stop" && activity === "active") activity = "inactive";
+      return okResult();
+    }
+    if (command === "start") {
+      starts++;
+      if (starts === 2 || (starts === 3 && (mode === "restored-start-fails" || activity === "failed"))) { activity = "failed"; return failResult(); }
+      activity = "active"; return okResult();
+    }
+    if (command === "disable") { enabled = false; if (mode === "stop-requery-unknown") activity = "activating"; return okResult(); }
+    if (command === "reset-failed") {
+      resets++;
+      if (mode === "reset-fails") return failResult();
+      activity = mode === "reset-remains-failed" ? "failed" : mode === "reset-reactivates" ? "active" : "inactive";
+      return okResult();
+    }
+    if (command === "is-enabled") return enabled ? okResult("enabled") : failResult("disabled", 1);
+    if (command === "is-active") return activity === "active" ? okResult("active") : failResult(activity, 3);
+    return failResult();
+  });
+  const host = realSupervisorHost("systemd", f.root, f.host.execStart, { adapter });
+  const first = installServeService(f.vault, host);
+  const original = readFileSync(first.unitPath!, "utf8");
+  const replacement = realSupervisorHost("systemd", f.root, ["/synthetic/kizuki-v2", "serve"], { adapter });
+  expect(() => installServeService(f.vault, replacement)).toThrow("recovery is pending");
+  expect(resets).toBe(mode === "stop-requery-unknown" ? 0 : 1);
+  if (mode === "restored-start-fails") expect(readFileSync(first.unitPath!, "utf8")).toBe(original);
+  expect(existsSync(journalPath(f.vault))).toBe(true);
+  expect(readServeIntent(f.vault)).toBe("installed");
 });
 
 test("timeout re-query treats a later confirmed active start as success", () => {
