@@ -1154,42 +1154,44 @@ function applyClaimInsert(
     sourceEventsAllowed(io.db, live.provenance, sourceScope) && externalEvidence(io.db, live.provenance) && claimsConflict(toConflict(claim), toConflict(live, provenanceGone(io.db, live))),
   );
 
-  const superseded: { claim_id: string; rule: ConflictRule }[] = [];
-  let incomingStatus: ClaimStatus = "live";
-  let contestedAgainst: Claim | null = null;
-
-  for (const live of conflicts) {
+  // Admission must succeed against every live conflict before changing any of them.
+  const resolutions = conflicts.map((live) => {
     const purged = provenanceGone(io.db, live);
-    if (purged && live.status !== "purged") {
-      persistClaim(io.db, { ...live, status: "purged", retracted_at: at });
-    }
     const resolution = resolveConflict(
       toConflict(claim),
       toConflict(purged ? { ...live, status: "purged" } : live, purged),
     );
-    if (resolution.action === "skip") {
-      incomingStatus = "skipped";
-      break;
-    }
-    if (resolution.action === "contested") {
-      contestedAgainst = live;
-      continue;
-    }
-    if (resolution.winner === "incoming") {
-      const prior = live.valid_to;
-      persistClaim(io.db, {
-        ...live,
-        status: "superseded",
-        superseded_by: claim.claim_id,
-        retracted_at: at,
-        valid_to: minTimestamp(live.valid_to, claim.valid_from),
-      });
-      writeSupersession(io.db, claim.claim_id, live.claim_id, resolution.rule, prior, at);
-      enqueueRetrieval(io.db, io, live, at);
-      superseded.push({ claim_id: live.claim_id, rule: resolution.rule });
-    } else {
-      incomingStatus = "skipped";
-      break;
+    return { live, purged, resolution };
+  });
+  const incomingStatus: ClaimStatus = resolutions.some(({ resolution }) =>
+    resolution.action === "skip" ||
+    (resolution.action === "supersede" && resolution.winner === "live"),
+  ) ? "skipped" : "live";
+  const superseded: { claim_id: string; rule: ConflictRule }[] = [];
+  let contestedAgainst: Claim | null = null;
+
+  if (incomingStatus === "live") {
+    for (const { live, purged, resolution } of resolutions) {
+      if (purged && live.status !== "purged") {
+        persistClaim(io.db, { ...live, status: "purged", retracted_at: at });
+      }
+      if (resolution.action === "contested") {
+        contestedAgainst = live;
+        continue;
+      }
+      if (resolution.action === "supersede" && resolution.winner === "incoming") {
+        const prior = live.valid_to;
+        persistClaim(io.db, {
+          ...live,
+          status: "superseded",
+          superseded_by: claim.claim_id,
+          retracted_at: at,
+          valid_to: minTimestamp(live.valid_to, claim.valid_from),
+        });
+        writeSupersession(io.db, claim.claim_id, live.claim_id, resolution.rule, prior, at);
+        enqueueRetrieval(io.db, io, live, at);
+        superseded.push({ claim_id: live.claim_id, rule: resolution.rule });
+      }
     }
   }
 
