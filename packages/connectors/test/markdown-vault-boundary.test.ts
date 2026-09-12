@@ -1,6 +1,7 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import * as filesystem from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { initVault } from "@kizuki/core";
 import { createMarkdownFolderConnector } from "../src/markdown-folder";
@@ -8,7 +9,8 @@ import { createMarkdownFolderConnector } from "../src/markdown-folder";
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function fixture() {
-  const root = mkdtempSync("/tmp/kizuki-markdown-vault-"), vault = join(root, "vault");
+  // Vault custody rejects aliased ancestors, including macOS's /tmp alias.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "kizuki-markdown-vault-"))), vault = join(root, "vault");
   roots.push(root); initVault(vault); mkdirSync(join(vault, "auto"));
   writeFileSync(join(vault, "auto", "synthetic.md"), "SYNTHETIC_GENERATED_CANON\n");
   writeFileSync(join(root, "first.md"), "SYNTHETIC_ORDINARY_SOURCE\n");
