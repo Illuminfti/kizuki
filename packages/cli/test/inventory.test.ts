@@ -157,6 +157,12 @@ const TAGGED_SECTIONS = [
     heading: "Product identity",
   },
   {
+    id: "product.taste",
+    status: "direction",
+    doc: "docs/product-context.md",
+    heading: "Taste as source-linked working knowledge",
+  },
+  {
     id: "stranger-proof.sqlite-engine",
     status: "shipped",
     doc: "docs/stranger-proof.md",
@@ -304,6 +310,32 @@ test.each([
     name: "architecture.layers tag only in adjacent Contracts",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Layers\n\nStatus: designed\n\n", "## Layers\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "product.taste tag removed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Taste as source-linked working knowledge\n\nStatus: direction\n\n", "## Taste as source-linked working knowledge\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "product.taste tag shipped",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Taste as source-linked working knowledge\n\nStatus: direction", "## Taste as source-linked working knowledge\n\nStatus: shipped"));
+      return entries;
+    },
+  },
+  {
+    name: "product.taste inventory entry removed",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "product.taste"),
+  },
+  {
+    name: "product.taste tag only in adjacent Progressive ingestion",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Taste as source-linked working knowledge\n\nStatus: direction\n\n", "## Taste as source-linked working knowledge\n\n"));
       return entries;
     },
   },
