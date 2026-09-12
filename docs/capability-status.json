@@ -88,6 +88,12 @@
       "status": "designed",
       "doc": "docs/architecture.md",
       "heading": "Invariants (CI-enforced where possible)"
+    },
+    {
+      "id": "architecture.serving",
+      "status": "designed",
+      "doc": "docs/architecture.md",
+      "heading": "Serving \u2014 agents as first-class citizens"
     }
   ]
 }
