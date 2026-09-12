@@ -4,7 +4,7 @@ import { CURRENT_PACKAGE_FILES } from "./release-artifacts";
 import { RAIL_IDS } from "../packages/core/src/serve/types";
 import { parseSqliteRuntime } from "../packages/core/src/ledger/runtime";
 
-export const LIFECYCLE_BASELINE_SOURCE = "5d4c9870797607e22d25e30bdda37a879aba9d69";
+export const LIFECYCLE_BASELINE_SOURCE = "0e3bb2216c9f1a1b3f33191d44eae5c39a6007f1";
 // Independently compiled consumer contract; the producer's registry digest must agree.
 export const LIFECYCLE_HISTORY = [
   { id: "ledger15", file: "doctor-ledger15-legacy.sql", sha256: "1d93c78885930f42bb01c579f4a6d272c5998ffd4b11bd4afe95318b90e8a2ed", writer_commit: "5c50bdc8bf14915ffa3c4e1a011ecc8af45d20a9", writer_bun: "1.3.10", ledger: 15 },

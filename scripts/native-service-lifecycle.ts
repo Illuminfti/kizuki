@@ -19,7 +19,7 @@ import type { CliEngineObservation, McpEngineObservation } from "./artifact-proo
 import { MODEL_PHASE_IDS, runNativeModelMatrix, readStrictNativeQuery, type NativeModelPhase } from "./native-model-matrix";
 import { HISTORICAL_RECOVERY_INPUTS, NATIVE_RECOVERY_PHASE_IDS, runNativeRecoveryFixtures, inspectRecoveryFixture, type NativeRecoveryResult } from "./native-recovery-fixtures";
 
-export const BASELINE_SOURCE_SHA = "5d4c9870797607e22d25e30bdda37a879aba9d69";
+export const BASELINE_SOURCE_SHA = "0e3bb2216c9f1a1b3f33191d44eae5c39a6007f1";
 export const NATIVE_STATE_PHASE_IDS = ["init-no-service", "state-missing", "state-disabled", "state-failed", "state-masked"] as const;
 export const NATIVE_LIFECYCLE_PHASE_IDS = [...NATIVE_STATE_PHASE_IDS, "cross-binary-upgrade", ...NATIVE_RECOVERY_PHASE_IDS, ...MODEL_PHASE_IDS] as const;
 export const NATIVE_LIFECYCLE_REGISTRY = {

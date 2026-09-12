@@ -96,9 +96,12 @@ describe("secret terminal prompt", () => {
       "catch (error) { process.stdout.write(error instanceof Error ? error.message : String(error)); }",
     ].join("\n"));
     try {
-      const child = Bun.spawn([
-        "script", "-qfec", `${process.execPath} ${program}`, "/dev/null",
-      ], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+      // BSD script takes a command argv after the transcript; util-linux
+      // takes a shell command with -c and uses lowercase -f for flushing.
+      const command = process.platform === "darwin"
+        ? ["script", "-qF", "/dev/null", process.execPath, program]
+        : ["script", "-qfec", `${process.execPath} ${program}`, "/dev/null"];
+      const child = Bun.spawn(command, { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
       const reader = child.stdout.getReader();
       let transcript = "";
       let sent = false;
@@ -113,7 +116,7 @@ describe("secret terminal prompt", () => {
         }
       }
       transcript += await new Response(child.stderr).text();
-      expect(sent).toBe(true);
+      expect(sent, transcript).toBe(true);
       expect(await child.exited).toBe(0);
       expect(transcript).toContain("interactive sign-in cancelled");
     } finally {

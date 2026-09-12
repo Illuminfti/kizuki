@@ -7,7 +7,7 @@ import { BUN_DISTRIBUTION_PIN } from "./release-notices";
 import { selectedReleaseTarget } from "./release-targets";
 
 // This is a previously qualified candidate, not a previously published release.
-export const NATIVE_BASELINE_SOURCE_SHA = "5d4c9870797607e22d25e30bdda37a879aba9d69";
+export const NATIVE_BASELINE_SOURCE_SHA = "0e3bb2216c9f1a1b3f33191d44eae5c39a6007f1";
 const repository = resolve(import.meta.dir, "..");
 const lockDigest = "2726abbda9cc9466570398e4297132d00969fee68a8cc486c244ce31a4ab6224";
 const digest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
