@@ -143,11 +143,20 @@ Known limits:
   `chatgpt:tool`). A node with any other role is reported and not stored.
   Nothing the model said is attributed to you.
 - The conversation tree is flattened. A regenerated answer is stored beside
-  the answer it replaced, each under its own node id, but neither event
-  records its parent or which branch the conversation continued on.
+  the answer it replaced, each under its own node id. The node's parent is
+  recorded when the export names one. `current_node` is the conversation's
+  selected leaf at import time, copied onto every event from that
+  conversation; it is not a live pointer. Snapshot hashing ignores metadata,
+  so a later export that only moves the leaf does not refresh it on unchanged
+  older rows. New messages receive the new leaf; old ones keep the first
+  import.
 - Image, file and audio parts become attachment references by their asset
-  pointer; the bytes are not read. Any other structured part is listed under
-  `unsupported_parts` and reported; the text around it still imports.
+  pointer; files listed on the message become references when those fields
+  already satisfy the event contract. A `file-service://` pointer and the
+  matching file id are stored as one ref. The bytes are not read or fetched.
+  Any other structured part, or a listed file that cannot be represented, is
+  listed under `unsupported_parts` and reported; the text around it still
+  imports.
 - A message with no `create_time`, or one with no text and no attachments, is
   reported and not stored. Import time is never substituted for message time.
 - Two nodes sharing an id are reported: as a duplicate when they agree, as a

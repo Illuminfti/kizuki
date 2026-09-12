@@ -2,12 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { validateEventInput } from "@kizuki/core";
 import {
   CHATGPT_IMPORT_CONNECTOR_ID,
   KizukiError,
   createChatGptImportConnector,
   parseChatGptExport,
 } from "../src";
+import { InMemoryLedger } from "../src/ledger";
 import { encodeSourceRecordId } from "../src/source-id";
 
 const OBSERVED_AT = "2026-04-01T12:00:00.000Z";
@@ -386,6 +388,76 @@ describe("parseChatGptExport", () => {
 });
 
 describe("ChatGptImportConnector", () => {
+  test("metadata attachments that miss frozen ingress still store the parent message in Core", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
+    try {
+      const file = path.join(root, "conversations.json");
+      await writeFile(
+        file,
+        JSON.stringify([
+          {
+            id: "c1",
+            current_node: "n",
+            mapping: {
+              n: {
+                message: {
+                  author: { role: "user" },
+                  content: { parts: ["summarize"] },
+                  create_time: 1_704_067_200,
+                  metadata: {
+                    attachments: [
+                      {
+                        id: "file-notes",
+                        name: " notes.pdf",
+                        size: 4,
+                        mimeType: "application/pdf",
+                      },
+                      {
+                        id: "file-typed",
+                        name: "notes.pdf",
+                        mime_type: "m".repeat(300),
+                      },
+                    ],
+                  },
+                },
+                parent: "root",
+              },
+            },
+          },
+        ]),
+      );
+      const connector = createChatGptImportConnector({ path: file });
+      const health = await connector.health();
+      expect(health.state).toBe("ok");
+      const first = await connector.backfill(null);
+      expect(first.status ?? "ok").toBe("ok");
+      expect(first.events).toHaveLength(1);
+      expect(first.events[0]?.text).toBe("summarize");
+      expect(first.events[0]?.metadata["parent"]).toBe("root");
+      expect(first.events[0]?.metadata["current_node"]).toBe("n");
+      expect(validateEventInput(first.events[0]).ok).toBe(true);
+      const ledger = new InMemoryLedger();
+      const stored = ledger.accept(first.events[0]);
+      expect(stored.status).toBe("stored");
+      if (stored.status !== "stored") return;
+      expect(stored.event.text).toBe("summarize");
+      expect(stored.event.attachments).toEqual([
+        {
+          attachment_id: "file-notes",
+          media_type: "application/pdf",
+          byte_size: 4,
+        },
+        {
+          attachment_id: "file-typed",
+          media_type: "application/pdf",
+          filename: "notes.pdf",
+        },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("unsupported parts preserve supported events and the existing health-only degradation", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
     try {

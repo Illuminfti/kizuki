@@ -1,4 +1,9 @@
-import { freezeManifest, isPlainObject, policyForConnector } from "@kizuki/core";
+import {
+  EVENT_LIMITS,
+  freezeManifest,
+  isPlainObject,
+  policyForConnector,
+} from "@kizuki/core";
 import type {
   AttachmentRef,
   CaptureEventInput,
@@ -136,6 +141,8 @@ const ATTACHMENT_TYPES = new Set([
   "video_asset_pointer",
   "real_time_user_audio_video_asset_pointer",
 ]);
+
+const FILE_SERVICE_PREFIX = "file-service://";
 
 export class ChatGptImportConnector implements Connector {
   readonly path: string;
@@ -435,9 +442,10 @@ function extractContent(
       unsupported: [contentType],
     };
   }
-  const usingPartsArray = Array.isArray(content["parts"]);
+  const rawParts = content["parts"];
+  const usingPartsArray = Array.isArray(rawParts);
   const parts = usingPartsArray
-    ? content["parts"]
+    ? rawParts
     : content["text"] !== undefined
       ? [content["text"]]
       : undefined;
@@ -462,16 +470,19 @@ function extractContent(
     collectMetadataAttachments(message["metadata"], extracted);
     return extracted;
   }
+  const extracted: ExtractedContent = {
+    text: "",
+    attachments: [],
+    unsupported: [],
+  };
   const lines: string[] = [];
-  const attachments: AttachmentRef[] = [];
-  const unsupported: string[] = [];
   parts.forEach((part, index) => {
     if (typeof part === "string") {
       lines.push(part);
       return;
     }
     if (!isPlainObject(part)) {
-      unsupported.push("non_object_part");
+      extracted.unsupported.push("non_object_part");
       return;
     }
     const type =
@@ -481,7 +492,7 @@ function extractContent(
           ? part["type"]
           : "unknown";
     if (INSTRUCTION_CONTENT_TYPES.has(type)) {
-      unsupported.push(type);
+      extracted.unsupported.push(type);
       return;
     }
     const pointer = nonEmptyString(part["asset_pointer"]);
@@ -490,24 +501,22 @@ function extractContent(
       (pointer !== undefined && !TEXT_CONTENT_TYPES.has(type))
     ) {
       const filename =
-        typeof part["filename"] === "string"
-          ? safeFilename(part["filename"])
-          : null;
+        typeof part["filename"] === "string" ? part["filename"] : undefined;
       const size = integerByteSize(part["size_bytes"] ?? part["size"]);
-      attachments.push({
-        attachment_id:
+      const ref = makeAttachmentRef({
+        id:
           pointer ??
           nonEmptyString(part["file_id"]) ??
           nonEmptyString(part["filename"]) ??
           `${type}:${index}`,
-        media_type: ATTACHMENT_TYPES.has(type)
+        mediaType: ATTACHMENT_TYPES.has(type)
           ? mediaTypeForPart(type)
-          : filename !== null
-            ? mediaTypeFor(filename)
-            : "application/octet-stream",
-        ...(filename !== null ? { filename } : {}),
-        ...(size !== undefined ? { byte_size: size } : {}),
+          : undefined,
+        filename,
+        byteSize: size,
       });
+      if (ref === undefined) extracted.unsupported.push(type);
+      else addAttachment(extracted, ref, type);
       if (typeof part["text"] === "string" && part["text"].length > 0) {
         lines.push(part["text"]);
       }
@@ -519,23 +528,19 @@ function extractContent(
     }
     if (typeof part["text"] === "string") {
       if (part["text"].length > 0) lines.push(part["text"]);
-      unsupported.push(type);
+      extracted.unsupported.push(type);
       return;
     }
-    unsupported.push(type);
+    extracted.unsupported.push(type);
   });
   if (
     !usingPartsArray &&
     typeof content["content_type"] === "string" &&
     !TEXT_CONTENT_TYPES.has(content["content_type"])
   ) {
-    unsupported.push(content["content_type"]);
+    extracted.unsupported.push(content["content_type"]);
   }
-  const extracted: ExtractedContent = {
-    text: lines.join("\n"),
-    attachments,
-    unsupported,
-  };
+  extracted.text = lines.join("\n");
   collectMetadataAttachments(message["metadata"], extracted);
   return extracted;
 }
@@ -550,45 +555,165 @@ function collectMetadataAttachments(
     return;
   }
   if (metadata["attachments"] === undefined) return;
-  if (!Array.isArray(metadata["attachments"])) {
+  const listed = metadata["attachments"];
+  if (!Array.isArray(listed)) {
     extracted.unsupported.push("malformed_attachments");
     return;
   }
-  const seen = new Set(
-    extracted.attachments.map((attachment) => attachment.attachment_id),
-  );
-  metadata["attachments"].forEach((raw, index) => {
+  listed.forEach((raw, index) => {
     if (!isPlainObject(raw)) {
       extracted.unsupported.push("non_object_attachment");
       return;
     }
-    const id =
-      nonEmptyString(raw["id"]) ??
-      nonEmptyString(raw["file_id"]) ??
-      nonEmptyString(raw["name"]) ??
-      nonEmptyString(raw["filename"]) ??
-      `attachment:${index}`;
-    if (seen.has(id)) return;
-    seen.add(id);
-    const filename =
-      nonEmptyString(raw["name"]) ?? nonEmptyString(raw["filename"]);
-    const safeName = filename !== undefined ? safeFilename(filename) : null;
-    const declared =
-      nonEmptyString(raw["mime_type"]) ??
-      nonEmptyString(raw["mimeType"]) ??
-      nonEmptyString(raw["file_type"]);
-    const size = integerByteSize(
-      raw["size"] ?? raw["size_bytes"] ?? raw["file_size"],
-    );
-    extracted.attachments.push({
-      attachment_id: id,
-      media_type:
-        declared ??
-        (safeName !== null ? mediaTypeFor(safeName) : "application/octet-stream"),
-      ...(safeName !== null ? { filename: safeName } : {}),
-      ...(size !== undefined ? { byte_size: size } : {}),
+    const ref = makeAttachmentRef({
+      id:
+        nonEmptyString(raw["id"]) ??
+        nonEmptyString(raw["file_id"]) ??
+        nonEmptyString(raw["name"]) ??
+        nonEmptyString(raw["filename"]) ??
+        `attachment:${index}`,
+      mediaType:
+        nonEmptyString(raw["mime_type"]) ??
+        nonEmptyString(raw["mimeType"]) ??
+        nonEmptyString(raw["file_type"]),
+      filename:
+        nonEmptyString(raw["name"]) ?? nonEmptyString(raw["filename"]),
+      byteSize: integerByteSize(
+        raw["size"] ?? raw["size_bytes"] ?? raw["file_size"],
+      ),
     });
+    if (ref === undefined) {
+      extracted.unsupported.push("invalid_attachment");
+      return;
+    }
+    addAttachment(extracted, ref, "invalid_attachment");
   });
+}
+
+const INGRESS_CONTROL = /[\p{Cc}\p{Zl}\p{Zp}]/u;
+const INGRESS_MARK = /\p{M}/u;
+const INGRESS_FORMAT = /\p{Cf}/u;
+const INGRESS_IGNORABLE = /\p{Default_Ignorable_Code_Point}/u;
+const INGRESS_SPACE = /\p{White_Space}/u;
+const INGRESS_GRAPHEMES = new Intl.Segmenter(undefined, {
+  granularity: "grapheme",
+});
+
+/** Same visible-identifier rule Core's attachment fields use. */
+function isVisibleIngress(value: string): boolean {
+  if (
+    value.trim() !== value ||
+    INGRESS_CONTROL.test(value) ||
+    value.includes("\u034f")
+  ) {
+    return false;
+  }
+  if (/^[\x20-\x7e]+$/.test(value)) return true;
+  for (const { segment } of INGRESS_GRAPHEMES.segment(value)) {
+    let whitespaceOnly = true;
+    let visible = false;
+    for (const ch of segment) {
+      if (INGRESS_SPACE.test(ch)) continue;
+      whitespaceOnly = false;
+      if (
+        !INGRESS_MARK.test(ch) &&
+        !INGRESS_FORMAT.test(ch) &&
+        !INGRESS_IGNORABLE.test(ch)
+      ) {
+        visible = true;
+        break;
+      }
+    }
+    if (!whitespaceOnly && !visible) return false;
+  }
+  return true;
+}
+
+function ingressIdentifier(
+  value: string,
+  maxBytes: number,
+): string | undefined {
+  if (
+    value.length === 0 ||
+    value.length > maxBytes ||
+    Buffer.byteLength(value, "utf8") > maxBytes ||
+    !isVisibleIngress(value)
+  ) {
+    return undefined;
+  }
+  return value;
+}
+
+function attachmentDedupeKey(id: string): string {
+  return id.startsWith(FILE_SERVICE_PREFIX)
+    ? id.slice(FILE_SERVICE_PREFIX.length)
+    : id;
+}
+
+function makeAttachmentRef(input: {
+  id: string;
+  mediaType?: string | undefined;
+  filename?: string | undefined;
+  byteSize?: number | undefined;
+}): AttachmentRef | undefined {
+  const attachmentId = ingressIdentifier(input.id, EVENT_LIMITS.attachmentIdBytes);
+  if (attachmentId === undefined) return undefined;
+  const safeName =
+    input.filename !== undefined ? safeFilename(input.filename) : null;
+  const filename =
+    safeName !== null
+      ? ingressIdentifier(safeName, EVENT_LIMITS.filenameBytes)
+      : undefined;
+  const declared =
+    input.mediaType !== undefined
+      ? ingressIdentifier(input.mediaType, EVENT_LIMITS.mediaTypeBytes)
+      : undefined;
+  return {
+    attachment_id: attachmentId,
+    media_type:
+      declared ??
+      (safeName !== null ? mediaTypeFor(safeName) : "application/octet-stream"),
+    ...(filename !== undefined ? { filename } : {}),
+    ...(input.byteSize !== undefined ? { byte_size: input.byteSize } : {}),
+  };
+}
+
+function mergeAttachmentEvidence(
+  target: AttachmentRef,
+  incoming: AttachmentRef,
+): void {
+  if (target.filename === undefined && incoming.filename !== undefined) {
+    target.filename = incoming.filename;
+  }
+  if (
+    incoming.media_type !== "application/octet-stream" &&
+    incoming.media_type !== target.media_type
+  ) {
+    target.media_type = incoming.media_type;
+  }
+  if (target.byte_size === undefined && incoming.byte_size !== undefined) {
+    target.byte_size = incoming.byte_size;
+  }
+}
+
+function addAttachment(
+  extracted: ExtractedContent,
+  ref: AttachmentRef,
+  overflowToken: string,
+): void {
+  const key = attachmentDedupeKey(ref.attachment_id);
+  const existing = extracted.attachments.find(
+    (item) => attachmentDedupeKey(item.attachment_id) === key,
+  );
+  if (existing !== undefined) {
+    mergeAttachmentEvidence(existing, ref);
+    return;
+  }
+  if (extracted.attachments.length >= EVENT_LIMITS.attachmentCount) {
+    extracted.unsupported.push(overflowToken);
+    return;
+  }
+  extracted.attachments.push(ref);
 }
 
 function mediaTypeForPart(type: string): string {

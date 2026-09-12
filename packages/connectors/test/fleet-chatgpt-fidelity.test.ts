@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { validateEventInput, type CaptureEventInput } from "@kizuki/core";
+import {
+  EVENT_LIMITS,
+  validateEventInput,
+  type CaptureEventInput,
+} from "@kizuki/core";
 import {
   CHATGPT_IMPORT_CONNECTOR_ID,
   parseChatGptExport,
@@ -595,6 +599,31 @@ describe("ChatGPT export fidelity", () => {
                 },
               },
             },
+            pointer: {
+              message: {
+                author: { role: "user" },
+                content: {
+                  parts: [
+                    {
+                      content_type: "image_asset_pointer",
+                      asset_pointer: "file-service://file-abc",
+                      size_bytes: 4,
+                    },
+                  ],
+                },
+                create_time: 1_704_067_440,
+                metadata: {
+                  attachments: [
+                    {
+                      id: "file-abc",
+                      name: "shot.png",
+                      size: 4,
+                      mimeType: "image/png",
+                    },
+                  ],
+                },
+              },
+            },
           },
         },
       ]),
@@ -625,7 +654,20 @@ describe("ChatGPT export fidelity", () => {
         [
           {
             attachment_id: "file-shared",
-            media_type: "image/*",
+            media_type: "image/png",
+            filename: "shared.png",
+            byte_size: 4,
+          },
+        ],
+      ],
+      [
+        encodeSourceRecordId(["files-thread", "pointer"]),
+        "",
+        [
+          {
+            attachment_id: "file-service://file-abc",
+            media_type: "image/png",
+            filename: "shot.png",
             byte_size: 4,
           },
         ],
@@ -659,6 +701,238 @@ describe("ChatGPT export fidelity", () => {
       assertIngressOnly(event);
       expect(event.metadata["model_slug"]).toBeUndefined();
     }
+  });
+
+  test("metadata attachments that miss frozen ingress keep the parent message valid", () => {
+    const overlongType = "m".repeat(EVENT_LIMITS.mediaTypeBytes + 1);
+    const overlongId = "a".repeat(EVENT_LIMITS.attachmentIdBytes + 50);
+    const listed = Array.from(
+      { length: EVENT_LIMITS.attachmentCount + 1 },
+      (_, index) => ({
+        id: `file-${index}`,
+        name: `doc-${index}.pdf`,
+        mimeType: "application/pdf",
+        size: 1,
+      }),
+    );
+    const result = parseChatGptExport(
+      JSON.stringify([
+        {
+          id: "ingress-thread",
+          title: "Ingress",
+          current_node: "space",
+          mapping: {
+            space: {
+              message: {
+                author: { role: "user" },
+                content: { parts: ["summarize"] },
+                create_time: 1_704_067_200,
+                metadata: {
+                  attachments: [
+                    {
+                      id: "file-notes",
+                      name: " notes.pdf",
+                      size: 4,
+                      mimeType: "application/pdf",
+                    },
+                  ],
+                },
+              },
+              parent: "root",
+            },
+            mime: {
+              message: {
+                author: { role: "user" },
+                content: { parts: ["typed"] },
+                create_time: 1_704_067_260,
+                metadata: {
+                  attachments: [
+                    {
+                      id: "file-typed",
+                      name: "notes.pdf",
+                      mime_type: overlongType,
+                    },
+                  ],
+                },
+              },
+              parent: "root",
+            },
+            clamped: {
+              message: {
+                author: { role: "user" },
+                content: { parts: ["clamped"] },
+                create_time: 1_704_067_320,
+                metadata: {
+                  attachments: [{ id: overlongId, name: "clip.bin", size: 2 }],
+                },
+              },
+              parent: "root",
+            },
+            invalid: {
+              message: {
+                author: { role: "user" },
+                content: { parts: ["kept"] },
+                create_time: 1_704_067_380,
+                metadata: {
+                  attachments: [
+                    {
+                      id: " file-bad",
+                      name: "notes.pdf",
+                      mimeType: "application/pdf",
+                    },
+                  ],
+                },
+              },
+              parent: "root",
+            },
+            nbsp: {
+              message: {
+                author: { role: "user" },
+                content: { parts: ["nbsp"] },
+                create_time: 1_704_067_440,
+                metadata: {
+                  attachments: [
+                    {
+                      id: "file-nbsp",
+                      name: "\u00a0notes.pdf",
+                      mimeType: "application/pdf",
+                    },
+                  ],
+                },
+              },
+              parent: "root",
+            },
+            many: {
+              message: {
+                author: { role: "user" },
+                content: { parts: ["many"] },
+                create_time: 1_704_067_500,
+                metadata: { attachments: listed },
+              },
+              parent: "root",
+            },
+            partname: {
+              message: {
+                author: { role: "user" },
+                content: {
+                  parts: [
+                    {
+                      content_type: "image_asset_pointer",
+                      asset_pointer: "file-service://img-space",
+                      filename: " shot.png",
+                      size_bytes: 3,
+                    },
+                  ],
+                },
+                create_time: 1_704_067_560,
+              },
+              parent: "root",
+            },
+          },
+        },
+      ]),
+      OBSERVED_AT,
+    );
+    const byNode = (node: string) =>
+      result.events.find(
+        (event) =>
+          event.source_record_id ===
+          encodeSourceRecordId(["ingress-thread", node]),
+      );
+    const space = byNode("space");
+    const mime = byNode("mime");
+    const clamped = byNode("clamped");
+    const invalid = byNode("invalid");
+    const nbsp = byNode("nbsp");
+    const many = byNode("many");
+    const partname = byNode("partname");
+    expect(space?.text).toBe("summarize");
+    expect(space?.metadata["parent"]).toBe("root");
+    expect(space?.metadata["current_node"]).toBe("space");
+    expect(space?.attachments).toEqual([
+      {
+        attachment_id: "file-notes",
+        media_type: "application/pdf",
+        byte_size: 4,
+      },
+    ]);
+    expect(mime?.attachments).toEqual([
+      {
+        attachment_id: "file-typed",
+        media_type: "application/pdf",
+        filename: "notes.pdf",
+      },
+    ]);
+    expect(clamped?.text).toBe("clamped");
+    expect(clamped?.attachments).toEqual([]);
+    expect(clamped?.metadata["unsupported_parts"]).toEqual(["invalid_attachment"]);
+    expect(invalid?.text).toBe("kept");
+    expect(invalid?.attachments).toEqual([]);
+    expect(invalid?.metadata["unsupported_parts"]).toEqual([
+      "invalid_attachment",
+    ]);
+    expect(nbsp?.attachments).toEqual([
+      { attachment_id: "file-nbsp", media_type: "application/pdf" },
+    ]);
+    expect(many?.text).toBe("many");
+    expect(many?.attachments).toHaveLength(EVENT_LIMITS.attachmentCount);
+    expect(many?.metadata["unsupported_parts"]).toEqual(["invalid_attachment"]);
+    expect(partname?.attachments).toEqual([
+      {
+        attachment_id: "file-service://img-space",
+        media_type: "image/*",
+        byte_size: 3,
+      },
+    ]);
+    expect(result.events).toHaveLength(7);
+    expect(byLocationCode(result.errors)).toEqual(
+      byLocationCode([
+        {
+          location: "ingress-thread/clamped",
+          code: "unsupported_part",
+          reason: "unsupported content parts: invalid_attachment",
+        },
+        {
+          location: "ingress-thread/invalid",
+          code: "unsupported_part",
+          reason: "unsupported content parts: invalid_attachment",
+        },
+        {
+          location: "ingress-thread/many",
+          code: "unsupported_part",
+          reason: "unsupported content parts: invalid_attachment",
+        },
+      ]),
+    );
+    for (const event of result.events) assertIngressOnly(event);
+  });
+
+  test("overlong attachment identities cannot alias a valid attachment", () => {
+    const exactId = "a".repeat(EVENT_LIMITS.attachmentIdBytes);
+    const result = parseChatGptExport(JSON.stringify([{
+      id: "identity-thread",
+      mapping: { node: { message: {
+        author: { role: "user" },
+        content: { parts: ["Keep the message and the exact source identity."] },
+        create_time: 1_704_067_200,
+        metadata: { attachments: [
+          { id: `${exactId}first`, name: "wrong-first.pdf" },
+          { id: exactId, name: "right.pdf" },
+          { id: `${exactId}second`, name: "wrong-second.pdf" },
+        ] },
+      } } },
+    }]), OBSERVED_AT);
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]?.text).toBe("Keep the message and the exact source identity.");
+    expect(result.events[0]?.attachments).toEqual([{
+      attachment_id: exactId,
+      media_type: "application/pdf",
+      filename: "right.pdf",
+    }]);
+    expect(result.events[0]?.metadata["unsupported_parts"]).toEqual([
+      "invalid_attachment", "invalid_attachment",
+    ]);
+    assertIngressOnly(result.events[0]!);
   });
 
   test("custom-instruction payloads stay out of evidence; useful unsupported text is kept and flagged", () => {
