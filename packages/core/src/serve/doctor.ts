@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { inspectPageIndex } from "../canon";
 import { isMachineOriginPath } from "../canon/origin";
 import { formatProducerDiagnostic } from "../producer/diagnostics";
+import { SINGLE_SOURCE_CAP } from "../claims/authority";
 import { countPendingRetrievalOps } from "../claims/store";
 import { readDerivedMeta } from "../derived-meta";
 import { inspectConnectionStateRecovery } from "../ledger/connection-state";
@@ -119,6 +120,65 @@ function stdev(values: number[]): number | null {
   return Math.sqrt(variance);
 }
 
+function policyCapped(row: {
+  confidence: number;
+  provenance: string;
+  corroboration: number;
+  authority: string;
+}): boolean {
+  if (row.authority !== "model_inference" || row.corroboration > 1) return false;
+  if (row.confidence !== SINGLE_SOURCE_CAP) return false;
+  try {
+    const provenance: unknown = JSON.parse(row.provenance);
+    return Array.isArray(provenance) && provenance.length === 1;
+  } catch {
+    return false;
+  }
+}
+
+/** Latest extracting `started_at`, or null if that clock cannot be parsed. */
+function latestExtractingStartedAt(receipts: RunReceipt[]): string | null {
+  let startedAt: string | null = null;
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const receipt of receipts) {
+    if (receipt.claims_extracted <= 0 && receipt.claims_written <= 0) continue;
+    const at = Date.parse(receipt.started_at);
+    if (!Number.isFinite(at)) return null;
+    if (at >= latest) {
+      latest = at;
+      startedAt = receipt.started_at;
+    }
+  }
+  return startedAt;
+}
+
+/** True first fill only when every live/superseded asserted_at parses. */
+function initialCapture(db: Database, startedAt: string): boolean {
+  if (!tableExists(db, "claims")) return false;
+  const row = db
+    .query<{ invalid: number; prior: number; current: number }, [string, string]>(
+      `SELECT
+         EXISTS (
+           SELECT 1 FROM claims
+            WHERE status IN ('live', 'superseded')
+              AND julianday(asserted_at) IS NULL
+         ) AS invalid,
+         EXISTS (
+           SELECT 1 FROM claims
+            WHERE status IN ('live', 'superseded')
+              AND julianday(asserted_at) < julianday(?)
+         ) AS prior,
+         EXISTS (
+           SELECT 1 FROM claims
+            WHERE status IN ('live', 'superseded')
+              AND julianday(asserted_at) >= julianday(?)
+         ) AS current`,
+    )
+    .get(startedAt, startedAt);
+  if (Number(row?.invalid ?? 0) !== 0) return false;
+  return Number(row?.prior ?? 0) === 0 && Number(row?.current ?? 0) !== 0;
+}
+
 function calibration(db: Database, receipts: RunReceipt[], now: string): CalibrationDoctor {
   const failures: string[] = [];
   if (receipts.length === 0) {
@@ -137,23 +197,42 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
   const deduped = receipts.reduce((sum, receipt) => sum + receipt.claims_deduped, 0);
   const writeRate = written / Math.max(1, extracted);
   const dedupRate = deduped / Math.max(1, extracted);
-  if (extracted > 0 && (writeRate < CALIBRATION_BAND.min || writeRate > CALIBRATION_BAND.max)) {
+  const startedAt = latestExtractingStartedAt(receipts);
+  // Keep-rate ceiling is steady-state; skip it only for a true initial capture.
+  const firstFill = startedAt !== null && initialCapture(db, startedAt);
+  if (
+    extracted > 0 &&
+    (writeRate < CALIBRATION_BAND.min || (writeRate > CALIBRATION_BAND.max && !firstFill))
+  ) {
     failures.push(`write_rate ${writeRate.toFixed(3)} outside [${CALIBRATION_BAND.min}, ${CALIBRATION_BAND.max}]`);
   }
-  const confidences = tableExists(db, "claims")
+  const rows = tableExists(db, "claims")
     ? db
-        .query<{ confidence: number }, []>(
-          `SELECT confidence FROM claims
+        .query<
+          {
+            confidence: number;
+            provenance: string;
+            corroboration: number;
+            authority: string;
+          },
+          []
+        >(
+          `SELECT confidence, provenance, corroboration, authority FROM claims
             WHERE status IN ('live', 'superseded')
             ORDER BY asserted_at DESC
             LIMIT 10000`,
         )
         .all()
-        .map((row) => row.confidence)
     : [];
+  const confidences = rows.map((row) => row.confidence);
   const spread = stdev(confidences);
-  if (spread !== null && confidences.length >= 8 && spread < CONFIDENCE_SPREAD_MIN) {
-    failures.push("confidence_not_produced");
+  // SINGLE_SOURCE_CAP flattens single-source confidence; that is policy, not a missing producer.
+  const measurable = rows.filter((row) => !policyCapped(row)).map((row) => row.confidence);
+  if (measurable.length >= 8) {
+    const measurableSpread = stdev(measurable);
+    if (measurableSpread !== null && measurableSpread < CONFIDENCE_SPREAD_MIN) {
+      failures.push("confidence_not_produced");
+    }
   }
   const today = now.slice(0, 10);
   const canonToday = receipts

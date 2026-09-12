@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { insertClaim } from "../../src/claims/store";
 import { openLedger } from "../../src/ledger/db";
 import { inspectServeDoctor } from "../../src/serve/doctor";
 import { persistRunReceipt } from "../../src/serve/receipts";
@@ -11,6 +12,7 @@ import {
   emptyRunTotals,
 } from "../../src/serve/types";
 import { initVault } from "../../src/vault/init";
+import { claimInput, putEvent } from "../claims/helpers";
 
 const dirs: string[] = [];
 
@@ -39,23 +41,36 @@ function receipt(
   };
 }
 
-function insertClaim(
+async function storeMeasurable(
   db: ReturnType<typeof openLedger>,
-  claimId: string,
+  index: number,
   confidence: number,
 ) {
-  db.query(
-    `INSERT INTO claims (
-       claim_id, kind, body, frontmatter, provenance, subjects, producer,
-       confidence, status, created_at, body_hash, asserted_at
-     ) VALUES (?, 'fact', 'synthetic', '{}', '[]', '[]', 'model', ?, 'live', ?, ?, ?)`,
-  ).run(
-    claimId,
-    confidence,
-    "2026-08-27T00:00:00Z",
-    `hash-${claimId}`,
-    "2026-08-27T00:00:00Z",
+  const text = `synthetic loop person ${index} works at org-${index}.`;
+  const first = putEvent(db, {
+    source_record_id: `loop-a-${index}`,
+    connector_id: "fixture-a",
+    text,
+  });
+  const second = putEvent(db, {
+    source_record_id: `loop-b-${index}`,
+    connector_id: "fixture-b",
+    text,
+  });
+  const result = await insertClaim(
+    { db, now: () => "2026-08-27T00:00:00Z" },
+    claimInput(first, {
+      subject: `person:loop-${index}`,
+      subjects: [`person:loop-${index}`],
+      object: `org-${index}`,
+      body: text,
+      confidence,
+      provenance: [first, second],
+    }),
   );
+  if (result.outcome !== "stored") throw new Error(`measurable claim ${index} was ${result.outcome}`);
+  expect(result.claim.confidence).toBe(confidence);
+  expect(result.claim.provenance).toHaveLength(2);
 }
 
 afterEach(() => {
@@ -94,7 +109,7 @@ test("doctor fails when the seven-day write rate leaves the band", () => {
   db.close();
 });
 
-test("doctor fails when confidence has no spread across the corpus", () => {
+test("doctor fails when confidence has no spread across the corpus", async () => {
   const { path, db } = vault();
   persistRunReceipt(
     db,
@@ -107,16 +122,17 @@ test("doctor fails when confidence has no spread across the corpus", () => {
     }),
   );
   for (let index = 0; index < 8; index += 1) {
-    insertClaim(db, `claim-flat-${index}`, 0.5);
+    await storeMeasurable(db, index, 0.9);
   }
   const report = inspectServeDoctor(db, path, { now: "2026-08-28T00:00:00Z" });
   expect(report.ok).toBe(false);
   expect(report.calibration.failures).toContain("confidence_not_produced");
   expect(report.failures).toContain("confidence_not_produced");
+  expect(report.failures.some((item) => item.startsWith("write_rate "))).toBe(false);
   db.close();
 });
 
-test("in-band writes with spread confidence stay unfailed", () => {
+test("in-band writes with spread confidence stay unfailed", async () => {
   const { path, db } = vault();
   persistRunReceipt(
     db,
@@ -129,11 +145,45 @@ test("in-band writes with spread confidence stay unfailed", () => {
     }),
   );
   for (let index = 0; index < 8; index += 1) {
-    insertClaim(db, `claim-spread-${index}`, 0.2 + index * 0.08);
+    await storeMeasurable(db, index, 0.2 + index * 0.08);
   }
   const report = inspectServeDoctor(db, path, { now: "2026-08-28T00:00:00Z" });
   expect(report.calibration.write_rate).toBeCloseTo(0.4);
   expect(report.calibration.failures).toEqual([]);
+  expect(report.failures).not.toContain("confidence_not_produced");
+  db.close();
+});
+
+test("a second receipt against an in-window corpus still fails the write-rate ceiling", async () => {
+  const { path, db } = vault();
+  for (let index = 0; index < 8; index += 1) {
+    await storeMeasurable(db, index, 0.2 + index * 0.08);
+  }
+  persistRunReceipt(
+    db,
+    path,
+    receipt("2026-08-27", {
+      run_id: "01JBCALIBSECA0000000000001",
+      claims_extracted: 8,
+      claims_written: 8,
+    }),
+  );
+  persistRunReceipt(
+    db,
+    path,
+    receipt("2026-08-28", {
+      run_id: "01JBCALIBSECB0000000000001",
+      claims_extracted: 10,
+      claims_written: 10,
+      claims_deduped: 0,
+    }),
+  );
+  const report = inspectServeDoctor(db, path, { now: "2026-08-28T00:00:00Z" });
+  expect(report.calibration.write_rate).toBeCloseTo(1);
+  expect(report.ok).toBe(false);
+  expect(report.failures.some((item) => item.startsWith("write_rate "))).toBe(true);
+  expect(report.calibration.failures[0]).toContain(`${CALIBRATION_BAND.min}`);
+  expect(report.calibration.failures[0]).toContain(`${CALIBRATION_BAND.max}`);
   expect(report.failures).not.toContain("confidence_not_produced");
   db.close();
 });
