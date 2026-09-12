@@ -54,12 +54,53 @@ review all agree for the candidate under test.
 - [ ] Bind `candidate_source_sha` to the reviewed Git head (lowercase 40-character SHA).
 - [ ] Record `captured_at` as an ISO-8601 UTC timestamp for when the inventory snapshot was taken.
 - [ ] Record `freshness_policy` with an explicit maximum age and the authoritative source used (for example live issue state at capture time).
-- [ ] List every open P0 finding that applies to the candidate, each with a stable `finding_id`, `issue_number` or audit id, `title`, `state`, and `severity:p0` (or equivalent binding label).
-- [ ] Record explicit disposition for each listed finding: `open`, `closed`, `not-applicable`, or `deferred-with-authority`, with a one-line reason and evidence pointer when not `open`.
-- [ ] Assert `live_p0_count` is zero before release credit; any positive count fails the gate.
+- [ ] List every open P0 finding that applies to the candidate, each with a stable `finding_id`, `issue_number` or audit id, `title`, GitHub `issue_state`, and `severity:p0` (or equivalent binding label).
+- [ ] Record GitHub issue state separately from candidate verification. `issue_state` is `open` or `closed`. Candidate `disposition` is `open`, `unresolved`, `verified-fixed`, `not-applicable`, or `deferred-with-authority`.
+- [ ] A closed GitHub issue without candidate-bound fix proof remains `unresolved`. It is never `verified-fixed`.
+- [ ] `verified-fixed` requires the fixing commit SHA, the candidate SHA, the regression command, and that command's result on that candidate.
+- [ ] Assert `live_p0_count` is zero before release credit; any positive count fails the gate. An online collector reporting no currently open P0s does not verify historical closed findings.
 - [ ] Retain failed or superseded attempts with the candidate; a later attempt does not erase earlier inventory rows.
 - [ ] Keep paths absolute, normalized, and under the local operator's exclusive custody when referenced from an evidence index.
 - [ ] Copy no private text, credentials, or machine-specific paths into the ledger; use issue numbers, digests, and bounded references only.
+
+## Synthetic examples (not evidence)
+
+These rows are labelled examples for the documentation contract. They are not
+inputs to `evaluateRelease` and cannot grant release credit.
+
+### Closed GitHub issue, unverified on the candidate
+
+```json
+{
+  "finding_id": "KZ-EXAMPLE-CLOSED-UNVERIFIED",
+  "issue_number": 48,
+  "issue_state": "closed",
+  "disposition": "unresolved",
+  "reason": "GitHub closed the original finding; no candidate-bound regression was recorded"
+}
+```
+
+`issue_state` is `closed`. `disposition` stays `unresolved` because the row has
+no fixing commit, no candidate SHA, and no regression command result.
+
+### Verified-fixed on the exact candidate
+
+```json
+{
+  "finding_id": "KZ-EXAMPLE-VERIFIED-FIXED",
+  "issue_number": 49,
+  "issue_state": "closed",
+  "disposition": "verified-fixed",
+  "candidate_source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "fix_commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "regression_command": "bun test packages/core/test/example.test.ts",
+  "regression_result": "pass"
+}
+```
+
+`verified-fixed` names the candidate, the fix, the regression command, and the
+result on that candidate. The online collector's empty open-P0 inventory is not
+this proof.
 
 ## Freshness policy checklist
 

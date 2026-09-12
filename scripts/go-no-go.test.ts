@@ -880,3 +880,30 @@ test.each(["notice", "inventory", "extra-member", "missing-license"])("v4 packag
   if (mutation === "missing-license") rmSync(join(f.artifact, "LICENSE"));
   f.save(); expect(gate(evaluateRelease("rc", f.indexPath), `artifact.${target}`).status).toBe("FAIL");
 });
+
+test("finding ledger separates GitHub closure from verified-fixed candidate proof", () => {
+  const ledger = readFileSync(join(EVALUATOR_ROOT, "docs/release/finding-inventory-ledger.md"), "utf8");
+  expect(ledger).toContain("Synthetic examples (not evidence)");
+  expect(ledger).toContain("cannot grant release credit");
+  const blocks = [...ledger.matchAll(/```json\n([\s\S]*?)```/g)].map((match) => JSON.parse(match[1]!));
+  const closedUnverified = blocks.find((row) => row.finding_id === "KZ-EXAMPLE-CLOSED-UNVERIFIED");
+  const verifiedFixed = blocks.find((row) => row.finding_id === "KZ-EXAMPLE-VERIFIED-FIXED");
+  expect(closedUnverified).toMatchObject({
+    issue_state: "closed",
+    disposition: "unresolved",
+  });
+  expect(closedUnverified).not.toHaveProperty("fix_commit_sha");
+  expect(closedUnverified).not.toHaveProperty("regression_command");
+  expect(verifiedFixed).toMatchObject({
+    issue_state: "closed",
+    disposition: "verified-fixed",
+    candidate_source_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    fix_commit_sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    regression_command: "bun test packages/core/test/example.test.ts",
+    regression_result: "pass",
+  });
+  const f = fixture();
+  f.index.artifacts = [];
+  f.save();
+  expect(gate(evaluateRelease("rc", f.indexPath), "candidate.current-p0-disposition").status).toBe("UNVERIFIABLE");
+});
