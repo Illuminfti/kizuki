@@ -112,12 +112,12 @@ completion or candidate release acceptance. Check
 
 The valuable inheritance is not the private estate itself. It is a set of
 proven patterns: scoped retrieval, provenance, receipts, fail-closed
-authorization, correction-aware working knowledge, reversible derived state,
-and explicit human approval for consequential truth. Superseded 2026-09-02,
-see `docs/decision-log.md` D9, D10 and D14: the last pattern is not
-inherited. A gate whose only consumer is the owner has zero throughput
-(RFC 0002 §1.1). What replaces it is autonomy plus reversibility — budgeted,
-attributable, receipted writes that the owner outranks with a sentence and
-reverses with one command. Kizuki should reproduce
-those properties through public, local-first contracts and neutral evidence,
-while leaving private infrastructure and unverified automation behind.
+authorization, correction-aware working knowledge, and reversible derived
+state. Truth maintenance follows RFC 0002: authority-tier arbitration,
+contested rendering, conversational correction, and undo. Reserve approval
+language for external side effects, not canon writes. A gate whose only
+consumer is the owner has zero throughput (RFC 0002 §1.1). Writes stay
+budgeted, attributable, and receipted; the owner outranks them with a
+sentence and reverses them with one command. Kizuki should reproduce those
+properties through public, local-first contracts and neutral evidence, while
+leaving private infrastructure and unverified automation behind.
