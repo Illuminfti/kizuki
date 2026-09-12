@@ -196,6 +196,7 @@ jobs:
         with: { fetch-depth: 0, ref: "${pinnedRef}" }
       - uses: ${pinnedBun}
         with: { bun-version: 1.3.14 }
+      - run: bun run verify
       - if: hashFiles('scripts/verify.sh') == ''
         run: bun run verify`,
     });
@@ -273,6 +274,22 @@ test("macOS validator rejects removal or bypass of each native proof obligation"
   for (const [name, mutate] of mutations) {
     const doc = Bun.YAML.parse(text); mutate(doc);
     expect(validateWorkflowText(path, JSON.stringify(doc)).length, name).toBeGreaterThan(0);
+  }
+});
+
+test("ci test rejects a masked or conditional repository verify step", () => {
+  const path = ".github/workflows/ci.yml";
+  const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  expect(validateWorkflowText(path, text)).toEqual([]);
+  expect(validateWorkflowText(path, ciWorkflow())).toEqual([]);
+  const mutations: [string, (doc: any) => void][] = [
+    ["masked command", d => { d.jobs.test.steps[4].run = "bun run verify || true"; }],
+    ["conditional if", d => { d.jobs.test.steps[4].if = "false"; }],
+    ["continue-on-error", d => { d.jobs.test.steps[4]["continue-on-error"] = true; }],
+  ];
+  for (const [name, mutate] of mutations) {
+    const doc = Bun.YAML.parse(text); mutate(doc);
+    expect(validateWorkflowText(path, JSON.stringify(doc)).some(failure => failure.reason.includes("repository verify")), name).toBe(true);
   }
 });
 

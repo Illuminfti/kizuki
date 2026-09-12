@@ -273,10 +273,17 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
     }
     const jobs = document["jobs"];
     const job = isRecord(jobs) ? jobs["test"] : undefined;
+    const steps = isRecord(job) ? job["steps"] : undefined;
     if (isRecord(job) && !hasLinuxNativeProof(document, job)) {
       failures.push({
         path,
         reason: "ci test must verify the native proof receipt before retaining the Linux package",
+      });
+    }
+    if (isRecord(job) && (!Array.isArray(steps) || !steps.some((step) => isBareCommand(step, "bun run verify")))) {
+      failures.push({
+        path,
+        reason: "ci test must run the unconditional repository verify gate",
       });
     }
   }
