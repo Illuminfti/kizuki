@@ -1,7 +1,14 @@
 import { lstat } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { basename, join } from "node:path";
-import { freezeManifest, HealthReport } from "@kizuki/core";
+import {
+  freezeManifest,
+  HealthReport,
+  isPlainObject,
+  MAX_SYNC_BATCH_BYTES,
+  MAX_SYNC_BATCH_EVENTS,
+  validateEventInput,
+} from "@kizuki/core";
 import type {
   CaptureEventInput,
   Connector,
@@ -21,6 +28,7 @@ import {
 } from "../folder";
 import type { ExportFolder } from "../folder";
 import { readBoundedUtf8File, readFirstLine } from "../read";
+import { sha256Hex } from "../source-id";
 import {
   FIXTURE_OBSERVED_AT,
   MAX_EXPORT_BYTES,
@@ -41,6 +49,7 @@ export { parsePocketCsv, pocketHeaderLine } from "./rows";
 export type { PocketRow } from "./rows";
 
 export const POCKET_IMPORT_CONNECTOR_ID = "kizuki.import-pocket" as const;
+export const POCKET_CURSOR_SCHEMA = "kizuki.import-pocket.cursor/v1" as const;
 
 /** A reading list is about the owner, not a secret, and not public either. */
 const POCKET_SENSITIVITY: SensitivityPolicy = {
@@ -77,7 +86,7 @@ const MANIFEST: Manifest = freezeManifest({
   contract_minor: 1,
   implementation: "@kizuki/connectors",
   allowed_egress: [],
-  cursor_schema: null,
+  cursor_schema: POCKET_CURSOR_SCHEMA,
   kinds: ["bookmark"],
   capabilities: {
     backfill: true,
@@ -109,28 +118,166 @@ export function pocketEvents(
   // records rather than one overwritten.
   const ids = numberRepeats(rows.map((row) => row.url));
   const sensitivity_hint = resolveSensitivity(POCKET_SENSITIVITY);
-  return rows.map((row, index) => ({
-    schema: "kizuki.event/v1",
+  return rows.map((row, index) => {
+    const at = `row ${index + 1}`;
+    const event: CaptureEventInput = {
+      schema: "kizuki.event/v1",
+      connector_id: POCKET_IMPORT_CONNECTOR_ID,
+      source_record_id: ids[index] ?? row.url,
+      kind: "bookmark",
+      // The reader refused an unreadable timestamp where it could name the file
+      // and the line; a row handed straight to this function is named by its
+      // place in the batch.
+      occurred_at: unixSecondsToIso(row.time_added, at),
+      observed_at,
+      text: row.title.length > 0 ? `${row.title}\n${row.url}` : row.url,
+      subjects: [{ subject_id: "pocket:self", role: "from" }],
+      sensitivity_hint,
+      deleted: false,
+      attachments: [],
+      metadata: {
+        title: row.title,
+        url: row.url,
+        tags: row.tags,
+        status: row.status,
+      },
+    };
+    const validated = validateEventInput(event);
+    if (!validated.ok) {
+      throw new KizukiError(
+        "parse_error",
+        `${at}: ${validated.errors[0] ?? "invalid event"}`,
+      );
+    }
+    return validated.value;
+  });
+}
+
+interface PocketExportIdentity {
+  sha256: string;
+  size: number;
+}
+
+interface PocketCursor {
+  schema: typeof POCKET_CURSOR_SCHEMA;
+  connector_id: typeof POCKET_IMPORT_CONNECTOR_ID;
+  export: PocketExportIdentity;
+  /** Next row index to emit; 0 is the start of this snapshot. */
+  after: number;
+}
+
+function malformedCursor(cause?: unknown): never {
+  throw new KizukiError(
+    "parse_error",
+    `${POCKET_IMPORT_CONNECTOR_ID}: malformed cursor`,
+    cause === undefined ? undefined : { cause },
+  );
+}
+
+function pocketIdentity(rows: readonly PocketRow[]): PocketExportIdentity {
+  const canonical = JSON.stringify(
+    rows.map((row) => [
+      row.title,
+      row.url,
+      row.time_added,
+      row.tags,
+      row.status,
+    ]),
+  );
+  return {
+    sha256: sha256Hex(canonical),
+    size: new TextEncoder().encode(canonical).byteLength,
+  };
+}
+
+function decodePocketCursor(cursor: Cursor): PocketCursor {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cursor) as unknown;
+  } catch (error) {
+    malformedCursor(error);
+  }
+  if (!isPlainObject(parsed)) malformedCursor();
+  const exported = parsed["export"];
+  if (!isPlainObject(exported)) malformedCursor();
+  const after = parsed["after"];
+  const size = exported["size"];
+  const sha256 = exported["sha256"];
+  if (
+    parsed["schema"] !== POCKET_CURSOR_SCHEMA ||
+    parsed["connector_id"] !== POCKET_IMPORT_CONNECTOR_ID ||
+    typeof sha256 !== "string" ||
+    typeof size !== "number" ||
+    !Number.isSafeInteger(size) ||
+    size < 0 ||
+    typeof after !== "number" ||
+    !Number.isSafeInteger(after) ||
+    after < 0
+  ) {
+    malformedCursor();
+  }
+  return {
+    schema: POCKET_CURSOR_SCHEMA,
     connector_id: POCKET_IMPORT_CONNECTOR_ID,
-    source_record_id: ids[index] ?? row.url,
-    kind: "bookmark",
-    // The reader refused an unreadable timestamp where it could name the file
-    // and the line; a row handed straight to this function is named by its
-    // place in the batch.
-    occurred_at: unixSecondsToIso(row.time_added, `row ${index + 1}`),
-    observed_at,
-    text: row.title.length > 0 ? `${row.title}\n${row.url}` : row.url,
-    subjects: [{ subject_id: "pocket:self", role: "from" }],
-    sensitivity_hint,
-    deleted: false,
-    attachments: [],
-    metadata: {
-      title: row.title,
-      url: row.url,
-      tags: row.tags,
-      status: row.status,
-    },
-  }));
+    export: { sha256, size },
+    after,
+  };
+}
+
+function encodePocketCursor(
+  identity: PocketExportIdentity,
+  after: number,
+): Cursor {
+  const next: PocketCursor = {
+    schema: POCKET_CURSOR_SCHEMA,
+    connector_id: POCKET_IMPORT_CONNECTOR_ID,
+    export: identity,
+    after,
+  };
+  return JSON.stringify(next);
+}
+
+/**
+ * Core refuses a SyncBatch over its event and byte budgets. A Pocket export is
+ * still one snapshot — numbering and identity are decided on the whole file —
+ * but it has to arrive in host-sized pages. A null cursor means this snapshot
+ * is exhausted, so a later run of the same file starts from the first row.
+ */
+function pagePocketEvents(
+  events: readonly CaptureEventInput[],
+  identity: PocketExportIdentity,
+  cursor: Cursor | null,
+): SyncBatch {
+  const previous = cursor === null ? null : decodePocketCursor(cursor);
+  const start =
+    previous !== null &&
+    previous.export.sha256 === identity.sha256 &&
+    previous.export.size === identity.size
+      ? previous.after
+      : 0;
+  if (start >= events.length) return { events: [], cursor: null };
+
+  const utf8 = new TextEncoder();
+  const page: CaptureEventInput[] = [];
+  let bytes = 2;
+  for (let index = start; index < events.length; index += 1) {
+    const event = events[index]!;
+    const piece = utf8.encode(JSON.stringify(event)).byteLength;
+    const nextBytes = bytes + piece + (page.length === 0 ? 0 : 1);
+    if (
+      page.length > 0 &&
+      (page.length >= MAX_SYNC_BATCH_EVENTS ||
+        nextBytes > MAX_SYNC_BATCH_BYTES)
+    ) {
+      return {
+        events: page,
+        cursor: encodePocketCursor(identity, index),
+      };
+    }
+    page.push(event);
+    bytes = nextBytes;
+  }
+  return { events: page, cursor: null };
 }
 
 export interface PocketReadLimits {
@@ -289,8 +436,13 @@ export class PocketImportConnector implements Connector {
 
   async connect(_resolve: SecretResolver): Promise<void> {}
 
-  async backfill(_cursor: Cursor | null): Promise<SyncBatch> {
-    return { events: await this.read(), cursor: null };
+  async backfill(cursor: Cursor | null): Promise<SyncBatch> {
+    const rows = await readPocketRows(await resolveSources(this.path));
+    return pagePocketEvents(
+      pocketEvents(rows, new Date().toISOString()),
+      pocketIdentity(rows),
+      cursor,
+    );
   }
 
   sync(cursor: Cursor | null): Promise<SyncBatch> {
