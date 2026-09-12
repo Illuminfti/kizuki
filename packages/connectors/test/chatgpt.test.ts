@@ -400,6 +400,50 @@ describe("ChatGptImportConnector", () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
+  test("custom-instruction nodes degrade health without failing a later drain", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
+    try {
+      const file = path.join(root, "conversations.json");
+      await writeFile(
+        file,
+        JSON.stringify([
+          {
+            id: "supported",
+            mapping: {
+              custom: {
+                message: {
+                  author: { role: "system" },
+                  content: {
+                    content_type: "user_editable_context",
+                    user_instructions: "synthetic instruction payload",
+                  },
+                  create_time: 1_700_000_000,
+                },
+              },
+              n: {
+                message: {
+                  author: { role: "user" },
+                  content: { parts: ["supported text"] },
+                  create_time: 1_700_000_001,
+                },
+              },
+            },
+          },
+        ]),
+      );
+      const connector = createChatGptImportConnector({ path: file });
+      expect((await connector.health()).state).toBe("degraded");
+      const first = await connector.backfill(null);
+      expect(first.status ?? "ok").toBe("ok");
+      expect(first.events).toHaveLength(1);
+      expect(first.events[0]?.text).toBe("supported text");
+      const drain = await connector.backfill(first.cursor);
+      expect(drain).toEqual({ events: [], cursor: first.cursor });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("malformed completion reports only bounded code counts after valid progress", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
     try {
@@ -572,6 +616,7 @@ describe("export fidelity", () => {
       JSON.stringify([
         {
           id: "c1",
+          current_node: "a2",
           mapping: {
             root: { parent: null, children: ["q"] },
             q: {
@@ -612,9 +657,15 @@ describe("export fidelity", () => {
       [encodeSourceRecordId(["c1", "a2"]), "Regenerated answer"],
       [encodeSourceRecordId(["c1", "q"]), "Question"],
     ]);
-    // The tree is flattened: no event records its parent or children.
+    expect(result.events.map((event) => event.metadata["parent"])).toEqual([
+      "q",
+      "q",
+      "root",
+    ]);
+    expect(
+      result.events.map((event) => event.metadata["current_node"]),
+    ).toEqual(["a2", "a2", "a2"]);
     for (const event of result.events) {
-      expect(Object.keys(event.metadata)).not.toContain("parent");
       expect(Object.keys(event.metadata)).not.toContain("children");
     }
   });
