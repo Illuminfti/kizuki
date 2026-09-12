@@ -125,6 +125,7 @@ assert_required_helpers() {
   for path in \
     "$verify_script_dir/verify-attribution.ts" \
     "$verify_script_dir/verify-tracked-text.ts" \
+    "$verify_script_dir/verify-history.ts" \
     "$verify_script_dir/verify-network.ts" \
     "$verify_script_dir/verify-secrets.ts" \
     "$verify_script_dir/verify-rfc-tests.ts" \
@@ -163,46 +164,40 @@ reachable_commit_identifier_pattern() {
   # Bound the first denylist token with POSIX ERE delimiters so a longer
   # public GitHub owner name that only shares that prefix cannot match.
   # Remaining tokens stay unanchored substring matches. No Perl regex.
-  # Floor-guardian / agent display names stay on denylist-tracked only:
-  # reachable history already contains legitimate squash prose that names them,
-  # and force-push of main is not the fix.
-  printf '%s' '(^|[^[:alnum:]])ill''umi([^[:alnum:]]|$)|her''mes|ika-''hetzner|g''brain'
+  printf '%s' '(^|[^[:alnum:]])ill''umi([^[:alnum:]]|$)|her''mes|ika-''hetzner|alb''edo|g''brain'
 }
 
-# Drop git trailer lines from commit messages before denylist-history.
-# Subjects and bodies still scan. Authorship trailers must not wedge public
-# main after a legitimate squash; force-push of main is not the fix.
-strip_git_trailers_from_messages() {
-  local messages_file="$1"
-  local cleaned_file="$2"
-  awk '
-    BEGIN { ignore = 0 }
-    /^[Cc][Oo]-[Aa][Uu][Tt][Hh][Oo][Rr][Ee][Dd]-[Bb][Yy]:/ { ignore = 1; next }
-    /^[Ss][Ii][Gg][Nn][Ee][Dd]-[Oo][Ff][Ff]-[Bb][Yy]:/ { ignore = 1; next }
-    /^[Aa][Cc][Kk][Ee][Dd]-[Bb][Yy]:/ { ignore = 1; next }
-    /^[Rr][Ee][Vv][Ii][Ee][Ww][Ee][Dd]-[Bb][Yy]:/ { ignore = 1; next }
-    {
-      if (ignore == 1 && $0 ~ /^[[:space:]]/) { next }
-      ignore = 0
-      print
-    }
-  ' "$messages_file" >"$cleaned_file"
+write_reachable_commit_records() {
+  local records_file="$1"
+  local status
+
+  set +e
+  git --no-replace-objects log --all -z --encoding=none --no-show-signature --format=%H%x00%B >"$records_file"
+  status=$?
+  set -e
+  if ((status != 0)); then
+    printf 'verification failed: reachable commit-message producer exited %d\n' "$status" >&2
+    return "$status"
+  fi
+  if [[ ! -s "$records_file" ]]; then
+    printf 'verification failed: reachable commit-message scan produced no text\n' >&2
+    return 2
+  fi
+}
+
+# Published history stays immutable. Each pin binds one origin/main ancestor,
+# the SHA-256 of that raw message, and exact occurrence offsets. No trailer
+# or token class is exempt. Only those bytes are masked in the name-scan copy.
+sanitize_historical_commit_records() {
+  bun "$verify_script_dir/verify-history.ts" "$1" "$2"
 }
 
 assert_safe_reachable_commit_messages() {
   local messages_file="$1"
-  local cleaned_file
-  local status
-  cleaned_file="$(mktemp)"
-  strip_git_trailers_from_messages "$messages_file" "$cleaned_file"
-  # Capture status explicitly: under `if`, set -e does not abort on a failing
-  # assert_no_match, so a trailing `rm` would otherwise make this return 0.
-  set +e
-  assert_no_match     "forbidden identifier in reachable commit messages"     grep -I -n -i -E "$(reachable_commit_identifier_pattern)" "$cleaned_file"
-  status=$?
-  set -e
-  rm -f -- "$cleaned_file"
-  return "$status"
+
+  assert_no_match \
+    "forbidden identifier in reachable commit messages" \
+    grep -a -n -i -E "$(reachable_commit_identifier_pattern)" "$messages_file"
 }
 
 gate() {
@@ -213,13 +208,14 @@ main() {
   local dependency_re
   local forbidden_identifier_re='ill''umi|her''mes|ika-''hetzner|alb''edo'
   local attributed_identifier_re='g''brain'
+  local commit_records
   local commit_messages
   local cleanup_command
-  local log_status
 
   dependency_re="$(phone_home_dependency_pattern)"
+  commit_records="$(mktemp)"
   commit_messages="$(mktemp)"
-  printf -v cleanup_command 'rm -f -- %q' "$commit_messages"
+  printf -v cleanup_command 'rm -f -- %q %q' "$commit_records" "$commit_messages"
   trap "$cleanup_command" EXIT
 
   gate required-commands
@@ -254,18 +250,8 @@ main() {
   assert_exact_attribution_spelling README.md docs/upstream-policy.md
   gate denylist-tracked
 
-  set +e
-  git log --all --format=%B >"$commit_messages"
-  log_status=$?
-  set -e
-  if ((log_status != 0)); then
-    printf 'verification failed: reachable commit-message producer exited %d\n' "$log_status" >&2
-    return "$log_status"
-  fi
-  if [[ ! -s "$commit_messages" ]]; then
-    printf 'verification failed: reachable commit-message scan produced no text\n' >&2
-    return 2
-  fi
+  write_reachable_commit_records "$commit_records"
+  sanitize_historical_commit_records "$commit_records" "$commit_messages"
   assert_safe_reachable_commit_messages "$commit_messages"
   gate denylist-history
   bun "$verify_script_dir/verify-secrets.ts"
