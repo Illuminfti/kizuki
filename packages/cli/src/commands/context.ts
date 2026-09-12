@@ -20,6 +20,21 @@ function parseBudget(raw: string): number {
   return value;
 }
 
+function parseQuery(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  // Match the context packet's text contract before opening its audited vault.
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(raw)) {
+    throw new UsageError("invalid arguments: query: must not contain control characters");
+  }
+  if (raw.trim().length === 0) {
+    throw new UsageError("invalid arguments: query: must not be blank");
+  }
+  if (Array.from(raw).length > 512) {
+    throw new UsageError("invalid arguments: query: must be at most 512 characters");
+  }
+  return raw;
+}
+
 function parseWindowBound(field: "since" | "until", raw: string | undefined): string | undefined {
   if (raw === undefined) return undefined;
   if (!isRfc3339(raw)) {
@@ -71,7 +86,7 @@ export const contextCommand: Command = {
     }
     const rawBudget = parsed.options.get("--budget");
     const budget = rawBudget === undefined ? undefined : parseBudget(rawBudget);
-    const query = parsed.options.get("--query");
+    const query = parseQuery(parsed.options.get("--query"));
     const window = parseContextWindow(parsed.options);
 
     return withReadVault(io, async (ctx) => {

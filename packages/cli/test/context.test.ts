@@ -1,10 +1,29 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { createHelpers, fixtureConsent } from "./helpers";
-import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const { cleanup, runCli, tempVault, isolatedEnv } = createHelpers();
+const { cleanup, runCli, tempVault, tempDir, isolatedEnv } = createHelpers();
 afterEach(cleanup);
+
+function observeLedger(vault: string) {
+  const observer = tempDir("context-query-observer-");
+  const files: Record<string, string> = {};
+  for (const name of ["kizuki.db", "kizuki.db-wal", "kizuki.db-shm", "kizuki.db-journal"]) {
+    const path = join(vault, ".kizuki", name);
+    if (!existsSync(path)) continue;
+    const bytes = readFileSync(path);
+    files[name] = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+    writeFileSync(join(observer, name), bytes);
+  }
+  // Inspect a quiescent copy so the observation cannot modify the tested ledger.
+  const db = new Database(join(observer, "kizuki.db"), { readwrite: true, create: false });
+  try {
+    const audits = db.query<{ n: number }, []>("SELECT count(*) AS n FROM agent_audit WHERE agent_id = 'owner'").get()!.n;
+    return { files, audits };
+  } finally { db.close(); }
+}
 
 const ATLAS_SINCE = "2020-01-01T00:00:00.000Z";
 const ATLAS_UNTIL = "2030-01-01T00:00:00.000Z";
@@ -34,6 +53,49 @@ describe("context", () => {
       expect(result.stderr).toContain("invalid --budget");
       expect(result.stderr).not.toContain("no vault configured");
     }
+  });
+
+  test.each([
+    ["empty", "", "must not be blank"],
+    ["whitespace only", " \t\r\n", "must not be blank"],
+    ["embedded escape", "private-query\u001btext", "must not contain control characters"],
+    ["delete control", "private-query\u007ftext", "must not contain control characters"],
+    ["513 ASCII characters", "q".repeat(513), "must be at most 512 characters"],
+    ["513 Unicode characters", "\u{1F680}".repeat(513), "must be at most 512 characters"],
+  ] as const)("invalid context query is a usage error without vault effects (%s)", (_label, query, diagnostic) => {
+    const setup = tempVault();
+    const before = observeLedger(setup.vault);
+    const withoutVault = runCli(isolatedEnv(), "context", "--query", query, "--json");
+    const result = runCli(setup.env, "context", "--query", query, "--json");
+    expect({
+      withoutVaultExit: withoutVault.exitCode,
+      withVaultExit: result.exitCode,
+      ledger: observeLedger(setup.vault),
+    }).toEqual({ withoutVaultExit: 2, withVaultExit: 2, ledger: before });
+    for (const response of [withoutVault, result]) {
+      expect(response.stdout).toBe("");
+      expect(response.stderr).toContain(`error: invalid arguments: query: ${diagnostic}`);
+      expect(response.stderr).not.toContain("no vault configured");
+      expect(response.stderr).not.toContain("private-query");
+    }
+  });
+
+  test.each([
+    ["ordinary padded query", "  Atlas  "],
+    ["permitted whitespace", "Atlas\tlaunch\r\nnotes"],
+    ["512 ASCII characters", "q".repeat(512)],
+    ["512 Unicode characters", "\u{1F680}".repeat(512)],
+  ] as const)("valid context query retains packet output and owner audit (%s)", (_label, query) => {
+    const setup = tempVault();
+    const before = observeLedger(setup.vault);
+    const result = runCli(setup.env, "context", "--query", query, "--budget", "80", "--json");
+    expect(result.exitCode, result.stderr).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.schema).toBe("kizuki.cli.context/v1");
+    expect(output.data.data.packet_md).toStartWith("KIZUKI CONTEXT v1");
+    expect(output.data.data.budget_tokens).toBe(80);
+    expect(output.data.data.purpose).toBe("session");
+    expect(observeLedger(setup.vault).audits).toBe(before.audits + 1);
   });
 
   test("empty context keeps stdout usable and offers a next step on stderr", () => {
