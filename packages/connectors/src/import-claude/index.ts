@@ -1,4 +1,9 @@
-import { freezeManifest, isPlainObject, policyForConnector } from "@kizuki/core";
+import {
+  freezeManifest,
+  isPlainObject,
+  policyForConnector,
+  validateEventInput,
+} from "@kizuki/core";
 import type {
   AttachmentRef,
   CaptureEventInput,
@@ -214,17 +219,12 @@ export function parseClaudeExport(
         errors.push(extracted.error);
         return;
       }
-      if (extracted.unsupported.length > 0) {
-        errors.push({
-          location,
-          code: "unsupported_part",
-          reason: `unsupported content blocks: ${extracted.unsupported.join(",")}`,
-        });
-      }
       if (
         extracted.text.trim().length === 0 &&
-        extracted.attachments.length === 0
+        extracted.attachments.length === 0 &&
+        extracted.extracts.length === 0
       ) {
+        pushUnsupported(errors, location, extracted.unsupported);
         errors.push({
           location,
           code: "empty_content",
@@ -237,6 +237,7 @@ export function parseClaudeExport(
       try {
         occurredAt = isoToRfc3339(rawMessage["created_at"], location);
       } catch {
+        pushUnsupported(errors, location, extracted.unsupported);
         errors.push({
           location,
           code: "invalid_timestamp",
@@ -245,12 +246,13 @@ export function parseClaudeExport(
         return;
       }
 
+      const sourceText = joinedClaudeText(extracted.text, extracted.extracts);
       const messageId =
         nonEmptyString(rawMessage["uuid"]) ??
         fallbackSourcePart("message", [
           conversationId,
           sender,
-          extracted.text,
+          sourceText,
           occurredAt,
         ]);
       if (nonEmptyString(rawMessage["uuid"]) === undefined) {
@@ -264,11 +266,12 @@ export function parseClaudeExport(
       const fingerprint = JSON.stringify({
         attachments: extracted.attachments,
         occurred_at: occurredAt,
-        text: extracted.text,
+        text: sourceText,
         unsupported: extracted.unsupported,
       });
       const prior = seen.get(sourceRecordId);
       if (prior !== undefined) {
+        pushUnsupported(errors, location, extracted.unsupported);
         errors.push({
           location: sourceRecordId,
           code: prior === fingerprint ? "duplicate_id" : "conflicting_id",
@@ -281,37 +284,176 @@ export function parseClaudeExport(
       }
       seen.set(sourceRecordId, fingerprint);
 
-      const handle = sender === "human" ? "self" : "assistant";
-      events.push({
-        schema: "kizuki.event/v1",
-        connector_id: CLAUDE_IMPORT_CONNECTOR_ID,
-        source_record_id: sourceRecordId,
-        kind: "message",
-        occurred_at: occurredAt,
-        observed_at: observedAt,
-        text: extracted.text,
-        subjects: [{ subject_id: `claude:${handle}`, role: "from" }],
-        deleted: false,
-        attachments: extracted.attachments,
-        metadata: {
-          handle,
-          namespace: "claude",
-          conversation_title: title,
-          unsupported_parts: extracted.unsupported,
-          export: "claude-conversations.json",
+      const fitted = fitClaudeDraft(
+        {
+          location,
+          sourceRecordId,
+          title,
+          sender,
+          occurredAt,
+          nativeText: extracted.text,
+          extracts: extracted.extracts,
+          attachments: extracted.attachments,
+          unsupported: extracted.unsupported,
         },
-      });
+        observedAt,
+      );
+      errors.push(...fitted.errors);
+      if (fitted.event !== undefined) events.push(fitted.event);
     });
   });
 
   return { events, errors };
 }
 
+const OVERSIZED_EXTRACTED_CONTENT = "oversized_extracted_content";
+const OVERSIZED_ATTACHMENTS = "oversized_attachments";
+
+interface ClaudeDraft {
+  location: string;
+  sourceRecordId: string;
+  title: string;
+  sender: string;
+  occurredAt: string;
+  nativeText: string;
+  extracts: string[];
+  attachments: AttachmentRef[];
+  unsupported: string[];
+}
+
 interface ExtractedContent {
   text: string;
+  extracts: string[];
   attachments: AttachmentRef[];
   unsupported: string[];
   error?: ImportRecordError;
+}
+
+function joinedClaudeText(nativeText: string, extracts: readonly string[]): string {
+  return nativeText.length === 0
+    ? extracts.join("\n")
+    : [nativeText, ...extracts].join("\n");
+}
+
+function pushUnsupported(
+  errors: ImportRecordError[],
+  location: string,
+  flags: readonly string[],
+): void {
+  if (flags.length === 0) return;
+  errors.push({
+    location,
+    code: "unsupported_part",
+    reason: `unsupported content blocks: ${flags.join(",")}`,
+  });
+}
+
+function claudeCaptureEvent(input: {
+  sourceRecordId: string;
+  occurredAt: string;
+  observedAt: string;
+  text: string;
+  handle: string;
+  title: string;
+  attachments: readonly AttachmentRef[];
+  unsupported: readonly string[];
+}): CaptureEventInput {
+  return {
+    schema: "kizuki.event/v1",
+    connector_id: CLAUDE_IMPORT_CONNECTOR_ID,
+    source_record_id: input.sourceRecordId,
+    kind: "message",
+    occurred_at: input.occurredAt,
+    observed_at: input.observedAt,
+    text: input.text,
+    subjects: [{ subject_id: `claude:${input.handle}`, role: "from" }],
+    deleted: false,
+    attachments: [...input.attachments],
+    metadata: {
+      handle: input.handle,
+      namespace: "claude",
+      conversation_title: input.title,
+      unsupported_parts: [...input.unsupported],
+      export: "claude-conversations.json",
+    },
+  };
+}
+
+/**
+ * Native text and exact attachment identities stay. extracted_content is
+ * omitted only when this event would miss frozen validateEventInput limits.
+ */
+function fitClaudeDraft(
+  draft: ClaudeDraft,
+  observedAt: string,
+): { event?: CaptureEventInput; errors: ImportRecordError[] } {
+  const handle = draft.sender === "human" ? "self" : "assistant";
+  const unsupported = [...draft.unsupported];
+  const build = (
+    text: string,
+    attachments: readonly AttachmentRef[],
+  ): CaptureEventInput =>
+    claudeCaptureEvent({
+      sourceRecordId: draft.sourceRecordId,
+      occurredAt: draft.occurredAt,
+      observedAt,
+      text,
+      handle,
+      title: draft.title,
+      attachments,
+      unsupported,
+    });
+  const oversizedRecord: ImportRecordError = {
+    location: draft.location,
+    code: "oversized_record",
+    reason: "message exceeds frozen ingress limits without extracted content",
+  };
+  const errors: ImportRecordError[] = [];
+
+  if (!validateEventInput(build(draft.nativeText, [])).ok) {
+    pushUnsupported(errors, draft.location, unsupported);
+    errors.push(oversizedRecord);
+    return { errors };
+  }
+
+  const attachments: AttachmentRef[] = [];
+  for (const attachment of draft.attachments) {
+    if (
+      validateEventInput(build(draft.nativeText, [...attachments, attachment]))
+        .ok
+    ) {
+      attachments.push(attachment);
+    } else if (!unsupported.includes(OVERSIZED_ATTACHMENTS)) {
+      unsupported.push(OVERSIZED_ATTACHMENTS);
+    }
+  }
+
+  let text = draft.nativeText;
+  for (const extract of draft.extracts) {
+    const nextText = joinedClaudeText(text, [extract]);
+    if (validateEventInput(build(nextText, attachments)).ok) {
+      text = nextText;
+    } else if (!unsupported.includes(OVERSIZED_EXTRACTED_CONTENT)) {
+      unsupported.push(OVERSIZED_EXTRACTED_CONTENT);
+    }
+  }
+
+  const event = build(text, attachments);
+  const body = event.text.trim().length > 0 || event.attachments.length > 0;
+  pushUnsupported(errors, draft.location, unsupported);
+  if (!body || !validateEventInput(event).ok) {
+    errors.push(
+      body
+        ? oversizedRecord
+        : {
+            location: draft.location,
+            code: "empty_content",
+            reason: "message has no text or attachments",
+          },
+    );
+    return { errors };
+  }
+  return { event, errors };
 }
 
 function extractClaudeContent(
@@ -352,6 +494,7 @@ function extractClaudeContent(
   if (blocks !== undefined && !Array.isArray(blocks)) {
     return {
       text: "",
+      extracts: [],
       attachments: [],
       unsupported: [],
       error: {
@@ -414,13 +557,13 @@ function extractClaudeContent(
   const topLevel =
     typeof rawMessage["text"] === "string" ? rawMessage["text"] : "";
   const text = claudeMessageText(topLevel, textBlocks);
-  const lines: string[] = text.length > 0 ? [text] : [];
+  const extracts: string[] = [];
 
   const appendExtracted = (value: unknown): void => {
     if (typeof value !== "string" || value.trim().length === 0) return;
-    const current = lines.join("\n");
-    if (value === current || lines.includes(value)) return;
-    lines.push(value);
+    const parts = text.length > 0 ? [text, ...extracts] : extracts;
+    if (value === parts.join("\n") || parts.includes(value)) return;
+    extracts.push(value);
   };
 
   const readListed = (
@@ -467,7 +610,7 @@ function extractClaudeContent(
   readListed(rawMessage["attachments"], "attachments");
   readListed(rawMessage["files"], "files");
 
-  return { text: lines.join("\n"), attachments, unsupported };
+  return { text, extracts, attachments, unsupported };
 }
 
 /** `text` is the message; content blocks that restate a prefix of it are not stored twice. */

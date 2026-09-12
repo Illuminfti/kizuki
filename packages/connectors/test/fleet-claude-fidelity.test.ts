@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { validateEventInput, type CaptureEventInput } from "@kizuki/core";
+import {
+  EVENT_LIMITS,
+  MAX_SYNC_BATCH_BYTES,
+  validateEventInput,
+  type CaptureEventInput,
+} from "@kizuki/core";
 import {
   CLAUDE_IMPORT_CONNECTOR_ID,
   createClaudeImportConnector,
@@ -705,6 +710,220 @@ describe("Claude export source fidelity", () => {
       },
     ]);
     assertIngressOnly(result.events[0]!);
+  });
+
+  test("an oversized extracted_content omits the extract and keeps the parent plus a later small message", () => {
+    const extract = "x".repeat(EVENT_LIMITS.textBytes + 1);
+    const result = parseClaudeExport(
+      JSON.stringify([
+        {
+          uuid: "conversation-1",
+          chat_messages: [
+            {
+              uuid: "human-1",
+              sender: "human",
+              text: "see attached",
+              created_at: "2026-03-15T09:30:45.000Z",
+              attachments: [
+                {
+                  file_name: "note.pdf",
+                  file_type: "application/pdf",
+                  extracted_content: extract,
+                },
+              ],
+            },
+            {
+              uuid: "human-2",
+              sender: "human",
+              text: "short follow-up",
+              created_at: "2026-03-15T09:30:46.000Z",
+            },
+          ],
+        },
+      ]),
+      OBSERVED_AT,
+    );
+
+    expect(result.events).toHaveLength(2);
+    expect(result.events[0]?.text).toBe("see attached");
+    expect(result.events[0]?.attachments).toEqual([
+      {
+        attachment_id: "note.pdf",
+        media_type: "application/pdf",
+        filename: "note.pdf",
+      },
+    ]);
+    expect(result.events[0]?.metadata["unsupported_parts"]).toEqual([
+      "oversized_extracted_content",
+    ]);
+    expect(result.events[1]?.text).toBe("short follow-up");
+    expect(result.errors.map((error) => error.code)).toEqual(["unsupported_part"]);
+    expect(JSON.stringify(result.events[0])).not.toContain(extract);
+    for (const event of result.events) assertIngressOnly(event);
+  });
+
+  test("JSON-encoded extracted_content that fits textBytes but not eventBytes is omitted", () => {
+    const extract = '"'.repeat(EVENT_LIMITS.textBytes - 32);
+    const result = parseClaudeExport(
+      JSON.stringify([
+        {
+          uuid: "conversation-1",
+          chat_messages: [
+            {
+              uuid: "human-1",
+              sender: "human",
+              text: "see attached",
+              created_at: "2026-03-15T09:30:45.000Z",
+              files: [
+                {
+                  file_name: "quotes.txt",
+                  file_type: "text/plain",
+                  extracted_content: extract,
+                },
+              ],
+            },
+          ],
+        },
+      ]),
+      OBSERVED_AT,
+    );
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]?.text).toBe("see attached");
+    expect(result.events[0]?.metadata["unsupported_parts"]).toEqual([
+      "oversized_extracted_content",
+    ]);
+    expect(result.errors.map((error) => error.code)).toEqual(["unsupported_part"]);
+    assertIngressOnly(result.events[0]!);
+  });
+
+  test("attachment refs past the frozen count are omitted without dropping the message", () => {
+    const listed = Array.from(
+      { length: EVENT_LIMITS.attachmentCount + 1 },
+      (_, index) => ({
+        file_name: `file-${index}.txt`,
+        file_type: "text/plain",
+      }),
+    );
+    const result = parseClaudeExport(
+      JSON.stringify([
+        {
+          uuid: "conversation-1",
+          chat_messages: [
+            {
+              uuid: "human-1",
+              sender: "human",
+              text: "many files",
+              created_at: "2026-03-15T09:30:45.000Z",
+              attachments: listed,
+            },
+          ],
+        },
+      ]),
+      OBSERVED_AT,
+    );
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]?.text).toBe("many files");
+    expect(result.events[0]?.attachments).toHaveLength(EVENT_LIMITS.attachmentCount);
+    expect(result.events[0]?.metadata["unsupported_parts"]).toEqual([
+      "oversized_attachments",
+    ]);
+    expect(result.errors.map((error) => error.code)).toEqual(["unsupported_part"]);
+    assertIngressOnly(result.events[0]!);
+  });
+
+  test("an invalid attachment descriptor is omitted without dropping the message", () => {
+    const invalidName = " note.pdf";
+    const result = parseClaudeExport(
+      JSON.stringify([
+        {
+          uuid: "conversation-1",
+          chat_messages: [
+            {
+              uuid: "human-1",
+              sender: "human",
+              text: "see attached",
+              created_at: "2026-03-15T09:30:45.000Z",
+              attachments: [
+                {
+                  file_name: "note.pdf",
+                  file_type: "application/pdf",
+                  file_size: 4,
+                },
+                {
+                  file_name: invalidName,
+                  file_type: "application/pdf",
+                },
+              ],
+            },
+          ],
+        },
+      ]),
+      OBSERVED_AT,
+    );
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]?.text).toBe("see attached");
+    expect(result.events[0]?.attachments).toEqual([
+      {
+        attachment_id: "note.pdf",
+        media_type: "application/pdf",
+        filename: "note.pdf",
+        byte_size: 4,
+      },
+    ]);
+    expect(result.events[0]?.metadata["unsupported_parts"]).toEqual([
+      "oversized_attachments",
+    ]);
+    expect(JSON.stringify(result.events[0])).not.toContain(invalidName);
+    expect(result.errors.map((error) => error.code)).toEqual(["unsupported_part"]);
+    assertIngressOnly(result.events[0]!);
+  });
+
+  test("extracted_content that fits each event is kept when the export exceeds one snapshot page", () => {
+    const extract = "x".repeat(EVENT_LIMITS.textBytes - 1024);
+    const natives = ["one", "two", "three", "four", "five"];
+    const result = parseClaudeExport(
+      JSON.stringify([
+        {
+          uuid: "conversation-1",
+          chat_messages: natives.map((text, index) => ({
+            uuid: `human-${index + 1}`,
+            sender: "human",
+            text,
+            created_at: `2026-03-15T09:30:4${index}.000Z`,
+            attachments: [
+              {
+                file_name: `note-${index + 1}.pdf`,
+                file_type: "application/pdf",
+                extracted_content: extract,
+              },
+            ],
+          })),
+        },
+      ]),
+      OBSERVED_AT,
+    );
+
+    // Parser fidelity only; Core ingest of a >4MiB snapshot page is shared pagination.
+    expect(result.errors).toEqual([]);
+    expect(result.events).toHaveLength(5);
+    expect(
+      Buffer.byteLength(JSON.stringify(result.events), "utf8"),
+    ).toBeGreaterThan(MAX_SYNC_BATCH_BYTES);
+    for (const [index, event] of result.events.entries()) {
+      expect(event.text).toBe(`${natives[index]}\n${extract}`);
+      expect(event.attachments).toEqual([
+        {
+          attachment_id: `note-${index + 1}.pdf`,
+          media_type: "application/pdf",
+          filename: `note-${index + 1}.pdf`,
+        },
+      ]);
+      expect(event.metadata["unsupported_parts"]).toEqual([]);
+      assertIngressOnly(event);
+    }
   });
 
   test("malformed records and unsupported senders are refused without substituting import time", () => {

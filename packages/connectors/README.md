@@ -176,9 +176,9 @@ kizuki import import-claude --vault VAULT --source conversations.json
 
 The file is a JSON array of conversations. From each the importer reads
 `uuid`, `name` and `chat_messages`; from each message it reads `uuid`,
-`sender`, `created_at`, `text`, the `content` blocks and the `attachments`
-list. Each message becomes one `message` event, labeled `private`, identified
-by the conversation uuid and message uuid.
+`sender`, `created_at`, `text`, the `content` blocks, and the `attachments`
+and `files` lists. Each message becomes one `message` event, labeled
+`private`, identified by the conversation uuid and message uuid.
 
 Known limits:
 
@@ -188,7 +188,11 @@ Known limits:
   repeats the other party's words stays with its sender.
 - `text` is the message; a `text` block repeating it is stored once, and any
   further `text` block is appended. `image` and `document` blocks and listed
-  attachments become references by name and type; `tool_use`, `tool_result`
+  `attachments` or `files` become name and type refs. Non-empty
+  `extracted_content` is appended only while that event stays inside frozen
+  ingress limits, including JSON encoding overhead; an oversized extract or
+  extra attachment is omitted, listed under `unsupported_parts`, and reported
+  as degraded health. The parent message is kept. `tool_use`, `tool_result`
   and `thinking` blocks are listed under `unsupported_parts` and reported.
 - A message with no `created_at`, or with no text and no attachments, is
   reported and not stored.
