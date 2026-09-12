@@ -323,6 +323,9 @@ describe("help", () => {
   test("sync structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["sync", "--help", "--json"], ["help", "sync", "--json"]] as const) {
+  test("agent structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["agent", "--help", "--json"], ["help", "agent", "--json"]] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
@@ -484,6 +487,22 @@ describe("help", () => {
       [["sync", "--once", "--once"], "repeated flag --once"],
       [["sync", "--once=true"], "flag --once does not take a value"],
       [["sync", "--source"], "missing value for --source"],
+      expect(body.data.name).toBe("agent");
+      expect(body.data.options).toEqual(["--grant", "--token-ref", "--operation-id"]);
+      expect(body.data.flags).toEqual(["--dry-run", "--json"]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "agent", "--help");
+    expect(text.stdout).toContain("--grant");
+    expect(text.stdout).toContain("--token-ref");
+    expect(text.stdout).toContain("--operation-id");
+    expect(text.stdout).toContain("--dry-run");
+    expect(text.stdout).toContain("--json");
+    for (const args of [
+      ["agent", "add", "--nope"],
+      ["agent", "add", "assistant", "--dry-run", "--dry-run"],
+      ["agent", "add", "--dry-run=true"],
+      ["agent", "add", "--grant"],
     ] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(2);
@@ -506,6 +525,8 @@ describe("help", () => {
       expect(result.stderr).toContain("usage: kizuki backfill");
       expect(result.stderr).toContain("usage: kizuki init");
       expect(result.stderr).toContain("usage: kizuki sync");
+      expect(result.stderr).toContain("invalid_request:");
+      expect(result.stderr).toContain("usage: agent");
     }
   });
 
