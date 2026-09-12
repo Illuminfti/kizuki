@@ -2,14 +2,23 @@ import { CanonRecoveryError, inspectCanonRecovery, recoverCanonWrites, retryCano
 import { parseArguments, UsageError } from "../args";
 import { withVault } from "../context";
 import { jsonEnvelope } from "../output";
-import type { Command } from "./index";
+import type { Command, CommandHelpSchema } from "./index";
+
+export const RECOVER_SCHEMA = {
+  options: [],
+  flags: ["--json"],
+} as const satisfies CommandHelpSchema;
 
 export const recoverCommand: Command = {
   name: "recover",
   usage: "recover [--json]",
   summary: "resume interrupted memory writes and their retrieval updates",
+  schema: RECOVER_SCHEMA,
   async run(io, args) {
-    const parsed = parseArguments(args, { flags: ["--json"] });
+    const parsed = parseArguments(args, {
+      options: [...RECOVER_SCHEMA.options],
+      flags: [...RECOVER_SCHEMA.flags],
+    });
     if (parsed.positionals.length !== 0) throw new UsageError(this.usage);
     return withVault(io, async ctx => {
       const target = { db: ctx.db, vault_path: ctx.vaultPath,
