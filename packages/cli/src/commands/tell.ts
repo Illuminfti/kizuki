@@ -3,17 +3,24 @@ import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
 import { tryRefreshDerived } from "../derived";
 import { jsonEnvelope } from "../output";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
+
+export const TELL_SCHEMA = {
+  options: ["--about", "--claim", "--page", "--since", "--until"],
+  flags: ["--dry-run", "--json", "--verbose"],
+  bounds: { "--since": "TIME", "--until": "TIME" },
+} as const satisfies CommandHelpSchema;
 
 export const tellCommand: Command = {
   name: "tell",
   usage:
     'tell "<statement>" [--claim CLAIM_ID] [--since TIME] [--until TIME] [--dry-run] [--json] [--verbose]',
   summary: "correct a claim; rewrite affected canon in the same pass",
+  schema: TELL_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
-      options: ["--about", "--claim", "--page", "--since", "--until"],
-      flags: ["--dry-run", "--json", "--verbose"],
+      options: [...TELL_SCHEMA.options],
+      flags: [...TELL_SCHEMA.flags],
     });
     const statement = parsed.positionals[0];
     if (statement === undefined || parsed.positionals.length !== 1) {

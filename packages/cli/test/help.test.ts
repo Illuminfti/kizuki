@@ -227,6 +227,44 @@ describe("help", () => {
     expect(result.stderr).toContain("usage: kizuki query");
   });
 
+  test("tell structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["tell", "--help", "--json"], ["help", "tell", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: {
+          name: string;
+          options: string[];
+          flags: string[];
+          bounds: Record<string, string>;
+          irreversible: boolean;
+        };
+      };
+      expect(body.data.name).toBe("tell");
+      expect(body.data.options).toEqual(["--about", "--claim", "--page", "--since", "--until"]);
+      expect(body.data.flags).toEqual(["--dry-run", "--json", "--verbose"]);
+      expect(body.data.bounds).toEqual({ "--since": "TIME", "--until": "TIME" });
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "tell", "--help");
+    expect(text.stdout).toContain("--claim");
+    expect(text.stdout).toContain("--dry-run");
+    for (const [args, diagnostic] of [
+      [["tell", "the name is Ada", "--nope"], "unknown option --nope"],
+      [["tell", "the name is Ada", "--json", "--json"], "repeated flag --json"],
+      [["tell", "the name is Ada", "--json=true"], "flag --json does not take a value"],
+      [["tell", "the name is Ada", "--claim"], "missing value for --claim"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki tell");
+    }
+  });
+
   test("undo structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["undo", "--help", "--json"], ["help", "undo", "--json"]] as const) {
