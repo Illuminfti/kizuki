@@ -10,7 +10,7 @@ import { LedgerStoreError } from "../src/ledger/errors";
 import { readSchemaVersion } from "../src/ledger/integrity";
 import { accept } from "../src/ledger/ledger";
 import { tableExists } from "../src/ledger/schema";
-import { openStagingDb } from "../src/staging/proposals";
+import { openStagingDb, initStaging } from "../src/staging/proposals";
 import { validEvent } from "./fixtures";
 
 const HASH_V1 = "b".repeat(64);
@@ -69,29 +69,56 @@ function plant(path: string, sql: string): void {
   db.close();
 }
 
-function seedStagingClaims(db: Database, claimCount: number): unknown[] {
-  expect(tableExists(db, "schema_version")).toBe(false);
-  expect(tableExists(db, "promotions")).toBe(false);
-  for (let index = 0; index < claimCount; index++) {
-    const body = `Synthetic migration fixture ${index + 1}.`;
-    const at = "2026-09-06T00:00:00.000Z";
-    const signature = contentSignature({
-      kind: "claim", target: null, body, frontmatter: {}, subjects: [],
-      producer: "deterministic", confidence: 0.5,
-    });
-    db.query(`
-      INSERT INTO claims (
-        claim_id, kind, body, frontmatter, provenance, subjects, producer,
-        confidence, status, created_at, body_hash, content_hash,
-        sensitivity, valid_from, asserted_at, retracted_at, last_confirmed_at
-      ) VALUES (?, 'claim', ?, '{}', '[]', '[]', 'deterministic',
-        0.5, 'skipped', ?, ?, ?, 'private', ?, ?, ?, ?)
-    `).run(
-      `01ARZ3NDEKTSV4RRFFQ69G5FA${index}`, body, at, hashBody(body),
-      signature, at, at, at, at,
-    );
+function plantHistoricalClaims(path: string, claimCount: number): unknown[] {
+  const db = new Database(path);
+  try {
+    db.exec(`
+      CREATE TABLE claims (
+        claim_id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        target TEXT,
+        body TEXT NOT NULL,
+        frontmatter TEXT NOT NULL,
+        provenance TEXT NOT NULL,
+        subjects TEXT NOT NULL,
+        producer TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        body_hash TEXT NOT NULL,
+        content_hash TEXT,
+        sensitivity TEXT,
+        valid_from TEXT NOT NULL DEFAULT '',
+        asserted_at TEXT NOT NULL DEFAULT '',
+        retracted_at TEXT,
+        last_confirmed_at TEXT
+      ) STRICT;
+    `);
+    expect(tableExists(db, "schema_version")).toBe(false);
+    expect(tableExists(db, "promotions")).toBe(false);
+    for (let index = 0; index < claimCount; index++) {
+      const body = `Synthetic migration fixture ${index + 1}.`;
+      const at = "2026-09-06T00:00:00.000Z";
+      const signature = contentSignature({
+        kind: "claim", target: null, body, frontmatter: {}, subjects: [],
+        producer: "deterministic", confidence: 0.5,
+      });
+      db.query(`
+        INSERT INTO claims (
+          claim_id, kind, body, frontmatter, provenance, subjects, producer,
+          confidence, status, created_at, body_hash, content_hash,
+          sensitivity, valid_from, asserted_at, retracted_at, last_confirmed_at
+        ) VALUES (?, 'claim', ?, '{}', '[]', '[]', 'deterministic',
+          0.5, 'skipped', ?, ?, ?, 'private', ?, ?, ?, ?)
+      `).run(
+        `01ARZ3NDEKTSV4RRFFQ69G5FA${index}`, body, at, hashBody(body),
+        signature, at, at, at, at,
+      );
+    }
+    return db.query("SELECT * FROM claims ORDER BY claim_id").all();
+  } finally {
+    db.close();
   }
-  return db.query("SELECT * FROM claims ORDER BY claim_id").all();
 }
 
 function expectReceipt(
@@ -135,26 +162,39 @@ async function filePublicClaim(path: string): Promise<string> {
   } finally { ledger.close(); }
 }
 
-for (const claimCount of [0, 2]) {
-  test(`opening staging before the ledger preserves ${claimCount} fixture claims through migration and reopen`, async () => {
-    await withTempDb((path) => {
-      const staging = openStagingDb(path);
-      let rowsBefore: unknown[] = [];
-      try {
-        rowsBefore = seedStagingClaims(staging, claimCount);
-        expect(rowsBefore).toHaveLength(claimCount);
-      } finally { staging.close(); }
+test("opening staging before the ledger yields a current ledger immediately", async () => {
+  await withTempDb((path) => {
+    const staging = openStagingDb(path);
+    try {
+      expectCurrent(staging);
+      expect(staging.query("SELECT * FROM claims ORDER BY claim_id").all()).toEqual([]);
+    } finally { staging.close(); }
 
-      const ledger = openLedger(path);
+    const ledger = openLedger(path);
+    try {
+      expectCurrent(ledger);
+    } finally { ledger.close(); }
+  });
+});
+
+for (const claimCount of [0, 2]) {
+  test(`opening staging on a historical claims-only database preserves ${claimCount} fixture claims`, async () => {
+    await withTempDb((path) => {
+      const rowsBefore = plantHistoricalClaims(path, claimCount);
+      expect(rowsBefore).toHaveLength(claimCount);
+
+      const staging = openStagingDb(path);
       try {
-        expectCurrent(ledger);
-        expect(ledger.query("SELECT * FROM claims ORDER BY claim_id").all()).toEqual(rowsBefore);
-      } finally { ledger.close(); }
+        expectCurrent(staging);
+        expect(staging.query("SELECT claim_id FROM claims ORDER BY claim_id").all())
+          .toEqual(rowsBefore.map((row) => ({ claim_id: (row as { claim_id: string }).claim_id })));
+      } finally { staging.close(); }
 
       const reopened = openLedger(path);
       try {
         expectCurrent(reopened);
-        expect(reopened.query("SELECT * FROM claims ORDER BY claim_id").all()).toEqual(rowsBefore);
+        expect(reopened.query("SELECT claim_id FROM claims ORDER BY claim_id").all())
+          .toEqual(rowsBefore.map((row) => ({ claim_id: (row as { claim_id: string }).claim_id })));
       } finally { reopened.close(); }
     });
   });
@@ -218,15 +258,9 @@ for (const shape of leftoverShapes) {
       plant(path, shape.sql);
       const staging = openStagingDb(path);
       try {
-        expect(tableExists(staging, "schema_version")).toBe(false);
-        expect(tableExists(staging, "promotions")).toBe(true);
+        expectCurrent(staging);
+        expectReceipt(staging, shape.receipt);
       } finally { staging.close(); }
-
-      const ledger = openLedger(path);
-      try {
-        expectCurrent(ledger);
-        expectReceipt(ledger, shape.receipt);
-      } finally { ledger.close(); }
 
       const reopened = openLedger(path);
       try {
@@ -269,6 +303,25 @@ test("an unknown leftover promotions table fails closed", async () => {
   });
 });
 
+test("an unknown leftover promotions table fails closed through staging", async () => {
+  await withTempDb((path) => {
+    plant(path, "CREATE TABLE promotions (receipt_id TEXT PRIMARY KEY) STRICT;");
+    expect(() => openStagingDb(path)).toThrow(/missing page_hash and after_hash/);
+  });
+});
+
+test("initStaging on an existing connection migrates through the ledger coordinator", async () => {
+  await withTempDb((path) => {
+    plantHistoricalClaims(path, 2);
+    const db = new Database(path);
+    try {
+      initStaging(db);
+      expectCurrent(db);
+      expect(db.query("SELECT COUNT(*) AS n FROM claims").get()).toEqual({ n: 2 });
+    } finally { db.close(); }
+  });
+});
+
 test("a mixed page_hash and after_hash promotions table fails closed without changing its schema or receipt", async () => {
   await withTempDb((path) => {
     plant(path, `
@@ -295,6 +348,12 @@ test("a mixed page_hash and after_hash promotions table fails closed without cha
     expect(failure).toBeInstanceOf(LedgerStoreError);
     expect(failure).toMatchObject({ code: "corrupt", retryable: false });
     expect((failure as LedgerStoreError).message).toMatch(/both page_hash and after_hash/);
+
+    let stagingFailure: unknown;
+    try { openStagingDb(path).close(); } catch (error) { stagingFailure = error; }
+    expect(stagingFailure).toBeInstanceOf(LedgerStoreError);
+    expect(stagingFailure).toMatchObject({ code: "corrupt", retryable: false });
+    expect((stagingFailure as LedgerStoreError).message).toMatch(/both page_hash and after_hash/);
 
     const unchanged = new Database(path, { readonly: true });
     try {
