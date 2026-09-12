@@ -30,11 +30,11 @@ for (const mode of ["replace", "disable", "absent", "unknown", "timeout", "later
           state.activationObservations++;
           if (mode === 'startup-unknown') { code = 1; stderr = 'synthetic inspection failure'; }
           else if (mode === 'startup-timeout' || (mode === 'startup-delay' && state.activationObservations < 3)) stdout = 'state = spawn scheduled';
-          else stdout = 'state = running\\npid = 98765';
+          else stdout = 'state = running\\npid = 98765\\ndisabled = 0\\nenvironment = { SERVICE_DISABLED = 1 }';
         } else if (mode === 'absent' || mode.startsWith('startup-') || (state.stopping && !['unknown','timeout','later-pid'].includes(mode) && ++state.observations > 1)) {
           state.absent = true; code = 113; stderr = 'Could not find service "dev.kizuki.synthetic" in domain for user gui';
         } else if (state.stopping && mode === 'unknown') { code = 1; stderr = 'synthetic inspection failure'; }
-        else stdout = 'state = running\\npid = ' + (state.stopping && mode === 'later-pid' ? 98765 : 5340);
+        else stdout = 'state = running\\npid = ' + (state.stopping && mode === 'later-pid' ? 98765 : 5340) + '\\ndisabled = 0\\nenvironment = { SERVICE_DISABLED = 1 }';
       } else if (args[0] === 'bootout') {
         assert.equal(args[1], 'gui/' + process.getuid() + '/dev.kizuki.synthetic');
         state.stopping = true; code = mode === 'bootout-failure' ? 1 : 0;
@@ -634,29 +634,49 @@ test("version-3 launchd journals cannot claim inactive enablement even with a ca
 });
 
 
-for (const [name, stdout, code, detail] of [
-  ["failed exit", "state = exited\nlast exit code = 78", 0, "failed (last exit code 78)"],
-  ["failed retry", "state = spawn scheduled\nlast exit code = 1", 0, "failed (last exit code 1)"],
-  ["clean stop", "state = not running\nlast exit code = 0", 0, "stopped (last exit code 0)"],
-  ["initial wait", "state = waiting", 0, "loaded but not running"],
-  ["active after failure", "state = running\npid = 98765\nlast exit code = 78", 0, "active"],
-  ["conflicting exit", "state = exited\nlast exit code = 78\nlast exit code = 0", 0, "loaded but not running"],
-  ["duplicate exit", "state = exited\nlast exit code = 78\nlast exit code = 78", 0, "loaded but not running"],
-  ["malformed exit", "state = exited\nlast exit code = PRIVATE_MANAGER_CANARY", 0, "loaded but not running"],
-  ["malformed sibling", "state = exited\nlast exit code = 78\nlast exit code=garbage", 0, "loaded but not running"],
-  ["malformed colon sibling", "state = exited\nlast exit code = 78\nlast exit code: 0", 0, "loaded but not running"],
-  ["oversized print", "state = exited\nlast exit code = 78\n" + "x".repeat(65_536), 0, "loaded but not running"],
-  ["unsafe exit", "state = exited\nlast exit code = 999999999999999999", 0, "loaded but not running"],
-  ["noncanonical exit", "state = exited\nlast exit code = 078", 0, "loaded but not running"],
-  ["out of range exit", "state = exited\nlast exit code = 256", 0, "loaded but not running"],
-  ["nested exit", "\tstate = exited\n\tenvironment = {\n\t\tlast exit code = 78\n\t}", 0, "loaded but not running"],
-  ["failed print", "state = exited\nlast exit code = 78", 1, "supervisor state could not be queried"],
+const launchdCanary = "disabled PRIVATE_MANAGER_CANARY" as const;
+for (const [name, stdout, code, state, detail, stderr] of [
+  ["failed exit", "state = exited\nlast exit code = 78", 0, "disabled", "failed (last exit code 78)", launchdCanary],
+  ["failed retry", "state = spawn scheduled\nlast exit code = 1", 0, "disabled", "failed (last exit code 1)", launchdCanary],
+  ["clean stop", "state = not running\nlast exit code = 0", 0, "disabled", "stopped (last exit code 0)", launchdCanary],
+  ["initial wait", "state = waiting", 0, "disabled", "loaded but not running", launchdCanary],
+  ["active after failure", "state = running\npid = 98765\nlast exit code = 78", 0, "active", "active", launchdCanary],
+  ["running with disabled = 0", "state = running\npid = 98765\ndisabled = 0", 0, "active", "active", launchdCanary],
+  ["running with SERVICE_DISABLED", "state = running\npid = 98765\nenvironment = {\n\tSERVICE_DISABLED = 1\n}", 0, "active", "active", launchdCanary],
+  ["stderr disabled substring", "state = running\npid = 98765", 0, "active", "active", "disabled in manager log"],
+  ["anchored disabled", "disabled = 1\nstate = not running", 0, "disabled", "loaded but not running", launchdCanary],
+  ["anchored disabled despite pid", "state = running\npid = 98765\ndisabled = 1", 0, "disabled", "loaded but not running", launchdCanary],
+  ["malformed top-level disabled cannot activate", "state = running\npid = 98765\ndisabled = PRIVATE_MANAGER_CANARY", 0, "unknown", "supervisor state could not be queried", launchdCanary],
+  ["anchored unloaded", "state = unloaded", 0, "disabled", "loaded but not running", launchdCanary],
+  ["running without pid", "state = running\nlast exit code = 0", 0, "disabled", "loaded but not running", launchdCanary],
+  ["non-running with pid", "state = waiting\npid = 98765", 0, "disabled", "loaded but not running", launchdCanary],
+  ["nested running", "state = not running\nenvironment = {\n\tstate = running\n\tpid = 99\n}", 0, "disabled", "loaded but not running", launchdCanary],
+  ["conflicting exit", "state = exited\nlast exit code = 78\nlast exit code = 0", 0, "disabled", "loaded but not running", launchdCanary],
+  ["duplicate exit", "state = exited\nlast exit code = 78\nlast exit code = 78", 0, "disabled", "loaded but not running", launchdCanary],
+  ["malformed exit", "state = exited\nlast exit code = PRIVATE_MANAGER_CANARY", 0, "disabled", "loaded but not running", launchdCanary],
+  ["malformed sibling", "state = exited\nlast exit code = 78\nlast exit code=garbage", 0, "disabled", "loaded but not running", launchdCanary],
+  ["malformed colon sibling", "state = exited\nlast exit code = 78\nlast exit code: 0", 0, "disabled", "loaded but not running", launchdCanary],
+  ["oversized print", "state = exited\nlast exit code = 78\n" + "x".repeat(65_536), 0, "unknown", "supervisor state could not be queried", launchdCanary],
+  ["unsafe exit", "state = exited\nlast exit code = 999999999999999999", 0, "disabled", "loaded but not running", launchdCanary],
+  ["noncanonical exit", "state = exited\nlast exit code = 078", 0, "disabled", "loaded but not running", launchdCanary],
+  ["out of range exit", "state = exited\nlast exit code = 256", 0, "disabled", "loaded but not running", launchdCanary],
+  ["nested exit", "\tstate = exited\n\tenvironment = {\n\t\tlast exit code = 78\n\t}", 0, "disabled", "loaded but not running", launchdCanary],
+  ["nested running failure", "state = running\nenvironment = {\n\tstate = exited\n\tlast exit code = 78\n}", 0, "disabled", "loaded but not running", launchdCanary],
+  ["nested unloaded failure", "state = unloaded\nenvironment = {\n\tstate = exited\n\tlast exit code = 78\n}", 0, "disabled", "loaded but not running", launchdCanary],
+  ["pid 1 is not a job", "state = running\npid = 1", 0, "disabled", "loaded but not running", launchdCanary],
+  ["empty success", "", 0, "unknown", "supervisor state could not be queried", ""],
+  ["unparseable success", "not a launchctl job record", 0, "unknown", "supervisor state could not be queried", ""],
+  ["failed print", "state = exited\nlast exit code = 78", 1, "unknown", "supervisor state could not be queried", launchdCanary],
+  ["failed print with job stdout", "state = running\npid = 98765", 1, "unknown", "supervisor state could not be queried", "Could not find service"],
+  ["missing-service on stdout only", "Could not find service", 113, "unknown", "supervisor state could not be queried", ""],
+  ["failed print without phrase", "", 113, "unknown", "supervisor state could not be queried", ""],
+  ["unloaded service", "", 113, "absent", "absent", "Could not find service \"dev.kizuki.synthetic\" in domain for user gui; disabled"],
 ] as const) {
   test(`launchd status distinguishes ${name} with bounded diagnostics only`, () => {
     const root = mkdtempSync(join(tmpdir(), "kizuki-launchd-status-")); roots.push(root);
     writeFileSync(join(root, "launchctl"), `#!${process.execPath}\nimport assert from 'node:assert/strict';
       assert.deepEqual(process.argv.slice(2), ['print', 'gui/' + process.getuid() + '/dev.kizuki.synthetic']);
-      process.stdout.write(${JSON.stringify(stdout)}); process.stderr.write('PRIVATE_MANAGER_CANARY'); process.exit(${code});
+      process.stdout.write(${JSON.stringify(stdout)}); process.stderr.write(${JSON.stringify(stderr)}); process.exit(${code});
 `, { mode: 0o700 });
     const script = `const {realSupervisorHost} = await import(${JSON.stringify(join(import.meta.dir, "../../src/serve/supervisor.ts"))});
       console.log(JSON.stringify(realSupervisorHost('launchd', '/synthetic', '/synthetic/kizuki').query('synthetic')));`;
@@ -665,11 +685,183 @@ for (const [name, stdout, code, detail] of [
     });
     expect(result.exitCode).toBe(0); expect(result.stderr.toString()).toBe("");
     const status = JSON.parse(result.stdout.toString());
-    expect(status).toEqual({ kind: "launchd", unit: "dev.kizuki.synthetic", enabled: code === 0,
-      state: code !== 0 ? "unknown" : name === "active after failure" ? "active" : "disabled", detail });
+    expect(status).toEqual({
+      kind: "launchd", unit: "dev.kizuki.synthetic",
+      enabled: state === "active" || state === "disabled", state, detail,
+    });
     expect(result.stdout.toString()).not.toContain("PRIVATE_MANAGER_CANARY");
   });
 }
+
+test("public install confirms launchd running pid despite disabled substrings", () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-launchd-install-")); roots.push(root);
+  const vault = join(root, "vault"), home = join(root, "home"), statePath = join(root, "state.json");
+  initVault(vault); writeServeIntent(vault, "opted-out");
+  writeFileSync(statePath, JSON.stringify({ loaded: false }), { mode: 0o600 });
+  writeFileSync(join(root, "launchctl"), `#!${process.execPath}
+    import {readFileSync, writeFileSync} from 'node:fs';
+    const path = ${JSON.stringify(statePath)};
+    const state = JSON.parse(readFileSync(path, 'utf8')), args = process.argv.slice(2);
+    let code = 0, stdout = '', stderr = '';
+    if (args[0] === 'print') {
+      if (!state.loaded) { code = 113; stderr = 'Could not find service in domain for user gui'; }
+      else stdout = 'state = running\\npid = 98765\\ndisabled = 0\\nenvironment = { SERVICE_DISABLED = 1 }';
+    } else if (args[0] === 'bootstrap') { state.loaded = true; }
+    else if (args[0] === 'bootout') { state.loaded = false; }
+    else code = 1;
+    writeFileSync(path, JSON.stringify(state));
+    process.stdout.write(stdout); process.stderr.write(stderr); process.exit(code);
+  `, { mode: 0o700 });
+  const script = `
+    import assert from 'node:assert/strict';
+    const {realSupervisorHost, installServeService} = await import(${JSON.stringify(join(import.meta.dir, "../../src/serve/supervisor.ts"))});
+    const result = installServeService(${JSON.stringify(vault)}, realSupervisorHost('launchd', ${JSON.stringify(home)}, '/synthetic/kizuki'));
+    assert.equal(result.status.state, 'active');
+    assert.equal(result.status.enabled, true);
+    assert.equal(result.wrote, true);
+  `;
+  const result = Bun.spawnSync([process.execPath, "--eval", script], {
+    env: { ...process.env, PATH: root + ":" + process.env.PATH }, stdout: "pipe", stderr: "pipe", timeout: 15_000,
+  });
+  expect({ code: result.exitCode, stderr: result.stderr.toString() }).toEqual({ code: 0, stderr: "" });
+});
+
+for (const [name, stdout, code, stderr] of [
+  ["nested running failure", "state = running\nenvironment = {\n\tstate = exited\n\tlast exit code = 78\n}", 0, ""],
+  ["nested unloaded failure", "state = unloaded\nenvironment = {\n\tstate = exited\n\tlast exit code = 78\n}", 0, ""],
+  ["failed print with job stdout", "state = running\npid = 98765", 1, "Could not find service"],
+  ["empty success", "", 0, ""],
+] as const) {
+  test(`launchd uninstall refuses ${name}`, () => {
+    const root = mkdtempSync(join(tmpdir(), "kizuki-launchd-refuse-")); roots.push(root);
+    const vault = join(root, "vault"), home = join(root, "home"), statePath = join(root, "state.json");
+    initVault(vault); writeServeIntent(vault, "opted-out");
+    writeFileSync(statePath, JSON.stringify({ loaded: false, probe: false }), { mode: 0o600 });
+    writeFileSync(join(root, "launchctl"), `#!${process.execPath}
+      import {readFileSync, writeFileSync} from 'node:fs';
+      const path = ${JSON.stringify(statePath)};
+      const state = JSON.parse(readFileSync(path, 'utf8')), args = process.argv.slice(2);
+      let code = 0, stdout = '', stderr = '';
+      if (args[0] === 'print') {
+        if (state.probe) { stdout = ${JSON.stringify(stdout)}; stderr = ${JSON.stringify(stderr)}; code = ${code}; }
+        else if (!state.loaded) { code = 113; stderr = 'Could not find service in domain for user gui'; }
+        else stdout = 'state = running\\npid = 98765\\ndisabled = 0';
+      } else if (args[0] === 'bootstrap') { state.loaded = true; }
+      else if (args[0] === 'bootout') { state.loaded = false; }
+      else code = 1;
+      writeFileSync(path, JSON.stringify(state));
+      process.stdout.write(stdout); process.stderr.write(stderr); process.exit(code);
+    `, { mode: 0o700 });
+    const script = `
+      import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+      import assert from 'node:assert/strict';
+      const { realSupervisorHost, installServeService, uninstallServeService } = await import(${JSON.stringify(join(import.meta.dir, "../../src/serve/supervisor.ts"))});
+      const host = realSupervisorHost('launchd', ${JSON.stringify(home)}, '/synthetic/kizuki');
+      const installed = installServeService(${JSON.stringify(vault)}, host);
+      const state = JSON.parse(readFileSync(${JSON.stringify(statePath)}, 'utf8'));
+      writeFileSync(${JSON.stringify(statePath)}, JSON.stringify({ ...state, probe: true }));
+      assert.throws(() => uninstallServeService(${JSON.stringify(vault)}, host), /no service change made/);
+      assert.equal(existsSync(installed.unitPath), true);
+    `;
+    const result = Bun.spawnSync([process.execPath, "--eval", script], {
+      env: { ...process.env, PATH: root + ":" + process.env.PATH }, stdout: "pipe", stderr: "pipe", timeout: 15_000,
+    });
+    expect({ code: result.exitCode, stderr: result.stderr.toString() }).toEqual({ code: 0, stderr: "" });
+  });
+}
+
+test("killed launchd print is unknown even with missing-service text", () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-launchd-killed-")); roots.push(root);
+  writeFileSync(join(root, "launchctl"), `#!${process.execPath}
+    process.stdout.write('state = running\\npid = 98765\\n');
+    process.stderr.write('Could not find service\\n');
+    process.kill(process.pid, 'SIGKILL');
+  `, { mode: 0o700 });
+  const script = `
+    import assert from 'node:assert/strict';
+    const { realSupervisorHost } = await import(${JSON.stringify(join(import.meta.dir, "../../src/serve/supervisor.ts"))});
+    const status = realSupervisorHost('launchd', '/synthetic', '/synthetic/kizuki').query('synthetic');
+    assert.equal(status.state, 'unknown');
+    assert.equal(status.enabled, false);
+  `;
+  const result = Bun.spawnSync([process.execPath, "--eval", script], {
+    env: { ...process.env, PATH: root + ":" + process.env.PATH }, stdout: "pipe", stderr: "pipe", timeout: 10_000,
+  });
+  expect({ code: result.exitCode, stderr: result.stderr.toString() }).toEqual({ code: 0, stderr: "" });
+});
+
+test("launchd wait does not treat a killed missing-service print as absence", () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-launchd-killed-wait-")); roots.push(root);
+  writeFileSync(join(root, "launchctl"), `#!${process.execPath}
+    const args = process.argv.slice(2);
+    if (args[0] === 'bootout') process.exit(0);
+    process.stderr.write('Could not find service\\n');
+    process.kill(process.pid, 'SIGKILL');
+  `, { mode: 0o700 });
+  const script = `
+    import assert from 'node:assert/strict';
+    let elapsed = 0;
+    Object.defineProperty(performance, 'now', { value: () => elapsed });
+    Atomics.wait = (_a, _b, _c, ms) => { elapsed += 1000; return 'timed-out'; };
+    const { realSupervisorHost } = await import(${JSON.stringify(join(import.meta.dir, "../../src/serve/supervisor.ts"))});
+    const result = realSupervisorHost('launchd', '/synthetic', '/synthetic/kizuki').disable('dev.kizuki.synthetic');
+    assert.equal(result.ok, false);
+  `;
+  const result = Bun.spawnSync([process.execPath, "--eval", script], {
+    env: { ...process.env, PATH: root + ":" + process.env.PATH }, stdout: "pipe", stderr: "pipe", timeout: 15_000,
+  });
+  expect({ code: result.exitCode, stderr: result.stderr.toString() }).toEqual({ code: 0, stderr: "" });
+});
+
+test("timed-out launchd print is not parsed as absence", () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-launchd-timeout-print-")); roots.push(root);
+  writeFileSync(join(root, "launchctl"), `#!${process.execPath}
+    const args = process.argv.slice(2);
+    if (args[0] === 'bootout') process.exit(0);
+    process.stderr.write('Could not find service in domain for user gui\\n');
+    setTimeout(() => process.exit(0), 1_000);
+  `, { mode: 0o700 });
+  const script = `
+    import assert from 'node:assert/strict';
+    let elapsed = 4900;
+    Object.defineProperty(performance, 'now', { value: () => elapsed });
+    Atomics.wait = (_a, _b, _c, ms) => { elapsed += 1000; return 'timed-out'; };
+    const { realSupervisorHost } = await import(${JSON.stringify(join(import.meta.dir, "../../src/serve/supervisor.ts"))});
+    const result = realSupervisorHost('launchd', '/synthetic', '/synthetic/kizuki').disable('dev.kizuki.synthetic');
+    assert.equal(result.ok, false);
+  `;
+  const result = Bun.spawnSync([process.execPath, "--eval", script], {
+    env: { ...process.env, PATH: root + ":" + process.env.PATH }, stdout: "pipe", stderr: "pipe", timeout: 10_000,
+  });
+  expect({ code: result.exitCode, stderr: result.stderr.toString() }).toEqual({ code: 0, stderr: "" });
+});
+
+test("launchd wait does not admit a missing-service result after the deadline", () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-launchd-late-")); roots.push(root);
+  const receipt = join(root, "printed");
+  writeFileSync(join(root, "launchctl"), `#!${process.execPath}
+    import { writeFileSync } from 'node:fs';
+    const args = process.argv.slice(2);
+    if (args[0] === 'bootout') process.exit(0);
+    writeFileSync(${JSON.stringify(receipt)}, 'printed');
+    process.stderr.write('Could not find service in domain for user gui\\n');
+    process.exit(113);
+  `, { mode: 0o700 });
+  const script = `
+    import { existsSync } from 'node:fs';
+    import assert from 'node:assert/strict';
+    let n = 0;
+    Object.defineProperty(performance, 'now', { value: () => ++n <= 2 ? 0 : 5001 });
+    const { realSupervisorHost } = await import(${JSON.stringify(join(import.meta.dir, "../../src/serve/supervisor.ts"))});
+    const result = realSupervisorHost('launchd', '/synthetic', '/synthetic/kizuki').disable('dev.kizuki.synthetic');
+    assert.equal(result.ok, false);
+    assert.equal(existsSync(${JSON.stringify(receipt)}), true);
+  `;
+  const result = Bun.spawnSync([process.execPath, "--eval", script], {
+    env: { ...process.env, PATH: root + ":" + process.env.PATH }, stdout: "pipe", stderr: "pipe", timeout: 10_000,
+  });
+  expect({ code: result.exitCode, stderr: result.stderr.toString() }).toEqual({ code: 0, stderr: "" });
+});
 
 
 test("uninstall of a positively observed failed launchd job removes it without starting it", () => {

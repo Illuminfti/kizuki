@@ -65,44 +65,95 @@ function runCommand(argv: string[], timeout = 5_000): { ok: boolean; exitCode: n
   };
 }
 
-/** launchctl print also contains arbitrary configuration and environment text. */
-function launchdInactiveDetail(stdout: string): string {
-  const unavailable = "loaded but not running";
-  if (stdout.length > 65_536) return unavailable;
-  const states = [...stdout.matchAll(/^([ \t]*)state = (?:waiting|spawn scheduled|exited|not running)[ \t]*$/gm)];
-  const exits = stdout.split("\n").filter(line => /^[ \t]*last exit code/.test(line));
-  if (states.length !== 1 || exits.length !== 1) return unavailable;
-  const match = /^([ \t]*)last exit code = (0|[1-9]\d{0,2})[ \t]*$/.exec(exits[0]!);
-  // The job fields share indentation; a nested environment value is not an exit.
-  if (!match || match[1] !== states[0]![1] || Number(match[2]) > 255) return unavailable;
-  return match[2] === "0" ? "stopped (last exit code 0)" : `failed (last exit code ${match[2]})`;
+const LAUNCHD_COMMAND_TIMEOUT_MS = 5_000;
+const LAUNCHD_PRINT_LIMIT = 65_536;
+const LAUNCHD_INACTIVE = new Set(["waiting", "spawn scheduled", "exited", "not running"]);
+const LAUNCHD_LOADED = new Set(["running", "unloaded", "waiting", "spawn scheduled", "exited", "not running"]);
+
+type LaunchdPrint = { ok: boolean; stdout: string; stderr: string; transport: boolean };
+type LaunchdJob = { state: string; pid: number | null; disabled: boolean; lastExit: number | null };
+
+function printLaunchd(label: string, timeout: number): LaunchdPrint {
+  const result = spawnSync("launchctl", ["print", `gui/${process.getuid?.() ?? 0}/${label}`], {
+    encoding: "utf8",
+    timeout,
+  });
+  const transport = result.error != null || result.signal != null || result.status == null;
+  return {
+    ok: result.status === 0 && !transport,
+    stdout: (result.stdout ?? "").trim(),
+    stderr: (result.stderr ?? "").trim(),
+    transport,
+  };
 }
 
-function queryLaunchdService(label: string, timeout = 5_000): SupervisorStatus {
-  const printed = runCommand(["launchctl", "print", `gui/${process.getuid?.() ?? 0}/${label}`], timeout);
-  const text = `${printed.stdout} ${printed.stderr}`.toLowerCase();
-  let state: SupervisorState = "unknown";
-  if (text.includes("disabled")) state = "disabled";
-  else if (printed.ok) state = /^\s*state = running\s*$/m.test(printed.stdout) && /^\s*pid = [1-9]\d*\s*$/m.test(printed.stdout) ? "active" : "disabled";
-  else if (text.includes("could not find service")) state = "absent";
-  return {
-    kind: "launchd", state, unit: label, enabled: printed.ok,
-    detail: state === "unknown" ? "supervisor state could not be queried" :
-      printed.ok && state !== "active" ? launchdInactiveDetail(printed.stdout) : state,
+/** Job fields share the least-indented `state =` line; nested env/config is not status. */
+function parseLaunchdJob(stdout: string): LaunchdJob | null {
+  if (stdout.length > LAUNCHD_PRINT_LIMIT) return null;
+  const states = [...stdout.matchAll(/^([ \t]*)state = (\S+(?:[ \t]+\S+)*)[ \t]*$/gm)];
+  if (states.length === 0) return null;
+  const indent = Math.min(...states.map(match => match[1]!.length));
+  const top = states.filter(match => match[1]!.length === indent);
+  if (top.length !== 1) return null;
+  const atIndent = (pattern: RegExp) => [...stdout.matchAll(pattern)].filter(match => match[1]!.length === indent);
+  const pids = atIndent(/^([ \t]*)pid = ([1-9]\d*)[ \t]*$/gm);
+  const pid = pids.length === 1 && Number.isSafeInteger(Number(pids[0]![2])) ? Number(pids[0]![2]) : null;
+  const flags = atIndent(/^([ \t]*)disabled = (.*)$/gm);
+  if (flags.length > 1 || (flags.length === 1 && !/^[01]$/.test(flags[0]![2]!.trim()))) return null;
+  const disabled = flags.length === 1 && flags[0]![2]!.trim() === "1";
+  const exits = stdout.split("\n").filter(line => /^[ \t]*last exit code/.test(line) && (/^[ \t]*/.exec(line)?.[0].length ?? 0) === indent);
+  let lastExit: number | null = null;
+  if (exits.length === 1) {
+    const match = /^([ \t]*)last exit code = (0|[1-9]\d{0,2})[ \t]*$/.exec(exits[0]!);
+    if (match && Number(match[2]) <= 255) lastExit = Number(match[2]);
+  }
+  return { state: top[0]![2]!, pid, disabled, lastExit };
+}
+
+function launchdInactiveDetail(job: LaunchdJob): string {
+  if (!LAUNCHD_INACTIVE.has(job.state) || job.lastExit === null) return "loaded but not running";
+  return job.lastExit === 0 ? "stopped (last exit code 0)" : `failed (last exit code ${job.lastExit})`;
+}
+
+function classifyLaunchdPrint(label: string, printed: LaunchdPrint): SupervisorStatus {
+  const unknown: SupervisorStatus = {
+    kind: "launchd", state: "unknown", unit: label, enabled: false,
+    detail: "supervisor state could not be queried",
   };
+  if (printed.transport) return unknown;
+  if (!printed.ok) {
+    if (printed.stdout.length === 0 && /could not find service/i.test(printed.stderr)) {
+      return { kind: "launchd", state: "absent", unit: label, enabled: false, detail: "absent" };
+    }
+    return unknown;
+  }
+  const job = parseLaunchdJob(printed.stdout);
+  if (job === null || !LAUNCHD_LOADED.has(job.state)) return unknown;
+  if (job.state === "running" && job.pid !== null && job.pid > 1 && !job.disabled) {
+    return { kind: "launchd", state: "active", unit: label, enabled: true, detail: "active" };
+  }
+  return { kind: "launchd", state: "disabled", unit: label, enabled: true, detail: launchdInactiveDetail(job) };
+}
+
+function queryLaunchdService(label: string): SupervisorStatus {
+  return classifyLaunchdPrint(label, printLaunchd(label, LAUNCHD_COMMAND_TIMEOUT_MS));
 }
 
 function waitForLaunchdState(label: string, state: "absent" | "active"): boolean {
   // Both bootstrap and bootout acknowledge a request before the corresponding
   // job transition has necessarily completed. Observe the requested state.
-  const deadline = performance.now() + 5_000;
+  const deadline = performance.now() + LAUNCHD_COMMAND_TIMEOUT_MS;
   const signal = new Int32Array(new SharedArrayBuffer(4));
   for (;;) {
     const remaining = deadline - performance.now();
-    if (remaining <= 0) return false;
-    const observed = queryLaunchdService(label, Math.ceil(remaining));
-    if (observed.state === state && observed.enabled === (state === "active")) return true;
-    if (observed.state === "unknown") return false;
+    if (remaining < 1) return false;
+    const printed = printLaunchd(label, Math.min(Math.floor(remaining), LAUNCHD_COMMAND_TIMEOUT_MS));
+    if (performance.now() >= deadline) return false;
+    if (!printed.transport) {
+      const observed = classifyLaunchdPrint(label, printed);
+      if (observed.state === state && observed.enabled === (state === "active")) return true;
+      if (observed.state === "unknown") return false;
+    }
     const delay = Math.min(50, deadline - performance.now());
     if (delay <= 0) return false;
     Atomics.wait(signal, 0, 0, delay);

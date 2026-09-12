@@ -7,6 +7,32 @@ import { fakeSystemd } from "./supervisor-fixture";
 const { cleanup, runCli, tempVault } = createHelpers();
 afterEach(cleanup);
 
+test("public install confirms launchd running pid despite disabled substrings", () => {
+  const setup = tempVault(), bin = join(setup.root, "synthetic-launchd"), state = join(setup.root, "launchd-state.json");
+  mkdirSync(bin, { mode: 0o700 });
+  writeFileSync(state, JSON.stringify({ loaded: false }), { mode: 0o600 });
+  writeFileSync(join(bin, "launchctl"), `#!${process.execPath}
+import {readFileSync, writeFileSync} from 'node:fs';
+const path = ${JSON.stringify(state)};
+const s = JSON.parse(readFileSync(path, 'utf8')), args = process.argv.slice(2);
+let code = 0, stdout = '', stderr = '';
+if (args[0] === 'print') {
+  if (!s.loaded) { code = 113; stderr = 'Could not find service in domain for user gui'; }
+  else stdout = 'state = running\\npid = 98765\\ndisabled = 0\\nenvironment = { SERVICE_DISABLED = 1 }';
+} else if (args[0] === 'bootstrap') { s.loaded = true; }
+else if (args[0] === 'bootout') { s.loaded = false; }
+else code = 1;
+writeFileSync(path, JSON.stringify(s));
+process.stdout.write(stdout); process.stderr.write(stderr); process.exit(code);
+`, { mode: 0o700 });
+  const env = { ...setup.env, KIZUKI_SUPERVISOR: "launchd", PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` };
+  const installed = runCli(env, "serve", "--install", "--json");
+  expect(installed.exitCode).toBe(0);
+  expect(JSON.parse(installed.stdout).data.status).toMatchObject({ kind: "launchd", state: "active", enabled: true });
+  const id = readFileSync(join(setup.vault, ".kizuki", "vault-id"), "utf8").trim();
+  expect(existsSync(join(setup.env.HOME!, "Library", "LaunchAgents", `dev.kizuki.${id}.plist`))).toBe(true);
+});
+
 test("public install and uninstall refuse failed supervisor transitions", () => {
   const setup = tempVault();
   const env = { ...fakeSystemd(setup.root, setup.env), KIZUKI_SUPERVISOR: "systemd" };
