@@ -191,16 +191,17 @@ function searchPlan(
     clauses.push(`page_type IN (${placeholders(types.length)})`);
     bindings.push(...types);
   }
+  if (opts.since !== undefined || opts.until !== undefined) {
+    // Canon pages have no occurrence-time contract; never bypass a time bound.
+    clauses.push("search_docs.scope = 'ledger'");
+    if (opts.scope !== "ledger") degraded.push("canon-time-scope-unsupported");
+  }
   if (opts.since !== undefined) {
-    clauses.push(
-      `(search_docs.scope = 'canon' OR ${OCCURRED_AT_PAIR} >= (?, ?))`,
-    );
+    clauses.push(`${OCCURRED_AT_PAIR} >= (?, ?)`);
     bindings.push(...instantBoundPair(opts.since, "search since"));
   }
   if (opts.until !== undefined) {
-    clauses.push(
-      `(search_docs.scope = 'canon' OR ${OCCURRED_AT_PAIR} < (?, ?))`,
-    );
+    clauses.push(`${OCCURRED_AT_PAIR} < (?, ?)`);
     bindings.push(...instantBoundPair(opts.until, "search until"));
   }
   if (subjects !== undefined) {
