@@ -19,9 +19,14 @@ import {
   readConfig,
   writeConfig,
 } from "../config";
-import type { CliIo, Command } from "./index";
+import type { CliIo, Command, CommandHelpSchema } from "./index";
 import { serveSupervisorHost } from "../service-host";
 import { assertSealedLedgerReady } from "../context";
+
+export const INIT_SCHEMA = {
+  options: [],
+  flags: ["--default", "--no-default", "--no-service", "--adopt", "--dry-run"],
+} as const satisfies CommandHelpSchema;
 
 /** Only emitted after vault creation, ledger hardening and default selection succeed. */
 export class InitServiceError extends Error {
@@ -32,11 +37,13 @@ export function createInitCommand(supervisor: typeof serveSupervisorHost = serve
   name: "init",
   usage: "init <path> [--default | --no-default] [--no-service] [--adopt] [--dry-run]",
   summary: "create a vault and install the local serve loop",
+  schema: INIT_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
     const path = configPath(io.env);
     const config = readConfig(path);
     const parsed = parseArguments(args, {
-      flags: ["--default", "--no-default", "--no-service", "--adopt", "--dry-run"],
+      options: [...INIT_SCHEMA.options],
+      flags: [...INIT_SCHEMA.flags],
     });
     const [rawPath] = requirePositional(parsed.positionals, 1);
     if (rawPath === undefined || rawPath.length === 0) {

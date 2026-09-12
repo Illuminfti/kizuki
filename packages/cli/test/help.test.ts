@@ -317,6 +317,9 @@ describe("help", () => {
   test("backfill structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["backfill", "--help", "--json"], ["help", "backfill", "--json"]] as const) {
+  test("init structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["init", "--help", "--json"], ["help", "init", "--json"]] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
@@ -445,6 +448,26 @@ describe("help", () => {
       [["backfill", "markdown-folder", "--nope"], "unknown option --nope"],
       [["backfill", "markdown-folder", "--source", "a", "--source", "b"], "repeated option --source"],
       [["backfill", "markdown-folder", "--source"], "missing value for --source"],
+      expect(body.data.name).toBe("init");
+      expect(body.data.options).toEqual([]);
+      expect(body.data.flags).toEqual([
+        "--default",
+        "--no-default",
+        "--no-service",
+        "--adopt",
+        "--dry-run",
+      ]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "init", "--help");
+    expect(text.stdout).toContain("--default");
+    expect(text.stdout).toContain("--no-service");
+    expect(text.stdout).toContain("--adopt");
+    expect(text.stdout).toContain("--dry-run");
+    for (const [args, diagnostic] of [
+      [["init", "./vault", "--nope"], "unknown option --nope"],
+      [["init", "./vault", "--dry-run", "--dry-run"], "repeated flag --dry-run"],
+      [["init", "./vault", "--no-service=true"], "flag --no-service does not take a value"],
     ] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(2);
@@ -465,6 +488,7 @@ describe("help", () => {
     expect(extra.stderr).toContain("usage: kizuki rebuild");
       expect(result.stderr).toContain("usage: kizuki app");
       expect(result.stderr).toContain("usage: kizuki backfill");
+      expect(result.stderr).toContain("usage: kizuki init");
     }
   });
 
