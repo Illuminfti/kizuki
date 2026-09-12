@@ -185,6 +185,10 @@ const TAGGED_SECTIONS = [
     status: "direction",
     doc: "docs/product-context.md",
     heading: "Proactive intelligence",
+    id: "product.progressive-ingestion",
+    status: "direction",
+    doc: "docs/product-context.md",
+    heading: "Progressive ingestion",
   },
   {
     id: "stranger-proof.sqlite-engine",
@@ -356,6 +360,9 @@ test.each([
     name: "product.proactive-intelligence tag removed",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Proactive intelligence\n\nStatus: direction\n\n", "## Proactive intelligence\n\n"));
+    name: "product.progressive-ingestion tag removed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Progressive ingestion\n\nStatus: direction\n\n", "## Progressive ingestion\n\n"));
       return entries;
     },
   },
@@ -378,6 +385,9 @@ test.each([
     name: "product.proactive-intelligence tag shipped",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Proactive intelligence\n\nStatus: direction", "## Proactive intelligence\n\nStatus: shipped"));
+    name: "product.progressive-ingestion tag shipped",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Progressive ingestion\n\nStatus: direction", "## Progressive ingestion\n\nStatus: shipped"));
       return entries;
     },
   },
@@ -430,6 +440,14 @@ test.each([
     name: "product.proactive-intelligence tag only in adjacent identity",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Proactive intelligence\n\nStatus: direction\n\n", "## Proactive intelligence\n\n"));
+    name: "product.progressive-ingestion inventory entry removed",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "product.progressive-ingestion"),
+  },
+  {
+    name: "product.progressive-ingestion tag only in adjacent Taste",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Progressive ingestion\n\nStatus: direction\n\n", "## Progressive ingestion\n\n"));
       return entries;
     },
   },

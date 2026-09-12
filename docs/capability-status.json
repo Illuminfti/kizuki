@@ -100,6 +100,12 @@
       "status": "direction",
       "doc": "docs/product-context.md",
       "heading": "Proactive intelligence"
+    },
+    {
+      "id": "product.progressive-ingestion",
+      "status": "direction",
+      "doc": "docs/product-context.md",
+      "heading": "Progressive ingestion"
     }
   ]
 }
