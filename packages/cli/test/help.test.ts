@@ -296,48 +296,6 @@ describe("help", () => {
   test("doctor structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["doctor", "--help", "--json"], ["help", "doctor", "--json"]] as const) {
-  test("export structured help matches its parser", () => {
-    const env = isolatedEnv();
-    for (const args of [["export", "--help", "--json"], ["help", "export", "--json"]] as const) {
-  test("restore structured help matches its parser", () => {
-    const env = isolatedEnv();
-    for (const args of [["restore", "--help", "--json"], ["help", "restore", "--json"]] as const) {
-  test("context structured help matches its parser", () => {
-    const env = isolatedEnv();
-    for (const args of [["context", "--help", "--json"], ["help", "context", "--json"]] as const) {
-  test("audit structured help matches its parser", () => {
-    const env = isolatedEnv();
-    for (const args of [["audit", "--help", "--json"], ["help", "audit", "--json"]] as const) {
-  test("rebuild structured help matches its parser", () => {
-    const env = isolatedEnv();
-    for (const args of [["rebuild", "--help", "--json"], ["help", "rebuild", "--json"]] as const) {
-  test("app structured help matches its parser", () => {
-    const env = isolatedEnv();
-    for (const args of [["app", "--help", "--json"], ["help", "app", "--json"]] as const) {
-  test("backfill structured help matches its parser", () => {
-    const env = isolatedEnv();
-    for (const args of [["backfill", "--help", "--json"], ["help", "backfill", "--json"]] as const) {
-  test("init structured help matches its parser", () => {
-    const env = isolatedEnv();
-    for (const args of [["init", "--help", "--json"], ["help", "init", "--json"]] as const) {
-  test("sync structured help matches its parser", () => {
-    const env = isolatedEnv();
-    for (const args of [["sync", "--help", "--json"], ["help", "sync", "--json"]] as const) {
-  test("agent structured help matches its parser", () => {
-    const env = isolatedEnv();
-    for (const args of [["agent", "--help", "--json"], ["help", "agent", "--json"]] as const) {
-  test("import structured help matches its parser", () => {
-    const env = isolatedEnv();
-    for (const args of [["import", "--help", "--json"], ["help", "import", "--json"]] as const) {
-  test("models structured help matches its parser", () => {
-    const env = isolatedEnv();
-    for (const args of [["models", "--help", "--json"], ["help", "models", "--json"]] as const) {
-  test("serve structured help matches its parser", () => {
-    const env = isolatedEnv();
-    for (const args of [["serve", "--help", "--json"], ["help", "serve", "--json"]] as const) {
-  test("connect structured help matches its parser", () => {
-    const env = isolatedEnv();
-    for (const args of [["connect", "--help", "--json"], ["help", "connect", "--json"]] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
@@ -358,6 +316,24 @@ describe("help", () => {
       [["doctor", "--integrity", "--integrity"], "repeated flag --integrity"],
       [["doctor", "--json=true"], "flag --json does not take a value"],
       [["doctor", "extra"], "invalid arguments"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki doctor");
+    }
+  });
+
+  test("export structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["export", "--help", "--json"], ["help", "export", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
       expect(body.data.name).toBe("export");
       expect(body.data.options).toEqual(["--out"]);
       expect(body.data.flags).toEqual([]);
@@ -369,6 +345,24 @@ describe("help", () => {
       [["export", "--out", "./export", "--out", "./other"], "repeated option --out"],
       [["export", "--out"], "missing value for --out"],
       [["export", "extra"], "invalid arguments"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki export");
+    }
+  });
+
+  test("restore structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["restore", "--help", "--json"], ["help", "restore", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
       expect(body.data.name).toBe("restore");
       expect(body.data.options).toEqual(["--from", "--into"]);
       expect(body.data.flags).toEqual(["--verify"]);
@@ -382,6 +376,22 @@ describe("help", () => {
       [["restore", "--verify=true"], "flag --verify does not take a value"],
       [["restore", "--from"], "missing value for --from"],
       [["restore", "extra"], "invalid arguments"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki restore");
+    }
+  });
+
+  test("context structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["context", "--help", "--json"], ["help", "context", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
         data: {
           name: string;
           options: string[];
@@ -410,6 +420,31 @@ describe("help", () => {
       [["context", "--json=true"], "flag --json does not take a value"],
       [["context", "--purpose"], "missing value for --purpose"],
       [["context", "extra"], "invalid arguments"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki context");
+    }
+  });
+
+  test("audit structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["audit", "--help", "--json"], ["help", "audit", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: {
+          name: string;
+          options: string[];
+          flags: string[];
+          defaults: Record<string, string>;
+          bounds: Record<string, string>;
+          irreversible: boolean;
+        };
+      };
       expect(body.data.name).toBe("audit");
       expect(body.data.options).toEqual(["--since", "--page", "--writer", "--limit", "--offset"]);
       expect(body.data.flags).toEqual(["--contested", "--ambiguous", "--reverted", "--json", "--list"]);
@@ -427,6 +462,31 @@ describe("help", () => {
       [["audit", "--list=true"], "flag --list does not take a value"],
       [["audit", "--since"], "missing value for --since"],
       [["audit", "extra"], "invalid arguments"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki audit");
+    }
+  });
+
+  test("rebuild structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["rebuild", "--help", "--json"], ["help", "rebuild", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: {
+          name: string;
+          options: string[];
+          flags: string[];
+          defaults: Record<string, string>;
+          bounds: Record<string, string>;
+          irreversible: boolean;
+        };
+      };
       expect(body.data.name).toBe("rebuild");
       expect(body.data.options).toEqual(["--layer", "--port"]);
       expect(body.data.flags).toEqual(["--json", "--prune-old"]);
@@ -441,6 +501,29 @@ describe("help", () => {
       [["rebuild", "--json", "--json"], "repeated flag --json"],
       [["rebuild", "--prune-old=true"], "flag --prune-old does not take a value"],
       [["rebuild", "--port"], "missing value for --port"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki rebuild");
+    }
+    const extra = runCli(env, "rebuild", "extra");
+    expect(extra.exitCode).toBe(2);
+    expect(extra.stdout).toBe("");
+    expect(extra.stderr).toContain("error: rebuild supports --layer all or graph");
+    expect(extra.stderr).toContain("usage: kizuki rebuild");
+  });
+
+  test("app structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["app", "--help", "--json"], ["help", "app", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
       expect(body.data.name).toBe("app");
       expect(body.data.options).toEqual([]);
       expect(body.data.flags).toEqual(["--no-open", "--no-service"]);
@@ -455,6 +538,24 @@ describe("help", () => {
       [["app", "--no-service", "--no-service"], "repeated flag --no-service"],
       [["app", "--no-open=true"], "flag --no-open does not take a value"],
       [["app", "extra"], "invalid arguments"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki app");
+    }
+  });
+
+  test("backfill structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["backfill", "--help", "--json"], ["help", "backfill", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
       expect(body.data.name).toBe("backfill");
       expect(body.data.options).toEqual(["--source"]);
       expect(body.data.flags).toEqual([]);
@@ -466,6 +567,24 @@ describe("help", () => {
       [["backfill", "markdown-folder", "--nope"], "unknown option --nope"],
       [["backfill", "markdown-folder", "--source", "a", "--source", "b"], "repeated option --source"],
       [["backfill", "markdown-folder", "--source"], "missing value for --source"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki backfill");
+    }
+  });
+
+  test("init structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["init", "--help", "--json"], ["help", "init", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
       expect(body.data.name).toBe("init");
       expect(body.data.options).toEqual([]);
       expect(body.data.flags).toEqual([
@@ -486,6 +605,24 @@ describe("help", () => {
       [["init", "./vault", "--nope"], "unknown option --nope"],
       [["init", "./vault", "--dry-run", "--dry-run"], "repeated flag --dry-run"],
       [["init", "./vault", "--no-service=true"], "flag --no-service does not take a value"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki init");
+    }
+  });
+
+  test("sync structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["sync", "--help", "--json"], ["help", "sync", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
       expect(body.data.name).toBe("sync");
       expect(body.data.options).toEqual(["--source"]);
       expect(body.data.flags).toEqual(["--once"]);
@@ -499,6 +636,24 @@ describe("help", () => {
       [["sync", "--once", "--once"], "repeated flag --once"],
       [["sync", "--once=true"], "flag --once does not take a value"],
       [["sync", "--source"], "missing value for --source"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki sync");
+    }
+  });
+
+  test("agent structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["agent", "--help", "--json"], ["help", "agent", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
       expect(body.data.name).toBe("agent");
       expect(body.data.options).toEqual(["--grant", "--token-ref", "--operation-id"]);
       expect(body.data.flags).toEqual(["--dry-run", "--json"]);
@@ -515,6 +670,24 @@ describe("help", () => {
       ["agent", "add", "assistant", "--dry-run", "--dry-run"],
       ["agent", "add", "--dry-run=true"],
       ["agent", "add", "--grant"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("invalid_request:");
+      expect(result.stderr).toContain("usage: agent");
+    }
+  });
+
+  test("import structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["import", "--help", "--json"], ["help", "import", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
       expect(body.data.name).toBe("import");
       expect(body.data.options).toEqual([
         "--source",
@@ -536,6 +709,24 @@ describe("help", () => {
       [["import", "estate-slice", "--dry-run", "--dry-run"], "repeated flag --dry-run"],
       [["import", "estate-slice", "--json=true"], "flag --json does not take a value"],
       [["import", "markdown-folder", "--source"], "missing value for --source"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki import");
+    }
+  });
+
+  test("models structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["models", "--help", "--json"], ["help", "models", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
       expect(body.data.name).toBe("models");
       expect(body.data.options).toEqual(["--from", "--sha256", "--bytes"]);
       expect(body.data.flags).toEqual(["--catalog"]);
@@ -551,6 +742,24 @@ describe("help", () => {
       [["models", "list", "--catalog", "--catalog"], "repeated flag --catalog"],
       [["models", "list", "--catalog=true"], "flag --catalog does not take a value"],
       [["models", "pull", "--from"], "missing value for --from"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki models");
+    }
+  });
+
+  test("serve structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["serve", "--help", "--json"], ["help", "serve", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
       expect(body.data.name).toBe("serve");
       expect(body.data.options).toEqual([
         "--port",
@@ -572,6 +781,24 @@ describe("help", () => {
       [["serve", "--once", "--once"], "repeated flag --once"],
       [["serve", "--json=true"], "flag --json does not take a value"],
       [["serve", "--port"], "missing value for --port"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki serve");
+    }
+  });
+
+  test("connect structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["connect", "--help", "--json"], ["help", "connect", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
       expect(body.data.name).toBe("connect");
       expect(body.data.options).toEqual([
         "--source",
@@ -600,28 +827,6 @@ describe("help", () => {
       expect(result.exitCode).toBe(2);
       expect(result.stdout).toBe("");
       expect(result.stderr).toContain(`error: ${diagnostic}`);
-      expect(result.stderr).toContain("usage: kizuki doctor");
-      expect(result.stderr).toContain("usage: kizuki export");
-      expect(result.stderr).toContain("usage: kizuki restore");
-      expect(result.stderr).toContain("usage: kizuki context");
-      expect(result.stderr).toContain("usage: kizuki audit");
-    }
-      expect(result.stderr).toContain("usage: kizuki rebuild");
-    }
-    const extra = runCli(env, "rebuild", "extra");
-    expect(extra.exitCode).toBe(2);
-    expect(extra.stdout).toBe("");
-    expect(extra.stderr).toContain("error: rebuild supports --layer all or graph");
-    expect(extra.stderr).toContain("usage: kizuki rebuild");
-      expect(result.stderr).toContain("usage: kizuki app");
-      expect(result.stderr).toContain("usage: kizuki backfill");
-      expect(result.stderr).toContain("usage: kizuki init");
-      expect(result.stderr).toContain("usage: kizuki sync");
-      expect(result.stderr).toContain("invalid_request:");
-      expect(result.stderr).toContain("usage: agent");
-      expect(result.stderr).toContain("usage: kizuki import");
-      expect(result.stderr).toContain("usage: kizuki models");
-      expect(result.stderr).toContain("usage: kizuki serve");
       expect(result.stderr).toContain("usage: kizuki connect");
     }
   });

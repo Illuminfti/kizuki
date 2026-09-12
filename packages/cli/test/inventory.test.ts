@@ -143,10 +143,42 @@ const TAGGED_SECTIONS = [
     status: "designed",
     doc: "docs/architecture.md",
     heading: "Storage",
+  },
+  {
     id: "architecture.invariants",
     status: "designed",
     doc: "docs/architecture.md",
     heading: "Invariants (CI-enforced where possible)",
+  },
+  {
+    id: "architecture.security",
+    status: "designed",
+    doc: "docs/architecture.md",
+    heading: "Security",
+  },
+  {
+    id: "architecture.serving",
+    status: "designed",
+    doc: "docs/architecture.md",
+    heading: "Serving — agents as first-class citizens",
+  },
+  {
+    id: "product.proactive-intelligence",
+    status: "direction",
+    doc: "docs/product-context.md",
+    heading: "Proactive intelligence",
+  },
+  {
+    id: "product.progressive-ingestion",
+    status: "direction",
+    doc: "docs/product-context.md",
+    heading: "Progressive ingestion",
+  },
+  {
+    id: "product.autonomy-modes",
+    status: "direction",
+    doc: "docs/product-context.md",
+    heading: "Autonomy modes",
   },
   {
     id: "architecture.layers",
@@ -161,16 +193,6 @@ const TAGGED_SECTIONS = [
     heading: "Contracts",
   },
   {
-    id: "architecture.security",
-    status: "designed",
-    doc: "docs/architecture.md",
-    heading: "Security",
-    id: "architecture.serving",
-    status: "designed",
-    doc: "docs/architecture.md",
-    heading: "Serving — agents as first-class citizens",
-  },
-  {
     id: "product.identity",
     status: "direction",
     doc: "docs/product-context.md",
@@ -181,18 +203,6 @@ const TAGGED_SECTIONS = [
     status: "direction",
     doc: "docs/product-context.md",
     heading: "Taste as source-linked working knowledge",
-    id: "product.proactive-intelligence",
-    status: "direction",
-    doc: "docs/product-context.md",
-    heading: "Proactive intelligence",
-    id: "product.progressive-ingestion",
-    status: "direction",
-    doc: "docs/product-context.md",
-    heading: "Progressive ingestion",
-    id: "product.autonomy-modes",
-    status: "direction",
-    doc: "docs/product-context.md",
-    heading: "Autonomy modes",
   },
   {
     id: "stranger-proof.sqlite-engine",
@@ -349,27 +359,6 @@ test.each([
     name: "product.taste tag removed",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Taste as source-linked working knowledge\n\nStatus: direction\n\n", "## Taste as source-linked working knowledge\n\n"));
-    name: "architecture.storage tag removed",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Storage\n\nStatus: designed\n\n", "## Storage\n\n"));
-    name: "architecture.security tag removed",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Security\n\nStatus: designed\n\n", "## Security\n\n"));
-    name: "architecture.invariants tag removed",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Invariants (CI-enforced where possible)\n\nStatus: designed\n\n", "## Invariants (CI-enforced where possible)\n\n"));
-    name: "architecture.serving tag removed",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Serving — agents as first-class citizens\n\nStatus: designed\n\n", "## Serving — agents as first-class citizens\n\n"));
-    name: "product.proactive-intelligence tag removed",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Proactive intelligence\n\nStatus: direction\n\n", "## Proactive intelligence\n\n"));
-    name: "product.progressive-ingestion tag removed",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Progressive ingestion\n\nStatus: direction\n\n", "## Progressive ingestion\n\n"));
-    name: "product.autonomy-modes tag removed",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Autonomy modes\n\nStatus: direction\n\n", "## Autonomy modes\n\n"));
       return entries;
     },
   },
@@ -377,27 +366,6 @@ test.each([
     name: "product.taste tag shipped",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Taste as source-linked working knowledge\n\nStatus: direction", "## Taste as source-linked working knowledge\n\nStatus: shipped"));
-    name: "architecture.storage tag shipped",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Storage\n\nStatus: designed", "## Storage\n\nStatus: shipped"));
-    name: "architecture.security tag shipped",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Security\n\nStatus: designed", "## Security\n\nStatus: shipped"));
-    name: "architecture.invariants tag shipped",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Invariants (CI-enforced where possible)\n\nStatus: designed", "## Invariants (CI-enforced where possible)\n\nStatus: shipped"));
-    name: "architecture.serving tag shipped",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Serving — agents as first-class citizens\n\nStatus: designed", "## Serving — agents as first-class citizens\n\nStatus: shipped"));
-    name: "product.proactive-intelligence tag shipped",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Proactive intelligence\n\nStatus: direction", "## Proactive intelligence\n\nStatus: shipped"));
-    name: "product.progressive-ingestion tag shipped",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Progressive ingestion\n\nStatus: direction", "## Progressive ingestion\n\nStatus: shipped"));
-    name: "product.autonomy-modes tag shipped",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Autonomy modes\n\nStatus: direction", "## Autonomy modes\n\nStatus: shipped"));
       return entries;
     },
   },
@@ -410,62 +378,6 @@ test.each([
     name: "product.taste tag only in adjacent Progressive ingestion",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Taste as source-linked working knowledge\n\nStatus: direction\n\n", "## Taste as source-linked working knowledge\n\n"));
-    name: "architecture.storage inventory entry removed",
-    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
-      entries.filter((entry) => entry.id !== "architecture.storage"),
-  },
-  {
-    name: "architecture.storage tag only in adjacent Contracts",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Storage\n\nStatus: designed\n\n", "## Storage\n\n"));
-    name: "architecture.security inventory entry removed",
-    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
-      entries.filter((entry) => entry.id !== "architecture.security"),
-  },
-  {
-    name: "architecture.security tag only in adjacent Proactive",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Security\n\nStatus: designed\n\n", "## Security\n\n"));
-    name: "architecture.invariants inventory entry removed",
-    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
-      entries.filter((entry) => entry.id !== "architecture.invariants"),
-  },
-  {
-    name: "architecture.invariants tag only in adjacent Layers",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Invariants (CI-enforced where possible)\n\nStatus: designed\n\n", "## Invariants (CI-enforced where possible)\n\n"));
-    name: "architecture.serving inventory entry removed",
-    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
-      entries.filter((entry) => entry.id !== "architecture.serving"),
-  },
-  {
-    name: "architecture.serving tag only in adjacent Proactive",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Serving — agents as first-class citizens\n\nStatus: designed\n\n", "## Serving — agents as first-class citizens\n\n"));
-    name: "product.proactive-intelligence inventory entry removed",
-    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
-      entries.filter((entry) => entry.id !== "product.proactive-intelligence"),
-  },
-  {
-    name: "product.proactive-intelligence tag only in adjacent identity",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Proactive intelligence\n\nStatus: direction\n\n", "## Proactive intelligence\n\n"));
-    name: "product.progressive-ingestion inventory entry removed",
-    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
-      entries.filter((entry) => entry.id !== "product.progressive-ingestion"),
-  },
-  {
-    name: "product.progressive-ingestion tag only in adjacent Taste",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Progressive ingestion\n\nStatus: direction\n\n", "## Progressive ingestion\n\n"));
-    name: "product.autonomy-modes inventory entry removed",
-    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
-      entries.filter((entry) => entry.id !== "product.autonomy-modes"),
-  },
-  {
-    name: "product.autonomy-modes tag only in adjacent Proactive",
-    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
-      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Autonomy modes\n\nStatus: direction\n\n", "## Autonomy modes\n\n"));
       return entries;
     },
   },
