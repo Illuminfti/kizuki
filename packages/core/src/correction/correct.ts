@@ -315,6 +315,10 @@ function replayRecordedCorrection(io: CorrectIo, input: CorrectInput): CorrectRe
   if (prior.status === "skipped") {
     throw new CorrectError("below_authority", "correction was below the live claim's authority");
   }
+  requireSourceEvents(io.db, prior.provenance, {
+    owner: !(io.producer ?? "owner").startsWith("agent:"),
+    purpose: "correction",
+  });
   const replay = reconstruct(io, eventId, prior);
   const recovery = inspectCanonRecovery(io.db);
   if (
@@ -325,10 +329,6 @@ function replayRecordedCorrection(io: CorrectIo, input: CorrectInput): CorrectRe
     // visibly incomplete, without attributing that receipt or page to it.
     return { ...replay, recovery_pending: [] };
   }
-  requireSourceEvents(io.db, prior.provenance, {
-    owner: !(io.producer ?? "owner").startsWith("agent:"),
-    purpose: "correction",
-  });
   return replay;
 }
 

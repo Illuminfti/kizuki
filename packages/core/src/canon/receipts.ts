@@ -290,7 +290,7 @@ export function latestReceiptForPage(db: Database, pagePath: string): CanonRecei
       .get(pagePath);
     if (indexed?.last_receipt !== null && indexed?.last_receipt !== undefined) {
       const current = getCanonReceipt(db, indexed.last_receipt);
-      if (current !== null) return current;
+      if (current !== null && current.page_path === pagePath) return current;
     }
   }
   const row = db

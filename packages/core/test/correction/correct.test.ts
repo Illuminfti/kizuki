@@ -11,6 +11,9 @@ import { getClaimsEpoch } from "../../src/correction/epoch";
 import { OWNER_CONNECTOR_ID } from "../../src/correction/types";
 import { TOOLS } from "../../src/agents/types";
 import { accept } from "../../src/ledger/ledger";
+import { registerConnection } from "../../src/ledger/connections";
+import { revokeSourceGrant, setSourceGrant } from "../../src/ledger/source-grants";
+import { ulid } from "../../src/util/ulid";
 import { canonFixture, storeClaim, budget } from "../canon/helpers";
 import { claimInput, putEvent } from "../claims/helpers";
 import type { CanonFixture } from "../canon/helpers";
@@ -19,6 +22,37 @@ const STATEMENT = "grace is at initech now, not acme";
 const LATER = "grace is at contoso now, not initech";
 const AT = "2026-09-02T15:00:00.000Z";
 const LATER_AT = "2026-09-02T16:00:00.000Z";
+const SOURCE_POLICY = {
+  purposes: ["capture", "derive", "recall", "correction"],
+  allowed_fields: ["text", "subjects", "attachments", "metadata"],
+  retention: "persistent_owned_until_revoked",
+  egress: "local_only",
+  sensitivity_floor: "private",
+} as const;
+
+function grantFixtureSources(fixture: CanonFixture) {
+  const fixtureSource = ulid();
+  const otherSource = ulid();
+  registerConnection(fixture.db, "fixture", fixtureSource);
+  registerConnection(fixture.db, "other-fixture", otherSource);
+  setSourceGrant(fixture.db, { source_key: fixtureSource, expected_revision: 0, operation_id: `grant-${fixtureSource}`, policy: SOURCE_POLICY });
+  setSourceGrant(fixture.db, { source_key: otherSource, expected_revision: 0, operation_id: `grant-${otherSource}`, policy: SOURCE_POLICY });
+  for (const row of fixture.db.query<{ event_id: string; connector_id: string }, []>(
+    "SELECT event_id, connector_id FROM events WHERE connector_id IN ('fixture', 'other-fixture')",
+  ).all()) {
+    const sourceKey = row.connector_id === "fixture" ? fixtureSource : otherSource;
+    const grant = fixture.db.query<{ revision: number; policy_digest: string }, [string]>(
+      "SELECT revision, policy_digest FROM source_grants WHERE source_key=?",
+    ).get(sourceKey)!;
+    fixture.db.query("INSERT INTO source_event_bindings(event_id,source_key,grant_revision,policy_digest) VALUES (?,?,?,?)").run(
+      row.event_id,
+      sourceKey,
+      grant.revision,
+      grant.policy_digest,
+    );
+  }
+  return { fixtureSource, otherSource };
+}
 
 function durableCorrectionState(fixture: CanonFixture) {
   return {
@@ -501,6 +535,46 @@ describe("correct", () => {
     expect(retry.claim_ids).toEqual([recordedId]);
     expect(retry.recovery_pending).toEqual(first.recovery_pending);
     expect(durableCorrectionState(fixture)).toEqual(before);
+  });
+
+  test("a revoked source rejects replay before an unrelated held write can expose page data", async () => {
+    const { fixture, claimId } = await writtenGrace();
+    const { fixtureSource } = grantFixtureSources(fixture);
+    await correct(
+      { db: fixture.db, vault_path: fixture.vault, now: () => AT },
+      { statement: STATEMENT, target: { claim_id: claimId } },
+    );
+    const unrelatedEvent = putEvent(fixture.db, { source_record_id: "unrelated-held-write" });
+    const unrelated = await storeClaim(fixture.db, unrelatedEvent, {
+      target: "facts/unrelated",
+      subject: "fact:unrelated",
+      subjects: ["fact:unrelated"],
+      body: "An unrelated write is held.",
+      frontmatter: { type: "fact", title: "Unrelated" },
+    });
+    fixture.db.exec("CREATE TRIGGER synthetic_unrelated_receipt_failure BEFORE INSERT ON canon_receipts BEGIN SELECT RAISE(FAIL,'synthetic-unrelated-receipt-failure'); END");
+    expect(() => applyCanonWrite(fixture.io, unrelated, resolveTarget(fixture.io, unrelated), {
+      writer: "loop", budget: budget(),
+    })).toThrow();
+    const permitted = await correct(
+      { db: fixture.db, vault_path: fixture.vault, now: () => "2026-09-02T15:01:00.000Z" },
+      { statement: STATEMENT, target: { claim_id: claimId } },
+    );
+    expect(permitted.recovery_pending).toEqual([]);
+    revokeSourceGrant(fixture.db, { source_key: fixtureSource, expected_revision: 1, operation_id: `revoke-${fixtureSource}` });
+
+    let caught: unknown;
+    try {
+      await correct(
+        { db: fixture.db, vault_path: fixture.vault, now: () => "2026-09-02T15:01:00.000Z" },
+        { statement: STATEMENT, target: { claim_id: claimId } },
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeDefined();
+    expect(String(caught)).not.toContain("people/grace.md");
+    expect(String(caught)).not.toContain("facts/unrelated.md");
   });
 
   test("repeating a below_authority correction keeps the live winner", async () => {
