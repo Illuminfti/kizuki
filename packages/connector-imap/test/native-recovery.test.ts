@@ -221,6 +221,76 @@ test("an interrupted sync page reopens from the durable checkpoint without dupli
   }
 });
 
+test("first sync after completed backfill tombstones an expunge from the durable known set", async () => {
+  const root = temporary();
+  const database = join(root, "ledger.db");
+  let db = openLedger(database);
+  const server = new FakeImapServer([inbox(4)]);
+  try {
+    const { connector, source } = await enrolled(
+      root,
+      db,
+      server,
+      stateFor(["INBOX"]),
+    );
+    const captured = await runToCompletion(
+      db,
+      connector,
+      IMAP_CONNECTOR_ID,
+      source,
+      "backfill",
+    );
+    expect(captured.errors).toEqual([]);
+    expect(captured.stored).toBe(4);
+    expect(liveIds(db)).toEqual([
+      "5:1:INBOX",
+      "5:2:INBOX",
+      "5:3:INBOX",
+      "5:4:INBOX",
+    ]);
+    const afterBackfill = getCheckpoint(db, IMAP_CONNECTOR_ID, source);
+    expect(afterBackfill?.backfill_complete).toBe(true);
+    expect(afterBackfill?.backfill_cursor).not.toBeNull();
+    expect(afterBackfill?.sync_cursor).toBeNull();
+    db.close();
+
+    const resumed = await reopen(root, database, server, source);
+    db = resumed.db;
+    expect(getCheckpoint(db, IMAP_CONNECTOR_ID, source)?.sync_cursor).toBeNull();
+
+    server.expunge("INBOX", 2);
+    const synced = await runToCompletion(
+      db,
+      resumed.connector,
+      IMAP_CONNECTOR_ID,
+      source,
+      "sync",
+    );
+    expect(synced.errors).toEqual([]);
+    expect(synced.stored).toBe(1);
+    expect(tombstoneIds(db)).toEqual(["5:2:INBOX"]);
+    expect(liveIds(db)).toEqual(["5:1:INBOX", "5:3:INBOX", "5:4:INBOX"]);
+    expect(getCheckpoint(db, IMAP_CONNECTOR_ID, source)?.sync_cursor).not.toBeNull();
+    db.close();
+
+    const afterRestart = await reopen(root, database, server, source);
+    db = afterRestart.db;
+    const replay = await runToCompletion(
+      db,
+      afterRestart.connector,
+      IMAP_CONNECTOR_ID,
+      source,
+      "sync",
+    );
+    expect(replay.errors).toEqual([]);
+    expect(replay.stored).toBe(0);
+    expect(tombstoneIds(db)).toEqual(["5:2:INBOX"]);
+    expect(liveIds(db)).toEqual(["5:1:INBOX", "5:3:INBOX", "5:4:INBOX"]);
+  } finally {
+    db.close();
+  }
+});
+
 test("a settled capture tombstones deletions and UIDVALIDITY resets after reopen", async () => {
   const root = temporary();
   const database = join(root, "ledger.db");

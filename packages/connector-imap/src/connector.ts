@@ -59,6 +59,8 @@ const MANIFEST: Manifest = freezeManifest({
     tombstones: true,
     purge: true,
     fixture: true,
+    // backfill and sync share kizuki.imap-cursor/v1, including `known`.
+    sync_from_backfill_before_first_success: true,
   },
   // Empty because sign-in mints the state; `connect` still fails closed.
   required_secrets: [],
