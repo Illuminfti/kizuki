@@ -55,6 +55,57 @@ function quotedBlock(chunk: QuotedChunk): string {
   );
 }
 
+function longestFit(max: number, ok: (n: number) => boolean): number | null {
+  if (!ok(0)) return null;
+  let lo = 0;
+  let hi = max;
+  while (lo < hi) {
+    const mid = lo + Math.ceil((hi - lo) / 2);
+    if (ok(mid)) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/**
+ * Bound a canon atom's excerpt, then its title projection, until `fits`
+ * accepts the rendered block. Returns null when even the provenance-only
+ * form (stamps, page id, path) cannot fit — the packer must then stop
+ * rather than skip ahead.
+ */
+export function boundCanonAtom(
+  piece: Piece,
+  fits: (block: string) => boolean,
+): Piece | null {
+  if (piece.canon === undefined) return null;
+  const source = piece.canon;
+  if (fits(piece.block)) return piece;
+  const excerptPoints = Array.from(source.excerpt);
+  const titlePoints = Array.from(source.title);
+  const at = (excerptLen: number, titleLen: number): Piece => {
+    const excerpt = excerptPoints.slice(0, excerptLen).join("");
+    const title = titlePoints.slice(0, titleLen).join("");
+    const truncated =
+      source.truncated ||
+      excerptLen < excerptPoints.length ||
+      titleLen < titlePoints.length;
+    const canon = { ...source, excerpt, title, truncated };
+    return { ...piece, canon, block: canonBlock(canon) };
+  };
+  const can = (excerptLen: number, titleLen: number): boolean =>
+    fits(at(excerptLen, titleLen).block);
+  const excerptFit = longestFit(excerptPoints.length, (n) =>
+    can(n, titlePoints.length),
+  );
+  if (excerptFit !== null) return at(excerptFit, titlePoints.length);
+  const titleFit = longestFit(titlePoints.length, (n) => can(0, n));
+  if (titleFit === null) return null;
+  const excerptAfterTitle = longestFit(excerptPoints.length, (n) =>
+    can(n, titleFit),
+  );
+  return at(excerptAfterTitle ?? 0, titleFit);
+}
+
 /** Keep every claim-controlled scalar on its stamped line. */
 function inline(value: string): string {
   return JSON.stringify(value).slice(1, -1).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");

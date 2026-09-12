@@ -10,7 +10,7 @@ import {
   scopedWindow,
   text,
 } from "./arguments";
-import { collectPieces } from "./candidates";
+import { boundCanonAtom, collectPieces } from "./candidates";
 import type { Piece } from "./candidates";
 import { claimsEpoch } from "./epoch";
 import { auditArguments, gateAsync, principalName } from "./gate";
@@ -33,6 +33,8 @@ const MAX_SUBJECTS = 16;
 const MIN_BUDGET = 50;
 const MAX_BUDGET = 2_000;
 const DEFAULT_BUDGET = 450;
+/** ASCII-density token allowance for one canon atom (CANON_EXCERPT=600 / 4). */
+const CANON_ATOM_FAIR_TOKENS = Math.ceil(600 / 4);
 const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 /** How long a brief is worth trusting without asking again. */
 const PACKET_TTL_MS = 15 * 60 * 1_000;
@@ -145,6 +147,26 @@ function sectionList(
     );
   }
   return value.map((section) => enumOf("include", section, PACKET_SECTIONS));
+}
+
+/**
+ * Cap a dense canon atom at the code-point/4 size the excerpt limit assumed,
+ * then at the remaining legal budget, so the packer can keep later pieces
+ * without skipping this one.
+ */
+function boundOverflowingCanon(
+  piece: Piece,
+  soFar: string,
+  prefix: string,
+  budget: number,
+): Piece | null {
+  const fairLimit = Math.min(budget, tokens(soFar) + CANON_ATOM_FAIR_TOKENS);
+  const within = (limit: number) => (block: string) =>
+    tokens(`${soFar}${prefix}${block}`) <= limit;
+  return (
+    boundCanonAtom(piece, within(fairLimit)) ??
+    boundCanonAtom(piece, within(budget))
+  );
 }
 
 /**
@@ -304,29 +326,39 @@ export async function serveContextPacket(
           continue;
         }
         const prefix = piece.heading === heading ? "" : `${piece.heading}\n`;
-        const rendered = `${prefix}${piece.block}`;
+        let chosen = piece;
+        const rendered = `${prefix}${chosen.block}`;
         const candidateTokens = tokens(`${header}${body}${rendered}`);
-        // Packing stops at the first chunk that does not fit: skipping ahead
-        // would make the packet depend on chunk order in a way a reader
-        // cannot predict.
+        // A canon atom may shrink its excerpt (and title projection) to fit.
+        // Packing still stops at the first chunk that cannot fit even then:
+        // skipping ahead would make the packet depend on chunk order in a
+        // way a reader cannot predict.
         if (candidateTokens > budget) {
-          truncated = true;
-          break;
+          if (chosen.canon === undefined) {
+            truncated = true;
+            break;
+          }
+          const bounded = boundOverflowingCanon(chosen, `${header}${body}`, prefix, budget);
+          if (bounded === null) {
+            truncated = true;
+            break;
+          }
+          chosen = bounded;
         }
-        const freshAudit = (piece.audit ?? []).filter((item) => !audit.has(item.id));
-        const chunkCount = Number(piece.canon !== undefined) + Number(piece.quoted !== undefined);
+        const freshAudit = (chosen.audit ?? []).filter((item) => !audit.has(item.id));
+        const chunkCount = Number(chosen.canon !== undefined) + Number(chosen.quoted !== undefined);
         // A compact gap can cite hundreds of intervals. Never serve a unit
         // whose complete provenance audit cannot fit in one bounded row.
         if (audit.size + canon.length + quoted.length + freshAudit.length + chunkCount > MAX_AUDIT_ITEMS) {
           truncated = true;
           break;
         }
-        body += rendered;
-        heading = piece.heading;
-        sections[piece.section] += 1;
+        body += `${prefix}${chosen.block}`;
+        heading = chosen.heading;
+        sections[chosen.section] += 1;
         for (const item of freshAudit) audit.set(item.id, item);
-        if (piece.canon !== undefined) canon.push(piece.canon);
-        if (piece.quoted !== undefined) quoted.push(piece.quoted);
+        if (chosen.canon !== undefined) canon.push(chosen.canon);
+        if (chosen.quoted !== undefined) quoted.push(chosen.quoted);
       }
 
       const packetHash = hashBody(body);
