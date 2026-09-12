@@ -157,6 +157,12 @@ const TAGGED_SECTIONS = [
     heading: "Product identity",
   },
   {
+    id: "product.autonomy-modes",
+    status: "direction",
+    doc: "docs/product-context.md",
+    heading: "Autonomy modes",
+  },
+  {
     id: "stranger-proof.sqlite-engine",
     status: "shipped",
     doc: "docs/stranger-proof.md",
@@ -304,6 +310,32 @@ test.each([
     name: "architecture.layers tag only in adjacent Contracts",
     mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
       docs.set("docs/architecture.md", docs.get("docs/architecture.md")!.replace("## Layers\n\nStatus: designed\n\n", "## Layers\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "product.autonomy-modes tag removed",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Autonomy modes\n\nStatus: direction\n\n", "## Autonomy modes\n\n"));
+      return entries;
+    },
+  },
+  {
+    name: "product.autonomy-modes tag shipped",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Autonomy modes\n\nStatus: direction", "## Autonomy modes\n\nStatus: shipped"));
+      return entries;
+    },
+  },
+  {
+    name: "product.autonomy-modes inventory entry removed",
+    mutate: (_docs: Map<string, string>, entries: CapabilityStatusEntry[]) =>
+      entries.filter((entry) => entry.id !== "product.autonomy-modes"),
+  },
+  {
+    name: "product.autonomy-modes tag only in adjacent Proactive",
+    mutate: (docs: Map<string, string>, entries: CapabilityStatusEntry[]) => {
+      docs.set("docs/product-context.md", docs.get("docs/product-context.md")!.replace("## Autonomy modes\n\nStatus: direction\n\n", "## Autonomy modes\n\n"));
       return entries;
     },
   },

@@ -52,6 +52,12 @@
       "heading": "Product identity"
     },
     {
+      "id": "product.autonomy-modes",
+      "status": "direction",
+      "doc": "docs/product-context.md",
+      "heading": "Autonomy modes"
+    },
+    {
       "id": "stranger-proof.sqlite-engine",
       "status": "shipped",
       "doc": "docs/stranger-proof.md",
