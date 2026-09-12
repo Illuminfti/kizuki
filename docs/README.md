@@ -14,6 +14,8 @@ Related:
 
 - [product-context.md](product-context.md) — direction; not a shipping claim
 - [upstream-policy.md](upstream-policy.md) — retrieval credit and dependency rules
+- [retrieval-engine-integration.md](retrieval-engine-integration.md): integrated memory adoption programme and work ownership, not shipped features
+- [retrieval-engine-acceptance.md](retrieval-engine-acceptance.md): 49 proposed acceptance obligations, not executed tests
 - [legacy-import.md](legacy-import.md) — estate importers
 - [event-identity-origin.md](event-identity-origin.md) — event revisions, machine origin and backup compatibility
 - [stranger-proof.md](stranger-proof.md) — automated native-artifact isolation prerequisite
