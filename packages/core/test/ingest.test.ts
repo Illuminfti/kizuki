@@ -878,6 +878,21 @@ describe("runToCompletion", () => {
     } finally { db.close(); }
   });
 
+  test("an explicit empty has_more page continues while an unspecified empty page remains drained", async () => {
+    const db = database();
+    try {
+      const continued = new ScriptedConnector([
+        { events: [], cursor: "empty-page", has_more: true },
+        { events: [validEvent()], cursor: "stored-page", has_more: false },
+      ]);
+      expect(await runToCompletion(db, continued, "fixture", SOURCE, "backfill")).toMatchObject({ stored: 1, errors: [], cursor: "stored-page" });
+      expect(continued.cursors).toEqual([null, "empty-page"]);
+      const legacy = new ScriptedConnector([{ events: [], cursor: "legacy-empty" }]);
+      expect(await runToCompletion(db, legacy, "fixture", SOURCE, "sync")).toMatchObject({ stored: 0, errors: [], cursor: null });
+      expect(legacy.cursors).toEqual([null]);
+    } finally { db.close(); }
+  });
+
   test("terminal failed and unavailable batches never commit their attempted cursor", async () => {
     for (const terminal of [
       { events: [{ ...validEvent(), occurred_at: "not-a-time" }], cursor: "failed", has_more: false },

@@ -644,7 +644,7 @@ async function runConnector(
     status,
     mode === "backfill" && status === "ok" && hasMore === false,
   );
-  return { result, terminal: status === "ok" && hasMore === false };
+  return { result, terminal: status === "ok" && hasMore === false, continue_empty: status === "ok" && hasMore === true };
 }
 
 export async function runBackfill(
@@ -717,13 +717,13 @@ export async function runToCompletion(
   const context = opts?.vault_path === undefined ? undefined : { vault_path: opts.vault_path };
   for (let batch = 0; batch < maxBatches; batch += 1) {
     const before = stored();
-    const { result, terminal } = await runConnector(db, connector, connector_id, source_key, mode, context);
+    const { result, terminal, continue_empty } = await runConnector(db, connector, connector_id, source_key, mode, context);
     absorb(total, result);
     total.cursor = stored();
     if (result.errors.length > 0) return total;
     if (terminal) return total;
     if (total.cursor === null) return total;
-    if (drained(result)) return total;
+    if (drained(result) && !continue_empty) return total;
     if (total.cursor === before) {
       total.errors.push("run made no progress");
       return total;
