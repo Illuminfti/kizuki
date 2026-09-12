@@ -50,6 +50,7 @@ describe("ledger export boundary", () => {
     expect(writers.sort()).toEqual([
       "packages/core/src/export.ts",
       "packages/core/src/ingest/run.ts",
+      "packages/core/src/ledger/connections-schema.ts",
       "packages/core/src/ledger/schema-v16.ts",
     ]);
     expect(retiredCalls).toEqual([]);

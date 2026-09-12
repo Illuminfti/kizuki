@@ -17,11 +17,12 @@ export function xApiSelection(fields: string | undefined, historyStart: string |
     if (fields === undefined || historyStart === undefined) throw new Error();
     return normalizeXApiSelection({ fields: fields === 'none' ? [] : fields.split(','), history_start: historyStart, wire_profile: 'tweet-v2' });
   } catch {
-    throw new Error('X requires explicit --fields relationships,links,media|none and --history-start RFC3339 (at or after 2010-11-06). Text and metadata are always included.');
+    throw new Error('X requires explicit --fields relationships,links,media|none and --history-start RFC3339 (at or after 2010-11-06). Text, metadata and author identity are always included.');
   }
 }
+/** Host policy maps provider-specific selections to native persisted event fields. Author identity is always retained. */
 export function xApiRequiredFields(selected: XApiSelection): string[] {
-  return ['text', 'metadata', ...(selected.fields.includes('relationships') ? ['subjects'] : []), ...(selected.fields.includes('media') ? ['attachments'] : [])];
+  return ['text', 'subjects', 'metadata', ...(selected.fields.includes('media') ? ['attachments'] : [])];
 }
 export function xApiStateConfig(bytes: Uint8Array, secret_ref: string, client: ReturnType<typeof xApiClient>): XApiConfig {
   const state = inspectXApiState(bytes);

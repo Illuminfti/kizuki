@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { applyCanonWrite } from "../../src/canon/apply";
@@ -269,8 +269,10 @@ test("a loop revision refused by an occupied archive retains its committed byte 
     });
     const receiptId = ulid();
     const archive = join(vault, archiveRelPath(first.page_path, receiptId));
-    mkdirSync(join(vault, "archive"), { recursive: true });
-    writeFileSync(archive, "Existing synthetic archive bytes.");
+    mkdirSync(join(vault, "archive"), { recursive: true, mode: 0o700 });
+    chmodSync(join(vault, "archive"), 0o700);
+    writeFileSync(archive, "Existing synthetic archive bytes.", { mode: 0o600 });
+    chmodSync(archive, 0o600);
     const target = resolveTarget({ db, vault_path: vault }, claim);
     expect(target.action).toBe("edit");
     expect(() => applyCanonWrite({ db, vault_path: vault, ids: () => receiptId }, claim, target, {

@@ -1,5 +1,4 @@
-import type { AuditDenial } from "../agents";
-import { timeline, timelineAuditCandidates } from "../query/timeline";
+import { timelineAuditCandidates } from "../query/timeline";
 import type { TimelineOptions } from "../query/timeline";
 import {
   day,
@@ -13,13 +12,11 @@ import {
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
 import {
+  collectAuthorizedTimeline,
   eventDecision,
-  liveEventIds,
-  quotedChunk,
   readServableEvents,
-  timelineSource,
 } from "./ledger";
-import type { Envelope, QuotedChunk, ServeContext } from "./types";
+import type { Envelope, ServeContext } from "./types";
 
 const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 50;
@@ -49,13 +46,12 @@ export function serveTimeline(ctx: ServeContext, args: TimelineArgs): Envelope {
     const kind =
       args.kind === undefined ? undefined : identifier("kind", args.kind);
     // `timeline` takes a single subject and kind, so these calls only check
-    // membership; a scoped grant with neither argument is enforced per entry.
+    // membership; a scoped grant with neither argument is enforced in SQL.
     if (subject !== undefined) scopedSubjects(grant, [subject]);
     if (kind !== undefined) scopedTypes(grant, [kind]);
 
     const rows = limit("limit", args.limit, MAX_LIMIT, DEFAULT_LIMIT);
     const base: Omit<TimelineOptions, "ceiling"> = {
-      limit: rows,
       ...(args.day === undefined ? {} : { day: day("day", args.day) }),
       ...window,
       ...(subject === undefined ? {} : { subject }),
@@ -65,23 +61,9 @@ export function serveTimeline(ctx: ServeContext, args: TimelineArgs): Envelope {
       ...(kind === undefined ? {} : { kind }),
     };
 
-    const quoted: QuotedChunk[] = [];
-    const withheld: AuditDenial[] = [];
-    const seen = new Set<string>();
+    const { quoted, withheld, seen } = collectAuthorizedTimeline(ctx, base, rows);
 
-    const entries = timeline(ctx.db, { ...base, ceiling: grant.ceiling });
-    const live = liveEventIds(ctx.db, entries.map(entry => entry.event_id));
-    for (const entry of entries) {
-      seen.add(entry.event_id);
-      // A tombstoned record is dropped, not counted as a denial.
-      if (!live.has(entry.event_id)) continue;
-      const source = timelineSource(entry);
-      const decision = eventDecision(grant, source, ctx);
-      if (!decision.allow) withheld.push({ id: entry.event_id, reason: decision.reason });
-      else quoted.push(quotedChunk(source, decision.sensitivity));
-    }
-
-    const auditIds = timelineAuditCandidates(ctx.db, base);
+    const auditIds = timelineAuditCandidates(ctx.db, { ...base, limit: rows });
     const auditFacts = readServableEvents(ctx.db, auditIds);
     for (const id of auditIds) {
       if (seen.has(id)) continue;

@@ -243,16 +243,22 @@ describe("help", () => {
         };
       };
       expect(body.data.name).toBe("tell");
-      expect(body.data.options).toEqual(["--about", "--claim", "--page", "--since", "--until"]);
+      expect(body.data.options).toEqual(["--claim", "--since", "--until"]);
       expect(body.data.flags).toEqual(["--dry-run", "--json", "--verbose"]);
       expect(body.data.bounds).toEqual({ "--since": "TIME", "--until": "TIME" });
       expect(body.data.irreversible).toBe(false);
     }
     const text = runCli(env, "tell", "--help");
     expect(text.stdout).toContain("--claim");
+    expect(text.stdout).toContain("--since");
+    expect(text.stdout).toContain("--until");
     expect(text.stdout).toContain("--dry-run");
+    expect(text.stdout).not.toContain("--about");
+    expect(text.stdout).not.toContain("--page");
     for (const [args, diagnostic] of [
       [["tell", "the name is Ada", "--nope"], "unknown option --nope"],
+      [["tell", "the name is Ada", "--about", "person:ada"], "unknown option --about"],
+      [["tell", "the name is Ada", "--page", "people/ada.md"], "unknown option --page"],
       [["tell", "the name is Ada", "--json", "--json"], "repeated flag --json"],
       [["tell", "the name is Ada", "--json=true"], "flag --json does not take a value"],
       [["tell", "the name is Ada", "--claim"], "missing value for --claim"],
@@ -402,23 +408,30 @@ describe("help", () => {
         };
       };
       expect(body.data.name).toBe("context");
-      expect(body.data.options).toEqual(["--purpose", "--budget", "--query"]);
+      expect(body.data.options).toEqual(["--purpose", "--budget", "--query", "--since", "--until"]);
       expect(body.data.flags).toEqual(["--json"]);
       expect(body.data.defaults).toEqual({ "--purpose": "session" });
       expect(body.data.bounds).toEqual({
         "--purpose": "session|recall|correction|audit",
         "--budget": "50..2000",
+        "--since": "RFC3339",
+        "--until": "RFC3339",
       });
       expect(body.data.irreversible).toBe(false);
     }
     const text = runCli(env, "context", "--help");
     expect(text.stdout).toContain("--purpose  session|recall|correction|audit  default session");
     expect(text.stdout).toContain("--budget  50..2000");
+    expect(text.stdout).toContain("--since  RFC3339");
+    expect(text.stdout).toContain("--until  RFC3339");
+    expect(text.stdout).toContain("--since 2020-01-01T00:00:00.000Z --until 2030-01-01T00:00:00.000Z --query \"Atlas\"");
     for (const [args, diagnostic] of [
       [["context", "--nope"], "unknown option --nope"],
       [["context", "--json", "--json"], "repeated flag --json"],
       [["context", "--json=true"], "flag --json does not take a value"],
       [["context", "--purpose"], "missing value for --purpose"],
+      [["context", "--since"], "missing value for --since"],
+      [["context", "--until"], "missing value for --until"],
       [["context", "extra"], "invalid arguments"],
     ] as const) {
       const result = runCli(env, ...args);
@@ -761,13 +774,7 @@ describe("help", () => {
         data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
       };
       expect(body.data.name).toBe("serve");
-      expect(body.data.options).toEqual([
-        "--port",
-        "--crash-after",
-        "--service-custody",
-        "--custody-broker-launch",
-        "--custody-broker-child",
-      ]);
+      expect(body.data.options).toEqual(["--port", "--crash-after"]);
       expect(body.data.flags).toEqual(["--once", "--no-http", "--json", "--install", "--uninstall"]);
       expect(body.data.irreversible).toBe(false);
     }
@@ -828,6 +835,20 @@ describe("help", () => {
       expect(result.stdout).toBe("");
       expect(result.stderr).toContain(`error: ${diagnostic}`);
       expect(result.stderr).toContain("usage: kizuki connect");
+    }
+  });
+
+  test("connect x-api field errors name retained author identity", () => {
+    const env = isolatedEnv();
+    for (const args of [
+      ["connect", "x-api"],
+      ["connect", "x-api", "--fields", "text", "--history-start", "2026-01-01T00:00:00Z"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("author identity");
+      expect(result.stderr).toContain("always included");
     }
   });
 

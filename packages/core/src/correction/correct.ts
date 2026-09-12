@@ -23,7 +23,7 @@ import { unifiedDiff } from "./diff";
 import { bumpClaimsEpoch, initClaimsEpoch } from "./epoch";
 import { CorrectError } from "./errors";
 import { correctionRecoveryPending } from "./recovery";
-import { CanonRecoveryError } from "../canon/write-intent";
+import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent";
 import { hasExactTarget, objectFromStatement, sourceRecordId } from "./parse";
 import {
   CORRECTION_MAX_PAGES,
@@ -191,20 +191,15 @@ function loadExactGroup(io: CorrectIo, target: CorrectTarget, scope: CorrectInpu
     if (named === null) {
       throw new CorrectError("claim_unknown", "target claim is not in the claims table");
     }
-    if (named.claim_key === null) {
-      if (named.status !== "live") {
-        throw new CorrectError("claim_not_live", `target claim is ${named.status}`);
-      }
-      return inScope(named, scope) ? [named] : [];
-    }
-    const group = listClaims(io.db, { status: "live", claim_key: named.claim_key }).filter((claim) =>
-      inScope(claim, scope),
-    );
-    if (group.length > 0) return group;
     if (named.status !== "live") {
       throw new CorrectError("claim_not_live", `target claim is ${named.status}`);
     }
-    return [];
+    if (named.claim_key === null) {
+      return inScope(named, scope) ? [named] : [];
+    }
+    return listClaims(io.db, { status: "live", claim_key: named.claim_key }).filter((claim) =>
+      inScope(claim, scope),
+    );
   }
   if (typeof target.claim_key === "string" && target.claim_key.length > 0) {
     const group = listClaims(io.db, { status: "live", claim_key: target.claim_key }).filter((claim) =>
@@ -230,14 +225,33 @@ function seedClaim(group: Claim[], target: CorrectTarget): Claim {
   return first;
 }
 
-function existingCorrection(db: Database, eventId: string): Claim | null {
-  const live = listClaims(db, { status: "live", limit: 500 }).find((claim) =>
-    claim.provenance.includes(eventId),
-  );
-  if (live !== undefined) return live;
+function recordedOwnerEvent(db: Database, sourceId: string): string | null {
+  if (!tableExists(db, "events") || !tableExists(db, "native_owner_evidence")) return null;
   return (
-    listClaims(db, { limit: 500 }).find((claim) => claim.provenance.includes(eventId)) ?? null
+    db
+      .query<{ event_id: string }, [string, string]>(
+        `SELECT e.event_id FROM events e
+           JOIN native_owner_evidence n ON n.event_id = e.event_id
+          WHERE e.connector_id = ? AND e.source_record_id = ?
+          ORDER BY e.accepted_at, e.event_id
+          LIMIT 1`,
+      )
+      .get(OWNER_CONNECTOR_ID, sourceId)?.event_id ?? null
   );
+}
+
+/** The claim this owner event created. Later winners may inherit the event further in provenance. */
+function recordedCorrection(db: Database, eventId: string): Claim | null {
+  if (!tableExists(db, "claims")) return null;
+  const row = db
+    .query<{ claim_id: string }, [string]>(
+      `SELECT claim_id FROM claims
+        WHERE json_extract(provenance, '$[0]') = ?
+        ORDER BY created_at, claim_id
+        LIMIT 1`,
+    )
+    .get(eventId);
+  return row === null ? null : getClaim(db, row.claim_id);
 }
 
 function reconstruct(
@@ -291,6 +305,31 @@ function reconstruct(
     ambiguous: [],
     answer: formatAnswer(winner, superseded, rewritten, rewritten.length === 0 ? null : winner.receipt_id, 0, pending.length === 0 ? undefined : pending),
   };
+}
+
+function replayRecordedCorrection(io: CorrectIo, input: CorrectInput): CorrectResult | null {
+  const eventId = recordedOwnerEvent(io.db, sourceRecordId(input.statement, input.target));
+  if (eventId === null) return null;
+  const prior = recordedCorrection(io.db, eventId);
+  if (prior === null) return null;
+  if (prior.status === "skipped") {
+    throw new CorrectError("below_authority", "correction was below the live claim's authority");
+  }
+  requireSourceEvents(io.db, prior.provenance, {
+    owner: !(io.producer ?? "owner").startsWith("agent:"),
+    purpose: "correction",
+  });
+  const replay = reconstruct(io, eventId, prior);
+  const recovery = inspectCanonRecovery(io.db);
+  if (
+    (recovery.pending || recovery.projection_pending > 0) &&
+    replay.recovery_pending === undefined
+  ) {
+    // A held write owned by another correction must still make this replay
+    // visibly incomplete, without attributing that receipt or page to it.
+    return { ...replay, recovery_pending: [] };
+  }
+  return replay;
 }
 
 function formatAnswer(
@@ -409,7 +448,10 @@ async function insertCorrection(
       ],
     },
   );
-  if (result.outcome === "skipped") {
+  if (
+    result.outcome === "skipped" ||
+    (result.outcome === "duplicate" && result.claim.status === "skipped")
+  ) {
     throw new CorrectError("below_authority", "correction was below the live claim's authority");
   }
   if (result.outcome === "duplicate") return result.claim;
@@ -535,6 +577,11 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
     throw new CorrectError("target_required", TARGET_REQUIRED_HINT);
   }
 
+  if (input.dry_run !== true) {
+    const recorded = replayRecordedCorrection(io, input);
+    if (recorded !== null) return recorded;
+  }
+
   const group = loadExactGroup(io, input.target as CorrectTarget, input.scope);
   if (group.length === 0) {
     throw new CorrectError("claim_unknown", "no live claims matched the target and scope");
@@ -544,14 +591,6 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
   const seed = seedClaim(group, input.target as CorrectTarget);
   const at = nowOf(io);
   const accepted = acceptOwnerEvent(io, input, seed, at);
-
-  if (input.dry_run !== true && accepted.duplicate) {
-    const prior = existingCorrection(io.db, accepted.event_id);
-    if (prior !== null) {
-      const recorded = reconstruct(io, accepted.event_id, prior);
-      if (prior.receipt_id !== null || recorded.recovery_pending !== undefined) return recorded;
-    }
-  }
 
   if (input.dry_run === true) {
     const parsed = objectFromStatement(input.statement, seed);
@@ -691,7 +730,10 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
     } catch (error) {
       const pending = correctionRecoveryPending(io.db, stored.claim_id, page.rel_path);
       if (pending.length > 0 || error instanceof CanonRecoveryError) { recoveryPending = pending; break; }
-      if (error instanceof CanonWriteError || error instanceof BudgetExhausted) {
+      if (error instanceof BudgetExhausted) {
+        throw new CorrectError("budget_exhausted", error.stopped, { cause: error });
+      }
+      if (error instanceof CanonWriteError) {
         continue;
       }
       throw error;

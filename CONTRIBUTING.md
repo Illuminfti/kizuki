@@ -45,6 +45,17 @@ git fetch origin main
 git log -1 --oneline --decorate
 ```
 
+## Published history
+
+Published `origin/main` stays immutable. The verifier reads raw
+`git --no-replace-objects` commit records and scans every reachable message
+under the full identifier rule, including trailers and the guardian token.
+Already published matches are admitted only as identity-bound occurrences:
+exact commit SHA, SHA-256 of the raw message, and byte offsets. Those ranges
+are masked only in the name-scan copy. A new commit with the same text is
+not exempt. Pin ancestry is `origin/main`, not `HEAD`. Secrets and gitleaks
+keep the original bytes.
+
 ## What to change
 
 Keep diffs narrow. Public commands, registry entries, schemas, and README

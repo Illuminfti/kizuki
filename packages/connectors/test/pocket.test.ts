@@ -130,6 +130,33 @@ test("tags are split on the pipe and trimmed", () => {
   expect(rows[0]?.tags).toEqual(["software", "reading"]);
 });
 
+test("a leading BOM does not hide the title column", () => {
+  const rows = parsePocketCsv(
+    `\uFEFF${HEADER}\nSynthetic,https://example.com/bom,1767225600,notes,unread\n`,
+    "part.csv",
+  );
+  expect(rows).toEqual([
+    {
+      title: "Synthetic",
+      url: "https://example.com/bom",
+      time_added: "1767225600",
+      tags: ["notes"],
+      status: "unread",
+    },
+  ]);
+});
+
+test("an empty title keeps the url as the whole text", () => {
+  const rows = parsePocketCsv(
+    `${HEADER}\n,https://example.com/untitled,1767225600,,unread\n`,
+    "part.csv",
+  );
+  expect(rows[0]?.title).toBe("");
+  expect(pocketEvents(rows, FIXTURE_OBSERVED_AT)[0]?.text).toBe(
+    "https://example.com/untitled",
+  );
+});
+
 test("a blank line before the header does not hide the export", async () => {
   const text = `\n${POCKET_FIXTURE_EXPORT}`;
   expect(parsePocketCsv(text, "part_000000.csv").length).toBe(4);

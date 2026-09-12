@@ -50,6 +50,15 @@ test("empty continuation is resumable and optional field selection excludes its 
   expect(minimal.events[0]?.subjects).toEqual([{ subject_id: "x:user:7", role: "from" }]);
   expect(minimal.events[0]?.attachments).toEqual([]);
   expect(minimal.events[0]?.metadata?.urls).toBeUndefined();
+  expect(minimal.events[0]?.metadata?.references).toBeUndefined();
+  expect(minimal.events[0]?.metadata?.in_reply_to_user_id).toBeUndefined();
+  expect(minimal.events[0]?.metadata?.media_refs).toBeUndefined();
+  const links = parsePage(page(), "7", selection({ ...selected, fields: ["links"] }), "2026-01-03T00:00:00Z");
+  expect(links.events[0]?.subjects).toEqual([{ subject_id: "x:user:7", role: "from" }]);
+  expect(links.events[0]?.metadata?.urls).toEqual(["https://example.test/post"]);
+  expect(links.events[0]?.attachments).toEqual([]);
+  expect(links.events[0]?.metadata?.references).toBeUndefined();
+  expect(links.events[0]?.metadata?.media_refs).toBeUndefined();
 });
 
 test("username-only mentions bind to same-page native user IDs in normal and long posts", () => {

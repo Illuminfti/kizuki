@@ -37,6 +37,7 @@ import { fixtureIcsEvents } from "./fixture";
 import { ICS_CONNECTOR_ID, decodeUid, tombstone } from "./map";
 import { parseIcs } from "./parse";
 import { parseIcsState } from "./state";
+import { MAX_ICS_CHARS } from "./unfold";
 import type { IcsState } from "./state";
 import { signInIcs, urlLabel } from "./sign-in";
 
@@ -54,7 +55,7 @@ const MANIFEST: Manifest = freezeManifest({
   schema: "kizuki.connector/v1",
   connector_id: ICS_CONNECTOR_ID,
   version: "0.1.0",
-  contract_minor: 2,
+  contract_minor: 1,
   implementation: "@kizuki/connector-ics",
   allowed_egress: [],
   cursor_schema: ICS_CURSOR_SCHEMA,
@@ -65,6 +66,7 @@ const MANIFEST: Manifest = freezeManifest({
     tombstones: true,
     purge: false,
     fixture: true,
+    sync_from_backfill_before_first_success: true,
   },
   required_secrets: [],
   emits_sensitivity_hint: true,
@@ -231,11 +233,24 @@ export class IcsConnector implements Connector {
   private async snapshot(previous: IcsCursor): Promise<Snapshot> {
     const observedAt = this.now().toISOString();
     if (this.path !== null) {
-      const file = Bun.file(this.path);
       let text: string;
       try {
-        text = await file.text();
+        const info = await stat(this.path);
+        if (!info.isFile()) {
+          throw new KizukiError(
+            "misconfigured",
+            "kizuki.ics: calendar file cannot be read",
+          );
+        }
+        if (info.size > MAX_ICS_CHARS) {
+          throw new KizukiError(
+            "parse_error",
+            "kizuki.ics: calendar text is too long",
+          );
+        }
+        text = await Bun.file(this.path).text();
       } catch (error) {
+        if (error instanceof KizukiError) throw error;
         throw new KizukiError(
           "misconfigured",
           "kizuki.ics: calendar file cannot be read",

@@ -1,4 +1,5 @@
 import { rebuildRetrieval, type RetrievalPort } from "../src/index";
+import { publishLedgerEvent } from "../src/retrieval/events";
 import { undoReceipt } from "../src/index";
 import { write, storeClaim } from "./canon/helpers";
 import { serveGetPage } from "../src/index";
@@ -1109,6 +1110,105 @@ test("owned-store omission is not absence and broken stores can be erased throug
     { store_id: "local:broken", status: "maintained" },
   ]);
   expect(erased.status).toBe("purged");
+  db.close();
+});
+
+test("reconsent after purge must erase a later published retrieval generation before certifying absence", async () => {
+  const { db, dir, a } = setup();
+  const initial = grant(db, a);
+  const imported = accept(db, event(), {
+    source: { source_key: a, expected_revision: 1 },
+  });
+  if (imported.status !== "stored") throw new Error("fixture failed");
+  const port: FixtureVectorPort & RetrievalPort = new FixtureVectorPort();
+  port.rebuildFromDocuments = async (docs) => {
+    port.docs.clear();
+    for await (const doc of docs) await port.upsert([doc]);
+  };
+  bindLocalSourcePort(port, { store_id: "local:epoch" });
+  await rebuildRetrieval(db, dir, port);
+  const stores = () =>
+    db
+      .query(
+        "SELECT store_id,status FROM source_retrieval_stores WHERE source_key=?",
+      )
+      .all(a);
+  const checked = () =>
+    db
+      .query("SELECT checked FROM source_store_inventory WHERE source_key=?")
+      .get(a);
+  const owned = (
+    maintain: () => Promise<{ owned_file_maintenance: "complete" }>,
+  ) => ({
+    ownedRetrieval: {
+      stores: async () => ({
+        stores: [{ id: "local:epoch", port, maintain }],
+        absent_store_ids: [],
+      }),
+    },
+  });
+  revokeSourceGrant(db, {
+    source_key: a,
+    expected_revision: 1,
+    operation_id: "epoch-1-revoke",
+  });
+  const purged = await resumeSourceRevocation(
+    db,
+    dir,
+    "epoch-1-revoke",
+    owned(async () => ({ owned_file_maintenance: "complete" })),
+  );
+  expect(purged.status).toBe("purged");
+  expect(purged.purge_blockers).toEqual([]);
+  expect(stores()).toEqual([{ store_id: "local:epoch", status: "maintained" }]);
+  expect(checked()).toEqual({ checked: 1 });
+  expect(grant(db, a)).toEqual(initial);
+  expect(inspectSourceGrant(db, a)?.status).toBe("purged");
+  expect(stores()).toEqual([{ store_id: "local:epoch", status: "maintained" }]);
+  expect(checked()).toEqual({ checked: 1 });
+  const regrantRequest = {
+    source_key: a,
+    expected_revision: purged.revision,
+    operation_id: "epoch-2-grant",
+    policy: policy(),
+  };
+  const regrant = setSourceGrant(db, regrantRequest);
+  expect(setSourceGrant(db, regrantRequest)).toEqual(regrant);
+  expect(stores()).toEqual([{ store_id: "local:epoch", status: "pending" }]);
+  expect(checked()).toEqual({ checked: 0 });
+  const second = accept(
+    db,
+    {
+      ...event(),
+      source_record_id: "epoch-2",
+      text: "SECOND_EPOCH_SENTINEL_91742",
+    },
+    { source: { source_key: a, expected_revision: regrant.revision } },
+  );
+  if (second.status !== "stored") throw new Error("fixture failed");
+  await publishLedgerEvent(port, second.event);
+  const sentinel = `event:${second.event.event_id}`;
+  expect(port.docs.has(sentinel)).toBe(true);
+  revokeSourceGrant(db, {
+    source_key: a,
+    expected_revision: regrant.revision,
+    operation_id: "epoch-2-revoke",
+  });
+  let removedBeforeComplete = false;
+  const done = await resumeSourceRevocation(
+    db,
+    dir,
+    "epoch-2-revoke",
+    owned(async () => {
+      expect(port.docs.has(sentinel)).toBe(false);
+      removedBeforeComplete = true;
+      return { owned_file_maintenance: "complete" };
+    }),
+  );
+  expect(removedBeforeComplete).toBe(true);
+  expect(port.docs.has(sentinel)).toBe(false);
+  expect(done.status).toBe("purged");
+  expect(done.purge_blockers).toEqual([]);
   db.close();
 });
 

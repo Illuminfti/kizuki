@@ -57,20 +57,28 @@ function atPhase<T>(phase: IdentityPhase, action: () => T): T {
 
 const sidecars = ["kizuki.db-wal", "kizuki.db-shm", "kizuki.db-journal"] as const;
 
-function readIdentity(db: Database): { schemaVersion: number } {
+function readIdentity(db: Database): { schemaVersion: number; accepted: number } {
   const tables = atPhase("tables", () => db.query<{ name: string }, []>(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('schema_version', 'events')",
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('schema_version', 'events', 'event_purges')",
   ).all());
-  if (tables.length !== 2) throw new LedgerIdentityError("invalid_ledger", undefined,
+  if (!tables.some(({ name }) => name === "schema_version") || !tables.some(({ name }) => name === "events")) throw new LedgerIdentityError("invalid_ledger", undefined,
     { phase: "tables", kind: "semantic", reason: "missing_tables" });
   const versions = atPhase("version", () => db.query<{ version: number }, []>("SELECT version FROM schema_version LIMIT 2").all());
   if (versions.length !== 1 || !Number.isSafeInteger(versions[0]?.version) || (versions[0]?.version ?? 0) < 1) {
     throw new LedgerIdentityError("invalid_ledger", undefined, { phase: "version", kind: "semantic", reason: "invalid_version" });
   }
-  return { schemaVersion: versions[0]!.version };
+  const events = atPhase("transaction", () => db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM events").get()?.count);
+  const purges = tables.some(({ name }) => name === "event_purges")
+    ? atPhase("transaction", () => db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM event_purges").get()?.count)
+    : 0;
+  const accepted = (events ?? -1) + (purges ?? -1);
+  if (!Number.isSafeInteger(accepted) || accepted < 0) {
+    throw new LedgerIdentityError("invalid_ledger", undefined, { phase: "transaction", kind: "unknown" });
+  }
+  return { schemaVersion: versions[0]!.version, accepted };
 }
 
-function readAndClose(db: Database): { schemaVersion: number } {
+function readAndClose(db: Database): { schemaVersion: number; accepted: number } {
   try { return atPhase("transaction", () => db.transaction(() => readIdentity(db)).deferred()); }
   finally {
     try { db.close(true); }
@@ -79,7 +87,7 @@ function readAndClose(db: Database): { schemaVersion: number } {
 }
 
 /** Identity only: callers never receive an immutable database or arbitrary query seam. */
-export function inspectLedgerIdentity(vaultPath: string): { schemaVersion: number } {
+export function inspectLedgerIdentity(vaultPath: string): { schemaVersion: number; accepted: number } {
   const path = join(resolve(vaultPath), ".kizuki", "kizuki.db");
   if (process.platform !== "darwin") {
     try { return readAndClose(atPhase("open", () => new Database(path, { readonly: true }))); }
@@ -117,7 +125,7 @@ export function inspectLedgerIdentity(vaultPath: string): { schemaVersion: numbe
       } catch { throw new LedgerIdentityError("busy"); }
     };
     const before = snapshot();
-    let result: { schemaVersion: number } | undefined;
+    let result: { schemaVersion: number; accepted: number } | undefined;
     let failure: unknown;
     try {
       result = readAndClose(atPhase("open", () => new Database(`${pathToFileURL(path).href}?immutable=1&mode=ro`,

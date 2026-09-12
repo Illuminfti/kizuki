@@ -78,6 +78,10 @@ export {
   launchdPlistPath,
   renderLaunchdPlist,
   renderSystemdUnit,
+  SERVICE_BROKER_REAP_SECONDS,
+  SERVICE_READY_SECONDS,
+  SERVICE_START_SECONDS,
+  SERVICE_STOP_SECONDS,
   systemdUnitName,
   systemdUnitPath,
 } from "./units";
@@ -87,9 +91,14 @@ export {
   installServeService,
   queryServeService,
   realSupervisorHost,
+  SUPERVISOR_COMMAND_TIMEOUT_MS,
+  SYSTEMD_RESTART_TIMEOUT_MS,
+  SYSTEMD_START_TIMEOUT_MS,
+  SYSTEMD_STOP_TIMEOUT_MS,
+  systemdCommandTimeoutMs,
   uninstallServeService,
 } from "./supervisor";
-export type { SupervisorHost } from "./supervisor";
+export type { SupervisorCommandResult, SupervisorHost, SupervisorTimeoutAdapter } from "./supervisor";
 export { FILE_NOTIFIER_ID, briefPath, createFileNotifier } from "./notifier-file";
 export { dueRails, runRail, runServeOnce } from "./rails";
 export type { RailHooks, RailRuntime, RailSyncResult, RunRailOptions } from "./rails";

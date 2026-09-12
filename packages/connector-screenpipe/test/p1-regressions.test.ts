@@ -58,6 +58,63 @@ describe("screenpipe P1 regressions", () => {
     await connector.revoke();
   });
 
+  test("since does not jump the seed past an unparseable or later older row", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    insertFrame(fixture.writer, {
+      id: 1,
+      timestamp: "2026-01-03T00:00:00Z",
+      fullText: "recent first",
+    });
+    insertFrame(fixture.writer, {
+      id: 2,
+      timestamp: "not-a-timestamp",
+      fullText: "malformed",
+    });
+    insertFrame(fixture.writer, {
+      id: 3,
+      timestamp: "2026-01-01T00:00:00Z",
+      fullText: "older later",
+    });
+    const connector = new ScreenpipeConnector(
+      {
+        path: fixture.path,
+        since: "2026-01-02T00:00:00.000Z",
+        settle_seconds: 0,
+      },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+    await expect(connector.backfill(null)).rejects.toMatchObject({
+      code: "parse_error",
+    });
+    await connector.revoke();
+
+    const ordered = createFixtureDatabase({ rows: false });
+    insertFrame(ordered.writer, {
+      id: 1,
+      timestamp: "2026-01-03T00:00:00Z",
+      fullText: "recent first",
+    });
+    insertFrame(ordered.writer, {
+      id: 2,
+      timestamp: "2026-01-01T00:00:00Z",
+      fullText: "older later",
+    });
+    const recovered = new ScreenpipeConnector(
+      {
+        path: ordered.path,
+        since: "2026-01-02T00:00:00.000Z",
+        settle_seconds: 0,
+      },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+    const batch = await recovered.backfill(null);
+    expect(batch.events.map(({ source_record_id }) => source_record_id)).toEqual([
+      "frame:1",
+      "frame:2",
+    ]);
+    await recovered.revoke();
+  });
+
   test("timezone-less source rows fail without advancing a checkpoint", async () => {
     const fixture = createFixtureDatabase({ rows: false });
     insertFrame(fixture.writer, {
@@ -107,6 +164,34 @@ describe("screenpipe P1 regressions", () => {
       fixtureDeps("2026-01-09T00:00:00.000Z"),
     );
     await expect(connector.backfill(null)).rejects.toMatchObject({ code: "parse_error" });
+    await connector.revoke();
+  });
+
+  test("a non-numeric audio offset fails instead of collapsing onto the chunk time", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    fixture.writer
+      .query(
+        `INSERT INTO audio_chunks (id, file_path, timestamp, transcription_status)
+         VALUES (1, '/tmp/a.mp4', '2026-01-06T10:00:00Z', 'transcribed')`,
+      )
+      .run();
+    fixture.writer
+      .query(
+        `INSERT INTO audio_transcriptions
+           (id, audio_chunk_id, offset_index, timestamp, transcription, device,
+            is_input_device, speaker_id, transcription_engine, start_time, end_time)
+         VALUES (1, 1, 0, '2026-01-06T10:00:00Z', 'offset must not collapse', 'mic',
+                 1, NULL, 'fixture-engine', 'not-a-number', NULL)`,
+      )
+      .run();
+    const connector = new ScreenpipeConnector(
+      { path: fixture.path, settle_seconds: 0 },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+    await expect(connector.backfill(null)).rejects.toMatchObject({
+      code: "parse_error",
+      message: "kizuki.screenpipe: audio_transcriptions.start_time has an invalid value",
+    });
     await connector.revoke();
   });
 

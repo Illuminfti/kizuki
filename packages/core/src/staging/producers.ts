@@ -64,9 +64,8 @@ function entityProposal(
   return {
     kind: "entity",
     target: subjectRef,
-    // Stable per namespaced subject, so a second sighting dedupes onto this
-    // candidate instead of forking a second stub page for the same subject.
-    body: `Stub entity page for \`${subjectRef}\`.`,
+    // User-facing stub; identifiers stay on target, subjects, and frontmatter.
+    body: "Referenced in a captured source.",
     frontmatter: {
       type: subjectPageType(subject.subject_id),
       title: handle,

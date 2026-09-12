@@ -1,7 +1,7 @@
 /** Synthetic provider/state fixtures only; never operator enrollment. */
 import type { StatePersister } from '@kizuki/core';
 import { WhoopConnector, type WhoopDeps } from './connector';
-import { encodeState, scopes, WHOOP_ID, type Selection, type Resource } from './state';
+import { compareInstants, encodeState, scopes, WHOOP_ID, type Selection, type Resource } from './state';
 export class WhoopFixture {
     state: Uint8Array;
     readonly records: Record<Resource, Record<string, unknown>[]> = {
@@ -70,9 +70,13 @@ export class WhoopFixture {
         const resource = url.pathname.split('/').at(-1) as Resource;
         if (!Object.hasOwn(this.records, resource))
             throw Error('unexpected fixture route');
-        const start = Number(url.searchParams.get('nextToken') ?? 0), records = this.records[resource];
+        const windowStart = url.searchParams.get('start'), windowEnd = url.searchParams.get('end');
+        const limit = Number(url.searchParams.get('limit')), from = Number(url.searchParams.get('nextToken') ?? 0);
+        const key = (r: Record<string, unknown>) => typeof r.start === 'string' ? r.start : String(r.created_at);
+        const records = windowStart && windowEnd ? [...this.records[resource]].filter(r => compareInstants(key(r), windowStart) >= 0 && compareInstants(key(r), windowEnd) < 0).sort((a, b) => compareInstants(key(b), key(a))) : [];
+        const size = Number.isInteger(limit) && limit > 0 && limit <= 25 ? limit : 0;
         return Response.json({
-            records: records.slice(start, start + 25), next_token: records.length > start + 25 ? String(start + 25) : null
+            records: records.slice(from, from + size), next_token: records.length > from + size ? String(from + size) : null
         });
     };
     async connected(overrides: Partial<WhoopDeps> = {}) {

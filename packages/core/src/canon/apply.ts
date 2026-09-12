@@ -35,7 +35,7 @@ import type { Writer } from "../vault/write";
 import { assertPageRelPath, assertReceiptPaths, assertStoredPageRelPath } from "./paths";
 import { cloneExactJson } from "../util/validate";
 import type { TargetDecision } from "./arbiter";
-import type { BudgetTracker } from "./budget";
+import { chargeCanonWrite, type BudgetTracker } from "./budget";
 import { CanonWriteError } from "./errors";
 import { getCanonReceipt, type CanonReceipt, type PageAction, type RetrievalOpRef } from "./receipts";
 import { initCanon } from "./schema";
@@ -515,7 +515,9 @@ export function applyCanonWriteOwned(
     receipt, before: existing === null ? null : Buffer.from(existing.content), after: Buffer.from(serializePage(prepared.page)),
     completion: { mode: "write", claim_kind: primary.kind, page_id: pageId,
       subject_key: primary.subject ?? (typeof priorSubject === "string" ? priorSubject : null), original_receipt_id: null },
-  }, admit, () => opts.budget.chargeWrite({ receipt_id: receiptId, page_path: target.rel_path, before_hash: existing?.hash ?? null }));
+  }, admit, () => chargeCanonWrite(io, opts.budget, {
+    receipt_id: receiptId, page_path: target.rel_path, before_hash: existing?.hash ?? null, at: receipt.at,
+  }));
 }
 
 function canonPageFromWrite(

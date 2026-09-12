@@ -1,28 +1,72 @@
 import type { VaultMutationScope } from "../vault/mutation-scope";
-import type { CanonFileSnapshot } from "../vault/canon-files";
+import type { CanonFileSnapshot, CanonFiles } from "../vault/canon-files";
 import { sha256Hex } from "../util/hash";
 import { parseFrontmatter } from "../vault/frontmatter";
 import { eventIdFromReference } from "../retrieval/ids";
 import { oneShotGet } from "../ledger/schema";
-import { requireSourceEvents } from "../ledger/source-grants";
 import { requireCanonFiles } from "./io";
 import { latestReceiptForPage } from "./receipts";
 import { openOrdinaryRecoveryReceiptStream } from "./receipt-stream";
 import { readCanonProjectionObligation } from "./projection-obligations";
 import type { CanonIo } from "./store";
-import { advanceCanonReadGeneration, captureCanonAdmission, decodeCanonImage, readCanonWriteIntent, recoveryFailure, type CanonWriteIntent } from "./write-intent";
+import { advanceCanonReadGeneration, assertIndependentSurvivorAdmission, decodeCanonImage, readCanonWriteIntent, recoveryFailure, type CanonWriteIntent } from "./write-intent";
 
-/** Restoring a prior committed page does not complete the withdrawn write. */
-function assertIndependentRollback(db: CanonIo["db"], intent: CanonWriteIntent, before: Buffer): void {
-  const current = captureCanonAdmission(db, intent.receipt, intent.completion, before, decodeCanonImage(intent.after_base64), intent.admission.claims.map(claim => claim.id));
-  for (const key of ["claims", "predecessor_digest", "original_digest", "page_index_digest", "supersessions_digest", "claim_bindings_digest"] as const) {
-    if (JSON.stringify(current[key]) !== JSON.stringify(intent.admission[key])) recoveryFailure("authority_changed", intent.receipt.receipt_id);
+function pageEventIds(bytes: Buffer, receiptId: string): string[] {
+  const sources = parseFrontmatter(bytes.toString("utf8")).data["sources"];
+  if (!Array.isArray(sources) || !sources.every(source => typeof source === "string")) recoveryFailure("intent_invalid", receiptId);
+  return sources.map(eventIdFromReference);
+}
+
+function sameImage(actual: Buffer | null, expected: Buffer | null): boolean {
+  return actual === null ? expected === null : expected !== null && actual.equals(expected);
+}
+
+function independentOf(bytes: Buffer | null, deniedEvents: Set<string>, receiptId: string): bytes is Buffer {
+  return bytes !== null && !pageEventIds(bytes, receiptId).some(id => deniedEvents.has(id));
+}
+
+function publishIndependent(files: CanonFiles, stagePath: string, bytes: Buffer, dest: string, expected: CanonFileSnapshot | null): void {
+  const stage = files.create(stagePath, bytes);
+  try {
+    const restored = expected === null ? files.publish(stage, dest) : files.replace(stage, expected);
+    restored.close();
+  } finally { stage.close(); }
+}
+
+/**
+ * A pending revert restores a previously committed page. Rewrite live bytes to
+ * that independent survivor and keep the intent; completing it here would need
+ * purge-binding/lineage schema this lane does not own.
+ */
+function holdIndependentRevert(
+  files: CanonFiles,
+  db: CanonIo["db"],
+  intent: CanonWriteIntent,
+  before: Buffer | null,
+  after: Buffer,
+  held: CanonFileSnapshot[],
+): never {
+  const receipt = intent.receipt;
+  assertIndependentSurvivorAdmission(db, intent, after);
+  const live = files.read(receipt.page_path);
+  let liveBytes: Buffer | null = null;
+  if (live !== null) {
+    held.push(live);
+    liveBytes = Buffer.from(live.bytes);
   }
-  const ids = new Set((parseFrontmatter(before.toString("utf8")).data["sources"] as string[]).map(eventIdFromReference));
-  const selected = (events: CanonWriteIntent["admission"]["events"]) => events.filter(event => ids.has(event.id));
-  if (JSON.stringify(selected(current.events)) !== JSON.stringify(selected(intent.admission.events))) recoveryFailure("authority_changed", intent.receipt.receipt_id);
-  try { requireSourceEvents(db, [...ids], { owner: true, purpose: "derive" }); }
-  catch { recoveryFailure("authority_changed", intent.receipt.receipt_id); }
+  if (!sameImage(liveBytes, after)) {
+    if (!sameImage(liveBytes, before)) recoveryFailure("page_changed", receipt.receipt_id);
+    if (before !== null && receipt.archive_path !== null && intent.stages.archive_stage !== null) {
+      const archive = files.read(receipt.archive_path);
+      if (archive === null) publishIndependent(files, intent.stages.archive_stage, before, receipt.archive_path, null);
+      else {
+        held.push(archive);
+        if (!before.equals(Buffer.from(archive.bytes))) recoveryFailure("archive_changed", receipt.receipt_id);
+      }
+    }
+    publishIndependent(files, intent.stages.live_stage, after, receipt.page_path, live);
+  }
+  recoveryFailure("authority_changed", receipt.receipt_id);
 }
 
 /**
@@ -62,8 +106,10 @@ export function withdrawPendingCanonWrite(scope: VaultMutationScope, io: CanonIo
         if (stage !== null) { stage.close(); recoveryFailure("stage_custody_unknown", receipt.receipt_id); }
       }
       const before = decodeCanonImage(intent.before_base64), after = decodeCanonImage(intent.after_base64);
-      const independentBefore = before !== null && !(parseFrontmatter(before.toString("utf8")).data["sources"] as string[])
-        .some(source => deniedEvents.has(eventIdFromReference(source)));
+      if ((intent.receipt.kind === "revert" || intent.completion.mode === "revert") && independentOf(after, deniedEvents, receipt.receipt_id)) {
+        holdIndependentRevert(files, db, intent, before, after, held);
+      }
+      const independentBefore = independentOf(before, deniedEvents, receipt.receipt_id);
       let rollback: { target: CanonFileSnapshot | null } | null = null;
       for (const [path, images] of [
         [receipt.page_path, [before, after]],
@@ -93,7 +139,7 @@ export function withdrawPendingCanonWrite(scope: VaultMutationScope, io: CanonIo
       }
       // A prior attempt may already have restored these bytes before SQL
       // completion failed. Preserving them still requires current authority.
-      if (independentBefore && before !== null) assertIndependentRollback(db, intent, before);
+      if (independentBefore && before !== null) assertIndependentSurvivorAdmission(db, intent, before);
       // Global single-intent admission makes the expected receipt the only
       // permitted suffix. The primitive refuses every foreign or changed tail.
       stream.withdrawExact(intent.checkpoint, Buffer.from(`${JSON.stringify(receipt)}\n`));

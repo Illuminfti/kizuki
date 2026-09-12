@@ -14,6 +14,8 @@ import { offsetSeconds, resolveTimestamp } from "./time";
 
 export type StreamKind = "frame" | "transcription";
 
+const STREAM_PAGE = 64;
+
 export interface PreparedEvent {
   stream: StreamKind;
   id: number;
@@ -109,6 +111,7 @@ class RowWalker<T extends { id: number }> implements StreamWalker {
     this.commitId(pending.id);
     this.#after = pending.id;
     this.#pending = undefined;
+    if (this.#after >= this.throughId) this.done = true;
   }
 
   #pull(): PreparedEvent | null {
@@ -142,7 +145,7 @@ class RowWalker<T extends { id: number }> implements StreamWalker {
       this.done = true;
       return;
     }
-    this.#buffer = this.readPage(this.#after, 64, this.throughId);
+    this.#buffer = this.readPage(this.#after, STREAM_PAGE, this.throughId);
     this.#index = 0;
     if (this.#buffer.length === 0) this.done = true;
   }

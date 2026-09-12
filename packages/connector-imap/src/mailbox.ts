@@ -138,6 +138,7 @@ export async function walkMailboxes(
   const observedAt = deps.now().toISOString();
   const events: CaptureEventInput[] = [];
   const notes: string[] = [];
+  let more = false;
 
   const session = await ImapSession.open(
     deps.dial,
@@ -168,6 +169,7 @@ export async function walkMailboxes(
         if (parseSet(plan.entry.known).length > 0) {
           cursor.folders[wire] = plan.entry;
           events.push(...folderTombstones);
+          more = true;
           continue;
         }
         plan.entry = initialEntry(status.uidvalidity, status.uidnext);
@@ -192,7 +194,10 @@ export async function walkMailboxes(
       // `alreadyEmitted` counts everything that is NOT in `into`: the callee
       // adds its own array's length. Counting the target array here too would
       // charge a retried message twice and stop the scan before it started.
-      if (mode === "sync" && wasDone && !renumbered) {
+      // Expunges are independent of UIDNEXT: a mailbox that keeps receiving
+      // mail would otherwise never tombstone deletions.
+      const catchUp = mode === "backfill" || !wasDone || renumbered;
+      if (mode === "sync" && !renumbered) {
         await detectExpunges(
           session,
           plan,
@@ -200,7 +205,8 @@ export async function walkMailboxes(
           events.length + folderEvents.length,
           folderTombstones,
         );
-      } else {
+      }
+      if (catchUp) {
         await pageFolder(
           session,
           plan,
@@ -216,7 +222,9 @@ export async function walkMailboxes(
       const holes = countUids(parseSet(plan.entry.pending));
       if (holes > 0) {
         notes.push(`message bodies not returned: ${display} (${holes})`);
+        more = true;
       }
+      if (!plan.entry.done) more = true;
 
       cursor.folders[wire] = plan.entry;
       events.push(...folderTombstones, ...folderEvents);
@@ -227,7 +235,14 @@ export async function walkMailboxes(
     throw error;
   }
 
-  return { batch: { events, cursor: encodeCursor(cursor) }, notes };
+  return {
+    batch: {
+      events,
+      cursor: encodeCursor(cursor),
+      has_more: more || events.length >= BATCH,
+    },
+    notes,
+  };
 }
 
 /**

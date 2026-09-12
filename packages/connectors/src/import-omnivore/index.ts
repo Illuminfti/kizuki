@@ -15,6 +15,7 @@ import {
   requireKnownKeys,
   requirePathConfig,
 } from "../util";
+import { OMNIVORE_CURSOR_SCHEMA, pageOmnivoreEvents } from "./batch";
 import {
   OMNIVORE_IMPORT_CONNECTOR_ID,
   OMNIVORE_SENSITIVITY,
@@ -24,6 +25,8 @@ import {
   probeOmnivoreExport,
 } from "./parse";
 
+export { OMNIVORE_CURSOR_SCHEMA, pageOmnivoreEvents } from "./batch";
+export type { OmnivorePageLimits } from "./batch";
 export {
   OMNIVORE_IMPORT_CONNECTOR_ID,
   fsOmnivoreFiles,
@@ -94,7 +97,7 @@ const MANIFEST: Manifest = freezeManifest({
   contract_minor: 1,
   implementation: "@kizuki/connectors",
   allowed_egress: [],
-  cursor_schema: null,
+  cursor_schema: OMNIVORE_CURSOR_SCHEMA,
   kinds: ["bookmark"],
   capabilities: {
     backfill: true,
@@ -141,8 +144,8 @@ export class OmnivoreImportConnector implements Connector {
 
   async connect(_resolve: SecretResolver): Promise<void> {}
 
-  async backfill(_cursor: Cursor | null): Promise<SyncBatch> {
-    return { events: await this.read(), cursor: null };
+  async backfill(cursor: Cursor | null): Promise<SyncBatch> {
+    return pageOmnivoreEvents(await this.read(), cursor);
   }
 
   sync(cursor: Cursor | null): Promise<SyncBatch> {

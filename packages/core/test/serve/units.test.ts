@@ -6,6 +6,10 @@ import {
   launchdLabel,
   renderLaunchdPlist,
   renderSystemdUnit,
+  SERVICE_BROKER_REAP_SECONDS,
+  SERVICE_READY_SECONDS,
+  SERVICE_START_SECONDS,
+  SERVICE_STOP_SECONDS,
   systemdUnitName,
 } from "../../src/serve/units";
 
@@ -25,7 +29,12 @@ describe("serve units", () => {
     expect(unit).toContain("PrivateTmp=true");
     expect(unit).toContain("ExitType=main");
     expect(unit).toContain("KillMode=control-group");
-    expect(unit).toContain("TimeoutStopSec=90s");
+    expect(SERVICE_READY_SECONDS).toBe(15);
+    expect(SERVICE_BROKER_REAP_SECONDS).toBe(2);
+    expect(SERVICE_START_SECONDS).toBe(SERVICE_READY_SECONDS + SERVICE_BROKER_REAP_SECONDS + 1);
+    expect(SERVICE_STOP_SECONDS).toBe(90);
+    expect(unit).toContain(`TimeoutStartSec=${SERVICE_START_SECONDS}s`);
+    expect(unit).toContain(`TimeoutStopSec=${SERVICE_STOP_SECONDS}s`);
     expect(unit).toContain(`ExecStart=${spec.execStart} --service-custody ${spec.vaultId}`);
     expect(unit).toContain(`ExecStartPost=+${spec.execStart} --custody-broker-launch ${spec.vaultId}`);
     expect(unit).not.toContain("ExecStart=+");

@@ -103,7 +103,7 @@ export async function walk(
     // Nothing is left to read, so nothing is worth asking for: a listing here
     // would only spend a request, and one more chance to be told to wait.
     return {
-      batch: { events: [], cursor: encodeCursor(stored) },
+      batch: { events: [], cursor: encodeCursor(stored), has_more: false },
       floodUntil: null,
       listing: null,
       read: 0,
@@ -130,7 +130,7 @@ export async function walk(
       // leave the wait unrecorded and health calling the connection healthy;
       // the caller reports it once the walk has handed it back.
       return {
-        batch: { events: [], cursor: cursorText },
+        batch: { events: [], cursor: cursorText, has_more: true },
         floodUntil: deps.now() + seconds * 1000,
         listing: null,
         read: 0,
@@ -229,12 +229,35 @@ export async function walk(
     cursor.phase = "synced";
   }
   return {
-    batch: { events: batch.events, cursor: encodeCursor(cursor) },
+    batch: {
+      events: batch.events,
+      cursor: encodeCursor(cursor),
+      has_more: snapshotHasMore(cursor, dialogs, floodUntil),
+    },
     floodUntil,
     listing:
       limitReached === null ? null : { dialogs, limitReached },
     read: batch.read,
   };
+}
+
+/**
+ * `has_more` is this snapshot, not the next scheduled run. A full page, an
+ * in-flight pass, a listed dialog that is not exhausted, or a wait mid-walk
+ * still has pages on this listing. Dialogs this listing did not show wait for
+ * a later run rather than spinning this one.
+ */
+function snapshotHasMore(
+  cursor: TelegramCursor,
+  dialogs: TelegramDialog[],
+  floodUntil: number | null,
+): boolean {
+  if (floodUntil !== null || cursor.pass !== null) return true;
+  const visible = new Set(dialogs.map((dialog) => dialog.peer_id));
+  return Object.keys(cursor.dialogs).some((peer) => {
+    const entry = cursor.dialogs[peer];
+    return entry !== undefined && visible.has(peer) && !entry.exhausted;
+  });
 }
 
 /**

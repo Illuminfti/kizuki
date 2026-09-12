@@ -127,6 +127,8 @@ describe("the advertised output schema describes what the server sends", () => {
     >;
     expect(structured).not.toHaveProperty("source_policy");
     expect(text).not.toHaveProperty("source_policy");
+    expect(structured["has_withheld"]).toBe(true);
+    expect(text["has_withheld"]).toBe(true);
     expect(text).toEqual(structured);
   });
 
@@ -165,6 +167,8 @@ describe("the advertised output schema describes what the server sends", () => {
     >;
     expect(structured["source_policy"]).toEqual(policy);
     expect(text["source_policy"]).toEqual(policy);
+    expect(structured["has_withheld"]).toBe(true);
+    expect(text["has_withheld"]).toBe(true);
     expect(text).toEqual(structured);
   });
 
@@ -180,6 +184,18 @@ describe("the advertised output schema describes what the server sends", () => {
       expect(advertised.required?.slice().sort()).toEqual(
         ["at", "canon", "denied", "principal", "quoted", "schema", "tool"],
       );
+      expect(Object.keys(advertised.properties ?? {}).sort()).toEqual([
+        "at",
+        "canon",
+        "data",
+        "denied",
+        "has_withheld",
+        "principal",
+        "quoted",
+        "schema",
+        "source_policy",
+        "tool",
+      ]);
       expect(advertised.properties?.source_policy?.required?.slice().sort()).toEqual(
         ["epoch", "legacy_unbound", "mode"],
       );
@@ -205,9 +221,18 @@ describe("the advertised output schema describes what the server sends", () => {
     expect(
       ENVELOPE_SHAPE.safeParse({ ...envelope, source_policy: policy }).success,
     ).toBe(true);
+    expect(
+      ENVELOPE_SHAPE.safeParse({ ...envelope, has_withheld: true }).success,
+    ).toBe(true);
     expect(ENVELOPE_SHAPE.safeParse({ ...envelope, tool: undefined }).success).toBe(
       false,
     );
+    expect(ENVELOPE_SHAPE.safeParse({ ...envelope, extra: true }).success).toBe(
+      false,
+    );
+    expect(
+      ENVELOPE_SHAPE.safeParse({ ...envelope, has_withheld: false }).success,
+    ).toBe(false);
 
     const invalid = [
       {},

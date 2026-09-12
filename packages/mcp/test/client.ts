@@ -21,15 +21,31 @@ export async function connectClient(
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "kizuki-test", version: "0" });
-  await Promise.all([
-    client.connect(clientTransport),
-    server.connect(serverTransport),
-  ]);
-  open.push(async () => {
-    await client.close();
-    await server.close();
-  });
-  return client;
+  let closed = false;
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    try {
+      await client.close();
+    } finally {
+      await server.close();
+    }
+  };
+  open.push(close);
+  let connected = false;
+  try {
+    await Promise.all([
+      client.connect(clientTransport),
+      server.connect(serverTransport),
+    ]);
+    // A real client lists first; that is what builds the SDK's closed output
+    // validator. Skipping it never notices a schema narrower than the envelope.
+    await client.listTools();
+    connected = true;
+    return client;
+  } finally {
+    if (!connected) await close();
+  }
 }
 
 export async function call(

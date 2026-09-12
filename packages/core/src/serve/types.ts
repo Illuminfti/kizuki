@@ -21,8 +21,11 @@ export const RETRIEVAL_SLA_SECONDS = 900;
 export const RUN_RECEIPT_RETENTION_DAYS = 7;
 /**
  * Steady-state write ratio once dedup/supersession can absorb claims.
- * The upper bound is not applied to a first-fill vault (nothing to dedup
- * against). The lower bound still fires when extracted claims are dropped.
+ * The upper bound is skipped only for a true initial capture: a live or
+ * superseded corpus exists, none of it was asserted before the latest
+ * extracting receipt started, and every asserted_at parses. A later
+ * extracting receipt in the same week applies the ceiling once that corpus
+ * is present. The lower bound still fires when extracted claims are dropped.
  */
 export const CALIBRATION_BAND = { min: 0.15, max: 0.75 } as const;
 export const CONFIDENCE_SPREAD_MIN = 0.02;

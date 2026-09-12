@@ -8,7 +8,8 @@ Read [release acceptance](../release-acceptance.md) for the full gate inventory.
 [D19](../decision-log.md#owner-amendment-to-readiness-2026-09-05) requires zero
 live P0 findings on the exact candidate. The checker currently leaves
 `candidate.current-p0-disposition` at `UNVERIFIABLE` with reason
-`trusted-snapshot-and-freshness-policy-unavailable`.
+`trusted-snapshot-and-freshness-policy-unavailable`. Offline evaluation cannot
+credit a saved GitHub observation or a `kizuki.p0-disposition/v1` receipt.
 
 ## Gate obligation
 
@@ -17,7 +18,28 @@ live P0 findings on the exact candidate. The checker currently leaves
 | Gate id         | `candidate.current-p0-disposition`   |
 | Scope           | `current-head-findings`              |
 | Required        | yes for both `rc` and `1.0` profiles |
-| Current adapter | none                                 |
+| Current adapter | online GitHub overlay only; offline default remains `UNVERIFIABLE` |
+
+## Online collector
+
+`evaluateReleaseOnline` in `scripts/github-release-evidence.ts` overlays this
+gate from a live GitHub inventory. That overlay is not an offline producer.
+
+- Exact open-issue label: `severity:p0`. Titles, bodies, authors and comments
+  are not fetched for retention; kept rows are `{ id, number, updated_at, labels }`.
+- Local `candidate_source_sha` must have GitHub `main` as a stable ancestor.
+  The candidate may be an unmerged descendant pull-request head.
+- Two complete array-paginated inventories must match, including `updated_at`
+  and labels. Pagination is `per_page=25` with a hard page cap.
+- Freshness is code-owned: 60 seconds maximum observation window and 5 seconds
+  future-completion skew. An evidence index or receipt cannot supply a duration
+  or timestamp.
+- Empty valid inventory: `PASS` / `github-current-p0-inventory-clear`.
+- One or more valid open rows: `FAIL` / `github-current-p0-findings-open`.
+- Transport, schema, pagination, ref, freshness, custody or race failure:
+  `UNVERIFIABLE` with a `github-p0-*` reason and no evidence digest.
+
+This ledger remains reader guidance. It is not an input to `evaluateRelease`.
 
 A passing disposition requires a complete current-head findings inventory and an
 explicit freshness policy bound to the same candidate SHA recorded in the

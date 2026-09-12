@@ -40,13 +40,23 @@ remain required for erasure. Directory timestamps cannot replace those guards.
 Run the native regressions with the repository's pinned Bun version:
 
 ```bash
-bun test packages/core/test/util/owned-directory.test.ts packages/core/test/util/native-enumeration.test.ts packages/core/test/util/native-loader.test.ts
+bun test packages/core/test/util/owned-directory.test.ts packages/core/test/util/native-enumeration.test.ts packages/core/test/util/native-loader.test.ts packages/core/test/util/source-read.test.ts
 ```
 
 These cover late errno changes, failed initialization and cleanup, sealed
 source, malformed directory records, opaque names, traversal bounds, root
 replacement and observation-time absence. Release acceptance additionally
 requires the copied executable on each claimed native platform.
+
+## Readonly source-file open
+
+Markdown folder capture uses `openSourceChild` to open a named child relative
+to a held directory descriptor through the same native `openat` helper. It does
+not require owner-only directory mode, single-link files, or vault ancestry:
+source folders are ordinary readable trees, and their root permissions may
+differ from a private vault. There is no pathname fallback when the native
+helper is unavailable; the caller fails closed. Darwin arm64 uses the existing
+libSystem `openat` entry, not `/dev/fd/<parent>/<name>`.
 
 ## Private canon adapter
 

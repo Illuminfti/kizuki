@@ -139,3 +139,68 @@ for (const boundary of ["before-accept", "after-accept"] as const) {
         });
     }
 }
+test("native runToCompletion drains a 404-only list page and stores later messages in one backfill", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gmail-empty-list-"));
+    const database = join(root, "ledger.db");
+    const db = openLedger(database);
+    try {
+        const fixture = new GmailFixture(25), store = new ConnectionStateStore(root);
+        for (let n = 1; n <= 20; n++)
+            fixture.missing.add(`m${n}`);
+        const enrollment = store.begin();
+        await enrollment.writer.write(fixture.state);
+        const connection = store.save(db, GMAIL_CONNECTOR_ID, enrollment.pending);
+        const source = connection.source_key;
+        setSourceGrant(db, { source_key: source, expected_revision: 0, operation_id: "synthetic-gmail-grant", policy: { purposes: ["capture"], allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" } });
+        const handle = createStatePersister(db, store, connection);
+        const connector = await fixture.connected(async (bytes) => { await handle.persist(bytes); fixture.state = bytes; });
+        const captured = await runToCompletion(db, connector, GMAIL_CONNECTOR_ID, source, "backfill");
+        expect(captured.errors).toEqual([]);
+        expect(captured.stored).toBe(5);
+        const rows = db.query("SELECT metadata, deleted FROM events").all() as { metadata: string; deleted: number }[];
+        expect(rows).toHaveLength(5);
+        expect(rows.every(row => row.deleted === 0)).toBe(true);
+        expect(rows.map(row => JSON.parse(row.metadata).message_id).sort()).toEqual(["m21", "m22", "m23", "m24", "m25"]);
+        expect(JSON.parse(getCheckpoint(db, GMAIL_CONNECTOR_ID, source)!.cursor!).unresolved).toBe(true);
+        expect(db.query("SELECT * FROM events WHERE deleted=1").all()).toHaveLength(0);
+    }
+    finally {
+        db.close();
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+test("native runToCompletion drains a 404-only history page and stores later deletions in one sync", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gmail-empty-history-"));
+    const database = join(root, "ledger.db");
+    const db = openLedger(database);
+    try {
+        const fixture = new GmailFixture(25), store = new ConnectionStateStore(root);
+        const enrollment = store.begin();
+        await enrollment.writer.write(fixture.state);
+        const connection = store.save(db, GMAIL_CONNECTOR_ID, enrollment.pending);
+        const source = connection.source_key;
+        setSourceGrant(db, { source_key: source, expected_revision: 0, operation_id: "synthetic-gmail-grant", policy: { purposes: ["capture"], allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" } });
+        const handle = createStatePersister(db, store, connection);
+        const connector = await fixture.connected(async (bytes) => { await handle.persist(bytes); fixture.state = bytes; });
+        const backfill = await runToCompletion(db, connector, GMAIL_CONNECTOR_ID, source, "backfill");
+        expect(backfill.errors).toEqual([]);
+        expect(backfill.stored).toBe(25);
+        for (let n = 1; n <= 20; n++) {
+            fixture.change(`m${n}`, "labelsAdded");
+            fixture.missing.add(`m${n}`);
+        }
+        for (let n = 21; n <= 25; n++)
+            fixture.change(`m${n}`, "messagesDeleted");
+        const synced = await runToCompletion(db, connector, GMAIL_CONNECTOR_ID, source, "sync");
+        expect(synced.errors).toEqual([]);
+        expect(synced.stored).toBe(5);
+        const rows = db.query("SELECT metadata FROM events WHERE deleted=1").all() as { metadata: string }[];
+        expect(rows).toHaveLength(5);
+        expect(rows.map(row => JSON.parse(row.metadata).message_id).sort()).toEqual(["m21", "m22", "m23", "m24", "m25"]);
+        expect(JSON.parse(getCheckpoint(db, GMAIL_CONNECTOR_ID, source)!.cursor!).unresolved).toBe(true);
+    }
+    finally {
+        db.close();
+        rmSync(root, { recursive: true, force: true });
+    }
+});

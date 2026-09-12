@@ -280,6 +280,19 @@ export function laterReceiptsForPage(
 
 export function latestReceiptForPage(db: Database, pagePath: string): CanonReceipt | null {
   if (!tableExists(db, "canon_receipts")) return null;
+  // Receipt timestamps describe the asserted fact and may be backdated. The
+  // page index instead records the receipt that produced the bytes on disk.
+  if (tableExists(db, "page_index")) {
+    const indexed = db
+      .query<{ last_receipt: string | null }, [string]>(
+        "SELECT last_receipt FROM page_index WHERE rel_path = ? LIMIT 1",
+      )
+      .get(pagePath);
+    if (indexed?.last_receipt !== null && indexed?.last_receipt !== undefined) {
+      const current = getCanonReceipt(db, indexed.last_receipt);
+      if (current !== null && current.page_path === pagePath) return current;
+    }
+  }
   const row = db
     .query<CanonReceiptRow, [string]>(
       "SELECT * FROM canon_receipts WHERE page_path = ? ORDER BY at DESC, receipt_id DESC LIMIT 1",

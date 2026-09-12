@@ -11,6 +11,8 @@ import {
   launchdPlistPath,
   renderLaunchdPlist,
   renderSystemdUnit,
+  SERVICE_START_SECONDS,
+  SERVICE_STOP_SECONDS,
   systemdUnitName,
   systemdUnitPath,
   type UnitSpec,
@@ -52,57 +54,153 @@ export function detectSupervisorKind(
   return "none";
 }
 
-function runCommand(argv: string[], timeout = 5_000): { ok: boolean; exitCode: number | null; stdout: string; stderr: string } {
-  const result = spawnSync(argv[0] ?? "", argv.slice(1), {
+/** Query, reload, enable, and reset-failed stay at this bound. */
+export const SUPERVISOR_COMMAND_TIMEOUT_MS = 5_000;
+/** Client start wait: TimeoutStartSec plus transport margin. */
+export const SYSTEMD_START_TIMEOUT_MS = SERVICE_START_SECONDS * 1_000 + SUPERVISOR_COMMAND_TIMEOUT_MS;
+/** Client stop wait: TimeoutStopSec plus transport margin. */
+export const SYSTEMD_STOP_TIMEOUT_MS = SERVICE_STOP_SECONDS * 1_000 + SUPERVISOR_COMMAND_TIMEOUT_MS;
+/** Client restart wait: stop plus start plus one transport margin. */
+export const SYSTEMD_RESTART_TIMEOUT_MS =
+  SYSTEMD_STOP_TIMEOUT_MS + SYSTEMD_START_TIMEOUT_MS - SUPERVISOR_COMMAND_TIMEOUT_MS;
+
+export type SupervisorCommandResult = {
+  ok: boolean;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+};
+
+/** Synthetic tests inject `now` and `run` instead of waiting on wall-clock spawn. */
+export type SupervisorTimeoutAdapter = {
+  now(): number;
+  run(argv: readonly string[], timeout: number): SupervisorCommandResult;
+};
+
+export function systemdCommandTimeoutMs(command: string): number {
+  if (command === "start") return SYSTEMD_START_TIMEOUT_MS;
+  if (command === "stop" || command === "disable") return SYSTEMD_STOP_TIMEOUT_MS;
+  if (command === "restart") return SYSTEMD_RESTART_TIMEOUT_MS;
+  return SUPERVISOR_COMMAND_TIMEOUT_MS;
+}
+
+function spawnTimedOut(error: Error | undefined): boolean {
+  return error instanceof Error && "code" in error && (error as { code?: string }).code === "ETIMEDOUT";
+}
+
+function runCommand(argv: readonly string[], timeout = SUPERVISOR_COMMAND_TIMEOUT_MS): SupervisorCommandResult {
+  const result = spawnSync(argv[0] ?? "", [...argv.slice(1)], {
     encoding: "utf8",
     timeout,
   });
+  const timedOut = spawnTimedOut(result.error);
   return {
-    ok: result.status === 0,
+    ok: result.status === 0 && !timedOut,
     exitCode: result.status,
     stdout: (result.stdout ?? "").trim(),
     stderr: (result.stderr ?? "").trim(),
+    timedOut,
   };
 }
 
-/** launchctl print also contains arbitrary configuration and environment text. */
-function launchdInactiveDetail(stdout: string): string {
-  const unavailable = "loaded but not running";
-  if (stdout.length > 65_536) return unavailable;
-  const states = [...stdout.matchAll(/^([ \t]*)state = (?:waiting|spawn scheduled|exited|not running)[ \t]*$/gm)];
-  const exits = stdout.split("\n").filter(line => /^[ \t]*last exit code/.test(line));
-  if (states.length !== 1 || exits.length !== 1) return unavailable;
-  const match = /^([ \t]*)last exit code = (0|[1-9]\d{0,2})[ \t]*$/.exec(exits[0]!);
-  // The job fields share indentation; a nested environment value is not an exit.
-  if (!match || match[1] !== states[0]![1] || Number(match[2]) > 255) return unavailable;
-  return match[2] === "0" ? "stopped (last exit code 0)" : `failed (last exit code ${match[2]})`;
+const wallAdapter: SupervisorTimeoutAdapter = { now: () => Date.now(), run: runCommand };
+
+function systemdUnitVaultId(unitName: string): string {
+  return unitName.startsWith("kizuki@") && unitName.endsWith(".service")
+    ? unitName.slice("kizuki@".length, -".service".length)
+    : unitName;
 }
 
-function queryLaunchdService(label: string, timeout = 5_000): SupervisorStatus {
-  const printed = runCommand(["launchctl", "print", `gui/${process.getuid?.() ?? 0}/${label}`], timeout);
-  const text = `${printed.stdout} ${printed.stderr}`.toLowerCase();
-  let state: SupervisorState = "unknown";
-  if (text.includes("disabled")) state = "disabled";
-  else if (printed.ok) state = /^\s*state = running\s*$/m.test(printed.stdout) && /^\s*pid = [1-9]\d*\s*$/m.test(printed.stdout) ? "active" : "disabled";
-  else if (text.includes("could not find service")) state = "absent";
+const LAUNCHD_COMMAND_TIMEOUT_MS = 5_000;
+const LAUNCHD_PRINT_LIMIT = 65_536;
+const LAUNCHD_INACTIVE = new Set(["waiting", "spawn scheduled", "exited", "not running"]);
+const LAUNCHD_LOADED = new Set(["running", "unloaded", "waiting", "spawn scheduled", "exited", "not running"]);
+
+type LaunchdPrint = { ok: boolean; stdout: string; stderr: string; transport: boolean };
+type LaunchdJob = { state: string; pid: number | null; disabled: boolean; lastExit: number | null };
+
+function printLaunchd(label: string, timeout: number): LaunchdPrint {
+  const result = spawnSync("launchctl", ["print", `gui/${process.getuid?.() ?? 0}/${label}`], {
+    encoding: "utf8",
+    timeout,
+  });
+  const transport = result.error != null || result.signal != null || result.status == null;
   return {
-    kind: "launchd", state, unit: label, enabled: printed.ok,
-    detail: state === "unknown" ? "supervisor state could not be queried" :
-      printed.ok && state !== "active" ? launchdInactiveDetail(printed.stdout) : state,
+    ok: result.status === 0 && !transport,
+    stdout: (result.stdout ?? "").trim(),
+    stderr: (result.stderr ?? "").trim(),
+    transport,
   };
+}
+
+/** Job fields share the least-indented `state =` line; nested env/config is not status. */
+function parseLaunchdJob(stdout: string): LaunchdJob | null {
+  if (stdout.length > LAUNCHD_PRINT_LIMIT) return null;
+  const states = [...stdout.matchAll(/^([ \t]*)state = (\S+(?:[ \t]+\S+)*)[ \t]*$/gm)];
+  if (states.length === 0) return null;
+  const indent = Math.min(...states.map(match => match[1]!.length));
+  const top = states.filter(match => match[1]!.length === indent);
+  if (top.length !== 1) return null;
+  const atIndent = (pattern: RegExp) => [...stdout.matchAll(pattern)].filter(match => match[1]!.length === indent);
+  const pids = atIndent(/^([ \t]*)pid = ([1-9]\d*)[ \t]*$/gm);
+  const pid = pids.length === 1 && Number.isSafeInteger(Number(pids[0]![2])) ? Number(pids[0]![2]) : null;
+  const flags = atIndent(/^([ \t]*)disabled = (.*)$/gm);
+  if (flags.length > 1 || (flags.length === 1 && !/^[01]$/.test(flags[0]![2]!.trim()))) return null;
+  const disabled = flags.length === 1 && flags[0]![2]!.trim() === "1";
+  const exits = stdout.split("\n").filter(line => /^[ \t]*last exit code/.test(line) && (/^[ \t]*/.exec(line)?.[0].length ?? 0) === indent);
+  let lastExit: number | null = null;
+  if (exits.length === 1) {
+    const match = /^([ \t]*)last exit code = (0|[1-9]\d{0,2})[ \t]*$/.exec(exits[0]!);
+    if (match && Number(match[2]) <= 255) lastExit = Number(match[2]);
+  }
+  return { state: top[0]![2]!, pid, disabled, lastExit };
+}
+
+function launchdInactiveDetail(job: LaunchdJob): string {
+  if (!LAUNCHD_INACTIVE.has(job.state) || job.lastExit === null) return "loaded but not running";
+  return job.lastExit === 0 ? "stopped (last exit code 0)" : `failed (last exit code ${job.lastExit})`;
+}
+
+function classifyLaunchdPrint(label: string, printed: LaunchdPrint): SupervisorStatus {
+  const unknown: SupervisorStatus = {
+    kind: "launchd", state: "unknown", unit: label, enabled: false,
+    detail: "supervisor state could not be queried",
+  };
+  if (printed.transport) return unknown;
+  if (!printed.ok) {
+    if (printed.stdout.length === 0 && /could not find service/i.test(printed.stderr)) {
+      return { kind: "launchd", state: "absent", unit: label, enabled: false, detail: "absent" };
+    }
+    return unknown;
+  }
+  const job = parseLaunchdJob(printed.stdout);
+  if (job === null || !LAUNCHD_LOADED.has(job.state)) return unknown;
+  if (job.state === "running" && job.pid !== null && job.pid > 1 && !job.disabled) {
+    return { kind: "launchd", state: "active", unit: label, enabled: true, detail: "active" };
+  }
+  return { kind: "launchd", state: "disabled", unit: label, enabled: true, detail: launchdInactiveDetail(job) };
+}
+
+function queryLaunchdService(label: string): SupervisorStatus {
+  return classifyLaunchdPrint(label, printLaunchd(label, LAUNCHD_COMMAND_TIMEOUT_MS));
 }
 
 function waitForLaunchdState(label: string, state: "absent" | "active"): boolean {
   // Both bootstrap and bootout acknowledge a request before the corresponding
   // job transition has necessarily completed. Observe the requested state.
-  const deadline = performance.now() + 5_000;
+  const deadline = performance.now() + LAUNCHD_COMMAND_TIMEOUT_MS;
   const signal = new Int32Array(new SharedArrayBuffer(4));
   for (;;) {
     const remaining = deadline - performance.now();
-    if (remaining <= 0) return false;
-    const observed = queryLaunchdService(label, Math.ceil(remaining));
-    if (observed.state === state && observed.enabled === (state === "active")) return true;
-    if (observed.state === "unknown") return false;
+    if (remaining < 1) return false;
+    const printed = printLaunchd(label, Math.min(Math.floor(remaining), LAUNCHD_COMMAND_TIMEOUT_MS));
+    if (performance.now() >= deadline) return false;
+    if (!printed.transport) {
+      const observed = classifyLaunchdPrint(label, printed);
+      if (observed.state === state && observed.enabled === (state === "active")) return true;
+      if (observed.state === "unknown") return false;
+    }
     const delay = Math.min(50, deadline - performance.now());
     if (delay <= 0) return false;
     Atomics.wait(signal, 0, 0, delay);
@@ -118,8 +216,65 @@ export function realSupervisorHost(
   kind: SupervisorKind,
   home: string,
   execStart: string | readonly string[],
-  options: { configHome?: string } = {},
+  options: { configHome?: string; adapter?: SupervisorTimeoutAdapter } = {},
 ): SupervisorHost {
+  const adapter = options.adapter ?? wallAdapter;
+  const runSystemctl = (command: string, ...args: string[]): SupervisorCommandResult => {
+    const timeout = systemdCommandTimeoutMs(command);
+    const startedAt = adapter.now();
+    const result = adapter.run(["systemctl", "--user", command, ...args], timeout);
+    if (result.timedOut || adapter.now() - startedAt >= timeout) {
+      return { ...result, ok: false, timedOut: true };
+    }
+    return result;
+  };
+  const querySystemd = (vaultId: string): SupervisorStatus => {
+    const unit = systemdUnitName(vaultId);
+    const enabled = runSystemctl("is-enabled", unit);
+    const active = runSystemctl("is-active", unit);
+    let state: SupervisorState = "unknown";
+    // Timeout-bearing output cannot confirm stopped, absent, or active.
+    const timedOut = enabled.timedOut || active.timedOut;
+    // Enablement/masking is independent of runtime activity. Neither proves a stop.
+    const inactive = !timedOut && active.exitCode === 3 && (active.stdout === "inactive" || active.stdout === "failed");
+    const absent = !timedOut && enabled.exitCode !== null && enabled.exitCode > 0 && enabled.stdout === "not-found";
+    const transitional = !timedOut && (active.stdout === "activating" || active.stdout === "deactivating");
+    if (!timedOut && active.ok && active.stdout === "active") state = "active";
+    else if (inactive) {
+      if (enabled.exitCode !== null && enabled.exitCode > 0 && enabled.stdout === "masked") state = "masked";
+      else if ((enabled.ok && enabled.stdout === "enabled") ||
+        (enabled.exitCode !== null && enabled.exitCode > 0 && enabled.stdout === "disabled")) state = "disabled";
+      else if (absent) state = "absent";
+    // systemd 255 reports a missing unit as exit 4 with inactive, while
+    // older managers can report unknown. Enablement must independently
+    // confirm not-found; masked/disabled unknown states remain unverified.
+    } else if (absent && active.exitCode === 4 &&
+      (active.stdout === "unknown" || active.stdout === "inactive")) state = "absent";
+    return {
+      kind: "systemd",
+      state,
+      unit,
+      enabled: !enabled.timedOut && enabled.ok && enabled.stdout === "enabled",
+      detail: timedOut ? "supervisor state could not be queried" :
+        active.exitCode === 3 && active.stdout === "failed" ? "failed" :
+        state === "disabled" && enabled.ok && enabled.stdout === "enabled" ? "inactive (enabled)" :
+        transitional ? active.stdout :
+        state === "unknown" ? "supervisor state could not be queried" : state,
+    };
+  };
+  const concludeSystemd = (
+    unitName: string,
+    result: SupervisorCommandResult,
+    success: string,
+    timeoutDetail: string,
+    failureDetail: string,
+    confirmed: (status: SupervisorStatus) => boolean,
+  ) => {
+    const status = querySystemd(systemdUnitVaultId(unitName));
+    if (confirmed(status)) return { ok: true, detail: success };
+    if (result.timedOut || status.state === "unknown") return { ok: false, detail: timeoutDetail };
+    return { ok: false, detail: failureDetail };
+  };
   return {
     kind,
     home,
@@ -135,53 +290,30 @@ export function realSupervisorHost(
           detail: "supervisor: none (loop runs only while you run it)",
         };
       }
-      if (kind === "systemd") {
-        const unit = systemdUnitName(vaultId);
-        const enabled = runCommand(["systemctl", "--user", "is-enabled", unit]);
-        const active = runCommand(["systemctl", "--user", "is-active", unit]);
-        let state: SupervisorState = "unknown";
-        // Enablement/masking is independent of runtime activity. Neither proves a stop.
-        const inactive = active.exitCode === 3 && (active.stdout === "inactive" || active.stdout === "failed");
-        const absent = enabled.exitCode !== null && enabled.exitCode > 0 && enabled.stdout === "not-found";
-        if (active.ok && active.stdout === "active") state = "active";
-        else if (inactive) {
-          if (enabled.exitCode !== null && enabled.exitCode > 0 && enabled.stdout === "masked") state = "masked";
-          else if ((enabled.ok && enabled.stdout === "enabled") ||
-            (enabled.exitCode !== null && enabled.exitCode > 0 && enabled.stdout === "disabled")) state = "disabled";
-          else if (absent) state = "absent";
-        // systemd 255 reports a missing unit as exit 4 with inactive, while
-        // older managers can report unknown. Enablement must independently
-        // confirm not-found; masked/disabled unknown states remain unverified.
-        } else if (absent && active.exitCode === 4 &&
-          (active.stdout === "unknown" || active.stdout === "inactive")) state = "absent";
-        return {
-          kind,
-          state,
-          unit,
-          enabled: enabled.ok && enabled.stdout === "enabled",
-          detail: active.exitCode === 3 && active.stdout === "failed" ? "failed" :
-            state === "disabled" && enabled.ok && enabled.stdout === "enabled" ? "inactive (enabled)" :
-            state === "unknown" ? "supervisor state could not be queried" : state,
-        };
-      }
+      if (kind === "systemd") return querySystemd(vaultId);
       return queryLaunchdService(launchdLabel(vaultId));
     },
     reload() {
       if (kind !== "systemd") return { ok: true, detail: "no definition cache reload required" };
-      const result = runCommand(["systemctl", "--user", "daemon-reload"]);
+      const result = runSystemctl("daemon-reload");
       return { ok: result.ok, detail: result.ok ? "definitions reloaded" : "service reload failed" };
     },
     enable(unitPath: string, unitName: string) {
       if (kind === "systemd") {
-        const reload = runCommand(["systemctl", "--user", "daemon-reload"]);
+        const reload = runSystemctl("daemon-reload");
         if (!reload.ok) return { ok: false, detail: "service reload failed" };
-        const enabled = runCommand(["systemctl", "--user", "enable", unitName]);
+        const enabled = runSystemctl("enable", unitName);
         if (!enabled.ok) return { ok: false, detail: "service enable failed" };
-        const restarted = runCommand(["systemctl", "--user", "restart", unitName]);
-        return {
-          ok: restarted.ok,
-          detail: restarted.ok ? "activated current definition" : "service restart failed",
-        };
+        const stopped = runSystemctl("stop", unitName);
+        const afterStop = querySystemd(systemdUnitVaultId(unitName));
+        // Start only after an observed stopped or inactive-enabled unit.
+        if (!confirmedStopped(afterStop) && !confirmedInactiveEnabled(afterStop)) {
+          if (stopped.timedOut || afterStop.state === "unknown") return { ok: false, detail: "service stop timed out" };
+          return { ok: false, detail: "service replacement stop failed" };
+        }
+        const started = runSystemctl("start", unitName);
+        return concludeSystemd(unitName, started, "activated current definition",
+          "service start timed out", "service start failed", confirmedActive);
       }
       if (kind === "launchd") {
         const before = queryLaunchdService(unitName);
@@ -200,8 +332,10 @@ export function realSupervisorHost(
     },
     disable(unitName: string) {
       if (kind === "systemd") {
-        const result = runCommand(["systemctl", "--user", "disable", "--now", unitName]);
-        return { ok: result.ok, detail: result.ok ? "disabled" : "service disable failed" };
+        const result = runSystemctl("disable", "--now", unitName);
+        if (result.ok) return { ok: true, detail: "disabled" };
+        return concludeSystemd(unitName, result, "disabled",
+          "service disable timed out", "service disable failed", confirmedStopped);
       }
       if (kind === "launchd") {
         const stopped = stopLaunchdService(unitName);
@@ -212,11 +346,11 @@ export function realSupervisorHost(
     ...(kind === "systemd"
       ? {
           resetFailure(unitName: string) {
-            const result = runCommand(["systemctl", "--user", "reset-failed", unitName]);
+            const result = runSystemctl("reset-failed", unitName);
             return { ok: result.ok, detail: result.ok ? "failure cleared" : "service failure reset failed" };
           },
           enableWithoutStart(unitName: string) {
-            const result = runCommand(["systemctl", "--user", "enable", unitName]);
+            const result = runSystemctl("enable", unitName);
             return { ok: result.ok, detail: result.ok ? "enabled without start" : "service enable failed" };
           },
         }
@@ -271,6 +405,11 @@ function confirmedStopped(status: SupervisorStatus): boolean {
 /** Known systemd inactive runtime that remains enabled. Not a confirmed stop. */
 function confirmedInactiveEnabled(status: SupervisorStatus): boolean {
   return status.kind === "systemd" && status.state === "disabled" && status.enabled;
+}
+function observedStable(status: SupervisorStatus): boolean {
+  // Runtime activity is observable even when enablement is off. Recovery must
+  // still stop such a process before restoring the previous definition.
+  return status.state === "active" || confirmedStopped(status) || confirmedInactiveEnabled(status);
 }
 function hasEnablementOnly(host: SupervisorHost): host is SupervisorHost & { enableWithoutStart: NonNullable<SupervisorHost["enableWithoutStart"]> } {
   return typeof host.enableWithoutStart === "function";
@@ -341,7 +480,7 @@ function completeForwardRemoval(vaultPath: string, host: SupervisorHost, paths: 
   } catch { throw new Error("service uninstall is pending; retry with the same service home"); }
 }
 
-function recoverChange(vaultPath: string, host: SupervisorHost, paths: ReturnType<typeof servicePaths>): void {
+function recoverChange(vaultPath: string, host: SupervisorHost, paths: ReturnType<typeof servicePaths>, clearFailedSystemd = false): void {
   const raw = serviceFile(paths.journal);
   if (raw === null) return;
   let entry: RecoveredChange | ForwardRemoval;
@@ -352,8 +491,23 @@ function recoverChange(vaultPath: string, host: SupervisorHost, paths: ReturnTyp
     throw new Error("service recovery cannot restore enablement; previous configuration retained");
   }
   const current = host.query(paths.vaultId);
-  if (!confirmedStopped(current)) {
-    if (!host.disable(paths.unit).ok || !confirmedStopped(host.query(paths.vaultId))) throw new Error("service recovery could not confirm stop; previous configuration retained");
+  // systemd may be mid-transition; launchd's loaded inactive state remains
+  // safely unloadable through its existing bootout path below.
+  if (current.kind === "systemd" && !observedStable(current)) {
+    throw new Error("service recovery could not confirm stop; previous configuration retained");
+  }
+  let stopped = current;
+  if (!confirmedStopped(stopped)) {
+    if (!host.disable(paths.unit).ok) throw new Error("service recovery could not confirm stop; previous configuration retained");
+    stopped = host.query(paths.vaultId);
+  }
+  if (!confirmedStopped(stopped)) throw new Error("service recovery could not confirm stop; previous configuration retained");
+  // A failed systemd unit can remain at its start limit after disable. Clear
+  // that retained failure before trying to reactivate the restored definition.
+  if (clearFailedSystemd && host.kind === "systemd" && stopped.detail === "failed") {
+    if (!host.resetFailure?.(paths.unit).ok) throw new Error("service recovery could not clear failed state; previous configuration retained");
+    const cleared = host.query(paths.vaultId);
+    if (!confirmedStopped(cleared) || cleared.detail === "failed") throw new Error("service recovery could not clear failed state; previous configuration retained");
   }
   replaceServiceFile(paths.path, entry.previous_unit);
   if (!host.reload().ok) throw new Error("previous service definition reload remains unverified");
@@ -373,12 +527,12 @@ function recoverChange(vaultPath: string, host: SupervisorHost, paths: ReturnTyp
 }
 
 function changeService<T>(vaultPath: string, host: SupervisorHost, operation: (paths: ReturnType<typeof servicePaths>) => T,
-  forwardRemoval?: (paths: ReturnType<typeof servicePaths>, entry: ForwardRemoval) => T): T {
+  forwardRemoval?: (paths: ReturnType<typeof servicePaths>, entry: ForwardRemoval) => T, clearFailedSystemd = false): T {
   const paths = servicePaths(vaultPath, host);
   const lock = tryAdvisoryFileLock(join(vaultPath, ".kizuki", "service-change.lock"));
   if (lock === null) throw new Error("another service change is in progress");
   try {
-    recoverChange(vaultPath, host, paths);
+    recoverChange(vaultPath, host, paths, clearFailedSystemd);
     const previous = host.query(paths.vaultId);
     if (forwardRemoval && host.kind === "launchd" && confirmedFailedLaunchd(previous)) {
       const previous_unit = serviceFile(paths.path);
@@ -406,7 +560,7 @@ function changeService<T>(vaultPath: string, host: SupervisorHost, operation: (p
       replaceServiceFile(paths.journal, null);
       return result;
     } catch {
-      try { recoverChange(vaultPath, host, paths); }
+      try { recoverChange(vaultPath, host, paths, clearFailedSystemd); }
       catch { throw new Error("service change failed; recovery is pending; retry with the same service home"); }
       throw new Error("service change failed; previous configuration restored");
     }
@@ -431,7 +585,7 @@ export function installServeService(
     if (!confirmedActive(status)) throw new Error("service activation was not confirmed");
     writeServeIntent(vaultPath, "installed");
     return { status, unitPath: paths.path, wrote: true };
-  });
+  }, undefined, true);
 }
 
 export function uninstallServeService(

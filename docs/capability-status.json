@@ -112,6 +112,30 @@
       "status": "direction",
       "doc": "docs/product-context.md",
       "heading": "Autonomy modes"
+    },
+    {
+      "id": "product.agent-harness",
+      "status": "direction",
+      "doc": "docs/product-context.md",
+      "heading": "Agent and harness experience"
+    },
+    {
+      "id": "product.deployment-direction",
+      "status": "direction",
+      "doc": "docs/product-context.md",
+      "heading": "Deployment direction"
+    },
+    {
+      "id": "product.explicit-non-decisions",
+      "status": "direction",
+      "doc": "docs/product-context.md",
+      "heading": "Explicit non-decisions"
+    },
+    {
+      "id": "product.settled-decisions",
+      "status": "designed",
+      "doc": "docs/product-context.md",
+      "heading": "Settled design decisions"
     }
   ]
 }

@@ -41,9 +41,10 @@ function pocketColumns(
 
 /** The same check from one line, for a health probe that reads no further. */
 export function pocketHeaderLine(line: string, where: string): string[] {
+  const source = line.startsWith("\uFEFF") ? line.slice(1) : line;
   let header: string[];
   try {
-    header = parseCsv(line, where)[0] ?? [];
+    header = parseCsv(source, where)[0] ?? [];
   } catch (error) {
     throw notPocketExport(where, error);
   }
@@ -57,8 +58,10 @@ export function parsePocketCsv(
 ): PocketRow[] {
   // The header comes out of the reader, not out of a separate split: the
   // reader skips a blank line before it, and a header taken from the raw
-  // first line would call such an export "not a Pocket CSV export".
-  const rows = parseCsvRows(text, where, opts);
+  // first line would call such an export "not a Pocket CSV export". A BOM
+  // left on the first cell would hide `title` without hiding `url`.
+  const source = text.startsWith("\uFEFF") ? text.slice(1) : text;
+  const rows = parseCsvRows(source, where, opts);
   const columns = pocketColumns(rows[0]?.cells ?? [], where);
   const cellOf = (cells: string[], name: string): string => {
     const at = columns.indexOf(name);

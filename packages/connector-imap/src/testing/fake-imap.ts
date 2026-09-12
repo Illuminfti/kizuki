@@ -56,6 +56,7 @@ export class FakeImapServer {
   private pendingOversizedLiteral = false;
   private pendingBye = false;
   private readonly withheld = new Set<string>();
+  private readonly nilBodies = new Set<string>();
 
   constructor(folders: FakeFolder[], options: FakeImapOptions = {}) {
     this.folders = folders;
@@ -130,6 +131,12 @@ export class FakeImapServer {
   /** Hands the body back, the way a server does once the fault clears. */
   restoreBody(wire: string, uid: number): void {
     this.withheld.delete(`${wire}\u0001${uid}`);
+    this.nilBodies.delete(`${wire}\u0001${uid}`);
+  }
+
+  /** Answers a body fetch with `BODY[] NIL`, another form of a vanished body. */
+  nilBody(wire: string, uid: number): void {
+    this.nilBodies.add(`${wire}\u0001${uid}`);
   }
 
   /** Re-numbers a mailbox the way a restored server does. */
@@ -318,6 +325,15 @@ export class FakeImapServer {
         items.includes("BODY.PEEK[HEADER]") || items.includes("BODY.PEEK[]");
       if (bodyWanted && this.withheld.has(`${folder.wire}\u0001${message.uid}`)) {
         lines.push(ascii(`* ${sequence} FETCH (UID ${message.uid})\r\n`));
+        return;
+      }
+      if (bodyWanted && this.nilBodies.has(`${folder.wire}\u0001${message.uid}`)) {
+        const section = items.includes("BODY.PEEK[HEADER]") ? "HEADER" : "";
+        lines.push(
+          ascii(
+            `* ${sequence} FETCH (UID ${message.uid} BODY[${section}] NIL)\r\n`,
+          ),
+        );
         return;
       }
       if (items.includes("BODYSTRUCTURE")) {

@@ -33,7 +33,7 @@ async function fixture() {
   const page = (id: string) => writeFileSync(join(setup.vault, `facts/${id}.md`), serializePage({
     data: { id, title: id, type: "fact", status: "active", sensitivity: "personal", taint: "quoted", sources: [`event:${erased.event_id}`, kept.event_id] },
     body: `${body}\nCurrent Atlas notes.\n`,
-  }));
+  }), { mode: 0o600 });
   page("atlas");
   const port = createVaultFts5Port(setup.vault, () => AT);
   await port.upsert([{

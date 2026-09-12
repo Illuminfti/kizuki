@@ -586,6 +586,7 @@ export type {
 } from "./derived-meta";
 
 export { canonicalSerialize, computeContentHash } from "./util/hash";
+export { compareRfc3339 } from "./agents/time";
 export { isRfc3339 } from "./util/time";
 export { isUlid, ulid } from "./util/ulid";
 export { isNonEmptyString, isPlainObject } from "./util/validate";
@@ -1042,6 +1043,8 @@ export type { OwnedSourceRetrievalInventory, OwnedSourceRetrievalStore, SourceSt
 
 export { openOwnedDirectory } from "./util/owned-directory";
 export type { OwnedDirectory, OwnedDirectoryIdentity } from "./util/owned-directory";
+export { openSourceChild, SourceReadError } from "./util/source-read";
+export type { SourceReadFailure } from "./util/source-read";
 export { inspectOwnerPageCorrectionTargets, inspectOwnerCorrectionPageCount } from "./serving/owner-correction-targets";
 
 export { AppModelSettingsError, readAppModelConfiguration, saveAppModelConfiguration, readAppManagedModelCredential, classifyAppModelCredential, readAppModelFileCredential } from "./serve/model-settings";

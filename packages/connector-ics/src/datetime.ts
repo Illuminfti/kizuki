@@ -214,3 +214,69 @@ export function toUtc(
   }
   return converted(new Date(guess).toISOString(), "unresolved");
 }
+
+/** Civil components of an instant without converting it into another zone. */
+export function instantLocal(instant: IcsInstant): LocalDateTime {
+  if (instant.kind === "date") return parseLocal(instant.date);
+  if (instant.kind === "utc") return msToLocal(Date.parse(instant.iso));
+  return parseLocal(instant.local);
+}
+
+/**
+ * UTC → civil time in `tzid`. Offset is read at the UTC instant, which is the
+ * inverse of the two-pass local→UTC conversion and is well-defined on both
+ * sides of a DST fold.
+ */
+export function utcMsToLocal(
+  utcMs: number,
+  tzid: string,
+  zones: ZoneResolver,
+  file: Map<string, ZoneInfo>,
+): LocalDateTime {
+  const offset =
+    zones.offsetMinutes(tzid, utcMs) ?? vtimezoneFixedOffset(file.get(tzid));
+  return msToLocal(utcMs + (offset ?? 0) * 60_000);
+}
+
+/**
+ * RFC 5545 lets EXDATE, RDATE and RECURRENCE-ID be UTC even when DTSTART is
+ * zoned. Expansion and occurrence ids are civil time in the series zone, so
+ * those UTC values have to be read in that zone rather than as UTC digits.
+ */
+export function civilLocal(
+  instant: IcsInstant,
+  series: IcsInstant,
+  zones: ZoneResolver,
+  file: Map<string, ZoneInfo>,
+): LocalDateTime {
+  if (
+    series.kind === "date" ||
+    instant.kind === "date" ||
+    instant.kind === "floating" ||
+    series.kind === "floating"
+  ) {
+    return instantLocal(instant);
+  }
+  if (instant.kind === "utc" && series.kind === "utc") {
+    return instantLocal(instant);
+  }
+  if (
+    instant.kind === "zoned" &&
+    series.kind === "zoned" &&
+    instant.tzid === series.tzid
+  ) {
+    return instantLocal(instant);
+  }
+  const utcMs = Date.parse(toUtc(instant, zones, file).iso);
+  return series.kind === "zoned"
+    ? utcMsToLocal(utcMs, series.tzid, zones, file)
+    : msToLocal(utcMs);
+}
+
+/** Compact local start used in `source_record_id`. Dates stay date-only. */
+export function occurrenceStamp(
+  series: IcsInstant,
+  local: LocalDateTime,
+): string {
+  return series.kind === "date" ? formatLocalDate(local) : formatLocal(local);
+}

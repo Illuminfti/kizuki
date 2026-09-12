@@ -62,6 +62,15 @@ export interface ManifestCapabilities {
    * than carried in the metadata that asks for it, and its absence denies.
    */
   page_candidates?: boolean;
+  /**
+   * Additive first-sync cursor compatibility. Default false. Not an authority
+   * grant. Backfill and sync tokens stay independently persisted; Core does
+   * not parse them. When true, a sync whose own cursor is still null may be
+   * handed the stored backfill token if this connection has no successful
+   * mode=sync status=ok run yet. Opt in only when backfill and sync share
+   * one opaque cursor schema.
+   */
+  sync_from_backfill_before_first_success?: boolean;
 }
 
 export interface Manifest {
@@ -108,6 +117,14 @@ export function freezeManifest(manifest: Manifest): Manifest {
   const required_secrets = [...manifest.required_secrets];
   const auth_modes = [...manifest.auth_modes];
   const capabilities = { ...manifest.capabilities };
+  if (
+    capabilities.sync_from_backfill_before_first_success !== undefined &&
+    typeof capabilities.sync_from_backfill_before_first_success !== "boolean"
+  ) {
+    throw new TypeError(
+      "manifest.capabilities.sync_from_backfill_before_first_success must be a boolean when present",
+    );
+  }
   const allowed_egress =
     manifest.allowed_egress === undefined
       ? undefined

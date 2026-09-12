@@ -1,8 +1,11 @@
+import { LEDGER_SCHEMA_VERSION } from "../packages/core/src/ledger/db";
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cleanupOwnedNativeFixtures, runNativeExtensionCommand, managerPid, nativeServiceStopped, nativeWaitTimeout, observeInstalledNativeHealth, waitForNativeState } from "./native-service-lifecycle";
+import { cleanupOwnedNativeFixtures, nativeLifecycleCommandTimeout, runNativeExtensionCommand, managerPid, nativeServiceStopped, nativeWaitTimeout, observeInstalledNativeHealth, waitForNativeState } from "./native-service-lifecycle";
+import { SUPERVISOR_COMMAND_TIMEOUT_MS, SYSTEMD_RESTART_TIMEOUT_MS, SYSTEMD_START_TIMEOUT_MS, SYSTEMD_STOP_TIMEOUT_MS } from "../packages/core/src/serve/supervisor";
+import { SERVICE_BROKER_REAP_SECONDS, SERVICE_READY_SECONDS, SERVICE_START_SECONDS } from "../packages/core/src/serve/units";
 import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS } from "../packages/core/src/serve/types";
 import { RAIL_IDS, emptyRunTotals } from "../packages/core/src/serve/types";
 import { installedRailsHealth, readNativeRailDiagnostics, recordInstalledHealth, waitForFreshRails } from "./native-service-health";
@@ -309,11 +312,11 @@ test("native state evidence refuses misleading healthy, enabled and failed obser
 });
 
 test("cross-binary fixture evidence refuses same bytes, same instance and damaged original data", () => {
-  const e: NativeUpgradeEvidence = { baseline_source_sha: BASELINE_SOURCE_SHA, candidate_source_sha: "b".repeat(40), baseline_binary_sha256: "a".repeat(64), candidate_binary_sha256: "b".repeat(64), baseline_schema: 21, candidate_schema: 21,
+  const e: NativeUpgradeEvidence = { baseline_source_sha: BASELINE_SOURCE_SHA, candidate_source_sha: "b".repeat(40), baseline_binary_sha256: "a".repeat(64), candidate_binary_sha256: "b".repeat(64), baseline_schema: 21, candidate_schema: LEDGER_SCHEMA_VERSION,
     baseline_instance_id: "old", candidate_instance_id: "new", baseline_pid: 40, candidate_pid: 41, unit: "kizuki@synthetic.service", vault_id: "synthetic", before_event_sha256: "e".repeat(64), after_event_sha256: "e".repeat(64),
     baseline_stopped: true, candidate_active: true, baseline_query_preserved: true, candidate_query_preserved: true, backup_verified: true, backup_manifest_sha256: "c".repeat(64), unit_sha256: "d".repeat(64) };
   expect(upgradePhasePassed(e)).toBe(true);
-  for (const change of [{ candidate_binary_sha256: e.baseline_binary_sha256 }, { candidate_instance_id: e.baseline_instance_id }, { after_event_sha256: "f".repeat(64) }, { baseline_stopped: false }, { candidate_active: false }, { backup_verified: false }, { baseline_schema: 15 }])
+  for (const change of [{ candidate_binary_sha256: e.baseline_binary_sha256 }, { candidate_instance_id: e.baseline_instance_id }, { after_event_sha256: "f".repeat(64) }, { baseline_stopped: false }, { candidate_active: false }, { backup_verified: false }, { baseline_schema: 15 }, { candidate_schema: LEDGER_SCHEMA_VERSION - 1 }, { candidate_schema: LEDGER_SCHEMA_VERSION + 1 }])
     expect(upgradePhasePassed({ ...e, ...change })).toBe(false);
 });
 
@@ -332,4 +335,23 @@ test("actual extension signal failure remains observable and never becomes expec
   const failure: any[] = [];
   expect(() => runNativeExtensionCommand([process.execPath, "-e", 'process.kill(process.pid,"SIGTERM")'], import.meta.dir, { PATH: "/usr/bin:/bin" }, 0, value => failure.push(value))).toThrow("extension command failed");
   expect(failure).toHaveLength(1); expect(failure[0].signal).toBe("SIGTERM");
+});
+
+test("native lifecycle command deadlines cover systemd protocol bounds without a blanket increase", () => {
+  expect(SERVICE_START_SECONDS).toBe(SERVICE_READY_SECONDS + SERVICE_BROKER_REAP_SECONDS + 1);
+  const install = nativeLifecycleCommandTimeout(["serve", "--install", "--json", "--vault", "/synthetic"]);
+  const reinstall = nativeLifecycleCommandTimeout(["kizuki", "serve", "--install", "--json"]);
+  const uninstall = nativeLifecycleCommandTimeout(["serve", "--uninstall", "--json", "--vault", "/synthetic"]);
+  const init = nativeLifecycleCommandTimeout(["init", "/synthetic", "--no-default"]);
+  const skipped = nativeLifecycleCommandTimeout(["init", "/synthetic", "--no-service", "--no-default"]);
+  const query = nativeLifecycleCommandTimeout(["query", "Ada", "--degraded", "--vault", "/synthetic"]);
+  expect(install).toBe(SYSTEMD_RESTART_TIMEOUT_MS + SUPERVISOR_COMMAND_TIMEOUT_MS * 2);
+  expect(reinstall).toBe(install);
+  expect(init).toBe(install);
+  expect(install).toBeGreaterThanOrEqual(SYSTEMD_STOP_TIMEOUT_MS + SYSTEMD_START_TIMEOUT_MS);
+  expect(uninstall).toBe(SYSTEMD_STOP_TIMEOUT_MS + SUPERVISOR_COMMAND_TIMEOUT_MS * 2);
+  expect(uninstall).toBeGreaterThan(SYSTEMD_STOP_TIMEOUT_MS);
+  expect(skipped).toBe(30_000);
+  expect(query).toBe(30_000);
+  expect(install).toBeLessThan(200_000);
 });

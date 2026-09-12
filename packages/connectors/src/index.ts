@@ -70,9 +70,10 @@ export type {
 export {
   MARKDOWN_FOLDER_CONNECTOR_ID,
   MarkdownFolderConnector,
+  MAX_FILES,
   createMarkdownFolderConnector,
 } from "./markdown-folder";
-export type { MarkdownFolderConfig } from "./markdown-folder";
+export type { MarkdownFolderConfig, MarkdownFolderDeps, MarkdownFileIdentity } from "./markdown-folder";
 export {
   CHATGPT_IMPORT_CONNECTOR_ID,
   ChatGptImportConnector,

@@ -1,8 +1,19 @@
-import { constants } from "node:fs";
+import { closeSync, constants, fstatSync } from "node:fs";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { freezeManifest, isPlainObject, policyForConnector } from "@kizuki/core";
+import { gunzipSync, gzipSync } from "node:zlib";
+import {
+  EVENT_LIMITS,
+  MAX_CURSOR_BYTES,
+  MAX_SYNC_BATCH_BYTES,
+  MAX_SYNC_BATCH_EVENTS,
+  freezeManifest,
+  isPlainObject,
+  openSourceChild,
+  policyForConnector,
+  SourceReadError,
+} from "@kizuki/core";
 import type {
   CaptureEventInput,
   SubjectRef,
@@ -21,7 +32,7 @@ import {
   summarizeImportErrors,
 } from "../import-report";
 import type { ImportRecordError } from "../import-report";
-import { readBoundedBytes, readReason } from "../read";
+import { readBoundedFd, readReason } from "../read";
 import {
   compareStrings,
   errorMessage,
@@ -36,9 +47,17 @@ export const DEFAULT_PAGE_SIZE = 128;
 export const MAX_PAGE_SIZE = 10_000;
 export const MAX_DEPTH = 16;
 export const MAX_FILES = 50_000;
-export const MAX_FILE_BYTES = 4 * 1024 * 1024;
+export const MAX_FILE_BYTES = EVENT_LIMITS.textBytes;
 export const MAX_SCAN_ENTRIES = 100_000;
+/** `["",{"sha256":"<64 hex>","size":<max>}],` without the path. */
+const PACK_IDENTITY_JSON_OVERHEAD_BYTES = 98;
+/** NAME_MAX-class path budget per identity at MAX_FILES. */
+const PACK_PATH_BUDGET_BYTES = 256;
+/** gunzip ceiling for `pack`; scan MAX_FILES is unchanged. */
+export const MAX_PACK_DECODED_BYTES =
+  MAX_FILES * (PACK_PATH_BUDGET_BYTES + PACK_IDENTITY_JSON_OVERHEAD_BYTES);
 const STABLE_READ_ATTEMPTS = 3;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 const SKIP_DIRECTORIES = new Set([
   ".git",
@@ -58,6 +77,24 @@ export interface MarkdownFolderConfig {
   exclude?: string[];
 }
 
+export interface MarkdownFileIdentity {
+  sha256: string;
+  size: number;
+}
+
+type FileIdentity = MarkdownFileIdentity;
+
+/** Factory-only. Never serialized into connection config or protected state. */
+export interface MarkdownFolderDeps {
+  /**
+   * Latest live `[relativePath, {sha256,size}]` identities for this source.
+   * Called on every non-null capture page; null input must not consult it.
+   */
+  committedFiles?: () =>
+    | ReadonlyArray<readonly [string, MarkdownFileIdentity]>
+    | Promise<ReadonlyArray<readonly [string, MarkdownFileIdentity]>>;
+}
+
 interface MarkdownFile {
   content: string;
   sha256: string;
@@ -70,11 +107,6 @@ interface RootIdentity {
   realpath: string;
   dev: number;
   ino: number;
-}
-
-interface FileIdentity {
-  sha256: string;
-  size: number;
 }
 
 export interface MarkdownCursor {
@@ -98,7 +130,7 @@ const MANIFEST: Manifest = freezeManifest({
   schema: "kizuki.connector/v1",
   connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
   version: "0.2.0",
-  contract_minor: 1,
+  contract_minor: 2,
   implementation: "@kizuki/connectors",
   allowed_egress: [],
   cursor_schema: MARKDOWN_CURSOR_SCHEMA,
@@ -109,6 +141,7 @@ const MANIFEST: Manifest = freezeManifest({
     tombstones: true,
     purge: false,
     fixture: true,
+    sync_from_backfill_before_first_success: true,
   },
   required_secrets: [],
   emits_sensitivity_hint: false,
@@ -120,12 +153,14 @@ export class MarkdownFolderConnector implements Connector {
   readonly path: string;
   readonly pageSize: number;
   readonly exclude: readonly string[];
+  private readonly committedFiles: MarkdownFolderDeps["committedFiles"];
 
-  constructor(config: MarkdownFolderConfig) {
+  constructor(config: MarkdownFolderConfig, deps: MarkdownFolderDeps = {}) {
     this.path = requirePathConfig(config, MARKDOWN_FOLDER_CONNECTOR_ID);
     requireKnownKeys(config, MARKDOWN_FOLDER_CONNECTOR_ID, CONFIG_KEYS);
     this.pageSize = parsePageSize(config.page_size);
     this.exclude = parseExclude(config.exclude);
+    this.committedFiles = deps.committedFiles;
   }
 
   manifest(): Manifest {
@@ -174,13 +209,17 @@ export class MarkdownFolderConnector implements Connector {
 
   private async sweep(cursor: Cursor | null): Promise<SyncBatch> {
     const root = await rootIdentity(this.path);
-    const previous = cursor === null ? undefined : parseCursor(cursor, root, this);
+    const previous =
+      cursor === null ? undefined : parseCursor(cursor, root, this, this.committedFiles !== undefined);
+    const previousFiles = await this.snapshotIdentities(previous);
     const scan = await scanMarkdownFiles(root, this.exclude);
     const observedAt = new Date().toISOString();
     const current = new Map(
       scan.files.map((file) => [file.relpath, file] as const),
     );
-    const previousFiles = new Map(previous?.files ?? []);
+    const scanErrors = [...scan.errors];
+    const hostBacked = this.committedFiles !== undefined;
+    const emitPageSize = Math.min(this.pageSize, MAX_SYNC_BATCH_EVENTS);
 
     const fileEvents: CaptureEventInput[] = [];
     for (const file of scan.files) {
@@ -192,7 +231,16 @@ export class MarkdownFolderConnector implements Connector {
       ) {
         continue;
       }
-      fileEvents.push(fileEvent(file, observedAt));
+      const event = fileEvent(file, observedAt);
+      if (utf8Bytes(JSON.stringify(event)) + 2 > MAX_SYNC_BATCH_BYTES) {
+        scanErrors.push({
+          location: file.relpath,
+          code: "too_large",
+          reason: "encoded event exceeds the sync batch bound",
+        });
+        continue;
+      }
+      fileEvents.push(event);
     }
     fileEvents.sort((left, right) =>
       compareStrings(left.source_record_id, right.source_record_id),
@@ -200,7 +248,7 @@ export class MarkdownFolderConnector implements Connector {
 
     const tombstones: CaptureEventInput[] = [];
     if (previous !== undefined && !scan.truncated) {
-      const failed = scan.errors.map((error) => error.location);
+      const failed = scanErrors.map((error) => error.location);
       for (const relpath of [...previousFiles.keys()].sort(compareStrings)) {
         if (current.has(relpath) || hiddenByScanError(relpath, failed)) continue;
         tombstones.push(tombstone(relpath, observedAt));
@@ -210,8 +258,12 @@ export class MarkdownFolderConnector implements Connector {
     // Each sweep diffs against the durable identities updated by prior pages.
     // The remaining diff can change between scans, including below `after`.
     // Keep phase/after as compatible cursor hints, never as exclusion bounds.
-    const filePage = fileEvents.slice(0, this.pageSize);
-    const filesDone = filePage.length >= fileEvents.length;
+    const { page: filePage, rest: fileRest } = takePage(
+      fileEvents,
+      emitPageSize,
+    );
+    const filesDone = fileRest.length === 0;
+    const pendingRefusal = scanErrors.length > 0 || scan.truncated;
 
     const processed = new Map(previousFiles);
     for (const event of filePage) {
@@ -224,62 +276,94 @@ export class MarkdownFolderConnector implements Connector {
       }
     }
 
-    const nextCursor = (
+    const mint = (
       exhausted: boolean,
       phase: "files" | "tombstones",
       after: string | null,
-    ): Cursor =>
-      encodeCursor({
-        schema: MARKDOWN_CURSOR_SCHEMA,
-        connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
-        root,
-        options: { page_size: this.pageSize, exclude: [...this.exclude] },
-        exhausted,
-        phase,
-        after,
-        files: sortedPairs(processed),
-      });
+    ): Cursor | undefined => {
+      const encoded = hostBacked
+        ? encodeCompactCursor({
+            schema: MARKDOWN_CURSOR_SCHEMA,
+            connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
+            root,
+            options: { page_size: this.pageSize, exclude: [...this.exclude] },
+            exhausted,
+            phase,
+            after,
+          })
+        : encodeCursor({
+            schema: MARKDOWN_CURSOR_SCHEMA,
+            connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
+            root,
+            options: { page_size: this.pageSize, exclude: [...this.exclude] },
+            exhausted,
+            phase,
+            after,
+            files: sortedPairs(processed),
+          });
+      return utf8Bytes(encoded) > MAX_CURSOR_BYTES ? undefined : encoded;
+    };
+
+    const overflow = (): SyncBatch => ({
+      events: [],
+      cursor,
+      status: "unavailable",
+      detail: `partial_import: ${summarizeImportErrors([
+        ...scanErrors,
+        {
+          location: ".",
+          code: "cursor_limit",
+          reason: "snapshot exceeds the resume cursor bound",
+        },
+      ])}${scan.truncated ? "; scan truncated" : ""}`,
+    });
 
     if (!filesDone) {
       const last = filePage[filePage.length - 1];
-      return {
-        events: filePage,
-        cursor: nextCursor(false, "files", last?.source_record_id ?? null),
-      };
+      const next = mint(false, "files", last?.source_record_id ?? null);
+      if (next === undefined) return overflow();
+      return { events: filePage, cursor: next, has_more: true };
     }
 
     if (filePage.length > 0) {
       const noTombstones = tombstones.length === 0;
+      const next = mint(
+        noTombstones && !scan.truncated,
+        noTombstones ? "files" : "tombstones",
+        null,
+      );
+      if (next === undefined) return overflow();
       return {
         events: filePage,
-        cursor: nextCursor(
-          noTombstones && !scan.truncated,
-          noTombstones ? "files" : "tombstones",
-          null,
-        ),
+        cursor: next,
+        has_more: !noTombstones || pendingRefusal,
       };
     }
 
     if (tombstones.length === 0) {
       // Valid pages have already checkpointed. Keep unreadable identities in
       // that checkpoint and report the incomplete sweep without advancing it.
-      if (scan.errors.length > 0 || scan.truncated) {
+      if (pendingRefusal) {
         return {
-          events: [], cursor, status: "unavailable",
-          detail: `partial_import: ${summarizeImportErrors(scan.errors)}${scan.truncated ? "; scan truncated" : ""}`,
+          events: [],
+          cursor,
+          status: "unavailable",
+          detail: `partial_import: ${summarizeImportErrors(scanErrors)}${scan.truncated ? "; scan truncated" : ""}`,
         };
       }
-      return {
-        events: [],
-        cursor: nextCursor(!scan.truncated, "files", null),
-      };
+      const next = mint(!scan.truncated, "files", null);
+      if (next === undefined) return overflow();
+      return { events: [], cursor: next, has_more: false };
     }
 
-    const tombstonePage = tombstones.slice(0, this.pageSize);
+    const { page: tombstonePage, rest: tombstoneRest } = takePage(
+      tombstones,
+      emitPageSize,
+    );
     for (const event of tombstonePage) {
       processed.delete(event.source_record_id);
     }
-    const tombstonesDone = tombstonePage.length >= tombstones.length;
+    const tombstonesDone = tombstoneRest.length === 0;
     const exhausted = tombstonesDone && !scan.truncated;
     if (exhausted) {
       for (const file of scan.files) {
@@ -287,21 +371,33 @@ export class MarkdownFolderConnector implements Connector {
       }
     }
     const lastTombstone = tombstonePage[tombstonePage.length - 1];
+    const next = mint(
+      exhausted,
+      exhausted ? "files" : "tombstones",
+      exhausted ? null : (lastTombstone?.source_record_id ?? null),
+    );
+    if (next === undefined) return overflow();
     return {
       events: tombstonePage,
-      cursor: nextCursor(
-        exhausted,
-        exhausted ? "files" : "tombstones",
-        exhausted ? null : (lastTombstone?.source_record_id ?? null),
-      ),
+      cursor: next,
+      has_more: !exhausted || pendingRefusal,
     };
+  }
+
+  private async snapshotIdentities(
+    previous: MarkdownCursor | undefined,
+  ): Promise<Map<string, FileIdentity>> {
+    if (previous === undefined) return new Map();
+    if (this.committedFiles === undefined) return new Map(previous.files);
+    return new Map(parseCommittedIdentities(await this.committedFiles()));
   }
 }
 
 export function createMarkdownFolderConnector(
   config: MarkdownFolderConfig,
+  deps: MarkdownFolderDeps = {},
 ): MarkdownFolderConnector {
-  return new MarkdownFolderConnector(config);
+  return new MarkdownFolderConnector(config, deps);
 }
 
 function parsePageSize(value: unknown): number {
@@ -381,6 +477,103 @@ async function assertOutsideVault(directory: string): Promise<void> {
   throw new KizukiError("misconfigured", "source_path_depth: source ancestry exceeds the verification bound");
 }
 
+function underPinnedRoot(root: string, resolved: string): boolean {
+  const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  return resolved === root || resolved.startsWith(prefix);
+}
+
+function isErrno(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === code
+  );
+}
+
+function replacedDirectoryError(): Error {
+  return Object.assign(
+    new Error("the listed directory was replaced while it was read"),
+    { code: "ELOOP" },
+  );
+}
+
+async function classifyReplacedDirectory(directory: string): Promise<void> {
+  let resolved: string;
+  try {
+    resolved = await realpath(directory);
+  } catch {
+    return;
+  }
+  await assertOutsideVault(resolved);
+}
+
+/** The listed parent inode is the authority for all children opened through it. */
+async function openPinnedDirectory(
+  parent: RootIdentity,
+): Promise<FileHandle> {
+  const directory = await open(
+    parent.realpath,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  );
+  try {
+    const info = await directory.stat();
+    if (
+      !info.isDirectory() ||
+      info.dev !== parent.dev ||
+      info.ino !== parent.ino
+    ) {
+      throw replacedDirectoryError();
+    }
+    return directory;
+  } catch (error) {
+    await directory.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+// Between lstat and readdir a child can be replaced with a symlink. Keep the
+// listing only when this path still resolves under the pinned source; a
+// vault-child target refuses the batch so earlier files are not published.
+async function pinnedDescent(
+  root: string,
+  directory: string,
+): Promise<
+  | { kind: "directory"; realpath: string; dev: number; ino: number }
+  | { kind: "symlink" }
+  | { kind: "unreadable"; reason: string }
+> {
+  let info;
+  try {
+    info = await lstat(directory);
+  } catch (error) {
+    return { kind: "unreadable", reason: readReason(error) };
+  }
+  if (info.isSymbolicLink()) {
+    let resolved: string;
+    try {
+      resolved = await realpath(directory);
+    } catch {
+      return { kind: "symlink" };
+    }
+    await assertOutsideVault(resolved);
+    return { kind: "symlink" };
+  }
+  if (!info.isDirectory()) {
+    return { kind: "unreadable", reason: "path is not a directory" };
+  }
+  let resolved: string;
+  try {
+    resolved = await realpath(directory);
+  } catch (error) {
+    return { kind: "unreadable", reason: readReason(error) };
+  }
+  if (!underPinnedRoot(root, resolved)) {
+    await assertOutsideVault(resolved);
+    return { kind: "symlink" };
+  }
+  return { kind: "directory", realpath: resolved, dev: info.dev, ino: info.ino };
+}
+
 async function scanMarkdownFiles(
   root: RootIdentity,
   exclude: readonly string[],
@@ -411,64 +604,99 @@ async function scanMarkdownFiles(
       });
       return;
     }
-    // Refuse the complete batch before reading entries in a discovered vault.
-    // Returning a partial scan would publish earlier files or infer deletions.
+    // The listing may already have followed a replacement symlink. A nested
+    // vault marker on that listing must abort before any of these names are
+    // published, including when the path is later skipped as a symlink.
     if (entries.some(entry => entry.name === ".kizuki")) refuseVaultSource();
-    entries.sort((left, right) => compareStrings(left.name, right.name));
-    for (const entry of entries) {
-      if (truncated) return;
-      considered += 1;
-      if (considered > MAX_SCAN_ENTRIES) {
-        truncated = true;
-        errors.push({
-          location: relpathOf(root.realpath, directory) || ".",
-          code: "scan_limit",
-          reason: "scan exceeded the entry bound",
-        });
-        return;
+    const descent = await pinnedDescent(root.realpath, directory);
+    if (descent.kind !== "directory") {
+      errors.push({
+        location: relpathOf(root.realpath, directory) || ".",
+        code: descent.kind === "symlink" ? "symlink" : "unreadable",
+        reason: descent.kind === "symlink" ? "symlink skipped" : descent.reason,
+      });
+      return;
+    }
+    if (depth === 0 && (descent.dev !== root.dev || descent.ino !== root.ino)) {
+      await classifyReplacedDirectory(descent.realpath);
+      errors.push({
+        location: ".",
+        code: "unreadable",
+        reason: "root was replaced while it was read",
+      });
+      return;
+    }
+    let parent: FileHandle;
+    try {
+      parent = await openPinnedDirectory(descent);
+    } catch (error) {
+      await classifyReplacedDirectory(descent.realpath);
+      errors.push({
+        location: relpathOf(root.realpath, directory) || ".",
+        code: "unreadable",
+        reason: readReason(error),
+      });
+      return;
+    }
+    try {
+      entries.sort((left, right) => compareStrings(left.name, right.name));
+      for (const entry of entries) {
+        if (truncated) return;
+        considered += 1;
+        if (considered > MAX_SCAN_ENTRIES) {
+          truncated = true;
+          errors.push({
+            location: relpathOf(root.realpath, descent.realpath) || ".",
+            code: "scan_limit",
+            reason: "scan exceeded the entry bound",
+          });
+          return;
+        }
+        if (shouldSkipName(entry.name, exclude)) continue;
+        const absolute = path.join(descent.realpath, entry.name);
+        let info;
+        try {
+          info = await lstat(absolute);
+        } catch (error) {
+          errors.push({
+            location: relpathOf(root.realpath, absolute),
+            code: "unreadable",
+            reason: readReason(error),
+          });
+          continue;
+        }
+        if (info.isSymbolicLink()) {
+          errors.push({
+            location: relpathOf(root.realpath, absolute),
+            code: "symlink",
+            reason: "symlink skipped",
+          });
+          continue;
+        }
+        if (info.isDirectory()) {
+          await walk(absolute, depth + 1);
+          continue;
+        }
+        if (!info.isFile() || !isMarkdownName(entry.name)) continue;
+        const relpath = relpathOf(root.realpath, absolute);
+        if (files.length >= MAX_FILES) {
+          truncated = true;
+          errors.push({
+            location: relpath,
+            code: "file_limit",
+            reason: "scan exceeded the file bound",
+          });
+          return;
+        }
+        const read = await readStableMarkdown(parent.fd, entry.name, relpath);
+        if ("error" in read) {
+          errors.push(read.error);
+          continue;
+        }
+        files.push(read.file);
       }
-      if (shouldSkipName(entry.name, exclude)) continue;
-      const absolute = path.join(directory, entry.name);
-      let info;
-      try {
-        info = await lstat(absolute);
-      } catch (error) {
-        errors.push({
-          location: relpathOf(root.realpath, absolute),
-          code: "unreadable",
-          reason: readReason(error),
-        });
-        continue;
-      }
-      if (info.isSymbolicLink()) {
-        errors.push({
-          location: relpathOf(root.realpath, absolute),
-          code: "symlink",
-          reason: "symlink skipped",
-        });
-        continue;
-      }
-      if (info.isDirectory()) {
-        await walk(absolute, depth + 1);
-        continue;
-      }
-      if (!info.isFile() || !isMarkdownName(entry.name)) continue;
-      if (files.length >= MAX_FILES) {
-        truncated = true;
-        errors.push({
-          location: relpathOf(root.realpath, absolute),
-          code: "file_limit",
-          reason: "scan exceeded the file bound",
-        });
-        return;
-      }
-      const relpath = relpathOf(root.realpath, absolute);
-      const read = await readStableMarkdown(absolute, relpath);
-      if ("error" in read) {
-        errors.push(read.error);
-        continue;
-      }
-      files.push(read.file);
+    } finally {
+      await parent.close().catch(() => undefined);
     }
   };
 
@@ -479,17 +707,15 @@ async function scanMarkdownFiles(
 }
 
 async function readStableMarkdown(
-  absolute: string,
+  parentFd: number,
+  name: string,
   relpath: string,
 ): Promise<{ file: MarkdownFile } | { error: ImportRecordError }> {
   for (let attempt = 0; attempt < STABLE_READ_ATTEMPTS; attempt += 1) {
-    let handle: FileHandle | undefined;
+    let fd: number | undefined;
     try {
-      handle = await open(
-        absolute,
-        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-      );
-      const before = await handle.stat();
+      fd = openSourceChild(parentFd, name);
+      const before = fstatSync(fd);
       if (!before.isFile()) {
         return {
           error: {
@@ -508,14 +734,14 @@ async function readStableMarkdown(
           },
         };
       }
-      const bytes = await readBoundedBytes(
-        handle,
+      const bytes = readBoundedFd(
+        fd,
         MAX_FILE_BYTES,
         MARKDOWN_FOLDER_CONNECTOR_ID,
         "file",
         before.size,
       );
-      const after = await handle.stat();
+      const after = fstatSync(fd);
       if (
         after.size !== before.size ||
         after.mtimeMs !== before.mtimeMs ||
@@ -546,15 +772,29 @@ async function readStableMarkdown(
         },
       };
     } catch (error) {
+      if (error instanceof KizukiError) throw error;
+      if (
+        (error instanceof SourceReadError && error.reason === "symlink") ||
+        isErrno(error, "ELOOP") ||
+        isErrno(error, "ENOTDIR")
+      ) {
+        return {
+          error: {
+            location: relpath,
+            code: "symlink",
+            reason: "symlink skipped",
+          },
+        };
+      }
       return {
         error: {
           location: relpath,
           code: "unreadable",
-          reason: readReason(error),
+          reason: error instanceof SourceReadError ? error.reason : readReason(error),
         },
       };
     } finally {
-      if (handle !== undefined) await handle.close().catch(() => undefined);
+      if (fd !== undefined) try { closeSync(fd); } catch { /* The descriptor is already gone. */ }
     }
   }
   return {
@@ -594,8 +834,12 @@ function hiddenByScanError(
 
 /** Source-record identity, bounded without lossy path normalization or mtime dependence. */
 function documentSubject(relpath: string): SubjectRef {
-  const digest=new Bun.CryptoHasher("sha256").update(relpath).digest("hex");
-  return {subject_id:`markdown-folder:${digest}`,role:"about",display_name:path.basename(relpath)};
+  const digest = new Bun.CryptoHasher("sha256").update(relpath).digest("hex");
+  return {
+    subject_id: `markdown-folder:${digest}`,
+    role: "about",
+    display_name: path.basename(relpath),
+  };
 }
 
 function fileEvent(file: MarkdownFile, observedAt: string): CaptureEventInput {
@@ -655,13 +899,38 @@ function fixtureEvent(relpath: string, text: string): CaptureEventInput {
 }
 
 function encodeCursor(cursor: MarkdownCursor): Cursor {
-  return JSON.stringify(cursor);
+  const plain = JSON.stringify(cursor);
+  // Core refuses resume tokens over MAX_CURSOR_BYTES; pack the identity map.
+  if (utf8Bytes(plain) <= MAX_CURSOR_BYTES) return plain;
+  const { files, ...header } = cursor;
+  const identityJson = Buffer.from(JSON.stringify(files));
+  if (identityJson.byteLength > MAX_PACK_DECODED_BYTES) return plain;
+  return JSON.stringify({
+    ...header,
+    pack: Buffer.from(gzipSync(identityJson)).toString("base64"),
+  });
+}
+
+function encodeCompactCursor(
+  header: Omit<MarkdownCursor, "files">,
+): Cursor {
+  return JSON.stringify({
+    schema: header.schema,
+    connector_id: header.connector_id,
+    root: header.root,
+    options: header.options,
+    exhausted: header.exhausted,
+    phase: header.phase,
+    after: header.after,
+    committed_identities: true,
+  });
 }
 
 function parseCursor(
   cursor: Cursor,
   root: RootIdentity,
   connector: MarkdownFolderConnector,
+  committedReader: boolean,
 ): MarkdownCursor {
   let parsed: unknown;
   try {
@@ -686,9 +955,42 @@ function parseCursor(
     typeof parsed["root"]["ino"] !== "number" ||
     !isPlainObject(parsed["options"]) ||
     typeof parsed["options"]["page_size"] !== "number" ||
-    !Array.isArray(parsed["options"]["exclude"]) ||
-    !Array.isArray(parsed["files"])
+    !Array.isArray(parsed["options"]["exclude"])
   ) {
+    throw new KizukiError(
+      "parse_error",
+      `${MARKDOWN_FOLDER_CONNECTOR_ID}: invalid cursor snapshot`,
+    );
+  }
+  const packed = parsed["pack"];
+  const hasPack = typeof packed === "string";
+  const hasFiles = Array.isArray(parsed["files"]);
+  const committed = parsed["committed_identities"] === true;
+  if (Object.hasOwn(parsed, "committed_identities") && !committed) {
+    throw new KizukiError(
+      "parse_error",
+      `${MARKDOWN_FOLDER_CONNECTOR_ID}: invalid cursor snapshot`,
+    );
+  }
+  if (committed) {
+    if (
+      hasPack ||
+      hasFiles ||
+      Object.hasOwn(parsed, "files") ||
+      Object.hasOwn(parsed, "pack")
+    ) {
+      throw new KizukiError(
+        "parse_error",
+        `${MARKDOWN_FOLDER_CONNECTOR_ID}: invalid cursor snapshot`,
+      );
+    }
+    if (!committedReader) {
+      throw new KizukiError(
+        "parse_error",
+        `${MARKDOWN_FOLDER_CONNECTOR_ID}: committed identities required`,
+      );
+    }
+  } else if (hasPack === hasFiles) {
     throw new KizukiError(
       "parse_error",
       `${MARKDOWN_FOLDER_CONNECTOR_ID}: invalid cursor snapshot`,
@@ -714,26 +1016,11 @@ function parseCursor(
       `${MARKDOWN_FOLDER_CONNECTOR_ID}: cursor does not match this configuration`,
     );
   }
-  const files: Array<[string, FileIdentity]> = [];
-  for (const entry of parsed["files"]) {
-    if (
-      !Array.isArray(entry) ||
-      entry.length !== 2 ||
-      typeof entry[0] !== "string" ||
-      !isPlainObject(entry[1]) ||
-      typeof entry[1]["sha256"] !== "string" ||
-      typeof entry[1]["size"] !== "number"
-    ) {
-      throw new KizukiError(
-        "parse_error",
-        `${MARKDOWN_FOLDER_CONNECTOR_ID}: invalid cursor file identity`,
-      );
-    }
-    files.push([
-      entry[0],
-      { sha256: entry[1]["sha256"], size: entry[1]["size"] },
-    ]);
-  }
+  const files = committed
+    ? []
+    : typeof packed === "string"
+      ? parsePackedFiles(packed)
+      : parseFilePairs(parsed["files"]);
   return {
     schema: MARKDOWN_CURSOR_SCHEMA,
     connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
@@ -759,4 +1046,105 @@ function sortedPairs(
   return [...files.entries()].sort(([left], [right]) =>
     compareStrings(left, right),
   );
+}
+
+function utf8Bytes(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
+}
+
+function takePage(
+  events: CaptureEventInput[],
+  pageSize: number,
+): { page: CaptureEventInput[]; rest: CaptureEventInput[] } {
+  const page: CaptureEventInput[] = [];
+  let encoded = 2;
+  let index = 0;
+  while (index < events.length && page.length < pageSize) {
+    const event = events[index]!;
+    const extra = utf8Bytes(JSON.stringify(event)) + (page.length === 0 ? 0 : 1);
+    if (page.length > 0 && encoded + extra > MAX_SYNC_BATCH_BYTES) break;
+    page.push(event);
+    encoded += extra;
+    index += 1;
+  }
+  return { page, rest: events.slice(index) };
+}
+
+function parseCommittedIdentities(
+  value: unknown,
+): Array<[string, FileIdentity]> {
+  try {
+    return parseFilePairs(value);
+  } catch (error) {
+    if (error instanceof KizukiError) {
+      throw new KizukiError(
+        "parse_error",
+        `${MARKDOWN_FOLDER_CONNECTOR_ID}: invalid committed identities`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
+function parsePackedFiles(pack: string): Array<[string, FileIdentity]> {
+  let unpacked: unknown;
+  try {
+    unpacked = JSON.parse(
+      Buffer.from(
+        gunzipSync(Buffer.from(pack, "base64"), {
+          maxOutputLength: MAX_PACK_DECODED_BYTES,
+        }),
+      ).toString("utf8"),
+    ) as unknown;
+  } catch (error) {
+    throw new KizukiError(
+      "parse_error",
+      `${MARKDOWN_FOLDER_CONNECTOR_ID}: malformed cursor pack`,
+      { cause: error },
+    );
+  }
+  return parseFilePairs(unpacked);
+}
+
+function parseFilePairs(value: unknown): Array<[string, FileIdentity]> {
+  if (!Array.isArray(value) || value.length > MAX_FILES) {
+    throw new KizukiError(
+      "parse_error",
+      `${MARKDOWN_FOLDER_CONNECTOR_ID}: invalid cursor file identity`,
+    );
+  }
+  const files: Array<[string, FileIdentity]> = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (!Array.isArray(entry) || entry.length !== 2 || !isPlainObject(entry[1])) {
+      throw new KizukiError(
+        "parse_error",
+        `${MARKDOWN_FOLDER_CONNECTOR_ID}: invalid cursor file identity`,
+      );
+    }
+    const relpath = entry[0];
+    const sha256 = entry[1]["sha256"];
+    const size = entry[1]["size"];
+    if (
+      typeof relpath !== "string" ||
+      relpath.length === 0 ||
+      utf8Bytes(relpath) > EVENT_LIMITS.sourceRecordIdBytes ||
+      seen.has(relpath) ||
+      typeof sha256 !== "string" ||
+      !SHA256_HEX.test(sha256) ||
+      typeof size !== "number" ||
+      !Number.isInteger(size) ||
+      size < 0 ||
+      size > MAX_FILE_BYTES
+    ) {
+      throw new KizukiError(
+        "parse_error",
+        `${MARKDOWN_FOLDER_CONNECTOR_ID}: invalid cursor file identity`,
+      );
+    }
+    seen.add(relpath);
+    files.push([relpath, { sha256, size }]);
+  }
+  return files;
 }

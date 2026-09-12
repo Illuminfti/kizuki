@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { setSourceGrant, registerConnection, runBackfill, runToCompletion } from "@kizuki/core";
+import { setSourceGrant, getCheckpoint, registerConnection, runBackfill, runSync, runToCompletion } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
-import { parseCursor } from "../src/cursor";
+import { BATCH_LIMIT, parseCursor } from "../src/cursor";
 import { fixtureAccount } from "../src/fixture";
 import type { TelegramMessage } from "../src/api";
 import { TELEGRAM_CONNECTOR_ID } from "../src/map";
@@ -28,6 +28,14 @@ function ledger() {
 
 function counts(calls: { method: string }[], method: string): number {
   return calls.filter((call) => call.method === method).length;
+}
+
+function historyMinIds(calls: { method: string; args?: unknown[] }[]): number[] {
+  return calls
+    .filter((call) => call.method === "messages")
+    .map((call) => call.args?.[1] as { min_id: number; max_id?: number })
+    .filter((query) => query.max_id === undefined)
+    .map((query) => query.min_id);
 }
 
 test("the runner drains a backfill and stores every non-service message", async () => {
@@ -99,9 +107,31 @@ test("a run the provider cuts short reports what it stored and where it is", asy
     "sync",
   );
   expect(cut.errors).toEqual(["kizuki.telegram: telegram is unreachable"]);
-  // The durable checkpoint is untouched, so the next run resumes rather than
-  // starting the account again.
+  // Failed first sync keeps the bootstrap token so retry resumes that snapshot.
+  // It does not commit a new sync position from the failed walk.
   expect(cut.cursor).toBe(first.cursor);
+  expect(getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.backfill_cursor).toBe(
+    first.cursor,
+  );
+  expect(getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.sync_cursor).toBe(
+    first.cursor,
+  );
+
+  built.api.reconnectNetwork();
+  built.clock.now += 3_600_000;
+  built.api.calls.length = 0;
+  const retry = await runToCompletion(
+    db,
+    built.connector,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+    "sync",
+  );
+  expect(retry.errors).toEqual([]);
+  expect(retry.stored).toBe(0);
+  expect(counts(built.api.calls, "dialogs")).toBe(1);
+  expect(counts(built.api.calls, "messages")).toBe(6);
+  db.close();
 });
 
 test("a record with an impossible date does not stall the backfill", async () => {
@@ -248,6 +278,251 @@ test("a wait during a resumed edit scan reads as a wait, not a stuck connector",
     "kizuki.telegram: telegram asked us to wait 900s",
   ]);
   expect((await built.connector.health()).state).toBe("rate_limited");
+  db.close();
+}, 15_000);
+
+test("restart and a later provider error keep the committed sync cursor", async () => {
+  const built = await connected({ now: FEBRUARY });
+  const db = ledger();
+  expect(
+    (
+      await runToCompletion(
+        db,
+        built.connector,
+        TELEGRAM_CONNECTOR_ID,
+        SOURCE,
+        "backfill",
+      )
+    ).errors,
+  ).toEqual([]);
+
+  built.clock.now += 3_600_000;
+  const synced = await runToCompletion(
+    db,
+    built.connector,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+    "sync",
+  );
+  expect(synced.errors).toEqual([]);
+  expect(synced.stored).toBe(0);
+  const committed = getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.sync_cursor;
+  if (typeof committed !== "string") throw new Error("expected a committed sync cursor");
+  expect(getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.backfill_cursor).not.toBeNull();
+
+  const restarted = await built.restart();
+  built.clock.now += 3_600_000;
+  built.api.calls.length = 0;
+  const afterRestart = await runToCompletion(
+    db,
+    restarted,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+    "sync",
+  );
+  expect(afterRestart.errors).toEqual([]);
+  expect(afterRestart.stored).toBe(0);
+  expect(afterRestart.cursor).toBe(committed);
+  expect(counts(built.api.calls, "dialogs")).toBe(1);
+  expect(counts(built.api.calls, "messages")).toBe(6);
+
+  built.api.disconnectNetwork();
+  const failed = await runToCompletion(
+    db,
+    restarted,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+    "sync",
+  );
+  expect(failed.errors).toEqual(["kizuki.telegram: telegram is unreachable"]);
+  expect(failed.cursor).toBe(committed);
+  expect(getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.sync_cursor).toBe(
+    committed,
+  );
+
+  built.api.reconnectNetwork();
+  built.clock.now += 3_600_000;
+  built.api.calls.length = 0;
+  const resumed = await runToCompletion(
+    db,
+    restarted,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+    "sync",
+  );
+  expect(resumed.errors).toEqual([]);
+  expect(resumed.stored).toBe(0);
+  expect(resumed.cursor).toBe(committed);
+  expect(counts(built.api.calls, "dialogs")).toBe(1);
+  expect(counts(built.api.calls, "messages")).toBe(6);
+  db.close();
+});
+
+test("the manifest opts into first-sync bootstrap from the committed backfill token", async () => {
+  const built = await connected({ now: FEBRUARY });
+  expect(
+    built.connector.manifest().capabilities.sync_from_backfill_before_first_success,
+  ).toBe(true);
+});
+
+test("restart before the first successful sync resumes the committed backfill token", async () => {
+  const built = await connected({ now: FEBRUARY });
+  const db = ledger();
+  const backfilled = await runToCompletion(
+    db,
+    built.connector,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+    "backfill",
+  );
+  expect(backfilled.errors).toEqual([]);
+  expect(getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.sync_cursor).toBeNull();
+  const backfillCursor = getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.backfill_cursor;
+  if (typeof backfillCursor !== "string") throw new Error("expected a committed backfill cursor");
+  expect(parseCursor(backfillCursor).phase).toBe("synced");
+
+  const restarted = await built.restart();
+  built.clock.now += 3_600_000;
+  built.api.calls.length = 0;
+  const synced = await runToCompletion(
+    db,
+    restarted,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+    "sync",
+  );
+  expect(synced.errors).toEqual([]);
+  expect(synced.stored).toBe(0);
+  expect(synced.duplicates).toBe(0);
+  expect(counts(built.api.calls, "dialogs")).toBe(1);
+  expect(counts(built.api.calls, "messages")).toBe(6);
+  expect(historyMinIds(built.api.calls).every((id) => id > 0)).toBe(true);
+  expect(getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.backfill_cursor).toBe(
+    backfillCursor,
+  );
+  expect(getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.sync_cursor).not.toBeNull();
+  db.close();
+});
+
+test("a first-sync walk that fails to persist retries the committed backfill token", async () => {
+  const built = await connected({ now: FEBRUARY });
+  const db = ledger();
+  expect(
+    (
+      await runToCompletion(
+        db,
+        built.connector,
+        TELEGRAM_CONNECTOR_ID,
+        SOURCE,
+        "backfill",
+      )
+    ).errors,
+  ).toEqual([]);
+  const backfillCursor = getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.backfill_cursor;
+  if (typeof backfillCursor !== "string") throw new Error("expected a committed backfill cursor");
+
+  built.api.append("1002", {
+    peer_id: "1002",
+    id: 6,
+    date: Math.floor(FEBRUARY / 1000) + 3_600,
+    text: "one more thing",
+    out: false,
+    service: false,
+  });
+  db.exec(`
+    CREATE TRIGGER fail_events_insert BEFORE INSERT ON events
+    BEGIN
+      SELECT RAISE(ABORT, 'SQLITE_IOERR disk I/O error');
+    END;
+  `);
+
+  built.clock.now += 3_600_000;
+  const failed = await runSync(
+    db,
+    built.connector,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+  );
+  expect(failed.stored).toBe(0);
+  expect(failed.errors.some((error) => error.includes("SQLITE_IOERR"))).toBe(true);
+  expect(getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.backfill_cursor).toBe(
+    backfillCursor,
+  );
+  // Failed persist keeps the bootstrap token, not the unpersisted walk.
+  expect(getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.sync_cursor).toBe(
+    backfillCursor,
+  );
+
+  db.exec("DROP TRIGGER fail_events_insert");
+  built.clock.now += 3_600_000;
+  built.api.calls.length = 0;
+  const retry = await runToCompletion(
+    db,
+    built.connector,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+    "sync",
+  );
+  expect(retry.errors).toEqual([]);
+  expect(retry.stored).toBe(1);
+  expect(retry.duplicates).toBe(0);
+  expect(historyMinIds(built.api.calls).every((id) => id > 0)).toBe(true);
+  expect(getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.backfill_cursor).toBe(
+    backfillCursor,
+  );
+  expect(getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.sync_cursor).not.toBe(
+    backfillCursor,
+  );
+  db.close();
+});
+
+test("first sync after a partial backfill continues from last_id across restart", async () => {
+  const account = fixtureAccount();
+  account.dialogs = [
+    {
+      peer_id: "1",
+      peer_type: "user",
+      title: "grace",
+      top_message_id: 1000,
+    },
+  ];
+  account.messages = { "1": notes("1", 1, 1000) };
+  const built = await connected({ account, now: FEBRUARY });
+  const db = ledger();
+  const first = await runBackfill(
+    db,
+    built.connector,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+  );
+  expect(first.stored).toBe(BATCH_LIMIT);
+  expect(parseCursor(first.cursor as string).phase).toBe("backfill");
+  expect(parseCursor(first.cursor as string).dialogs["1"]?.last_id).toBe(
+    BATCH_LIMIT,
+  );
+  expect(getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.sync_cursor).toBeNull();
+
+  const restarted = await built.restart();
+  built.clock.now += 3_600_000;
+  built.api.calls.length = 0;
+  const synced = await runToCompletion(
+    db,
+    restarted,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+    "sync",
+  );
+  expect(synced.errors).toEqual([]);
+  expect(synced.stored).toBe(1000 - BATCH_LIMIT);
+  expect(synced.duplicates).toBe(0);
+  expect(historyMinIds(built.api.calls)).not.toContain(0);
+  expect(historyMinIds(built.api.calls)[0]).toBe(BATCH_LIMIT);
+  expect(getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.backfill_cursor).toBe(
+    first.cursor,
+  );
+  const syncCursor = getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.sync_cursor;
+  if (typeof syncCursor !== "string") throw new Error("expected a committed sync cursor");
+  expect(parseCursor(syncCursor).dialogs["1"]?.last_id).toBe(1000);
   db.close();
 }, 15_000);
 

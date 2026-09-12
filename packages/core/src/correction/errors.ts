@@ -7,6 +7,7 @@ export const CORRECT_ERROR_CODES = [
   "ledger_rejected",
   "tool_not_granted",
   "below_authority",
+  "budget_exhausted",
 ] as const;
 export type CorrectErrorCode = (typeof CORRECT_ERROR_CODES)[number];
 

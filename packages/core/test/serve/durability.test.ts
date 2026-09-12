@@ -94,16 +94,16 @@ test("an unused interrupted reservation is released, a file effect remains charg
   const f = fixture();
   const { createDurableWriteBudget, settleWriteReservations } = await import("../../src/serve/budget-ledger");
   const day = new Date().toISOString().slice(0, 10);
-  const tracker = () => createDurableWriteBudget(f.db, f.path, day, { canon_writes_per_day: 1, canon_writes_per_run: 1 });
-  tracker().chargeWrite({ receipt_id: "synthetic-before", page_path: "people/grace.md", before_hash: null });
+  const tracker = () => createDurableWriteBudget(f.db, day, { canon_writes_per_day: 1, canon_writes_per_run: 1 });
+  tracker().chargeWrite({ receipt_id: "synthetic-before", page_path: "people/grace.md", before_hash: null, at: `${day}T00:00:00.000Z` });
   settleWriteReservations(f.db, f.path);
   expect(tracker().usage().canon_writes_per_day.used).toBe(0);
-  tracker().chargeWrite({ receipt_id: "synthetic-after", page_path: "people/grace.md", before_hash: null });
+  tracker().chargeWrite({ receipt_id: "synthetic-after", page_path: "people/grace.md", before_hash: null, at: `${day}T00:00:00.000Z` });
   mkdirSync(join(f.path, "people"), { recursive: true });
   writeFileSync(join(f.path, "people/grace.md"), "synthetic interrupted bytes");
   settleWriteReservations(f.db, f.path);
   expect(tracker().usage().canon_writes_per_day.used).toBe(1);
-  expect(() => tracker().chargeWrite({ receipt_id: "synthetic-denied", page_path: "people/ada.md", before_hash: null })).toThrow("exhausted");
+  expect(() => tracker().chargeWrite({ receipt_id: "synthetic-denied", page_path: "people/ada.md", before_hash: null, at: `${day}T00:00:00.000Z` })).toThrow("exhausted");
   f.db.close();
 });
 

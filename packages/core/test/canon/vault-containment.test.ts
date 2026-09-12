@@ -1,6 +1,6 @@
 import { snapshotCanonIo, withCanonMutationSync } from "../../src/canon/io";
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { applyCanonWrite, publishOrdinaryCanonIntent } from "../../src/canon/apply";
 import type { CanonWriteIntent } from "../../src/canon/write-intent";
@@ -25,8 +25,12 @@ const page = { data: {
 test("selected-root capability keeps revision and deletion archives in that root", () => {
   const { vault } = fixture();
   const nested = join(vault, "projects");
-  mkdirSync(join(nested, ".kizuki"), { recursive: true });
-  mkdirSync(join(nested, "archive"));
+  mkdirSync(nested, { recursive: true, mode: 0o700 });
+  chmodSync(nested, 0o700);
+  mkdirSync(join(nested, ".kizuki"), { recursive: true, mode: 0o700 });
+  chmodSync(join(nested, ".kizuki"), 0o700);
+  mkdirSync(join(nested, "archive"), { mode: 0o700 });
+  chmodSync(join(nested, "archive"), 0o700);
   const file = join(nested, "person.md");
   const created = writePage(grantCanonWrite("loop", "create", vault), file, page);
   const prior = readFileSync(file, "utf8");

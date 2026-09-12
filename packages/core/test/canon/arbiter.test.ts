@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chooseCandidate, pageRelPath, resolveTarget } from "../../src/canon/arbiter";
 import { targetProblem, targetRefusal } from "../../src/contracts/page-candidate";
@@ -336,9 +336,11 @@ describe("resolveTarget", () => {
   test("a page without any receipt counts as owner-authored", async () => {
     const { db, io, vault } = fixture();
     const eventId = putEvent(db);
-    mkdirSync(join(vault, "people"));
+    mkdirSync(join(vault, "people"), { mode: 0o700 });
+    chmodSync(join(vault, "people"), 0o700);
+    const ownerPage = join(vault, "people", "grace.md");
     writeFileSync(
-      join(vault, "people", "grace.md"),
+      ownerPage,
       serializePage({
         data: {
           id: "hand:grace",
@@ -351,7 +353,9 @@ describe("resolveTarget", () => {
         },
         body: "Hand-written page.\n",
       }),
+      { mode: 0o600 },
     );
+    chmodSync(ownerPage, 0o600);
     rebuildPageIndex(io);
     const claim = await storeClaim(db, eventId);
     expect(resolveTarget(io, claim)).toEqual({ action: "skip", reason: "owner_edited_body" });

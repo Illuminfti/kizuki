@@ -1,4 +1,4 @@
-import { constants } from "node:fs";
+import { constants, readSync } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { KizukiError } from "./errors";
@@ -99,6 +99,34 @@ export async function readBoundedBytes(
     const read = await fill(handle, bytes, total, capacity);
     if (read === total) break;
     total = read;
+  }
+  if (total > maxBytes) throw overLimit(label, connectorId, maxBytes);
+  return bytes.subarray(0, total);
+}
+
+/** Bounded read of an already-open descriptor. Used when the child never had a pathname. */
+export function readBoundedFd(
+  fd: number,
+  maxBytes: number,
+  connectorId: string,
+  label: string,
+  expected = 0,
+): Buffer {
+  const limit = maxBytes + 1;
+  let capacity = Math.min(Math.max(expected, 0) + 1, limit);
+  let bytes = Buffer.alloc(capacity);
+  let total = 0;
+  for (;;) {
+    if (total === capacity) {
+      if (capacity === limit) break;
+      capacity = Math.min(capacity * 2, limit);
+      const grown = Buffer.alloc(capacity);
+      bytes.copy(grown);
+      bytes = grown;
+    }
+    const bytesRead = readSync(fd, bytes, total, capacity - total, total);
+    if (bytesRead === 0) break;
+    total += bytesRead;
   }
   if (total > maxBytes) throw overLimit(label, connectorId, maxBytes);
   return bytes.subarray(0, total);

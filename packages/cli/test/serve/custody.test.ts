@@ -35,5 +35,8 @@ describe("installed service custody boundary", () => {
     }
     const help = runCli(setup.env, "help", "serve");
     expect(help.stdout).not.toContain("custody");
+    const json = runCli(setup.env, "help", "serve", "--json");
+    expect(json.exitCode).toBe(0);
+    expect(json.stdout).not.toContain("custody");
   });
 });

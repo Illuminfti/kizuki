@@ -10,7 +10,7 @@ import {
   readVaultId,
 } from "@kizuki/core";
 import type { ConnectionStateReader, RetrievalPort } from "@kizuki/core";
-import { assertBoundVaultId, inspectLedgerIdentity, LedgerIdentityError, ledgerNotReadyError, openLedgerRead, openReadyLedgerRead, openLedger, ledgerAccepted, readLedgerMark, sealLedger, initSearch } from "@kizuki/core/internal";
+import { assertBoundVaultId, inspectLedgerIdentity, LedgerIdentityError, LEDGER_SCHEMA_VERSION, ledgerNotReadyError, openLedgerRead, openReadyLedgerRead, openLedger, ledgerAccepted, readLedgerMark, sealLedger, initSearch } from "@kizuki/core/internal";
 import { inspectConfiguredRetrieval, openConfiguredRetrieval } from "./retrieval-runtime";
 import type { CliIo } from "./commands/index";
 import {
@@ -67,7 +67,7 @@ function peekLedgerIdentity(vaultPath: string, dbPath: string): void {
 
 /** Existing positive floors gate explicit writers before they repair or migrate.
  * Missing/legacy unsealed ledgers retain the explicit init migration path. */
-export function assertSealedLedgerReady(vaultPath: string): void {
+export function assertSealedLedgerReady(vaultPath: string, options: { allowMigration?: boolean } = {}): void {
   try { lstatSync(join(vaultPath, ".kizuki", "ledger-mark")); }
   catch (error) {
     // Explicit init may repair an interrupted, unsealed bootstrap. A present
@@ -77,6 +77,14 @@ export function assertSealedLedgerReady(vaultPath: string): void {
   }
   const floor = readLedgerMark(vaultPath);
   if (floor === null || floor === 0) return;
+  // A sealed historical ledger is safe to migrate only after its identity has
+  // been read without mutation. The current-schema readiness reader correctly
+  // refuses old versions, but init is the explicit migration writer.
+  const identity = inspectLedgerIdentity(vaultPath);
+  if (options.allowMigration === true && identity.schemaVersion < LEDGER_SCHEMA_VERSION) {
+    if (identity.accepted < floor) throw ledgerNotReadyError(vaultPath, identity.accepted, floor);
+    return;
+  }
   const binding = openReadyLedgerRead(vaultPath);
   binding.close();
 }

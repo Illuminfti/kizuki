@@ -324,11 +324,17 @@ filename taken from inside an export.
 
 ### 0.7 Subjects and sensitivity
 
-Subjects are people or the chat. Ids have exactly one segment after the
-namespace so `handleOf` yields a readable handle:
+Subjects are people or the chat. Ordinary sender and chat ids have exactly one
+segment after the namespace so `handleOf` yields a readable handle. The reserved
+owner id is an exception, and so is the participant namespace that keeps other
+`self` slugs from minting it:
 
-- WhatsApp: sender `whatsapp:<subjectSlug(name)>` (`whatsapp:self` when the
-  name equals `config.self`), chat `whatsapp:chat:<subjectSlug(chat)>`.
+- WhatsApp: sender `whatsapp:<subjectSlug(name)>`, except `whatsapp:self` only
+  when the name equals `config.self`, and
+  `whatsapp:participant:<sha256(subjectName(name)).slice(0,16)>` when the
+  ordinary slug would be `self` and the name is not `config.self`. Without
+  `config.self`, nobody is `whatsapp:self`. Chat remains
+  `whatsapp:chat:<subjectSlug(chat)>`.
 - Pocket: `pocket:self`; Omnivore: `omnivore:self` — the owner saved the
   item; authors, labels and domains are metadata, not subjects (§ Already
   on main: every subject becomes a person candidate).
@@ -361,7 +367,7 @@ packages/connectors/src/
   index.ts                    # + re-exports (§5)
 packages/connectors/README.md # NEW (§6)
 packages/connectors/test/
-  whatsapp.test.ts whatsapp-dates.test.ts pocket.test.ts csv.test.ts omnivore.test.ts
+  whatsapp.test.ts whatsapp-dates.test.ts whatsapp-reserved-owner.test.ts pocket.test.ts csv.test.ts omnivore.test.ts
   importers-tombstones.test.ts conformance.test.ts (extend) registry.test.ts (extend)
 ```
 
@@ -585,7 +591,7 @@ of what the message is).
 | `occurred_at`      | `localToUtc(local_timestamp, timezone)`                                                                                                                                                                                                                         |
 | `observed_at`      | `opts.observed_at` (one per batch)                                                                                                                                                                                                                              |
 | `text`             | the message text (§2.3), verbatim                                                                                                                                                                                                                               |
-| `subjects`         | `[{ subject_id: senderId, role: "from", display_name: sender }, { subject_id: "whatsapp:chat:" + subjectSlug(chat), role: "about", display_name: chat }]`; `senderId` = `"whatsapp:self"` when `sender === opts.self`, else `"whatsapp:" + subjectSlug(sender)` |
+| `subjects`         | `[{ subject_id: senderId, role: "from", display_name: sender }, { subject_id: "whatsapp:chat:" + subjectSlug(chat), role: "about", display_name: chat }]`; `senderId` = `"whatsapp:self"` when `sender === opts.self`; else `"whatsapp:participant:" + sha256(subjectName(sender)).slice(0,16)` when `subjectSlug(sender) === "self"`; else `"whatsapp:" + subjectSlug(sender)`. Absent `opts.self`, nobody is `whatsapp:self`. |
 | `sensitivity_hint` | `"private"`                                                                                                                                                                                                                                                     |
 | `deleted`          | `false`, always                                                                                                                                                                                                                                                 |
 | `attachments`      | `[ref]` per §2.6 or `[]`                                                                                                                                                                                                                                        |
@@ -964,6 +970,12 @@ removed in `finally`; fixtures synthetic — ada, grace, linus, acme):
     text from the input (assert against a distinctive token planted in
     the fixture).
   - Unknown config key → `misconfigured` at construction.
+- `whatsapp-reserved-owner.test.ts`
+  - owner Ada plus non-owner `self` and `Self!`: only Ada is `whatsapp:self`;
+    the other two are distinct `whatsapp:participant:<digest>` ids; Grace
+    stays `whatsapp:grace`; record ids are unchanged; no configured owner
+    means nobody is `whatsapp:self`; Core purge of `whatsapp:self` leaves
+    the non-owners.
 - `whatsapp-dates.test.ts`
   - `detectDateOrder`: `a > 12` ⇒ dmy; `b > 12` ⇒ mdy; wide first ⇒ ymd;
     both `> 12` ⇒ `parse_error`; no evidence + monotone under one

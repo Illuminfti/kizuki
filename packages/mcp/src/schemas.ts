@@ -22,11 +22,11 @@ const SUBJECT_LABEL = z.strictObject({
 });
 
 /**
- * Every field the engine puts on a chunk is described here. zod renders the
- * object closed, so a field the engine sends and this shape omits makes a
- * client that listed the tools first reject the whole answer.
+ * Every field the engine puts on a chunk is described here. The objects are
+ * closed, so a field the engine sends and this shape omits makes a client
+ * that listed the tools first reject the whole answer.
  */
-const CANON_CHUNK = z.object({
+const CANON_CHUNK = z.strictObject({
   page_id: z.string(),
   path: z.string(),
   title: z.string(),
@@ -41,7 +41,7 @@ const CANON_CHUNK = z.object({
   subject_labels: z.array(SUBJECT_LABEL).max(50).optional(),
 });
 
-const QUOTED_CHUNK = z.object({
+const QUOTED_CHUNK = z.strictObject({
   event_id: z.string(),
   connector_id: z.string(),
   kind: z.string(),
@@ -53,7 +53,7 @@ const QUOTED_CHUNK = z.object({
   subject_labels: z.array(SUBJECT_LABEL).max(50).optional(),
 });
 
-const DENIED = z.object({ reason: z.string(), count: z.int() });
+const DENIED = z.strictObject({ reason: z.string(), count: z.int() });
 
 /** Exact object core emits once the source-policy epoch is positive; omitted at epoch 0. */
 const SOURCE_POLICY = z.strictObject({
@@ -62,7 +62,7 @@ const SOURCE_POLICY = z.strictObject({
   legacy_unbound: z.literal("owner_only"),
 });
 
-export const ENVELOPE_SHAPE = z.object({
+export const ENVELOPE_SHAPE = z.strictObject({
   schema: z.literal(ENVELOPE_SCHEMA),
   tool: z.enum(TOOLS),
   principal: z.string(),
@@ -70,6 +70,8 @@ export const ENVELOPE_SHAPE = z.object({
   canon: z.array(CANON_CHUNK),
   quoted: z.array(QUOTED_CHUNK),
   denied: z.array(DENIED),
+  /** Owner envelopes only; omitted when nothing was withheld. */
+  has_withheld: z.literal(true).optional(),
   source_policy: SOURCE_POLICY.optional(),
   data: z.record(z.string(), z.unknown()).optional(),
 });

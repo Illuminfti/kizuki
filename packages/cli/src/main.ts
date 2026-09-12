@@ -3,6 +3,7 @@ import { UsageError, extractVault } from "./args";
 import { COMMANDS } from "./commands/index";
 import type { CliIo } from "./commands/index";
 import { printCommandHelp, printRootHelp, usageLines } from "./help";
+import { lookupCommandHelp } from "./option-schema";
 import { errorText } from "./output";
 import { createInterface } from "node:readline/promises";
 import {
@@ -183,28 +184,33 @@ async function dispatch(argv: string[]): Promise<number> {
       printRootHelp(io.out, COMMANDS);
       return 0;
     }
-    if (names.length !== 1) {
-      io.err("error: invalid arguments");
-      io.err("usage: kizuki help [verb] [--json]");
-      return 2;
-    }
     const name = names[0];
     if (name === undefined) {
       printRootHelp(io.out, COMMANDS);
       return 0;
     }
-    if (isRetiredOwnerGateVerb(name)) {
+    if (names.length === 1 && isRetiredOwnerGateVerb(name)) {
       io.err(retiredOwnerGateMessage(name));
       return 2;
     }
     const command = COMMANDS.find((entry) => entry.name === name);
-    if (command === undefined) {
-      io.err(`unknown verb: ${name}`);
-      printRootHelp(io.err, COMMANDS);
-      return 2;
+    if (names.length === 1) {
+      if (command === undefined) {
+        io.err(`unknown verb: ${name}`);
+        printRootHelp(io.err, COMMANDS);
+        return 2;
+      }
+      printCommandHelp(io.out, command, { json });
+      return 0;
     }
-    printCommandHelp(io.out, command, { json });
-    return 0;
+    const nested = command === undefined ? undefined : lookupCommandHelp(command.name, names.slice(1));
+    if (nested !== undefined) {
+      printCommandHelp(io.out, nested, { json });
+      return 0;
+    }
+    io.err("error: invalid arguments");
+    io.err("usage: kizuki help [verb] [--json]");
+    return 2;
   }
 
   if (isRetiredOwnerGateVerb(verb)) {
@@ -220,12 +226,15 @@ async function dispatch(argv: string[]): Promise<number> {
   }
 
   if (args.includes("--help")) {
-    if (!args.every((token) => token === "--help" || token === "--json")) {
-      for (const line of usageLines(command, new UsageError("invalid arguments"))) io.err(line);
-      return 2;
+    const json = args.includes("--json");
+    const rest = args.filter((token) => token !== "--help" && token !== "--json");
+    const topic = rest.length === 0 ? command : lookupCommandHelp(command.name, rest);
+    if (topic !== undefined) {
+      printCommandHelp(io.out, topic, { json });
+      return 0;
     }
-    printCommandHelp(io.out, command, { json: args.includes("--json") });
-    return 0;
+    for (const line of usageLines(command, new UsageError("invalid arguments"))) io.err(line);
+    return 2;
   }
 
   try {

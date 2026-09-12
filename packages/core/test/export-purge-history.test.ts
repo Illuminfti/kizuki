@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exportVault, restoreVault, verifyBackup, type ExportManifest } from "../src/export";
+import { eventPurgeProofDigest } from "../src/ledger/purge-schema";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { accept } from "../src/ledger/ledger";
 import { createVaultFts5Port, resumePurge, runPurge, verifyPurge } from "../src/ledger/purge";
@@ -48,6 +49,31 @@ function history(db: Database) {
 
 function rows(backup: string, table: typeof TABLES[number]): Record<string, unknown>[] {
   return readFileSync(join(backup, "ledger", `${table}.jsonl`), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+}
+
+function rewriteEventPurgesJsonl(
+  backup: string,
+  rewrite: (row: Record<string, unknown>) => Record<string, unknown>,
+): Record<string, unknown>[] {
+  const path = join(backup, "ledger", "event_purges.jsonl");
+  const rows = readFileSync(path, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>);
+  const bytes = Buffer.from(rows.map((row) => `${JSON.stringify(rewrite(row))}\n`).join(""));
+  writeFileSync(path, bytes);
+  const manifest = JSON.parse(readFileSync(join(backup, "manifest.json"), "utf8")) as ExportManifest;
+  manifest.files["ledger/event_purges.jsonl"] = {
+    count: rows.length,
+    size: bytes.length,
+    mode: 0o600,
+    sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
+  };
+  const unsigned = {
+    schema: manifest.schema, vault_id: manifest.vault_id, created_at: manifest.created_at,
+    schema_versions: manifest.schema_versions, snapshot: manifest.snapshot, complete: manifest.complete,
+    files: Object.fromEntries(Object.entries(manifest.files).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)),
+  };
+  writeFileSync(join(backup, "manifest.json"), `${JSON.stringify({ ...unsigned, manifest_sha256: new Bun.CryptoHasher("sha256").update(`${JSON.stringify(unsigned, null, 2)}\n`).digest("hex") }, null, 2)}\n`);
+  chmodSync(join(backup, "manifest.json"), 0o600);
+  return rows;
 }
 
 function rewriteBackup(
@@ -117,6 +143,85 @@ describe("completed purge history backup", () => {
     expect(copy.query("SELECT receipt_id, selector_kind FROM event_purge_proofs ORDER BY receipt_id").all()).toEqual(before);
   });
 
+  test("source-only selector provenance survives backup restore", async () => {
+    const f = fixture();
+    const source = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    f.db.query(`INSERT INTO connections
+      (connector_id,source_key,config,secret_refs,connected_at,implementation_version)
+      VALUES ('fixture',?,'{"schema":"kizuki.connection-config/v1","state_ref_index":null}','[]',?,'fixture@1')`).run(source, AT);
+    setSourceGrant(f.db, {
+      source_key: source, expected_revision: 0, operation_id: "grant-source-fixture",
+      policy: {
+        purposes: ["capture", "recall", "export"],
+        allowed_fields: ["text", "subjects", "attachments", "metadata"],
+        retention: "persistent_owned_until_revoked",
+        egress: "local_only",
+        sensitivity_floor: "private",
+      },
+    });
+    const stored = accept(
+      f.db,
+      { ...validEvent(), source_record_id: "source-one" },
+      { source: { source_key: source, expected_revision: 1 } },
+    );
+    if (stored.status !== "stored") throw new Error("fixture event was not stored");
+    const result = await runPurge(f.db, f.vault, { source_key: source }, "retire fixture");
+    const before = f.db.query(
+      "SELECT receipt_id, selector_kind FROM event_purge_proofs ORDER BY receipt_id",
+    ).all();
+    expect(before.map((row) => (row as { selector_kind: string | null }).selector_kind)).toEqual(["source"]);
+    const bound = f.db.query<{ proof_digest: string | null }, []>(
+      "SELECT proof_digest FROM event_purges ORDER BY receipt_id",
+    ).all();
+    expect(bound).toEqual([{
+      proof_digest: eventPurgeProofDigest(stored.event.content_hash, stored.event.source_record_id, "source"),
+    }]);
+    exportVault(f.db, f.vault, f.backup);
+    restoreVault(f.backup, f.restored);
+    const copy = f.openRestored();
+    expect(copy.query("SELECT receipt_id, selector_kind FROM event_purge_proofs ORDER BY receipt_id").all()).toEqual(before);
+    expect(copy.query("SELECT proof_digest FROM event_purges ORDER BY receipt_id").all()).toEqual(bound);
+    expect((await verifyPurge(copy, f.restored, result.receipts[0]!.receipt_id)).ok).toBe(true);
+  });
+
+  test("mismatched proof_digest is refused before installing a restore", async () => {
+    const f = fixture();
+    const event = f.event("atlas-one");
+    await runPurge(f.db, f.vault, { event_id: event.event_id }, "retire fixture");
+    const digest = eventPurgeProofDigest(event.content_hash, event.source_record_id, "event");
+    exportVault(f.db, f.vault, f.backup);
+    const wrong = "0".repeat(64);
+    expect(wrong).not.toBe(digest);
+    const rows = rewriteEventPurgesJsonl(f.backup, (row) => {
+      expect(row.proof_digest).toBe(digest);
+      return { ...row, proof_digest: wrong };
+    });
+    expect(rows).toHaveLength(1);
+    expect(() => restoreVault(f.backup, f.restored)).toThrow("event purge proof does not match receipt proof_digest");
+    expect(existsSync(f.restored)).toBe(false);
+  });
+
+  test("omitted proof_digest restores by binding stored proof bytes", async () => {
+    const f = fixture();
+    const event = f.event("atlas-one");
+    const result = await runPurge(f.db, f.vault, { event_id: event.event_id }, "retire fixture");
+    const digest = eventPurgeProofDigest(event.content_hash, event.source_record_id, "event");
+    exportVault(f.db, f.vault, f.backup);
+    const rows = rewriteEventPurgesJsonl(f.backup, (row) => {
+      expect(row.proof_digest).toBe(digest);
+      const rest = { ...row };
+      delete rest.proof_digest;
+      return rest;
+    });
+    expect(rows).toHaveLength(1);
+    restoreVault(f.backup, f.restored);
+    const copy = f.openRestored();
+    expect(copy.query<{ proof_digest: string | null }, []>("SELECT proof_digest FROM event_purges").all()).toEqual([
+      { proof_digest: digest },
+    ]);
+    expect((await verifyPurge(copy, f.restored, result.receipts[0]!.receipt_id)).ok).toBe(true);
+  });
+
   test("retains completed store obligations and verifies them against the original bound store", async () => {
     const f = fixture();
     const event = f.event("atlas-one");
@@ -182,7 +287,7 @@ describe("completed purge history backup", () => {
     const f = fixture();
     const event = f.event("atlas");
     const current = await runPurge(f.db, f.vault, { event_id: event.event_id }, "retire fixture", { now: () => AT });
-    f.db.query("INSERT INTO event_purges VALUES('legacy-receipt','legacy-event','fixture','retire fixture',?)").run(AT);
+    f.db.query("INSERT INTO event_purges(receipt_id, event_id, connector_id, reason, purged_at) VALUES('legacy-receipt','legacy-event','fixture','retire fixture',?)").run(AT);
     exportVault(f.db, f.vault, f.backup);
     expect(readFileSync(join(f.backup, "export-inventory.json"), "utf8")).toContain("unassigned receipts remain unverifiable");
     expect(restoreVault(f.backup, f.restored).recovery_warnings.join(" ")).toContain("store evidence");

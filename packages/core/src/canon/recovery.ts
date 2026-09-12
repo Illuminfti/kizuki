@@ -2,15 +2,15 @@ import type { VaultMutationScope } from "../vault/mutation-scope";
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationSync } from "./io";
 import { openOrdinaryRecoveryReceiptStream } from "./receipt-stream";
 import { commitMachineByteIntent } from "../ledger/event-origin";
-import { getClaim, markClaimReverted, reinstateClaim, resupersedeClaim, supersessionsForReceipt } from "../claims/store";
+import { getClaim, markClaimReverted, minTimestamp, reinstateClaim, resupersedeClaim, supersessionsForReceipt } from "../claims/store";
 import { tableExists } from "../ledger/schema";
 import { getCanonReceipt, type CanonReceipt } from "./receipts";
 import { insertReceiptRow, deletePageIndex, markReceiptReverted, upsertPageIndex, type CanonIo } from "./store";
 import { canonStageRelPath } from "../vault/write";
 import { publishOrdinaryCanonIntent } from "./apply";
 import {
-  advanceCanonReadGeneration, assertCanonAdmission, captureCanonAdmission, decodeCanonImage,
-  inspectCanonRecovery, persistCanonWriteIntent, readCanonWriteIntent, recoveryFailure,
+  advanceCanonReadGeneration, assertCanonAdmission, assertIndependentSurvivorAdmission, captureCanonAdmission, decodeCanonImage,
+  inspectCanonRecovery, persistCanonWriteIntent, readCanonWriteIntent, recoveryFailure, CanonRecoveryError,
   type CanonCompletion, type CanonWriteIntent,
 } from "./write-intent";
 import { enqueueCanonProjection, refreshCanonProjectionFloor } from "./projection-obligations";
@@ -53,11 +53,6 @@ function currentState(scope: VaultMutationScope, io: CanonIo, intent: CanonWrite
   recoveryFailure("page_changed", intent.receipt.receipt_id);
 }
 
-function earlier(left: string | null, right: string | null): string | null {
-  if (left === null || left === "") return right;
-  if (right === null || right === "") return left;
-  return left < right ? left : right;
-}
 function restoreClaimLifecycle(io: CanonIo, original: CanonReceipt, at: string): void {
   if (original.kind === "revert") {
     for (const id of original.claim_ids) {
@@ -69,7 +64,7 @@ function restoreClaimLifecycle(io: CanonIo, original: CanonReceipt, at: string):
     const prior = new Map(rows.map(row => [row.loser, row.prior_valid_to]));
     const winner = winnerId === undefined ? null : getClaim(io.db, winnerId);
     for (const ref of original.superseded) if (winnerId !== undefined) {
-      resupersedeClaim(io.db, ref.claim_id, winnerId, at, earlier(prior.get(ref.claim_id) ?? null, winner?.valid_from ?? null));
+      resupersedeClaim(io.db, ref.claim_id, winnerId, at, minTimestamp(prior.get(ref.claim_id) ?? null, winner?.valid_from ?? null));
     }
   } else {
     for (const id of original.claim_ids) markClaimReverted(io.db, id, at);
@@ -161,7 +156,17 @@ export function recoverCanonWritesOwned(scope: VaultMutationScope, io: CanonIo):
   const completed: string[] = [];
   if (intent !== null) {
     const stream = openOrdinaryRecoveryReceiptStream(scope, io);
-    try { finish(scope, io, intent, stream); completed.push(intent.receipt.receipt_id); }
+    try {
+      try { finish(scope, io, intent, stream); completed.push(intent.receipt.receipt_id); }
+      catch (error) {
+        const after = decodeCanonImage(intent.after_base64);
+        if (!(error instanceof CanonRecoveryError) || error.reason !== "authority_changed" ||
+            intent.receipt.kind !== "revert" || intent.completion.mode !== "revert" || after === null) throw error;
+        // Independent revert survivor: do not complete under withdrawn derive
+        // ids or invent a purge-lineage rewrite. Leave the original intent.
+        assertIndependentSurvivorAdmission(io.db, intent, after);
+      }
+    }
     finally { stream.close(); }
   }
   const summary = inspectCanonRecovery(io.db);

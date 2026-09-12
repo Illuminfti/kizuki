@@ -358,6 +358,116 @@ describe("mapping edges", () => {
     }
   });
 
+  test("a UTC EXDATE and RECURRENCE-ID match a zoned series on civil time", () => {
+    const events = mapped([
+      "BEGIN:VEVENT",
+      "UID:standup@acme.example",
+      "DTSTART;TZID=Europe/Berlin:20260318T100000",
+      "DTEND;TZID=Europe/Berlin:20260318T110000",
+      "RRULE:FREQ=WEEKLY;COUNT=4;BYDAY=WE",
+      "EXDATE:20260325T090000Z",
+      "SUMMARY:Standup",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:standup@acme.example",
+      "RECURRENCE-ID:20260401T080000Z",
+      "DTSTART;TZID=Europe/Berlin:20260401T140000",
+      "DTEND;TZID=Europe/Berlin:20260401T150000",
+      "SUMMARY:Standup moved",
+      "END:VEVENT",
+    ]);
+    expect(
+      events.map((event) => [
+        event.source_record_id,
+        event.occurred_at,
+        event.text,
+      ]),
+    ).toEqual([
+      [
+        "standup@acme.example#20260318T100000",
+        "2026-03-18T09:00:00.000Z",
+        "Standup",
+      ],
+      [
+        "standup@acme.example#20260401T100000",
+        "2026-04-01T12:00:00.000Z",
+        "Standup moved",
+      ],
+      [
+        "standup@acme.example#20260408T100000",
+        "2026-04-08T08:00:00.000Z",
+        "Standup",
+      ],
+    ]);
+    expect(
+      (events[1]?.metadata["recurrence"] as { recurrence_id?: string })
+        .recurrence_id,
+    ).toBe("20260401T100000");
+  });
+
+  test("a UTC UNTIL is applied in the DTSTART zone", () => {
+    const events = mapped([
+      "BEGIN:VEVENT",
+      "UID:until-zoned@acme.example",
+      "DTSTART;TZID=Europe/Berlin:20260329T100000",
+      "DTEND;TZID=Europe/Berlin:20260329T110000",
+      "RRULE:FREQ=DAILY;COUNT=3;UNTIL=20260329T090000Z",
+      "SUMMARY:Until",
+      "END:VEVENT",
+    ]);
+    // 10:00 CEST = 08:00Z, which is before UNTIL 09:00Z. Compared as civil
+    // 10:00 vs 09:00Z the first instance used to vanish.
+    expect(events.map((event) => event.source_record_id)).toEqual([
+      "until-zoned@acme.example#20260329T100000",
+    ]);
+    expect(events[0]?.occurred_at).toBe("2026-03-29T08:00:00.000Z");
+  });
+
+  test("a UTC cancelled override drops only that zoned instance", () => {
+    const events = mapped([
+      "BEGIN:VEVENT",
+      "UID:briefing@acme.example",
+      "DTSTART;TZID=Europe/Berlin:20260329T100000",
+      "DTEND;TZID=Europe/Berlin:20260329T110000",
+      "RRULE:FREQ=DAILY;COUNT=3",
+      "SUMMARY:Briefing",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:briefing@acme.example",
+      "RECURRENCE-ID:20260330T080000Z",
+      "DTSTART;TZID=Europe/Berlin:20260330T100000",
+      "STATUS:CANCELLED",
+      "SUMMARY:Briefing",
+      "END:VEVENT",
+    ]);
+    expect(events.map((event) => event.source_record_id)).toEqual([
+      "briefing@acme.example#20260329T100000",
+      "briefing@acme.example#20260331T100000",
+    ]);
+    expect(events.map((event) => event.occurred_at)).toEqual([
+      "2026-03-29T08:00:00.000Z",
+      "2026-03-31T08:00:00.000Z",
+    ]);
+  });
+
+  test("a UTC RDATE is added in the DTSTART zone", () => {
+    const events = mapped([
+      "BEGIN:VEVENT",
+      "UID:rdate-zoned@acme.example",
+      "DTSTART;TZID=Europe/Berlin:20260318T100000",
+      "DTEND;TZID=Europe/Berlin:20260318T110000",
+      "RDATE:20260320T090000Z",
+      "SUMMARY:Office hours",
+      "END:VEVENT",
+    ]);
+    expect(
+      events.map((event) => [event.source_record_id, event.occurred_at]),
+    ).toEqual([
+      ["rdate-zoned@acme.example#20260318T100000", "2026-03-18T09:00:00.000Z"],
+      ["rdate-zoned@acme.example#20260320T100000", "2026-03-20T09:00:00.000Z"],
+    ]);
+  });
+
   test("RDATE adds to the start rather than replacing it", () => {
     const events = mapped([
       "BEGIN:VEVENT",
@@ -795,10 +905,54 @@ describe("an override carries its own length", () => {
       "SUMMARY:Offsite, two days",
       "END:VEVENT",
     ]);
+    expect(events.map((event) => event.source_record_id)).toEqual([
+      "allday@acme.example#20260302",
+      "allday@acme.example#20260309",
+    ]);
+    expect(events.map((event) => event.metadata["ends_on"])).toEqual([
+      "20260303",
+      "20260311",
+    ]);
     const moved = events[1];
     expect(moved?.metadata["all_day"]).toBe(true);
-    expect(moved?.metadata["ends_on"]).toBe("20260311");
     expect(moved?.metadata["duration"]).toBe(2 * 86_400);
+    expect(
+      (moved?.metadata["recurrence"] as { recurrence_id?: string })
+        .recurrence_id,
+    ).toBe("20260309");
+  });
+
+  test("later all-day instances shift the exclusive end date", () => {
+    const events = mapped([
+      "BEGIN:VEVENT",
+      "UID:holiday@acme.example",
+      "DTSTART;VALUE=DATE:20260511",
+      "DTEND;VALUE=DATE:20260512",
+      "RRULE:FREQ=WEEKLY;COUNT=2",
+      "SUMMARY:Holiday",
+      "END:VEVENT",
+    ]);
+    expect(
+      events.map((event) => [
+        event.source_record_id,
+        event.occurred_at,
+        event.metadata["ends_on"],
+        event.metadata["ends_at"],
+      ]),
+    ).toEqual([
+      [
+        "holiday@acme.example#20260511",
+        "2026-05-11T00:00:00.000Z",
+        "20260512",
+        "2026-05-12T00:00:00.000Z",
+      ],
+      [
+        "holiday@acme.example#20260518",
+        "2026-05-18T00:00:00.000Z",
+        "20260519",
+        "2026-05-19T00:00:00.000Z",
+      ],
+    ]);
   });
 });
 

@@ -143,11 +143,26 @@ Known limits:
   `chatgpt:tool`). A node with any other role is reported and not stored.
   Nothing the model said is attributed to you.
 - The conversation tree is flattened. A regenerated answer is stored beside
-  the answer it replaced, each under its own node id, but neither event
-  records its parent or which branch the conversation continued on.
+  the answer it replaced, each under its own node id. The node's parent is
+  recorded when the export names one. `current_node` is the conversation's
+  selected leaf in that imported export, copied onto every event from that
+  conversation; it is not a live pointer. A clean changed export is parsed as
+  a new bounded snapshot under the connector's shared cursor. Event hashing
+  includes metadata, so moving the selected leaf writes a new revision for
+  affected nodes; an unchanged complete event remains a duplicate. This
+  snapshot import does not infer tombstones from a changed selected leaf.
 - Image, file and audio parts become attachment references by their asset
-  pointer; the bytes are not read. Any other structured part is listed under
-  `unsupported_parts` and reported; the text around it still imports.
+  pointer; files listed on the message become references when those fields
+  already satisfy the event contract. A `file-service://` pointer and the
+  matching file id are stored as one ref. The bytes are not read or fetched.
+  Any other structured part, or a listed file that cannot be represented, is
+  listed under `unsupported_parts` and reported; the text around it still
+  imports.
+- Optional metadata (`conversation_title`, `parent`, `current_node`, and
+  unsupported part names) is kept only when each string fits Core's metadata
+  bound. An oversize field is omitted and named under `unsupported_parts`.
+  Message text and exact record and attachment ids stay as they are; the
+  importer does not shorten those strings.
 - A message with no `create_time`, or one with no text and no attachments, is
   reported and not stored. Import time is never substituted for message time.
 - Two nodes sharing an id are reported: as a duplicate when they agree, as a
@@ -167,9 +182,9 @@ kizuki import import-claude --vault VAULT --source conversations.json
 
 The file is a JSON array of conversations. From each the importer reads
 `uuid`, `name` and `chat_messages`; from each message it reads `uuid`,
-`sender`, `created_at`, `text`, the `content` blocks and the `attachments`
-list. Each message becomes one `message` event, labeled `private`, identified
-by the conversation uuid and message uuid.
+`sender`, `created_at`, `text`, the `content` blocks, and the `attachments`
+and `files` lists. Each message becomes one `message` event, labeled
+`private`, identified by the conversation uuid and message uuid.
 
 Known limits:
 
@@ -179,7 +194,11 @@ Known limits:
   repeats the other party's words stays with its sender.
 - `text` is the message; a `text` block repeating it is stored once, and any
   further `text` block is appended. `image` and `document` blocks and listed
-  attachments become references by name and type; `tool_use`, `tool_result`
+  `attachments` or `files` become name and type refs. Non-empty
+  `extracted_content` is appended only while that event stays inside frozen
+  ingress limits, including JSON encoding overhead; an oversized extract or
+  extra attachment is omitted, listed under `unsupported_parts`, and reported
+  as degraded health. The parent message is kept. `tool_use`, `tool_result`
   and `thinking` blocks are listed under `unsupported_parts` and reported.
 - A message with no `created_at`, or with no text and no attachments, is
   reported and not stored.
@@ -255,6 +274,12 @@ to: …` — is indistinguishable from a message and is captured as one, with
   at all, become one handle and therefore one subject, which a purge aimed at
   that handle reaches together. The display names are kept whole on every
   event, so the evidence still says who wrote what.
+- `whatsapp:self` is only the configured owner. A sender whose ordinary handle
+  would be `self` — including `self` and `Self!` — is filed under
+  `whatsapp:participant:` plus a digest of the normalized display name, so
+  those people stay distinct from each other and from the owner, and a slug
+  cannot mint a colon namespace. With no configured owner, nobody receives
+  `whatsapp:self`.
 
 ## Pocket CSV export
 
@@ -346,10 +371,14 @@ X API access are not supported by this bounded importer.
 The separate `kizuki.x` connector is registered for native CLI enrollment and
 read-only capture of the authenticated account's own posts. The CLI owns
 browser sign-in, the configured fixed loopback callback and protected OAuth
-state; source consent is a separate step. See the [X API guide](../connector-x/API.md)
-for the enrollment command and prerequisites. Provider enrollment, paid access,
-API compatibility and deletion coverage remain unqualified against a real
-account. The local archive importer above does not supply that qualification.
+state; source consent is a separate step. Every captured post keeps the owner as
+a `from` subject; `--fields none` does not omit author identity. Compatible
+grants always need `text`, `subjects`, and `metadata`, plus `attachments` when
+`media` is selected. Grants are not auto-widened. See the
+[X API guide](../connector-x/API.md) for the enrollment command, selection-dependent
+GET query, and prerequisites. Provider enrollment, paid access, API compatibility
+and deletion coverage remain unqualified against a real account. The local
+archive importer above does not supply that qualification.
 
 ## Not here, deliberately
 

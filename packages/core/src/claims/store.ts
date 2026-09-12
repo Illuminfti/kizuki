@@ -4,6 +4,7 @@ import type { Database } from "bun:sqlite";
 import { SelfOriginError, validateEventOrigin, requireExternalEvents } from "../ledger/event-origin";
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "../canon/source-tombstone";
 import { eventFromRow, type EventRow } from "../ledger/event-record";
+import { compareRfc3339 } from "../agents/time";
 import type { Sensitivity } from "../agents/types";
 import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../contracts/retrieval";
 import { bareRetrievalId, retrievalDocId } from "../retrieval/ids";
@@ -224,9 +225,11 @@ function toConflict(claim: Claim, purged = false): ConflictClaim {
   };
 }
 
-function minTimestamp(left: string | null, right: string): string {
+/** Earlier RFC 3339 instant; null/empty is absent. Preserves the earlier original string. */
+export function minTimestamp(left: string | null, right: string | null): string | null {
   if (left === null || left === "") return right;
-  return left < right ? left : right;
+  if (right === null || right === "") return left;
+  return compareRfc3339(left, "valid_to", right, "valid_from") <= 0 ? left : right;
 }
 
 function assertInput(input: InsertClaimInput): void {
@@ -1027,14 +1030,18 @@ function applyClaimInsert(
   const authorityProducer = producer === "owner" && !ownerAttested ? "deterministic" : producer;
   const authorityIntent = input.intent === "correct" && !ownerAttested ? undefined : input.intent;
   const authorityEvents = events.map(event => ({...event, taint: ownerAttested ? event.taint : "untrusted" as const}));
+  const incomingConnectors = new Set(events.map((event) => event.connector_id));
   const hasCorroboration =
     key !== null &&
-    liveByKey(io.db, key).filter(live => sourceEventsAllowed(io.db, live.provenance, sourceScope) && externalEvidence(io.db, live.provenance)).some((live) =>
-      live.provenance.some((id) => {
-        const incomingConnectors = new Set(events.map((event) => event.connector_id));
-        const liveFacts = loadEventFacts(io.db, live.provenance);
-        return liveFacts.some((fact) => !incomingConnectors.has(fact.connector_id));
-      }),
+    liveByKey(io.db, key).some(
+      (live) =>
+        sourceEventsAllowed(io.db, live.provenance, sourceScope) &&
+        externalEvidence(io.db, live.provenance) &&
+        live.polarity === polarity &&
+        objectsMatch(live.object, object) &&
+        loadEventFacts(io.db, live.provenance).some(
+          (fact) => !incomingConnectors.has(fact.connector_id),
+        ),
     );
 
   const assigned = sourceControl
@@ -1147,42 +1154,44 @@ function applyClaimInsert(
     sourceEventsAllowed(io.db, live.provenance, sourceScope) && externalEvidence(io.db, live.provenance) && claimsConflict(toConflict(claim), toConflict(live, provenanceGone(io.db, live))),
   );
 
-  const superseded: { claim_id: string; rule: ConflictRule }[] = [];
-  let incomingStatus: ClaimStatus = "live";
-  let contestedAgainst: Claim | null = null;
-
-  for (const live of conflicts) {
+  // Admission must succeed against every live conflict before changing any of them.
+  const resolutions = conflicts.map((live) => {
     const purged = provenanceGone(io.db, live);
-    if (purged && live.status !== "purged") {
-      persistClaim(io.db, { ...live, status: "purged", retracted_at: at });
-    }
     const resolution = resolveConflict(
       toConflict(claim),
       toConflict(purged ? { ...live, status: "purged" } : live, purged),
     );
-    if (resolution.action === "skip") {
-      incomingStatus = "skipped";
-      break;
-    }
-    if (resolution.action === "contested") {
-      contestedAgainst = live;
-      continue;
-    }
-    if (resolution.winner === "incoming") {
-      const prior = live.valid_to;
-      persistClaim(io.db, {
-        ...live,
-        status: "superseded",
-        superseded_by: claim.claim_id,
-        retracted_at: at,
-        valid_to: minTimestamp(live.valid_to, claim.valid_from),
-      });
-      writeSupersession(io.db, claim.claim_id, live.claim_id, resolution.rule, prior, at);
-      enqueueRetrieval(io.db, io, live, at);
-      superseded.push({ claim_id: live.claim_id, rule: resolution.rule });
-    } else {
-      incomingStatus = "skipped";
-      break;
+    return { live, purged, resolution };
+  });
+  const incomingStatus: ClaimStatus = resolutions.some(({ resolution }) =>
+    resolution.action === "skip" ||
+    (resolution.action === "supersede" && resolution.winner === "live"),
+  ) ? "skipped" : "live";
+  const superseded: { claim_id: string; rule: ConflictRule }[] = [];
+  let contestedAgainst: Claim | null = null;
+
+  if (incomingStatus === "live") {
+    for (const { live, purged, resolution } of resolutions) {
+      if (purged && live.status !== "purged") {
+        persistClaim(io.db, { ...live, status: "purged", retracted_at: at });
+      }
+      if (resolution.action === "contested") {
+        contestedAgainst = live;
+        continue;
+      }
+      if (resolution.action === "supersede" && resolution.winner === "incoming") {
+        const prior = live.valid_to;
+        persistClaim(io.db, {
+          ...live,
+          status: "superseded",
+          superseded_by: claim.claim_id,
+          retracted_at: at,
+          valid_to: minTimestamp(live.valid_to, claim.valid_from),
+        });
+        writeSupersession(io.db, claim.claim_id, live.claim_id, resolution.rule, prior, at);
+        enqueueRetrieval(io.db, io, live, at);
+        superseded.push({ claim_id: live.claim_id, rule: resolution.rule });
+      }
     }
   }
 

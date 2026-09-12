@@ -259,7 +259,10 @@ export class ImapSession {
       if (!fields.has("UID")) continue;
       const uid = requiredInteger(fields, "UID", "uid", 1);
       const body = bodyField(fields, section);
-      if (body === undefined) continue;
+      // NIL is the same as a withheld body: the message was listed, then gone
+      // before the bytes arrived. Treating it as an empty capture would mint a
+      // blank ledger row for a UID that should be retried or dropped.
+      if (body === undefined || body.kind === "nil") continue;
       // A body for a message nobody asked about would be stored under a record
       // id the walk never scanned, so it is refused rather than kept.
       if (!wanted.has(uid)) throw protocolError("server sent an unrequested body");

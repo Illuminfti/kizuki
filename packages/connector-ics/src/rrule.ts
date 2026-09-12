@@ -321,7 +321,9 @@ function untilMs(rule: RecurrenceRule): number | null {
   if (rule.until.kind === "date") {
     return localToMs(parseLocal(rule.until.date)) + DAY_MS - 1;
   }
-  return null;
+  // Civil UNTIL is compared in the same local-as-ms domain as candidates.
+  // Callers convert a UTC UNTIL into this form when DTSTART is zoned.
+  return localToMs(parseLocal(rule.until.local));
 }
 
 /**

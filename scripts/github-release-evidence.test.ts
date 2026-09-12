@@ -14,7 +14,7 @@ import { distributionIdentity } from "./release-notices";
 import { verifyGithubNativeArchive } from "./github-native-artifact";
 import { evaluateRelease } from "./go-no-go";
 import { resolve } from "node:path";
-import { GITHUB_REPOSITORY_ID, inspectGithubCandidate, inspectGithubNativeArtifacts, inspectGithubNativeJobs, inspectGithubNativeIndexBinding, validateGithubCommandBindings, bindGithubNativeProducer, bindGithubLifecycleProducer, inspectGithubLifecycleIndexBinding, parseGithubEvidenceArgs } from "./github-release-evidence";
+import { GITHUB_REPOSITORY_ID, inspectGithubCandidate, inspectGithubNativeArtifacts, inspectGithubNativeJobs, inspectGithubNativeIndexBinding, validateGithubCommandBindings, bindGithubNativeProducer, bindGithubLifecycleProducer, inspectGithubLifecycleIndexBinding, parseGithubEvidenceArgs, inspectGithubCurrentP0, inspectGithubP0Disposition } from "./github-release-evidence";
 
 const SHA = "a".repeat(40);
 const REPO = { id: GITHUB_REPOSITORY_ID, full_name: "fixture-owner/fixture-repo", private: false };
@@ -156,7 +156,7 @@ test("missing workflow is explicit and arbitrary saved-passing fields have no ef
 test("online CLI has no endpoint, repository, run selector or saved-facts injection", () => {
   const args = ["--profile", "rc", "--evidence", "/tmp/index.json", "--checkout", "/tmp/candidate", "--out", "/tmp/receipt"];
   expect(parseGithubEvidenceArgs(args)).toEqual({ profile: "rc", evidence: "/tmp/index.json", checkout: "/tmp/candidate", out: "/tmp/receipt" });
-  for (const flag of ["--repo", "--host", "--run", "--attempt", "--facts", "--passed"]) expect(() => parseGithubEvidenceArgs([...args, flag, "x"])).toThrow();
+  for (const flag of ["--repo", "--host", "--run", "--attempt", "--facts", "--passed", "--label", "--p0"]) expect(() => parseGithubEvidenceArgs([...args, flag, "x"])).toThrow();
 });
 
 
@@ -499,4 +499,173 @@ test.each([...LIFECYCLE_PRODUCER_ENTRYPOINTS, ...LIFECYCLE_PRODUCER_DATA, "scrip
   writeFileSync(join(f.candidate.path, path), readFileSync(join(f.candidate.path, path), "utf8") + "\nchanged synthetic observation\n"); f.candidate.sha = f.commit(f.candidate.path);
   expect(() => bindGithubLifecycleProducer(f.candidate.path, f.candidate.sha, f.reviewed.path, f.reviewed.sha)).toThrow();
   expect(() => held.unchanged()).toThrow();
+});
+
+function p0IssueRow(id: number, number: number, extra: Record<string, unknown> = {}) {
+  return {
+    id, number, state: "open", title: `synthetic-title-${number}`, body: `synthetic-body-${number}`,
+    user: { login: "synthetic-author" }, comments: 4, updated_at: "2026-09-07T00:00:00Z",
+    labels: [{ id: 77, name: "severity:p0", color: "b60205", description: "must-not-retain" }],
+    ...extra,
+  };
+}
+function p0Git() {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-github-p0-")); nativeRoots.push(root);
+  const git = (args: string[]) => execFileSync("git", ["-C", root, "-c", "core.hooksPath=/dev/null", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  git(["-c", "init.defaultBranch=main", "init"]);
+  writeFileSync(join(root, "README"), "main\n"); git(["add", "."]);
+  git(["-c", "user.name=fixture", "-c", "user.email=fixture@example.test", "-c", "commit.gpgsign=false", "commit", "-m", "main"]);
+  const mainSha = git(["rev-parse", "HEAD"]);
+  writeFileSync(join(root, "README"), "candidate\n"); git(["add", "."]);
+  git(["-c", "user.name=fixture", "-c", "user.email=fixture@example.test", "-c", "commit.gpgsign=false", "commit", "-m", "candidate"]);
+  return { root, mainSha, candidateSha: git(["rev-parse", "HEAD"]) };
+}
+function p0Transport(git: ReturnType<typeof p0Git>, options: {
+  issues?: any[]; finalIssues?: any[]; mainBefore?: string; mainAfter?: string;
+  pageValue?: (endpoint: string, page: number, rows: any[]) => unknown;
+} = {}) {
+  const initial = options.issues ?? [], final = options.finalIssues ?? initial;
+  let mainReads = 0, inventory = 0; const calls: string[] = [];
+  const get = async (endpoint: string): Promise<any> => {
+    calls.push(endpoint);
+    const url = new URL(endpoint, "https://api.example.invalid");
+    if (url.pathname === `/repositories/${GITHUB_REPOSITORY_ID}`) return { ...REPO };
+    if (url.pathname === `/repos/${REPO.full_name}/git/ref/heads/main`) {
+      const sha = ++mainReads === 1 ? (options.mainBefore ?? git.mainSha) : (options.mainAfter ?? options.mainBefore ?? git.mainSha);
+      return { ref: "refs/heads/main", object: { type: "commit", sha } };
+    }
+    if (url.pathname === `/repos/${REPO.full_name}/issues`) {
+      const page = Number(url.searchParams.get("page") ?? 1), rows = inventory === 0 ? initial : final;
+      if (options.pageValue) {
+        const value = options.pageValue(endpoint, page, rows);
+        if (!Array.isArray(value) || value.length < 25) inventory = 1;
+        return structuredClone(value);
+      }
+      const items = rows.slice((page - 1) * 25, page * 25);
+      if (items.length < 25) inventory = 1;
+      return structuredClone(items);
+    }
+    throw new Error("unexpected synthetic endpoint");
+  };
+  return { calls, get };
+}
+function p0Index(root: string, sha: string, receipts: { producer: string; gate_id: string; target: null; path: string; sha256: string }[] = []) {
+  const index = join(root, "index.json");
+  writeFileSync(index, JSON.stringify({ schema: "kizuki.acceptance-evidence/v4", candidate_source_sha: sha, artifacts: [], fixture_observation: null, gate_receipts: receipts }));
+  return index;
+}
+function p0Gate(report: ReturnType<typeof evaluateRelease>) {
+  return report.gates.find(row => row.id === "candidate.current-p0-disposition")!;
+}
+
+test("stable ancestor main and zero exact-label issues yield online P0 PASS; offline evaluateRelease stays UNVERIFIABLE", async () => {
+  const git = p0Git(), transport = p0Transport(git);
+  const observed = await inspectGithubCurrentP0(transport.get, git.candidateSha, git.root);
+  expect(git.mainSha).not.toBe(git.candidateSha);
+  expect(observed).toMatchObject({ candidate_source_sha: git.candidateSha, main_sha_before: git.mainSha, main_sha_after: git.mainSha, count: 0, inventory: [] });
+  expect(inspectGithubP0Disposition(observed)).toEqual({ status: "PASS", reason: "github-current-p0-inventory-clear" });
+  expect(transport.calls).toContain(`/repositories/${GITHUB_REPOSITORY_ID}`);
+  expect(transport.calls).toContain(`/repos/${REPO.full_name}/git/ref/heads/main`);
+  expect(transport.calls.filter(path => path.includes("/issues")).every(path => path.includes("labels=severity%3Ap0") && !path.includes("labels=severity:p0"))).toBe(true);
+  expect(p0Gate(evaluateRelease("rc", p0Index(git.root, git.candidateSha)))).toMatchObject({
+    status: "UNVERIFIABLE", reason: "trusted-snapshot-and-freshness-policy-unavailable", evidence_sha256: null,
+  });
+});
+
+test("one valid open exact-label issue yields FAIL and retains no title or body", async () => {
+  const git = p0Git(), issue = p0IssueRow(501, 12, { labels: [{ id: 1, name: "bug", color: "ffffff" }, { id: 2, name: "severity:p0", color: "b60205", description: "secret" }] });
+  const observed = await inspectGithubCurrentP0(p0Transport(git, { issues: [issue] }).get, git.candidateSha, git.root);
+  expect(inspectGithubP0Disposition(observed)).toEqual({ status: "FAIL", reason: "github-current-p0-findings-open" });
+  expect(observed.inventory).toEqual([{ id: 501, number: 12, updated_at: "2026-09-07T00:00:00Z", labels: [{ name: "bug" }, { name: "severity:p0" }] }]);
+  const retained = JSON.stringify(observed);
+  expect(retained).not.toContain("synthetic-title-12");
+  expect(retained).not.toContain("synthetic-body-12");
+  expect(retained).not.toContain("synthetic-author");
+  expect(retained).not.toContain("secret");
+});
+
+test("main that is not an ancestor or that changes before the final read is UNVERIFIABLE; a descendant candidate is valid", async () => {
+  const git = p0Git();
+  const descendant = await inspectGithubCurrentP0(p0Transport(git).get, git.candidateSha, git.root);
+  expect(descendant.main_sha_before).toBe(git.mainSha);
+  expect(descendant.main_sha_before).not.toBe(git.candidateSha);
+  expect(inspectGithubP0Disposition(descendant).status).toBe("PASS");
+  await expect(inspectGithubCurrentP0(p0Transport(git, { mainBefore: git.candidateSha }).get, git.mainSha, git.root)).rejects.toThrow("github-p0-main-not-ancestor");
+  await expect(inspectGithubCurrentP0(p0Transport(git, { mainAfter: git.candidateSha }).get, git.candidateSha, git.root)).rejects.toThrow("github-p0-main-changed");
+});
+
+test.each([
+  ["a PR-shaped row", [p0IssueRow(1, 1, { pull_request: { url: "https://example.invalid/pr" } })]],
+  ["a missing label", [p0IssueRow(1, 1, { labels: [] })]],
+  ["a wrong label", [p0IssueRow(1, 1, { labels: [{ name: "severity:p1" }] })]],
+  ["a duplicate label", [p0IssueRow(1, 1, { labels: [{ name: "severity:p0" }, { name: "severity:p0" }] })]],
+  ["a non-open state", [p0IssueRow(1, 1, { state: "closed" })]],
+  ["a malformed id", [p0IssueRow(1, 1, { id: 0 })]],
+  ["a malformed number", [p0IssueRow(1, 1, { number: "1" })]],
+  ["a malformed timestamp", [p0IssueRow(1, 1, { updated_at: "2026-09-07T00:00:00.000Z" })]],
+  ["a duplicate id", [p0IssueRow(1, 1), p0IssueRow(1, 2)]],
+  ["a duplicate number", [p0IssueRow(1, 1), p0IssueRow(2, 1)]],
+  ["a repository mismatch", [p0IssueRow(1, 1, { repository: { id: 1, full_name: "other/other" } })]],
+  ["a repository URL mismatch", [p0IssueRow(1, 1, { repository_url: "https://api.github.com/repos/other/other" })]],
+] as const)("%s refuses PASS", async (_name, issues) => {
+  const git = p0Git();
+  await expect(inspectGithubCurrentP0(p0Transport(git, { issues: [...issues] }).get, git.candidateSha, git.root)).rejects.toThrow(/github-p0-/);
+});
+
+test("a malformed array page and page-limit exhaustion refuse PASS", async () => {
+  const git = p0Git();
+  await expect(inspectGithubCurrentP0(p0Transport(git, { pageValue: () => ({ issues: [] }) }).get, git.candidateSha, git.root)).rejects.toThrow("github-p0-invalid-page");
+  const overfull = Array.from({ length: 26 }, (_, i) => p0IssueRow(2000 + i, i + 1));
+  await expect(inspectGithubCurrentP0(p0Transport(git, { issues: overfull, pageValue: (_endpoint, _page, rows) => rows.slice(0, 26) }).get, git.candidateSha, git.root)).rejects.toThrow("github-p0-invalid-page");
+  const full = Array.from({ length: 500 }, (_, i) => p0IssueRow(3000 + i, i + 1));
+  await expect(inspectGithubCurrentP0(p0Transport(git, { issues: full }).get, git.candidateSha, git.root)).rejects.toThrow("github-p0-inventory-limit");
+});
+
+test("two-page inventory succeeds only when complete; a changed final inventory refuses PASS", async () => {
+  const git = p0Git();
+  const issues = Array.from({ length: 26 }, (_, i) => p0IssueRow(4000 + i, 26 - i, { updated_at: "2026-09-07T00:00:00Z" }));
+  const transport = p0Transport(git, { issues });
+  const observed = await inspectGithubCurrentP0(transport.get, git.candidateSha, git.root);
+  expect(observed.count).toBe(26);
+  expect(observed.inventory.map(row => row.number)).toEqual(issues.map(row => row.number).sort((a, b) => a - b));
+  expect(transport.calls.filter(path => path.endsWith("page=2"))).toHaveLength(2);
+  expect(inspectGithubP0Disposition(observed).status).toBe("FAIL");
+  const added = [...issues, p0IssueRow(5000, 99)];
+  await expect(inspectGithubCurrentP0(p0Transport(git, { issues, finalIssues: added }).get, git.candidateSha, git.root)).rejects.toThrow("github-p0-inventory-changed");
+  await expect(inspectGithubCurrentP0(p0Transport(git, { issues, finalIssues: issues.slice(1) }).get, git.candidateSha, git.root)).rejects.toThrow("github-p0-inventory-changed");
+  const touched = issues.map((row, index) => index === 0 ? { ...row, updated_at: "2026-09-07T00:00:01Z" } : row);
+  await expect(inspectGithubCurrentP0(p0Transport(git, { issues, finalIssues: touched }).get, git.candidateSha, git.root)).rejects.toThrow("github-p0-inventory-changed");
+  const relabeled = issues.map((row, index) => index === 0 ? { ...row, labels: [{ name: "severity:p0" }, { name: "blocked" }] } : row);
+  await expect(inspectGithubCurrentP0(p0Transport(git, { issues, finalIssues: relabeled }).get, git.candidateSha, git.root)).rejects.toThrow("github-p0-inventory-changed");
+});
+
+test("fixed 60s freshness and 5s skew cannot be relaxed by a fixture policy value", async () => {
+  const git = p0Git(), completed = Date.now();
+  const over = Object.assign(() => new Date((over as { n: number }).n++ === 0 ? completed - 60_001 : completed), { n: 0, max_ms: 120_000, observation_max_ms: 1_000_000, P0_OBSERVATION_MAX_MS: 120_000 });
+  await expect(inspectGithubCurrentP0(p0Transport(git).get, git.candidateSha, git.root, over)).rejects.toThrow("github-p0-observation-stale");
+  const inverted = Object.assign(() => new Date((inverted as { n: number }).n++ === 0 ? completed : completed - 1_000), { n: 0, max_ms: 120_000 });
+  await expect(inspectGithubCurrentP0(p0Transport(git).get, git.candidateSha, git.root, inverted)).rejects.toThrow("github-p0-observation-time-order");
+  const future = Object.assign(() => new Date(Date.now() + 10_000), { P0_CLOCK_SKEW_MS: 60_000, max_ms: 120_000 });
+  await expect(inspectGithubCurrentP0(p0Transport(git).get, git.candidateSha, git.root, future)).rejects.toThrow("github-p0-observation-future");
+});
+
+test("a saved github-observation.json or handcrafted p0-disposition receipt cannot gain offline credit", () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-github-p0-offline-")); nativeRoots.push(root);
+  const observationPath = join(root, "github-observation.json");
+  writeFileSync(observationPath, JSON.stringify({
+    schema: "kizuki.github-collection/v1", candidate_source_sha: SHA, p0: { inventory: [], count: 0, failure: null },
+    p0_failure: null, observation: { required: [] },
+  }) + "\n");
+  const receiptPath = join(root, "p0-disposition.json");
+  writeFileSync(receiptPath, JSON.stringify({
+    schema: "kizuki.p0-disposition/v1", gate_id: "candidate.current-p0-disposition", status: "PASS",
+    live_p0_count: 0, reason: "github-current-p0-inventory-clear",
+  }) + "\n");
+  for (const path of [observationPath, receiptPath]) {
+    const report = evaluateRelease("rc", p0Index(root, SHA, [{
+      producer: "kizuki.p0-disposition/v1", gate_id: "candidate.current-p0-disposition", target: null, path, sha256: digest(readFileSync(path)),
+    }]));
+    expect(p0Gate(report)).toMatchObject({ status: "UNVERIFIABLE", reason: "trusted-snapshot-and-freshness-policy-unavailable", evidence_sha256: null });
+    expect(report.decision).not.toBe("GO");
+  }
 });

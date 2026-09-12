@@ -96,25 +96,43 @@ describe("secret terminal prompt", () => {
       "catch (error) { process.stdout.write(error instanceof Error ? error.message : String(error)); }",
     ].join("\n"));
     try {
-      const child = Bun.spawn([
-        "script", "-qfec", `${process.execPath} ${program}`, "/dev/null",
-      ], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-      const reader = child.stdout.getReader();
-      let transcript = "";
-      let sent = false;
-      for (;;) {
-        const next = await reader.read();
-        if (next.done) break;
-        transcript += new TextDecoder().decode(next.value);
-        if (!sent && transcript.includes("IMAP server host: ")) {
-          child.stdin.write("\x03");
-          child.stdin.end();
-          sent = true;
-        }
-      }
-      transcript += await new Response(child.stderr).text();
-      expect(sent).toBe(true);
-      expect(await child.exited).toBe(0);
+      const harness = join(directory, "pty-parent.py");
+      writeFileSync(harness, String.raw`import errno, os, pty, select, sys
+prompt = b"IMAP server host: "
+pid, master = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[1], sys.argv[1:])
+transcript = bytearray()
+sent = False
+while True:
+    ready, _, _ = select.select([master], [], [], 10)
+    if not ready:
+        os.kill(pid, 9)
+        raise RuntimeError("pseudo-terminal prompt timed out")
+    try:
+        chunk = os.read(master, 4096)
+    except OSError as error:
+        if error.errno == errno.EIO:
+            break
+        raise
+    if not chunk:
+        break
+    transcript.extend(chunk)
+    os.write(1, chunk)
+    if not sent and prompt in transcript:
+        os.write(master, b"\x03")
+        sent = True
+_, status = os.waitpid(pid, 0)
+if not sent:
+    raise RuntimeError("pseudo-terminal prompt was not visible")
+sys.exit(os.waitstatus_to_exitcode(status))
+`);
+      const child = Bun.spawn(["python3", harness, process.execPath, program], { stdout: "pipe", stderr: "pipe" });
+      const [transcript, stderr, exitCode] = await Promise.all([
+        new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+      ]);
+      expect(exitCode, stderr).toBe(0);
+      expect(transcript).toContain("IMAP server host: ");
       expect(transcript).toContain("interactive sign-in cancelled");
     } finally {
       rmSync(directory, { recursive: true, force: true });

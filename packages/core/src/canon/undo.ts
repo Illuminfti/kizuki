@@ -98,11 +98,12 @@ export async function undoReceipt(
   }
 }
 
-async function undoReceiptOwned(
+/** Internal nested entry: the enclosing operation owns files through receipt completion. */
+export async function undoReceiptOwned(
   scope: VaultMutationScope,
   io: CanonIo,
   receiptId: string,
-  opts: UndoReceiptOptions,
+  opts: UndoReceiptOptions = {},
 ): Promise<UndoReceiptResult> {
   requireCanonFiles(scope, io);
   if (io.db.inTransaction) recoveryFailure("nested_transaction");
@@ -110,6 +111,7 @@ async function undoReceiptOwned(
   if (pending !== null) {
     if (pending.receipt.kind !== "revert" || pending.receipt.reverts !== receiptId) recoveryFailure("recovery_pending", pending.receipt.receipt_id);
     recoverCanonWritesOwned(scope, io);
+    if (readCanonWriteIntent(io.db) !== null) recoveryFailure("authority_changed", pending.receipt.receipt_id);
     return finishUndoProjection(scope, io, pending.receipt);
   }
   const original = getCanonReceipt(io.db, receiptId);

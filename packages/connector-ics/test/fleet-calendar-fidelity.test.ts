@@ -54,6 +54,9 @@ function schedule(event: CaptureEventInput) {
     observed_at: event.observed_at,
     text: event.text,
     all_day: event.metadata["all_day"],
+    ...(event.metadata["ends_on"] !== undefined
+      ? { ends_on: event.metadata["ends_on"] }
+      : {}),
     tz: event.metadata["tz"],
     recurrence: event.metadata["recurrence"],
   };
@@ -342,6 +345,7 @@ describe("parse/map public seam", () => {
         observed_at: OBSERVED_AT,
         text: "Offsite",
         all_day: true,
+        ends_on: "20260512",
         tz: { approximation: "none" },
         recurrence: {
           rrule: "FREQ=WEEKLY;COUNT=3",
@@ -355,6 +359,7 @@ describe("parse/map public seam", () => {
         observed_at: OBSERVED_AT,
         text: "Offsite",
         all_day: true,
+        ends_on: "20260526",
         tz: { approximation: "none" },
         recurrence: {
           rrule: "FREQ=WEEKLY;COUNT=3",
@@ -368,6 +373,124 @@ describe("parse/map public seam", () => {
     );
     expect(events.map((event) => event.source_record_id)).not.toContain(
       "offsite@fleet.example#20260511T000000",
+    );
+  });
+
+  test("UTC EXDATE and RECURRENCE-ID match the zoned civil slot across DST", () => {
+    const events = map([
+      ...vevent([
+        "UID:utc-ex@fleet.example",
+        "DTSTART;TZID=Europe/Berlin:20260318T100000",
+        "DTEND;TZID=Europe/Berlin:20260318T110000",
+        "RRULE:FREQ=WEEKLY;COUNT=4;BYDAY=WE",
+        "EXDATE:20260325T090000Z",
+        "SUMMARY:Standup",
+      ]),
+      ...vevent([
+        "UID:utc-ex@fleet.example",
+        "RECURRENCE-ID:20260401T080000Z",
+        "DTSTART;TZID=Europe/Berlin:20260401T140000",
+        "DTEND;TZID=Europe/Berlin:20260401T150000",
+        "SUMMARY:Standup moved",
+      ]),
+    ]);
+    expect(events.map(schedule)).toEqual([
+      {
+        source_record_id: "utc-ex@fleet.example#20260318T100000",
+        occurred_at: "2026-03-18T09:00:00.000Z",
+        observed_at: OBSERVED_AT,
+        text: "Standup",
+        all_day: false,
+        tz: { tzid: "Europe/Berlin", approximation: "none" },
+        recurrence: {
+          rrule: "FREQ=WEEKLY;COUNT=4;BYDAY=WE",
+          instance_of: "utc-ex@fleet.example",
+          expanded: true,
+        },
+      },
+      {
+        source_record_id: "utc-ex@fleet.example#20260401T100000",
+        occurred_at: "2026-04-01T12:00:00.000Z",
+        observed_at: OBSERVED_AT,
+        text: "Standup moved",
+        all_day: false,
+        tz: { tzid: "Europe/Berlin", approximation: "none" },
+        recurrence: {
+          rrule: "FREQ=WEEKLY;COUNT=4;BYDAY=WE",
+          instance_of: "utc-ex@fleet.example",
+          recurrence_id: "20260401T100000",
+          expanded: true,
+        },
+      },
+      {
+        source_record_id: "utc-ex@fleet.example#20260408T100000",
+        occurred_at: "2026-04-08T08:00:00.000Z",
+        observed_at: OBSERVED_AT,
+        text: "Standup",
+        all_day: false,
+        tz: { tzid: "Europe/Berlin", approximation: "none" },
+        recurrence: {
+          rrule: "FREQ=WEEKLY;COUNT=4;BYDAY=WE",
+          instance_of: "utc-ex@fleet.example",
+          expanded: true,
+        },
+      },
+    ]);
+  });
+
+  test("an all-day override keeps the date occurrence id of the slot it replaces", () => {
+    const events = map([
+      ...vevent([
+        "UID:retreat@fleet.example",
+        "DTSTART;VALUE=DATE:20260511",
+        "DTEND;VALUE=DATE:20260512",
+        "RRULE:FREQ=WEEKLY;COUNT=2",
+        "SUMMARY:Retreat",
+      ]),
+      ...vevent([
+        "UID:retreat@fleet.example",
+        "RECURRENCE-ID;VALUE=DATE:20260518",
+        "DTSTART;VALUE=DATE:20260520",
+        "DTEND;VALUE=DATE:20260522",
+        "SUMMARY:Retreat moved",
+      ]),
+    ]);
+    expect(events.map(schedule)).toEqual([
+      {
+        source_record_id: "retreat@fleet.example#20260511",
+        occurred_at: "2026-05-11T00:00:00.000Z",
+        observed_at: OBSERVED_AT,
+        text: "Retreat",
+        all_day: true,
+        ends_on: "20260512",
+        tz: { approximation: "none" },
+        recurrence: {
+          rrule: "FREQ=WEEKLY;COUNT=2",
+          instance_of: "retreat@fleet.example",
+          expanded: true,
+        },
+      },
+      {
+        source_record_id: "retreat@fleet.example#20260518",
+        occurred_at: "2026-05-20T00:00:00.000Z",
+        observed_at: OBSERVED_AT,
+        text: "Retreat moved",
+        all_day: true,
+        ends_on: "20260522",
+        tz: { approximation: "none" },
+        recurrence: {
+          rrule: "FREQ=WEEKLY;COUNT=2",
+          instance_of: "retreat@fleet.example",
+          recurrence_id: "20260518",
+          expanded: true,
+        },
+      },
+    ]);
+    expect(events.map((event) => event.source_record_id)).not.toContain(
+      "retreat@fleet.example#20260518T000000",
+    );
+    expect(events.map((event) => event.source_record_id)).not.toContain(
+      "retreat@fleet.example#20260520",
     );
   });
 });
@@ -499,5 +622,28 @@ describe("connector public seam", () => {
         },
       },
     ]);
+  });
+
+  test("replayed backfill keeps occurrence ids and an unchanged sync is empty", async () => {
+    const path = await writeCalendar(document(WEEKLY));
+    const connector = createIcsConnector(
+      { path },
+      { now: () => new Date(OBSERVED_AT) },
+    );
+    const first = await connector.backfill(null);
+    expect(first.events.map((event) => event.source_record_id)).toEqual([
+      "standup@fleet.example#20260318T100000",
+      "standup@fleet.example#20260401T100000",
+      "standup@fleet.example#20260408T100000",
+    ]);
+    const replay = await connector.backfill(first.cursor);
+    expect(replay.events.map((event) => event.source_record_id)).toEqual(
+      first.events.map((event) => event.source_record_id),
+    );
+    expect(replay.events.map((event) => event.occurred_at)).toEqual(
+      first.events.map((event) => event.occurred_at),
+    );
+    const synced = await connector.sync(first.cursor);
+    expect(synced.events).toEqual([]);
   });
 });

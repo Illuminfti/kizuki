@@ -23,6 +23,7 @@ import {
   requireKnownKeys,
   requirePathConfig,
   safeFilename,
+  subjectName,
 } from "../util";
 import { isDateOrder, resolveTimezone } from "./dates";
 import type { DateOrder } from "./dates";
@@ -229,13 +230,15 @@ export class WhatsAppImportConnector implements Connector {
     ] as const) {
       if (
         value !== undefined &&
-        (typeof value !== "string" || value.length === 0)
+        (typeof value !== "string" || subjectName(value).length === 0)
       ) {
         throw misconfigured(`${key} must be a non-empty string`);
       }
     }
-    this.self = config.self;
-    this.chat = config.chat;
+    this.self =
+      config.self === undefined ? undefined : subjectName(config.self);
+    this.chat =
+      config.chat === undefined ? undefined : subjectName(config.chat);
   }
 
   manifest(): Manifest {

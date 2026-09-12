@@ -26,12 +26,13 @@ import { registerPort } from "../contracts/registry";
 import type { PortRegistry } from "../contracts/registry";
 import { isRfc3339 } from "../util/time";
 import { isNonEmptyString, isPlainObject } from "../util/validate";
-import { escapeFenceText, hasFenceLeak, newFenceNonce } from "./fence";
+import { escapeFenceText, hasFenceLeak, hasParsedFenceLeak, newFenceNonce } from "./fence";
 import { buildExtractionMessages } from "./prompt";
 import {
   MAX_EVENT_ID_CHARS,
   containsVerbatimCapture,
-  parseExtractClaims,
+  decodeExtractJson,
+  parseDecodedExtractClaims,
 } from "./schema";
 
 export const MODEL_PRODUCER_ID = "kizuki.producer.model" as const;
@@ -487,7 +488,19 @@ export function createModelProducerPort(
         if (hasFenceLeak(text, batch.nonce)) {
           return { status: "rejected", reason: "fence_leak", usage };
         }
-        const parsed = parseExtractClaims(text);
+        const decoded = decodeExtractJson(text);
+        if (!decoded.ok) {
+          ctx.logger({
+            level: "warn",
+            message: "extract_schema_invalid",
+            detail: { detail: decoded.detail },
+          });
+          return { status: "rejected", reason: "schema_invalid", usage, diagnostic: decoded.diagnostic };
+        }
+        if (hasParsedFenceLeak(decoded.value, batch.nonce)) {
+          return { status: "rejected", reason: "fence_leak", usage };
+        }
+        const parsed = parseDecodedExtractClaims(decoded.value);
         if (!parsed.ok) {
           ctx.logger({
             level: "warn",

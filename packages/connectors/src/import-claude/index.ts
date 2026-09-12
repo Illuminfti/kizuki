@@ -1,4 +1,9 @@
-import { freezeManifest, isPlainObject, policyForConnector } from "@kizuki/core";
+import {
+  freezeManifest,
+  isPlainObject,
+  policyForConnector,
+  validateEventInput,
+} from "@kizuki/core";
 import type {
   AttachmentRef,
   CaptureEventInput,
@@ -71,7 +76,9 @@ const MANIFEST: Manifest = freezeManifest({
   capabilities: {
     backfill: true,
     sync: true,
-    tombstones: true,
+    // A shorter export is not a deletion, and the importer cannot tell the
+    // difference, so it never claims one.
+    tombstones: false,
     purge: false,
     fixture: true,
   },
@@ -83,7 +90,6 @@ const MANIFEST: Manifest = freezeManifest({
 
 const SNAPSHOT: SnapshotParse = {
   connectorId: CLAUDE_IMPORT_CONNECTOR_ID,
-  kind: "message",
   parse: parseClaudeExport,
 };
 
@@ -213,17 +219,12 @@ export function parseClaudeExport(
         errors.push(extracted.error);
         return;
       }
-      if (extracted.unsupported.length > 0) {
-        errors.push({
-          location,
-          code: "unsupported_part",
-          reason: `unsupported content blocks: ${extracted.unsupported.join(",")}`,
-        });
-      }
       if (
         extracted.text.trim().length === 0 &&
-        extracted.attachments.length === 0
+        extracted.attachments.length === 0 &&
+        extracted.extracts.length === 0
       ) {
+        pushUnsupported(errors, location, extracted.unsupported);
         errors.push({
           location,
           code: "empty_content",
@@ -236,6 +237,7 @@ export function parseClaudeExport(
       try {
         occurredAt = isoToRfc3339(rawMessage["created_at"], location);
       } catch {
+        pushUnsupported(errors, location, extracted.unsupported);
         errors.push({
           location,
           code: "invalid_timestamp",
@@ -244,12 +246,13 @@ export function parseClaudeExport(
         return;
       }
 
+      const sourceText = joinedClaudeText(extracted.text, extracted.extracts);
       const messageId =
         nonEmptyString(rawMessage["uuid"]) ??
         fallbackSourcePart("message", [
           conversationId,
           sender,
-          extracted.text,
+          sourceText,
           occurredAt,
         ]);
       if (nonEmptyString(rawMessage["uuid"]) === undefined) {
@@ -260,11 +263,15 @@ export function parseClaudeExport(
         });
       }
       const sourceRecordId = encodeSourceRecordId([conversationId, messageId]);
-      const fingerprint = `${occurredAt}\n${extracted.text}\n${extracted.attachments
-        .map((attachment) => attachment.attachment_id)
-        .join(",")}`;
+      const fingerprint = JSON.stringify({
+        attachments: extracted.attachments,
+        occurred_at: occurredAt,
+        text: sourceText,
+        unsupported: extracted.unsupported,
+      });
       const prior = seen.get(sourceRecordId);
       if (prior !== undefined) {
+        pushUnsupported(errors, location, extracted.unsupported);
         errors.push({
           location: sourceRecordId,
           code: prior === fingerprint ? "duplicate_id" : "conflicting_id",
@@ -277,37 +284,176 @@ export function parseClaudeExport(
       }
       seen.set(sourceRecordId, fingerprint);
 
-      const handle = sender === "human" ? "self" : "assistant";
-      events.push({
-        schema: "kizuki.event/v1",
-        connector_id: CLAUDE_IMPORT_CONNECTOR_ID,
-        source_record_id: sourceRecordId,
-        kind: "message",
-        occurred_at: occurredAt,
-        observed_at: observedAt,
-        text: extracted.text,
-        subjects: [{ subject_id: `claude:${handle}`, role: "from" }],
-        deleted: false,
-        attachments: extracted.attachments,
-        metadata: {
-          handle,
-          namespace: "claude",
-          conversation_title: title,
-          unsupported_parts: extracted.unsupported,
-          export: "claude-conversations.json",
+      const fitted = fitClaudeDraft(
+        {
+          location,
+          sourceRecordId,
+          title,
+          sender,
+          occurredAt,
+          nativeText: extracted.text,
+          extracts: extracted.extracts,
+          attachments: extracted.attachments,
+          unsupported: extracted.unsupported,
         },
-      });
+        observedAt,
+      );
+      errors.push(...fitted.errors);
+      if (fitted.event !== undefined) events.push(fitted.event);
     });
   });
 
   return { events, errors };
 }
 
+const OVERSIZED_EXTRACTED_CONTENT = "oversized_extracted_content";
+const OVERSIZED_ATTACHMENTS = "oversized_attachments";
+
+interface ClaudeDraft {
+  location: string;
+  sourceRecordId: string;
+  title: string;
+  sender: string;
+  occurredAt: string;
+  nativeText: string;
+  extracts: string[];
+  attachments: AttachmentRef[];
+  unsupported: string[];
+}
+
 interface ExtractedContent {
   text: string;
+  extracts: string[];
   attachments: AttachmentRef[];
   unsupported: string[];
   error?: ImportRecordError;
+}
+
+function joinedClaudeText(nativeText: string, extracts: readonly string[]): string {
+  return nativeText.length === 0
+    ? extracts.join("\n")
+    : [nativeText, ...extracts].join("\n");
+}
+
+function pushUnsupported(
+  errors: ImportRecordError[],
+  location: string,
+  flags: readonly string[],
+): void {
+  if (flags.length === 0) return;
+  errors.push({
+    location,
+    code: "unsupported_part",
+    reason: `unsupported content blocks: ${flags.join(",")}`,
+  });
+}
+
+function claudeCaptureEvent(input: {
+  sourceRecordId: string;
+  occurredAt: string;
+  observedAt: string;
+  text: string;
+  handle: string;
+  title: string;
+  attachments: readonly AttachmentRef[];
+  unsupported: readonly string[];
+}): CaptureEventInput {
+  return {
+    schema: "kizuki.event/v1",
+    connector_id: CLAUDE_IMPORT_CONNECTOR_ID,
+    source_record_id: input.sourceRecordId,
+    kind: "message",
+    occurred_at: input.occurredAt,
+    observed_at: input.observedAt,
+    text: input.text,
+    subjects: [{ subject_id: `claude:${input.handle}`, role: "from" }],
+    deleted: false,
+    attachments: [...input.attachments],
+    metadata: {
+      handle: input.handle,
+      namespace: "claude",
+      conversation_title: input.title,
+      unsupported_parts: [...input.unsupported],
+      export: "claude-conversations.json",
+    },
+  };
+}
+
+/**
+ * Native text and exact attachment identities stay. extracted_content is
+ * omitted only when this event would miss frozen validateEventInput limits.
+ */
+function fitClaudeDraft(
+  draft: ClaudeDraft,
+  observedAt: string,
+): { event?: CaptureEventInput; errors: ImportRecordError[] } {
+  const handle = draft.sender === "human" ? "self" : "assistant";
+  const unsupported = [...draft.unsupported];
+  const build = (
+    text: string,
+    attachments: readonly AttachmentRef[],
+  ): CaptureEventInput =>
+    claudeCaptureEvent({
+      sourceRecordId: draft.sourceRecordId,
+      occurredAt: draft.occurredAt,
+      observedAt,
+      text,
+      handle,
+      title: draft.title,
+      attachments,
+      unsupported,
+    });
+  const oversizedRecord: ImportRecordError = {
+    location: draft.location,
+    code: "oversized_record",
+    reason: "message exceeds frozen ingress limits without extracted content",
+  };
+  const errors: ImportRecordError[] = [];
+
+  if (!validateEventInput(build(draft.nativeText, [])).ok) {
+    pushUnsupported(errors, draft.location, unsupported);
+    errors.push(oversizedRecord);
+    return { errors };
+  }
+
+  const attachments: AttachmentRef[] = [];
+  for (const attachment of draft.attachments) {
+    if (
+      validateEventInput(build(draft.nativeText, [...attachments, attachment]))
+        .ok
+    ) {
+      attachments.push(attachment);
+    } else if (!unsupported.includes(OVERSIZED_ATTACHMENTS)) {
+      unsupported.push(OVERSIZED_ATTACHMENTS);
+    }
+  }
+
+  let text = draft.nativeText;
+  for (const extract of draft.extracts) {
+    const nextText = joinedClaudeText(text, [extract]);
+    if (validateEventInput(build(nextText, attachments)).ok) {
+      text = nextText;
+    } else if (!unsupported.includes(OVERSIZED_EXTRACTED_CONTENT)) {
+      unsupported.push(OVERSIZED_EXTRACTED_CONTENT);
+    }
+  }
+
+  const event = build(text, attachments);
+  const body = event.text.trim().length > 0 || event.attachments.length > 0;
+  pushUnsupported(errors, draft.location, unsupported);
+  if (!body || !validateEventInput(event).ok) {
+    errors.push(
+      body
+        ? oversizedRecord
+        : {
+            location: draft.location,
+            code: "empty_content",
+            reason: "message has no text or attachments",
+          },
+    );
+    return { errors };
+  }
+  return { event, errors };
 }
 
 function extractClaudeContent(
@@ -316,16 +462,39 @@ function extractClaudeContent(
 ): ExtractedContent {
   const attachments: AttachmentRef[] = [];
   const unsupported: string[] = [];
-  const lines: string[] = [];
+  const byId = new Map<string, AttachmentRef>();
+  let unnamedDocuments = 0;
+  let unnamedImages = 0;
+  const textBlocks: string[] = [];
 
-  if (typeof rawMessage["text"] === "string" && rawMessage["text"].length > 0) {
-    lines.push(rawMessage["text"]);
-  }
+  const remember = (candidate: AttachmentRef): void => {
+    let id = candidate.attachment_id;
+    const existing = byId.get(id);
+    if (existing !== undefined) {
+      if (
+        existing.media_type === candidate.media_type &&
+        existing.filename === candidate.filename &&
+        existing.byte_size === candidate.byte_size
+      ) {
+        return;
+      }
+      let suffix = 1;
+      while (byId.has(`${candidate.attachment_id}:${suffix}`)) suffix += 1;
+      id = `${candidate.attachment_id}:${suffix}`;
+    }
+    const stored =
+      id === candidate.attachment_id
+        ? candidate
+        : { ...candidate, attachment_id: id };
+    byId.set(id, stored);
+    attachments.push(stored);
+  };
 
   const blocks = rawMessage["content"];
   if (blocks !== undefined && !Array.isArray(blocks)) {
     return {
       text: "",
+      extracts: [],
       attachments: [],
       unsupported: [],
       error: {
@@ -336,32 +505,44 @@ function extractClaudeContent(
     };
   }
   if (Array.isArray(blocks)) {
-    blocks.forEach((block, index) => {
+    blocks.forEach((block) => {
       if (!isPlainObject(block)) {
         unsupported.push("non_object_block");
         return;
       }
       const type =
         typeof block["type"] === "string" ? block["type"] : "unknown";
-      if (type === "text" && typeof block["text"] === "string") {
-        if (typeof rawMessage["text"] === "string" && block["text"] === rawMessage["text"]) {
+      if (type === "text") {
+        if (typeof block["text"] === "string") {
+          textBlocks.push(block["text"]);
           return;
         }
-        lines.push(block["text"]);
+        unsupported.push("malformed_text");
         return;
       }
       if (type === "image" || type === "document") {
-        const id =
+        const source = isPlainObject(block["source"])
+          ? block["source"]
+          : undefined;
+        const named =
           nonEmptyString(block["id"]) ??
-          nonEmptyString(
-            isPlainObject(block["source"])
-              ? block["source"]["media_type"]
-              : undefined,
-          ) ??
-          `${type}:${index}`;
-        attachments.push({
-          attachment_id: id,
-          media_type: type === "image" ? "image/*" : "application/octet-stream",
+          nonEmptyString(block["file_id"]) ??
+          nonEmptyString(block["file_name"]) ??
+          nonEmptyString(block["filename"]);
+        const filename =
+          nonEmptyString(block["file_name"]) ??
+          nonEmptyString(block["filename"]);
+        remember({
+          attachment_id:
+            named ??
+            `${type}:${type === "image" ? unnamedImages++ : unnamedDocuments++}`,
+          media_type:
+            nonEmptyString(
+              source !== undefined ? source["media_type"] : undefined,
+            ) ??
+            nonEmptyString(block["media_type"]) ??
+            (type === "image" ? "image/*" : "application/octet-stream"),
+          ...(filename !== undefined ? { filename } : {}),
         });
         return;
       }
@@ -369,38 +550,80 @@ function extractClaudeContent(
         unsupported.push(type);
         return;
       }
-      if (type !== "text") unsupported.push(type);
+      unsupported.push(type);
     });
   }
 
-  const listed = rawMessage["attachments"];
-  if (listed !== undefined && !Array.isArray(listed)) {
-    unsupported.push("malformed_attachments");
-  } else if (Array.isArray(listed)) {
-    listed.forEach((attachment, index) => {
-      if (!isPlainObject(attachment)) {
-        unsupported.push("non_object_attachment");
+  const topLevel =
+    typeof rawMessage["text"] === "string" ? rawMessage["text"] : "";
+  const text = claudeMessageText(topLevel, textBlocks);
+  const extracts: string[] = [];
+
+  const appendExtracted = (value: unknown): void => {
+    if (typeof value !== "string" || value.trim().length === 0) return;
+    const parts = text.length > 0 ? [text, ...extracts] : extracts;
+    if (value === parts.join("\n") || parts.includes(value)) return;
+    extracts.push(value);
+  };
+
+  const readListed = (
+    listed: unknown,
+    kind: "attachments" | "files",
+  ): void => {
+    if (listed === undefined) return;
+    if (!Array.isArray(listed)) {
+      unsupported.push(
+        kind === "attachments" ? "malformed_attachments" : "malformed_files",
+      );
+      return;
+    }
+    listed.forEach((item, index) => {
+      if (!isPlainObject(item)) {
+        unsupported.push(
+          kind === "attachments"
+            ? "non_object_attachment"
+            : "non_object_file",
+        );
         return;
       }
       const name =
-        nonEmptyString(attachment["file_name"]) ??
-        nonEmptyString(attachment["filename"]) ??
-        `attachment:${index}`;
-      attachments.push({
+        nonEmptyString(item["file_name"]) ??
+        nonEmptyString(item["filename"]) ??
+        `${kind === "files" ? "file" : "attachment"}:${index}`;
+      const byteSize =
+        typeof item["file_size"] === "number" &&
+        Number.isSafeInteger(item["file_size"]) &&
+        item["file_size"] >= 0
+          ? item["file_size"]
+          : undefined;
+      remember({
         attachment_id: name,
         media_type:
-          typeof attachment["file_type"] === "string"
-            ? attachment["file_type"]
-            : "application/octet-stream",
+          nonEmptyString(item["file_type"]) ?? "application/octet-stream",
         filename: name,
-        ...(typeof attachment["file_size"] === "number"
-          ? { byte_size: attachment["file_size"] }
-          : {}),
+        ...(byteSize !== undefined ? { byte_size: byteSize } : {}),
       });
+      appendExtracted(item["extracted_content"]);
     });
-  }
+  };
 
-  return { text: lines.join("\n"), attachments, unsupported };
+  readListed(rawMessage["attachments"], "attachments");
+  readListed(rawMessage["files"], "files");
+
+  return { text, extracts, attachments, unsupported };
+}
+
+/** `text` is the message; content blocks that restate a prefix of it are not stored twice. */
+function claudeMessageText(topLevel: string, blockTexts: string[]): string {
+  if (blockTexts.length === 0) return topLevel;
+  const joined = blockTexts.join("\n");
+  if (topLevel.length === 0 || topLevel === joined) return joined;
+  let prefix = "";
+  for (const block of blockTexts) {
+    prefix = prefix.length === 0 ? block : `${prefix}\n${block}`;
+    if (prefix === topLevel) return joined;
+  }
+  return `${topLevel}\n${joined}`;
 }
 
 function messageFingerprint(messages: unknown): string {

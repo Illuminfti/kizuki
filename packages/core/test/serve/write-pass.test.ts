@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import type { Database } from "bun:sqlite";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createBudgetTracker } from "../../src/canon/budget";
+import { createBudgetTracker, ordinaryDailyOccupancy } from "../../src/canon/budget";
+import { RECEIPTS_PATH } from "../../src/canon/receipts";
 import { getClaim, listClaims, reviveUncontestedSkipped } from "../../src/claims/store";
 import type { ProduceResult, ProducerPort } from "../../src/contracts/producer";
 import { openLedger } from "../../src/ledger/db";
+import { createDurableWriteBudget } from "../../src/serve/budget-ledger";
 import { runRail } from "../../src/serve/rails";
 import { readExtractCursor } from "../../src/serve/extract";
 import { runWritePass } from "../../src/serve/write-pass";
@@ -42,6 +45,44 @@ function boundWriteOptions(db: ReturnType<typeof openLedger>, budget: ReturnType
       dropped: [],
     }),
   };
+}
+
+function filePerson(
+  db: ReturnType<typeof openLedger>,
+  eventId: string,
+  name: "grace" | "ada",
+) {
+  const title = name === "grace" ? "Grace" : "Ada";
+  const filed = fileProposal(db, {
+    kind: "claim",
+    target: `people/${name}`,
+    body: `${title} works at Acme.`,
+    frontmatter: { type: "person", title },
+    provenance: [eventId],
+    subjects: [`person:${name}`],
+    producer: "deterministic",
+    confidence: 0.8,
+  });
+  if (filed.outcome !== "stored") throw new Error("expected stored claim");
+  return filed.proposal.proposal_id;
+}
+
+/** Fails the receipt row insert only, after the file and the JSONL line. */
+function failingOnReceiptRow(db: Database): Database {
+  return new Proxy(db, {
+    get(target, property) {
+      if (property === "query") {
+        return (sql: string) => {
+          if (sql.includes("INSERT INTO canon_receipts")) {
+            throw new Error("synthetic storage failure");
+          }
+          return target.query(sql);
+        };
+      }
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    },
+  });
 }
 
 const dirs: string[] = [];
@@ -225,9 +266,11 @@ describe("write pass", () => {
 
   test("an edit of a human page stays on that page", async () => {
     const { path, db } = vault();
-    mkdirSync(join(path, "people"), { recursive: true });
+    mkdirSync(join(path, "people"), { recursive: true, mode: 0o700 });
+    chmodSync(join(path, "people"), 0o700);
+    const ownerPage = join(path, "people", "grace.md");
     writeFileSync(
-      join(path, "people", "grace.md"),
+      ownerPage,
       [
         "---",
         "id: person:grace",
@@ -241,7 +284,9 @@ describe("write pass", () => {
         "Grace keeps the partnership notes.",
         "",
       ].join("\n"),
+      { mode: 0o600 },
     );
+    chmodSync(ownerPage, 0o600);
     const eventId = putEvent(db);
     fileProposal(db, {
       kind: "claim",
@@ -259,6 +304,7 @@ describe("write pass", () => {
     ));
     // A page with no receipt is owner prose: the loop skips it and
     // does not open a parallel auto/ copy.
+    expect(result.errors).toEqual([]);
     expect(result.canon_writes).toBe(0);
     expect(existsSync(join(path, "people", "grace.md"))).toBe(true);
     expect(existsSync(join(path, "auto", "people", "grace.md"))).toBe(false);
@@ -292,11 +338,13 @@ describe("write pass", () => {
 
   test("skipped owner pages do not stall later writeable claims", async () => {
     const { path, db } = vault();
-    mkdirSync(join(path, "people"), { recursive: true });
+    mkdirSync(join(path, "people"), { recursive: true, mode: 0o700 });
+    chmodSync(join(path, "people"), 0o700);
     for (let index = 0; index < 32; index += 1) {
       const slug = `skip-${String(index).padStart(2, "0")}`;
+      const ownerPage = join(path, "people", `${slug}.md`);
       writeFileSync(
-        join(path, "people", `${slug}.md`),
+        ownerPage,
         [
           "---",
           `id: person:${slug}`,
@@ -310,7 +358,9 @@ describe("write pass", () => {
           `${slug} keeps owner notes.`,
           "",
         ].join("\n"),
+        { mode: 0o600 },
       );
+      chmodSync(ownerPage, 0o600);
       fileProposal(db, {
         kind: "claim",
         target: `people/${slug}`,
@@ -332,11 +382,11 @@ describe("write pass", () => {
       producer: "deterministic",
       confidence: 0.8,
     });
-    const result = await runWritePass(db, path, boundWriteOptions(
-      db,
-      createBudgetTracker({ canon_writes_per_run: 8 }),
-    ));
+    const budget = createBudgetTracker({ canon_writes_per_run: 8 });
+    const result = await runWritePass(db, path, boundWriteOptions(db, budget));
+    expect(result.errors).toEqual([]);
     expect(result.canon_writes).toBe(1);
+    expect(budget.usage().canon_writes_per_run.used).toBe(1);
     expect(existsSync(join(path, "auto", "people", "ada.md"))).toBe(true);
     db.close();
   });
@@ -508,6 +558,84 @@ describe("write pass", () => {
     await runWritePass(db, path, options);
     expect(calls).toBe(1);
     expect(listClaims(db, { status: "live", limit: 20 }).map((claim) => claim.subject)).toEqual(expect.arrayContaining(["person:grace", "person:ada"]));
+    db.close();
+  });
+
+  test("occupancy does not parse promotions.jsonl; a torn journal stays fail-closed", async () => {
+    const { path, db } = vault();
+    filePerson(db, putEvent(db, { source_record_id: "jsonl-grace" }), "grace");
+    filePerson(db, putEvent(db, { source_record_id: "jsonl-ada" }), "ada");
+    const first = await runWritePass(db, path, boundWriteOptions(
+      db,
+      createBudgetTracker({ canon_writes_per_run: 1 }),
+    ));
+    expect(first.canon_writes).toBe(1);
+    expect(first.stopped).toBe("budget:canon_writes_per_run");
+    expect(db.query("SELECT 1 FROM canon_write_intents").get()).toBeNull();
+    appendFileSync(join(path, RECEIPTS_PATH), "x");
+    const second = await runWritePass(db, path, boundWriteOptions(
+      db,
+      createBudgetTracker({ canon_writes_per_run: 8 }),
+    ));
+    expect(second.canon_writes).toBe(0);
+    expect(second.errors.length).toBeGreaterThan(0);
+    expect(second.errors.some((error) => error.includes("Unexpected token") || error.includes("JSON Parse"))).toBe(false);
+    expect(db.query<{ n: number }, []>("SELECT count(*) AS n FROM canon_receipts").get()?.n).toBe(1);
+    expect(
+      Number(existsSync(join(path, "auto", "people", "grace.md"))) +
+        Number(existsSync(join(path, "auto", "people", "ada.md"))),
+    ).toBe(1);
+    db.close();
+  });
+
+  test("a file and JSONL effect without a receipt row still occupies the write slot", async () => {
+    const { path, db } = vault();
+    filePerson(db, putEvent(db, { source_record_id: "intent-grace" }), "grace");
+    filePerson(db, putEvent(db, { source_record_id: "intent-ada" }), "ada");
+    const failing = failingOnReceiptRow(db);
+    const result = await runWritePass(failing, path, boundWriteOptions(
+      failing,
+      createBudgetTracker({ canon_writes_per_run: 8 }),
+    ));
+    expect(result.canon_writes).toBe(1);
+    expect(result.claims_written).toBe(1);
+    expect(result.errors.some((error) => error.includes("synthetic storage failure"))).toBe(true);
+    expect(db.query("SELECT 1 FROM canon_receipts").get()).toBeNull();
+    expect(db.query("SELECT 1 FROM canon_write_intents").get()).not.toBeNull();
+    expect(db.query("SELECT 1 FROM canon_write_reservations").get()).not.toBeNull();
+    expect(
+      Number(existsSync(join(path, "auto", "people", "grace.md"))) +
+        Number(existsSync(join(path, "auto", "people", "ada.md"))),
+    ).toBe(1);
+    db.close();
+  });
+
+  test("rails, receipts, and durable reservations share one UTC day clock", async () => {
+    const { path, db } = vault();
+    filePerson(db, putEvent(db, { source_record_id: "clock-grace" }), "grace");
+    const NOW = "2026-08-28T23:59:59.000Z";
+    const { budget: _budget, ...hooks } = boundWriteOptions(db, createBudgetTracker({ canon_writes_per_run: 8 }));
+    const receipt = await runRail(db, path, "sync", { now: () => NOW, hooks });
+    expect(receipt.canon_writes).toBe(1);
+    expect(db.query<{ at: string }, []>("SELECT at FROM canon_receipts").get()?.at).toBe(NOW);
+    expect(db.query<{ day: string; used: number }, []>(
+      "SELECT day, used FROM budget_ledger WHERE name='canon_writes_per_day'",
+    ).get()).toEqual({ day: "2026-08-28", used: 1 });
+    expect(db.query("SELECT 1 FROM canon_write_reservations").get()).toBeNull();
+
+    const split = createDurableWriteBudget(db, () => "2026-08-29", {
+      canon_writes_per_run: 8,
+      canon_writes_per_day: 8,
+    });
+    split.chargeWrite({
+      receipt_id: "01CLOCKRESERVE0000000000000",
+      page_path: "people/ada.md",
+      before_hash: null,
+      at: NOW,
+    });
+    expect(db.query<{ day: string }, []>("SELECT day FROM canon_write_reservations").get()?.day).toBe("2026-08-28");
+    expect(ordinaryDailyOccupancy(db, "2026-08-28")).toBe(2);
+    expect(ordinaryDailyOccupancy(db, "2026-08-29")).toBe(0);
     db.close();
   });
 });

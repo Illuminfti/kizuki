@@ -376,6 +376,30 @@ export function listCheckpoints(db: Database): Checkpoint[] {
   return inspectCheckpoints(db).flatMap((item) => (item.ok ? [item.value] : []));
 }
 
+/**
+ * True after any successful sync for this connection, including one that
+ * committed a null cursor. Presence of that receipt, not a non-null
+ * sync_cursor, is what ends first-sync bootstrap.
+ */
+export function hasSuccessfulSyncRun(
+  db: Database,
+  connector_id: string,
+  source_key: string,
+): boolean {
+  return (
+    db
+      .query<{ present: number }, [string, string]>(
+        `SELECT EXISTS (
+           SELECT 1 FROM connection_runs
+            WHERE connector_id = ? AND source_key = ?
+              AND mode = 'sync' AND status = 'ok'
+            LIMIT 1
+         ) AS present`,
+      )
+      .get(connector_id, source_key)?.present === 1
+  );
+}
+
 export function listConnectionRuns(
   db: Database,
   connector_id: string,

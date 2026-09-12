@@ -16,8 +16,9 @@ import {
   PAGE_CANDIDATE_KEY,
   PAGE_CANDIDATE_SCHEMA,
 } from "../src/contracts/page-candidate";
-import { getCheckpoint, registerConnection } from "../src/ledger/connections";
+import { getCheckpoint, listConnectionRuns, registerConnection } from "../src/ledger/connections";
 import { openLedger } from "../src/ledger/db";
+import { accept } from "../src/ledger/ledger";
 import {
   runBackfill,
   runBatch,
@@ -32,6 +33,7 @@ import { tempVault } from "./helpers/vault";
 
 type ManifestOverrides = Partial<Pick<Manifest, "connector_id" | "kinds">> & {
   page_candidates?: boolean;
+  sync_from_backfill_before_first_success?: boolean;
 };
 
 class FixtureConnector implements Connector {
@@ -59,6 +61,12 @@ class FixtureConnector implements Connector {
         ...(this.declared.page_candidates === undefined
           ? {}
           : { page_candidates: this.declared.page_candidates }),
+        ...(this.declared.sync_from_backfill_before_first_success === undefined
+          ? {}
+          : {
+              sync_from_backfill_before_first_success:
+                this.declared.sync_from_backfill_before_first_success,
+            }),
       },
       required_secrets: [],
       emits_sensitivity_hint: true,
@@ -237,13 +245,15 @@ function candidate(over: Partial<CaptureEventInput> = {}): CaptureEventInput {
 
 const SOURCE = "01JJ0000000000000000000001";
 
-function database() {
-  const db = openLedger(":memory:");
+function database(path = ":memory:") {
+  const db = openLedger(path);
   initStaging(db);
   registerConnection(db, "fixture", SOURCE);
   setSourceGrant(db, { source_key: SOURCE, expected_revision: 0, operation_id: "fixture-" + SOURCE, policy: { purposes: ["capture", "recall", "derive"], allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public" } });
   return db;
 }
+
+const OPT_IN = { sync_from_backfill_before_first_success: true } as const;
 
 describe("runBatch", () => {
   test("accepts events and files deterministic proposals", () => {
@@ -596,6 +606,220 @@ describe("connector runs", () => {
     reopened.close();
     rmSync(directory, { recursive: true, force: true });
   });
+
+  test("default fixture first sync after backfill still receives null", async () => {
+    const db = database();
+    const connector = new FixtureConnector(
+      { events: [], cursor: "B1" },
+      { events: [], cursor: "S1" },
+    );
+    await runBackfill(db, connector, "fixture", SOURCE);
+    await runSync(db, connector, "fixture", SOURCE);
+    expect(connector.syncCursors).toEqual([null]);
+    expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+      backfill_cursor: "B1",
+      sync_cursor: "S1",
+    });
+    db.close();
+  });
+
+  test("opt-in first sync after backfill reopen receives the backfill token", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-sync-bootstrap-"));
+    let db = database(join(directory, "ledger.sqlite"));
+    try {
+      const connector = new FixtureConnector(
+        { events: [], cursor: "B1" },
+        { events: [], cursor: "S1" },
+        OPT_IN,
+      );
+      await runBackfill(db, connector, "fixture", SOURCE);
+      db.close();
+      db = openLedger(join(directory, "ledger.sqlite"));
+      initStaging(db);
+      await runSync(db, connector, "fixture", SOURCE);
+      expect(connector.syncCursors).toEqual(["B1"]);
+      expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+        backfill_cursor: "B1",
+        sync_cursor: "S1",
+      });
+    } finally {
+      db.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("opt-in interleaved backfill and sync keep independent B1/B2 and S1/S2 tokens", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-optin-mode-cursors-"));
+    let db = database(join(directory, "ledger.sqlite"));
+    const received = { backfill: [] as (string | null)[], sync: [] as (string | null)[] };
+    const connector = new FixtureConnector({ events: [], cursor: null }, undefined, OPT_IN);
+    connector.backfill = async (cursor) => {
+      received.backfill.push(cursor);
+      return { events: [], cursor: cursor === null ? "B1" : "B2" };
+    };
+    connector.sync = async (cursor) => {
+      received.sync.push(cursor);
+      return { events: [], cursor: cursor === "S1" ? "S2" : "S1" };
+    };
+    try {
+      await runBackfill(db, connector, "fixture", SOURCE);
+      await runSync(db, connector, "fixture", SOURCE);
+      db.close();
+      db = openLedger(join(directory, "ledger.sqlite"));
+      initStaging(db);
+      await runBackfill(db, connector, "fixture", SOURCE);
+      await runSync(db, connector, "fixture", SOURCE);
+      expect(received.backfill).toEqual([null, "B1"]);
+      expect(received.sync).toEqual(["B1", "S1"]);
+      expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+        backfill_cursor: "B2",
+        sync_cursor: "S2",
+        backfill_complete: false,
+      });
+    } finally {
+      db.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("a successful null sync suppresses backfill bootstrap after restart", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-null-sync-bootstrap-"));
+    let db = database(join(directory, "ledger.sqlite"));
+    try {
+      const first = new FixtureConnector(
+        { events: [validEvent()], cursor: "B1", has_more: false },
+        { events: [], cursor: null },
+        OPT_IN,
+      );
+      await runBackfill(db, first, "fixture", SOURCE);
+      expect(getCheckpoint(db, "fixture", SOURCE)?.backfill_complete).toBe(true);
+      const synced = await runSync(db, first, "fixture", SOURCE);
+      expect(first.syncCursors).toEqual(["B1"]);
+      expect(synced).toMatchObject({ errors: [], cursor: null });
+      expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+        backfill_cursor: "B1",
+        sync_cursor: null,
+        backfill_complete: true,
+      });
+      expect(
+        listConnectionRuns(db, "fixture", SOURCE).some(
+          (run) => run.mode === "sync" && run.status === "ok",
+        ),
+      ).toBe(true);
+      db.close();
+      db = openLedger(join(directory, "ledger.sqlite"));
+      initStaging(db);
+      const second = new FixtureConnector(
+        { events: [], cursor: "B1" },
+        { events: [], cursor: "S1" },
+        OPT_IN,
+      );
+      await runSync(db, second, "fixture", SOURCE);
+      expect(second.syncCursors).toEqual([null]);
+      expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+        backfill_cursor: "B1",
+        sync_cursor: "S1",
+        backfill_complete: true,
+      });
+    } finally {
+      db.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("opt-in first sync failure preserves the bootstrap token for retry", async () => {
+    const db = database();
+    try {
+      const failing = new (class extends FixtureConnector {
+        override sync(cursor: string | null): Promise<SyncBatch> {
+          this.syncCursors.push(cursor);
+          return Promise.reject(new Error("provider down"));
+        }
+      })({ events: [validEvent()], cursor: "B1", has_more: false }, undefined, OPT_IN);
+      await runBackfill(db, failing, "fixture", SOURCE);
+      expect(getCheckpoint(db, "fixture", SOURCE)?.backfill_complete).toBe(true);
+      const failed = await runSync(db, failing, "fixture", SOURCE);
+      expect(failed.errors).toEqual(["provider down"]);
+      expect(failed.cursor).toBe("B1");
+      expect(failing.syncCursors).toEqual(["B1"]);
+      expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+        backfill_cursor: "B1",
+        sync_cursor: "B1",
+        backfill_complete: true,
+      });
+      expect(
+        listConnectionRuns(db, "fixture", SOURCE).filter((run) => run.mode === "sync"),
+      ).toMatchObject([{ status: "failed", committed_cursor: "B1" }]);
+      const later = new FixtureConnector(
+        { events: [], cursor: "B2" },
+        { events: [], cursor: "S2" },
+        OPT_IN,
+      );
+      await runBackfill(db, later, "fixture", SOURCE);
+      expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+        backfill_cursor: "B2",
+        sync_cursor: "B1",
+        backfill_complete: true,
+      });
+      await runSync(db, later, "fixture", SOURCE);
+      expect(later.syncCursors).toEqual(["B1"]);
+      expect(getCheckpoint(db, "fixture", SOURCE)?.sync_cursor).toBe("S2");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("opt-in first sync unavailable preserves the bootstrap token for retry", async () => {
+    const db = database();
+    try {
+      const connector = new FixtureConnector(
+        { events: [validEvent()], cursor: "B1", has_more: false },
+        {
+          events: [],
+          cursor: "attempted",
+          status: "unavailable",
+          detail: "provider is down",
+        },
+        OPT_IN,
+      );
+      await runBackfill(db, connector, "fixture", SOURCE);
+      const result = await runSync(db, connector, "fixture", SOURCE);
+      expect(result.errors).toEqual(["provider is down"]);
+      expect(result.cursor).toBe("B1");
+      expect(connector.syncCursors).toEqual(["B1"]);
+      expect(getCheckpoint(db, "fixture", SOURCE)).toMatchObject({
+        backfill_cursor: "B1",
+        sync_cursor: "B1",
+        backfill_complete: true,
+      });
+      const retry = new FixtureConnector(
+        { events: [], cursor: "B1" },
+        { events: [], cursor: "S1" },
+        OPT_IN,
+      );
+      await runSync(db, retry, "fixture", SOURCE);
+      expect(retry.syncCursors).toEqual(["B1"]);
+      expect(getCheckpoint(db, "fixture", SOURCE)?.sync_cursor).toBe("S1");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("opt-in without a backfill cursor still starts sync at null", async () => {
+    const db = database();
+    try {
+      const connector = new FixtureConnector(
+        { events: [], cursor: "B1" },
+        { events: [], cursor: "S1" },
+        OPT_IN,
+      );
+      await runSync(db, connector, "fixture", SOURCE);
+      expect(connector.syncCursors).toEqual([null]);
+      expect(connector.backfillCursors).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
 });
 
 /** A connector whose batches are scripted, the way a paging source behaves. */
@@ -654,6 +878,21 @@ describe("runToCompletion", () => {
     } finally { db.close(); }
   });
 
+  test("an explicit empty has_more page continues while an unspecified empty page remains drained", async () => {
+    const db = database();
+    try {
+      const continued = new ScriptedConnector([
+        { events: [], cursor: "empty-page", has_more: true },
+        { events: [validEvent()], cursor: "stored-page", has_more: false },
+      ]);
+      expect(await runToCompletion(db, continued, "fixture", SOURCE, "backfill")).toMatchObject({ stored: 1, errors: [], cursor: "stored-page" });
+      expect(continued.cursors).toEqual([null, "empty-page"]);
+      const legacy = new ScriptedConnector([{ events: [], cursor: "legacy-empty" }]);
+      expect(await runToCompletion(db, legacy, "fixture", SOURCE, "backfill")).toMatchObject({ stored: 0, errors: [], cursor: "legacy-empty" });
+      expect(legacy.cursors).toEqual(["stored-page"]);
+    } finally { db.close(); }
+  });
+
   test("terminal failed and unavailable batches never commit their attempted cursor", async () => {
     for (const terminal of [
       { events: [{ ...validEvent(), occurred_at: "not-a-time" }], cursor: "failed", has_more: false },
@@ -671,14 +910,36 @@ describe("runToCompletion", () => {
     }
   });
 
-  test("the admitted terminal scalar survives provider mutation while events are read", async () => {
+  test("an events accessor is refused before it can mutate the admitted completion scalar", async () => {
     const db = database();
     try {
-      const original = page(1, 1), batch = { cursor: original.cursor, has_more: false } as SyncBatch;
-      Object.defineProperty(batch, "events", { get: () => { batch.has_more = true; return original.events; }, enumerable: true });
-      const connector = new ScriptedConnector([batch, page(99, 1)]);
-      expect(await runToCompletion(db, connector, "fixture", SOURCE, "backfill")).toMatchObject({ stored: 1, errors: [], cursor: "page-1" });
-      expect(connector.cursors).toEqual([null]);
+      const original = page(1, 1);
+      const batch = { cursor: original.cursor, has_more: false } as SyncBatch;
+      let reads = 0;
+      Object.defineProperty(batch, "events", {
+        enumerable: true,
+        get() {
+          reads += 1;
+          batch.has_more = true;
+          return original.events;
+        },
+      });
+      const result = await runToCompletion(db, new FixtureConnector(batch), "fixture", SOURCE, "backfill");
+      expect(result.errors).toEqual(["sync batch events must be an own data property"]);
+      expect(result.stored).toBe(0);
+      expect(result.cursor).toBeNull();
+      expect(reads).toBe(0);
+      expect(batch.has_more).toBe(false);
+      expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBeNull();
+    } finally { db.close(); }
+  });
+
+  test("an inherited completion flag on a later page cannot terminate a legacy batch", async () => {
+    const db = database();
+    try {
+      expect(await runToCompletion(db, new ScriptedConnector([page(1, 1)]), "fixture", SOURCE, "backfill")).toMatchObject({
+        stored: 1, errors: [], cursor: "page-1",
+      });
       const inherited = Object.assign(Object.create({ has_more: false }), page(2, 1));
       inherited.cursor = "page-1";
       expect((await runToCompletion(db, new FixtureConnector(inherited), "fixture", SOURCE, "backfill")).errors).toEqual(["run made no progress"]);
@@ -992,6 +1253,193 @@ describe("a batch that does not match the enrolled connection", () => {
     const [staged] = listProposals(db);
     expect(staged?.target).toBe("entities/injected");
     expect(staged?.body).toBe("UNQUOTED BODY");
+    db.close();
+  });
+});
+
+describe("hostile live event records", () => {
+  const CANARY = "private-body\u0007SECRET";
+
+  function leakless(value: unknown) {
+    const encoded = JSON.stringify(value);
+    expect(encoded).not.toContain("private-body");
+    expect(encoded).not.toContain("SECRET");
+    expect(encoded).not.toContain("\u0007");
+  }
+
+  const shapes: [string, (hits: { n: number }) => CaptureEventInput][] = [
+    [
+      "text accessor",
+      (hits) => {
+        const event = { ...validEvent(), text: CANARY };
+        Object.defineProperty(event, "text", {
+          configurable: true,
+          enumerable: true,
+          get() {
+            hits.n += 1;
+            throw new Error(CANARY);
+          },
+        });
+        return event as CaptureEventInput;
+      },
+    ],
+    [
+      "enumerable toJSON",
+      (hits) => {
+        const event = { ...validEvent(), text: CANARY };
+        Object.defineProperty(event, "toJSON", {
+          configurable: true,
+          enumerable: true,
+          value() {
+            hits.n += 1;
+            throw new Error(CANARY);
+          },
+        });
+        return event as CaptureEventInput;
+      },
+    ],
+  ];
+
+  for (const [name, make] of shapes) {
+    test(`accept, runBatch, runBackfill and runSync refuse ${name} without executing or leaking`, async () => {
+      const hits = { n: 0 };
+      const event = make(hits);
+
+      const direct = openLedger(":memory:");
+      try {
+        const accepted = accept(direct, event);
+        expect(accepted.status).toBe("error");
+        if (accepted.status !== "error") throw new Error("unreachable");
+        expect(accepted.kind).toBe("validation");
+        leakless(accepted);
+        expect(direct.query("SELECT count(*) AS n FROM events").get()).toEqual({ n: 0 });
+      } finally {
+        direct.close();
+      }
+      expect(hits.n).toBe(0);
+
+      const batched = database();
+      try {
+        const result = runBatch(
+          batched,
+          { events: [event, { ...validEvent(), source_record_id: "rec-2" }], cursor: "stolen" },
+          NOTHING,
+        );
+        expect(result.stored).toBe(0);
+        expect(result.cursor).toBeNull();
+        expect(result.errors.length).toBeGreaterThan(0);
+        leakless(result);
+        expect(batched.query("SELECT count(*) AS n FROM events").get()).toEqual({ n: 0 });
+      } finally {
+        batched.close();
+      }
+      expect(hits.n).toBe(0);
+
+      const backfillDb = database();
+      try {
+        const result = await runBackfill(
+          backfillDb,
+          new FixtureConnector({ events: [event], cursor: "stolen" }),
+          "fixture",
+          SOURCE,
+        );
+        expect(result.stored).toBe(0);
+        expect(result.cursor).toBeNull();
+        leakless(result);
+        leakless(getCheckpoint(backfillDb, "fixture", SOURCE));
+        leakless(listConnectionRuns(backfillDb, "fixture", SOURCE));
+        expect(getCheckpoint(backfillDb, "fixture", SOURCE)?.cursor).toBeNull();
+      } finally {
+        backfillDb.close();
+      }
+      expect(hits.n).toBe(0);
+
+      const syncDb = database();
+      try {
+        expect(
+          (await runBackfill(
+            syncDb,
+            new FixtureConnector({ events: [validEvent()], cursor: "kept" }),
+            "fixture",
+            SOURCE,
+          )).stored,
+        ).toBe(1);
+        const result = await runSync(
+          syncDb,
+          new FixtureConnector({ events: [], cursor: null }, { events: [event], cursor: "stolen" }),
+          "fixture",
+          SOURCE,
+        );
+        expect(result.stored).toBe(0);
+        expect(result.cursor).toBeNull();
+        leakless(result);
+        leakless(getCheckpoint(syncDb, "fixture", SOURCE));
+        expect(getCheckpoint(syncDb, "fixture", SOURCE)?.backfill_cursor).toBe("kept");
+        expect(getCheckpoint(syncDb, "fixture", SOURCE)?.sync_cursor).toBeNull();
+      } finally {
+        syncDb.close();
+      }
+      expect(hits.n).toBe(0);
+    });
+  }
+
+  test("events-array toJSON and cursor accessors are refused without execution", async () => {
+    const hits = { n: 0 };
+    const events = [validEvent()];
+    Object.defineProperty(events, "toJSON", {
+      enumerable: true,
+      value() {
+        hits.n += 1;
+        throw new Error(CANARY);
+      },
+    });
+    const cursorBatch = { events: [validEvent()], cursor: "stolen" } as SyncBatch;
+    Object.defineProperty(cursorBatch, "cursor", {
+      enumerable: true,
+      get() {
+        hits.n += 1;
+        throw new Error(CANARY);
+      },
+    });
+
+    const db = database();
+    try {
+      const arrayResult = runBatch(db, { events, cursor: "stolen" }, NOTHING);
+      expect(arrayResult.stored).toBe(0);
+      leakless(arrayResult);
+      expect(hits.n).toBe(0);
+
+      const cursorResult = runBatch(db, cursorBatch, NOTHING);
+      expect(cursorResult.stored).toBe(0);
+      leakless(cursorResult);
+      expect(hits.n).toBe(0);
+
+      const backfill = await runBackfill(
+        db,
+        new FixtureConnector({ events, cursor: "stolen" }),
+        "fixture",
+        SOURCE,
+      );
+      expect(backfill.stored).toBe(0);
+      expect(backfill.cursor).toBeNull();
+      leakless(backfill);
+      expect(hits.n).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a later plain batch still stores and is not mutated after a hostile refusal", () => {
+    const db = database();
+    const hits = { n: 0 };
+    const hostile = shapes[0]![1](hits);
+    expect(runBatch(db, { events: [hostile], cursor: "nope" }, NOTHING).stored).toBe(0);
+    const plain = validEvent();
+    const before = JSON.stringify(plain);
+    const result = runBatch(db, { events: [plain], cursor: "ok" }, NOTHING);
+    expect(result).toMatchObject({ stored: 1, errors: [], cursor: "ok" });
+    expect(JSON.stringify(plain)).toBe(before);
+    expect(hits.n).toBe(0);
     db.close();
   });
 });

@@ -323,6 +323,17 @@ test("the configured owner name becomes the self subject", async () => {
   expect(events[1]?.subjects[0]?.subject_id).toBe("whatsapp:grace");
 });
 
+test("a sender wrapped in direction marks is still the configured owner", async () => {
+  const events = await parse("1/13/26, 09:00 - \u200eAda\u200e: hi", {
+    date_order: "mdy",
+    self: "Ada",
+  });
+  expect(events).toHaveLength(1);
+  expect(events[0]?.subjects[0]?.subject_id).toBe("whatsapp:self");
+  expect(events[0]?.subjects[0]?.display_name).toBe("Ada");
+  expect(events[0]?.metadata["sender"]).toBe("Ada");
+});
+
 test("which name is the owner's comes from configuration", async () => {
   // An export names every participant by whatever they set on their own
   // profile and says nothing about which of them is the owner, so the

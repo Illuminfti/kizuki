@@ -373,7 +373,9 @@ export function normalizeReplayFilter(filter: ReplayFilter): ReplayFilter {
   return out;
 }
 
-/** Internal SQL shared by ledger replay and timeline selection, before limits. */
+/** Internal SQL shared by ledger replay and timeline selection, before limits.
+ *  Tombstones match connector, source record, and source binding; `IS` keeps
+ *  two unbound rows equivalent. */
 export const LIVE_PREDICATE = `
   events.deleted = 0
   AND NOT EXISTS (
@@ -381,6 +383,11 @@ export const LIVE_PREDICATE = `
      WHERE tombstone.deleted = 1
        AND tombstone.connector_id = events.connector_id
        AND tombstone.source_record_id = events.source_record_id
+       AND (
+         SELECT source_key FROM source_event_bindings WHERE event_id = tombstone.event_id
+       ) IS (
+         SELECT source_key FROM source_event_bindings WHERE event_id = events.event_id
+       )
        AND (
          tombstone.accepted_at > events.accepted_at
          OR (

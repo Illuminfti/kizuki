@@ -71,6 +71,15 @@ export function recordSourceStoreWrite(
     }
   }).immediate();
 }
+/** Completed generation evidence cannot certify a later consent epoch. */
+export function invalidateSourceStoreGeneration(db: Database, source: string): void {
+  db.query(
+    "UPDATE source_retrieval_stores SET status='pending' WHERE source_key=?",
+  ).run(source);
+  db.query(
+    "INSERT INTO source_store_inventory (source_key,checked) VALUES (?,0) ON CONFLICT(source_key) DO UPDATE SET checked=0",
+  ).run(source);
+}
 export function sourceStoresPending(db: Database, source: string): boolean {
   const bound =
     db

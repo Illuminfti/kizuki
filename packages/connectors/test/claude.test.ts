@@ -3,6 +3,16 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  EVENT_LIMITS,
+  getCheckpoint,
+  registerConnection,
+  replay,
+  runBackfill,
+  setSourceGrant,
+  validateEventInput,
+} from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
+import {
   CLAUDE_IMPORT_CONNECTOR_ID,
   KizukiError,
   createChatGptImportConnector,
@@ -10,6 +20,8 @@ import {
   parseClaudeExport,
 } from "../src";
 import { encodeSourceRecordId } from "../src/source-id";
+
+const SOURCE_KEY = "01JJ0000000000000000000003";
 
 const OBSERVED_AT = "2026-04-01T12:00:00.000Z";
 
@@ -212,6 +224,13 @@ describe("parseClaudeExport", () => {
 });
 
 describe("ClaudeImportConnector", () => {
+  test("the importer does not claim tombstones", () => {
+    expect(
+      createClaudeImportConnector({ path: "/nonexistent.json" }).manifest()
+        .capabilities.tombstones,
+    ).toBe(false);
+  });
+
   test("health probes the export and refuses a non-array", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-claude-"));
     try {
@@ -225,7 +244,7 @@ describe("ClaudeImportConnector", () => {
     }
   });
 
-  test("sync tombstones a message removed from a later export", async () => {
+  test("a later smaller export does not tombstone removed messages", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-claude-"));
     try {
       const file = path.join(root, "conversations.json");
@@ -244,11 +263,10 @@ describe("ClaudeImportConnector", () => {
         ]),
       );
       const second = await connector.sync(first.cursor);
-      expect(
-        second.events
-          .filter((event) => event.deleted)
-          .map((event) => event.source_record_id),
-      ).toEqual([encodeSourceRecordId(["conversation-42", "message-2"])]);
+      expect(second.events.some((event) => event.deleted)).toBe(false);
+      expect(second.events.map((event) => event.source_record_id)).toEqual([
+        encodeSourceRecordId(["conversation-42", "message-1"]),
+      ]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -304,6 +322,42 @@ describe("ClaudeImportConnector", () => {
     }
   });
 
+  test("unsupported parts preserve supported events and the existing health-only degradation", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-claude-unsupported-"));
+    try {
+      const file = path.join(root, "conversations.json");
+      await writeFile(
+        file,
+        JSON.stringify([
+          {
+            uuid: "supported",
+            chat_messages: [
+              {
+                uuid: "m1",
+                sender: "human",
+                text: "supported text",
+                created_at: "2026-01-01T00:00:00Z",
+                content: [
+                  { type: "text", text: "supported text" },
+                  { type: "tool_use", name: "search" },
+                ],
+              },
+            ],
+          },
+        ]),
+      );
+      const connector = createClaudeImportConnector({ path: file });
+      expect((await connector.health()).state).toBe("degraded");
+      const first = await connector.backfill(null);
+      expect(first.status ?? "ok").toBe("ok");
+      expect(first.events).toHaveLength(1);
+      const drain = await connector.backfill(first.cursor);
+      expect(drain).toEqual({ events: [], cursor: first.cursor, has_more: false });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("an export that drops uuids does not tombstone the prior records", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-claude-"));
     try {
@@ -329,13 +383,117 @@ describe("ClaudeImportConnector", () => {
       );
       const second = await connector.sync(first.cursor);
       expect(second.events.some((event) => event.deleted)).toBe(false);
-      const cursor = JSON.parse(second.cursor ?? "{}") as {
-        records: Array<[string, string]>;
-      };
-      expect(priorIds.every((id) => cursor.records.some(([kept]) => kept === id))).toBe(
-        true,
+      expect(second.events.map((event) => event.source_record_id).length).toBe(
+        priorIds.length,
       );
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("connector to Core stores a parent with an oversized extract and a second small record", async () => {
+    const extract = "x".repeat(EVENT_LIMITS.textBytes + 1);
+    const exportBody = JSON.stringify([
+      {
+        uuid: "conversation-1",
+        name: "Bounds",
+        chat_messages: [
+          {
+            uuid: "human-1",
+            sender: "human",
+            text: "see attached",
+            created_at: "2026-03-15T09:30:45.000Z",
+            attachments: [
+              {
+                file_name: "note.pdf",
+                file_type: "application/pdf",
+                extracted_content: extract,
+              },
+            ],
+          },
+          {
+            uuid: "human-2",
+            sender: "human",
+            text: "short follow-up",
+            created_at: "2026-03-15T09:30:46.000Z",
+          },
+        ],
+      },
+    ]);
+    const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-claude-ingest-"));
+    const db = openLedger(":memory:");
+    try {
+      const file = path.join(root, "conversations.json");
+      await writeFile(file, exportBody);
+      const connector = createClaudeImportConnector({ path: file });
+      const health = await connector.health();
+      expect(health.state).toBe("degraded");
+      expect(health.detail ?? "").toContain("unsupported_part");
+      expect(health.detail ?? "").not.toContain(extract);
+
+      const preview = await connector.backfill(null);
+      expect(preview.events).toHaveLength(2);
+      expect(preview.status ?? "ok").toBe("ok");
+      for (const event of preview.events) {
+        expect(validateEventInput(event).ok).toBe(true);
+      }
+      expect(preview.events[0]?.text).toBe("see attached");
+      expect(preview.events[1]?.text).toBe("short follow-up");
+
+      registerConnection(db, CLAUDE_IMPORT_CONNECTOR_ID, SOURCE_KEY);
+      setSourceGrant(db, {
+        source_key: SOURCE_KEY,
+        expected_revision: 0,
+        operation_id: "fixture-grant",
+        policy: {
+          purposes: ["capture", "recall", "derive"],
+          allowed_fields: ["text", "subjects", "attachments", "metadata"],
+          retention: "persistent_owned_until_revoked",
+          egress: "local_only",
+          sensitivity_floor: "public",
+        },
+      });
+      const first = await runBackfill(
+        db,
+        connector,
+        CLAUDE_IMPORT_CONNECTOR_ID,
+        SOURCE_KEY,
+      );
+      expect(first.errors).toEqual([]);
+      expect(first.stored).toBe(2);
+      const checkpoint = getCheckpoint(db, CLAUDE_IMPORT_CONNECTOR_ID, SOURCE_KEY);
+      expect(checkpoint?.cursor).toBe(first.cursor);
+      expect(checkpoint?.cursor).not.toBeNull();
+      expect(checkpoint?.last_result.errors).toEqual([]);
+      const stored = [...replay(db, {})];
+      expect(stored).toHaveLength(2);
+      expect(stored.map((event) => event.text)).toEqual([
+        "see attached",
+        "short follow-up",
+      ]);
+      expect(stored[0]?.attachments).toEqual([
+        {
+          attachment_id: "note.pdf",
+          media_type: "application/pdf",
+          filename: "note.pdf",
+        },
+      ]);
+
+      const second = await runBackfill(
+        db,
+        connector,
+        CLAUDE_IMPORT_CONNECTOR_ID,
+        SOURCE_KEY,
+      );
+      expect(second.errors).toEqual([]);
+      expect(second.stored).toBe(0);
+      expect(second.cursor).toBe(first.cursor);
+      expect(
+        getCheckpoint(db, CLAUDE_IMPORT_CONNECTOR_ID, SOURCE_KEY)?.cursor,
+      ).toBe(first.cursor);
+      expect([...replay(db, {})]).toHaveLength(2);
+    } finally {
+      db.close();
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -409,6 +567,31 @@ describe("export fidelity", () => {
     );
     expect(result.errors).toEqual([]);
     expect(result.events[0]?.text).toBe("Answer\nFootnote");
+  });
+
+  test("top-level text that already concatenates content blocks is stored once", () => {
+    const result = parseClaudeExport(
+      JSON.stringify([
+        {
+          uuid: "c1",
+          chat_messages: [
+            {
+              uuid: "m1",
+              sender: "assistant",
+              text: "first paragraph\nsecond paragraph",
+              created_at: "2026-01-01T00:00:01Z",
+              content: [
+                { type: "text", text: "first paragraph" },
+                { type: "text", text: "second paragraph" },
+              ],
+            },
+          ],
+        },
+      ]),
+      OBSERVED_AT,
+    );
+    expect(result.errors).toEqual([]);
+    expect(result.events[0]?.text).toBe("first paragraph\nsecond paragraph");
   });
 
   test("a sender outside human or assistant is reported and not stored", () => {

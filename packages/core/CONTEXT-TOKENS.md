@@ -14,7 +14,12 @@ header with a millisecond timestamp occupies 55 tokens at budget 50; it cannot
 be delivered within 50. Header fields and the self-capture marker are preserved.
 
 Each complete candidate packet is encoded before its next piece is accepted;
-packing stops at the first piece that does not fit. A retained-prefix response
+packing stops at the first piece that does not fit. A canon atom whose exact
+encoding would overflow is bounded first: excerpt, then title projection,
+shrink by code points so the atom can occupy at most 150 tokens
+(600 code points at 4 per token), without exceeding the remaining
+legal budget. Packing still stops if even that provenance-preserving form
+cannot fit; later pieces are not skipped. A retained-prefix response
 uses `UNCHANGED` only when the header and marker fit; otherwise it returns the
 normal full packet. A degraded response also has to fit its mandatory header.
 

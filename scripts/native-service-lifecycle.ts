@@ -1,3 +1,4 @@
+import { LEDGER_SCHEMA_VERSION } from "../packages/core/src/ledger/db";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, release } from "node:os";
@@ -6,7 +7,10 @@ import { readServeIntent, writeServeIntent } from "../packages/core/src/serve/in
 import { loadServeConfig } from "../packages/core/src/serve/config";
 import { renderLaunchdPlist, renderSystemdUnit } from "../packages/core/src/serve/units";
 import { collectEngineProcess, mcpObservationFromOutput, parseDoctorObservation } from "./artifact-engine";
-import { installServeService, realSupervisorHost } from "../packages/core/src/serve/supervisor";
+import {
+  installServeService, realSupervisorHost, SUPERVISOR_COMMAND_TIMEOUT_MS,
+  SYSTEMD_RESTART_TIMEOUT_MS, SYSTEMD_STOP_TIMEOUT_MS,
+} from "../packages/core/src/serve/supervisor";
 import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS } from "../packages/core/src/serve/types";
 import { parseBuildInfo, parseProofArgs } from "./stranger-proof";
 import { packageFiles, requireRegularFile, verifyPackageDirectory } from "./release-artifacts";
@@ -19,7 +23,7 @@ import type { CliEngineObservation, McpEngineObservation } from "./artifact-proo
 import { MODEL_PHASE_IDS, runNativeModelMatrix, readStrictNativeQuery, type NativeModelPhase } from "./native-model-matrix";
 import { HISTORICAL_RECOVERY_INPUTS, NATIVE_RECOVERY_PHASE_IDS, runNativeRecoveryFixtures, inspectRecoveryFixture, type NativeRecoveryResult } from "./native-recovery-fixtures";
 
-export const BASELINE_SOURCE_SHA = "5d4c9870797607e22d25e30bdda37a879aba9d69";
+export const BASELINE_SOURCE_SHA = "0e3bb2216c9f1a1b3f33191d44eae5c39a6007f1";
 export const NATIVE_STATE_PHASE_IDS = ["init-no-service", "state-missing", "state-disabled", "state-failed", "state-masked"] as const;
 export const NATIVE_LIFECYCLE_PHASE_IDS = [...NATIVE_STATE_PHASE_IDS, "cross-binary-upgrade", ...NATIVE_RECOVERY_PHASE_IDS, ...MODEL_PHASE_IDS] as const;
 export const NATIVE_LIFECYCLE_REGISTRY = {
@@ -53,6 +57,15 @@ export type NativeLifecycleQualification = { registry_sha256: string; baseline: 
 const repository = resolve(import.meta.dir, "..");
 const timeout = 30_000;
 const restartTimeout = (HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS + 15) * 1000;
+
+/** Install/reinstall covers stop+start plus reload/enable; uninstall covers stop plus queries. */
+export function nativeLifecycleCommandTimeout(command: readonly string[]): number {
+  if (command.includes("--uninstall")) return SYSTEMD_STOP_TIMEOUT_MS + SUPERVISOR_COMMAND_TIMEOUT_MS * 2;
+  if (command.includes("--install") || (command.includes("init") && !command.includes("--no-service"))) {
+    return SYSTEMD_RESTART_TIMEOUT_MS + SUPERVISOR_COMMAND_TIMEOUT_MS * 2;
+  }
+  return timeout;
+}
 type CommandResult = { exit_code: number; stdout: string; stderr: string };
 type Observation = { manager_pid: number | null; marker_pid: number | null; instance_id: string | null; command: string | null };
 type Step = { id: string; passed: boolean; evidence: unknown };
@@ -196,7 +209,7 @@ export function statePhasePassed(id: NativeStatePhase["id"], e: NativeStateEvide
 export function upgradePhasePassed(e: NativeUpgradeEvidence): boolean {
   return e.baseline_source_sha === BASELINE_SOURCE_SHA && e.candidate_source_sha !== BASELINE_SOURCE_SHA &&
     e.baseline_binary_sha256 !== e.candidate_binary_sha256 && e.baseline_instance_id !== e.candidate_instance_id &&
-    e.baseline_pid > 1 && e.candidate_pid > 1 && e.baseline_schema === 21 && e.candidate_schema === 21 &&
+    e.baseline_pid > 1 && e.candidate_pid > 1 && e.baseline_schema === 21 && e.candidate_schema === LEDGER_SCHEMA_VERSION &&
     e.before_event_sha256 === e.after_event_sha256 && e.baseline_stopped && e.candidate_active &&
     e.baseline_query_preserved && e.candidate_query_preserved && e.backup_verified;
 }
@@ -237,11 +250,11 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
   for (const key of ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"]) {
     if (process.env[key]) managerEnv[key] = process.env[key]!;
   }
-  const invoke = (command: readonly string[], env = cliEnv, commandTimeout = timeout): CommandResult => {
+  const invoke = (command: readonly string[], env = cliEnv, commandTimeout = nativeLifecycleCommandTimeout(command)): CommandResult => {
     const result = Bun.spawnSync([...command], { cwd: fixtureRoot ?? repository, env, stdout: "pipe", stderr: "pipe", stdin: "ignore", timeout: commandTimeout });
     return { exit_code: result.exitCode, stdout: text(result.stdout), stderr: text(result.stderr) };
   };
-  const native = (...command: string[]) => invoke([manager, ...command], managerEnv);
+  const native = (...command: string[]) => invoke([manager, ...command], managerEnv, timeout);
   const cli = (id: string, command: string[], expectedExit = 0, binary = executable) => {
     const result = invoke([binary, ...command]);
     record(id, result.exit_code === expectedExit, { command: ["kizuki", ...command], ...result });
@@ -514,7 +527,7 @@ export async function runNativeServiceLifecycle(argv: readonly string[]): Promis
         evidence.process = processObservation(state, 5000);
       } catch { evidence.manager_diagnostic = "unavailable"; }
       steps.push({ id: "extension-command-failure", passed: false, evidence }); save();
-    });
+    }, nativeLifecycleCommandTimeout(args));
     const candidate = join(copied, "kizuki");
     const activateExtension = async (selected: string, binary = candidate) => {
       selectVault(selected, binary); const started_at = new Date().toISOString();

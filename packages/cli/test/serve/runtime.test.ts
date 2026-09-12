@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { chmodSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { listCanonReceipts, listClaims, listRunReceipts, setSourceGrant, sourcePolicyEpoch, ConnectionStateStore } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
@@ -13,6 +13,12 @@ const main = resolve(import.meta.dir, "../../src/main.ts");
 const token = "synthetic-daemon-connector-token";
 
 afterEach(cleanup);
+
+function writeServeToml(vault: string, contents: string) {
+  const path = join(vault, ".kizuki", "serve.toml");
+  writeFileSync(path, contents, { mode: 0o600 });
+  chmodSync(path, 0o600);
+}
 
 async function cli(env: Record<string, string | undefined>, ...args: string[]) {
   const child = Bun.spawn([process.execPath, main, ...args], {
@@ -108,8 +114,8 @@ async function exerciseModelJourney(mode: "legacy" | "local_only" | "model") {
         expect(sourcePolicyEpoch(historical)).toBe(0);
       } finally { historical.close(); }
     }
-    writeFileSync(
-      join(setup.vault, ".kizuki", "serve.toml"),
+    writeServeToml(
+      setup.vault,
       `[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "${endpoint}/v1"\nmodel = "loopback"\ntimeout_ms = 1000\nmax_retries = 0\n`,
     );
     emit = 1;
@@ -154,22 +160,22 @@ async function exerciseModelJourney(mode: "legacy" | "local_only" | "model") {
     expect(queried.stdout).toContain("collaborator");
     emit = 2;
     if (mode === "model") {
-      writeFileSync(
-        join(setup.vault, ".kizuki", "serve.toml"),
+      writeServeToml(
+        setup.vault,
         `[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "${endpoint}/v1"\nmodel = "other-model"\ntimeout_ms = 1000\nmax_retries = 0\n`,
       );
       expect((await cli(env, "serve", "--once", "--no-http", "--json")).exitCode).toBe(0);
       expect(modelRequests).toBe(1);
       expect(modelPaths).toEqual(["/v1/chat/completions"]);
-      writeFileSync(
-        join(setup.vault, ".kizuki", "serve.toml"),
+      writeServeToml(
+        setup.vault,
         `[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "${endpoint}/other"\nmodel = "loopback"\ntimeout_ms = 1000\nmax_retries = 0\n`,
       );
       expect((await cli(env, "serve", "--once", "--no-http", "--json")).exitCode).toBe(0);
       expect(modelRequests).toBe(1);
       expect(modelPaths).toEqual(["/v1/chat/completions"]);
-      writeFileSync(
-        join(setup.vault, ".kizuki", "serve.toml"),
+      writeServeToml(
+        setup.vault,
         `[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "${endpoint}/v1"\nmodel = "loopback"\ntimeout_ms = 1000\nmax_retries = 0\n`,
       );
     }
@@ -199,8 +205,8 @@ test("a malformed model degrades daemon capture and fails strict foreground acqu
   const setup = tempVault();
   const canary = "synthetic-model-secret";
   const env = { ...setup.env, MODEL_KEY: canary };
-  writeFileSync(
-    join(setup.vault, ".kizuki", "serve.toml"),
+  writeServeToml(
+    setup.vault,
     '[ports.llm]\nid = "kizuki.llm.openai-compatible"\nmodel = "string-is-not-a-binding"\nsecret_ref = "env:MODEL_KEY"\n',
   );
   const command = runCli(env, "serve", "--once", "--no-http");

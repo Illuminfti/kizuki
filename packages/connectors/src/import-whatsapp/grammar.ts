@@ -1,5 +1,5 @@
 import { KizukiError } from "../errors";
-import { MAX_RECORDS, MAX_RECORD_BYTES } from "../util";
+import { MAX_RECORDS, MAX_RECORD_BYTES, subjectName } from "../util";
 import { detectDateOrder, localTimestamp } from "./dates";
 import type { DateOrder, RawDate, RawTime } from "./dates";
 
@@ -146,13 +146,14 @@ export function splitWhatsAppMessages(
     }
     const rest = matched[3] ?? "";
     const cut = rest.indexOf(": ");
-    const sender = cut > 0 ? rest.slice(0, cut).trim() : null;
+    // WhatsApp wraps senders in direction marks; they are not the name.
+    const sender = cut > 0 ? subjectName(rest.slice(0, cut)) : "";
     starts.push({
       line: index + 1,
       date: stamp.date,
       time: stamp.time,
-      sender,
-      text: sender === null ? "" : rest.slice(cut + 2),
+      sender: sender.length > 0 ? sender : null,
+      text: sender.length > 0 ? rest.slice(cut + 2) : "",
     });
     current = starts.length - 1;
     currentLine = index + 1;

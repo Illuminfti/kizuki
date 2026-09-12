@@ -3,6 +3,7 @@ import { assertAgentEnrollmentSchema } from "../agents/enrollment-schema";
 import { assertSourceSurvivorLineageSchema } from "./canon-source-survivor-lineage";
 import { assertCanonRecoverySchema } from "./canon-recovery-schema";
 import { assertPurgeBatchSchema } from "./purge-batch-schema";
+import { findMismatchedEventPurgeProof } from "./purge-schema";
 import { LedgerStoreError } from "./errors";
 import { LEDGER_DOCTOR_ROW_CAP } from "./limits";
 import { eventFromRow, type EventRow } from "./event-record";
@@ -177,6 +178,9 @@ export function assertLedgerSchema(db: Database, expectedVersion: number): void 
     if (expectedVersion >= 24 && !tableColumns(db, "event_purge_proofs").includes("selector_kind")) {
       throw new LedgerStoreError("corrupt", "event_purge_proofs is missing selector_kind");
     }
+    if (expectedVersion >= 28 && !tableColumns(db, "event_purges").includes("proof_digest")) {
+      throw new LedgerStoreError("corrupt", "event_purges is missing proof_digest");
+    }
   }
   if (expectedVersion >= 25) {
     const names = tableColumns(db, "checkpoints");
@@ -290,11 +294,13 @@ export function inspectLedgerHealth(
       });
     }
     if (schemaVersion >= 24) {
-      const allowed = schemaVersion >= 27
-        ? "('event', 'connector', 'record')"
-        : schemaVersion >= 26
-          ? "('event', 'connector')"
-          : "('event')";
+      const allowed = schemaVersion >= 28
+        ? "('event', 'connector', 'record', 'source')"
+        : schemaVersion >= 27
+          ? "('event', 'connector', 'record')"
+          : schemaVersion >= 26
+            ? "('event', 'connector')"
+            : "('event')";
       const invalidKind = oneShotGet<{ receipt_id: string }>(
         db,
         `SELECT receipt_id FROM event_purge_proofs
@@ -305,6 +311,16 @@ export function inspectLedgerHealth(
           kind: "row",
           table: "event_purge_proofs",
           detail: `receipt ${invalidKind.receipt_id} has an invalid selector_kind`,
+        });
+      }
+    }
+    if (schemaVersion >= 28 && tableColumns(db, "event_purges").includes("proof_digest")) {
+      const mismatched = findMismatchedEventPurgeProof(db, LEDGER_DOCTOR_ROW_CAP);
+      if (mismatched !== null) {
+        failures.push({
+          kind: "row",
+          table: "event_purges",
+          detail: `receipt ${mismatched.receipt_id} proof does not match proof_digest`,
         });
       }
     }

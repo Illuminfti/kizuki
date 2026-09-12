@@ -103,6 +103,8 @@ test("twelve-hour clocks resolve to a twenty-four hour stamp", () => {
         "4/1/26, 10:15 p. m. - Ada: e",
         "4/1/26, 11:15\u00A0pm - Ada: f",
         "4/1/26, 11:45\u202FPM - Ada: g",
+        "4/1/26, 9:15:30 AM - Ada: h",
+        "[4/1/26, 11:45:00 PM] Ada: i",
       ].join("\n"),
       "dmy",
     ),
@@ -114,6 +116,8 @@ test("twelve-hour clocks resolve to a twenty-four hour stamp", () => {
     "2026-01-04T22:15",
     "2026-01-04T23:15",
     "2026-01-04T23:45",
+    "2026-01-04T09:15:30",
+    "2026-01-04T23:45:00",
   ]);
 });
 

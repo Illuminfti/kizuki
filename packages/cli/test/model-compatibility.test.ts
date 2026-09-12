@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { listCanonReceipts, listClaims, listConnections, listRunReceipts, setSourceGrant } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
@@ -49,7 +49,9 @@ test("native source consent, model canon, rejected responses and doctor compose"
           egress: { model_endpoint: `${endpoint.base_url}/chat/completions`, model: MODEL, external_retention: "provider_managed" }, sensitivity_floor: "public" } });
     } finally { grantDb.close(); }
     expect(runCli(setup.env, "import", "markdown-folder", "--source", notes).exitCode).toBe(0);
-    writeFileSync(join(setup.vault, ".kizuki/serve.toml"), `[ports.llm]\nid="kizuki.llm.openai-compatible"\nbase_url="${endpoint.base_url}"\nmodel="${MODEL}"\nmax_retries=0\ntimeout_ms=1000\n`);
+    const serveToml = join(setup.vault, ".kizuki/serve.toml");
+    writeFileSync(serveToml, `[ports.llm]\nid="kizuki.llm.openai-compatible"\nbase_url="${endpoint.base_url}"\nmodel="${MODEL}"\nmax_retries=0\ntimeout_ms=1000\n`, { mode: 0o600 });
+    chmodSync(serveToml, 0o600);
     const first = await cli(setup.env, "serve", "run", "sync", "--json");
     expect(first.exitCode).toBe(0);
     const db = openLedger(database);

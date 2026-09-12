@@ -5,6 +5,7 @@ import { verifyPackageDirectory } from "./release-artifacts";
 
 import { selectedReleaseTarget } from "./release-targets";
 import { parseBuildInfo } from "./stranger-proof";
+import { PACKAGED_CLI_COMMANDS, packagedCommandLine } from "./build-release";
 const target = selectedReleaseTarget();
 
 const root = resolve(import.meta.dir, "..");
@@ -22,6 +23,10 @@ for (const required of [cli, mcp, join(release, "SHA256SUMS"), join(release, "RE
 const build = parseBuildInfo(join(release, "BUILD.json"));
 if (build.target !== target.target || build.bun_version !== Bun.version) throw new Error("artifact target or Bun version mismatch");
 verifyPackageDirectory(release, build);
+const readme = readFileSync(join(release, "README.txt"), "utf8");
+for (const argv of Object.values(PACKAGED_CLI_COMMANDS)) {
+  if (!readme.includes(packagedCommandLine(argv))) throw new Error(`package README missing ${argv.join(" ")}`);
+}
 
 function run(command: string, args: string[], env: Record<string, string>): string {
   const result = Bun.spawnSync([command, ...args], { env, stderr: "pipe", stdout: "pipe", timeout: 30_000 });
@@ -71,7 +76,16 @@ try {
   writeFileSync(join(notes, "note.md"), "Ada met Grace at the library.\n", "utf8");
 
   if (!run(cli, ["version"], env).includes(version)) throw new Error("wrong CLI version");
-  if (!run(cli, ["--help"], env).includes("usage: kizuki")) throw new Error("CLI help missing");
+  const help = run(cli, ["--help"], env);
+  if (!help.includes("usage: kizuki")) throw new Error("CLI help missing");
+  for (const argv of Object.values(PACKAGED_CLI_COMMANDS)) {
+    const verb = argv[1];
+    if (verb === undefined || !help.includes(verb)) throw new Error(`compiled help missing packaged verb ${verb}`);
+  }
+  const serveHelp = run(cli, ["help", "serve"], env);
+  if (!serveHelp.includes("serve stop") || !serveHelp.includes("--install") || !serveHelp.includes("--uninstall")) {
+    throw new Error("compiled serve help missing stop/install/uninstall");
+  }
   const catalog = JSON.parse(run(cli, ["connect", "--json"], env)) as {
     data: { sources: { id: string; available: boolean }[] };
   };
@@ -89,9 +103,48 @@ try {
   if (!query.includes("Ada")) {
     throw new Error(`imported note was not queryable: ${query}`);
   }
+  const doctor = JSON.parse(runJson(cli, ["doctor", "--json", "--vault", vault], env).stdout) as {
+    schema?: string;
+    status?: string;
+    data?: {
+      ok?: boolean;
+      problems?: unknown[];
+      ledger?: { ok?: boolean };
+      effective_config?: { model_ref?: string | null };
+      connections?: { connector_id?: string; health?: string; problem?: string | null }[];
+      serve?: { model?: { canon_writing?: string; model_ref?: string | null } };
+    };
+  };
+  const importedConnection = doctor.data?.connections?.find(
+    (connection) => connection.connector_id === "kizuki.markdown-folder",
+  );
+  if (
+    doctor.schema !== "kizuki.cli.doctor/v1" ||
+    doctor.status !== "ok" ||
+    doctor.data?.ok !== true ||
+    doctor.data.problems?.length !== 0 ||
+    doctor.data.ledger?.ok !== true ||
+    importedConnection?.health !== "ok" ||
+    importedConnection.problem !== null ||
+    doctor.data.effective_config?.model_ref !== null ||
+    doctor.data.serve?.model?.canon_writing !== "off" ||
+    doctor.data.serve?.model?.model_ref !== null
+  ) throw new Error("doctor did not report a healthy imported no-model vault");
   const context = run(cli, ["context", "--query", "Ada", "--vault", vault], env);
   if (!context.includes("Ada")) throw new Error("imported note is missing from compiled context");
   run(cli, ["serve", "--once", "--no-http", "--vault", vault], env);
+  const exported = join(rootTemp, "export");
+  const restored = join(rootTemp, "restored");
+  run(cli, ["export", "--out", exported, "--vault", vault], env);
+  run(cli, ["restore", "--from", exported, "--verify"], env);
+  run(cli, ["restore", "--from", exported, "--into", restored], env);
+  const restoredQuery = run(cli, ["query", "Ada", "--degraded", "--vault", restored], env);
+  if (!restoredQuery.includes("Ada")) throw new Error("restored vault was not queryable");
+  run(cli, ["serve", "--install", "--vault", vault], env);
+  run(cli, ["serve", "--uninstall", "--vault", vault], env);
+  if (!existsSync(join(vault, ".kizuki"))) throw new Error("uninstall removed the vault");
+  const afterUninstall = run(cli, ["query", "Ada", "--vault", vault], env);
+  if (!afterUninstall.includes("Ada")) throw new Error("uninstall did not preserve queryable vault data");
 
   const grant = join(rootTemp, "agent-grant.json");
   const credential = join(rootTemp, "agent-credential");

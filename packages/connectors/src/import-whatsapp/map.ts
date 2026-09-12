@@ -1,7 +1,7 @@
 import type { AttachmentRef, CaptureEventInput } from "@kizuki/core";
 import { resolveSensitivity } from "../sensitivity";
 import type { SensitivityPolicy } from "../sensitivity";
-import { mediaTypeFor, subjectSlug } from "../util";
+import { mediaTypeFor, subjectName, subjectSlug } from "../util";
 import { localToUtc } from "./dates";
 import type { DateOrder } from "./dates";
 import { splitWhatsAppMessages } from "./grammar";
@@ -52,11 +52,15 @@ function subjectIdFor(namespace: string, name: string): string {
 /**
  * `whatsapp:self` is the owner: an export names every participant by whatever
  * they set on their own profile, so which of those names is the owner's comes
- * from configuration rather than from the file.
+ * from configuration rather than from the file. An ordinary slug of `self`
+ * would mint that reserved id, so any other such name is filed under
+ * `whatsapp:participant:` plus a digest of the normalized display name — a
+ * colon namespace no slug can produce, and distinct for `self` and `Self!`.
  */
 function senderSubjectId(sender: string, self: string | undefined): string {
   if (self !== undefined && sender === self) return "whatsapp:self";
-  return subjectIdFor("whatsapp", sender);
+  if (subjectSlug(sender) !== "self") return subjectIdFor("whatsapp", sender);
+  return `whatsapp:participant:${digest(subjectName(sender), 16)}`;
 }
 
 /**
@@ -92,6 +96,9 @@ export async function parseWhatsAppExport(
   opts: WhatsAppParseOptions,
 ): Promise<CaptureEventInput[]> {
   const { messages } = splitWhatsAppMessages(text, opts.date_order);
+  const chat = subjectName(opts.chat);
+  const selfName = opts.self === undefined ? "" : subjectName(opts.self);
+  const self = selfName.length > 0 ? selfName : undefined;
   const seen = new Map<string, number>();
   const sensitivity_hint = resolveSensitivity(WHATSAPP_SENSITIVITY);
   const events: CaptureEventInput[] = [];
@@ -107,7 +114,7 @@ export async function parseWhatsAppExport(
       media?.kind === "file" && filename !== null
         ? await attachmentFor(filename, opts.media)
         : [];
-    const senderId = senderSubjectId(message.sender, opts.self);
+    const senderId = senderSubjectId(message.sender, self);
 
     events.push({
       schema: "kizuki.event/v1",
@@ -124,16 +131,16 @@ export async function parseWhatsAppExport(
           display_name: message.sender,
         },
         {
-          subject_id: subjectIdFor("whatsapp:chat", opts.chat),
+          subject_id: subjectIdFor("whatsapp:chat", chat),
           role: "about",
-          display_name: opts.chat,
+          display_name: chat,
         },
       ],
       sensitivity_hint,
       deleted: false,
       attachments,
       metadata: {
-        chat: opts.chat,
+        chat,
         sender: message.sender,
         local_timestamp: message.local_timestamp,
         timezone: opts.timezone,

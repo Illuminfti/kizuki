@@ -5,6 +5,8 @@ import { INVOCATION, IS_COMPILED } from "./runtime";
 import { jsonEnvelope } from "./output";
 export { INVOCATION } from "./runtime";
 
+export type HelpTopic = Pick<Command, "name" | "usage" | "summary" | "schema">;
+
 const GROUPS: readonly { title: string; names: readonly string[] }[] = [
   { title: "Start", names: ["app", "init", "import", "doctor"] },
   { title: "Recall", names: ["query", "context"] },
@@ -27,6 +29,7 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
   context: [
     `${INVOCATION} context --purpose session --query "acme"`,
     `${INVOCATION} context --purpose recall --query "acme" --budget 1200`,
+    `${INVOCATION} context --since 2020-01-01T00:00:00.000Z --until 2030-01-01T00:00:00.000Z --query "Atlas"`,
     `${INVOCATION} context --json`,
   ],
   doctor: [`${INVOCATION} doctor`, `${INVOCATION} doctor --json`],
@@ -140,11 +143,11 @@ const EXIT_CODES = [
   { code: 2, meaning: "usage error" },
 ] as const;
 
-function schemaOf(command: Command): CommandHelpSchema {
+function schemaOf(command: HelpTopic): CommandHelpSchema {
   return command.schema ?? { options: [], flags: [] };
 }
 
-export function commandHelpData(command: Command): {
+export function commandHelpData(command: HelpTopic): {
   name: string;
   usage: string;
   summary: string;
@@ -173,7 +176,7 @@ export function commandHelpData(command: Command): {
 
 export function printCommandHelp(
   write: (line: string) => void,
-  command: Command,
+  command: HelpTopic,
   options: { json?: boolean } = {},
 ): void {
   if (options.json === true) {

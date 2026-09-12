@@ -1,9 +1,24 @@
 import { expect, test } from "bun:test";
-import { ApiBudget, HttpFailure, X_API_RESPONSE_BYTES, fieldsQuery, request } from "../../src/api/client";
+import { ApiBudget, HttpFailure, X_API_RESPONSE_BYTES, request } from "../../src/api/client";
 import { XApiFixture } from "../../src/api/testkit";
-import { selection } from "../../src/api/state";
+import { selection, type XApiField } from "../../src/api/state";
 
 const url = () => new URL("https://api.x.com/2/users/me");
+function assertSelectedQuery(request: Request, fields: readonly XApiField[]) {
+  expect(request.method).toBe("GET");
+  const query = new URL(request.url).searchParams;
+  const tweet = new Set((query.get("tweet.fields") ?? "").split(","));
+  const expansions = new Set((query.get("expansions") ?? "").split(",").filter(Boolean));
+  const links = fields.includes("links"), relationships = fields.includes("relationships"), media = fields.includes("media");
+  expect(tweet.has("author_id")).toBe(true);
+  expect(tweet.has("entities")).toBe(links || relationships);
+  expect(tweet.has("attachments")).toBe(media);
+  expect(expansions.has("entities.mentions.username")).toBe(relationships);
+  expect(expansions.has("attachments.media_keys")).toBe(media);
+  expect(query.get("user.fields")).toBe(relationships ? "id,username" : null);
+  expect(query.has("media.fields")).toBe(media);
+  if (!relationships && !media) expect(query.has("expansions")).toBe(false);
+}
 
 test("request admission caps one operation at five fixed-origin GETs before transport", async () => {
   let calls = 0; const budget = new ApiBudget(() => 0), peer = async (input: Request) => {
@@ -15,12 +30,23 @@ test("request admission caps one operation at five fixed-origin GETs before tran
     await expect(request(new URL(endpoint), "synthetic-token", new ApiBudget(() => 0), peer)).rejects.toThrow("misconfigured");
   }
   expect(calls).toBe(5);
-  const query = fieldsQuery(selection({ fields: ["media", "links", "relationships"], history_start: "2026-01-01T00:00:00Z", wire_profile: "tweet-v2" }));
-  expect(query.get("tweet.fields")).toContain("author_id");
-  expect(query.get("expansions")!.split(",")).toEqual(["entities.mentions.username", "attachments.media_keys"]);
-  expect(query.get("user.fields")).toBe("id,username");
-  const minimal = fieldsQuery(selection({ fields: [], history_start: "2026-01-01T00:00:00Z", wire_profile: "tweet-v2" }));
-  expect(minimal.has("expansions")).toBe(false); expect(minimal.has("user.fields")).toBe(false);
+});
+
+test("capture GET query entities follow the selected optional fields", async () => {
+  for (const fields of [[], ["links"], ["relationships"], ["media"], ["links", "media"], ["relationships", "media"], ["links", "relationships", "media"]] as XApiField[][]) {
+    const selected = selection({ fields, history_start: "2026-01-01T00:00:00Z", wire_profile: "tweet-v2" });
+    const f = new XApiFixture(2, 1, selected);
+    let port = await f.connected();
+    expect((await port.backfill(null)).events).toHaveLength(1);
+    const list = f.requests.find(request => new URL(request.url).pathname === `/2/users/${f.account}/tweets`);
+    expect(list).toBeDefined(); assertSelectedQuery(list!, selected.fields);
+    await port.close();
+    port = await f.connected();
+    expect((await port.backfill(null)).events).toHaveLength(1);
+    const lookup = [...f.requests].reverse().find(request => new URL(request.url).pathname === "/2/tweets");
+    expect(lookup).toBeDefined(); assertSelectedQuery(lookup!, selected.fields);
+    await port.close();
+  }
 });
 
 test("oversized headers and streams, invalid UTF-8, malformed JSON and redirects refuse without provider prose", async () => {

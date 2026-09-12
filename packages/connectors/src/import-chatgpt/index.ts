@@ -1,4 +1,10 @@
-import { freezeManifest, isPlainObject, policyForConnector } from "@kizuki/core";
+import {
+  EVENT_LIMITS,
+  freezeManifest,
+  isPlainObject,
+  policyForConnector,
+  validateEventInput,
+} from "@kizuki/core";
 import type {
   AttachmentRef,
   CaptureEventInput,
@@ -18,10 +24,12 @@ import {
 } from "../import-snapshot";
 import type { SnapshotParse } from "../import-snapshot";
 import {
+  mediaTypeFor,
   nonEmptyString,
   parseJsonArray,
   requireKnownKeys,
   requirePathConfig,
+  safeFilename,
   unixSecondsToIso,
 } from "../util";
 import {
@@ -94,7 +102,9 @@ const MANIFEST: Manifest = freezeManifest({
   capabilities: {
     backfill: true,
     sync: true,
-    tombstones: true,
+    // A shorter export is not a deletion, and the importer cannot tell the
+    // difference, so it never claims one.
+    tombstones: false,
     purge: false,
     fixture: true,
   },
@@ -106,11 +116,35 @@ const MANIFEST: Manifest = freezeManifest({
 
 const SNAPSHOT: SnapshotParse = {
   connectorId: CHATGPT_IMPORT_CONNECTOR_ID,
-  kind: "message",
   parse: parseChatGptExport,
 };
 
 const SUPPORTED_ROLES = new Set(["user", "assistant", "system", "tool"]);
+
+/** Custom-instruction payloads. Keep them out of conversation evidence. */
+const INSTRUCTION_CONTENT_TYPES = new Set([
+  "user_editable_context",
+  "model_editable_context",
+]);
+
+const TEXT_CONTENT_TYPES = new Set([
+  "text",
+  "multimodal_text",
+  "code",
+  "audio_transcription",
+]);
+
+const ATTACHMENT_TYPES = new Set([
+  "image_asset_pointer",
+  "image",
+  "file",
+  "audio",
+  "audio_asset_pointer",
+  "video_asset_pointer",
+  "real_time_user_audio_video_asset_pointer",
+]);
+
+const FILE_SERVICE_PREFIX = "file-service://";
 
 export class ChatGptImportConnector implements Connector {
   readonly path: string;
@@ -245,30 +279,62 @@ export function parseChatGptExport(
         continue;
       }
       const extracted = extractContent(
-        message["content"],
+        message,
         `${conversationId}/${rawNodeId || "node"}`,
       );
       if (extracted.error !== undefined) {
         errors.push(extracted.error);
         continue;
       }
-      if (extracted.unsupported.length > 0) {
-        errors.push({
-          location: `${conversationId}/${rawNodeId || "node"}`,
-          code: "unsupported_part",
-          reason: `unsupported content parts: ${extracted.unsupported.join(",")}`,
-        });
-      }
-      if (
+      const location = `${conversationId}/${rawNodeId || "node"}`;
+      const noPayload =
         extracted.text.trim().length === 0 &&
-        extracted.attachments.length === 0
-      ) {
-        errors.push({
-          location: `${conversationId}/${rawNodeId || "node"}`,
-          code: "empty_content",
-          reason: "message has no text or attachments",
-        });
+        extracted.attachments.length === 0;
+      if (noPayload) {
+        if (extracted.unsupported.length > 0) {
+          errors.push({
+            location,
+            code: "unsupported_part",
+            reason: `unsupported content parts: ${extracted.unsupported.join(",")}`,
+          });
+        }
+        if (
+          extracted.unsupported.length === 0 ||
+          extracted.rejectedAttachment === true
+        ) {
+          errors.push({
+            location,
+            code: "empty_content",
+            reason: "message has no text or attachments",
+          });
+        }
         continue;
+      }
+      const conversationTitle = metadataString(titled);
+      const parent = nonEmptyString(rawNode["parent"]);
+      const keptParent =
+        parent === undefined ? undefined : metadataString(parent);
+      const currentNode = nonEmptyString(rawConversation["current_node"]);
+      const keptCurrent =
+        currentNode === undefined ? undefined : metadataString(currentNode);
+      const unsupportedParts = [
+        ...extracted.unsupported,
+        ...(conversationTitle === undefined
+          ? ["oversize_conversation_title"]
+          : []),
+        ...(parent !== undefined && keptParent === undefined
+          ? ["oversize_parent"]
+          : []),
+        ...(currentNode !== undefined && keptCurrent === undefined
+          ? ["oversize_current_node"]
+          : []),
+      ].slice(0, EVENT_LIMITS.metadataArrayLength);
+      if (unsupportedParts.length > 0) {
+        errors.push({
+          location,
+          code: "unsupported_part",
+          reason: `unsupported content parts: ${unsupportedParts.join(",")}`,
+        });
       }
 
       let occurredAt: string;
@@ -279,7 +345,7 @@ export function parseChatGptExport(
         );
       } catch {
         errors.push({
-          location: `${conversationId}/${rawNodeId || "node"}`,
+          location,
           code: "invalid_timestamp",
           reason: "message create_time is missing or invalid",
         });
@@ -323,7 +389,7 @@ export function parseChatGptExport(
 
       const handle =
         role === "user" ? "self" : role === "assistant" ? "assistant" : role;
-      events.push({
+      const event: CaptureEventInput = {
         schema: "kizuki.event/v1",
         connector_id: CHATGPT_IMPORT_CONNECTOR_ID,
         source_record_id: sourceRecordId,
@@ -337,11 +403,24 @@ export function parseChatGptExport(
         metadata: {
           handle,
           namespace: "chatgpt",
-          conversation_title: titled,
-          unsupported_parts: extracted.unsupported,
+          ...(conversationTitle !== undefined
+            ? { conversation_title: conversationTitle }
+            : {}),
+          unsupported_parts: unsupportedParts,
           export: "chatgpt-conversations.json",
+          ...(keptParent !== undefined ? { parent: keptParent } : {}),
+          ...(keptCurrent !== undefined ? { current_node: keptCurrent } : {}),
         },
-      });
+      };
+      if (!validateEventInput(event).ok) {
+        errors.push({
+          location,
+          code: "malformed_content",
+          reason: "message cannot be represented as an event",
+        });
+        continue;
+      }
+      events.push(event);
     }
   });
 
@@ -352,10 +431,15 @@ interface ExtractedContent {
   text: string;
   attachments: AttachmentRef[];
   unsupported: string[];
+  rejectedAttachment?: boolean;
   error?: ImportRecordError;
 }
 
-function extractContent(content: unknown, location: string): ExtractedContent {
+function extractContent(
+  message: Record<string, unknown>,
+  location: string,
+): ExtractedContent {
+  const content = message["content"];
   if (content === undefined || content === null) {
     return {
       text: "",
@@ -369,7 +453,13 @@ function extractContent(content: unknown, location: string): ExtractedContent {
     };
   }
   if (typeof content === "string") {
-    return { text: content, attachments: [], unsupported: [] };
+    const extracted: ExtractedContent = {
+      text: content,
+      attachments: [],
+      unsupported: [],
+    };
+    collectMetadataAttachments(message["metadata"], extracted);
+    return extracted;
   }
   if (!isPlainObject(content)) {
     return {
@@ -383,44 +473,58 @@ function extractContent(content: unknown, location: string): ExtractedContent {
       },
     };
   }
-  const parts = Array.isArray(content["parts"])
-    ? content["parts"]
+  const contentType =
+    typeof content["content_type"] === "string"
+      ? content["content_type"]
+      : "unknown";
+  if (INSTRUCTION_CONTENT_TYPES.has(contentType)) {
+    return {
+      text: "",
+      attachments: [],
+      unsupported: [unsupportedToken(contentType)],
+    };
+  }
+  const rawParts = content["parts"];
+  const usingPartsArray = Array.isArray(rawParts);
+  const parts = usingPartsArray
+    ? rawParts
     : content["text"] !== undefined
       ? [content["text"]]
       : undefined;
   if (parts === undefined) {
-    const contentType =
-      typeof content["content_type"] === "string"
-        ? content["content_type"]
-        : "unknown";
-    if (contentType !== "text") {
+    if (TEXT_CONTENT_TYPES.has(contentType)) {
       return {
         text: "",
         attachments: [],
-        unsupported: [contentType],
+        unsupported: [],
+        error: {
+          location,
+          code: "malformed_content",
+          reason: "text content has no parts",
+        },
       };
     }
-    return {
+    const extracted: ExtractedContent = {
       text: "",
       attachments: [],
-      unsupported: [],
-      error: {
-        location,
-        code: "malformed_content",
-        reason: "text content has no parts",
-      },
+      unsupported: [unsupportedToken(contentType)],
     };
+    collectMetadataAttachments(message["metadata"], extracted);
+    return extracted;
   }
+  const extracted: ExtractedContent = {
+    text: "",
+    attachments: [],
+    unsupported: [],
+  };
   const lines: string[] = [];
-  const attachments: AttachmentRef[] = [];
-  const unsupported: string[] = [];
   parts.forEach((part, index) => {
     if (typeof part === "string") {
       lines.push(part);
       return;
     }
     if (!isPlainObject(part)) {
-      unsupported.push("non_object_part");
+      extracted.unsupported.push("non_object_part");
       return;
     }
     const type =
@@ -429,43 +533,243 @@ function extractContent(content: unknown, location: string): ExtractedContent {
         : typeof part["type"] === "string"
           ? part["type"]
           : "unknown";
+    if (INSTRUCTION_CONTENT_TYPES.has(type)) {
+      extracted.unsupported.push(unsupportedToken(type));
+      return;
+    }
+    const pointer = nonEmptyString(part["asset_pointer"]);
     if (
-      type === "image_asset_pointer" ||
-      type === "image" ||
-      type === "file" ||
-      type === "audio"
+      ATTACHMENT_TYPES.has(type) ||
+      (pointer !== undefined && !TEXT_CONTENT_TYPES.has(type))
     ) {
-      const pointer =
-        nonEmptyString(part["asset_pointer"]) ??
-        nonEmptyString(part["filename"]) ??
-        `${type}:${index}`;
-      attachments.push({
-        attachment_id: pointer,
-        media_type:
-          type === "image" || type === "image_asset_pointer"
-            ? "image/*"
-            : type === "audio"
-              ? "audio/*"
-              : "application/octet-stream",
-        ...(typeof part["filename"] === "string"
-          ? { filename: part["filename"] }
-          : {}),
-        ...(typeof part["size_bytes"] === "number"
-          ? { byte_size: part["size_bytes"] }
-          : {}),
+      const filename =
+        typeof part["filename"] === "string" ? part["filename"] : undefined;
+      const size = integerByteSize(part["size_bytes"] ?? part["size"]);
+      const ref = makeAttachmentRef({
+        id:
+          pointer ??
+          nonEmptyString(part["file_id"]) ??
+          nonEmptyString(part["filename"]) ??
+          `${type}:${index}`,
+        mediaType: ATTACHMENT_TYPES.has(type)
+          ? mediaTypeForPart(type)
+          : undefined,
+        filename,
+        byteSize: size,
       });
+      if (ref === undefined) {
+        extracted.unsupported.push(unsupportedToken(type));
+        extracted.rejectedAttachment = true;
+      } else addAttachment(extracted, ref, unsupportedToken(type));
       if (typeof part["text"] === "string" && part["text"].length > 0) {
         lines.push(part["text"]);
       }
       return;
     }
-    if (type === "text" || typeof part["text"] === "string") {
+    if (TEXT_CONTENT_TYPES.has(type)) {
       if (typeof part["text"] === "string") lines.push(part["text"]);
       return;
     }
-    unsupported.push(type);
+    if (typeof part["text"] === "string") {
+      if (part["text"].length > 0) lines.push(part["text"]);
+      extracted.unsupported.push(unsupportedToken(type));
+      return;
+    }
+    extracted.unsupported.push(unsupportedToken(type));
   });
-  return { text: lines.join("\n"), attachments, unsupported };
+  if (
+    !usingPartsArray &&
+    typeof content["content_type"] === "string" &&
+    !TEXT_CONTENT_TYPES.has(content["content_type"])
+  ) {
+    extracted.unsupported.push(unsupportedToken(content["content_type"]));
+  }
+  extracted.text = lines.join("\n");
+  collectMetadataAttachments(message["metadata"], extracted);
+  return extracted;
+}
+
+function collectMetadataAttachments(
+  metadata: unknown,
+  extracted: ExtractedContent,
+): void {
+  if (metadata === undefined || metadata === null) return;
+  if (!isPlainObject(metadata)) {
+    extracted.unsupported.push("malformed_metadata");
+    return;
+  }
+  if (metadata["attachments"] === undefined) return;
+  const listed = metadata["attachments"];
+  if (!Array.isArray(listed)) {
+    extracted.unsupported.push("malformed_attachments");
+    return;
+  }
+  listed.forEach((raw, index) => {
+    if (!isPlainObject(raw)) {
+      extracted.unsupported.push("non_object_attachment");
+      return;
+    }
+    const ref = makeAttachmentRef({
+      id:
+        nonEmptyString(raw["id"]) ??
+        nonEmptyString(raw["file_id"]) ??
+        nonEmptyString(raw["name"]) ??
+        nonEmptyString(raw["filename"]) ??
+        `attachment:${index}`,
+      mediaType:
+        nonEmptyString(raw["mime_type"]) ??
+        nonEmptyString(raw["mimeType"]) ??
+        nonEmptyString(raw["file_type"]),
+      filename:
+        nonEmptyString(raw["name"]) ?? nonEmptyString(raw["filename"]),
+      byteSize: integerByteSize(
+        raw["size"] ?? raw["size_bytes"] ?? raw["file_size"],
+      ),
+    });
+    if (ref === undefined) {
+      extracted.unsupported.push("invalid_attachment");
+      extracted.rejectedAttachment = true;
+      return;
+    }
+    addAttachment(extracted, ref, "invalid_attachment");
+  });
+}
+
+function fitsUtf8(value: string, maxBytes: number): boolean {
+  return (
+    value.length <= maxBytes && Buffer.byteLength(value, "utf8") <= maxBytes
+  );
+}
+
+function metadataString(value: string): string | undefined {
+  return fitsUtf8(value, EVENT_LIMITS.metadataStringBytes) ? value : undefined;
+}
+
+function unsupportedToken(value: string): string {
+  return metadataString(value) ?? "oversize_content_type";
+}
+
+function attachmentAdmitted(ref: AttachmentRef): boolean {
+  return validateEventInput({
+    schema: "kizuki.event/v1",
+    connector_id: CHATGPT_IMPORT_CONNECTOR_ID,
+    source_record_id: "chatgpt-attachment",
+    kind: "message",
+    occurred_at: "2026-01-01T00:00:00.000Z",
+    observed_at: "2026-01-01T00:00:00.000Z",
+    text: "",
+    subjects: [{ subject_id: "chatgpt:self", role: "from" }],
+    deleted: false,
+    attachments: [ref],
+    metadata: {},
+  }).ok;
+}
+
+function attachmentDedupeKey(id: string): string {
+  return id.startsWith(FILE_SERVICE_PREFIX)
+    ? id.slice(FILE_SERVICE_PREFIX.length)
+    : id;
+}
+
+function makeAttachmentRef(input: {
+  id: string;
+  mediaType?: string | undefined;
+  filename?: string | undefined;
+  byteSize?: number | undefined;
+}): AttachmentRef | undefined {
+  if (input.id.length === 0 || !fitsUtf8(input.id, EVENT_LIMITS.attachmentIdBytes)) {
+    return undefined;
+  }
+  const safeName =
+    input.filename !== undefined ? safeFilename(input.filename) : null;
+  const filenameCandidate =
+    safeName !== null && fitsUtf8(safeName, EVENT_LIMITS.filenameBytes)
+      ? safeName
+      : undefined;
+  const declared =
+    input.mediaType !== undefined &&
+    input.mediaType.length > 0 &&
+    fitsUtf8(input.mediaType, EVENT_LIMITS.mediaTypeBytes)
+      ? input.mediaType
+      : undefined;
+  const fallback =
+    safeName !== null ? mediaTypeFor(safeName) : "application/octet-stream";
+  const candidate = (
+    filename: string | undefined,
+    media_type: string,
+  ): AttachmentRef => ({
+    attachment_id: input.id,
+    media_type,
+    ...(filename !== undefined ? { filename } : {}),
+    ...(input.byteSize !== undefined ? { byte_size: input.byteSize } : {}),
+  });
+  if (!attachmentAdmitted(candidate(undefined, fallback))) return undefined;
+  const filename =
+    filenameCandidate !== undefined &&
+    attachmentAdmitted(candidate(filenameCandidate, fallback))
+      ? filenameCandidate
+      : undefined;
+  const media_type =
+    declared !== undefined && attachmentAdmitted(candidate(undefined, declared))
+      ? declared
+      : fallback;
+  return candidate(filename, media_type);
+}
+
+function mergeAttachmentEvidence(
+  target: AttachmentRef,
+  incoming: AttachmentRef,
+): void {
+  if (target.filename === undefined && incoming.filename !== undefined) {
+    target.filename = incoming.filename;
+  }
+  if (
+    incoming.media_type !== "application/octet-stream" &&
+    incoming.media_type !== target.media_type
+  ) {
+    target.media_type = incoming.media_type;
+  }
+  if (target.byte_size === undefined && incoming.byte_size !== undefined) {
+    target.byte_size = incoming.byte_size;
+  }
+}
+
+function addAttachment(
+  extracted: ExtractedContent,
+  ref: AttachmentRef,
+  overflowToken: string,
+): void {
+  const key = attachmentDedupeKey(ref.attachment_id);
+  const existing = extracted.attachments.find(
+    (item) => attachmentDedupeKey(item.attachment_id) === key,
+  );
+  if (existing !== undefined) {
+    mergeAttachmentEvidence(existing, ref);
+    return;
+  }
+  if (extracted.attachments.length >= EVENT_LIMITS.attachmentCount) {
+    extracted.unsupported.push(overflowToken);
+    return;
+  }
+  extracted.attachments.push(ref);
+}
+
+function mediaTypeForPart(type: string): string {
+  if (type === "image" || type === "image_asset_pointer") return "image/*";
+  if (type === "audio" || type === "audio_asset_pointer") return "audio/*";
+  if (
+    type === "video_asset_pointer" ||
+    type === "real_time_user_audio_video_asset_pointer"
+  ) {
+    return "video/*";
+  }
+  return "application/octet-stream";
+}
+
+function integerByteSize(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : undefined;
 }
 
 function mappingFingerprint(mapping: unknown): string {

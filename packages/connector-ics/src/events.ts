@@ -1,13 +1,17 @@
 import { KizukiError } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import {
+  civilLocal,
   formatLocal,
   formatLocalDate,
   intlZones,
   localToMs,
   msToLocal,
+  occurrenceStamp,
   parseDateTime,
+  parseLocal,
   toUtc,
+  utcMsToLocal,
 } from "./datetime";
 import type { IcsInstant, LocalDateTime, ZoneResolver } from "./datetime";
 import {
@@ -22,8 +26,9 @@ import {
 } from "./map";
 import type { EmitInput, MapOptions } from "./map";
 import { allValues, firstValue, unescapeText } from "./parse";
-import type { ParsedCalendar, RawVEvent } from "./parse";
+import type { ParsedCalendar, RawVEvent, ZoneInfo } from "./parse";
 import { expand, parseRrule } from "./rrule";
+import type { RecurrenceRule } from "./rrule";
 
 export const MAX_INSTANCES = 1_000;
 /** Used only when neither the calendar nor its source yields a usable slug. */
@@ -38,22 +43,58 @@ export const WINDOW_DAYS = 365;
 export const MAX_CALENDAR_EVENTS = 20_000;
 export const MAX_CALENDAR_STEPS = 1_000_000;
 
-function exdateKeys(event: RawVEvent): Set<string> {
+function exdateKeys(
+  event: RawVEvent,
+  series: IcsInstant,
+  zones: ZoneResolver,
+  file: Map<string, ZoneInfo>,
+): Set<string> {
   const keys = new Set<string>();
   for (const line of allValues(event, "EXDATE")) {
     for (const piece of line.value.split(",")) {
       const instant = parseDateTime(piece, single(line.params));
-      keys.add(formatLocal(localOf(instant)));
+      // Expansion matches on civil compact time, including midnight for dates.
+      keys.add(formatLocal(civilLocal(instant, series, zones, file)));
     }
   }
   return keys;
 }
 
-function rdateLocals(event: RawVEvent): LocalDateTime[] {
+function expandRuleFor(
+  rule: RecurrenceRule,
+  start: IcsInstant,
+  zones: ZoneResolver,
+  file: Map<string, ZoneInfo>,
+): RecurrenceRule {
+  if (rule.until?.kind !== "utc" || start.kind !== "zoned") return rule;
+  return {
+    ...rule,
+    until: {
+      kind: "floating",
+      local: formatLocal(
+        utcMsToLocal(Date.parse(rule.until.iso), start.tzid, zones, file),
+      ),
+    },
+  };
+}
+
+function rdateLocals(
+  event: RawVEvent,
+  series: IcsInstant,
+  zones: ZoneResolver,
+  file: Map<string, ZoneInfo>,
+): LocalDateTime[] {
   const locals: LocalDateTime[] = [];
   for (const line of allValues(event, "RDATE")) {
     for (const piece of line.value.split(",")) {
-      locals.push(localOf(parseDateTime(piece, single(line.params))));
+      locals.push(
+        civilLocal(
+          parseDateTime(piece, single(line.params)),
+          series,
+          zones,
+          file,
+        ),
+      );
     }
   }
   return locals;
@@ -255,7 +296,7 @@ function seriesEvents(
   const duration = durationOf(master, start, parsed, zones);
 
   const rruleLine = firstValue(master, "RRULE");
-  const rdates = rdateLocals(master);
+  const rdates = rdateLocals(master, start, zones, parsed.zones);
   const common = {
     uid,
     parsed,
@@ -270,7 +311,7 @@ function seriesEvents(
   if (rruleLine === undefined && rdates.length === 0) {
     if (!isCancelled(master)) events.push(emit({ ...common, event: master, start }));
     for (const override of entry.overrides) {
-      pushOverride(events, override, common, parsed, zones);
+      pushOverride(events, override, common, start, parsed, zones);
     }
     return events;
   }
@@ -313,6 +354,7 @@ function seriesEvents(
     1,
     Math.min(MAX_INSTANCES, context.budget.events),
   );
+  const exdates = exdateKeys(master, start, zones, parsed.zones);
   const expansion =
     parsedRule === null
       ? // RFC 5545 §3.8.5.2: RDATE adds to the recurrence set, which always
@@ -320,28 +362,28 @@ function seriesEvents(
         withStart(
           dtstartLocal,
           rdates,
-          exdateKeys(master),
+          exdates,
           seriesWindowEnd,
           maxInstances,
         )
-      : expand(parsedRule.rule, dtstartLocal, {
-          windowEnd: seriesWindowEnd,
-          maxInstances,
-          exdates: exdateKeys(master),
-          rdates,
-          maxSteps: Math.max(1, Math.min(MAX_STEPS, context.budget.steps)),
-        });
+      : expand(
+          expandRuleFor(parsedRule.rule, start, zones, parsed.zones),
+          dtstartLocal,
+          {
+            windowEnd: seriesWindowEnd,
+            maxInstances,
+            exdates,
+            rdates,
+            maxSteps: Math.max(1, Math.min(MAX_STEPS, context.budget.steps)),
+          },
+        );
   context.budget.steps -= expansion.steps;
 
   if (expansion.truncated) {
     const oldest = expansion.instances[0];
     context.truncated.set(
       uid,
-      oldest === undefined
-        ? null
-        : start.kind === "date"
-          ? formatLocalDate(oldest)
-          : formatLocal(oldest),
+      oldest === undefined ? null : occurrenceStamp(start, oldest),
     );
   }
 
@@ -349,7 +391,10 @@ function seriesEvents(
   for (const override of entry.overrides) {
     const recurrenceId = instantOf(firstValue(override, "RECURRENCE-ID"));
     if (recurrenceId === null) continue;
-    overrideByStart.set(formatLocal(localOf(recurrenceId)), override);
+    overrideByStart.set(
+      formatLocal(civilLocal(recurrenceId, start, zones, parsed.zones)),
+      override,
+    );
   }
 
   const emittedKeys = new Set<string>();
@@ -371,17 +416,18 @@ function seriesEvents(
         ? duration
         : (durationOf(override, instanceStartInstant, parsed, zones) ??
           duration);
+    const stamp = occurrenceStamp(start, instance);
     events.push(
       emit({
         ...common,
         duration: instanceDuration,
         event: source,
         start: instanceStartInstant,
-        ...(override !== undefined ? { suffixKey: key } : {}),
+        suffixKey: stamp,
         recurrence: {
           rrule: rruleLine?.value ?? null,
           instance_of: uid,
-          ...(override !== undefined ? { recurrence_id: key } : {}),
+          ...(override !== undefined ? { recurrence_id: stamp } : {}),
           expanded: true,
           ...(expansion.truncated ? { truncated: true } : {}),
         },
@@ -401,7 +447,7 @@ function seriesEvents(
         recurrence: {
           rrule: rruleLine?.value ?? null,
           instance_of: uid,
-          recurrence_id: key,
+          recurrence_id: occurrenceStamp(start, parseLocal(key)),
           expanded: true,
           // The flag belongs to the series, not to the instances that made the
           // cut, so an override outside the kept window carries it too.
@@ -417,6 +463,7 @@ function pushOverride(
   events: CaptureEventInput[],
   override: RawVEvent,
   common: Omit<EmitInput, "event" | "start" | "recurrence">,
+  seriesStart: IcsInstant,
   parsed: ParsedCalendar,
   zones: ZoneResolver,
 ): void {
@@ -439,7 +486,12 @@ function pushOverride(
         rrule: null,
         instance_of: common.uid,
         ...(recurrenceId !== null
-          ? { recurrence_id: formatLocal(localOf(recurrenceId)) }
+          ? {
+              recurrence_id: occurrenceStamp(
+                seriesStart,
+                civilLocal(recurrenceId, seriesStart, zones, parsed.zones),
+              ),
+            }
           : {}),
         expanded: true,
       },

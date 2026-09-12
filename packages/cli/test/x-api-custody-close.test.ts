@@ -18,7 +18,7 @@ for (const delayed of ['response', 'write'] as const) test(`X host drains late $
   let db = openLedger(path), release!: () => void, enter!: () => void;
   const started = new Promise<void>(resolve => { enter = resolve; }), hold = new Promise<void>(resolve => { release = resolve; });
   const pending = store.begin(); await pending.writer.write(f.state); const saved = store.save(db, 'kizuki.x', pending.pending);
-  setSourceGrant(db, { source_key: saved.source_key, expected_revision: 0, operation_id: 'synthetic-x-drain-grant', policy: { purposes: ['capture'], allowed_fields: ['text', 'metadata'], retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' } }); db.close();
+  setSourceGrant(db, { source_key: saved.source_key, expected_revision: 0, operation_id: 'synthetic-x-drain-grant', policy: { purposes: ['capture'], allowed_fields: ['text', 'subjects', 'metadata'], retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' } }); db.close();
   const io: CliIo = { env: { ...setup.env, KIZUKI_X_CLIENT_ID: f.clientId, KIZUKI_X_REDIRECT_URI: 'http://127.0.0.1:49152/callback' }, vaultOverride: setup.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out: () => {}, err: () => {}, prompt: async () => { throw Error(); } };
   let connector: ReturnType<typeof createXApiConnector> | undefined, finished = false;
   const run = withVault(io, async ctx => {

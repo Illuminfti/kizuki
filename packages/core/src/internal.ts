@@ -2,7 +2,7 @@
  * Composition-root opener. Not the public policy boundary: callers still go
  * through accept, purge, ingest, and the receipted writer for mutation.
  */
-export { openLedger } from "./ledger/db";
+export { LEDGER_SCHEMA_VERSION, openLedger } from "./ledger/db";
 export { ledgerAccepted, readLedgerMark, sealLedger } from "./ledger/mark";
 export {
   LEDGER_READY_DEADLINE_MS,
@@ -16,6 +16,7 @@ export { inspectLedgerIdentity, LedgerIdentityError } from "./ledger/identity";
 export { parseSqliteRuntime, readSqliteRuntime } from "./ledger/runtime";
 export type { SqliteRuntime } from "./ledger/runtime";
 export { assertBoundVaultId } from "./serve/vault-id";
+export { SERVICE_BROKER_REAP_SECONDS, SERVICE_READY_SECONDS } from "./serve/units";
 export { startServiceCustody, runServiceCustodyBroker, validateServiceCustodyLaunch, ServiceCustodyError } from "./serve/custody";
 export type { ServiceCustodyHandle } from "./serve/custody";
 export { indexEvent, indexPage, initSearch, removeCanonPath, removeDoc } from "./search";

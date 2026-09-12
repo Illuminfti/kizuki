@@ -196,6 +196,7 @@ jobs:
         with: { fetch-depth: 0, ref: "${pinnedRef}" }
       - uses: ${pinnedBun}
         with: { bun-version: 1.3.14 }
+      - run: bun run verify
       - if: hashFiles('scripts/verify.sh') == ''
         run: bun run verify`,
     });
@@ -276,6 +277,22 @@ test("macOS validator rejects removal or bypass of each native proof obligation"
   }
 });
 
+test("ci test rejects a masked or conditional repository verify step", () => {
+  const path = ".github/workflows/ci.yml";
+  const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  expect(validateWorkflowText(path, text)).toEqual([]);
+  expect(validateWorkflowText(path, ciWorkflow())).toEqual([]);
+  const mutations: [string, (doc: any) => void][] = [
+    ["masked command", d => { d.jobs.test.steps[4].run = "bun run verify || true"; }],
+    ["conditional if", d => { d.jobs.test.steps[4].if = "false"; }],
+    ["continue-on-error", d => { d.jobs.test.steps[4]["continue-on-error"] = true; }],
+  ];
+  for (const [name, mutate] of mutations) {
+    const doc = Bun.YAML.parse(text); mutate(doc);
+    expect(validateWorkflowText(path, JSON.stringify(doc)).some(failure => failure.reason.includes("repository verify")), name).toBe(true);
+  }
+});
+
 test("Linux validator rejects removal or bypass of each native receipt retention binding", () => {
   const path = ".github/workflows/ci.yml";
   const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
@@ -336,7 +353,7 @@ test("both native modes require ledger lifetime, imports and service custody con
   const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
   expect(validateWorkflowText(path, text)).toEqual([]);
   for (const [job, index] of [["native-arm64", 5], ["native-service", 4]] as const) {
-    for (const proof of [" packages/core/test/export-portable-local.test.ts", " packages/cli/test/portable-connection-integrity.test.ts", " packages/cli/test/restore-connection-state.test.ts", " scripts/release-download.test.ts", " scripts/native-sqlite-vendor.test.ts", " packages/core/test/migration.test.ts", " packages/core/test/retrieval/fts5.test.ts", " packages/core/test/retrieval/fts5-erasure.test.ts", " packages/core/test/ledger-wal.test.ts", " packages/core/test/serve/boot-id.test.ts", " packages/cli/test/serve/restart.test.ts", " packages/core/test/descriptor-custody.test.ts", " packages/core/test/ledger-lifetime.test.ts", " packages/connector-ics/test/ingest-completion.test.ts", " packages/connectors/test/fleet-markdown-lifecycle.test.ts", " packages/cli/test/import-markdown-lifecycle.test.ts", " packages/core/test/ledger-identity.test.ts", " packages/cli/test/vault-identity.test.ts", " packages/cli/test/serve/supervisor-status.test.ts", " packages/core/test/serve/supervisor.test.ts", " packages/cli/test/rebuild.test.ts", " packages/core/test/ledger-mark.test.ts", " packages/cli/test/doctor/ledger-readiness.test.ts", " packages/core/test/serve/custody-native.test.ts", " packages/core/test/serve/custody-observation.test.ts", " packages/core/test/serve/custody.test.ts", " packages/cli/test/serve/custody.test.ts"]) {
+    for (const proof of [" packages/core/test/export-portable-local.test.ts", " packages/cli/test/portable-connection-integrity.test.ts", " packages/cli/test/restore-connection-state.test.ts", " scripts/release-download.test.ts", " scripts/native-sqlite-vendor.test.ts", " packages/core/test/migration.test.ts", " packages/core/test/retrieval/fts5.test.ts", " packages/core/test/retrieval/fts5-erasure.test.ts", " packages/core/test/ledger-wal.test.ts", " packages/core/test/serve/boot-id.test.ts", " packages/cli/test/serve/restart.test.ts", " packages/core/test/descriptor-custody.test.ts", " packages/core/test/ledger-lifetime.test.ts", " packages/connector-ics/test/ingest-completion.test.ts", " packages/core/test/util/source-read.test.ts", " packages/connectors/test/markdown-folder.test.ts", " packages/connectors/test/markdown-vault-boundary.test.ts", " packages/connectors/test/fleet-markdown-lifecycle.test.ts", " packages/cli/test/import-markdown-lifecycle.test.ts", " packages/core/test/ledger-identity.test.ts", " packages/cli/test/vault-identity.test.ts", " packages/cli/test/serve/supervisor-status.test.ts", " packages/core/test/serve/supervisor.test.ts", " packages/cli/test/rebuild.test.ts", " packages/core/test/ledger-mark.test.ts", " packages/cli/test/doctor/ledger-readiness.test.ts", " packages/core/test/serve/custody-native.test.ts", " packages/core/test/serve/custody-observation.test.ts", " packages/core/test/serve/custody.test.ts", " packages/cli/test/serve/custody.test.ts"]) {
       const doc = Bun.YAML.parse(text) as any;
       const step = doc.jobs[job].steps[index];
       expect(step.run, job).toContain(proof);

@@ -9,8 +9,9 @@ import { XApiFixture } from '../../connector-x/src/api/testkit';
 import { encodeState, parseState } from '../../connector-x/src/api/state';
 import { runXApiConnect } from '../src/commands/connect-x-api';
 import { closeHostConnector, listHostConnections, loadConnector, selectConnection } from '../src/connections';
-import { xApiClient, xApiSelection } from '../src/x-api';
+import { xApiClient, xApiRequiredFields, xApiSelection } from '../src/x-api';
 import { printConnectorCatalog } from '../src/connect-catalog';
+import { createAppHost } from '../src/app/host';
 import { createHelpers } from './helpers';
 import type { CliIo } from '../src/commands';
 const h = createHelpers(); afterEach(h.cleanup);
@@ -113,12 +114,107 @@ test('X runtime rejects incompatible fields and consent revision races before co
     const source = listConnections(db)[0]!.source_key; grant(db, source, ['metadata']); let factories = 0;
     await expect(loadConnector(selectConnection(db, store, ID, source), store, db, {}, () => { factories++; throw Error(); })).rejects.toThrow('source_field_denied');
     expect(factories).toBe(0);
-    setSourceGrant(db, { source_key: source, expected_revision: 1, operation_id: 'synthetic-x-fields', policy: { purposes: ['capture'], allowed_fields: ['metadata', 'text'], retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' } });
+    setSourceGrant(db, { source_key: source, expected_revision: 1, operation_id: 'synthetic-x-fields', policy: { purposes: ['capture'], allowed_fields: ['metadata', 'text', 'subjects'], retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' } });
     const env = { ...o.io.env };
     queueMicrotask(() => revokeSourceGrant(db, { source_key: source, expected_revision: 2, operation_id: 'synthetic-x-race' }));
     await expect(loadConnector(selectConnection(db, store, ID, source), store, db, env, () => { factories++; throw Error(); })).rejects.toThrow('source_capture_denied');
     expect(factories).toBe(0);
   } finally { db.close(); }
+});
+
+test('app host reports native X selection fields, grants exactly them, and flags corrupt protected state', async () => {
+  for (const [fields, required] of [
+    ['none', ['text', 'subjects', 'metadata']],
+    ['links', ['text', 'subjects', 'metadata']],
+    ['media', ['text', 'subjects', 'metadata', 'attachments']],
+  ] as const) {
+    const setup = h.tempVault(), o = await owner(setup), host = createAppHost(o.io);
+    const call = async (route: string, body: unknown = {}) => (await host.handle(new Request(`http://127.0.0.1/app/v1/${route}`, { method: 'POST', body: JSON.stringify(body) }))).json() as Promise<any>;
+    let db: ReturnType<typeof openLedger> | undefined;
+    try {
+      expect(await runXApiConnect(o.io, { fields, historyStart, json: true }, () => {}, o.create, o.open)).toBe(0);
+      ({ db } = ledger(setup));
+      const connection = listConnections(db)[0]!, source = connection.source_key;
+      expect((await call('sources')).data.sources).toEqual([expect.objectContaining({ source_key: source, state: 'enrolled', consent: 'required', required_fields: required })]);
+      const consent = await call('consent', { source_key: source, expected_revision: 0, operation_id: `app-x-${fields}`, policy: { purposes: ['capture'], allowed_fields: required, retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' } });
+      expect(consent.ok).toBe(true);
+      const stored = new ConnectionStateStore(join(setup.vault, '.kizuki'));
+      const loaded = await loadConnector(selectConnection(db, stored, ID, source), stored, db, o.io.env, runtime(o.f));
+      await closeHostConnector(loaded);
+      writeFileSync(join(setup.vault, '.kizuki', connection.secret_refs[0]!.slice(5)), 'corrupt X state');
+      expect((await call('sources')).data.sources).toEqual([expect.objectContaining({ source_key: source, state: 'needs_attention', required_fields: [] })]);
+    } finally { db?.close(); await host.close(); }
+  }
+});
+
+for (const [fields, required, subjects, urls] of [
+  ['none', ['text', 'subjects', 'metadata'], [{ subject_id: 'x:user:7', role: 'from' as const }], false],
+  ['links', ['text', 'subjects', 'metadata'], [{ subject_id: 'x:user:7', role: 'from' as const }], true],
+  ['media', ['text', 'subjects', 'metadata', 'attachments'], [{ subject_id: 'x:user:7', role: 'from' as const }], false],
+  ['media,relationships', ['text', 'subjects', 'metadata', 'attachments'], [{ subject_id: 'x:user:7', role: 'from' as const }, { subject_id: 'x:user:9', role: 'to' as const }, { subject_id: 'x:user:8', role: 'about' as const }], false],
+] as const) test(`X ${fields} grant admits only its required fields before capture`, async () => {
+  const includes = { media: [{ media_key: '3_100', type: 'photo', url: 'https://pbs.twimg.com/media/synthetic.jpg' }] };
+    expect(xApiRequiredFields(xApiSelection(fields, historyStart))).toEqual([...required]);
+    const needsAttachments = required.some(field => field === 'attachments');
+    const setup = h.tempVault(), f = new XApiFixture(1, 1, xApiSelection(fields, historyStart));
+    f.records = [{ id: '100', author_id: f.account, text: 'Synthetic own reply.', created_at: '2026-01-02T00:00:00Z',
+      in_reply_to_user_id: '9', entities: { mentions: [{ id: '8', username: 'peer' }], urls: [{ expanded_url: 'https://example.test/post' }] },
+      attachments: { media_keys: ['3_100'] } }];
+    f.before = async request => {
+      const url = new URL(request.url);
+      if (url.pathname !== `/2/users/${f.account}/tweets` && url.pathname !== '/2/tweets') return;
+      const since = url.searchParams.get('since_id');
+      const rows = f.records.filter(row => url.pathname === '/2/tweets'
+        ? (url.searchParams.get('ids') ?? '').split(',').includes(String(row.id))
+        : since === null || BigInt(String(row.id)) > BigInt(since)).map(row => structuredClone(row));
+      return Response.json({ data: rows, meta: { result_count: rows.length, ...(rows.length === 0 ? {} : { newest_id: rows[0]!.id, oldest_id: rows.at(-1)!.id }) }, includes });
+    };
+    const o = await owner(setup, f);
+    expect(await runXApiConnect(o.io, { fields, historyStart, json: true }, () => {}, o.create, o.open)).toBe(0);
+    const { db, store } = ledger(setup);
+    try {
+      const source = listConnections(db)[0]!.source_key;
+      let factories = 0, revision = 0;
+      const load = () => loadConnector(selectConnection(db, store, ID, source), store, db, o.io.env, (_id, config, deps) => { factories++; return runtime(f)(_id, config, deps); });
+      const policy = (allowed_fields: ('text' | 'subjects' | 'attachments' | 'metadata')[]) =>
+        setSourceGrant(db, { source_key: source, expected_revision: revision++, operation_id: `synthetic-x-fields-${revision}`,
+          policy: { purposes: ['capture'], allowed_fields, retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' } });
+      const before = f.requests.length;
+      policy(['text', 'metadata']);
+      await expect(load()).rejects.toThrow('source_field_denied');
+      expect(factories).toBe(0); expect(f.requests).toHaveLength(before);
+      if (needsAttachments) {
+        policy(['text', 'subjects', 'metadata']);
+        await expect(load()).rejects.toThrow('source_field_denied');
+        expect(factories).toBe(0); expect(f.requests).toHaveLength(before);
+      }
+      policy([...required]);
+      const port = await load();
+      const result = await runToCompletion(db, port, ID, source, 'backfill', { maxBatches: 2 });
+      expect(result.errors).toEqual([]); expect(result.stored).toBe(1); await closeHostConnector(port);
+      const event = [...replayLive(db)][0]!;
+      expect(event.subjects).toEqual([...subjects]);
+      expect(event.attachments.map(item => item.attachment_id)).toEqual(needsAttachments ? ['3_100'] : []);
+      expect(event.metadata.urls).toEqual(urls ? ['https://example.test/post'] : undefined);
+      expect(event.metadata.in_reply_to_user_id).toBe(fields.includes('relationships') ? '9' : undefined);
+      expect(event.metadata.references).toEqual(fields.includes('relationships') ? [] : undefined);
+      expect(event.metadata.media_refs === undefined).toBe(!fields.includes('media'));
+      const list = f.requests.find(request => new URL(request.url).pathname === `/2/users/${f.account}/tweets`)!;
+      expect(list.method).toBe('GET');
+      const query = new URL(list.url).searchParams;
+      const tweetFields = new Set((query.get('tweet.fields') ?? '').split(','));
+      const expansions = new Set((query.get('expansions') ?? '').split(',').filter(Boolean));
+      expect(tweetFields.has('author_id')).toBe(true);
+      expect(tweetFields.has('entities')).toBe(fields.includes('links') || fields.includes('relationships'));
+      expect(tweetFields.has('attachments')).toBe(fields.includes('media'));
+      expect(tweetFields.has('referenced_tweets')).toBe(fields.includes('relationships'));
+      expect(expansions.has('entities.mentions.username')).toBe(fields.includes('relationships'));
+      expect(expansions.has('attachments.media_keys')).toBe(fields.includes('media'));
+      expect(query.get('user.fields')).toBe(fields.includes('relationships') ? 'id,username' : null);
+      expect(query.has('media.fields')).toBe(fields.includes('media'));
+      if (!fields.includes('relationships') && !fields.includes('media')) expect(query.has('expansions')).toBe(false);
+      expect(o.auth().searchParams.get('scope')).toBe(X_API_SCOPES.join(' '));
+    } finally { db.close(); }
 });
 
 test('held X state snapshot resolves only its original reference and stale runtime writes cannot overwrite replacement', async () => {
@@ -227,7 +323,11 @@ test('public X CLI and catalog distinguish native configuration, explicit select
     const invalid = h.runCli(setup.env, 'connect', ...args); expect(invalid.exitCode).toBe(2);
   }
   expect(xApiSelection('media,relationships', historyStart).fields).toEqual(['relationships', 'media']);
+  expect(xApiRequiredFields(xApiSelection('none', historyStart))).toEqual(['text', 'subjects', 'metadata']);
+  expect(xApiRequiredFields(xApiSelection('links', historyStart))).toEqual(['text', 'subjects', 'metadata']);
+  expect(xApiRequiredFields(xApiSelection('media,relationships', historyStart))).toEqual(['text', 'subjects', 'metadata', 'attachments']);
   for (const raw of [undefined, '', 'text', 'links,links', 'none,links']) expect(() => xApiSelection(raw, historyStart)).toThrow('explicit');
+  expect(() => xApiSelection('text', historyStart)).toThrow('author identity');
   expect(() => xApiSelection('none', '2026-01-01T00:00:00.0001Z')).toThrow();
   for (const callback of ['http://localhost:1234/callback', 'http://127.0.0.1:0/callback', o.redirect + '?x=1']) expect(() => xApiClient({ ...o.io.env, KIZUKI_X_REDIRECT_URI: callback })).toThrow('not configured');
   printConnectorCatalog(o.io, true);

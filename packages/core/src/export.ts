@@ -17,6 +17,7 @@ import {
   fsyncSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   opendirSync,
   readSync,
@@ -29,6 +30,7 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { rebuildPageIndex } from "./canon";
 import { CANON_SCHEMA_VERSION } from "./canon/schema";
@@ -67,7 +69,7 @@ import {
 import { eventFromRow, parseEventRecord, type LegacyEventRecord } from "./ledger/event-record";
 import { bindLegacyEventOrigins, installEventIdentityGuards } from "./ledger/event-identity-schema";
 import { readSchemaVersion } from "./ledger/integrity";
-import { PURGE_SCHEMA_VERSION } from "./ledger/purge-schema";
+import { bindStoredEventPurgeProofs, findMismatchedEventPurgeProof, PURGE_SCHEMA_VERSION } from "./ledger/purge-schema";
 import { tableExists } from "./ledger/schema";
 import { SENSITIVITY_SCHEMA_VERSION } from "./sensitivity/schema";
 import { SERVE_SCHEMA_VERSION } from "./serve/types";
@@ -84,6 +86,7 @@ export const V2_BACKUP_SCHEMA = "kizuki.backup/v2" as const;
 export const LEGACY_BACKUP_SCHEMA = "kizuki.backup/v1" as const;
 type BackupSchema = typeof BACKUP_SCHEMA | typeof V2_BACKUP_SCHEMA | typeof LEGACY_BACKUP_SCHEMA;
 const FILE_MODE = 0o600;
+const INVENTORY_CHANGED = "export inventory file changed before copying completed";
 const DIR_MODE = 0o700;
 const PAGE = 256;
 const CHUNK = 65_536;
@@ -231,6 +234,7 @@ interface PurgeRow {
   connector_id: string;
   reason: string;
   purged_at: string;
+  proof_digest: string | null;
 }
 
 interface PurgeProofRow {
@@ -515,6 +519,9 @@ function copyHashed(
   destination: string,
   expected?: { sha256: string; size: number },
 ): { sha256: string; size: number } {
+  if (expected !== undefined && (!Number.isSafeInteger(expected.size) || expected.size < 0)) {
+    throw new Error(INVENTORY_CHANGED);
+  }
   mkdirPrivate(dirname(destination));
   const hasher = new Bun.CryptoHasher("sha256");
   const input = openSync(source, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -528,7 +535,7 @@ function copyHashed(
     while (read > 0) {
       const slice = buf.subarray(0, read);
       if (expected !== undefined && size + read > expected.size) {
-        throw new Error("export inventory file changed before copying completed");
+        throw new Error(INVENTORY_CHANGED);
       }
       hasher.update(slice);
       writeAll(output, slice);
@@ -544,7 +551,7 @@ function copyHashed(
   chmodSync(destination, FILE_MODE);
   const result = { sha256: hasher.digest("hex"), size };
   if (expected !== undefined && (result.sha256 !== expected.sha256 || result.size !== expected.size)) {
-    throw new Error("export inventory file changed before copying completed");
+    throw new Error(INVENTORY_CHANGED);
   }
   return result;
 }
@@ -1041,14 +1048,14 @@ function* pagePurges(db: Database): Generator<PurgeRow> {
     if (cursor === null) {
       rows = db
         .query<PurgeRow, [number]>(
-          `SELECT receipt_id, event_id, connector_id, reason, purged_at
+          `SELECT receipt_id, event_id, connector_id, reason, purged_at, proof_digest
            FROM event_purges ORDER BY purged_at, receipt_id LIMIT ?`,
         )
         .all(PAGE);
     } else {
       rows = db
         .query<PurgeRow, [string, string, string, number]>(
-          `SELECT receipt_id, event_id, connector_id, reason, purged_at
+          `SELECT receipt_id, event_id, connector_id, reason, purged_at, proof_digest
            FROM event_purges
            WHERE purged_at > ?
               OR (purged_at = ? AND receipt_id > ?)
@@ -1428,28 +1435,58 @@ function refuseSecrets(value: unknown, path: string): void {
   }
 }
 
-function* readJsonl(path: string, maxRowBytes = Infinity): Generator<unknown> {
-  const fd = openSync(path, "r");
-  let leftover = Buffer.alloc(0);
+function* readJsonl(
+  path: string,
+  maxRowBytes: number,
+  expected: { sha256: string; size: number },
+): Generator<unknown> {
+  // Digest-bind the original onto an owner-only spool, then parse only that snapshot.
+  const spoolDir = mkdtempSync(join(tmpdir(), "kizuki-restore-jsonl-"));
   try {
-    const buf = Buffer.alloc(CHUNK);
-    let read = readSync(fd, buf);
-    while (read > 0) {
-      leftover = Buffer.concat([leftover, buf.subarray(0, read)]);
-      let newline = leftover.indexOf(0x0a);
-      while (newline !== -1) {
-        const line = leftover.subarray(0, newline);
-        leftover = leftover.subarray(newline + 1);
-        if (line.byteLength > maxRowBytes) throw new Error("backup record exceeds its byte bound");
-        if (line.byteLength > 0) yield JSON.parse(FATAL_UTF8.decode(line));
-        newline = leftover.indexOf(0x0a);
-      }
-      if (leftover.byteLength > maxRowBytes) throw new Error("backup record exceeds its byte bound");
-      read = readSync(fd, buf);
-    }
-    if (leftover.byteLength > 0) yield JSON.parse(FATAL_UTF8.decode(leftover));
+    chmodSync(spoolDir, DIR_MODE);
+    const spool = join(spoolDir, "snapshot.jsonl");
+    copyHashed(path, spool, expected);
+    yield* readBoundLines(spool, maxRowBytes);
   } finally {
-    closeSync(fd);
+    rmSync(spoolDir, { recursive: true, force: true });
+  }
+}
+
+function* readBoundLines(path: string, maxRowBytes: number): Generator<unknown> {
+  const input = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    requireSingleLinkRegularFile(input);
+    const buf = Buffer.alloc(CHUNK);
+    const parts: Buffer[] = [];
+    let pending = 0;
+    let read = readSync(input, buf);
+    while (read > 0) {
+      const chunk = buf.subarray(0, read);
+      let offset = 0;
+      while (offset < chunk.byteLength) {
+        const newline = chunk.indexOf(0x0a, offset);
+        const piece = chunk.subarray(offset, newline === -1 ? chunk.byteLength : newline);
+        if (pending + piece.byteLength > maxRowBytes) throw new Error("backup record exceeds its byte bound");
+        if (newline === -1) {
+          if (piece.byteLength > 0) {
+            parts.push(Buffer.from(piece));
+            pending += piece.byteLength;
+          }
+          break;
+        }
+        const line = pending === 0 ? piece : Buffer.concat([...parts, piece], pending + piece.byteLength);
+        parts.length = 0;
+        pending = 0;
+        if (line.byteLength > 0) yield JSON.parse(FATAL_UTF8.decode(line));
+        offset = newline + 1;
+      }
+      read = readSync(input, buf);
+    }
+    requireSingleLinkRegularFile(input);
+    if (pending > maxRowBytes) throw new Error("backup record exceeds its byte bound");
+    if (pending > 0) yield JSON.parse(FATAL_UTF8.decode(Buffer.concat(parts, pending)));
+  } finally {
+    closeSync(input);
   }
 }
 
@@ -1963,11 +2000,15 @@ function assertBackupFormat(manifest: ExportManifest): void {
   // Ledger25 adds independent checkpoint backfill_cursor and sync_cursor; omitted rows restore as NULL.
   // Ledger26 widens selector_kind to event|connector; omitted and compound rows restore as NULL.
   // Ledger27 widens selector_kind to event|connector|record; omitted and compound rows restore as NULL.
+  // Ledger28 widens selector_kind to event|connector|record|source; omitted and compound rows restore as NULL.
+  // Ledger28 also stores proof_digest on event_purges. Omitted digests bind currently stored
+  // proof bytes as a restore baseline, not retroactive authentication. Mismatched explicit
+  // digests are refused.
   // Future migrations must make their own explicit compatibility decision.
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
       versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
       versions.ledger !== 19 && versions.ledger !== 20 &&
-      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27))) {
+      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27 || versions.ledger === 28))) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -2036,21 +2077,27 @@ function insertEvent(
   );
 }
 
+const CLAIM_CONTENT_HASH = /^[0-9a-f]{64}$/;
+
 function insertPurge(db: Database, raw: Record<string, unknown>): void {
+  let digest: string | null = null;
+  if (raw.proof_digest !== undefined && raw.proof_digest !== null) {
+    digest = asString(raw.proof_digest, "proof_digest");
+    if (!CLAIM_CONTENT_HASH.test(digest)) throw new Error("proof_digest: must be a sha256 hex digest");
+  }
   db.query(
     `INSERT INTO event_purges
-       (receipt_id, event_id, connector_id, reason, purged_at)
-     VALUES (?, ?, ?, ?, ?)`,
+       (receipt_id, event_id, connector_id, reason, purged_at, proof_digest)
+     VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(
     asString(raw.receipt_id, "receipt_id"),
     asString(raw.event_id, "event_id"),
     asString(raw.connector_id, "connector_id"),
     asString(raw.reason, "reason"),
     asString(raw.purged_at, "purged_at"),
+    digest,
   );
 }
-
-const CLAIM_CONTENT_HASH = /^[0-9a-f]{64}$/;
 
 function insertPurgeProof(db: Database, raw: Record<string, unknown>): void {
   const hash = asString(raw.content_hash, "content_hash");
@@ -2065,9 +2112,10 @@ function insertPurgeProof(db: Database, raw: Record<string, unknown>): void {
     selectorKind !== null &&
     selectorKind !== "event" &&
     selectorKind !== "connector" &&
-    selectorKind !== "record"
+    selectorKind !== "record" &&
+    selectorKind !== "source"
   ) {
-    throw new Error("selector_kind: must be event, connector, record, or omitted");
+    throw new Error("selector_kind: must be event, connector, record, source, or omitted");
   }
   db.query(
     `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
@@ -2076,7 +2124,9 @@ function insertPurgeProof(db: Database, raw: Record<string, unknown>): void {
     asString(raw.receipt_id, "receipt_id"),
     hash,
     sourceRecordId,
-    selectorKind === "event" || selectorKind === "connector" || selectorKind === "record" ? selectorKind : null,
+    selectorKind === "event" || selectorKind === "connector" || selectorKind === "record" || selectorKind === "source"
+      ? selectorKind
+      : null,
   );
 }
 
@@ -2422,7 +2472,8 @@ function* streamRows(
   relativePath: string,
   required: boolean,
 ): Generator<Record<string, unknown>> {
-  if (!Object.hasOwn(manifest.files, relativePath)) {
+  const entry = Object.hasOwn(manifest.files, relativePath) ? manifest.files[relativePath] : undefined;
+  if (entry === undefined) {
     if (required) throw new Error(`backup manifest is missing ${relativePath}`);
     return;
   }
@@ -2438,7 +2489,7 @@ function* streamRows(
     : relativePath === "ledger/purge_batches.jsonl" || relativePath === "ledger/purge_batch_receipts.jsonl" ? 16_384
     : relativePath === SOURCE_SURVIVOR_LINEAGE_BACKUP ? MAX_SOURCE_SURVIVOR_LINEAGE_ROW_BYTES : Infinity;
   let rows = 0;
-  for (const row of readJsonl(path, maxRowBytes)) {
+  for (const row of readJsonl(path, maxRowBytes, { sha256: entry.sha256, size: entry.size })) {
     if (relativePath === IDENTITY_BACKUP && ++rows > LEGACY_IDENTITY_SCAN_MAX_ROWS) {
       throw new Error("backup legacy identity row limit exceeded");
     }
@@ -2513,7 +2564,13 @@ export function restoreVault(
       options.onProgress?.("vault");
       const parts = splitBackupPath(key);
       if (parts[0] !== "vault") continue;
-      copyHashed(pathUnder(source, parts), pathUnder(staging, parts.slice(1)));
+      const entry = manifest.files[key];
+      if (entry === undefined) throw new Error(`backup manifest is missing ${key}`);
+      copyHashed(
+        pathUnder(source, parts),
+        pathUnder(staging, parts.slice(1)),
+        { sha256: entry.sha256, size: entry.size },
+      );
     }
     initVault(staging);
     if (manifest.vault_id !== null) {
@@ -2545,6 +2602,10 @@ export function restoreVault(
         }
         for (const row of streamRows(source, manifest, "ledger/event_purge_proofs.jsonl", false)) {
           insertPurgeProof(db, row);
+        }
+        bindStoredEventPurgeProofs(db);
+        if (findMismatchedEventPurgeProof(db, PAGE) !== null) {
+          throw new Error("event purge proof does not match receipt proof_digest");
         }
         for (const row of streamRows(source, manifest, "claims/claims.jsonl", false)) {
           insertClaimRow(db, row);

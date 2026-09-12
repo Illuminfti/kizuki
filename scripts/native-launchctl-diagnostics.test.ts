@@ -64,7 +64,7 @@ test("the real supervisor resolves its CLI child PATH without changing the paren
   const wrapper = join(root, "launchctl"), receipt = join(root, "argv");
   const oldPath = process.env.PATH;
   try {
-    writeFileSync(wrapper, `#!${process.execPath}\nimport { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(receipt)}, JSON.stringify(process.argv.slice(2)));\nconsole.log('state = running\\npid = 501');\n`, { mode: 0o700 });
+    writeFileSync(wrapper, `#!${process.execPath}\nimport { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(receipt)}, JSON.stringify(process.argv.slice(2)));\nconsole.log('state = running\\npid = 501\\ndisabled = 0\\nenvironment = { SERVICE_DISABLED = 1 }');\n`, { mode: 0o700 });
     const result = Bun.spawnSync([process.execPath, "--eval", `
       import { realSupervisorHost } from ${JSON.stringify(join(import.meta.dir, "../packages/core/src/serve/supervisor.ts"))};
       const result = realSupervisorHost('launchd', ${JSON.stringify(root)}, '/synthetic/binary').query('synthetic-vault');

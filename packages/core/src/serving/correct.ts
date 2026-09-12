@@ -7,7 +7,12 @@ import {
 } from "../ledger/source-grants";
 import { claimReader } from "./claims";
 import type { Sensitivity } from "../agents";
-import { insertClaim, getClaim } from "../claims/store";
+import {
+  claimsConflict,
+  resolveConflict,
+  type ConflictClaim,
+} from "../claims/conflict";
+import { insertClaim, getClaim, listClaims } from "../claims/store";
 import type { AuthorityTier, Claim } from "../contracts/proposal";
 import { recordNativeCorrection } from "../correction/evidence";
 import { text } from "./arguments";
@@ -64,6 +69,14 @@ function refuse(field: string, rule: string): ServeError {
   return new ServeError(
     "invalid_arguments",
     `invalid arguments: ${field}: ${rule}`,
+  );
+}
+
+/** Public DenyReason has no below_authority; held is the existing policy refusal. */
+function refuseAuthority(): ServeError {
+  return new ServeError(
+    "held",
+    "correction is below the live claim's authority",
   );
 }
 
@@ -126,6 +139,41 @@ function relayCeiling(ctx: ServeContext): AuthorityTier | undefined {
   return ctx.principal.grant.relay_owner_corrections
     ? undefined
     : "owner_authored";
+}
+
+/**
+ * Refuse before native owner evidence when this relay cannot beat a live
+ * rival. Uses the same filed tier and conflict comparator as insertClaim.
+ */
+function assertSufficientAuthority(
+  ctx: ServeContext,
+  group: Claim[],
+  claimKey: string,
+  predicate: string,
+  replacement: string | undefined,
+  at: string,
+): void {
+  const rivals = listClaims(ctx.db, { claim_key: claimKey, status: "live" });
+  const live = rivals.length > 0 ? rivals : group;
+  const incoming: ConflictClaim = {
+    claim_id: "",
+    claim_key: claimKey,
+    polarity: replacement === undefined ? "negative" : "positive",
+    object: replacement ?? null,
+    predicate,
+    authority: relayCeiling(ctx) ?? "owner_correction",
+    confidence: 1,
+    valid_from: at,
+    valid_to: null,
+    status: "live",
+    provenance: [...new Set(live.flatMap((claim) => claim.provenance))],
+  };
+  for (const rival of live) {
+    if (!claimsConflict(incoming, rival)) continue;
+    if (resolveConflict(incoming, rival).action === "skip") {
+      throw refuseAuthority();
+    }
+  }
 }
 
 function sentence(
@@ -207,7 +255,7 @@ export async function serveCorrect(
             );
           const filedRow = ctx.db
             .query<{ claim_id: string }, [string]>(
-              "SELECT claim_id FROM claims WHERE EXISTS (SELECT 1 FROM json_each(claims.provenance) WHERE value=?) AND target LIKE 'correction:%' ORDER BY created_at LIMIT 1",
+              "SELECT claim_id FROM claims WHERE EXISTS (SELECT 1 FROM json_each(claims.provenance) WHERE value=?) AND target LIKE 'correction:%' AND status != 'skipped' ORDER BY created_at LIMIT 1",
             )
             .get(recorded.event_id);
           const prior =
@@ -303,6 +351,15 @@ export async function serveCorrect(
         };
       }
 
+      assertSufficientAuthority(
+        ctx,
+        group,
+        claimKeyValue,
+        predicate,
+        replacement,
+        at,
+      );
+
       const targetEvidence = [
         ...new Set(group.flatMap((claim) => claim.provenance)),
       ].sort();
@@ -357,6 +414,14 @@ export async function serveCorrect(
           .run(eventId);
         throw error;
       });
+      if (filed.outcome === "skipped") {
+        ctx.db
+          .query(
+            "UPDATE native_owner_evidence SET filing_state='failed' WHERE event_id=?",
+          )
+          .run(eventId);
+        throw refuseAuthority();
+      }
       ctx.db
         .query(
           "UPDATE native_owner_evidence SET filing_state='filed' WHERE event_id=?",

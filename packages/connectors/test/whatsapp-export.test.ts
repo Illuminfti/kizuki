@@ -311,12 +311,15 @@ test("a malformed config fails construction", () => {
   expect(() =>
     construct({ path: "/x", timezone: "+02:00", chat: "Acme Planning" }),
   ).not.toThrow();
+  expect(() => construct({ path: "/x", self: "\u200eAda" })).not.toThrow();
   for (const config of [
     {},
     { path: "/x", tz: "+02:00" },
     { path: "/x", timezone: "Not/AZone" },
     { path: "/x", date_order: "xyz" },
     { path: "/x", self: "" },
+    { path: "/x", self: "\u200e" },
+    { path: "/x", chat: "   " },
   ]) {
     try {
       construct(config);

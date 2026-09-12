@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { listValidityGaps } from "../../src/claims/gaps";
+import { claimKey } from "../../src/claims/hash";
 import { PREDICATE_REGISTRY, isSingleValuedPredicate } from "../../src/claims/predicates";
-import { insertClaim } from "../../src/claims/store";
+import { insertClaim, listClaims, listSupersessions } from "../../src/claims/store";
 import { claimsDb, eventFacts, putEvent } from "./helpers";
 
 describe("validity coverage gaps", () => {
@@ -58,6 +59,61 @@ describe("validity coverage gaps", () => {
     expect(gaps.length).toBeGreaterThan(0);
     expect(gaps[0]?.after).toBe("2021-06-01T00:00:00.000Z");
     expect(gaps[0]?.before).toBe("2022-01-01T00:00:00.000Z");
+    db.close();
+  });
+
+  test("a hole bounded by an offset timestamp is a gap, not a conflict", async () => {
+    const db = claimsDb();
+    const firstEvent = putEvent(db, { source_record_id: "first" });
+    const secondEvent = putEvent(db, { source_record_id: "second" });
+    const first = await insertClaim(
+      { db },
+      {
+        kind: "claim",
+        subject: "person:ada",
+        predicate: "employment.works_at",
+        object: "Acme",
+        polarity: "positive",
+        body: "Ada worked at Acme.",
+        provenance: [firstEvent],
+        subjects: ["person:ada"],
+        producer: "deterministic",
+        confidence: 0.6,
+        valid_from: "2020-01-01T00:00:00.000Z",
+        valid_to: "2026-06-01T00:00:00.000Z",
+        events: [eventFacts(firstEvent)],
+      },
+    );
+    const second = await insertClaim(
+      { db },
+      {
+        kind: "claim",
+        subject: "person:ada",
+        predicate: "employment.works_at",
+        object: "Contoso",
+        polarity: "positive",
+        body: "Ada later worked at Contoso.",
+        provenance: [secondEvent],
+        subjects: ["person:ada"],
+        producer: "deterministic",
+        confidence: 0.9,
+        // 2026-06-01T01:00:00Z: one hour after Acme ended, earlier as a string.
+        valid_from: "2026-05-31T23:00:00-02:00",
+        events: [eventFacts(secondEvent)],
+      },
+    );
+    expect(first.outcome).toBe("stored");
+    expect(second.outcome).toBe("stored");
+    expect(listClaims(db, { status: "live" })).toHaveLength(2);
+    expect(listSupersessions(db)).toEqual([]);
+    expect(listValidityGaps(db, { subject: "person:ada" })).toEqual([
+      {
+        claim_key: claimKey("person:ada", "employment.works_at"),
+        predicate: "employment.works_at",
+        after: "2026-06-01T00:00:00.000Z",
+        before: "2026-05-31T23:00:00-02:00",
+      },
+    ]);
     db.close();
   });
 });

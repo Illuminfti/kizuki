@@ -47,8 +47,17 @@ test("search audit candidates retain bounded rank/filter order without projectin
     const projection = sql.find(query => query.includes("FROM search_docs"))!;
     expect(projection.startsWith("SELECT doc_id, scope ")).toBe(true);
     expect(projection).not.toMatch(/\b(?:body|title|snippet|text_preview)\b/);
+    expect(projection).not.toContain("source_event_bindings");
     expect(projection).toContain("LIMIT ?");
+    expect(projection).not.toMatch(/\bOFFSET\b/);
     expect(searchAuditCandidates(readDb, "ceilingaudit", { limit: 0 }).candidates).toEqual([]);
+    const first = searchAuditCandidates(readDb, "ceilingaudit", { scope: "canon", types: ["fact"], limit: 1, excludePaths: ["facts/2.md"] });
+    const second = searchAuditCandidates(readDb, "ceilingaudit", { scope: "canon", types: ["fact"], limit: 1, offset: 1, excludePaths: ["facts/2.md"] });
+    expect([...first.candidates, ...second.candidates]).toEqual(result.candidates);
+    const paged = sql.filter(query => query.includes("FROM search_docs")).at(-1)!;
+    expect(paged.startsWith("SELECT doc_id, scope ")).toBe(true);
+    expect(paged).toContain("LIMIT ? OFFSET ?");
+    expect(paged).not.toMatch(/\b(?:body|title|snippet|text_preview)\b/);
   } finally { db.close(); vault.dispose(); }
 });
 

@@ -193,20 +193,6 @@ export function replayFrom(
   });
 }
 
-export function recordSkippedFrame(cursor: ScreenpipeCursor, id: number): void {
-  cursor.oldest_skipped_frame_id = oldestId(cursor.oldest_skipped_frame_id, id);
-}
-
-export function recordSkippedTranscription(
-  cursor: ScreenpipeCursor,
-  id: number,
-): void {
-  cursor.oldest_skipped_transcription_id = oldestId(
-    cursor.oldest_skipped_transcription_id,
-    id,
-  );
-}
-
 export function assertCompatibleIdentity(
   cursor: ScreenpipeCursor,
   identity: DatabaseIdentity,
@@ -242,10 +228,6 @@ export function canonicalCursor(cursor: ScreenpipeCursor): ScreenpipeCursor {
     oldest_skipped_transcription_id: cursor.oldest_skipped_transcription_id,
     phase: cursor.phase,
   };
-}
-
-function oldestId(current: number, id: number): number {
-  return current === 0 || id < current ? id : current;
 }
 
 function isCounter(value: unknown): value is number {

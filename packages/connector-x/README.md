@@ -36,3 +36,11 @@ provider enrollment, paid access, API compatibility and deletion coverage remain
 unqualified against a real account. The same post captured through both paths is
 two ledger records under two connector ids; they corroborate nothing about each
 other. The archive importer does not establish that qualification.
+
+The API connector always retains owner author identity as a `from` subject.
+`--fields none` still persists text, author subjects, and metadata. Compatible
+source grants must name those fields explicitly; selecting `media` also requires
+`attachments`. Grants are not auto-widened. Capture GETs request `entities` only
+for `links` or `relationships`, and attachments/`attachments.media_keys` only for
+`media`; `user.fields` is omitted for `none` and `links`. See
+[API.md](./API.md) for the wire contract.
