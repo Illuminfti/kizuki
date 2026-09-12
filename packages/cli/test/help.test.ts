@@ -761,13 +761,7 @@ describe("help", () => {
         data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
       };
       expect(body.data.name).toBe("serve");
-      expect(body.data.options).toEqual([
-        "--port",
-        "--crash-after",
-        "--service-custody",
-        "--custody-broker-launch",
-        "--custody-broker-child",
-      ]);
+      expect(body.data.options).toEqual(["--port", "--crash-after"]);
       expect(body.data.flags).toEqual(["--once", "--no-http", "--json", "--install", "--uninstall"]);
       expect(body.data.irreversible).toBe(false);
     }

@@ -24,8 +24,15 @@ import { runServiceCustodyBroker, startServiceCustody, ServiceCustodyError, type
 import { launchServiceCustodyBroker } from "../service-custody";
 import { isAbsolute, resolve } from "node:path";
 
+/** Supervisor-only launch modes. Parsed so installed units can start; omitted from public help. */
+const PRIVATE_LAUNCH_MODES = [
+  "--service-custody",
+  "--custody-broker-launch",
+  "--custody-broker-child",
+] as const;
+
 export const SERVE_SCHEMA = {
-  options: ["--port", "--crash-after", "--service-custody", "--custody-broker-launch", "--custody-broker-child"],
+  options: ["--port", "--crash-after"],
   flags: ["--once", "--no-http", "--json", "--install", "--uninstall"],
 } as const satisfies CommandHelpSchema;
 
@@ -37,12 +44,11 @@ export const serveCommand: Command = {
   schema: SERVE_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
-      options: [...SERVE_SCHEMA.options],
+      options: [...SERVE_SCHEMA.options, ...PRIVATE_LAUNCH_MODES],
       flags: [...SERVE_SCHEMA.flags],
     });
     const [verb, rail] = parsed.positionals;
-    const modes = ["--service-custody", "--custody-broker-launch", "--custody-broker-child"]
-      .filter(mode => parsed.options.has(mode));
+    const modes = PRIVATE_LAUNCH_MODES.filter(mode => parsed.options.has(mode));
     if (modes.length > 1) throw new ServiceCustodyError();
     let custody: ServiceCustodyHandle | undefined;
     if (modes.length === 1) {
