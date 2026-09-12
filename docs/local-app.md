@@ -44,6 +44,52 @@ All APIs require the exact bound Host and Origin plus the app bearer. Foreign or
 
 App shutdown first closes the listener, then waits a bounded five seconds for native operations to settle. A still-running operation or credential exchange can remain uncertain after that deadline; this does not claim cancellation or token recovery after process exit. Tests use temporary vaults, synthetic transports and simulated supervisor activation; a separate copied-artifact proof uses an explicit service opt-out. These checks do not prove a real OS supervisor lifecycle. Real-account, OS packaging and broader release acceptance are separate gates.
 
+## Terminal install and recovery
+
+The local app is the guided path. These are the current CLI forms for the same
+workspace, including devices without a browser. They are not a signed or
+published installer, and they do not prove a macOS native run or that an
+unfamiliar person completed setup.
+
+Create a workspace without installing a background service:
+
+```sh
+./kizuki init /absolute/workspace --no-service
+./kizuki import markdown-folder --source /absolute/notes --policy /absolute/policy.json --expected-revision 0 --operation-id first-import --vault /absolute/workspace
+./kizuki query acme --vault /absolute/workspace
+./kizuki doctor --vault /absolute/workspace
+```
+
+`import` is capture. `query` is search. Both work with no model. `doctor` then
+reports `canon writing: off`. There is no `kizuki capture` or `kizuki search`
+verb.
+
+Stop, reinstall, and uninstall the user service without deleting the workspace:
+
+```sh
+./kizuki serve stop --vault /absolute/workspace
+./kizuki serve --install --vault /absolute/workspace
+./kizuki serve --uninstall --vault /absolute/workspace
+```
+
+`serve stop` queues a stop request for the current daemon instance; it does not
+signal a PID or claim the process has exited. There is no start subcommand;
+`--install` activates the current executable. `--uninstall` removes the service
+definition after it is stopped and disabled. Stop and uninstall do not delete the vault.
+
+Backup and restore:
+
+```sh
+./kizuki export --out /absolute/backup --vault /absolute/workspace
+./kizuki restore --from /absolute/backup --verify
+./kizuki restore --from /absolute/backup --into /absolute/restored
+```
+
+Export needs a source grant that includes the export purpose. `--verify` writes
+nothing. `--into` restores into an empty directory. The copied-artifact proof
+exercises import, query, export, and restore with `--no-service`; it does not
+install a user service.
+
 ## Connect Codex CLI
 
 This guide assumes Codex CLI is already installed and working on the same device.
