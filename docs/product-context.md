@@ -134,6 +134,8 @@ working model without requiring a full rebuild of the user's experience.
 
 ## Proactive intelligence
 
+Status: direction
+
 The product direction includes:
 
 - proactive briefings and material insights;

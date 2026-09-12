@@ -94,6 +94,12 @@
       "status": "designed",
       "doc": "docs/architecture.md",
       "heading": "Serving \u2014 agents as first-class citizens"
+    },
+    {
+      "id": "product.proactive-intelligence",
+      "status": "direction",
+      "doc": "docs/product-context.md",
+      "heading": "Proactive intelligence"
     }
   ]
 }
