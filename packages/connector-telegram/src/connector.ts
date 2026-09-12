@@ -391,6 +391,13 @@ export class TelegramConnector implements Connector {
     const resumable =
       moved && result.batch.cursor !== null && result.batch.cursor !== cursor;
     if (!resumable) throw this.#waiting();
+    if (result.batch.events.length === 0) {
+      // A wait after skipped records still has a durable checkpoint, but it
+      // cannot be drained immediately: the next call would only return the
+      // same wait. Omitting `has_more` leaves the cursor unfinished without
+      // making runToCompletion spend that second request.
+      return { events: [], cursor: result.batch.cursor };
+    }
     return result.batch;
   }
 
