@@ -311,6 +311,9 @@ describe("help", () => {
   test("rebuild structured help matches its parser", () => {
     const env = isolatedEnv();
     for (const args of [["rebuild", "--help", "--json"], ["help", "rebuild", "--json"]] as const) {
+  test("app structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["app", "--help", "--json"], ["help", "app", "--json"]] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
@@ -414,6 +417,20 @@ describe("help", () => {
       [["rebuild", "--json", "--json"], "repeated flag --json"],
       [["rebuild", "--prune-old=true"], "flag --prune-old does not take a value"],
       [["rebuild", "--port"], "missing value for --port"],
+      expect(body.data.name).toBe("app");
+      expect(body.data.options).toEqual([]);
+      expect(body.data.flags).toEqual(["--no-open", "--no-service"]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    const text = runCli(env, "app", "--help");
+    expect(text.stdout).toContain("--no-open");
+    expect(text.stdout).toContain("--no-service");
+    for (const [args, diagnostic] of [
+      [["app", "--nope"], "unknown option --nope"],
+      [["app", "--no-open", "--no-open"], "repeated flag --no-open"],
+      [["app", "--no-service", "--no-service"], "repeated flag --no-service"],
+      [["app", "--no-open=true"], "flag --no-open does not take a value"],
+      [["app", "extra"], "invalid arguments"],
     ] as const) {
       const result = runCli(env, ...args);
       expect(result.exitCode).toBe(2);
@@ -432,6 +449,8 @@ describe("help", () => {
     expect(extra.stdout).toBe("");
     expect(extra.stderr).toContain("error: rebuild supports --layer all or graph");
     expect(extra.stderr).toContain("usage: kizuki rebuild");
+      expect(result.stderr).toContain("usage: kizuki app");
+    }
   });
 
   test("recover structured help matches its parser", () => {
