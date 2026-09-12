@@ -1,7 +1,7 @@
 import type { AttachmentRef, CaptureEventInput } from "@kizuki/core";
 import { resolveSensitivity } from "../sensitivity";
 import type { SensitivityPolicy } from "../sensitivity";
-import { mediaTypeFor, subjectSlug } from "../util";
+import { mediaTypeFor, subjectName, subjectSlug } from "../util";
 import { localToUtc } from "./dates";
 import type { DateOrder } from "./dates";
 import { splitWhatsAppMessages } from "./grammar";
@@ -92,6 +92,9 @@ export async function parseWhatsAppExport(
   opts: WhatsAppParseOptions,
 ): Promise<CaptureEventInput[]> {
   const { messages } = splitWhatsAppMessages(text, opts.date_order);
+  const chat = subjectName(opts.chat);
+  const selfName = opts.self === undefined ? "" : subjectName(opts.self);
+  const self = selfName.length > 0 ? selfName : undefined;
   const seen = new Map<string, number>();
   const sensitivity_hint = resolveSensitivity(WHATSAPP_SENSITIVITY);
   const events: CaptureEventInput[] = [];
@@ -107,7 +110,7 @@ export async function parseWhatsAppExport(
       media?.kind === "file" && filename !== null
         ? await attachmentFor(filename, opts.media)
         : [];
-    const senderId = senderSubjectId(message.sender, opts.self);
+    const senderId = senderSubjectId(message.sender, self);
 
     events.push({
       schema: "kizuki.event/v1",
@@ -124,16 +127,16 @@ export async function parseWhatsAppExport(
           display_name: message.sender,
         },
         {
-          subject_id: subjectIdFor("whatsapp:chat", opts.chat),
+          subject_id: subjectIdFor("whatsapp:chat", chat),
           role: "about",
-          display_name: opts.chat,
+          display_name: chat,
         },
       ],
       sensitivity_hint,
       deleted: false,
       attachments,
       metadata: {
-        chat: opts.chat,
+        chat,
         sender: message.sender,
         local_timestamp: message.local_timestamp,
         timezone: opts.timezone,

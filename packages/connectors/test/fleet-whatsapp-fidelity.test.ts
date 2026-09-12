@@ -359,3 +359,134 @@ test("a message keeps its identity across neighbors and missing media files", as
   expect(present[0]?.attachments).toEqual([PRESENT_ATTACHMENT]);
   expect(missing[0]?.attachments).toEqual([]);
 });
+
+test("bidi marks and decomposed names do not fork a sender's identity", async () => {
+  const clean = await parse("13.01.2026, 18:05 - Ada: hello");
+  const wrapped = await parse(
+    "13.01.2026, 18:05 - \u200eAda\u200e: hello",
+  );
+  const android = await parse(
+    "13.01.2026, 18:05 - \u200eAda: \u200ehello",
+  );
+  const leading = await parse("\u200e13.01.2026, 18:05 - Ada: hello");
+  expect(wrapped.map(record)).toEqual(clean.map(record));
+  expect(android.map(record)).toEqual(clean.map(record));
+  expect(leading.map(record)).toEqual(clean.map(record));
+  expect(clean[0]?.subjects[0]?.display_name).toBe("Ada");
+
+  const nfc = await parse("13.01.2026, 18:05 - Renée: café");
+  const nfd = await parse("13.01.2026, 18:05 - Rene\u0301e: café");
+  expect(nfd.map(record)).toEqual(nfc.map(record));
+  expect(nfc[0]?.subjects[0]).toEqual(from("whatsapp:renée", "Renée"));
+
+  const owned = await parse("13.01.2026, 18:05 - \u200eAda: hello", {
+    self: "\u200eAda",
+  });
+  expect(owned[0]?.subjects[0]?.subject_id).toBe("whatsapp:self");
+  expect(owned[0]?.subjects[0]?.display_name).toBe("Ada");
+  expect(owned[0]?.source_record_id).toBe(clean[0]?.source_record_id);
+});
+
+test("twelve-hour clocks and punctuation names keep their records", async () => {
+  const events = await parse(
+    [
+      "1/4/26, 12:00 AM - Ada: midnight",
+      "1/4/26, 12:00 PM - Ada: noon",
+      "1/4/26, 6:05 PM - Ada: evening",
+      "1/4/26, 9:15:30 a.m. - Ada: with seconds",
+      "[1/4/26, 11:45:00 PM] Ada: ios night",
+      "1/4/26, 9:16 AM - O'Brien: apostrophe",
+      "1/4/26, 9:17 AM - Ada (work): parens",
+      "1/4/26, 9:18 AM - Dr. Strange: title",
+    ].join("\n"),
+    { date_order: "mdy" },
+  );
+  expect(events.map((event) => event.occurred_at)).toEqual([
+    "2026-01-04T00:00:00.000Z",
+    "2026-01-04T12:00:00.000Z",
+    "2026-01-04T18:05:00.000Z",
+    "2026-01-04T09:15:30.000Z",
+    "2026-01-04T23:45:00.000Z",
+    "2026-01-04T09:16:00.000Z",
+    "2026-01-04T09:17:00.000Z",
+    "2026-01-04T09:18:00.000Z",
+  ]);
+  expect(events.map((event) => event.subjects[0])).toEqual([
+    from("whatsapp:ada", "Ada"),
+    from("whatsapp:ada", "Ada"),
+    from("whatsapp:ada", "Ada"),
+    from("whatsapp:ada", "Ada"),
+    from("whatsapp:ada", "Ada"),
+    from("whatsapp:o-brien", "O'Brien"),
+    from("whatsapp:ada-work", "Ada (work)"),
+    from("whatsapp:dr-strange", "Dr. Strange"),
+  ]);
+  expect(events[3]?.metadata["local_timestamp"]).toBe("2026-01-04T09:15:30");
+  expect(events[4]?.metadata["local_timestamp"]).toBe("2026-01-04T23:45:00");
+  for (const event of events) {
+    expect(event.deleted).toBe(false);
+    expect(validateEventInput(event).ok).toBe(true);
+  }
+});
+
+test("edits and deletion placeholders stay ordinary text", async () => {
+  const original = await parse("13.01.2026, 18:05 - Ada: hello");
+  const edited = await parse("13.01.2026, 18:05 - Ada: hello later");
+  const marked = await parse(
+    "13.01.2026, 18:05 - Ada: hello <This message was edited>",
+  );
+  expect(edited[0]?.deleted).toBe(false);
+  expect(marked[0]?.deleted).toBe(false);
+  expect(marked[0]?.text).toBe("hello <This message was edited>");
+  expect(edited[0]?.source_record_id).not.toBe(original[0]?.source_record_id);
+  expect(marked[0]?.source_record_id).not.toBe(original[0]?.source_record_id);
+  expect(marked[0]?.metadata["media"]).toBeNull();
+
+  const deleted = await parse(
+    "13.01.2026, 18:05 - Ada: This message was deleted",
+  );
+  expect(deleted[0]?.deleted).toBe(false);
+  expect(deleted[0]?.text).toBe("This message was deleted");
+  expect(deleted[0]?.metadata["media"]).toBeNull();
+  expect(deleted[0]?.attachments).toEqual([]);
+
+  const bracketed = await parse(
+    "13.01.2026, 18:05 - Ada: <This message was deleted>",
+  );
+  expect(bracketed[0]?.deleted).toBe(false);
+  expect(bracketed[0]?.text).toBe("<This message was deleted>");
+  // The same bracketed shape as "media omitted"; the text is exact.
+  expect(bracketed[0]?.metadata["media"]).toBe("omitted");
+  expect(bracketed[0]?.attachments).toEqual([]);
+
+  const subjectChange = await parse(
+    "13.01.2026, 18:05 - Ada changed the subject to: Planning",
+  );
+  expect(subjectChange).toHaveLength(1);
+  expect(subjectChange[0]?.deleted).toBe(false);
+  expect(subjectChange[0]?.text).toBe("Planning");
+  expect(subjectChange[0]?.subjects[0]).toEqual(
+    from("whatsapp:ada-changed-the-subject-to", "Ada changed the subject to"),
+  );
+});
+
+test("a slug collision does not mint the owner, and a nameless stamp is a notice", async () => {
+  const events = await parse(
+    [
+      "13.01.2026, 18:05 - A.D.A: one",
+      "13.01.2026, 18:06 - Ada: two",
+      "13.01.2026, 18:07 -  : dropped",
+      "13.01.2026, 18:08 - \u200e: also dropped",
+    ].join("\n"),
+    { self: "Ada" },
+  );
+  expect(events.map((event) => event.subjects[0]?.subject_id)).toEqual([
+    "whatsapp:a-d-a",
+    "whatsapp:self",
+  ]);
+  expect(events.map((event) => event.subjects[0]?.display_name)).toEqual([
+    "A.D.A",
+    "Ada",
+  ]);
+  expect(events.map((event) => event.text)).toEqual(["one", "two"]);
+});
