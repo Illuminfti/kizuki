@@ -221,4 +221,21 @@ describe("serve doctor", () => {
     expect(stale.stores.oldest_retrieval_op_age_s).toBeGreaterThan(RETRIEVAL_SLA_SECONDS);
     db.close();
   });
+
+  test("pending retrieval op counts are not silently capped at the list window", () => {
+    const { path, db } = vault();
+    writeServeIntent(path, "opted-out");
+    const insert = db.query(
+      `INSERT INTO retrieval_ops (op_id, store, op, doc_id, state, created_at, done_at)
+       VALUES (?, 'kizuki.retrieval.fts5', 'upsert', ?, 'pending', '2026-09-02T12:00:00.000Z', NULL)`,
+    );
+    db.exec("BEGIN");
+    for (let i = 0; i < 10_001; i += 1) {
+      insert.run(`op-${i}`, `page:facts/${i}`);
+    }
+    db.exec("COMMIT");
+    const report = inspectServeDoctor(db, path, { now: "2026-09-02T12:00:00.000Z" });
+    expect(report.stores.pending_retrieval_ops).toBe(10_001);
+    db.close();
+  });
 });

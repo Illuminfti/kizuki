@@ -1,6 +1,6 @@
 import { countAgents } from "../agents";
 import type { Sensitivity, Tool } from "../agents";
-import { countClaims, pendingRetrievalOps } from "../claims/store";
+import { countClaims, countPendingRetrievalOps } from "../claims/store";
 import { readDerivedMeta } from "../derived-meta";
 import { getCheckpoint, listConnections } from "../ledger/connections";
 import { count } from "../ledger/ledger";
@@ -129,7 +129,7 @@ export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
           },
           events: count(ctx.db),
           live_claims: countClaims(ctx.db, { status: "live" }),
-          pending_retrieval_ops: pendingRetrievalOps(ctx.db).length,
+          pending_retrieval_ops: countPendingRetrievalOps(ctx.db),
           derived: {
             search: readDerivedMeta(ctx.db, "search")?.rebuilt_at ?? null,
             graph: readDerivedMeta(ctx.db, "graph")?.rebuilt_at ?? null,
