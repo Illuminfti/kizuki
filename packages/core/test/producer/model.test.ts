@@ -214,6 +214,93 @@ describe("kizuki.producer.model", () => {
     });
   });
 
+  test("a unicode-escaped nonce confined to a dropped sibling is rejected as fence_leak with no claims", async () => {
+    const survivors = [draft(), draft({ object: "runs sales at Acme" })];
+    let raw = "";
+    let nonce = "";
+    const llm = scriptedLlm((request) => {
+      const user = request.messages[1]!.content;
+      nonce = /<<<KZ-QUOTE ([0-9a-f]{32}) /.exec(user)![1]!;
+      const placeholder = "KZ_UNICODE_FIELD";
+      raw = JSON.stringify({
+        claims: [...survivors, draft({ sensitivity: "professional" as never, body: placeholder })],
+      }).replace(`"${placeholder}"`, `"${jsonUnicodeEscape(nonce)}"`);
+      return raw;
+    });
+    await withProducer(llm, async (producer, logs) => {
+      const result = await producer.produce(input([GRACE_EVENT]));
+      const parsed = JSON.parse(raw);
+      expect(hasFenceLeak(raw, nonce)).toBe(false);
+      expect(parsed.claims.slice(0, 2)).toEqual(survivors);
+      expect(parsed.claims[2].body).toBe(nonce);
+      expect(parsed.claims[2].sensitivity).toBe("professional");
+      expect(result).toEqual({
+        status: "rejected",
+        reason: "fence_leak",
+        usage: expect.objectContaining({ calls: 1 }),
+      });
+      expect(result).not.toHaveProperty("claims");
+      expect(result).not.toHaveProperty("dropped");
+      expect(logs.some((line) => line.message === "extract_claim_rejected")).toBe(false);
+      expect(logs.some((line) => line.message === "extract_schema_invalid")).toBe(false);
+    });
+  });
+
+  test("a unicode-escaped nonce confined to an extra decoded key is rejected as fence_leak with no claims", async () => {
+    const survivors = [draft(), draft({ object: "runs sales at Acme" })];
+    let raw = "";
+    let nonce = "";
+    const llm = scriptedLlm((request) => {
+      const user = request.messages[1]!.content;
+      nonce = /<<<KZ-QUOTE ([0-9a-f]{32}) /.exec(user)![1]!;
+      const placeholder = "KZ_UNICODE_KEY";
+      raw = JSON.stringify({
+        claims: [...survivors, { ...draft(), [placeholder]: "extra" }],
+      }).replace(`"${placeholder}"`, `"${jsonUnicodeEscape(nonce)}"`);
+      return raw;
+    });
+    await withProducer(llm, async (producer, logs) => {
+      const result = await producer.produce(input([GRACE_EVENT]));
+      const parsed = JSON.parse(raw);
+      expect(hasFenceLeak(raw, nonce)).toBe(false);
+      expect(parsed.claims.slice(0, 2)).toEqual(survivors);
+      expect(Object.hasOwn(parsed.claims[2], nonce)).toBe(true);
+      expect(result).toEqual({
+        status: "rejected",
+        reason: "fence_leak",
+        usage: expect.objectContaining({ calls: 1 }),
+      });
+      expect(result).not.toHaveProperty("claims");
+      expect(result).not.toHaveProperty("dropped");
+      expect(logs.some((line) => line.message === "extract_claim_rejected")).toBe(false);
+      expect(logs.some((line) => line.message === "extract_schema_invalid")).toBe(false);
+    });
+  });
+
+
+  test("deep escaped leakage is rejected before wrong top-level shape", async () => {
+    const llm = scriptedLlm((request) => {
+      const nonce = /<<<KZ-QUOTE ([0-9a-f]{32}) /.exec(request.messages[1]!.content)![1]!;
+      return "[".repeat(100_000) + `"${jsonUnicodeEscape(nonce)}"` + "]".repeat(100_000);
+    });
+    await withProducer(llm, async (producer, logs) => {
+      expect(await producer.produce(input([GRACE_EVENT]))).toEqual({
+        status: "rejected", reason: "fence_leak", usage: expect.objectContaining({ calls: 1 }),
+      });
+      expect(logs.some(line => line.message === "extract_schema_invalid")).toBe(false);
+    });
+  });
+
+  test("invalid JSON retains a schema rejection and charges the call", async () => {
+    await withProducer(scriptedLlm(() => '{"claims":['), async (producer, logs) => {
+      expect(await producer.produce(input([GRACE_EVENT]))).toMatchObject({
+        status: "rejected", reason: "schema_invalid", usage: { calls: 1 },
+        diagnostic: { rule: "json" },
+      });
+      expect(logs.some(line => line.message === "extract_schema_invalid")).toBe(true);
+    });
+  });
+
   test("benign unicode-escaped extraction text that does not decode to the nonce or a marker is accepted", async () => {
     const claim = draft();
     let raw = "";

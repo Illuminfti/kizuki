@@ -105,5 +105,39 @@ describe("nonce fence", () => {
     expect(hasFenceLeak(rawBenign, NONCE)).toBe(false);
     expect(hasParsedFenceLeak(JSON.parse(rawBenign), NONCE)).toBe(false);
     expect(JSON.parse(rawBenign).body).toBe("Acme");
+
+    const rawNonceKey = `{"${escapedNonce}":"ok"}`;
+    expect(rawNonceKey.includes(NONCE)).toBe(false);
+    expect(hasFenceLeak(rawNonceKey, NONCE)).toBe(false);
+    expect(Object.keys(JSON.parse(rawNonceKey))).toEqual([NONCE]);
+    expect(hasParsedFenceLeak(JSON.parse(rawNonceKey), NONCE)).toBe(true);
+
+    const rawMarkerKey = `{"${escapedMarker}":1}`;
+    expect(rawMarkerKey.includes(FENCE_OPEN)).toBe(false);
+    expect(hasFenceLeak(rawMarkerKey, NONCE)).toBe(false);
+    expect(hasParsedFenceLeak(JSON.parse(rawMarkerKey), NONCE)).toBe(true);
   });
+
+  test("a unicode-escaped nonce confined to a dropped sibling leaks on the complete parsed tree", () => {
+    const raw = `{"claims":[{"body":"ok"},{"body":"ok"},{"body":"${jsonUnicodeEscape(NONCE)}","sensitivity":"professional"}]}`;
+    expect(hasFenceLeak(raw, NONCE)).toBe(false);
+    const parsed = JSON.parse(raw);
+    expect(hasParsedFenceLeak(parsed.claims.slice(0, 2), NONCE)).toBe(false);
+    expect(hasParsedFenceLeak(parsed, NONCE)).toBe(true);
+  });
+
+  test("a unicode-escaped nonce confined to an extra decoded key leaks on the complete parsed tree", () => {
+    const raw = `{"claims":[{"body":"ok"},{"body":"ok"},{"body":"ok","${jsonUnicodeEscape(NONCE)}":"extra"}]}`;
+    expect(hasFenceLeak(raw, NONCE)).toBe(false);
+    const parsed = JSON.parse(raw);
+    expect(Object.hasOwn(parsed.claims[2], NONCE)).toBe(true);
+    expect(hasParsedFenceLeak(parsed.claims.slice(0, 2), NONCE)).toBe(false);
+    expect(hasParsedFenceLeak(parsed, NONCE)).toBe(true);
+  });
+  test("deep JSON below the response size cap is scanned without recursive overflow", () => {
+    const wrap = (value: string) => JSON.parse("[".repeat(100_000) + JSON.stringify(value) + "]".repeat(100_000));
+    expect(hasParsedFenceLeak(wrap(NONCE), NONCE)).toBe(true);
+    expect(hasParsedFenceLeak(wrap("ordinary text"), NONCE)).toBe(false);
+  });
+
 });

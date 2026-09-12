@@ -70,6 +70,9 @@ export type ParseExtractClaimsResult =
   | { ok: true; claims: ClaimDraft[]; rejected: ClaimRejection[] }
   | { ok: false; detail: string; diagnostic: ClaimDiagnostic };
 type SchemaFailure = Extract<ParseExtractResult, { ok: false }>;
+export type DecodeExtractResult =
+  | { ok: true; value: unknown }
+  | SchemaFailure;
 
 function fail(detail: string, field: ClaimDiagnostic["field"], rule: ClaimDiagnostic["rule"], value: unknown, index: number | null = null, count: number | null = null): SchemaFailure {
   return { ok: false, detail, diagnostic: { stage: "claims", field, rule, shape: diagnosticShape(value), claim_index: index, claim_count: count } };
@@ -182,7 +185,11 @@ function readClaim(raw: unknown, index: number, count: number): ClaimDraft | Sch
   };
 }
 
-function readResponse(text: string): ParseExtractClaimsResult {
+/**
+ * Size-cap, optional Markdown fence, and JSON.parse. The decoded value is
+ * the complete extraction tree, including extra keys and malformed claims.
+ */
+export function decodeExtractJson(text: string): DecodeExtractResult {
   if (typeof text !== "string") return fail("response is not text", "response", "text", text);
   if (text.length > MAX_RESPONSE_CHARS) return fail("response exceeds the size cap", "response", "size_cap", text);
 
@@ -190,12 +197,14 @@ function readResponse(text: string): ParseExtractClaimsResult {
   const fenced = CODE_FENCE.exec(source);
   if (fenced !== null && fenced[1] !== undefined) source = fenced[1].trim();
 
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(source) as unknown;
+    return { ok: true, value: JSON.parse(source) as unknown };
   } catch {
     return fail("response is not JSON", "response", "json", source);
   }
+}
+
+function readDecodedClaims(parsed: unknown): ParseExtractClaimsResult {
   if (!isPlainObject(parsed)) return fail("response is not an object", "response", "object", parsed);
   const rawClaims = parsed["claims"];
   const count = Array.isArray(rawClaims) ? rawClaims.length : null;
@@ -217,15 +226,9 @@ function readResponse(text: string): ParseExtractClaimsResult {
   return { ok: true, claims, rejected };
 }
 
-/**
- * Parses raw model text into validated drafts, rejecting malformed claims
- * one at a time. Every rejection is returned so the caller counts it; half
- * or more rejected refuses the response, so a wholesale-malformed response
- * cannot be laundered claim by claim. Never throws on model output; a
- * failure names the field, never the offending value.
- */
-export function parseExtractClaims(text: string): ParseExtractClaimsResult {
-  const read = readResponse(text);
+/** Per-claim filtering and the rejected-claim ceiling on an already-decoded tree. */
+export function parseDecodedExtractClaims(value: unknown): ParseExtractClaimsResult {
+  const read = readDecodedClaims(value);
   if (!read.ok) return read;
   const [first] = read.rejected;
   const count = read.claims.length + read.rejected.length;
@@ -236,11 +239,26 @@ export function parseExtractClaims(text: string): ParseExtractClaimsResult {
 }
 
 /**
+ * Parses raw model text into validated drafts, rejecting malformed claims
+ * one at a time. Every rejection is returned so the caller counts it; half
+ * or more rejected refuses the response, so a wholesale-malformed response
+ * cannot be laundered claim by claim. Never throws on model output; a
+ * failure names the field, never the offending value.
+ */
+export function parseExtractClaims(text: string): ParseExtractClaimsResult {
+  const decoded = decodeExtractJson(text);
+  if (!decoded.ok) return decoded;
+  return parseDecodedExtractClaims(decoded.value);
+}
+
+/**
  * Strict form for stored drafts and in-process port results: any rejected
  * claim fails the response with that claim's diagnostic.
  */
 export function parseExtractResponse(text: string): ParseExtractResult {
-  const read = readResponse(text);
+  const decoded = decodeExtractJson(text);
+  if (!decoded.ok) return decoded;
+  const read = readDecodedClaims(decoded.value);
   if (!read.ok) return read;
   const [first] = read.rejected;
   if (first !== undefined) return { ok: false, ...first };
