@@ -28,9 +28,9 @@ for (const argv of Object.values(PACKAGED_CLI_COMMANDS)) {
   if (!readme.includes(packagedCommandLine(argv))) throw new Error(`package README missing ${argv.join(" ")}`);
 }
 
-function run(command: string, args: string[], env: Record<string, string>, allowed: readonly number[] = [0]): string {
+function run(command: string, args: string[], env: Record<string, string>): string {
   const result = Bun.spawnSync([command, ...args], { env, stderr: "pipe", stdout: "pipe", timeout: 30_000 });
-  if (!allowed.includes(result.exitCode)) {
+  if (result.exitCode !== 0) {
     throw new Error("compiled command failed");
   }
   return `${result.stdout}${result.stderr}`;
@@ -103,8 +103,33 @@ try {
   if (!query.includes("Ada")) {
     throw new Error(`imported note was not queryable: ${query}`);
   }
-  const doctor = run(cli, ["doctor", "--vault", vault], env, [0, 1]);
-  if (!doctor.includes("canon writing: off")) throw new Error("doctor did not report canon writing off");
+  const doctor = JSON.parse(runJson(cli, ["doctor", "--json", "--vault", vault], env).stdout) as {
+    schema?: string;
+    status?: string;
+    data?: {
+      ok?: boolean;
+      problems?: unknown[];
+      ledger?: { ok?: boolean };
+      effective_config?: { model_ref?: string | null };
+      connections?: { connector_id?: string; health?: string; problem?: string | null }[];
+      serve?: { model?: { canon_writing?: string; model_ref?: string | null } };
+    };
+  };
+  const importedConnection = doctor.data?.connections?.find(
+    (connection) => connection.connector_id === "kizuki.markdown-folder",
+  );
+  if (
+    doctor.schema !== "kizuki.cli.doctor/v1" ||
+    doctor.status !== "ok" ||
+    doctor.data?.ok !== true ||
+    doctor.data.problems?.length !== 0 ||
+    doctor.data.ledger?.ok !== true ||
+    importedConnection?.health !== "ok" ||
+    importedConnection.problem !== null ||
+    doctor.data.effective_config?.model_ref !== null ||
+    doctor.data.serve?.model?.canon_writing !== "off" ||
+    doctor.data.serve?.model?.model_ref !== null
+  ) throw new Error("doctor did not report a healthy imported no-model vault");
   const context = run(cli, ["context", "--query", "Ada", "--vault", vault], env);
   if (!context.includes("Ada")) throw new Error("imported note is missing from compiled context");
   run(cli, ["serve", "--once", "--no-http", "--vault", vault], env);
