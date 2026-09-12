@@ -1,6 +1,6 @@
 import { fixtureConsent } from "../helpers";
 import { afterEach, describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeServeIntent } from "@kizuki/core";
 import { createHelpers } from "../helpers";
@@ -140,10 +140,13 @@ describe("doctor liveness", () => {
 
   test("doctor reports an unverified configured model rather than a write-enabled string", () => {
     const setup = supervisedVault();
+    const serveToml = join(setup.vault, ".kizuki", "serve.toml");
     writeFileSync(
-      join(setup.vault, ".kizuki", "serve.toml"),
+      serveToml,
       '[ports.llm]\nid = "kizuki.llm.openai-compatible"\nmodel = "synthetic@local"\n',
+      { mode: 0o600 },
     );
+    chmodSync(serveToml, 0o600);
     const result = runCli(setup.env, "doctor");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(
@@ -153,10 +156,13 @@ describe("doctor liveness", () => {
 
   test("doctor does not call a model with an unresolved configured secret bound", () => {
     const setup = supervisedVault();
+    const serveToml = join(setup.vault, ".kizuki", "serve.toml");
     writeFileSync(
-      join(setup.vault, ".kizuki", "serve.toml"),
+      serveToml,
       '[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "http://127.0.0.1:7777/v1"\nmodel = "loopback"\nsecret_ref = "env:MODEL_KEY"\n',
+      { mode: 0o600 },
     );
+    chmodSync(serveToml, 0o600);
     const result = runCli(setup.env, "doctor");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(

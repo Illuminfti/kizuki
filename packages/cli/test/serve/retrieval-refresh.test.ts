@@ -1,6 +1,6 @@
 import { fixtureConsent } from "../helpers";
 import { afterEach, expect, test } from "bun:test";
-import { rmSync, writeFileSync } from "node:fs";
+import { chmodSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { OWNER, retrievalDocId, serveSearch } from "@kizuki/core";
 import { withReadVault } from "../../src/context";
@@ -35,7 +35,9 @@ test("the offline retrieval rail refreshes edits and deletion for a reused engin
     } finally { db.close(); }
   };
   await writeRecordedPage("The library opens after sunrise.");
-  writeFileSync(join(f.vault, ".kizuki/serve.toml"), '[ports]\nretrieval="kizuki.retrieval.embedded-pg"\n');
+  const serveToml = join(f.vault, ".kizuki/serve.toml");
+  writeFileSync(serveToml, '[ports]\nretrieval="kizuki.retrieval.embedded-pg"\n', { mode: 0o600 });
+  chmodSync(serveToml, 0o600);
   const rail = async () => {
     const run = await helpers.runCliAsync(f.env, "serve", "run", "retrieval-sweep", "--json");
     expect(run.exitCode).toBe(0);

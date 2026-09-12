@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   ConnectionStateStore, inspectSourceGrant, listClaims, listConnections, listRunReceipts,
@@ -41,8 +41,13 @@ test("scheduled attempts adopt settings without restart, pin credentials in flig
   const secretPath = join(setup.vault, ".kizuki/model-fixture.key");
   const firstKey = "synthetic-key-alpha", secondKey = "synthetic-key-beta";
   writeFileSync(secretPath, firstKey, { mode: 0o600 });
+  chmodSync(secretPath, 0o600);
   const configPath = join(setup.vault, ".kizuki/serve.toml");
-  const configure = (baseUrl: string, model: string) => writeFileSync(configPath,
+  const writeConfig = (contents: string) => {
+    writeFileSync(configPath, contents, { mode: 0o600 });
+    chmodSync(configPath, 0o600);
+  };
+  const configure = (baseUrl: string, model: string) => writeConfig(
     `[ports.llm]\nid="kizuki.llm.openai-compatible"\nbase_url=${JSON.stringify(baseUrl)}\nmodel=${JSON.stringify(model)}\nsecret_ref=${JSON.stringify(`file:${secretPath}`)}\ntimeout_ms=1000\nmax_retries=0\n`);
   const grant = (baseUrl: string, model: string, revision: number) => setSourceGrant(db, {
     source_key: source.source_key, expected_revision: revision, operation_id: `fixture-runtime-grant-${revision}`,
@@ -71,13 +76,13 @@ test("scheduled attempts adopt settings without restart, pin credentials in flig
         if (phase === 1) {
           // Change both files after acquisition but before the first HTTP call.
           // The current attempt must keep alpha's endpoint AND the old credential.
-          configure(second.base_url, "beta"); writeFileSync(secretPath, secondKey, { mode: 0o600 });
+          configure(second.base_url, "beta"); writeFileSync(secretPath, secondKey, { mode: 0o600 }); chmodSync(secretPath, 0o600);
         }
         return { hooks: runtime.hooks, close: async () => {
           await runtime.close(); closes++;
           if (phase === 1) grant(second.base_url, "beta", 1);
-          if (phase === 2) writeFileSync(configPath, '[ports]\nllm="kizuki.llm.none"\n');
-          if (phase === 3) writeFileSync(configPath, '[ports.llm');
+          if (phase === 2) writeConfig('[ports]\nllm="kizuki.llm.none"\n');
+          if (phase === 3) writeConfig('[ports.llm');
           if (phase === 4) configure(second.base_url, "beta");
           if (phase < 5) note(phase + 1);
         } };
@@ -121,9 +126,11 @@ test("strict runtime callers still reject invalid configuration, credentials, an
     '[ports.llm]\nid="kizuki.llm.openai-compatible"\nbase_url="http://127.0.0.1:1/v1"\nmodel="synthetic"\nsecret_ref="env:SYNTHETIC_MISSING_KEY"\n',
     '[ports.llm]\nid="kizuki.llm.openai-compatible"\nbase_url="http://192.0.2.1/v1"\nmodel="synthetic"\n',
   ];
+  const configPath = join(setup.vault, ".kizuki/serve.toml");
   try {
     for (const config of configs) {
-      writeFileSync(join(setup.vault, ".kizuki/serve.toml"), config);
+      writeFileSync(configPath, config, { mode: 0o600 });
+      chmodSync(configPath, 0o600);
       await expect(createServeRuntime(options)).rejects.toThrow();
       const disabled = await createServeRuntime({ ...options, configurationErrorMode: "disable-model" });
       try {
