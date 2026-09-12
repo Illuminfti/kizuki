@@ -353,4 +353,31 @@ describe("help", () => {
       expect(result.stderr).toContain("usage: kizuki recover");
     }
   });
+
+  test("version structured help matches its parser", () => {
+    const env = isolatedEnv();
+    for (const args of [["version", "--help", "--json"], ["help", "version", "--json"]] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const body = JSON.parse(result.stdout) as {
+        data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
+      };
+      expect(body.data.name).toBe("version");
+      expect(body.data.options).toEqual([]);
+      expect(body.data.flags).toEqual([]);
+      expect(body.data.irreversible).toBe(false);
+    }
+    for (const [args, diagnostic] of [
+      [["version", "--nope"], "unknown option --nope"],
+      [["version", "--json"], "unknown option --json"],
+      [["version", "extra"], "invalid arguments"],
+    ] as const) {
+      const result = runCli(env, ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`error: ${diagnostic}`);
+      expect(result.stderr).toContain("usage: kizuki version");
+    }
+  });
 });
