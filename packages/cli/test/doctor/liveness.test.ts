@@ -2,6 +2,7 @@ import { fixtureConsent } from "../helpers";
 import { afterEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { writeServeIntent } from "@kizuki/core";
 import { createHelpers } from "../helpers";
 import { fakeSystemd } from "../serve/supervisor-fixture";
 import { parseSqliteRuntime } from "@kizuki/core/internal";
@@ -61,6 +62,42 @@ describe("doctor liveness", () => {
     expect(parseSqliteRuntime(JSON.parse(result.stdout).data.runtime)).toMatchObject({
       schema: "kizuki.sqlite-runtime/v1", bun_version: Bun.version,
     });
+  });
+
+  test("doctor distinguishes --no-service from a missing installed service", () => {
+    const setup = supervisedVault();
+    const opted = runCli(
+      { ...setup.env, KIZUKI_SUPERVISOR: "systemd", TEST_SUPERVISOR_STATE: "absent" },
+      "doctor",
+      "--json",
+    );
+    expect(opted.exitCode).toBe(0);
+    const optedReport = JSON.parse(opted.stdout) as {
+      data: { ok: boolean; serve: { ok: boolean; intent: string; supervisor: { state: string } } };
+    };
+    expect(optedReport.data.ok).toBe(true);
+    expect(optedReport.data.serve.ok).toBe(true);
+    expect(optedReport.data.serve.intent).toBe("opted-out");
+
+    writeServeIntent(setup.vault, "installed");
+    const missing = runCli(
+      { ...setup.env, KIZUKI_SUPERVISOR: "systemd", TEST_SUPERVISOR_STATE: "absent" },
+      "doctor",
+      "--json",
+    );
+    expect(missing.exitCode).toBe(1);
+    const missingReport = JSON.parse(missing.stdout) as {
+      data: {
+        ok: boolean;
+        serve: { ok: boolean; intent: string; supervisor: { state: string }; failures: string[] };
+      };
+    };
+    expect(missingReport.data.ok).toBe(false);
+    expect(missingReport.data.serve.ok).toBe(false);
+    expect(missingReport.data.serve.intent).toBe("installed");
+    expect(missingReport.data.serve.supervisor.state).toBe("absent");
+    expect(missingReport.data.serve.failures.some((failure) => failure.includes("absent"))).toBe(true);
+    expect(missing.stdout).not.toContain("opted-out");
   });
 
   test("a rail with five empty runs in a row is reported down", () => {
