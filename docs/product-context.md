@@ -153,6 +153,8 @@ generated it.
 
 ## Autonomy modes
 
+Status: direction
+
 The intended autonomy model has three modes:
 
 1. **Autonomous by default.** The loop writes canon within its configured

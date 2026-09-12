@@ -106,6 +106,12 @@
       "status": "direction",
       "doc": "docs/product-context.md",
       "heading": "Progressive ingestion"
+    },
+    {
+      "id": "product.autonomy-modes",
+      "status": "direction",
+      "doc": "docs/product-context.md",
+      "heading": "Autonomy modes"
     }
   ]
 }
