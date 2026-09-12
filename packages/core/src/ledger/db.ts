@@ -17,7 +17,7 @@ import {
 } from "./integrity";
 import type { LedgerHealth } from "./integrity";
 import { LEDGER_BUSY_TIMEOUT_MS } from "./limits";
-import { applyPurgeV5, applyEventPurgeIntegrityV22, applyEventPurgeSelectorKindV24, applyEventPurgeSelectorKindV26, applyEventPurgeSelectorKindV27 } from "./purge-schema";
+import { applyPurgeV5, applyEventPurgeIntegrityV22, applyEventPurgeSelectorKindV24, applyEventPurgeSelectorKindV26, applyEventPurgeSelectorKindV27, applyEventPurgeSelectorKindV28 } from "./purge-schema";
 import { applyPurgeBatchesV19 } from "./purge-batch-schema";
 import { applyEventIdentityV16 } from "./event-identity-schema";
 import { applyAgentEnrollmentV18 } from "../agents/enrollment-schema";
@@ -195,6 +195,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 25, apply: applyCheckpointModeCursorsV25 },
   { version: 26, apply: applyEventPurgeSelectorKindV26 },
   { version: 27, apply: applyEventPurgeSelectorKindV27 },
+  { version: 28, apply: applyEventPurgeSelectorKindV28 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

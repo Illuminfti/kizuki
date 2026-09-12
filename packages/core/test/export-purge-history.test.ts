@@ -117,6 +117,32 @@ describe("completed purge history backup", () => {
     expect(copy.query("SELECT receipt_id, selector_kind FROM event_purge_proofs ORDER BY receipt_id").all()).toEqual(before);
   });
 
+  test("source-only selector provenance survives backup restore", async () => {
+    const f = fixture();
+    const source = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    f.db.query(`INSERT INTO connections
+      (connector_id,source_key,config,secret_refs,connected_at,implementation_version)
+      VALUES ('fixture',?,'{"schema":"kizuki.connection-config/v1","state_ref_index":null}','[]',?,'fixture@1')`).run(source, AT);
+    setSourceGrant(f.db, {
+      source_key: source, expected_revision: 0, operation_id: "grant-source-selector",
+      policy: {
+        purposes: ["capture", "export"], allowed_fields: ["text", "subjects", "attachments", "metadata"],
+        retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private",
+      },
+    });
+    const stored = accept(f.db, { ...validEvent(), source_record_id: "source-one" }, {
+      source: { source_key: source, expected_revision: 1 },
+    });
+    if (stored.status !== "stored") throw new Error("fixture event was not stored");
+    await runPurge(f.db, f.vault, { source_key: source }, "retire fixture");
+    const before = f.db.query("SELECT receipt_id, selector_kind FROM event_purge_proofs ORDER BY receipt_id").all();
+    expect(before.map((row) => (row as { selector_kind: string | null }).selector_kind)).toEqual(["source"]);
+    exportVault(f.db, f.vault, f.backup);
+    restoreVault(f.backup, f.restored);
+    const copy = f.openRestored();
+    expect(copy.query("SELECT receipt_id, selector_kind FROM event_purge_proofs ORDER BY receipt_id").all()).toEqual(before);
+  });
+
   test("retains completed store obligations and verifies them against the original bound store", async () => {
     const f = fixture();
     const event = f.event("atlas-one");

@@ -290,7 +290,9 @@ export function inspectLedgerHealth(
       });
     }
     if (schemaVersion >= 24) {
-      const allowed = schemaVersion >= 27
+      const allowed = schemaVersion >= 28
+        ? "('event', 'connector', 'record', 'source')"
+        : schemaVersion >= 27
         ? "('event', 'connector', 'record')"
         : schemaVersion >= 26
           ? "('event', 'connector')"

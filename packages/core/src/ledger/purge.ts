@@ -342,7 +342,7 @@ function emptyOutcome(): PurgeOutcome {
   };
 }
 
-function recordedSelectorKind(filter: PurgeFilter): "event" | "connector" | "record" | null {
+function recordedSelectorKind(filter: PurgeFilter): "event" | "connector" | "record" | "source" | null {
   const event = filter.event_id !== undefined;
   const source = filter.source_key !== undefined;
   const connector = filter.connector_id !== undefined;
@@ -353,6 +353,7 @@ function recordedSelectorKind(filter: PurgeFilter): "event" | "connector" | "rec
   if (event) return "event";
   if (connector) return "connector";
   if (record) return "record";
+  if (source) return "source";
   return null;
 }
 

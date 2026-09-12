@@ -1963,11 +1963,12 @@ function assertBackupFormat(manifest: ExportManifest): void {
   // Ledger25 adds independent checkpoint backfill_cursor and sync_cursor; omitted rows restore as NULL.
   // Ledger26 widens selector_kind to event|connector; omitted and compound rows restore as NULL.
   // Ledger27 widens selector_kind to event|connector|record; omitted and compound rows restore as NULL.
+  // Ledger28 widens selector_kind to event|connector|record|source; omitted and compound rows restore as NULL.
   // Future migrations must make their own explicit compatibility decision.
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
       versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
       versions.ledger !== 19 && versions.ledger !== 20 &&
-      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27))) {
+      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27 || versions.ledger === 28))) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -2065,9 +2066,10 @@ function insertPurgeProof(db: Database, raw: Record<string, unknown>): void {
     selectorKind !== null &&
     selectorKind !== "event" &&
     selectorKind !== "connector" &&
-    selectorKind !== "record"
+    selectorKind !== "record" &&
+    selectorKind !== "source"
   ) {
-    throw new Error("selector_kind: must be event, connector, record, or omitted");
+    throw new Error("selector_kind: must be event, connector, record, source, or omitted");
   }
   db.query(
     `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
@@ -2076,7 +2078,7 @@ function insertPurgeProof(db: Database, raw: Record<string, unknown>): void {
     asString(raw.receipt_id, "receipt_id"),
     hash,
     sourceRecordId,
-    selectorKind === "event" || selectorKind === "connector" || selectorKind === "record" ? selectorKind : null,
+    selectorKind === "event" || selectorKind === "connector" || selectorKind === "record" || selectorKind === "source" ? selectorKind : null,
   );
 }
 

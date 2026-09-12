@@ -7,6 +7,8 @@ import type { CaptureEventInput } from "../src/contracts/event";
 import { initGraph } from "../src/graph/schema";
 import { inspectOpenLedgerHealth, openLedger } from "../src/ledger/db";
 import { accept, count, readSince } from "../src/ledger/ledger";
+import { registerConnection } from "../src/ledger/connections";
+import { setSourceGrant } from "../src/ledger/source-grants";
 import {
   PURGE_REASON_MAX_BYTES,
   PurgeError,
@@ -60,8 +62,8 @@ function event(
   return { ...validEvent(), source_record_id: sourceRecordId, ...overrides };
 }
 
-function storedEvent(db: Database, input: CaptureEventInput) {
-  const result = accept(db, input);
+function storedEvent(db: Database, input: CaptureEventInput, source?: { source_key: string; expected_revision: number }) {
+  const result = accept(db, input, source === undefined ? {} : { source });
   if (result.status !== "stored") throw new Error("expected stored event");
   return result.event;
 }
@@ -252,6 +254,61 @@ describe("purgeEvents", () => {
         `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
          VALUES ('01JCPURGEPROOF0000000000009', ?, 'legacy-record', 'subject')`,
       ).run("d".repeat(64)),
+    ).toThrow();
+    db.close();
+  });
+
+  test("purges by source_key and records selector_kind=source", () => {
+    const db = openLedger(":memory:");
+    const sourceKey = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    registerConnection(db, "fixture", sourceKey);
+    const grant = setSourceGrant(db, {
+      source_key: sourceKey,
+      expected_revision: 0,
+      operation_id: "grant-source-selector",
+      policy: {
+        purposes: ["capture", "export"],
+        allowed_fields: ["text", "subjects", "attachments", "metadata"],
+        retention: "persistent_owned_until_revoked",
+        egress: "local_only",
+        sensitivity_floor: "private",
+      },
+    });
+    const target = storedEvent(db, event("source-target"), {
+      source_key: sourceKey,
+      expected_revision: grant.revision,
+    });
+    storedEvent(db, event("keep"));
+    const compound = storedEvent(db, event("source-compound"), {
+      source_key: sourceKey,
+      expected_revision: grant.revision,
+    });
+    const receipts = purgeEvents(
+      db,
+      temporaryVault(),
+      { source_key: sourceKey },
+      "source request",
+    ).receipts;
+    expect(receipts.map(({ event_id }) => event_id).sort()).toEqual(
+      [target.event_id, compound.event_id].sort(),
+    );
+    expect(count(db)).toBe(1);
+    expect(
+      db.query<{ selector_kind: string | null }, []>(
+        "SELECT selector_kind FROM event_purge_proofs ORDER BY receipt_id",
+      ).all().map(({ selector_kind }) => selector_kind),
+    ).toEqual(["source", "source"]);
+    expect(() =>
+      db.query(
+        `INSERT INTO event_purges (receipt_id, event_id, connector_id, reason, purged_at)
+         VALUES ('01JCPURGEPROOF0000000000008', '01JCPURGEEVENT0000000000008', 'fixture', 'legacy', '2026-09-06T12:00:00.000Z')`,
+      ).run(),
+    ).not.toThrow();
+    expect(() =>
+      db.query(
+        `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
+         VALUES ('01JCPURGEPROOF0000000000008', ?, 'legacy-record', 'subject')`,
+      ).run("e".repeat(64)),
     ).toThrow();
     db.close();
   });
