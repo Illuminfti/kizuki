@@ -55,7 +55,7 @@ const MANIFEST: Manifest = freezeManifest({
   schema: "kizuki.connector/v1",
   connector_id: ICS_CONNECTOR_ID,
   version: "0.1.0",
-  contract_minor: 2,
+  contract_minor: 1,
   implementation: "@kizuki/connector-ics",
   allowed_egress: [],
   cursor_schema: ICS_CURSOR_SCHEMA,

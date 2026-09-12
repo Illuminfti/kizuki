@@ -76,7 +76,7 @@ describe("manifest and empty config", () => {
       schema: "kizuki.connector/v1",
       connector_id: "kizuki.ics",
       version: "0.1.0",
-      contract_minor: 2,
+      contract_minor: 1,
       implementation: "@kizuki/connector-ics",
       allowed_egress: [],
       cursor_schema: "kizuki.ics-cursor/v1",

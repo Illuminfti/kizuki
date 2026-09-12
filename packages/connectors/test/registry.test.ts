@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import { PORT_CONTRACTS, PortError } from "@kizuki/core";
 import type { PortDescriptor } from "@kizuki/core";
+import { FIXTURE_ICS, memoryFetcher, okResult } from "@kizuki/connector-ics/testing";
 import {
   ConnectorRegistry,
+  ICS_CONNECTOR_ID,
   KizukiError,
   OMNIVORE_IMPORT_CONNECTOR_ID,
   POCKET_IMPORT_CONNECTOR_ID,
@@ -10,6 +12,8 @@ import {
   WHATSAPP_IMPORT_CONNECTOR_ID,
   X_API_CONNECTOR_ID,
   X_ARCHIVE_CONNECTOR_ID,
+  createIcsConnector,
+  defaultConnectorRegistry,
   getConnector,
   listConnectorDescriptors,
   sealConnector,
@@ -156,6 +160,63 @@ test("a snapshot importer without a path is refused", () => {
       expect(error.code).toBe("misconfigured");
     }
   }
+});
+
+test("ICS public descriptor matches sealed factory contract_minor and legacy two-argument sign-in", async () => {
+  const listed = listConnectorDescriptors().find((port) => port.id === "kizuki.connector.ics");
+  const sealed = getConnector(ICS_CONNECTOR_ID, {});
+  const manifest = sealed.manifest();
+  const contractMinor = listed?.contract_minor;
+  const manifestMinor = manifest.contract_minor;
+  if (typeof contractMinor !== "number" || typeof manifestMinor !== "number") throw new Error("ICS contract_minor unavailable");
+  expect(contractMinor).toBe(manifestMinor);
+  expect(manifestMinor).toBe(1);
+  expect(manifest.auth_modes).toEqual(["none", "sign_in"]);
+  expect(listed).toMatchObject({
+    contract_minor: 1,
+    optional_package: "@kizuki/connector-ics",
+    supports: ["backfill", "sync", "tombstones", "fixture", "sign_in"],
+  });
+  expect(typeof sealed.signIn).toBe("function");
+  expect(createIcsConnector({}).signIn.length).toBe(2);
+
+  const url = "https://calendar.acme.example/private/abc123.ics";
+  let fetches = 0;
+  const route = memoryFetcher({ [url]: okResult(FIXTURE_ICS) });
+  const raw = createIcsConnector(
+    {},
+    {
+      fetch: async (requested, conditional) => {
+        fetches += 1;
+        return route(requested, conditional);
+      },
+    },
+  );
+  const factory = defaultConnectorRegistry.seal(raw);
+  expect(factory.manifest().contract_minor).toBe(contractMinor);
+  const io = {
+    prompt: async () => url,
+    notify() {},
+    async openUrl() {},
+  };
+  let writes = 0;
+  expect(await factory.signIn!(io, { write: async () => { writes += 1; } })).toEqual({ display: "Acme team" });
+  expect(writes).toBe(1);
+  writes = 0;
+  expect(
+    await factory.signIn!(io, { write: async () => { writes += 1; } }, { mode: "new" }),
+  ).toEqual({ display: "Acme team" });
+  expect(writes).toBe(1);
+  writes = 0;
+  expect(
+    await factory.signIn!(
+      io,
+      { write: async () => { writes += 1; } },
+      { mode: "replace", previous_state: new Uint8Array([1, 2, 3]) },
+    ),
+  ).toEqual({ display: "Acme team" });
+  expect(writes).toBe(1);
+  expect(fetches).toBe(3);
 });
 
 test('X API registry exposes native sign-in and passes exact Core new/replace context', async () => {
