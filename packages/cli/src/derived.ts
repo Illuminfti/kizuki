@@ -167,14 +167,16 @@ export function indexReceiptsFromCursor(
   db: Database,
   vaultPath: string,
   cursor: IndexCursor,
+  listPages: typeof listCanonPages = listCanonPages,
 ): { indexed: number; cursor: IndexCursor } {
-  const pages = new Map(listCanonPages(vaultPath).map((page) => [page.relPath, page]));
+  let pages: Map<string, ReturnType<typeof listCanonPages>[number]> | undefined;
   let indexed = 0;
   let lastId = cursor.receipt_id;
   let seen = 0;
   for (const receipt of walkCanonReceipts(db)) {
     seen += 1;
     if (!receiptAfter(cursor.receipt_id, receipt.receipt_id)) continue;
+    pages ??= new Map(listPages(vaultPath).map((page) => [page.relPath, page]));
     const page = pages.get(receipt.page_path);
     const live =
       page !== undefined &&

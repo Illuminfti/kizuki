@@ -8,6 +8,7 @@ import {
   indexReceiptsFromCursor,
   walkCanonReceipts,
 } from "../src/derived";
+import { listCanonPages } from "@kizuki/core";
 import { createHelpers } from "./helpers";
 
 const { cleanup, tempVault } = createHelpers();
@@ -76,6 +77,54 @@ describe("derived receipt walk", () => {
         "01WALK00000000000000000002",
         "01WALK00000000000000000003",
       ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("receipt refresh with no new receipts performs no canon filesystem scan", () => {
+    const setup = tempVault();
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    try {
+      insertReceipt(db, "01IDLE00000000000000000001", "facts/a.md");
+      let listed = 0;
+      const result = indexReceiptsFromCursor(
+        db,
+        setup.vault,
+        { ...emptyIndexCursor(), receipt_id: "01IDLE00000000000000000001" },
+        (vaultPath) => {
+          listed += 1;
+          return listCanonPages(vaultPath);
+        },
+      );
+      expect(listed).toBe(0);
+      expect(result.indexed).toBe(0);
+      expect(result.cursor.receipt_id).toBe("01IDLE00000000000000000001");
+      expect(result.cursor.receipts_seen).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("receipt refresh with new receipts scans canon once", () => {
+    const setup = tempVault();
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    try {
+      insertReceipt(db, "01NEW000000000000000000001", "facts/a.md");
+      insertReceipt(db, "01NEW000000000000000000002", "facts/b.md");
+      let listed = 0;
+      const result = indexReceiptsFromCursor(
+        db,
+        setup.vault,
+        { ...emptyIndexCursor(), receipt_id: "01NEW000000000000000000001" },
+        (vaultPath) => {
+          listed += 1;
+          return listCanonPages(vaultPath);
+        },
+      );
+      expect(listed).toBe(1);
+      expect(result.cursor.receipt_id).toBe("01NEW000000000000000000002");
+      expect(result.cursor.receipts_seen).toBe(2);
     } finally {
       db.close();
     }
