@@ -127,9 +127,14 @@ describe("claims authority", () => {
       }),
     );
     expect(incoming.outcome).toBe("skipped");
-    if (incoming.outcome !== "skipped") return;
+    if (incoming.outcome !== "skipped" || live.outcome !== "stored") return;
     expect(incoming.reason).toBe("below_authority");
     expect(incoming.claim.status).toBe("skipped");
+    expect(resolveConflict(incoming.claim, live.claim)).toEqual({
+      action: "skip",
+      reason: "below_authority",
+      rule: "R2",
+    });
     expect(listClaims(db, { status: "live" })).toHaveLength(1);
     expect(listSupersessions(db)).toEqual([]);
     db.close();
@@ -387,6 +392,27 @@ describe("claims authority", () => {
       action: "supersede",
       winner: "incoming",
       rule: "R3",
+    });
+  });
+
+  test("model inference cannot overturn connector evidence (R2)", () => {
+    const live = evidenceConflict({
+      claim_id: "01CLAIM000000000000000000L",
+      object: "acme",
+      confidence: 0.7,
+      valid_from: "2026-01-01T00:00:00.000Z",
+    });
+    const incoming = evidenceConflict({
+      claim_id: "01CLAIM000000000000000000N",
+      object: "northwind",
+      confidence: 0.95,
+      authority: "model_inference",
+      valid_from: "2026-02-01T00:00:00.000Z",
+    });
+    expect(resolveConflict(incoming, live)).toEqual({
+      action: "skip",
+      reason: "below_authority",
+      rule: "R2",
     });
   });
 
