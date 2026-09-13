@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { ensureLedgerInitialized, LEDGER_SCHEMA_VERSION } from "../ledger/db";
+import { ensureLedgerSchema, LEDGER_SCHEMA_VERSION } from "../ledger/db";
 import { LedgerStoreError } from "../ledger/errors";
 import { readSchemaVersion } from "../ledger/integrity";
 import { claimsCompatibilityReady } from "./schema";
@@ -16,5 +16,5 @@ function ledgerVersionCurrent(db: Database): boolean {
 /** Cheap no-op on a healthy current ledger. Otherwise request the migrator. */
 export function initClaims(db: Database): void {
   if (claimsCompatibilityReady(db) && ledgerVersionCurrent(db)) return;
-  ensureLedgerInitialized(db, { includeStaging: true });
+  ensureLedgerSchema(db, { includeStaging: true });
 }

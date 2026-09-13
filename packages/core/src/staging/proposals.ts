@@ -111,14 +111,7 @@ export function initStaging(db: Database): void {
 }
 
 export function openStagingDb(path: string): Database {
-  const db = openLedger(path);
-  try {
-    initStaging(db);
-    return db;
-  } catch (error) {
-    db.close();
-    throw error;
-  }
+  return openLedger(path, { includeStaging: true });
 }
 
 export function hashBody(body: string): string {

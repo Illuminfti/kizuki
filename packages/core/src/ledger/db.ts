@@ -305,12 +305,14 @@ function validatedBusyTimeout(value: number | undefined): number {
   return timeout;
 }
 
-export function ensureLedgerInitialized(
-  db: Database,
-  options: { busyTimeoutMs?: number; includeStaging?: boolean } = {},
-): void {
-  const timeout = validatedBusyTimeout(options.busyTimeoutMs);
+function configureLedgerBusyTimeout(db: Database, timeout: number): void {
   db.exec(`PRAGMA busy_timeout = ${timeout}`);
+}
+
+export function ensureLedgerSchema(
+  db: Database,
+  options: { includeStaging?: boolean } = {},
+): void {
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   migrate(db, options);
@@ -318,7 +320,10 @@ export function ensureLedgerInitialized(
   initCanon(db);
 }
 
-export function openLedger(dbPath: string, options: { busyTimeoutMs?: number } = {}): Database {
+export function openLedger(
+  dbPath: string,
+  options: { busyTimeoutMs?: number; includeStaging?: boolean } = {},
+): Database {
   const timeout = validatedBusyTimeout(options.busyTimeoutMs);
   const db = manageDatabaseLifetime(new Database(dbPath));
   try {
@@ -327,7 +332,8 @@ export function openLedger(dbPath: string, options: { busyTimeoutMs?: number } =
     // checkpointing and removal. Immutable previews must never repair journals.
     configureLedgerWalLifecycle(db, dbPath);
     // Apply before migrations: concurrent process startup is a writer too.
-    ensureLedgerInitialized(db, { busyTimeoutMs: timeout });
+    configureLedgerBusyTimeout(db, timeout);
+    ensureLedgerSchema(db, options);
     return db;
   } catch (error) {
     db.close();

@@ -136,6 +136,18 @@ describe("openLedger migrations", () => {
     } finally { legacy.close(); contender.close(); }
   });
 
+  test("lazy claims repair preserves the connection's startup wait", () => {
+    const db = openLedger(":memory:", { busyTimeoutMs: 5000 });
+    try {
+      db.exec("DROP INDEX claims_signature_idempotency");
+      initClaims(db);
+      expect(db.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 5000 });
+      expect(
+        db.query("SELECT 1 FROM sqlite_master WHERE type='index' AND name='claims_signature_idempotency'").get(),
+      ).not.toBeNull();
+    } finally { db.close(); }
+  });
+
   test("rejects invalid startup waits before creating a database", () => {
     const root = mkdtempSync(join(tmpdir(), "kizuki-ledger-timeout-")), path = join(root, "ledger.db");
     try {
