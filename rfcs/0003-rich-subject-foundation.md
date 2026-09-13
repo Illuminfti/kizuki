@@ -362,6 +362,55 @@ abstention, and authorized public retrieval. Empty output and indiscriminate
 overclassification both fail. Issue completion and semantic qualification remain
 open beyond the engineering stages.
 
+### Source-only person/company homonym
+
+This is a design acceptance example, not automatic discovery and not a public
+surface. The input supplies only a synthetic source/event identity and text. It
+does not pre-resolve person or company references. Two equal labels remain
+distinct occurrences until identity evidence supports an alias.
+
+<!-- rich-subject-homonym-example -->
+```json
+{
+  "id": "source-only-person-company-homonym",
+  "evaluation_state": "design_only",
+  "input": {
+    "source_key": "synthetic.note",
+    "event_id": "00000000000000000000000002",
+    "text": "A person named Atlas joined a company named Atlas.",
+    "supplied_refs": []
+  },
+  "expected": {
+    "discoveries": [
+      {
+        "occurrence_id": "person-atlas",
+        "label": "Atlas",
+        "class": "person",
+        "anchor": {
+          "event_id": "00000000000000000000000002",
+          "start_utf16": 15,
+          "end_utf16": 20
+        }
+      },
+      {
+        "occurrence_id": "company-atlas",
+        "label": "Atlas",
+        "class": "organization",
+        "anchor": {
+          "event_id": "00000000000000000000000002",
+          "start_utf16": 44,
+          "end_utf16": 49
+        }
+      }
+    ]
+  }
+}
+```
+
+A counterexample fails when both occurrences collapse into one identity, no
+discoveries are returned, a class is wrong, or an occurrence reuses the other
+occurrence's source anchor.
+
 ## Verification
 
 B1a must prove valid v1/v2 parsing, exact v1 compatibility, all status branches,
