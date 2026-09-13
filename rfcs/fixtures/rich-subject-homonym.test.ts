@@ -56,6 +56,11 @@ function homonymErrors(example: Example): string[] {
   const discoveries = example.expected.discoveries;
   if (discoveries.length === 0) errors.push("no discoveries");
   if (discoveries.length !== 2) errors.push("homonym must keep two occurrences");
+  for (const item of discoveries) {
+    if (typeof item.occurrence_id !== "string" || item.occurrence_id.trim() === "") {
+      errors.push("occurrence_id must be a nonempty string");
+    }
+  }
   const ids = new Set(discoveries.map((item) => item.occurrence_id));
   if (ids.size !== discoveries.length) errors.push("occurrences collapsed into one identity");
   const anchors = new Set(discoveries.map((item) => anchorKey(item.anchor)));
@@ -111,5 +116,28 @@ test("homonym counterexamples fail when identities, classes, or anchors collapse
   ];
   for (const broken of cases) {
     expect(homonymErrors(broken).length).toBeGreaterThan(0);
+  }
+});
+
+test("homonym occurrence ids must be nonempty strings", () => {
+  const example = extractExample(readFileSync(RFC, "utf8"));
+  expect(homonymErrors(example)).toEqual([]);
+  const person = example.expected.discoveries[0]!;
+  const company = example.expected.discoveries[1]!;
+  const blankIds: Array<string | undefined> = ["", "   ", undefined];
+  for (const target of [person, company]) {
+    for (const occurrence_id of blankIds) {
+      const { occurrence_id: _ignored, ...rest } = target;
+      const mutated = occurrence_id === undefined ? rest : { ...target, occurrence_id };
+      const broken: Example = {
+        ...example,
+        expected: {
+          discoveries: example.expected.discoveries.map((item) =>
+            item === target ? (mutated as Discovery) : item,
+          ),
+        },
+      };
+      expect(homonymErrors(broken).length).toBeGreaterThan(0);
+    }
   }
 });
