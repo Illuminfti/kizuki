@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import * as core from "../src/index";
+import { LEDGER_SCHEMA_VERSION } from "../src/ledger/db";
+import { readSchemaVersion } from "../src/ledger/integrity";
+import { tableExists } from "../src/ledger/schema";
 
 describe("public surface", () => {
   test("re-exports every runtime value the contract layer defines", () => {
@@ -202,7 +206,6 @@ describe("public surface", () => {
       "applyAgentsV9",
       "applyCanonV4",
       "applyCanonWrite",
-      "applyClaimsV3",
       "applyConnectionSensitivity",
       "applyPurgeV5",
       "applySensitivityV6",
@@ -562,5 +565,18 @@ describe("public surface", () => {
     expect(core.CLAIM_SCHEMA).toBe("kizuki.claim/v1");
     expect(core.PROPOSAL_SCHEMA).toBe("kizuki.claim/v1");
     expect(core.CONNECTOR_SCHEMA).toBe("kizuki.connector/v1");
+  });
+
+  test("applyClaimsV3 is not a public schema owner; initClaims produces a current ledger", () => {
+    expect(Object.hasOwn(core, "applyClaimsV3")).toBe(false);
+    const db = new Database(":memory:");
+    try {
+      core.initClaims(db);
+      expect(readSchemaVersion(db)).toBe(LEDGER_SCHEMA_VERSION);
+      expect(tableExists(db, "events")).toBe(true);
+      expect(tableExists(db, "claims")).toBe(true);
+    } finally {
+      db.close();
+    }
   });
 });

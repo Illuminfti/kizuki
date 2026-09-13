@@ -54,7 +54,6 @@ export {
 export type { PredicateCardinality, PredicateSpec } from "./predicates";
 export {
   CLAIMS_SCHEMA_VERSION,
-  applyClaimsV3,
   applyLegacyStagingIdempotency,
 } from "./schema";
 export { initClaims } from "./init";
