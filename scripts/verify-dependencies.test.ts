@@ -24,12 +24,27 @@ ${packages}
 `;
 }
 
-function tree(contents: string) {
+function policy(packages: Record<string, { integrity: string; capabilities?: string[] }>): string {
+  return `${JSON.stringify({
+    schema: "kizuki.dependency-policy/v1",
+    forbidden_capabilities: ["telemetry", "crash-reporting", "automatic-update-checks"],
+    packages: Object.fromEntries(
+      Object.entries(packages).map(([identity, entry]) => [
+        identity,
+        { integrity: entry.integrity, capabilities: entry.capabilities ?? [] },
+      ]),
+    ),
+  }, null, 2)}\n`;
+}
+
+function tree(contents: string, policyText?: string) {
   const root = mkdtempSync(join(tmpdir(), "kizuki-deps-"));
   dirs.push(root);
   mkdirSync(join(root, "packages"), { recursive: true });
+  mkdirSync(join(root, "scripts"), { recursive: true });
   writeFileSync(join(root, "package.json"), '{"name":"fixture","private":true}\n');
   writeFileSync(join(root, "bun.lock"), contents);
+  if (policyText !== undefined) writeFileSync(join(root, "scripts/dependency-policy.json"), policyText);
   return root;
 }
 
@@ -39,6 +54,7 @@ test("permitted and workspace packages pass", () => {
     "typescript": ["typescript@5.9.0", "", {}, "sha512-abc="],
     "@kizuki/core": ["@kizuki/core@workspace:packages/core"],
 `),
+    policy({ "typescript@5.9.0": { integrity: "sha512-abc=" } }),
   );
   expect(verifyLockfileDependencies(root)).toEqual(["typescript"]);
 });
@@ -49,6 +65,7 @@ test("a denied package only in the resolved transitive set fails", () => {
     "typescript": ["typescript@5.9.0", "", {}, "sha512-abc="],
     "@sentry/node": ["@sentry/node@7.120.0", "", {}, "sha512-abc="],
 `),
+    policy({ "typescript@5.9.0": { integrity: "sha512-abc=" } }),
   );
   expect(() => verifyLockfileDependencies(root)).toThrow(DependencyPolicyError);
   try {
@@ -65,6 +82,40 @@ test("an alias whose resolved identity is denied fails", () => {
 `),
   );
   expect(report.denied).toEqual(["harmless -> @sentry/node@7.120.0"]);
+});
+
+test("a neutrally named transitive dependency cannot bypass capability policy", () => {
+  const lock = lockfile(`
+    "harmless": ["widget-runtime@1.0.0", "", {}, "sha512-abc="],
+`);
+  const classified = policy({
+    "widget-runtime@1.0.0": { integrity: "sha512-abc=", capabilities: [] },
+  });
+  expect(verifyLockfileDependencies(tree(lock, classified))).toEqual(["widget-runtime"]);
+
+  expect(() =>
+    verifyLockfileDependencies(
+      tree(
+        lock,
+        policy({
+          "widget-runtime@1.0.0": { integrity: "sha512-abc=", capabilities: ["telemetry"] },
+        }),
+      ),
+    ),
+  ).toThrow(/forbidden capability telemetry/);
+
+  expect(() => verifyLockfileDependencies(tree(lock, policy({})))).toThrow(/unclassified/);
+
+  expect(() =>
+    verifyLockfileDependencies(
+      tree(
+        lock,
+        policy({
+          "widget-runtime@1.0.0": { integrity: "sha512-other=", capabilities: [] },
+        }),
+      ),
+    ),
+  ).toThrow(/integrity mismatch/);
 });
 
 test("malformed lockfiles and unsupported versions fail", () => {

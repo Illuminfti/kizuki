@@ -82,11 +82,25 @@ const CONNECT_CONSENT_HELP: Readonly<Record<ConnectConsentAction, HelpTopic>> = 
   ),
 };
 
+export const AGENT_REVOKE_SCHEMA = {
+  options: [],
+  flags: ["--json"],
+} as const satisfies CommandHelpSchema;
+
+const AGENT_REVOKE_HELP: HelpTopic = {
+  name: "agent revoke",
+  usage: "agent revoke NAME [--json]",
+  summary: "revoke an enrolled agent's access, or cancel pending setup",
+  schema: AGENT_REVOKE_SCHEMA,
+};
+
 export function lookupCommandHelp(
   verb: string,
   rest: readonly string[],
 ): HelpTopic | undefined {
-  if (verb !== "connect" || rest.length !== 1) return undefined;
+  if (rest.length !== 1) return undefined;
+  if (verb === "agent" && rest[0] === "revoke") return AGENT_REVOKE_HELP;
+  if (verb !== "connect") return undefined;
   const action = rest[0];
   if (action !== "grant" && action !== "revoke" && action !== "resume-revocation") {
     return undefined;
