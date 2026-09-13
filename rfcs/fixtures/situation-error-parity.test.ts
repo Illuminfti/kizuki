@@ -7,6 +7,7 @@ const ROOT = join(import.meta.dir, "../..");
 const DOC = join(ROOT, "docs/world-model-program.md");
 const MARKER = "<!-- situation-error-parity-example -->";
 const REFRESH_MARKER = "<!-- situation-error-parity-refresh-unavailable -->";
+const SENSITIVITY_MARKER = "<!-- situation-error-parity-sensitivity-denied -->";
 const SEMANTIC_KEYS = [
   "happened",
   "state_changed",
@@ -223,4 +224,114 @@ test("refresh DX/AX diagnostic code must identify the committed-refresh outcome"
     },
   };
   expect(refreshParityErrors(bothWrong).length).toBeGreaterThan(0);
+});
+
+function sensitivityParityErrors(example: Example): string[] {
+  const errors: string[] = [];
+  if (example.evaluation_state !== "design_only") {
+    errors.push("example must remain design_only");
+  }
+  if (example.principal.length === 0) errors.push("missing principal");
+  const { ux, dx, ax } = example.projections;
+  const forbiddenRecovery = new Set(["lower_sensitivity", "expand_grant", "owner_label"]);
+  for (const [name, projection] of [
+    ["ux", ux],
+    ["dx", dx],
+    ["ax", ax],
+  ] as const) {
+    if (projection.happened !== "sensitivity_denied") {
+      errors.push(`${name} must report sensitivity_denied`);
+    }
+    if (projection.state_changed !== false) errors.push(`${name} implies a state change`);
+    if (projection.blind_retry_useful !== false) errors.push(`${name} implies a useful blind retry`);
+    if (projection.recovery !== "resolve_authorization") {
+      errors.push(`${name} recovery is not resolve_authorization`);
+    }
+    if (forbiddenRecovery.has(projection.recovery)) {
+      errors.push(`${name} recovery lowers sensitivity or invents an owner chore`);
+    }
+    if (projection.hidden_target_disclosed !== false) {
+      errors.push(`${name} discloses whether a hidden target exists`);
+    }
+  }
+  if (dx.code !== "sensitivity_denied") {
+    errors.push("dx code must identify sensitivity_denied");
+  }
+  if (ax.code !== "sensitivity_denied") {
+    errors.push("ax code must identify sensitivity_denied");
+  }
+  for (const key of SEMANTIC_KEYS) {
+    if (ux[key] !== dx[key] || ux[key] !== ax[key]) {
+      errors.push(`UX/DX/AX disagree on ${key}`);
+    }
+  }
+  return errors;
+}
+
+test("the documented sensitivity-denied example keeps UX/DX/AX error semantics aligned", () => {
+  const example = extractExample(readFileSync(DOC, "utf8"), SENSITIVITY_MARKER);
+  expect(example.id).toBe("sensitivity-denied-before-mutation");
+  expect(sensitivityParityErrors(example)).toEqual([]);
+});
+
+test("a sensitivity projection that implies success, retry, or hidden-target disclosure fails", () => {
+  const example = extractExample(readFileSync(DOC, "utf8"), SENSITIVITY_MARKER);
+  const mutations: Array<(projection: Projection) => Projection> = [
+    (projection) => ({ ...projection, happened: "ok", state_changed: true }),
+    (projection) => ({ ...projection, blind_retry_useful: true }),
+    (projection) => ({ ...projection, hidden_target_disclosed: true }),
+    (projection) => ({ ...projection, recovery: "lower_sensitivity" }),
+    (projection) => ({ ...projection, recovery: "owner_label" }),
+  ];
+  for (const mutate of mutations) {
+    const broken: Example = {
+      ...example,
+      projections: {
+        ...example.projections,
+        ux: mutate(example.projections.ux),
+      },
+    };
+    expect(sensitivityParityErrors(broken).length).toBeGreaterThan(0);
+  }
+});
+
+test("sensitivity DX/AX diagnostic code must identify sensitivity_denied", () => {
+  const example = extractExample(readFileSync(DOC, "utf8"), SENSITIVITY_MARKER);
+  const mutations: Array<(projection: Projection) => Projection> = [
+    (projection) => ({ ...projection, code: "ok" }),
+    (projection) => ({ ...projection, code: "authorization_refused" }),
+    (projection) => {
+      const { code: _code, ...rest } = projection;
+      return rest;
+    },
+  ];
+  for (const name of ["dx", "ax"] as const) {
+    for (const mutate of mutations) {
+      const broken: Example = {
+        ...example,
+        projections: {
+          ...example.projections,
+          [name]: mutate(example.projections[name]),
+        },
+      };
+      expect(sensitivityParityErrors(broken).length).toBeGreaterThan(0);
+    }
+  }
+});
+
+test("matching wrong sensitivity outcomes still fail the example", () => {
+  const example = extractExample(readFileSync(DOC, "utf8"), SENSITIVITY_MARKER);
+  const wrong = {
+    happened: "ok",
+    state_changed: true,
+    blind_retry_useful: true,
+    recovery: "lower_sensitivity",
+    hidden_target_disclosed: true,
+    code: "ok",
+  } as Projection;
+  const allWrong: Example = {
+    ...example,
+    projections: { ux: wrong, dx: wrong, ax: wrong },
+  };
+  expect(sensitivityParityErrors(allWrong).length).toBeGreaterThan(0);
 });

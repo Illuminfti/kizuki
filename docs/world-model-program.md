@@ -150,6 +150,47 @@ This is a design acceptance example, not a shipped public surface. It does not a
 
 A counterexample fails this law when any projection implies rollback, repeats the mutation, labels the unavailable view current, loses the receipt, or discloses a hidden target.
 
+### Error-semantics example: sensitivity denied before mutation
+
+This is a design acceptance example, not a shipped public surface. It does not add a CLI, MCP, HTTP, or Situation API. For one principal, the human, developer, and agent projections of the same Core refusal must agree that the request exceeded the current sensitivity ceiling, that nothing was written, that repeating the identical request is not useful, and that they do not disclose whether a hidden target exists. Recovery is to resolve authorization. It is not to lower stored sensitivity, expand a grant, or add an owner labeling step.
+
+<!-- situation-error-parity-sensitivity-denied -->
+```json
+{
+  "id": "sensitivity-denied-before-mutation",
+  "evaluation_state": "design_only",
+  "principal": "agent.alpha",
+  "projections": {
+    "ux": {
+      "happened": "sensitivity_denied",
+      "state_changed": false,
+      "blind_retry_useful": false,
+      "recovery": "resolve_authorization",
+      "hidden_target_disclosed": false,
+      "summary": "This request is above the current sensitivity ceiling. Nothing was written. Retrying the same request will not help until access is granted."
+    },
+    "dx": {
+      "happened": "sensitivity_denied",
+      "state_changed": false,
+      "blind_retry_useful": false,
+      "recovery": "resolve_authorization",
+      "hidden_target_disclosed": false,
+      "code": "sensitivity_denied"
+    },
+    "ax": {
+      "happened": "sensitivity_denied",
+      "state_changed": false,
+      "blind_retry_useful": false,
+      "recovery": "resolve_authorization",
+      "hidden_target_disclosed": false,
+      "code": "sensitivity_denied"
+    }
+  }
+}
+```
+
+A counterexample fails this law when any projection reports success, a state change, a useful blind retry, whether a hidden target exists, or a recovery that lowers data sensitivity or invents an owner labeling chore.
+
 ## Delivery map
 
 Follow issue #497 for the current dependency graph. The groups below explain the sequence without maintaining another exhaustive task list.
