@@ -23,11 +23,7 @@ function compatibilitySection(markdown: string): string {
   return next < 0 ? rest : rest.slice(0, next);
 }
 
-function reservationErrors(
-  section: string,
-  baseline: readonly number[],
-  currentMax: number,
-): string[] {
+function reservationErrors(section: string, occupied: readonly number[]): string[] {
   const errors: string[] = [];
   const lower = section.toLowerCase();
   if (!lower.includes("historical baseline")) errors.push("missing historical-baseline classification");
@@ -37,10 +33,13 @@ function reservationErrors(
   if (/does not choose or reserve the next version/.test(lower) === false) {
     errors.push("note must not reserve the next version");
   }
-  if (!section.includes(`continues through version ${currentMax}`)) {
-    errors.push(`RFC does not classify current max ledger ${currentMax} as occupied`);
+  if (!section.includes("packages/core/src/ledger/db.ts")) {
+    errors.push("missing live migration-chain authority");
   }
-  for (const version of baseline) {
+  if (/continues through version \d+/.test(section)) {
+    errors.push("unqualified numeric current-tip claim");
+  }
+  for (const version of occupied) {
     if (!section.includes(`ledger ${version} is occupied`)) {
       errors.push(`ledger ${version} is not classified as occupied`);
     }
@@ -56,26 +55,32 @@ test("occupied baseline ledger versions are classified as historical on current 
   for (const version of BASELINE_LEDGER_VERSIONS) {
     expect(occupied).toContain(version);
   }
-  const currentMax = Math.max(...occupied);
-  expect(currentMax).toBeGreaterThanOrEqual(26);
+  expect(Math.max(...occupied)).toBeGreaterThanOrEqual(26);
   const section = compatibilitySection(readFileSync(RFC, "utf8"));
-  expect(reservationErrors(section, BASELINE_LEDGER_VERSIONS, currentMax)).toEqual([]);
+  expect(reservationErrors(section, BASELINE_LEDGER_VERSIONS)).toEqual([]);
+});
+
+test("current-main compatibility delegates the live ledger tip to the migration chain", () => {
+  const section = compatibilitySection(readFileSync(RFC, "utf8"));
+  expect(section).toContain("packages/core/src/ledger/db.ts");
+  expect(section).not.toMatch(/continues through version \d+/);
+  expect(reservationErrors(section, BASELINE_LEDGER_VERSIONS)).toEqual([]);
 });
 
 test("restoring an occupied baseline version as a current reservation fails the addendum", () => {
-  const occupied = currentLedgerVersions(readFileSync(DB, "utf8"));
   const section = compatibilitySection(readFileSync(RFC, "utf8"));
   const counterexample = section.replace(
     "ledger 17 is occupied by `applyLedgerV16`",
     "ledger 17 remains reserved for implementation",
   );
-  expect(reservationErrors(counterexample, BASELINE_LEDGER_VERSIONS, Math.max(...occupied)).length).toBeGreaterThan(0);
+  expect(reservationErrors(counterexample, BASELINE_LEDGER_VERSIONS).length).toBeGreaterThan(0);
 });
 
-test("a stale max occupancy sentence fails the addendum", () => {
-  const occupied = currentLedgerVersions(readFileSync(DB, "utf8"));
-  const currentMax = Math.max(...occupied);
+test("an unqualified numeric current-tip claim fails the compatibility addendum", () => {
   const section = compatibilitySection(readFileSync(RFC, "utf8"));
-  const stale = section.replace(`continues through version ${currentMax}`, "continues through version 26");
-  expect(reservationErrors(stale, BASELINE_LEDGER_VERSIONS, currentMax).length).toBeGreaterThan(0);
+  const stale = section.replace(
+    "continues through the live migration chain in that file",
+    "continues through version 26",
+  );
+  expect(reservationErrors(stale, BASELINE_LEDGER_VERSIONS)).toContain("unqualified numeric current-tip claim");
 });

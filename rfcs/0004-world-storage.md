@@ -376,7 +376,7 @@ A1 may reuse canon 5 and purge 6 only if those versions already contain the gene
 
 The coordinated allocation table above is a **historical baseline** at `a96c5f4a4455d22fb4b40537c308c6d019a36d0d`. It is not an executable reservation on current main.
 
-Current `packages/core/src/ledger/db.ts` already applies ledger versions 17, 18, and 19, and continues through version 28. Those occupied numbers are historical, not available world-model reservations:
+Current `packages/core/src/ledger/db.ts` already applies ledger versions 17, 18, and 19, and continues through the live migration chain in that file. Those occupied numbers are historical, not available world-model reservations:
 
 - ledger 17 is occupied by `applyLedgerV16`
 - ledger 18 is occupied by `applyAgentEnrollmentV18`
