@@ -222,6 +222,39 @@ describe("serve doctor", () => {
     db.close();
   });
 
+  test("doctor reports per-run and per-day canon-write budgets", () => {
+    const { path, db } = vault();
+    writeServeIntent(path, "opted-out");
+    writeFileSync(
+      join(path, ".kizuki", "serve.toml"),
+      "[budget]\ncanon_writes_per_run = 4\ncanon_writes_per_day = 9\n",
+    );
+    persistRunReceipt(
+      db,
+      path,
+      receipt("2026-09-02", {
+        run_id: "01JBBUDGET00000000000000001",
+        canon_writes: 3,
+        budget: { canon_writes_per_run: { used: 3, limit: 4 } },
+      }),
+    );
+    persistRunReceipt(
+      db,
+      path,
+      receipt("2026-09-03", {
+        run_id: "01JBBUDGET00000000000000002",
+        canon_writes: 2,
+        budget: { canon_writes_per_run: { used: 2, limit: 4 } },
+      }),
+    );
+    const report = inspectServeDoctor(db, path, { now: "2026-09-03T00:10:00Z" });
+    expect(report.model.budget).toEqual({
+      canon_writes_per_run: { used: 2, limit: 4 },
+      canon_writes_per_day: { used: 2, limit: 9 },
+    });
+    db.close();
+  });
+
   test("pending retrieval op counts are not silently capped at the list window", () => {
     const { path, db } = vault();
     writeServeIntent(path, "opted-out");
