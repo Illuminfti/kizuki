@@ -1,9 +1,8 @@
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 import { hashBytes } from "./write";
 import { parseFrontmatter } from "./frontmatter";
 import { validatePage } from "./schema";
-import { openCanonFiles } from "./canon-files";
 
 export const MAX_CANON_PAGE_BYTES = 1_048_576;
 export const MAX_CANON_PAGES = 10_000;
@@ -104,13 +103,37 @@ function withholdDuplicate(
   );
 }
 
-function considerBytes(
-  state: WalkState,
-  path: string,
-  relPath: string,
-  bytes: Buffer,
-): void {
-  if (state.bytes + bytes.byteLength > MAX_CANON_WALK_BYTES) {
+function considerFile(state: WalkState, path: string, relPath: string): void {
+  if (state.truncated) return;
+  if (state.files >= MAX_CANON_PAGES) {
+    state.truncated = true;
+    state.skipped.push(
+      skip(".", "too_many", `vault exceeds ${MAX_CANON_PAGES} markdown files`),
+    );
+    return;
+  }
+  state.files += 1;
+
+  let size: number;
+  try {
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      state.skipped.push(skip(relPath, "unreadable", "unreadable: not a regular file"));
+      return;
+    }
+    size = stat.size;
+  } catch (error) {
+    state.skipped.push(skip(relPath, "unreadable", `unreadable: ${fsCode(error)}`));
+    return;
+  }
+
+  if (size > MAX_CANON_PAGE_BYTES) {
+    state.skipped.push(
+      skip(relPath, "oversize", `exceeds ${MAX_CANON_PAGE_BYTES} bytes`),
+    );
+    return;
+  }
+  if (state.bytes + size > MAX_CANON_WALK_BYTES) {
     state.truncated = true;
     state.skipped.push(
       skip(relPath, "too_many", `vault exceeds ${MAX_CANON_WALK_BYTES} scanned bytes`),
@@ -121,6 +144,7 @@ function considerBytes(
   let parsed: ReturnType<typeof parseFrontmatter>;
   let contentHash: string;
   try {
+    const bytes = readFileSync(path);
     state.bytes += bytes.byteLength;
     contentHash = hashBytes(bytes);
     parsed = parseFrontmatter(bytes.toString("utf8"));
@@ -162,46 +186,6 @@ function considerBytes(
     body: parsed.body,
     contentHash,
   });
-}
-
-function considerFile(state: WalkState, path: string, relPath: string): void {
-  if (state.truncated) return;
-  if (state.files >= MAX_CANON_PAGES) {
-    state.truncated = true;
-    state.skipped.push(
-      skip(".", "too_many", `vault exceeds ${MAX_CANON_PAGES} markdown files`),
-    );
-    return;
-  }
-  state.files += 1;
-
-  let size: number;
-  try {
-    const stat = lstatSync(path);
-    if (stat.isSymbolicLink() || !stat.isFile()) {
-      state.skipped.push(skip(relPath, "unreadable", "unreadable: not a regular file"));
-      return;
-    }
-    size = stat.size;
-  } catch (error) {
-    state.skipped.push(skip(relPath, "unreadable", `unreadable: ${fsCode(error)}`));
-    return;
-  }
-
-  if (size > MAX_CANON_PAGE_BYTES) {
-    state.skipped.push(
-      skip(relPath, "oversize", `exceeds ${MAX_CANON_PAGE_BYTES} bytes`),
-    );
-    return;
-  }
-  let bytes: Buffer;
-  try {
-    bytes = readFileSync(path);
-  } catch (error) {
-    state.skipped.push(skip(relPath, "unreadable", `unreadable: ${fsCode(error)}`));
-    return;
-  }
-  considerBytes(state, path, relPath, bytes);
 }
 
 function walk(state: WalkState, directory: string, vaultPath: string, depth: number): void {
@@ -273,47 +257,6 @@ export function listCanonPagesReport(vaultPath: string): CanonPageReport {
 
 export function listCanonPages(vaultPath: string): CanonPage[] {
   return listCanonPagesReport(vaultPath).pages;
-}
-
-/**
- * Read one vault-relative Markdown page without walking the rest of the vault.
- * Unsafe, missing, or invalid paths return null.
- */
-export function readCanonPage(vaultPath: string, relPath: string): CanonPage | null {
-  if (typeof relPath !== "string" || !isCanonPagePath(relPath)) return null;
-  const parts = relPath.split("/");
-  if (parts.length === 0 || parts.length > MAX_CANON_DEPTH) return null;
-  if (parts.some((part) => part.length === 0 || part === "." || part === "..")) return null;
-  const root = resolve(vaultPath);
-  const target = resolve(join(vaultPath, ...parts));
-  if (target !== root && !target.startsWith(`${root}${sep}`)) return null;
-  let bytes: Buffer;
-  try {
-    const files = openCanonFiles(root);
-    try {
-      const snapshot = files.read(relPath);
-      if (snapshot === null) return null;
-      try {
-        bytes = Buffer.from(snapshot.bytes);
-      } finally {
-        snapshot.close();
-      }
-    } finally {
-      files.close();
-    }
-  } catch {
-    return null;
-  }
-  const state: WalkState = {
-    pages: [],
-    skipped: [],
-    seen: new Map(),
-    files: 0,
-    bytes: 0,
-    truncated: false,
-  };
-  considerBytes(state, target, relPath, bytes);
-  return state.pages[0] ?? null;
 }
 
 /**

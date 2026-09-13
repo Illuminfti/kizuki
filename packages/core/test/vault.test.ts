@@ -25,7 +25,6 @@ import {
   listCanonPages,
   listCanonPagesReport,
   parseFrontmatter,
-  readCanonPage,
   readInitJournal,
   serializePage,
   validatePage,
@@ -468,30 +467,6 @@ describe("canon page discovery", () => {
 
     expect(findPageById(vault, "fact:engine")?.relPath).toBe("facts/engine.md");
     expect(findPageById(vault, "fact:missing")).toBeNull();
-  });
-
-  test("reads one canon page by relative path and refuses traversal", () => {
-    const vault = tempDir();
-    const outside = tempDir();
-    initVault(vault);
-    seedPage(join(vault, "facts", "engine.md"), {
-      data: validData({ id: "fact:engine", type: "fact", title: "Engine" }),
-      body: "A fact.\n",
-    });
-    seedPage(join(vault, "facts", "other.md"), {
-      data: validData({ id: "fact:other", type: "fact", title: "Other" }),
-      body: "Other.\n",
-    });
-    seedPage(join(outside, "escaped.md"), {
-      data: validData({ id: "fact:escaped", type: "fact", title: "Escaped" }),
-      body: "Outside.\n",
-    });
-    symlinkSync(outside, join(vault, "linked"));
-    expect(readCanonPage(vault, "facts/engine.md")?.id).toBe("fact:engine");
-    expect(readCanonPage(vault, "facts/missing.md")).toBeNull();
-    expect(readCanonPage(vault, "../facts/engine.md")).toBeNull();
-    expect(readCanonPage(vault, "facts/../facts/engine.md")).toBeNull();
-    expect(readCanonPage(vault, "linked/escaped.md")).toBeNull();
   });
 
   test("skips a malformed note without aborting the vault", () => {

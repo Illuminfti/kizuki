@@ -9,10 +9,9 @@ import {
   listCanonPagesReport,
   listCanonReceipts,
   pendingRetrievalOps,
-  readCanonPage,
   readSince,
 } from "@kizuki/core";
-import { indexEvent, indexPage, pageIndexByPath, publishLedgerEvent, removeCanonPath } from "@kizuki/core/internal";
+import { indexEvent, indexPage, publishLedgerEvent, removeCanonPath } from "@kizuki/core/internal";
 import { writeAtomicFile } from "./atomic-file";
 
 export const INDEX_CURSOR_SCHEMA = "kizuki.cli.index-cursor/v1" as const;
@@ -168,42 +167,31 @@ export function indexReceiptsFromCursor(
   db: Database,
   vaultPath: string,
   cursor: IndexCursor,
-  loadPage: (vaultPath: string, relPath: string) => ReturnType<typeof readCanonPage> = readCanonPage,
   scanPages: typeof listCanonPagesReport = listCanonPagesReport,
 ): { indexed: number; cursor: IndexCursor } {
-  const loaded = new Map<string, ReturnType<typeof readCanonPage>>();
-  let duplicatePaths: Set<string> | undefined;
+  let pages: Map<string, ReturnType<typeof listCanonPagesReport>["pages"][number]> | undefined;
   let indexed = 0;
   let lastId = cursor.receipt_id;
   let seen = 0;
   for (const receipt of walkCanonReceipts(db)) {
     seen += 1;
     if (!receiptAfter(cursor.receipt_id, receipt.receipt_id)) continue;
-    if (duplicatePaths === undefined) {
-      // Direct reads still need one batch-wide audit to preserve rebuild's
-      // rule that every file sharing a frontmatter id stays withheld.
-      duplicatePaths = new Set(
-        scanPages(vaultPath).skipped
-          .filter((entry) => entry.code === "duplicate")
-          .map((entry) => entry.relPath),
-      );
+    if (pages === undefined) {
+      const report = scanPages(vaultPath);
+      pages = new Map(report.pages.map((page) => [page.relPath, page]));
+      const duplicatePaths = new Set(report.skipped
+        .filter((entry) => entry.code === "duplicate")
+        .map((entry) => entry.relPath));
       for (const path of duplicatePaths) {
-        withdrawIndexedCanon(db, path, pageIndexByPath(db, path)?.page_id);
+        withdrawIndexedCanon(db, path);
       }
     }
-    const indexedPath = pageIndexByPath(db, receipt.page_path);
-    const relPath = indexedPath?.rel_path ?? receipt.page_path;
-    let page = loaded.get(relPath);
-    if (!loaded.has(relPath)) {
-      page = loadPage(vaultPath, relPath);
-      loaded.set(relPath, page);
-    }
-    const duplicate = duplicatePaths.has(relPath);
-    if (page != null && !duplicate && isLiveCanonPage(page) && receipt.page_action !== "archive") {
+    const page = pages.get(receipt.page_path);
+    if (page !== undefined && isLiveCanonPage(page) && receipt.page_action !== "archive") {
       indexPage(db, page);
       indexed += 1;
     } else {
-      withdrawIndexedCanon(db, receipt.page_path, page?.id ?? indexedPath?.page_id);
+      withdrawIndexedCanon(db, receipt.page_path, page?.id);
       for (const candidate of receipt.candidates) {
         withdrawIndexedCanon(db, receipt.page_path, candidate.page_id);
       }

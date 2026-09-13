@@ -570,7 +570,6 @@ export {
   isLiveCanonPage,
   listCanonPages,
   listCanonPagesReport,
-  readCanonPage,
 } from "./vault/pages";
 export type {
   CanonPage,
