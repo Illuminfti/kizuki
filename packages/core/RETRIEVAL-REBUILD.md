@@ -17,11 +17,12 @@ rows and the port's authorized projection can have different counts; serving
 still applies current authority and access checks to either backend's results.
 `--prune-old` does not rebuild. It erases inactive owned retrieval generations
 and leaves the currently bound engine, or the SQLite floor when none is bound.
-Unsafe or busy roots stay pending and refuse the command. `--port ID` must name
-the currently bound store and does not switch engines. Other `--layer` values
-are explicitly refused. RFC 0002 sections 9.6 and 18.3 describe layer-specific
-rebuilds; this implementation provides full reconstruction, graph-only SQLite
-floor rebuild, bound-port naming, and prune-old.
+Unsafe or busy roots stay pending and refuse the command. `--port ID` selects an
+installed engine for this invocation. Unknown IDs and a busy engine fail closed.
+It does not rewrite `serve.toml`. Other `--layer` values are explicitly refused.
+RFC 0002 sections 9.6 and 18.3 describe layer-specific rebuilds; this
+implementation provides full reconstruction, graph-only SQLite floor rebuild,
+invocation-scoped port selection, and prune-old.
 
 `readRetrievalDocuments(db, vaultPath)` is the shared projection boundary. It
 reads current canon bytes and their hash-bound receipt authority, live events
