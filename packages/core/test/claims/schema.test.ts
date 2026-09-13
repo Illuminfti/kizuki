@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { initClaims } from "../../src/claims/schema";
+import { initClaims } from "../../src/claims/init";
 import { insertClaim } from "../../src/claims/store";
 import { claimInput, claimsDb, FIXED_NOW, putEvent } from "./helpers";
 

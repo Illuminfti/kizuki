@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { contentSignature, hashBody } from "../src/claims/hash";
+import { applyClaimsV3 } from "../src/claims/schema";
 import { insertClaim } from "../src/claims/store";
 import { inspectOpenLedgerHealth, LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { LedgerStoreError } from "../src/ledger/errors";
@@ -320,6 +321,26 @@ test("initStaging on an existing connection migrates through the ledger coordina
       expect(db.query("SELECT COUNT(*) AS n FROM claims").get()).toEqual({ n: 2 });
     } finally { db.close(); }
   });
+});
+
+test("initStaging does not mistake a complete claims-only surface for a ledger", async () => {
+  await withTempDb((path) => {
+    const db = new Database(path);
+    try {
+      applyClaimsV3(db);
+      expect(tableExists(db, "schema_version")).toBe(false);
+      initStaging(db);
+      expectCurrent(db);
+    } finally { db.close(); }
+  });
+});
+
+test("initStaging refuses a ledger newer than this binary", () => {
+  const db = openLedger(":memory:");
+  try {
+    db.query("UPDATE schema_version SET version = ?").run(LEDGER_SCHEMA_VERSION + 1);
+    expect(() => initStaging(db)).toThrow(/newer than supported/);
+  } finally { db.close(); }
 });
 
 test("a mixed page_hash and after_hash promotions table fails closed without changing its schema or receipt", async () => {

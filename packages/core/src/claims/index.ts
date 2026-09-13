@@ -56,8 +56,8 @@ export {
   CLAIMS_SCHEMA_VERSION,
   applyClaimsV3,
   applyLegacyStagingIdempotency,
-  initClaims,
 } from "./schema";
+export { initClaims } from "./init";
 export {
   IDENTITY_LINK_STATUSES,
   IDENTITY_MERGE_MIN,

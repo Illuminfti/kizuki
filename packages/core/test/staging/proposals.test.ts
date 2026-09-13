@@ -4,8 +4,8 @@ import { join } from "node:path";
 import {
   applyClaimsV3,
   applyLegacyStagingIdempotency,
-  initClaims,
 } from "../../src/claims/schema";
+import { initClaims } from "../../src/claims/init";
 import { getClaim } from "../../src/claims/store";
 import {
   StagingError,

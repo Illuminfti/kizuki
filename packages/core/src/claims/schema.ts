@@ -1,10 +1,7 @@
 import type { Database } from "bun:sqlite";
-import { createRequire } from "node:module";
 import { tableExists } from "../ledger/schema";
 import { canonicalizeProducer, isProducer } from "../contracts/proposal";
 import { claimKey, contentSignature } from "./hash";
-
-const requireFromClaims = createRequire(import.meta.url);
 
 /** RFC 0002 §18.1 — claims-core widens durable state to schema v3. */
 export const CLAIMS_SCHEMA_VERSION = 3;
@@ -569,7 +566,7 @@ function emptyLiveSignature(db: Database): boolean {
 
 /**
  * Low-level claims compatibility repairs. The ledger migrator is the only
- * schema owner; `initClaims` must not call these directly. Staging repair is
+ * schema owner; callers must not call these directly. Staging repair is
  * opt-in because it widens historical claim rows with staging-only columns.
  */
 export function repairClaimsCompatibility(
@@ -582,14 +579,6 @@ export function repairClaimsCompatibility(
   }
 }
 
-/** Cheap no-op on a healthy current ledger. Otherwise request the migrator. */
-export function initClaims(db: Database): void {
-  if (claimsSurfaceReady(db) && stagingIdempotencyReady(db)) return;
-  const { ensureLedgerInitialized } = requireFromClaims("../ledger/db") as {
-    ensureLedgerInitialized: (
-      database: Database,
-      options: { includeStaging?: boolean },
-    ) => void;
-  };
-  ensureLedgerInitialized(db, { includeStaging: true });
+export function claimsCompatibilityReady(db: Database): boolean {
+  return claimsSurfaceReady(db) && stagingIdempotencyReady(db);
 }

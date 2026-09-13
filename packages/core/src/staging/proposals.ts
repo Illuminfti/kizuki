@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
 import { contentSignature } from "../claims/hash";
-import { initClaims } from "../claims/schema";
+import { initClaims } from "../claims/init";
 import { openLedger } from "../ledger/db";
 import {
   canonicalizeProducer,
