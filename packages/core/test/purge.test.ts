@@ -248,7 +248,7 @@ describe("purgeEvents", () => {
     expect(() =>
       db.query(
         `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
-         VALUES ('01JCPURGEPROOF0000000000000', ?, 'legacy-record', 'subject')`,
+         VALUES ('01JCPURGEPROOF0000000000000', ?, 'legacy-record', 'alias')`,
       ).run("a".repeat(64)),
     ).toThrow();
     db.exec(
@@ -318,7 +318,7 @@ describe("purgeEvents", () => {
     expect(() =>
       db.query(
         `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
-         VALUES ('01JCPURGEPROOF0000000000009', ?, 'legacy-record', 'subject')`,
+         VALUES ('01JCPURGEPROOF0000000000009', ?, 'legacy-record', 'alias')`,
       ).run("d".repeat(64)),
     ).toThrow();
     db.close();
@@ -377,7 +377,7 @@ describe("purgeEvents", () => {
     expect(() =>
       db.query(
         `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
-         VALUES ('01JCPURGEPROOF000000000000B', ?, 'legacy-record', 'subject')`,
+         VALUES ('01JCPURGEPROOF000000000000B', ?, 'legacy-record', 'alias')`,
       ).run("f".repeat(64)),
     ).toThrow();
     db.close();
