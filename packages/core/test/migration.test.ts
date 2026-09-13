@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { applyAgentsV9 } from "../src/agents/schema";
 import { applyCanonV4, initCanon } from "../src/canon/schema";
 import { getCanonReceipt } from "../src/canon/receipts";
-import { applyClaimsV3, initClaims } from "../src/claims/schema";
+import { initClaims } from "../src/claims/init";
+import { applyClaimsV3 } from "../src/claims/schema";
 import { neighbors } from "../src/graph/graph";
 import { initGraph } from "../src/graph/schema";
 import { applyCheckpointModeCursorsV25, applyConnectionsV8 } from "../src/ledger/connections-schema";
@@ -133,6 +134,18 @@ describe("openLedger migrations", () => {
       expect(legacy.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 1000 });
       expect(contender.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 5000 });
     } finally { legacy.close(); contender.close(); }
+  });
+
+  test("lazy claims repair preserves the connection's startup wait", () => {
+    const db = openLedger(":memory:", { busyTimeoutMs: 5000 });
+    try {
+      db.exec("DROP INDEX claims_signature_idempotency");
+      initClaims(db);
+      expect(db.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 5000 });
+      expect(
+        db.query("SELECT 1 FROM sqlite_master WHERE type='index' AND name='claims_signature_idempotency'").get(),
+      ).not.toBeNull();
+    } finally { db.close(); }
   });
 
   test("rejects invalid startup waits before creating a database", () => {
