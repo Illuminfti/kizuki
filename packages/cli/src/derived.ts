@@ -6,7 +6,7 @@ import {
   count,
   isLiveCanonPage,
   isPlainObject,
-  listCanonPages,
+  listCanonPagesReport,
   listCanonReceipts,
   pendingRetrievalOps,
   readSince,
@@ -167,22 +167,27 @@ export function indexReceiptsFromCursor(
   db: Database,
   vaultPath: string,
   cursor: IndexCursor,
-  listPages: typeof listCanonPages = listCanonPages,
+  scanPages: typeof listCanonPagesReport = listCanonPagesReport,
 ): { indexed: number; cursor: IndexCursor } {
-  let pages: Map<string, ReturnType<typeof listCanonPages>[number]> | undefined;
+  let pages: Map<string, ReturnType<typeof listCanonPagesReport>["pages"][number]> | undefined;
   let indexed = 0;
   let lastId = cursor.receipt_id;
   let seen = 0;
   for (const receipt of walkCanonReceipts(db)) {
     seen += 1;
     if (!receiptAfter(cursor.receipt_id, receipt.receipt_id)) continue;
-    pages ??= new Map(listPages(vaultPath).map((page) => [page.relPath, page]));
+    if (pages === undefined) {
+      const report = scanPages(vaultPath);
+      pages = new Map(report.pages.map((page) => [page.relPath, page]));
+      const duplicatePaths = new Set(report.skipped
+        .filter((entry) => entry.code === "duplicate")
+        .map((entry) => entry.relPath));
+      for (const path of duplicatePaths) {
+        withdrawIndexedCanon(db, path);
+      }
+    }
     const page = pages.get(receipt.page_path);
-    const live =
-      page !== undefined &&
-      isLiveCanonPage(page) &&
-      receipt.page_action !== "archive";
-    if (live) {
+    if (page !== undefined && isLiveCanonPage(page) && receipt.page_action !== "archive") {
       indexPage(db, page);
       indexed += 1;
     } else {
