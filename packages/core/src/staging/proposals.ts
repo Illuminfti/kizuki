@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
 import { contentSignature } from "../claims/hash";
-import { initClaims } from "../claims/schema";
+import { initClaims } from "../claims/init";
+import { openLedger } from "../ledger/db";
 import {
   canonicalizeProducer,
   isAuthorityTier,
@@ -110,10 +111,7 @@ export function initStaging(db: Database): void {
 }
 
 export function openStagingDb(path: string): Database {
-  const db = new Database(path, { create: true });
-  db.exec("PRAGMA journal_mode = WAL");
-  initStaging(db);
-  return db;
+  return openLedger(path, { includeStaging: true });
 }
 
 export function hashBody(body: string): string {

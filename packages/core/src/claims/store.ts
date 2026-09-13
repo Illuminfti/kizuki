@@ -45,7 +45,7 @@ import {
 import { ClaimError } from "./errors";
 import { claimKey, hashBody, normalizeObject, objectsMatch } from "./hash";
 import { isRegisteredPredicate } from "./predicates";
-import { initClaims } from "./schema";
+import { initClaims } from "./init";
 
 /** One sweep never walks the whole backlog: the next pass takes the rest. */
 export const RETRIEVAL_SWEEP_LIMIT = 32;

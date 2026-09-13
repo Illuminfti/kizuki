@@ -564,12 +564,21 @@ function emptyLiveSignature(db: Database): boolean {
   }
 }
 
-/** Cheap no-op once v3 exists. `applyClaimsV3` stays the migration path. */
-export function initClaims(db: Database): void {
-  if (!claimsSurfaceReady(db)) {
-    applyClaimsV3(db);
-  }
-  if (!stagingIdempotencyReady(db)) {
+/**
+ * Low-level claims compatibility repairs. The ledger migrator is the only
+ * schema owner; callers must not call these directly. Staging repair is
+ * opt-in because it widens historical claim rows with staging-only columns.
+ */
+export function repairClaimsCompatibility(
+  db: Database,
+  options: { includeStaging?: boolean } = {},
+): void {
+  if (!claimsSurfaceReady(db)) applyClaimsV3(db);
+  if (options.includeStaging && !stagingIdempotencyReady(db)) {
     applyLegacyStagingIdempotency(db);
   }
+}
+
+export function claimsCompatibilityReady(db: Database): boolean {
+  return claimsSurfaceReady(db) && stagingIdempotencyReady(db);
 }
