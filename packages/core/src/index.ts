@@ -64,7 +64,6 @@ export {
   FIXTURE_EMBEDDING_SPACE,
   PREDICATE_REGISTRY,
   SINGLE_SOURCE_CAP,
-  applyClaimsV3,
   authorityFor,
   claimKey,
   claimsConflict,
