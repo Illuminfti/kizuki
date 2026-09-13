@@ -342,7 +342,7 @@ function emptyOutcome(): PurgeOutcome {
   };
 }
 
-const RECORDED_SELECTOR_KINDS = ["event", "connector", "record", "source"] as const;
+const RECORDED_SELECTOR_KINDS = ["event", "connector", "record", "source", "subject"] as const;
 type RecordedSelectorKind = (typeof RECORDED_SELECTOR_KINDS)[number];
 
 function recordedSelectorKind(filter: PurgeFilter): RecordedSelectorKind | null {
@@ -351,7 +351,11 @@ function recordedSelectorKind(filter: PurgeFilter): RecordedSelectorKind | null 
   const connector = filter.connector_id !== undefined;
   const subject = filter.subject_handle !== undefined;
   const record = filter.source_record_id !== undefined;
-  const n = Number(event) + Number(source) + Number(connector) + Number(subject) + Number(record);
+  if (subject) {
+    if (event || record || !connector) return null;
+    return "subject";
+  }
+  const n = Number(event) + Number(source) + Number(connector) + Number(record);
   if (n !== 1) return null;
   if (event) return "event";
   if (connector) return "connector";
