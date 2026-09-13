@@ -167,3 +167,36 @@ test("archive creator refuses extra members and legacy packages", () => {
   const legacy = { schema: "kizuki.release-build/v1", source_sha: f.build.source_sha, target: f.build.target, bun_version: f.build.bun_version };
   expect(() => createPackageArchive({ ...f.files, "BUILD.json": Buffer.from(JSON.stringify(legacy)) })).toThrow();
 });
+test("documented retained-package example verifies local files without installing", () => {
+  const docs = fs.readFileSync(join(import.meta.dir, "../docs/release-download.md"), "utf8");
+  expect(docs).toContain("bun scripts/verify-retained-download-example.ts");
+  expect(docs).toContain("--source SOURCE_SHA --target TARGET");
+  const f = fixture(), manifest = prepare(f), row = manifest.targets[0]!;
+  const example = join(import.meta.dir, "verify-retained-download-example.ts");
+  const manifestPath = join(f.output, "download-manifest.json");
+  const archivePath = join(f.output, row.archive.name);
+  const run = (...args: string[]) => Bun.spawnSync([process.execPath, example, ...args], { stderr: "pipe", stdout: "pipe" });
+  const valid = ["--source", f.build.source_sha, "--target", row.target, "--manifest", manifestPath, "--archive", archivePath, "--proof", f.proofFile];
+  const ok = run(...valid);
+  expect(ok.exitCode, ok.stderr.toString()).toBe(0);
+  expect(ok.stdout.toString()).toBe("integrity_ok\n");
+  expect(fs.existsSync(join(f.root, "installed"))).toBe(false);
+  const changedArchive = join(f.root, "changed.tar.gz");
+  fs.copyFileSync(archivePath, changedArchive);
+  fs.appendFileSync(changedArchive, "x");
+  const changedProof = join(f.root, "changed-proof.json");
+  fs.copyFileSync(f.proofFile, changedProof);
+  fs.appendFileSync(changedProof, "x");
+  for (const args of [
+    ["--source", "b".repeat(40), "--target", row.target, "--manifest", manifestPath, "--archive", archivePath, "--proof", f.proofFile],
+    ["--source", f.build.source_sha, "--target", "bun-darwin-arm64", "--manifest", manifestPath, "--archive", archivePath, "--proof", f.proofFile],
+    ["--source", f.build.source_sha, "--target", row.target, "--manifest", manifestPath, "--archive", changedArchive, "--proof", f.proofFile],
+    ["--source", f.build.source_sha, "--target", row.target, "--manifest", manifestPath, "--archive", archivePath, "--proof", changedProof],
+    ["--source", f.build.source_sha, "--target", row.target, "--manifest", join(f.root, "missing-manifest.json"), "--archive", archivePath, "--proof", f.proofFile],
+  ]) {
+    const failed = run(...args);
+    expect(failed.exitCode).not.toBe(0);
+    expect(failed.stdout.toString()).not.toContain("integrity_ok");
+    expect(fs.existsSync(join(f.root, "installed"))).toBe(false);
+  }
+});
