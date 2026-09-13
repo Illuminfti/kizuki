@@ -297,14 +297,19 @@ function migrate(db: Database, options: { includeStaging?: boolean } = {}): void
   assertLedgerSchema(db, latest);
 }
 
+function validatedBusyTimeout(value: number | undefined): number {
+  const timeout = value ?? LEDGER_BUSY_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 5000) {
+    throw new TypeError("invalid ledger busy timeout");
+  }
+  return timeout;
+}
+
 export function ensureLedgerInitialized(
   db: Database,
   options: { busyTimeoutMs?: number; includeStaging?: boolean } = {},
 ): void {
-  const timeout = options.busyTimeoutMs ?? LEDGER_BUSY_TIMEOUT_MS;
-  if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 5000) {
-    throw new TypeError("invalid ledger busy timeout");
-  }
+  const timeout = validatedBusyTimeout(options.busyTimeoutMs);
   db.exec(`PRAGMA busy_timeout = ${timeout}`);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
@@ -314,8 +319,7 @@ export function ensureLedgerInitialized(
 }
 
 export function openLedger(dbPath: string, options: { busyTimeoutMs?: number } = {}): Database {
-  const timeout = options.busyTimeoutMs ?? LEDGER_BUSY_TIMEOUT_MS;
-  if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 5000) throw new TypeError("invalid ledger busy timeout");
+  const timeout = validatedBusyTimeout(options.busyTimeoutMs);
   const db = manageDatabaseLifetime(new Database(dbPath));
   try {
     // Apple's SQLite persists WAL/SHM after close by default. Match the normal
