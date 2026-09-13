@@ -134,10 +134,20 @@ test("discovery and doctor include nested doctrine names and archive folders as 
   const f = fixture();
   const eventId = putEvent(f.db);
   mkdirSync(join(f.vault, "facts", "archive"));
+  mkdirSync(join(f.vault, "facts", ".kizuki"), { recursive: true, mode: 0o700 });
+  chmodSync(join(f.vault, "facts", ".kizuki"), 0o700);
+  const nestedControl = join(f.vault, "facts", ".kizuki", "note.md");
+  const nestedControlBytes = serializePage({
+    data: data("nested-kizuki", [eventId]),
+    body: "Owner-controlled synthetic prose.\n",
+  });
+  writeFileSync(nestedControl, nestedControlBytes, { mode: 0o600 });
+  chmodSync(nestedControl, 0o600);
   const pages = [
     seed(f.vault, "CANON", data("nested-canon", [eventId])),
     seed(f.vault, "SCHEMA", data("nested-schema", [eventId])),
     seed(f.vault, "archive/item", data("nested-archive", [eventId])),
+    { path: nestedControl, bytes: nestedControlBytes },
   ];
   const doctrine = ["CANON.md", "SCHEMA.md"].map(name => ({
     path: join(f.vault, name), bytes: readFileSync(join(f.vault, name), "utf8"),
@@ -146,12 +156,12 @@ test("discovery and doctor include nested doctrine names and archive folders as 
   writeFileSync(history, "Historical bytes outside live page discovery.\n");
   const discovered = listCanonPagesReport(f.vault);
   expect(discovered.pages.map(page => page.relPath)).toEqual([
-    "facts/CANON.md", "facts/SCHEMA.md", "facts/archive/item.md",
+    "facts/.kizuki/note.md", "facts/CANON.md", "facts/SCHEMA.md", "facts/archive/item.md",
   ]);
   expect(discovered.skipped).toEqual([]);
   expect(discovered.truncated).toBe(false);
   const report = doctorVault(f.vault, f.db);
-  expect(report.counts).toEqual({ total: 3, valid: 3, invalid: 0 });
+  expect(report.counts).toEqual({ total: 4, valid: 4, invalid: 0 });
   expect(report.pages.map(page => page.page)).toEqual(discovered.pages.map(page => page.relPath));
   for (const file of [...pages, ...doctrine]) expect(readFileSync(file.path, "utf8")).toBe(file.bytes);
   expect(readFileSync(history, "utf8")).toBe("Historical bytes outside live page discovery.\n");
