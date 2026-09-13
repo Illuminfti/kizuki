@@ -569,18 +569,27 @@ function emptyLiveSignature(db: Database): boolean {
 
 /**
  * Low-level claims compatibility repairs. The ledger migrator is the only
- * schema owner; `initClaims` must not call these directly.
+ * schema owner; `initClaims` must not call these directly. Staging repair is
+ * opt-in because it widens historical claim rows with staging-only columns.
  */
-export function repairClaimsCompatibility(db: Database): void {
+export function repairClaimsCompatibility(
+  db: Database,
+  options: { includeStaging?: boolean } = {},
+): void {
   if (!claimsSurfaceReady(db)) applyClaimsV3(db);
-  if (!stagingIdempotencyReady(db)) applyLegacyStagingIdempotency(db);
+  if (options.includeStaging && !stagingIdempotencyReady(db)) {
+    applyLegacyStagingIdempotency(db);
+  }
 }
 
 /** Cheap no-op on a healthy current ledger. Otherwise request the migrator. */
 export function initClaims(db: Database): void {
   if (claimsSurfaceReady(db) && stagingIdempotencyReady(db)) return;
   const { ensureLedgerInitialized } = requireFromClaims("../ledger/db") as {
-    ensureLedgerInitialized: (database: Database) => void;
+    ensureLedgerInitialized: (
+      database: Database,
+      options: { includeStaging?: boolean },
+    ) => void;
   };
-  ensureLedgerInitialized(db);
+  ensureLedgerInitialized(db, { includeStaging: true });
 }

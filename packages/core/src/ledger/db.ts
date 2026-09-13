@@ -265,7 +265,7 @@ function writeSchemaVersion(db: Database, version: number): void {
   oneShotRun(db, "UPDATE schema_version SET version = ?", version);
 }
 
-function migrate(db: Database): void {
+function migrate(db: Database, options: { includeStaging?: boolean } = {}): void {
   repairSchemaVersion(db);
   const current = readSchemaVersion(db);
   const latest = LEDGER_SCHEMA_VERSION;
@@ -280,7 +280,7 @@ function migrate(db: Database): void {
   if (pending.length === 0) {
     db.transaction(() => {
       applyDerivedV10(db);
-      repairClaimsCompatibility(db);
+      repairClaimsCompatibility(db, options);
     }).immediate();
     assertLedgerSchema(db, latest);
     return;
@@ -292,14 +292,14 @@ function migrate(db: Database): void {
       migration.apply?.(db);
       writeSchemaVersion(db, migration.version);
     }
-    repairClaimsCompatibility(db);
+    repairClaimsCompatibility(db, options);
   }).immediate();
   assertLedgerSchema(db, latest);
 }
 
 export function ensureLedgerInitialized(
   db: Database,
-  options: { busyTimeoutMs?: number } = {},
+  options: { busyTimeoutMs?: number; includeStaging?: boolean } = {},
 ): void {
   const timeout = options.busyTimeoutMs ?? LEDGER_BUSY_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 5000) {
@@ -308,7 +308,7 @@ export function ensureLedgerInitialized(
   db.exec(`PRAGMA busy_timeout = ${timeout}`);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
-  migrate(db);
+  migrate(db, options);
   initServe(db);
   initCanon(db);
 }

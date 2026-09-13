@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
 import { contentSignature } from "../claims/hash";
-import { ensureLedgerInitialized, openLedger } from "../ledger/db";
+import { initClaims } from "../claims/schema";
+import { openLedger } from "../ledger/db";
 import {
   canonicalizeProducer,
   isAuthorityTier,
@@ -106,11 +107,18 @@ interface ProposalRow {
 }
 
 export function initStaging(db: Database): void {
-  ensureLedgerInitialized(db);
+  initClaims(db);
 }
 
 export function openStagingDb(path: string): Database {
-  return openLedger(path);
+  const db = openLedger(path);
+  try {
+    initStaging(db);
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 export function hashBody(body: string): string {
