@@ -411,6 +411,89 @@ A counterexample fails when both occurrences collapse into one identity, no
 discoveries are returned, a class is wrong, or an occurrence reuses the other
 occurrence's source anchor.
 
+### Source-only quoted disagreement
+
+This is a design acceptance example, not automatic discovery and not a public
+surface. The input supplies only a synthetic source/event identity and text.
+Quotation is not endorsement. Disagreement with a quoted proposition is not a
+universal dislike, and neither mentioned person is the owner.
+
+<!-- rich-subject-quoted-disagreement-example -->
+```json
+{
+  "id": "source-only-quoted-disagreement",
+  "evaluation_state": "design_only",
+  "input": {
+    "source_key": "synthetic.note",
+    "event_id": "00000000000000000000000003",
+    "text": "Mira: Theo wrote, “The Cedar method is best.” I disagree.",
+    "supplied_refs": []
+  },
+  "expected": {
+    "discoveries": [
+      {
+        "occurrence_id": "speaker-mira",
+        "label": "Mira",
+        "class": "person",
+        "role": "speaker",
+        "owner": false,
+        "anchor": {
+          "event_id": "00000000000000000000000003",
+          "start_utf16": 0,
+          "end_utf16": 4
+        }
+      },
+      {
+        "occurrence_id": "quoted-author-theo",
+        "label": "Theo",
+        "class": "person",
+        "role": "quoted_author",
+        "owner": false,
+        "anchor": {
+          "event_id": "00000000000000000000000003",
+          "start_utf16": 6,
+          "end_utf16": 10
+        }
+      }
+    ],
+    "observations": [
+      {
+        "observation_id": "theo-cedar-best",
+        "speaker_occurrence_id": "quoted-author-theo",
+        "mode": "quotation",
+        "proposition": "The Cedar method is best",
+        "endorsed_by_speaker": false,
+        "endorsed_by_owner": false,
+        "anchor": {
+          "event_id": "00000000000000000000000003",
+          "start_utf16": 19,
+          "end_utf16": 43
+        }
+      },
+      {
+        "observation_id": "mira-disagrees-quote",
+        "speaker_occurrence_id": "speaker-mira",
+        "mode": "disagreement",
+        "target_observation_id": "theo-cedar-best",
+        "endorsed_by_speaker": false,
+        "endorsed_by_owner": false,
+        "universal_dislike": false,
+        "anchor": {
+          "event_id": "00000000000000000000000003",
+          "start_utf16": 46,
+          "end_utf16": 56
+        }
+      }
+    ]
+  }
+}
+```
+
+A counterexample fails when Theo's quoted proposition is attributed to Mira,
+quotation becomes endorsement, the disagreement is dropped, either person is
+marked owner, no observations remain, or an observation leaves its source
+anchor.
+
 ## Verification
 
 B1a must prove valid v1/v2 parsing, exact v1 compatibility, all status branches,
