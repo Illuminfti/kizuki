@@ -98,7 +98,15 @@ export const modelsCommand: Command = {
           io.out(`architecture=${entry.architecture}`);
           io.out(`dims=${entry.dims}`);
           const remote = catalogRemoteAcquisition(entry);
-          io.out(remote === null ? "remote=no" : "remote=yes");
+          if (remote === null) {
+            io.out("remote=no");
+            io.out("bytes=none");
+            io.out("sha256=none");
+          } else {
+            io.out("remote=yes");
+            io.out(`bytes=${remote.bytes}`);
+            io.out(`sha256=${remote.sha256}`);
+          }
         }
         return 0;
       }
