@@ -23,7 +23,7 @@ Every capability has one canonical Core implementation and one versioned semanti
 
 ### Error-semantics example: authorization refusal before mutation
 
-This is a design acceptance example, not a shipped public surface. It does not add a CLI, MCP, HTTP, or Situation API. For one principal, the human, developer, and agent projections of the same Core refusal must agree on four obligations: what happened, whether state changed, whether an identical blind retry is useful, and the next safe recovery path. None of them may disclose whether a hidden target exists.
+This is a design acceptance example, not a shipped public surface. It does not add a CLI, MCP, HTTP, or Situation API. For one principal, the human, developer, and agent projections of the same Core refusal must agree on four obligations: what happened, whether state changed, whether an identical blind retry is useful, and the next safe recovery path. None of them may disclose whether a hidden target exists. The DX and AX diagnostic code must identify the same refusal outcome.
 
 <!-- situation-error-parity-example -->
 ```json

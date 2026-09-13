@@ -66,6 +66,12 @@ function parityErrors(example: Example): string[] {
       errors.push(`${name} discloses whether a hidden target exists`);
     }
   }
+  if (dx.code !== "authorization_refused") {
+    errors.push("dx code must identify authorization_refused");
+  }
+  if (ax.code !== "authorization_refused") {
+    errors.push("ax code must identify authorization_refused");
+  }
   for (const key of SEMANTIC_KEYS) {
     if (ux[key] !== dx[key] || ux[key] !== ax[key]) {
       errors.push(`UX/DX/AX disagree on ${key}`);
@@ -128,6 +134,30 @@ test("a projection that implies success, retry, or hidden-target disclosure fail
     },
   };
   expect(parityErrors(broken).length).toBeGreaterThan(0);
+});
+
+test("authorization DX/AX diagnostic code must identify the same refusal", () => {
+  const example = extractExample(readFileSync(DOC, "utf8"));
+  const mutations: Array<(projection: Projection) => Projection> = [
+    (projection) => ({ ...projection, code: "ok" }),
+    (projection) => ({ ...projection, code: "model_unavailable" }),
+    (projection) => {
+      const { code: _code, ...rest } = projection;
+      return rest;
+    },
+  ];
+  for (const name of ["dx", "ax"] as const) {
+    for (const mutate of mutations) {
+      const broken: Example = {
+        ...example,
+        projections: {
+          ...example.projections,
+          [name]: mutate(example.projections[name]),
+        },
+      };
+      expect(parityErrors(broken).length).toBeGreaterThan(0);
+    }
+  }
 });
 
 test("a committed correction with an unavailable refresh preserves UX/DX/AX mutation semantics", () => {
