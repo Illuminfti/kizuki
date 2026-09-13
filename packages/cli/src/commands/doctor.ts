@@ -17,7 +17,7 @@ import {
   inspectServeDoctor,
   latestReceiptForPage,
   listClaims,
-  listCanonPages,
+  listCanonPagesReport,
   readHolds,
   readVaultId,
 } from "@kizuki/core";
@@ -58,6 +58,17 @@ interface DoctorClaim {
   predicate: string | null;
 }
 
+interface HashDriftCoverage {
+  complete: boolean;
+  sampled: boolean;
+  truncated: boolean;
+  limit: number;
+  enumerated: number;
+  selected: number;
+  checked: number;
+  unreceipted: number;
+}
+
 interface DoctorReport {
   config: string;
   vault: string;
@@ -76,6 +87,7 @@ interface DoctorReport {
   orphans: string[];
   holds: { page_path: string; id: string }[];
   problems: { page: string; error: string }[];
+  hash_drift: HashDriftCoverage;
   serve: ReturnType<typeof inspectServeDoctor>;
   doctrine: { file: string; state: string }[];
   ledger: ReturnType<typeof inspectLedgerHealth>;
@@ -113,7 +125,12 @@ export const doctorCommand: Command = {
       if (parsed.flags.has("--json")) {
         io.out(
           jsonEnvelope("doctor", report.ok ? "ok" : "error", report, {
-            degraded: report.problems.map((problem) => problem.error),
+            degraded: [
+              ...report.problems.map((problem) => problem.error),
+              ...(report.hash_drift.sampled
+                ? [hashDriftCoverageLine(report.hash_drift)]
+                : []),
+            ],
           }),
         );
         return report.ok ? 0 : 1;
@@ -192,12 +209,26 @@ function reconcileReceipts(vaultPath: string, ctx: ReadVaultContext): string[] {
   return orphans;
 }
 
-function hashDrift(vaultPath: string, ctx: ReadVaultContext): { page: string; error: string }[] {
+function hashDriftCoverageLine(coverage: HashDriftCoverage): string {
+  return `hash-drift coverage=${coverage.sampled ? "sampled" : "complete"} selected=${coverage.selected} enumerated=${coverage.enumerated} limit=${coverage.limit}`;
+}
+
+function hashDrift(
+  vaultPath: string,
+  ctx: ReadVaultContext,
+): { problems: { page: string; error: string }[]; coverage: HashDriftCoverage } {
+  const report = listCanonPagesReport(vaultPath);
+  const selected = report.pages.slice(0, HASH_DRIFT_CAP);
   const problems: { page: string; error: string }[] = [];
-  const pages = listCanonPages(vaultPath).slice(0, HASH_DRIFT_CAP);
-  for (const page of pages) {
+  let checked = 0;
+  let unreceipted = 0;
+  for (const page of selected) {
     const latest = latestReceiptForPage(ctx.db, page.relPath);
-    if (latest === null) continue;
+    if (latest === null) {
+      unreceipted += 1;
+      continue;
+    }
+    checked += 1;
     const absolute = join(vaultPath, page.relPath);
     if (!existsSync(absolute)) {
       problems.push({
@@ -216,7 +247,20 @@ function hashDrift(vaultPath: string, ctx: ReadVaultContext): { page: string; er
       });
     }
   }
-  return problems;
+  const complete = !report.truncated && report.pages.length <= HASH_DRIFT_CAP;
+  return {
+    problems,
+    coverage: {
+      complete,
+      sampled: !complete,
+      truncated: report.truncated,
+      limit: HASH_DRIFT_CAP,
+      enumerated: report.pages.length,
+      selected: selected.length,
+      checked,
+      unreceipted,
+    },
+  };
 }
 
 async function collect(
@@ -324,7 +368,8 @@ async function collect(
           : `canon hold ${failure.id} pending for ${failure.age_s}s (SLA ${PURGE_SLA_SECONDS}s)`,
     });
   }
-  problems.push(...hashDrift(vaultPath, ctx));
+  const hashDriftResult = hashDrift(vaultPath, ctx);
+  problems.push(...hashDriftResult.problems);
 
   const freshness = indexFreshness(ctx.db, vaultPath);
   for (const reason of freshness.degraded) {
@@ -401,6 +446,7 @@ async function collect(
     orphans,
     holds,
     problems,
+    hash_drift: hashDriftResult.coverage,
     serve,
     doctrine: vault.doctrine,
     ledger,
@@ -458,6 +504,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     io.out(item.problem === null ? line : `${line} ${item.problem}`);
   }
   io.out(`receipts=${report.receipts} orphans=${report.orphans.length}`);
+  io.out(hashDriftCoverageLine(report.hash_drift));
   for (const orphan of report.orphans) io.out(orphan);
   for (const hold of report.holds) {
     io.out(`hold ${hold.page_path} id=${hold.id}`);
