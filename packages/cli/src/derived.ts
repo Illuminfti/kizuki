@@ -6,6 +6,7 @@ import {
   count,
   isLiveCanonPage,
   isPlainObject,
+  listCanonPagesReport,
   listCanonReceipts,
   pendingRetrievalOps,
   readCanonPage,
@@ -168,14 +169,28 @@ export function indexReceiptsFromCursor(
   vaultPath: string,
   cursor: IndexCursor,
   loadPage: (vaultPath: string, relPath: string) => ReturnType<typeof readCanonPage> = readCanonPage,
+  scanPages: typeof listCanonPagesReport = listCanonPagesReport,
 ): { indexed: number; cursor: IndexCursor } {
   const loaded = new Map<string, ReturnType<typeof readCanonPage>>();
+  let duplicatePaths: Set<string> | undefined;
   let indexed = 0;
   let lastId = cursor.receipt_id;
   let seen = 0;
   for (const receipt of walkCanonReceipts(db)) {
     seen += 1;
     if (!receiptAfter(cursor.receipt_id, receipt.receipt_id)) continue;
+    if (duplicatePaths === undefined) {
+      // Direct reads still need one batch-wide audit to preserve rebuild's
+      // rule that every file sharing a frontmatter id stays withheld.
+      duplicatePaths = new Set(
+        scanPages(vaultPath).skipped
+          .filter((entry) => entry.code === "duplicate")
+          .map((entry) => entry.relPath),
+      );
+      for (const path of duplicatePaths) {
+        withdrawIndexedCanon(db, path, pageIndexByPath(db, path)?.page_id);
+      }
+    }
     const indexedPath = pageIndexByPath(db, receipt.page_path);
     const relPath = indexedPath?.rel_path ?? receipt.page_path;
     let page = loaded.get(relPath);
@@ -183,7 +198,8 @@ export function indexReceiptsFromCursor(
       page = loadPage(vaultPath, relPath);
       loaded.set(relPath, page);
     }
-    if (page != null && isLiveCanonPage(page) && receipt.page_action !== "archive") {
+    const duplicate = duplicatePaths.has(relPath);
+    if (page != null && !duplicate && isLiveCanonPage(page) && receipt.page_action !== "archive") {
       indexPage(db, page);
       indexed += 1;
     } else {

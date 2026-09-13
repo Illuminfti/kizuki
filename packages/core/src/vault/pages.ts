@@ -3,6 +3,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { hashBytes } from "./write";
 import { parseFrontmatter } from "./frontmatter";
 import { validatePage } from "./schema";
+import { openCanonFiles } from "./canon-files";
 
 export const MAX_CANON_PAGE_BYTES = 1_048_576;
 export const MAX_CANON_PAGES = 10_000;
@@ -103,37 +104,13 @@ function withholdDuplicate(
   );
 }
 
-function considerFile(state: WalkState, path: string, relPath: string): void {
-  if (state.truncated) return;
-  if (state.files >= MAX_CANON_PAGES) {
-    state.truncated = true;
-    state.skipped.push(
-      skip(".", "too_many", `vault exceeds ${MAX_CANON_PAGES} markdown files`),
-    );
-    return;
-  }
-  state.files += 1;
-
-  let size: number;
-  try {
-    const stat = lstatSync(path);
-    if (stat.isSymbolicLink() || !stat.isFile()) {
-      state.skipped.push(skip(relPath, "unreadable", "unreadable: not a regular file"));
-      return;
-    }
-    size = stat.size;
-  } catch (error) {
-    state.skipped.push(skip(relPath, "unreadable", `unreadable: ${fsCode(error)}`));
-    return;
-  }
-
-  if (size > MAX_CANON_PAGE_BYTES) {
-    state.skipped.push(
-      skip(relPath, "oversize", `exceeds ${MAX_CANON_PAGE_BYTES} bytes`),
-    );
-    return;
-  }
-  if (state.bytes + size > MAX_CANON_WALK_BYTES) {
+function considerBytes(
+  state: WalkState,
+  path: string,
+  relPath: string,
+  bytes: Buffer,
+): void {
+  if (state.bytes + bytes.byteLength > MAX_CANON_WALK_BYTES) {
     state.truncated = true;
     state.skipped.push(
       skip(relPath, "too_many", `vault exceeds ${MAX_CANON_WALK_BYTES} scanned bytes`),
@@ -144,7 +121,6 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
   let parsed: ReturnType<typeof parseFrontmatter>;
   let contentHash: string;
   try {
-    const bytes = readFileSync(path);
     state.bytes += bytes.byteLength;
     contentHash = hashBytes(bytes);
     parsed = parseFrontmatter(bytes.toString("utf8"));
@@ -186,6 +162,46 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
     body: parsed.body,
     contentHash,
   });
+}
+
+function considerFile(state: WalkState, path: string, relPath: string): void {
+  if (state.truncated) return;
+  if (state.files >= MAX_CANON_PAGES) {
+    state.truncated = true;
+    state.skipped.push(
+      skip(".", "too_many", `vault exceeds ${MAX_CANON_PAGES} markdown files`),
+    );
+    return;
+  }
+  state.files += 1;
+
+  let size: number;
+  try {
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      state.skipped.push(skip(relPath, "unreadable", "unreadable: not a regular file"));
+      return;
+    }
+    size = stat.size;
+  } catch (error) {
+    state.skipped.push(skip(relPath, "unreadable", `unreadable: ${fsCode(error)}`));
+    return;
+  }
+
+  if (size > MAX_CANON_PAGE_BYTES) {
+    state.skipped.push(
+      skip(relPath, "oversize", `exceeds ${MAX_CANON_PAGE_BYTES} bytes`),
+    );
+    return;
+  }
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(path);
+  } catch (error) {
+    state.skipped.push(skip(relPath, "unreadable", `unreadable: ${fsCode(error)}`));
+    return;
+  }
+  considerBytes(state, path, relPath, bytes);
 }
 
 function walk(state: WalkState, directory: string, vaultPath: string, depth: number): void {
@@ -271,6 +287,23 @@ export function readCanonPage(vaultPath: string, relPath: string): CanonPage | n
   const root = resolve(vaultPath);
   const target = resolve(join(vaultPath, ...parts));
   if (target !== root && !target.startsWith(`${root}${sep}`)) return null;
+  let bytes: Buffer;
+  try {
+    const files = openCanonFiles(root);
+    try {
+      const snapshot = files.read(relPath);
+      if (snapshot === null) return null;
+      try {
+        bytes = Buffer.from(snapshot.bytes);
+      } finally {
+        snapshot.close();
+      }
+    } finally {
+      files.close();
+    }
+  } catch {
+    return null;
+  }
   const state: WalkState = {
     pages: [],
     skipped: [],
@@ -279,7 +312,7 @@ export function readCanonPage(vaultPath: string, relPath: string): CanonPage | n
     bytes: 0,
     truncated: false,
   };
-  considerFile(state, target, relPath);
+  considerBytes(state, target, relPath, bytes);
   return state.pages[0] ?? null;
 }
 
