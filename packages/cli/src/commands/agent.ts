@@ -11,6 +11,7 @@ import {
 import { UsageError, parseArguments } from "../args";
 import { configPath, readConfig } from "../config";
 import { resolveVault } from "../context";
+import { AGENT_REVOKE_SCHEMA } from "../option-schema";
 import { jsonEnvelope } from "../output";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
@@ -92,7 +93,7 @@ export const agentCommand: Command = {
       if (action !== "add" && action !== "revoke") throw new UsageError(USAGE);
       const parsed = parseArguments(args.slice(1), action === "add" ? {
         options: [...AGENT_SCHEMA.options], flags: [...AGENT_SCHEMA.flags],
-      } : { flags: ["--json"] });
+      } : { options: [...AGENT_REVOKE_SCHEMA.options], flags: [...AGENT_REVOKE_SCHEMA.flags] });
       if (parsed.positionals.length !== 1) throw new UsageError(USAGE);
       const name = parsed.positionals[0]!;
       let result: AgentEnrollmentResult;
