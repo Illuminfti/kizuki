@@ -62,6 +62,47 @@ This is a design acceptance example, not a shipped public surface. It does not a
 
 A counterexample fails this law when any projection reports success, a state change, a useful blind retry, or whether a hidden target exists.
 
+### Error-semantics example: model unavailable before canon write
+
+This is a design acceptance example, not a shipped public surface. It does not add a CLI, MCP, HTTP, or Situation API. Capture, search, timeline, and undo remain useful. Autonomous canon writing does not proceed. Human, developer, and agent projections of the same Core diagnostic must agree that the model was unavailable, that no canon write occurred, that repeating the same request is not useful until a model is configured, and that they do not disclose whether a hidden page would have been written.
+
+<!-- situation-error-parity-model-unavailable -->
+```json
+{
+  "id": "model-unavailable-before-canon-write",
+  "evaluation_state": "design_only",
+  "principal": "owner",
+  "projections": {
+    "ux": {
+      "happened": "model_unavailable",
+      "state_changed": false,
+      "blind_retry_useful": false,
+      "recovery": "configure_model",
+      "hidden_target_disclosed": false,
+      "summary": "No model is configured. Nothing was written to canon. Retrying will not help until a model is set."
+    },
+    "dx": {
+      "happened": "model_unavailable",
+      "state_changed": false,
+      "blind_retry_useful": false,
+      "recovery": "configure_model",
+      "hidden_target_disclosed": false,
+      "code": "model_unavailable"
+    },
+    "ax": {
+      "happened": "model_unavailable",
+      "state_changed": false,
+      "blind_retry_useful": false,
+      "recovery": "configure_model",
+      "hidden_target_disclosed": false,
+      "code": "model_unavailable"
+    }
+  }
+}
+```
+
+A counterexample fails this law when any projection reports a canon write, a useful blind retry, or whether a hidden page exists.
+
 ## Delivery map
 
 Follow issue #497 for the current dependency graph. The groups below explain the sequence without maintaining another exhaustive task list.
