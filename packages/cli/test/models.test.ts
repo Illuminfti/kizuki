@@ -258,6 +258,9 @@ describe("kizuki models list and remove", () => {
     expect(listed.stdout).toContain("id=kizuki-fixture-embed");
     expect(listed.stdout).toContain("filename=kizuki-fixture-embed.gguf");
     expect(listed.stdout).toContain("remote=no");
+    expect(listed.stdout).toContain("bytes=none");
+    expect(listed.stdout).toContain("sha256=none");
+    expect(listed.stdout).not.toContain("http");
   });
 
   test("refuses traversal, extra arguments, and unknown names", () => {
