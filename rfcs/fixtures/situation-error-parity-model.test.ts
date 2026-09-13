@@ -63,6 +63,12 @@ function parityErrors(example: Example): string[] {
       errors.push(`${name} discloses whether a hidden target exists`);
     }
   }
+  if (dx.code !== "model_unavailable") {
+    errors.push("dx code must identify model_unavailable");
+  }
+  if (ax.code !== "model_unavailable") {
+    errors.push("ax code must identify model_unavailable");
+  }
   for (const key of SEMANTIC_KEYS) {
     if (ux[key] !== dx[key] || ux[key] !== ax[key]) {
       errors.push(`UX/DX/AX disagree on ${key}`);
@@ -93,4 +99,37 @@ test("a projection that implies a canon write or useful retry fails the example"
     },
   };
   expect(parityErrors(broken).length).toBeGreaterThan(0);
+});
+
+test("model-unavailable DX/AX diagnostic code must identify model_unavailable", () => {
+  const example = extractExample(readFileSync(DOC, "utf8"));
+  const mutations: Array<(projection: Projection) => Projection> = [
+    (projection) => ({ ...projection, code: "ok" }),
+    (projection) => ({ ...projection, code: "authorization_refused" }),
+    (projection) => {
+      const { code: _code, ...rest } = projection;
+      return rest;
+    },
+  ];
+  for (const name of ["dx", "ax"] as const) {
+    for (const mutate of mutations) {
+      const broken: Example = {
+        ...example,
+        projections: {
+          ...example.projections,
+          [name]: mutate(example.projections[name]),
+        },
+      };
+      expect(parityErrors(broken).length).toBeGreaterThan(0);
+    }
+  }
+  const bothWrong: Example = {
+    ...example,
+    projections: {
+      ...example.projections,
+      dx: { ...example.projections.dx, code: "ok" },
+      ax: { ...example.projections.ax, code: "ok" },
+    },
+  };
+  expect(parityErrors(bothWrong).length).toBeGreaterThan(0);
 });

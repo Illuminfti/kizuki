@@ -104,6 +104,12 @@ function refreshParityErrors(example: Example): string[] {
     if (projection.view_current !== false) errors.push(`${name} labels the unavailable view current`);
     if (projection.receipt !== "synthetic-receipt-1") errors.push(`${name} lost the mutation receipt`);
   }
+  if (dx.code !== "correction_committed_refresh_unavailable") {
+    errors.push("dx code must identify correction_committed_refresh_unavailable");
+  }
+  if (ax.code !== "correction_committed_refresh_unavailable") {
+    errors.push("ax code must identify correction_committed_refresh_unavailable");
+  }
   for (const key of [...SEMANTIC_KEYS, "view_current", "receipt"] as const) {
     if (ux[key] !== dx[key] || ux[key] !== ax[key]) {
       errors.push(`UX/DX/AX disagree on ${key}`);
@@ -184,4 +190,37 @@ test("refresh failure cannot imply rollback, mutation retry, or a current view",
     };
     expect(refreshParityErrors(broken).length).toBeGreaterThan(0);
   }
+});
+
+test("refresh DX/AX diagnostic code must identify the committed-refresh outcome", () => {
+  const example = extractExample(readFileSync(DOC, "utf8"), REFRESH_MARKER);
+  const mutations: Array<(projection: Projection) => Projection> = [
+    (projection) => ({ ...projection, code: "ok" }),
+    (projection) => ({ ...projection, code: "authorization_refused" }),
+    (projection) => {
+      const { code: _code, ...rest } = projection;
+      return rest;
+    },
+  ];
+  for (const name of ["dx", "ax"] as const) {
+    for (const mutate of mutations) {
+      const broken: Example = {
+        ...example,
+        projections: {
+          ...example.projections,
+          [name]: mutate(example.projections[name]),
+        },
+      };
+      expect(refreshParityErrors(broken).length).toBeGreaterThan(0);
+    }
+  }
+  const bothWrong: Example = {
+    ...example,
+    projections: {
+      ...example.projections,
+      dx: { ...example.projections.dx, code: "ok" },
+      ax: { ...example.projections.ax, code: "ok" },
+    },
+  };
+  expect(refreshParityErrors(bothWrong).length).toBeGreaterThan(0);
 });
