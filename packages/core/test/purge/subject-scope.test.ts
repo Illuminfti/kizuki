@@ -93,6 +93,11 @@ describe("raw subject purge scope", () => {
     expectUnchanged(db, [selected, retained]);
     const outcome = purgeEvents(db, vault, filter, "synthetic subject request");
     expect(outcome.receipts.map(receipt => receipt.event_id)).toEqual(preview.event_ids);
+    expect(
+      db.query<{ selector_kind: string | null }, []>(
+        "SELECT selector_kind FROM event_purge_proofs",
+      ).all().map(({ selector_kind }) => selector_kind),
+    ).toEqual(["subject"]);
     expect(readSince(db, null, 10).events.map(event => event.event_id)).toEqual([retained]);
   });
 
@@ -117,6 +122,11 @@ describe("raw subject purge scope", () => {
     expectUnchanged(db, [selected, ...kept]);
     const outcome = purgeEvents(db, vault, filter, "synthetic subject request");
     expect(outcome.receipts.map(receipt => receipt.event_id)).toEqual([selected]);
+    expect(
+      db.query<{ selector_kind: string | null }, []>(
+        "SELECT selector_kind FROM event_purge_proofs",
+      ).all().map(({ selector_kind }) => selector_kind),
+    ).toEqual(["subject"]);
     expect(readSince(db, null, 10).events.map(event => event.event_id).sort()).toEqual(kept.sort());
   });
 
@@ -127,6 +137,19 @@ describe("raw subject purge scope", () => {
     expectRefusal(() => previewPurge(db, vault, filter, "synthetic request"), "subject_namespace_required");
     expectRefusal(() => purgeEvents(db, vault, filter, "synthetic request"), "subject_namespace_required");
     expectUnchanged(db, ids);
+  });
+
+  test("compound event and subject selectors stay unrecorded", () => {
+    const { db, vault } = fixture();
+    const selected = store(db, "selected");
+    const filter = { connector_id: CONNECTOR, subject_handle: SUBJECT, event_id: selected };
+    const outcome = purgeEvents(db, vault, filter, "synthetic compound request");
+    expect(outcome.receipts.map(receipt => receipt.event_id)).toEqual([selected]);
+    expect(
+      db.query<{ selector_kind: string | null }, []>(
+        "SELECT selector_kind FROM event_purge_proofs",
+      ).get()?.selector_kind ?? null,
+    ).toBeNull();
   });
 
   test("source-bound evidence requires an explicit source even when only one source matches", () => {

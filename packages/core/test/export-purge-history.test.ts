@@ -184,6 +184,31 @@ describe("completed purge history backup", () => {
     expect((await verifyPurge(copy, f.restored, result.receipts[0]!.receipt_id)).ok).toBe(true);
   });
 
+  test("namespaced subject selector provenance survives backup restore", async () => {
+    const f = fixture();
+    const stored = f.event("subject-one");
+    const result = await runPurge(f.db, f.vault, {
+      connector_id: stored.connector_id,
+      subject_handle: "person:ada",
+    }, "retire fixture");
+    const before = f.db.query(
+      "SELECT receipt_id, selector_kind FROM event_purge_proofs ORDER BY receipt_id",
+    ).all();
+    expect(before.map((row) => (row as { selector_kind: string | null }).selector_kind)).toEqual(["subject"]);
+    const bound = f.db.query<{ proof_digest: string | null }, []>(
+      "SELECT proof_digest FROM event_purges ORDER BY receipt_id",
+    ).all();
+    expect(bound).toEqual([{
+      proof_digest: eventPurgeProofDigest(stored.content_hash, stored.source_record_id, "subject"),
+    }]);
+    exportVault(f.db, f.vault, f.backup);
+    restoreVault(f.backup, f.restored);
+    const copy = f.openRestored();
+    expect(copy.query("SELECT receipt_id, selector_kind FROM event_purge_proofs ORDER BY receipt_id").all()).toEqual(before);
+    expect(copy.query("SELECT proof_digest FROM event_purges ORDER BY receipt_id").all()).toEqual(bound);
+    expect((await verifyPurge(copy, f.restored, result.receipts[0]!.receipt_id)).ok).toBe(true);
+  });
+
   test("mismatched proof_digest is refused before installing a restore", async () => {
     const f = fixture();
     const event = f.event("atlas-one");

@@ -2004,11 +2004,13 @@ function assertBackupFormat(manifest: ExportManifest): void {
   // Ledger28 also stores proof_digest on event_purges. Omitted digests bind currently stored
   // proof bytes as a restore baseline, not retroactive authentication. Mismatched explicit
   // digests are refused.
+  // Ledger29 widens selector_kind to event|connector|record|source|subject for namespaced
+  // subject selectors. Bare subject ids remain refused and unrecorded. Compound rows restore as NULL.
   // Future migrations must make their own explicit compatibility decision.
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
       versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
       versions.ledger !== 19 && versions.ledger !== 20 &&
-      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27 || versions.ledger === 28))) {
+      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27 || versions.ledger === 28 || versions.ledger === 29))) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -2113,9 +2115,10 @@ function insertPurgeProof(db: Database, raw: Record<string, unknown>): void {
     selectorKind !== "event" &&
     selectorKind !== "connector" &&
     selectorKind !== "record" &&
-    selectorKind !== "source"
+    selectorKind !== "source" &&
+    selectorKind !== "subject"
   ) {
-    throw new Error("selector_kind: must be event, connector, record, source, or omitted");
+    throw new Error("selector_kind: must be event, connector, record, source, subject, or omitted");
   }
   db.query(
     `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
@@ -2124,7 +2127,7 @@ function insertPurgeProof(db: Database, raw: Record<string, unknown>): void {
     asString(raw.receipt_id, "receipt_id"),
     hash,
     sourceRecordId,
-    selectorKind === "event" || selectorKind === "connector" || selectorKind === "record" || selectorKind === "source"
+    selectorKind === "event" || selectorKind === "connector" || selectorKind === "record" || selectorKind === "source" || selectorKind === "subject"
       ? selectorKind
       : null,
   );
