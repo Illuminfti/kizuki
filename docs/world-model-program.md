@@ -103,6 +103,53 @@ This is a design acceptance example, not a shipped public surface. It does not a
 
 A counterexample fails this law when any projection reports a canon write, a useful blind retry, or whether a hidden page exists.
 
+### Error-semantics example: correction committed, refreshed view unavailable
+
+This is a design acceptance example, not a shipped public surface. It does not add a CLI, MCP, HTTP, or Situation API. The correction already committed. A later view refresh failed. Human, developer, and agent projections must agree that the mutation stands, that its receipt is preserved, that repeating the correction is not the recovery path, and that an unavailable view is not current. None of them may disclose whether a hidden target exists.
+
+<!-- situation-error-parity-refresh-unavailable -->
+```json
+{
+  "id": "correction-committed-refresh-unavailable",
+  "evaluation_state": "design_only",
+  "principal": "agent.alpha",
+  "projections": {
+    "ux": {
+      "happened": "correction_committed_refresh_unavailable",
+      "state_changed": true,
+      "blind_retry_useful": false,
+      "recovery": "retry_read",
+      "hidden_target_disclosed": false,
+      "view_current": false,
+      "receipt": "synthetic-receipt-1",
+      "summary": "The correction was saved. The refreshed view is unavailable. Retry the read, not the correction."
+    },
+    "dx": {
+      "happened": "correction_committed_refresh_unavailable",
+      "state_changed": true,
+      "blind_retry_useful": false,
+      "recovery": "retry_read",
+      "hidden_target_disclosed": false,
+      "view_current": false,
+      "receipt": "synthetic-receipt-1",
+      "code": "correction_committed_refresh_unavailable"
+    },
+    "ax": {
+      "happened": "correction_committed_refresh_unavailable",
+      "state_changed": true,
+      "blind_retry_useful": false,
+      "recovery": "retry_read",
+      "hidden_target_disclosed": false,
+      "view_current": false,
+      "receipt": "synthetic-receipt-1",
+      "code": "correction_committed_refresh_unavailable"
+    }
+  }
+}
+```
+
+A counterexample fails this law when any projection implies rollback, repeats the mutation, labels the unavailable view current, loses the receipt, or discloses a hidden target.
+
 ## Delivery map
 
 Follow issue #497 for the current dependency graph. The groups below explain the sequence without maintaining another exhaustive task list.
