@@ -83,3 +83,85 @@ test("misbound inspection versions fail the design validator", () => {
     }),
   ).not.toBe(0);
 });
+
+type ContentBinding = {
+  id: string;
+  evaluation_state: string;
+  inspections: Array<{
+    record_id: string;
+    artifact_id: string;
+    version: string;
+    inspected_content_sha256?: string;
+  }>;
+};
+
+const CONTENT_BINDING = "world-artifact-content-binding.json";
+const SHA256 = /^[0-9a-f]{64}$/;
+
+function loadContentBinding(): ContentBinding {
+  return JSON.parse(readFileSync(join(FIXTURES, CONTENT_BINDING), "utf8")) as ContentBinding;
+}
+
+function loadLongitudinal(): Fixture {
+  return JSON.parse(readFileSync(join(FIXTURES, LONGITUDINAL), "utf8")) as Fixture;
+}
+
+function sha256Utf8(value: string): string {
+  return new Bun.CryptoHasher("sha256").update(value).digest("hex");
+}
+
+function contentBindingErrors(example: ContentBinding, artifacts: Fixture): string[] {
+  const errors: string[] = [];
+  if (example.evaluation_state !== "design_only") errors.push("example must remain design_only");
+  if (example.id !== "exact-content-inspection-binding") errors.push("unexpected example id");
+  const expected = [
+    { record_id: "x_r_wrong_version", artifact_id: "x_artifact_v1", version: "v1" },
+    { record_id: "x_r_correct_version", artifact_id: "x_artifact_v2", version: "v2" },
+  ];
+  if (example.inspections.length !== expected.length) errors.push("unexpected inspection count");
+  for (const [index, want] of expected.entries()) {
+    const got = example.inspections[index];
+    if (got === undefined) {
+      errors.push(`missing inspection ${want.record_id}`);
+      continue;
+    }
+    if (got.record_id !== want.record_id) errors.push(`${want.record_id} lost its record binding`);
+    if (got.artifact_id !== want.artifact_id) errors.push(`${want.record_id} bound the wrong artifact`);
+    if (got.version !== want.version) errors.push(`${want.record_id} lost its version`);
+    const hash = got.inspected_content_sha256;
+    if (typeof hash !== "string" || !SHA256.test(hash)) {
+      errors.push(`${want.record_id} is missing a sha256 content digest`);
+      continue;
+    }
+    const row = artifact(artifacts, want.artifact_id);
+    if (row.version !== want.version) errors.push(`${want.artifact_id} is not ${want.version}`);
+    const actual = sha256Utf8(String(row.content ?? ""));
+    if (hash !== actual) errors.push(`${want.record_id} does not match the artifact bytes`);
+  }
+  return errors;
+}
+
+test("failed v1 and successful v2 inspections bind exact artifact content hashes", () => {
+  expect(contentBindingErrors(loadContentBinding(), loadLongitudinal())).toEqual([]);
+});
+
+test("content-hash counterexamples fail when bytes, versions, or refs drift", () => {
+  const example = loadContentBinding();
+  const artifacts = loadLongitudinal();
+  expect(contentBindingErrors(example, artifacts)).toEqual([]);
+  const v1 = example.inspections[0]!;
+  const v2 = example.inspections[1]!;
+  const cases: ContentBinding[] = [
+    { ...example, evaluation_state: "not_run" },
+    { ...example, inspections: [{ ...v1, inspected_content_sha256: v2.inspected_content_sha256 }, v2] },
+    { ...example, inspections: [{ ...v1, inspected_content_sha256: undefined }, v2] },
+    { ...example, inspections: [{ ...v1, artifact_id: "x_artifact_v2" }, v2] },
+    { ...example, inspections: [] },
+  ];
+  for (const broken of cases) {
+    expect(contentBindingErrors(broken, artifacts).length).toBeGreaterThan(0);
+  }
+  const mutated = loadLongitudinal();
+  artifact(mutated, "x_artifact_v1").content = `${artifact(mutated, "x_artifact_v1").content}extra`;
+  expect(contentBindingErrors(example, mutated).length).toBeGreaterThan(0);
+});
