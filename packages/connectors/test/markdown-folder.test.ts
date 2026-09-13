@@ -16,6 +16,7 @@ import path from "node:path";
 import { gzipSync } from "node:zlib";
 import { MAX_CURSOR_BYTES, MAX_SYNC_BATCH_EVENTS } from "@kizuki/core";
 import {
+  KizukiError,
   MARKDOWN_FOLDER_CONNECTOR_ID,
   createMarkdownFolderConnector,
 } from "../src";
@@ -327,6 +328,56 @@ describe("MarkdownFolderConnector", () => {
     } finally {
       await rm(firstRoot, { recursive: true, force: true });
       await rm(secondRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a same-root cursor when page_size or exclude changes", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "a.md"), "alpha\n");
+      await writeFile(path.join(root, "b.md"), "bravo\n");
+      await writeFile(path.join(root, "c.md"), "charlie\n");
+      const original = createMarkdownFolderConnector({ path: root, page_size: 1 });
+      const first = await original.backfill(null);
+      expect(first.cursor).not.toBeNull();
+      expect(first.events.map((event) => event.source_record_id)).toEqual(["a.md"]);
+      expect(first.has_more).toBe(true);
+
+      const mismatches: Array<{ path: string; page_size: number; exclude?: string[] }> = [
+        { path: root, page_size: 2 },
+        { path: root, page_size: 1, exclude: ["c.md"] },
+      ];
+      for (const config of mismatches) {
+        const foreign = createMarkdownFolderConnector(config);
+        for (const method of ["backfill", "sync"] as const) {
+          try {
+            await foreign[method](first.cursor);
+            throw new Error("expected a configuration-mismatched cursor to be rejected");
+          } catch (error) {
+            expect(error).toBeInstanceOf(KizukiError);
+            expect((error as KizukiError).code).toBe("parse_error");
+            expect((error as KizukiError).message).toBe(
+              `${MARKDOWN_FOLDER_CONNECTOR_ID}: cursor does not match this configuration`,
+            );
+            expect((error as KizukiError).message).not.toContain("a.md");
+            expect((error as KizukiError).message).not.toContain("alpha");
+            expect((error as KizukiError).message).not.toContain(root);
+          }
+        }
+      }
+
+      const remaining: string[] = [];
+      let cursor = first.cursor;
+      for (;;) {
+        const page = await original.backfill(cursor);
+        remaining.push(...page.events.map((event) => event.source_record_id));
+        expect(page.events.every((event) => event.deleted !== true)).toBe(true);
+        if (!page.has_more) break;
+        cursor = page.cursor;
+      }
+      expect(remaining).toEqual(["b.md", "c.md"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 
