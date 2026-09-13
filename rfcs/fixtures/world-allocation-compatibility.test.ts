@@ -33,6 +33,12 @@ function reservationErrors(section: string, occupied: readonly number[]): string
   if (/does not choose or reserve the next version/.test(lower) === false) {
     errors.push("note must not reserve the next version");
   }
+  if (!section.includes("packages/core/src/ledger/db.ts")) {
+    errors.push("missing live migration-chain authority");
+  }
+  if (/continues through version \d+/.test(section)) {
+    errors.push("unqualified numeric current-tip claim");
+  }
   for (const version of occupied) {
     if (!section.includes(`ledger ${version} is occupied`)) {
       errors.push(`ledger ${version} is not classified as occupied`);
@@ -54,6 +60,13 @@ test("occupied baseline ledger versions are classified as historical on current 
   expect(reservationErrors(section, BASELINE_LEDGER_VERSIONS)).toEqual([]);
 });
 
+test("current-main compatibility delegates the live ledger tip to the migration chain", () => {
+  const section = compatibilitySection(readFileSync(RFC, "utf8"));
+  expect(section).toContain("packages/core/src/ledger/db.ts");
+  expect(section).not.toMatch(/continues through version \d+/);
+  expect(reservationErrors(section, BASELINE_LEDGER_VERSIONS)).toEqual([]);
+});
+
 test("restoring an occupied baseline version as a current reservation fails the addendum", () => {
   const section = compatibilitySection(readFileSync(RFC, "utf8"));
   const counterexample = section.replace(
@@ -61,4 +74,13 @@ test("restoring an occupied baseline version as a current reservation fails the 
     "ledger 17 remains reserved for implementation",
   );
   expect(reservationErrors(counterexample, BASELINE_LEDGER_VERSIONS).length).toBeGreaterThan(0);
+});
+
+test("an unqualified numeric current-tip claim fails the compatibility addendum", () => {
+  const section = compatibilitySection(readFileSync(RFC, "utf8"));
+  const stale = section.replace(
+    "continues through the live migration chain in that file",
+    "continues through version 26",
+  );
+  expect(reservationErrors(stale, BASELINE_LEDGER_VERSIONS)).toContain("unqualified numeric current-tip claim");
 });

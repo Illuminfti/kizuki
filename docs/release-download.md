@@ -65,6 +65,21 @@ establish integrity and receipt consistency; they do not independently attest
 execution, actor identity or release authority. Legacy package and proof formats
 remain consumable by existing tools but are not accepted by this new preparer.
 
+Supply the expected source SHA and target independently of the manifest. Bound
+local reads, then call the existing parsers:
+
+```sh
+bun scripts/verify-retained-download-example.ts \
+  --source SOURCE_SHA --target TARGET \
+  --manifest /absolute/download-manifest.json \
+  --archive /absolute/kizuki-SOURCE_SHA-TARGET.tar.gz \
+  --proof /absolute/artifact-proof.json
+```
+
+The example reports `integrity_ok` only after those bindings pass. It does not
+extract the archive, execute binaries, download files, rebuild, sign, publish or
+change release approval.
+
 ## Verification and limits
 
 Run `bun test scripts/release-download.test.ts` and the repository typecheck.

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { truncateSync, writeFileSync } from "node:fs";
+import { mkdirSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readRetrievalDocuments, rebuildRetrieval } from "../../src/retrieval/rebuild";
 import { serveFixture } from "../serving/helpers";
@@ -53,6 +53,23 @@ test("source byte limits refuse before a sparse oversized canon file can be read
   const path = join(fixture.vaultPath, "facts", "oversized.md");
   writeFileSync(path, "");
   truncateSync(path, 64 * 1024 * 1024 + 1);
+  let called = false;
+  const port = { rebuildFromDocuments: async () => { called = true; } } as never;
+  await expect(rebuildRetrieval(fixture.db, fixture.vaultPath, port)).rejects.toThrow("rebuild corpus exceeds");
+  expect(called).toBe(false);
+});
+
+test("rebuild corpus bound counts nested archive pages and still excludes root archive", async () => {
+  fixture = await serveFixture();
+  mkdirSync(join(fixture.vaultPath, "archive"), { recursive: true, mode: 0o700 });
+  const rootArchive = join(fixture.vaultPath, "archive", "oversized.md");
+  writeFileSync(rootArchive, "");
+  truncateSync(rootArchive, 64 * 1024 * 1024 + 1);
+  await rebuildRetrieval(fixture.db, fixture.vaultPath);
+  mkdirSync(join(fixture.vaultPath, "facts", "archive"), { recursive: true, mode: 0o700 });
+  const nested = join(fixture.vaultPath, "facts", "archive", "oversized.md");
+  writeFileSync(nested, "");
+  truncateSync(nested, 64 * 1024 * 1024 + 1);
   let called = false;
   const port = { rebuildFromDocuments: async () => { called = true; } } as never;
   await expect(rebuildRetrieval(fixture.db, fixture.vaultPath, port)).rejects.toThrow("rebuild corpus exceeds");

@@ -365,6 +365,8 @@ reports a complete binding as `on` and an incomplete configuration as
 
 ## models
 
+Status: shipped
+
 ```text
 usage: kizuki models <list [--catalog] | pull <CATALOG_ID | --from PATH|URL [--sha256 HEX] [--bytes N]> | remove NAME>
 ```
@@ -466,10 +468,11 @@ rebuilds only the SQLite graph floor and does not refresh search; a configured
 retrieval engine refuses that partial layer and exits 1. `--prune-old` removes
 inactive owned retrieval generations under `.kizuki/retrieval/` and leaves the
 currently configured engine, or the SQLite floor when no engine is bound.
-`--port ID` names the bound store (`kizuki.retrieval.fts5` for the SQLite floor,
-or the configured engine id) and refuses any other id. Other layers are not
-implemented and exit 2. `--prune-old` cannot be combined with `--layer` or
-`--port`.
+`--port ID` selects an installed engine for this invocation
+(`kizuki.retrieval.fts5` for the SQLite floor, or an installed retrieval engine
+id). Unknown IDs and a busy engine fail closed. It does not rewrite
+`serve.toml`. Other layers are not implemented and exit 2. `--prune-old` cannot
+be combined with `--layer` or `--port`.
 
 The result identifies `backend` (`sqlite-floor` or `retrieval-port`), `store`,
 `documents`, `floor_documents`, and the floor's `generation`. With default
