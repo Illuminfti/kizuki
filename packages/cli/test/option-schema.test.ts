@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  AGENT_REVOKE_SCHEMA,
   CONNECT_GRANT_SCHEMA,
   CONNECT_RESUME_SCHEMA,
   CONNECT_REVOKE_SCHEMA,
@@ -55,5 +56,17 @@ describe("option schema", () => {
     expect(lookupCommandHelp("connect", ["markdown-folder"])).toBeUndefined();
     expect(lookupCommandHelp("connect", [])).toBeUndefined();
     expect(lookupCommandHelp("query", ["grant"])).toBeUndefined();
+  });
+
+  test("lookup exposes agent revoke with the parser's schema", () => {
+    const topic = lookupCommandHelp("agent", ["revoke"]);
+    expect(topic?.name).toBe("agent revoke");
+    expect(topic?.usage).toBe("agent revoke NAME [--json]");
+    expect(topic?.schema).toBe(AGENT_REVOKE_SCHEMA);
+    expect([...AGENT_REVOKE_SCHEMA.options]).toEqual([]);
+    expect([...AGENT_REVOKE_SCHEMA.flags]).toEqual(["--json"]);
+    expect(lookupCommandHelp("agent", ["add"])).toBeUndefined();
+    expect(lookupCommandHelp("agent", ["revoke", "extra"])).toBeUndefined();
+    expect(lookupCommandHelp("agent", [])).toBeUndefined();
   });
 });
