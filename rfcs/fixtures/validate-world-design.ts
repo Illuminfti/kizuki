@@ -239,6 +239,13 @@ const required = "Copies are not independent evidence.";
 assert(!text(get(xa,"x_artifact_v1").content).includes(required));
 assert(text(get(xa,"x_artifact_v2").content).includes(required));
 assert(text(get(xa,"x_artifact_v2").content).includes("Retries repeat safely"));
+function boundInspection(recordId: string, artifactId: string, version: string): void {
+  const refs = strings(get(xr, recordId).artifact_refs);
+  assert.deepEqual(refs, [artifactId]);
+  assert.equal(text(get(xa, artifactId).version), version);
+}
+boundInspection("x_r_wrong_version", "x_artifact_v1", "v1");
+boundInspection("x_r_correct_version", "x_artifact_v2", "v2");
 const correction = get(xc,"x_ctl_correct_c1");
 assert(at(get(xr,"x_r_correct_version").controlled_admitted_at) < at(correction.correction_deadline));
 assert(!strings(correction.target_record_refs).includes("x_r_c2"));
@@ -274,6 +281,6 @@ console.log(JSON.stringify({
   validation:"static_pass", product_execution:false,
   concept:{sha256:base.sha256,bytes:base.bytes.length,symbols:bs.all.size,references:bs.refs.length,records:br.size,controls:bc.size,queries:bq.size},
   extension:{sha256:extension.sha256,bytes:extension.bytes.length,symbols:xs.all.size,references:xs.refs.length,records:xr.size,controls:xc.size,queries:xq.size},
-  checked:["strict JSON without duplicate keys","reference closure","complete Core transaction order","scheduled support agreement","chronological oracle isolation","exact purge selections","actual Grant.subjects grammar and visibility profiles","pinned baseline agreement","distinct commitments","four outcome prefixes","restore outcome and runtime-generation invalidation within token TTL"],
+  checked:["strict JSON without duplicate keys","reference closure","complete Core transaction order","scheduled support agreement","chronological oracle isolation","exact purge selections","actual Grant.subjects grammar and visibility profiles","pinned baseline agreement","distinct commitments","four outcome prefixes","exact-version inspection binding","restore outcome and runtime-generation invalidation within token TTL"],
   limitation:"Design data only; no extraction, policy runtime, migration, restore, client parity or quality claim."
 },null,2));
