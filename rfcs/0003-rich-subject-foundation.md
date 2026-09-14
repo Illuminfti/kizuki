@@ -494,6 +494,93 @@ quotation becomes endorsement, the disagreement is dropped, either person is
 marked owner, no observations remain, or an observation leaves its source
 anchor.
 
+### Source-only nested frameworks
+
+This is a design acceptance example, not automatic discovery and not a public
+surface. The input supplies only a synthetic source/event identity and text.
+Containment is a fixture expectation, not a production predicate. Nested
+membership is two direct observations; a Cedar-to-Birch shortcut is not stated
+evidence.
+
+<!-- rich-subject-nested-frameworks-example -->
+```json
+{
+  "id": "source-only-nested-frameworks",
+  "evaluation_state": "design_only",
+  "input": {
+    "source_key": "synthetic.note",
+    "event_id": "00000000000000000000000004",
+    "text": "The Cedar framework includes the Pine framework, which includes the Birch method.",
+    "supplied_refs": []
+  },
+  "expected": {
+    "discoveries": [
+      {
+        "occurrence_id": "framework-cedar",
+        "label": "Cedar",
+        "class": "framework",
+        "anchor": {
+          "event_id": "00000000000000000000000004",
+          "start_utf16": 4,
+          "end_utf16": 9
+        }
+      },
+      {
+        "occurrence_id": "framework-pine",
+        "label": "Pine",
+        "class": "framework",
+        "anchor": {
+          "event_id": "00000000000000000000000004",
+          "start_utf16": 33,
+          "end_utf16": 37
+        }
+      },
+      {
+        "occurrence_id": "method-birch",
+        "label": "Birch",
+        "class": "method",
+        "anchor": {
+          "event_id": "00000000000000000000000004",
+          "start_utf16": 68,
+          "end_utf16": 73
+        }
+      }
+    ],
+    "observations": [
+      {
+        "observation_id": "cedar-contains-pine",
+        "mode": "contains",
+        "container_occurrence_id": "framework-cedar",
+        "contained_occurrence_id": "framework-pine",
+        "stated": true,
+        "anchor": {
+          "event_id": "00000000000000000000000004",
+          "start_utf16": 20,
+          "end_utf16": 47
+        }
+      },
+      {
+        "observation_id": "pine-contains-birch",
+        "mode": "contains",
+        "container_occurrence_id": "framework-pine",
+        "contained_occurrence_id": "method-birch",
+        "stated": true,
+        "anchor": {
+          "event_id": "00000000000000000000000004",
+          "start_utf16": 55,
+          "end_utf16": 80
+        }
+      }
+    ]
+  }
+}
+```
+
+A counterexample fails when occurrences collapse, containment reverses, the
+inner containment is dropped, a class is wrong, an occurrence reuses the wrong
+anchor, input pre-resolves refs, or a direct Cedar-to-Birch containment is
+presented as stated evidence.
+
 ## Verification
 
 B1a must prove valid v1/v2 parsing, exact v1 compatibility, all status branches,
