@@ -1,0 +1,39 @@
+{
+  "schema": "kizuki.world-procedure-evidence-design/v1",
+  "id": "assisted-procedure-usefulness",
+  "title": "Assisted procedure help is not independent mastery",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only fixture. Not a production procedure registry, executor, proficiency scale, or public API.",
+  "procedure": {
+    "id": "p_retry_note",
+    "purpose": "Write a one-page idempotency note that includes the heading Retries repeat safely.",
+    "assistance": "assisted",
+    "independent_mastery": false
+  },
+  "support": {
+    "independent_root_count": 1,
+    "root_refs": ["r_owner_demo"],
+    "copied_feedback_refs": ["r_copy_praise"],
+    "copied_feedback_is_independent_witness": false
+  },
+  "usefulness": {
+    "helped": true,
+    "task_class": "one-page-note",
+    "conditions": "assisted, synthetic review desk",
+    "from_retrieval_count": false
+  },
+  "applicability": {
+    "limits": ["not unassisted production review"],
+    "counterexample_ref": "x_counter_unassisted"
+  },
+  "freshness": {
+    "observed_at": "2025-01-13T08:35:00Z",
+    "last_validated_at": "2025-01-13T08:35:00Z"
+  },
+  "confidence": {
+    "value": 0.5,
+    "retrieval_count": 12,
+    "retrieval_does_not_increase_confidence": true
+  }
+}
