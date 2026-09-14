@@ -547,6 +547,28 @@ test("v3 unknown, duplicate and mismatched gate references fail the index withou
   expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").reason).toBe("mismatched-gate-or-target");
 });
 
+test("a self-attested telegram live-account receipt cannot pass connector qualification", () => {
+  const f = fixture();
+  const body = JSON.stringify({
+    schema: "kizuki.connector-evidence/v1",
+    connector: "telegram",
+    status: "PASS",
+    attested_by: "model",
+    live_account: true,
+  });
+  const path = join(f.root, "connector-telegram.json");
+  writeFileSync(path, body);
+  asV3(f, [receiptRef("kizuki.connector-evidence/v1", "connector.telegram", null, path, digest(body))]);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, "connector.telegram")).toMatchObject({
+    status: "NOT_IMPLEMENTED",
+    evidence_sha256: null,
+  });
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
+});
+
 test("inactive families keep default states while an active surface producer refuses missing receipts", () => {
   const f = fixture(), missing = join(f.root, "never-opened.json");
   const receipts = [
