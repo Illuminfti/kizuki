@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { COMMANDS } from "../packages/cli/src/commands/index";
 import { printRootHelp } from "../packages/cli/src/help";
-import { evaluateRelease, parseAcceptanceArgs, writeAcceptanceReport } from "./go-no-go";
+import { evaluateRelease, gates, parseAcceptanceArgs, releaseDecision, writeAcceptanceReport } from "./go-no-go";
 import {
   CAPABILITY_PROOF_FILE, CHECKOUT_LIMITS, CONNECTORS, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, SURFACE_DOC_FILES, SURFACE_GATE, SURFACE_OBSERVED_FILES, SURFACE_PRODUCER, SURFACE_PRODUCER_FILES, TARGETS,
   assertCheckoutCustody, assertProductCheckoutCustody, bindEvaluatorCheckout, cliVerbSequence, collectProductSources, consumeSurfaceReceipt, evaluateSurfaceReceipt, inspectOptionalVerifier, read, surfaceProducerActive,
@@ -906,4 +906,31 @@ test("finding ledger separates GitHub closure from verified-fixed candidate proo
   f.index.artifacts = [];
   f.save();
   expect(gate(evaluateRelease("rc", f.indexPath), "candidate.current-p0-disposition").status).toBe("UNVERIFIABLE");
+});
+
+function syntheticPass(rows = gates()) {
+  return rows.map(row => row.required ? { ...row, status: "PASS" as const, reason: "synthetic-helper" } : { ...row });
+}
+
+test.each(["rc", "1.0"] as const)("%s helper GO requires the complete mandatory inventory", profile => {
+  const complete = syntheticPass();
+  const accepted = releaseDecision(profile, complete);
+  expect(accepted.decision).toBe("GO");
+  expect(accepted.release_1_0_accepted).toBe(profile === "1.0");
+  expect(releaseDecision(profile, []).decision).toBe("NO-GO");
+  expect(releaseDecision(profile, complete.filter(row => row.id === "evidence.index")).decision).toBe("NO-GO");
+  expect(releaseDecision(profile, [...complete, complete[0]!]).decision).toBe("NO-GO");
+  const missing = complete.filter(row => row.id !== "human.unfamiliar-user");
+  expect(releaseDecision(profile, missing).decision).toBe("NO-GO");
+  for (const id of complete.filter(row => row.required).map(row => row.id)) {
+    expect(releaseDecision(profile, complete.filter(row => row.id !== id)).decision).toBe("NO-GO");
+  }
+  const downgraded = complete.map(row => row.id === "evidence.index" ? { ...row, required: false } : row);
+  expect(releaseDecision(profile, downgraded).decision).toBe("NO-GO");
+  const wrongTarget = complete.map(row => row.id.startsWith("artifact.") ? { ...row, target: "wrong-target" } : row);
+  expect(releaseDecision(profile, wrongTarget).decision).toBe("NO-GO");
+  for (const status of ["FAIL", "MISSING", "UNVERIFIABLE", "NOT_IMPLEMENTED"] as const) {
+    const broken = complete.map(row => row.id === "human.unfamiliar-user" ? { ...row, status } : row);
+    expect(releaseDecision(profile, broken)).toEqual({ decision: "NO-GO", release_1_0_accepted: false });
+  }
 });
