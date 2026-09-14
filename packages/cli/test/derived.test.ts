@@ -8,7 +8,7 @@ import {
   indexReceiptsFromCursor,
   walkCanonReceipts,
 } from "../src/derived";
-import { serializePage } from "@kizuki/core";
+import { listCanonPagesReport, serializePage } from "@kizuki/core";
 import { createHelpers } from "./helpers";
 
 const { cleanup, tempVault } = createHelpers();
@@ -63,7 +63,12 @@ function seedSearchDoc(
   ).run(...values);
 }
 
-function seedCanonPage(vaultPath: string, relPath: string, id: string): void {
+function seedCanonPage(
+  vaultPath: string,
+  relPath: string,
+  id: string,
+  body = "Synthetic body.\n",
+): void {
   const path = join(vaultPath, relPath);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, serializePage({
@@ -76,8 +81,12 @@ function seedCanonPage(vaultPath: string, relPath: string, id: string): void {
       taint: "clean",
       sources: [],
     },
-    body: "Synthetic body.\n",
+    body,
   }));
+}
+
+function receiptId(prefix: string, n: number): string {
+  return `${prefix}${String(n).padStart(26 - prefix.length, "0")}`;
 }
 
 describe("derived receipt walk", () => {
@@ -202,4 +211,76 @@ describe("derived receipt walk", () => {
       db.close();
     }
   });
+
+  test("many-page receipt refresh scans canon once regardless of changed receipt count", () => {
+    const pageCount = 512;
+    const changedCount = 64;
+    const setup = tempVault();
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    const relPath = (n: number) => `facts/p${String(n).padStart(3, "0")}.md`;
+    type ScanCounter = {
+      n: number;
+      report?: ReturnType<typeof listCanonPagesReport>;
+    };
+    const wrapScan = (counter: ScanCounter) => (vaultPath: string) => {
+      counter.n += 1;
+      counter.report = listCanonPagesReport(vaultPath);
+      return counter.report;
+    };
+    try {
+      for (let n = 0; n < pageCount; n += 1) {
+        const token = n < changedCount ? `keepword${n}` : `stillword${n}`;
+        seedCanonPage(setup.vault, relPath(n), `fact:p${n}`, `original ${token}\n`);
+        insertReceipt(db, receiptId("01MANYI", n), relPath(n));
+      }
+
+      const initialScans: ScanCounter = { n: 0 };
+      const initial = indexReceiptsFromCursor(
+        db,
+        setup.vault,
+        emptyIndexCursor(),
+        wrapScan(initialScans),
+      );
+      expect(initialScans.n).toBe(1);
+      expect(initial.indexed).toBe(pageCount);
+      expect(initial.cursor.receipt_id).toBe(receiptId("01MANYI", pageCount - 1));
+      expect(initial.cursor.receipts_seen).toBe(pageCount);
+
+      for (let n = 0; n < changedCount; n += 1) {
+        seedCanonPage(setup.vault, relPath(n), `fact:p${n}`, `updated chgword${n}\n`);
+        insertReceipt(db, receiptId("01MANYU", n), relPath(n));
+      }
+
+      const changedScans: ScanCounter = { n: 0 };
+      const changed = indexReceiptsFromCursor(
+        db,
+        setup.vault,
+        initial.cursor,
+        wrapScan(changedScans),
+      );
+      expect(changedScans.n).toBe(1);
+      expect(changed.indexed).toBe(changedCount);
+      expect(changed.cursor.receipt_id).toBe(receiptId("01MANYU", changedCount - 1));
+      expect(changed.cursor.receipts_seen).toBe(pageCount + changedCount);
+      const scanned = changedScans.report?.pages ?? [];
+      expect(scanned).toHaveLength(pageCount);
+      expect(scanned.find((page) => page.relPath === relPath(0))?.body).toContain("chgword0");
+      expect(scanned.find((page) => page.relPath === relPath(100))?.body).toContain("stillword100");
+      expect(scanned.find((page) => page.relPath === relPath(0))?.body).not.toContain("keepword0");
+
+      const idleScans: ScanCounter = { n: 0 };
+      const idle = indexReceiptsFromCursor(
+        db,
+        setup.vault,
+        changed.cursor,
+        wrapScan(idleScans),
+      );
+      expect(idleScans.n).toBe(0);
+      expect(idle.indexed).toBe(0);
+      expect(idle.cursor.receipt_id).toBe(changed.cursor.receipt_id);
+      expect(idle.cursor.receipts_seen).toBe(pageCount + changedCount);
+    } finally {
+      db.close();
+    }
+  }, 20_000);
 });
