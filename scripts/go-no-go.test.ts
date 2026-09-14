@@ -661,6 +661,28 @@ test("v3 index byte cap is 32 KiB while v1 stays at 16 KiB", () => {
   expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").status).toBe("FAIL");
 });
 
+test("a self-attested google-calendar live-account receipt cannot pass connector qualification", () => {
+  const f = fixture();
+  const body = JSON.stringify({
+    schema: "kizuki.connector-evidence/v1",
+    connector: "google-calendar",
+    status: "PASS",
+    attested_by: "model",
+    live_account: true,
+  });
+  const path = join(f.root, "connector-google-calendar.json");
+  writeFileSync(path, body);
+  asV3(f, [receiptRef("kizuki.connector-evidence/v1", "connector.google-calendar", null, path, digest(body))]);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, "connector.google-calendar")).toMatchObject({
+    status: "NOT_IMPLEMENTED",
+    evidence_sha256: null,
+  });
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
+});
+
 test("optional capability verifier is MISSING until a regular file exists and other errors are fatal", () => {
   const root = mkdtempSync(join(tmpdir(), "kizuki-verifier-")); roots.push(root);
   mkdirSync(join(root, "scripts"));
