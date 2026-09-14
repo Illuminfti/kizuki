@@ -1,0 +1,29 @@
+{
+  "schema": "kizuki.world-cue-quiet-design/v1",
+  "id": "volume-is-not-urgency",
+  "title": "High message volume is not urgency; quiet when nothing material changed",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Cue decisions do not gate canon, grant execution, or authorize a runtime API.",
+  "candidate": {
+    "id": "x_cue_volume",
+    "purpose": "pilot-plan-accuracy",
+    "mention_count": 48,
+    "material_change": false,
+    "actionable": false,
+    "no_action_needed": true
+  },
+  "delivery": {
+    "interrupt": false,
+    "quiet_reason": "no_material_change",
+    "records_quiet_without_telemetry": true,
+    "volume_implies_urgency": false
+  },
+  "oracle": {
+    "interrupted": false,
+    "urgency_from_volume": false,
+    "quiet_recorded": true,
+    "telemetry_collected": false,
+    "fabricated_action": false
+  }
+}
