@@ -1,0 +1,18 @@
+{
+  "id": "exact-content-inspection-binding",
+  "evaluation_state": "design_only",
+  "inspections": [
+    {
+      "record_id": "x_r_wrong_version",
+      "artifact_id": "x_artifact_v1",
+      "version": "v1",
+      "inspected_content_sha256": "2ee5e10dbea04eb703e8300e89bba174fbac134d6c19183b8e80ef8194df1060"
+    },
+    {
+      "record_id": "x_r_correct_version",
+      "artifact_id": "x_artifact_v2",
+      "version": "v2",
+      "inspected_content_sha256": "6612a2991f8e8d84b533402f8f6583b64ebd3e41baa5c4724f319b9e22409069"
+    }
+  ]
+}
