@@ -1,0 +1,29 @@
+{
+  "schema": "kizuki.world-consolidation-empty-design/v1",
+  "id": "empty-success-requires-complete-accepted-batch",
+  "title": "Only a complete accepted empty batch may advance the consolidation frontier",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only fixture. Not a consolidation engine, public API, or checkpoint implementation.",
+  "job": {
+    "id": "job_empty_prefix",
+    "kind": "bounded_consolidation",
+    "result": "success",
+    "empty_batch": true,
+    "batch_complete": true,
+    "batch_accepted": true,
+    "input_admission_refs": [],
+    "checkpoint_advanced": true
+  },
+  "unavailable": {
+    "result": "unavailable",
+    "empty_batch": false,
+    "checkpoint_advanced": false
+  },
+  "oracle": {
+    "successful_empty": true,
+    "frontier_advanced": true,
+    "unavailable_may_advance": false,
+    "partial_batch_may_advance": false
+  }
+}
