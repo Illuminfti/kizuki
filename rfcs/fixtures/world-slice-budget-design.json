@@ -1,0 +1,16 @@
+{
+  "schema": "kizuki.world-slice-budget-design/v1",
+  "id": "world-slice-budget-constraint",
+  "title": "Decisive constraint and qualifications must fit the whole serialized response",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not a World Slice compiler, public tool, or context_packet change.",
+  "tokenizer_id": "js-tiktoken@1.0.21/cl100k_base",
+  "budget_tokens": 80,
+  "mandatory": {
+    "constraint": "Do not treat a copy as independent evidence.",
+    "qualifications": ["Assisted work is not independent mastery."],
+    "evidence_refs": ["r02"]
+  },
+  "optional_explanation": "A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. A long relevant-looking explanation of Bayesian updating, retries, and note delivery that should not crowd out the decisive constraint. "
+}

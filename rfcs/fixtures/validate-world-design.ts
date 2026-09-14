@@ -175,6 +175,13 @@ for (const id of ["ctl_purge_s1", "ctl_purge_copy"]) {
 }
 sameSet(remaining, ["r02", "r03", "r04", "r06"]);
 assert.equal(get(br, "r01").content, get(br, "r05").content);
+const copiedSupport = get(index(bo.support_expectations), "support_copied_exposure");
+assert.equal(copiedSupport.record_ref, "r05");
+assert.deepEqual(strings(copiedSupport.independence_root_refs), ["r01"]);
+assert.deepEqual(strings(copiedSupport.prerequisite_support_refs), ["support_ada_exposure"]);
+assert.equal(number(row(get(index(bo.assertions), "a_initial_concept").expected).independent_definition_root_count), 2);
+assert.equal(number(row(get(index(bo.assertions), "a_copy").expected).independent_definition_root_count), 2);
+assert.equal(number(row(get(index(bo.assertions), "a_copy").expected).retained_raw_record_count), 5);
 assert.deepEqual(get(br, "r03").record_occurrence, { kind: "unknown" });
 const sources = index(bi.sources), sourceSubjects = index(bi.source_subjects);
 for (const source of sources.values()) assert.equal(source.default_sensitivity, "private");

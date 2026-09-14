@@ -186,6 +186,28 @@ test("consistent fixture bytes receive only local integrity credit, never native
   expect(output).not.toContain(f.root); expect(output).not.toContain(f.receipt.paths.vault);
 });
 
+test("a self-attested unfamiliar-user receipt cannot pass human acceptance", () => {
+  const f = fixture();
+  const body = JSON.stringify({
+    schema: "kizuki.unfamiliar-user/v1",
+    gate_id: "human.unfamiliar-user",
+    status: "PASS",
+    attested_by: "model",
+    coaching: false,
+  });
+  const path = join(f.root, "unfamiliar-user.json");
+  writeFileSync(path, body);
+  asV3(f, [receiptRef("kizuki.unfamiliar-user/v1", "human.unfamiliar-user", null, path, digest(body))]);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, "human.unfamiliar-user")).toMatchObject({
+    status: "NOT_IMPLEMENTED",
+    evidence_sha256: null,
+  });
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
+});
+
 test.each([0, 1])("v2 engine records preserve doctor exit %d without granting native or release credit", exit => {
   const f = engineFixture(exit), mac = engineFixture(exit, "bun-darwin-arm64");
   f.index.artifacts.push(mac.ref); f.save();
@@ -535,6 +557,28 @@ test("inactive families keep default states while an active surface producer ref
   for (const id of JOURNEYS) expect(gate(result, `journey.${id}`).status).toBe("NOT_IMPLEMENTED");
   for (const item of CONNECTORS) expect(gate(result, `connector.${item.id}`).status).toBe("NOT_IMPLEMENTED");
   expect(gate(result, "human.unfamiliar-user").status).toBe("NOT_IMPLEMENTED");
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
+});
+
+test("a self-graded journey-proof receipt cannot pass correct-belief", () => {
+  const f = fixture();
+  const body = JSON.stringify({
+    schema: "kizuki.journey-proof/v1",
+    journey: "correct-belief",
+    status: "PASS",
+    graded_by: "model",
+    model_self_grade: true,
+  });
+  const path = join(f.root, "journey-correct-belief.json");
+  writeFileSync(path, body);
+  asV3(f, [receiptRef("kizuki.journey-proof/v1", "journey.correct-belief", null, path, digest(body))]);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, "journey.correct-belief")).toMatchObject({
+    status: "NOT_IMPLEMENTED",
+    evidence_sha256: null,
+  });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
 });
