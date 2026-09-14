@@ -191,6 +191,50 @@ This is a design acceptance example, not a shipped public surface. It does not a
 
 A counterexample fails this law when any projection reports success, a state change, a useful blind retry, whether a hidden target exists, or a recovery that lowers data sensitivity or invents an owner labeling chore.
 
+### Error-semantics example: invalid view baseline requires a new view
+
+This is a design acceptance example, not a shipped public surface. It does not add a CLI, MCP, HTTP, or Situation API. The request used an invalid view or cursor baseline. Nothing was written. Human, developer, and agent projections must agree that a new currently authorized view is required, that repeating the same invalid baseline is not useful, and that the unavailable view is not current. None of them may disclose whether a hidden target exists. `request_new_view` is fixture vocabulary, not a newly registered command.
+
+<!-- situation-error-parity-new-view-required -->
+```json
+{
+  "id": "invalid-view-baseline-new-view-required",
+  "evaluation_state": "design_only",
+  "principal": "agent.alpha",
+  "projections": {
+    "ux": {
+      "happened": "new_view_required",
+      "state_changed": false,
+      "blind_retry_useful": false,
+      "recovery": "request_new_view",
+      "hidden_target_disclosed": false,
+      "view_current": false,
+      "summary": "This view is no longer valid. Nothing was written. Retrying the same baseline will not help; request a new view."
+    },
+    "dx": {
+      "happened": "new_view_required",
+      "state_changed": false,
+      "blind_retry_useful": false,
+      "recovery": "request_new_view",
+      "hidden_target_disclosed": false,
+      "view_current": false,
+      "code": "new_view_required"
+    },
+    "ax": {
+      "happened": "new_view_required",
+      "state_changed": false,
+      "blind_retry_useful": false,
+      "recovery": "request_new_view",
+      "hidden_target_disclosed": false,
+      "view_current": false,
+      "code": "new_view_required"
+    }
+  }
+}
+```
+
+A counterexample fails this law when any projection reports a mutation, a current view, a useful blind retry of the same baseline, or whether a hidden target exists.
+
 ## Delivery map
 
 Follow issue #497 for the current dependency graph. The groups below explain the sequence without maintaining another exhaustive task list.

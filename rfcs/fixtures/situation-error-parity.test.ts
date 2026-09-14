@@ -8,6 +8,7 @@ const DOC = join(ROOT, "docs/world-model-program.md");
 const MARKER = "<!-- situation-error-parity-example -->";
 const REFRESH_MARKER = "<!-- situation-error-parity-refresh-unavailable -->";
 const SENSITIVITY_MARKER = "<!-- situation-error-parity-sensitivity-denied -->";
+const NEW_VIEW_MARKER = "<!-- situation-error-parity-new-view-required -->";
 const SEMANTIC_KEYS = [
   "happened",
   "state_changed",
@@ -334,4 +335,106 @@ test("matching wrong sensitivity outcomes still fail the example", () => {
     projections: { ux: wrong, dx: wrong, ax: wrong },
   };
   expect(sensitivityParityErrors(allWrong).length).toBeGreaterThan(0);
+});
+
+function newViewParityErrors(example: Example): string[] {
+  const errors: string[] = [];
+  if (example.evaluation_state !== "design_only") {
+    errors.push("example must remain design_only");
+  }
+  if (example.principal.length === 0) errors.push("missing principal");
+  const { ux, dx, ax } = example.projections;
+  for (const [name, projection] of [
+    ["ux", ux],
+    ["dx", dx],
+    ["ax", ax],
+  ] as const) {
+    if (projection.happened !== "new_view_required") {
+      errors.push(`${name} must report new_view_required`);
+    }
+    if (projection.state_changed !== false) errors.push(`${name} implies a state change`);
+    if (projection.blind_retry_useful !== false) {
+      errors.push(`${name} implies a useful blind retry of the same baseline`);
+    }
+    if (projection.recovery !== "request_new_view") {
+      errors.push(`${name} recovery is not request_new_view`);
+    }
+    if (projection.hidden_target_disclosed !== false) {
+      errors.push(`${name} discloses whether a hidden target exists`);
+    }
+    if (projection.view_current !== false) errors.push(`${name} labels the invalid view current`);
+  }
+  if (dx.code !== "new_view_required") {
+    errors.push("dx code must identify new_view_required");
+  }
+  if (ax.code !== "new_view_required") {
+    errors.push("ax code must identify new_view_required");
+  }
+  for (const key of [...SEMANTIC_KEYS, "view_current"] as const) {
+    if (ux[key] !== dx[key] || ux[key] !== ax[key]) {
+      errors.push(`UX/DX/AX disagree on ${key}`);
+    }
+  }
+  return errors;
+}
+
+test("an invalid view baseline preserves UX/DX/AX new-view-required semantics", () => {
+  const example = extractExample(readFileSync(DOC, "utf8"), NEW_VIEW_MARKER);
+  expect(example.id).toBe("invalid-view-baseline-new-view-required");
+  expect(newViewParityErrors(example)).toEqual([]);
+});
+
+test("stale-view counterexamples cannot imply current data, mutation, or useful blind retry", () => {
+  const example = extractExample(readFileSync(DOC, "utf8"), NEW_VIEW_MARKER);
+  const mutations: Array<(projection: Projection) => Projection> = [
+    (projection) => ({ ...projection, happened: "ok", state_changed: true }),
+    (projection) => ({ ...projection, state_changed: true }),
+    (projection) => ({ ...projection, view_current: true }),
+    (projection) => ({ ...projection, blind_retry_useful: true, recovery: "retry_same_baseline" }),
+    (projection) => ({ ...projection, hidden_target_disclosed: true }),
+  ];
+  for (const mutate of mutations) {
+    const broken: Example = {
+      ...example,
+      projections: {
+        ...example.projections,
+        ux: mutate(example.projections.ux),
+      },
+    };
+    expect(newViewParityErrors(broken).length).toBeGreaterThan(0);
+  }
+  const codeMutations: Array<(projection: Projection) => Projection> = [
+    (projection) => ({ ...projection, code: "ok" }),
+    (projection) => ({ ...projection, code: "authorization_refused" }),
+    (projection) => {
+      const { code: _code, ...rest } = projection;
+      return rest;
+    },
+  ];
+  for (const name of ["dx", "ax"] as const) {
+    for (const mutate of codeMutations) {
+      const broken: Example = {
+        ...example,
+        projections: {
+          ...example.projections,
+          [name]: mutate(example.projections[name]),
+        },
+      };
+      expect(newViewParityErrors(broken).length).toBeGreaterThan(0);
+    }
+  }
+  const wrong = {
+    happened: "ok",
+    state_changed: true,
+    blind_retry_useful: true,
+    recovery: "retry_same_baseline",
+    hidden_target_disclosed: true,
+    view_current: true,
+    code: "ok",
+  } as Projection;
+  const allWrong: Example = {
+    ...example,
+    projections: { ux: wrong, dx: wrong, ax: wrong },
+  };
+  expect(newViewParityErrors(allWrong).length).toBeGreaterThan(0);
 });
