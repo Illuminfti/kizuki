@@ -1,0 +1,45 @@
+{
+  "schema": "kizuki.world-outcome-evidence-design/v1",
+  "id": "four-outcome-evidence-classes",
+  "title": "Agent report, acknowledgement, failed inspection, and later success stay distinct",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not an execution-receipt endpoint or execution tool.",
+  "prefixes": [
+    {
+      "id": "x_q_agent",
+      "evidence_refs": ["x_r_agent_done"],
+      "c1_independent_verification": "absent",
+      "c2_review": "unverified",
+      "goal_achieved": false
+    },
+    {
+      "id": "x_q_ack",
+      "evidence_refs": ["x_r_agent_done", "x_r_provider_ack"],
+      "acknowledgement_recorded": true,
+      "c1_criteria": "unverified",
+      "c2_review": "unverified",
+      "goal_achieved": false
+    },
+    {
+      "id": "x_q_wrong",
+      "evidence_refs": ["x_r_agent_done", "x_r_provider_ack", "x_r_wrong_version"],
+      "artifact_refs": ["x_artifact_v1"],
+      "c1_criteria": "not_met",
+      "c2_review": "unverified",
+      "goal_achieved": false
+    },
+    {
+      "id": "x_q_correct",
+      "evidence_refs": ["x_r_agent_done", "x_r_provider_ack", "x_r_wrong_version", "x_r_correct_version"],
+      "artifact_refs": ["x_artifact_v1", "x_artifact_v2"],
+      "c1_criteria": "met",
+      "c2_review": "pending",
+      "goal_achieved": false
+    }
+  ],
+  "history": {
+    "pre_success_query_ref": "x_q_pre_success_history",
+    "later_success_injected": false
+  }
+}
