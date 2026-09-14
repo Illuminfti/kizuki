@@ -692,6 +692,28 @@ test("cli verb sequence follows the unique printRootHelp command-row order", () 
   expect(cliVerbSequence()).toEqual(order);
 });
 
+test("a self-attested whoop live-account receipt cannot pass connector qualification", () => {
+  const f = fixture();
+  const body = JSON.stringify({
+    schema: "kizuki.connector-evidence/v1",
+    connector: "whoop",
+    status: "PASS",
+    attested_by: "model",
+    live_account: true,
+  });
+  const path = join(f.root, "connector-whoop.json");
+  writeFileSync(path, body);
+  asV3(f, [receiptRef("kizuki.connector-evidence/v1", "connector.whoop", null, path, digest(body))]);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, "connector.whoop")).toMatchObject({
+    status: "NOT_IMPLEMENTED",
+    evidence_sha256: null,
+  });
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
+});
+
 test("surface validator recomputes inventories and refuses a self-declared empty disagreement list", () => {
   const expected = neutralExpected();
   expect(evaluateSurfaceReceipt(surfaceBody(expected), expected)).toMatchObject({ status: "PASS", reason: "surface-inventory-agrees", creditDigest: true });
