@@ -583,6 +583,28 @@ test("a self-graded journey-proof receipt cannot pass correct-belief", () => {
   expect(result.release_1_0_accepted).toBe(false);
 });
 
+test("a self-graded journey-proof receipt cannot pass install-recover", () => {
+  const f = fixture();
+  const body = JSON.stringify({
+    schema: "kizuki.journey-proof/v1",
+    journey: "install-recover",
+    status: "PASS",
+    graded_by: "model",
+    model_self_grade: true,
+  });
+  const path = join(f.root, "journey-install-recover.json");
+  writeFileSync(path, body);
+  asV3(f, [receiptRef("kizuki.journey-proof/v1", "journey.install-recover", null, path, digest(body))]);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, "journey.install-recover")).toMatchObject({
+    status: "NOT_IMPLEMENTED",
+    evidence_sha256: null,
+  });
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
+});
+
 test("v3 index byte cap is 32 KiB while v1 stays at 16 KiB", () => {
   const f = asV3(fixture());
   const raw = `${readFileSync(f.indexPath, "utf8")}${" ".repeat(20000)}`;
