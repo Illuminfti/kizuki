@@ -853,3 +853,51 @@ describe("context timeline authorization starvation", () => {
     expect(envelope.data?.truncated).toBe(false);
   });
 });
+
+describe("context packet lifecycle negotiation", () => {
+  test("omitting hooks preserves the legacy packet data shape", async () => {
+    const data = (await serveContextPacket((await newFixture()).owner(), { query: "kettle" })).data;
+    expect(data).toBeDefined();
+    expect("lifecycle" in (data ?? {})).toBe(false);
+  });
+
+  test("advertised pre-compaction and session-end hooks stay pull-only instead of claiming host support", async () => {
+    const data = (
+      await serveContextPacket((await newFixture()).owner(), {
+        query: "kettle",
+        hooks: ["pre_compaction", "session_end"],
+      })
+    ).data;
+    expect(data?.lifecycle).toEqual({
+      mode: "pull_only",
+      supported_hooks: [],
+      requested_hooks: ["pre_compaction", "session_end"],
+      unsupported_hooks: ["pre_compaction", "session_end"],
+    });
+    expect(data?.packet_md.startsWith("KIZUKI CONTEXT v1\n")).toBe(true);
+  });
+
+  test("an unknown lifecycle hook is refused", async () => {
+    const ctx = (await newFixture()).owner();
+    const error = await refusal(() =>
+      serveContextPacket(ctx, {
+        query: "kettle",
+        hooks: ["private_provider"] as unknown as ["session_start"],
+      }),
+    );
+    expect(error.code).toBe("invalid_arguments");
+    expect(error.message).toContain("hooks");
+    expect(error.message).not.toContain("private_provider");
+  });
+
+  test("repeated lifecycle hooks are refused", async () => {
+    const ctx = (await newFixture()).owner();
+    const error = await refusal(() =>
+      serveContextPacket(ctx, {
+        hooks: ["turn", "turn"],
+      }),
+    );
+    expect(error.code).toBe("invalid_arguments");
+    expect(error.message).toContain("hooks");
+  });
+});
