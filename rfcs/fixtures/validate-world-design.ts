@@ -263,6 +263,12 @@ sameSet(strings(snapshot.retained_base_record_refs), [...remaining].map(id => `b
 sameSet(strings(snapshot.excluded_raw_record_refs), ["base:r01","base:r05"]);
 sameSet(strings(snapshot.retained_extension_record_refs), xr.keys());
 sameSet(strings(snapshot.artifact_refs), xa.keys());
+const requiredSnapshotControls = ["base:ctl_revoke_s1","base:ctl_purge_s1","base:ctl_purge_copy","base:ctl_narrow_g1","x_ctl_correct_c1"];
+sameSet(strings(snapshot.retained_control_refs), requiredSnapshotControls);
+for (const id of requiredSnapshotControls) {
+  const control = id.startsWith("base:") ? get(bc, id.slice(5)) : get(xc, id);
+  assert(at(control.available_at) < at(snapshot.available_at));
+}
 assert.equal(snapshot.live_view_tokens_included,false);
 assert.equal(snapshot.available_at,get(xc,"x_ctl_export").available_at);
 for (const record of xr.values()) assert(at(record.controlled_admitted_at) < at(snapshot.available_at));
@@ -287,6 +293,6 @@ console.log(JSON.stringify({
   validation:"static_pass", product_execution:false,
   concept:{sha256:base.sha256,bytes:base.bytes.length,symbols:bs.all.size,references:bs.refs.length,records:br.size,controls:bc.size,queries:bq.size},
   extension:{sha256:extension.sha256,bytes:extension.bytes.length,symbols:xs.all.size,references:xs.refs.length,records:xr.size,controls:xc.size,queries:xq.size},
-  checked:["strict JSON without duplicate keys","reference closure","complete Core transaction order","scheduled support agreement","chronological oracle isolation","exact purge selections","actual Grant.subjects grammar and visibility profiles","pinned baseline agreement","distinct commitments","exact commitment actor and evidence binding","four outcome prefixes","exact-version inspection binding","restore outcome and runtime-generation invalidation within token TTL"],
+  checked:["strict JSON without duplicate keys","reference closure","complete Core transaction order","scheduled support agreement","chronological oracle isolation","exact purge selections","actual Grant.subjects grammar and visibility profiles","pinned baseline agreement","distinct commitments","exact commitment actor and evidence binding","four outcome prefixes","exact-version inspection binding","retained restore-control inventory","restore outcome and runtime-generation invalidation within token TTL"],
   limitation:"Design data only; no extraction, policy runtime, migration, restore, client parity or quality claim."
 },null,2));
