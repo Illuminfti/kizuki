@@ -1,0 +1,24 @@
+{
+  "schema": "kizuki.world-forecast-prefix-design/v1",
+  "id": "next-inspection-forecast",
+  "title": "Freeze prediction inputs before the first independent inspection",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not a forecast API, causal engine, scoring claim, or model call.",
+  "longitudinal_base": "world-longitudinal-design.json",
+  "prediction": {
+    "frozen_after": "x_r_provider_ack",
+    "frozen_before": "x_r_wrong_version",
+    "input_record_refs": ["x_r_agent_done", "x_r_provider_ack"],
+    "resolution_question": "Does the next independently inspected delivery satisfy the required version and content criterion?",
+    "resolution_rule": "next_independent_inspection"
+  },
+  "oracle": {
+    "prediction_inputs_exclude": ["x_r_wrong_version", "x_r_correct_version", "x_artifact_v1", "x_artifact_v2"],
+    "first_inspection_ref": "x_r_wrong_version",
+    "first_inspection_meets_criterion": false,
+    "later_success_ref": "x_r_correct_version",
+    "later_success_rewrites_first_inspection": false,
+    "absent_resolving_observation_is_success": false
+  }
+}
