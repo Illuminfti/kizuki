@@ -1,0 +1,45 @@
+{
+  "schema": "kizuki.world-atlas-projection-design/v1",
+  "id": "shared-concept-card-projection",
+  "title": "One Concept result, three projections, same semantics",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not a frontend, Atlas UI, or #458 client. Not real accessibility or stranger proof.",
+  "concept": {
+    "definition": "Retries that repeat safely are not independent evidence.",
+    "attribution": "Ada Vale, synthetic notebook",
+    "attributed_is_fact": false,
+    "evidence_refs": ["r01", "r02"],
+    "uncertainty": "A. Vale remains unresolved.",
+    "freshness": "known_at 2025-01-03T13:00:00Z",
+    "summary_available": false
+  },
+  "projections": {
+    "human": {
+      "definition": "Retries that repeat safely are not independent evidence.",
+      "attribution": "Ada Vale, synthetic notebook",
+      "attributed_is_fact": false,
+      "evidence_visible": true,
+      "uncertainty": "A. Vale remains unresolved.",
+      "freshness": "known_at 2025-01-03T13:00:00Z",
+      "status": "partial",
+      "omission_exposes_restricted_counts": false
+    },
+    "developer": {
+      "definition": "Retries that repeat safely are not independent evidence.",
+      "attribution": "Ada Vale, synthetic notebook",
+      "evidence_refs": ["r01", "r02"],
+      "uncertainty": "A. Vale remains unresolved.",
+      "freshness": "known_at 2025-01-03T13:00:00Z",
+      "status": "partial"
+    },
+    "agent": {
+      "definition": "Retries that repeat safely are not independent evidence.",
+      "attribution": "Ada Vale, synthetic notebook",
+      "evidence_refs": ["r01", "r02"],
+      "uncertainty": "A. Vale remains unresolved.",
+      "freshness": "known_at 2025-01-03T13:00:00Z",
+      "status": "partial"
+    }
+  }
+}
