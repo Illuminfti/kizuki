@@ -150,6 +150,7 @@ for (const support of rows(bo.support_expectations)) {
   assert.equal(support.admission_seq, admission.core_admission_seq, "support sequence disagrees with schedule");
   assert.equal(support.raw_available_at, record.core_accepted_at, "support capture time disagrees with record");
   assert.equal(span.start, 0); assert.equal(span.end, text(record.content).length);
+  assert.equal(number(support.event_version), 1, "fixture captured-record revision, not CaptureEvent.content_hash_version");
   assert(at(support.raw_available_at) <= at(support.admitted_at));
   for (const id of strings(support.prerequisite_support_refs ?? [])) assert(at(get(bs.all, id).admitted_at) <= at(support.admitted_at));
 }
@@ -325,6 +326,6 @@ console.log(JSON.stringify({
   validation:"static_pass", product_execution:false,
   concept:{sha256:base.sha256,bytes:base.bytes.length,symbols:bs.all.size,references:bs.refs.length,records:br.size,controls:bc.size,queries:bq.size},
   extension:{sha256:extension.sha256,bytes:extension.bytes.length,symbols:xs.all.size,references:xs.refs.length,records:xr.size,controls:xc.size,queries:xq.size},
-  checked:["strict JSON without duplicate keys","reference closure","complete Core transaction order","scheduled support agreement","chronological oracle isolation","exact purge selections","actual Grant.subjects grammar and visibility profiles","pinned baseline agreement","hidden-only change remains unchanged","distinct commitments","exact commitment actor and evidence binding","four outcome prefixes","exact-version inspection binding","retained restore-control inventory","restore outcome and runtime-generation invalidation within token TTL","stale Cue decision does not cover a changed effect"],
+  checked:["strict JSON without duplicate keys","reference closure","complete Core transaction order","scheduled support agreement","fixture captured-record revision 1","chronological oracle isolation","exact purge selections","actual Grant.subjects grammar and visibility profiles","pinned baseline agreement","hidden-only change remains unchanged","distinct commitments","exact commitment actor and evidence binding","four outcome prefixes","exact-version inspection binding","retained restore-control inventory","restore outcome and runtime-generation invalidation within token TTL","stale Cue decision does not cover a changed effect"],
   limitation:"Design data only; no extraction, policy runtime, migration, restore, client parity or quality claim."
 },null,2));
