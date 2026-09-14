@@ -5,8 +5,10 @@ import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "../..");
 const RFC = join(ROOT, "rfcs/0004-world-storage.md");
+const PARENT = join(ROOT, "rfcs/0004-living-epistemic-world-model.md");
 const DB = join(ROOT, "packages/core/src/ledger/db.ts");
 const MARKER = "<!-- world-allocation-compatibility -->";
+const PARENT_MIGRATION = "## Migration, recovery and export";
 const BASELINE_LEDGER_VERSIONS = [17, 18, 19] as const;
 
 function currentLedgerVersions(source: string): number[] {
@@ -17,6 +19,14 @@ function currentLedgerVersions(source: string): number[] {
 
 function compatibilitySection(markdown: string): string {
   const at = markdown.indexOf(MARKER);
+  expect(at).toBeGreaterThanOrEqual(0);
+  const rest = markdown.slice(at);
+  const next = rest.search(/\n## /);
+  return next < 0 ? rest : rest.slice(0, next);
+}
+
+function markdownSection(markdown: string, heading: string): string {
+  const at = markdown.indexOf(heading);
   expect(at).toBeGreaterThanOrEqual(0);
   const rest = markdown.slice(at);
   const next = rest.search(/\n## /);
@@ -45,6 +55,24 @@ function reservationErrors(section: string, occupied: readonly number[]): string
     }
     if (new RegExp(`ledger ${version} remains reserved for implementation`, "i").test(section)) {
       errors.push(`ledger ${version} restored as a current reservation`);
+    }
+  }
+  return errors;
+}
+
+function parentReservationErrors(section: string, occupied: readonly number[]): string[] {
+  const errors: string[] = [];
+  const compact = section.toLowerCase().replace(/\s+/g, " ");
+  if (!compact.includes("pinned baseline")) errors.push("missing baseline qualification");
+  if (!compact.includes("collision consumes a fresh version")) {
+    errors.push("missing fresh-version-on-collision rule");
+  }
+  if (!compact.includes("never different ddl under an already used number")) {
+    errors.push("missing already-used-number collision rule");
+  }
+  for (const version of occupied) {
+    if (new RegExp(`ledger ${version} remains reserved for implementation`, "i").test(section)) {
+      errors.push(`parent restored ledger ${version} as a current reservation`);
     }
   }
   return errors;
@@ -83,4 +111,35 @@ test("an unqualified numeric current-tip claim fails the compatibility addendum"
     "continues through version 26",
   );
   expect(reservationErrors(stale, BASELINE_LEDGER_VERSIONS)).toContain("unqualified numeric current-tip claim");
+});
+
+test("parent and storage appendix cannot disagree about current ledger reservations", () => {
+  const occupied = currentLedgerVersions(readFileSync(DB, "utf8"));
+  const appendix = compatibilitySection(readFileSync(RFC, "utf8"));
+  const parent = markdownSection(readFileSync(PARENT, "utf8"), PARENT_MIGRATION);
+  expect(reservationErrors(appendix, BASELINE_LEDGER_VERSIONS)).toEqual([]);
+  expect(parentReservationErrors(parent, occupied)).toEqual([]);
+
+  const reserved = parent.replace(
+    "a collision consumes a fresh\nversion through review, never different DDL under an already used number.",
+    "ledger 17 remains reserved for implementation.",
+  );
+  expect(parentReservationErrors(reserved, BASELINE_LEDGER_VERSIONS)).toContain(
+    "parent restored ledger 17 as a current reservation",
+  );
+  expect(reservationErrors(appendix, BASELINE_LEDGER_VERSIONS)).toEqual([]);
+
+  const unpinned = parent.replace("pinned baseline", "current main");
+  expect(parentReservationErrors(unpinned, BASELINE_LEDGER_VERSIONS)).toContain("missing baseline qualification");
+
+  const noCollision = parent.replace(
+    "a collision consumes a fresh\nversion through review, never different DDL under an already used number.",
+    "reuse the occupied number.",
+  );
+  expect(parentReservationErrors(noCollision, BASELINE_LEDGER_VERSIONS)).toEqual(
+    expect.arrayContaining([
+      "missing fresh-version-on-collision rule",
+      "missing already-used-number collision rule",
+    ]),
+  );
 });
