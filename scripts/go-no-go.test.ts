@@ -797,6 +797,28 @@ test("surface validator recomputes inventories and refuses a self-declared empty
   });
 });
 
+test("a self-attested x-api live-account receipt cannot pass connector qualification", () => {
+  const f = fixture();
+  const body = JSON.stringify({
+    schema: "kizuki.connector-evidence/v1",
+    connector: "x-api",
+    status: "PASS",
+    attested_by: "model",
+    live_account: true,
+  });
+  const path = join(f.root, "connector-x-api.json");
+  writeFileSync(path, body);
+  asV3(f, [receiptRef("kizuki.connector-evidence/v1", "connector.x-api", null, path, digest(body))]);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, "connector.x-api")).toMatchObject({
+    status: "NOT_IMPLEMENTED",
+    evidence_sha256: null,
+  });
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
+});
+
 test("surface identity, revision, RFC3339 and receipt custody failures do not credit a digest", () => {
   const expected = neutralExpected();
   const fail = (patch: Record<string, unknown>, reason: string) => {
