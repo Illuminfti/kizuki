@@ -133,6 +133,10 @@ export const PACKET_INPUT = z.strictObject({
     .optional(),
   purpose: z.enum(["session", "recall", "correction", "audit"]).optional(),
   capabilities: z.array(z.enum(["delta"])).max(1).optional(),
+  hooks: z
+    .array(z.enum(["session_start", "turn", "pre_compaction", "post_compaction", "session_end"]))
+    .max(5)
+    .optional(),
   retain_prefix: z.boolean().optional(),
   prior_hash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   epoch: z.int().min(0).optional(),
