@@ -1,0 +1,24 @@
+{
+  "schema": "kizuki.world-slice-partial-design/v1",
+  "id": "partial-slice-coverage-is-advertised",
+  "title": "A World Slice must advertise missing providers instead of omitting them as complete",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not a World Slice compiler, public tool, or context_packet change.",
+  "request": {
+    "task": "resume-pilot-plan",
+    "requested_kinds": ["concept", "question", "skill", "procedure"]
+  },
+  "coverage": [
+    { "kind": "concept", "status": "included", "provider_available": true },
+    { "kind": "question", "status": "unavailable", "provider_available": false },
+    { "kind": "skill", "status": "unavailable", "provider_available": false },
+    { "kind": "procedure", "status": "included", "provider_available": true }
+  ],
+  "oracle": {
+    "complete": false,
+    "omitted_kinds_count": 0,
+    "unavailable_kinds": ["question", "skill"],
+    "missing_provider_hidden": false
+  }
+}
