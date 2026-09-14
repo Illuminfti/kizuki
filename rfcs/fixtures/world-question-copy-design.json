@@ -1,0 +1,47 @@
+{
+  "schema": "kizuki.world-question-copy-design/v1",
+  "id": "copied-answer-is-not-corroboration",
+  "title": "A copied AI answer is not independent corroboration or demonstrated learning",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only fixture. Not a Question registry, tutoring harness, curiosity score, or public API.",
+  "question": {
+    "id": "q_dependent_count",
+    "lifecycle": "open",
+    "source_conversation_ref": "r_ask",
+    "survives_source_conversation": true
+  },
+  "candidates": [
+    {
+      "id": "c_copied_model",
+      "kind": "copied_model_answer",
+      "evidence_ref": "r_copied_answer",
+      "independent_root": false,
+      "demonstrates_owner_understanding": false
+    },
+    {
+      "id": "c_partial_note",
+      "kind": "partial_source_evidence",
+      "evidence_ref": "r_later_note",
+      "independent_root": true,
+      "resolves_question": false
+    }
+  ],
+  "understanding": {
+    "answer_available": true,
+    "owner_understanding": "unknown",
+    "missing_practice_is_incompetence": false
+  },
+  "curiosity": {
+    "mention_count": 12,
+    "frequency_implies_importance": false
+  },
+  "oracle": {
+    "lifecycle": "open",
+    "independent_corroboration_count": 1,
+    "copied_answer_is_independent_witness": false,
+    "resolved": false,
+    "owner_understood": false,
+    "curiosity_from_frequency": false
+  }
+}
