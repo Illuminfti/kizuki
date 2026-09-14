@@ -1,0 +1,34 @@
+{
+  "schema": "kizuki.world-cue-dismissal-design/v1",
+  "id": "cue-dismissal-preserves-fact",
+  "title": "Dismissal changes attention state, not factual authority",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Cue decisions do not gate canon, grant execution, or authorize a runtime API.",
+  "candidate": {
+    "id": "x_cue_candidate",
+    "purpose": "pilot-plan-accuracy",
+    "claim_ref": "x_claim_deadline",
+    "claim_confidence": 0.5,
+    "claim_authority": "model_inference"
+  },
+  "dismissal": {
+    "id": "x_cue_dismiss",
+    "candidate_ref": "x_cue_candidate",
+    "purpose": "pilot-plan-accuracy",
+    "suppresses_same_candidate": true,
+    "retracts_claim": false,
+    "changes_confidence": false,
+    "changes_authority": false,
+    "grants_other_channel_delivery": false,
+    "grants_execution": false,
+    "widens_suppression_scope": false
+  },
+  "oracle": {
+    "claim_confidence_after": 0.5,
+    "claim_authority_after": "model_inference",
+    "attention_suppressed": true,
+    "canon_gated": false,
+    "execution_granted": false
+  }
+}
