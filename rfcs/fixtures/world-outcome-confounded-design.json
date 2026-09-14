@@ -1,0 +1,28 @@
+{
+  "schema": "kizuki.world-outcome-confounded-design/v1",
+  "id": "confounded-is-not-success",
+  "title": "A confounded outcome stays distinct from unknown, failed, and success",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not an execution-receipt endpoint or execution tool.",
+  "report": {
+    "principal": "agent_client",
+    "kind": "self_report",
+    "independent_root": false,
+    "goal_achieved": false
+  },
+  "observation": {
+    "class": "confounded",
+    "unknown": false,
+    "failed": false,
+    "success": false,
+    "confound_ref": "r_overlapping_change"
+  },
+  "oracle": {
+    "self_report_is_independent_proof": false,
+    "confounded_counts_as_success": false,
+    "confounded_counts_as_failure": false,
+    "unknown_collapsed": false,
+    "goal_achieved": false
+  }
+}
