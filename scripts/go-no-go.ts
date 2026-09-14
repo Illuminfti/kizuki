@@ -17,7 +17,21 @@ type Status = "PASS" | "FAIL" | "MISSING" | "UNVERIFIABLE" | "NOT_IMPLEMENTED";
 interface Gate { id: string; required: boolean; status: Status; scope: string; reason: string; target: string | null; evidence_sha256: string | null; }
 /** Shared decision only; this function never establishes evidence authority. */
 export function releaseDecision(profile: Profile, rows: readonly Gate[]) {
-  const accepted = rows.filter(item => item.required).every(item => item.status === "PASS") && !rows.some(item => item.status === "FAIL");
+  const required = gates().filter(item => item.required);
+  const seen = new Set<string>();
+  const byId = new Map<string, Gate>();
+  for (const row of rows) {
+    if (seen.has(row.id)) {
+      return { decision: "NO-GO" as const, release_1_0_accepted: false };
+    }
+    seen.add(row.id);
+    byId.set(row.id, row);
+  }
+  const complete = required.every(item => {
+    const row = byId.get(item.id);
+    return row !== undefined && row.required === true && row.target === item.target;
+  });
+  const accepted = complete && required.every(item => byId.get(item.id)!.status === "PASS") && !rows.some(item => item.status === "FAIL");
   return { decision: accepted ? "GO" as const : "NO-GO" as const, release_1_0_accepted: profile === "1.0" && accepted };
 }
 interface ArtifactReference { producer: ArtifactProofSchema; target: string; directory: string; proof: string; proof_sha256: string; }
@@ -91,7 +105,7 @@ function fixtureDiagnostic(ref: FixtureReference, index: EvidenceIndex) {
     release_credit: false, producer_revision: null, manifest_sha256: after.manifest.sha256, genesis_sha256: after.genesis.sha256, samples_sha256: after.samples.sha256 };
 }
 
-function gates(): Gate[] {
+export function gates(): Gate[] {
   const rows: Gate[] = [];
   const add = (id: string, scope: string, status: Status = "NOT_IMPLEMENTED", reason = "trusted-producer-not-implemented", required = true, target: string | null = null) => rows.push({ id, scope, status, reason, required, target, evidence_sha256: null });
   add("evidence.index", "evidence-integrity", "MISSING", "index-missing");
