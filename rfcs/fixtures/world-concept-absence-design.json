@@ -1,0 +1,32 @@
+{
+  "schema": "kizuki.world-concept-absence-design/v1",
+  "id": "missing-concept-sections-stay-absent",
+  "title": "Missing Concept card sections stay absent, not fabricated empty success",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not a Concept API, card renderer, or epistemic store.",
+  "card": {
+    "concept_ref": "c_idempotency",
+    "definition_present": true,
+    "applications_present": false,
+    "open_questions_present": false,
+    "applications_status": "absent",
+    "open_questions_status": "unavailable"
+  },
+  "epistemic": {
+    "exposure": true,
+    "explanation": false,
+    "application": false,
+    "demonstrated_performance": false,
+    "exposure_implies_explanation": false,
+    "explanation_implies_application": false,
+    "application_implies_mastery": false
+  },
+  "oracle": {
+    "fabricated_empty_applications": false,
+    "fabricated_empty_questions": false,
+    "view_status": "partial",
+    "complete_success": false,
+    "independent_performance_count": 0
+  }
+}
