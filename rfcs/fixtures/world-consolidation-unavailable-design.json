@@ -1,0 +1,29 @@
+{
+  "schema": "kizuki.world-consolidation-unavailable-design/v1",
+  "id": "unavailable-is-not-empty-success",
+  "title": "Model-unavailable consolidation cannot advance as an empty success",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only fixture. Not a consolidation engine, public API, or checkpoint implementation.",
+  "job": {
+    "id": "job_concept_summary",
+    "kind": "bounded_consolidation",
+    "input_admission_refs": ["adm_r01", "adm_r05"],
+    "policy_version": "serve-policy/v1",
+    "result": "unavailable",
+    "empty_batch": false,
+    "checkpoint_advanced": false
+  },
+  "read": {
+    "after_new_evidence": true,
+    "view": "pending_consolidation",
+    "fabricated_fresh_deadline": false,
+    "owner_correction_waiting": false
+  },
+  "oracle": {
+    "result": "unavailable",
+    "successful_empty": false,
+    "frontier_advanced": false,
+    "current_deadline_claimed": false
+  }
+}
