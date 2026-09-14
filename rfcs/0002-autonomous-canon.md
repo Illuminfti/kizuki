@@ -70,6 +70,20 @@ which E1–E11 says was missing:
 6. **liveness asserted against the supervisor**, plus a machine-origin
    marker that keeps the loop out of its own input (E8, E10).
 
+<!-- cue-d10-reconciliation -->
+D10 is unchanged for evidence, claims, interpretation, canon, correction
+and undo. A Cue decision never gates those paths. It is an append-only
+record of the owner's exact external-effect intent. It is not source
+permission, a Kizuki execution grant, or proof of completion. The separate
+external runtime must still hold and revalidate its own effect authority,
+target, audience, cost limits, current Kizuki basis and prior attempt
+immediately before acting. Material changes invalidate execution eligibility
+and require a new decision. Presentation-only changes do not. Kizuki records
+candidate, decision, intent, report and independently observed outcome
+separately. It hosts no agent and exposes no general execute endpoint. This
+clarification does not adopt RFC 0004, amend D10, authorize a Cue schema,
+migration, public API, or execution runtime.
+
 ### 1.3 The restated moat
 
 Autonomous, provenance-total, reversible canon with conversational
