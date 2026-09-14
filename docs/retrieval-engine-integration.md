@@ -97,6 +97,13 @@ harness lacking a sanctioned hook gets documented pull-mode behavior, not an
 invented hook or a patched private provider interface. Qualify each real client
 and version independently using current official documentation.
 
+Current `context_packet` can accept optional `hooks` naming `session_start`,
+`turn`, `pre_compaction`, `post_compaction`, or `session_end`. That reports
+`lifecycle.mode=pull_only` and lists every requested hook as unsupported. It
+does not implement, qualify, or invent host hooks, compaction recovery, or
+session-end capture. Omitting `hooks` keeps the previous packet data shape.
+This is not L06, MI-01, or Stage A completion.
+
 Stage one reuses current context packets and enrollment without waiting for the
 whole world model. Stage two consumes #489/#490 after their contracts are
 accepted. Neither adapter implements its own compiler, identity store or grants.

@@ -25,7 +25,7 @@ export const TOOL_DESCRIPTIONS: Record<Tool, string> = {
   get_page: `Read one canon note by id or by vault-relative path. ${TAINT_RULE}`,
   query_entities: `List canon notes about people, organizations, projects, places and topics. ${TAINT_RULE}`,
   timeline: `List captured records in a time window, optionally narrowed by subject, connector or kind. ${TAINT_RULE}`,
-  context_packet: `Build one purpose-scoped Markdown brief within a token budget. Pass purpose (session, recall, correction, audit), and advertise capabilities=["delta"] with retain_prefix plus prior_hash to skip an unchanged body. ${TAINT_RULE}`,
+  context_packet: `Build one purpose-scoped Markdown brief within a token budget. Pass purpose (session, recall, correction, audit), and advertise capabilities=["delta"] with retain_prefix plus prior_hash to skip an unchanged body. Optional hooks negotiate session_start, turn, pre_compaction, post_compaction, or session_end; unsupported hooks stay pull-only through this tool and are never invented host hooks. ${TAINT_RULE}`,
   graph_neighbors: `List the links around a note, a subject or a record. ${TAINT_RULE}`,
   system_health: `Report vault, ledger, connector and agent counts for this principal. ${TAINT_RULE}`,
   propose: `File a claim for the receipted writer to act on. It never changes canon by itself. ${TAINT_RULE}`,

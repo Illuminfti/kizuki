@@ -9,7 +9,7 @@ import {
 } from "@kizuki/core";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { recordedPage } from "../../core/test/helpers/recorded-page";
-import { ENVELOPE_SHAPE } from "../src/schemas";
+import { ENVELOPE_SHAPE, PACKET_INPUT } from "../src/schemas";
 import { call, connectClient, envelopeOf } from "./client";
 import { mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
@@ -306,4 +306,31 @@ test('listed MCP preserves quoted aggregate taint when a clean page gains a sepa
   const chunk = (envelopeOf(result)['canon'] as { page_id: string; taint: string; authority: string; subject_labels?: unknown[] }[]).find(chunk => chunk.page_id === 'fact:clean-label-base')!;
   expect(chunk.taint).toBe('quoted'); expect(chunk.authority).toBe(base.receipt.authority);
   expect(chunk.subject_labels).toHaveLength(1);
+});
+
+test("context packet hooks accept named lifecycle events and refuse invented host hooks", () => {
+  expect(PACKET_INPUT.safeParse({ hooks: ["pre_compaction", "session_end"] }).success).toBe(true);
+  expect(PACKET_INPUT.safeParse({ hooks: ["session_start", "turn", "post_compaction"] }).success).toBe(true);
+  expect(PACKET_INPUT.safeParse({ hooks: ["private_provider"] }).success).toBe(false);
+  expect(PACKET_INPUT.safeParse({ hooks: ["delta"] }).success).toBe(false);
+  expect(PACKET_INPUT.safeParse({ hooks: ["compaction"] }).success).toBe(false);
+});
+
+test("a listed MCP client receives pull-only lifecycle negotiation without claiming hooks", async () => {
+  const client = await listed(live());
+  const omitted = envelopeOf(await call(client, "context_packet", { query: "kettle" }));
+  expect((omitted["data"] as { lifecycle?: unknown } | undefined)?.lifecycle).toBeUndefined();
+  const result = await call(client, "context_packet", {
+    query: "kettle",
+    hooks: ["pre_compaction", "post_compaction", "session_end"],
+  });
+  expect(result.isError ?? false).toBe(false);
+  const envelope = envelopeOf(result);
+  expect((envelope["data"] as { lifecycle?: unknown }).lifecycle).toEqual({
+    mode: "pull_only",
+    supported_hooks: [],
+    requested_hooks: ["pre_compaction", "post_compaction", "session_end"],
+    unsupported_hooks: ["pre_compaction", "post_compaction", "session_end"],
+  });
+  expect(JSON.parse(result.content[0]!.text)).toEqual(envelope);
 });
