@@ -137,6 +137,11 @@ for (const assertion of rows(bo.assertions)) {
   for (const id of strings(assertion.semantic_control_refs)) assert(at(get(bc, id).available_at) <= at(query.known_at));
   for (const id of strings(assertion.delivery_control_refs)) assert(at(get(bc, id).available_at) <= at(query.delivery_at));
 }
+const hidden = get(index(bo.assertions), "a_hidden_mutation");
+assert.equal(hidden.query_ref, "q_narrow_after_private");
+assert.equal(hidden.compare_query_ref, "q_copy_before_private");
+assert.equal(row(hidden.expected).view_status, "unchanged");
+assert.equal(get(bq, hidden.query_ref).baseline_query_ref, hidden.compare_query_ref);
 for (const support of rows(bo.support_expectations)) {
   const record = get(br, support.record_ref), span = row(support.span_utf16);
   const admission = get(admissions, support.scheduled_admission_ref);
@@ -313,6 +318,6 @@ console.log(JSON.stringify({
   validation:"static_pass", product_execution:false,
   concept:{sha256:base.sha256,bytes:base.bytes.length,symbols:bs.all.size,references:bs.refs.length,records:br.size,controls:bc.size,queries:bq.size},
   extension:{sha256:extension.sha256,bytes:extension.bytes.length,symbols:xs.all.size,references:xs.refs.length,records:xr.size,controls:xc.size,queries:xq.size},
-  checked:["strict JSON without duplicate keys","reference closure","complete Core transaction order","scheduled support agreement","chronological oracle isolation","exact purge selections","actual Grant.subjects grammar and visibility profiles","pinned baseline agreement","distinct commitments","exact commitment actor and evidence binding","four outcome prefixes","exact-version inspection binding","retained restore-control inventory","restore outcome and runtime-generation invalidation within token TTL","stale Cue decision does not cover a changed effect"],
+  checked:["strict JSON without duplicate keys","reference closure","complete Core transaction order","scheduled support agreement","chronological oracle isolation","exact purge selections","actual Grant.subjects grammar and visibility profiles","pinned baseline agreement","hidden-only change remains unchanged","distinct commitments","exact commitment actor and evidence binding","four outcome prefixes","exact-version inspection binding","retained restore-control inventory","restore outcome and runtime-generation invalidation within token TTL","stale Cue decision does not cover a changed effect"],
   limitation:"Design data only; no extraction, policy runtime, migration, restore, client parity or quality claim."
 },null,2));
