@@ -1,0 +1,32 @@
+{
+  "schema": "kizuki.world-perspective-binding-design/v1",
+  "id": "c1-deadline-perspectives",
+  "title": "Ada's C1 statement and Ben's unconfirmed understanding stay distinct",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not a social-state store or quoted-disagreement reopen.",
+  "perspectives": [
+    {
+      "id": "ada_c1_deadline",
+      "holder_ref": "base:actor_ada",
+      "speaker_ref": "base:actor_ada",
+      "evidence_ref": "x_r_goal_c1",
+      "deadline": "2025-01-10T17:00:00Z",
+      "confirmed": true
+    },
+    {
+      "id": "ben_unconfirmed_c1",
+      "holder_ref": "base:actor_ben",
+      "speaker_ref": "base:actor_ben",
+      "evidence_ref": "x_r_deadline_conflict",
+      "deadline": "2025-01-09T17:00:00Z",
+      "confirmed": false,
+      "about_commitment": "x_c1"
+    }
+  ],
+  "oracle": {
+    "agreed_deadline": null,
+    "c2_affected": false,
+    "later_correction_in_old_knowledge": false
+  }
+}
