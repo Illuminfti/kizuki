@@ -517,6 +517,56 @@
       }
     ]
   },
+  "cue_stale_approval": {
+    "id": "x_cue_stale_approval",
+    "family": "#491/#492",
+    "evaluation_state": "not_run",
+    "project": "Acme",
+    "goal": "Keep the pilot plan accurate.",
+    "commitments": [
+      {
+        "id": "x_cue_ada",
+        "actor": "Ada",
+        "deadline": "2026-09-18T16:00:00Z",
+        "changed": false
+      },
+      {
+        "id": "x_cue_grace",
+        "actor": "Grace",
+        "deadline_before": "2026-09-18T16:00:00Z",
+        "deadline_after": "2026-09-17T16:00:00Z",
+        "changed": true
+      }
+    ],
+    "effect": {
+      "id": "x_cue_effect_v1",
+      "target": "pilot-plan.md",
+      "revision": "v1"
+    },
+    "decision": {
+      "id": "x_cue_decision",
+      "covers_effect_ref": "x_cue_effect_v1",
+      "changes_external_file": false,
+      "changes_canon": false,
+      "changes_source_grants": false,
+      "changes_runtime_authority": false
+    },
+    "material_change": {
+      "id": "x_cue_effect_v2",
+      "target": "pilot-plan.md",
+      "revision": "v2",
+      "invalidates_decision_ref": "x_cue_decision"
+    },
+    "presentation_only": {
+      "id": "x_cue_title_tweak",
+      "invalidates_decision": false
+    },
+    "oracle": {
+      "old_decision_covers_changed_effect": false,
+      "ada_commitment_unchanged": true,
+      "approval_is_execution_grant": false
+    }
+  },
   "validation_scope": "Strict JSON, frozen-base hash, all local/cross-base references, record/admission/query chronology, oracle prefix availability, artifact versions, exact C1/C2 separation, four outcome events, token timing and snapshot selection. Passing these static checks does not execute the proposed product contracts.",
   "original_design_sha256": "d35f8cc8fde3a4087bf603c865e74d7e7c6e0ea46db22a5319d9986d73fd8c9b"
 }
