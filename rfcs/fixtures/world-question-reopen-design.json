@@ -1,0 +1,31 @@
+{
+  "schema": "kizuki.world-question-reopen-design/v1",
+  "id": "contradiction-reopens-resolved-question",
+  "title": "A later contradiction reopens a resolved question; abandonment is not resolution",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not a Question registry, tutoring harness, or public API.",
+  "question": {
+    "id": "q_dependent_count",
+    "lifecycle": "reopened",
+    "prior_lifecycle": "resolved",
+    "abandoned": false,
+    "survives_source_conversation": true
+  },
+  "resolution": {
+    "resolved_by_ref": "c_partial_note",
+    "contradicted_by_ref": "r_later_conflict",
+    "contradiction_reopens": true,
+    "copied_answer_resolves": false
+  },
+  "abandonment": {
+    "abandoned_is_resolved": false,
+    "silence_is_resolution": false
+  },
+  "oracle": {
+    "lifecycle": "reopened",
+    "resolved": false,
+    "abandoned": false,
+    "prior_resolution_survives_contradiction": false
+  }
+}
