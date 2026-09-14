@@ -288,11 +288,31 @@ for (const status of ["current", "unchanged", "empty successful diff"]) assert(s
 const restoreFresh = get(index(xo.assertions), "x_a_restore_fresh");
 assert.equal(restoreFresh.expected_status, "current");
 assert.match(text(restoreFresh.expected), /^Fresh current projection, if complete and supported:/);
+const cue = row(extension.fixture.cue_stale_approval);
+assert.equal(cue.evaluation_state, "not_run");
+assert.equal(cue.project, "Acme");
+const cueCommitments = index(cue.commitments), adaCue = get(cueCommitments, "x_cue_ada"), graceCue = get(cueCommitments, "x_cue_grace");
+assert.equal(adaCue.actor, "Ada"); assert.equal(adaCue.deadline, "2026-09-18T16:00:00Z"); assert.equal(adaCue.changed, false);
+assert.equal(graceCue.actor, "Grace"); assert.equal(graceCue.deadline_before, "2026-09-18T16:00:00Z");
+assert.equal(graceCue.deadline_after, "2026-09-17T16:00:00Z"); assert.equal(graceCue.changed, true);
+const cueDecision = row(cue.decision), cueEffect = row(cue.effect), cueChanged = row(cue.material_change);
+const cuePresentation = row(cue.presentation_only), cueOracle = row(cue.oracle);
+assert.equal(cueDecision.covers_effect_ref, cueEffect.id);
+assert.equal(cueChanged.invalidates_decision_ref, cueDecision.id);
+assert.notEqual(cueDecision.covers_effect_ref, cueChanged.id);
+assert.notEqual(cueEffect.revision, cueChanged.revision);
+for (const key of ["changes_external_file", "changes_canon", "changes_source_grants", "changes_runtime_authority"]) {
+  assert.equal(cueDecision[key], false);
+}
+assert.equal(cuePresentation.invalidates_decision, false);
+assert.equal(cueOracle.old_decision_covers_changed_effect, false);
+assert.equal(cueOracle.ada_commitment_unchanged, true);
+assert.equal(cueOracle.approval_is_execution_grant, false);
 
 console.log(JSON.stringify({
   validation:"static_pass", product_execution:false,
   concept:{sha256:base.sha256,bytes:base.bytes.length,symbols:bs.all.size,references:bs.refs.length,records:br.size,controls:bc.size,queries:bq.size},
   extension:{sha256:extension.sha256,bytes:extension.bytes.length,symbols:xs.all.size,references:xs.refs.length,records:xr.size,controls:xc.size,queries:xq.size},
-  checked:["strict JSON without duplicate keys","reference closure","complete Core transaction order","scheduled support agreement","chronological oracle isolation","exact purge selections","actual Grant.subjects grammar and visibility profiles","pinned baseline agreement","distinct commitments","exact commitment actor and evidence binding","four outcome prefixes","exact-version inspection binding","retained restore-control inventory","restore outcome and runtime-generation invalidation within token TTL"],
+  checked:["strict JSON without duplicate keys","reference closure","complete Core transaction order","scheduled support agreement","chronological oracle isolation","exact purge selections","actual Grant.subjects grammar and visibility profiles","pinned baseline agreement","distinct commitments","exact commitment actor and evidence binding","four outcome prefixes","exact-version inspection binding","retained restore-control inventory","restore outcome and runtime-generation invalidation within token TTL","stale Cue decision does not cover a changed effect"],
   limitation:"Design data only; no extraction, policy runtime, migration, restore, client parity or quality claim."
 },null,2));
