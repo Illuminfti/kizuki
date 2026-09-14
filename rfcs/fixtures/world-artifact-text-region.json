@@ -1,0 +1,10 @@
+{
+  "id": "exact-text-region-inspection-binding",
+  "evaluation_state": "design_only",
+  "record_id": "x_r_correct_version",
+  "artifact_id": "x_artifact_v2",
+  "version": "v2",
+  "span_utf16": [102, 138],
+  "quote": "Copies are not independent evidence.",
+  "inspected_content_sha256": "6612a2991f8e8d84b533402f8f6583b64ebd3e41baa5c4724f319b9e22409069"
+}
