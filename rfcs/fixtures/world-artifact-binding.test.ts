@@ -165,3 +165,90 @@ test("content-hash counterexamples fail when bytes, versions, or refs drift", ()
   artifact(mutated, "x_artifact_v1").content = `${artifact(mutated, "x_artifact_v1").content}extra`;
   expect(contentBindingErrors(example, mutated).length).toBeGreaterThan(0);
 });
+
+type TextRegion = {
+  id: string;
+  evaluation_state: string;
+  record_id: string;
+  artifact_id: string;
+  version: string;
+  span_utf16?: [number, number] | number[];
+  quote?: string;
+  inspected_content_sha256?: string;
+};
+
+const TEXT_REGION = "world-artifact-text-region.json";
+const QUOTE = "Copies are not independent evidence.";
+
+function loadTextRegion(): TextRegion {
+  return JSON.parse(readFileSync(join(FIXTURES, TEXT_REGION), "utf8")) as TextRegion;
+}
+
+function textRegionErrors(example: TextRegion, artifacts: Fixture): string[] {
+  const errors: string[] = [];
+  if (example.evaluation_state !== "design_only") errors.push("example must remain design_only");
+  if (example.id !== "exact-text-region-inspection-binding") errors.push("unexpected example id");
+  if (example.record_id !== "x_r_correct_version") errors.push("region left the v2 inspection record");
+  if (example.artifact_id !== "x_artifact_v2") errors.push("region bound the wrong artifact");
+  if (example.version !== "v2") errors.push("region lost its version");
+  record(artifacts, example.record_id);
+  const row = artifact(artifacts, example.artifact_id);
+  if (row.version !== example.version) errors.push("artifact version drifted");
+  const content = row.content;
+  if (typeof content !== "string") {
+    errors.push("artifact body is not a string");
+    return errors;
+  }
+  const hash = example.inspected_content_sha256;
+  if (typeof hash !== "string" || !SHA256.test(hash)) {
+    errors.push("region is missing a sha256 content digest");
+  } else if (hash !== sha256Utf8(content)) {
+    errors.push("region does not match the artifact bytes");
+  }
+  const span = example.span_utf16;
+  if (!Array.isArray(span) || span.length !== 2) {
+    errors.push("region span is missing");
+    return errors;
+  }
+  const [start, end] = span;
+  if (!Number.isInteger(start) || !Number.isInteger(end)) {
+    errors.push("region span is not an integer half-open range");
+  } else if (start < 0 || end < 0 || start >= end || end > content.length) {
+    errors.push("region span is empty, reversed, or out of range");
+  } else if (content.slice(start, end) !== example.quote) {
+    errors.push("region quote does not match the selected bytes");
+  }
+  if (example.quote !== QUOTE) errors.push("region quote drifted");
+  return errors;
+}
+
+test("an inspected text region binds its quote to exact artifact version and bytes", () => {
+  expect(textRegionErrors(loadTextRegion(), loadLongitudinal())).toEqual([]);
+});
+
+test("text-region counterexamples fail for stale versions, changed bytes, and invalid spans", () => {
+  const example = loadTextRegion();
+  const artifacts = loadLongitudinal();
+  expect(textRegionErrors(example, artifacts)).toEqual([]);
+  const cases: TextRegion[] = [
+    { ...example, evaluation_state: "not_run" },
+    { ...example, record_id: "x_r_wrong_version" },
+    { ...example, artifact_id: "x_artifact_v1", version: "v1" },
+    { ...example, version: "v1" },
+    { ...example, quote: "Copies are independent evidence." },
+    { ...example, span_utf16: [101, 137] },
+    { ...example, span_utf16: [103, 139] },
+    { ...example, span_utf16: [138, 102] },
+    { ...example, span_utf16: [102.5, 138] },
+    { ...example, span_utf16: [102, 102] },
+    { ...example, span_utf16: [102, 200] },
+    { ...example, span_utf16: undefined },
+    { ...example, inspected_content_sha256: undefined },
+  ];
+  for (const broken of cases) {
+    expect(textRegionErrors(broken, artifacts).length).toBeGreaterThan(0);
+  }
+  const mutated = loadLongitudinal();
+  artifact(mutated, "x_artifact_v2").content = `${artifact(mutated, "x_artifact_v2").content}extra`;
+  expect(textRegionErrors(example, mutated).length).toBeGreaterThan(0);
+});
