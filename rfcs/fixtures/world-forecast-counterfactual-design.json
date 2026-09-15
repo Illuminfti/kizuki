@@ -1,0 +1,28 @@
+{
+  "schema": "kizuki.world-forecast-counterfactual-design/v1",
+  "id": "counterfactual-is-not-current-world",
+  "title": "A counterfactual world state is derived analysis, not current fact",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not a forecast API, causal engine, scoring claim, or model call.",
+  "current": {
+    "view": "current",
+    "includes_counterfactual": false,
+    "record_refs": ["x_r_agent_done", "x_r_provider_ack"]
+  },
+  "counterfactual": {
+    "id": "cf_if_v2_first",
+    "kind": "derived_analysis",
+    "isolated": true,
+    "assumed_record_refs": ["x_r_correct_version"],
+    "leaks_into_current_retrieval": false,
+    "leaks_into_consolidation": false,
+    "becomes_current_fact": false
+  },
+  "oracle": {
+    "current_contains_counterfactual": false,
+    "counterfactual_is_fact": false,
+    "retrieval_leaked": false,
+    "consolidation_leaked": false
+  }
+}
