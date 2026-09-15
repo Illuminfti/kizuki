@@ -11,6 +11,7 @@ import { validateRetrievalDoc, validateAbsenceProof } from "../contracts/retriev
 import type { RetrievalDoc, RetrievalPort } from "../contracts/retrieval";
 import { rebuildDerived } from "../derived";
 import { rebuildGraph } from "../graph/graph";
+import { rebuildSearch } from "../search/indexer";
 import { loadCanon, pageDecision } from "../serving/canon";
 import { claimReader } from "../serving/claims";
 import { currentQuotedSource, eventDecision } from "../serving/ledger";
@@ -119,7 +120,7 @@ export function readRetrievalDocuments(db: Database, vaultPath: string): Retriev
   return readRebuildSnapshot(db, vaultPath).docs;
 }
 
-export type RebuildLayer = "all" | "graph";
+export type RebuildLayer = "all" | "search" | "graph";
 
 function graphFloorReport(db: Database, vaultPath: string) {
   boundCanon(vaultPath);
@@ -137,6 +138,23 @@ function graphFloorReport(db: Database, vaultPath: string) {
   };
 }
 
+function searchFloorReport(db: Database, vaultPath: string) {
+  boundCanon(vaultPath);
+  const report = listCanonPagesReport(vaultPath);
+  if (fatalCanonSkips(report.skipped).length > 0) {
+    throw new Error("canon is unreadable; derived rebuild refused");
+  }
+  const search = rebuildSearch(db, vaultPath);
+  const documents = search.pages + search.events;
+  return {
+    backend: "sqlite-floor" as const,
+    documents,
+    floor_documents: documents,
+    store: "kizuki.retrieval.fts5",
+    generation: search.generation,
+  };
+}
+
 /** Atomic inside each derived store; the stores do not share a distributed transaction. */
 async function rebuildUnderFence(
   scope: VaultMutationScope,
@@ -147,11 +165,11 @@ async function rebuildUnderFence(
   layer: RebuildLayer,
 ) {
   assertVaultMutationScope(scope, { db, vault_path: vaultPath });
-  if (layer === "graph") {
+  if (layer === "graph" || layer === "search") {
     if (port !== undefined) {
       throw new PortError("config_invalid", "partial layer rebuild is not supported for a configured retrieval engine", false);
     }
-    return graphFloorReport(db, vaultPath);
+    return layer === "graph" ? graphFloorReport(db, vaultPath) : searchFloorReport(db, vaultPath);
   }
   if (port !== undefined && sourcePolicyEpoch(db) > 0 && !isLocalSourcePort(port)) throw new PortError("unavailable", "source egress authorization unavailable", false);
   const snapshot = readRebuildSnapshot(db, vaultPath);
@@ -218,8 +236,8 @@ export async function rebuildRetrieval(
 ) {
   vaultPath = resolve(vaultPath);
   const layer = options?.layer ?? "all";
-  if (layer !== "all" && layer !== "graph") {
-    throw new PortError("config_invalid", "rebuild supports --layer all or graph only", false);
+  if (layer !== "all" && layer !== "graph" && layer !== "search") {
+    throw new PortError("config_invalid", "rebuild supports --layer all, search, or graph only", false);
   }
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
