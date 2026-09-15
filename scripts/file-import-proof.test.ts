@@ -22,6 +22,10 @@ test("all eight public file formats have distinct bounded serialized fixtures an
     expect(steps).toContain("denied-reimport-query"); expect(steps).toContain("invalid-import");
   }
 });
+test("ChatGPT first-status stored matches the imported event count", () => {
+  const chatgpt = fileImportFixtures("2026-09-07").find(item => item.format === "chatgpt")!;
+  expect(chatgpt.last_batch_stored).toBe(chatgpt.events);
+});
 test("file fixture timestamps are explicit and no source filename can be supplied as a runtime knob", () => {
   expect(fileImportFixtures("2026-09-07")[0]!.valid["calendar.ics"]).toContain("DTSTART:20260908T090000Z");
   expect(() => fileImportFixtures("not a date")).toThrow();

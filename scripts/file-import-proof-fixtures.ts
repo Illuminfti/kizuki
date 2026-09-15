@@ -28,7 +28,7 @@ export function fileImportFixtures(referenceDay: string): FileCase[] {
     { format: "markdown-folder", connector: "kizuki.markdown-folder", sentinel: "markdownotter", source: "notes", events: 1, proposals: 2, repeat_duplicates: 0, last_batch_stored: 0,
       valid: { "notes/welcome.md": `# Synthetic note\n\n${sentence("markdownotter")}\n` }, invalid: { "notes/broken.md": new Uint8Array([255, 254, 253]) },
       invalid_mode: "partial", invalid_events: 0, invalid_error: "not_utf8" },
-    { format: "chatgpt", connector: "kizuki.import-chatgpt", sentinel: "chatgptbadger", source: "conversations.json", events: 1, proposals: 2, repeat_duplicates: 0, last_batch_stored: 0,
+    { format: "chatgpt", connector: "kizuki.import-chatgpt", sentinel: "chatgptbadger", source: "conversations.json", events: 1, proposals: 2, repeat_duplicates: 0, last_batch_stored: 1,
       valid: { "conversations.json": JSON.stringify([chatgpt("synthetic-chatgpt", sentence("chatgptbadger"))]) },
       invalid: { "conversations.json": JSON.stringify([chatgpt("synthetic-partial-chatgpt", sentence("chatgptbadger")), "synthetic malformed record"]) }, invalid_mode: "partial", invalid_events: 1, invalid_error: "not_object" },
     { format: "claude", connector: "kizuki.import-claude", sentinel: "claudekingfisher", source: "conversations.json", events: 1, proposals: 2, repeat_duplicates: 0, last_batch_stored: 0,
