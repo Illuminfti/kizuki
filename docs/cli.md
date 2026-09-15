@@ -459,13 +459,14 @@ in place.
 ## rebuild
 
 ```text
-usage: kizuki rebuild [--layer all|graph] [--port ID] [--prune-old] [--json]
+usage: kizuki rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--json]
 ```
 
 Reconstructs derived retrieval from the vault. `--layer all` rebuilds the
-configured retrieval store and the SQLite search/graph floor. `--layer graph`
-rebuilds only the SQLite graph floor and does not refresh search; a configured
-retrieval engine refuses that partial layer and exits 1. `--prune-old` removes
+configured retrieval store and the SQLite search/graph floor. `--layer search`
+rebuilds only the SQLite lexical floor and does not refresh graph; `--layer graph`
+rebuilds only the SQLite graph floor and does not refresh search. A configured
+retrieval engine refuses those partial layers and exits 1. `--prune-old` removes
 inactive owned retrieval generations under `.kizuki/retrieval/` and leaves the
 currently configured engine, or the SQLite floor when no engine is bound.
 `--port ID` selects an installed engine for this invocation
