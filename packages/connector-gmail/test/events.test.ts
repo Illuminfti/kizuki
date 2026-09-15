@@ -64,6 +64,20 @@ test("incomplete base64url terminal quantum refuses the record", () => {
     expect(emit(message({ mimeType: "text/plain", body: { data: "QUI=" } })).text).toBe("AB");
     expect(emit(message({ mimeType: "text/plain", body: { data: "QUJD" } })).text).toBe("ABC");
 });
+test("inline text refuses declared byte-length mismatch despite complete base64url", () => {
+    refuse(message({ mimeType: "text/plain", body: { data: "QUJD", size: 4 } }), "source_schema");
+    refuse(message({ mimeType: "text/plain", body: { data: "QUJD", size: 2 } }), "source_schema");
+    for (const size of ["3", 3.5, null, true, Number.NaN])
+        refuse(message({ mimeType: "text/plain", body: { data: "QUJD", size } }), "source_schema");
+    expect(emit(message({ mimeType: "text/plain", body: { data: "QUJD" } })).text).toBe("ABC");
+    expect(emit(message({ mimeType: "text/plain", body: { data: "QUJD", size: 3 } })).text).toBe("ABC");
+    expect(emit(message({ mimeType: "text/plain", body: { data: "", size: 0 } })).text).toBe("");
+    const accent = b64("é");
+    expect(Buffer.byteLength("é")).toBe(2);
+    expect("é".length).toBe(1);
+    expect(emit(message({ mimeType: "text/plain", body: { data: accent, size: 2 } })).text).toBe("é");
+    refuse(message({ mimeType: "text/plain", body: { data: accent, size: 1 } }), "source_schema");
+});
 test("decoded bytes that are not utf-8 are malformed", () => {
     refuse(message({ mimeType: "text/plain", body: { data: b64(new Uint8Array([0xff, 0xfe, 0x41])) } }), "malformed_record");
 });
