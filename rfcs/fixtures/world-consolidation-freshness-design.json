@@ -1,0 +1,29 @@
+{
+  "schema": "kizuki.world-consolidation-freshness-design/v1",
+  "id": "stale-deadline-is-not-current",
+  "title": "A later deadline change cannot be served as the old current value",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only fixture. Not a consolidation engine, public API, or checkpoint implementation.",
+  "summary": {
+    "id": "x_sum_1",
+    "generated_at": "2026-09-01T00:00:00Z",
+    "deadline_ref": "x_deadline_v1",
+    "deadline_value": "2026-09-10T00:00:00Z"
+  },
+  "later_change": {
+    "id": "x_deadline_v2",
+    "changed_at": "2026-09-01T01:00:00Z",
+    "before_worker": true,
+    "deadline_value": "2026-09-12T00:00:00Z"
+  },
+  "read": {
+    "accounts_for_change": true,
+    "declares_freshness_gap": false,
+    "returns_old_deadline_as_current": false
+  },
+  "oracle": {
+    "stale_deadline_current": false,
+    "freshness_honest": true
+  }
+}
