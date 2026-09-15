@@ -25,7 +25,7 @@ else {
     }
     result.timeZone = zone;
 } return result; }
-export function projection(selected: readonly Field[]): string { const base = ['id', 'etag', 'status', 'updated', 'start', 'end', 'recurrence', 'recurringEventId', 'originalStartTime']; for (const field of selected)
+export function projection(selected: readonly Field[]): string { const base = ['id', 'etag', 'status', 'updated', 'start', 'end', 'endTimeUnspecified', 'recurrence', 'recurringEventId', 'originalStartTime']; for (const field of selected)
     base.push(field === 'attendees' ? 'attendees(email,displayName,responseStatus),attendeesOmitted' : field === 'attachments' ? 'attachments(fileId,title,mimeType)' : field); return `nextPageToken,nextSyncToken,items(${base.join(',')})`; }
 export function event(account: string, calendar: string, raw: Record<string, unknown>, observed: string, selected: readonly Field[], cancelAt: string): CaptureEventInput {
     const eventId = id(raw.id);
@@ -38,7 +38,9 @@ export function event(account: string, calendar: string, raw: Record<string, unk
     const recurrence = raw.recurrence === undefined ? [] : raw.recurrence;
     if (!Array.isArray(recurrence) || recurrence.length > 32 || recurrence.some(v => typeof v !== 'string' || Buffer.byteLength(v) > 2048))
         throw failure();
-    const metadata: Record<string, unknown> = { provider: 'google-calendar', calendar_id: calendar, event_id: eventId, status: raw.status, provider_etag: raw.etag === undefined ? null : text(raw.etag, 1024), provider_updated_at: updated, occurred_at_semantics: updated === null ? 'cancellation_first_observed' : 'provider_updated', provider_deleted_at: null, recurrence_expanded: false, schedule: { start: time(raw.start), end: time(raw.end), end_semantics: 'exclusive', recurrence, recurring_event_id: raw.recurringEventId === undefined ? null : id(raw.recurringEventId), original_start: time(raw.originalStartTime) } };
+    if (raw.endTimeUnspecified !== undefined && typeof raw.endTimeUnspecified !== 'boolean')
+        throw failure();
+    const metadata: Record<string, unknown> = { provider: 'google-calendar', calendar_id: calendar, event_id: eventId, status: raw.status, provider_etag: raw.etag === undefined ? null : text(raw.etag, 1024), provider_updated_at: updated, occurred_at_semantics: updated === null ? 'cancellation_first_observed' : 'provider_updated', provider_deleted_at: null, recurrence_expanded: false, schedule: { start: time(raw.start), end: time(raw.end), end_semantics: raw.endTimeUnspecified === true ? 'unspecified' : 'exclusive', recurrence, recurring_event_id: raw.recurringEventId === undefined ? null : id(raw.recurringEventId), original_start: time(raw.originalStartTime) } };
     // This is the source resource, never an inferred owner or attendee identity.
     const subjects: CaptureEventInput['subjects'] = [{subject_id: 'google-calendar-event:' + digest([account, calendar, eventId]), role: 'about', display_name: 'Google Calendar event'}], attachments: CaptureEventInput['attachments'] = [];
     const lines: string[] = [];
