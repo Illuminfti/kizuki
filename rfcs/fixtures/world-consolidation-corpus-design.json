@@ -1,0 +1,100 @@
+{
+  "schema": "kizuki.world-consolidation-corpus-design/v1",
+  "id": "large-corpus-bounded-work-and-unrun-measurements",
+  "title": "Large-corpus fixtures report bounded candidate work, backlog, lag, p95, memory and model usage",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "result_class": "illustrative",
+  "authority": "Design-only fixture. Not a load test, production measurement, public API, scheduler, or claimed speed/accuracy multiplier.",
+  "corpora": [
+    { "id": "small", "logical_records": 20, "id_prefix": "s" },
+    { "id": "large", "logical_records": 10000, "id_prefix": "L" }
+  ],
+  "caps": { "examine": 1000, "compare": 2000, "admit": 800 },
+  "windows": [
+    {
+      "id": "w1",
+      "start": "2026-09-01T00:00:00Z",
+      "end": "2026-09-01T00:50:00Z",
+      "corpus_id": "large",
+      "backlog_start": 0,
+      "arrivals": 1000,
+      "coalesced": 50,
+      "completed": 700,
+      "deferred": 250,
+      "remaining": 250,
+      "candidates": {
+        "examined": 1000,
+        "comparisons": 1800,
+        "admitted": 800,
+        "rejected": 200,
+        "overflow": 200,
+        "unexamined_remainder": null,
+        "unexamined_reason": "bounded_window"
+      }
+    },
+    {
+      "id": "w2_drain",
+      "start": "2026-09-01T00:50:00Z",
+      "end": "2026-09-01T01:00:00Z",
+      "corpus_id": "large",
+      "backlog_start": 250,
+      "arrivals": 0,
+      "coalesced": 0,
+      "completed": 250,
+      "deferred": 0,
+      "remaining": 0,
+      "candidates": {
+        "examined": 250,
+        "comparisons": 250,
+        "admitted": 250,
+        "rejected": 0,
+        "overflow": 0,
+        "unexamined_remainder": null,
+        "unexamined_reason": "bounded_window"
+      }
+    }
+  ],
+  "jobs": [
+    { "id": "older", "enqueued_at": "2026-09-01T00:00:00Z", "completed_in": "w1", "age_reset": false },
+    { "id": "newer", "enqueued_at": "2026-09-01T00:40:00Z", "completed_in": "w2_drain", "age_reset": false }
+  ],
+  "lag": {
+    "definition": "oldest_uncovered_ledger_evidence_age_ms",
+    "ingest_lag_start": "2026-09-01T00:00:00Z",
+    "ingest_lag_end": "2026-09-01T00:50:00Z",
+    "unit": "ms",
+    "pending_accepted_at": ["2026-09-01T00:00:00Z", "2026-09-01T00:40:00Z"],
+    "illustrative_ingest_lag_ms": 3000000,
+    "capture_latency_ms": 25,
+    "measured_ingest_lag_ms": null,
+    "measured_reason": "not_run"
+  },
+  "p95": {
+    "operation": "logical_job_enqueue_to_filed_result",
+    "rule": "nearest_rank",
+    "percentile": 95,
+    "illustrative_completed_ms": [8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 40],
+    "unresolved": 2,
+    "failed": 1,
+    "measured_ms": null,
+    "measured_reason": "not_run"
+  },
+  "memory": {
+    "method": "sampled_process_tree_rss",
+    "metric": "sampled_peak_rss_bytes",
+    "scope": "consolidation_worker_descendants",
+    "interval_ms": 1000,
+    "excludes_harness": true,
+    "illustrative_samples_bytes": [10000000, 12000000, 11000000],
+    "measured_bytes": null,
+    "measured_reason": "not_run"
+  },
+  "model": {
+    "attempts": [
+      { "logical_job_id": "older", "attempt_id": "a1", "attempt_number": 1, "status": "unknown_consumption", "usage": null, "usage_reason": "unknown", "reservation": "unresolved" },
+      { "logical_job_id": "older", "attempt_id": "a2", "attempt_number": 2, "status": "failed", "usage": 10, "usage_reason": null, "reservation": "settled" },
+      { "logical_job_id": "older", "attempt_id": "a3", "attempt_number": 3, "status": "success", "usage": 8, "usage_reason": null, "reservation": "settled" }
+    ]
+  }
+}
