@@ -1,0 +1,36 @@
+{
+  "schema": "kizuki.world-outcome-replay-design/v1",
+  "id": "duplicate-receipt-is-one-result",
+  "title": "Duplicate or replayed receipts preserve one logical result",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not an execution-receipt endpoint or execution tool.",
+  "receipts": {
+    "first": {
+      "id": "x_r_exec_1",
+      "idempotency_key": "k_exec_1",
+      "logical_result_id": "x_result_1",
+      "unknown": false,
+      "invented_success": false
+    },
+    "replay": {
+      "id": "x_r_exec_1_replay",
+      "idempotency_key": "k_exec_1",
+      "logical_result_id": "x_result_1",
+      "duplicate": true,
+      "invented_success": false
+    },
+    "unknown": {
+      "id": "x_r_exec_unknown",
+      "idempotency_key": "k_exec_unknown",
+      "unknown": true,
+      "invented_success": false,
+      "retry_safe": true
+    }
+  },
+  "oracle": {
+    "logical_results": 1,
+    "replay_creates_second_result": false,
+    "unknown_counted_success": false
+  }
+}
