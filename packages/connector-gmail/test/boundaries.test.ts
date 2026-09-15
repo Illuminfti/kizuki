@@ -40,6 +40,31 @@ test("truncated body refuses the complete batch and preserves the supplied check
     expect(replayed.status).not.toBe("unavailable");
     expect(replayed.events.map(event => event.source_record_id)).toEqual(recovered.events.map(event => event.source_record_id));
 });
+test("inline body-size mismatch retains a non-null checkpoint and retries after repair", async () => {
+    const fixture = new GmailFixture(21);
+    const connector = await fixture.connected();
+    const first = await connector.backfill(null);
+    expect(first.status).not.toBe("unavailable");
+    expect(first.events).toHaveLength(20);
+    expect(first.cursor).not.toBeNull();
+    const saved = first.cursor!;
+    const payload = fixture.messages.get("m21")!.payload as { body: { data: string; size?: unknown } };
+    payload.body.data = "QUJD";
+    payload.body.size = 4;
+    const refused = await connector.backfill(saved);
+    expect(refused.status).toBe("unavailable");
+    expect(refused.events).toEqual([]);
+    expect(refused.cursor).toBe(saved);
+    expect(JSON.stringify(refused)).not.toContain("ABC");
+    payload.body.size = 3;
+    const recovered = await connector.backfill(saved);
+    expect(recovered.status).not.toBe("unavailable");
+    expect(recovered.events.map(event => event.text)).toEqual(["ABC"]);
+    const reopened = await fixture.connected();
+    const replayed = await reopened.backfill(saved);
+    expect(replayed.status).not.toBe("unavailable");
+    expect(replayed.events.map(event => event.source_record_id)).toEqual(recovered.events.map(event => event.source_record_id));
+});
 test("explicit fields suppress persisted body and provider body-data projection", async () => {
     const fixture = new GmailFixture(1), state = parseState(fixture.state);
     state.fields = ["labels"];
