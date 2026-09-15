@@ -1,0 +1,40 @@
+{
+  "schema": "kizuki.world-outcome-stages-design/v1",
+  "id": "agent-done-is-not-goal-achieved",
+  "title": "Agent says done, provider accepted, observed artifact, and goal achieved stay separate",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not an execution-receipt endpoint or execution tool.",
+  "stages": {
+    "agent_says_done": {
+      "kind": "agent_says_done",
+      "source": "self_report",
+      "independent_observation": false,
+      "goal_achieved": false
+    },
+    "provider_accepted": {
+      "kind": "provider_accepted",
+      "source": "provider_ack",
+      "independent_observation": false,
+      "goal_achieved": false
+    },
+    "observed_artifact": {
+      "kind": "observed_artifact",
+      "source": "attributable_observation",
+      "independent_observation": true,
+      "goal_achieved": false
+    },
+    "goal_achieved": {
+      "kind": "goal_achieved",
+      "source": "intended_goal_oracle",
+      "independent_observation": true,
+      "goal_achieved": true
+    }
+  },
+  "oracle": {
+    "self_report_is_goal": false,
+    "provider_ack_is_goal": false,
+    "artifact_is_goal": false,
+    "stages_collapsed": false
+  }
+}
