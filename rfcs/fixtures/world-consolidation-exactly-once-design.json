@@ -1,0 +1,65 @@
+{
+  "schema": "kizuki.world-consolidation-exactly-once-design/v1",
+  "id": "crash-restart-duplicate-narrowing-exactly-once",
+  "title": "Crash, restart, duplicate jobs and policy narrowing preserve exactly-once effects",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only traces. Not a scheduler, outbox, writer, schema migration, or recovery implementation.",
+  "traces": [
+    {
+      "id": "crash_before_commit",
+      "crash": "before_commit",
+      "duplicate_jobs": 1,
+      "policy_revision_prepared": 1,
+      "policy_revision_commit": 1,
+      "committed_on_crash": 0,
+      "retry_new_effects": 1,
+      "observable_effects": 1,
+      "idempotent_equivalent": true,
+      "admits_old_scope_after_narrowing": false
+    },
+    {
+      "id": "crash_after_commit",
+      "crash": "after_commit",
+      "duplicate_jobs": 1,
+      "policy_revision_prepared": 1,
+      "policy_revision_commit": 1,
+      "committed_on_crash": 1,
+      "retry_new_effects": 0,
+      "observable_effects": 1,
+      "idempotent_equivalent": true,
+      "admits_old_scope_after_narrowing": false
+    },
+    {
+      "id": "duplicate_jobs",
+      "crash": "none",
+      "duplicate_jobs": 2,
+      "policy_revision_prepared": 1,
+      "policy_revision_commit": 1,
+      "committed_on_crash": 0,
+      "retry_new_effects": 0,
+      "observable_effects": 1,
+      "idempotent_equivalent": true,
+      "admits_old_scope_after_narrowing": false
+    },
+    {
+      "id": "policy_narrowing",
+      "crash": "none",
+      "duplicate_jobs": 1,
+      "policy_revision_prepared": 1,
+      "policy_revision_commit": 2,
+      "committed_on_crash": 0,
+      "retry_new_effects": 0,
+      "observable_effects": 1,
+      "idempotent_equivalent": true,
+      "admits_old_scope_after_narrowing": false
+    }
+  ],
+  "oracle": {
+    "exactly_once": true,
+    "crash_before_commits": false,
+    "crash_after_retry_duplicates": false,
+    "duplicate_jobs_inflate": false,
+    "narrowing_admits_old_scope": false
+  }
+}
