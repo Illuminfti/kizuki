@@ -102,13 +102,21 @@ async function child(executable: string, argv: string[], cwd: string, env: Recor
     check(!timedOut, "child-timeout"); return { stdout, stderr, exit_code };
   } finally { clearTimeout(timer); if (proc.exitCode === null) proc.kill("SIGKILL"); await proc.exited; }
 }
-function statusObservation(stdout: string, connector: string, sourceKey: string | null, stored: number, errors: number, expectedCount = 1) {
+export function statusObservation(
+  stdout: string,
+  connector: string,
+  sourceKey: string | null,
+  stored: number,
+  errors: number,
+  expectedCount = 1,
+  expectedState: "enrolled" | "disconnected" = "enrolled",
+) {
   const body = envelope(stdout, "connect"), data = exact(body.data, "connections");
   check(body.status === "ok" && Array.isArray(data.connections) && data.connections.length === expectedCount, "connection-cardinality");
   if (expectedCount === 0) return { sourceKey: null, observation: empty() };
   const row = exact(data.connections[0], "connector_id,source_key,state,consent,revision,purge_blockers,sensitivity,last_run,stored,errors");
   check(row.connector_id === connector && /^[0-9A-HJKMNP-TV-Z]{26}$/.test(row.source_key) && (sourceKey === null || row.source_key === sourceKey), "connection-identity");
-  check(row.state === "enrolled" && row.consent === "active" && row.revision === 1 && row.purge_blockers.length === 0 && row.stored === stored && row.errors === errors, "connection-checkpoint-summary");
+  check(row.state === expectedState && row.consent === "active" && row.revision === 1 && row.purge_blockers.length === 0 && row.stored === stored && row.errors === errors, "connection-checkpoint-summary");
   check(typeof row.last_run === "string" && Number.isFinite(Date.parse(row.last_run)), "connection-last-run");
   return { sourceKey: row.source_key as string, observation: { ...empty(), stored: row.stored, errors: row.errors, consent: row.consent, last_run: row.last_run } };
 }
@@ -217,11 +225,11 @@ export async function runFileImportProof(args: FileImportArgs): Promise<string> 
           } else {
             await run("invalid-import", [...importArgs, ...grant], 1, fixture.invalid_mode !== "blocked" ? counts(fixture.invalid_events, 1, fixture.invalid_error, fixture.invalid_events ? fixture.proposals : 0, 0, fixture.invalid_events === 0) : (stdout, stderr) => { check(stdout === "" && stderr.includes(fixture.invalid_error) && /^error: [^\n]+\n$/.test(stderr), "malformed-source-not-refused"); return empty(); });
             const first = await query("invalid-query", fixture.invalid_events);
-            await run("invalid-status", ["connect", "status", "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-status-diagnostics"); const result = statusObservation(stdout, fixture.connector, null, 0, 1, fixture.invalid_mode !== "blocked" ? 1 : 0); entry.invalid_source_key = result.sourceKey; return result.observation; });
+            await run("invalid-status", ["connect", "status", "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-status-diagnostics"); const result = statusObservation(stdout, fixture.connector, null, 0, 1, fixture.invalid_mode !== "blocked" ? 1 : 0, fixture.invalid_events === 0 ? "disconnected" : "enrolled"); entry.invalid_source_key = result.sourceKey; return result.observation; });
             if (fixture.invalid_mode !== "blocked") {
-              await run("invalid-repeat", importArgs, 1, counts(0, 1, fixture.invalid_error));
+              await run("invalid-repeat", importArgs, 1, counts(0, 1, fixture.invalid_error, 0, 0, fixture.invalid_events === 0));
               const second = await query("invalid-repeat-query", fixture.invalid_events); check(JSON.stringify(first.hit_ids) === JSON.stringify(second.hit_ids), "partial-repeat-identities-changed");
-              await run("invalid-repeat-status", ["connect", "status", "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-status-diagnostics"); return statusObservation(stdout, fixture.connector, entry.invalid_source_key, 0, 1).observation; });
+              await run("invalid-repeat-status", ["connect", "status", "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-status-diagnostics"); return statusObservation(stdout, fixture.connector, entry.invalid_source_key, 0, 1, 1, fixture.invalid_events === 0 ? "disconnected" : "enrolled").observation; });
             }
           }
         } catch (error) { entry.failures.push(`${scenario}:${error instanceof Error ? error.message : "case-failed"}`); }

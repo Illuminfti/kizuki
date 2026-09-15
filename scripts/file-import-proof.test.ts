@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { FILE_FORMATS, FILE_IMPORT_POLICY, fileImportFixtures } from "./file-import-proof-fixtures";
-import { consentObservation, expectedFileImportSteps, importCounts, importDiagnostics, parseFileImportArgs, queryObservation } from "./file-import-proof";
+import { consentObservation, expectedFileImportSteps, importCounts, importDiagnostics, parseFileImportArgs, queryObservation, statusObservation } from "./file-import-proof";
 
 test("all eight public file formats have distinct bounded serialized fixtures and explicit local consent", () => {
   const cases = fileImportFixtures("2026-09-07");
@@ -141,4 +141,16 @@ test("a zero-event initial failure requires the exact enrollment cleanup diagnos
   ]) {
     expect(() => importDiagnostics(invalid, 1, "not_utf8", "kizuki.markdown-folder", true)).toThrow();
   }
+});
+
+test("status distinguishes disconnected zero-event failure from enrolled partial import", () => {
+  const source = "01JJ0000000000000000000001";
+  const body = (state: "enrolled" | "disconnected", stored: number) => JSON.stringify({
+    schema: "kizuki.cli.connect/v1", status: "ok", degraded: [], warnings: [],
+    data: { connections: [{ connector_id: "kizuki.markdown-folder", source_key: source, state, consent: "active", revision: 1,
+      purge_blockers: [], sensitivity: "private", last_run: "2026-09-15T00:00:00Z", stored, errors: 1 }] },
+  });
+  expect(statusObservation(body("enrolled", 1), "kizuki.markdown-folder", source, 1, 1).sourceKey).toBe(source);
+  expect(statusObservation(body("disconnected", 0), "kizuki.markdown-folder", source, 0, 1, 1, "disconnected").sourceKey).toBe(source);
+  expect(() => statusObservation(body("enrolled", 0), "kizuki.markdown-folder", source, 0, 1, 1, "disconnected")).toThrow();
 });
