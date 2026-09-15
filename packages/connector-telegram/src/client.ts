@@ -269,11 +269,17 @@ function rpcName(error: unknown, runtime: Runtime): string {
 function mapDialog(dialog: Dialog, runtime: Runtime): TelegramDialog | null {
   const entity = dialog.entity;
   if (entity === undefined) return null;
-  const peerType: PeerType = dialog.isUser
+  // GramJS marks megagroups as both group and channel; keep the group mapping.
+  // Secret chats and other unknown peer classes are not a user, group, or
+  // broadcast channel — drop them instead of inventing a channel identity.
+  const peerType: PeerType | null = dialog.isUser
     ? "user"
     : dialog.isGroup
       ? "group"
-      : "channel";
+      : dialog.isChannel
+        ? "channel"
+        : null;
+  if (peerType === null) return null;
   return {
     peer_id: runtime.utils.getPeerId(entity, true),
     peer_type: peerType,
