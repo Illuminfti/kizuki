@@ -1,0 +1,244 @@
+{
+  "schema": "kizuki.world-consolidation-recovery-design/v1",
+  "id": "crash-restart-duplicate-narrowing-recovery",
+  "title": "Crash, re-delivery and policy narrowing preserve one logical result",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "result_class": "illustrative",
+  "authority": "Design-only traces. Not a scheduler, outbox, writer, schema migration, or recovery implementation.",
+  "jobs": [
+    {
+      "id": "crash_before_result",
+      "policy_prepared": ["capture", "recall", "derive"],
+      "policy_current": ["capture", "recall", "derive"],
+      "input_refs": ["r1"],
+      "replay_from_prepared": false,
+      "blocked_because_other_job_narrowed": false,
+      "cross_store_atomic_transaction": false,
+      "attempts": [
+        {
+          "id": "t1",
+          "boundary": "before_result",
+          "saved_result": false,
+          "filed": false,
+          "acked": false,
+          "producer_calls": 1,
+          "unknown_consumption": true,
+          "unknown_charged_as_zero": false,
+          "committed_effects": [],
+          "progress": 0
+        },
+        {
+          "id": "t2",
+          "boundary": "acked",
+          "saved_result": true,
+          "filed": true,
+          "acked": true,
+          "producer_calls": 1,
+          "unknown_consumption": false,
+          "unknown_charged_as_zero": false,
+          "committed_effects": ["e_before"],
+          "progress": 1
+        }
+      ]
+    },
+    {
+      "id": "crash_after_save_before_file",
+      "policy_prepared": ["capture", "recall", "derive"],
+      "policy_current": ["capture", "recall", "derive"],
+      "input_refs": ["r2"],
+      "replay_from_prepared": false,
+      "blocked_because_other_job_narrowed": false,
+      "cross_store_atomic_transaction": false,
+      "attempts": [
+        {
+          "id": "t1",
+          "boundary": "saved_unfiled",
+          "saved_result": true,
+          "filed": false,
+          "acked": false,
+          "producer_calls": 1,
+          "unknown_consumption": false,
+          "unknown_charged_as_zero": false,
+          "committed_effects": [],
+          "progress": 0
+        },
+        {
+          "id": "t2",
+          "boundary": "acked",
+          "saved_result": true,
+          "filed": true,
+          "acked": true,
+          "producer_calls": 0,
+          "unknown_consumption": false,
+          "unknown_charged_as_zero": false,
+          "committed_effects": ["e_saved"],
+          "progress": 1
+        }
+      ]
+    },
+    {
+      "id": "crash_after_file_before_ack",
+      "policy_prepared": ["capture", "recall", "derive"],
+      "policy_current": ["capture", "recall", "derive"],
+      "input_refs": ["r3"],
+      "replay_from_prepared": false,
+      "blocked_because_other_job_narrowed": false,
+      "cross_store_atomic_transaction": false,
+      "attempts": [
+        {
+          "id": "t1",
+          "boundary": "filed_unacked",
+          "saved_result": true,
+          "filed": true,
+          "acked": false,
+          "producer_calls": 1,
+          "unknown_consumption": false,
+          "unknown_charged_as_zero": false,
+          "committed_effects": ["e_filed"],
+          "progress": 1
+        },
+        {
+          "id": "t2",
+          "boundary": "acked",
+          "saved_result": true,
+          "filed": true,
+          "acked": true,
+          "producer_calls": 0,
+          "unknown_consumption": false,
+          "unknown_charged_as_zero": false,
+          "committed_effects": ["e_filed"],
+          "progress": 1
+        }
+      ]
+    },
+    {
+      "id": "canon_materialization",
+      "policy_prepared": ["capture", "recall", "derive"],
+      "policy_current": ["capture", "recall", "derive"],
+      "input_refs": ["r4"],
+      "replay_from_prepared": false,
+      "blocked_because_other_job_narrowed": false,
+      "cross_store_atomic_transaction": false,
+      "attempts": [
+        {
+          "id": "t1",
+          "boundary": "file_written_receipt_missing",
+          "saved_result": true,
+          "filed": false,
+          "acked": false,
+          "producer_calls": 1,
+          "unknown_consumption": false,
+          "unknown_charged_as_zero": false,
+          "committed_effects": [],
+          "progress": 0
+        },
+        {
+          "id": "t2",
+          "boundary": "acked",
+          "saved_result": true,
+          "filed": true,
+          "acked": true,
+          "producer_calls": 0,
+          "unknown_consumption": false,
+          "unknown_charged_as_zero": false,
+          "committed_effects": ["e_canon"],
+          "progress": 1
+        }
+      ]
+    },
+    {
+      "id": "ack_lost",
+      "policy_prepared": ["capture", "recall", "derive"],
+      "policy_current": ["capture", "recall", "derive"],
+      "input_refs": ["r5"],
+      "replay_from_prepared": false,
+      "blocked_because_other_job_narrowed": false,
+      "cross_store_atomic_transaction": false,
+      "attempts": [
+        {
+          "id": "t1",
+          "boundary": "filed_unacked",
+          "saved_result": true,
+          "filed": true,
+          "acked": false,
+          "producer_calls": 1,
+          "unknown_consumption": false,
+          "unknown_charged_as_zero": false,
+          "committed_effects": ["e_ack"],
+          "progress": 1
+        },
+        {
+          "id": "t2",
+          "boundary": "acked",
+          "saved_result": true,
+          "filed": true,
+          "acked": true,
+          "producer_calls": 0,
+          "unknown_consumption": false,
+          "unknown_charged_as_zero": false,
+          "committed_effects": ["e_ack"],
+          "progress": 1
+        }
+      ]
+    },
+    {
+      "id": "policy_narrowing",
+      "policy_prepared": ["capture", "recall", "derive"],
+      "policy_current": ["capture", "recall"],
+      "input_refs": ["r6"],
+      "replay_from_prepared": false,
+      "blocked_because_other_job_narrowed": false,
+      "cross_store_atomic_transaction": false,
+      "attempts": [
+        {
+          "id": "t1",
+          "boundary": "saved_unfiled",
+          "saved_result": true,
+          "filed": false,
+          "acked": false,
+          "producer_calls": 1,
+          "unknown_consumption": false,
+          "unknown_charged_as_zero": false,
+          "committed_effects": [],
+          "progress": 0
+        },
+        {
+          "id": "t2",
+          "boundary": "refused",
+          "saved_result": true,
+          "filed": false,
+          "acked": false,
+          "producer_calls": 0,
+          "unknown_consumption": false,
+          "unknown_charged_as_zero": false,
+          "committed_effects": [],
+          "progress": 0
+        }
+      ]
+    },
+    {
+      "id": "unaffected_job",
+      "policy_prepared": ["capture", "recall", "derive"],
+      "policy_current": ["capture", "recall", "derive"],
+      "input_refs": ["r7"],
+      "replay_from_prepared": false,
+      "blocked_because_other_job_narrowed": false,
+      "cross_store_atomic_transaction": false,
+      "attempts": [
+        {
+          "id": "t1",
+          "boundary": "acked",
+          "saved_result": true,
+          "filed": true,
+          "acked": true,
+          "producer_calls": 1,
+          "unknown_consumption": false,
+          "unknown_charged_as_zero": false,
+          "committed_effects": ["e_ok"],
+          "progress": 1
+        }
+      ]
+    }
+  ]
+}
