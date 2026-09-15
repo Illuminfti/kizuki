@@ -1,0 +1,94 @@
+{
+  "schema": "kizuki.world-outcome-matched-evaluation-design/v1",
+  "id": "matched-subsequent-task-benefit-and-cost",
+  "title": "Matched subsequent-task evaluation reports benefit and cost honestly",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only fixture. Not a learning runtime, benchmark executor, measured product result, or public API.",
+  "result_class": "illustrative",
+  "longitudinal_base": {
+    "file": "world-longitudinal-design.json",
+    "sha256": "a31febcd7e6c4a72fd03f1d9668dd67e06cd891f604f5b2d371b4b2869878beb",
+    "role": "evaluation_contract_reference"
+  },
+  "arms": {
+    "shared": {
+      "raw_evidence_refs": ["x_r_goal_c1", "x_r_agent_done"],
+      "grant": "scope_s2",
+      "model": "synthetic-answering-v1",
+      "prompt": "subsequent-task-v1",
+      "seed": 7,
+      "budget_tokens": 800
+    },
+    "control": {
+      "id": "control",
+      "applies_outcome_usefulness_update": false,
+      "drops_original_outcome_evidence": false,
+      "model_override": null,
+      "prompt_override": null,
+      "grant_override": null,
+      "budget_override": null,
+      "evidence_override": null
+    },
+    "treatment": {
+      "id": "treatment",
+      "applies_outcome_usefulness_update": true,
+      "drops_original_outcome_evidence": false,
+      "model_override": null,
+      "prompt_override": null,
+      "grant_override": null,
+      "budget_override": null,
+      "evidence_override": null
+    }
+  },
+  "pairs": [
+    {
+      "id": "pair_benefit",
+      "kind": "benefit",
+      "subsequent_task": true,
+      "learning_task": false,
+      "control_success": false,
+      "treatment_success": true,
+      "resolved": true,
+      "resolution_in_prefix": false
+    },
+    {
+      "id": "pair_tie",
+      "kind": "tie",
+      "subsequent_task": true,
+      "learning_task": false,
+      "control_success": true,
+      "treatment_success": true,
+      "resolved": true,
+      "resolution_in_prefix": false
+    },
+    {
+      "id": "pair_regression",
+      "kind": "regression",
+      "subsequent_task": true,
+      "learning_task": false,
+      "control_success": true,
+      "treatment_success": false,
+      "resolved": true,
+      "resolution_in_prefix": false
+    },
+    {
+      "id": "pair_unresolved",
+      "kind": "unresolved",
+      "subsequent_task": true,
+      "learning_task": false,
+      "control_success": false,
+      "treatment_success": false,
+      "resolved": false,
+      "resolution_in_prefix": false
+    }
+  ],
+  "costs": {
+    "ingestion": 4,
+    "learning": 6,
+    "maintenance": 2,
+    "retries": 3,
+    "answering": 8,
+    "unknown": [{ "metric": "price_usd", "reason": "no_price_table" }]
+  }
+}
