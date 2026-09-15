@@ -1,0 +1,43 @@
+{
+  "schema": "kizuki.world-consolidation-corpus-design/v1",
+  "id": "large-corpus-reports-bounded-work-and-cost",
+  "title": "Large-corpus fixtures report bounded candidate work, lag, p95, memory and model usage",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only fixture. Not a load test, production measurement, public API, or claimed speed/accuracy multiplier.",
+  "result_class": "illustrative",
+  "corpus": {
+    "records": 10000,
+    "admitted": 800,
+    "candidate_cap": 1000,
+    "candidates_considered": 800
+  },
+  "backlog": {
+    "start": 800,
+    "end": 0,
+    "converged": true
+  },
+  "lag": {
+    "ingest_ms": 1200,
+    "p95_read_ms": 40
+  },
+  "resources": {
+    "peak_memory_bytes": 67108864,
+    "model_calls": 12,
+    "retry_calls": 2,
+    "total_model_calls": 14
+  },
+  "unknown": [
+    { "metric": "price_usd", "reason": "no_price_table" }
+  ],
+  "oracle": {
+    "candidates_within_cap": true,
+    "backlog_converged": true,
+    "lag_reported": true,
+    "p95_reported": true,
+    "peak_memory_reported": true,
+    "retries_included_in_model_usage": true,
+    "unknown_priced_as_zero": false,
+    "claims_multiplier": false
+  }
+}
