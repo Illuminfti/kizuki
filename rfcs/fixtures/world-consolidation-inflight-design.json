@@ -1,0 +1,26 @@
+{
+  "schema": "kizuki.world-consolidation-inflight-design/v1",
+  "id": "inflight-correction-beats-stale-commit",
+  "title": "A correction during an in-flight job cannot be overwritten by a later stale commit",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only fixture. Not a consolidation engine, public API, or checkpoint implementation.",
+  "job": {
+    "id": "job_in_flight",
+    "kind": "bounded_consolidation",
+    "started_at": "2026-09-01T00:00:00Z",
+    "commit_at": "2026-09-01T00:05:00Z",
+    "stale_commit": true
+  },
+  "correction": {
+    "id": "x_corr_1",
+    "during_job": true,
+    "at": "2026-09-01T00:02:00Z",
+    "overwritten_by_stale_commit": false
+  },
+  "oracle": {
+    "stale_commit_wins": false,
+    "correction_preserved": true,
+    "race_invented_current": false
+  }
+}
