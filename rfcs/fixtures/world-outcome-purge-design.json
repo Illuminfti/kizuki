@@ -1,0 +1,26 @@
+{
+  "schema": "kizuki.world-outcome-purge-design/v1",
+  "id": "purge-invalidates-learned-state",
+  "title": "Purge, revocation, and correction invalidate dependent learned state",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not an execution-receipt endpoint or execution tool.",
+  "learned": {
+    "id": "x_proc_1",
+    "kind": "learned_procedure",
+    "support_refs": ["x_r_observed_artifact"],
+    "retained_context_refs": ["x_ctx_1"]
+  },
+  "invalidation": {
+    "kind": "purge",
+    "target_ref": "x_r_observed_artifact",
+    "learned_invalid": true,
+    "retained_context_invalid": true,
+    "resurrects": false
+  },
+  "oracle": {
+    "learned_survives": false,
+    "context_survives": false,
+    "resurrected": false
+  }
+}
