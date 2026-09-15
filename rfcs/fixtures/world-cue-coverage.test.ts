@@ -44,6 +44,10 @@ function coverageErrors(example: Fixture): string[] {
   if (example.id !== "coverage-stale-failure-quiet-are-distinct") errors.push("unexpected example id");
   const kinds = Object.values(example.states).map((state) => state.kind);
   if (new Set(kinds).size !== 4) errors.push("cue states collapsed");
+  const expectedKinds = ["missing_coverage", "stale_consolidation", "provider_failure", "genuine_quiet"] as const;
+  for (const kind of expectedKinds) {
+    if (example.states[kind]?.kind !== kind) errors.push(`cue state kind mismatch: ${kind}`);
+  }
   const missing = example.states.missing_coverage;
   const stale = example.states.stale_consolidation;
   const failure = example.states.provider_failure;
@@ -108,6 +112,16 @@ test("collapsing a failure mode into quiet fails", () => {
         stale_consolidation: { ...example.states.stale_consolidation, quiet: true, reason: "no_material_change" },
       },
       oracle: { ...example.oracle, stale_treated_as_current: true, quiet_from_stale_consolidation: true },
+    }).length,
+  ).toBeGreaterThan(0);
+  expect(
+    coverageErrors({
+      ...example,
+      states: {
+        ...example.states,
+        missing_coverage: { ...example.states.missing_coverage, kind: "stale_consolidation" },
+        stale_consolidation: { ...example.states.stale_consolidation, kind: "missing_coverage" },
+      },
     }).length,
   ).toBeGreaterThan(0);
 });
