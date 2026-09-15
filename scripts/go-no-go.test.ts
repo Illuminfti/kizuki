@@ -650,6 +650,28 @@ test("a self-graded journey-proof receipt cannot pass install-recover", () => {
   expect(result.release_1_0_accepted).toBe(false);
 });
 
+test("a self-attested gmail live-account receipt cannot pass connector qualification", () => {
+  const f = fixture();
+  const body = JSON.stringify({
+    schema: "kizuki.connector-evidence/v1",
+    connector: "gmail",
+    status: "PASS",
+    attested_by: "model",
+    live_account: true,
+  });
+  const path = join(f.root, "connector-gmail.json");
+  writeFileSync(path, body);
+  asV3(f, [receiptRef("kizuki.connector-evidence/v1", "connector.gmail", null, path, digest(body))]);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, "connector.gmail")).toMatchObject({
+    status: "NOT_IMPLEMENTED",
+    evidence_sha256: null,
+  });
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
+});
+
 test("v3 index byte cap is 32 KiB while v1 stays at 16 KiB", () => {
   const f = asV3(fixture());
   const raw = `${readFileSync(f.indexPath, "utf8")}${" ".repeat(20000)}`;
@@ -659,6 +681,28 @@ test("v3 index byte cap is 32 KiB while v1 stays at 16 KiB", () => {
   expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").status).toBe("PASS");
   writeFileSync(f.indexPath, `${raw}${" ".repeat(EVIDENCE_LIMITS.index_v3)}`);
   expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").status).toBe("FAIL");
+});
+
+test("a self-attested google-calendar live-account receipt cannot pass connector qualification", () => {
+  const f = fixture();
+  const body = JSON.stringify({
+    schema: "kizuki.connector-evidence/v1",
+    connector: "google-calendar",
+    status: "PASS",
+    attested_by: "model",
+    live_account: true,
+  });
+  const path = join(f.root, "connector-google-calendar.json");
+  writeFileSync(path, body);
+  asV3(f, [receiptRef("kizuki.connector-evidence/v1", "connector.google-calendar", null, path, digest(body))]);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, "connector.google-calendar")).toMatchObject({
+    status: "NOT_IMPLEMENTED",
+    evidence_sha256: null,
+  });
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
 });
 
 test("optional capability verifier is MISSING until a regular file exists and other errors are fatal", () => {
@@ -677,6 +721,28 @@ test("optional capability verifier is MISSING until a regular file exists and ot
   expect(() => inspectOptionalVerifier(root, "link.ts")).toThrow(EvidenceError);
 });
 
+test("a self-attested imap live-account receipt cannot pass connector qualification", () => {
+  const f = fixture();
+  const body = JSON.stringify({
+    schema: "kizuki.connector-evidence/v1",
+    connector: "imap",
+    status: "PASS",
+    attested_by: "model",
+    live_account: true,
+  });
+  const path = join(f.root, "connector-imap.json");
+  writeFileSync(path, body);
+  asV3(f, [receiptRef("kizuki.connector-evidence/v1", "connector.imap", null, path, digest(body))]);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, "connector.imap")).toMatchObject({
+    status: "NOT_IMPLEMENTED",
+    evidence_sha256: null,
+  });
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
+});
+
 test("cli verb sequence follows the unique printRootHelp command-row order", () => {
   const width = Math.max(...COMMANDS.map(command => command.name.length));
   const lines: string[] = [];
@@ -690,6 +756,28 @@ test("cli verb sequence follows the unique printRootHelp command-row order", () 
   expect(new Set(order).size).toBe(COMMANDS.length);
   expect(order).toHaveLength(COMMANDS.length);
   expect(cliVerbSequence()).toEqual(order);
+});
+
+test("a self-attested whoop live-account receipt cannot pass connector qualification", () => {
+  const f = fixture();
+  const body = JSON.stringify({
+    schema: "kizuki.connector-evidence/v1",
+    connector: "whoop",
+    status: "PASS",
+    attested_by: "model",
+    live_account: true,
+  });
+  const path = join(f.root, "connector-whoop.json");
+  writeFileSync(path, body);
+  asV3(f, [receiptRef("kizuki.connector-evidence/v1", "connector.whoop", null, path, digest(body))]);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, "connector.whoop")).toMatchObject({
+    status: "NOT_IMPLEMENTED",
+    evidence_sha256: null,
+  });
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
 });
 
 test("surface validator recomputes inventories and refuses a self-declared empty disagreement list", () => {
@@ -707,6 +795,28 @@ test("surface validator recomputes inventories and refuses a self-declared empty
   expect(evaluateSurfaceReceipt(surfaceBody(expected, { outcome: "unresolved" }), expected)).toMatchObject({
     status: "UNVERIFIABLE", reason: "surface-outcome-unresolved", creditDigest: true,
   });
+});
+
+test("a self-attested x-api live-account receipt cannot pass connector qualification", () => {
+  const f = fixture();
+  const body = JSON.stringify({
+    schema: "kizuki.connector-evidence/v1",
+    connector: "x-api",
+    status: "PASS",
+    attested_by: "model",
+    live_account: true,
+  });
+  const path = join(f.root, "connector-x-api.json");
+  writeFileSync(path, body);
+  asV3(f, [receiptRef("kizuki.connector-evidence/v1", "connector.x-api", null, path, digest(body))]);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, "connector.x-api")).toMatchObject({
+    status: "NOT_IMPLEMENTED",
+    evidence_sha256: null,
+  });
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
 });
 
 test("surface identity, revision, RFC3339 and receipt custody failures do not credit a digest", () => {
@@ -727,6 +837,28 @@ test("surface identity, revision, RFC3339 and receipt custody failures do not cr
   expect(read(receiptPath, EVIDENCE_LIMITS.family_receipt).sha256).toBe(digest(readFileSync(receiptPath)));
   truncateSync(receiptPath, EVIDENCE_LIMITS.family_receipt + 1);
   expect(() => read(receiptPath, EVIDENCE_LIMITS.family_receipt)).toThrow("unsafe-file-or-size");
+});
+
+test("a self-attested markdown-folder file-import receipt cannot pass connector qualification", () => {
+  const f = fixture();
+  const body = JSON.stringify({
+    schema: "kizuki.connector-evidence/v1",
+    connector: "markdown-folder",
+    status: "PASS",
+    attested_by: "model",
+    file_import: true,
+  });
+  const path = join(f.root, "connector-markdown-folder.json");
+  writeFileSync(path, body);
+  asV3(f, [receiptRef("kizuki.connector-evidence/v1", "connector.markdown-folder", null, path, digest(body))]);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, "connector.markdown-folder")).toMatchObject({
+    status: "NOT_IMPLEMENTED",
+    evidence_sha256: null,
+  });
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
 });
 
 test("checkout custody accepts a clean exact-head candidate and refuses later drift", () => {

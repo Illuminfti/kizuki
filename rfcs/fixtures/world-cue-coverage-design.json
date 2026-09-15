@@ -1,0 +1,51 @@
+{
+  "schema": "kizuki.world-cue-coverage-design/v1",
+  "id": "coverage-stale-failure-quiet-are-distinct",
+  "title": "Missing coverage, stale consolidation, provider failure, and genuine quiet stay distinct",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Cue decisions do not gate canon, grant execution, or authorize a runtime API.",
+  "states": {
+    "missing_coverage": {
+      "kind": "missing_coverage",
+      "material_change": false,
+      "actionable": false,
+      "quiet": false,
+      "interrupt": false,
+      "reason": "source_unobserved"
+    },
+    "stale_consolidation": {
+      "kind": "stale_consolidation",
+      "material_change": false,
+      "actionable": false,
+      "quiet": false,
+      "interrupt": false,
+      "reason": "summary_older_than_ledger"
+    },
+    "provider_failure": {
+      "kind": "provider_failure",
+      "material_change": false,
+      "actionable": false,
+      "quiet": false,
+      "interrupt": false,
+      "reason": "model_unavailable"
+    },
+    "genuine_quiet": {
+      "kind": "genuine_quiet",
+      "material_change": false,
+      "actionable": false,
+      "quiet": true,
+      "interrupt": false,
+      "reason": "no_material_change"
+    }
+  },
+  "oracle": {
+    "kinds_collapsed": false,
+    "quiet_from_missing_coverage": false,
+    "quiet_from_stale_consolidation": false,
+    "quiet_from_provider_failure": false,
+    "missing_coverage_is_quiet": false,
+    "provider_failure_is_success": false,
+    "stale_treated_as_current": false
+  }
+}
