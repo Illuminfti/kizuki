@@ -48,10 +48,19 @@ export function importCounts(stdout: string, expectedStored: number, expectedErr
   check(values.every(Number.isSafeInteger) && values[0] === expectedStored && values[1] === expectedDuplicates && values[2] === expectedProposals && values[3] === 0 && values[4] === 0 && values[5] === expectedErrors, "unexpected-import-counts");
   return { ...empty(), stored: values[0]!, duplicates: values[1]!, proposals: values[2]!, errors: values[5]! };
 }
-export function importDiagnostics(stderr: string, errors: number, error: string | undefined, connector: string): void {
+export function importDiagnostics(
+  stderr: string,
+  errors: number,
+  error: string | undefined,
+  connector: string,
+  expectInitialDisconnect = false,
+): void {
   if (errors === 0) { check(stderr === "", "unexpected-import-diagnostics"); return; }
   const lines = stderr.split("\n");
   check(errors === 1 && typeof error === "string" && error.length > 0 && lines.pop() === "", "missing-or-extra-import-error");
+  if (expectInitialDisconnect) {
+    check(lines.shift() === "error: initial backfill stored no usable events; connection was not left active", "missing-or-extra-import-error");
+  }
   if (connector === "kizuki.import-claude" && lines[0] === "degraded: Claude health check before capture found partial or unsupported content.") lines.shift();
   check(lines.length === 1 && /^error: [^\n]+$/.test(lines[0]!) && lines[0]!.includes(error), "missing-or-extra-import-error");
 }
@@ -93,13 +102,21 @@ async function child(executable: string, argv: string[], cwd: string, env: Recor
     check(!timedOut, "child-timeout"); return { stdout, stderr, exit_code };
   } finally { clearTimeout(timer); if (proc.exitCode === null) proc.kill("SIGKILL"); await proc.exited; }
 }
-function statusObservation(stdout: string, connector: string, sourceKey: string | null, stored: number, errors: number, expectedCount = 1) {
+export function statusObservation(
+  stdout: string,
+  connector: string,
+  sourceKey: string | null,
+  stored: number,
+  errors: number,
+  expectedCount = 1,
+  expectedState: "enrolled" | "disconnected" = "enrolled",
+) {
   const body = envelope(stdout, "connect"), data = exact(body.data, "connections");
   check(body.status === "ok" && Array.isArray(data.connections) && data.connections.length === expectedCount, "connection-cardinality");
   if (expectedCount === 0) return { sourceKey: null, observation: empty() };
   const row = exact(data.connections[0], "connector_id,source_key,state,consent,revision,purge_blockers,sensitivity,last_run,stored,errors");
   check(row.connector_id === connector && /^[0-9A-HJKMNP-TV-Z]{26}$/.test(row.source_key) && (sourceKey === null || row.source_key === sourceKey), "connection-identity");
-  check(row.state === "enrolled" && row.consent === "active" && row.revision === 1 && row.purge_blockers.length === 0 && row.stored === stored && row.errors === errors, "connection-checkpoint-summary");
+  check(row.state === expectedState && row.consent === "active" && row.revision === 1 && row.purge_blockers.length === 0 && row.stored === stored && row.errors === errors, "connection-checkpoint-summary");
   check(typeof row.last_run === "string" && Number.isFinite(Date.parse(row.last_run)), "connection-last-run");
   return { sourceKey: row.source_key as string, observation: { ...empty(), stored: row.stored, errors: row.errors, consent: row.consent, last_run: row.last_run } };
 }
@@ -184,8 +201,8 @@ export async function runFileImportProof(args: FileImportArgs): Promise<string> 
         const query = (id: string, expected: number) => run(id, ["query", fixture.sentinel, "--scope", "ledger", "--json", ...(expected === 0 ? ["--degraded"] : [])], 0, (stdout, stderr) => { const observation = queryObservation(stdout, stderr, fixture, expected, id === "purged-query" || id === "denied-reimport-query" ? "post_purge" : "ordinary"); if (id !== "revoked-query") check(observation.withheld === 0, "unexpected-withheld-evidence"); return observation; });
         const importArgs = ["import", fixture.connector, "--source", source];
         const grant = ["--policy", policy, "--expected-revision", "0", "--operation-id", `synthetic-${fixture.format}-${scenario}-grant`];
-        const counts = (stored: number, errors: number, error?: string, proposals = 0, duplicates = 0) => (stdout: string, stderr: string) => {
-          importDiagnostics(stderr, errors, error, fixture.connector);
+        const counts = (stored: number, errors: number, error?: string, proposals = 0, duplicates = 0, expectInitialDisconnect = false) => (stdout: string, stderr: string) => {
+          importDiagnostics(stderr, errors, error, fixture.connector, expectInitialDisconnect);
           return importCounts(stdout, stored, errors, proposals, duplicates);
         };
         try {
@@ -206,13 +223,13 @@ export async function runFileImportProof(args: FileImportArgs): Promise<string> 
             await run("denied-reimport", importArgs, 1, (stdout, stderr) => { check(stdout === "" && stderr === `error: source_capture_denied; consent-required: kizuki connect grant --source ${entry.source_key} --policy POLICY.json --expected-revision 3 --operation-id UNIQUE_ID\n`, "missing-or-extra-capture-denial"); return empty(); });
             await query("denied-reimport-query", 0);
           } else {
-            await run("invalid-import", [...importArgs, ...grant], 1, fixture.invalid_mode !== "blocked" ? counts(fixture.invalid_events, 1, fixture.invalid_error, fixture.invalid_events ? fixture.proposals : 0) : (stdout, stderr) => { check(stdout === "" && stderr.includes(fixture.invalid_error) && /^error: [^\n]+\n$/.test(stderr), "malformed-source-not-refused"); return empty(); });
+            await run("invalid-import", [...importArgs, ...grant], 1, fixture.invalid_mode !== "blocked" ? counts(fixture.invalid_events, 1, fixture.invalid_error, fixture.invalid_events ? fixture.proposals : 0, 0, fixture.invalid_events === 0) : (stdout, stderr) => { check(stdout === "" && stderr.includes(fixture.invalid_error) && /^error: [^\n]+\n$/.test(stderr), "malformed-source-not-refused"); return empty(); });
             const first = await query("invalid-query", fixture.invalid_events);
-            await run("invalid-status", ["connect", "status", "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-status-diagnostics"); const result = statusObservation(stdout, fixture.connector, null, 0, 1, fixture.invalid_mode !== "blocked" ? 1 : 0); entry.invalid_source_key = result.sourceKey; return result.observation; });
+            await run("invalid-status", ["connect", "status", "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-status-diagnostics"); const result = statusObservation(stdout, fixture.connector, null, 0, 1, fixture.invalid_mode !== "blocked" ? 1 : 0, fixture.invalid_events === 0 ? "disconnected" : "enrolled"); entry.invalid_source_key = result.sourceKey; return result.observation; });
             if (fixture.invalid_mode !== "blocked") {
-              await run("invalid-repeat", importArgs, 1, counts(0, 1, fixture.invalid_error));
+              await run("invalid-repeat", importArgs, 1, counts(0, 1, fixture.invalid_error, 0, 0, fixture.invalid_events === 0));
               const second = await query("invalid-repeat-query", fixture.invalid_events); check(JSON.stringify(first.hit_ids) === JSON.stringify(second.hit_ids), "partial-repeat-identities-changed");
-              await run("invalid-repeat-status", ["connect", "status", "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-status-diagnostics"); return statusObservation(stdout, fixture.connector, entry.invalid_source_key, 0, 1).observation; });
+              await run("invalid-repeat-status", ["connect", "status", "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-status-diagnostics"); return statusObservation(stdout, fixture.connector, entry.invalid_source_key, 0, 1, 1, fixture.invalid_events === 0 ? "disconnected" : "enrolled").observation; });
             }
           }
         } catch (error) { entry.failures.push(`${scenario}:${error instanceof Error ? error.message : "case-failed"}`); }
