@@ -28,6 +28,38 @@ test('timed event keeps exact dateTime strings and zone while occurred_at is the
     expect(timed.metadata.occurred_at_semantics).toBe('provider_updated');
     expect(timed.metadata.provider_updated_at).toBe('2024-01-02T12:00:00Z');
 });
+test('unspecified provider end survives projection without becoming an asserted endpoint', async () => {
+    const unspecified = new CalendarFixture();
+    const compatibility = zoned('2024-02-01T10:00:00-05:00');
+    unspecified.rows[1]!.endTimeUnspecified = true;
+    const b = await (await unspecified.connected()).backfill(null), timed = b.events[1]!;
+    expect(new URL(unspecified.calls.at(-1)!).searchParams.get('fields')).toContain('endTimeUnspecified');
+    expect(schedule(timed).end).toEqual(compatibility);
+    expect(schedule(timed).end_semantics).toBe('unspecified');
+    expect(timed.occurred_at).toBe('2024-01-02T12:00:00Z');
+    const control = await (await new CalendarFixture().connected()).backfill(null);
+    expect(timed.source_record_id).toBe(control.events[1]!.source_record_id);
+    expect(timed.occurred_at).toBe(control.events[1]!.occurred_at);
+    expect(schedule(control.events[1]!).end_semantics).toBe('exclusive');
+    const falsyFixture = new CalendarFixture();
+    falsyFixture.rows[1]!.endTimeUnspecified = false;
+    const falsy = await (await falsyFixture.connected()).backfill(null);
+    expect(schedule(falsy.events[1]!).end_semantics).toBe('exclusive');
+    expect(schedule(falsy.events[1]!).end).toEqual(compatibility);
+});
+test('malformed endTimeUnspecified refuses the page without checkpoint publication', async () => {
+    for (const value of ['true', 1, null]) {
+        const f = new CalendarFixture();
+        f.rows[0]!.endTimeUnspecified = value;
+        const before = f.state.slice();
+        const b = await (await f.connected()).backfill(null);
+        expect(b.status).toBe('unavailable');
+        expect(b.events).toEqual([]);
+        expect(b.cursor).toBeNull();
+        expect(parseState(f.state).pending).toBeNull();
+        expect(f.state).toEqual(before);
+    }
+});
 test('recurring master keeps rules verbatim unexpanded and an exception instance keeps its parent link', async () => {
     const f = new CalendarFixture();
     f.rows = [f.rows[1]!, instance];
