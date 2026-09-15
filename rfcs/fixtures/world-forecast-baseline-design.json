@@ -1,0 +1,30 @@
+{
+  "schema": "kizuki.world-forecast-baseline-design/v1",
+  "id": "deterministic-baseline-before-learned-model",
+  "title": "A deterministic dependency baseline is evaluated before a more expensive model",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not a forecast API, causal engine, scoring claim, or model call.",
+  "question": {
+    "id": "x_q_deadline",
+    "kind": "prerequisite_deadline",
+    "deterministic": true
+  },
+  "baseline": {
+    "id": "x_baseline_dep",
+    "kind": "deterministic_dependency",
+    "evaluated": true,
+    "adopted_expensive_model": false
+  },
+  "learned_model": {
+    "id": "x_model_forecast",
+    "adopted": false,
+    "compared_to_baseline": true,
+    "skips_baseline": false
+  },
+  "oracle": {
+    "baseline_evaluated": true,
+    "expensive_model_first": false,
+    "baseline_skipped": false
+  }
+}
