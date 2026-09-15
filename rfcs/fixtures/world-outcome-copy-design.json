@@ -1,0 +1,28 @@
+{
+  "schema": "kizuki.world-outcome-copy-design/v1",
+  "id": "forwarded-copy-is-not-independent-support",
+  "title": "A forwarded copy cannot inflate independent support",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not an execution-receipt endpoint or execution tool.",
+  "observation": {
+    "id": "x_r_observed_artifact",
+    "kind": "attributable_observation",
+    "independent_root": true,
+    "resolves_outcome": true,
+    "goal_achieved": false
+  },
+  "forwarded_copy": {
+    "id": "x_r_forwarded_transcript",
+    "kind": "forwarded_copy",
+    "independent_root": false,
+    "inflates_independent_support": false,
+    "source_ref": "x_r_observed_artifact"
+  },
+  "oracle": {
+    "copy_is_independent": false,
+    "copy_inflates_support": false,
+    "observation_can_resolve": true,
+    "goal_achieved": false
+  }
+}

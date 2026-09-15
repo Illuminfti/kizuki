@@ -1,0 +1,35 @@
+{
+  "schema": "kizuki.world-forecast-hypothesis-design/v1",
+  "id": "correlation-is-not-cause",
+  "title": "Two plausible hypotheses can coexist; a correlation is not a cause",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not a forecast API, causal engine, scoring claim, or model call.",
+  "hypotheses": {
+    "h_schedule": {
+      "id": "h_schedule",
+      "kind": "hypothesis",
+      "plausible": true,
+      "causal": false,
+      "support_refs": ["x_r_observed_artifact"]
+    },
+    "h_tooling": {
+      "id": "h_tooling",
+      "kind": "hypothesis",
+      "plausible": true,
+      "causal": false,
+      "support_refs": ["x_r_provider_ack"]
+    }
+  },
+  "association": {
+    "kind": "correlation",
+    "promoted_to_cause": false,
+    "silences_alternative": false
+  },
+  "oracle": {
+    "coexist": true,
+    "correlation_is_cause": false,
+    "alternative_dropped": false,
+    "current_fact": false
+  }
+}
