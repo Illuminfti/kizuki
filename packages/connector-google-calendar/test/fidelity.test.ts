@@ -60,6 +60,48 @@ test('malformed endTimeUnspecified refuses the page without checkpoint publicati
         expect(f.state).toEqual(before);
     }
 });
+test('mixed all-day and timed bounds refuse the page without checkpoint publication', async () => {
+    const mixed = [
+        { start: { date: '2024-02-01' }, end: zoned('2024-02-01T10:00:00-05:00') },
+        { start: zoned('2024-02-01T09:00:00-05:00'), end: { date: '2024-02-02' } },
+        { id: 'gone-mixed', status: 'cancelled', start: { date: '2024-02-01' }, end: zoned('2024-02-01T10:00:00-05:00') },
+    ];
+    for (const bounds of mixed) {
+        const f = new CalendarFixture();
+        if (bounds.status === 'cancelled')
+            f.rows = [bounds];
+        else
+            Object.assign(f.rows[0]!, bounds);
+        const before = f.state.slice();
+        const b = await (await f.connected()).backfill(null);
+        expect(b.status).toBe('unavailable');
+        expect(b.events).toEqual([]);
+        expect(b.cursor).toBeNull();
+        expect(parseState(f.state).pending).toBeNull();
+        expect(f.state).toEqual(before);
+    }
+});
+test('a live event missing start or a specified end refuses without inventing civil time', async () => {
+    for (const patch of [ { start: undefined }, { end: undefined } ]) {
+        const f = new CalendarFixture();
+        Object.assign(f.rows[0]!, patch);
+        const before = f.state.slice();
+        const b = await (await f.connected()).backfill(null);
+        expect(b.status).toBe('unavailable');
+        expect(b.events).toEqual([]);
+        expect(b.cursor).toBeNull();
+        expect(parseState(f.state).pending).toBeNull();
+        expect(f.state).toEqual(before);
+    }
+    const unspecified = new CalendarFixture();
+    delete unspecified.rows[1]!.end;
+    unspecified.rows[1]!.endTimeUnspecified = true;
+    const b = await (await unspecified.connected()).backfill(null);
+    expect(b.status).toBeUndefined();
+    expect(schedule(b.events[1]!).end).toBeNull();
+    expect(schedule(b.events[1]!).end_semantics).toBe('unspecified');
+    expect(schedule(b.events[1]!).start).toEqual(zoned('2024-02-01T09:00:00-05:00'));
+});
 test('recurring master keeps rules verbatim unexpanded and an exception instance keeps its parent link', async () => {
     const f = new CalendarFixture();
     f.rows = [f.rows[1]!, instance];
