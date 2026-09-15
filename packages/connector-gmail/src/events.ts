@@ -86,6 +86,8 @@ export function messageEvent(account: string, raw: unknown, observed: string, se
             else {
                 if (typeof body.data !== "string" || !/^[A-Za-z0-9_-]*={0,2}$/.test(body.data))
                     throw failure();
+                if (body.data.replace(/=+$/, "").length % 4 === 1)
+                    throw failure();
                 const decoded = Buffer.from(body.data, "base64url");
                 if (bytes + decoded.byteLength > 65536)
                     coverage.add("body_size_unsupported");

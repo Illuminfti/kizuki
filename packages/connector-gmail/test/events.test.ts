@@ -54,6 +54,16 @@ test("invalid base64url body characters refuse the record", () => {
     refuse(message({ mimeType: "text/plain", body: { data: "not+base64url/" } }), "source_schema");
     refuse(message({ mimeType: "text/plain", body: { data: "a b" } }), "source_schema");
 });
+test("incomplete base64url terminal quantum refuses the record", () => {
+    for (const data of ["A", "QUJDA", "A=="])
+        refuse(message({ mimeType: "text/plain", body: { data } }), "source_schema");
+    expect(emit(message({ mimeType: "text/plain", body: { data: "" } })).text).toBe("");
+    expect(emit(message({ mimeType: "text/plain", body: { data: "QQ" } })).text).toBe("A");
+    expect(emit(message({ mimeType: "text/plain", body: { data: "QQ==" } })).text).toBe("A");
+    expect(emit(message({ mimeType: "text/plain", body: { data: "QUI" } })).text).toBe("AB");
+    expect(emit(message({ mimeType: "text/plain", body: { data: "QUI=" } })).text).toBe("AB");
+    expect(emit(message({ mimeType: "text/plain", body: { data: "QUJD" } })).text).toBe("ABC");
+});
 test("decoded bytes that are not utf-8 are malformed", () => {
     refuse(message({ mimeType: "text/plain", body: { data: b64(new Uint8Array([0xff, 0xfe, 0x41])) } }), "malformed_record");
 });
