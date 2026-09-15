@@ -40,7 +40,12 @@ export function event(account: string, calendar: string, raw: Record<string, unk
         throw failure();
     if (raw.endTimeUnspecified !== undefined && typeof raw.endTimeUnspecified !== 'boolean')
         throw failure();
-    const metadata: Record<string, unknown> = { provider: 'google-calendar', calendar_id: calendar, event_id: eventId, status: raw.status, provider_etag: raw.etag === undefined ? null : text(raw.etag, 1024), provider_updated_at: updated, occurred_at_semantics: updated === null ? 'cancellation_first_observed' : 'provider_updated', provider_deleted_at: null, recurrence_expanded: false, schedule: { start: time(raw.start), end: time(raw.end), end_semantics: raw.endTimeUnspecified === true ? 'unspecified' : 'exclusive', recurrence, recurring_event_id: raw.recurringEventId === undefined ? null : id(raw.recurringEventId), original_start: time(raw.originalStartTime) } };
+    const start = time(raw.start), end = time(raw.end);
+    if (start !== null && end !== null && (start.date !== undefined) !== (end.date !== undefined))
+        throw failure();
+    if (!deleted && (start === null || (end === null && raw.endTimeUnspecified !== true)))
+        throw failure();
+    const metadata: Record<string, unknown> = { provider: 'google-calendar', calendar_id: calendar, event_id: eventId, status: raw.status, provider_etag: raw.etag === undefined ? null : text(raw.etag, 1024), provider_updated_at: updated, occurred_at_semantics: updated === null ? 'cancellation_first_observed' : 'provider_updated', provider_deleted_at: null, recurrence_expanded: false, schedule: { start, end, end_semantics: raw.endTimeUnspecified === true ? 'unspecified' : 'exclusive', recurrence, recurring_event_id: raw.recurringEventId === undefined ? null : id(raw.recurringEventId), original_start: time(raw.originalStartTime) } };
     // This is the source resource, never an inferred owner or attendee identity.
     const subjects: CaptureEventInput['subjects'] = [{subject_id: 'google-calendar-event:' + digest([account, calendar, eventId]), role: 'about', display_name: 'Google Calendar event'}], attachments: CaptureEventInput['attachments'] = [];
     const lines: string[] = [];
