@@ -1,0 +1,26 @@
+{
+  "schema": "kizuki.world-forecast-purge-design/v1",
+  "id": "purge-propagates-through-derived-analysis",
+  "title": "Correction, revocation, and purge propagate through derived analysis and caches",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not a forecast API, causal engine, scoring claim, or model call.",
+  "derived": {
+    "id": "x_cf_1",
+    "kind": "derived_analysis",
+    "cache_refs": ["x_cache_1"],
+    "support_refs": ["x_r_observed_artifact"]
+  },
+  "invalidation": {
+    "kind": "revocation",
+    "target_ref": "x_r_observed_artifact",
+    "derived_invalid": true,
+    "cache_invalid": true,
+    "fork_bypasses_consent": false
+  },
+  "oracle": {
+    "derived_survives": false,
+    "cache_survives": false,
+    "consent_bypassed": false
+  }
+}
