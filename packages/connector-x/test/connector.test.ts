@@ -218,6 +218,31 @@ describe("local X archive connector", () => {
     await expect(scanArchive(largeRoot)).rejects.toThrow("exceeds");
   });
 
+  test("per-post media boundary admits 256 and refuses 257 without advancing the cursor", async () => {
+    const root = await temporaryArchive();
+    const media = path.join(root, "data", "tweets_media");
+    await mkdir(media);
+    const postId = "1742012345678901234";
+    const name = (index: number) => `${postId}-${String(index).padStart(3, "0")}.jpg`;
+    for (let index = 0; index < 256; index++) await writeFile(path.join(media, name(index)), "bytes");
+    const first = await new XArchiveConnector({ path: root }).backfill(null);
+    expect(first.events).toHaveLength(2);
+    expect(first.events.find((event) => event.source_record_id === `post:${postId}`)?.attachments).toHaveLength(256);
+    expect(first.cursor).not.toBeNull();
+    const savedCursor = first.cursor!;
+
+    await writeFile(path.join(media, name(256)), "bytes");
+    await expect(new XArchiveConnector({ path: root }).backfill(savedCursor)).rejects.toMatchObject({
+      code: "parse_error",
+      message: expect.stringContaining("more than 256 media references"),
+    });
+
+    await rm(path.join(media, name(256)));
+    const retry = await new XArchiveConnector({ path: root }).backfill(savedCursor);
+    expect(retry.events).toEqual([]);
+    expect(retry.cursor).toBe(savedCursor);
+  });
+
   test("fixture is offline and production input sources remain synthetic", async () => {
     const events = await new XArchiveConnector({ path: "/not-used-by-fixture" }).fixture();
     expect(events).toHaveLength(2);
