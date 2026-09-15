@@ -1,0 +1,31 @@
+{
+  "schema": "kizuki.world-outcome-usefulness-design/v1",
+  "id": "task-outcome-does-not-inflate-truth",
+  "title": "Comparable task success or failure may change usefulness, not truth confidence",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not an execution-receipt endpoint or execution tool.",
+  "tasks": {
+    "success": {
+      "id": "x_task_ok",
+      "comparable": true,
+      "result": "success",
+      "usefulness_delta": "conservative_up",
+      "truth_confidence_inflated": false,
+      "overrides_owner_correction": false
+    },
+    "failure": {
+      "id": "x_task_fail",
+      "comparable": true,
+      "result": "failed",
+      "usefulness_delta": "conservative_down",
+      "truth_confidence_inflated": false,
+      "overrides_owner_correction": false
+    }
+  },
+  "oracle": {
+    "truth_inflated": false,
+    "owner_correction_overridden": false,
+    "usefulness_collapsed_into_truth": false
+  }
+}
