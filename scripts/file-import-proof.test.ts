@@ -129,3 +129,16 @@ test("failed import keeps its one qualified error and optional Claude notice", (
   expect(() => importDiagnostics("error: partial_import: 1 record errors (not_utf8=1)\n", 1, "not_utf8", "kizuki.markdown-folder")).not.toThrow();
   expect(() => importDiagnostics("degraded: Claude health check before capture found partial or unsupported content.\nerror: partial_import: 1 record errors (not_object=1)\n", 1, "not_object", "kizuki.import-claude")).not.toThrow();
 });
+
+test("a zero-event initial failure requires the exact enrollment cleanup diagnostic", () => {
+  const cleanup = "error: initial backfill stored no usable events; connection was not left active\n";
+  const error = "error: partial_import: 1 record errors (not_utf8=1)\n";
+  expect(() => importDiagnostics(cleanup + error, 1, "not_utf8", "kizuki.markdown-folder", true)).not.toThrow();
+  for (const invalid of [
+    error,
+    "error: initial backfill failed; connection removed\n" + error,
+    cleanup + error + "error: unexpected\n",
+  ]) {
+    expect(() => importDiagnostics(invalid, 1, "not_utf8", "kizuki.markdown-folder", true)).toThrow();
+  }
+});

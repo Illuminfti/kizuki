@@ -48,10 +48,19 @@ export function importCounts(stdout: string, expectedStored: number, expectedErr
   check(values.every(Number.isSafeInteger) && values[0] === expectedStored && values[1] === expectedDuplicates && values[2] === expectedProposals && values[3] === 0 && values[4] === 0 && values[5] === expectedErrors, "unexpected-import-counts");
   return { ...empty(), stored: values[0]!, duplicates: values[1]!, proposals: values[2]!, errors: values[5]! };
 }
-export function importDiagnostics(stderr: string, errors: number, error: string | undefined, connector: string): void {
+export function importDiagnostics(
+  stderr: string,
+  errors: number,
+  error: string | undefined,
+  connector: string,
+  expectInitialDisconnect = false,
+): void {
   if (errors === 0) { check(stderr === "", "unexpected-import-diagnostics"); return; }
   const lines = stderr.split("\n");
   check(errors === 1 && typeof error === "string" && error.length > 0 && lines.pop() === "", "missing-or-extra-import-error");
+  if (expectInitialDisconnect) {
+    check(lines.shift() === "error: initial backfill stored no usable events; connection was not left active", "missing-or-extra-import-error");
+  }
   if (connector === "kizuki.import-claude" && lines[0] === "degraded: Claude health check before capture found partial or unsupported content.") lines.shift();
   check(lines.length === 1 && /^error: [^\n]+$/.test(lines[0]!) && lines[0]!.includes(error), "missing-or-extra-import-error");
 }
@@ -184,8 +193,8 @@ export async function runFileImportProof(args: FileImportArgs): Promise<string> 
         const query = (id: string, expected: number) => run(id, ["query", fixture.sentinel, "--scope", "ledger", "--json", ...(expected === 0 ? ["--degraded"] : [])], 0, (stdout, stderr) => { const observation = queryObservation(stdout, stderr, fixture, expected, id === "purged-query" || id === "denied-reimport-query" ? "post_purge" : "ordinary"); if (id !== "revoked-query") check(observation.withheld === 0, "unexpected-withheld-evidence"); return observation; });
         const importArgs = ["import", fixture.connector, "--source", source];
         const grant = ["--policy", policy, "--expected-revision", "0", "--operation-id", `synthetic-${fixture.format}-${scenario}-grant`];
-        const counts = (stored: number, errors: number, error?: string, proposals = 0, duplicates = 0) => (stdout: string, stderr: string) => {
-          importDiagnostics(stderr, errors, error, fixture.connector);
+        const counts = (stored: number, errors: number, error?: string, proposals = 0, duplicates = 0, expectInitialDisconnect = false) => (stdout: string, stderr: string) => {
+          importDiagnostics(stderr, errors, error, fixture.connector, expectInitialDisconnect);
           return importCounts(stdout, stored, errors, proposals, duplicates);
         };
         try {
@@ -206,7 +215,7 @@ export async function runFileImportProof(args: FileImportArgs): Promise<string> 
             await run("denied-reimport", importArgs, 1, (stdout, stderr) => { check(stdout === "" && stderr === `error: source_capture_denied; consent-required: kizuki connect grant --source ${entry.source_key} --policy POLICY.json --expected-revision 3 --operation-id UNIQUE_ID\n`, "missing-or-extra-capture-denial"); return empty(); });
             await query("denied-reimport-query", 0);
           } else {
-            await run("invalid-import", [...importArgs, ...grant], 1, fixture.invalid_mode !== "blocked" ? counts(fixture.invalid_events, 1, fixture.invalid_error, fixture.invalid_events ? fixture.proposals : 0) : (stdout, stderr) => { check(stdout === "" && stderr.includes(fixture.invalid_error) && /^error: [^\n]+\n$/.test(stderr), "malformed-source-not-refused"); return empty(); });
+            await run("invalid-import", [...importArgs, ...grant], 1, fixture.invalid_mode !== "blocked" ? counts(fixture.invalid_events, 1, fixture.invalid_error, fixture.invalid_events ? fixture.proposals : 0, 0, fixture.invalid_events === 0) : (stdout, stderr) => { check(stdout === "" && stderr.includes(fixture.invalid_error) && /^error: [^\n]+\n$/.test(stderr), "malformed-source-not-refused"); return empty(); });
             const first = await query("invalid-query", fixture.invalid_events);
             await run("invalid-status", ["connect", "status", "--json"], 0, (stdout, stderr) => { check(stderr === "", "unexpected-status-diagnostics"); const result = statusObservation(stdout, fixture.connector, null, 0, 1, fixture.invalid_mode !== "blocked" ? 1 : 0); entry.invalid_source_key = result.sourceKey; return result.observation; });
             if (fixture.invalid_mode !== "blocked") {
