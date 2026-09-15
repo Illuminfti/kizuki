@@ -1,0 +1,34 @@
+{
+  "schema": "kizuki.world-consolidation-copy-design/v1",
+  "id": "paraphrase-does-not-inflate-support",
+  "title": "Copies and AI paraphrases of one source do not inflate support",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only fixture. Not a consolidation engine, public API, or checkpoint implementation.",
+  "source": {
+    "id": "x_r_primary",
+    "kind": "source_record",
+    "independent_root": true
+  },
+  "derivatives": {
+    "copy": {
+      "id": "x_r_copy",
+      "kind": "copy",
+      "source_ref": "x_r_primary",
+      "independent_root": false
+    },
+    "paraphrase": {
+      "id": "x_r_paraphrase",
+      "kind": "ai_paraphrase",
+      "source_ref": "x_r_primary",
+      "independent_root": false
+    }
+  },
+  "oracle": {
+    "copy_inflates_support": false,
+    "paraphrase_inflates_support": false,
+    "inflates_skill": false,
+    "inflates_mastery": false,
+    "inflates_truth_confidence": false
+  }
+}
