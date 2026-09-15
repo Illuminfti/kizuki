@@ -29,6 +29,11 @@ test("first-status stored matches the imported event count for ChatGPT, Claude a
     expect(item.last_batch_stored).toBe(item.events);
   }
 });
+test("x-archive first-status stored is the empty drain batch, not the import count", () => {
+  const item = fileImportFixtures("2026-09-07").find(entry => entry.format === "x-archive")!;
+  expect(item.events).toBe(1);
+  expect(item.last_batch_stored).toBe(0);
+});
 test("file fixture timestamps are explicit and no source filename can be supplied as a runtime knob", () => {
   expect(fileImportFixtures("2026-09-07")[0]!.valid["calendar.ics"]).toContain("DTSTART:20260908T090000Z");
   expect(() => fileImportFixtures("not a date")).toThrow();
