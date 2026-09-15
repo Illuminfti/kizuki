@@ -89,6 +89,8 @@ export function messageEvent(account: string, raw: unknown, observed: string, se
                 if (body.data.replace(/=+$/, "").length % 4 === 1)
                     throw failure();
                 const decoded = Buffer.from(body.data, "base64url");
+                if (body.size !== undefined && (!Number.isSafeInteger(body.size) || body.size !== decoded.byteLength))
+                    throw failure();
                 if (bytes + decoded.byteLength > 65536)
                     coverage.add("body_size_unsupported");
                 else {
