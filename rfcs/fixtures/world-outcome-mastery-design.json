@@ -1,0 +1,24 @@
+{
+  "schema": "kizuki.world-outcome-mastery-design/v1",
+  "id": "assisted-execution-is-not-user-mastery",
+  "title": "Assisted execution does not assert independent user mastery",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not an execution-receipt endpoint or execution tool.",
+  "execution": {
+    "id": "x_r_agent_done",
+    "kind": "assisted_execution",
+    "actor": "agent_client",
+    "user_performed": false
+  },
+  "learning": {
+    "asserts_user_mastery": false,
+    "hides_later_rework": false,
+    "rework_visible": true
+  },
+  "oracle": {
+    "user_mastery": false,
+    "rework_hidden": false,
+    "independent_mastery_from_agent": false
+  }
+}
