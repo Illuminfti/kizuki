@@ -21,6 +21,25 @@ test("missing meaningful date refuses the complete batch and keeps checkpoint", 
     expect(result.events).toEqual([]);
     expect(result.cursor).toBeNull();
 });
+test("truncated body refuses the complete batch and preserves the supplied checkpoint", async () => {
+    const fixture = new GmailFixture(2);
+    const payload = fixture.messages.get("m2")!.payload as { body: { data: string } };
+    const original = payload.body.data;
+    payload.body.data = "A";
+    const connector = await fixture.connected();
+    const refused = await connector.backfill(null);
+    expect(refused.status).toBe("unavailable");
+    expect(refused.events).toEqual([]);
+    expect(refused.cursor).toBeNull();
+    payload.body.data = original;
+    const recovered = await connector.backfill(null);
+    expect(recovered.status).not.toBe("unavailable");
+    expect(recovered.events.map(event => event.text)).toEqual(["Synthetic message body 1", "Synthetic message body 2"]);
+    const reopened = await fixture.connected();
+    const replayed = await reopened.backfill(null);
+    expect(replayed.status).not.toBe("unavailable");
+    expect(replayed.events.map(event => event.source_record_id)).toEqual(recovered.events.map(event => event.source_record_id));
+});
 test("explicit fields suppress persisted body and provider body-data projection", async () => {
     const fixture = new GmailFixture(1), state = parseState(fixture.state);
     state.fields = ["labels"];
