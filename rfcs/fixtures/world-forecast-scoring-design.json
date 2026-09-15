@@ -1,0 +1,37 @@
+{
+  "schema": "kizuki.world-forecast-scoring-design/v1",
+  "id": "binary-forecast-scoring-and-usefulness",
+  "title": "Binary forecasts report proper scoring, unresolved cases, cost and usefulness separately",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "authority": "Design-only. Not a forecast service, fitted calibrator, live-provider qualification, or measured product result.",
+  "result_class": "illustrative",
+  "scoring": {
+    "kind": "binary_brier",
+    "applicable": true,
+    "not_applicable_reason": null,
+    "false_certainty_threshold": 0.99,
+    "bins": [0, 0.5, 1]
+  },
+  "rows": [
+    { "id": "wrong_confident", "p": 0.8, "y": 0, "resolved": true, "censored": false },
+    { "id": "resolved_low", "p": 0.2, "y": 0, "resolved": true, "censored": false },
+    { "id": "unresolved", "p": 0.6, "y": null, "resolved": false, "censored": false },
+    { "id": "censored", "p": 0.4, "y": null, "resolved": false, "censored": true }
+  ],
+  "certain_wrong": { "id": "certain_wrong", "p": 1, "y": 0, "resolved": true, "censored": false },
+  "decision": {
+    "act_if_p_ge": 0.7,
+    "true_positive": 1,
+    "false_positive": -2,
+    "true_negative": 0,
+    "false_negative": -1,
+    "useful_because_better_score": false
+  },
+  "costs": {
+    "prediction": 2,
+    "retries": 1,
+    "maintenance": 1,
+    "unknown": [{ "metric": "price_usd", "reason": "no_price_table" }]
+  }
+}
