@@ -174,6 +174,52 @@ test("graph-only rebuild restores graph without refreshing search", () => {
   expect(helpers.runCli(setup.env, "rebuild", "--layer", "vector").exitCode).toBe(2);
 }, 60_000);
 
+test("search-only rebuild is immediately queryable and preserves graph and configuration", () => {
+  const setup = helpers.tempVault();
+  expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode).toBe(0);
+  expect(helpers.runCli(setup.env, "rebuild", "--layer", "all", "--json").exitCode).toBe(0);
+  const cursor = join(setup.vault, ".kizuki/index-cursor.json");
+  const configPath = join(setup.vault, ".kizuki", "serve.toml");
+  const snapshot = () => {
+    const reader = openLedgerRead(setup.vault);
+    try {
+      return {
+        documents: reader.db.query("SELECT * FROM search_documents ORDER BY doc_id").all(),
+        docs: reader.db.query("SELECT * FROM search_docs ORDER BY doc_id").all(),
+        search: reader.db.query("SELECT * FROM derived_meta WHERE layer='search'").all(),
+        graph: reader.db.query("SELECT * FROM graph_edges ORDER BY src, dst, kind").all(),
+        graphMeta: reader.db.query("SELECT * FROM derived_meta WHERE layer='graph'").all(),
+        cursor: existsSync(cursor) ? readFileSync(cursor) : null,
+      };
+    } finally { reader.close(); }
+  };
+  const before = snapshot();
+  expect(before.documents.length).toBeGreaterThan(0);
+  expect(existsSync(configPath)).toBe(false);
+  const db = new Database(join(setup.vault, ".kizuki/kizuki.db"));
+  try { db.exec("DELETE FROM search_documents"); }
+  finally { db.close(); }
+  const rebuilt = helpers.runCli(setup.env, "rebuild", "--layer", "search", "--json");
+  expect(rebuilt.exitCode, rebuilt.stdout + rebuilt.stderr).toBe(0);
+  const report = JSON.parse(rebuilt.stdout).data;
+  expect(report).toMatchObject({ backend: "sqlite-floor", store: "kizuki.retrieval.fts5" });
+  const queried = helpers.runCli(setup.env, "query", "acme", "--json");
+  expect(queried.exitCode, queried.stdout + queried.stderr).toBe(0);
+  expect(JSON.parse(queried.stdout).degraded).toEqual([]);
+  expect(queried.stdout).toContain("acme");
+  const retry = helpers.runCli(setup.env, "query", "acme", "--json");
+  expect(JSON.parse(retry.stdout).data.hits.map((hit: { doc_id: string }) => hit.doc_id).sort())
+    .toEqual(JSON.parse(queried.stdout).data.hits.map((hit: { doc_id: string }) => hit.doc_id).sort());
+  const after = snapshot();
+  expect(after.graph).toEqual(before.graph);
+  expect(after.graphMeta).toEqual(before.graphMeta);
+  expect(after.documents).toEqual(before.documents);
+  expect(existsSync(configPath)).toBe(false);
+  expect(helpers.runCli(setup.env, "rebuild", "--layer", "vector").exitCode).toBe(2);
+  expect(helpers.runCli(setup.env, "rebuild", "--prune-old", "--layer", "search").exitCode).toBe(2);
+  expect(helpers.runCli(setup.env, "rebuild", "--layer", "search", "--port", "kizuki.retrieval.embedded-pg").exitCode).toBe(1);
+}, 60_000);
+
 test("prune-old removes an inactive FTS generation and keeps the lexical floor", async () => {
   const setup = helpers.tempVault();
   expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode).toBe(0);

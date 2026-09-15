@@ -504,10 +504,10 @@ describe("help", () => {
       expect(body.data.options).toEqual(["--layer", "--port"]);
       expect(body.data.flags).toEqual(["--json", "--prune-old"]);
       expect(body.data.defaults).toEqual({ "--layer": "all" });
-      expect(body.data.bounds).toEqual({ "--layer": "all|graph" });
+      expect(body.data.bounds).toEqual({ "--layer": "all|search|graph" });
       expect(body.data.irreversible).toBe(false);
     }
-    expect(runCli(env, "rebuild", "--help").stdout).toContain("--layer  all|graph  default all");
+    expect(runCli(env, "rebuild", "--help").stdout).toContain("--layer  all|search|graph  default all");
     expect(runCli(env, "rebuild", "--help").stdout).toContain("--prune-old");
     for (const [args, diagnostic] of [
       [["rebuild", "--nope"], "unknown option --nope"],
@@ -524,7 +524,7 @@ describe("help", () => {
     const extra = runCli(env, "rebuild", "extra");
     expect(extra.exitCode).toBe(2);
     expect(extra.stdout).toBe("");
-    expect(extra.stderr).toContain("error: rebuild supports --layer all or graph");
+    expect(extra.stderr).toContain("error: rebuild supports --layer all, search, or graph");
     expect(extra.stderr).toContain("usage: kizuki rebuild");
   });
 

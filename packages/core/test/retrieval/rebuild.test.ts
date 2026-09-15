@@ -24,6 +24,10 @@ function snapshotGraph(db: Database) {
   return db.query("SELECT * FROM graph_edges ORDER BY src, dst, kind").all();
 }
 
+function snapshotGraphMeta(db: Database) {
+  return db.query("SELECT * FROM derived_meta WHERE layer='graph'").all();
+}
+
 test("recorded canon has receipt dates and stable projections", async () => {
   fixture = await serveFixture();
   const docs = readRetrievalDocuments(fixture.db, fixture.vaultPath);
@@ -157,6 +161,62 @@ test("graph-only rebuild refuses a configured retrieval engine before mutation",
   let called = false;
   const port = { rebuildFromDocuments: async () => { called = true; } } as never;
   await expect(rebuildRetrieval(fixture.db, fixture.vaultPath, port, { layer: "graph" })).rejects.toThrow(
+    "partial layer rebuild is not supported for a configured retrieval engine",
+  );
+  expect(called).toBe(false);
+  expect(snapshotGraph(fixture.db)).toEqual(graph);
+  expect(snapshotSearch(fixture.db)).toEqual(search);
+});
+
+test("search-only rebuild restores lexical rows without touching graph", async () => {
+  fixture = await serveFixture();
+  const search = snapshotSearch(fixture.db);
+  const graph = snapshotGraph(fixture.db);
+  const graphMeta = snapshotGraphMeta(fixture.db);
+  expect(graph.length).toBeGreaterThan(0);
+  expect(search.documents.length).toBeGreaterThan(0);
+  fixture.db.exec("DELETE FROM search_documents");
+  expect(fixture.db.query("SELECT count(*) AS n FROM search_documents").get()).toEqual({ n: 0 });
+  const result = await rebuildRetrieval(fixture.db, fixture.vaultPath, undefined, { layer: "search" });
+  const restored = snapshotSearch(fixture.db);
+  expect(restored.documents).toEqual(search.documents);
+  expect(restored.docs).toEqual(search.docs);
+  expect(snapshotGraph(fixture.db)).toEqual(graph);
+  expect(snapshotGraphMeta(fixture.db)).toEqual(graphMeta);
+  expect(result).toMatchObject({ backend: "sqlite-floor", store: "kizuki.retrieval.fts5" });
+  expect(result.documents).toBe(search.documents.length);
+});
+
+test("search-only rebuild refuses malformed canon and a busy writer before mutation", async () => {
+  fixture = await serveFixture();
+  const graph = snapshotGraph(fixture.db);
+  const search = snapshotSearch(fixture.db);
+  writeFileSync(join(fixture.vaultPath, "facts", "malformed.md"), "---\ninvalid: [\n---\nsecret");
+  await expect(rebuildRetrieval(fixture.db, fixture.vaultPath, undefined, { layer: "search" })).rejects.toThrow(
+    "canon is unreadable; derived rebuild refused",
+  );
+  expect(snapshotGraph(fixture.db)).toEqual(graph);
+  expect(snapshotSearch(fixture.db)).toEqual(search);
+  const lock = tryWriteFlock(fixture.vaultPath);
+  expect(lock).not.toBeNull();
+  try {
+    await expect(rebuildRetrieval(fixture.db, fixture.vaultPath, undefined, { layer: "search" })).rejects.toThrow(
+      "canon writer is busy; retry rebuild",
+    );
+    expect(snapshotGraph(fixture.db)).toEqual(graph);
+    expect(snapshotSearch(fixture.db)).toEqual(search);
+  } finally {
+    lock?.release();
+  }
+});
+
+test("search-only rebuild refuses a configured retrieval engine before mutation", async () => {
+  fixture = await serveFixture();
+  const graph = snapshotGraph(fixture.db);
+  const search = snapshotSearch(fixture.db);
+  let called = false;
+  const port = { rebuildFromDocuments: async () => { called = true; } } as never;
+  await expect(rebuildRetrieval(fixture.db, fixture.vaultPath, port, { layer: "search" })).rejects.toThrow(
     "partial layer rebuild is not supported for a configured retrieval engine",
   );
   expect(called).toBe(false);
