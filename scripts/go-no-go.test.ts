@@ -891,6 +891,30 @@ test("a self-attested markdown-folder file-import receipt cannot pass connector 
   expect(result.release_1_0_accepted).toBe(false);
 });
 
+test("a self-attested chatgpt-export file-import receipt cannot pass connector qualification", () => {
+  const f = fixture();
+  const body = JSON.stringify({
+    schema: "kizuki.connector-evidence/v1",
+    connector: "chatgpt-export",
+    status: "PASS",
+    attested_by: "model",
+    file_import: true,
+  });
+  const path = join(f.root, "connector-chatgpt-export.json");
+  writeFileSync(path, body);
+  asV3(f, [receiptRef("kizuki.connector-evidence/v1", "connector.chatgpt-export", null, path, digest(body))]);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "evidence.index").status).toBe("PASS");
+  expect(gate(result, "connector.chatgpt-export")).toMatchObject({
+    required: true,
+    scope: "file-import",
+    status: "NOT_IMPLEMENTED",
+    evidence_sha256: null,
+  });
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
+});
+
 test("checkout custody accepts a clean exact-head candidate and refuses later drift", () => {
   const repo = custodyRepo();
   const frame = assertCheckoutCustody(repo.root, repo.sha, SURFACE_OBSERVED_FILES);
