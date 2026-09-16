@@ -41,6 +41,15 @@ const successIf = '${{ success() }}';
 const linuxArtifactName = 'linux-x64-${{ github.event.pull_request.head.sha || github.sha }}';
 const linuxReceiptPath = '${{ runner.temp }}/kizuki-artifact-proof/receipt.json';
 
+const pinnedSecretsJob = `
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: ${pinnedCheckout}
+        with: { fetch-depth: 0, ref: "${pinnedRef}" }
+      - run: bun run ci:secrets`;
+
 function ciWorkflow(overrides?: {
   name?: string;
   extraJob?: string;
@@ -80,7 +89,7 @@ ${testSteps}
             ${linuxReceiptPath}
           retention-days: 7
           if-no-files-found: error
-${overrides?.extraJob ?? ""}`;
+${overrides?.extraJob ?? ""}${pinnedSecretsJob}`;
 }
 
 describe("workflow validation", () => {
@@ -237,8 +246,35 @@ jobs:
       - run: bun test
 `;
     expect(validateWorkflowText(".github/workflows/ci.yml", withoutTest)).toEqual([
-      expect.objectContaining({ reason: expect.stringContaining('job "test"') }),
+      expect.objectContaining({ reason: expect.stringContaining('required main check context "test"') }),
+      expect.objectContaining({ reason: expect.stringContaining('required main check context "secrets"') }),
     ]);
+  });
+
+  test("deleting or renaming a required main check job fails the validator", () => {
+    const path = ".github/workflows/ci.yml";
+    const withSecrets = ciWorkflow();
+    expect(validateWorkflowText(path, withSecrets)).toEqual([]);
+    const withoutSecrets = withSecrets.slice(0, withSecrets.indexOf("\n  secrets:"));
+    expect(validateWorkflowText(path, withoutSecrets).some(failure => failure.reason.includes('required main check context "secrets"'))).toBe(true);
+    const renamedSecrets = withSecrets.replace("  secrets:", "  secret-patterns:");
+    expect(validateWorkflowText(path, renamedSecrets).some(failure => failure.reason.includes('required main check context "secrets"'))).toBe(true);
+
+    const workflowsPath = ".github/workflows/workflows.yml";
+    const workflowsText = `name: workflows
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  workflows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: bun run ci:workflows
+`;
+    expect(validateWorkflowText(workflowsPath, workflowsText)).toEqual([]);
+    const renamedWorkflows = workflowsText.replace("  workflows:", "  guard:");
+    expect(validateWorkflowText(workflowsPath, renamedWorkflows).some(failure => failure.reason.includes('required main check context "workflows"'))).toBe(true);
   });
 
   test("rejects skip-on-missing hashFiles conditions", () => {
