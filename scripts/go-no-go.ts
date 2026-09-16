@@ -17,11 +17,14 @@ type Status = "PASS" | "FAIL" | "MISSING" | "UNVERIFIABLE" | "NOT_IMPLEMENTED";
 interface Gate { id: string; required: boolean; status: Status; scope: string; reason: string; target: string | null; evidence_sha256: string | null; }
 /** Shared decision only; this function never establishes evidence authority. */
 export function releaseDecision(profile: Profile, rows: readonly Gate[]) {
-  const required = gates().filter(item => item.required);
+  if (profile !== "rc" && profile !== "1.0") reject("unsupported-profile");
+  const inventory = gates();
+  const knownIds = new Set(inventory.map(item => item.id));
+  const required = inventory.filter(item => item.required);
   const seen = new Set<string>();
   const byId = new Map<string, Gate>();
   for (const row of rows) {
-    if (seen.has(row.id)) {
+    if (!knownIds.has(row.id) || seen.has(row.id)) {
       return { decision: "NO-GO" as const, release_1_0_accepted: false };
     }
     seen.add(row.id);
