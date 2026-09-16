@@ -34,7 +34,7 @@ describe("release superseded task claims", () => {
     for (const line of output.trim().split("\n")) {
       const task = JSON.parse(line);
       if (task.status === "superseded") {
-        for (const field of ["assignee", "claimedAt", "heartbeatAt", "leaseExpiresAt"]) {
+        for (const field of ["assignee", "claimedAt", "heartbeatAt", "lastHeartbeatAt", "leaseExpiresAt"]) {
           expect(task).not.toHaveProperty(field);
         }
       }
