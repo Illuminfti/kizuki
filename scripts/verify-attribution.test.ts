@@ -10,6 +10,14 @@ function failures(text: string) {
 }
 
 describe("attribution verification", () => {
+  test("rejects an empty configured credit before scanning a document", () => {
+    for (const text of ["", `[${exactCredit}](${canonicalUrl})`]) {
+      expect(() => validateAttributionText(path, text, "", canonicalUrl)).toThrow(
+        "attribution identifier must not be empty",
+      );
+    }
+  });
+
   test("requires an exact credit and canonical URL in each document", () => {
     expect(failures(canonicalUrl)).toEqual([
       expect.objectContaining({ reason: "public attribution is missing the exact credit" }),

@@ -79,6 +79,9 @@ export function validateAttributionText(
   exactSpelling: string,
   canonicalUrl: string,
 ): AttributionFailure[] {
+  if (exactSpelling.length === 0) {
+    throw new Error("attribution identifier must not be empty");
+  }
   const identifier = exactSpelling.toLowerCase();
   if (!canonicalUrl.toLowerCase().endsWith(identifier)) {
     throw new Error("canonical URL must end with the attribution identifier");
