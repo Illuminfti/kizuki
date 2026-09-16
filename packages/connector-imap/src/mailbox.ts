@@ -1,4 +1,4 @@
-import type { CaptureEventInput, Cursor, SyncBatch } from "@kizuki/core";
+import { KizukiError, type CaptureEventInput, type Cursor, type SyncBatch } from "@kizuki/core";
 import { decodeCursor, emptyCursor, encodeCursor } from "./cursor";
 import type { ImapCursor, ImapFolderCursor } from "./cursor";
 import { folderLabel, messageEvent, tombstoneEvent } from "./events";
@@ -87,7 +87,16 @@ async function fetchBodiesFor(
       batch.map((summary) => summary.uid),
       "",
     );
-    for (const [uid, raw] of fetched) bodies.set(uid, { raw, section: "" });
+    const expected = new Map(batch.map((summary) => [summary.uid, summary.size]));
+    for (const [uid, raw] of fetched) {
+      if (raw.byteLength !== expected.get(uid)) {
+        throw new KizukiError(
+          "protocol",
+          "server sent a body whose size disagreed with RFC822.SIZE",
+        );
+      }
+      bodies.set(uid, { raw, section: "" });
+    }
   }
   for (const batch of group(headerOnly, BODY_FETCH)) {
     const ids = batch.map((summary) => summary.uid);
