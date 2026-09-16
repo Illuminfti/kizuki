@@ -10,13 +10,16 @@ function failures(text: string) {
 }
 
 describe("attribution verification", () => {
-  test("rejects an empty configured credit before scanning a document", () => {
-    for (const text of ["", `[${exactCredit}](${canonicalUrl})`]) {
-      expect(() => validateAttributionText(path, text, "", canonicalUrl)).toThrow(
-        "attribution identifier must not be empty",
-      );
-    }
-  });
+  test.each(["", " ", "\t", "\r\n", "\u00a0"])(
+    "rejects a blank configured credit %p before scanning a document",
+    (credit) => {
+      for (const text of ["", `[${exactCredit}](${canonicalUrl})`]) {
+        expect(() => validateAttributionText(path, text, credit, canonicalUrl)).toThrow(
+          "attribution identifier must not be empty",
+        );
+      }
+    },
+  );
 
   test("requires an exact credit and canonical URL in each document", () => {
     expect(failures(canonicalUrl)).toEqual([

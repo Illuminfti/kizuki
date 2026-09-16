@@ -79,7 +79,7 @@ export function validateAttributionText(
   exactSpelling: string,
   canonicalUrl: string,
 ): AttributionFailure[] {
-  if (exactSpelling.length === 0) {
+  if (exactSpelling.trim().length === 0) {
     throw new Error("attribution identifier must not be empty");
   }
   const identifier = exactSpelling.toLowerCase();
