@@ -50,6 +50,22 @@ test("installed native status waits for first rail coverage and shares one succe
   expect(result.installedHealth.evidence.diagnostics).toBe(diagnostics);
 });
 
+test.each(["", "{", "null"])("installed native status retains invalid JSON evidence: %j", async (stdout) => {
+  const { since, diagnostics } = freshNativeHealth();
+  const status = { exit_code: 1, stdout, stderr: "synthetic status failure" };
+  let commands = 0;
+  const result = await observeInstalledNativeHealth(501, since, () => diagnostics, () => { commands++; return status; });
+  expect(commands).toBe(1);
+  expect(result.publicStatus).toEqual({ passed: false, evidence: status });
+  expect(result.installedHealth.passed).toBe(false);
+  expect(result.installedHealth.evidence.diagnostics).toBe(diagnostics);
+  const steps: { id: string; passed: boolean; evidence: unknown }[] = [{ id: "public-status-agrees-with-native-manager", ...result.publicStatus }];
+  const failures: string[] = [];
+  recordInstalledHealth(steps, failures, result.installedHealth);
+  expect(steps.map(step => step.passed)).toEqual([false, false]);
+  expect(failures).toEqual(["installed-rails-healthy failed"]);
+});
+
 for (const fault of ["exit", "pid", "inactive", "disabled", "failed-rail", "failed-receipt"] as const) {
   test(`installed native status retains ${fault} after first rail coverage`, async () => {
     const { since, diagnostics, body } = freshNativeHealth(); let reads = 0, commands = 0;
