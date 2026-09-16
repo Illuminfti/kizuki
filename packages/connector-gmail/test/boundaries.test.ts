@@ -81,6 +81,28 @@ test("explicit fields suppress persisted body and provider body-data projection"
     expect(request.searchParams.get("fields")).not.toContain("data");
     expect(validateEventInput(event).ok).toBe(true);
 });
+test("text-only capture requests attachment classification but persists no attachment data", async () => {
+    const fixture = new GmailFixture(1), state = parseState(fixture.state);
+    state.fields = ["text"];
+    fixture.state = encodeState(state);
+    fixture.messages.get("m1")!.payload = { mimeType: "multipart/mixed", parts: [
+        { mimeType: "text/plain", body: { data: Buffer.from("visible body").toString("base64url") } },
+        { partId: "1", mimeType: "text/plain", filename: "ATTACHMENT_NAME.txt", body: { data: Buffer.from("ATTACHMENT_BODY").toString("base64url") } },
+    ] };
+    const connector = createGmailConnector({ ...config, fields: ["text"] }, { fetch: fixture.fetch, persist: fixture.persist, now: fixture.now });
+    await connector.connect(async () => new TextDecoder().decode(fixture.state));
+    const result = await connector.backfill(null);
+    expect(result.status).not.toBe("unavailable");
+    expect(result.events).toHaveLength(1);
+    const request = new URL(fixture.requests.find(url => url.includes("/messages/m1"))!);
+    // Every projected MIME level must retain the discriminator used by messageEvent.
+    expect(request.searchParams.get("fields")!.match(/\bfilename\b/g)).toHaveLength(9);
+    expect(result.events[0]!.text).toBe("visible body");
+    expect(result.events[0]!.attachments).toEqual([]);
+    expect(result.events[0]!.metadata.body_coverage).toContain("attachment_body_unsupported");
+    expect(JSON.stringify(result)).not.toContain("ATTACHMENT_");
+    expect(validateEventInput(result.events[0]!).ok).toBe(true);
+});
 test("backfill stops at 1000 records and reports partial instead of false complete", async () => {
     const fixture = new GmailFixture(1001), connector = await fixture.connected();
     let cursor: string | null = null, stored = 0, detail = "";
