@@ -233,6 +233,23 @@ test("manual macOS proof refuses automatic triggers, unbounded cost, and mutable
   }
 });
 
+test("macOS qualification retains permission, durability and temporary-home installation coverage (#339)", () => {
+  const path = ".github/workflows/macos-native.yml";
+  const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  expect(validateWorkflowText(path, text)).toEqual([]);
+  for (const suite of [
+    "packages/core/test/vault-platform.test.ts",
+    "packages/core/test/serve/durability.test.ts",
+    "packages/cli/test/serve/install.test.ts",
+  ]) {
+    const doc = Bun.YAML.parse(text) as any;
+    const step = doc.jobs["native-arm64"].steps[5];
+    expect(step.run.split(/\s+/)).toContain(suite);
+    step.run = step.run.replace(` ${suite}`, "");
+    expect(validateWorkflowText(path, JSON.stringify(doc)).length, suite).toBeGreaterThan(0);
+  }
+});
+
 test("macOS validator rejects removal or bypass of each native proof obligation", () => {
   const path = ".github/workflows/macos-native.yml";
   const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
