@@ -226,6 +226,8 @@ main() {
   assert_full_history
   bun "$verify_script_dir/verify-workflows.ts"
   gate workflows
+  bun "$verify_script_dir/verify-maestro.ts"
+  gate maestro
 
   bun install --frozen-lockfile
   gate install

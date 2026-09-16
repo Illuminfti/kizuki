@@ -119,6 +119,16 @@ describe("Maestro current-law ledger", () => {
     expect(byId.get("tsk-563f05")?.title).toContain("RFC absorption");
   });
 
+  test("committed task history and lane definitions contain no live worker claims", () => {
+    for (const task of tasks) {
+      expect(task).not.toHaveProperty("assignee");
+      expect(task).not.toHaveProperty("claimedAt");
+      expect(task).not.toHaveProperty("heartbeatAt");
+      expect(task).not.toHaveProperty("leaseExpiresAt");
+      expect(task.status).not.toBe("in_progress");
+    }
+  });
+
   test("every active task is an RFC 0002 §18.4 lane and carries the same current-law pointer", () => {
     expect(lanes.length).toBeGreaterThan(0);
     expect(active.map((task) => task.id).sort()).toEqual(
