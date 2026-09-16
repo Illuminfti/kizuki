@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, opendirSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { dirname, extname, isAbsolute, join, parse, resolve } from "node:path";
+import { releaseTarget } from "./release-targets";
 import ts from "typescript";
 import { COMMANDS } from "../packages/cli/src/commands/index";
 import { printRootHelp } from "../packages/cli/src/help";
@@ -41,6 +42,8 @@ export const SURFACE_PRODUCER = "kizuki.surface-inventory/v1";
 export const SURFACE_GATE = "surface.capabilities-and-docs";
 export const SURFACE_PRODUCER_FILES = ["scripts/capability-proof.ts", "scripts/release-evidence.ts"] as const;
 export const CAPABILITY_PROOF_FILE = "scripts/capability-proof.ts";
+export const NATIVE_ATTESTATION_PRODUCER = "kizuki.native-attestation/v1";
+export const NATIVE_ATTESTATION_PRODUCER_FILES = ["scripts/native-attestation.ts", "scripts/release-evidence.ts"] as const;
 export const SURFACE_DOC_FILES = ["README.md", "SECURITY.md", "docs/CURRENT.md", "docs/cli.md"] as const;
 const SURFACE_MODULE_FILES = [
   "packages/cli/src/commands/index.ts", "packages/cli/src/help.ts", "packages/cli/src/retired.ts",
@@ -64,7 +67,7 @@ export const ACTOR_CLASSES = [
   "independent-witness", "owner-or-delegated-maintainer",
 ] as const;
 const PRODUCERS = [
-  "kizuki.native-attestation/v1", "kizuki.native-lifecycle/v1", "kizuki.required-checks/v1",
+  NATIVE_ATTESTATION_PRODUCER, "kizuki.native-lifecycle/v1", "kizuki.required-checks/v1",
   "kizuki.independent-review/v1", "kizuki.p0-disposition/v1", SURFACE_PRODUCER, "kizuki.journey-proof/v1",
   "kizuki.connector-evidence/v1", "kizuki.unfamiliar-user/v1", "kizuki.owner-rails-observation/v1",
   "kizuki.estate-parity-observation/v1", "kizuki.cutover-authority/v1",
@@ -192,7 +195,7 @@ export function parseGateReceipts(value: unknown): GateReceiptReference[] {
 
 function producerAllows(producer: string, gate_id: string, target: string | null): boolean {
   switch (producer) {
-    case "kizuki.native-attestation/v1":
+    case NATIVE_ATTESTATION_PRODUCER:
       return target !== null && (TARGETS as readonly string[]).includes(target) && gate_id === `native.${target}`;
     case "kizuki.native-lifecycle/v1":
       return target !== null && (TARGETS as readonly string[]).includes(target) && gate_id === `lifecycle.${target}`;
@@ -575,6 +578,84 @@ export function consumeSurfaceReceipt(value: unknown, root: string, candidateSha
   const evaluated = evaluateSurfaceReceipt(value, expected);
   frame.unchanged();
   return evaluated;
+}
+
+export interface NativeAttestationExpected {
+  candidate_source_sha: string; target: string; producer_files: string[]; producer_revision: string;
+  package_sha256: Record<string, string> | null; evaluator_platform: string; evaluator_arch: string; bun_version: string;
+}
+
+function packageHashes(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) reject("invalid-schema");
+  const out: Record<string, string> = {};
+  for (const key of Object.keys(value)) {
+    relativePosix(key);
+    out[key] = digest((value as Record<string, unknown>)[key]);
+  }
+  if (out.kizuki === undefined) reject("invalid-schema");
+  return out;
+}
+function sameHashes(left: Record<string, string>, right: Record<string, string>): boolean {
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length && keys.every(key => left[key] === right[key]);
+}
+
+export function evaluateNativeAttestationReceipt(value: unknown, expected: NativeAttestationExpected): SurfaceEvaluation {
+  const row = exact(value, "schema,identity,target,host_platform,host_arch,host_kernel_release,bun_version,execution_class,binary_sha256,package_sha256,argv,exit_code,stdout_sha256,outcome,failures");
+  if (row.schema !== NATIVE_ATTESTATION_PRODUCER) reject("invalid-schema");
+  const identity = parseSharedIdentity(row.identity, NATIVE_ATTESTATION_PRODUCER, expected.candidate_source_sha);
+  if (identity.source_class !== "native-host-attestation" || identity.actor_class !== "automated-producer") reject("invalid-identity");
+  if (!equalJson(identity.producer_files, expected.producer_files)) reject("producer-files-mismatch");
+  if (identity.producer_revision !== expected.producer_revision) reject("producer-revision-mismatch");
+  const target = releaseTarget(text(row.target, 64));
+  if (target.target !== expected.target) reject("mismatched-gate-or-target");
+  const host_platform = text(row.host_platform, 16), host_arch = text(row.host_arch, 16);
+  const kernel = text(row.host_kernel_release, 256);
+  if (kernel.trim() !== kernel || /[^\x20-\x7e]/.test(kernel)) reject("invalid-kernel-release");
+  if (text(row.bun_version, 64) !== expected.bun_version) reject("unsupported-bun-version");
+  const execution_class = text(row.execution_class, 32);
+  if (execution_class === "simulated" || execution_class === "host-label" || execution_class === "cross-compiled") {
+    return { status: "FAIL", reason: "cannot-certify-native-execution", creditDigest: true };
+  }
+  if (execution_class !== "native-host") reject("invalid-schema");
+  if (host_platform !== target.platform || host_arch !== target.arch) {
+    return { status: "FAIL", reason: "cannot-certify-native-execution", creditDigest: true };
+  }
+  const argv = stringList(row.argv, 8, 64);
+  if (!equalJson(argv, ["kizuki", "--help"])) reject("native-command-substituted");
+  if (typeof row.exit_code !== "number" || !Number.isSafeInteger(row.exit_code) || row.exit_code < 0 || row.exit_code > 255) reject("invalid-schema");
+  digest(row.stdout_sha256);
+  const package_sha256 = packageHashes(row.package_sha256);
+  if (digest(row.binary_sha256) !== package_sha256.kizuki) reject("proof-identity-mismatch");
+  if (expected.package_sha256 === null) return { status: "FAIL", reason: "native-package-not-indexed", creditDigest: false };
+  if (!sameHashes(package_sha256, expected.package_sha256)) reject("proof-package-mismatch");
+  const outcome = text(row.outcome, 16);
+  if (outcome !== "pass" && outcome !== "fail" && outcome !== "unresolved") reject("invalid-outcome");
+  const failures = failureList(row.failures);
+  if (outcome === "pass" && (failures.length !== 0 || row.exit_code !== 0)) reject("invalid-outcome");
+  if (outcome === "fail" && failures.length === 0) reject("invalid-outcome");
+  if (host_platform !== expected.evaluator_platform || host_arch !== expected.evaluator_arch) {
+    return { status: "UNVERIFIABLE", reason: "evaluator-cannot-certify-native-target", creditDigest: false };
+  }
+  if (outcome === "pass") return { status: "PASS", reason: "native-host-execution-attested", creditDigest: true };
+  if (outcome === "fail") return { status: "FAIL", reason: "native-outcome-fail", creditDigest: true };
+  return { status: "UNVERIFIABLE", reason: "native-outcome-unresolved", creditDigest: true };
+}
+
+export function consumeNativeAttestationReceipt(
+  value: unknown, root: string, candidateSha: string, binding: { target: string; package_sha256: Record<string, string> | null },
+): SurfaceEvaluation {
+  const producer_files = NATIVE_ATTESTATION_PRODUCER_FILES.map(path => {
+    const entry = inspectOptionalVerifier(root, path);
+    if (entry.status !== "PRESENT" || entry.sha256 === null) reject("producer-revision-and-native-attestation-unavailable");
+    return { path, sha256: entry.sha256 };
+  });
+  return evaluateNativeAttestationReceipt(value, {
+    candidate_source_sha: digest(candidateSha, 40), target: binding.target, producer_files: [...NATIVE_ATTESTATION_PRODUCER_FILES],
+    producer_revision: producerRevision(producer_files), package_sha256: binding.package_sha256,
+    evaluator_platform: process.platform, evaluator_arch: process.arch,
+    bun_version: readFileSync(resolve(root, ".bun-version"), "utf8").trim(),
+  });
 }
 
 function stringList(value: unknown, bound: number, limit = 256): string[] {
