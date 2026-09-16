@@ -215,6 +215,15 @@ async function rebuildUnderFence(
     if (refused) throw new PortError("unavailable", "source authorization changed during rebuild; current evidence must be rebuilt", true,
       unreadable === undefined ? undefined : { cause: unreadable });
     if (failure !== undefined) throw failure;
+    const snapshotIds = [...remaining.keys()];
+    for (let offset = 0; offset < snapshotIds.length; offset += 100) {
+      const ids = snapshotIds.slice(offset, offset + 100);
+      const proof = validateAbsenceProof(await port.verifyAbsent(ids), ids);
+      const found = new Set(proof.found);
+      if (found.size !== ids.length || proof.store !== store || port.descriptor.id !== store) {
+        throw new PortError("unavailable", "rebuild document set did not match the authoritative snapshot", true);
+      }
+    }
   }
   const floor = rebuildDerived(db, vaultPath);
   const floorDocuments = floor.search.pages + floor.search.events;

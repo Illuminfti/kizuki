@@ -5,10 +5,12 @@ import { readRetrievalDocuments, rebuildRetrieval } from "../../src/retrieval/re
 import { serveFixture } from "../serving/helpers";
 import { insertClaim } from "../../src/claims/store";
 import { claimInput, putEvent, FixtureVectorPort } from "../claims/helpers";
-import type { RetrievalDoc } from "../../src/contracts/retrieval";
+import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../../src/contracts/retrieval";
 import type { Fixture } from "../serving/helpers";
 import { tryWriteFlock } from "../../src/serve/flock";
 import type { Database } from "bun:sqlite";
+import { createFts5RetrievalPort, FTS5_RETRIEVAL_DESCRIPTOR } from "../../src/retrieval";
+import { temporaryPortContext } from "../contracts/fixtures";
 let fixture: Fixture | undefined;
 afterEach(() => fixture?.dispose());
 
@@ -222,4 +224,68 @@ test("search-only rebuild refuses a configured retrieval engine before mutation"
   expect(called).toBe(false);
   expect(snapshotGraph(fixture.db)).toEqual(graph);
   expect(snapshotSearch(fixture.db)).toEqual(search);
+});
+
+function lexicalQuery(text: string): RetrievalQuery {
+  return {
+    text,
+    mode: "lexical",
+    scope: {},
+    ceiling: "private",
+    limit: 100,
+    deadline_ms: 5_000,
+  };
+}
+
+async function hitIds(port: RetrievalPort, text: string): Promise<string[]> {
+  return (await port.search(lexicalQuery(text))).hits.map(({ doc_id }) => doc_id);
+}
+
+test("rebuild fails when the selected store drops a snapshot document", async () => {
+  fixture = await serveFixture();
+  class DroppingPort extends FixtureVectorPort {
+    async rebuildFromDocuments(docs: readonly RetrievalDoc[]) {
+      this.docs.clear();
+      await this.upsert(docs.slice(1));
+    }
+  }
+  const port = new DroppingPort();
+  await expect(rebuildRetrieval(fixture.db, fixture.vaultPath, port)).rejects.toThrow(
+    "rebuild document set did not match the authoritative snapshot",
+  );
+});
+
+test("rebuild verifies the snapshot document set and golden recall", async () => {
+  fixture = await serveFixture();
+  const temporary = temporaryPortContext(FTS5_RETRIEVAL_DESCRIPTOR);
+  const port = createFts5RetrievalPort(temporary.ctx);
+  try {
+    const snapshot = readRetrievalDocuments(fixture.db, fixture.vaultPath);
+    expect(snapshot.length).toBeGreaterThan(1);
+    await port.upsert(snapshot);
+    const ids = snapshot.map((doc) => doc.doc_id).sort();
+    const incremental = (await port.verifyAbsent(ids)).found.slice().sort();
+    expect(incremental).toEqual(ids);
+    const incrementalGrace = await hitIds(port, "Grace");
+    const incrementalKettle = await hitIds(port, "kettle");
+    expect(incrementalGrace).toContain("page:person:grace");
+    expect(incrementalKettle.length).toBeGreaterThan(0);
+
+    const result = await rebuildRetrieval(fixture.db, fixture.vaultPath, port);
+    expect(result.documents).toBe(snapshot.length);
+    expect((await port.verifyAbsent(ids)).found.slice().sort()).toEqual(ids);
+    const rebuiltGrace = await hitIds(port, "Grace");
+    const rebuiltKettle = await hitIds(port, "kettle");
+    expect(rebuiltGrace).toEqual(incrementalGrace);
+    expect(rebuiltKettle).toEqual(incrementalKettle);
+
+    const again = await rebuildRetrieval(fixture.db, fixture.vaultPath, port);
+    expect(again.documents).toBe(snapshot.length);
+    expect((await port.verifyAbsent(ids)).found.slice().sort()).toEqual(ids);
+    expect(await hitIds(port, "Grace")).toEqual(rebuiltGrace);
+    expect(await hitIds(port, "kettle")).toEqual(rebuiltKettle);
+  } finally {
+    await port.close();
+    temporary.cleanup();
+  }
 });

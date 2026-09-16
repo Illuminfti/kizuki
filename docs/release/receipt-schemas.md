@@ -14,6 +14,7 @@ for invocation, custody, limits and the current release obligations.
 | `kizuki.release-build/v2` | Package build identity and distribution material inventory | `scripts/release-artifacts.ts` |
 | `kizuki.sqlite-runtime/v1` | Observed child SQLite identity | `scripts/artifact-engine.ts` |
 | `kizuki.sqlite-engine-policy/v2` | Exact supported runtime identities | `scripts/artifact-proof.ts` |
+| `kizuki.native-attestation/v1` | Native-host execution of a copied package binary on the evaluator host | `scripts/native-attestation.ts` |
 | `kizuki.native-service-lifecycle/v2` | Original native service checks, seventeen qualification phases and owned fixture cleanup | `scripts/native-lifecycle-proof.ts` |
 | `kizuki.github-collection/v1` | Retained live GitHub collection and source inventories | `scripts/github-release-evidence.ts` |
 | `kizuki.acceptance-report/v2` | Offline acceptance verdict and all gate rows | `scripts/go-no-go.ts` |
