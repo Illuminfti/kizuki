@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { checksumManifest, packageFiles, parseBuildInfo, verifyPackageDirectory } from "./release-artifacts";
+import { releaseTarget } from "./release-targets";
 
 const hash = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
-import { releaseTarget } from "./release-targets";
 
 const TASKS = [
   ["install", "Install the supplied package and create a private workspace using only public instructions.", "Normal init installs an active, enabled supervisor service; no hidden setup."],
