@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { closeSync, fsyncSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, fsyncSync, lstatSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { renderLaunchdPlist } from "../packages/core/src/serve/units";
@@ -14,6 +14,25 @@ test("native host preserves private modes, atomic replacement, and directory fsy
     const directory = openSync(root, "r"); try { fsyncSync(directory); } finally { closeSync(directory); }
     expect(statSync(target).mode & 0o777).toBe(0o600);
     expect(readFileSync(target, "utf8")).toBe("new synthetic state");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test("native rename replaces a symlink entry without modifying its referent", () => {
+  const root = mkdtempSync(join(tmpdir(), "native symlink "));
+  try {
+    const referent = join(root, "referent");
+    const target = join(root, "target");
+    const pending = join(root, "pending");
+    writeFileSync(referent, "original synthetic state", { mode: 0o600 });
+    symlinkSync("referent", target);
+    expect(lstatSync(target).isSymbolicLink()).toBe(true);
+    writeFileSync(pending, "replacement synthetic state", { mode: 0o600 });
+
+    renameSync(pending, target);
+
+    expect(lstatSync(target).isSymbolicLink()).toBe(false);
+    expect(readFileSync(target, "utf8")).toBe("replacement synthetic state");
+    expect(statSync(target).mode & 0o777).toBe(0o600);
+    expect(readFileSync(referent, "utf8")).toBe("original synthetic state");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 test.if(process.platform === "darwin")("native plutil validates launchd rendering without loading a service", () => {
