@@ -52,6 +52,36 @@ describe("date-time parsing", () => {
     });
   });
 
+  test("refuses unsupported or contradictory explicit VALUE types", () => {
+    for (const [value, valueType] of [
+      ["20260315", "DATE-TIME"],
+      ["20260315", "date-time"],
+      ["20260315T090000Z", "DATE"],
+      ["20260315", "TEXT"],
+      ["20260315T090000Z", "PERIOD"],
+      ["20260315T090000", "X-UNKNOWN"],
+    ] as const) {
+      expect(() => parseDateTime(value, { VALUE: valueType })).toThrow(
+        new KizukiError("parse_error", "kizuki.ics: malformed date-time value"),
+      );
+    }
+  });
+
+  test("accepts supported explicit VALUE types case-insensitively", () => {
+    expect(parseDateTime("20260315", { VALUE: "date" })).toEqual({
+      kind: "date",
+      date: "20260315",
+    });
+    expect(parseDateTime("20260315T090000Z", { VALUE: "date-time" })).toEqual({
+      kind: "utc",
+      iso: "2026-03-15T09:00:00.000Z",
+    });
+    expect(parseDateTime("20260315T090000", { VALUE: "DATE-TIME" })).toEqual({
+      kind: "floating",
+      local: "20260315T090000",
+    });
+  });
+
   test("refuses malformed values", () => {
     for (const value of ["", "2026-03-02", "20260302T0900", "notadate"]) {
       expect(() => parseDateTime(value, {})).toThrow(KizukiError);
