@@ -146,6 +146,10 @@ async function main(): Promise<void> {
     .split("\0")
     .filter((path) => path.length > 0);
 
+  if (paths.length === 0) {
+    throw new Error("attribution validator found no configured documents");
+  }
+
   const failures = paths.flatMap((path) =>
     validateAttributionText(
       path,

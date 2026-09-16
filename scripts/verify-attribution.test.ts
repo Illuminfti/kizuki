@@ -81,4 +81,13 @@ describe("attribution verification", () => {
       expect.objectContaining({ reason: "public attribution is missing the canonical URL" }),
     ]);
   });
+
+  test("rejects a suffixed canonical URL that shares the credit's tail", () => {
+    expect(failures(`[${exactCredit}](${canonicalUrl}-mirror)`)).toEqual([
+      expect.objectContaining({
+        reason: "public attribution URL is not the exact delimited canonical URL",
+      }),
+      expect.objectContaining({ reason: "public attribution is missing the canonical URL" }),
+    ]);
+  });
 });
