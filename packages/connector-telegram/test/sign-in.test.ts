@@ -54,7 +54,7 @@ test("the two-step password is prompted only when the account has one", async ()
   await guarded.connector.signIn(io, new CapturingWriter());
 
   expect(io.prompts.map((prompt) => prompt.secret)).toEqual([
-    false,
+    true,
     false,
     true,
   ]);
@@ -71,6 +71,7 @@ test("a malformed phone number is refused before anything is dialled", async () 
   const error = await rejection(() => connector.signIn(io, writer));
   expect(error.code).toBe("invalid_phone");
   expect(error.message).not.toContain("5551234");
+  expect(io.prompts.map((prompt) => prompt.secret)).toEqual([true]);
   expect(api.calls).toEqual([]);
   expect(writer.writes).toEqual([]);
 });

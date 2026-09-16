@@ -159,6 +159,7 @@ export async function enroll(
   const phone = (
     await io.prompt(
       "Telegram phone number (international format, e.g. +15551234567): ",
+      { secret: true },
     )
   ).trim();
   if (!PHONE_FORMAT.test(phone)) {
