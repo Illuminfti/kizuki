@@ -1240,6 +1240,20 @@ function syntheticPass(rows = gates()) {
   return rows.map(row => row.required ? { ...row, status: "PASS" as const, reason: "synthetic-helper" } : { ...row });
 }
 
+test.each(["rc", "1.0"] as const)("%s helper respects additional required gates", profile => {
+  const complete = syntheticPass();
+  for (const required of [true, false]) {
+    for (const status of ["PASS", "FAIL", "MISSING", "UNVERIFIABLE", "NOT_IMPLEMENTED"] as const) {
+      const extra = { ...complete[0]!, id: "candidate.additional-check", required, status };
+      const accepted = status === "PASS" || (!required && status !== "FAIL");
+      expect(releaseDecision(profile, [...complete, extra])).toEqual({
+        decision: accepted ? "GO" : "NO-GO",
+        release_1_0_accepted: profile === "1.0" && accepted,
+      });
+    }
+  }
+});
+
 test.each(["rc", "1.0"] as const)("%s helper GO requires the complete mandatory inventory", profile => {
   const complete = syntheticPass();
   const accepted = releaseDecision(profile, complete);
