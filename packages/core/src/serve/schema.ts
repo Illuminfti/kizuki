@@ -93,6 +93,15 @@ CREATE TABLE IF NOT EXISTS extract_deferred_inputs (
   checked_revision INTEGER NOT NULL,
   checked_binding_digest TEXT NOT NULL
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS port_state (
+  kind TEXT PRIMARY KEY,
+  port_id TEXT NOT NULL,
+  contract TEXT NOT NULL,
+  contract_minor INTEGER NOT NULL,
+  space TEXT,
+  bound_at TEXT NOT NULL
+) STRICT;
 `;
 
 export function applyServeV7(db: Database): void {

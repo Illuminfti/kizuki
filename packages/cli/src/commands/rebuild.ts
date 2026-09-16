@@ -1,4 +1,4 @@
-import { rebuildRetrieval, type RetrievalPort } from "@kizuki/core";
+import { rebuildRetrieval, persistConfiguredRetrieval, type RetrievalPort } from "@kizuki/core";
 import { parseArguments, UsageError } from "../args";
 import { withVault } from "../context";
 import { jsonEnvelope } from "../output";
@@ -51,6 +51,9 @@ export const rebuildCommand: Command = {
           : await openConfiguredRetrieval(ctx.vaultPath, portId);
         const result = await rebuildRetrieval(ctx.db, ctx.vaultPath, selected, { layer });
         if (layer === "all" || layer === "search") refreshDerived(ctx.db, ctx.vaultPath);
+        if (portId !== undefined && layer === "all") {
+          persistConfiguredRetrieval(ctx.db, ctx.vaultPath, result.store);
+        }
         io.out(parsed.flags.has("--json") ? jsonEnvelope("rebuild", "ok", result)
           : `rebuilt=${result.documents} backend=${result.backend} store=${result.store} floor_documents=${result.floor_documents} generation=${result.generation}`);
         return 0;

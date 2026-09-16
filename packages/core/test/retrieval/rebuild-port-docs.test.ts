@@ -1,4 +1,4 @@
-/** Docs must describe invocation-scoped --port, not the superseded bound-only contract. */
+/** Docs must describe --port persist on successful full rebuild, not the superseded bound-only contract. */
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -33,8 +33,10 @@ function persistContractErrors(text: string): string[] {
   const errors: string[] = [];
   if (!/--port/.test(text)) errors.push("missing --port");
   if (!/serve\.toml/.test(text)) errors.push("missing serve.toml persist boundary");
+  if (!/port_state/.test(text)) errors.push("missing port_state");
+  if (!/flips/.test(text)) errors.push("missing success persist");
   if (!/does not rewrite/i.test(text) && !/not rewritten/i.test(text)) {
-    errors.push("missing non-persist contract for serve.toml");
+    errors.push("missing non-persist contract for failed or partial rebuild");
   }
   return errors;
 }

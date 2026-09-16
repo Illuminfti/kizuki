@@ -471,8 +471,11 @@ inactive owned retrieval generations under `.kizuki/retrieval/` and leaves the
 currently configured engine, or the SQLite floor when no engine is bound.
 `--port ID` selects an installed engine for this invocation
 (`kizuki.retrieval.fts5` for the SQLite floor, or an installed retrieval engine
-id). Unknown IDs and a busy engine fail closed. It does not rewrite
-`serve.toml`. Other layers are not implemented and exit 2. `--prune-old` cannot
+id). Unknown IDs and a busy engine fail closed. A successful `--layer all`
+rebuild (the default) flips `[ports].retrieval` in `serve.toml` and records
+`port_state`. A failed or partial rebuild does not rewrite
+`serve.toml` or `port_state`. The previous store remains on disk until
+`kizuki rebuild --prune-old`. Other layers are not implemented and exit 2. `--prune-old` cannot
 be combined with `--layer` or `--port`.
 
 The result identifies `backend` (`sqlite-floor` or `retrieval-port`), `store`,
