@@ -7,8 +7,8 @@ import { statusQualification } from "./qualification";
 import { ArtifactProofError, PROOF_JSON_LIMITS, SQLITE_ENGINE_POLICY, parseProofJson as json, validateArtifactProof } from "./artifact-proof";
 import type { ArtifactProofIdentity, ArtifactProofSchema } from "./artifact-proof";
 import {
-  CAPABILITY_PROOF_FILE, CONNECTORS, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, SURFACE_GATE, SURFACE_PRODUCER, TARGETS,
-  absolute, consumeSurfaceReceipt, digest, exact, gateReceiptMappingError, hash, inspectOptionalVerifier, parseGateReceipts, parents, read, reject, surfaceProducerActive, text,
+  CAPABILITY_PROOF_FILE, CONNECTORS, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, NATIVE_ATTESTATION_PRODUCER, SURFACE_GATE, SURFACE_PRODUCER, TARGETS,
+  absolute, consumeNativeAttestationReceipt, consumeSurfaceReceipt, digest, exact, gateReceiptMappingError, hash, inspectOptionalVerifier, parseGateReceipts, parents, read, reject, surfaceProducerActive, text,
 } from "./release-evidence";
 import type { GateReceiptReference } from "./release-evidence";
 
@@ -168,6 +168,20 @@ export function evaluateRelease(profile: Profile, evidencePath: string) {
         const file = read(ref.path, LIMITS.family_receipt);
         if (file.sha256 !== ref.sha256) reject("receipt-digest-mismatch");
         const evaluated = consumeSurfaceReceipt(json(file.bytes), EVALUATOR_ROOT, index.candidate_source_sha);
+        file.unchanged();
+        gate.status = evaluated.status; gate.reason = evaluated.reason; gate.evidence_sha256 = evaluated.creditDigest ? file.sha256 : null;
+      } catch (error) { fail(gate, error); }
+    }
+    for (const ref of index.gate_receipts) {
+      if (ref.producer !== NATIVE_ATTESTATION_PRODUCER || ref.target === null) continue;
+      const gate = row(ref.gate_id);
+      try {
+        const file = read(ref.path, LIMITS.family_receipt);
+        if (file.sha256 !== ref.sha256) reject("receipt-digest-mismatch");
+        const verified = evidence.find(item => item.target === ref.target);
+        const evaluated = consumeNativeAttestationReceipt(json(file.bytes), EVALUATOR_ROOT, index.candidate_source_sha, {
+          target: ref.target, package_sha256: verified?.package_sha256 ?? null,
+        });
         file.unchanged();
         gate.status = evaluated.status; gate.reason = evaluated.reason; gate.evidence_sha256 = evaluated.creditDigest ? file.sha256 : null;
       } catch (error) { fail(gate, error); }
