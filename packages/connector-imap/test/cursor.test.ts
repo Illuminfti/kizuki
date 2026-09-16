@@ -36,6 +36,37 @@ describe("cursor", () => {
     expect(() => decodeCursor(raw)).toThrow(KizukiError);
   });
 
+  test("rejects checkpoint numbers outside the nonzero 32-bit range", () => {
+    for (const field of ["uidvalidity", "scan_from", "uidnext"] as const) {
+      for (const value of [0, -1, 1.5, 4294967296, Number.MAX_SAFE_INTEGER + 1]) {
+        const raw = JSON.stringify({
+          ...CURSOR,
+          folders: { INBOX: { ...CURSOR.folders["INBOX"], [field]: value } },
+        });
+        expect(() => decodeCursor(raw)).toThrow(KizukiError);
+      }
+    }
+  });
+
+  test("preserves checkpoint numeric boundaries across restart", () => {
+    for (const value of [1, 4294967295]) {
+      const cursor: ImapCursor = {
+        ...CURSOR,
+        folders: {
+          INBOX: {
+            uidvalidity: value,
+            scan_from: value,
+            uidnext: value,
+            known: "",
+            pending: "",
+            done: true,
+          },
+        },
+      };
+      expect(decodeCursor(encodeCursor(cursor))).toEqual(cursor);
+    }
+  });
+
   test("rejects any deviation", () => {
     const deviations = [
       "{",

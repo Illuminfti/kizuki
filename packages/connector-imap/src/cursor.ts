@@ -40,7 +40,11 @@ function invalid(what: string): never {
 }
 
 function positiveInteger(raw: unknown, what: string): number {
-  if (!Number.isInteger(raw) || (raw as number) < 0) invalid(what);
+  if (
+    !Number.isInteger(raw) ||
+    (raw as number) < 1 ||
+    (raw as number) > 4294967295
+  ) invalid(what);
   return raw as number;
 }
 
