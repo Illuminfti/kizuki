@@ -9,8 +9,8 @@ export function releaseSupersededTaskClaims(jsonl: string): string {
       const task: unknown = JSON.parse(line);
       if (
         typeof task !== "object" || task === null || Array.isArray(task) ||
-        !("id" in task) || typeof task.id !== "string" ||
-        !("status" in task) || typeof task.status !== "string"
+        !("id" in task) || typeof task.id !== "string" || task.id.trim() === "" ||
+        !("status" in task) || typeof task.status !== "string" || task.status.trim() === ""
       ) throw new Error("Expected a task object with id and status");
       if (task.status !== "superseded") return line;
       const fields = ["assignee", "claimedAt", "heartbeatAt", "lastHeartbeatAt", "leaseExpiresAt"];

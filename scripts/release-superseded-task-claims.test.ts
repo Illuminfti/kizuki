@@ -44,7 +44,10 @@ describe("release superseded task claims", () => {
   });
 
   test("rejects malformed task records", () => {
-    for (const input of ["null", "[]", "42", "{}", '{"id":"old"}', '{"id":1,"status":"superseded"}']) {
+    for (const input of ["null", "[]", "42", "{}", '{"id":"old"}', '{"id":1,"status":"superseded"}',
+      '{"id":"","status":"superseded","assignee":"worker-host"}',
+      '{"id":"   ","status":"superseded","assignee":"worker-host"}',
+      '{"id":"old","status":""}', '{"id":"old","status":"   "}']) {
       expect(() => releaseSupersededTaskClaims(input)).toThrow();
     }
   });
