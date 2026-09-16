@@ -1456,7 +1456,10 @@ function rewriteHolds(
   const { db, vault_path: vaultPath } = ownerIo;
   const rewritten: PurgeRewriteRef[] = [];
   const holds = readHolds(db);
-  const unprovedReceipts = new Set(holds.filter(hold => readBatch(db, hold.proposal_id)?.state !== "ready").map(hold => hold.proposal_id));
+  const unprovedReceipts = new Set(holds.filter(hold =>
+    readBatch(db, hold.proposal_id)?.state !== "ready" ||
+    !eventPurgeIntegrityOk(db, hold.proposal_id),
+  ).map(hold => hold.proposal_id));
   for (const op of listOps(db)) {
     try {
       if (op.state !== "done" || !proofIsEmpty(checkedPurgeProof(op.proof, op, batchEventIds(db, op.receipt_id)))) unprovedReceipts.add(op.receipt_id);
