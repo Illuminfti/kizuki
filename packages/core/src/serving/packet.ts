@@ -177,7 +177,7 @@ function priorHashOf(value: unknown): string | undefined {
 /** A cached epoch is a plain counter; anything else is a caller error. */
 function epochOf(value: unknown): number | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new ServeError(
       "invalid_arguments",
       "invalid arguments: epoch: must be a non-negative integer",
