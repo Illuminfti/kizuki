@@ -50,8 +50,11 @@ async function mcpSession(env: Record<string, string>, args: string[], requests:
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("MCP smoke timed out")); }, 15_000); });
-    const code = await Promise.race([child.exited, timeout]);
-    const [stdout, diagnostics] = await Promise.all([output, stderr]);
+    // Keep the deadline active until both output streams have also closed.
+    const [code, stdout, diagnostics] = await Promise.race([
+      Promise.all([child.exited, output, stderr]),
+      timeout,
+    ]);
     if (diagnostics.length > 16_384) throw new Error("MCP smoke diagnostics overflow");
     return { code, output: stdout, diagnostics };
   } finally {
