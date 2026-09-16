@@ -220,7 +220,7 @@ function renderMemory() {
     section.append(pending
       ? empty('Permission comes before import.', 'Choose what Kizuki may keep from this source. Nothing is imported until you allow it.', button('Review permission', () => consent(pending), 'primary'))
       : waiting
-        ? empty('Import this source to search it.', 'Capture reads your Markdown in place and leaves the original files untouched. Search works without a model.', button('Import history', () => capture(waiting), 'primary'))
+        ? empty('Import this source to search it.', 'Import reads only the information permitted for this source. Search works without a model.', button('Import history', () => capture(waiting), 'primary'))
         : empty('A place to find things again.', 'Search for a name, a phrase, or a detail from a source you’ve imported.'));
   }
   else if (!state.hits.length) section.append(empty('Nothing matched this search.', 'Try a more specific word from the original source, or check that the source has finished importing.', button('Check sources', () => navigate('sources'))));
