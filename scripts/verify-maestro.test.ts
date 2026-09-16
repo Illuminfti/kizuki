@@ -61,6 +61,22 @@ describe("committed Maestro state validation", () => {
     ]);
   });
 
+  test("rejects explicit candidate status that disagrees with its source", () => {
+    const done = { id: "tsk-done", status: "done" };
+    const closed = { id: done.id, sourceTaskId: done.id };
+    expect(validateMaestroState([done], [closed])).toEqual([]);
+    expect(validateMaestroState([done], [{ ...closed, status: "done" }])).toEqual([]);
+    expect(validateMaestroState([historical], [{ ...candidate, status: "superseded" }])).toEqual([]);
+    for (const status of ["pending", "blocked", "done", "", null]) {
+      expect(validateMaestroState([historical], [{ ...candidate, status }])).toContain(
+        "candidate 1: explicit status disagrees with source task",
+      );
+    }
+    expect(validateMaestroState([done], [{ ...closed, status: "pending" }])).toContain(
+      "candidate 1: explicit status disagrees with source task",
+    );
+  });
+
   test("validates the repository ledger and every close candidate", () => {
     const root = join(import.meta.dir, "..", ".maestro", "tasks");
     const tasks = readFileSync(join(root, "tasks.jsonl"), "utf8")
