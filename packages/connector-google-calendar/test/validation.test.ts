@@ -34,13 +34,20 @@ for (const selected of ['primary', 'PRIMARY', '.', '..'])
         expect(effects).toBe(0);
         expect(f.calls).toEqual([]);
     });
-test('persisted dot-segment calendars are refused on restart', () => {
+test('persisted dot-segment calendars are refused on restart before transport or persistence', async () => {
     const f = new CalendarFixture();
     const raw = JSON.parse(new TextDecoder().decode(f.state));
+    let writes = 0;
     for (const selected of ['.', '..']) {
         raw.calendar = selected;
-        expect(() => parseState(new TextEncoder().encode(JSON.stringify(raw)))).toThrow();
+        f.state = new TextEncoder().encode(JSON.stringify(raw));
+        const before = f.state.slice();
+        expect(() => parseState(f.state)).toThrow();
+        await expect(f.connected(async () => { writes++; })).rejects.toMatchObject({ code: 'source_schema' });
+        expect(f.state).toEqual(before);
     }
+    expect(writes).toBe(0);
+    expect(f.calls).toEqual([]);
 });
 test('canonical calendar identifiers with embedded dots remain supported', async () => {
     const f = new CalendarFixture();
