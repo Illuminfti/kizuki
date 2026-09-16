@@ -27,7 +27,7 @@ class Element {
     replaceChildren(...nodes: Element[]) { this.children = []; this.ownText = ''; this.append(...nodes); }
     replaceWith(node: Element) { if (this.parent) { const at = this.parent.children.indexOf(this); this.parent.children[at] = node; node.parent = this.parent; } }
     remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); }
-    setAttribute(key: string, value: string) { this.attributes[key] = value; if (key === 'class') this.className = value; }
+    setAttribute(key: string, value: string) { this.attributes[key] = value; if (key === 'class') this.className = value; if (key === 'value') this.value = value; }
     getAttribute(key: string) { return this.attributes[key] ?? null; }
     addEventListener(name: string, fn: (event: any) => unknown) { (this.listeners[name] ??= []).push(fn); }
     fire(name: string, event: unknown = {}) { return Promise.all((this.listeners[name] ?? []).map(fn => fn(event))); }
@@ -275,6 +275,32 @@ test('failed folder enrollment restores the labeled path instead of leaving a cl
     expect(f.dialog.querySelector('.form-error')!.textContent).toContain('outside your Kizuki workspace');
     expect(f.dialog.textContent).toContain('Connect folder');
 });
+
+for (const [provider, fields] of [['gmail', ['attachments']], ['google-calendar', []]] as const) {
+    test(`failed ${provider} enrollment preserves selected fields on retry`, async () => {
+        const f = fixture();
+        f.evaluate(`state.catalog=[{id:${JSON.stringify(provider)},title:'Synthetic Google source',detail:'Synthetic',available:true,fields:['text','attachments'],required_fields:['text']}]; enrollment(state.catalog[0]);`);
+        f.dialog.querySelector('#field-text')!.checked = false;
+        f.dialog.querySelector('#field-attachments')!.checked = fields.length > 0;
+        const calendar = f.dialog.querySelector('#calendar-id');
+        if (calendar) calendar.value = 'synthetic-calendar';
+        const work = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+        const payload = f.requests[0]!.payload;
+        expect(payload.fields).toEqual([...fields]);
+        f.reply('enroll', { operation_id: 'enroll-fields' }); await tick();
+        f.reply('operation', { id: 'enroll-fields', kind: 'enroll', state: 'failed', error: { code: 'unavailable' } });
+        await work; await tick();
+        expect(f.dialog.querySelector('#field-text')!.checked).toBe(false);
+        expect(f.dialog.querySelector('#field-attachments')!.checked).toBe(fields.length > 0);
+        expect(f.dialog.querySelector('.form-error')!.textContent).not.toBe('');
+        const retry = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+        expect(f.requests[0]!.payload).toEqual(payload);
+        f.reply('enroll', { operation_id: 'retry-fields' }); await tick();
+        f.reply('operation', { id: 'retry-fields', kind: 'enroll', state: 'failed', error: { code: 'unavailable' } });
+        await retry;
+        expect(f.storageWrites).toEqual([]);
+    });
+}
 
 test('a queued native close and late success leave a newly opened dialog intact', async () => {
     const f = fixture();
