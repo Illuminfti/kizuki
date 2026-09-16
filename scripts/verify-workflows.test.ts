@@ -101,6 +101,33 @@ describe("workflow validation", () => {
     expect(validateWorkflowText(".github/workflows/ci.yml", ciWorkflow())).toEqual([]);
   });
 
+  test("keeps required CI checks available on pull requests and pushes to main", () => {
+    const path = ".github/workflows/ci.yml";
+    const current = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+    const original = "  push: { branches: [main] }\n  pull_request:";
+    expect(current).toContain(original);
+    expect(validateWorkflowText(path, current)).toEqual([]);
+    expect(validateWorkflowText(path, current.replace(original,
+      "  push: { branches: [main] }\n  pull_request: {}"))).toEqual([]);
+    for (const trigger of [
+      "  workflow_dispatch:",
+      "  push: { branches: [main] }",
+      "  pull_request:",
+      "  push: { branches: [release] }\n  pull_request:",
+      "  push: { branches: [main], paths: ['src/**'] }\n  pull_request:",
+      "  push: { branches: [main], 'paths-ignore': ['docs/**'] }\n  pull_request:",
+      "  push: { branches: [main] }\n  pull_request: { branches: [release] }",
+      "  push: { branches: [main] }\n  pull_request: { paths: ['src/**'] }",
+      "  push: { branches: [main] }\n  pull_request: { 'paths-ignore': ['docs/**'] }",
+      "  push: { branches: [main] }\n  pull_request: { types: [opened] }",
+      "  push: { branches: [main] }\n  pull_request: false",
+    ]) {
+      expect(validateWorkflowText(path, current.replace(original, trigger))).toEqual([
+        expect.objectContaining({ reason: "ci must run on every pull request and every push to main without filters" }),
+      ]);
+    }
+  });
+
   test("rejects invalid YAML", () => {
     const failures = validateWorkflowText(
       ".github/workflows/ci.yml",
@@ -175,7 +202,9 @@ describe("workflow validation", () => {
     ]);
 
     const withoutTest = `name: ci
-on: [push]
+on:
+  push: { branches: [main] }
+  pull_request:
 jobs:
   unit:
     runs-on: ubuntu-latest
