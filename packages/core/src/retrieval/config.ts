@@ -190,7 +190,7 @@ export function editRetrievalPortToml(text: string | null, portId: string): stri
   return result.endsWith("\n") ? result : `${result}\n`;
 }
 
-function readEngineSpace(vaultPath: string, portId: string): string | null {
+export function readRetrievalEngineSpace(vaultPath: string, portId: string): string | null {
   if (portId === "kizuki.retrieval.fts5") return null;
   const path = join(vaultPath, ".kizuki", "retrieval", portId, "engine.json");
   if (!existsSync(path)) return null;
@@ -276,7 +276,7 @@ export function persistConfiguredRetrieval(
     port_id: id,
     contract: RETRIEVAL_CONTRACT,
     contract_minor: RETRIEVAL_CONTRACT_MINOR,
-    space: options.space === undefined ? readEngineSpace(vaultPath, id) : options.space,
+    space: options.space === undefined ? readRetrievalEngineSpace(vaultPath, id) : options.space,
     bound_at: boundAt,
   };
   writeAtomicToml(path, next);

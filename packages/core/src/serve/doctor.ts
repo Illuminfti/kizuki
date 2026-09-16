@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
+import { embeddingThroughputFromReceipts } from "../retrieval/reembed";
 import { inspectPageIndex } from "../canon";
 import { isMachineOriginPath } from "../canon/origin";
 import { formatProducerDiagnostic } from "../producer/diagnostics";
@@ -377,6 +378,7 @@ function storeDoctor(
   db: Database,
   vaultPath: string,
   now: string,
+  receipts: RunReceipt[],
 ): StoreDoctor {
   const pendingRetrieval = countPendingRetrievalOps(db);
   const oldestRetrieval =
@@ -418,6 +420,7 @@ function storeDoctor(
     oldest_retrieval_op_age_s: oldestRetrievalAge,
     pending_purge_ops: pendingPurge,
     oldest_purge_op_age_s: ageSeconds(oldestPurge, now),
+    embedding_throughput_docs_per_s: embeddingThroughputFromReceipts(receipts),
     orphan_run_receipts: orphanJournalReceipts(db, vaultPath),
     derived: {
       search: {
@@ -489,7 +492,7 @@ export function inspectServeDoctor(
     config.canon_writes_per_run,
     lastRunUsed,
   );
-  const stores = storeDoctor(db, vaultPath, now);
+  const stores = storeDoctor(db, vaultPath, now, receipts);
   const cal = calibration(db, receipts, now);
   const failures: string[] = [];
   if (model.current_failure !== null) failures.push(`${model.current_failure.detail} (at ${model.current_failure.at})`);

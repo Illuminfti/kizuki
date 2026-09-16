@@ -271,4 +271,17 @@ describe("serve doctor", () => {
     expect(report.stores.pending_retrieval_ops).toBe(10_001);
     db.close();
   });
+
+  test("doctor reports measured embed-backfill throughput and stays null when unmeasured", () => {
+    const { path, db } = vault();
+    writeServeIntent(path, "opted-out");
+    expect(inspectServeDoctor(db, path, { now: "2026-09-16T00:10:00Z" }).stores.embedding_throughput_docs_per_s).toBeNull();
+    persistRunReceipt(db, path, receipt("2026-09-16", {
+      run_id: "01JEMBEDTHROUGHPUT00000000001",
+      rail: "embed-backfill",
+      retrieval: { upserts: 20, removals: 0, pending_ops: 0, degraded: [] },
+    }));
+    expect(inspectServeDoctor(db, path, { now: "2026-09-16T00:10:00Z" }).stores.embedding_throughput_docs_per_s).toBe(20);
+    db.close();
+  });
 });
