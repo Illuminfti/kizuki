@@ -59,7 +59,7 @@ describe("attribution verification", () => {
     ]);
   });
 
-  test.each(["‿", "‍", "😀", "𐐀"])(
+  test.each(["‿", "‍", "😀", "𐐀", "\u00a0", "\u2003", "\u202f"])(
     "rejects a canonical URL with a Unicode neighbour %p",
     (neighbour) => {
       for (const url of [`${neighbour}${canonicalUrl}`, `${canonicalUrl}${neighbour}`]) {
@@ -72,6 +72,33 @@ describe("attribution verification", () => {
       }
     },
   );
+
+  test.each(["|", "{", "}", "[", "]"])(
+    "rejects a modified Markdown link destination containing %p",
+    (neighbour) => {
+      for (const url of [`${neighbour}${canonicalUrl}`, `${canonicalUrl}${neighbour}suffix`]) {
+        expect(failures(`[${exactCredit}](${url})`)).toEqual([
+          expect.objectContaining({
+            reason: "public attribution URL is not the exact delimited canonical URL",
+          }),
+          expect.objectContaining({ reason: "public attribution is missing the canonical URL" }),
+        ]);
+      }
+    },
+  );
+
+  test("accepts canonical URLs in autolinks and spaced table cells", () => {
+    expect(failures(`[${exactCredit}](<${canonicalUrl}>)`)).toEqual([]);
+    expect(failures(`| ${exactCredit} | ${canonicalUrl} |`)).toEqual([]);
+  });
+
+  test("does not let a valid link mask a suffixed destination", () => {
+    expect(failures(`[${exactCredit}](${canonicalUrl}) [reference](${canonicalUrl}|suffix)`)).toEqual([
+      expect.objectContaining({
+        reason: "public attribution URL is not the exact delimited canonical URL",
+      }),
+    ]);
+  });
 
   test("rejects a case-modified URL as a URL, not prose", () => {
     expect(failures(`[${exactCredit}](HTTPS://example.invalid/AtlasCore)`)).toEqual([

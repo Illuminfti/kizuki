@@ -7,7 +7,10 @@ interface AttributionFailure {
   reason: string;
 }
 
-const delimiter = /[\s<>"'()[\]{}|`]/;
+// Brackets, braces and pipes can be part of a link destination; treating
+// them as boundaries would accept a canonical URL with an added suffix.
+// Non-ASCII spaces are URL data in Markdown destinations, not separators.
+const delimiter = /[ \t\r\n<>"'()`]/;
 const tokenCharacter = /[\p{ID_Continue}\u200C\u200D]/u;
 
 function requiredEnvironment(name: string): string {
