@@ -51,6 +51,7 @@ test("rebuild docs describe confirmed full re-embed", () => {
   for (const text of [limits, cli]) {
     expect(text).toContain("--confirm");
     expect(text).toMatch(/full re-embed/);
+    expect(text).toMatch(/embedding port/);
   }
 });
 

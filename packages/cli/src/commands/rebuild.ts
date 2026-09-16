@@ -7,6 +7,8 @@ import {
   formatReembedRefusal,
   inspectServeDoctor,
   loadConfiguredRetrieval,
+  PortError,
+  type EmbeddingPort,
   type RetrievalPort,
 } from "@kizuki/core";
 import { parseArguments, UsageError } from "../args";
@@ -14,7 +16,7 @@ import { withVault } from "../context";
 import { jsonEnvelope } from "../output";
 import { refreshDerived } from "../derived";
 import { pruneOldOwnedRetrieval } from "../owned-retrieval-inventory";
-import { openConfiguredRetrieval } from "../retrieval-runtime";
+import { openConfiguredEmbedding, openConfiguredRetrieval } from "../retrieval-runtime";
 import { loadVaultConfig } from "../vault-config";
 import type { Command, CommandHelpSchema } from "./index";
 
@@ -63,24 +65,39 @@ export const rebuildCommand: Command = {
         return 0;
       }
       let selected: RetrievalPort | undefined;
+      let embedding: EmbeddingPort | undefined;
       try {
         if (layer === "all") {
           const storeId = portId ?? loadConfiguredRetrieval(ctx.vaultPath).id;
           const previousSpace = readRetrievalEngineSpace(ctx.vaultPath, storeId);
           const nextSpace = nextConfiguredEmbeddingSpace(ctx.vaultPath);
+          const documents = readRetrievalDocuments(ctx.db, ctx.vaultPath).length;
+          const throughputDocsPerS = inspectServeDoctor(ctx.db, ctx.vaultPath).stores.embedding_throughput_docs_per_s;
           if (nextSpace !== null && nextSpace !== previousSpace) {
-            const plan = planFullReembed({
-              previousSpace,
-              nextSpace,
-              documents: readRetrievalDocuments(ctx.db, ctx.vaultPath).length,
-              throughputDocsPerS: inspectServeDoctor(ctx.db, ctx.vaultPath).stores.embedding_throughput_docs_per_s,
-            });
+            const plan = planFullReembed({ previousSpace, nextSpace, documents, throughputDocsPerS });
             if (plan !== null && !confirm) throw new UsageError(formatReembedRefusal(plan));
           }
+          if (storeId !== "kizuki.retrieval.fts5") {
+            embedding = await openConfiguredEmbedding(ctx.vaultPath);
+            const liveSpace = embedding?.space().id ?? null;
+            if (liveSpace !== null && liveSpace !== previousSpace) {
+              const plan = planFullReembed({ previousSpace, nextSpace: liveSpace, documents, throughputDocsPerS });
+              if (plan !== null && !confirm) throw new UsageError(formatReembedRefusal(plan));
+            }
+            if (previousSpace !== null && embedding === undefined) {
+              throw new PortError(
+                "unavailable",
+                "rebuild requires the matching embedding port for the stored vector space",
+                false,
+              );
+            }
+          }
         }
-        selected = portId === undefined
-          ? ctx.retrieval
-          : await openConfiguredRetrieval(ctx.vaultPath, portId);
+        selected = await openConfiguredRetrieval(
+          ctx.vaultPath,
+          portId,
+          embedding === undefined ? {} : { embedding },
+        );
         const result = await rebuildRetrieval(ctx.db, ctx.vaultPath, selected, { layer });
         if (layer === "all" || layer === "search") refreshDerived(ctx.db, ctx.vaultPath);
         if (portId !== undefined && layer === "all") {
@@ -90,8 +107,8 @@ export const rebuildCommand: Command = {
           : `rebuilt=${result.documents} backend=${result.backend} store=${result.store} floor_documents=${result.floor_documents} generation=${result.generation}`);
         return 0;
       } finally {
-        if (portId !== undefined) await selected?.close();
+        try { await selected?.close(); } finally { await embedding?.close(); }
       }
-    }, portId === undefined ? {} : { retrieval: "none" });
+    }, pruneOld ? {} : { retrieval: "none" });
   },
 };

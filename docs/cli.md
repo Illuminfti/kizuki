@@ -478,7 +478,9 @@ rebuild (the default) flips `[ports].retrieval` in `serve.toml` and records
 `kizuki rebuild --prune-old`. Changing the embedding space is a full re-embed.
 `rebuild --layer all` refuses it unless `--confirm` is passed, and prices the
 work from doctor's measured embed-backfill throughput (`unmeasured` when none
-exists). Other layers are not implemented and exit 2. `--prune-old` cannot
+exists). A confirmed space change binds the configured embedding port and
+rebuilds vectors in that space. The public CLI refuses when that binding is
+unavailable instead of discarding vector state. Other layers are not implemented and exit 2. `--prune-old` cannot
 be combined with `--layer`, `--port`, or `--confirm`.
 
 The result identifies `backend` (`sqlite-floor` or `retrieval-port`), `store`,

@@ -26,7 +26,8 @@ installed engine. Unknown IDs and a busy engine fail closed. A successful
 Changing the embedding space is a full re-embed, never an incremental update.
 `rebuild --layer all` refuses that change unless `--confirm` is passed. The
 refusal names `estimated_duration_s` from doctor's measured embed-backfill
-throughput, or `unmeasured` when doctor has none. RFC 0002 sections 9.6 and 18.3 describe layer-specific rebuilds; this
+throughput, or `unmeasured` when doctor has none. A confirmed space change binds
+the configured embedding port and rebuilds vectors in that space. RFC 0002 sections 9.6 and 18.3 describe layer-specific rebuilds; this
 implementation provides full reconstruction, search-only and graph-only SQLite floor rebuild,
 port selection that persists the default on a successful full rebuild, confirmed embedding-space re-embed, and prune-old.
 
