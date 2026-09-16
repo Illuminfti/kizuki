@@ -14,6 +14,8 @@ export interface FakeMessage {
   uid: number;
   internaldate: string;
   raw: Uint8Array;
+  /** Declared RFC822.SIZE; omit to report the actual body length. */
+  reportedSize?: number;
 }
 
 export interface FakeFolder {
@@ -356,7 +358,7 @@ export class FakeImapServer {
       }
       lines.push(
         ascii(
-          `* ${sequence} FETCH (UID ${message.uid} INTERNALDATE "${message.internaldate}" RFC822.SIZE ${message.raw.length})\r\n`,
+          `* ${sequence} FETCH (UID ${message.uid} INTERNALDATE "${message.internaldate}" RFC822.SIZE ${message.reportedSize ?? message.raw.length})\r\n`,
         ),
       );
     });

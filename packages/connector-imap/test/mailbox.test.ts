@@ -368,6 +368,43 @@ describe("sync", () => {
     expect(advanced?.scan_from).toBe(BATCH + holes + 1);
   });
 
+  test("a body that disagrees with RFC822.SIZE refuses the page without a cursor", async () => {
+    const first = message(1, "first");
+    const second = message(2, "second");
+    const server = new FakeImapServer([
+      {
+        wire: "INBOX",
+        attributes: ["\\HasNoChildren"],
+        uidvalidity: 5,
+        uidnext: 3,
+        messages: [
+          first,
+          { ...second, reportedSize: second.raw.length + 7 },
+        ],
+      },
+    ]);
+    const walkDeps = deps(server, state(["INBOX"]));
+
+    await expect(walkMailboxes(walkDeps, null, "backfill")).rejects.toMatchObject({
+      code: "protocol",
+      message: expect.stringMatching(/RFC822\.SIZE/),
+    });
+
+    server.folders[0]!.messages[1] = second;
+    const retry = await walkMailboxes(walkDeps, null, "backfill");
+    expect(uidsOf(retry.batch.events)).toEqual([1, 2]);
+    expect(retry.batch.has_more).toBe(false);
+    expect(decodeCursor(retry.batch.cursor ?? "").folders["INBOX"]?.known).toBe(
+      "1:2",
+    );
+    expect(decodeCursor(retry.batch.cursor ?? "").folders["INBOX"]?.scan_from).toBe(
+      3,
+    );
+
+    const again = await walkMailboxes(walkDeps, retry.batch.cursor, "sync");
+    expect(again.batch.events).toEqual([]);
+  });
+
   test("a BODY[] NIL is retried, not stored as a blank message", async () => {
     const server = new FakeImapServer([folder("INBOX", 3)]);
     const walkDeps = deps(server, state(["INBOX"]));
