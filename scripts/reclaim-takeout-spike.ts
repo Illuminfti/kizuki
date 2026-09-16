@@ -32,6 +32,12 @@ export function distillTakeoutActivity(source: string): {
   if (source.length > MAX_BYTES || Buffer.byteLength(source, "utf8") > MAX_BYTES) {
     throw new Error("Takeout activity exceeds byte limit");
   }
+  // UTF-8 encoding replaces lone surrogates, which would let distinct source
+  // strings share a receipt while projecting different titles. Refuse that loss.
+  const input = Buffer.from(source, "utf8");
+  if (input.toString("utf8") !== source) {
+    throw new Error("Takeout activity must be lossless UTF-8");
+  }
   let rows: unknown;
   try {
     rows = JSON.parse(source) as unknown;
@@ -59,8 +65,8 @@ export function distillTakeoutActivity(source: string): {
   return {
     activities,
     receipt: {
-      input_sha256: createHash("sha256").update(source, "utf8").digest("hex"),
-      input_bytes: Buffer.byteLength(source, "utf8"),
+      input_sha256: createHash("sha256").update(input).digest("hex"),
+      input_bytes: input.length,
       records: activities.length,
     },
   };

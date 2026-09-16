@@ -22,6 +22,19 @@ describe("post-1.0 Takeout activity spike", () => {
       .not.toBe(result.receipt.input_sha256);
   });
 
+  test("rejects lossy UTF-8 input rather than minting a colliding receipt", () => {
+    // Both lone surrogates encode as the same UTF-8 replacement character.
+    const sources = ["\ud800", "\ud801"].map((value) =>
+      JSON.stringify([activity]).replace("gardening", value));
+    expect(Buffer.from(sources[0]!, "utf8")).toEqual(Buffer.from(sources[1]!, "utf8"));
+    for (const source of sources) {
+      expect(() => distillTakeoutActivity(source)).toThrow("Takeout activity must be lossless UTF-8");
+    }
+    const title = "Searched for gardening 🌱";
+    expect(distillTakeoutActivity(JSON.stringify([{ ...activity, title }])).activities[0]?.title)
+      .toBe(title);
+  });
+
   test("preserves duplicate positions rather than inventing vendor identities", () => {
     expect(distillTakeoutActivity(JSON.stringify([activity, activity])).activities
       .map((row) => row.record_index)).toEqual([0, 1]);
