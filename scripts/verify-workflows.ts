@@ -271,6 +271,15 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
     if (document["name"] !== "ci") {
       failures.push({ path, reason: 'ci.yml name must remain "ci"' });
     }
+    const trigger = document["on"];
+    const push = isRecord(trigger) ? trigger["push"] : undefined;
+    const pullRequest = isRecord(trigger) ? trigger["pull_request"] : undefined;
+    if (!isRecord(trigger) || !("pull_request" in trigger) ||
+        !(pullRequest === null || (isRecord(pullRequest) && Object.keys(pullRequest).length === 0)) ||
+        !isRecord(push) || Object.keys(push).length !== 1 ||
+        !Array.isArray(push["branches"]) || push["branches"].length !== 1 || push["branches"][0] !== "main") {
+      failures.push({ path, reason: "ci must run on every pull request and every push to main without filters" });
+    }
     const jobs = document["jobs"];
     const job = isRecord(jobs) ? jobs["test"] : undefined;
     const steps = isRecord(job) ? job["steps"] : undefined;
