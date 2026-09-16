@@ -106,6 +106,19 @@ describe("workflow validation", () => {
     }
   });
 
+  test("rejects fractional job timeouts and accepts positive whole minutes", () => {
+    for (const timeout of ["1.5", "10.25"]) {
+      const text = ciWorkflow().replace("timeout-minutes: 10", `timeout-minutes: ${timeout}`);
+      expect(validateWorkflowText(".github/workflows/ci.yml", text)).toContainEqual(
+        expect.objectContaining({ reason: expect.stringContaining("timeout-minutes") }),
+      );
+    }
+    for (const timeout of [1, 10, 360]) {
+      const text = ciWorkflow().replace("timeout-minutes: 10", `timeout-minutes: ${timeout}`);
+      expect(validateWorkflowText(".github/workflows/ci.yml", text)).toEqual([]);
+    }
+  });
+
   test("accepts a SHA-pinned ci workflow with fetch-depth 0", () => {
     expect(validateWorkflowText(".github/workflows/ci.yml", ciWorkflow())).toEqual([]);
   });
