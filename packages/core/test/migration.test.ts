@@ -386,6 +386,7 @@ describe("openLedger migrations", () => {
         "run_receipts",
         "leases",
         "budget_ledger",
+        "port_state",
         "connection_runs",
         "agents",
         "agent_grants",

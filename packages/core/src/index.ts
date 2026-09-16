@@ -1021,8 +1021,8 @@ export type {
   WritePassResult,
 } from "./serve";
 
-export { loadConfiguredRetrieval } from "./retrieval/config";
-export type { ConfiguredRetrieval } from "./retrieval/config";
+export { loadConfiguredRetrieval, persistConfiguredRetrieval, readRetrievalPortState, editRetrievalPortToml } from "./retrieval/config";
+export type { ConfiguredRetrieval, RetrievalPortState } from "./retrieval/config";
 export { tryAdvisoryFileLock } from "./util/advisory-file-lock";
 export type { AdvisoryFileLock } from "./util/advisory-file-lock";
 
