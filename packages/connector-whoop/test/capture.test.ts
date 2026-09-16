@@ -164,6 +164,30 @@ test('long explicit provider cooldown is never shortened to a local monthly cap'
     await port.close();
 });
 
+for (const operation of ['sync', 'provider-revoke'] as const) {
+    test(`HTTP 401 reports unauthenticated health after ${operation} and successful access recovers`, async () => {
+        const f = new WhoopFixture(), port = await f.connected();
+        const first = await port.backfill(null);
+        const saved = f.state.slice();
+        f.failStatus = 401;
+        if (operation === 'sync') {
+            const refused = await port.sync(first.cursor);
+            expect(refused.status).toBe('unavailable');
+            expect(refused.detail).toContain('unauthenticated');
+            expect(refused.events).toEqual([]);
+            expect(refused.cursor).toBe(first.cursor);
+        } else {
+            await expect(port.revokeProviderAccess()).rejects.toThrow('unauthenticated');
+        }
+        expect((await port.health()).state).toBe('unauthenticated');
+        expect(f.state).toEqual(saved);
+        f.failStatus = 0;
+        expect((await port.sync(first.cursor)).status).toBeUndefined();
+        expect((await port.health()).state).toBe('degraded');
+        await port.close();
+    });
+}
+
 test('contract revoke stops locally without credentials or provider success', async () => {
     const f = new WhoopFixture(), port = await f.connected();
     await expect(port.connect(async () => { throw Error('missing protected state'); })).rejects.toThrow();

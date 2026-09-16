@@ -239,8 +239,11 @@ export class WhoopConnector implements Connector {
                 this.status = 'rate_limited';
                 throw failure('rate_limited');
             }
-            if (error instanceof HttpFailure)
+            if (error instanceof HttpFailure) {
+                if (error.status === 401)
+                    this.status = 'unauthenticated';
                 throw failure(error.status === 401 ? 'unauthenticated' : error.status === 404 ? 'coverage_gap' : 'provider_error');
+            }
             throw error;
         }
     }
