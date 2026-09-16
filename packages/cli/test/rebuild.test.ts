@@ -1,11 +1,13 @@
 import { fixtureConsent } from "./helpers";
 import { loadConfiguredRetrieval, readRetrievalPortState } from "@kizuki/core";
 import { openLedgerRead } from "@kizuki/core/internal";
+import { fixtureSpaceId, writeFixtureGguf } from "@kizuki/embed-gguf";
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHelpers } from "./helpers";
+import { openConfiguredEmbedding, openConfiguredRetrieval } from "../src/retrieval-runtime";
 const helpers = createHelpers();
 afterEach(helpers.cleanup);
 
@@ -395,4 +397,79 @@ expected_space = "fixture:new@8"
   expect(readFileSync(configPath, "utf8")).toBe(before);
   expect((JSON.parse(readFileSync(enginePath, "utf8")) as { space: string }).space).toBe("fixture:old@8");
   expect(loadConfiguredRetrieval(setup.vault).id).toBe("kizuki.retrieval.embedded-pg");
+}, 120_000);
+
+test("rebuild --confirm binds the configured GGUF port and re-embeds", async () => {
+  const setup = helpers.tempVault();
+  expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode).toBe(0);
+  const first = helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.embedded-pg", "--json");
+  expect(first.exitCode, first.stdout + first.stderr).toBe(0);
+  const enginePath = join(setup.vault, ".kizuki", "retrieval", "kizuki.retrieval.embedded-pg", "engine.json");
+  const engine = JSON.parse(readFileSync(enginePath, "utf8")) as { space: string | null };
+  writeFileSync(enginePath, `${JSON.stringify({ ...engine, space: "fixture:old@8" })}\n`);
+  const modelPath = join(setup.root, "fixture.gguf");
+  writeFileSync(modelPath, writeFixtureGguf());
+  const space = fixtureSpaceId();
+  const configPath = join(setup.vault, ".kizuki", "serve.toml");
+  writeFileSync(configPath, `[ports]
+retrieval = "kizuki.retrieval.embedded-pg"
+
+[ports.embedding]
+id = "kizuki.embedding.gguf"
+model_path = ${JSON.stringify(modelPath)}
+context_size = 32
+batch_size = 4
+expected_space = ${JSON.stringify(space)}
+`);
+  const rebuilt = helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.embedded-pg", "--confirm", "--json");
+  expect(rebuilt.exitCode, rebuilt.stdout + rebuilt.stderr).toBe(0);
+  expect((JSON.parse(readFileSync(enginePath, "utf8")) as { space: string }).space).toBe(space);
+  const embedding = await openConfiguredEmbedding(setup.vault);
+  const port = await openConfiguredRetrieval(setup.vault, "kizuki.retrieval.embedded-pg", embedding === undefined ? {} : { embedding });
+  try {
+    expect(port).toBeDefined();
+    const result = await port!.search({
+      text: "grace",
+      mode: "vector",
+      scope: {},
+      ceiling: "private",
+      limit: 8,
+      deadline_ms: 5_000,
+    });
+    expect(result.space).toBe(space);
+    expect(result.degraded).not.toContain("embedding-space-mismatch");
+    expect(result.hits.length).toBeGreaterThan(0);
+  } finally {
+    await port?.close();
+    await embedding?.close();
+  }
+  writeFileSync(configPath, `[ports]\nretrieval = "kizuki.retrieval.embedded-pg"\n`);
+  const stripped = helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.embedded-pg");
+  expect(stripped.exitCode).not.toBe(0);
+  expect(stripped.stderr).toContain("matching embedding port");
+  expect((JSON.parse(readFileSync(enginePath, "utf8")) as { space: string }).space).toBe(space);
+}, 120_000);
+
+test("rebuild --confirm refuses an unavailable GGUF binding instead of dropping vector state", () => {
+  const setup = helpers.tempVault();
+  expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode).toBe(0);
+  const first = helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.embedded-pg", "--json");
+  expect(first.exitCode, first.stdout + first.stderr).toBe(0);
+  const enginePath = join(setup.vault, ".kizuki", "retrieval", "kizuki.retrieval.embedded-pg", "engine.json");
+  const engine = JSON.parse(readFileSync(enginePath, "utf8")) as { space: string | null };
+  writeFileSync(enginePath, `${JSON.stringify({ ...engine, space: "fixture:old@8" })}\n`);
+  const configPath = join(setup.vault, ".kizuki", "serve.toml");
+  writeFileSync(configPath, `[ports]
+retrieval = "kizuki.retrieval.embedded-pg"
+
+[ports.embedding]
+id = "kizuki.embedding.gguf"
+expected_space = "gguf:kizuki-fixture-embed@8"
+`);
+  const before = readFileSync(configPath, "utf8");
+  const refused = helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.embedded-pg", "--confirm");
+  expect(refused.exitCode).not.toBe(0);
+  expect(refused.stderr).toContain("model_path");
+  expect(readFileSync(configPath, "utf8")).toBe(before);
+  expect((JSON.parse(readFileSync(enginePath, "utf8")) as { space: string }).space).toBe("fixture:old@8");
 }, 120_000);
