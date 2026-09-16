@@ -87,14 +87,19 @@ function git(args: string[]): string {
   return result.stdout.toString().trim();
 }
 
-/** Take one public snapshot after first-run receipt coverage, including failed rails. */
+/** Take one public snapshot after first-run receipt coverage, including failed rails.
+ * A malformed status envelope is retained as structured evidence, not thrown. */
 export async function observeInstalledNativeHealth(expectedPid: number, since: string,
   readDiagnostics: () => NativeRailDiagnostics, readStatus: () => CommandResult) {
   const diagnostics = await waitForFreshRails(readDiagnostics);
   const status = readStatus();
-  const body = JSON.parse(status.stdout).data;
+  let publicStatusPassed = false;
+  try {
+    const body = JSON.parse(status.stdout)?.data;
+    publicStatusPassed = status.exit_code === 0 && body?.pid === expectedPid && body?.supervisor?.state === "active" && body?.supervisor?.enabled === true;
+  } catch { /* Keep malformed command evidence without aborting independent lifecycle checks. */ }
   return {
-    publicStatus: { passed: status.exit_code === 0 && body?.pid === expectedPid && body?.supervisor?.state === "active" && body?.supervisor?.enabled === true, evidence: status },
+    publicStatus: { passed: publicStatusPassed, evidence: status },
     installedHealth: installedRailsHealth(status, diagnostics, since),
   };
 }
