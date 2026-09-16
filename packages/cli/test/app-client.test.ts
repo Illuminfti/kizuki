@@ -68,6 +68,36 @@ function fixture() {
 }
 const status = (operations: unknown[] = [], epoch = '1') => ({ vault: { ready: true }, visibility_epoch: epoch, operations });
 
+test('Activity distinguishes loading and unavailable from an empty receipt history and can retry', async () => {
+    const f = fixture();
+    f.evaluate(`navigate('activity')`);
+    expect(f.main.textContent).toContain('Loading activity');
+    expect(f.main.textContent).not.toContain('No receipted changes yet');
+    const pending = f.requests.splice(f.requests.findIndex(row => row.route === 'activity'), 1)[0]!;
+    pending.result.resolve({ status: 503, json: async () => ({ ok: false, error: { code: 'unavailable' } }) });
+    await tick();
+    expect(f.main.textContent).toContain('Activity is unavailable');
+    expect(f.main.textContent).not.toContain('No receipted changes yet');
+    const retry = findAction(f.main, 'Retry activity').fire('click');
+    expect(f.main.textContent).toContain('Loading activity');
+    f.reply('activity', { receipts: [] }); await retry;
+    expect(f.main.textContent).toContain('No receipted changes yet');
+    expect(f.main.textContent).not.toContain('Activity is unavailable');
+});
+
+test('Activity clears previously displayed receipts when their refresh fails', async () => {
+    const f = fixture();
+    f.evaluate(`state.view='activity'; state.receipts=[{id:'old',page:'STALE_PAGE'}]; render();`);
+    expect(f.main.textContent).toContain('STALE_PAGE');
+    const work = f.evaluate<Promise<void>>('loadActivity()');
+    expect(f.main.textContent).not.toContain('STALE_PAGE');
+    const pending = f.requests.splice(0, 1)[0]!;
+    pending.result.resolve({ status: 503, json: async () => ({ ok: false, error: { code: 'unavailable' } }) });
+    await work;
+    expect(f.main.textContent).toContain('Activity is unavailable');
+    expect(f.main.textContent).not.toContain('STALE_PAGE');
+});
+
 test('Activity names the receipt action while preserving exact references in closed details', () => {
     for (const [action, title] of [['create', 'Memory page created'], ['edit', 'Memory page updated'], ['archive', 'Memory page removed'], ['unknown', 'Memory change'], ['toString', 'Memory change']] as const) {
         const f = fixture();

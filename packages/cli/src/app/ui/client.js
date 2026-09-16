@@ -5,7 +5,7 @@ const SESSION_KEY = 'kizuki.app.session';
 const main = document.getElementById('main');
 const dialog = document.getElementById('dialog');
 const notice = document.getElementById('notification');
-const state = { view: 'memory', status: null, service: null, model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], hits: null, query: '', degraded: [], busy: false, operation: null, setupError: null };
+const state = { view: 'memory', status: null, service: null, model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], activityStatus: 'idle', hits: null, query: '', degraded: [], busy: false, operation: null, setupError: null };
 let bearer = null;
 let noticeTimer;
 let dialogCleanup = null;
@@ -108,7 +108,7 @@ function staleResponse() { return Object.assign(new Error('Response superseded.'
 function invalidatePrivateView() {
   privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++; serviceSequence++; modelSequence++; agentsSequence++;
   privateViewValid = false;
-  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.service = null; state.model = null; state.modelError = false; state.agents = null; state.agentsError = false; state.operation = null;
+  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.activityStatus = 'idle'; state.service = null; state.model = null; state.modelError = false; state.agents = null; state.agentsError = false; state.operation = null;
   clearDialogTransient();
   if (dialog.open) closeDialog();
   dialog.replaceChildren();
@@ -455,6 +455,9 @@ function activityTitle(action) {
 }
 function renderActivity() {
   const section = el('section', {}, heading('A clear history.', 'See receipted changes to your memory. Undo restores the previous state when its receipt still applies.'));
+  if (state.activityStatus === 'loading') { section.append(el('p', { role: 'status', 'aria-busy': 'true' }, 'Loading activity…')); return section; }
+  if (state.activityStatus === 'unavailable') { section.append(empty('Activity is unavailable.', 'The latest receipt history could not be checked. Retry before relying on this view.', button('Retry activity', loadActivity, 'primary'))); return section; }
+  if (state.activityStatus === 'idle' && !state.receipts.length) { section.append(empty('Check your activity.', 'Load the latest receipt history from this device.', button('Load activity', loadActivity, 'primary'))); return section; }
   if (!state.receipts.length) { section.append(empty('No receipted changes yet.', 'Imported sources are searchable right away. Changes to your memory pages appear here when they happen.')); return section; }
   const list = el('ol', { class: 'activity-list' });
   for (const receipt of state.receipts) list.append(el('li', { class: 'activity-item' }, el('div', { class: 'activity-top' }, el('div', {}, el('h3', {}, activityTitle(receipt.action)), el('p', {}, `${dateText(receipt.at)}${receipt.reverted ? ' · Undone' : ''}`)), !receipt.reverted && button('Undo', () => undo(receipt))), el('details', { class: 'result-details' }, el('summary', {}, 'Change details'), el('p', {}, 'Page: ', el('code', {}, receipt.page)), el('p', {}, 'Receipt: ', el('code', {}, receipt.id)))));
@@ -464,12 +467,19 @@ async function loadActivity() {
   if (!bearer || !privateViewValid) return;
   const sequence = ++activitySequence, session = bearer, generation = privacyGeneration, epoch = state.status?.visibility_epoch;
   const current = () => sequence === activitySequence && session === bearer && generation === privacyGeneration && epoch === state.status?.visibility_epoch && privateViewValid;
+  state.activityStatus = 'loading'; state.receipts = [];
+  if (state.view === 'activity') render();
   try {
     const result = await api('activity', { limit: 30 });
     if (!current()) return;
-    state.receipts = result.receipts;
+    state.receipts = result.receipts; state.activityStatus = 'loaded';
     if (state.view === 'activity') render();
-  } catch (error) { if (current() && error.code !== 'stale_response') message(error.message); }
+  } catch (error) {
+    if (!current() || error.code === 'stale_response') return;
+    state.activityStatus = 'unavailable';
+    if (state.view === 'activity') render();
+    message(error.message);
+  }
 }
 function undo(receipt) {
   const content = openDialog('Undo this change?', 'Kizuki will use the saved receipt to restore the previous state. If the page or a dependent change has moved on, the undo will refuse safely.', 'activity');
