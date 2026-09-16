@@ -223,6 +223,35 @@ test("search-only rebuild is immediately queryable and preserves graph and confi
   expect(helpers.runCli(setup.env, "rebuild", "--layer", "search", "--port", "kizuki.retrieval.embedded-pg").exitCode).toBe(1);
 }, 60_000);
 
+test("partial rebuild ignores a configured engine and refuses --port before opening it", () => {
+  const setup = helpers.tempVault();
+  expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode).toBe(0);
+  const configPath = join(setup.vault, ".kizuki", "serve.toml");
+  writeFileSync(configPath, "[ports]\nretrieval = \"kizuki.retrieval.embedded-pg\"\n");
+  const engineRoot = join(setup.vault, ".kizuki", "retrieval", "kizuki.retrieval.embedded-pg");
+  const db = new Database(join(setup.vault, ".kizuki/kizuki.db"));
+  try { db.exec("DELETE FROM search_documents"); }
+  finally { db.close(); }
+  const rebuilt = helpers.runCli(setup.env, "rebuild", "--layer", "search", "--json");
+  expect(rebuilt.exitCode, rebuilt.stdout + rebuilt.stderr).toBe(0);
+  expect(JSON.parse(rebuilt.stdout).data).toMatchObject({ backend: "sqlite-floor", store: "kizuki.retrieval.fts5" });
+  const queried = helpers.runCli(setup.env, "query", "acme", "--json");
+  expect(queried.exitCode, queried.stdout + queried.stderr).toBe(0);
+  expect(queried.stdout).toContain("acme");
+  expect(existsSync(engineRoot)).toBe(false);
+  expect(readFileSync(configPath, "utf8")).toBe("[ports]\nretrieval = \"kizuki.retrieval.embedded-pg\"\n");
+  expect(loadConfiguredRetrieval(setup.vault).id).toBe("kizuki.retrieval.embedded-pg");
+  const refused = helpers.runCli(setup.env, "rebuild", "--layer", "search", "--port", "kizuki.retrieval.embedded-pg");
+  expect(refused.exitCode).toBe(1);
+  expect(refused.stderr).toContain("partial layer rebuild is not supported for a configured retrieval engine");
+  expect(existsSync(engineRoot)).toBe(false);
+  const graph = helpers.runCli(setup.env, "rebuild", "--layer", "graph", "--json");
+  expect(graph.exitCode, graph.stdout + graph.stderr).toBe(0);
+  expect(JSON.parse(graph.stdout).data).toMatchObject({ backend: "sqlite-floor", store: "kizuki.retrieval.fts5" });
+  expect(existsSync(engineRoot)).toBe(false);
+  expect(readFileSync(configPath, "utf8")).toBe("[ports]\nretrieval = \"kizuki.retrieval.embedded-pg\"\n");
+}, 60_000);
+
 test("prune-old removes an inactive FTS generation and keeps the lexical floor", async () => {
   const setup = helpers.tempVault();
   expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode).toBe(0);
@@ -362,12 +391,13 @@ test("rebuild --port persists the default on a successful full rebuild", async (
   expect(loadConfiguredRetrieval(setup.vault).id).toBe("kizuki.retrieval.fts5");
 }, 120_000);
 
-test("rebuild --layer search --port does not flip the default", async () => {
+test("rebuild --layer search --port is refused before the engine opens", async () => {
   const setup = helpers.tempVault();
   expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode).toBe(0);
   const configPath = join(setup.vault, ".kizuki", "serve.toml");
   const search = helpers.runCli(setup.env, "rebuild", "--layer", "search", "--port", "kizuki.retrieval.fts5", "--json");
-  expect(search.exitCode, search.stdout + search.stderr).toBe(0);
+  expect(search.exitCode).toBe(1);
+  expect(search.stderr).toContain("partial layer rebuild is not supported for a configured retrieval engine");
   expect(existsSync(configPath)).toBe(false);
   expect(loadConfiguredRetrieval(setup.vault).id).toBe("kizuki.retrieval.fts5");
   expect(portState(setup.vault)).toBeNull();

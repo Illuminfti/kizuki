@@ -67,7 +67,15 @@ export const rebuildCommand: Command = {
       let selected: RetrievalPort | undefined;
       let embedding: EmbeddingPort | undefined;
       try {
-        if (layer === "all") {
+        if (layer === "search" || layer === "graph") {
+          if (portId !== undefined) {
+            throw new PortError(
+              "config_invalid",
+              "partial layer rebuild is not supported for a configured retrieval engine",
+              false,
+            );
+          }
+        } else if (layer === "all") {
           const storeId = portId ?? loadConfiguredRetrieval(ctx.vaultPath).id;
           const previousSpace = readRetrievalEngineSpace(ctx.vaultPath, storeId);
           const nextSpace = nextConfiguredEmbeddingSpace(ctx.vaultPath);
@@ -92,12 +100,12 @@ export const rebuildCommand: Command = {
               );
             }
           }
+          selected = await openConfiguredRetrieval(
+            ctx.vaultPath,
+            portId,
+            embedding === undefined ? {} : { embedding },
+          );
         }
-        selected = await openConfiguredRetrieval(
-          ctx.vaultPath,
-          portId,
-          embedding === undefined ? {} : { embedding },
-        );
         const result = await rebuildRetrieval(ctx.db, ctx.vaultPath, selected, { layer });
         if (layer === "all" || layer === "search") refreshDerived(ctx.db, ctx.vaultPath);
         if (portId !== undefined && layer === "all") {

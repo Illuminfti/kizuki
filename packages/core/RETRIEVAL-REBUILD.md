@@ -6,7 +6,8 @@ the SQLite lexical/search/graph floor. With the default FTS selection, only the
 existing lexical floor is rebuilt; no second FTS store is opened. `--layer search`
 rebuilds only the SQLite lexical floor and does not refresh graph. `--layer graph`
 rebuilds only the SQLite graph floor and does not refresh search or the FTS
-index. A configured retrieval engine refuses those partial layers. The legacy
+index. Those partial layers do not open a configured retrieval engine, and `--port`
+is refused before the engine initializes. The legacy
 floor indexes page and event rows; an optional retrieval port receives the
 validated projection, including readable live claims. The report identifies
 `backend` as `sqlite-floor` or `retrieval-port`.
@@ -28,8 +29,8 @@ Changing the embedding space is a full re-embed, never an incremental update.
 refusal names `estimated_duration_s` from doctor's measured embed-backfill
 throughput, or `unmeasured` when doctor has none. A confirmed space change binds
 the configured embedding port and rebuilds vectors in that space. RFC 0002 sections 9.6 and 18.3 describe layer-specific rebuilds; this
-implementation provides full reconstruction, search-only and graph-only SQLite floor rebuild,
-port selection that persists the default on a successful full rebuild, confirmed embedding-space re-embed, and prune-old.
+implementation provides full reconstruction, search-only and graph-only SQLite floor rebuild
+without opening a configured engine, port selection that persists the default on a successful full rebuild, confirmed embedding-space re-embed, and prune-old.
 
 `readRetrievalDocuments(db, vaultPath)` is the shared projection boundary. It
 reads current canon bytes and their hash-bound receipt authority, live events
