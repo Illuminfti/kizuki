@@ -106,6 +106,9 @@ function urlsFrom(entities: Record<string, unknown> | null, where: string): stri
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
       throw archiveError("parse_error", `${where}.entities.urls[${index}].expanded_url uses an unsupported scheme`);
     }
+    if (parsed.username !== "" || parsed.password !== "") {
+      throw archiveError("parse_error", `${where}.entities.urls[${index}].expanded_url contains credentials`);
+    }
     if (!seen.has(expanded)) {
       seen.add(expanded);
       result.push(expanded);

@@ -31,6 +31,22 @@ test("post links are preserved only for supported URL schemes", () => {
   })).toThrow("unsupported scheme");
 });
 
+test("archive links refuse URL userinfo without exposing the rejected value", () => {
+  for (const expanded_url of [
+    "https://synthetic-user@example.test/path",
+    "https://:synthetic-password@example.test/path",
+    "http://synthetic-user:synthetic-password@example.test/path",
+    "https://synthetic%40user:synthetic%3Apassword@example.test/path",
+  ]) {
+    expect(() => mapped({ entities: { urls: [{ expanded_url }] } }))
+      .toThrow("expanded_url contains credentials");
+    try { mapped({ entities: { urls: [{ expanded_url }] } }); }
+    catch (error) { expect(String(error)).not.toContain("synthetic"); }
+  }
+  const expanded_url = "https://example.test/path@segment?q=user@example.test";
+  expect(mapped({ entities: { urls: [{ expanded_url }] } }).metadata.urls).toEqual([expanded_url]);
+});
+
 test("long-form note and extended text replace truncated full_text without slicing display_text_range", () => {
   const long = "A longer synthetic owner post that must not be replaced by the short preview.";
   const note = mapped({
