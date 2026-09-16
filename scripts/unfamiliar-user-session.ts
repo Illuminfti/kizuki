@@ -12,7 +12,7 @@ const TASKS = [
   ["source-consent", "Connect the agreed supported source after reviewing its consent.", "Explicit account, fields, history and destinations; ingestion from that scope only."],
   ["canon-agent-query", "Find useful knowledge from your source through an authorized agent and inspect its provenance.", "Autonomous model-written canon and an authorized agent query within 900000 ms of receiving the package; source-linked usefulness recorded."],
   ["model-boundary", "Explain what remains available without a model and what requires one.", "Capture, ledger, search, timeline, context, audit and undo remain available; canon writing requires a configured model."],
-  ["correction-audit-undo", "Correct a belief, inspect the change and its receipt, then undo it.", "Observe correction, subsequent query/context, audit and undo separately; no approval queue."],
+  ["correction-audit-undo", "Correct a belief, query it again or inspect its updated context, inspect the change and its receipt, then undo it.", "Observe correction, subsequent query/context, audit and undo separately; no approval queue."],
   ["source-health-revoke", "Inspect source health, then revoke the selected source.", "Participant understands health and revocation outcome; record errors without account contents."],
   ["recovery", "Use the documented backup and clean-target restore route, then query restored content.", "Record completion, failures and losses; technical restore/purge qualification remains separate."],
   ["accessibility", "Try the supported keyboard, reduced-motion and small-screen routes.", "Record each mode's outcome and inaccessible steps; automation is not a human outcome."],
@@ -53,6 +53,9 @@ export function prepareSession(directory: string) {
     first_useful_result_ms: null,
     canon_agent_milestone_ms: null,
     usefulness: null,
+    correction_observations: ["correction", "subsequent-query-context", "audit", "undo"].map(step => ({
+      step, outcome: "UNRECORDED", elapsed_ms: null, receipt_reference: null,
+    })),
     limitations: [],
     accessibility_modes: ["keyboard", "reduced-motion", "small-screen"].map(mode => ({
       mode, supported: null, outcome: "UNRECORDED", inaccessible_steps: null,

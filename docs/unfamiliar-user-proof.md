@@ -67,6 +67,10 @@ mode starts with unknown support and an unrecorded outcome. Do not infer one
 mode's result from another;
 unrun or unsupported modes remain explicit limitations, not passes. Record
 source-health/revocation and model/no-model understanding as distinct tasks.
+Use `correction_observations` for separate correction, subsequent query/context,
+audit and undo outcomes, elapsed times and bounded receipt references. A combined
+task result must not hide an unrun or failed step. These observations start
+unrecorded and do not replace the independent witness process.
 No worksheet field grants consent, verifies actor identity, or changes the
 acceptance checker's `NOT_IMPLEMENTED` human gate.
 

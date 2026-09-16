@@ -32,6 +32,14 @@ test("freeze a human task sheet without inventing results or acceptance", () => 
     { mode: "reduced-motion", supported: null, outcome: "UNRECORDED", inaccessible_steps: null },
     { mode: "small-screen", supported: null, outcome: "UNRECORDED", inaccessible_steps: null },
   ]);
+  expect(session.correction_observations).toEqual([
+    { step: "correction", outcome: "UNRECORDED", elapsed_ms: null, receipt_reference: null },
+    { step: "subsequent-query-context", outcome: "UNRECORDED", elapsed_ms: null, receipt_reference: null },
+    { step: "audit", outcome: "UNRECORDED", elapsed_ms: null, receipt_reference: null },
+    { step: "undo", outcome: "UNRECORDED", elapsed_ms: null, receipt_reference: null },
+  ]);
+  expect(session.tasks.find(task => task.id === "correction-audit-undo")?.instruction)
+    .toContain("query it again or inspect its updated context");
   expect(session.started_at).toBeNull();
   expect(session.independent_eligibility_reference).toBeNull();
   for (const name of LEGACY_PACKAGE_FILES) expect(session.package_sha256[name]).toBe(hash(readFileSync(join(directory, name))));
