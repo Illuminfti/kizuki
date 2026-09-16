@@ -611,6 +611,30 @@ describe("LifeOS-calibre packet compilation", () => {
     expect(again.data?.tokenizer).toBe(PACKET_TOKENIZER_ID);
   });
 
+  test("degraded context is delivered in full even when its body matches a retained prefix", async () => {
+    const ctx = (await newFixture()).owner();
+    const args = { query: "kettle", include: ["canon" as const], budget_tokens: 2_000 };
+    const first = await serveContextPacket(ctx, args);
+    expect(first.canon.length).toBeGreaterThan(0);
+    expect(first.data?.retrieval_degraded).toEqual([]);
+    const retained = {
+      ...args,
+      capabilities: ["delta" as const],
+      retain_prefix: true,
+      prior_hash: first.data!.packet_hash,
+      epoch: first.data!.claims_epoch,
+    };
+    const degraded = await serveContextPacket({ ...ctx, retrievalUnavailable: true }, retained);
+    expect(degraded.data?.packet_hash).toBe(first.data?.packet_hash);
+    expect(degraded.data?.retrieval_degraded).toContain("retrieval-unavailable");
+    expect(degraded.data?.delivery).toBe("full");
+    expect(degraded.data?.packet_md).not.toContain("UNCHANGED");
+    expect(degraded.canon).toEqual(first.canon);
+    // The optimization resumes once gathering is healthy again.
+    const recovered = await serveContextPacket(ctx, retained);
+    expect(recovered.data?.delivery).toBe("unchanged");
+  });
+
   test("delta delivery is refused without the advertised capability", async () => {
     const ctx = (await newFixture()).owner();
     const first = (await serveContextPacket(ctx, { query: "kettle" }));
