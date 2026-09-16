@@ -1,0 +1,62 @@
+import { afterEach, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { checksumManifest, LEGACY_PACKAGE_FILES } from "./release-artifacts";
+import { hash } from "./release-evidence";
+import { prepareSession } from "./unfamiliar-user-session";
+
+const temporary: string[] = [];
+afterEach(() => { for (const path of temporary.splice(0)) rmSync(path, { recursive: true, force: true }); });
+function fixture() {
+  const directory = mkdtempSync(join(tmpdir(), "human-worksheet-test-"));
+  temporary.push(directory);
+  for (const name of ["kizuki", "kizuki-mcp", "README.txt"]) writeFileSync(join(directory, name), "synthetic worksheet fixture; not an executable package\n");
+  writeFileSync(join(directory, "BUILD.json"), JSON.stringify({ schema: "kizuki.release-build/v1", source_sha: "a".repeat(40), target: "bun-linux-x64-baseline", bun_version: "1.3.14" }));
+  writeFileSync(join(directory, "SHA256SUMS"), checksumManifest(directory, LEGACY_PACKAGE_FILES.slice(0, -1)));
+  return directory;
+}
+
+test("freeze a human task sheet without inventing results or acceptance", () => {
+  const directory = fixture(), session = prepareSession(directory);
+  expect(session.release_credit).toBe(false);
+  expect(session.milestone_ms).toBe(900000);
+  expect(session.tasks.map(task => task.id)).toEqual([
+    "install", "source-consent", "canon-agent-query", "model-boundary",
+    "correction-audit-undo", "source-health-revoke", "recovery", "accessibility",
+  ]);
+  expect(session.tasks.every(task => task.outcome === "UNRECORDED" && task.elapsed_ms === null && task.interventions === null)).toBe(true);
+  expect(session.candidate_source_sha).toBe("a".repeat(40));
+  expect(session.accessibility_modes).toEqual([
+    { mode: "keyboard", supported: null, outcome: "UNRECORDED", inaccessible_steps: null },
+    { mode: "reduced-motion", supported: null, outcome: "UNRECORDED", inaccessible_steps: null },
+    { mode: "small-screen", supported: null, outcome: "UNRECORDED", inaccessible_steps: null },
+  ]);
+  expect(session.started_at).toBeNull();
+  expect(session.independent_eligibility_reference).toBeNull();
+  for (const name of LEGACY_PACKAGE_FILES) expect(session.package_sha256[name]).toBe(hash(readFileSync(join(directory, name))));
+  expect(session.protocol_sha256).toBe(hash(readFileSync(join(import.meta.dir, "../docs/unfamiliar-user-proof.md"))));
+  expect(session.acceptance_checker_sha256).toBe(hash(readFileSync(join(import.meta.dir, "go-no-go.ts"))));
+  // Keep the frozen milestone aligned with the existing release policy.
+  expect(readFileSync(join(import.meta.dir, "go-no-go.ts"), "utf8")).toContain(`unfamiliar_user_ms: ${session.milestone_ms}`);
+  expect(prepareSession(directory)).toEqual(session);
+});
+
+test("refuse changed package bytes before preparing a worksheet", () => {
+  const directory = fixture();
+  writeFileSync(join(directory, "kizuki"), "changed");
+  expect(() => prepareSession(directory)).toThrow();
+});
+
+test("CLI emits a blank worksheet and reports errors without leaking paths", () => {
+  const directory = fixture();
+  const run = (args: string[]) => Bun.spawnSync([process.execPath, join(import.meta.dir, "unfamiliar-user-session.ts"), ...args]);
+  const ok = run(["--package", directory]);
+  expect(ok.exitCode).toBe(0);
+  expect(JSON.parse(ok.stdout.toString())).toEqual(prepareSession(directory));
+  const bad = run(["--package", join(directory, "private-missing")]);
+  expect(bad.exitCode).toBe(2);
+  expect(bad.stdout.toString()).toBe("");
+  expect(bad.stderr.toString()).not.toContain(directory);
+  expect(run(["--package", directory, "--pass"]).exitCode).toBe(2);
+});
