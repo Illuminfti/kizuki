@@ -1,4 +1,4 @@
-/** Docs must describe invocation-scoped --port, not the superseded bound-only contract. */
+/** Docs must describe --port persist on successful full rebuild, not the superseded bound-only contract. */
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -33,19 +33,25 @@ function persistContractErrors(text: string): string[] {
   const errors: string[] = [];
   if (!/--port/.test(text)) errors.push("missing --port");
   if (!/serve\.toml/.test(text)) errors.push("missing serve.toml persist boundary");
+  if (!/port_state/.test(text)) errors.push("missing port_state");
+  if (!/flips/.test(text)) errors.push("missing success persist");
   if (!/does not rewrite/i.test(text) && !/not rewritten/i.test(text)) {
-    errors.push("missing non-persist contract for serve.toml");
+    errors.push("missing non-persist contract for failed or partial rebuild");
   }
   return errors;
 }
 
-test("rebuild docs no longer describe the bound-only --port contract", () => {
+test("rebuild docs describe confirmed full re-embed", () => {
   const limits = readFileSync(LIMITS, "utf8");
   const cli = rebuildSection(readFileSync(CLI, "utf8"));
   expect(staleBoundOnlyClaims(limits)).toEqual([]);
   expect(staleBoundOnlyClaims(cli)).toEqual([]);
   expect(persistContractErrors(limits)).toEqual([]);
   expect(persistContractErrors(cli)).toEqual([]);
+  for (const text of [limits, cli]) {
+    expect(text).toContain("--confirm");
+    expect(text).toMatch(/full re-embed/);
+  }
 });
 
 test("restoring the bound-only --port claim fails the docs contract", () => {

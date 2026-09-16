@@ -75,7 +75,7 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
     `${INVOCATION} restore --from ./export --verify`,
     `${INVOCATION} restore --from ./export --into ./restored`,
   ],
-  rebuild: [`${INVOCATION} rebuild`, `${INVOCATION} rebuild --prune-old`],
+  rebuild: [`${INVOCATION} rebuild`, `${INVOCATION} rebuild --prune-old`, `${INVOCATION} rebuild --confirm`],
   recover: [`${INVOCATION} recover`],
   version: [`${INVOCATION} version`],
 };

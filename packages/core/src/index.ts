@@ -1021,12 +1021,14 @@ export type {
   WritePassResult,
 } from "./serve";
 
-export { loadConfiguredRetrieval } from "./retrieval/config";
-export type { ConfiguredRetrieval } from "./retrieval/config";
+export { loadConfiguredRetrieval, persistConfiguredRetrieval, readRetrievalPortState, readRetrievalEngineSpace, editRetrievalPortToml } from "./retrieval/config";
+export type { ConfiguredRetrieval, RetrievalPortState } from "./retrieval/config";
 export { tryAdvisoryFileLock } from "./util/advisory-file-lock";
 export type { AdvisoryFileLock } from "./util/advisory-file-lock";
 
 export { readRetrievalDocuments, rebuildRetrieval, MAX_REBUILD_RECORDS } from "./retrieval/rebuild";
+export { planFullReembed, embeddingThroughputFromReceipts, formatReembedRefusal } from "./retrieval/reembed";
+export type { ReembedPlan } from "./retrieval/reembed";
 export { claimRetrievalDoc } from "./claims/store";
 
 export { ESTATE_IMPORT_LIMITS } from "./contracts/estate-import";
