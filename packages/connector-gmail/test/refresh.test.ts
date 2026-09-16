@@ -60,7 +60,7 @@ test("a second consecutive 401 after refresh is unavailable without a third GET 
     const after = h.gets.slice(before);
     expect(after.map(seen => seen.bearer)).toEqual([`Bearer ${OLD_ACCESS}`, `Bearer ${NEW_ACCESS}`]);
     expect(new Set(after.map(seen => seen.url)).size).toBe(1);
-    expect((await h.connector.health()).state).toBe("degraded");
+    expect((await h.connector.health()).state).toBe("unauthenticated");
 });
 test("invalid_grant on refresh refuses without retrying, advancing, or rewriting state", async () => {
     const fixture = new GmailFixture(1), h = harness(fixture, { status: 400, body: { error: "invalid_grant", error_description: "SECRET_SENTINEL" } });
@@ -81,5 +81,5 @@ test("invalid_grant on refresh refuses without retrying, advancing, or rewriting
     // The rejected grant fences this instance: the host must reconnect from durable state.
     await expect(h.connector.sync(cursor)).rejects.toMatchObject({ code: "unavailable" });
     expect(h.gets.slice(before)).toHaveLength(1);
-    expect((await h.connector.health()).state).toBe("degraded");
+    expect((await h.connector.health()).state).toBe("unauthenticated");
 });

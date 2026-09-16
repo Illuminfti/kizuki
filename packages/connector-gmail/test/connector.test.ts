@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { MAX_CURSOR_BYTES, MAX_CONNECTION_STATE_BYTES, validateEventInput } from "@kizuki/core";
+import { MAX_CURSOR_BYTES, MAX_CONNECTION_STATE_BYTES, validateEventInput, type OAuthTransport } from "@kizuki/core";
 import { createGmailConnector, GMAIL_SCOPES } from "../src/index";
 import { GmailFixture } from "../src/testing";
+import { FIELDS } from "../src/state";
+const config = { client: { id: "synthetic-desktop-client" }, secret_ref: "file:synthetic", fields: FIELDS };
 describe("Gmail public connector", () => {
     test("missing registered application refuses before browser, resolver or state write", async () => {
         const connector = createGmailConnector({});
@@ -70,6 +72,37 @@ describe("Gmail public connector", () => {
         await connector.revoke();
         await expect(connector.sync(null)).rejects.toMatchObject({ code: "unauthenticated" });
         expect((await connector.health()).state).toBe("disabled");
+    });
+    test("provider auth rejection during message capture reports unauthenticated health", async () => {
+        const fixture = new GmailFixture(2);
+        const oauth: OAuthTransport = { listen: async () => { throw new Error("not used"); }, postForm: async () => ({ status: 200, body: { access_token: "synthetic-rotated-access-not-a-credential", refresh_token: "synthetic-rotated-refresh-not-a-credential", expires_in: 3600, scope: GMAIL_SCOPES.join(" "), token_type: "Bearer" } }) };
+        let rejectMessage = true;
+        const connector = createGmailConnector(config, { persist: fixture.persist, now: fixture.now, oauth, fetch: async (request) => rejectMessage && request.url.includes("/messages/m2?") ? Response.json({ error: "SECRET_SENTINEL" }, { status: 401 }) : fixture.fetch(request) });
+        await connector.connect(async () => new TextDecoder().decode(fixture.state));
+        const failed = await connector.backfill(null);
+        expect(failed.status).toBe("unavailable");
+        expect(failed.events).toEqual([]);
+        expect(failed.cursor).toBeNull();
+        expect(failed.detail).toContain("unauthenticated");
+        expect(JSON.stringify(failed)).not.toContain("SECRET_SENTINEL");
+        expect((await connector.health()).state).toBe("unauthenticated");
+        rejectMessage = false;
+        const recovered = await connector.backfill(null);
+        expect(recovered.status).not.toBe("unavailable");
+        expect(recovered.events.map(event => event.metadata.message_id)).toEqual(["m1", "m2"]);
+    });
+    test("a rejected grant during message capture fences the instance without advancing", async () => {
+        const fixture = new GmailFixture(2);
+        const connector = createGmailConnector(config, { persist: fixture.persist, now: fixture.now, oauth: { listen: async () => { throw new Error("not used"); }, postForm: async () => ({ status: 400, body: { error: "invalid_grant", error_description: "SECRET_SENTINEL" } }) }, fetch: async (request) => request.url.includes("/messages/m2?") ? Response.json({ error: "SECRET_SENTINEL" }, { status: 401 }) : fixture.fetch(request) });
+        await connector.connect(async () => new TextDecoder().decode(fixture.state));
+        const refused = await connector.backfill(null);
+        expect(refused.status).toBe("unavailable");
+        expect(refused.events).toEqual([]);
+        expect(refused.cursor).toBeNull();
+        expect(refused.detail).toContain("unauthenticated");
+        expect(refused.detail).not.toContain("SECRET_SENTINEL");
+        expect((await connector.health()).state).toBe("unauthenticated");
+        await expect(connector.backfill(null)).rejects.toMatchObject({ code: "unavailable" });
     });
     test("provider error text and malformed cursors never escape or move checkpoint", async () => {
         const fixture = new GmailFixture(1);
