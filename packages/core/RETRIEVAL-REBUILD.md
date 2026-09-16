@@ -54,8 +54,10 @@ limits are explicit, not silent truncation.
 
 PostgreSQL stages documents and embeddings before one transactional replacement;
 source or embedding failure retains the old active index. FTS stages validated
-documents before its own SQLite replacement transaction. The legacy lexical
-floor prevalidates canon and replaces its search and graph tables transactionally.
+documents before its own SQLite replacement transaction. After a successful
+port replacement, rebuild proves the snapshot document identities are present
+before rebuilding the lexical floor. The legacy lexical floor prevalidates canon
+and replaces its search and graph tables transactionally.
 
 Atomicity is per store. PostgreSQL, the FTS port and the legacy lexical floor do
 not share a distributed transaction: failure after one store commits may leave
