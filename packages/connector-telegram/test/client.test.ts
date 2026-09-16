@@ -19,9 +19,24 @@ test.skipIf(!OFFLINE)("dialogs arrive as the plain records the walk reads", asyn
       message: { id: 13 },
     };
     yield {
+      entity: { id: "-100888", title: "acme members" },
+      isUser: false,
+      isGroup: true,
+      isChannel: true,
+      message: { id: 40 },
+    };
+    yield {
       entity: { id: "-100777", title: "acme news", username: "acmenews" },
       isUser: false,
       isGroup: false,
+      isChannel: true,
+    };
+    // Secret chats are not a broadcast channel; they are dropped rather than guessed at.
+    yield {
+      entity: { id: "9001", title: "secret planning" },
+      isUser: false,
+      isGroup: false,
+      isChannel: false,
     };
     // A listing entry the response carried no entity for: there is no peer to
     // read, so it is dropped rather than guessed at.
@@ -40,6 +55,12 @@ test.skipIf(!OFFLINE)("dialogs arrive as the plain records the walk reads", asyn
       peer_type: "group",
       title: "acme planning",
       top_message_id: 13,
+    },
+    {
+      peer_id: "-100888",
+      peer_type: "group",
+      title: "acme members",
+      top_message_id: 40,
     },
     {
       peer_id: "-100777",
