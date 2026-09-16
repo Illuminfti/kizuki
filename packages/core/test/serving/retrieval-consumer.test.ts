@@ -102,6 +102,38 @@ test("an unavailable engine leaves the deterministic offline consumer usable", a
   expect(packet.data?.retrieval_degraded).toContain("retrieval-unavailable");
 });
 
+test("malformed retrieval responses declare a safe reason and preserve offline ordering", async () => {
+  const f = await live();
+  const baseline = await serveSearch(f.owner(), { query: "kettle" });
+  const retrieval = port(async () => ({
+    ...result(["page:person:ada"]),
+    timings_ms: { PRIVATE_PROVIDER_ERROR: Number.NaN },
+  }));
+  const ctx = { ...f.owner(), retrieval };
+  const search = await serveSearch(ctx, { query: "kettle" });
+  expect(search.canon).toEqual(baseline.canon);
+  expect(search.quoted).toEqual(baseline.quoted);
+  expect(search.data?.degraded).toContain("retrieval-unavailable");
+  expect(search.data?.degraded).toContain("retrieval-invalid-response");
+  const packet = await serveContextPacket(ctx, { query: "kettle", budget_tokens: 2_000 });
+  expect(packet.data?.retrieval_degraded).toContain("retrieval-invalid-response");
+  expect(packet.data?.sections.canon).toBeGreaterThan(0);
+  expect(JSON.stringify([search, packet])).not.toContain("PRIVATE_PROVIDER_ERROR");
+  expect(JSON.stringify([search, packet])).not.toContain("STALE_PRIVATE_CACHE_MARKER");
+});
+
+test("empty and degraded successful retrieval remain distinct from invalid responses", async () => {
+  const f = await live();
+  const empty = await serveSearch({ ...f.owner(), retrieval: port(async () => result([])) }, { query: "kettle" });
+  expect(empty.data?.degraded ?? []).not.toContain("retrieval-invalid-response");
+  expect(empty.data?.degraded ?? []).not.toContain("retrieval-unavailable");
+  const retrieval = port(async () => ({ ...result([]), degraded: ["PRIVATE_PROVIDER_ERROR"] }));
+  const degraded = await serveSearch({ ...f.owner(), retrieval }, { query: "kettle" });
+  expect(degraded.data?.degraded).toContain("retrieval-degraded");
+  expect(degraded.data?.degraded ?? []).not.toContain("retrieval-invalid-response");
+  expect(JSON.stringify(degraded)).not.toContain("PRIVATE_PROVIDER_ERROR");
+});
+
 test("a grant narrowed while retrieval is pending refuses the whole response", async () => {
   const f = await live();
   const retrieval = port(async () => {

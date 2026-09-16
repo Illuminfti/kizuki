@@ -48,7 +48,14 @@ export async function retrievalCandidates(
         timer = setTimeout(() => reject(new Error("retrieval deadline")), 3_000);
       }),
     ]);
-    const validated = validateRetrievalResult(result, request.limit);
+    let validated;
+    try {
+      validated = validateRetrievalResult(result, request.limit);
+    } catch {
+      // Keep the compatibility marker; distinguish invalid success from an
+      // unavailable provider without publishing its payload or error text.
+      return { ids: [], degraded: ["retrieval-unavailable", "retrieval-invalid-response"] };
+    }
     return {
       ids: validated.hits.map((hit) => hit.doc_id),
       // Provider strings are not a public diagnostic channel.
