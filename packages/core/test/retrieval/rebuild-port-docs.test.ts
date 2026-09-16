@@ -41,13 +41,17 @@ function persistContractErrors(text: string): string[] {
   return errors;
 }
 
-test("rebuild docs no longer describe the bound-only --port contract", () => {
+test("rebuild docs describe confirmed full re-embed", () => {
   const limits = readFileSync(LIMITS, "utf8");
   const cli = rebuildSection(readFileSync(CLI, "utf8"));
   expect(staleBoundOnlyClaims(limits)).toEqual([]);
   expect(staleBoundOnlyClaims(cli)).toEqual([]);
   expect(persistContractErrors(limits)).toEqual([]);
   expect(persistContractErrors(cli)).toEqual([]);
+  for (const text of [limits, cli]) {
+    expect(text).toContain("--confirm");
+    expect(text).toMatch(/full re-embed/);
+  }
 });
 
 test("restoring the bound-only --port claim fails the docs contract", () => {

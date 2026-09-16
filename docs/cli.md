@@ -459,7 +459,7 @@ in place.
 ## rebuild
 
 ```text
-usage: kizuki rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--json]
+usage: kizuki rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm] [--json]
 ```
 
 Reconstructs derived retrieval from the vault. `--layer all` rebuilds the
@@ -475,8 +475,11 @@ id). Unknown IDs and a busy engine fail closed. A successful `--layer all`
 rebuild (the default) flips `[ports].retrieval` in `serve.toml` and records
 `port_state`. A failed or partial rebuild does not rewrite
 `serve.toml` or `port_state`. The previous store remains on disk until
-`kizuki rebuild --prune-old`. Other layers are not implemented and exit 2. `--prune-old` cannot
-be combined with `--layer` or `--port`.
+`kizuki rebuild --prune-old`. Changing the embedding space is a full re-embed.
+`rebuild --layer all` refuses it unless `--confirm` is passed, and prices the
+work from doctor's measured embed-backfill throughput (`unmeasured` when none
+exists). Other layers are not implemented and exit 2. `--prune-old` cannot
+be combined with `--layer`, `--port`, or `--confirm`.
 
 The result identifies `backend` (`sqlite-floor` or `retrieval-port`), `store`,
 `documents`, `floor_documents`, and the floor's `generation`. With default

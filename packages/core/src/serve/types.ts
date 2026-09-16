@@ -230,6 +230,8 @@ export interface StoreDoctor {
   readonly oldest_retrieval_op_age_s: number | null;
   readonly pending_purge_ops: number;
   readonly oldest_purge_op_age_s: number | null;
+  /** Successful embed-backfill docs/s, or null when doctor has no measured throughput. */
+  readonly embedding_throughput_docs_per_s: number | null;
   readonly orphan_run_receipts: string[];
   readonly derived: {
     readonly search: { rebuilt_at: string | null; doc_count: number };

@@ -1,6 +1,6 @@
 # Public authoritative retrieval rebuild
 
-`kizuki rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--json]` reconstructs derived retrieval
+`kizuki rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm] [--json]` reconstructs derived retrieval
 from the named vault. `--layer all` rebuilds the configured retrieval store and
 the SQLite lexical/search/graph floor. With the default FTS selection, only the
 existing lexical floor is rebuilt; no second FTS store is opened. `--layer search`
@@ -23,9 +23,12 @@ installed engine. Unknown IDs and a busy engine fail closed. A successful
 `--layer all` rebuild flips `[ports].retrieval` in `serve.toml` and records
 `port_state`. A failed or partial rebuild (`--layer search` or `--layer graph`) does not rewrite
 `serve.toml`. Other `--layer` values are explicitly refused.
-RFC 0002 sections 9.6 and 18.3 describe layer-specific rebuilds; this
+Changing the embedding space is a full re-embed, never an incremental update.
+`rebuild --layer all` refuses that change unless `--confirm` is passed. The
+refusal names `estimated_duration_s` from doctor's measured embed-backfill
+throughput, or `unmeasured` when doctor has none. RFC 0002 sections 9.6 and 18.3 describe layer-specific rebuilds; this
 implementation provides full reconstruction, search-only and graph-only SQLite floor rebuild,
-port selection that persists the default on a successful full rebuild, and prune-old.
+port selection that persists the default on a successful full rebuild, confirmed embedding-space re-embed, and prune-old.
 
 `readRetrievalDocuments(db, vaultPath)` is the shared projection boundary. It
 reads current canon bytes and their hash-bound receipt authority, live events

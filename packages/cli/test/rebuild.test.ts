@@ -254,6 +254,7 @@ test("prune-old removes an inactive FTS generation and keeps the lexical floor",
   expect(helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.no-such").exitCode).not.toBe(0);
   expect(helpers.runCli(setup.env, "rebuild", "--prune-old", "--layer", "all").exitCode).toBe(2);
   expect(helpers.runCli(setup.env, "rebuild", "--prune-old", "--port", "kizuki.retrieval.fts5").exitCode).toBe(2);
+  expect(helpers.runCli(setup.env, "rebuild", "--prune-old", "--confirm").exitCode).toBe(2);
   mkdirSync(join(dataDir, "store"), { recursive: true });
   writeFileSync(join(dataDir, "store", "unknown"), "SYNTHETIC_KEEP");
   const refused = helpers.runCli(setup.env, "rebuild", "--prune-old", "--json");
@@ -369,3 +370,29 @@ test("rebuild --layer search --port does not flip the default", async () => {
   expect(loadConfiguredRetrieval(setup.vault).id).toBe("kizuki.retrieval.fts5");
   expect(portState(setup.vault)).toBeNull();
 }, 60_000);
+
+test("rebuild refuses an embedding-space change without --confirm", () => {
+  const setup = helpers.tempVault();
+  expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode).toBe(0);
+  const first = helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.embedded-pg", "--json");
+  expect(first.exitCode, first.stdout + first.stderr).toBe(0);
+  const enginePath = join(setup.vault, ".kizuki", "retrieval", "kizuki.retrieval.embedded-pg", "engine.json");
+  const engine = JSON.parse(readFileSync(enginePath, "utf8")) as { space: string | null };
+  writeFileSync(enginePath, `${JSON.stringify({ ...engine, space: "fixture:old@8" })}\n`);
+  const configPath = join(setup.vault, ".kizuki", "serve.toml");
+  writeFileSync(configPath, `[ports]
+retrieval = "kizuki.retrieval.embedded-pg"
+
+[ports.embedding]
+id = "kizuki.embedding.gguf"
+expected_space = "fixture:new@8"
+`);
+  const before = readFileSync(configPath, "utf8");
+  const refused = helpers.runCli(setup.env, "rebuild", "--port", "kizuki.retrieval.embedded-pg");
+  expect(refused.exitCode).toBe(2);
+  expect(refused.stderr).toContain("full re-embed from fixture:old@8 to fixture:new@8 requires --confirm");
+  expect(refused.stderr).toContain("unmeasured");
+  expect(readFileSync(configPath, "utf8")).toBe(before);
+  expect((JSON.parse(readFileSync(enginePath, "utf8")) as { space: string }).space).toBe("fixture:old@8");
+  expect(loadConfiguredRetrieval(setup.vault).id).toBe("kizuki.retrieval.embedded-pg");
+}, 120_000);

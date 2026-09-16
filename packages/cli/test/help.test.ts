@@ -502,13 +502,14 @@ describe("help", () => {
       };
       expect(body.data.name).toBe("rebuild");
       expect(body.data.options).toEqual(["--layer", "--port"]);
-      expect(body.data.flags).toEqual(["--json", "--prune-old"]);
+      expect(body.data.flags).toEqual(["--json", "--prune-old", "--confirm"]);
       expect(body.data.defaults).toEqual({ "--layer": "all" });
       expect(body.data.bounds).toEqual({ "--layer": "all|search|graph" });
       expect(body.data.irreversible).toBe(false);
     }
     expect(runCli(env, "rebuild", "--help").stdout).toContain("--layer  all|search|graph  default all");
     expect(runCli(env, "rebuild", "--help").stdout).toContain("--prune-old");
+    expect(runCli(env, "rebuild", "--help").stdout).toContain("--confirm");
     for (const [args, diagnostic] of [
       [["rebuild", "--nope"], "unknown option --nope"],
       [["rebuild", "--json", "--json"], "repeated flag --json"],
