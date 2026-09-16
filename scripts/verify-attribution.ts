@@ -32,7 +32,7 @@ function schemeStart(text: string, offset: number): number | null {
   }
   const tokenPrefix = text.slice(tokenStart, offset);
   let relative = -1;
-  for (const match of tokenPrefix.matchAll(/https?:\/\//giu)) {
+  for (const match of tokenPrefix.matchAll(/[a-z][a-z0-9+.-]*:\/\//giu)) {
     relative = match.index ?? relative;
   }
   return relative < 0 ? null : tokenStart + relative;
