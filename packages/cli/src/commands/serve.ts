@@ -48,6 +48,14 @@ export const serveCommand: Command = {
       flags: [...SERVE_SCHEMA.flags],
     });
     const [verb, rail] = parsed.positionals;
+    const portRaw = parsed.options.get("--port");
+    const port = portRaw === undefined ? undefined : Number(portRaw);
+    if (portRaw !== undefined && (
+      portRaw.length === 0 || /[^0-9]/.test(portRaw) ||
+      port === undefined || !Number.isInteger(port) || port < 0 || port > 65535
+    )) {
+      throw new UsageError(this.usage);
+    }
     const modes = PRIVATE_LAUNCH_MODES.filter(mode => parsed.options.has(mode));
     if (modes.length > 1) throw new ServiceCustodyError();
     let custody: ServiceCustodyHandle | undefined;
@@ -149,11 +157,6 @@ export const serveCommand: Command = {
 
       if (verb !== undefined) throw new UsageError(this.usage);
 
-      const portRaw = parsed.options.get("--port");
-      const port = portRaw === undefined ? undefined : Number.parseInt(portRaw, 10);
-      if (portRaw !== undefined && (!Number.isInteger(port) || (port ?? 0) < 0)) {
-        throw new UsageError(this.usage);
-      }
       const crashAfter = parsed.options.get("--crash-after");
       const result = await runServeDaemon(ctx.db, ctx.vaultPath, {
         once: parsed.flags.has("--once"),
