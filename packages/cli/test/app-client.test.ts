@@ -241,6 +241,20 @@ test('memory keeps Markdown onboarding when a source still needs permission or i
     expect(findAction(f.main, 'Import history')).toBeTruthy();
 });
 
+test('sources distinguish incomplete history from a finished backfill without promising complete coverage', () => {
+    const f = fixture();
+    f.evaluate(`state.view='sources'; Object.assign(state.sources[0], {last_run:'2026-09-07T00:00:00Z', stored:3, backfill_complete:false}); render();`);
+    expect(f.main.textContent).toContain('History import is incomplete');
+    expect(f.main.textContent).toContain('3 saved in the last check');
+    f.evaluate(`state.sources[0].backfill_complete=true; render();`);
+    expect(f.main.textContent).toContain('History import reached the end reported by this source');
+    expect(f.main.textContent).not.toContain('History import is incomplete');
+    expect(f.main.textContent).toContain('This does not confirm complete date coverage');
+    f.evaluate(`state.sources[0].last_run=null; state.sources[0].backfill_complete=null; render();`);
+    expect(f.main.textContent).toContain('No capture checkpoint yet');
+    expect(f.main.textContent).not.toContain('3 saved in the last check');
+});
+
 test('source enrollment focuses the labeled folder field instead of the close control', () => {
     const f = fixture();
     f.evaluate(`enrollment({id:'markdown',title:'Local notes',detail:'Synthetic',available:true,fields:[],required_fields:['text']})`);
