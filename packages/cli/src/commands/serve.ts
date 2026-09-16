@@ -150,8 +150,8 @@ export const serveCommand: Command = {
       if (verb !== undefined) throw new UsageError(this.usage);
 
       const portRaw = parsed.options.get("--port");
-      const port = portRaw === undefined ? undefined : Number.parseInt(portRaw, 10);
-      if (portRaw !== undefined && (!Number.isInteger(port) || (port ?? 0) < 0)) {
+      const port = portRaw === undefined ? undefined : Number(portRaw);
+      if (portRaw !== undefined && (!/^\d+$/.test(portRaw) || !Number.isInteger(port) || (port ?? 0) > 65535)) {
         throw new UsageError(this.usage);
       }
       const crashAfter = parsed.options.get("--crash-after");
