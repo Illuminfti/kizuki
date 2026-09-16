@@ -465,8 +465,10 @@ usage: kizuki rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--co
 Reconstructs derived retrieval from the vault. `--layer all` rebuilds the
 configured retrieval store and the SQLite search/graph floor. `--layer search`
 rebuilds only the SQLite lexical floor and does not refresh graph; `--layer graph`
-rebuilds only the SQLite graph floor and does not refresh search. A configured
-retrieval engine refuses those partial layers and exits 1. `--prune-old` removes
+rebuilds only the SQLite graph floor and does not refresh search. Those partial
+layers rebuild the SQLite floor even when an engine is configured; they do not
+open that engine. `--port` with a partial layer is refused before initialization
+and exits 1. `--prune-old` removes
 inactive owned retrieval generations under `.kizuki/retrieval/` and leaves the
 currently configured engine, or the SQLite floor when no engine is bound.
 `--port ID` selects an installed engine for this invocation
