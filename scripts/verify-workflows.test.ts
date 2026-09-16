@@ -97,6 +97,15 @@ describe("workflow validation", () => {
     expect(validateWorkflowText(path, secondCheckout).some(failure => failure.reason.includes("event head"))).toBe(true);
   });
 
+  test("rejects non-finite job timeouts instead of accepting unbounded jobs", () => {
+    for (const timeout of [".nan", ".inf", "-.inf"]) {
+      const text = ciWorkflow().replace("timeout-minutes: 10", `timeout-minutes: ${timeout}`);
+      expect(validateWorkflowText(".github/workflows/ci.yml", text)).toContainEqual(
+        expect.objectContaining({ reason: expect.stringContaining("timeout-minutes") }),
+      );
+    }
+  });
+
   test("accepts a SHA-pinned ci workflow with fetch-depth 0", () => {
     expect(validateWorkflowText(".github/workflows/ci.yml", ciWorkflow())).toEqual([]);
   });
