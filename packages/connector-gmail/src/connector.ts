@@ -227,9 +227,17 @@ export class GmailConnector implements Connector {
             this.live();
             budget.remaining();
             token = await this.tokenWait(() => session.accessToken(), budget, generation);
-            const result = await getJson(url, token, budget, this.deps.fetch);
-            this.live();
-            return result;
+            try {
+                const result = await getJson(url, token, budget, this.deps.fetch);
+                this.live();
+                return result;
+            }
+            catch (retry) {
+                // The refreshed grant was also rejected: an identity state, not transient degradation.
+                if (retry instanceof HttpFailure && retry.status === 401)
+                    throw failure("unauthenticated");
+                throw retry;
+            }
         }
     }
     private url(path: string, params: Record<string, string> = {}): URL {
@@ -372,7 +380,9 @@ export class GmailConnector implements Connector {
             return { events, cursor: encodeCursor(next), detail, has_more: consumed < plan.items.length || next.page !== null };
         }
         catch (error) {
-            this.last = error instanceof KizukiError && error.code === "rate_limited" ? "rate_limited" : "degraded";
+            // Provider auth rejection is an identity state, not transient degradation.
+            const code = error instanceof KizukiError ? error.code : null;
+            this.last = code === "rate_limited" || code === "unauthenticated" ? code : "degraded";
             return { events: [], cursor: input, status: "unavailable", detail: error instanceof SnapshotGap ? "Gmail snapshot_gap_unresolved; provider observation changed or checkpoint is stale; no history was advanced" : error instanceof KizukiError ? failure(error.code).message : "Gmail unavailable; check permissions or source coverage" };
         }
         finally {
