@@ -123,7 +123,8 @@ export function tombstoneEvent(account: string, change: Change, observed: string
 }
 /** Provider-side partial response, in addition to the separately enforced persisted-field selection. */
 export function messageProjection(selected: readonly Field[]): string {
-    let part = ["partId", "mimeType", ...(selected.includes("attachments") ? ["filename"] : []), "headers(name,value)", selected.includes("text") ? "body(data,size,attachmentId)" : "body(size,attachmentId)"].join(",");
+    // Text capture needs filenames to exclude inline attachment bodies, even when references are unselected.
+    let part = ["partId", "mimeType", ...(selected.includes("text") || selected.includes("attachments") ? ["filename"] : []), "headers(name,value)", selected.includes("text") ? "body(data,size,attachmentId)" : "body(size,attachmentId)"].join(",");
     const leaf = part;
     for (let depth = 0; depth < 8; depth++)
         part = `${leaf},parts(${part})`;
