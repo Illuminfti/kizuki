@@ -80,6 +80,7 @@ for (const fault of ["exit", "pid", "inactive", "disabled", "failed-rail", "fail
     expect(reads).toBe(1); expect(commands).toBe(1);
     if (["exit", "pid", "inactive", "disabled"].includes(fault)) expect(result.publicStatus.passed).toBe(false);
     if (["exit", "failed-rail", "failed-receipt"].includes(fault)) expect(result.installedHealth.passed).toBe(false);
+    if (["failed-rail", "failed-receipt"].includes(fault)) expect(result.publicStatus.passed).toBe(true);
     expect(result.publicStatus.passed && result.installedHealth.passed).toBe(false);
     expect(result.installedHealth.evidence.diagnostics).toBe(diagnostics);
   });

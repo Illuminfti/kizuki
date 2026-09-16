@@ -93,11 +93,14 @@ export async function observeInstalledNativeHealth(expectedPid: number, since: s
   readDiagnostics: () => NativeRailDiagnostics, readStatus: () => CommandResult) {
   const diagnostics = await waitForFreshRails(readDiagnostics);
   const status = readStatus();
-  const health = installedRailsHealth(status, diagnostics, since);
-  const body = health.passed ? JSON.parse(status.stdout).data : null;
+  let publicStatusPassed = false;
+  try {
+    const body = JSON.parse(status.stdout)?.data;
+    publicStatusPassed = status.exit_code === 0 && body?.pid === expectedPid && body?.supervisor?.state === "active" && body?.supervisor?.enabled === true;
+  } catch { /* Keep malformed command evidence without aborting independent lifecycle checks. */ }
   return {
-    publicStatus: { passed: health.passed && body?.pid === expectedPid && body?.supervisor?.state === "active" && body?.supervisor?.enabled === true, evidence: status },
-    installedHealth: health,
+    publicStatus: { passed: publicStatusPassed, evidence: status },
+    installedHealth: installedRailsHealth(status, diagnostics, since),
   };
 }
 
