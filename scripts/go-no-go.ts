@@ -29,7 +29,7 @@ export function releaseDecision(profile: Profile, rows: readonly Gate[]) {
   }
   const complete = required.every(item => {
     const row = byId.get(item.id);
-    return row !== undefined && row.required === true && row.target === item.target;
+    return row !== undefined && row.required === true && row.target === item.target && row.scope === item.scope;
   });
   const accepted = complete && required.every(item => byId.get(item.id)!.status === "PASS") && !rows.some(item => item.status === "FAIL");
   return { decision: accepted ? "GO" as const : "NO-GO" as const, release_1_0_accepted: profile === "1.0" && accepted };
