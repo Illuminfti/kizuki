@@ -21,8 +21,10 @@ review axis lives in the exact-head review process described in
 The three required contexts are produced by tracked workflows: `test` and
 `secrets` by `.github/workflows/ci.yml`, `workflows` by
 `.github/workflows/workflows.yml`. `scripts/verify-workflows.ts` fails the
-repository gate when a producing job is deleted or renamed, so the workflow
-files and the protection settings cannot drift apart silently.
+repository gate when a required job is deleted, renamed, given a different
+check name, expanded into a matrix, or made conditional. This guards job
+identity in the tracked workflows; live repository settings still need the
+readback below.
 
 ## Verifying the live setting
 

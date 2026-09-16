@@ -255,6 +255,22 @@ jobs:
     expect(validateWorkflowText(workflowsPath, renamedWorkflows).some(failure => failure.reason.includes('required main check context "workflows"'))).toBe(true);
   });
 
+  test("required check producers keep their reported names and cannot skip", () => {
+    for (const [file, jobs] of [["ci.yml", ["test", "secrets"]], ["workflows.yml", ["workflows"]]] as const) {
+      const path = `.github/workflows/${file}`;
+      const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+      for (const job of jobs) {
+        for (const setting of ["name: renamed", "strategy: { matrix: { os: [ubuntu-latest] } }", "if: false"]) {
+          const changed = text.replace(`  ${job}:`, `  ${job}:\n    ${setting}`);
+          expect(changed).not.toBe(text);
+          expect(validateWorkflowText(path, changed).some(failure =>
+            failure.reason.includes(`required main check context "${job}"`))).toBe(true);
+        }
+        expect(validateWorkflowText(path, text.replace(`  ${job}:`, `  ${job}:\n    name: ${job}`))).toEqual([]);
+      }
+    }
+  });
+
   test("rejects skip-on-missing hashFiles conditions", () => {
     const text = ciWorkflow({
       testSteps: `      - uses: ${pinnedCheckout}

@@ -129,6 +129,17 @@ function validateJobs(
         path,
         reason: `required main check context "${job}" has no producing job; branch protection blocks every merge until it reports`,
       });
+    } else if (isRecord(jobs[job])) {
+      const producer = jobs[job];
+      if ((producer["name"] !== undefined && producer["name"] !== job) || producer["strategy"] !== undefined) {
+        failures.push({
+          path,
+          reason: `required main check context "${job}" must retain its exact name without a matrix`,
+        });
+      }
+      if (producer["if"] !== undefined) {
+        failures.push({ path, reason: `required main check context "${job}" must run unconditionally` });
+      }
     }
   }
   return failures;
