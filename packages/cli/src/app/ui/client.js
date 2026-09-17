@@ -66,7 +66,7 @@ function firstFocusable(root) {
     if (node.hidden) return;
     const tag = nodeTag(node), close = node.getAttribute && node.getAttribute('aria-label') === 'Close dialog';
     if (!node.disabled && !close) {
-      if (['input', 'select', 'textarea'].includes(tag)) input ??= node;
+      if (['input', 'select', 'textarea'].includes(tag) && !(tag === 'input' && node.getAttribute('type')?.toLowerCase() === 'hidden')) input ??= node;
       else if (tag === 'button') {
         if (/button-primary|button-danger/.test(node.className || '')) primary ??= node;
         else other ??= node;
