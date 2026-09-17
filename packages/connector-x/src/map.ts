@@ -11,7 +11,7 @@ const MAX_URL_BYTES = 8 * 1024;
 const MAX_MENTIONS = 128;
 
 function byteLength(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
+  return Buffer.byteLength(value, "utf8");
 }
 
 function optionalNativeId(value: unknown, field: string): string | null {
