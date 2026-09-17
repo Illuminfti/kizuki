@@ -137,6 +137,27 @@ describe("workflow validation", () => {
     }
   });
 
+  test("required workflows check retains unfiltered pull request and main push triggers", () => {
+    const path = ".github/workflows/workflows.yml";
+    const current = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+    expect(validateWorkflowText(path, current)).toEqual([]);
+    expect(validateWorkflowText(path, current.replace("  pull_request:", "  pull_request: {}"))).toEqual([]);
+    for (const text of [
+      current.replace("  pull_request:\n", ""),
+      current.replace("  pull_request:", "  pull_request: { paths: ['scripts/**'] }"),
+      current.replace("  pull_request:", "  pull_request: { branches: [main] }"),
+      current.replace("  pull_request:", "  pull_request: { types: [opened] }"),
+      current.replace("  push: { branches: [main] }\n", ""),
+      current.replace("branches: [main]", "branches: [release]"),
+      current.replace("branches: [main]", "branches: [main], paths-ignore: ['docs/**']"),
+    ]) {
+      expect(text).not.toBe(current);
+      expect(validateWorkflowText(path, text)).toContainEqual(expect.objectContaining({
+        reason: "workflows must run on every pull request and every push to main without filters",
+      }));
+    }
+  });
+
   test("rejects invalid YAML", () => {
     const failures = validateWorkflowText(
       ".github/workflows/ci.yml",
