@@ -140,6 +140,9 @@ function mentionsFrom(
       `${where}.entities.${field}[${index}].screen_name`,
       64,
     );
+    if (username !== null && !/^[A-Za-z0-9_]{1,64}$/.test(username)) {
+      throw archiveError("parse_error", `${where}.entities.${field}[${index}].screen_name is invalid`);
+    }
     result.push({
       subject_id: userSubjectId(id),
       role: "about",

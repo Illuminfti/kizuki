@@ -36,6 +36,24 @@ test.each(["\ud800", "\udfff"])("surrogate %j preserves text and respects the se
   expect(() => mapped({ full_text: text })).toThrow("cannot be represented by kizuki.event/v1");
 });
 
+test.each(["user_mentions", "mentions"])("%s handles use the archive account username grammar", (field) => {
+  const handleField = field === "user_mentions" ? "screen_name" : "username";
+  for (const username of ["", "two words", "@peer", "peer/name", "合", "a".repeat(65)]) {
+    expect(() => mapped({
+      entities: { [field]: [{ id_str: "8", [handleField]: username }] },
+    })).toThrow("screen_name");
+  }
+  for (const username of ["peer_1", "a".repeat(64)]) {
+    expect(mapped({
+      entities: { [field]: [{ id_str: "8", [handleField]: username }] },
+    }).subjects).toContainEqual({
+      subject_id: "x:user:8", role: "about", display_name: `@${username}`,
+    });
+  }
+  expect(mapped({ entities: { [field]: [{ id_str: "8" }] } }).subjects)
+    .toContainEqual({ subject_id: "x:user:8", role: "about" });
+});
+
 test("post links are preserved only for supported URL schemes", () => {
   expect(mapped({
     full_text: "link",
