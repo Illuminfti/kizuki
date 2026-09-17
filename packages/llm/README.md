@@ -9,6 +9,7 @@ port; the receipted writer owns canon. Tests use a loopback fake endpoint.
 | --- | --- |
 | `kizuki.llm.none` | Default. `model_ref` is null. `health` is unavailable. `complete` throws `PortError("unavailable")` and never returns empty text. |
 | `kizuki.llm.openai-compatible` | One `fetch` to `<base_url>/chat/completions`. Configured by the owner. |
+| `kizuki.systemone.jev` | Optional typed-decision port. One `fetch` to `<base_url>/systemone`. Never generates claims. |
 
 ## Config (`[ports.llm]`)
 
@@ -21,6 +22,23 @@ port; the receipted writer owns canon. Tests use a loopback fake endpoint.
 | `max_retries` | no | Default `2`. Bounded retries for network failures, timeouts and HTTP 429/502/503/504 share the request deadline. |
 
 `model_ref` recorded by callers is `<port_id>:<model>@<host>`.
+
+## Config (`[ports.systemone]`)
+
+Optional. Absent config leaves extraction unchanged.
+
+| Key | Required | Notes |
+| --- | --- | --- |
+| `id` | yes | Must be `kizuki.systemone.jev`. |
+| `base_url` | no | Default `https://api.typesafe.ai/v1`. Same URL rules as LLM. |
+| `model` | no | Default `jev-latest`. |
+| `secret_ref` | no | `env:` or `file:` only. |
+| `timeout_ms` | no | Default `30000`. |
+| `max_retries` | no | Default `2`. |
+
+The producer asks Jev whether each extracted draft is supported. Jev never
+writes canon and never replaces LLM extraction. A configured but dead port
+is unavailable, not an empty keep.
 
 ## Fail-closed rules
 
