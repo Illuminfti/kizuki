@@ -84,6 +84,18 @@ describe("attribution verification", () => {
     },
   );
 
+  test.each(["ftp", "file", "ws", "git+https"])(
+    "rejects a modified %s scheme even alongside valid credit",
+    (scheme) => {
+      const modifiedUrl = canonicalUrl.replace("https", scheme);
+      expect(failures(`[${exactCredit}](${canonicalUrl}) ${modifiedUrl}`)).toEqual([
+        expect.objectContaining({
+          reason: "public attribution URL is not the exact delimited canonical URL",
+        }),
+      ]);
+    },
+  );
+
   test("rejects a case-modified URL as a URL, not prose", () => {
     expect(failures(`[${exactCredit}](HTTPS://example.invalid/AtlasCore)`)).toEqual([
       expect.objectContaining({
