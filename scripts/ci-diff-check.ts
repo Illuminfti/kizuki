@@ -36,6 +36,7 @@ function main(): void {
   } else if (kind === "push") {
     before = sha(event["before"]);
     after = sha(event["after"]);
+    if (before === after) throw new Error("push requires distinct commit endpoints");
   } else if (kind === "workflow_dispatch") {
     before = sha(record(event["inputs"])["base_sha"]);
     after = sha(process.env["GITHUB_SHA"]);

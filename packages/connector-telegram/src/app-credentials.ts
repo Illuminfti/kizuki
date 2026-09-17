@@ -20,7 +20,7 @@ export function appCredentials(
     api_hash: COMPILED_API_HASH,
   },
 ): AppCredentials | null {
-  if (typeof source.api_hash !== "string" || source.api_hash.length === 0) {
+  if (typeof source.api_hash !== "string" || source.api_hash.trim().length === 0) {
     return null;
   }
   if (typeof source.api_id !== "string" || !/^[1-9][0-9]*$/.test(source.api_id)) {
