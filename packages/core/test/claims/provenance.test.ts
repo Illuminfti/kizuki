@@ -7,6 +7,7 @@ import {
   insertClaim,
   listSupersessions,
   markClaimsPurged,
+  prepareClaimInsert,
 } from "../../src/claims/store";
 import { claimInput, claimsDb, eventFacts, FixtureVectorPort, putEvent } from "./helpers";
 
@@ -99,6 +100,48 @@ describe("claims provenance", () => {
       await insertClaim(io, claimInput(secondEvent, { body: "Another source: Grace works at Acme." }));
       expect(operations()).toHaveLength(3);
       expect(retrieval.docs.get(`claim:${first.claim.claim_id}`)?.provenance).toEqual([eventId, secondEvent]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("rolled-back corroboration leaves no support or retrieval work and can retry", async () => {
+    const db = claimsDb();
+    try {
+      seedConnectorSensitivity(db, { connector_id: "fixture", source_key: "fixture" }, {
+        default_sensitivity: "public", sensitivity_floor: "public",
+      });
+      const firstEvent = putEvent(db);
+      const secondEvent = putEvent(db, { source_record_id: "retry-support" });
+      const io = { db, retrieval: new FixtureVectorPort({ vector: false }) };
+      const first = await insertClaim(io, claimInput(firstEvent));
+      if (first.outcome !== "stored") throw new Error("expected stored");
+      const operations = () => db.query("SELECT * FROM retrieval_ops ORDER BY op_id").all();
+      const initialOps = operations();
+      const prepared = await prepareClaimInsert(io, claimInput(secondEvent, {
+        body: "Another record confirms Grace works at Acme.", sensitivity: "private",
+      }));
+      expect(() => db.transaction(() => {
+        const result = prepared.apply();
+        if (result.outcome !== "duplicate") throw new Error("expected duplicate");
+        expect(result.claim.provenance).toEqual([firstEvent, secondEvent]);
+        expect(result.claim.sensitivity).toBe("private");
+        throw new Error("abort extraction transaction");
+      })()).toThrow("abort extraction transaction");
+      expect(getClaim(db, first.claim.claim_id)).toEqual(first.claim);
+      expect(operations()).toEqual(initialOps);
+
+      const retried = db.transaction(() => prepared.apply())();
+      if (retried.outcome !== "duplicate") throw new Error("expected duplicate");
+      expect(retried.claim.provenance).toEqual([firstEvent, secondEvent]);
+      expect(retried.claim.sensitivity).toBe("private");
+      expect(retried.claim.corroboration).toBe(first.claim.corroboration + 1);
+      expect(getClaim(db, first.claim.claim_id)).toEqual(retried.claim);
+      expect(operations()).toHaveLength(initialOps.length + 1);
+      const replayed = db.transaction(() => prepared.apply())();
+      if (replayed.outcome !== "duplicate") throw new Error("expected duplicate");
+      expect(replayed.claim).toEqual(retried.claim);
+      expect(operations()).toHaveLength(initialOps.length + 1);
     } finally {
       db.close();
     }

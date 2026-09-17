@@ -448,10 +448,12 @@ function corroborate(db: Database, live: Claim, incoming: Claim, at: string): Cl
     SENSITIVITY_ORDER[incoming.sensitivity] > SENSITIVITY_ORDER[live.sensitivity]
       ? incoming.sensitivity
       : live.sensitivity;
-  // Index support once so replay checks do not rescan it for every citation.
+  // Merge support once; only new citations can confirm evidence.
   const existingEvidence = new Set(live.provenance);
+  const previousSupportCount = existingEvidence.size;
+  for (const eventId of incoming.provenance) existingEvidence.add(eventId);
   // Rephrasing already-cited evidence may tighten policy, not confirm evidence.
-  if (incoming.provenance.every((eventId) => existingEvidence.has(eventId))) {
+  if (existingEvidence.size === previousSupportCount) {
     if (sensitivity === live.sensitivity) return live;
     db.query("UPDATE claims SET sensitivity = ? WHERE claim_id = ?")
       .run(sensitivity, live.claim_id);
@@ -464,7 +466,7 @@ function corroborate(db: Database, live: Claim, incoming: Claim, at: string): Cl
     authority: higherAuthority(incoming.authority, live.authority),
     last_confirmed_at: at,
     sensitivity,
-    provenance: [...new Set([...live.provenance, ...incoming.provenance])],
+    provenance: [...existingEvidence],
   };
   persistClaim(db, next);
   db.query("UPDATE claims SET provenance = ?, sensitivity = ? WHERE claim_id = ?")
