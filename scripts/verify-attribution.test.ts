@@ -30,6 +30,35 @@ describe("attribution verification", () => {
     expect(failures(`İ [${exactCredit}](${canonicalUrl})`)).toEqual([]);
   });
 
+  test("reports original line and UTF-16 column for every invalid credit", () => {
+    const text = `atlascore\r\n\r\n😀 atlascore\n[${exactCredit}](${canonicalUrl})\natlascore`;
+    expect(failures(text)).toEqual([
+      expect.objectContaining({ path, line: 1, column: 1 }),
+      expect.objectContaining({ path, line: 3, column: 4 }),
+      expect.objectContaining({ path, line: 5, column: 1 }),
+    ]);
+  });
+
+  test("locates invalid credit after a long multiline prefix", () => {
+    const prefix = "unrelated prose\n".repeat(100_000);
+    expect(failures(`${prefix}atlascore\n[${exactCredit}](${canonicalUrl})`)).toEqual([
+      expect.objectContaining({ path, line: 100_001, column: 1 }),
+    ]);
+  });
+
+  test("locates dense diagnostics across valid credits and repeated calls", () => {
+    const row = `atlascore ${exactCredit} atlascore\r\n`;
+    const text = row.repeat(2_000) + `[${exactCredit}](${canonicalUrl})`;
+    const expected = Array.from({ length: 2_000 }, (_, index) => [
+      expect.objectContaining({ path, line: index + 1, column: 1 }),
+      expect.objectContaining({ path, line: index + 1, column: 21 }),
+    ]).flat();
+    expect(failures(text)).toEqual(expected);
+    expect(failures(`atlascore [${exactCredit}](${canonicalUrl})`)).toEqual([
+      expect.objectContaining({ path, line: 1, column: 1 }),
+    ]);
+  });
+
   test("treats the configured credit as literal text", () => {
     const punctuatedCredit = "Atlas.Core+";
     const punctuatedUrl = "https://example.invalid/Atlas.Core+";
