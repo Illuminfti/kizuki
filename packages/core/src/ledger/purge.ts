@@ -993,7 +993,7 @@ function eventPurgeIntegrityOk(db: Database, batchId: string): boolean {
        WHERE m.batch_id = ?
          AND (
            length(x.content_hash) != 64 OR x.content_hash GLOB '*[^0-9a-f]*'
-           OR length(x.source_record_id) NOT BETWEEN 1 AND ${EVENT_LIMITS.sourceRecordIdBytes}
+           OR length(CAST(x.source_record_id AS BLOB)) NOT BETWEEN 1 AND ${EVENT_LIMITS.sourceRecordIdBytes}
            OR (
              x.selector_kind IS NOT NULL
              AND x.selector_kind NOT IN (${RECORDED_SELECTOR_KINDS.map((kind) => `'${kind}'`).join(", ")})
