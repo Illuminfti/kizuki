@@ -259,7 +259,7 @@ export class Fts5RetrievalPort implements RetrievalPort {
       const docs: RetrievalDoc[] = [];
       for await (const doc of source) {
         if (docs.length >= 10_000) throw new PortError("config_invalid", "FTS rebuild exceeds 10000 documents", false);
-        docs.push(validateRetrievalDoc(doc));
+        docs.push(structuredClone(validateRetrievalDoc(doc)));
       }
       this.assertOpen();
       this.db.transaction(() => {

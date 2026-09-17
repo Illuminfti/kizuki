@@ -382,6 +382,40 @@ test("FTS atomic rebuild preserves old documents on source failure and accepts u
   expect(engineJson(ctx.data_dir).rebuilt_at).toBe("2026-09-02T12:00:00.000Z");
 });
 
+test("FTS rebuild snapshots documents before a producer reuses its object", async () => {
+  const { port, ctx } = openPort();
+  const original = SYNTHETIC_DOCS[0]!;
+  const doc = { ...original, subjects: [...original.subjects], provenance: [...original.provenance] };
+  const firstId = doc.doc_id;
+  const firstSubjects = [...doc.subjects];
+  const firstProvenance = [...doc.provenance];
+  async function* source() {
+    yield doc;
+    doc.subjects.push("person:replacement");
+    doc.provenance.push("event:replacement");
+    doc.doc_id = "page:replacement";
+    doc.text = "replacementquartz";
+    yield doc;
+    doc.text = "mutatedafteryield";
+  }
+  await port.rebuildFromDocuments!(source());
+  expect((await port.verifyAbsent([firstId, "page:replacement"])).found.slice().sort())
+    .toEqual([firstId, "page:replacement"].sort());
+  expect((await port.search({ ...SYNTHETIC_QUERY, text: "replacementquartz" })).hits.map(hit => hit.doc_id))
+    .toEqual(["page:replacement"]);
+  expect((await port.search({ ...SYNTHETIC_QUERY, text: "mutatedafteryield" })).hits).toEqual([]);
+  const db = new Database(join(ctx.data_dir, FTS5_RETRIEVAL_STORE_REL), { readonly: true });
+  try {
+    const stored = db.query<{ subjects: string; provenance: string }, [string]>(
+      "SELECT subjects, provenance FROM search_documents WHERE doc_id=?",
+    ).get(firstId)!;
+    expect(JSON.parse(stored.subjects)).toEqual(firstSubjects);
+    expect(JSON.parse(stored.provenance)).toEqual(firstProvenance);
+  } finally {
+    db.close();
+  }
+});
+
 test("FTS rebuild commits rebuilt_at in the store and repairs engine.json on reopen", async () => {
   const temporary = temporaryPortContext(FTS5_RETRIEVAL_DESCRIPTOR);
   disposers.push(temporary.cleanup);
