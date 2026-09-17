@@ -175,6 +175,51 @@ describe("committed Maestro state validation", () => {
     }
   });
 
+  test("CLI rejects invalid UTF-8 in tasks and candidates without rewriting bytes", () => {
+    const root = mkdtempSync(join(tmpdir(), "maestro-utf8-"));
+    try {
+      mkdirSync(join(root, "scripts"));
+      const state = join(root, ".maestro", "tasks");
+      mkdirSync(join(state, "candidates"), { recursive: true });
+      const script = join(root, "scripts", "verify-maestro.ts");
+      writeFileSync(script, readFileSync(join(import.meta.dir, "verify-maestro.ts")));
+      const taskPath = join(state, "tasks.jsonl");
+      const candidatePath = join(state, "candidates", "example.json");
+      const decoder = new TextDecoder("utf-8", { fatal: true });
+      const isValidUtf8 = (bytes: Buffer) => {
+        try { decoder.decode(bytes); return true; } catch { return false; }
+      };
+      for (const target of [taskPath, candidatePath]) {
+        for (const bytes of [Buffer.from("日本語 �"), Buffer.from([0xef, 0xbf, 0xbd]),
+          Buffer.from([0xff]), Buffer.from([0xc3]), Buffer.from([0xc0, 0xaf])]) {
+          writeFileSync(taskPath, JSON.stringify(historical) + "\n");
+          writeFileSync(candidatePath, JSON.stringify(candidate));
+          const record = target === taskPath ? historical : candidate;
+          const input = Buffer.concat([
+            Buffer.from(JSON.stringify(record).slice(0, -1) + ',"note":"'),
+            bytes, Buffer.from('"}\n'),
+          ]);
+          writeFileSync(target, input);
+          const beforeTask = readFileSync(taskPath);
+          const beforeCandidate = readFileSync(candidatePath);
+          const result = spawnSync(process.execPath, [script], {
+            encoding: "utf8", timeout: 5000, killSignal: "SIGKILL",
+          });
+          const valid = isValidUtf8(bytes);
+          expect(result.error).toBeUndefined();
+          expect(result.signal).toBeNull();
+          expect(result.status).toBe(valid ? 0 : 1);
+          expect(result.stdout).toBe(valid ? "Maestro committed state verification passed\n" : "");
+          expect(result.stderr).toBe(valid ? "" : "Maestro committed state is missing or malformed\n");
+          expect(readFileSync(taskPath)).toEqual(beforeTask);
+          expect(readFileSync(candidatePath)).toEqual(beforeCandidate);
+        }
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("validates the repository ledger and every close candidate", () => {
     const root = join(import.meta.dir, "..", ".maestro", "tasks");
     const tasks = readFileSync(join(root, "tasks.jsonl"), "utf8")

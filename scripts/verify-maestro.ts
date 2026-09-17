@@ -72,14 +72,18 @@ export function validateMaestroState(tasks: unknown[], candidates: unknown[]): s
   return errors;
 }
 
+const decoder = new TextDecoder("utf-8", { fatal: true });
+
 if (import.meta.main) {
   try {
     const root = join(import.meta.dir, "..", ".maestro", "tasks");
-    const tasks = readFileSync(join(root, "tasks.jsonl"), "utf8")
+    // Committed state is evidence: malformed bytes must fail closed instead of
+    // being silently replaced with replacement characters before validation.
+    const tasks = decoder.decode(readFileSync(join(root, "tasks.jsonl")))
       .split("\n").filter(line => !/^[ \t\r]*$/.test(line)).map(line => JSON.parse(line));
     const candidates = readdirSync(join(root, "candidates"))
       .filter(name => name.endsWith(".json")).sort()
-      .map(name => JSON.parse(readFileSync(join(root, "candidates", name), "utf8")));
+      .map(name => JSON.parse(decoder.decode(readFileSync(join(root, "candidates", name)))));
     const errors = validateMaestroState(tasks, candidates);
     for (const error of errors) console.error(error);
     if (errors.length > 0) process.exitCode = 1;
