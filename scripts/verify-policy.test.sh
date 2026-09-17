@@ -156,6 +156,33 @@ if (
 fi
 rm -rf -- "$shallow_copy"
 
+# A caller's case-insensitive pattern option must not broaden Git's boolean protocol.
+for matching in on off; do
+  for probe_output in false true FALSE False TRUE unexpected ''; do
+    (
+      git() { printf '%s\n' "$probe_output"; }
+      if [[ "$matching" == on ]]; then shopt -s nocasematch; else shopt -u nocasematch; fi
+      status=0
+      assert_full_history >"$fixture_root/history-case.out" 2>"$fixture_root/history-case.err" || status=$?
+      if shopt -q nocasematch; then actual_matching=on; else actual_matching=off; fi
+      expected_status=2
+      expected_error='verification failed: could not determine whether the clone is shallow'
+      if [ "$probe_output" = false ]; then
+        expected_status=0
+        expected_error=''
+      elif [ "$probe_output" = true ]; then
+        expected_error='verification failed: shallow clone cannot scan reachable commit messages'
+      fi
+      if ((status != expected_status)) || [ "$actual_matching" != "$matching" ] ||
+         [[ -s "$fixture_root/history-case.out" ]] ||
+         [ "$(<"$fixture_root/history-case.err")" != "$expected_error" ]; then
+        printf 'policy test failed: history boolean parsing depended on nocasematch\n' >&2
+        exit 1
+      fi
+    )
+  done
+done
+
 restrict_root="$(mktemp -d)"
 git -C "$restrict_root" init -q
 git -C "$restrict_root" config user.name verifier

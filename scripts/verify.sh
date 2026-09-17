@@ -146,11 +146,11 @@ assert_required_helpers() {
 assert_full_history() {
   local shallow
   shallow="$(git rev-parse --is-shallow-repository)"
-  if [[ "$shallow" == "true" ]]; then
+  if [ "$shallow" = "true" ]; then
     printf 'verification failed: shallow clone cannot scan reachable commit messages\n' >&2
     return 2
   fi
-  if [[ "$shallow" != "false" ]]; then
+  if [ "$shallow" != "false" ]; then
     printf 'verification failed: could not determine whether the clone is shallow\n' >&2
     return 2
   fi
