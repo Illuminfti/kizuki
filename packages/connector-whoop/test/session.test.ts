@@ -127,6 +127,34 @@ test('refresh and API requests share one operation budget', async () => {
     await port.close();
 });
 
+test('HTTP 401 fences capture and provider revoke until explicit reconnect', async () => {
+    const f = new WhoopFixture(), port = await f.connected();
+    try {
+        const first = await port.sync(null), saved = f.state.slice();
+        f.failStatus = 401;
+        const refused = await port.sync(first.cursor);
+        expect(refused.status).toBe('unavailable');
+        expect(refused.detail).toContain('unauthenticated');
+        expect(refused.events).toEqual([]);
+        expect(refused.cursor).toBe(first.cursor);
+        expect((await port.health()).state).toBe('unauthenticated');
+        const calls = f.requests.length;
+        f.failStatus = 0;
+        expect((await port.sync(first.cursor)).status).toBe('unavailable');
+        expect((await port.backfill(first.cursor)).status).toBe('unavailable');
+        await expect(port.revokeProviderAccess()).rejects.toThrow();
+        expect(f.requests).toHaveLength(calls);
+        expect(f.state).toEqual(saved);
+        await port.connect(async () => new TextDecoder().decode(f.state));
+        const resumed = await port.sync(first.cursor);
+        expect(resumed.status).not.toBe('unavailable');
+        expect(resumed.cursor).toBe(first.cursor);
+        expect((await port.health()).state).toBe('degraded');
+    } finally {
+        await port.close();
+    }
+});
+
 test('instance manifest declares state custody and health recovers persisted cooldown', async () => {
     const f = new WhoopFixture();
     let port = await f.connected();

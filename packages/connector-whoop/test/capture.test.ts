@@ -102,6 +102,34 @@ test('rate-limit cooldown is durable across restart and provider authorization r
     await other.close();
     expect(g.requests).toHaveLength(before);
 });
+test('invalid Retry-After preserves reset cooldown through restart', async () => {
+    const f = new WhoopFixture();
+    const port = await f.connected({ fetch: async request => {
+        const response = await f.fetch(request);
+        if (response.status === 429) response.headers.set('retry-after', '-1');
+        return response;
+    } });
+    f.failStatus = 429;
+    f.retry = '120';
+    const refused = await port.sync(null);
+    expect(refused.status).toBe('unavailable');
+    expect(refused.cursor).toBeNull();
+    expect(Date.parse(parseState(f.state).retry_at!) - f.time.getTime()).toBe(120000);
+    await port.close();
+    const resumed = await f.connected();
+    f.failStatus = 0;
+    f.time = new Date(f.time.getTime() + 61000);
+    const count = f.requests.length;
+    expect((await resumed.sync(null)).status).toBe('unavailable');
+    expect(f.requests).toHaveLength(count);
+    f.time = new Date(f.time.getTime() + 60000);
+    const recovered = await resumed.sync(null);
+    expect(recovered.status).toBeUndefined();
+    expect(recovered.events).toHaveLength(2);
+    expect(f.requests.length).toBeGreaterThan(count);
+    await resumed.close();
+});
+
 test('over-limit initial history and cyclic page tokens do not emit partial history or advance', async () => {
     const f = new WhoopFixture(1001);
     const port = await f.connected();
@@ -182,9 +210,47 @@ for (const operation of ['sync', 'provider-revoke'] as const) {
         expect((await port.health()).state).toBe('unauthenticated');
         expect(f.state).toEqual(saved);
         f.failStatus = 0;
+        const calls = f.requests.length;
+        expect((await port.sync(first.cursor)).status).toBe('unavailable');
+        await expect(port.revokeProviderAccess()).rejects.toThrow();
+        expect(f.requests).toHaveLength(calls);
+        expect(f.state).toEqual(saved);
+        await port.connect(async () => new TextDecoder().decode(f.state));
         expect((await port.sync(first.cursor)).status).toBeUndefined();
         expect((await port.health()).state).toBe('degraded');
         await port.close();
+    });
+}
+
+for (const resource of ['profile', 'cycle', 'recovery', 'sleep', 'workout'] as const) {
+    test(`account mismatch in ${resource} fences capture until explicit reconnect`, async () => {
+        const f = new WhoopFixture(2, {
+            resources: ['cycle', 'recovery', 'sleep', 'workout'],
+            fields: ['metrics', 'activity'], history_start: '2026-01-01T00:00:00Z'
+        });
+        const port = await f.connected();
+        try {
+            const first = await port.backfill(null), saved = f.state.slice();
+            if (resource === 'profile') f.account = 8;
+            else f.records[resource][1]!.user_id = 8;
+            const refused = await port.sync(first.cursor);
+            expect(refused).toMatchObject({ events: [], cursor: first.cursor, status: 'unavailable' });
+            expect(refused.detail).toContain('identity_mismatch');
+            expect((await port.health()).state).toBe('unauthenticated');
+            expect(f.state).toEqual(saved);
+            if (resource === 'profile') f.account = 7;
+            else f.records[resource][1]!.user_id = 7;
+            const calls = f.requests.length;
+            expect((await port.sync(first.cursor)).status).toBe('unavailable');
+            expect((await port.backfill(first.cursor)).status).toBe('unavailable');
+            await expect(port.revokeProviderAccess()).rejects.toThrow();
+            expect(f.requests).toHaveLength(calls);
+            expect(f.state).toEqual(saved);
+            await port.connect(async () => new TextDecoder().decode(f.state));
+            expect((await port.sync(first.cursor)).status).toBeUndefined();
+        } finally {
+            await port.close();
+        }
     });
 }
 
