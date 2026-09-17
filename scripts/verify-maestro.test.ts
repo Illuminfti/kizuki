@@ -137,6 +137,36 @@ describe("committed Maestro state validation", () => {
     }
   });
 
+  test("rejects lone surrogates in other committed text without mutating or exposing them", () => {
+    const joined = (errors: string[]) => errors.join("\n");
+    for (const [field, value] of [
+      ["title", "Wave \uD800"],
+      ["description", "see \uDC00 docs"],
+      ["closeReason", "Superseded \uD800 by RFC"],
+      ["note", "\uDC80"],
+    ] as const) {
+      const corruptedTask = { ...task, [field]: value };
+      expect(validateMaestroState([corruptedTask], [])).toEqual(["task 1: invalid text"]);
+      expect(joined(validateMaestroState([corruptedTask], []))).not.toContain(value);
+      expect((corruptedTask as Record<string, unknown>)[field]).toBe(value);
+      const corruptedCandidate = { ...candidate, [field]: value };
+      expect(validateMaestroState([historical], [corruptedCandidate])).toEqual([
+        "candidate 1: invalid text",
+      ]);
+      expect((corruptedCandidate as Record<string, unknown>)[field]).toBe(value);
+    }
+    for (const corrupted of [
+      { ...task, labels: ["ok", "\uD800"] },
+      { ...task, meta: { deep: ["\uDC80"] } },
+      { ...task, note: { nested: { deeper: "\uDFFF" } } },
+    ]) {
+      expect(validateMaestroState([corrupted], [])).toEqual(["task 1: invalid text"]);
+    }
+    expect(validateMaestroState([
+      { ...task, title: "日本語 — §18.4", description: "ok \uFFFD text", labels: ["領域"] },
+    ], [])).toEqual([]);
+  });
+
   test("accepts done close candidates using the historical task status", () => {
     const closedCandidate = { id: "tsk-closed", sourceTaskId: "tsk-closed" };
     expect(validateMaestroState([{ id: "tsk-closed", status: "done" }], [closedCandidate])).toEqual([]);

@@ -21,6 +21,15 @@ const hasLoneSurrogate = (value: string): boolean => {
   return false;
 };
 
+// Committed text beyond the id, status and supersession fields can also carry
+// lone surrogates through byte decoding and JSON.parse, so scan every value.
+const hasDeepLoneSurrogate = (value: unknown): boolean => {
+  if (typeof value === "string") return hasLoneSurrogate(value);
+  if (Array.isArray(value)) return value.some(hasDeepLoneSurrogate);
+  if (isRecord(value)) return Object.values(value).some(hasDeepLoneSurrogate);
+  return false;
+};
+
 // Committed history and lane definitions are not a live worker lease store.
 export function validateMaestroState(tasks: unknown[], candidates: unknown[]): string[] {
   const errors: string[] = [];
@@ -37,6 +46,11 @@ export function validateMaestroState(tasks: unknown[], candidates: unknown[]): s
     if (typeof value["status"] === "string" &&
         (value["status"] !== value["status"].trim() || hasLoneSurrogate(value["status"]))) {
       errors.push(`${label}: invalid status`);
+    }
+    if (Object.entries(value).some(([field, field_value]) =>
+      field !== "id" && field !== "status" && field !== "supersededBy" &&
+      hasDeepLoneSurrogate(field_value))) {
+      errors.push(`${label}: invalid text`);
     }
     if (value["status"] === "in_progress") errors.push(`${label}: live reservation in committed state`);
     return true;
