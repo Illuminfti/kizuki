@@ -4,6 +4,7 @@ import { TelegramConnectorError, redactedCause } from "./api";
 const DEAD_SESSION = new Set([
   "AUTH_KEY_UNREGISTERED",
   "AUTH_KEY_INVALID",
+  "AUTH_KEY_DUPLICATED",
   "SESSION_REVOKED",
   "SESSION_EXPIRED",
   "USER_DEACTIVATED",
