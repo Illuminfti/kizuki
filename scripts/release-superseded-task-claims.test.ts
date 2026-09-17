@@ -57,12 +57,13 @@ describe("release superseded task claims", () => {
     }
   });
 
-  test("releases the lastHeartbeatAt alias on superseded tasks but not live tasks", () => {
-    const historical = { id: "old", status: "superseded", lastHeartbeatAt: "2026-09-01T23:28:00Z" };
-    expect(JSON.parse(releaseSupersededTaskClaims(JSON.stringify(historical))))
-      .toEqual({ id: "old", status: "superseded" });
-    const live = JSON.stringify({ ...historical, status: "in_progress" });
-    expect(releaseSupersededTaskClaims(live)).toBe(live);
+  test("releases a superseded lastHeartbeatAt without changing a live heartbeat", () => {
+    const old = { id: "old", status: "superseded", lastHeartbeatAt: "2026-09-01T23:28:00Z" };
+    const live = ' {"id":"live", "status":"in_progress", "lastHeartbeatAt":"2026-09-01T23:28:00Z"}';
+    const input = `${JSON.stringify(old)}\n${live}\n`;
+    const output = releaseSupersededTaskClaims(input);
+    expect(output).toBe(`{"id":"old","status":"superseded"}\n${live}\n`);
+    expect(releaseSupersededTaskClaims(output)).toBe(output);
   });
 
   test("repairs current committed history without touching the input file", () => {
