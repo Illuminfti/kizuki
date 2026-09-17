@@ -804,6 +804,12 @@ function restoreEnrollment(payload, text) {
   const pathInput = dialog.querySelector('#source-path'), calendarInput = dialog.querySelector('#calendar-id');
   if (pathInput && payload.path) pathInput.value = payload.path;
   if (calendarInput && payload.calendar_id) calendarInput.value = payload.calendar_id;
+  if (Array.isArray(payload.fields)) {
+    for (const name of provider.fields) {
+      const checkbox = dialog.querySelector(`#field-${name}`);
+      if (checkbox) checkbox.checked = payload.fields.includes(name);
+    }
+  }
   const errorLine = dialog.querySelector('.form-error');
   if (errorLine) errorLine.textContent = text;
   (pathInput || calendarInput || firstFocusable(dialog))?.focus({ preventScroll: true });
