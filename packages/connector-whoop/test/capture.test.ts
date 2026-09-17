@@ -193,7 +193,7 @@ test('long explicit provider cooldown is never shortened to a local monthly cap'
 });
 
 for (const operation of ['sync', 'provider-revoke'] as const) {
-    test(`HTTP 401 reports unauthenticated health after ${operation} and successful access recovers`, async () => {
+    test(`HTTP 401 fences ${operation} until explicit reconnect`, async () => {
         const f = new WhoopFixture(), port = await f.connected();
         const first = await port.backfill(null);
         const saved = f.state.slice();
@@ -210,6 +210,13 @@ for (const operation of ['sync', 'provider-revoke'] as const) {
         expect((await port.health()).state).toBe('unauthenticated');
         expect(f.state).toEqual(saved);
         f.failStatus = 0;
+        const requests = f.requests.length;
+        expect((await port.sync(first.cursor)).status).toBe('unavailable');
+        expect((await port.backfill(first.cursor)).status).toBe('unavailable');
+        await expect(port.revokeProviderAccess()).rejects.toThrow();
+        expect(f.requests).toHaveLength(requests);
+        expect(f.state).toEqual(saved);
+        await port.connect(async () => new TextDecoder().decode(f.state));
         expect((await port.sync(first.cursor)).status).toBeUndefined();
         expect((await port.health()).state).toBe('degraded');
         await port.close();
