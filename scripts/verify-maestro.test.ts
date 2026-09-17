@@ -18,7 +18,7 @@ describe("committed Maestro state validation", () => {
     expect(validateMaestroState([task, historical], [candidate])).toEqual([]);
   });
 
-  for (const field of ["assignee", "claimedAt", "heartbeatAt", "leaseExpiresAt"]) {
+  for (const field of ["assignee", "claimedAt", "heartbeatAt", "lastHeartbeatAt", "leaseExpiresAt"]) {
     test(`rejects ${field} on tasks and candidates without exposing its value`, () => {
       const value = "synthetic-worker-value";
       for (const [tasks, candidates] of [

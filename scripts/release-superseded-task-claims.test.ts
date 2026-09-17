@@ -19,6 +19,14 @@ describe("release superseded task claims", () => {
       supersededBy: task.supersededBy, closeReason: task.closeReason, blockedBy: task.blockedBy });
   });
 
+  test("releases the lastHeartbeatAt alias only on superseded tasks", () => {
+    const historical = { id: "old", status: "superseded", lastHeartbeatAt: "2026-09-01T23:28:00Z" };
+    expect(JSON.parse(releaseSupersededTaskClaims(JSON.stringify(historical))))
+      .toEqual({ id: "old", status: "superseded" });
+    const live = JSON.stringify({ ...historical, status: "in_progress" });
+    expect(releaseSupersededTaskClaims(live)).toBe(live);
+  });
+
   test("repairs current committed history without touching the input file", () => {
     const path = join(root, ".maestro/tasks/tasks.jsonl");
     const before = readFileSync(path, "utf8");
