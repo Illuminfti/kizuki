@@ -40,6 +40,23 @@ test("placeholder values yield no credentials", () => {
   expect(appCredentials({ api_id: "12", api_hash: "" })).toBeNull();
 });
 
+test("blank app hashes refuse sign-in before prompts or provider access", async () => {
+  for (const api_hash of [" ", "\t", "\r\n", " \t\n "]) {
+    const api = new ScriptedTelegramApi(fixtureAccount());
+    const connector = new TelegramConnector({}, {
+      api: () => api,
+      credentials: () => appCredentials({ api_id: "12345", api_hash }),
+    });
+    const io = new ScriptedIo([]);
+    const writer = new CapturingWriter();
+    const error = await rejection(() => connector.signIn(io, writer));
+    expect(error.code).toBe("placeholder_credentials");
+    expect(error.message).toBe(PLACEHOLDER_CREDENTIALS_MESSAGE);
+    expect(io.prompts).toEqual([]);
+    expect(api.calls).toEqual([]);
+  }
+});
+
 test("a malformed app id yields no credentials", () => {
   expect(appCredentials({ api_id: "abc", api_hash: "cafe" })).toBeNull();
   expect(appCredentials({ api_id: "-5", api_hash: "cafe" })).toBeNull();

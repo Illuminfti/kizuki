@@ -342,7 +342,7 @@ function emptyOutcome(): PurgeOutcome {
   };
 }
 
-const RECORDED_SELECTOR_KINDS = ["event", "connector", "record", "source", "subject"] as const;
+const RECORDED_SELECTOR_KINDS = ["event", "connector", "record", "source", "subject", "event+connector"] as const;
 type RecordedSelectorKind = (typeof RECORDED_SELECTOR_KINDS)[number];
 
 function recordedSelectorKind(filter: PurgeFilter): RecordedSelectorKind | null {
@@ -356,11 +356,14 @@ function recordedSelectorKind(filter: PurgeFilter): RecordedSelectorKind | null 
     return "subject";
   }
   const n = Number(event) + Number(source) + Number(connector) + Number(record);
-  if (n !== 1) return null;
-  if (event) return "event";
-  if (connector) return "connector";
-  if (record) return "record";
-  if (source) return "source";
+  if (n === 1) {
+    if (event) return "event";
+    if (connector) return "connector";
+    if (record) return "record";
+    if (source) return "source";
+    return null;
+  }
+  if (n === 2 && event && connector) return "event+connector";
   return null;
 }
 
@@ -993,7 +996,7 @@ function eventPurgeIntegrityOk(db: Database, batchId: string): boolean {
        WHERE m.batch_id = ?
          AND (
            length(x.content_hash) != 64 OR x.content_hash GLOB '*[^0-9a-f]*'
-           OR length(x.source_record_id) NOT BETWEEN 1 AND ${EVENT_LIMITS.sourceRecordIdBytes}
+           OR length(CAST(x.source_record_id AS BLOB)) NOT BETWEEN 1 AND ${EVENT_LIMITS.sourceRecordIdBytes}
            OR (
              x.selector_kind IS NOT NULL
              AND x.selector_kind NOT IN (${RECORDED_SELECTOR_KINDS.map((kind) => `'${kind}'`).join(", ")})

@@ -16,7 +16,9 @@ interface Activity {
 
 function boundedText(value: unknown, bytes: number): value is string {
   return typeof value === "string" && value.trim().length > 0 &&
-    Buffer.byteLength(value, "utf8") <= bytes;
+    Buffer.byteLength(value, "utf8") <= bytes &&
+    // JSON escapes can decode to lone surrogates despite lossless source bytes.
+    Buffer.from(value, "utf8").toString("utf8") === value;
 }
 
 /**

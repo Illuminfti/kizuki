@@ -601,7 +601,7 @@ function sameHashes(left: Record<string, string>, right: Record<string, string>)
 }
 
 export function evaluateNativeAttestationReceipt(value: unknown, expected: NativeAttestationExpected): SurfaceEvaluation {
-  const row = exact(value, "schema,identity,target,host_platform,host_arch,host_kernel_release,bun_version,execution_class,binary_sha256,package_sha256,argv,exit_code,stdout_sha256,outcome,failures");
+  const row = exact(value, "schema,identity,target,host_platform,host_arch,host_kernel_release,bun_version,execution_class,binary_sha256,package_sha256,argv,exit_code,stdout_sha256,mcp_argv,mcp_exit_code,mcp_stderr_sha256,outcome,failures");
   if (row.schema !== NATIVE_ATTESTATION_PRODUCER) reject("invalid-schema");
   const identity = parseSharedIdentity(row.identity, NATIVE_ATTESTATION_PRODUCER, expected.candidate_source_sha);
   if (identity.source_class !== "native-host-attestation" || identity.actor_class !== "automated-producer") reject("invalid-identity");
@@ -625,6 +625,10 @@ export function evaluateNativeAttestationReceipt(value: unknown, expected: Nativ
   if (!equalJson(argv, ["kizuki", "--help"])) reject("native-command-substituted");
   if (typeof row.exit_code !== "number" || !Number.isSafeInteger(row.exit_code) || row.exit_code < 0 || row.exit_code > 255) reject("invalid-schema");
   digest(row.stdout_sha256);
+  const mcp_argv = stringList(row.mcp_argv, 8, 64);
+  if (!equalJson(mcp_argv, ["kizuki-mcp"])) reject("native-command-substituted");
+  if (typeof row.mcp_exit_code !== "number" || !Number.isSafeInteger(row.mcp_exit_code) || row.mcp_exit_code < 0 || row.mcp_exit_code > 255) reject("invalid-schema");
+  digest(row.mcp_stderr_sha256);
   const package_sha256 = packageHashes(row.package_sha256);
   if (digest(row.binary_sha256) !== package_sha256.kizuki) reject("proof-identity-mismatch");
   if (expected.package_sha256 === null) return { status: "FAIL", reason: "native-package-not-indexed", creditDigest: false };

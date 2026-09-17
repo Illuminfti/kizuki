@@ -62,6 +62,23 @@ async function summaries(replies: string[]): Promise<unknown> {
   return session.fetchSummaries("1:10").catch((caught: unknown) => caught);
 }
 
+describe("session opening", () => {
+  test("closes the transport when reading the greeting fails", async () => {
+    const failure = new Error("synthetic receive failure");
+    let closes = 0;
+    let sends = 0;
+    const dial: ImapDialer = async () => ({
+      async send() { sends += 1; },
+      async receive() { throw failure; },
+      close() { closes += 1; },
+    });
+
+    await expect(ImapSession.open(dial, STATE)).rejects.toBe(failure);
+    expect(closes).toBe(1);
+    expect(sends).toBe(0);
+  });
+});
+
 describe("fetch summaries", () => {
   test("accepts a complete row", async () => {
     const result = await summaries([

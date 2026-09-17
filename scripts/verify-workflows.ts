@@ -89,10 +89,10 @@ function validateJobs(
       failures.push({ path, reason: `job "${name}" has no runs-on` });
     }
     const timeout = rawJob["timeout-minutes"];
-    if (typeof timeout !== "number" || timeout < 1) {
+    if (typeof timeout !== "number" || !Number.isInteger(timeout) || timeout < 1) {
       failures.push({
         path,
-        reason: `job "${name}" must set timeout-minutes to a positive number`,
+        reason: `job "${name}" must set timeout-minutes to a positive integer`,
       });
     }
     const steps = rawJob["steps"];
