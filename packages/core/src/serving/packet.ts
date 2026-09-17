@@ -420,6 +420,9 @@ export async function serveContextPacket(
         canDelta &&
         retainPrefix &&
         priorHash === packetHash &&
+        // A matching partial body does not prove the requested context is current.
+        // Keep unavailable capabilities visible instead of endorsing a cached prefix.
+        degraded.length === 0 &&
         status === "current" &&
         tokens(`${header}UNCHANGED\n`) <= budget;
       const packet = unchanged ? `${header}UNCHANGED\n` : `${header}${body}`;
