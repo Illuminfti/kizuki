@@ -28,6 +28,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Failed scratch-file allocation must stop before invoking a tracked scanner.
+for helper in assert_safe_tracked_paths assert_safe_tracked_text; do
+  for errexit in on off; do
+    (
+      mktemp() { return 73; }
+      git() { printf 'called' >"$fixture_root/allocation-producer"; return 0; }
+      if [ "$errexit" = on ]; then set -e; else set +e; fi
+      status=0
+      "$helper" 'unused-pattern' >"$fixture_root/allocation.out" 2>"$fixture_root/allocation.err" || status=$?
+      case "$-" in *e*) actual_errexit=on ;; *) actual_errexit=off ;; esac
+      if ((status != 73)) || [ "$actual_errexit" != "$errexit" ] ||
+         [[ -e "$fixture_root/allocation-producer" ]] || [[ -s "$fixture_root/allocation.out" ]] ||
+         [ "$(cat -- "$fixture_root/allocation.err")" != 'verification failed: tracked scanner temporary-file allocation exited 73' ]; then
+        printf 'policy test failed: tracked scanner continued after allocation failure\n' >&2
+        exit 1
+      fi
+    )
+  done
+done
+
 git -C "$fixture_root" init -q
 git -C "$fixture_root" config user.name verifier
 git -C "$fixture_root" config user.email verifier@example.invalid

@@ -61,8 +61,12 @@ assert_safe_tracked_paths() {
   local paths_file
   local status
 
-  paths_file="$(mktemp)"
   status=0
+  paths_file="$(mktemp)" || status=$?
+  if ((status != 0)); then
+    printf 'verification failed: tracked scanner temporary-file allocation exited %d\n' "$status" >&2
+    return "$status"
+  fi
   git ls-files -z >"$paths_file" || status=$?
   if ((status != 0)); then
     rm -f -- "$paths_file"
@@ -90,8 +94,12 @@ assert_safe_tracked_paths() {
 assert_safe_tracked_text() {
   local identifier_re="$1"
   local records_file
-  local status
-  records_file="$(mktemp)"
+  local status=0
+  records_file="$(mktemp)" || status=$?
+  if ((status != 0)); then
+    printf 'verification failed: tracked scanner temporary-file allocation exited %d\n' "$status" >&2
+    return "$status"
+  fi
   if git grep --no-color -I -n -z -i -E "$identifier_re" >"$records_file"; then
     if bun "$verify_script_dir/verify-tracked-text.ts" "$identifier_re" <"$records_file"; then
       status=0
