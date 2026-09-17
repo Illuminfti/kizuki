@@ -363,7 +363,10 @@ function closeDialog() {
   closingDialogGeneration = dialogGeneration;
   clearDialogTransient(); dialog.close(); restoreDialogFocus();
 }
-dialog.addEventListener('cancel', clearDialogTransient);
+dialog.addEventListener('cancel', () => {
+  closingDialogGeneration = dialogGeneration;
+  clearDialogTransient();
+});
 dialog.addEventListener('close', () => {
   // Native close events can be queued after openDialog replaces a prior panel.
   if (dialog.open || closingDialogGeneration !== dialogGeneration) return;

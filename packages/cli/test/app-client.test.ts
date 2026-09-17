@@ -68,6 +68,32 @@ function fixture() {
 }
 const status = (operations: unknown[] = [], epoch = '1') => ({ vault: { ready: true }, visibility_epoch: epoch, operations });
 
+test('native dialog cancellation restores focus and releases its return target', async () => {
+    const f = fixture();
+    f.evaluate(`document.activeElement=el('button'); globalThis.opener=document.activeElement; openDialog('Source setup','Synthetic');`);
+    await f.dialog.fire('cancel');
+    f.dialog.close();
+    await tick();
+    expect(f.evaluate<boolean>('opener.focused')).toBe(true);
+    expect(f.evaluate('dialogReturnFocus')).toBeNull();
+    expect(f.evaluate('closingDialogGeneration')).toBeNull();
+});
+
+test('a queued cancellation close leaves a newer dialog and its cleanup intact', async () => {
+    const f = fixture();
+    f.evaluate(`openDialog('Old source','Synthetic'); globalThis.cleanups=0; dialogCleanup=()=>{cleanups++};`);
+    await f.dialog.fire('cancel');
+    f.dialog.close();
+    f.evaluate(`openDialog('New source','Synthetic'); dialogCleanup=()=>{cleanups++};`);
+    await tick();
+    expect(f.dialog.open).toBe(true);
+    expect(f.dialog.textContent).toContain('New source');
+    expect(f.evaluate<number>('cleanups')).toBe(1);
+    f.evaluate('closeDialog()');
+    await tick();
+    expect(f.evaluate<number>('cleanups')).toBe(2);
+});
+
 test('Activity names the receipt action while preserving exact references in closed details', () => {
     for (const [action, title] of [['create', 'Memory page created'], ['edit', 'Memory page updated'], ['archive', 'Memory page removed'], ['unknown', 'Memory change'], ['toString', 'Memory change']] as const) {
         const f = fixture();
