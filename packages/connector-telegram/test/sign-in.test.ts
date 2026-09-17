@@ -8,6 +8,8 @@ import {
   fixtureAccount,
 } from "../src/fixture";
 import { parseState } from "../src/state";
+import { TelegramConnectorError } from "../src/api";
+import { runSignIn, waitSeconds } from "../src/sign-in";
 import {
   CapturingWriter,
   ScriptedIo,
@@ -99,6 +101,26 @@ test("a short wait is honoured once and then sign-in continues", async () => {
   expect(await connector.signIn(io, writer)).toEqual({ display: "@ada" });
   expect(sleeps).toEqual([30_000]);
   expect(io.notices).toEqual(["Telegram asked us to wait 30s"]);
+});
+
+test("invalid cooldowns propagate without sleeping or retrying sign-in", async () => {
+  for (const seconds of [0, -1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    const { api, sleeps } = harness({ config: {} });
+    const io = new ScriptedIo([]);
+    const error = new TelegramConnectorError("flood_wait", "invalid cooldown", {
+      retry_after: seconds,
+    });
+    let starts = 0;
+    api.start = async () => { starts += 1; throw error; };
+
+    expect(waitSeconds(error)).toBeNull();
+    expect(await rejection(() => runSignIn(api, io, PHONE, async ms => {
+      sleeps.push(ms);
+    }))).toBe(error);
+    expect(starts).toBe(1);
+    expect(sleeps).toEqual([]);
+    expect(io.notices).toEqual([]);
+  }
 });
 
 test("a long wait is reported to the owner rather than slept through", async () => {

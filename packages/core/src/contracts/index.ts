@@ -3,6 +3,7 @@ export * from "./registry";
 export * from "./retrieval";
 export * from "./embedding";
 export * from "./llm";
+export * from "./systemone";
 export * from "./producer";
 export * from "./producer-v2";
 export * from "./claim-v2";

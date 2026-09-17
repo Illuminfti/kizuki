@@ -133,6 +133,18 @@ test("two-digit and four-digit years both resolve", () => {
   ).toEqual(["2026-01-04T09:00", "2026-01-05T09:00:30"]);
 });
 
+test("four-digit years are not silently expanded as two-digit years", () => {
+  for (const order of ["dmy", "mdy"] as const) {
+    for (const year of ["0000", "0026", "0099"]) {
+      expect(thrown(() => stamps(`4/1/${year}, 09:00 - Ada: hi`, order)).code)
+        .toBe("parse_error");
+    }
+    expect(stamps("4/1/00, 09:00 - Ada: hi", order)).toEqual([
+      order === "dmy" ? "2000-01-04T09:00" : "2000-04-01T09:00",
+    ]);
+  }
+});
+
 test("resolveTimezone accepts the host zone and fixed offsets", () => {
   expect(resolveTimezone(undefined)).toBe(
     Intl.DateTimeFormat().resolvedOptions().timeZone,
