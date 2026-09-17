@@ -10,7 +10,7 @@ const hash = (bytes: string | Buffer) => createHash("sha256").update(bytes).dige
 const TASKS = [
   ["install", "Install the supplied package and create a private workspace using only public instructions.", "Normal init installs an active, enabled supervisor service; no hidden setup."],
   ["source-consent", "Connect the agreed supported source after reviewing its consent.", "Explicit account, fields, history and destinations; ingestion from that scope only."],
-  ["canon-agent-query", "Find useful knowledge from your source through an authorized agent and inspect its provenance.", "Autonomous model-written canon and an authorized agent query within 900000 ms of receiving the package; source-linked usefulness recorded."],
+  ["canon-agent-query", "Find useful knowledge from your source through an authorized agent and inspect its provenance. Explain whether the result is useful to you and why, without sharing private source contents.", "Autonomous model-written canon and an authorized agent query within 900000 ms of receiving the package; source-linked usefulness recorded."],
   ["model-boundary", "Explain what remains available without a model and what requires one.", "Capture, ledger, search, timeline, context, audit and undo remain available; canon writing requires a configured model."],
   ["correction-audit-undo", "Correct a belief, query it again or inspect its updated context, inspect the change and its receipt, then undo it.", "Observe correction, subsequent query/context, audit and undo separately; no approval queue."],
   ["source-health-revoke", "Inspect source health, then revoke the selected source.", "Participant understands health and revocation outcome; record errors without account contents."],
