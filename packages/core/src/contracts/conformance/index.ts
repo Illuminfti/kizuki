@@ -32,6 +32,8 @@ export { runEmbeddingConformance } from "./embedding";
 export type { EmbeddingConformanceHarness } from "./embedding";
 export { runLlmConformance } from "./llm";
 export type { LlmConformanceHarness } from "./llm";
+export { runSystemOneConformance } from "./systemone";
+export type { SystemOneConformanceHarness } from "./systemone";
 export { runProducerConformance } from "./producer";
 export type { ProducerConformanceHarness } from "./producer";
 export { runNotifierConformance } from "./notifier";
