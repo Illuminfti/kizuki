@@ -82,6 +82,15 @@ describe("release superseded task claims", () => {
     expect(readFileSync(path, "utf8")).toBe(before);
   });
 
+  test("rejects non-JSON whitespace lines without changing valid blank lines", () => {
+    const task = '{"id":"old","status":"superseded","assignee":"worker-host"}';
+    for (const padding of ["\u00a0", "\ufeff", "\u000b", "\u000c"]) {
+      expect(() => releaseSupersededTaskClaims(`${task}\n${padding}\n`)).toThrow();
+    }
+    expect(releaseSupersededTaskClaims(`${task}\r\n \t\r\n`))
+      .toBe('{"id":"old","status":"superseded"}\r\n \t\r\n');
+  });
+
   test("rejects malformed task records", () => {
     for (const input of ["null", "[]", "42", "{}", '{"id":"old"}', '{"id":1,"status":"superseded"}',
       '{"id":"","status":"superseded","assignee":"worker-host"}',
