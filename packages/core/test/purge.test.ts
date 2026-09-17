@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CaptureEventInput } from "../src/contracts/event";
+import { EVENT_LIMITS, type CaptureEventInput } from "../src/contracts/event";
 import { initGraph } from "../src/graph/schema";
 import { registerConnection } from "../src/ledger/connections";
 import { inspectOpenLedgerHealth, openLedger } from "../src/ledger/db";
@@ -193,7 +193,7 @@ describe("purgeEvents", () => {
         )
         .get(eventId)?.selector_kind ?? null;
     expect(kinds(target.event_id)).toBe("event");
-    expect(kinds(lone.event_id)).toBeNull();
+    expect(kinds(lone.event_id)).toBe("event+connector");
     const keep = db
       .query<{ event_id: string }, [string, string]>(
         "SELECT event_id FROM event_purges WHERE event_id NOT IN (?, ?) ORDER BY event_id",
@@ -208,7 +208,7 @@ describe("purgeEvents", () => {
       .map((row) => row.selector_kind);
     expect(mailProofs.filter((kind) => kind === "event")).toEqual(["event"]);
     expect(mailProofs.filter((kind) => kind === "connector")).toEqual(["connector"]);
-    expect(mailProofs.filter((kind) => kind === null)).toEqual([null]);
+    expect(mailProofs.filter((kind) => kind === "event+connector")).toEqual(["event+connector"]);
     db.close();
     const reopened = openLedger(path);
     expect(
@@ -226,7 +226,7 @@ describe("purgeEvents", () => {
             WHERE receipt_id = (SELECT receipt_id FROM event_purges WHERE event_id = ?)`,
         )
         .get(lone.event_id),
-    ).toEqual({ selector_kind: null });
+    ).toEqual({ selector_kind: "event+connector" });
     expect(
       reopened
         .query<{ selector_kind: string | null }, [string]>(
@@ -481,6 +481,24 @@ describe("purgeEvents", () => {
 
     db.exec("DELETE FROM event_purge_proofs");
     expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(false);
+    db.close();
+  });
+
+  test("purge verification measures proof record ids in UTF-8 bytes", async () => {
+    const db = openLedger(":memory:");
+    const vaultPath = temporaryVault();
+    const target = storedEvent(db, event("proof-byte-boundary"));
+    const receipt = purgeEvents(db, vaultPath, { event_id: target.event_id }, "record request")
+      .receipts[0]!.receipt_id;
+    const boundary = "é".repeat(EVENT_LIMITS.sourceRecordIdBytes / 2);
+    for (const [record, ok] of [[boundary, true], [boundary + "x", false], [boundary, true]] as const) {
+      expect(Buffer.byteLength(record, "utf8")).toBe(EVENT_LIMITS.sourceRecordIdBytes + (ok ? 0 : 1));
+      db.query("UPDATE event_purge_proofs SET source_record_id = ? WHERE receipt_id = ?")
+        .run(record, receipt);
+      db.query("UPDATE event_purges SET proof_digest = ? WHERE receipt_id = ?")
+        .run(eventPurgeProofDigest(target.content_hash, record, "event"), receipt);
+      expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(ok);
+    }
     db.close();
   });
 

@@ -22,6 +22,7 @@ describe("public port surface", () => {
       "runRetrievalConformance",
       "runStorageConformance",
       "runSurfaceConformance",
+      "runSystemOneConformance",
     ] as const) {
       expect(core).toHaveProperty(name);
     }
@@ -30,6 +31,7 @@ describe("public port surface", () => {
       retrieval: "kizuki.retrieval/v1",
       embedding: "kizuki.embedding/v1",
       llm: "kizuki.llm/v1",
+      systemone: "kizuki.systemone/v1",
       producer: "kizuki.producer/v1",
       connector: "kizuki.connector/v1",
       notifier: "kizuki.notifier/v1",

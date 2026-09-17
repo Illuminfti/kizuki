@@ -37,6 +37,43 @@ proof is useful prerequisite evidence; it does not identify the person
 operating a session. Retain private source/account evidence outside the
 repository and expose only the bounded references needed for review.
 
+## Prepare a package-bound worksheet
+
+Run `bun scripts/unfamiliar-user-session.ts --package /absolute/package` to
+print a blank JSON worksheet. This reads and checks the package without
+executing its binaries, opening sources, or contacting a model. Retain the
+output in the approved private evidence location, not the repository.
+
+The worksheet binds every package member hash (including distribution files
+when present), source SHA, target, this protocol, the acceptance checker and
+the participant task wording. It is a collection aid, not the trusted
+`human.unfamiliar-user` producer. All observations start unrecorded; generating
+it proves neither package qualification nor human acceptance.
+
+Before the attempt, independently confirm the final candidate qualification,
+participant consent and eligibility, and freeze the worksheet with the exact
+public install route, environment, source/model authorization references and
+attempt identifier. Give the participant only the package, public instructions
+and the task prompts, not author-only setup. The existing 900000 ms milestone
+still requires autonomous model-written canon plus an authorized agent query;
+record first useful result separately. Do not relax this policy after a run.
+Retain the frozen copy and every failed attempt. If wording or package bytes
+change, prepare and freeze a successor worksheet before repeating tasks.
+
+For each task record elapsed time, interventions, confusion, inaccessible
+steps and error recovery without private source text. Record keyboard,
+reduced-motion and small-screen support and outcomes in `accessibility_modes`; each
+mode starts with unknown support and an unrecorded outcome. Do not infer one
+mode's result from another;
+unrun or unsupported modes remain explicit limitations, not passes. Record
+source-health/revocation and model/no-model understanding as distinct tasks.
+Use `correction_observations` for separate correction, subsequent query/context,
+audit and undo outcomes, elapsed times and bounded receipt references. A combined
+task result must not hide an unrun or failed step. These observations start
+unrecorded and do not replace the independent witness process.
+No worksheet field grants consent, verifies actor identity, or changes the
+acceptance checker's `NOT_IMPLEMENTED` human gate.
+
 ## Observe the participant
 
 1. Record actual wall and monotonic start time when the participant receives

@@ -79,7 +79,7 @@ export function parsePackageArchive(archive: Uint8Array, source?: string): { fil
   const announced = bytes.readUInt32LE(bytes.length - 4);
   requireValue(announced >= 9 * BLOCK && announced <= RAW_LIMIT && announced % BLOCK === 0, "unpacked_size");
   let tar: Buffer;
-  try { tar = gunzipSync(bytes, { maxOutputLength: RAW_LIMIT }); } catch { throw new Error("release_download_gzip_invalid"); }
+  try { tar = gunzipSync(bytes, { maxOutputLength: announced }); } catch { throw new Error("release_download_gzip_invalid"); }
   requireValue(tar.length === announced && tar.length <= RAW_LIMIT, "unpacked_size");
   // Gunzip accepts concatenated members and some trailing data. Re-encoding the
   // exact canonical representation closes those otherwise ambiguous inputs.
