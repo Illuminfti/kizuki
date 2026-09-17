@@ -94,7 +94,8 @@ function sameTierResolution(
     AUTHORITY_TIERS[incoming.authority] <= 2 &&
     AUTHORITY_TIERS[live.authority] <= 2 &&
     margin >= 0 &&
-    margin < CONFLICT_MARGIN
+    // Confidence is in [0, 1]; discount subtraction roundoff at the boundary.
+    margin < CONFLICT_MARGIN - Number.EPSILON
   ) {
     return { action: "contested", rule: "R4" };
   }
