@@ -26,7 +26,7 @@ settled 2026-09-02.
 | D18 | 2026-09-05 | Arbitrary-agent enrollment | Supersedes RFC 0002 §8.4's personal default. New arbitrary agents authenticate with an inert public grant: empty tools/types/subjects, rate 60, and no owner-correction relay. `OWNER` is unchanged. `OWNER_AGENT_GRANT` remains an explicit private harness preset with its former useful scope. Existing stored grants are unchanged. |
 | D19 | 2026-09-05 | Readiness without calendar gates | Owner amendment in issue #403: ready means a stranger can install and use Kizuki, with executable stranger proof, zero live P0s on the exact candidate and an honest install path. Supersedes C1's estate-cutover prerequisite and mandatory seven-/fourteen-day elapsed release gates. Long observation is optional post-ready; operational cutover requires separate authorization. Other product acceptance requirements remain. |
 | D20 | 2026-09-17 | Optional System One admission | TypeSafe Jev is an optional `kizuki.systemone/v1` port, not an LLM. Unconfigured vaults keep ordinary OpenAI-compatible extraction. When `[ports.systemone]` selects `kizuki.systemone.jev`, extracted drafts are admitted by typed noul questions before claims become live. Jev never writes canon, never replaces extraction, and never generates claims JSON. A configured but dead judge is unavailable, not an empty keep. |
-| D21 | 2026-09-17 | World model is the launch product | Owner amendment: 1.0 is the world model, not capture-to-context. D19 still applies (stranger install, executable stranger proof, zero live P0s, honest install path). Ready also requires a public world-model journey: a stranger installs, connects a consented source, and a second authorized client resumes current Concept or Situation context without reconstructing history; one owner correction is visible to both clients. RFC 0003 and RFC 0004 remain proposed until those public seams exist. Closed GitHub packets, RFC fixtures, and planning documents are not shipped surfaces. Issue #497 is the execution map; a closed packet without a public CLI, MCP, or local-app seam does not satisfy this decision. |
+| D21 | 2026-09-17 | World model is the launch product | Owner amendment: 1.0 is the world model, not capture-to-context. Same-day follow-up: the entire #497 execution map is day-one 1.0. D19 still applies (stranger install, executable stranger proof, zero live P0s, honest install path). Ready requires the public seams named by #497: foundation and first Concept (#481 to #484, #503), domain expansion (#485 to #488, #494), two-client continuity and World Slice/Diff (#502, #489, #490), outcomes and attention (#491, #492), Atlas (#495), forecasts (#493), and continuous verification (#496), with #458 onboarding. The golden acceptance journey in #497 is the day-one proof. RFC 0003 and RFC 0004 remain proposed until those public seams exist. Closed GitHub packets, RFC fixtures, and planning documents are not shipped surfaces. A closed packet without a public CLI, MCP, or local-app seam does not satisfy this decision. Atlas, forecasts, ontology, and later packets in that map are not deferred past 1.0. |
 
 D9–D16 supersede any earlier Gate 0 answer that made the owner the only
 consumer of a review queue, or that forbade scheduled canon writes.
@@ -136,15 +136,24 @@ what product must be proved.
 A stranger must be able to install Kizuki, connect a consented source, and
 have a second authorized client resume current Concept or Situation context
 without reconstructing history. One owner correction must be visible to both
-clients. That journey is the 1.0 bar. Capture, search, context packets, and
-receipted canon remain the substrate; they are not the launch product.
+clients. That journey remains the first public proof. Capture, search,
+context packets, and receipted canon remain the substrate; they are not the
+launch product.
+
+The same-day owner follow-up makes the entire #497 execution map day-one
+1.0. Ready requires the public seams named by that map: foundation and first
+Concept (#481 to #484, #503), domain expansion (#485 to #488, #494),
+two-client continuity and World Slice/Diff (#502, #489, #490), outcomes and
+attention (#491, #492), Atlas (#495), forecasts (#493), and continuous
+verification (#496), with #458 onboarding. The golden acceptance journey in
+#497 is the day-one proof. Atlas, forecasts, ontology, and later packets in
+that map are not deferred past 1.0.
 
 RFC 0003 and RFC 0004 stay proposed until those public seams exist on the
 exact candidate. Closed GitHub packets, RFC fixtures, and planning documents
 are not shipped surfaces. Issue #497 remains the execution map. A closed
 packet that never exposed a public CLI, MCP, or local-app seam does not
-satisfy this decision. Atlas, forecasts, and the full ontology are later
-packets; they do not block the first Concept or Situation journey.
+satisfy this decision.
 
 This amendment does not create a second canon writer, an owner review queue,
 or a fake public surface. It does not relax D19, connector honesty, security,
