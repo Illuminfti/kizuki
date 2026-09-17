@@ -18,6 +18,19 @@ describe("X archive provider timestamps", () => {
       .toBe("9999-12-31T23:59:59.000Z");
   });
 
+  test("applies the supported year floor after converting to UTC", () => {
+    expect(() => parseArchiveDate("Sun Jan 01 00:00:00 +0001 2006"))
+      .toThrow("created_at");
+    expect(() => parseArchiveDate("Sun Jan 01 13:59:59 +1400 2006"))
+      .toThrow("created_at");
+    expect(parseArchiveDate("Sun Jan 01 00:01:00 +0001 2006"))
+      .toBe("2006-01-01T00:00:00.000Z");
+    expect(parseArchiveDate("Sun Jan 01 14:00:00 +1400 2006"))
+      .toBe("2006-01-01T00:00:00.000Z");
+    expect(parseArchiveDate("Sun Jan 01 00:00:00 +0000 2006"))
+      .toBe("2006-01-01T00:00:00.000Z");
+  });
+
   test.each([
     "Mon Jan 02 03:04:05 +0000 2024",
     "Tue Feb 30 03:04:05 +0000 2024",
