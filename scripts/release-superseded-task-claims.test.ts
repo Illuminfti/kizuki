@@ -52,6 +52,28 @@ describe("release superseded task claims", () => {
     }
   });
 
+  test("rejects padded task IDs rather than treating them as distinct lanes", () => {
+    for (const id of [" old", "old ", "old\t", "\nold"]) {
+      const input = JSON.stringify({ id, status: "superseded", assignee: "worker-host" });
+      expect(() => releaseSupersededTaskClaims(input)).toThrow("Expected a task object with id and status");
+    }
+  });
+
+  test("rejects padded statuses instead of silently preserving stale reservations", () => {
+    for (const status of [" superseded", "superseded ", "superseded\t", "\nin_progress"]) {
+      const input = JSON.stringify({ id: "old", status, assignee: "worker-host" });
+      expect(() => releaseSupersededTaskClaims(input)).toThrow("Expected a task object with id and status");
+    }
+  });
+
+  test("rejects conflicting duplicate task IDs rather than emitting ambiguous claims", () => {
+    const old = '{"id":"lane-a","status":"superseded","assignee":"lane-1"}';
+    const live = '{"id":"lane-a","status":"in_progress","assignee":"lane-2"}';
+    for (const input of [`${old}\n${live}`, `${live}\n${old}`, `${old}\n${old}`]) {
+      expect(() => releaseSupersededTaskClaims(input)).toThrow("Duplicate task id");
+    }
+  });
+
   test("preserves live tasks and already-clean lines byte for byte", () => {
     const input = ' {"id":"lane-a", "status":"in_progress", "assignee":"lane-1"}\n\n{"id":"old","status":"superseded"}\n';
     expect(releaseSupersededTaskClaims(input)).toBe(input);
@@ -72,6 +94,13 @@ describe("release superseded task claims", () => {
       const bad = run();
       expect(bad.exitCode).toBe(1);
       expect(bad.stdout.toString()).toBe("");
+      const duplicate = input + '{"id":"old","status":"in_progress","assignee":"lane-2"}\n';
+      writeFileSync(path, duplicate);
+      const ambiguous = run();
+      expect(ambiguous.exitCode).toBe(1);
+      expect(ambiguous.stdout.toString()).toBe("");
+      expect(ambiguous.stderr.toString()).toBe("Could not release task claims: input must be readable task JSONL.\n");
+      expect(readFileSync(path, "utf8")).toBe(duplicate);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

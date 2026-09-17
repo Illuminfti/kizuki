@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 
 /** Release obsolete reservations without changing task history or active leases. */
 export function releaseSupersededTaskClaims(jsonl: string): string {
+  const seen = new Set<string>();
   return jsonl
     .split("\n")
     .map((line) => {
@@ -9,9 +10,12 @@ export function releaseSupersededTaskClaims(jsonl: string): string {
       const task: unknown = JSON.parse(line);
       if (
         typeof task !== "object" || task === null || Array.isArray(task) ||
-        !("id" in task) || typeof task.id !== "string" || task.id.trim() === "" ||
-        !("status" in task) || typeof task.status !== "string" || task.status.trim() === ""
+        !("id" in task) || typeof task.id !== "string" || task.id.trim() === "" || task.id !== task.id.trim() ||
+        !("status" in task) || typeof task.status !== "string" || task.status.trim() === "" ||
+        task.status !== task.status.trim()
       ) throw new Error("Expected a task object with id and status");
+      if (seen.has(task.id)) throw new Error("Duplicate task id");
+      seen.add(task.id);
       if (task.status !== "superseded") return line;
       const fields = ["assignee", "claimedAt", "heartbeatAt", "lastHeartbeatAt", "leaseExpiresAt"];
       if (!fields.some((field) => Object.hasOwn(task, field))) return line;
