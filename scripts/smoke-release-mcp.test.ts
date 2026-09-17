@@ -23,6 +23,19 @@ test("MCP smoke refuses diagnostics overflow", async () => {
   `], [])).rejects.toThrow("MCP smoke diagnostics overflow");
 });
 
+test("MCP smoke diagnostics limit counts UTF-8 bytes", async () => {
+  const diagnostics = "é".repeat(8_192);
+  const result = await mcpSession(process.execPath, env, ["-e", `
+    await Bun.stdin.text();
+    process.stderr.write(${JSON.stringify(diagnostics)});
+  `], []);
+  expect(result.diagnostics).toBe(diagnostics);
+  await expect(mcpSession(process.execPath, env, ["-e", `
+    await Bun.stdin.text();
+    process.stderr.write(${JSON.stringify(diagnostics + "x")});
+  `], [])).rejects.toThrow("MCP smoke diagnostics overflow");
+});
+
 for (const pipe of ["stdout", "stderr"] as const) {
   test(`MCP smoke deadline includes ${pipe} retained after parent exit`, async () => {
     const root = mkdtempSync(join(tmpdir(), "kizuki-smoke-pipe-"));

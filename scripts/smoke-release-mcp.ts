@@ -11,7 +11,7 @@ export async function mcpSession(mcp: string, env: Record<string, string>, args:
       Promise.all([child.exited, output, stderr]),
       timeout,
     ]);
-    if (diagnostics.length > 16_384) throw new Error("MCP smoke diagnostics overflow");
+    if (Buffer.byteLength(diagnostics, "utf8") > 16_384) throw new Error("MCP smoke diagnostics overflow");
     return { code, output: stdout, diagnostics };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
