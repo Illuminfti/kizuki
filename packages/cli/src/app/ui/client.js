@@ -778,7 +778,8 @@ function showSetupFailure(text, payload) {
   const noService = payload.no_service === true;
   state.setupError = text;
   if (dialog.open) closeDialog();
-  if (state.status?.vault.ready || !bearer) return;
+  if (!bearer) return;
+  if (state.status?.vault.ready) { message(text); return; }
   render();
   const details = main.querySelector('details');
   if (details) details.open = true;
