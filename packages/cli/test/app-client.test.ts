@@ -70,6 +70,23 @@ function fixture() {
 }
 const status = (operations: unknown[] = [], epoch = '1') => ({ vault: { ready: true }, visibility_epoch: epoch, operations });
 
+test('dialog initial focus skips hidden controls and hidden containers', () => {
+    for (const nested of [false, true]) {
+        const f = fixture();
+        f.evaluate(`
+            const content = openDialog('Source setup', 'Synthetic');
+            globalThis.unavailable = el('input');
+            const concealed = ${nested} ? el('div', {}, unavailable) : unavailable;
+            concealed.hidden = true;
+            globalThis.available = el('button', { class: 'button-primary' }, 'Continue');
+            content.append(concealed, available);
+            focusDialog(content);
+        `);
+        expect(f.evaluate<boolean>('unavailable.focused')).toBe(false);
+        expect(f.evaluate<boolean>('available.focused')).toBe(true);
+    }
+});
+
 test('native dialog cancellation restores focus and releases its return target', async () => {
     const f = fixture();
     f.evaluate(`document.activeElement=el('button'); globalThis.opener=document.activeElement; openDialog('Source setup','Synthetic');`);

@@ -63,6 +63,7 @@ function nodeTag(node) { return node.tagName.toLowerCase(); }
 function firstFocusable(root) {
   let input = null, primary = null, other = null;
   const visit = node => {
+    if (node.hidden) return;
     const tag = nodeTag(node), close = node.getAttribute && node.getAttribute('aria-label') === 'Close dialog';
     if (!node.disabled && !close) {
       if (['input', 'select', 'textarea'].includes(tag)) input ??= node;
