@@ -186,6 +186,34 @@ describe("local X archive connector", () => {
     await expect(scanArchive(root)).rejects.toMatchObject({ code: "parse_error" });
   });
 
+  test("rejects invalid account usernames even in an empty archive", async () => {
+    const root = await temporaryArchive();
+    await writeFile(path.join(root, "data", "tweets.js"), tweetsSource(0, []));
+    for (const username of ["owner\n", "owner\r", "owner\u2028", "owner\u2029", "", "a".repeat(65), "bad-name", null, 123]) {
+      await writeFile(path.join(root, "data", "account.js"),
+        `window.YTD.account.part0 = ${JSON.stringify([{ account: { accountId: "123", username } }])};`);
+      const connector = new XArchiveConnector({ path: root });
+      await expect(connector.backfill(null)).rejects.toMatchObject({
+        code: "parse_error", message: "kizuki.import-x-archive: account username is invalid",
+      });
+      expect(await connector.health()).toMatchObject({
+        state: "misconfigured", detail: "kizuki.import-x-archive: account username is invalid",
+      });
+    }
+  });
+
+  test("preserves optional and boundary-length account usernames", async () => {
+    const root = await temporaryArchive();
+    for (const username of [undefined, "a", "A_09".repeat(16)]) {
+      await writeFile(path.join(root, "data", "account.js"),
+        `window.YTD.account.part0 = ${JSON.stringify([{ account: { accountId: "123", username } }])};`);
+      expect((await scanArchive(root)).identity).toEqual({ account_id: "123", username: username ?? null });
+      const batch = await new XArchiveConnector({ path: root }).backfill(null);
+      expect(batch.events).toHaveLength(2);
+      expect(batch.events[0]?.subjects[0]?.display_name).toBe(username === undefined ? undefined : `@${username}`);
+    }
+  });
+
   test("rejects another account rather than applying its cursor", async () => {
     const firstRoot = await temporaryArchive();
     const cursor = (await new XArchiveConnector({ path: firstRoot }).backfill(null)).cursor;
