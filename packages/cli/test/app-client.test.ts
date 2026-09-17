@@ -100,6 +100,23 @@ test('dialog initial focus skips hidden-type inputs', () => {
     expect(f.evaluate<boolean>('available.focused')).toBe(true);
 });
 
+test('dialog initial focus skips collapsed details but preserves controls in its first summary', () => {
+    for (const open of [false, true]) for (const inSummary of [false, true]) {
+        const f = fixture();
+        f.evaluate(`
+            const content = openDialog('Source setup', 'Synthetic');
+            globalThis.nested = el('input', { type: 'text' });
+            const summary = el('summary', {}, 'Options', ${inSummary} ? nested : null);
+            content.append(el('details', { open: ${open} }, summary, ${inSummary} ? null : nested));
+            globalThis.available = el('button', { class: 'button-primary' }, 'Continue');
+            content.append(available);
+            focusDialog(content);
+        `);
+        expect(f.evaluate<boolean>('nested.focused')).toBe(open || inSummary);
+        expect(f.evaluate<boolean>('available.focused')).toBe(!open && !inSummary);
+    }
+});
+
 test('native dialog cancellation restores focus and releases its return target', async () => {
     const f = fixture();
     f.evaluate(`document.activeElement=el('button'); globalThis.opener=document.activeElement; openDialog('Source setup','Synthetic');`);

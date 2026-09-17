@@ -72,7 +72,10 @@ function firstFocusable(root) {
         else other ??= node;
       }
     }
-    for (const child of node.children || []) visit(child);
+    if (tag === 'details' && !node.open) {
+      const summary = Array.from(node.children || []).find(child => nodeTag(child) === 'summary');
+      if (summary) visit(summary);
+    } else for (const child of node.children || []) visit(child);
   };
   visit(root);
   return input || primary || other;
