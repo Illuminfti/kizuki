@@ -291,6 +291,8 @@ for (const [provider, fields] of [['gmail', ['attachments']], ['google-calendar'
         f.reply('operation', { id: 'enroll-fields', kind: 'enroll', state: 'failed', error: { code: 'unavailable' } });
         await work; await tick();
         expect(f.dialog.querySelector('#field-text')!.checked).toBe(false);
+        expect(f.dialog.querySelector(provider === 'gmail' ? '#field-text' : '#calendar-id')!.focused).toBe(true);
+        expect(f.dialog.querySelector('.icon-button')!.focused).toBe(false);
         expect(f.dialog.querySelector('#field-attachments')!.checked).toBe(fields.length > 0);
         expect(f.dialog.querySelector('.form-error')!.textContent).not.toBe('');
         const retry = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
