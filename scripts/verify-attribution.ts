@@ -8,6 +8,7 @@ interface AttributionFailure {
 }
 
 const delimiter = /[\s<>"'()[\]{}|`]/;
+const trailingSentencePunctuation = /^[.,;:!?]+/u;
 const tokenCharacter = /[\p{ID_Continue}\u200C\u200D]/u;
 
 function requiredEnvironment(name: string): string {
@@ -66,7 +67,9 @@ function hasTokenBoundaries(text: string, offset: number, length: number): boole
 
 function hasUrlBoundaries(text: string, offset: number, length: number): boolean {
   const before = characterBefore(text, offset);
-  const after = characterAt(text, offset + length);
+  // Sentence punctuation after a URL is prose; only a delimiter may follow it.
+  const tail = text.slice(offset + length).match(trailingSentencePunctuation);
+  const after = characterAt(text, offset + length + (tail?.[0].length ?? 0));
   return (
     (before === undefined || delimiter.test(before)) &&
     (after === undefined || delimiter.test(after))
