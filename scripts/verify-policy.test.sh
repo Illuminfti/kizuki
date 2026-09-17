@@ -28,6 +28,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The policy subprocess needs bash on PATH even if this script was launched
+# through an absolute interpreter path. Missing commands get preflight errors.
+for missing_command in bun git grep bash; do
+  (
+    command() {
+      if [ "$2" = "$missing_command" ]; then return 1; fi
+      builtin command "$@"
+    }
+    status=0
+    assert_required_commands >"$fixture_root/commands.out" 2>"$fixture_root/commands.err" || status=$?
+    if ((status != 2)) || [[ -s "$fixture_root/commands.out" ]] ||
+       [ "$(cat -- "$fixture_root/commands.err")" != "verification failed: required command missing: $missing_command" ]; then
+      printf 'policy test failed: missing command escaped preflight: %s\n' "$missing_command" >&2
+      exit 1
+    fi
+  )
+done
+
 # Failed scratch-file allocation must stop before invoking a tracked scanner.
 for helper in assert_safe_tracked_paths assert_safe_tracked_text; do
   for errexit in on off; do

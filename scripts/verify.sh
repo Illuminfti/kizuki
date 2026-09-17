@@ -120,7 +120,7 @@ assert_safe_tracked_text() {
 
 assert_required_commands() {
   local cmd
-  for cmd in bun git grep; do
+  for cmd in bun git grep bash; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       printf 'verification failed: required command missing: %s\n' "$cmd" >&2
       return 2
