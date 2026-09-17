@@ -171,6 +171,21 @@ describe("local X archive connector", () => {
     await expect(scanArchive(root)).rejects.toMatchObject({ code: "parse_error" });
   });
 
+  test("a newline-terminated timestamp refuses the whole archive at scan, health and backfill", async () => {
+    const root = await temporaryArchive();
+    await writeFile(
+      path.join(root, "data", "tweets.js"),
+      tweetsSource(0, [tweet("1742012345678901234", "synthetic trailing newline", "Tue Jan 02 03:04:05 +0000 2024\n")]),
+    );
+    const connector = new XArchiveConnector({ path: root });
+    await expect(connector.backfill(null)).rejects.toMatchObject({ code: "parse_error" });
+    expect(await connector.health()).toMatchObject({
+      state: "misconfigured",
+      detail: "kizuki.import-x-archive: post created_at is missing or invalid",
+    });
+    await expect(scanArchive(root)).rejects.toMatchObject({ code: "parse_error" });
+  });
+
   test("rejects another account rather than applying its cursor", async () => {
     const firstRoot = await temporaryArchive();
     const cursor = (await new XArchiveConnector({ path: firstRoot }).backfill(null)).cursor;

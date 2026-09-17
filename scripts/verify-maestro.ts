@@ -10,12 +10,16 @@ export function validateMaestroState(tasks: unknown[], candidates: unknown[]): s
   const errors: string[] = [];
   const byId = new Map<string, Record<string, unknown>>();
   const checkRecord = (value: unknown, label: string): value is Record<string, unknown> => {
-    if (!isRecord(value) || typeof value["id"] !== "string" || value["id"].trim() === "") {
+    if (!isRecord(value) || typeof value["id"] !== "string" || value["id"].trim() === "" ||
+        value["id"] !== value["id"].trim()) {
       errors.push(`${label}: invalid record or id`);
       return false;
     }
     for (const field of ["assignee", "claimedAt", "heartbeatAt", "lastHeartbeatAt", "leaseExpiresAt"]) {
       if (Object.hasOwn(value, field)) errors.push(`${label}: forbidden worker field ${field}`);
+    }
+    if (typeof value["status"] === "string" && value["status"] !== value["status"].trim()) {
+      errors.push(`${label}: invalid status`);
     }
     if (value["status"] === "in_progress") errors.push(`${label}: live reservation in committed state`);
     return true;
@@ -27,6 +31,14 @@ export function validateMaestroState(tasks: unknown[], candidates: unknown[]): s
     if (typeof task["status"] !== "string" || task["status"].trim() === "") {
       errors.push(`${label}: missing status`);
     }
+    if (task["status"] === "superseded" &&
+        (typeof task["supersededBy"] !== "string" || task["supersededBy"].trim() === "")) {
+      errors.push(`${label}: missing supersession reference`);
+    }
+    if (task["status"] === "superseded" && typeof task["supersededBy"] === "string" &&
+        task["supersededBy"].trim() !== "" && task["supersededBy"] !== task["supersededBy"].trim()) {
+      errors.push(`${label}: invalid supersession reference`);
+    }
     if (byId.has(id)) errors.push(`${label}: duplicate task id`);
     byId.set(id, task);
   });
@@ -37,6 +49,9 @@ export function validateMaestroState(tasks: unknown[], candidates: unknown[]): s
     const id = candidate["id"] as string;
     if (candidateIds.has(id)) errors.push(`${label}: duplicate candidate id`);
     candidateIds.add(id);
+    if (Object.hasOwn(candidate, "superseded") && typeof candidate["superseded"] !== "boolean") {
+      errors.push(`${label}: invalid superseded flag`);
+    }
     const source = candidate["sourceTaskId"];
     const task = typeof source === "string" ? byId.get(source) : undefined;
     if (!task || candidate["id"] !== source) {
@@ -61,7 +76,7 @@ if (import.meta.main) {
   try {
     const root = join(import.meta.dir, "..", ".maestro", "tasks");
     const tasks = readFileSync(join(root, "tasks.jsonl"), "utf8")
-      .split("\n").filter(line => line.trim().length > 0).map(line => JSON.parse(line));
+      .split("\n").filter(line => !/^[ \t\r]*$/.test(line)).map(line => JSON.parse(line));
     const candidates = readdirSync(join(root, "candidates"))
       .filter(name => name.endsWith(".json")).sort()
       .map(name => JSON.parse(readFileSync(join(root, "candidates", name), "utf8")));
