@@ -21,6 +21,7 @@ class Element {
     namespaceURI = 'http://www.w3.org/2000/svg';
     constructor(public tag = 'div') {}
     get tagName() { return this.tag.toUpperCase(); }
+    get parentElement(): Element | null { return this.parent; }
     set textContent(text: string) { this.ownText = text; this.children = []; }
     get textContent(): string { return this.ownText + this.children.map(child => child.textContent).join(''); }
     append(...nodes: Element[]) { for (const node of nodes) { node.parent = this; this.children.push(node); } }
@@ -90,6 +91,20 @@ test('dialog dismissal returns focus to main when its opener is detached, disabl
         expect(f.main.focused).toBe(true);
         expect(f.evaluate<boolean>('opener.focused')).toBe(false);
         expect(f.evaluate('dialogReturnFocus')).toBeNull();
+    }
+});
+
+test('dialog dismissal skips openers inside hidden ancestors but preserves visible nested openers', async () => {
+    for (const cancel of [false, true]) for (const hidden of [false, true]) {
+        const f = fixture();
+        f.evaluate(`globalThis.opener=el('button'); globalThis.container=el('section', {}, el('div', {}, opener)); main.append(container); document.activeElement=opener; openDialog('Source setup','Synthetic'); container.hidden=${hidden};`);
+        if (cancel) { await f.dialog.fire('cancel'); f.dialog.close(); }
+        else f.evaluate('closeDialog()');
+        await tick();
+        expect(f.main.focused).toBe(hidden);
+        expect(f.evaluate<boolean>('opener.focused')).toBe(!hidden);
+        expect(f.evaluate('dialogReturnFocus')).toBeNull();
+        expect(f.evaluate('closingDialogGeneration')).toBeNull();
     }
 });
 
