@@ -35,7 +35,9 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/gu;
 export function waitSeconds(error: unknown): number | null {
   return error instanceof TelegramConnectorError &&
     error.code === "flood_wait" &&
-    error.retry_after !== undefined
+    error.retry_after !== undefined &&
+    Number.isSafeInteger(error.retry_after) &&
+    error.retry_after > 0
     ? error.retry_after
     : null;
 }
