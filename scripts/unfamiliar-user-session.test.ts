@@ -42,6 +42,8 @@ test("freeze a human task sheet without inventing results or acceptance", () => 
     .toContain("query it again or inspect its updated context");
   expect(session.tasks.find(task => task.id === "install")?.instruction)
     .toContain("Install to a stable path, use normal init, and check that its supervisor service is active and enabled using the public instructions.");
+  expect(session.tasks.find(task => task.id === "recovery")?.instruction)
+    .toContain("verify both query and context against the restored content");
   expect(session.participant_instructions_sha256).toBe(hash(JSON.stringify(
     session.tasks.map(({ id, instruction, required_outcome }) => [id, instruction, required_outcome]),
   )));
