@@ -63,7 +63,10 @@ export function parseArchiveDate(value: unknown): string {
   const offsetMinutes = (offsetHour * 60 + offsetMinute) * (sign === "+" ? 1 : -1);
   const instant = local.getTime() - offsetMinutes * 60_000;
   const result = new Date(instant);
-  if (!Number.isFinite(result.getTime())) {
+  if (
+    !Number.isFinite(result.getTime()) ||
+    result.getUTCFullYear() < 2006 || result.getUTCFullYear() > 9999
+  ) {
     throw archiveError("parse_error", "post created_at is missing or invalid");
   }
   return result.toISOString();

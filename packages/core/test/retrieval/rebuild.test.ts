@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readRetrievalDocuments, rebuildRetrieval } from "../../src/retrieval/rebuild";
-import { serveFixture } from "../serving/helpers";
+import { recordedPage, serveFixture } from "../serving/helpers";
 import { insertClaim } from "../../src/claims/store";
 import { claimInput, putEvent, FixtureVectorPort } from "../claims/helpers";
 import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../../src/contracts/retrieval";
@@ -41,6 +41,34 @@ test("recorded canon has receipt dates and stable projections", async () => {
     expect(page.authority).toBe("model_inference");
   }
   expect(readRetrievalDocuments(fixture.db, fixture.vaultPath)).toEqual(docs);
+});
+
+test("rebuild snapshots and selected ports use locale-independent document order", async () => {
+  fixture = await serveFixture();
+  const pageIds = ["fact:order-a", "fact:order-Z"];
+  for (const [index, id] of pageIds.entries()) {
+    await recordedPage(fixture.db, fixture.vaultPath, `facts/order-${index}.md`, {
+      id, title: id, type: "fact", status: "active", sensitivity: "public", taint: "clean",
+    }, `Ordering fixture ${id}.`);
+  }
+  const expected = ["page:fact:order-Z", "page:fact:order-a"];
+  const selected = (docs: readonly RetrievalDoc[]) => docs.map(doc => doc.doc_id)
+    .filter(id => id.startsWith("page:fact:order-"));
+  const snapshot = readRetrievalDocuments(fixture.db, fixture.vaultPath);
+  expect(selected(snapshot)).toEqual(expected);
+  expect(snapshot.map(doc => doc.doc_id)).toEqual(snapshot.map(doc => doc.doc_id).sort());
+  class OrderedPort extends FixtureVectorPort {
+    async rebuildFromDocuments(docs: readonly RetrievalDoc[]) {
+      expect(selected(docs)).toEqual(expected);
+      this.docs.clear();
+      await this.upsert(docs);
+    }
+  }
+  const port = new OrderedPort();
+  await rebuildRetrieval(fixture.db, fixture.vaultPath, port);
+  expect([...port.docs.values()]).toEqual(snapshot);
+  await rebuildRetrieval(fixture.db, fixture.vaultPath, port);
+  expect([...port.docs.values()]).toEqual(snapshot);
 });
 
 test("unreadable canon refuses before the selected engine or lexical floor changes", async () => {

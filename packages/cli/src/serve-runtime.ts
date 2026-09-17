@@ -21,14 +21,17 @@ import {
   type RailRuntime,
   type RailSyncResult,
   type RetrievalPort,
+  type SystemOnePort,
 } from "@kizuki/core";
-import { chatCompletionsUrl, parseOpenAiCompatibleConfig, registerLlmPorts, endpointHost, modelRef } from "@kizuki/llm";
+import { chatCompletionsUrl, parseOpenAiCompatibleConfig, parseSystemOneJevConfig, registerLlmPorts, registerSystemOnePorts, endpointHost, modelRef } from "@kizuki/llm";
 import { listHostConnections, loadConnector, closeHostConnector } from "./connections";
 import { tryRefreshDerived } from "./derived";
 import { tokenResolver } from "./secrets";
+import { loadSystemOneBinding } from "./vault-config";
 
 const NONE_LLM_ID = "kizuki.llm.none";
 const MODEL_LLM_ID = "kizuki.llm.openai-compatible";
+const SYSTEMONE_JEV_ID = "kizuki.systemone.jev";
 const MAX_SYNC_ERRORS = 32;
 
 export class ServeRuntimeError extends Error {
@@ -70,7 +73,7 @@ function parseLlmSelection(llm: unknown): LlmSelection {
 
 function portContext(
   vaultPath: string,
-  kind: "llm" | "producer",
+  kind: "llm" | "producer" | "systemone",
   id: string,
   config: Readonly<Record<string, unknown>>,
   secretRef: string | null,
@@ -165,7 +168,7 @@ export async function inspectModelBinding(vaultPath: string, env: Record<string,
   return modelRef(selected.id, configured.model, endpointHost(configured.base_url));
 }
 
-async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; producer?: ProducerPort }> {
+async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; producer?: ProducerPort; systemone?: SystemOnePort }> {
   let document: ReturnType<typeof readAppModelConfiguration>;
   try {
     document = readAppModelConfiguration(options.vaultPath, value => { parseLlmSelection(value); });
@@ -189,9 +192,32 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
     portContext(options.vaultPath, "llm", selected.id, selected.config, selected.secret_ref, secret, options.err),
   )).port;
   let producer: ProducerPort | undefined;
+  let systemone: SystemOnePort | undefined;
   try {
     if (llm.model_ref !== null) {
-      registerModelProducerPort(() => llm, registry);
+      const binding = loadSystemOneBinding(options.vaultPath);
+      if (binding !== null && binding.id === SYSTEMONE_JEV_ID) {
+        const config: Record<string, unknown> = { ...binding.config };
+        const secretRef = binding.secret_ref;
+        let systemoneSecret: string | null = null;
+        if (secretRef !== null) {
+          try {
+            systemoneSecret = classifyAppModelCredential(options.vaultPath, secretRef) === "env"
+              ? await tokenResolver(secretRef, options.env)(secretRef)
+              : readAppModelFileCredential(options.vaultPath, document.revision, secretRef);
+          } catch {
+            runtimeError("configured systemone secret reference cannot be resolved");
+          }
+        }
+        parseSystemOneJevConfig(config);
+        registerSystemOnePorts(registry);
+        systemone = (await registry.bindFromConfig<SystemOnePort>(
+          "systemone",
+          { systemone: SYSTEMONE_JEV_ID },
+          portContext(options.vaultPath, "systemone", SYSTEMONE_JEV_ID, config, secretRef, systemoneSecret, options.err),
+        )).port;
+      }
+      registerModelProducerPort(() => llm, registry, () => systemone);
       producer = (await registry.bindFromConfig<ProducerPort>(
         "producer",
         { producer: MODEL_PRODUCER_ID },
@@ -209,11 +235,17 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
     // A partially bound producer is still owned here. Cleanup failures must
     // escape, rather than being mistaken for a safe model-disabled runtime.
     try {
-      try { await producer?.close(); } finally { await llm.close(); }
+      try { await producer?.close(); } finally {
+        try { await systemone?.close(); } finally { await llm.close(); }
+      }
     } catch { throw new Error("model runtime cleanup failed"); }
     throw error;
   }
-  return { llm, ...(producer === undefined ? {} : { producer }) };
+  return {
+    llm,
+    ...(producer === undefined ? {} : { producer }),
+    ...(systemone === undefined ? {} : { systemone }),
+  };
 }
 
 /** Bind one immutable model destination and credential for one rail attempt. */
@@ -262,7 +294,11 @@ export async function createServeRuntime(options: ServeRuntimeOptions): Promise<
       try {
         if (binding?.producer !== undefined) await binding.producer.close();
       } finally {
-        await binding?.llm.close();
+        try {
+          if (binding?.systemone !== undefined) await binding.systemone.close();
+        } finally {
+          await binding?.llm.close();
+        }
       }
     },
   };

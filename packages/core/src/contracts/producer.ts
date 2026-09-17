@@ -3,8 +3,8 @@ import type { SubjectRef } from "./event";
 import type { Port } from "./ports";
 
 export const PRODUCER_CONTRACT = "kizuki.producer/v1" as const;
-/** Minor 4 adds content-free per-claim schema rejection counts. */
-export const PRODUCER_CONTRACT_MINOR = 4;
+/** Minor 5 adds optional System One admission drops. */
+export const PRODUCER_CONTRACT_MINOR = 5;
 export const PRODUCER_CAPABILITIES = ["deterministic", "model"] as const;
 export type ProducerCapability =
   (typeof PRODUCER_CAPABILITIES)[number];
@@ -106,6 +106,7 @@ export const DROPPED_DRAFT_REASONS = [
   "unknown_subject",
   "event_too_large",
   "schema_invalid",
+  "systemone_rejected",
 ] as const;
 export type DroppedDraftReason = (typeof DROPPED_DRAFT_REASONS)[number];
 
@@ -133,6 +134,10 @@ export type DroppedDraft =
       readonly reason: "event_too_large";
       readonly event_id: string;
       readonly chars: number;
+    }
+  | {
+      readonly reason: "systemone_rejected";
+      readonly event_ids: readonly string[];
     };
 
 export type ProduceResult =

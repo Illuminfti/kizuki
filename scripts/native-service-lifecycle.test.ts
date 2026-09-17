@@ -66,6 +66,29 @@ test.each(["", "{", "null"])("installed native status retains invalid JSON evide
   expect(failures).toEqual(["installed-rails-healthy failed"]);
 });
 
+test.each(["error", "unknown", "missing", "null"] as const)(
+  "installed native status refuses envelope status %s after first rail coverage",
+  async (fault) => {
+    const { since, diagnostics, body } = freshNativeHealth();
+    const envelope: Record<string, unknown> = { ...body };
+    if (fault === "missing") delete envelope.status;
+    else envelope.status = fault === "null" ? null : fault;
+    const status = { exit_code: 0, stdout: JSON.stringify(envelope), stderr: "" };
+    const result = await observeInstalledNativeHealth(501, since, () => diagnostics, () => status);
+    expect(result.publicStatus).toEqual({ passed: false, evidence: status });
+    expect(result.installedHealth.evidence.diagnostics).toBe(diagnostics);
+  },
+);
+
+test("installed native status refuses a non-serve schema after first rail coverage", async () => {
+  const { since, diagnostics, body } = freshNativeHealth();
+  const envelope = { ...body, schema: "kizuki.cli.other/v1" };
+  const status = { exit_code: 0, stdout: JSON.stringify(envelope), stderr: "" };
+  const result = await observeInstalledNativeHealth(501, since, () => diagnostics, () => status);
+  expect(result.publicStatus).toEqual({ passed: false, evidence: status });
+  expect(result.installedHealth.evidence.diagnostics).toBe(diagnostics);
+});
+
 for (const fault of ["exit", "pid", "inactive", "disabled", "failed-rail", "failed-receipt"] as const) {
   test(`installed native status retains ${fault} after first rail coverage`, async () => {
     const { since, diagnostics, body } = freshNativeHealth(); let reads = 0, commands = 0;
