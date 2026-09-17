@@ -68,6 +68,36 @@ function fixture() {
 }
 const status = (operations: unknown[] = [], epoch = '1') => ({ vault: { ready: true }, visibility_epoch: epoch, operations });
 
+test('Activity distinguishes loading and unavailable from an empty receipt history and can retry', async () => {
+    const f = fixture();
+    f.evaluate(`navigate('activity')`);
+    expect(f.main.textContent).toContain('Loading activity');
+    expect(f.main.textContent).not.toContain('No receipted changes yet');
+    const pending = f.requests.splice(f.requests.findIndex(row => row.route === 'activity'), 1)[0]!;
+    pending.result.resolve({ status: 503, json: async () => ({ ok: false, error: { code: 'unavailable' } }) });
+    await tick();
+    expect(f.main.textContent).toContain('Activity is unavailable');
+    expect(f.main.textContent).not.toContain('No receipted changes yet');
+    const retry = findAction(f.main, 'Retry activity').fire('click');
+    expect(f.main.textContent).toContain('Loading activity');
+    f.reply('activity', { receipts: [] }); await retry;
+    expect(f.main.textContent).toContain('No receipted changes yet');
+    expect(f.main.textContent).not.toContain('Activity is unavailable');
+});
+
+test('Activity clears previously displayed receipts when their refresh fails', async () => {
+    const f = fixture();
+    f.evaluate(`state.view='activity'; state.receipts=[{id:'old',page:'STALE_PAGE'}]; render();`);
+    expect(f.main.textContent).toContain('STALE_PAGE');
+    const work = f.evaluate<Promise<void>>('loadActivity()');
+    expect(f.main.textContent).not.toContain('STALE_PAGE');
+    const pending = f.requests.splice(0, 1)[0]!;
+    pending.result.resolve({ status: 503, json: async () => ({ ok: false, error: { code: 'unavailable' } }) });
+    await work;
+    expect(f.main.textContent).toContain('Activity is unavailable');
+    expect(f.main.textContent).not.toContain('STALE_PAGE');
+});
+
 test('Activity names the receipt action while preserving exact references in closed details', () => {
     for (const [action, title] of [['create', 'Memory page created'], ['edit', 'Memory page updated'], ['archive', 'Memory page removed'], ['unknown', 'Memory change'], ['toString', 'Memory change']] as const) {
         const f = fixture();
@@ -209,6 +239,20 @@ test('memory keeps Markdown onboarding when a source still needs permission or i
     f.evaluate(`state.sources[0].consent='active'; state.sources[0].last_run=null; state.sources[0].stored=0; render();`);
     expect(f.main.textContent).toContain('Import this source to search it');
     expect(findAction(f.main, 'Import history')).toBeTruthy();
+});
+
+test('sources distinguish incomplete history from a finished backfill without promising complete coverage', () => {
+    const f = fixture();
+    f.evaluate(`state.view='sources'; Object.assign(state.sources[0], {last_run:'2026-09-07T00:00:00Z', stored:3, backfill_complete:false}); render();`);
+    expect(f.main.textContent).toContain('History import is incomplete');
+    expect(f.main.textContent).toContain('3 saved in the last check');
+    f.evaluate(`state.sources[0].backfill_complete=true; render();`);
+    expect(f.main.textContent).toContain('History import reached the end reported by this source');
+    expect(f.main.textContent).not.toContain('History import is incomplete');
+    expect(f.main.textContent).toContain('This does not confirm complete date coverage');
+    f.evaluate(`state.sources[0].last_run=null; state.sources[0].backfill_complete=null; render();`);
+    expect(f.main.textContent).toContain('No capture checkpoint yet');
+    expect(f.main.textContent).not.toContain('3 saved in the last check');
 });
 
 test('source enrollment focuses the labeled folder field instead of the close control', () => {
