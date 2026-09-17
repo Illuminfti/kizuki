@@ -7,7 +7,7 @@ import type {
 } from "../contracts/event";
 import { canonicalSerialize, computeContentHash, computeLegacyContentHash, sha256Hex } from "../util/hash";
 import { instantBoundPair, instantPairSql } from "../query/sql";
-import { isRfc3339 } from "../util/time";
+import { canonicalizeRfc3339Utc, isRfc3339 } from "../util/time";
 import { isUlid, ulid } from "../util/ulid";
 import { EventRecordError, eventFromRow as fromRow, type EventRow } from "./event-record";
 import { EventOriginError, classifyNewEventOrigin } from "./event-origin";
@@ -365,10 +365,11 @@ export function normalizeReplayFilter(filter: ReplayFilter): ReplayFilter {
     out.kind = assertIdentifier(filter.kind, "kind", LEDGER_KIND_MAX);
   }
   if (filter.since !== undefined) {
-    if (!isRfc3339(filter.since)) {
+    const canonical = canonicalizeRfc3339Utc(filter.since);
+    if (canonical === null) {
       throw new LedgerStoreError("usage", "since must be an RFC3339 timestamp");
     }
-    out.since = filter.since;
+    out.since = canonical;
   }
   return out;
 }

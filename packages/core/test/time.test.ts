@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isRfc3339 } from "../src/util/time";
+import { canonicalizeRfc3339Utc, isRfc3339 } from "../src/util/time";
 
 describe("isRfc3339", () => {
   const valid = [
@@ -50,3 +50,31 @@ describe("isRfc3339", () => {
     expect(isRfc3339("2026-02-30T00:00:00Z")).toBe(false);
   });
 });
+
+describe("canonicalizeRfc3339Utc", () => {
+  test("maps offset-equivalent instants to one UTC spelling", () => {
+    const a = canonicalizeRfc3339Utc("2026-01-02T03:04:05+01:00");
+    const b = canonicalizeRfc3339Utc("2026-01-02T02:04:05Z");
+    expect(a).toBe("2026-01-02T02:04:05.000000000Z");
+    expect(b).toBe(a);
+  });
+
+  test("pads fractional seconds to nine digits", () => {
+    expect(canonicalizeRfc3339Utc("2026-01-02T03:04:05.1Z")).toBe(
+      "2026-01-02T03:04:05.100000000Z",
+    );
+  });
+
+  test("rejects invalid input", () => {
+    expect(canonicalizeRfc3339Utc("2026-02-30T00:00:00Z")).toBeNull();
+    expect(canonicalizeRfc3339Utc("not-a-time")).toBeNull();
+  });
+
+  test("offset-equivalent forms compare equal as strings after canonicalize", () => {
+    const left = canonicalizeRfc3339Utc("2026-06-01T12:00:00-05:00");
+    const right = canonicalizeRfc3339Utc("2026-06-01T17:00:00Z");
+    expect(left).toBe(right);
+    expect(left! < "2026-06-01T17:00:00.000000001Z").toBe(true);
+  });
+});
+
