@@ -5,6 +5,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+// Lone surrogates are invalid Unicode scalars that survive JSON.parse and a
+// UTF-8 byte round trip, so committed text carrying them is corrupted evidence.
+const hasLoneSurrogate = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      index += 1;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+};
+
 // Committed history and lane definitions are not a live worker lease store.
 export function validateMaestroState(tasks: unknown[], candidates: unknown[]): string[] {
   const errors: string[] = [];
@@ -18,7 +34,8 @@ export function validateMaestroState(tasks: unknown[], candidates: unknown[]): s
     for (const field of ["assignee", "claimedAt", "heartbeatAt", "lastHeartbeatAt", "leaseExpiresAt"]) {
       if (Object.hasOwn(value, field)) errors.push(`${label}: forbidden worker field ${field}`);
     }
-    if (typeof value["status"] === "string" && value["status"] !== value["status"].trim()) {
+    if (typeof value["status"] === "string" &&
+        (value["status"] !== value["status"].trim() || hasLoneSurrogate(value["status"]))) {
       errors.push(`${label}: invalid status`);
     }
     if (value["status"] === "in_progress") errors.push(`${label}: live reservation in committed state`);
@@ -36,7 +53,8 @@ export function validateMaestroState(tasks: unknown[], candidates: unknown[]): s
       errors.push(`${label}: missing supersession reference`);
     }
     if (task["status"] === "superseded" && typeof task["supersededBy"] === "string" &&
-        task["supersededBy"].trim() !== "" && task["supersededBy"] !== task["supersededBy"].trim()) {
+        task["supersededBy"].trim() !== "" && (task["supersededBy"] !== task["supersededBy"].trim() ||
+        hasLoneSurrogate(task["supersededBy"]))) {
       errors.push(`${label}: invalid supersession reference`);
     }
     if (byId.has(id)) errors.push(`${label}: duplicate task id`);

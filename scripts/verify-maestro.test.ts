@@ -104,6 +104,39 @@ describe("committed Maestro state validation", () => {
     }
   });
 
+  test("rejects lone surrogate statuses without mutating or exposing them", () => {
+    const joined = (errors: string[]) => errors.join("\n");
+    for (const status of ["\uD800pending", "pending\uDC00", "in_prog\uD800ress"]) {
+      const corruptedTask = { ...task, status };
+      const corruptedCandidate = { ...candidate, status };
+      expect(validateMaestroState([corruptedTask], [])).toEqual(["task 1: invalid status"]);
+      expect(validateMaestroState([historical], [corruptedCandidate])).toEqual([
+        "candidate 1: invalid status",
+        "candidate 1: candidate status disagrees with source task",
+      ]);
+      expect(joined(validateMaestroState([corruptedTask], []))).not.toContain(status);
+      expect(corruptedTask.status).toBe(status);
+      expect(corruptedCandidate.status).toBe(status);
+    }
+    expect(validateMaestroState([task], [])).toEqual([]);
+    expect(validateMaestroState([{ ...task, status: "in_progress" }], [])).toEqual([
+      "task 1: live reservation in committed state",
+    ]);
+  });
+
+  test("rejects lone surrogate supersession references even when candidate and task agree", () => {
+    for (const supersededBy of [`${pointer}\uD800`, `\uDC00${pointer}`]) {
+      const source = { ...historical, supersededBy };
+      const close = { ...candidate, supersededBy };
+      expect(validateMaestroState([source], [])).toEqual(["task 1: invalid supersession reference"]);
+      expect(validateMaestroState([source], [close])).toEqual([
+        "task 1: invalid supersession reference",
+      ]);
+      expect(source.supersededBy).toBe(supersededBy);
+      expect(close.supersededBy).toBe(supersededBy);
+    }
+  });
+
   test("accepts done close candidates using the historical task status", () => {
     const closedCandidate = { id: "tsk-closed", sourceTaskId: "tsk-closed" };
     expect(validateMaestroState([{ id: "tsk-closed", status: "done" }], [closedCandidate])).toEqual([]);
