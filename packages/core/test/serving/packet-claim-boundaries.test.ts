@@ -39,6 +39,36 @@ async function packet(f: Fixture, reader?: string) {
 }
 async function md(f: Fixture, reader?: string) { return (await packet(f, reader)).data?.packet_md ?? ""; }
 
+test("taste packets preserve polarity and validity together without leaking denied intervals", async () => {
+  const f = await fixture();
+  const positive = await claim(f, "minimal", {
+    predicate: "taste.likes_style", polarity: "positive",
+    valid_from: "2026-01-01T01:00:00+01:00", valid_to: "2026-02-01T00:00:00Z",
+  });
+  const negative = await claim(f, "ornate", {
+    predicate: "taste.likes_style", polarity: "negative",
+    valid_from: "2026-02-01T00:00:00Z", valid_to: null,
+  });
+  const hidden = await claim(f, "private-style", {
+    predicate: "taste.likes_style", sensitivity: "private",
+    valid_from: "2025-06-03T00:00:00Z", valid_to: "2025-07-04T00:00:00Z",
+  });
+  for (const reader of [undefined, "reader-public"]) {
+    const text = await md(f, reader);
+    const lines = text.split("\n");
+    expect(lines.find((line) => line.includes(`[claim:${positive.claim_id}]`)))
+      .toContain('polarity=positive valid_from=2026-01-01T01:00:00+01:00 valid_to=2026-02-01T00:00:00Z :: person:ada taste.likes_style "minimal"');
+    expect(lines.find((line) => line.includes(`[claim:${negative.claim_id}]`)))
+      .toContain('polarity=negative valid_from=2026-02-01T00:00:00Z valid_to=null :: person:ada taste.likes_style "ornate"');
+    expect(text).toContain("auth=model_inference");
+    if (reader !== undefined) {
+      expect(text).not.toContain(hidden.claim_id);
+      expect(text).not.toContain("2025-06-03");
+      expect(text).not.toContain("2025-07-04");
+    }
+  }
+});
+
 test("working claims and conflict identifiers honor the reader's ceiling", async () => {
   const f = await fixture();
   const secret = await claim(f, "private-orchard-plan", { sensitivity: "private" });

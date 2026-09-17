@@ -14,9 +14,12 @@ describe("public surface", () => {
       "NONE_LLM_ID",
       "OPENAI_COMPATIBLE_LLM_DESCRIPTOR",
       "OPENAI_COMPATIBLE_LLM_ID",
+      "SYSTEMONE_JEV_DESCRIPTOR",
+      "SYSTEMONE_JEV_ID",
       "chatCompletionsUrl",
       "createNoneLlmPort",
       "createOpenAiCompatibleLlmPort",
+      "createSystemOneJevPort",
       "endpointHost",
       "fetchTransport",
       "isLoopbackHost",
@@ -24,7 +27,9 @@ describe("public surface", () => {
       "modelRef",
       "parseChatCompletion",
       "parseOpenAiCompatibleConfig",
+      "parseSystemOneJevConfig",
       "registerLlmPorts",
+      "registerSystemOnePorts",
     ]);
   });
 
@@ -38,6 +43,11 @@ describe("public surface", () => {
       id: "kizuki.llm.openai-compatible",
       kind: "llm",
       contract: "kizuki.llm/v1",
+    });
+    expect(llm.SYSTEMONE_JEV_DESCRIPTOR).toMatchObject({
+      id: "kizuki.systemone.jev",
+      kind: "systemone",
+      contract: "kizuki.systemone/v1",
     });
     expect(llm.modelRef("kizuki.llm.openai-compatible", "synthetic", "127.0.0.1")).toBe(
       "kizuki.llm.openai-compatible:synthetic@127.0.0.1",

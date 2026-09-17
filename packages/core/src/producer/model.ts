@@ -16,6 +16,7 @@ import type {
   QuotedEvent,
   RejectReason,
 } from "../contracts/producer";
+import type { SystemOnePort } from "../contracts/systemone";
 import { PortError, isPortErrorCode, validatePortDescriptor } from "../contracts/ports";
 import type {
   PortContext,
@@ -28,6 +29,7 @@ import { isRfc3339 } from "../util/time";
 import { isNonEmptyString, isPlainObject } from "../util/validate";
 import { escapeFenceText, hasFenceLeak, hasParsedFenceLeak, newFenceNonce } from "./fence";
 import { buildExtractionMessages } from "./prompt";
+import { admitExtractedClaims } from "./systemone-admit";
 import {
   MAX_EVENT_ID_CHARS,
   containsVerbatimCapture,
@@ -72,6 +74,11 @@ const PREDICATE = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$/;
 export interface ModelProducerOptions {
   /** The bound `kizuki.llm/v1` port. The producer does not own or close it. */
   readonly llm: LlmPort;
+  /**
+   * Optional `kizuki.systemone/v1` port. Admission never writes canon and
+   * never replaces extraction. Unconfigured is a no-op.
+   */
+  readonly systemone?: SystemOnePort;
 }
 
 export interface ModelProducerConfig {
@@ -415,6 +422,7 @@ export function createModelProducerPort(
   if (llm === undefined || typeof llm.complete !== "function") {
     configError("model producer requires a bound llm port");
   }
+  const systemone = options?.systemone;
   let closed = false;
 
   const assertOpen = (): void => {
@@ -443,6 +451,12 @@ export function createModelProducerPort(
       const upstream = await llm.health();
       if (upstream.status === "unavailable") {
         return { status: "unavailable", reason: `llm: ${upstream.reason}` };
+      }
+      if (systemone !== undefined && systemone.model_ref !== null) {
+        const judge = await systemone.health();
+        if (judge.status === "unavailable") {
+          return { status: "unavailable", reason: `systemone: ${judge.reason}` };
+        }
       }
       const detail = {
         model_ref: llm.model_ref,
@@ -569,7 +583,25 @@ export function createModelProducerPort(
         }
       }
 
-      return { status: "ok", claims, usage, dropped };
+      const admitted = await admitExtractedClaims(
+        claims,
+        plan.input.events,
+        systemone,
+        config.deadline_ms,
+      );
+      if (admitted.status === "unavailable") {
+        return { status: "unavailable", reason: admitted.reason, usage };
+      }
+      if (admitted.status === "rejected") {
+        return { status: "rejected", reason: "schema_invalid", usage };
+      }
+      for (const item of admitted.dropped) drop(item);
+      return {
+        status: "ok",
+        claims: admitted.claims,
+        usage,
+        dropped: [...dropped, ...admitted.dropped],
+      };
     },
     async close(): Promise<void> {
       closed = true;
@@ -585,9 +617,15 @@ export function createModelProducerPort(
 export function registerModelProducerPort(
   llmFor: (ctx: PortContext) => LlmPort,
   registry?: PortRegistry,
+  systemoneFor?: (ctx: PortContext) => SystemOnePort | undefined,
 ): void {
-  const factory = (ctx: PortContext): ModelProducerPort =>
-    createModelProducerPort(ctx, { llm: llmFor(ctx) });
+  const factory = (ctx: PortContext): ModelProducerPort => {
+    const bound = systemoneFor?.(ctx);
+    return createModelProducerPort(
+      ctx,
+      bound === undefined ? { llm: llmFor(ctx) } : { llm: llmFor(ctx), systemone: bound },
+    );
+  };
   if (registry === undefined) {
     registerPort(MODEL_PRODUCER_DESCRIPTOR, factory);
   } else {
