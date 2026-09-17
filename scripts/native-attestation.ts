@@ -73,9 +73,10 @@ export function runNativeAttestation(args: NativeAttestationArgs): GateReceiptRe
   const spawn = (path: string, args: readonly string[]) => {
     try {
       const child = Bun.spawnSync([path, ...args], {
-        cwd: artifact, stdout: "pipe", stderr: "pipe", timeout: 5_000, killSignal: "SIGKILL", env: {},
+        cwd: artifact, stdout: "pipe", stderr: "pipe", timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 1_048_576, env: {},
       });
-      return child.signalCode ? null : child;
+      if (child.signalCode || child.stdout.byteLength > 1_048_576 || child.stderr.byteLength > 1_048_576) return null;
+      return child;
     } catch {
       return null;
     }

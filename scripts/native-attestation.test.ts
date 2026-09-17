@@ -165,6 +165,29 @@ test.each(["kizuki", "kizuki-mcp"])("producer cannot credit %s exiting successfu
   expect(() => readFileSync(out)).toThrow();
 }, 15_000);
 
+test.each([
+  ["kizuki", "stdout"], ["kizuki", "stderr"],
+  ["kizuki-mcp", "stdout"], ["kizuki-mcp", "stderr"],
+] as const)("producer refuses oversized %s %s without publishing a receipt", (binary, stream) => {
+  const f = executablePackage();
+  writeFileSync(join(f.artifact, binary), `#!/bin/sh\nprintf '%1048577s' x ${stream === "stderr" ? ">&2" : ""}\nexit 0\n`);
+  const names = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"];
+  writeFileSync(join(f.artifact, "SHA256SUMS"), names.map(name => `${digest(readFileSync(join(f.artifact, name)))}  ${name}`).join("\n") + "\n");
+  const out = join(f.root, "native.json");
+  expect(() => runNativeAttestation({ candidate: source, artifact: f.artifact, out }))
+    .toThrow(binary === "kizuki" ? "native-execution-failed" : "native-mcp-execution-failed");
+  expect(() => readFileSync(out)).toThrow();
+});
+
+test.each(["kizuki", "kizuki-mcp"])("producer accepts %s output at the byte bound", binary => {
+  const f = executablePackage();
+  writeFileSync(join(f.artifact, binary), "#!/bin/sh\nprintf '%1048576s' x\nexit 0\n");
+  const names = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"];
+  writeFileSync(join(f.artifact, "SHA256SUMS"), names.map(name => `${digest(readFileSync(join(f.artifact, name)))}  ${name}`).join("\n") + "\n");
+  const out = join(f.root, "native.json");
+  expect(runNativeAttestation({ candidate: source, artifact: f.artifact, out }).path).toBe(out);
+});
+
 test("wrong candidate argument is refused before execution credit", () => {
   const f = executablePackage();
   expect(() => runNativeAttestation({ candidate: "b".repeat(40), artifact: f.artifact, out: join(f.root, "native.json") })).toThrow("candidate-mismatch");
