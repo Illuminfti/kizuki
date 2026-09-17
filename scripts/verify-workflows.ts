@@ -140,6 +140,10 @@ function validateJobs(
       if (producer["if"] !== undefined) {
         failures.push({ path, reason: `required main check context "${job}" must run unconditionally` });
       }
+      // A skipped dependency also skips this producer, even without its own if.
+      if (producer["needs"] !== undefined) {
+        failures.push({ path, reason: `required main check context "${job}" must run independently without needs` });
+      }
     }
   }
   return failures;

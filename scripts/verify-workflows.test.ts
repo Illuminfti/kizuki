@@ -282,8 +282,16 @@ jobs:
       const path = `.github/workflows/${file}`;
       const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
       for (const job of jobs) {
-        for (const setting of ["name: renamed", "strategy: { matrix: { os: [ubuntu-latest] } }", "if: false"]) {
-          const changed = text.replace(`  ${job}:`, `  ${job}:\n    ${setting}`);
+        for (const setting of ["name: renamed", "strategy: { matrix: { os: [ubuntu-latest] } }", "if: false", "needs: prerequisite", "needs: [prerequisite]"]) {
+          const prerequisite = setting.startsWith("needs:") ? `
+  prerequisite:
+    if: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: "true"
+` : "";
+          const changed = text.replace(`  ${job}:`, `  ${job}:\n    ${setting}`) + prerequisite;
           expect(changed).not.toBe(text);
           expect(validateWorkflowText(path, changed).some(failure =>
             failure.reason.includes(`required main check context "${job}"`))).toBe(true);
