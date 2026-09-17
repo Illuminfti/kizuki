@@ -10,26 +10,29 @@ import { isRfc3339 } from "../util/time";
  * allowed here. `agents/time.ts` uses the same minute-preserving order for
  * grant windows.
  */
-function timezoneSuffixSql(column: string): string {
-  return `CASE WHEN lower(substr(${column}, -1)) = 'z' THEN 'Z' ELSE substr(${column}, -6) END`;
-}
-
 export function instantSecondSql(column: string): string {
-  const tz = timezoneSuffixSql(column);
-  return `unixepoch(
+  // Only numeric offsets have a sign six characters from the end. Z/z forms
+  // fall through to zero without a second timezone-normalization expression.
+  const tz = `substr(${column}, -6)`;
+  // SQLite rejects offsets beyond 14 hours, but the ingress contract accepts
+  // RFC3339 offsets through 23:59. Parse the wall clock as UTC and apply the
+  // validated offset arithmetically so accepted rows never become SQL NULL.
+  const offset = `(CAST(substr(${tz}, 2, 2) AS INTEGER) * 3600 + CAST(substr(${tz}, 5, 2) AS INTEGER) * 60)`;
+  return `(unixepoch(
   replace(
-    replace(
-      CASE
-        WHEN substr(${column}, 18, 2) = '60' THEN
-          substr(${column}, 1, 17) || '59' || ${tz}
-        ELSE
-          substr(${column}, 1, 19) || ${tz}
-      END,
-      't', 'T'
-    ),
-    'z', 'Z'
+    CASE
+      WHEN substr(${column}, 18, 2) = '60' THEN
+        substr(${column}, 1, 17) || '59Z'
+      ELSE
+        substr(${column}, 1, 19) || 'Z'
+    END,
+    't', 'T'
   )
-)`;
+) - CASE substr(${tz}, 1, 1)
+  WHEN '+' THEN ${offset}
+  WHEN '-' THEN -${offset}
+  ELSE 0
+END)`;
 }
 
 export function instantNanoSql(column: string): string {
