@@ -34,6 +34,24 @@ test('RFC850 Retry-After resolves two-digit years relative to the current centur
     }
 });
 
+test('RFC850 year and delay use the same wall-clock snapshot', async () => {
+    const originalNow = Date.now;
+    const now = Date.UTC(2026, 8, 17), target = Date.UTC(2050, 0, 1);
+    let samples = 0;
+    try {
+        await expect(request(new URL('https://api.prod.whoop.com/developer/v2/cycle'), 'synthetic', new Budget(), async () => {
+            // Change the clock only after transport admission, during retry parsing.
+            Date.now = () => now + samples++ * 1000;
+            return new Response(null, {
+                status: 429, headers: { 'retry-after': 'Saturday, 01-Jan-50 00:00:00 GMT' }
+            });
+        })).rejects.toMatchObject({ status: 429, retrySeconds: (target - now) / 1000 });
+        expect(samples).toBe(1);
+    } finally {
+        Date.now = originalNow;
+    }
+});
+
 test('rate limit headers preserve precedence and reject malformed reset delays', async () => {
     const cases: [Record<string, string>, number][] = [
         [{ 'retry-after': '30', 'x-ratelimit-reset': '120' }, 30],
