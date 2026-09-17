@@ -17,6 +17,7 @@ class Element {
     checked = false;
     disabled = false;
     focused = false;
+    isConnected = true;
     namespaceURI = 'http://www.w3.org/2000/svg';
     constructor(public tag = 'div') {}
     get tagName() { return this.tag.toUpperCase(); }
@@ -77,6 +78,19 @@ test('native dialog cancellation restores focus and releases its return target',
     expect(f.evaluate<boolean>('opener.focused')).toBe(true);
     expect(f.evaluate('dialogReturnFocus')).toBeNull();
     expect(f.evaluate('closingDialogGeneration')).toBeNull();
+});
+
+test('dialog dismissal returns focus to main when its opener is detached or disabled', async () => {
+    for (const cancel of [false, true]) for (const unavailable of ['isConnected=false', 'disabled=true']) {
+        const f = fixture();
+        f.evaluate(`document.activeElement=el('button'); globalThis.opener=document.activeElement; openDialog('Source setup','Synthetic'); opener.${unavailable};`);
+        if (cancel) { await f.dialog.fire('cancel'); f.dialog.close(); }
+        else f.evaluate('closeDialog()');
+        await tick();
+        expect(f.main.focused).toBe(true);
+        expect(f.evaluate<boolean>('opener.focused')).toBe(false);
+        expect(f.evaluate('dialogReturnFocus')).toBeNull();
+    }
 });
 
 test('a queued cancellation close leaves a newer dialog and its cleanup intact', async () => {
