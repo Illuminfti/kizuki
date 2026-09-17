@@ -203,7 +203,9 @@ copies already retained by an external client.
 
 Study U3. #528 first inventories the effective public composition and existing
 local model work. The current inventory is
-[retrieval-effective-composition.md](retrieval-effective-composition.md). D17
+[retrieval-effective-composition.md](retrieval-effective-composition.md). That
+inventory records optional D20 `rerankWithSystemOne` as a core helper outside
+the retrieval port; it is not a serving stage and is not D17 GGUF rerank. D17
 retains Kizuki-owned reranking/GGUF; the upstream's actual reranker is evidence
 of a pattern, not automatically included source or a license to extend the
 permitted fork. The factual correction is in upstream policy.

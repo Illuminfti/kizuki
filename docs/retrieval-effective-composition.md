@@ -1,7 +1,7 @@
 # Effective retrieval composition (#528 RI-01)
 
-Status: inspection of this revision. Not a production-model binding, not a
-rerank implementation, and not a corpus-scale performance receipt.
+Status: inspection of this revision. Not a production-model binding and not a
+corpus-scale performance receipt.
 
 Exact head at the time of this inventory is the commit that lands this file.
 
@@ -73,10 +73,17 @@ an owner-supplied file, refuses runtime network, and does not download weights
 on a read path. Transformer GGUF architectures are refused until a native
 runtime is bound.
 
-There is no Kizuki-owned rerank operation on this revision: no port method, no
-CLI/MCP tool, no serving stage, and no GGUF cross-encoder binding. Upstream
-`src/core/search/rerank.ts` is evidence of a pattern under D17. It is not
-copied into this tree and is not a configured production model.
+D17 GGUF cross-encoder rerank is still unimplemented: no `RetrievalPort`
+method, no CLI/MCP tool, no serving stage, and no GGUF cross-encoder binding.
+Upstream `src/core/search/rerank.ts` is evidence of a pattern under D17. It is
+not copied into this tree and is not a configured production model.
 
-RI-02 owns implementing that operation against the accepted contracts. This
-file must not be read as that implementation.
+Core also exports `rerankWithSystemOne`, an optional D20 System One helper
+after an FTS5 or embedding shortlist. It is not a `kizuki.retrieval/v1`
+capability, not a query `mode`, and not a serving or CLI/MCP stage. An
+unconfigured port keeps the shortlist order. A configured but dead port is
+unavailable, never a silent empty success. That helper is not RI-02 and is
+not D17 GGUF rerank.
+
+RI-02 still owns a bounded rerank operation against the accepted retrieval
+port and model contracts. This file must not be read as that implementation.

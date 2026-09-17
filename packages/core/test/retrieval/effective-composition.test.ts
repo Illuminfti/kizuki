@@ -4,6 +4,7 @@ import {
   PortError,
   PROVENANCE_ERASURE_CAPABILITY,
   RETRIEVAL_CAPABILITIES,
+  rerankWithSystemOne,
   validateRetrievalQuery,
 } from "../../src/index";
 
@@ -29,6 +30,7 @@ describe("effective retrieval composition (#528 RI-01)", () => {
     expect(validateRetrievalQuery({ ...LEXICAL_QUERY, mode: "vector" }).mode).toBe("vector");
     expect(validateRetrievalQuery({ ...LEXICAL_QUERY, mode: "hybrid" }).mode).toBe("hybrid");
     expect(() => validateRetrievalQuery({ ...LEXICAL_QUERY, mode: "rerank" })).toThrow(PortError);
+    expect(typeof rerankWithSystemOne).toBe("function");
   });
 
   test("the default FTS5 descriptor is lexical only", () => {
