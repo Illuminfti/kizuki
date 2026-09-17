@@ -67,6 +67,47 @@ describe("fileProposal", () => {
     expect(after?.corroboration).toBe(1);
   });
 
+  for (const status of ["pending", "promoted"] as const) {
+    for (const confirmedAt of [null, "2026-03-01T00:00:00Z"]) {
+      test(`${status} sensitivity-only refile preserves confirmation ${confirmedAt}`, () => {
+        const db = memoryDb();
+        try {
+          const first = fileProposal(db, proposalInput());
+          const id = first.proposal.proposal_id;
+          db.query("UPDATE proposals SET status = ? WHERE proposal_id = ?").run(status, id);
+          db.query("UPDATE claims SET sensitivity = 'public', last_confirmed_at = ? WHERE claim_id = ?")
+            .run(confirmedAt, id);
+          const before = getClaim(db, id)!;
+
+          const again = fileProposal(db, proposalInput());
+          expect(again.outcome).toBe("duplicate");
+          expect(again.proposal.proposal_id).toBe(id);
+          expect(again.proposal.sensitivity).toBe("private");
+          expect(getClaim(db, id)).toEqual({ ...before, sensitivity: "private" });
+          expect(listProposals(db)).toHaveLength(1);
+
+          const later = seedEvent(db, event({
+            event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+            source_record_id: "rec-later",
+          }));
+          fileProposal(db, proposalInput({ provenance: [later.event_id] }));
+          const confirmed = getClaim(db, id)!;
+          expect(confirmed.corroboration).toBe(before.corroboration + 1);
+          expect(confirmed.last_confirmed_at).not.toBe(confirmedAt);
+          expect(confirmed.last_confirmed_at).not.toBeNull();
+          expect(confirmed.sensitivity).toBe("private");
+          expect(confirmed.provenance).toEqual([...before.provenance, later.event_id]);
+
+          // Replaying that evidence must not count as another confirmation.
+          fileProposal(db, proposalInput({ provenance: [later.event_id] }));
+          expect(getClaim(db, id)).toEqual(confirmed);
+        } finally {
+          db.close();
+        }
+      });
+    }
+  }
+
   test("a drifted pending signature does not occupy the live claim slot", () => {
     const db = memoryDb();
     const first = fileProposal(db, proposalInput({ body: "current retraction" }));

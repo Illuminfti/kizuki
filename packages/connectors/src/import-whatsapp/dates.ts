@@ -200,7 +200,7 @@ export function resolveTimezone(value: string | undefined): string {
   if (fixed !== null) {
     const hours = Number(fixed[2]);
     const minutes = Number(fixed[3]);
-    if (hours > 14 || minutes > 59) {
+    if (hours > 14 || minutes > 59 || (hours === 14 && minutes !== 0)) {
       throw new KizukiError(
         "misconfigured",
         `time zone offset out of range: ${value}`,

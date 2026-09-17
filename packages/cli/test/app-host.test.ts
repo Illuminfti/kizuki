@@ -58,6 +58,7 @@ test('native local app enrolls folder, requires consent, captures and queries wi
         const capture = await done((await call('capture', { source_key: source, mode: 'backfill' })).data.operation_id);
         expect(capture.state).toBe('succeeded');
         expect(capture.counts.stored).toBe(1);
+        expect((await call('sources')).data.sources[0].backfill_complete).toBe(true);
         const query = await call('query', { text: 'chartreuse' });
         expect(query.ok).toBe(true);
         expect(query.data.hits.some((hit: any) => hit.text.includes('chartreuse'))).toBe(true);
