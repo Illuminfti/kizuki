@@ -1,5 +1,31 @@
 import { test, expect } from 'bun:test';
 import { Budget, request } from '../src/api';
+
+test('invalid Retry-After falls back to WHOOP reset seconds', async () => {
+    for (const retryAfter of ['', 'invalid', '-1', '1.5']) {
+        await expect(request(new URL('https://api.prod.whoop.com/developer/v2/cycle'), 'synthetic', new Budget(), async () => new Response(null, {
+            status: 429, headers: { 'retry-after': retryAfter, 'x-ratelimit-reset': '120' }
+        }))).rejects.toMatchObject({ status: 429, retrySeconds: 120 });
+    }
+});
+
+test('rate limit headers preserve precedence and reject malformed reset delays', async () => {
+    const cases: [Record<string, string>, number][] = [
+        [{ 'retry-after': '30', 'x-ratelimit-reset': '120' }, 30],
+        [{ 'retry-after': '0' }, 1],
+        [{ 'retry-after': 'Wed, 01 Jan 2020 00:00:00 GMT', 'x-ratelimit-reset': '120' }, 1],
+        [{ 'x-ratelimit-reset': '120' }, 120],
+        [{ 'x-ratelimit-reset': '0' }, 1],
+        [{ 'x-ratelimit-reset': '-1' }, 60],
+        [{ 'x-ratelimit-reset': 'Wed, 01 Jan 2020 00:00:00 GMT' }, 60],
+        [{}, 60]
+    ];
+    for (const [headers, seconds] of cases) {
+        await expect(request(new URL('https://api.prod.whoop.com/developer/v2/cycle'), 'synthetic', new Budget(), async () => new Response(null, {
+            status: 429, headers
+        }))).rejects.toMatchObject({ status: 429, retrySeconds: seconds });
+    }
+});
 test('request refuses foreign routes before transport and never follows bearer redirects', async () => {
     let calls = 0;
     for (const raw of ['https://outside.example/developer/v2/cycle', 'https://api.prod.whoop.com/developer/v2/partner/token', 'https://api.prod.whoop.com@outside.example/developer/v2/cycle'])

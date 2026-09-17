@@ -29,15 +29,18 @@ export class Budget {
     }
 }
 function retry(response: Response): number {
-    const raw = response.headers.get('retry-after') ?? response.headers.get('x-ratelimit-reset');
+    const raw = response.headers.get('retry-after');
     if (raw && /^\d{1,10}$/.test(raw))
         return Math.max(1, Number(raw));
-    if (raw) {
+    // Date.parse also accepts malformed delays such as "-1" as calendar dates.
+    if (raw && /^[A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(raw)) {
         const time = Date.parse(raw);
         if (Number.isFinite(time))
             return Math.max(1, Math.ceil((time - Date.now()) / 1000));
     }
-    return 60;
+    // WHOOP's reset header is a delay in seconds, never an HTTP date.
+    const reset = response.headers.get('x-ratelimit-reset');
+    return reset && /^\d{1,10}$/.test(reset) ? Math.max(1, Number(reset)) : 60;
 }
 async function read(response: Response): Promise<unknown> {
     const length = response.headers.get('content-length');
