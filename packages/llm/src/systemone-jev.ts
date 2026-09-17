@@ -257,6 +257,9 @@ function validateQuestion(id: string, question: SystemOneQuestion): SystemOneQue
     return { type: "noul", instructions: question.instructions, criteria };
   }
   if (question.type === "choice") {
+    if (!isPlainObject(question.criteria)) {
+      requestError("choice criteria must be an object");
+    }
     const entries = Object.entries(question.criteria);
     if (entries.length < 2 || entries.length > MAX_CRITERIA) {
       requestError("choice criteria must have between 2 and 255 options");
