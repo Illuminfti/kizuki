@@ -192,7 +192,7 @@ describe("serveContextPacket", () => {
 
   test("an epoch that is not a counter is refused", async () => {
     const ctx = (await newFixture()).owner();
-    const bad: unknown[] = ["3", -1, 1.5];
+    const bad: unknown[] = ["3", -1, 1.5, Number.MAX_SAFE_INTEGER + 1, 1e100, NaN, Infinity];
     for (const value of bad) {
       expect(
         (await refusal(async () =>
