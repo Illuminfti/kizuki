@@ -39,6 +39,11 @@ export function validateMaestroState(tasks: unknown[], candidates: unknown[]): s
     candidateIds.add(id);
     const source = candidate["sourceTaskId"];
     const task = typeof source === "string" ? byId.get(source) : undefined;
+    // Legacy close candidates omit status; an explicit status must agree.
+    if (task && Object.hasOwn(candidate, "status") &&
+        candidate["status"] !== "in_progress" && candidate["status"] !== task["status"]) {
+      errors.push(`${label}: explicit status disagrees with source task`);
+    }
     if (!task || candidate["id"] !== source) {
       errors.push(`${label}: missing or mismatched source task`);
     } else if (task["status"] === "superseded") {
