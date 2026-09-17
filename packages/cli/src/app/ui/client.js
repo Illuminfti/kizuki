@@ -359,7 +359,7 @@ function restoreDialogFocus() {
   dialogReturnFocus = null;
   let hidden = false;
   for (let node = target; node; node = node.parentElement) if (node.hidden) { hidden = true; break; }
-  if (target && typeof target.focus === 'function') (target.isConnected && !target.disabled && !hidden ? target : main).focus({ preventScroll: true });
+  if (target && typeof target.focus === 'function') (target !== document.body && target.isConnected && !target.disabled && !hidden ? target : main).focus({ preventScroll: true });
 }
 function closeDialog() {
   closingDialogGeneration = dialogGeneration;

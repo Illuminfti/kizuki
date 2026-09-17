@@ -108,6 +108,20 @@ test('dialog dismissal skips openers inside hidden ancestors but preserves visib
     }
 });
 
+test('dialog dismissal returns focus to main when opened from the document body', async () => {
+    for (const cancel of [false, true]) {
+        const f = fixture();
+        f.evaluate(`document.body=el('body'); document.activeElement=document.body; openDialog('Source setup','Synthetic');`);
+        if (cancel) { await f.dialog.fire('cancel'); f.dialog.close(); }
+        else f.evaluate('closeDialog()');
+        await tick();
+        expect(f.main.focused).toBe(true);
+        expect(f.evaluate<boolean>('document.body.focused')).toBe(false);
+        expect(f.evaluate('dialogReturnFocus')).toBeNull();
+        expect(f.evaluate('closingDialogGeneration')).toBeNull();
+    }
+});
+
 test('a queued cancellation close leaves a newer dialog and its cleanup intact', async () => {
     const f = fixture();
     f.evaluate(`openDialog('Old source','Synthetic'); globalThis.cleanups=0; dialogCleanup=()=>{cleanups++};`);
