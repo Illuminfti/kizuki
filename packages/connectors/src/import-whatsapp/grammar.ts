@@ -77,6 +77,7 @@ function parseTimestamp(
       b: Number(matched[3]),
       c: Number(matched[4]),
       wide_first: first.length === 4,
+      wide_last: matched[4]?.length === 4,
     },
     time: {
       hour: Number(matched[5]),
