@@ -77,4 +77,3 @@ describe("canonicalizeRfc3339Utc", () => {
     expect(left! < "2026-06-01T17:00:00.000000001Z").toBe(true);
   });
 });
-
