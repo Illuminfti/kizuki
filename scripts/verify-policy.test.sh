@@ -735,6 +735,18 @@ if ! grep -F 'verify-secrets.ts' "$script_dir/verify.sh" >/dev/null; then
   printf 'policy test failed: secrets gate is not invoked\n' >&2
   exit 1
 fi
+# Every helper file the script executes through bun must be in the pre-flight
+# inventory, so a missing or renamed helper fails before the first gate runs.
+helper_inventory="$(sed -n '/^assert_required_helpers()/,/^}/p' "$script_dir/verify.sh")"
+while IFS= read -r invoked_helper; do
+  if ! printf '%s\n' "$helper_inventory" | grep -F "$invoked_helper" >/dev/null; then
+    printf 'policy test failed: preflight helper inventory omits %s\n' "$invoked_helper" >&2
+    exit 1
+  fi
+done < <(sed -n \
+  -e 's/.*"\$verify_script_dir\/\([a-z0-9-]*\.ts\)".*/\1/p' \
+  -e 's/.*bun run scripts\/\([a-z0-9-]*\.ts\).*/\1/p' \
+  "$script_dir/verify.sh")
 if grep -F 'strip_git_trailers' "$script_dir/verify.sh" >/dev/null; then
   printf 'policy test failed: global trailer exemption remains\n' >&2
   exit 1
