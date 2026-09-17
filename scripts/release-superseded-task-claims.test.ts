@@ -74,6 +74,15 @@ describe("release superseded task claims", () => {
     }
   });
 
+  test("preserves CRLF separators while releasing obsolete reservations", () => {
+    const old = '{"id":"old","status":"superseded","assignee":"worker-host"}';
+    const live = ' {"id":"live", "status":"in_progress", "assignee":"lane-1"}';
+    const input = `${old}\r\n${live}\r\n`;
+    const output = releaseSupersededTaskClaims(input);
+    expect(output).toBe(`{"id":"old","status":"superseded"}\r\n${live}\r\n`);
+    expect(releaseSupersededTaskClaims(output)).toBe(output);
+  });
+
   test("preserves live tasks and already-clean lines byte for byte", () => {
     const input = ' {"id":"lane-a", "status":"in_progress", "assignee":"lane-1"}\n\n{"id":"old","status":"superseded"}\n';
     expect(releaseSupersededTaskClaims(input)).toBe(input);

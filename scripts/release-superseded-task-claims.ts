@@ -20,7 +20,7 @@ export function releaseSupersededTaskClaims(jsonl: string): string {
       const fields = ["assignee", "claimedAt", "heartbeatAt", "lastHeartbeatAt", "leaseExpiresAt"];
       if (!fields.some((field) => Object.hasOwn(task, field))) return line;
       for (const field of fields) delete (task as Record<string, unknown>)[field];
-      return JSON.stringify(task);
+      return JSON.stringify(task) + (line.endsWith("\r") ? "\r" : "");
     })
     .join("\n");
 }
