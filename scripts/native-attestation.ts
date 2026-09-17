@@ -72,7 +72,10 @@ export function runNativeAttestation(args: NativeAttestationArgs): GateReceiptRe
   const package_sha256 = Object.fromEntries(names.map(name => [name, files[name]!.sha256]));
   const spawn = (path: string, args: readonly string[]) => {
     try {
-      return Bun.spawnSync([path, ...args], { cwd: artifact, stdout: "pipe", stderr: "pipe", timeout: 5_000, env: {} });
+      const child = Bun.spawnSync([path, ...args], {
+        cwd: artifact, stdout: "pipe", stderr: "pipe", timeout: 5_000, killSignal: "SIGKILL", env: {},
+      });
+      return child.signalCode ? null : child;
     } catch {
       return null;
     }

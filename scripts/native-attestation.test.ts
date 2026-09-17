@@ -154,6 +154,17 @@ test("producer refuses a non-runnable MCP binary instead of attesting CLI-only e
   expect(() => runNativeAttestation({ candidate: source, artifact: f.artifact, out: join(f.root, "native.json") })).toThrow("native-mcp-execution-failed");
 });
 
+test.each(["kizuki", "kizuki-mcp"])("producer cannot credit %s exiting successfully from its timeout handler", binary => {
+  const f = executablePackage();
+  writeFileSync(join(f.artifact, binary), "#!/bin/sh\ntrap 'exit 0' TERM\nwhile :; do :; done\n");
+  const names = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"];
+  writeFileSync(join(f.artifact, "SHA256SUMS"), names.map(name => `${digest(readFileSync(join(f.artifact, name)))}  ${name}`).join("\n") + "\n");
+  const out = join(f.root, "native.json");
+  expect(() => runNativeAttestation({ candidate: source, artifact: f.artifact, out }))
+    .toThrow(binary === "kizuki" ? "native-execution-failed" : "native-mcp-execution-failed");
+  expect(() => readFileSync(out)).toThrow();
+}, 15_000);
+
 test("wrong candidate argument is refused before execution credit", () => {
   const f = executablePackage();
   expect(() => runNativeAttestation({ candidate: "b".repeat(40), artifact: f.artifact, out: join(f.root, "native.json") })).toThrow("candidate-mismatch");
