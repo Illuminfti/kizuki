@@ -21,6 +21,17 @@ describe("detached task snapshot export", () => {
     expect(exportTaskState(result)).toBe(result);
   });
 
+  test("drops the heartbeat alias from every detached task status", () => {
+    for (const status of ["pending", "in_progress", "superseded", "done", "completed"]) {
+      const input = JSON.stringify({ id: "lane-test", status, lastHeartbeatAt: "old", title: "History" });
+      const output = exportTaskState(input);
+      expect(JSON.parse(output)).toEqual({
+        id: "lane-test", status: status === "in_progress" ? "pending" : status, title: "History",
+      });
+      expect(exportTaskState(output)).toBe(output);
+    }
+  });
+
   test("empty input stays empty and malformed input fails atomically", () => {
     expect(exportTaskState("\n  \n")).toBe("");
     for (const input of ["null", "[]", "{}", '{"id":"","status":"pending"}', '{"id":"a","status":null}', '{"id":"a","status":"done"}\ninvalid']) {
@@ -32,7 +43,7 @@ describe("detached task snapshot export", () => {
     const root = mkdtempSync(join(tmpdir(), "kizuki-task-export-"));
     try {
       const input = join(root, "tasks.jsonl");
-      const original = '{"id":"lane-test","status":"in_progress","assignee":"test-host"}\n';
+      const original = '{"id":"lane-test","status":"in_progress","assignee":"test-host","lastHeartbeatAt":"old"}\n';
       writeFileSync(input, original);
       const command = [process.execPath, join(import.meta.dir, "export-task-state.ts"), input];
       const result = Bun.spawnSync(command);

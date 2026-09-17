@@ -326,7 +326,7 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
                             : grant.policy.egress === 'local_only' ? 'local_only'
                             : configured === null ? 'unavailable'
                             : configured.selection.kind === 'openai_compatible' && configured.selection.model_endpoint === grant.policy.egress.model_endpoint && configured.selection.model === grant.policy.egress.model ? 'current' : 'different_model';
-                        const source: AppSource = { source_key: row.source_key, connector_id: row.connector_id, display_name: row.connector_id.replace('kizuki.', ''), state, consent: grant?.status ?? 'required', revision: grant?.revision ?? 0, required_fields: required, last_run: checkpoint?.last_run_at ?? null, stored: checkpoint?.last_result.stored ?? 0, errors: checkpoint?.last_result.errors.length ?? 0, revoke_operation: grant?.revoke_operation ?? null, purge_blockers: grant?.purge_blockers ?? [], model_consent: modelConsent };
+                        const source: AppSource = { source_key: row.source_key, connector_id: row.connector_id, display_name: row.connector_id.replace('kizuki.', ''), state, consent: grant?.status ?? 'required', revision: grant?.revision ?? 0, required_fields: required, last_run: checkpoint?.last_run_at ?? null, backfill_complete: checkpoint?.backfill_complete ?? null, stored: checkpoint?.last_result.stored ?? 0, errors: checkpoint?.last_result.errors.length ?? 0, revoke_operation: grant?.revoke_operation ?? null, purge_blockers: grant?.purge_blockers ?? [], model_consent: modelConsent };
                         return source;
                     }) };
             });
