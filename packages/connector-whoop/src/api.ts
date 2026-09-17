@@ -33,10 +33,36 @@ function retry(response: Response): number {
     if (raw && /^\d{1,10}$/.test(raw))
         return Math.max(1, Number(raw));
     // Date.parse also accepts malformed delays such as "-1" as calendar dates.
-    if (raw && /^[A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(raw)) {
-        const time = Date.parse(raw);
-        if (Number.isFinite(time))
-            return Math.max(1, Math.ceil((time - Date.now()) / 1000));
+    if (raw && /^(?:[A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT|[A-Za-z]+, \d{2}-[A-Za-z]{3}-\d{2} \d{2}:\d{2}:\d{2} GMT|[A-Za-z]{3} [A-Za-z]{3} [ \d]\d \d{2}:\d{2}:\d{2} \d{4})$/.test(raw)) {
+        // asctime has no zone suffix, but HTTP dates always denote GMT.
+        let time = Date.parse(raw.includes(',') ? raw : `${raw} GMT`);
+        // RFC 9110: resolve a two-digit RFC850 year to the most recent matching
+        // year no more than 50 years in the future; Date.parse's fixed
+        // 1950/2049 pivot turns valid future cooldowns into the past.
+        const shortYear = /-(\d{2}) /.exec(raw);
+        if (shortYear) {
+            const limitDate = new Date(Date.now());
+            limitDate.setUTCFullYear(limitDate.getUTCFullYear() + 50);
+            const suffix = Number(shortYear[1]);
+            let year = Math.floor((limitDate.getUTCFullYear() - suffix) / 100) * 100 + suffix;
+            let parsed = Date.parse(raw.replace(/-\d{2} /, `-${year} `));
+            if (parsed > limitDate.getTime()) {
+                year -= 100;
+                parsed = Date.parse(raw.replace(/-\d{2} /, `-${year} `));
+            }
+            if (Number.isFinite(parsed))
+                time = parsed;
+        }
+        if (Number.isFinite(time)) {
+            // Round-trip every HTTP-date form: Date.parse normalizes invalid days
+            // and ignores mismatched weekdays, which can shorten the cooldown.
+            const date = new Date(time), utc = date.toUTCString();
+            const weekday = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][date.getUTCDay()];
+            const rfc850 = `${weekday}, ${utc.slice(5, 7)}-${utc.slice(8, 11)}-${utc.slice(14, 16)} ${utc.slice(17)}`;
+            const asctime = `${utc.slice(0, 3)} ${utc.slice(8, 11)} ${String(date.getUTCDate()).padStart(2, ' ')} ${utc.slice(17, 25)} ${utc.slice(12, 16)}`;
+            if (raw === utc || raw === rfc850 || raw === asctime)
+                return Math.max(1, Math.ceil((time - Date.now()) / 1000));
+        }
     }
     // WHOOP's reset header is a delay in seconds, never an HTTP date.
     const reset = response.headers.get('x-ratelimit-reset');
