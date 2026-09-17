@@ -48,6 +48,40 @@ for helper in assert_safe_tracked_paths assert_safe_tracked_text; do
   done
 done
 
+# Allocation counters live on disk because command substitutions are subshells.
+# Either allocation failure must stop before gates and release any first file.
+for fail_at in 1 2; do
+  for errexit in on off; do
+    (
+      printf '0\n' >"$fixture_root/main-alloc-count"
+      mktemp() {
+        read -r allocation_count <"$fixture_root/main-alloc-count"
+        allocation_count=$((allocation_count + 1))
+        printf '%s\n' "$allocation_count" >"$fixture_root/main-alloc-count"
+        if ((allocation_count == fail_at)); then return 73; fi
+        printf '' >"$fixture_root/main-scratch"
+        printf '%s\n' "$fixture_root/main-scratch"
+      }
+      bun() { return 99; }
+      bash() { return 99; }
+      git() { return 99; }
+      if [ "$errexit" = on ]; then set -e; else set +e; fi
+      status=0
+      main >"$fixture_root/main-alloc.out" 2>"$fixture_root/main-alloc.err" || status=$?
+      case "$-" in *e*) actual_errexit=on ;; *) actual_errexit=off ;; esac
+      read -r allocation_count <"$fixture_root/main-alloc-count"
+      if ((status != 73 || allocation_count != fail_at)) ||
+         [ "$actual_errexit" != "$errexit" ] ||
+         [[ -e "$fixture_root/main-scratch" ]] ||
+         [[ -s "$fixture_root/main-alloc.out" ]] ||
+         [ "$(cat -- "$fixture_root/main-alloc.err")" != 'verification failed: commit-message scratch allocation exited 73' ]; then
+        printf 'policy test failed: main scratch allocation failure was unstructured\n' >&2
+        exit 1
+      fi
+    )
+  done
+done
+
 git -C "$fixture_root" init -q
 git -C "$fixture_root" config user.name verifier
 git -C "$fixture_root" config user.email verifier@example.invalid

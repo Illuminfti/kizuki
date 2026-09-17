@@ -223,10 +223,20 @@ main() {
   local commit_records
   local commit_messages
   local cleanup_command
+  local status=0
 
   dependency_re="$(phone_home_dependency_pattern)"
-  commit_records="$(mktemp)"
-  commit_messages="$(mktemp)"
+  commit_records="$(mktemp)" || status=$?
+  if ((status != 0)); then
+    printf 'verification failed: commit-message scratch allocation exited %d\n' "$status" >&2
+    return "$status"
+  fi
+  commit_messages="$(mktemp)" || status=$?
+  if ((status != 0)); then
+    rm -f -- "$commit_records"
+    printf 'verification failed: commit-message scratch allocation exited %d\n' "$status" >&2
+    return "$status"
+  fi
   printf -v cleanup_command 'rm -f -- %q %q' "$commit_records" "$commit_messages"
   trap "$cleanup_command" EXIT
 
