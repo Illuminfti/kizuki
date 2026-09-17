@@ -412,6 +412,15 @@ export async function validateTrackedWorkflows(opts?: {
   }
 
   const failures: WorkflowFailure[] = [];
+  const trackedNames = new Set(files.map(file => file.slice(file.lastIndexOf("/") + 1)));
+  for (const required of Object.keys(REQUIRED_MAIN_CHECK_JOBS)) {
+    if (!trackedNames.has(required)) {
+      failures.push({
+        path: `${workflowsDir}/${required}`,
+        reason: "required main check workflow is not tracked",
+      });
+    }
+  }
   for (const file of files) {
     failures.push(...validateWorkflowText(file, await Bun.file(file).text()));
   }

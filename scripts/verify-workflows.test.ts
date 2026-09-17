@@ -320,6 +320,35 @@ jobs:
     ]);
   });
 
+  test("required workflow files cannot disappear from the tracked inventory", () => {
+    const root = mkdtempSync(join(tmpdir(), "kizuki-workflow-inventory-"));
+    const run = (cmd: string[]) => Bun.spawnSync({ cmd, cwd: root, stdout: "pipe", stderr: "pipe" });
+    try {
+      expect(run(["git", "init", "--quiet"]).exitCode).toBe(0);
+      for (const file of ["ci.yml", "workflows.yml"]) {
+        writeFileSync(join(root, file), readFileSync(resolve(import.meta.dir, "..", ".github/workflows", file)));
+      }
+      expect(run(["git", "add", "ci.yml", "workflows.yml"]).exitCode).toBe(0);
+      const validate = () => {
+        const result = run([process.execPath, "-e", `
+          import { validateTrackedWorkflows } from ${JSON.stringify(resolve(import.meta.dir, "verify-workflows.ts"))};
+          console.log(JSON.stringify(await validateTrackedWorkflows({ workflowsDir: "." })));
+        `]);
+        expect(result.exitCode).toBe(0);
+        return JSON.parse(result.stdout.toString());
+      };
+      expect(validate()).toEqual([]);
+      for (const file of ["ci.yml", "workflows.yml"]) {
+        expect(run(["git", "rm", "--cached", file]).exitCode).toBe(0);
+        expect(validate()).toContainEqual({
+          path: `./${file}`,
+          reason: "required main check workflow is not tracked",
+        });
+        expect(run(["git", "add", file]).exitCode).toBe(0);
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   test("the tracked workflow files pass the same rules CI runs", async () => {
     expect(await validateTrackedWorkflows()).toEqual([]);
   });
