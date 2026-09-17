@@ -19,6 +19,20 @@ describe("YTD parser", () => {
     expect(() => parseYtd(source, "tweets", 0)).toThrow();
   });
 
+  test("requires canonical, safely representable part identifiers", () => {
+    for (const dataset of ["account", "tweets"] as const) {
+      for (const part of [0, 1, Number.MAX_SAFE_INTEGER]) {
+        expect(parseYtd(`window.YTD.${dataset}.part${part} = [];`, dataset, part)).toEqual([]);
+        expect(() => parseYtd(`window.YTD.${dataset}.part0${part} = [];`, dataset, part))
+          .toThrow("invalid archive wrapper");
+      }
+      for (const part of ["9007199254740992", "9007199254740993"]) {
+        expect(() => parseYtd(`window.YTD.${dataset}.part${part} = [];`, dataset, Number(part)))
+          .toThrow("invalid archive wrapper");
+      }
+    }
+  });
+
   test("refuses excessive JSON nesting before parsing", () => {
     const nested = "[".repeat(MAX_JSON_DEPTH + 1) + "]".repeat(MAX_JSON_DEPTH + 1);
     expect(() => parseYtd(`window.YTD.tweets.part0 = ${nested};`, "tweets", 0))

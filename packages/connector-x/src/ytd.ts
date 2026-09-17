@@ -40,7 +40,7 @@ export function parseYtd(
   const match = WRAPPER.exec(source);
   if (
     match === null || match[1] !== expectedDataset ||
-    Number(match[2]) !== expectedPart
+    !Number.isSafeInteger(expectedPart) || match[2] !== String(expectedPart)
   ) {
     throw archiveError(
       "parse_error",
