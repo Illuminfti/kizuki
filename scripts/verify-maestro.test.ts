@@ -220,6 +220,39 @@ describe("committed Maestro state validation", () => {
     }
   });
 
+  for (const target of ["tasks", "candidate"]) {
+    test(`CLI rejects a leading BOM in ${target} without changing bytes`, () => {
+      const root = mkdtempSync(join(tmpdir(), "maestro-bom-"));
+      try {
+        mkdirSync(join(root, "scripts"));
+        const state = join(root, ".maestro", "tasks");
+        mkdirSync(join(state, "candidates"), { recursive: true });
+        const script = join(root, "scripts", "verify-maestro.ts");
+        writeFileSync(script, readFileSync(join(import.meta.dir, "verify-maestro.ts")));
+        const taskPath = join(state, "tasks.jsonl");
+        const candidatePath = join(state, "candidates", "example.json");
+        writeFileSync(taskPath, JSON.stringify(historical) + "\n");
+        writeFileSync(candidatePath, JSON.stringify(candidate));
+        const path = target === "tasks" ? taskPath : candidatePath;
+        writeFileSync(path, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), readFileSync(path)]));
+        const beforeTask = readFileSync(taskPath);
+        const beforeCandidate = readFileSync(candidatePath);
+        const result = spawnSync(process.execPath, [script], {
+          encoding: "utf8", timeout: 5000, killSignal: "SIGKILL",
+        });
+        expect(result.error).toBeUndefined();
+        expect(result.signal).toBeNull();
+        expect(result.status).toBe(1);
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toBe("Maestro committed state is missing or malformed\n");
+        expect(readFileSync(taskPath)).toEqual(beforeTask);
+        expect(readFileSync(candidatePath)).toEqual(beforeCandidate);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+
   test("validates the repository ledger and every close candidate", () => {
     const root = join(import.meta.dir, "..", ".maestro", "tasks");
     const tasks = readFileSync(join(root, "tasks.jsonl"), "utf8")

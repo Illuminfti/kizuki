@@ -72,7 +72,9 @@ export function validateMaestroState(tasks: unknown[], candidates: unknown[]): s
   return errors;
 }
 
-const decoder = new TextDecoder("utf-8", { fatal: true });
+// Preserve a leading BOM so JSON validation rejects it rather than silently
+// accepting bytes that the previous UTF-8 file reader would have rejected.
+const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 if (import.meta.main) {
   try {
