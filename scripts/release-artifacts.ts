@@ -41,7 +41,8 @@ export function verifyPackageDirectory(directory: string, build: BuildInfo): voi
   if (!stat.isDirectory() || stat.isSymbolicLink() || readdirSync(directory).sort().join() !== [...packageFiles(build)].sort().join()) throw new Error("release package member mismatch");
   for (const name of packageFiles(build)) {
     const file = join(directory, name); requireRegularFile(file);
-    if (lstatSync(file).size > packageFileLimit(name, build)) throw new Error("release package file exceeds bounds");
+    const size = lstatSync(file).size;
+    if (size === 0 || size > packageFileLimit(name, build)) throw new Error("release package file exceeds bounds");
   }
   const actual = parseBuildInfo(join(directory, "BUILD.json"));
   if (actual.schema !== build.schema || actual.source_sha !== build.source_sha || actual.target !== build.target || actual.bun_version !== build.bun_version ||

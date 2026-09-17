@@ -42,6 +42,11 @@ test("freeze a human task sheet without inventing results or acceptance", () => 
     .toContain("Report any inaccessible steps separately for each mode");
   expect(session.tasks.find(task => task.id === "correction-audit-undo")?.instruction)
     .toContain("query it again or inspect its updated context");
+  expect(session.tasks.find(task => task.id === "recovery")?.instruction)
+    .toContain("verify both query and context against the restored content");
+  expect(session.participant_instructions_sha256).toBe(hash(JSON.stringify(
+    session.tasks.map(({ id, instruction, required_outcome }) => [id, instruction, required_outcome]),
+  )));
   expect(session.started_at).toBeNull();
   expect(session.independent_eligibility_reference).toBeNull();
   for (const name of LEGACY_PACKAGE_FILES) expect(session.package_sha256[name]).toBe(hash(readFileSync(join(directory, name))));
