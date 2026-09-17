@@ -50,8 +50,11 @@ async function mcpSession(env: Record<string, string>, args: string[], requests:
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("MCP smoke timed out")); }, 15_000); });
-    const code = await Promise.race([child.exited, timeout]);
-    const [stdout, diagnostics] = await Promise.all([output, stderr]);
+    // Keep the deadline active until both output streams have also closed.
+    const [code, stdout, diagnostics] = await Promise.race([
+      Promise.all([child.exited, output, stderr]),
+      timeout,
+    ]);
     if (diagnostics.length > 16_384) throw new Error("MCP smoke diagnostics overflow");
     return { code, output: stdout, diagnostics };
   } finally {
@@ -183,21 +186,13 @@ try {
   const rejected = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], [agentRequests[0]!]);
   if (rejected.code === 0 || `${rejected.output}${rejected.diagnostics}`.includes(envelope.token) || `${rejected.output}${rejected.diagnostics}`.includes(credential)) throw new Error("revoked credential reconnected");
 
-  const session = Bun.spawn([mcp, "--vault", vault, "--owner"], {
-    env,
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  session.stdin.write(
-    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"release-smoke","version":"0"}}}\n',
-  );
-  session.stdin.write('{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n');
-  session.stdin.end();
-  const output = await new Response(session.stdout).text();
-  const stderr = await new Response(session.stderr).text();
-  if ((await session.exited) !== 0) throw new Error(`MCP smoke failed: ${stderr}`);
-  if (!output.includes('"tools"')) throw new Error("MCP tools/list did not respond");
+  const ownerSession = await mcpSession(env, ["--vault", vault, "--owner"], [
+    agentRequests[0]!,
+    agentRequests[1]!,
+    '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}',
+  ]);
+  if (ownerSession.code !== 0) throw new Error("owner MCP smoke failed");
+  if (!ownerSession.output.includes('"tools"')) throw new Error("MCP tools/list did not respond");
 
   verifyPackageDirectory(release, build);
   process.stdout.write(`release smoke passed: ${release}\n`);

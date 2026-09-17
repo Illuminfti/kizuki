@@ -190,9 +190,12 @@ export async function omnivoreEvents(
 function metadataString(value: string): string {
   const max = EVENT_LIMITS.metadataStringBytes;
   if (Buffer.byteLength(value, "utf8") <= max) return value;
-  let chars = Math.min(value.length, max);
-  while (chars > 0 && Buffer.byteLength(value.slice(0, chars), "utf8") > max) {
-    chars -= 1;
+  let bytes = 0;
+  let chars = 0;
+  for (const character of value) {
+    bytes += Buffer.byteLength(character, "utf8");
+    if (bytes > max) break;
+    chars += character.length;
   }
   return value.slice(0, chars);
 }

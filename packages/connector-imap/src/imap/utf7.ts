@@ -15,6 +15,17 @@ function decodeChunk(chunk: string): string | null {
     }
   }
   if (bits >= 6 || (accumulator & ((1 << bits) - 1)) !== 0) return null;
+  // Modified UTF-7 carries UTF-16: preserve malformed runs rather than
+  // emitting lone surrogates that become replacement characters in UTF-8.
+  for (let index = 0; index < units.length; index += 1) {
+    const unit = units[index]!;
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = units[++index];
+      if (next === undefined || next < 0xdc00 || next > 0xdfff) return null;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return null;
+    }
+  }
   return String.fromCharCode(...units);
 }
 

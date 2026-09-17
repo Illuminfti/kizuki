@@ -433,6 +433,40 @@ describe("ChatGPT export fidelity", () => {
     ]);
   });
 
+  test("reused message identity distinguishes every supported author role", () => {
+    const roles = ["user", "assistant", "system", "tool"] as const;
+    const conversation = (role: string) => ({
+      id: "role-thread",
+      mapping: {
+        n: {
+          message: {
+            author: { role },
+            content: { parts: ["Same words"] },
+            create_time: 1_704_067_200,
+          },
+        },
+      },
+    });
+    for (const first of roles) {
+      for (const second of roles) {
+        const result = parseChatGptExport(
+          JSON.stringify([conversation(first), conversation(second)]),
+          OBSERVED_AT,
+        );
+        expect(result.errors.map((error) => error.code)).toEqual([
+          first === second ? "duplicate_id" : "conflicting_id",
+        ]);
+        expect(result.events).toHaveLength(1);
+        expect(result.events[0]?.metadata["handle"]).toBe(
+          first === "user" ? "self" : first,
+        );
+        expect(result.events[0]?.subjects).toEqual([
+          { subject_id: `chatgpt:${first === "user" ? "self" : first}`, role: "from" },
+        ]);
+      }
+    }
+  });
+
   test("malformed metadata does not drop the message or copy the bag", () => {
     const result = parseChatGptExport(
       JSON.stringify([
