@@ -4,6 +4,10 @@ import {
   OPENAI_COMPATIBLE_LLM_DESCRIPTOR,
   createOpenAiCompatibleLlmPort,
 } from "./openai-compatible";
+import {
+  SYSTEMONE_JEV_DESCRIPTOR,
+  createSystemOneJevPort,
+} from "./systemone-jev";
 
 export {
   DEFAULT_MAX_RETRIES,
@@ -31,6 +35,13 @@ export {
 export type { OpenAiCompatibleOptions } from "./openai-compatible";
 export { isRetryableStatus, parseChatCompletion } from "./response";
 export {
+  SYSTEMONE_JEV_DESCRIPTOR,
+  SYSTEMONE_JEV_ID,
+  createSystemOneJevPort,
+  parseSystemOneJevConfig,
+} from "./systemone-jev";
+export type { SystemOneJevConfig, SystemOneJevOptions } from "./systemone-jev";
+export {
   DEFAULT_MAX_RESPONSE_BYTES,
   fetchTransport,
 } from "./transport";
@@ -47,4 +58,8 @@ export function registerLlmPorts(registry: PortRegistry): void {
     OPENAI_COMPATIBLE_LLM_DESCRIPTOR,
     createOpenAiCompatibleLlmPort,
   );
+}
+
+export function registerSystemOnePorts(registry: PortRegistry): void {
+  registry.registerPort(SYSTEMONE_JEV_DESCRIPTOR, createSystemOneJevPort);
 }

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { PortError } from "../../src/contracts/ports";
+import { PortError, validatePortDescriptor } from "../../src/contracts/ports";
 import type { ProducerPort } from "../../src/contracts/producer";
+import type { SystemOnePort } from "../../src/contracts/systemone";
+import { SYSTEMONE_CONTRACT, SYSTEMONE_CONTRACT_MINOR } from "../../src/contracts/systemone";
 import { PortRegistry } from "../../src/contracts/registry";
 import {
   FENCE_OPEN,
@@ -37,9 +39,10 @@ function withProducer<T>(
   llm: ScriptedLlm,
   run: (producer: ReturnType<typeof createModelProducerPort>, logs: PortLogLineList) => Promise<T>,
   config: Readonly<Record<string, unknown>> = {},
+  systemone?: Parameters<typeof createModelProducerPort>[1]["systemone"],
 ): Promise<T> {
   const temporary = temporaryProducerContext(MODEL_PRODUCER_DESCRIPTOR, config);
-  const producer = createModelProducerPort(temporary.ctx, { llm });
+  const producer = createModelProducerPort(temporary.ctx, { llm, ...(systemone === undefined ? {} : { systemone }) });
   return run(producer, temporary.logs).finally(() => {
     void producer.close();
     temporary.cleanup();
@@ -71,7 +74,7 @@ describe("kizuki.producer.model", () => {
       id: MODEL_PRODUCER_ID,
       kind: "producer",
       contract: "kizuki.producer/v1",
-      contract_minor: 4,
+      contract_minor: 5,
       supports: ["model"],
       requires_lease: false,
       optional_package: null,
@@ -685,6 +688,43 @@ describe("kizuki.producer.model", () => {
     } finally {
       temporary.cleanup();
     }
+  });
+
+  test("optional systemone admission drops low-noul drafts without writing canon", async () => {
+    const keep = draft();
+    const llm = scriptedLlm(() => responseText([keep]));
+    const systemone: SystemOnePort = {
+      descriptor: validatePortDescriptor({
+        id: "test.kizuki.systemone.scripted",
+        kind: "systemone",
+        contract: SYSTEMONE_CONTRACT,
+        contract_minor: SYSTEMONE_CONTRACT_MINOR,
+        supports: ["evaluate"],
+        requires_lease: false,
+        optional_package: null,
+      }),
+      model_ref: "kizuki.systemone.jev:jev-latest@127.0.0.1",
+      async health() {
+        return { status: "ready", detail: {} };
+      },
+      async evaluate() {
+        return {
+          model: "jev-latest",
+          answers: { admit_0: { type: "noul", noul: 0.11 } },
+          usage: { input_tokens: 1, output_tokens: 1 },
+        };
+      },
+      async close() {},
+    };
+    await withProducer(llm, async (producer) => {
+      const result = await producer.produce(input([GRACE_EVENT]));
+      expect(result.status).toBe("ok");
+      if (result.status !== "ok") return;
+      expect(result.claims).toEqual([]);
+      expect(result.dropped).toEqual([
+        { reason: "systemone_rejected", event_ids: [GRACE_EVENT.event_id] },
+      ]);
+    }, {}, systemone);
   });
 
   test("registers and binds through the registry", async () => {
