@@ -145,7 +145,12 @@ assert_required_helpers() {
 
 assert_full_history() {
   local shallow
-  shallow="$(git rev-parse --is-shallow-repository)"
+  local status=0
+  shallow="$(git rev-parse --is-shallow-repository)" || status=$?
+  if ((status != 0)); then
+    printf 'verification failed: history probe exited %d\n' "$status" >&2
+    return "$status"
+  fi
   if [ "$shallow" = "true" ]; then
     printf 'verification failed: shallow clone cannot scan reachable commit messages\n' >&2
     return 2

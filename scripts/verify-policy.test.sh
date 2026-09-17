@@ -183,6 +183,26 @@ for matching in on off; do
   done
 done
 
+# A failed history probe must not turn partial stdout into a successful check.
+# Conditional callers suppress errexit, so status handling must be explicit.
+for errexit in on off; do
+  for probe_output in false true FALSE unexpected ''; do
+    (
+      git() { printf '%s\n' "$probe_output"; return 7; }
+      if [[ "$errexit" == on ]]; then set -e; else set +e; fi
+      status=0
+      assert_full_history >"$fixture_root/history-probe.out" 2>"$fixture_root/history-probe.err" || status=$?
+      case "$-" in *e*) actual_errexit=on ;; *) actual_errexit=off ;; esac
+      if ((status != 7)) || [[ "$actual_errexit" != "$errexit" ]] ||
+         [[ -s "$fixture_root/history-probe.out" ]] ||
+         [[ "$( <"$fixture_root/history-probe.err" )" != 'verification failed: history probe exited 7' ]]; then
+        printf 'policy test failed: failed history probe lost status, shell state or diagnostic\n' >&2
+        exit 1
+      fi
+    )
+  done
+done
+
 restrict_root="$(mktemp -d)"
 git -C "$restrict_root" init -q
 git -C "$restrict_root" config user.name verifier
