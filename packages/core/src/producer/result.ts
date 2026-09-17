@@ -74,6 +74,11 @@ function readDroppedV1(value: unknown): DroppedDraft[] | undefined {
       integer(item.chars)) {
       dropped.push({ reason: item.reason, event_id: item.event_id, chars: item.chars });
     }
+    else if (item.reason === "systemone_rejected" &&
+      exact(item, ["reason", "event_ids"]) &&
+      eventIds(item.event_ids)) {
+      dropped.push({ reason: "systemone_rejected", event_ids: [...item.event_ids] });
+    }
     else {
       return undefined;
     }

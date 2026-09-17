@@ -118,6 +118,7 @@ test("every dead-session name ends in one conclusion, stated without the provide
   for (const name of [
     "AUTH_KEY_UNREGISTERED",
     "AUTH_KEY_INVALID",
+    "AUTH_KEY_DUPLICATED",
     "SESSION_REVOKED",
     "SESSION_EXPIRED",
     "USER_DEACTIVATED",

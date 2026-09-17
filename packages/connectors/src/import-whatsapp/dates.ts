@@ -23,6 +23,7 @@ export interface RawDate {
   b: number;
   c: number;
   wide_first: boolean;
+  wide_last?: boolean;
 }
 
 export interface RawTime {
@@ -38,8 +39,8 @@ interface DateParts {
   day: number;
 }
 
-function expandYear(value: number): number {
-  return value < 100 ? 2000 + value : value;
+function expandYear(value: number, wide = false): number {
+  return !wide && value < 100 ? 2000 + value : value;
 }
 
 function partsOf(date: RawDate, order: DateOrder): DateParts {
@@ -47,9 +48,9 @@ function partsOf(date: RawDate, order: DateOrder): DateParts {
     return { year: date.a, month: date.b, day: date.c };
   }
   if (order === "dmy") {
-    return { year: expandYear(date.c), month: date.b, day: date.a };
+    return { year: expandYear(date.c, date.wide_last), month: date.b, day: date.a };
   }
-  return { year: expandYear(date.c), month: date.a, day: date.b };
+  return { year: expandYear(date.c, date.wide_last), month: date.a, day: date.b };
 }
 
 /**
