@@ -188,6 +188,37 @@ for (const operation of ['sync', 'provider-revoke'] as const) {
     });
 }
 
+for (const mismatch of ['profile', 'cycle', 'recovery', 'sleep', 'workout'] as const) {
+    test(`${mismatch} account mismatch fences capture and provider revoke until reconnect`, async () => {
+        const f = new WhoopFixture(2, {
+            resources: ['cycle', 'recovery', 'sleep', 'workout'], fields: ['metrics', 'activity'], history_start: '2026-01-01T00:00:00Z'
+        });
+        const port = await f.connected();
+        const first = await port.backfill(null);
+        const saved = f.state.slice();
+        if (mismatch === 'profile') f.account = 8;
+        else f.records[mismatch][1]!.user_id = 8;
+        const refused = await port.sync(first.cursor);
+        expect(refused.status).toBe('unavailable');
+        expect(refused.detail).toContain('identity_mismatch');
+        expect(refused.events).toEqual([]);
+        expect(refused.cursor).toBe(first.cursor);
+        expect((await port.health()).state).toBe('unauthenticated');
+        expect(f.state).toEqual(saved);
+        const count = f.requests.length;
+        if (mismatch === 'profile') f.account = 7;
+        else f.records[mismatch][1]!.user_id = 7;
+        expect((await port.sync(first.cursor)).status).toBe('unavailable');
+        expect((await port.backfill(first.cursor)).status).toBe('unavailable');
+        await expect(port.revokeProviderAccess()).rejects.toThrow();
+        expect(f.requests).toHaveLength(count);
+        expect(f.state).toEqual(saved);
+        await port.connect(async () => new TextDecoder().decode(f.state));
+        expect((await port.sync(first.cursor)).status).toBeUndefined();
+        await port.close();
+    });
+}
+
 test('contract revoke stops locally without credentials or provider success', async () => {
     const f = new WhoopFixture(), port = await f.connected();
     await expect(port.connect(async () => { throw Error('missing protected state'); })).rejects.toThrow();
