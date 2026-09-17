@@ -19,7 +19,45 @@ describe("release superseded task claims", () => {
       supersededBy: task.supersededBy, closeReason: task.closeReason, blockedBy: task.blockedBy });
   });
 
-  test("releases the lastHeartbeatAt alias only on superseded tasks", () => {
+  test("releases completed reservations while preserving completion evidence", () => {
+    const completed = {
+      id: "done", status: "completed", assignee: "lane-1",
+      claimedAt: "2026-09-01T23:27:12Z", heartbeatAt: "2026-09-01T23:28:00Z",
+      lastHeartbeatAt: "2026-09-01T23:28:00Z", leaseExpiresAt: "2026-09-01T23:29:00Z",
+      completedAt: "2026-09-01T23:28:30Z", result: { commit: "abc123" },
+    };
+    const output = releaseSupersededTaskClaims(JSON.stringify(completed));
+    expect(JSON.parse(output)).toEqual({
+      id: completed.id, status: completed.status,
+      completedAt: completed.completedAt, result: completed.result,
+    });
+    expect(releaseSupersededTaskClaims(output)).toBe(output);
+  });
+
+  test("CLI releases completed claims without changing live claims or source bytes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "task-claims-"));
+    const path = join(dir, "tasks.jsonl");
+    const completed = '{"id":"done","status":"completed","assignee":"lane-1","completedAt":"2026-09-01T23:28:30Z"}';
+    const live = ' {"id":"live", "status":"in_progress", "assignee":"lane-2"}';
+    const pending = '{"id":"pending","status":"pending","assignee":"lane-3"}';
+    const input = `${completed}\r\n${live}\r\n\r\n${pending}\n`;
+    try {
+      writeFileSync(path, input);
+      const result = Bun.spawnSync([process.execPath, join(import.meta.dir, "release-superseded-task-claims.ts"), path], {
+        timeout: 5000, killSignal: "SIGKILL",
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr.toString()).toBe("");
+      const output = result.stdout.toString();
+      expect(output).toBe(`{"id":"done","status":"completed","completedAt":"2026-09-01T23:28:30Z"}\r\n${live}\r\n\r\n${pending}\n`);
+      expect(releaseSupersededTaskClaims(output)).toBe(output);
+      expect(readFileSync(path, "utf8")).toBe(input);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("releases the lastHeartbeatAt alias on superseded tasks but not live tasks", () => {
     const historical = { id: "old", status: "superseded", lastHeartbeatAt: "2026-09-01T23:28:00Z" };
     expect(JSON.parse(releaseSupersededTaskClaims(JSON.stringify(historical))))
       .toEqual({ id: "old", status: "superseded" });
