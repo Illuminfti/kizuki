@@ -54,6 +54,22 @@ describe("committed Maestro state validation", () => {
     }
   });
 
+  test("rejects lone surrogate task and candidate IDs without changing or exposing them", () => {
+    for (const id of ["lane-\uD800", "lane-\uDC00", "lane-\uD800x\uDC00"]) {
+      const source = { id, status: "done" };
+      const close = { id, sourceTaskId: id };
+      expect(validateMaestroState([source], [close])).toEqual([
+        "task 1: invalid record or id",
+        "candidate 1: invalid record or id",
+      ]);
+      expect(source.id).toBe(id);
+      expect(close.id).toBe(id);
+    }
+    for (const id of ["lane-日本語", "lane-\uD83D\uDE00", "lane-�"]) {
+      expect(validateMaestroState([{ id, status: "done" }], [{ id, sourceTaskId: id }])).toEqual([]);
+    }
+  });
+
   test("rejects padded statuses on tasks and candidates without mutating them", () => {
     for (const status of [" in_progress", "in_progress ", "\tin_progress", "in_progress\n", "\u00a0in_progress"]) {
       const paddedTask = { ...task, status };

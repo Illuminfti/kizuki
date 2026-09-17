@@ -11,7 +11,7 @@ export function validateMaestroState(tasks: unknown[], candidates: unknown[]): s
   const byId = new Map<string, Record<string, unknown>>();
   const checkRecord = (value: unknown, label: string): value is Record<string, unknown> => {
     if (!isRecord(value) || typeof value["id"] !== "string" || value["id"].trim() === "" ||
-        value["id"] !== value["id"].trim()) {
+        value["id"] !== value["id"].trim() || /[\uD800-\uDFFF]/u.test(value["id"])) {
       errors.push(`${label}: invalid record or id`);
       return false;
     }
