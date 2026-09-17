@@ -17,13 +17,14 @@ not capture-to-context.
 
 Ready still means a stranger can install Kizuki: executable stranger proof,
 zero live P0s on the exact candidate, and an honest install path. Ready also
-requires a public world-model journey. A stranger connects a consented source;
-a second authorized client resumes current Concept or Situation context
-without reconstructing history; one owner correction is visible to both
-clients. RFC 0003 and RFC 0004 remain proposed until those public seams
-exist. Closed GitHub packets, RFC fixtures, and planning documents are not
-shipped surfaces. The remaining product, security, connector, recovery,
-platform, review and verification requirements still apply.
+requires the entire #497 execution map as public seams on day one: foundation
+and first Concept, domain expansion, two-client continuity, World Slice and
+Diff, outcomes, attention, Atlas, forecasts, continuous verification, and
+#458 onboarding. The golden acceptance journey in #497 is the day-one proof.
+RFC 0003 and RFC 0004 remain proposed until those public seams exist. Closed
+GitHub packets, RFC fixtures, and planning documents are not shipped
+surfaces. The remaining product, security, connector, recovery, platform,
+review and verification requirements still apply.
 
 Seven-day rail observation and fourteen-day estate comparison are optional
 post-ready diagnostics. Operational cutover requires separate authorization;
