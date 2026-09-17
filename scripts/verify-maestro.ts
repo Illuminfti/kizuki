@@ -14,7 +14,7 @@ export function validateMaestroState(tasks: unknown[], candidates: unknown[]): s
       errors.push(`${label}: invalid record or id`);
       return false;
     }
-    for (const field of ["assignee", "claimedAt", "heartbeatAt", "leaseExpiresAt"]) {
+    for (const field of ["assignee", "claimedAt", "heartbeatAt", "lastHeartbeatAt", "leaseExpiresAt"]) {
       if (Object.hasOwn(value, field)) errors.push(`${label}: forbidden worker field ${field}`);
     }
     if (value["status"] === "in_progress") errors.push(`${label}: live reservation in committed state`);

@@ -13,7 +13,7 @@ export function releaseSupersededTaskClaims(jsonl: string): string {
         !("status" in task) || typeof task.status !== "string"
       ) throw new Error("Expected a task object with id and status");
       if (task.status !== "superseded") return line;
-      const fields = ["assignee", "claimedAt", "heartbeatAt", "leaseExpiresAt"];
+      const fields = ["assignee", "claimedAt", "heartbeatAt", "lastHeartbeatAt", "leaseExpiresAt"];
       if (!fields.some((field) => Object.hasOwn(task, field))) return line;
       for (const field of fields) delete (task as Record<string, unknown>)[field];
       return JSON.stringify(task);
