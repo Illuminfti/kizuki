@@ -80,8 +80,8 @@ test('native dialog cancellation restores focus and releases its return target',
     expect(f.evaluate('closingDialogGeneration')).toBeNull();
 });
 
-test('dialog dismissal returns focus to main when its opener is detached or disabled', async () => {
-    for (const cancel of [false, true]) for (const unavailable of ['isConnected=false', 'disabled=true']) {
+test('dialog dismissal returns focus to main when its opener is detached, disabled or hidden', async () => {
+    for (const cancel of [false, true]) for (const unavailable of ['isConnected=false', 'disabled=true', 'hidden=true']) {
         const f = fixture();
         f.evaluate(`document.activeElement=el('button'); globalThis.opener=document.activeElement; openDialog('Source setup','Synthetic'); opener.${unavailable};`);
         if (cancel) { await f.dialog.fire('cancel'); f.dialog.close(); }

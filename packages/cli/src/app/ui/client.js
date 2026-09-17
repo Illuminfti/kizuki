@@ -357,7 +357,7 @@ function clearDialogTransient() { clearDialogSecrets(); const cleanup = dialogCl
 function restoreDialogFocus() {
   const target = dialogReturnFocus;
   dialogReturnFocus = null;
-  if (target && typeof target.focus === 'function') (target.isConnected && !target.disabled ? target : main).focus({ preventScroll: true });
+  if (target && typeof target.focus === 'function') (target.isConnected && !target.disabled && !target.hidden ? target : main).focus({ preventScroll: true });
 }
 function closeDialog() {
   closingDialogGeneration = dialogGeneration;
