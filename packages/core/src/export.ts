@@ -2105,7 +2105,8 @@ function insertPurgeProof(db: Database, raw: Record<string, unknown>): void {
   const hash = asString(raw.content_hash, "content_hash");
   if (!CLAIM_CONTENT_HASH.test(hash)) throw new Error("content_hash: must be a sha256 hex digest");
   const sourceRecordId = asString(raw.source_record_id, "source_record_id");
-  if (sourceRecordId.length < 1 || sourceRecordId.length > EVENT_LIMITS.sourceRecordIdBytes) {
+  const sourceRecordIdBytes = Buffer.byteLength(sourceRecordId, "utf8");
+  if (sourceRecordIdBytes < 1 || sourceRecordIdBytes > EVENT_LIMITS.sourceRecordIdBytes) {
     throw new Error("source_record_id: invalid length");
   }
   const selectorKind = raw.selector_kind;
