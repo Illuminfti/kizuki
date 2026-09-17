@@ -56,7 +56,8 @@ start to obtain a new browser grant; capture consent remains unchanged. WHOOP
 remains an unregistered component. After
 `import`, claims are live and `tell --claim` can name them. Canon writing
 still requires a configured model; without one the sync rail leaves live
-claims unwritten and doctor says so. The automated
+claims unwritten and doctor says so. Optional TypeSafe Jev admission sits
+behind `[ports.systemone]` and never replaces that model. The automated
 `scripts/stranger-proof.ts` artifact isolation check is a
 deterministic release prerequisite, not a human stranger proof.
 

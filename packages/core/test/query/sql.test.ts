@@ -18,6 +18,16 @@ const CONTRACT_INSTANTS = [
   "2026-06-30T23:59:60+05:30",
   "2026-01-01T00:00:00.123456Z",
   "2026-12-31T23:59:59-00:00",
+  "2026-01-01T00:00:00.123456789+14:00",
+  "2026-01-01T00:00:00.123456789+14:01",
+  "2026-01-01T00:00:00.123456789-14:01",
+  "2026-01-01T00:00:00.123456789+23:59",
+  "2026-01-01T00:00:00.123456789-23:59",
+  // Cover the accepted year edges, including UTC rollover beyond year 9999.
+  "0001-01-01t00:00:00.000000001+23:59",
+  "9999-12-31T23:59:59.999999999-23:59",
+  "2026-06-30t23:59:60.1+23:59",
+  "2026-06-30T23:59:60.1-23:59",
 ] as const;
 
 describe("instant helpers", () => {
@@ -38,6 +48,28 @@ describe("instant helpers", () => {
       const parsed = rfc3339Instant(value, "instant");
       expect(row?.seconds).toBe(parsed.epochSecond);
       expect(row?.nanos).toBe(parsed.nanos);
+    }
+  });
+
+  test("equivalent wide offsets retain nanosecond ordering before the Unix epoch", () => {
+    const db = new Database(":memory:");
+    try {
+      db.exec("CREATE TABLE t (id TEXT, v TEXT)");
+      const insert = db.query<never, [string, string]>("INSERT INTO t VALUES (?, ?)");
+      insert.run("later", "1970-01-01T23:58:59.000000002+23:59");
+      insert.run("earlier", "1969-12-31T00:00:59.000000001-23:59");
+      insert.run("equal", "1969-12-31T23:59:59.000000001Z");
+      const rows = db.query<{ id: string; seconds: number; nanos: number }, []>(
+        `SELECT id, ${instantSecondSql("v")} AS seconds, ${instantNanoSql("v")} AS nanos
+         FROM t ORDER BY seconds, nanos, id`,
+      ).all();
+      expect(rows).toEqual([
+        { id: "earlier", seconds: -1, nanos: 1 },
+        { id: "equal", seconds: -1, nanos: 1 },
+        { id: "later", seconds: -1, nanos: 2 },
+      ]);
+    } finally {
+      db.close();
     }
   });
 
