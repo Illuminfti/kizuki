@@ -783,12 +783,13 @@ function operationErrorMessage(route, operation, payload) {
   if (code) return humanError(code);
   return 'Completion is not confirmed. Check the source state before trying again.';
 }
-function showSetupFailure(text) {
-  const path = document.getElementById('setup-path')?.value || '';
-  const noService = document.getElementById('setup-no-service')?.checked === true;
+function showSetupFailure(text, payload) {
+  const path = payload.path || '';
+  const noService = payload.no_service === true;
   state.setupError = text;
   if (dialog.open) closeDialog();
-  if (state.status?.vault.ready || !bearer) return;
+  if (!bearer) return;
+  if (state.status?.vault.ready) { message(text); return; }
   render();
   const details = main.querySelector('details');
   if (details) details.open = true;
@@ -858,7 +859,7 @@ async function launchOperation(route, payload, title, done) {
     const text = error.message;
     const ownsDialog = dialog.open && dialog.contains(content);
     if (route === 'revoke') await refresh();
-    if (route === 'initialize' && ownsDialog) { showSetupFailure(text); return; }
+    if (route === 'initialize' && ownsDialog) { showSetupFailure(text, payload); return; }
     if (route === 'enroll' && ownsDialog && restoreEnrollment(payload, text)) return;
     progress.setAttribute('aria-busy', 'false'); progress.replaceChildren(el('p', { class: 'form-error', role: 'alert' }, text));
     if (route === 'capture') {

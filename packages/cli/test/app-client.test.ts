@@ -215,6 +215,50 @@ test('failed workspace creation returns to setup options instead of a modal dead
     expect(f.main.textContent).not.toContain('Completed');
 });
 
+test('failed setup restores submitted choices after a refresh rebuilds the form', async () => {
+    const f = fixture();
+    const setupStatus = { vault: { ready: false }, setup_location: '/tmp/kizuki-empty', setup_no_service: false, visibility_epoch: 'uninitialized', operations: [] };
+    f.evaluate(`state.status=${JSON.stringify(setupStatus)}; render();`);
+    f.main.querySelector('#setup-path')!.value = '/tmp/existing-notes';
+    f.main.querySelector('#setup-no-service')!.checked = true;
+    const work = f.evaluate<Promise<void>>('initialize()');
+    f.reply('initialize', { operation_id: 'init' }); await tick();
+    const refreshed = f.evaluate<Promise<void>>('refresh()');
+    f.reply('status', setupStatus); await tick();
+    f.reply('catalog', { sources: [] }); await refreshed;
+    f.reply('operation', { id: 'init', kind: 'initialize', state: 'failed', error: { code: 'unavailable' } });
+    await work; await tick();
+    expect(f.main.querySelector('#setup-path')!.value).toBe('/tmp/existing-notes');
+    expect(f.main.querySelector('#setup-no-service')!.checked).toBe(true);
+    expect(f.main.querySelector('#setup-path')!.focused).toBe(true);
+    const retry = f.evaluate<Promise<void>>('initialize()');
+    expect(f.requests.find(row => row.route === 'initialize')!.payload).toEqual({ path: '/tmp/existing-notes', no_service: true });
+    f.reply('initialize', { operation_id: 'retry' }); await tick();
+    f.reply('operation', { id: 'retry', kind: 'initialize', state: 'failed', error: { code: 'unavailable' } });
+    await retry;
+    expect(f.storageWrites).toHaveLength(0);
+});
+
+test('failed setup keeps its error visible when refresh already reports a ready workspace', async () => {
+    const f = fixture();
+    f.evaluate(`state.status={vault:{ready:false},visibility_epoch:'1',operations:[]}; render();`);
+    const work = f.evaluate<Promise<void>>('initialize()');
+    f.reply('initialize', { operation_id: 'init' }); await tick();
+    const refreshed = f.evaluate<Promise<void>>('refresh()');
+    f.reply('status', status()); await tick();
+    f.reply('catalog', { sources: [] });
+    f.reply('sources', { sources: [] }); await refreshed;
+    const currentView = f.main.children[0];
+    f.reply('operation', { id: 'init', kind: 'initialize', state: 'failed', error: { code: 'invalid_request' } });
+    await work; await tick();
+    expect(f.dialog.open).toBe(false);
+    expect(f.notice.hidden).toBe(false);
+    expect(f.notice.textContent).toContain('A workspace already exists');
+    expect(f.main.children[0]).toBe(currentView);
+    expect(f.main.querySelector('#setup-path')).toBeNull();
+    expect(f.storageWrites).toHaveLength(0);
+});
+
 test('successful setup opens sources without a stale completed banner and focuses Connect', async () => {
     const f = fixture();
     f.evaluate(`state.status={vault:{ready:false},visibility_epoch:'uninitialized',operations:[]}; state.sources=[]; render();`);
