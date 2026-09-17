@@ -6,6 +6,7 @@ import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "
 import { eventFromRow, type EventRow } from "../ledger/event-record";
 import { compareRfc3339 } from "../agents/time";
 import type { Sensitivity } from "../agents/types";
+import { SENSITIVITY_ORDER } from "../agents/types";
 import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../contracts/retrieval";
 import { bareRetrievalId, retrievalDocId } from "../retrieval/ids";
 import type {
@@ -443,14 +444,31 @@ function structuralMatch(incoming: Claim, live: Claim): boolean {
 }
 
 function corroborate(db: Database, live: Claim, incoming: Claim, at: string): Claim {
+  const sensitivity: Sensitivity =
+    SENSITIVITY_ORDER[incoming.sensitivity] > SENSITIVITY_ORDER[live.sensitivity]
+      ? incoming.sensitivity
+      : live.sensitivity;
+  // Index support once so replay checks do not rescan it for every citation.
+  const existingEvidence = new Set(live.provenance);
+  // Rephrasing already-cited evidence may tighten policy, not confirm evidence.
+  if (incoming.provenance.every((eventId) => existingEvidence.has(eventId))) {
+    if (sensitivity === live.sensitivity) return live;
+    db.query("UPDATE claims SET sensitivity = ? WHERE claim_id = ?")
+      .run(sensitivity, live.claim_id);
+    return { ...live, sensitivity };
+  }
   const next: Claim = {
     ...live,
     confidence: Math.max(live.confidence, incoming.confidence),
     corroboration: live.corroboration + 1,
     authority: higherAuthority(incoming.authority, live.authority),
     last_confirmed_at: at,
+    sensitivity,
+    provenance: [...new Set([...live.provenance, ...incoming.provenance])],
   };
   persistClaim(db, next);
+  db.query("UPDATE claims SET provenance = ?, sensitivity = ? WHERE claim_id = ?")
+    .run(JSON.stringify(next.provenance), next.sensitivity, next.claim_id);
   return getClaim(db, live.claim_id) ?? next;
 }
 
@@ -1143,7 +1161,7 @@ function applyClaimInsert(
   // conflict/R5 when the object or polarity differs (RFC 0002 §5.2, §6.3).
   if (structural !== undefined) {
     const confirmed = corroborate(io.db, structural, claim, at);
-    enqueueRetrieval(io.db, io, confirmed, at);
+    if (confirmed !== structural) enqueueRetrieval(io.db, io, confirmed, at);
     return { outcome: "duplicate", claim: confirmed, dedup: mode };
   }
 
