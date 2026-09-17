@@ -327,6 +327,10 @@ describe("local X archive connector", () => {
     expect(changed.cursor).not.toBe(first.cursor);
     expect(changed.events.map((event) => event.source_record_id))
       .toEqual(first.events.map((event) => event.source_record_id));
+    const changedPost = changed.events.find((event) => event.source_record_id === "post:1000");
+    expect(changedPost?.attachments.map((entry) => entry.byte_size)).toEqual([12, 5, 5]);
+    expect(await new XArchiveConnector({ path: root }).backfill(changed.cursor))
+      .toEqual({ events: [], cursor: changed.cursor });
   });
 
   test("fixture is offline and production input sources remain synthetic", async () => {
