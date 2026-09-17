@@ -5,6 +5,19 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=verify.sh
 source "$script_dir/verify.sh"
 
+# Sourcing must not dispatch main when argv[0] differs only by case.
+# A failing allocator bounds an accidental main invocation before any gates run.
+source_probe=0
+source_output="$(bash -O nocasematch -c '
+  mktemp() { return 73; }
+  source "$1"
+  printf "loaded"
+' "$script_dir/VERIFY.SH" "$script_dir/verify.sh")" || source_probe=$?
+if ((source_probe != 0)) || [ "$source_output" != loaded ]; then
+  printf 'policy test failed: sourcing dispatched main under nocasematch\n' >&2
+  exit 1
+fi
+
 fixture_root="$(mktemp -d)"
 shallow_copy=""
 cleanup() {

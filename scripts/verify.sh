@@ -266,6 +266,6 @@ main() {
   printf 'VERIFY_OK\n'
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   main "$@"
 fi
