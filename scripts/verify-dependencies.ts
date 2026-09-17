@@ -115,7 +115,7 @@ export function inspectDependencyPolicy(text: string): DependencyPolicy {
   }
   const packages = parsed["packages"];
   if (!isPlainObject(packages)) fail("dependency policy packages must be an object");
-  const classified: Record<string, PolicyPackage> = {};
+  const classified: Record<string, PolicyPackage> = Object.create(null);
   for (const [identity, entry] of Object.entries(packages)) {
     if (!isPlainObject(entry) || typeof entry["integrity"] !== "string" || entry["integrity"].length === 0) {
       fail(`dependency policy packages[${identity}] is missing integrity`);
