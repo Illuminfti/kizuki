@@ -227,20 +227,18 @@ function mediaType(filename: string): string {
 async function scanMedia(directory: string): Promise<{
   directory: { path: string; identity: FileIdentity } | null;
   byPost: ReadonlyMap<string, readonly MediaEntry[]>;
-  count: number;
 }> {
   try {
     await lstat(directory);
   } catch (error) {
     if ((error as { code?: unknown }).code === "ENOENT") {
-      return { directory: null, byPost: new Map(), count: 0 };
+      return { directory: null, byPost: new Map() };
     }
     throw archiveError("misconfigured", "cannot inspect tweets_media", error);
   }
   const directoryIdentity = await inspectDirectory(directory, "tweets_media");
   const mutable = new Map<string, MediaEntry[]>();
   let entries = 0;
-  let references = 0;
   const stream = await opendir(directory);
   try {
     for await (const entry of stream) {
@@ -268,8 +266,10 @@ async function scanMedia(directory: string): Promise<{
         path: itemPath,
         identity: identityOf(info),
       };
-      references += 1;
       const found = mutable.get(prefix) ?? [];
+      if (found.length >= 256) {
+        throw archiveError("parse_error", "one post has more than 256 media references");
+      }
       found.push(media);
       mutable.set(prefix, found);
     }
@@ -278,14 +278,10 @@ async function scanMedia(directory: string): Promise<{
   }
   for (const items of mutable.values()) {
     items.sort((a, b) => a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : 0);
-    if (items.length > 256) {
-      throw archiveError("parse_error", "one post has more than 256 media references");
-    }
   }
   return {
     directory: { path: directory, identity: directoryIdentity },
     byPost: mutable,
-    count: references,
   };
 }
 
@@ -371,6 +367,7 @@ export async function scanArchive(rootPath: string): Promise<XArchiveSnapshot> {
   const parts: TweetPart[] = [];
   let aggregateBytes = accountRead.bytes.byteLength;
   let totalPosts = 0;
+  let mediaReferences = 0;
   for (const [part, partPath] of ordered) {
     const label = part === 0 ? "data/tweets.js" : `data/tweets-part${part}.js`;
     const handle = await openRegular(partPath, label);
@@ -391,12 +388,13 @@ export async function scanArchive(rootPath: string): Promise<XArchiveSnapshot> {
       throw archiveError("misconfigured", `archive has more than ${MAX_POSTS} posts; split the import or wait for streaming support`);
     }
     records.forEach((record, index) => {
-      const id = mapPost(record, part, index, identity, media.byPost, null)
-        .event.source_record_id;
+      const { event } = mapPost(record, part, index, identity, media.byPost, null);
+      const id = event.source_record_id;
       if (seen.has(id)) {
         throw archiveError("parse_error", "archive contains a duplicate native post id");
       }
       seen.add(id);
+      mediaReferences += event.attachments.length;
     });
     parts.push({
       part,
@@ -407,7 +405,7 @@ export async function scanArchive(rootPath: string): Promise<XArchiveSnapshot> {
   const coverage: XArchiveCoverage = {
     posts: totalPosts,
     tweet_parts: parts.length,
-    media_references: media.count,
+    media_references: mediaReferences,
     media_bytes: "not_supported",
     likes: "not_inspected",
     bookmarks: "not_supported",
