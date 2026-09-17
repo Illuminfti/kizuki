@@ -216,6 +216,86 @@ for errexit in on off; do
   done
 done
 
+# The scanner wrapper must not flip a conditional caller's errexit.
+for errexit in on off; do
+  for scanner_status in 1 0; do
+    (
+      git() { printf 'match\n'; return "$scanner_status"; }
+      if [[ "$errexit" == on ]]; then set -e; else set +e; fi
+      status=0
+      assert_no_match 'regression scanner' git \
+        >"$fixture_root/scanner.out" 2>"$fixture_root/scanner.err" || status=$?
+      case "$-" in *e*) actual_errexit=on ;; *) actual_errexit=off ;; esac
+      expected_status=0
+      expected_error=''
+      if [ "$scanner_status" -eq 0 ]; then
+        expected_status=1
+        expected_error=$'verification failed: regression scanner matched\nmatch'
+      fi
+      if ((status != expected_status)) || [[ "$actual_errexit" != "$errexit" ]] ||
+         [[ -s "$fixture_root/scanner.out" ]] ||
+         [ "$(cat -- "$fixture_root/scanner.err")" != "$expected_error" ]; then
+        printf 'policy test failed: assert_no_match changed caller errexit state\n' >&2
+        exit 1
+      fi
+    )
+  done
+done
+
+# The tracked-path matcher must preserve the caller's nocasematch and errexit.
+for errexit in on off; do
+  for matching in on off; do
+    for scanner_status in 0 1; do
+      for forbidden_path in "packages/${name_re}.ts" packages/safe.ts; do
+        (
+          git() { printf '%s\0' "$forbidden_path"; return "$scanner_status"; }
+          if [ "$matching" = on ]; then shopt -s nocasematch; else shopt -u nocasematch; fi
+          if [ "$errexit" = on ]; then set -e; else set +e; fi
+          status=0
+          assert_safe_tracked_paths 'G''brain' \
+            >"$fixture_root/tracked-state.out" 2>"$fixture_root/tracked-state.err" || status=$?
+          if shopt -q nocasematch; then actual_matching=on; else actual_matching=off; fi
+          case "$-" in *e*) actual_errexit=on ;; *) actual_errexit=off ;; esac
+          expected_status=0
+          expected_error=''
+          if [ "$scanner_status" -eq 1 ]; then
+            expected_status=1
+            expected_error='verification failed: tracked-path producer exited 1'
+          elif [ "$forbidden_path" != packages/safe.ts ]; then
+            expected_status=1
+            expected_error="verification failed: forbidden identifier in tracked path
+$forbidden_path"
+          fi
+          if ((status != expected_status)) || [ "$actual_matching" != "$matching" ] ||
+             [ "$actual_errexit" != "$errexit" ] ||
+             [[ -s "$fixture_root/tracked-state.out" ]] ||
+             [ "$(cat -- "$fixture_root/tracked-state.err")" != "$expected_error" ]; then
+            printf 'policy test failed: tracked-path helper changed caller shell state\n' >&2
+            exit 1
+          fi
+        )
+      done
+    done
+  done
+done
+
+# The reachable-commit producer wrapper must not flip a conditional caller's errexit.
+for errexit in on off; do
+  (
+    git() { printf 'records\n'; return 5; }
+    if [[ "$errexit" == on ]]; then set -e; else set +e; fi
+    status=0
+    write_reachable_commit_records "$fixture_root/producer-state.records" \
+      >/dev/null 2>"$fixture_root/producer-state.err" || status=$?
+    case "$-" in *e*) actual_errexit=on ;; *) actual_errexit=off ;; esac
+    if ((status != 5)) || [[ "$actual_errexit" != "$errexit" ]] ||
+       [[ "$(cat -- "$fixture_root/producer-state.err")" != 'verification failed: reachable commit-message producer exited 5' ]]; then
+      printf 'policy test failed: reachable-commit producer wrapper changed caller errexit state\n' >&2
+      exit 1
+    fi
+  )
+done
+
 restrict_root="$(mktemp -d)"
 git -C "$restrict_root" init -q
 git -C "$restrict_root" config user.name verifier

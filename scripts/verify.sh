@@ -9,10 +9,8 @@ assert_no_match() {
   local output
   local status
 
-  set +e
-  output="$("$@" 2>&1)"
-  status=$?
-  set -e
+  status=0
+  output="$("$@" 2>&1)" || status=$?
 
   case "$status" in
     0)
@@ -64,26 +62,28 @@ assert_safe_tracked_paths() {
   local status
 
   paths_file="$(mktemp)"
-  set +e
-  git ls-files -z >"$paths_file"
-  status=$?
-  set -e
+  status=0
+  git ls-files -z >"$paths_file" || status=$?
   if ((status != 0)); then
     rm -f -- "$paths_file"
     printf 'verification failed: tracked-path producer exited %d\n' "$status" >&2
     return "$status"
   fi
 
-  shopt -s nocasematch
+  local restore_nocasematch=0
+  if ! shopt -q nocasematch; then
+    shopt -s nocasematch
+    restore_nocasematch=1
+  fi
   while IFS= read -r -d '' path; do
     if [[ "$path" =~ $identifier_re ]]; then
-      shopt -u nocasematch
+      if ((restore_nocasematch)); then shopt -u nocasematch; fi
       rm -f -- "$paths_file"
       printf 'verification failed: forbidden identifier in tracked path\n%s\n' "$path" >&2
       return 1
     fi
   done <"$paths_file"
-  shopt -u nocasematch
+  if ((restore_nocasematch)); then shopt -u nocasematch; fi
   rm -f -- "$paths_file"
 }
 
@@ -176,10 +176,8 @@ write_reachable_commit_records() {
   local records_file="$1"
   local status
 
-  set +e
-  git --no-replace-objects log --all -z --encoding=none --no-show-signature --format=%H%x00%B >"$records_file"
-  status=$?
-  set -e
+  status=0
+  git --no-replace-objects log --all -z --encoding=none --no-show-signature --format=%H%x00%B >"$records_file" || status=$?
   if ((status != 0)); then
     printf 'verification failed: reachable commit-message producer exited %d\n' "$status" >&2
     return "$status"
