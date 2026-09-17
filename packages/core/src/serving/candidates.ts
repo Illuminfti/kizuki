@@ -379,6 +379,7 @@ export async function collectPieces(
       const line =
         `- [claim:${inline(claim.claim_id)}] c=${confidenceLabel(claim.confidence)}` +
         ` s=${claim.sensitivity} taint=${claim.taint} auth=${claim.authority} status=${claim.status}` +
+        ` polarity=${claim.polarity} valid_from=${inline(claim.valid_from)} valid_to=${inline(claim.valid_to ?? "null")}` +
         ` :: ${inline(claim.subject ?? "-")} ${inline(claim.predicate ?? "-")} ${JSON.stringify(object)}\n`;
       pieces.push({
         section: "claims",
