@@ -51,6 +51,7 @@ export function prepareSession(directory: string) {
     source_and_model_authorization_reference: null,
     started_at: null,
     monotonic_start_ms: null,
+    timer_interruptions: [],
     first_useful_result_ms: null,
     canon_agent_milestone_ms: null,
     usefulness: null,
