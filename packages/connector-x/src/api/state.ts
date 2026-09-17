@@ -36,6 +36,11 @@ export function instant(value: unknown): string {
   if (typeof value !== "string" || value.length > 64 || !isRfc3339(value) || !Number.isFinite(Date.parse(value))) throw failure();
   return value;
 }
+/** Trust-boundary enum members must be exact strings, not coercible look-alikes. */
+export function enumValue<T extends string>(value: unknown, members: readonly T[]): T {
+  if (typeof value !== "string" || !members.includes(value as T)) throw failure();
+  return value as T;
+}
 /** Preserve sub-millisecond ordering within the accepted non-leap RFC3339 grammar. */
 export function compareInstants(left: string, right: string): number {
   const a = Date.parse(instant(left)), b = Date.parse(instant(right));
