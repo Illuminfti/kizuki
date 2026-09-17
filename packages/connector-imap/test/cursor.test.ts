@@ -23,6 +23,20 @@ describe("cursor", () => {
     expect(decodeCursor(encodeCursor(emptyCursor()))).toEqual(emptyCursor());
   });
 
+  test("preserves literal mailbox names across checkpoint restart", () => {
+    for (const folder of ["__proto__", "constructor", "toString"]) {
+      const cursor = emptyCursor();
+      expect(cursor.folders[folder]).toBeUndefined();
+      cursor.folders[folder] = { ...CURSOR.folders["INBOX"]! };
+
+      const resumed = decodeCursor(encodeCursor(cursor));
+      expect(Object.hasOwn(resumed.folders, folder)).toBe(true);
+      expect(resumed.folders[folder]).toEqual(CURSOR.folders["INBOX"]);
+      expect(Object.keys(resumed.folders)).toEqual([folder]);
+      expect(encodeCursor(resumed)).toBe(encodeCursor(cursor));
+    }
+  });
+
   test("refuses a folder entry with no retry list", () => {
     const { pending: _dropped, ...incomplete } = CURSOR.folders["INBOX"] ?? {
       pending: "",

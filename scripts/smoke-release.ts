@@ -50,8 +50,11 @@ async function mcpSession(env: Record<string, string>, args: string[], requests:
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("MCP smoke timed out")); }, 15_000); });
-    const code = await Promise.race([child.exited, timeout]);
-    const [stdout, diagnostics] = await Promise.all([output, stderr]);
+    // Keep the deadline active until both output streams have also closed.
+    const [code, stdout, diagnostics] = await Promise.race([
+      Promise.all([child.exited, output, stderr]),
+      timeout,
+    ]);
     if (diagnostics.length > 16_384) throw new Error("MCP smoke diagnostics overflow");
     return { code, output: stdout, diagnostics };
   } finally {
@@ -185,9 +188,10 @@ try {
 
   const ownerSession = await mcpSession(env, ["--vault", vault, "--owner"], [
     agentRequests[0]!,
+    agentRequests[1]!,
     '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}',
   ]);
-  if (ownerSession.code !== 0) throw new Error("MCP smoke failed");
+  if (ownerSession.code !== 0) throw new Error("owner MCP smoke failed");
   if (!ownerSession.output.includes('"tools"')) throw new Error("MCP tools/list did not respond");
 
   verifyPackageDirectory(release, build);
