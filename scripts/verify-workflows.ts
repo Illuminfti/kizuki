@@ -306,6 +306,16 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
       failures.push({ path, reason: 'ci.yml name must remain "ci"' });
     }
     const jobs = document["jobs"];
+    const secrets = isRecord(jobs) ? jobs["secrets"] : undefined;
+    if (isRecord(secrets)) {
+      const secretSteps = secrets["steps"];
+      for (const command of ["bun run ci:secrets", "bash scripts/ci-gitleaks.sh"]) {
+        if (document["defaults"] !== undefined || secrets["defaults"] !== undefined ||
+            !Array.isArray(secretSteps) || !secretSteps.some(step => isBareCommand(step, command))) {
+          failures.push({ path, reason: `ci secrets must run the unconditional ${command} gate` });
+        }
+      }
+    }
     const job = isRecord(jobs) ? jobs["test"] : undefined;
     const steps = isRecord(job) ? job["steps"] : undefined;
     if (isRecord(job) && !hasLinuxNativeProof(document, job)) {

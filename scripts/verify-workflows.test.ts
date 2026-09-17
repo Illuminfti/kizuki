@@ -401,6 +401,28 @@ test("macOS validator rejects removal or bypass of each native proof obligation"
   }
 });
 
+test("ci secrets retains both unconditional secret scan commands", () => {
+  const path = ".github/workflows/ci.yml";
+  const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  expect(validateWorkflowText(path, text)).toEqual([]);
+  for (const command of ["bun run ci:secrets", "bash scripts/ci-gitleaks.sh"]) {
+    const doc = Bun.YAML.parse(text) as any;
+    doc.jobs.secrets.steps = doc.jobs.secrets.steps.filter((step: any) => step.run !== command);
+    expect(validateWorkflowText(path, JSON.stringify(doc))).toContainEqual(
+      expect.objectContaining({ reason: `ci secrets must run the unconditional ${command} gate` }),
+    );
+  }
+  const mutations: [string, (doc: any) => void][] = [
+    ["masked secret scan", d => { d.jobs.secrets.steps.find((step: any) => step.run === "bun run ci:secrets").run += " || true"; }],
+    ["conditional secret scan", d => { d.jobs.secrets.steps.find((step: any) => step.run === "bun run ci:secrets").if = "false"; }],
+    ["job run defaults", d => { d.jobs.secrets.defaults = { run: { shell: "bash" } }; }],
+  ];
+  for (const [name, mutate] of mutations) {
+    const doc = Bun.YAML.parse(text); mutate(doc);
+    expect(validateWorkflowText(path, JSON.stringify(doc)).some(failure => failure.reason.includes("unconditional")), name).toBe(true);
+  }
+});
+
 test("ci test rejects a masked or conditional repository verify step", () => {
   const path = ".github/workflows/ci.yml";
   const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
