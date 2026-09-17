@@ -31,6 +31,14 @@ describe("X archive provider timestamps", () => {
       .toBe("2006-01-01T00:00:00.000Z");
   });
 
+  test.each(["\n", "\r", "\r\n", "\u2028", "\u2029"])(
+    "refuses trailing line terminator %j instead of normalizing the timestamp",
+    (suffix) => {
+      expect(() => parseArchiveDate(`Tue Jan 02 03:04:05 +0000 2024${suffix}`))
+        .toThrow("created_at");
+    },
+  );
+
   test.each([
     "Mon Jan 02 03:04:05 +0000 2024",
     "Tue Feb 30 03:04:05 +0000 2024",
