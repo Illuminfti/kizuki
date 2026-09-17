@@ -70,9 +70,17 @@ export function runNativeAttestation(args: NativeAttestationArgs): GateReceiptRe
   const names = packageFiles(build);
   const files = Object.fromEntries(names.map(name => [name, read(join(artifact, name), name === "kizuki" || name === "kizuki-mcp" ? 268_435_456 : 1_048_576)]));
   const package_sha256 = Object.fromEntries(names.map(name => [name, files[name]!.sha256]));
-  const executable = join(artifact, "kizuki");
-  const child = Bun.spawnSync([executable, "--help"], { cwd: artifact, stdout: "pipe", stderr: "pipe", timeout: 5_000, env: {} });
-  if (child.exitCode !== 0) reject("native-execution-failed");
+  const spawn = (path: string, args: readonly string[]) => {
+    try {
+      return Bun.spawnSync([path, ...args], { cwd: artifact, stdout: "pipe", stderr: "pipe", timeout: 5_000, env: {} });
+    } catch {
+      return null;
+    }
+  };
+  const child = spawn(join(artifact, "kizuki"), ["--help"]);
+  if (child === null || child.exitCode !== 0) reject("native-execution-failed");
+  const mcp = spawn(join(artifact, "kizuki-mcp"), []);
+  if (mcp === null || mcp.exitCode === null) reject("native-mcp-execution-failed");
   const producer_files = producerFiles(EVALUATOR_ROOT);
   const receipt = {
     schema: NATIVE_ATTESTATION_PRODUCER,
@@ -83,7 +91,8 @@ export function runNativeAttestation(args: NativeAttestationArgs): GateReceiptRe
     },
     target: target.target, host_platform: target.platform, host_arch: target.arch, host_kernel_release: kernelRelease(),
     bun_version, execution_class: "native-host", binary_sha256: package_sha256.kizuki, package_sha256,
-    argv: ["kizuki", "--help"], exit_code: child.exitCode, stdout_sha256: hash(child.stdout), outcome: "pass", failures: [],
+    argv: ["kizuki", "--help"], exit_code: child.exitCode, stdout_sha256: hash(child.stdout),
+    mcp_argv: ["kizuki-mcp"], mcp_exit_code: mcp.exitCode, mcp_stderr_sha256: hash(mcp.stderr), outcome: "pass", failures: [],
   };
   for (const file of Object.values(files)) file.unchanged();
   if (evaluateNativeAttestationReceipt(receipt, {

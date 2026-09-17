@@ -1,8 +1,33 @@
 import { describe, expect, test } from "bun:test";
 import { timeline } from "../../src/query/timeline";
+import { replay } from "../../src/ledger/ledger";
 import { searchDb, storedEvent } from "../search/helpers";
 
 describe("timeline", () => {
+  test("wide offsets retain nanosecond ordering, bounds and replay identity", () => {
+    const db = searchDb();
+    try {
+      const earlier = storedEvent(db, "wide-positive", {
+        occurred_at: "2026-01-02T00:00:00.123456789+23:59",
+      });
+      const later = storedEvent(db, "wide-negative", {
+        occurred_at: "2025-12-31T00:02:00.123456790-23:59",
+      });
+      const since = "2026-01-01T00:01:00.123456789Z";
+      const until = "2026-01-01T00:01:00.123456790Z";
+      expect(timeline(db, { ceiling: "private", since }).map(e => e.event_id))
+        .toEqual([earlier.event_id, later.event_id]);
+      expect(timeline(db, { ceiling: "private", since, until }).map(e => e.event_id))
+        .toEqual([earlier.event_id]);
+      expect(timeline(db, { ceiling: "private", since,
+        after: { occurred_at: earlier.occurred_at, event_id: earlier.event_id },
+      }).map(e => e.event_id)).toEqual([later.event_id]);
+      expect([...replay(db, { since: until })]).toEqual([later]);
+      expect([...replay(db, { since })]).toEqual([earlier, later]);
+    } finally {
+      db.close();
+    }
+  });
   test("expands a UTC day to a half-open window", () => {
     const db = searchDb();
     const start = storedEvent(db, "start", {

@@ -20,6 +20,40 @@ function mapped(tweet: Record<string, unknown>) {
   return mapPost(record(tweet), 0, 0, self, new Map(), observed).event;
 }
 
+test.each(["a", "é", "合", "🐦"])("text byte counting preserves UTF-8 boundaries for %j", (unit) => {
+  const maximum = 1024 * 1024;
+  const width = new TextEncoder().encode(unit).byteLength;
+  const text = unit.repeat(Math.floor(maximum / width)) + "a".repeat(maximum % width);
+  expect(mapped({ full_text: text }).text).toBe(text);
+  expect(() => mapped({ full_text: text + "a" })).toThrow("exceeds 1048576 bytes");
+});
+
+test.each(["\ud800", "\udfff"])("surrogate %j preserves text and respects the serialized event limit", (unit) => {
+  expect(mapped({ full_text: unit }).text).toBe(unit);
+  // JSON escapes each lone surrogate to six bytes, exceeding the 2 MiB
+  // event envelope even though the text itself fits the 1 MiB UTF-8 limit.
+  const text = unit.repeat(Math.floor(1024 * 1024 / 3));
+  expect(() => mapped({ full_text: text })).toThrow("cannot be represented by kizuki.event/v1");
+});
+
+test.each(["user_mentions", "mentions"])("%s handles use the archive account username grammar", (field) => {
+  const handleField = field === "user_mentions" ? "screen_name" : "username";
+  for (const username of ["", "two words", "@peer", "peer/name", "合", "a".repeat(65)]) {
+    expect(() => mapped({
+      entities: { [field]: [{ id_str: "8", [handleField]: username }] },
+    })).toThrow("screen_name");
+  }
+  for (const username of ["peer_1", "a".repeat(64)]) {
+    expect(mapped({
+      entities: { [field]: [{ id_str: "8", [handleField]: username }] },
+    }).subjects).toContainEqual({
+      subject_id: "x:user:8", role: "about", display_name: `@${username}`,
+    });
+  }
+  expect(mapped({ entities: { [field]: [{ id_str: "8" }] } }).subjects)
+    .toContainEqual({ subject_id: "x:user:8", role: "about" });
+});
+
 test("post links are preserved only for supported URL schemes", () => {
   expect(mapped({
     full_text: "link",
