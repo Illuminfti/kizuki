@@ -1,4 +1,4 @@
-# Current direction (2026-09-06)
+# Current direction (2026-09-17)
 
 Binding intent is RFC 0002 — Autonomous canon (`rfcs/0002-autonomous-canon.md`).
 It is BINDING. It amends `docs/architecture.md` invariants 3, 5, 9, RFC 0000,
@@ -11,10 +11,19 @@ Read [README.md](../README.md) for what this revision actually runs, then
 
 The owner's 2026-09-05 amendment, recorded in
 [D19](decision-log.md#owner-amendment-to-readiness-2026-09-05), supersedes
-calendar and estate-cutover release gates. Ready means a stranger can install
-and use Kizuki: executable stranger proof, zero live P0s on the exact candidate,
-and an honest install path. The remaining product, security, connector,
-recovery, platform, review and verification requirements still apply.
+calendar and estate-cutover release gates. The owner's 2026-09-17 amendment,
+[D21](decision-log.md), sets the product that must be ready: the world model,
+not capture-to-context.
+
+Ready still means a stranger can install Kizuki: executable stranger proof,
+zero live P0s on the exact candidate, and an honest install path. Ready also
+requires a public world-model journey. A stranger connects a consented source;
+a second authorized client resumes current Concept or Situation context
+without reconstructing history; one owner correction is visible to both
+clients. RFC 0003 and RFC 0004 remain proposed until those public seams
+exist. Closed GitHub packets, RFC fixtures, and planning documents are not
+shipped surfaces. The remaining product, security, connector, recovery,
+platform, review and verification requirements still apply.
 
 Seven-day rail observation and fourteen-day estate comparison are optional
 post-ready diagnostics. Operational cutover requires separate authorization;
@@ -80,9 +89,10 @@ readiness.
 ## What still holds
 
 Frozen ingress `kizuki.event/v1`. Zero phone-home. Fail closed. No fake
-surface. MIT. TypeScript on Bun. Readiness follows D19 above.
+surface. MIT. TypeScript on Bun. Readiness follows D19 and D21 above.
 
 ## Decision log
 
 See `docs/decision-log.md`. D1-D8 Gate 0 (2026-09-01). D9-D16 autonomy
-(2026-09-02). RFC 0002 is the implementation brief for D9-D16.
+(2026-09-02). RFC 0002 is the implementation brief for D9-D16. D21
+(2026-09-17) makes the world model the 1.0 launch product.

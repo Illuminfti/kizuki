@@ -1,6 +1,6 @@
 # Kizuki world model implementation program
 
-Status: planning guide. Public capability and acceptance claims require implementation and exact-head evidence.
+Status: planning guide. Public capability and acceptance claims require implementation and exact-head evidence. [D21](decision-log.md) makes this program the 1.0 launch product: closed packets and RFC fixtures are not shipped surfaces.
 
 GitHub issue #497 is the single authority for live packet dependencies, ownership and progress. This guide connects that program to the repository; it is not a second completion tracker. Architecture direction is #480; Situation and UX/DX/AX direction is #476.
 
@@ -270,4 +270,4 @@ Both stages preserve evidence, important constraints and correction history. Mea
 
 ## Readiness
 
-The owner's 5 September 2026 amendment at the top of issue #403 defines readiness as stranger installation/use, executable stranger proof, zero live P0s on the exact candidate and an honest install path. Seven-/fourteen-day observation is optional after readiness. Operational cutover requires separate authorization. Remaining product, connector, security, recovery, platform, review and verification requirements remain; historical timestamps and failed receipts receive no new credit.
+The owner's 5 September 2026 amendment at the top of issue #403, recorded as D19, defines how readiness is proved: stranger installation/use, executable stranger proof, zero live P0s on the exact candidate and an honest install path. The owner's 17 September 2026 amendment, recorded as D21, defines what must be proved: the world model, not capture-to-context. Seven-/fourteen-day observation is optional after readiness. Operational cutover requires separate authorization. Remaining product, connector, security, recovery, platform, review and verification requirements remain; historical timestamps and failed receipts receive no new credit. Closed packets without a public CLI, MCP, or local-app seam do not satisfy D21.
