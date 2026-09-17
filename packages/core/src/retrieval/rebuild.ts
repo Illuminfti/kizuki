@@ -111,7 +111,7 @@ function readRebuildSnapshot(db: Database, vaultPath: string): RebuildSnapshot {
     for (const claim of listClaims(db, { status: "live", limit: MAX_REBUILD_RECORDS })) {
       if (reader.canRead(claim)) admit({ ...claimRetrievalDoc(claim), sensitivity: sourceSensitivity(db, claim.provenance, claim.sensitivity) }, claim);
     }
-    return { epoch: sourcePolicyEpoch(db), docs: docs.sort((a, b) => a.doc_id.localeCompare(b.doc_id)), revisions };
+    return { epoch: sourcePolicyEpoch(db), docs: docs.sort((a, b) => a.doc_id < b.doc_id ? -1 : a.doc_id > b.doc_id ? 1 : 0), revisions };
   }).deferred();
 }
 

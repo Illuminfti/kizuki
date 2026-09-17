@@ -1248,6 +1248,10 @@ test.each(["rc", "1.0"] as const)("%s helper GO requires the complete mandatory 
   expect(releaseDecision(profile, []).decision).toBe("NO-GO");
   expect(releaseDecision(profile, complete.filter(row => row.id === "evidence.index")).decision).toBe("NO-GO");
   expect(releaseDecision(profile, [...complete, complete[0]!]).decision).toBe("NO-GO");
+  for (const status of ["PASS", "FAIL", "MISSING", "UNVERIFIABLE", "NOT_IMPLEMENTED"] as const) {
+    const unknown = { ...complete[0]!, id: "unknown.gate", status };
+    expect(releaseDecision(profile, [...complete, unknown])).toEqual({ decision: "NO-GO", release_1_0_accepted: false });
+  }
   const missing = complete.filter(row => row.id !== "human.unfamiliar-user");
   expect(releaseDecision(profile, missing).decision).toBe("NO-GO");
   for (const id of complete.filter(row => row.required).map(row => row.id)) {
@@ -1257,6 +1261,10 @@ test.each(["rc", "1.0"] as const)("%s helper GO requires the complete mandatory 
   expect(releaseDecision(profile, downgraded).decision).toBe("NO-GO");
   const wrongTarget = complete.map(row => row.id.startsWith("artifact.") ? { ...row, target: "wrong-target" } : row);
   expect(releaseDecision(profile, wrongTarget).decision).toBe("NO-GO");
+  for (const id of complete.filter(row => row.required).map(row => row.id)) {
+    const wrongScope = complete.map(row => row.id === id ? { ...row, scope: "fixture-only" } : row);
+    expect(releaseDecision(profile, wrongScope)).toEqual({ decision: "NO-GO", release_1_0_accepted: false });
+  }
   for (const status of ["FAIL", "MISSING", "UNVERIFIABLE", "NOT_IMPLEMENTED"] as const) {
     const broken = complete.map(row => row.id === "human.unfamiliar-user" ? { ...row, status } : row);
     expect(releaseDecision(profile, broken)).toEqual({ decision: "NO-GO", release_1_0_accepted: false });

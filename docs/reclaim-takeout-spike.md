@@ -27,7 +27,8 @@ policy. No registry entry or public CLI verb is added.
 Select one already-extracted activity JSON file, not a ZIP or whole Takeout tree.
 The spike refuses more than 1 MiB of supplied UTF-8 text or 10,000 records before
 projection. It rejects input whose UTF-8 encoding is lossy, such as lone
-surrogates, so distinct source strings cannot share one receipt. It validates all
+surrogates, and any selected field whose JSON escape decodes to a lone
+surrogate, so distinct source strings cannot share one receipt. It validates all
 records before returning any result, preserves
 source timestamp precision and offsets, and omits unselected fields such as
 location information. Duplicate rows retain distinct positions. Positions bound

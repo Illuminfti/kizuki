@@ -95,8 +95,10 @@ export async function observeInstalledNativeHealth(expectedPid: number, since: s
   const status = readStatus();
   let publicStatusPassed = false;
   try {
-    const body = JSON.parse(status.stdout)?.data;
-    publicStatusPassed = status.exit_code === 0 && body?.pid === expectedPid && body?.supervisor?.state === "active" && body?.supervisor?.enabled === true;
+    const envelope = JSON.parse(status.stdout);
+    const body = envelope?.data;
+    publicStatusPassed = status.exit_code === 0 && envelope?.schema === "kizuki.cli.serve/v1" && envelope?.status === "ok"
+      && body?.pid === expectedPid && body?.supervisor?.state === "active" && body?.supervisor?.enabled === true;
   } catch { /* Keep malformed command evidence without aborting independent lifecycle checks. */ }
   return {
     publicStatus: { passed: publicStatusPassed, evidence: status },

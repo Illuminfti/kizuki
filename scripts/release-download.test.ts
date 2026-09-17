@@ -93,6 +93,15 @@ test("gzip refuses corruption, truncation, concatenation, padding and announced 
   const oversized = Buffer.from(valid); oversized.writeUInt32LE(DOWNLOAD_LIMITS.unpacked + 512, oversized.length - 4);
   for (const archive of [corrupt, valid.subarray(0, valid.length - 9), Buffer.concat([valid, valid]), Buffer.concat([valid, Buffer.alloc(8)]), oversized]) expect(() => parsePackageArchive(archive)).toThrow();
 });
+test("archive inflation is bounded by its validated announced size", () => {
+  const f = fixture(), archive = createPackageArchive(f.files);
+  const announced = archive.readUInt32LE(archive.length - 4);
+  const decoder = spyOn(zlib, "gunzipSync");
+  try {
+    expect(parsePackageArchive(archive).build).toEqual(f.build);
+    expect(decoder).toHaveBeenCalledWith(expect.any(Buffer), { maxOutputLength: announced });
+  } finally { decoder.mockRestore(); }
+});
 test("preparation preserves seven members and unresolved notices without release credit", () => {
   const f = fixture(), manifest = prepare(f), archive = fs.readFileSync(join(f.output, manifest.targets[0]!.archive.name));
   expect(manifest).toMatchObject({ source_sha: f.build.source_sha, status: "unpublished_candidate", release_approved: false, distribution_assessment: "not_performed", target_coverage: "partial" });

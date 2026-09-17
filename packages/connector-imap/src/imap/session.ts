@@ -152,14 +152,14 @@ export class ImapSession {
       // able to ride back out inside one.
       secrets: [state.username, state.password].flatMap(secretSpellings),
     });
-    const greeting = await client.greeting();
-    const status = (greeting.text.split(/\s+/)[0] ?? "").toUpperCase();
-    if (status !== "OK" && status !== "PREAUTH") {
-      client.close();
-      throw new KizukiError("unreachable", "server refused the connection");
-    }
-    const session = new ImapSession(client);
     try {
+      // Greeting reads can fail before authentication starts. They own the
+      // same transport as CAPABILITY and LOGIN and need the same cleanup.
+      const greeting = await client.greeting();
+      const status = (greeting.text.split(/\s+/)[0] ?? "").toUpperCase();
+      if (status !== "OK" && status !== "PREAUTH") {
+        throw new KizukiError("unreachable", "server refused the connection");
+      }
       await client.send("CAPABILITY");
       if (status !== "PREAUTH") {
         await client.send("LOGIN", [str(state.username), str(state.password)], {
@@ -170,7 +170,7 @@ export class ImapSession {
       client.close();
       throw error;
     }
-    return session;
+    return new ImapSession(client);
   }
 
   async list(): Promise<MailboxEntry[]> {
