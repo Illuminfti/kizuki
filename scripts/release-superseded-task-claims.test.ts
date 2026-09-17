@@ -19,12 +19,51 @@ describe("release superseded task claims", () => {
       supersededBy: task.supersededBy, closeReason: task.closeReason, blockedBy: task.blockedBy });
   });
 
-  test("releases the lastHeartbeatAt alias only on superseded tasks", () => {
-    const historical = { id: "old", status: "superseded", lastHeartbeatAt: "2026-09-01T23:28:00Z" };
-    expect(JSON.parse(releaseSupersededTaskClaims(JSON.stringify(historical))))
-      .toEqual({ id: "old", status: "superseded" });
-    const live = JSON.stringify({ ...historical, status: "in_progress" });
-    expect(releaseSupersededTaskClaims(live)).toBe(live);
+  test("releases completed reservations while preserving completion evidence", () => {
+    const completed = {
+      id: "done", status: "completed", assignee: "lane-1",
+      claimedAt: "2026-09-01T23:27:12Z", heartbeatAt: "2026-09-01T23:28:00Z",
+      lastHeartbeatAt: "2026-09-01T23:28:00Z", leaseExpiresAt: "2026-09-01T23:29:00Z",
+      completedAt: "2026-09-01T23:28:30Z", result: { commit: "abc123" },
+    };
+    const output = releaseSupersededTaskClaims(JSON.stringify(completed));
+    expect(JSON.parse(output)).toEqual({
+      id: completed.id, status: completed.status,
+      completedAt: completed.completedAt, result: completed.result,
+    });
+    expect(releaseSupersededTaskClaims(output)).toBe(output);
+  });
+
+  test("CLI releases completed claims without changing live claims or source bytes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "task-claims-"));
+    const path = join(dir, "tasks.jsonl");
+    const completed = '{"id":"done","status":"completed","assignee":"lane-1","completedAt":"2026-09-01T23:28:30Z"}';
+    const live = ' {"id":"live", "status":"in_progress", "assignee":"lane-2"}';
+    const pending = '{"id":"pending","status":"pending","assignee":"lane-3"}';
+    const input = `${completed}\r\n${live}\r\n\r\n${pending}\n`;
+    try {
+      writeFileSync(path, input);
+      const result = Bun.spawnSync([process.execPath, join(import.meta.dir, "release-superseded-task-claims.ts"), path], {
+        timeout: 5000, killSignal: "SIGKILL",
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr.toString()).toBe("");
+      const output = result.stdout.toString();
+      expect(output).toBe(`{"id":"done","status":"completed","completedAt":"2026-09-01T23:28:30Z"}\r\n${live}\r\n\r\n${pending}\n`);
+      expect(releaseSupersededTaskClaims(output)).toBe(output);
+      expect(readFileSync(path, "utf8")).toBe(input);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("releases a superseded lastHeartbeatAt without changing a live heartbeat", () => {
+    const old = { id: "old", status: "superseded", lastHeartbeatAt: "2026-09-01T23:28:00Z" };
+    const live = ' {"id":"live", "status":"in_progress", "lastHeartbeatAt":"2026-09-01T23:28:00Z"}';
+    const input = `${JSON.stringify(old)}\n${live}\n`;
+    const output = releaseSupersededTaskClaims(input);
+    expect(output).toBe(`{"id":"old","status":"superseded"}\n${live}\n`);
+    expect(releaseSupersededTaskClaims(output)).toBe(output);
   });
 
   test("repairs current committed history without touching the input file", () => {
@@ -41,6 +80,15 @@ describe("release superseded task claims", () => {
     }
     expect(releaseSupersededTaskClaims(output)).toBe(output);
     expect(readFileSync(path, "utf8")).toBe(before);
+  });
+
+  test("rejects non-JSON whitespace lines without changing valid blank lines", () => {
+    const task = '{"id":"old","status":"superseded","assignee":"worker-host"}';
+    for (const padding of ["\u00a0", "\ufeff", "\u000b", "\u000c"]) {
+      expect(() => releaseSupersededTaskClaims(`${task}\n${padding}\n`)).toThrow();
+    }
+    expect(releaseSupersededTaskClaims(`${task}\r\n \t\r\n`))
+      .toBe('{"id":"old","status":"superseded"}\r\n \t\r\n');
   });
 
   test("rejects malformed task records", () => {

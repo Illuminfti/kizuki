@@ -20,6 +20,26 @@ function mapped(tweet: Record<string, unknown>) {
   return mapPost(record(tweet), 0, 0, self, new Map(), observed).event;
 }
 
+test("mapped posts enforce UTC year bounds without changing observation time or identity", () => {
+  for (const created_at of [
+    "Sun Jan 01 13:59:59 +1400 2006",
+    "Fri Dec 31 10:00:00 -1400 9999",
+  ]) {
+    expect(() => mapped({ created_at })).toThrow("created_at");
+  }
+  for (const boundary of [
+    { created_at: "Sun Jan 01 14:00:00 +1400 2006", occurred_at: "2006-01-01T00:00:00.000Z" },
+    { created_at: "Sun Jan 01 00:00:00 +0000 2006", occurred_at: "2006-01-01T00:00:00.000Z" },
+    { created_at: "Fri Dec 31 09:59:59 -1400 9999", occurred_at: "9999-12-31T23:59:59.000Z" },
+    { created_at: "Fri Dec 31 23:59:59 +0000 9999", occurred_at: "9999-12-31T23:59:59.000Z" },
+  ]) {
+    const event = mapped({ created_at: boundary.created_at });
+    expect(event.occurred_at).toBe(boundary.occurred_at);
+    expect(event.observed_at).toBe(observed);
+    expect(event.source_record_id).toBe("post:456");
+  }
+});
+
 test.each(["a", "é", "合", "🐦"])("text byte counting preserves UTF-8 boundaries for %j", (unit) => {
   const maximum = 1024 * 1024;
   const width = new TextEncoder().encode(unit).byteLength;

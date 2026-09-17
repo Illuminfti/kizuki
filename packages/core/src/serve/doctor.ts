@@ -225,15 +225,13 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
         )
         .all()
     : [];
-  const confidences = rows.map((row) => row.confidence);
-  const spread = stdev(confidences);
   // SINGLE_SOURCE_CAP flattens single-source confidence; that is policy, not a missing producer.
   const measurable = rows.filter((row) => !policyCapped(row)).map((row) => row.confidence);
-  if (measurable.length >= 8) {
-    const measurableSpread = stdev(measurable);
-    if (measurableSpread !== null && measurableSpread < CONFIDENCE_SPREAD_MIN) {
-      failures.push("confidence_not_produced");
-    }
+  // Report the same population we assess. Null means no informative confidence,
+  // rather than a zero spread that incorrectly suggests a flat model output.
+  const spread = stdev(measurable);
+  if (measurable.length >= 8 && spread !== null && spread < CONFIDENCE_SPREAD_MIN) {
+    failures.push("confidence_not_produced");
   }
   const today = now.slice(0, 10);
   const canonToday = receipts

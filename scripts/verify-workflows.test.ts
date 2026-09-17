@@ -48,7 +48,8 @@ const pinnedSecretsJob = `
     steps:
       - uses: ${pinnedCheckout}
         with: { fetch-depth: 0, ref: "${pinnedRef}" }
-      - run: bun run ci:secrets`;
+      - run: bun run ci:secrets
+      - run: bash scripts/ci-gitleaks.sh`;
 
 function ciWorkflow(overrides?: {
   name?: string;
@@ -156,6 +157,27 @@ describe("workflow validation", () => {
       expect(validateWorkflowText(path, current.replace(original, trigger))).toEqual([
         expect.objectContaining({ reason: "ci must run on every pull request and every push to main without filters" }),
       ]);
+    }
+  });
+
+  test("required workflows check retains unfiltered pull request and main push triggers", () => {
+    const path = ".github/workflows/workflows.yml";
+    const current = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+    expect(validateWorkflowText(path, current)).toEqual([]);
+    expect(validateWorkflowText(path, current.replace("  pull_request:", "  pull_request: {}"))).toEqual([]);
+    for (const text of [
+      current.replace("  pull_request:\n", ""),
+      current.replace("  pull_request:", "  pull_request: { paths: ['scripts/**'] }"),
+      current.replace("  pull_request:", "  pull_request: { branches: [main] }"),
+      current.replace("  pull_request:", "  pull_request: { types: [opened] }"),
+      current.replace("  push: { branches: [main] }\n", ""),
+      current.replace("branches: [main]", "branches: [release]"),
+      current.replace("branches: [main]", "branches: [main], paths-ignore: ['docs/**']"),
+    ]) {
+      expect(text).not.toBe(current);
+      expect(validateWorkflowText(path, text)).toContainEqual(expect.objectContaining({
+        reason: "workflows must run on every pull request and every push to main without filters",
+      }));
     }
   });
 
@@ -385,6 +407,28 @@ test("macOS validator rejects removal or bypass of each native proof obligation"
   for (const [name, mutate] of mutations) {
     const doc = Bun.YAML.parse(text); mutate(doc);
     expect(validateWorkflowText(path, JSON.stringify(doc)).length, name).toBeGreaterThan(0);
+  }
+});
+
+test("ci secrets retains both unconditional secret scan commands", () => {
+  const path = ".github/workflows/ci.yml";
+  const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  expect(validateWorkflowText(path, text)).toEqual([]);
+  for (const command of ["bun run ci:secrets", "bash scripts/ci-gitleaks.sh"]) {
+    const doc = Bun.YAML.parse(text) as any;
+    doc.jobs.secrets.steps = doc.jobs.secrets.steps.filter((step: any) => step.run !== command);
+    expect(validateWorkflowText(path, JSON.stringify(doc))).toContainEqual(
+      expect.objectContaining({ reason: `ci secrets must run the unconditional ${command} gate` }),
+    );
+  }
+  const mutations: [string, (doc: any) => void][] = [
+    ["masked secret scan", d => { d.jobs.secrets.steps.find((step: any) => step.run === "bun run ci:secrets").run += " || true"; }],
+    ["conditional secret scan", d => { d.jobs.secrets.steps.find((step: any) => step.run === "bun run ci:secrets").if = "false"; }],
+    ["job run defaults", d => { d.jobs.secrets.defaults = { run: { shell: "bash" } }; }],
+  ];
+  for (const [name, mutate] of mutations) {
+    const doc = Bun.YAML.parse(text); mutate(doc);
+    expect(validateWorkflowText(path, JSON.stringify(doc)).some(failure => failure.reason.includes("unconditional")), name).toBe(true);
   }
 });
 
