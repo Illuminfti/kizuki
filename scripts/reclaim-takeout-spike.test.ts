@@ -51,6 +51,19 @@ describe("post-1.0 Takeout activity spike", () => {
     });
   });
 
+  test("refuses non-text runtime input without coercion or exposing values", () => {
+    let touched = false;
+    const object = {
+      get length() { touched = true; throw new Error("private source value"); },
+      toString() { touched = true; throw new Error("private source value"); },
+    };
+    for (const source of [null, undefined, 42, true, [], object]) {
+      expect(() => distillTakeoutActivity(source as unknown as string))
+        .toThrow("Takeout activity source must be text");
+    }
+    expect(touched).toBe(false);
+  });
+
   test("preserves duplicate positions rather than inventing vendor identities", () => {
     expect(distillTakeoutActivity(JSON.stringify([activity, activity])).activities
       .map((row) => row.record_index)).toEqual([0, 1]);

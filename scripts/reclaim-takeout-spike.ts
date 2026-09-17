@@ -31,6 +31,11 @@ export function distillTakeoutActivity(source: string): {
   activities: Activity[];
   receipt: { input_sha256: string; input_bytes: number; records: number };
 } {
+  if (typeof source !== "string") {
+    // Fail closed on runtime type drift: no String() coercion and no access to
+    // getter surfaces (length/toString) of a hostile or non-text input.
+    throw new Error("Takeout activity source must be text");
+  }
   if (source.length > MAX_BYTES || Buffer.byteLength(source, "utf8") > MAX_BYTES) {
     throw new Error("Takeout activity exceeds byte limit");
   }
