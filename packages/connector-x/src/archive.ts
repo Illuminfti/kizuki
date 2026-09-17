@@ -204,7 +204,8 @@ function parseAccount(source: string): XArchiveIdentity {
   const accountId = nativeId(account["accountId"], "account id");
   const username = account["username"];
   if (username !== undefined &&
-    (typeof username !== "string" || !/^[A-Za-z0-9_]{1,64}$/.test(username))) {
+    (typeof username !== "string" || username.length < 1 || username.length > 64 ||
+      /[^A-Za-z0-9_]/u.test(username))) {
     throw archiveError("parse_error", "account username is invalid");
   }
   return { account_id: accountId, username: username ?? null };
