@@ -143,7 +143,7 @@ test('dialog dismissal returns focus to main when opened without a usable active
     for (const cancel of [false, true]) for (const active of ['null', 'dialog']) {
         const f = fixture();
         f.evaluate(`document.activeElement=${active}; openDialog('Source setup','Synthetic');`);
-        expect(f.evaluate('dialogReturnFocus === main')).toBe(true);
+        expect(f.evaluate<boolean>('dialogReturnFocus === main')).toBe(true);
         if (cancel) { await f.dialog.fire('cancel'); f.dialog.close(); }
         else f.evaluate('closeDialog()');
         await tick();
