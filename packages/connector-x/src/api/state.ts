@@ -94,11 +94,11 @@ export function parseCursor(raw: string): XApiCursor {
     if (typeof raw !== "string" || Buffer.byteLength(raw) > 8192) throw failure();
     const value = object(JSON.parse(raw));
     exact(value, ["schema", "account", "selection", "phase", "committed", "lower", "end", "newest", "next", "pages", "seen", "restarts"]);
-    if (value.schema !== X_API_CURSOR_SCHEMA || !["walk", "idle"].includes(String(value.phase)) ||
+    if (value.schema !== X_API_CURSOR_SCHEMA || (value.phase !== "walk" && value.phase !== "idle") ||
       !Number.isSafeInteger(value.pages) || Number(value.pages) < 0 || Number(value.pages) > MAX_WALK_PAGES ||
       !Number.isInteger(value.restarts) || Number(value.restarts) < 0 || Number(value.restarts) > 1 ||
       !Array.isArray(value.seen) || value.seen.length > MAX_WALK_PAGES || new Set(value.seen).size !== value.seen.length) throw failure();
-    const cursor: XApiCursor = { schema: X_API_CURSOR_SCHEMA, account: id(value.account), selection: hash(value.selection), phase: value.phase as "walk" | "idle",
+    const cursor: XApiCursor = { schema: X_API_CURSOR_SCHEMA, account: id(value.account), selection: hash(value.selection), phase: value.phase,
       committed: value.committed === null ? null : id(value.committed), lower: value.lower === null ? null : id(value.lower), end: instant(value.end),
       newest: value.newest === null ? null : id(value.newest), next: value.next === null ? null : token(value.next), pages: Number(value.pages),
       seen: value.seen.map(hash), restarts: Number(value.restarts) };
@@ -154,7 +154,8 @@ export function parseState(bytes: Uint8Array): XApiState {
     if (bytes.byteLength > 256 * 1024) throw failure();
     const value = object(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
     exact(value, ["schema", "app", "oauth", "selection", "checkpoint", "pending", "retry_at", "revocation", ...(value.schema === X_API_STATE_SCHEMA ? ["native_client", "credential_generation", "refresh_pending"] : [])]);
-    if (![X_API_LEGACY_STATE_SCHEMA, X_API_STATE_SCHEMA].includes(String(value.schema)) || !["active", "pending", "revoked"].includes(String(value.revocation))) throw failure();
+    if ((value.schema !== X_API_LEGACY_STATE_SCHEMA && value.schema !== X_API_STATE_SCHEMA) ||
+      (value.revocation !== "active" && value.revocation !== "pending" && value.revocation !== "revoked")) throw failure();
     const selected = selection(value.selection), oauth = parseOAuthState(JSON.stringify(value.oauth), X_API_CONNECTOR_ID);
     id(oauth.account.id);
     if (!X_API_SCOPES.every(scope => oauth.tokens.scope.split(/\s+/).includes(scope)) || oauth.tokens.refresh_token === null ||
