@@ -10,6 +10,17 @@ function failures(text: string) {
 }
 
 describe("attribution verification", () => {
+  test.each(["", " ", "\t", "\r\n", "\u00a0"])(
+    "rejects a blank configured credit %p before scanning a document",
+    (credit) => {
+      for (const text of ["", `[${exactCredit}](${canonicalUrl})`]) {
+        expect(() => validateAttributionText(path, text, credit, canonicalUrl)).toThrow(
+          "attribution identifier must not be empty",
+        );
+      }
+    },
+  );
+
   test("requires an exact credit and canonical URL in each document", () => {
     expect(failures(canonicalUrl)).toEqual([
       expect.objectContaining({ reason: "public attribution is missing the exact credit" }),
@@ -129,8 +140,29 @@ describe("attribution verification", () => {
     ]);
   });
 
+  test.each(["ftp", "file", "ws", "git+https"])(
+    "rejects a modified %s scheme even alongside valid credit",
+    (scheme) => {
+      const modifiedUrl = canonicalUrl.replace("https", scheme);
+      expect(failures(`[${exactCredit}](${canonicalUrl}) ${modifiedUrl}`)).toEqual([
+        expect.objectContaining({
+          reason: "public attribution URL is not the exact delimited canonical URL",
+        }),
+      ]);
+    },
+  );
+
   test("rejects a case-modified URL as a URL, not prose", () => {
     expect(failures(`[${exactCredit}](HTTPS://example.invalid/AtlasCore)`)).toEqual([
+      expect.objectContaining({
+        reason: "public attribution URL is not the exact delimited canonical URL",
+      }),
+      expect.objectContaining({ reason: "public attribution is missing the canonical URL" }),
+    ]);
+  });
+
+  test("rejects a suffixed canonical URL that shares the credit's tail", () => {
+    expect(failures(`[${exactCredit}](${canonicalUrl}-mirror)`)).toEqual([
       expect.objectContaining({
         reason: "public attribution URL is not the exact delimited canonical URL",
       }),

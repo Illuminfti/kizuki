@@ -98,6 +98,33 @@ test("cyclic tokens, malformed cursors and out-of-window provider rows cannot ad
   expect((await source.sync(null)).status).toBe("unavailable"); expect(parseState(other.state).pending).toBeNull(); await source.close();
 });
 
+test("saved cursor phases must be exact strings before resuming", async () => {
+  const f = new XApiFixture(3), port = await f.connected();
+  try {
+    const first = await port.backfill(null), cursor = parseCursor(first.cursor!);
+    expect(cursor.phase).toBe("walk");
+    const calls = f.requests.length, before = f.state.slice();
+    for (const phase of [["walk"], [["walk"]], ["idle"], null, 0]) {
+      const malformed = JSON.stringify({ ...cursor, phase });
+      expect(() => parseCursor(malformed)).toThrow("invalid_cursor");
+      const saved = { ...parseState(before), checkpoint: malformed, pending: null };
+      expect(() => parseState(new TextEncoder().encode(JSON.stringify(saved)))).toThrow("invalid_state");
+      const state = parseState(before);
+      const draft = { base: state.pending!.base, next: malformed, observed: state.pending!.observed, entries: state.pending!.entries };
+      const pending = { ...draft, id: digest(draft) };
+      const savedPending = JSON.stringify({ ...state, pending });
+      expect(() => parseState(new TextEncoder().encode(savedPending))).toThrow("invalid_state");
+      const resumed = createXApiConnector(f.config(), f.deps());
+      try { await expect(resumed.connect(async () => savedPending)).rejects.toThrow("invalid_state"); }
+      finally { await resumed.close(); }
+      await expect(port.sync(malformed)).rejects.toThrow("invalid_cursor");
+      expect(f.requests).toHaveLength(calls);
+      expect(f.state).toEqual(before);
+    }
+    expect((await port.sync(first.cursor)).events).toHaveLength(1);
+  } finally { await port.close(); }
+});
+
 test("rate limits survive restart, while health and local revoke consume no provider requests", async () => {
   const f = new XApiFixture(); let port = await f.connected(); f.failStatus = 429;
   expect((await port.sync(null)).detail).toContain("rate_limited"); const cooldown = parseState(f.state).retry_at;

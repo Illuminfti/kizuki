@@ -92,6 +92,28 @@ test('late protected-state load cannot alter newer session health or account', a
     expect((await port.sync(null)).events).toHaveLength(2);
     await port.close();
 });
+test('HTTP 401 fences capture and provider revoke until explicit reconnect', async () => {
+    const f = new WhoopFixture(), port = await f.connected();
+    const cursor = (await port.sync(null)).cursor;
+    const protectedState = f.state.slice();
+    f.failStatus = 401;
+    const refused = await port.sync(cursor);
+    expect(refused.status).toBe('unavailable');
+    expect(refused.detail).toContain('unauthenticated');
+    expect(refused.cursor).toBe(cursor);
+    expect(refused.events).toEqual([]);
+    expect((await port.health()).state).toBe('unauthenticated');
+    const requests = f.requests.length;
+    f.failStatus = 0;
+    expect((await port.sync(cursor)).status).toBe('unavailable');
+    expect((await port.backfill(cursor)).status).toBe('unavailable');
+    await expect(port.revokeProviderAccess()).rejects.toThrow();
+    expect(f.requests).toHaveLength(requests);
+    expect(f.state).toEqual(protectedState);
+    await port.connect(async () => new TextDecoder().decode(f.state));
+    expect((await port.sync(cursor)).status).not.toBe('unavailable');
+    await port.close();
+});
 test('missing protected state refuses without provider requests', async () => {
     const f = new WhoopFixture(), port = await f.connected();
     await expect(port.connect(async () => {
