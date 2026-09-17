@@ -379,7 +379,7 @@ function openDialog(title, description, symbol = 'info') {
   if (dialog.open) closeDialog();
   dialogGeneration++;
   const active = document.activeElement;
-  dialogReturnFocus = active && active !== dialog && typeof active.focus === 'function' ? active : null;
+  dialogReturnFocus = active && active !== dialog && typeof active.focus === 'function' ? active : main;
   const content = el('div', {}, el('div', { class: 'dialog-top' }, el('div', {}, el('div', { class: 'source-icon' }, icon(symbol)), el('h2', { id: 'dialog-title' }, title)), el('button', { type: 'button', class: 'icon-button', 'aria-label': 'Close dialog', onclick: () => closeDialog() }, icon('close'))), el('p', { class: 'dialog-description', id: 'dialog-description' }, description));
   dialog.replaceChildren(content); dialog.setAttribute('aria-describedby', 'dialog-description'); dialog.showModal();
   return content;

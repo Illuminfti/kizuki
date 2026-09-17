@@ -139,6 +139,20 @@ test('dialog dismissal returns focus to main when opened from the document body'
     }
 });
 
+test('dialog dismissal returns focus to main when opened without a usable active element', async () => {
+    for (const cancel of [false, true]) for (const active of ['null', 'dialog']) {
+        const f = fixture();
+        f.evaluate(`document.activeElement=${active}; openDialog('Source setup','Synthetic');`);
+        expect(f.evaluate('dialogReturnFocus === main')).toBe(true);
+        if (cancel) { await f.dialog.fire('cancel'); f.dialog.close(); }
+        else f.evaluate('closeDialog()');
+        await tick();
+        expect(f.main.focused).toBe(true);
+        expect(f.evaluate('dialogReturnFocus')).toBeNull();
+        expect(f.evaluate('closingDialogGeneration')).toBeNull();
+    }
+});
+
 test('a queued cancellation close leaves a newer dialog and its cleanup intact', async () => {
     const f = fixture();
     f.evaluate(`openDialog('Old source','Synthetic'); globalThis.cleanups=0; dialogCleanup=()=>{cleanups++};`);
