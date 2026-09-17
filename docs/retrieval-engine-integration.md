@@ -202,9 +202,11 @@ copies already retained by an external client.
 ## 4. Bounded reranking and truthful retrieval diagnostics
 
 Study U3. #528 first inventories the effective public composition and existing
-local model work. D17 retains Kizuki-owned reranking/GGUF; the upstream's actual
-reranker is evidence of a pattern, not automatically included source or a license
-to extend the permitted fork. The factual correction is in upstream policy.
+local model work. The current inventory is
+[retrieval-effective-composition.md](retrieval-effective-composition.md). D17
+retains Kizuki-owned reranking/GGUF; the upstream's actual reranker is evidence
+of a pattern, not automatically included source or a license to extend the
+permitted fork. The factual correction is in upstream policy.
 
 Retrieve candidates through the existing port, enforce current access and source
 consent, then optionally rerank a bounded authorized shortlist. Configuration of
