@@ -35,6 +35,22 @@ describe("post-1.0 Takeout activity spike", () => {
       .toBe(title);
   });
 
+  test("requires decoded titles and products to survive UTF-8 encoding", () => {
+    for (const row of [
+      { ...activity, title: "Searched for \ud800" },
+      { ...activity, products: ["Search \udc00"] },
+    ]) {
+      // JSON.stringify escapes these code units, so the source itself is valid UTF-8.
+      const source = JSON.stringify([row]);
+      expect(Buffer.from(source, "utf8").toString("utf8")).toBe(source);
+      expect(() => distillTakeoutActivity(source)).toThrow("unsupported fields");
+    }
+    const row = { ...activity, title: "Garden 🌱", products: ["Search 🌱"] };
+    expect(distillTakeoutActivity(JSON.stringify([row])).activities[0]).toMatchObject({
+      title: row.title, products: row.products,
+    });
+  });
+
   test("preserves duplicate positions rather than inventing vendor identities", () => {
     expect(distillTakeoutActivity(JSON.stringify([activity, activity])).activities
       .map((row) => row.record_index)).toEqual([0, 1]);
