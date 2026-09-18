@@ -5,21 +5,52 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+// Lone surrogates are invalid Unicode scalars that survive JSON.parse and a
+// UTF-8 byte round trip, so committed text carrying them is corrupted evidence.
+const hasLoneSurrogate = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      index += 1;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+};
+
+// Committed text beyond the id, status and supersession fields can also carry
+// lone surrogates through byte decoding and JSON.parse, so scan every value.
+const hasDeepLoneSurrogate = (value: unknown): boolean => {
+  if (typeof value === "string") return hasLoneSurrogate(value);
+  if (Array.isArray(value)) return value.some(hasDeepLoneSurrogate);
+  if (isRecord(value)) return Object.values(value).some(hasDeepLoneSurrogate);
+  return false;
+};
+
 // Committed history and lane definitions are not a live worker lease store.
 export function validateMaestroState(tasks: unknown[], candidates: unknown[]): string[] {
   const errors: string[] = [];
   const byId = new Map<string, Record<string, unknown>>();
   const checkRecord = (value: unknown, label: string): value is Record<string, unknown> => {
     if (!isRecord(value) || typeof value["id"] !== "string" || value["id"].trim() === "" ||
-        value["id"] !== value["id"].trim()) {
+        value["id"] !== value["id"].trim() || /[\uD800-\uDFFF]/u.test(value["id"])) {
       errors.push(`${label}: invalid record or id`);
       return false;
     }
     for (const field of ["assignee", "claimedAt", "heartbeatAt", "lastHeartbeatAt", "leaseExpiresAt"]) {
       if (Object.hasOwn(value, field)) errors.push(`${label}: forbidden worker field ${field}`);
     }
-    if (typeof value["status"] === "string" && value["status"] !== value["status"].trim()) {
+    if (typeof value["status"] === "string" &&
+        (value["status"] !== value["status"].trim() || hasLoneSurrogate(value["status"]))) {
       errors.push(`${label}: invalid status`);
+    }
+    if (Object.entries(value).some(([field, field_value]) =>
+      field !== "id" && field !== "status" && field !== "supersededBy" &&
+      hasDeepLoneSurrogate(field_value))) {
+      errors.push(`${label}: invalid text`);
     }
     if (value["status"] === "in_progress") errors.push(`${label}: live reservation in committed state`);
     return true;
@@ -36,7 +67,8 @@ export function validateMaestroState(tasks: unknown[], candidates: unknown[]): s
       errors.push(`${label}: missing supersession reference`);
     }
     if (task["status"] === "superseded" && typeof task["supersededBy"] === "string" &&
-        task["supersededBy"].trim() !== "" && task["supersededBy"] !== task["supersededBy"].trim()) {
+        task["supersededBy"].trim() !== "" && (task["supersededBy"] !== task["supersededBy"].trim() ||
+        hasLoneSurrogate(task["supersededBy"]))) {
       errors.push(`${label}: invalid supersession reference`);
     }
     if (byId.has(id)) errors.push(`${label}: duplicate task id`);
@@ -72,14 +104,20 @@ export function validateMaestroState(tasks: unknown[], candidates: unknown[]): s
   return errors;
 }
 
+// Preserve a leading BOM so JSON validation rejects it rather than silently
+// accepting bytes that the previous UTF-8 file reader would have rejected.
+const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
 if (import.meta.main) {
   try {
     const root = join(import.meta.dir, "..", ".maestro", "tasks");
-    const tasks = readFileSync(join(root, "tasks.jsonl"), "utf8")
+    // Committed state is evidence: malformed bytes must fail closed instead of
+    // being silently replaced with replacement characters before validation.
+    const tasks = decoder.decode(readFileSync(join(root, "tasks.jsonl")))
       .split("\n").filter(line => !/^[ \t\r]*$/.test(line)).map(line => JSON.parse(line));
     const candidates = readdirSync(join(root, "candidates"))
       .filter(name => name.endsWith(".json")).sort()
-      .map(name => JSON.parse(readFileSync(join(root, "candidates", name), "utf8")));
+      .map(name => JSON.parse(decoder.decode(readFileSync(join(root, "candidates", name)))));
     const errors = validateMaestroState(tasks, candidates);
     for (const error of errors) console.error(error);
     if (errors.length > 0) process.exitCode = 1;

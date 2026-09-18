@@ -102,6 +102,34 @@ test('rate-limit cooldown is durable across restart and provider authorization r
     await other.close();
     expect(g.requests).toHaveLength(before);
 });
+test('invalid Retry-After preserves reset cooldown through restart', async () => {
+    const f = new WhoopFixture();
+    const port = await f.connected({ fetch: async request => {
+        const response = await f.fetch(request);
+        if (response.status === 429) response.headers.set('retry-after', '-1');
+        return response;
+    } });
+    f.failStatus = 429;
+    f.retry = '120';
+    const refused = await port.sync(null);
+    expect(refused.status).toBe('unavailable');
+    expect(refused.cursor).toBeNull();
+    expect(Date.parse(parseState(f.state).retry_at!) - f.time.getTime()).toBe(120000);
+    await port.close();
+    const resumed = await f.connected();
+    f.failStatus = 0;
+    f.time = new Date(f.time.getTime() + 61000);
+    const count = f.requests.length;
+    expect((await resumed.sync(null)).status).toBe('unavailable');
+    expect(f.requests).toHaveLength(count);
+    f.time = new Date(f.time.getTime() + 60000);
+    const recovered = await resumed.sync(null);
+    expect(recovered.status).toBeUndefined();
+    expect(recovered.events).toHaveLength(2);
+    expect(f.requests.length).toBeGreaterThan(count);
+    await resumed.close();
+});
+
 test('over-limit initial history and cyclic page tokens do not emit partial history or advance', async () => {
     const f = new WhoopFixture(1001);
     const port = await f.connected();
@@ -165,7 +193,7 @@ test('long explicit provider cooldown is never shortened to a local monthly cap'
 });
 
 for (const operation of ['sync', 'provider-revoke'] as const) {
-    test(`HTTP 401 reports unauthenticated health after ${operation} and successful access recovers`, async () => {
+    test(`HTTP 401 fences ${operation} until explicit reconnect`, async () => {
         const f = new WhoopFixture(), port = await f.connected();
         const first = await port.backfill(null);
         const saved = f.state.slice();
@@ -182,8 +210,46 @@ for (const operation of ['sync', 'provider-revoke'] as const) {
         expect((await port.health()).state).toBe('unauthenticated');
         expect(f.state).toEqual(saved);
         f.failStatus = 0;
+        const requests = f.requests.length;
+        expect((await port.sync(first.cursor)).status).toBe('unavailable');
+        expect((await port.backfill(first.cursor)).status).toBe('unavailable');
+        await expect(port.revokeProviderAccess()).rejects.toThrow();
+        expect(f.requests).toHaveLength(requests);
+        expect(f.state).toEqual(saved);
+        await port.connect(async () => new TextDecoder().decode(f.state));
         expect((await port.sync(first.cursor)).status).toBeUndefined();
         expect((await port.health()).state).toBe('degraded');
+        await port.close();
+    });
+}
+
+for (const mismatch of ['profile', 'cycle', 'recovery', 'sleep', 'workout'] as const) {
+    test(`${mismatch} account mismatch fences capture and provider revoke until reconnect`, async () => {
+        const f = new WhoopFixture(2, {
+            resources: ['cycle', 'recovery', 'sleep', 'workout'], fields: ['metrics', 'activity'], history_start: '2026-01-01T00:00:00Z'
+        });
+        const port = await f.connected();
+        const first = await port.backfill(null);
+        const saved = f.state.slice();
+        if (mismatch === 'profile') f.account = 8;
+        else f.records[mismatch][1]!.user_id = 8;
+        const refused = await port.sync(first.cursor);
+        expect(refused.status).toBe('unavailable');
+        expect(refused.detail).toContain('identity_mismatch');
+        expect(refused.events).toEqual([]);
+        expect(refused.cursor).toBe(first.cursor);
+        expect((await port.health()).state).toBe('unauthenticated');
+        expect(f.state).toEqual(saved);
+        const count = f.requests.length;
+        if (mismatch === 'profile') f.account = 7;
+        else f.records[mismatch][1]!.user_id = 7;
+        expect((await port.sync(first.cursor)).status).toBe('unavailable');
+        expect((await port.backfill(first.cursor)).status).toBe('unavailable');
+        await expect(port.revokeProviderAccess()).rejects.toThrow();
+        expect(f.requests).toHaveLength(count);
+        expect(f.state).toEqual(saved);
+        await port.connect(async () => new TextDecoder().decode(f.state));
+        expect((await port.sync(first.cursor)).status).toBeUndefined();
         await port.close();
     });
 }

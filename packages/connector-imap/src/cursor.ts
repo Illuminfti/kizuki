@@ -49,7 +49,8 @@ function positiveInteger(raw: unknown, what: string): number {
 }
 
 export function emptyCursor(): ImapCursor {
-  return { schema: IMAP_CURSOR_SCHEMA, folders: {} };
+  // Mailbox names are literal keys, including names inherited by plain objects.
+  return { schema: IMAP_CURSOR_SCHEMA, folders: Object.create(null) };
 }
 
 export function encodeCursor(cursor: ImapCursor): Cursor {
@@ -70,7 +71,7 @@ export function decodeCursor(raw: Cursor): ImapCursor {
   }
   const folders = parsed["folders"];
   if (!isPlainObject(folders)) invalid("folders");
-  const decoded: Record<string, ImapFolderCursor> = {};
+  const decoded = emptyCursor().folders;
   for (const [folder, value] of Object.entries(folders)) {
     if (!isPlainObject(value)) invalid("folder entry");
     for (const key of Object.keys(value)) {

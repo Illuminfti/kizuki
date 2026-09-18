@@ -24,6 +24,7 @@ import {
   POCKET_IMPORT_CONNECTOR_ID,
   createPocketImportConnector,
   parsePocketCsv,
+  pocketHeaderLine,
   pocketEvents,
 } from "../src/import-pocket";
 
@@ -172,6 +173,21 @@ test("quoted titles, empty titles, and the url itself keep independent wording",
     "https://example.com/quoted",
     "https://example.com/untitled",
   ]);
+});
+
+test("duplicate Pocket columns are refused by both health and import parsing", () => {
+  for (const column of ["url", "time_added", "title", "tags", "status"]) {
+    const header = `${HEADER}, ${column.toUpperCase()} `;
+    const text = `${header}\nTitle,https://example.com/a,1767225600,,unread,conflicting value\n`;
+    for (const parse of [
+      () => pocketHeaderLine(header, "part.csv"),
+      () => parsePocketCsv(text, "part.csv"),
+    ]) {
+      const error = thrown(parse);
+      expect(error.code).toBe("parse_error");
+      expect(error.message).toBe("part.csv: not a Pocket CSV export");
+    }
+  }
 });
 
 test("an unreadable timestamp is refused at the row and never rewritten", () => {
