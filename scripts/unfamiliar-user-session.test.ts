@@ -38,6 +38,8 @@ test("freeze a human task sheet without inventing results or acceptance", () => 
     { step: "audit", outcome: "UNRECORDED", elapsed_ms: null, receipt_reference: null },
     { step: "undo", outcome: "UNRECORDED", elapsed_ms: null, receipt_reference: null },
   ]);
+  expect(session.tasks.find(task => task.id === "accessibility")?.instruction)
+    .toContain("Report any inaccessible steps separately for each mode");
   expect(session.tasks.find(task => task.id === "correction-audit-undo")?.instruction)
     .toContain("query it again or inspect its updated context");
   expect(session.tasks.find(task => task.id === "install")?.instruction)
