@@ -497,6 +497,32 @@ Rebuild is atomic within each store, not across stores. Retry after a failed
 rebuild; use quiescent source writers for a fixed corpus. See
 [rebuild behavior and limits](../packages/core/RETRIEVAL-REBUILD.md).
 
+## reflex
+
+```text
+usage: kizuki reflex --request FILE [--format json|html] [--allow-model]
+```
+
+Checks the assumptions in a plan against authorized memory and prints a
+source-linked report. `--request` takes one regular JSON file of at most
+16384 bytes holding `assumptions` and `event_ids`; symlinks, oversized input,
+invalid UTF-8 and unknown fields are refused before a vault is opened.
+
+The report is advisory. It never executes the plan, writes canon, or stands in
+for an execution permit. Evidence comes through the same read authorization as
+`context`, and each cell names the event it rests on.
+
+Model judgement is off unless `--allow-model` is given. Even then the request
+goes only to the endpoint and model the source grant names; a source without
+that exact egress consent yields an explicit unavailable report on stdout with
+the reason on stderr, and exit status 1. Credentials stay in the configured
+secret references.
+
+`--format html` prints a standalone document with the findings, the
+contradiction matrix and source lineage. It carries no script and fetches
+nothing, so it opens without a network. Exported copies live outside the vault
+and are not reached by purge.
+
 ## version
 
 ```text
