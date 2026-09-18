@@ -54,6 +54,30 @@ for (const failAt of [1, 2]) test(`partial provider revoke remains fenced and ex
   delete f.beforeToken; await restored.revokeProviderAccess(); expect(parseState(f.state).revocation).toBe("revoked"); expect(f.forms).toHaveLength(forms + 2); expect(f.tokenCount).toBe(0);
 });
 
+test("local revoke discards an in-flight page without changing the saved checkpoint", async () => {
+  const f = new XApiFixture(1), port = await f.connected(), before = f.state.slice();
+  const entered = deferred<void>(), released = deferred<void>();
+  f.before = async request => {
+    if (new URL(request.url).pathname === `/2/users/${f.account}/tweets`) { entered.resolve(); await released.promise; }
+  };
+  const running = port.sync(null);
+  try {
+    await entered.promise;
+    await port.revoke();
+  } finally { released.resolve(); }
+  expect(await running).toMatchObject({ status: "unavailable", cursor: null, events: [] });
+  expect(f.state).toEqual(before); expect(f.forms).toEqual([]);
+  expect((await port.health()).state).toBe("disabled");
+  const requests = f.requests.length;
+  await expect(port.sync(null)).rejects.toThrow("unavailable");
+  expect(f.requests).toHaveLength(requests);
+  await expect(port.connect(async () => new TextDecoder().decode(f.state))).rejects.toThrow("unavailable");
+  delete f.before;
+  const restored = await f.connected();
+  expect((await restored.sync(null)).events).toHaveLength(1);
+  await restored.close();
+});
+
 test("GET retry hints persist at the local automatic ceiling instead of centuries", async () => {
   const f = new XApiFixture(1), port = await f.connected(); f.failStatus = 429; f.retryAfter = "9999999999";
   expect((await port.sync(null)).detail).toContain("rate_limited"); expect(parseState(f.state).retry_at).toBe("2026-02-02T00:00:00.000Z"); await port.close();

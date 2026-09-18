@@ -32,7 +32,7 @@ function schemeStart(text: string, offset: number): number | null {
   }
   const tokenPrefix = text.slice(tokenStart, offset);
   let relative = -1;
-  for (const match of tokenPrefix.matchAll(/https?:\/\//giu)) {
+  for (const match of tokenPrefix.matchAll(/[a-z][a-z0-9+.-]*:\/\//giu)) {
     relative = match.index ?? relative;
   }
   return relative < 0 ? null : tokenStart + relative;
@@ -79,6 +79,9 @@ export function validateAttributionText(
   exactSpelling: string,
   canonicalUrl: string,
 ): AttributionFailure[] {
+  if (exactSpelling.trim().length === 0) {
+    throw new Error("attribution identifier must not be empty");
+  }
   const identifier = exactSpelling.toLowerCase();
   if (!canonicalUrl.toLowerCase().endsWith(identifier)) {
     throw new Error("canonical URL must end with the attribution identifier");
@@ -145,6 +148,10 @@ async function main(): Promise<void> {
     .decode(await Bun.stdin.arrayBuffer())
     .split("\0")
     .filter((path) => path.length > 0);
+
+  if (paths.length === 0) {
+    throw new Error("attribution validator found no configured documents");
+  }
 
   const failures = paths.flatMap((path) =>
     validateAttributionText(

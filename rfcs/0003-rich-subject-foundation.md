@@ -1,6 +1,6 @@
 # RFC 0003: Rich subjects, shared claim support, and reversible identity
 
-Status: **Proposed**. Date: 2026-09-05. Owner: Kizuki core.
+Status: **Accepted for the B1b–B1d scope** (owner decision D22, 2026-09-18): claim-v2 semantics and support tables with their ledger migration, one shared prepare/commit claim writer, a discriminated v1/v2 reader, and backup/restore/rebuild coverage. Sections outside that scope remain Proposed. Original date: 2026-09-05. Owner: Kizuki core.
 
 This draft records the reviewed foundation and its engineering sequence. It
 does not make the rich classifier available or amend a binding contract merely
