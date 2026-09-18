@@ -52,7 +52,9 @@ describe("rails", () => {
     expect(brief.startsWith("---\n")).toBe(true);
     const parsed = parseFrontmatter(brief);
     expect(validatePage(parsed.data)).toEqual([]);
-    const vaultDoctor = doctorVault(vault);
+    expect(parsed.data["status"]).toBe("archived");
+    expect(parsed.data["sources"]).toEqual([]);
+    const vaultDoctor = doctorVault(vault, db);
     const briefPage = vaultDoctor.pages.find(
       (page) => page.page === "dashboards/brief-2026-09-03.md",
     );
