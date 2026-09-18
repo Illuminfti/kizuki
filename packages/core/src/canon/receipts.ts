@@ -278,6 +278,24 @@ export function laterReceiptsForPage(
     .map(rowToReceipt);
 }
 
+/** The next receipt on the same page, including reverted writes; one indexed row. */
+export function nextReceiptForPage(
+  db: Database,
+  pagePath: string,
+  after: { at: string; receipt_id: string },
+): CanonReceipt | null {
+  if (!tableExists(db, "canon_receipts")) return null;
+  const row = db
+    .query<CanonReceiptRow, [string, string, string, string]>(
+      `SELECT * FROM canon_receipts
+        WHERE page_path = ?
+          AND (at > ? OR (at = ? AND receipt_id > ?))
+        ORDER BY at, receipt_id LIMIT 1`,
+    )
+    .get(pagePath, after.at, after.at, after.receipt_id);
+  return row === null ? null : rowToReceipt(row);
+}
+
 export function latestReceiptForPage(db: Database, pagePath: string): CanonReceipt | null {
   if (!tableExists(db, "canon_receipts")) return null;
   // Receipt timestamps describe the asserted fact and may be backdated. The
