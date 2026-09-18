@@ -21,24 +21,33 @@ conformance suite pulls transport code into the process.
 ## App credentials
 
 Telegram issues an app id and hash once per project, not once per person. You
-are never asked to paste one. The two values are inlined when the binary is
-built:
+are never asked to paste one. The two values are inlined by the release build
+when both are set in its environment, and by nothing else:
 
 ```sh
-KIZUKI_TELEGRAM_API_ID=… KIZUKI_TELEGRAM_API_HASH=… \
-  bun build packages/cli/src/main.ts --compile --env 'KIZUKI_TELEGRAM_*' \
-  --outfile kizuki
+KIZUKI_TELEGRAM_API_ID=… KIZUKI_TELEGRAM_API_HASH=… bun run build:release
 ```
 
-A build without them refuses to sign in, with this message and nothing else:
+The build substitutes exactly these two names, from a closed allowlist; it
+never inlines by prefix. Setting only one of them, an id that is not a
+positive decimal number, or a hash that is not 32 lowercase hex digits fails
+the build rather than shipping a half-credentialed binary. The package's
+`BUILD.json` records `compiled_credentials`, these names and no value. See
+[the native build](../../docs/native-build.md#app-credentials).
+
+A build without them succeeds and refuses to sign in, with this message and
+nothing else:
 
 ```
 kizuki.telegram: app credentials are not compiled in; build with KIZUKI_TELEGRAM_API_ID and KIZUKI_TELEGRAM_API_HASH set (see packages/connector-telegram/README.md)
 ```
 
-There is no fallback and no prompt. During development, export the same two
-variables in your shell before running from source. Keep the registered pair
-out of the repository: Telegram penalises published credentials with
+There is no fallback and no prompt, and the refusal covers every session this
+connector opens, not only the first sign-in: a build without them cannot
+backfill or resync an already-enrolled source either. During development, and
+from a build that compiled none in, export the same two variables before
+running; the two reads fall back to the live environment. Keep the registered
+pair out of the repository: Telegram penalises published credentials with
 `API_ID_PUBLISHED_FLOOD` for everyone using that build.
 
 ## Signing in

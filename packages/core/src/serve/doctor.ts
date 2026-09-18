@@ -27,6 +27,7 @@ import {
   EMPTY_STREAK,
   RETRIEVAL_SLA_SECONDS,
   RUN_RECEIPT_RETENTION_DAYS,
+  type CalibrationBandsReason,
   type CalibrationDoctor,
   type ModelDoctor,
   type RailDoctor,
@@ -142,20 +143,31 @@ function policyCapped(row: {
   }
 }
 
-/** Latest extracting `started_at`, or null if that clock cannot be parsed. */
-function latestExtractingStartedAt(receipts: RunReceipt[]): string | null {
+/**
+ * Minimum extracted drafts before a keep rate is a control rather than
+ * noise. Mirrors the confidence-spread sample floor below.
+ */
+const MIN_CALIBRATION_SAMPLE = 8;
+
+/** The clock a first fill is judged against, or why there is not one. */
+type ExtractingClock =
+  | { readonly kind: "none" }
+  | { readonly kind: "unparseable" }
+  | { readonly kind: "at"; readonly started_at: string };
+
+function latestExtractingStartedAt(receipts: RunReceipt[]): ExtractingClock {
   let startedAt: string | null = null;
   let latest = Number.NEGATIVE_INFINITY;
   for (const receipt of receipts) {
     if (receipt.claims_extracted <= 0 && receipt.claims_written <= 0) continue;
     const at = Date.parse(receipt.started_at);
-    if (!Number.isFinite(at)) return null;
+    if (!Number.isFinite(at)) return { kind: "unparseable" };
     if (at >= latest) {
       latest = at;
       startedAt = receipt.started_at;
     }
   }
-  return startedAt;
+  return startedAt === null ? { kind: "none" } : { kind: "at", started_at: startedAt };
 }
 
 /** True first fill only when every live/superseded asserted_at parses. */
@@ -195,6 +207,8 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
       confidence_spread: null,
       canon_writes_today: 0,
       top_subjects: [],
+      bands_enforced: false,
+      bands_reason: "no-receipts",
       failures,
     };
   }
@@ -203,12 +217,23 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
   const deduped = receipts.reduce((sum, receipt) => sum + receipt.claims_deduped, 0);
   const writeRate = written / Math.max(1, extracted);
   const dedupRate = deduped / Math.max(1, extracted);
-  const startedAt = latestExtractingStartedAt(receipts);
-  // Keep-rate ceiling is steady-state; skip it only for a true initial capture.
-  const firstFill = startedAt !== null && initialCapture(db, startedAt);
+  const clock = latestExtractingStartedAt(receipts);
+  // An unreadable receipt clock cannot tell a first fill from drift. Say so
+  // rather than quietly judging the vault as if it were in steady state.
+  if (clock.kind === "unparseable") failures.push("calibration_clock_unreadable");
+  // The band is a steady-state control in both directions: on a true initial
+  // capture the corpus that dedup and supersession need does not exist yet.
+  const bandsReason: CalibrationBandsReason | null =
+    clock.kind === "unparseable"
+      ? "receipt-clock-unparseable"
+      : extracted < MIN_CALIBRATION_SAMPLE
+        ? "insufficient-sample"
+        : clock.kind === "at" && initialCapture(db, clock.started_at)
+          ? "initial-capture"
+          : null;
   if (
-    extracted > 0 &&
-    (writeRate < CALIBRATION_BAND.min || (writeRate > CALIBRATION_BAND.max && !firstFill))
+    bandsReason === null &&
+    (writeRate < CALIBRATION_BAND.min || writeRate > CALIBRATION_BAND.max)
   ) {
     failures.push(`write_rate ${writeRate.toFixed(3)} outside [${CALIBRATION_BAND.min}, ${CALIBRATION_BAND.max}]`);
   }
@@ -235,7 +260,7 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
   // Report the same population we assess. Null means no informative confidence,
   // rather than a zero spread that incorrectly suggests a flat model output.
   const spread = stdev(measurable);
-  if (measurable.length >= 8 && spread !== null && spread < CONFIDENCE_SPREAD_MIN) {
+  if (measurable.length >= MIN_CALIBRATION_SAMPLE && spread !== null && spread < CONFIDENCE_SPREAD_MIN) {
     failures.push("confidence_not_produced");
   }
   const today = now.slice(0, 10);
@@ -260,6 +285,8 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
     confidence_spread: spread,
     canon_writes_today: canonToday,
     top_subjects: subjects,
+    bands_enforced: bandsReason === null,
+    bands_reason: bandsReason,
     failures,
   };
 }

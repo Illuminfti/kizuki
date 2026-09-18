@@ -4,7 +4,9 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { evaluateRelease, releaseDecision, writeAcceptanceReport } from "./go-no-go";
-import { absolute, assertCheckoutCustody, assertProductCheckoutCustody, digest, EVALUATOR_ROOT, EvidenceError, hash, parents, read, reject } from "./release-evidence";
+import { absolute, assertCheckoutCustody, assertProductCheckoutCustody, consumeP0DispositionReceipt, consumeRequiredChecksReceipt, digest, EVALUATOR_ROOT, EvidenceError, hash, P0_LABEL, parents, read, reject } from "./release-evidence";
+import { requiredChecksContexts, requiredChecksReceipt } from "./required-checks";
+import { candidateCommittedAt, p0DispositionReceipt } from "./p0-disposition";
 import { parseProofJson } from "./proof-json";
 import { validateToolchain, validateWorkflowText } from "./verify-workflows";
 import { GITHUB_ARCHIVE_LIMIT, verifyGithubNativeArchive } from "./github-native-artifact";
@@ -14,7 +16,6 @@ export const GITHUB_REPOSITORY_ID = 1353875622;
 interface GithubRepository { id: typeof GITHUB_REPOSITORY_ID; full_name: string; }
 const PAGE_SIZE = 25;
 const LIMITS = { json_bytes: 1_048_576, pages: 20, attempts: 10, jobs: 100, requests: 256, total_ms: 300_000, timeout_ms: 30_000 } as const;
-const P0_LABEL = "severity:p0";
 const P0_OBSERVATION_MAX_MS = 60_000;
 const P0_CLOCK_SKEW_MS = 5_000;
 const REQUIRED = [
@@ -22,7 +23,7 @@ const REQUIRED = [
   { path: ".github/workflows/workflows.yml", jobs: ["workflows"] },
 ] as const;
 const CANDIDATE_FILES = [".bun-version", "package.json", "bun.lock", "tsconfig.json", ...REQUIRED.map(item => item.path), ".github/workflows/macos-native.yml"];
-const COLLECTOR_FILES = [...CANDIDATE_FILES, "scripts/github-release-evidence.ts", "scripts/go-no-go.ts", "scripts/release-evidence.ts", "scripts/verify-workflows.ts", "scripts/proof-json.ts", "scripts/github-artifact-archive.py"];
+const COLLECTOR_FILES = [...CANDIDATE_FILES, "scripts/github-release-evidence.ts", "scripts/go-no-go.ts", "scripts/release-evidence.ts", "scripts/required-checks.ts", "scripts/p0-disposition.ts", "scripts/verify-workflows.ts", "scripts/proof-json.ts", "scripts/github-artifact-archive.py"];
 type JsonObject = Record<string, unknown>;
 type GetJson = (endpoint: string) => Promise<unknown>;
 export interface GithubRun {
@@ -468,13 +469,6 @@ export async function inspectGithubCurrentP0(transport: GetJson, candidate: stri
   } catch (error) { rethrowP0(error); }
 }
 
-/** Pure mapping, not authority. Only evaluateReleaseOnline may overlay the gate. */
-export function inspectGithubP0Disposition(observation: GithubP0Observation): { status: "PASS" | "FAIL"; reason: string } {
-  return observation.count === 0 && observation.inventory.length === 0
-    ? { status: "PASS", reason: "github-current-p0-inventory-clear" }
-    : { status: "FAIL", reason: "github-current-p0-findings-open" };
-}
-
 function allowedGithubEndpoint(endpoint: string): boolean {
   if (!/^[/A-Za-z0-9_.?=&%-]+$/.test(endpoint)) return false;
   if (endpoint === `/repositories/${GITHUB_REPOSITORY_ID}`) return true;
@@ -551,13 +545,44 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
     }
     candidateFrame.unchanged(); collectorFrame.unchanged(); nativeProducer?.unchanged(); lifecycleProducer?.unchanged(); index.unchanged(); checkOutput();
   } catch (error) { failure = error instanceof EvidenceError ? error.reason : "github-observation-unavailable"; }
+  // Emitted receipts: the collector observes and emits, the evaluator judges.
+  // These are the same receipt bodies an offline index would reference, so both
+  // entry points reach a gate through one consume function.
+  const emitted: { gate_id: string; path: string; sha256: string }[] = [];
+  const emit = (name: string, gate_id: string, body: unknown) => {
+    const bytes = JSON.stringify(body, null, 2) + "\n", sha256 = hash(bytes);
+    writeFileSync(join(output, name), bytes, { flag: "wx", mode: 0o600 });
+    emitted.push({ gate_id, path: name, sha256 });
+    return { body, sha256 };
+  };
+  let requiredChecks: { body: unknown; sha256: string } | null = null;
+  let requiredChecksFailure: string | null = null;
+  // A required row that failed the collector's own job and authored-step review
+  // is a failing candidate, not a receipt to emit.
+  const requiredJobsPassed = observation !== null && observation.required.every(item => item.status === "PASS");
+  if (failure === null && observation !== null && requiredJobsPassed) {
+    try {
+      requiredChecks = emit("required-checks.json", "candidate.required-checks", requiredChecksReceipt({
+        candidate_source_sha: candidate, root: EVALUATOR_ROOT, contexts: requiredChecksContexts(observation.required),
+      }));
+    } catch (error) { requiredChecksFailure = error instanceof EvidenceError ? error.reason : "github-required-checks-receipt-unavailable"; }
+  }
+  let p0Receipt: { body: unknown; sha256: string } | null = null;
+  if (failure === null && p0Failure === null && p0 !== null) {
+    try {
+      p0Receipt = emit("p0-disposition.json", "candidate.current-p0-disposition", p0DispositionReceipt({
+        candidate_source_sha: candidate, root: EVALUATOR_ROOT, candidate_committed_at: candidateCommittedAt(root, candidate),
+        snapshot_at: p0.completed_at, open_issues: p0.inventory.map(issue => ({ number: issue.number, updated_at: issue.updated_at })),
+      }));
+    } catch (error) { p0Failure = error instanceof EvidenceError ? error.reason : "github-p0-receipt-unavailable"; }
+  }
   const retained = { schema: "kizuki.github-collection/v1", candidate_source_sha: candidate, collector_source_sha: collectorHead,
     candidate_files: candidateFrame.files.map(({ path, sha256 }) => ({ path, sha256 })), collector_files: collectorFrame.files.map(({ path, sha256 }) => ({ path, sha256 })),
     started_at: started, completed_at: new Date().toISOString(), command_bindings: commandBindings, raw, observation, failure, native, native_failure: nativeFailure,
     lifecycle_failure: lifecycleFailure,
     lifecycle_producer: lifecycleProducer === null ? null : { candidate_files: lifecycleProducer.candidate_files, reviewed_files: lifecycleProducer.reviewed_files },
     native_producer: nativeProducer === null ? null : { candidate_files: nativeProducer.candidate_files, reviewed_files: nativeProducer.reviewed_files },
-    p0, p0_failure: p0Failure,
+    p0, p0_failure: p0Failure, emitted,
     trust_scope: "fresh GitHub HTTPS observation under local operator custody; saved JSON alone is not an authenticated input" };
   const receiptPath = join(output, "github-observation.json");
   writeFileSync(receiptPath, JSON.stringify(retained, null, 2) + "\n", { flag: "wx", mode: 0o600 });
@@ -569,9 +594,15 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
   candidateFrame.unchanged(); collectorFrame.unchanged(); nativeProducer?.unchanged(); lifecycleProducer?.unchanged(); index.unchanged(); checkOutput();
   const gate = report.gates.find(row => row.id === "candidate.required-checks")!;
   if (failure !== null || observation === null) Object.assign(gate, { status: "UNVERIFIABLE", reason: failure ?? "github-observation-unavailable", evidence_sha256: null });
+  else if (!requiredJobsPassed) Object.assign(gate, { status: "FAIL", reason: "github-current-required-jobs-not-passed", evidence_sha256: null });
+  else if (requiredChecks === null) Object.assign(gate, { status: "UNVERIFIABLE", reason: requiredChecksFailure ?? "github-required-checks-receipt-unavailable", evidence_sha256: null });
   else {
-    const passed = observation.required.every(item => item.status === "PASS");
-    Object.assign(gate, { status: passed ? "PASS" : "FAIL", reason: passed ? "github-current-required-jobs-passed" : "github-current-required-jobs-not-passed", evidence_sha256: passed ? receipt.sha256 : null });
+    try {
+      const evaluated = consumeRequiredChecksReceipt(requiredChecks.body, EVALUATOR_ROOT, candidate);
+      Object.assign(gate, { status: evaluated.status, reason: evaluated.reason, evidence_sha256: evaluated.creditDigest ? requiredChecks.sha256 : null });
+    } catch (error) {
+      Object.assign(gate, { status: "UNVERIFIABLE", reason: error instanceof EvidenceError ? error.reason : "github-required-checks-receipt-unavailable", evidence_sha256: null });
+    }
   }
   const nativeBinding = failure === null && nativeFailure === null && native?.status === "PASS"
     ? inspectGithubNativeIndexBinding(native.targets, report.evidence) : null;
@@ -589,13 +620,17 @@ export async function evaluateReleaseOnline(profile: "rc" | "1.0", evidence: str
     Object.assign(row, { status, reason: lifecycleBinding?.reason ?? lifecycleFailure ?? nativeBinding?.reason ?? failure ?? nativeFailure ?? "github-current-lifecycle-not-observed", evidence_sha256: status === "PASS" ? receipt.sha256 : null });
   }
   const p0Gate = report.gates.find(row => row.id === "candidate.current-p0-disposition")!;
-  if (failure !== null || p0Failure !== null || p0 === null) {
+  if (failure !== null || p0Failure !== null || p0Receipt === null) {
     Object.assign(p0Gate, { status: "UNVERIFIABLE", reason: p0Failure ?? "github-p0-observation-unavailable", evidence_sha256: null });
   } else {
-    const binding = inspectGithubP0Disposition(p0);
-    Object.assign(p0Gate, { status: binding.status, reason: binding.reason, evidence_sha256: receipt.sha256 });
+    try {
+      const evaluated = consumeP0DispositionReceipt(p0Receipt.body, EVALUATOR_ROOT, candidate);
+      Object.assign(p0Gate, { status: evaluated.status, reason: evaluated.reason, evidence_sha256: evaluated.creditDigest ? p0Receipt.sha256 : null });
+    } catch (error) {
+      Object.assign(p0Gate, { status: "UNVERIFIABLE", reason: error instanceof EvidenceError ? error.reason : "github-p0-receipt-unavailable", evidence_sha256: null });
+    }
   }
-  const result = { ...report, schema: "kizuki.online-acceptance-report/v1", ...releaseDecision(profile, report.gates), github_observation_sha256: receipt.sha256,
+  const result = { ...report, schema: "kizuki.online-acceptance-report/v1", ...releaseDecision(profile, report.gates), github_observation_sha256: receipt.sha256, emitted_receipts: emitted,
     trust_scope: `${report.trust_scope}; candidate.required-checks, native target facts and current open severity:p0 inventory additionally observed from GitHub during this evaluation; native lifecycle additionally requires independently reviewed producer closure and all17 v2 phases; released-version upgrades, hardware reboot, distribution and human trials are not asserted`,
     online_policy_sha256: hash(JSON.stringify({ schema: "kizuki.github-evidence-policy/v1", repository_id: GITHUB_REPOSITORY_ID, required: REQUIRED, native_targets: NATIVE_TARGETS, native_archive_bytes: GITHUB_ARCHIVE_LIMIT, native_index_binding: "same-target-v3-proof-and-all-seven-package-digests", package_commands: PACKAGE_COMMANDS, native_producer_entrypoints: NATIVE_PRODUCER_ENTRYPOINTS, lifecycle_producer_entrypoints: LIFECYCLE_PRODUCER_ENTRYPOINTS, lifecycle_producer_data: LIFECYCLE_PRODUCER_DATA, lifecycle_registry_sha256: LIFECYCLE_REGISTRY_SHA256, limits: LIMITS, p0_label: P0_LABEL, p0_observation_max_ms: P0_OBSERVATION_MAX_MS, p0_clock_skew_ms: P0_CLOCK_SKEW_MS, selection: "latest-attempt-start-no-pending-ambiguous-refused" })),
     online_verifier_sha256: hash(JSON.stringify(retained.collector_files)) };

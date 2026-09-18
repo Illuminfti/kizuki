@@ -40,9 +40,10 @@ Operator credentials are required and fail closed:
 
 - Telegram needs project `api_id` and `api_hash`
   (`KIZUKI_TELEGRAM_API_ID` / `KIZUKI_TELEGRAM_API_HASH`). From source, export
-  them. The current native release build inlines `KIZUKI_COMPILED` only and
-  does not compile those Telegram values; a binary that includes them is a
-  separate build.
+  them. `bun run build:release` compiles that pair into the package when both
+  are set in the build environment, and records their names, never their
+  values, in `BUILD.json` as `compiled_credentials`. With neither set the
+  build still succeeds and the package refuses Telegram sign-in.
 - Gmail and Google Calendar need operator desktop client IDs
   (`KIZUKI_GMAIL_CLIENT_ID`, `KIZUKI_GOOGLE_CALENDAR_CLIENT_ID`) and optional
   `env:` / `file:` secret references. This tree does not register a Google
