@@ -170,16 +170,24 @@ observations only; the evaluator computes the verdict, and an evaluator that
 cannot certify returns `UNVERIFIABLE` with a stated reason rather than `PASS`.
 
 The producer revision binds the bytes of the producing code, not the work the
-receipt describes. For `kizuki.journey-proof/v1` and `kizuki.connector-evidence/v1`
-no producer entrypoint has landed yet, so the pinned list is
-`scripts/release-evidence.ts` alone and the revision attests only to the shared
-receipt module, which every operator already holds. A receipt bound to that list
-alone records no executed work, so those two evaluators keep every denial path
-and end in `UNVERIFIABLE` (`journey-producer-not-landed`,
-`connector-producer-not-landed`) instead of `PASS`, crediting no evidence digest.
-A later lane that lands a journey or connector producer script adds it to the
-pinned list, and the terminal verdict becomes `PASS` for a receipt that survives
-every denial.
+receipt describes. For `kizuki.journey-proof/v1` no producer entrypoint has
+landed yet, so the pinned list is `scripts/release-evidence.ts` alone and the
+revision attests only to the shared receipt module, which every operator already
+holds. A receipt bound to that list alone records no executed work, so that
+evaluator keeps every denial path and ends in `UNVERIFIABLE`
+(`journey-producer-not-landed`) instead of `PASS`, crediting no evidence digest.
+A later lane that lands a journey producer script adds it to the pinned list, and
+the terminal verdict becomes `PASS` for a receipt that survives every denial.
+
+`kizuki.connector-evidence/v1` has landed producers. Its pinned list is the
+shared receipt builder `scripts/connector-evidence.ts`, the file-import proof
+`scripts/file-import-proof.ts` with its fixtures, the local-source proof
+`scripts/screenpipe-proof.ts` with its fixtures, and the evaluator module. Those
+producers can witness two of the three evidence classes: a file import and an
+offline read of a stopped local database. Nothing in this repository can witness
+a live account, so a `live-account` receipt still ends in `UNVERIFIABLE`
+(`connector-producer-not-landed`) however well formed it is, and the six
+live-account obligations stay unmet until a real account is observed.
 
 `kizuki.required-checks/v1` (`scripts/required-checks.ts`) records exactly
 `test`, `secrets` and `workflows` with each context's conclusion, run ID and
