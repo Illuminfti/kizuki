@@ -76,6 +76,10 @@ jobs:
     steps:
 ${testSteps}
       - run: |
+          mkdir -p "$RUNNER_TEMP/kizuki-surface"
+          bun scripts/capability-proof.ts --candidate ${pinnedRef} --out "$RUNNER_TEMP/kizuki-surface/receipt.json"
+      - run: test -f "$RUNNER_TEMP/kizuki-surface/receipt.json"
+      - run: |
           bun run build:release
           bun run smoke:release
           bun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-artifact-proof"
@@ -453,20 +457,20 @@ test("Linux validator rejects removal or bypass of each native receipt retention
   const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
   expect(validateWorkflowText(path, text)).toEqual([]);
   const mutations: [string, (doc: any) => void][] = [
-    ["proof-command removal", d => { d.jobs.test.steps.splice(5, 1); }],
-    ["receipt check removed", d => { d.jobs.test.steps.splice(7, 1); }],
-    ["renamed receipt check", d => { d.jobs.test.steps[7].run = 'test -f "$RUNNER_TEMP/kizuki-artifact-proof/missing.json"'; }],
-    ["package-only upload path", d => { d.jobs.test.steps[8].with.path = "dist/kizuki-*/bun-linux-x64-baseline/"; }],
-    ["wrong receipt path", d => { d.jobs.test.steps[8].with.path = "dist/kizuki-*/bun-linux-x64-baseline/\n${{ runner.temp }}/wrong/receipt.json"; }],
-    ["always() retention", d => { d.jobs.test.steps[8].if = "${{ always() }}"; }],
-    ["action SHA drift", d => { d.jobs.test.steps[8].uses = "actions/upload-artifact@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; }],
-    ["artifact name change", d => { d.jobs.test.steps[8].with.name = "linux-x64-latest"; }],
-    ["package path change", d => { d.jobs.test.steps[8].with.path = "dist/\n${{ runner.temp }}/kizuki-artifact-proof/receipt.json"; }],
-    ["retention-days change", d => { d.jobs.test.steps[8].with["retention-days"] = 90; }],
-    ["if-no-files-found change", d => { d.jobs.test.steps[8].with["if-no-files-found"] = "warn"; }],
+    ["proof-command removal", d => { d.jobs.test.steps.splice(7, 1); }],
+    ["receipt check removed", d => { d.jobs.test.steps.splice(9, 1); }],
+    ["renamed receipt check", d => { d.jobs.test.steps[9].run = 'test -f "$RUNNER_TEMP/kizuki-artifact-proof/missing.json"'; }],
+    ["package-only upload path", d => { d.jobs.test.steps[10].with.path = "dist/kizuki-*/bun-linux-x64-baseline/"; }],
+    ["wrong receipt path", d => { d.jobs.test.steps[10].with.path = "dist/kizuki-*/bun-linux-x64-baseline/\n${{ runner.temp }}/wrong/receipt.json"; }],
+    ["always() retention", d => { d.jobs.test.steps[10].if = "${{ always() }}"; }],
+    ["action SHA drift", d => { d.jobs.test.steps[10].uses = "actions/upload-artifact@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; }],
+    ["artifact name change", d => { d.jobs.test.steps[10].with.name = "linux-x64-latest"; }],
+    ["package path change", d => { d.jobs.test.steps[10].with.path = "dist/\n${{ runner.temp }}/kizuki-artifact-proof/receipt.json"; }],
+    ["retention-days change", d => { d.jobs.test.steps[10].with["retention-days"] = 90; }],
+    ["if-no-files-found change", d => { d.jobs.test.steps[10].with["if-no-files-found"] = "warn"; }],
     ["upload removed", d => { d.jobs.test.steps.pop(); }],
-    ["conditional receipt check", d => { d.jobs.test.steps[7].if = "false"; }],
-    ["masked proof failure", d => { d.jobs.test.steps[5].run += "\ntrue"; }],
+    ["conditional receipt check", d => { d.jobs.test.steps[9].if = "false"; }],
+    ["masked proof failure", d => { d.jobs.test.steps[7].run += "\ntrue"; }],
     ["second package-only upload", d => {
       d.jobs.test.steps.push({
         name: "retain package only",
@@ -481,10 +485,10 @@ test("Linux validator rejects removal or bypass of each native receipt retention
       });
     }],
     ["insert a benign run step between the receipt check and upload", d => {
-      d.jobs.test.steps.splice(8, 0, { run: "true" });
+      d.jobs.test.steps.splice(10, 0, { run: "true" });
     }],
     ["move the exact-head check after upload", d => {
-      d.jobs.test.steps.push(d.jobs.test.steps.splice(6, 1)[0]);
+      d.jobs.test.steps.push(d.jobs.test.steps.splice(8, 1)[0]);
     }],
     ["append a benign step after upload", d => {
       d.jobs.test.steps.push({ run: "true" });
@@ -565,4 +569,34 @@ test("paired native qualification retains exactly the built package and both rec
   const doc = Bun.YAML.parse(current) as any;
   doc.jobs["native-service"].steps[8].with.path += "\n${{ runner.temp }}/kizuki-native-artifact-proof/execution/";
   expect(validateWorkflowText(path, JSON.stringify(doc)).length).toBeGreaterThan(0);
+});
+
+test("ci test must keep producing the surface inventory receipt on the event head", () => {
+  const path = ".github/workflows/ci.yml";
+  const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  expect(validateWorkflowText(path, text)).toEqual([]);
+  expect(validateWorkflowText(path, ciWorkflow())).toEqual([]);
+  const mutations: [string, (doc: any) => void][] = [
+    ["producer removed", d => { d.jobs.test.steps.splice(5, 2); }],
+    ["producer step removed", d => { d.jobs.test.steps.splice(5, 1); }],
+    ["receipt check removed", d => { d.jobs.test.steps.splice(6, 1); }],
+    ["masked producer failure", d => { d.jobs.test.steps[5].run += "\ntrue"; }],
+    ["conditional producer", d => { d.jobs.test.steps[5].if = "false"; }],
+    ["continue-on-error producer", d => { d.jobs.test.steps[5]["continue-on-error"] = true; }],
+    ["conditional receipt check", d => { d.jobs.test.steps[6].if = "false"; }],
+    ["renamed receipt check", d => { d.jobs.test.steps[6].run = 'test -f "$RUNNER_TEMP/kizuki-surface/missing.json"'; }],
+    ["second notion of the candidate", d => {
+      d.jobs.test.steps[5].run = d.jobs.test.steps[5].run
+        .replace("${{ github.event.pull_request.head.sha || github.sha }}", "$(git rev-parse HEAD)");
+    }],
+    ["receipt written inside the checkout", d => {
+      d.jobs.test.steps[5].run = d.jobs.test.steps[5].run.replaceAll("$RUNNER_TEMP/kizuki-surface", "kizuki-surface");
+      d.jobs.test.steps[6].run = 'test -f "kizuki-surface/receipt.json"';
+    }],
+    ["moved after the native proof", d => { d.jobs.test.steps.push(...d.jobs.test.steps.splice(5, 2)); }],
+  ];
+  for (const [name, mutate] of mutations) {
+    const doc = Bun.YAML.parse(text); mutate(doc);
+    expect(validateWorkflowText(path, JSON.stringify(doc)).some(failure => failure.reason.includes("surface inventory")), name).toBe(true);
+  }
 });

@@ -87,6 +87,8 @@ The long-term signature primitive is a **World Slice**: a task-bounded compilati
 
 A coding agent should receive different context from a meeting assistant. A design agent should receive relevant taste exemplars and prior decisions. A research agent should receive the owner's knowledge frontier and unresolved questions. A larger token budget must never grant broader permission.
 
+The v2 [Adaptive Domain World Models and Collaboration Model checklist](docs/v2-adaptive-collaboration.md) tracks [#552](https://github.com/Illuminfti/kizuki/issues/552): deeper domain knowledge and task-aware collaboration through World Slices. These are future requirements, not shipped capabilities or evidence of 1.0 stranger-readiness; [#403](https://github.com/Illuminfti/kizuki/issues/403) remains that bar.
+
 ### World revisions and diffs
 
 World state changes. Kizuki's direction includes coherent world revisions and task-aware diffs so an agent can discover whether assumptions became stale without re-reading the entire vault.
