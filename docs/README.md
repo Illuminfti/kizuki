@@ -26,5 +26,7 @@ stranger proof. Estate cutover and seven-/fourteen-day calendar observation
 are not readiness or 1.0 tag prerequisites ([D19](decision-log.md#owner-amendment-to-readiness-2026-09-05)).
 [D21](decision-log.md) makes the entire #497 world-model map day-one 1.0;
 closed packets and RFC fixtures are not shipped surfaces. Stranger proof is
-not in this tree. Product, connector, model, security, recovery, platform,
-independent review, and unfamiliar-human requirements remain.
+not in this tree; `scripts/stranger-proof.ts` is the automated
+artifact-isolation prerequisite, not that proof. Product, connector, model,
+security, recovery, platform, independent review, and unfamiliar-human
+requirements remain.

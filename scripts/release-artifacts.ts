@@ -9,7 +9,19 @@ export const CURRENT_PACKAGE_FILES = ["kizuki", "kizuki-mcp", "README.txt", "LIC
 export type PackageFile = typeof CURRENT_PACKAGE_FILES[number];
 interface BuildBase { source_sha: string; target: string; bun_version: string; }
 export type BuildInfo = (BuildBase & { schema: "kizuki.release-build/v1" }) |
-  (BuildBase & { schema: "kizuki.release-build/v2"; distribution: PackageDistribution });
+  (BuildBase & { schema: "kizuki.release-build/v2"; compiled_credentials?: readonly string[]; distribution: PackageDistribution });
+const CREDENTIAL_NAME = /^KIZUKI_[A-Z0-9]+(?:_[A-Z0-9]+)*$/;
+/** Names only; a credential value never belongs in a package file. Ascending, so the list is its own identity. */
+export function parseCompiledCredentialNames(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || value.length > 16 || value.some((name, index) => typeof name !== "string" ||
+      name.length > 128 || !CREDENTIAL_NAME.test(name) || (index > 0 && name <= value[index - 1]))) throw new Error("release BUILD.json has an invalid shape");
+  return value as readonly string[];
+}
+/** Absent in packages built before the field existed; those stay readable and claim nothing. */
+function compiledCredentialIdentity(build: BuildInfo): string {
+  if (build.schema !== "kizuki.release-build/v2" || build.compiled_credentials === undefined) return "unrecorded";
+  return build.compiled_credentials.join(",");
+}
 export function packageFiles(build: BuildInfo): readonly PackageFile[] { return build.schema === "kizuki.release-build/v1" ? LEGACY_PACKAGE_FILES : CURRENT_PACKAGE_FILES; }
 export function packageFileLimit(name: PackageFile, build?: BuildInfo): number {
   if (name === "kizuki" || name === "kizuki-mcp") return 268_435_456;
@@ -19,14 +31,16 @@ export function packageFileLimit(name: PackageFile, build?: BuildInfo): number {
 }
 export function parseBuildInfoValue(value: unknown): BuildInfo {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("release BUILD.json has an invalid shape");
-  const row = value as Record<string, unknown>, v2 = row.schema === "kizuki.release-build/v2";
+  const row = value as Record<string, unknown>, v2 = row.schema === "kizuki.release-build/v2", keys = Object.keys(row).sort().join();
   if ((!v2 && row.schema !== "kizuki.release-build/v1") ||
-      Object.keys(row).sort().join() !== (v2 ? "bun_version,distribution,schema,source_sha,target" : "bun_version,schema,source_sha,target") ||
+      !(v2 ? keys === "bun_version,compiled_credentials,distribution,schema,source_sha,target" || keys === "bun_version,distribution,schema,source_sha,target"
+           : keys === "bun_version,schema,source_sha,target") ||
       typeof row.source_sha !== "string" || !/^[a-f0-9]{40}$/.test(row.source_sha) || typeof row.target !== "string" || typeof row.bun_version !== "string") {
     throw new Error("release BUILD.json has an invalid shape");
   }
   if (v2) {
     if (row.bun_version !== BUN_DISTRIBUTION_PIN.version) throw new Error("release BUILD.json runtime mismatch");
+    if (row.compiled_credentials !== undefined) parseCompiledCredentialNames(row.compiled_credentials);
     parsePackageDistribution(row.distribution);
   }
   return value as BuildInfo;
@@ -46,6 +60,7 @@ export function verifyPackageDirectory(directory: string, build: BuildInfo): voi
   }
   const actual = parseBuildInfo(join(directory, "BUILD.json"));
   if (actual.schema !== build.schema || actual.source_sha !== build.source_sha || actual.target !== build.target || actual.bun_version !== build.bun_version ||
+      compiledCredentialIdentity(actual) !== compiledCredentialIdentity(build) ||
       (actual.schema === "kizuki.release-build/v2" && build.schema === "kizuki.release-build/v2" && distributionIdentity(actual.distribution).inventory_sha256 !== distributionIdentity(build.distribution).inventory_sha256)) throw new Error("release BUILD.json identity changed");
   verifyChecksumManifest(directory, packageFiles(build).slice(0, -1));
   if (build.schema === "kizuki.release-build/v2" && readFileSync(join(directory, "SHA256SUMS"), "utf8") !== checksumManifest(directory, CURRENT_PACKAGE_FILES.slice(0, -1))) throw new Error("release checksum verification failed");

@@ -28,6 +28,27 @@ const TITLES: Record<string, string> = {
   "kizuki.telegram": "Telegram sign-in",
 };
 
+export interface NotEnrollableSource {
+  readonly id: string;
+  readonly name: string;
+  readonly reason: string;
+}
+
+/**
+ * Components this CLI deliberately does not enroll. An entry is an honest
+ * absence, not a capability: it never enters the connector registry, never
+ * becomes resolvable by `connect <connector>`, and carries no setup path. Each
+ * reason is stated verbatim in the "Not enrollable from this CLI" section of
+ * docs/connect.md, which packages/cli/test/connect-catalog.test.ts asserts.
+ */
+export const NOT_ENROLLABLE: readonly NotEnrollableSource[] = Object.freeze([
+  Object.freeze({
+    id: "kizuki.whoop",
+    name: "WHOOP",
+    reason: "WHOOP's documented eight-character OAuth state and registered redirect are unqualified against Core's PKCE and dynamic loopback callback, and local desktop custody of the server-side Client Secret WHOOP documents is not sanctioned here.",
+  }),
+]);
+
 export function printConnectorCatalog(io: CliIo, json: boolean): number {
   let xConfigured = false;
   try { xApiClient(io.env); xConfigured = true; } catch { /* New enrollment configuration only; existing v2 sources carry their own. */ }
@@ -42,7 +63,7 @@ export function printConnectorCatalog(io: CliIo, json: boolean): number {
     detail: id === "kizuki.x" ? "CLI wired; public native app, exact registered loopback callback, explicit fields/history start, usage credits and separate source consent required; real-account qualification pending" : id === "kizuki.google-calendar" ? "CLI wired; operator desktop client, canonical calendar, explicit fields, browser sign-in and separate source consent required; real-account qualification pending" : id === "kizuki.gmail" ? "CLI wired; operator desktop-client configuration, explicit fields, browser sign-in and separate source consent required" : id === "kizuki.telegram" && appCredentials() === null ? "CLI wired; project app credentials missing" : ["kizuki.import-legacy-events", "kizuki.import-legacy-wiki"].includes(id) ? "local export and explicit mapping required; source consent required before capture" : enrollable.has(id) ? "ready to connect" : "not yet available from this CLI",
   }));
   if (json) {
-    io.out(jsonEnvelope("connect", "ok", { sources }));
+    io.out(jsonEnvelope("connect", "ok", { sources, not_enrollable: NOT_ENROLLABLE }));
     return 0;
   }
   io.out("Kizuki Connect");
@@ -52,6 +73,12 @@ export function printConnectorCatalog(io: CliIo, json: boolean): number {
     ["Source", "Connector", "How", "Status"],
     ...sources.map((source) => [source.name, source.id.replace(/^kizuki\./, ""), source.mode, source.detail]),
   ])) io.out(line);
+  io.out("");
+  io.out("Not enrollable from this CLI:");
+  for (const entry of NOT_ENROLLABLE) {
+    io.out(`  ${entry.name} (${entry.id})`);
+    io.out(`  ${entry.reason}`);
+  }
   io.out("");
   io.out(`Notes:     ${INVOCATION} import markdown-folder --source ./notes --policy POLICY.json --expected-revision 0 --operation-id first-import`);
   if (enrollable.has("kizuki.beeper")) {
