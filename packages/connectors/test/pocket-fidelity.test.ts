@@ -1,6 +1,5 @@
-import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { expect, test } from "bun:test";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   EVENT_LIMITS,
@@ -27,22 +26,11 @@ import {
   pocketHeaderLine,
   pocketEvents,
 } from "../src/import-pocket";
+import { rootTest } from "./temp-root";
 
 const HEADER = "title,url,time_added,tags,status";
 const SOURCE_KEY = "01JJ0000000000000000000008";
-const roots: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
-});
-
-async function syntheticDir(): Promise<string> {
-  const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-pocket-life-"));
-  roots.push(root);
-  return root;
-}
+const lifeTest = rootTest("kizuki-pocket-life-");
 
 function thrown(body: () => unknown): KizukiError {
   try {
@@ -252,7 +240,7 @@ test("a title or tag list the ledger cannot store is refused without quoting it"
   );
 });
 
-test("a snapshot larger than one ingest batch resumes from the durable checkpoint", async () => {
+lifeTest("a snapshot larger than one ingest batch resumes from the durable checkpoint", async (syntheticDir) => {
   const root = await syntheticDir();
   const file = path.join(root, "pocket.csv");
   const count = MAX_SYNC_BATCH_EVENTS + 1;
@@ -334,7 +322,7 @@ test("a snapshot larger than one ingest batch resumes from the durable checkpoin
   }
 });
 
-test("a malformed page after a checkpoint keeps the earlier page and resumes", async () => {
+lifeTest("a malformed page after a checkpoint keeps the earlier page and resumes", async (syntheticDir) => {
   const root = await syntheticDir();
   const file = path.join(root, "pocket.csv");
   const count = MAX_SYNC_BATCH_EVENTS + 1;
@@ -397,7 +385,7 @@ test("a malformed page after a checkpoint keeps the earlier page and resumes", a
   }
 });
 
-test("replacing the export after a checkpoint restarts from the first row", async () => {
+lifeTest("replacing the export after a checkpoint restarts from the first row", async (syntheticDir) => {
   const root = await syntheticDir();
   const file = path.join(root, "pocket.csv");
   const count = MAX_SYNC_BATCH_EVENTS + 1;
@@ -434,7 +422,7 @@ test("replacing the export after a checkpoint restarts from the first row", asyn
   expect(restarted.cursor).not.toBeNull();
 });
 
-test("a page stays inside the host byte budget", async () => {
+lifeTest("a page stays inside the host byte budget", async (syntheticDir) => {
   const root = await syntheticDir();
   const file = path.join(root, "pocket.csv");
   const title = "N".repeat(20_000);
@@ -459,7 +447,7 @@ test("a page stays inside the host byte budget", async () => {
   ).toBeLessThanOrEqual(MAX_SYNC_BATCH_BYTES);
 });
 
-test("a corrupt checkpoint is refused", async () => {
+lifeTest("a corrupt checkpoint is refused", async (syntheticDir) => {
   const root = await syntheticDir();
   const file = path.join(root, "pocket.csv");
   await writeFile(
@@ -472,7 +460,7 @@ test("a corrupt checkpoint is refused", async () => {
   expect(error.message).toBe(`${POCKET_IMPORT_CONNECTOR_ID}: malformed cursor`);
 });
 
-test("purge plans every bookmark as unreachable and leaves the export", async () => {
+lifeTest("purge plans every bookmark as unreachable and leaves the export", async (syntheticDir) => {
   const root = await syntheticDir();
   const file = path.join(root, "pocket.csv");
   const body = csv([

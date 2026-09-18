@@ -564,6 +564,7 @@ export {
   laterReceiptsForPage,
   listAuditReceipts,
   listCanonReceipts,
+  nextReceiptForPage,
   ownerEdited,
   pageRelPath,
   parseReceiptLine,
