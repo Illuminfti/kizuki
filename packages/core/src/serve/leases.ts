@@ -17,6 +17,9 @@ export interface LeaseProcess {
   readonly isAlive: (pid: number) => boolean;
 }
 
+/** The three answers a lease read can give; `ServeStatus.lease` is one. */
+export type LeaseState = "held" | "free" | "busy";
+
 export interface LeaseAcquireResult {
   readonly acquired: boolean;
   readonly lease: LeaseRow | null;
@@ -115,6 +118,25 @@ function isBusy(lease: LeaseRow, process: LeaseProcess, now: string): boolean {
   if (process.isAlive(lease.holder_pid)) return true;
   const staleAfter = HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS;
   return ageSeconds(lease.heartbeat_at, now) < staleAfter;
+}
+
+/**
+ * RFC 0002 §9.7: read the lease without touching it. The order mirrors
+ * `acquireLease`: our own row is `held`, a live foreign holder is `busy`,
+ * a reclaimable or absent row is `free`. A status read must never
+ * heartbeat, reclaim or release, so it can answer no other way.
+ */
+export function leaseState(
+  db: Database,
+  process: LeaseProcess,
+  name = WRITER_LEASE,
+): LeaseState {
+  const existing = readLease(db, name);
+  if (existing === null) return "free";
+  if (existing.holder_pid === process.pid && existing.holder_boot_id === process.boot_id) {
+    return "held";
+  }
+  return isBusy(existing, process, process.now()) ? "busy" : "free";
 }
 
 export function reclaimDeadLease(

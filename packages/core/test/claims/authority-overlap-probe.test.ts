@@ -194,6 +194,38 @@ describe("insertClaim mixed-authority overlap probe", () => {
 
 describe("claim admission across every overlapping interval", () => {
   test.each([
+    [0.8, 0.95, "stored"],
+    [0.6, 0.75, "stored"],
+    [0.8, 0.950001, "stored"],
+    [0.8, 0.949999, "contested"],
+    [0.8, 0.8, "contested"],
+  ] as const)("conflict margin from %s to %s yields %s", async (firstConfidence, confidence, outcome) => {
+    const { db, io, first, incoming } = await overlappingClaims("connector", { firstConfidence });
+    try {
+      // End before the second claim, isolating the first interval.
+      const result = await insertClaim(io, {
+        ...incoming, confidence, valid_to: "2026-03-01T00:00:00.000Z",
+      });
+      expect(result.outcome).toBe(outcome);
+      if (result.outcome === "stored") {
+        expect(resolveConflict(result.claim, first)).toEqual({
+          action: "supersede", winner: "incoming", rule: "R3",
+        });
+        expect(getClaim(db, first.claim_id)?.status).toBe("superseded");
+        expect(listSupersessions(db)).toEqual([
+          { winner: result.claim.claim_id, loser: first.claim_id, rule: "R3" },
+        ]);
+      } else if (result.outcome === "contested") {
+        expect(resolveConflict(result.incoming, first)).toEqual({ action: "contested", rule: "R4" });
+        expect(getClaim(db, first.claim_id)).toEqual(first);
+        expect(getClaim(db, result.incoming.claim_id)?.status).toBe("live");
+        expect(listSupersessions(db)).toEqual([]);
+      } else {
+        throw new Error("expected supersession or contest");
+      }
+    } finally { db.close(); }
+  });
+  test.each([
     ["earlier evidence, forward walk", false, false],
     ["earlier evidence, reverse walk", true, false],
     ["later evidence, forward walk", false, true],
@@ -209,9 +241,13 @@ describe("claim admission across every overlapping interval", () => {
       expect(result.reason).toBe("below_authority");
       expect(claimsConflict(result.claim, first)).toBe(true);
       expect(claimsConflict(result.claim, other)).toBe(true);
-      expect(resolveConflict(result.claim, first)).toEqual({
-        action: "supersede", winner: reverseIntervals ? "live" : "incoming", rule: "R3",
-      });
+      // Reversed intervals make the live claim the recency winner at lower
+      // confidence, which RFC 0002 R4 keeps contested rather than superseding.
+      expect(resolveConflict(result.claim, first)).toEqual(
+        reverseIntervals
+          ? { action: "contested", rule: "R4" }
+          : { action: "supersede", winner: "incoming", rule: "R3" },
+      );
       expect(resolveConflict(result.claim, other)).toEqual({ action: "skip", reason: "below_authority", rule: "R1" });
       expect(getClaim(db, result.claim.claim_id)?.status).toBe("skipped");
       expect(snapshot()).toEqual(before);

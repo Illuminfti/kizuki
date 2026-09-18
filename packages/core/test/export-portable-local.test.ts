@@ -1,5 +1,6 @@
-import { afterEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, readdirSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { afterEach, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { exportVault, restoreVault, verifyBackup, type ExportManifest, type PortableLocalAdapter } from "../src/export";
 import { ConnectionStateStore } from "../src/ledger/connection-state";
@@ -7,7 +8,7 @@ import { getCheckpoint, getConnection } from "../src/ledger/connections";
 import { openLedger } from "../src/ledger/db";
 import { enrollConnection } from "../src/ledger/enroll";
 import { setSourceGrant, sourceCaptureAdmission } from "../src/ledger/source-grants";
-import { PORTABLE_LOCAL_STREAM } from "../src/portable-local";
+import { hashPortableLocal, PORTABLE_LOCAL_STREAM } from "../src/portable-local";
 import { sha256Hex } from "../src/util/hash";
 import { initVault } from "../src/vault/init";
 import { connector, io, temporaryDirectories } from "./connections-helpers";
@@ -264,3 +265,27 @@ for (const mutation of ["missing", "duplicate", "wrong-connector", "inactive"] a
     expect(existsSync(f.target)).toBe(false);
   });
 }
+
+test("hashing the portable stream refuses a connections directory widened during the read", async () => {
+  const f = await fixture(); exportVault(f.db, f.vault, f.backup, f.options);
+  const directory = join(f.backup, "connections"), stream = join(f.backup, PORTABLE_LOCAL_STREAM);
+  const inode = lstatSync(stream).ino;
+  const read = fs.readSync;
+  let widened = false;
+  // Canon custody reads the checked descriptor with readSync. Widening the
+  // holding directory after that read leaves path traversal satisfied, so only
+  // the post-read exact-0700 gate can still observe it.
+  const spy = spyOn(fs, "readSync").mockImplementation(((...args: Parameters<typeof fs.readSync>) => {
+    const count = read(...args);
+    if (!widened && count > 0 && fs.fstatSync(args[0]).ino === inode) { widened = true; chmodSync(directory, 0o750); }
+    return count;
+  }) as typeof fs.readSync);
+  try {
+    expect(() => hashPortableLocal(f.backup)).toThrow("canon_files_unsafe");
+    expect(widened).toBe(true);
+  } finally { spy.mockRestore(); }
+  expect(lstatSync(directory).mode & 0o777).toBe(0o750);
+  expect(() => verifyBackup(f.backup)).toThrow();
+  expect(() => restoreVault(f.backup, f.target, f.options)).toThrow();
+  expect(existsSync(f.target)).toBe(false);
+});

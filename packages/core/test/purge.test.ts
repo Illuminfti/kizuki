@@ -18,6 +18,7 @@ import {
   previewPurge,
   purgeEvents,
   resolvePurgeConnectorId,
+  resumePurge,
   runPurge,
   setAfterCanonSnapshot,
   verifyPurge,
@@ -805,6 +806,89 @@ describe("purgeEvents", () => {
     expect(page).not.toContain(first.event_id);
     expect(page).not.toContain(second.event_id);
     db.close();
+  });
+
+  for (const corruption of ["missing proof", "digest mismatch"] as const) {
+    for (const recovery of ["resume", "later purge"] as const) {
+      test(`${recovery} keeps canon held after event purge ${corruption}`, async () => {
+        const db = openLedger(":memory:");
+        try {
+          const target = storedEvent(db, event("target"));
+          const vaultPath = temporaryVault();
+          const raw = serializePage({
+            data: {
+              id: "page-held", title: "held", type: "fact", status: "active",
+              sensitivity: "personal", taint: "clean", sources: [target.event_id],
+            },
+            body: "synthetic evidence\n",
+          });
+          putCanonFile(vaultPath, "facts/held.md", raw);
+          const outcome = purgeEvents(db, vaultPath, { event_id: target.event_id }, "record request");
+          const receiptId = outcome.receipts[0]!.receipt_id;
+          if (corruption === "missing proof") {
+            db.query("DELETE FROM event_purge_proofs WHERE receipt_id = ?").run(receiptId);
+          } else {
+            db.query("UPDATE event_purge_proofs SET content_hash = ? WHERE receipt_id = ?")
+              .run("0".repeat(64), receiptId);
+          }
+
+          if (recovery === "resume") {
+            const report = await resumePurge(db, vaultPath, receiptId);
+            expect(report.ok).toBe(false);
+            expect(report.hold_lifted).toBe(false);
+          } else {
+            const later = storedEvent(db, event("later"));
+            const report = await runPurge(db, vaultPath, { event_id: later.event_id }, "later request");
+            expect(report.rewritten).toEqual([]);
+          }
+          expect(isHeld(db, "facts/held.md")).toBe(true);
+          expect(readFileSync(join(vaultPath, "facts/held.md"), "utf8")).toBe(raw);
+          expect(db.query("SELECT count(*) AS n FROM canon_receipts WHERE receipt_kind = 'purge_rewrite'").get())
+            .toEqual({ n: 0 });
+          expect((await verifyPurge(db, vaultPath, receiptId)).ok).toBe(false);
+
+          db.query("DELETE FROM event_purge_proofs WHERE receipt_id = ?").run(receiptId);
+          db.query(`INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
+                    VALUES (?, ?, ?, 'event')`).run(receiptId, target.content_hash, target.source_record_id);
+          const repaired = await resumePurge(db, vaultPath, receiptId);
+          expect(repaired.ok).toBe(true);
+          expect(repaired.hold_lifted).toBe(true);
+          expect(repaired.pages_rewritten).toBe(1);
+          expect(isHeld(db, "facts/held.md")).toBe(false);
+          expect(readFileSync(join(vaultPath, "facts/held.md"), "utf8")).not.toContain(target.event_id);
+        } finally {
+          db.close();
+        }
+      });
+    }
+  }
+
+  test("resume still rewrites held canon on a ledger predating the proof schema", async () => {
+    const db = openLedger(":memory:");
+    try {
+      const target = storedEvent(db, event("target"));
+      const vaultPath = temporaryVault();
+      const raw = serializePage({
+        data: {
+          id: "page-legacy", title: "legacy", type: "fact", status: "active",
+          sensitivity: "personal", taint: "clean", sources: [target.event_id],
+        },
+        body: "synthetic evidence\n",
+      });
+      putCanonFile(vaultPath, "facts/legacy.md", raw);
+      const outcome = purgeEvents(db, vaultPath, { event_id: target.event_id }, "record request");
+      const receiptId = outcome.receipts[0]!.receipt_id;
+      // An unmigrated ledger carries no receipt-bound proof identity at all. That is a schema
+      // the open path migrates, not a corrupted receipt, so the hold gate must not read it as one.
+      db.exec("ALTER TABLE event_purges DROP COLUMN proof_digest");
+      const report = await resumePurge(db, vaultPath, receiptId);
+      expect(report.hold_lifted).toBe(true);
+      expect(report.pages_rewritten).toBe(1);
+      expect(isHeld(db, "facts/legacy.md")).toBe(false);
+      expect(readFileSync(join(vaultPath, "facts/legacy.md"), "utf8")).not.toContain(target.event_id);
+    } finally {
+      db.close();
+    }
   });
 
   test("does not lift a hold on an id-less page with no sources", async () => {

@@ -60,7 +60,24 @@ describe("claim-level dedup threshold", () => {
     expect(second.outcome).toBe("duplicate");
     if (second.outcome !== "duplicate") return;
     expect(second.claim.claim_id).toBe(first.claim.claim_id);
-    expect(second.claim.corroboration).toBe(2);
+    // Re-wording the same cited event is a replay, so it confirms nothing.
+    expect(second.claim.corroboration).toBe(1);
+
+    const secondEvent = putEvent(db, { source_record_id: "rec-second-observation" });
+    const third = await insertClaim(
+      { db },
+      claimInput(secondEvent, {
+        body: "Employment note: grace is based at acme.",
+        object: "acme.",
+        events: [eventFacts(secondEvent)],
+      }),
+    );
+    expect(third.outcome).toBe("duplicate");
+    if (third.outcome !== "duplicate") return;
+    expect(third.claim.claim_id).toBe(first.claim.claim_id);
+    // A second observation is new evidence and does corroborate.
+    expect(third.claim.corroboration).toBe(2);
+    expect(third.claim.provenance).toEqual([eventId, secondEvent]);
     db.close();
   });
 
