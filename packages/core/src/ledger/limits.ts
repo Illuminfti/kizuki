@@ -1,5 +1,23 @@
-/** Host-side wait when another connection holds the ledger. */
-export const LEDGER_BUSY_TIMEOUT_MS = 1_000;
+/**
+ * Host-side wait when another connection holds the ledger. The serve daemon
+ * writes in short per-batch transactions, so a few seconds covers ordinary
+ * rail activity without letting a stuck writer block a verb indefinitely.
+ */
+export const LEDGER_BUSY_TIMEOUT_MS = 5_000;
+
+/** Largest busy timeout a caller may ask for. */
+export const LEDGER_BUSY_TIMEOUT_MAX_MS = 5_000;
+
+/**
+ * Attempts for one top-level immediate transaction. The busy timeout already
+ * waits inside each attempt; these retries survive a writer that holds the
+ * lock across several of those waits, and stay bounded so a command still
+ * stops with an actionable refusal instead of hanging.
+ */
+export const LEDGER_BUSY_ATTEMPTS = 4;
+
+/** Backoff before retry N of a busy immediate transaction. */
+export const LEDGER_BUSY_BACKOFF_MS = 50;
 
 /** Hard cap for `readSince`. Bulk walks page; they do not raise this. */
 export const MAX_READ_SINCE = 1_000;

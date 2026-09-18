@@ -8,6 +8,7 @@ import { applyCanonV4, initCanon } from "../src/canon/schema";
 import { getCanonReceipt } from "../src/canon/receipts";
 import { initClaims } from "../src/claims/init";
 import { applyClaimsV3 } from "../src/claims/schema";
+import { LEDGER_BUSY_TIMEOUT_MS } from "../src/ledger/limits";
 import { neighbors } from "../src/graph/graph";
 import { initGraph } from "../src/graph/schema";
 import { applyCheckpointModeCursorsV25, applyConnectionsV8 } from "../src/ledger/connections-schema";
@@ -128,12 +129,13 @@ const V2_SCHEMA = `
 `;
 
 describe("openLedger migrations", () => {
-  test("keeps the existing one-second wait default and permits a bounded startup wait", () => {
-    const legacy = openLedger(":memory:"), contender = openLedger(":memory:", { busyTimeoutMs: 5000 });
+  test("waits out a live writer by default and permits an explicit bounded wait", () => {
+    const standard = openLedger(":memory:"), brief = openLedger(":memory:", { busyTimeoutMs: 250 });
     try {
-      expect(legacy.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 1000 });
-      expect(contender.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 5000 });
-    } finally { legacy.close(); contender.close(); }
+      expect(standard.query("PRAGMA busy_timeout").get()).toEqual({ timeout: LEDGER_BUSY_TIMEOUT_MS });
+      expect(LEDGER_BUSY_TIMEOUT_MS).toBe(5000);
+      expect(brief.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 250 });
+    } finally { standard.close(); brief.close(); }
   });
 
   test("lazy claims repair preserves the connection's startup wait", () => {
