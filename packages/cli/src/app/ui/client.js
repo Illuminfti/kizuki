@@ -63,15 +63,19 @@ function nodeTag(node) { return node.tagName.toLowerCase(); }
 function firstFocusable(root) {
   let input = null, primary = null, other = null;
   const visit = node => {
+    if (node.hidden) return;
     const tag = nodeTag(node), close = node.getAttribute && node.getAttribute('aria-label') === 'Close dialog';
     if (!node.disabled && !close) {
-      if (['input', 'select', 'textarea'].includes(tag)) input ??= node;
+      if (['input', 'select', 'textarea'].includes(tag) && !(tag === 'input' && node.getAttribute('type')?.toLowerCase() === 'hidden')) input ??= node;
       else if (tag === 'button') {
         if (/button-primary|button-danger/.test(node.className || '')) primary ??= node;
         else other ??= node;
       }
     }
-    for (const child of node.children || []) visit(child);
+    if (tag === 'details' && !node.open) {
+      const summary = Array.from(node.children || []).find(child => nodeTag(child) === 'summary');
+      if (summary) visit(summary);
+    } else for (const child of node.children || []) visit(child);
   };
   visit(root);
   return input || primary || other;
@@ -357,13 +361,18 @@ function clearDialogTransient() { clearDialogSecrets(); const cleanup = dialogCl
 function restoreDialogFocus() {
   const target = dialogReturnFocus;
   dialogReturnFocus = null;
-  if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
+  let hidden = false;
+  for (let node = target; node; node = node.parentElement) if (node.hidden) { hidden = true; break; }
+  if (target && typeof target.focus === 'function') (target !== document.body && target.isConnected && !target.disabled && !hidden ? target : main).focus({ preventScroll: true });
 }
 function closeDialog() {
   closingDialogGeneration = dialogGeneration;
   clearDialogTransient(); dialog.close(); restoreDialogFocus();
 }
-dialog.addEventListener('cancel', clearDialogTransient);
+dialog.addEventListener('cancel', () => {
+  closingDialogGeneration = dialogGeneration;
+  clearDialogTransient();
+});
 dialog.addEventListener('close', () => {
   // Native close events can be queued after openDialog replaces a prior panel.
   if (dialog.open || closingDialogGeneration !== dialogGeneration) return;
@@ -373,7 +382,7 @@ function openDialog(title, description, symbol = 'info') {
   if (dialog.open) closeDialog();
   dialogGeneration++;
   const active = document.activeElement;
-  dialogReturnFocus = active && active !== dialog && typeof active.focus === 'function' ? active : null;
+  dialogReturnFocus = active && active !== dialog && typeof active.focus === 'function' ? active : main;
   const content = el('div', {}, el('div', { class: 'dialog-top' }, el('div', {}, el('div', { class: 'source-icon' }, icon(symbol)), el('h2', { id: 'dialog-title' }, title)), el('button', { type: 'button', class: 'icon-button', 'aria-label': 'Close dialog', onclick: () => closeDialog() }, icon('close'))), el('p', { class: 'dialog-description', id: 'dialog-description' }, description));
   dialog.replaceChildren(content); dialog.setAttribute('aria-describedby', 'dialog-description'); dialog.showModal();
   return content;
