@@ -225,7 +225,8 @@ const SURFACE_PROOF_COMMAND =
 const SURFACE_RECEIPT_CHECK = 'test -f "$RUNNER_TEMP/kizuki-surface/receipt.json"';
 const LINUX_ARTIFACT_NAME = "linux-x64-${{ github.event.pull_request.head.sha || github.sha }}";
 const LINUX_ARTIFACT_PATH =
-  "dist/kizuki-*/bun-linux-x64-baseline/\n${{ runner.temp }}/kizuki-artifact-proof/receipt.json";
+  "dist/kizuki-*/bun-linux-x64-baseline/\n${{ runner.temp }}/kizuki-artifact-proof/receipt.json\n" +
+  "${{ runner.temp }}/kizuki-surface/receipt.json";
 const MACOS_PROOF_COMMAND =
   'bun run build:release\nbun run smoke:release\nbun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-macos-artifact-proof"';
 const MACOS_RECEIPT_CHECK = 'test -f "$RUNNER_TEMP/kizuki-macos-artifact-proof/receipt.json"';

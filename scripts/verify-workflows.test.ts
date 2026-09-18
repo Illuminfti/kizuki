@@ -93,6 +93,7 @@ ${testSteps}
           path: |
             dist/kizuki-*/bun-linux-x64-baseline/
             ${linuxReceiptPath}
+            ${surfaceReceiptPath}
           retention-days: 7
           if-no-files-found: error
 ${overrides?.extraJob ?? ""}${pinnedSecretsJob}`;

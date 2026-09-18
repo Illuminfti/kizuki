@@ -47,6 +47,7 @@ jobs:
           path: |
             dist/kizuki-*/bun-linux-x64-baseline/
             ${{ runner.temp }}/kizuki-artifact-proof/receipt.json
+            ${{ runner.temp }}/kizuki-surface/receipt.json
           retention-days: 7
           if-no-files-found: error
   secrets:
