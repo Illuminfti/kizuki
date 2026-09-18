@@ -6,7 +6,6 @@ import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "
 import { eventFromRow, type EventRow } from "../ledger/event-record";
 import { compareRfc3339 } from "../agents/time";
 import type { Sensitivity } from "../agents/types";
-import { SENSITIVITY_ORDER } from "../agents/types";
 import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../contracts/retrieval";
 import { bareRetrievalId, retrievalDocId } from "../retrieval/ids";
 import type {
@@ -445,10 +444,8 @@ function structuralMatch(incoming: Claim, live: Claim): boolean {
 }
 
 function corroborate(db: Database, live: Claim, incoming: Claim, at: string): Claim {
-  const sensitivity: Sensitivity =
-    SENSITIVITY_ORDER[incoming.sensitivity] > SENSITIVITY_ORDER[live.sensitivity]
-      ? incoming.sensitivity
-      : live.sensitivity;
+  // Same monotonic label rule as the exact-replay path above.
+  const sensitivity: Sensitivity = stricter(live.sensitivity, incoming.sensitivity);
   // Merge support once; only new citations can confirm evidence.
   const existingEvidence = new Set(live.provenance);
   const previousSupportCount = existingEvidence.size;
@@ -470,6 +467,7 @@ function corroborate(db: Database, live: Claim, incoming: Claim, at: string): Cl
     provenance: [...existingEvidence],
   };
   persistClaim(db, next);
+  // persistClaim owns neither column, so the merged support and label are written here.
   db.query("UPDATE claims SET provenance = ?, sensitivity = ? WHERE claim_id = ?")
     .run(JSON.stringify(next.provenance), next.sensitivity, next.claim_id);
   return getClaim(db, live.claim_id) ?? next;
