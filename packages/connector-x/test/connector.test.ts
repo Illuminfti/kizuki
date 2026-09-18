@@ -77,6 +77,19 @@ describe("local X archive connector", () => {
     await expect(connector.purgeSource("x:user:123")).rejects.toMatchObject({ code: "not_supported" });
   });
 
+  test("coverage counts imported attachments rather than orphan media files", async () => {
+    const root = await temporaryArchive();
+    const media = path.join(root, "data", "tweets_media");
+    await mkdir(media);
+    await writeFile(path.join(media, "1742012345678901234-photo.jpg"), "attached");
+    await writeFile(path.join(media, "999-orphan.jpg"), "not imported");
+    const connector = new XArchiveConnector({ path: root });
+    const batch = await connector.backfill(null);
+    expect(batch.events.flatMap((event) => event.attachments)).toHaveLength(1);
+    expect((await connector.health()).detail).toContain("media_refs=1;");
+    expect((await scanArchive(root)).coverage.media_references).toBe(1);
+  });
+
   test("resets a changed same-account snapshot and never infers deletions", async () => {
     const root = await temporaryArchive();
     const connector = new XArchiveConnector({ path: root });
@@ -275,6 +288,12 @@ describe("local X archive connector", () => {
     const savedCursor = first.cursor!;
 
     await writeFile(path.join(media, name(256)), "bytes");
+    const oversized = new XArchiveConnector({ path: root });
+    expect(await oversized.health()).toMatchObject({
+      state: "misconfigured",
+      detail: "kizuki.import-x-archive: one post has more than 256 media references",
+    });
+    await expect(oversized.connect(async () => "unused")).rejects.toMatchObject({ code: "parse_error" });
     await expect(new XArchiveConnector({ path: root }).backfill(savedCursor)).rejects.toMatchObject({
       code: "parse_error",
       message: expect.stringContaining("more than 256 media references"),

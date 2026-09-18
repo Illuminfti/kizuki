@@ -63,6 +63,14 @@ test.each([...CURRENT_PACKAGE_FILES])("every new member %s is required", name =>
   const root = temp(), build = writePackageFixture(root); rmSync(join(root, name));
   expect(() => verifyPackageDirectory(root, build)).toThrow();
 });
+test.each([...CURRENT_PACKAGE_FILES])("empty package member %s is refused even with matching checksums", name => {
+  const root = temp(), build = writePackageFixture(root);
+  writeFileSync(join(root, name), "");
+  if (name !== "SHA256SUMS") {
+    writeFileSync(join(root, "SHA256SUMS"), checksumManifest(root, CURRENT_PACKAGE_FILES.slice(0, -1)));
+  }
+  expect(() => verifyPackageDirectory(root, build)).toThrow("release package file exceeds bounds");
+});
 test.each(["LICENSE", "THIRD-PARTY-NOTICES.txt"])("notice tampering survives checksum rewrite but fails bound BUILD identity: %s", name => {
   const root = temp(), build = writePackageFixture(root); writeFileSync(join(root, name), "changed original text");
   writeFileSync(join(root, "SHA256SUMS"), checksumManifest(root, CURRENT_PACKAGE_FILES.slice(0, -1)));
