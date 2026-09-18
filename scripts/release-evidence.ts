@@ -786,6 +786,11 @@ export function evaluateSurfaceReceipt(value: unknown, expected: ExpectedSurface
  * actor class from the lists above. An evaluator that cannot certify returns
  * UNVERIFIABLE with a stated reason; it never returns PASS.
  *
+ * The evaluator's own module is not a producer: every operator holds it and can
+ * recompute its hash, so a family whose pinned list names that module alone
+ * binds a receipt to no executed work. Such a family keeps every denial path and
+ * ends in UNVERIFIABLE, never PASS, until its producer entrypoint lands.
+ *
  * Receipts carry `stdout_sha256`/`stderr_sha256`. Captured command output is
  * attacker-controlled and may contain secrets, so a receipt that carries raw
  * output instead of a digest is refused rather than read.
@@ -799,10 +804,19 @@ export const REQUIRED_CHECKS_PRODUCER_FILES = ["scripts/release-evidence.ts", "s
 /** No journey or connector producer entrypoint has landed yet, so the shared
  * receipt module is the whole producer surface. A later lane that adds a
  * producer script extends these lists; leaving them unpinned would let a receipt
- * author choose which files the revision is computed over. */
+ * author choose which files the revision is computed over. While a list names
+ * this module alone, its evaluator cannot certify that any step ran. */
 export const JOURNEY_PRODUCER_FILES = ["scripts/release-evidence.ts"] as const;
 export const CONNECTOR_PRODUCER_FILES = ["scripts/release-evidence.ts"] as const;
 export const P0_DISPOSITION_PRODUCER_FILES = ["scripts/p0-disposition.ts", "scripts/release-evidence.ts"] as const;
+/** The shared receipt module; holding it proves nothing about executed work. */
+export const EVALUATOR_MODULE_FILE = "scripts/release-evidence.ts";
+/** True once a family's pinned producer files name an entrypoint other than the
+ * evaluator's own module, so its revision can bind work the evaluator did not
+ * also hand the receipt's author. */
+export function producerEntrypointLanded(producer_files: readonly string[]): boolean {
+  return producer_files.some(path => path !== EVALUATOR_MODULE_FILE);
+}
 /** The three branch-protection contexts, in their required order. */
 export const REQUIRED_CONTEXTS = ["test", "secrets", "workflows"] as const;
 export const CHECK_CONCLUSIONS = ["success", "failure", "cancelled", "timed_out", "action_required", "neutral", "skipped", "stale", "startup_failure"] as const;
@@ -925,12 +939,15 @@ export function evaluateJourneyReceipt(value: unknown, binding: JourneyBinding):
   refuseRawOutput(value);
   const row = exact(value, "schema,identity,journey_id,acceptance_credit,steps");
   if (row.schema !== JOURNEY_PRODUCER) reject("invalid-schema");
-  familyIdentity(row.identity, JOURNEY_PRODUCER, binding, "local-operator-custody", "authorized-operator", JOURNEY_PRODUCER_FILES);
+  const identity = familyIdentity(row.identity, JOURNEY_PRODUCER, binding, "local-operator-custody", "authorized-operator", JOURNEY_PRODUCER_FILES);
   const journey_id = kebab(row.journey_id);
   if (!(JOURNEYS as readonly string[]).includes(journey_id)) reject("unknown-journey");
   if (journey_id !== binding.journey_id) reject("mismatched-gate-or-target");
   acceptanceCredit(row.acceptance_credit);
   receiptSteps(row.steps);
+  // Every denial above still holds; what is missing is a producer whose bytes
+  // the receipt's author does not also control, so no credit is granted here.
+  if (!producerEntrypointLanded(identity.producer_files)) return { status: "UNVERIFIABLE", reason: "journey-producer-not-landed", creditDigest: false };
   return { status: "PASS", reason: "journey-steps-passed", creditDigest: true };
 }
 
@@ -944,9 +961,10 @@ export function evaluateConnectorReceipt(value: unknown, binding: ConnectorBindi
   if (connector_id !== binding.connector_id) reject("mismatched-gate-or-target");
   // A file import can never stand in for a live account, whatever it claims.
   if (kebab(row.evidence_class) !== entry.evidence) reject("connector-evidence-class-mismatch");
-  familyIdentity(row.identity, CONNECTOR_PRODUCER, binding, CONNECTOR_SOURCE_CLASSES[entry.evidence], "authorized-operator", CONNECTOR_PRODUCER_FILES);
+  const identity = familyIdentity(row.identity, CONNECTOR_PRODUCER, binding, CONNECTOR_SOURCE_CLASSES[entry.evidence], "authorized-operator", CONNECTOR_PRODUCER_FILES);
   acceptanceCredit(row.acceptance_credit);
   receiptSteps(row.steps);
+  if (!producerEntrypointLanded(identity.producer_files)) return { status: "UNVERIFIABLE", reason: "connector-producer-not-landed", creditDigest: false };
   return { status: "PASS", reason: "connector-steps-passed", creditDigest: true };
 }
 

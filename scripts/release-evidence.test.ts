@@ -7,7 +7,7 @@ import {
   JOURNEY_PRODUCER_FILES, P0_DISPOSITION_PRODUCER, P0_DISPOSITION_PRODUCER_FILES, P0_LABEL, RECEIPT_FAMILIES,
   REQUIRED_CHECKS_PRODUCER, REQUIRED_CHECKS_PRODUCER_FILES, REQUIRED_CONTEXTS,
   consumeConnectorReceipt, consumeJourneyReceipt, evaluateConnectorReceipt, evaluateJourneyReceipt,
-  evaluateP0DispositionReceipt, evaluateRequiredChecksReceipt, evaluatorRevision, inspectOptionalVerifier, producerRevision,
+  evaluateP0DispositionReceipt, evaluateRequiredChecksReceipt, evaluatorRevision, inspectOptionalVerifier, producerEntrypointLanded, producerRevision,
 } from "./release-evidence";
 
 const digest = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
@@ -20,6 +20,11 @@ const now = Date.parse("2026-09-18T02:00:00.000Z");
 const revision = (files: readonly string[]) => digest(JSON.stringify([...files]));
 const binding = { candidate_source_sha: source, revision };
 const p0Binding = { ...binding, now };
+/** Neither family pins a producer entrypoint yet, so a receipt that survives
+ * every denial still buys no credit: the evaluator cannot certify that a step
+ * ran. A later lane that lands a producer script flips these to PASS. */
+const JOURNEY_TERMINAL = { status: "UNVERIFIABLE", reason: "journey-producer-not-landed", creditDigest: false } as const;
+const CONNECTOR_TERMINAL = { status: "UNVERIFIABLE", reason: "connector-producer-not-landed", creditDigest: false } as const;
 
 function identity(producer: string, files: readonly string[], source_class: string, actor_class: string, patch: Record<string, unknown> = {}) {
   return {
@@ -138,10 +143,8 @@ test("p0 disposition binds its label, identity and inventory shape", () => {
   expect(reasonOf(() => evaluateP0DispositionReceipt(p0Body({ snapshot_at: "2026-09-18T01:00:00Z" }), p0Binding))).toBe("invalid-recorded-at");
 });
 
-test("a complete journey receipt passes only its own gate", () => {
-  expect(evaluateJourneyReceipt(journeyBody("connect-resume"), { ...binding, journey_id: "connect-resume" })).toEqual({
-    status: "PASS", reason: "journey-steps-passed", creditDigest: true,
-  });
+test("a complete journey receipt reaches only its own gate and still cannot certify", () => {
+  expect(evaluateJourneyReceipt(journeyBody("connect-resume"), { ...binding, journey_id: "connect-resume" })).toEqual(JOURNEY_TERMINAL);
   expect(reasonOf(() => evaluateJourneyReceipt(journeyBody("correct-belief"), { ...binding, journey_id: "connect-resume" }))).toBe("mismatched-gate-or-target");
   expect(reasonOf(() => evaluateJourneyReceipt(journeyBody("connect-and-resume"), { ...binding, journey_id: "connect-and-resume" }))).toBe("unknown-journey");
   expect(reasonOf(() => evaluateJourneyReceipt(journeyBody("connect-resume", {
@@ -151,7 +154,24 @@ test("a complete journey receipt passes only its own gate", () => {
 
 test("every journey id is consumable and none is special-cased", () => {
   for (const journey of JOURNEYS) {
-    expect(evaluateJourneyReceipt(journeyBody(journey), { ...binding, journey_id: journey })).toMatchObject({ status: "PASS" });
+    expect(evaluateJourneyReceipt(journeyBody(journey), { ...binding, journey_id: journey })).toEqual(JOURNEY_TERMINAL);
+  }
+});
+
+test("a hand-authored journey or connector receipt cannot buy acceptance credit", () => {
+  // Both pinned lists name the evaluator's own module alone. Every operator holds
+  // that file and can recompute its hash, so the revision check binds no executed
+  // work and the terminal verdict must not be PASS.
+  expect(producerEntrypointLanded(JOURNEY_PRODUCER_FILES)).toBe(false);
+  expect(producerEntrypointLanded(CONNECTOR_PRODUCER_FILES)).toBe(false);
+  expect(producerEntrypointLanded(REQUIRED_CHECKS_PRODUCER_FILES)).toBe(true);
+  expect(producerEntrypointLanded(P0_DISPOSITION_PRODUCER_FILES)).toBe(true);
+  for (const verdict of [
+    evaluateJourneyReceipt(journeyBody("install-recover"), { ...binding, journey_id: "install-recover" }),
+    evaluateConnectorReceipt(connectorBody("telegram", "live-account"), { ...binding, connector_id: "telegram" }),
+  ]) {
+    expect(verdict.status).not.toBe("PASS");
+    expect(verdict.creditDigest).toBe(false);
   }
 });
 
@@ -187,9 +207,7 @@ test("a file-import connector receipt can never satisfy a live-account gate", ()
 test("each connector receipt needs the operator class its evidence family requires", () => {
   for (const entry of CONNECTORS) {
     const gate = { ...binding, connector_id: entry.id };
-    expect(evaluateConnectorReceipt(connectorBody(entry.id, entry.evidence), gate)).toEqual({
-      status: "PASS", reason: "connector-steps-passed", creditDigest: true,
-    });
+    expect(evaluateConnectorReceipt(connectorBody(entry.id, entry.evidence), gate)).toEqual(CONNECTOR_TERMINAL);
     const wrongActor = connectorBody(entry.id, entry.evidence, {
       identity: identity(CONNECTOR_PRODUCER, ["scripts/release-evidence.ts"], "synthetic-fixture", "authorized-operator"),
     });
@@ -258,9 +276,7 @@ test("the journey and connector families bind the evaluator's real checkout byte
     identity(producer, files, source_class, "authorized-operator", { producer_revision: bind(files) });
   expect(evaluateJourneyReceipt(journeyBody("connect-resume", {
     identity: real(JOURNEY_PRODUCER, JOURNEY_PRODUCER_FILES, "local-operator-custody"),
-  }), { candidate_source_sha: source, revision: bind, journey_id: "connect-resume" })).toEqual({
-    status: "PASS", reason: "journey-steps-passed", creditDigest: true,
-  });
+  }), { candidate_source_sha: source, revision: bind, journey_id: "connect-resume" })).toEqual(JOURNEY_TERMINAL);
   expect(reasonOf(() => evaluateJourneyReceipt(journeyBody("connect-resume", {
     identity: identity(JOURNEY_PRODUCER, JOURNEY_PRODUCER_FILES, "local-operator-custody", "authorized-operator"),
   }), { candidate_source_sha: source, revision: bind, journey_id: "connect-resume" }))).toBe("producer-revision-mismatch");

@@ -6,7 +6,9 @@ The current producer set cannot establish release `GO`: independent review,
 live accounts and unfamiliar-user acceptance still need their required evidence.
 The required-checks, p0-disposition, journey and connector families now have
 offline consume functions, so a supplied receipt reaches its gate and an absent
-one reports `MISSING` rather than an unimplemented adapter.
+one reports `MISSING` rather than an unimplemented adapter. The journey and
+connector families cannot yet certify: with no producer entrypoint pinned, a
+complete receipt reports `UNVERIFIABLE` and earns no evidence credit.
 The online collector can qualify current CI, native packages and complete
 installed-service lifecycle receipts under the contracts below. The current readiness bar is a stranger who
 can install and use the product, zero live P0 findings, and honest installation.
@@ -171,9 +173,13 @@ The producer revision binds the bytes of the producing code, not the work the
 receipt describes. For `kizuki.journey-proof/v1` and `kizuki.connector-evidence/v1`
 no producer entrypoint has landed yet, so the pinned list is
 `scripts/release-evidence.ts` alone and the revision attests only to the shared
-receipt module. Those two families still depend on the operator's custody of the
-steps they record; a later lane that lands a journey or connector producer script
-adds it to the pinned list.
+receipt module, which every operator already holds. A receipt bound to that list
+alone records no executed work, so those two evaluators keep every denial path
+and end in `UNVERIFIABLE` (`journey-producer-not-landed`,
+`connector-producer-not-landed`) instead of `PASS`, crediting no evidence digest.
+A later lane that lands a journey or connector producer script adds it to the
+pinned list, and the terminal verdict becomes `PASS` for a receipt that survives
+every denial.
 
 `kizuki.required-checks/v1` (`scripts/required-checks.ts`) records exactly
 `test`, `secrets` and `workflows` with each context's conclusion, run ID and
@@ -196,7 +202,9 @@ withheld acceptance credit is refused. A connector receipt must declare the
 evidence class the frozen C3 catalogue records for that connector and carry the
 matching operator source class, so a file-import receipt can never satisfy a
 live-account gate. Steps carry `stdout_sha256` and `stderr_sha256`; a receipt
-that carries raw captured output instead of a digest is refused unread.
+that carries raw captured output instead of a digest is refused unread. A
+receipt that clears every one of those checks is still hand-authorable today, so
+neither family can grant a gate `PASS` until its producer entrypoint lands.
 
 The implemented `kizuki.surface-inventory/v1` producer is
 `scripts/capability-proof.ts`. Its receipt binds the exact candidate's public
@@ -306,7 +314,7 @@ can set `release_1_0_accepted` after every required row passes.
 | `journey.daily-loop` | Deployed named contracts, one goal authority, missing data cases and normal-week usefulness |
 | `journey.useful-insight` | Named question/insight contracts, insufficient-evidence cases and human usefulness |
 | `journey.install-recover` | Both native packages and lifecycles, backup/clean restore and unfamiliar-user proof |
-| `connector.<id>` for all fifteen C3 entries | Per-provider/file conformance and applicable real-source evidence; generic v3 receipt adapter implemented and bound to each entry's evidence class, `MISSING` without a receipt |
+| `connector.<id>` for all fifteen C3 entries | Per-provider/file conformance and applicable real-source evidence; generic v3 receipt adapter implemented and bound to each entry's evidence class, `MISSING` without a receipt, `UNVERIFIABLE` with one until a connector producer lands |
 | `human.unfamiliar-user` | Non-author, fresh machine, zero coaching and fifteen-minute milestone; adapter `NOT_IMPLEMENTED` |
 | `owner.seven-day-rails` | Optional post-readiness diagnostic; `NOT_IMPLEMENTED`, `superseded-readiness-gate` |
 | `estate.fourteen-day-parity` | Optional post-readiness diagnostic; `NOT_IMPLEMENTED`, `superseded-readiness-gate` |
@@ -316,7 +324,9 @@ can set `release_1_0_accepted` after every required row passes.
 The eight journey rows share one generic adapter keyed by `journey_id`, and the
 fifteen connector rows share one generic adapter keyed by `connector_id`. Both
 adapters are implemented; no producer in this tree emits their receipts yet, so
-both families report `MISSING`. Adapter status describes acceptance evidence
+both families report `MISSING` without a receipt and `UNVERIFIABLE` with one.
+Each of the eight journey rows below reads the same way: a supplied receipt is
+checked against every denial path and then reported `UNVERIFIABLE`. Adapter status describes acceptance evidence
 support, not whether a product feature exists.
 
 The frozen C3 catalogue is Telegram user sign-in, Gmail, Google Calendar,

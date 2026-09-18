@@ -570,6 +570,13 @@ test("a self-attested telegram live-account receipt cannot pass connector qualif
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-telegram-authored.json", connectorReceipt("telegram", "live-account", "live-account-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.telegram", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.telegram")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("unimplemented families keep their default state while implemented families refuse an unreadable receipt", () => {
@@ -629,6 +636,13 @@ test("a self-graded journey-proof receipt cannot pass correct-belief", () => {
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-graded receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "journey-correct-belief-authored.json", journeyReceipt("correct-belief"));
+  asV3(f, [receiptRef(JOURNEY_PRODUCER, "journey.correct-belief", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "journey.correct-belief")).toMatchObject({ status: "UNVERIFIABLE", reason: "journey-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("a self-graded journey-proof receipt cannot pass install-recover", () => {
@@ -651,6 +665,13 @@ test("a self-graded journey-proof receipt cannot pass install-recover", () => {
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-graded receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "journey-install-recover-authored.json", journeyReceipt("install-recover"));
+  asV3(f, [receiptRef(JOURNEY_PRODUCER, "journey.install-recover", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "journey.install-recover")).toMatchObject({ status: "UNVERIFIABLE", reason: "journey-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("a self-attested gmail live-account receipt cannot pass connector qualification", () => {
@@ -673,6 +694,13 @@ test("a self-attested gmail live-account receipt cannot pass connector qualifica
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-gmail-authored.json", connectorReceipt("gmail", "live-account", "live-account-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.gmail", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.gmail")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("v3 index byte cap is 32 KiB while v1 stays at 16 KiB", () => {
@@ -706,6 +734,13 @@ test("a self-attested google-calendar live-account receipt cannot pass connector
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-google-calendar-authored.json", connectorReceipt("google-calendar", "live-account", "live-account-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.google-calendar", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.google-calendar")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("optional capability verifier is MISSING until a regular file exists and other errors are fatal", () => {
@@ -744,6 +779,13 @@ test("a self-attested imap live-account receipt cannot pass connector qualificat
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-imap-authored.json", connectorReceipt("imap", "live-account", "live-account-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.imap", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.imap")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("cli verb sequence follows the unique printRootHelp command-row order", () => {
@@ -781,6 +823,13 @@ test("a self-attested whoop live-account receipt cannot pass connector qualifica
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-whoop-authored.json", connectorReceipt("whoop", "live-account", "live-account-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.whoop", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.whoop")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("surface validator recomputes inventories and refuses a self-declared empty disagreement list", () => {
@@ -820,6 +869,13 @@ test("a self-attested x-api live-account receipt cannot pass connector qualifica
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-x-api-authored.json", connectorReceipt("x-api", "live-account", "live-account-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.x-api", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.x-api")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("a self-attested x-archive file-import receipt cannot pass connector qualification", () => {
@@ -851,6 +907,13 @@ test("a self-attested x-archive file-import receipt cannot pass connector qualif
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-x-archive-authored.json", connectorReceipt("x-archive", "file-import", "file-import-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.x-archive", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.x-archive")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("surface identity, revision, RFC3339 and receipt custody failures do not credit a digest", () => {
@@ -893,6 +956,13 @@ test("a self-attested markdown-folder file-import receipt cannot pass connector 
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-markdown-folder-authored.json", connectorReceipt("markdown-folder", "file-import", "file-import-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.markdown-folder", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.markdown-folder")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("a self-attested chatgpt-export file-import receipt cannot pass connector qualification", () => {
@@ -917,6 +987,13 @@ test("a self-attested chatgpt-export file-import receipt cannot pass connector q
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-chatgpt-export-authored.json", connectorReceipt("chatgpt-export", "file-import", "file-import-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.chatgpt-export", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.chatgpt-export")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test.each([
@@ -1416,12 +1493,14 @@ test("open p0 findings and a stale snapshot are reported without granting credit
   });
 });
 
-test("a complete journey receipt credits only its own gate and raw output is refused", () => {
+test("a complete journey receipt reaches only its own gate, buys no credit, and raw output is refused", () => {
   const f = fixture();
   const proof = retain(f.root, "journey-connect-resume.json", journeyReceipt("connect-resume"));
   asV3(f, [receiptRef(JOURNEY_PRODUCER, "journey.connect-resume", null, proof.path, proof.sha256)]);
   const result = evaluateRelease("1.0", f.indexPath);
-  expect(gate(result, "journey.connect-resume")).toMatchObject({ status: "PASS", reason: "journey-steps-passed", evidence_sha256: proof.sha256 });
+  // Every denial path below still holds; the terminal verdict cannot be PASS while
+  // the family pins no producer beyond the evaluator's own module.
+  expect(gate(result, "journey.connect-resume")).toMatchObject({ status: "UNVERIFIABLE", reason: "journey-producer-not-landed", evidence_sha256: null });
   expect(gate(result, "journey.correct-belief")).toMatchObject({ status: "MISSING", reason: "journey-receipt-missing" });
   expect(result.decision).toBe("NO-GO");
   for (const [name, body, reason] of [
@@ -1452,9 +1531,11 @@ test.each(["telegram", "whoop"])("a file-import connector receipt cannot satisfy
   expect(gate(evaluateRelease("1.0", f.indexPath), `connector.${id}`)).toMatchObject({
     status: "FAIL", reason: "connector-evidence-class-mismatch", scope: "live-account", evidence_sha256: null,
   });
+  // A correctly declared live-account receipt clears the class check and still
+  // buys no credit: it is hand-authorable, so the evaluator cannot certify it.
   const live = retain(f.root, `connector-${id}-live.json`, connectorReceipt(id, "live-account", "live-account-operator"));
   asV3(f, [receiptRef(CONNECTOR_PRODUCER, `connector.${id}`, null, live.path, live.sha256)]);
   const result = evaluateRelease("1.0", f.indexPath);
-  expect(gate(result, `connector.${id}`)).toMatchObject({ status: "PASS", reason: "connector-steps-passed", evidence_sha256: live.sha256 });
+  expect(gate(result, `connector.${id}`)).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
   expect(result.decision).toBe("NO-GO");
 });
