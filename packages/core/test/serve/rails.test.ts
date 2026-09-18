@@ -89,4 +89,20 @@ describe("rails", () => {
     expect(receipt.canon_writes).toBe(0);
     db.close();
   });
+
+  test("retrieval-sweep records derived catch-up as upserts", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-rails-"));
+    dirs.push(directory);
+    const vault = join(directory, "vault");
+    initVault(vault);
+    const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
+    const receipt = await runRail(db, vault, "retrieval-sweep", {
+      hooks: {
+        refresh: async () => ({ degraded: [], upserts: 12 }),
+      },
+    });
+    expect(receipt.status).toBe("ok");
+    expect(receipt.retrieval.upserts).toBe(12);
+    db.close();
+  });
 });

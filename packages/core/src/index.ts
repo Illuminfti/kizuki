@@ -1035,6 +1035,7 @@ export type {
   ModelDoctor,
   RailDoctor,
   RailHooks,
+  RailRefreshResult,
   RailRuntime,
   RailId,
   RailSpec,

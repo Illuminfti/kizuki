@@ -22,8 +22,18 @@ import { fatalCanonSkips, isLiveCanonPage, listCanonPagesReport, stringArray } f
 export const MAX_REBUILD_RECORDS = 10_000;
 const MAX_SOURCE_BYTES = 64 * 1024 * 1024;
 
-function tooLarge(): never {
-  throw new PortError("config_invalid", "rebuild corpus exceeds 10000 records, 20000 filesystem entries, or 64 MiB of source text", false);
+function tooLarge(actual?: { records?: number; entries?: number; bytes?: number }): never {
+  const counted = [
+    actual?.records !== undefined ? `${actual.records} records` : undefined,
+    actual?.entries !== undefined ? `${actual.entries} filesystem entries` : undefined,
+    actual?.bytes !== undefined ? `${actual.bytes} bytes of source text` : undefined,
+  ].filter((part): part is string => part !== undefined);
+  const suffix = counted.length === 0 ? "" : ` (counted ${counted.join(", ")})`;
+  throw new PortError(
+    "config_invalid",
+    `rebuild corpus exceeds 10000 records, 20000 filesystem entries, or 64 MiB of source text${suffix}`,
+    false,
+  );
 }
 
 /** Inspect only the named vault; refuse oversized or linked canon before reading it. */
@@ -36,7 +46,7 @@ function boundCanon(vaultPath: string): void {
     const directory = pending.pop()!;
     const atRoot = directory === root;
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (++entries > MAX_REBUILD_RECORDS * 2) tooLarge();
+      if (++entries > MAX_REBUILD_RECORDS * 2) tooLarge({ entries });
       if (atRoot && (entry.name === ".kizuki" || entry.name === "archive")) continue;
       const path = join(directory, entry.name);
       if (entry.isSymbolicLink()) {
@@ -45,7 +55,7 @@ function boundCanon(vaultPath: string): void {
       if (entry.isDirectory()) pending.push(path);
       else if (entry.isFile() && entry.name.endsWith(".md")) {
         bytes += lstatSync(path).size;
-        if (bytes > MAX_SOURCE_BYTES) tooLarge();
+        if (bytes > MAX_SOURCE_BYTES) tooLarge({ bytes });
       }
     }
   }
@@ -67,10 +77,12 @@ function readRebuildSnapshot(db: Database, vaultPath: string): RebuildSnapshot {
     const claimTotal = db.query<{ n: number; bytes: number }, []>(
       "SELECT count(*) AS n,coalesce(sum(length(CAST(body AS BLOB))),0) AS bytes FROM claims WHERE status='live'",
     ).get()!;
-    if (totals.n + claimTotal.n > MAX_REBUILD_RECORDS || totals.bytes + claimTotal.bytes > MAX_SOURCE_BYTES) tooLarge();
+    const records = totals.n + claimTotal.n;
+    const bytes = totals.bytes + claimTotal.bytes;
+    if (records > MAX_REBUILD_RECORDS || bytes > MAX_SOURCE_BYTES) tooLarge({ records, bytes });
     const ctx = { db, vaultPath, principal: OWNER, sourcePurpose: "derive" as const };
     const index = loadCanon(ctx);
-    if (index.pages.length + totals.n + claimTotal.n > MAX_REBUILD_RECORDS) tooLarge();
+    if (index.pages.length + records > MAX_REBUILD_RECORDS) tooLarge({ records: index.pages.length + records });
     const docs: RetrievalDoc[] = [];
     const revisions = new Map<string, string>();
     const admit = (input: RetrievalDoc, revision: unknown): void => {
@@ -172,6 +184,18 @@ async function rebuildUnderFence(
     return layer === "graph" ? graphFloorReport(db, vaultPath) : searchFloorReport(db, vaultPath);
   }
   if (port !== undefined && sourcePolicyEpoch(db) > 0 && !isLocalSourcePort(port)) throw new PortError("unavailable", "source egress authorization unavailable", false);
+  if (port === undefined) {
+    boundCanon(vaultPath);
+    const floor = rebuildDerived(db, vaultPath);
+    const floorDocuments = floor.search.pages + floor.search.events;
+    return {
+      backend: "sqlite-floor" as const,
+      documents: floorDocuments,
+      floor_documents: floorDocuments,
+      store: "kizuki.retrieval.fts5",
+      generation: floor.generation,
+    };
+  }
   const snapshot = readRebuildSnapshot(db, vaultPath);
   const { docs } = snapshot;
   if (port !== undefined) {

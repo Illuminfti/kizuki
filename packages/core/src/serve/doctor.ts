@@ -55,6 +55,7 @@ function ageSeconds(from: string | null, now: string): number | null {
 }
 
 function produced(receipt: RunReceipt): boolean {
+  if (receipt.rail === "retrieval-sweep" && receipt.status === "ok") return true;
   return (
     receipt.events_stored > 0 ||
     receipt.claims_written > 0 ||

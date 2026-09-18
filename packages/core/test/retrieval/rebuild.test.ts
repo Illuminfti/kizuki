@@ -5,6 +5,10 @@ import { readRetrievalDocuments, rebuildRetrieval } from "../../src/retrieval/re
 import { recordedPage, serveFixture } from "../serving/helpers";
 import { insertClaim } from "../../src/claims/store";
 import { claimInput, putEvent, FixtureVectorPort } from "../claims/helpers";
+import { computeOriginBinding } from "../../src/ledger/event-origin-binding";
+import { computeContentHash, sha256Hex } from "../../src/util/hash";
+import { ulid } from "../../src/util/ulid";
+import type { CaptureEventInput } from "../../src/contracts/event";
 import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../../src/contracts/retrieval";
 import type { Fixture } from "../serving/helpers";
 import { tryWriteFlock } from "../../src/serve/flock";
@@ -13,6 +17,45 @@ import { createFts5RetrievalPort, FTS5_RETRIEVAL_DESCRIPTOR } from "../../src/re
 import { temporaryPortContext } from "../contracts/fixtures";
 let fixture: Fixture | undefined;
 afterEach(() => fixture?.dispose());
+
+function seedBulkEvents(db: Database, count: number): void {
+  const insert = db.prepare(`INSERT INTO events (
+    event_id, connector_id, source_record_id, kind, occurred_at, observed_at,
+    text, subjects, sensitivity_hint, deleted, attachments, metadata, content_hash,
+    accepted_at, content_hash_version, text_hash, origin, origin_binding_version,
+    origin_binding_kind, origin_binding
+  ) VALUES (?, 'fixture', ?, 'message', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z',
+    'bulkcatchupword', '[]', NULL, 0, '[]', '{}', ?, '2026-09-01T00:00:01.000Z', 2, ?,
+    'external', 1, 'capture', ?)`);
+  const textHash = sha256Hex("bulkcatchupword");
+  db.transaction(() => {
+    for (let index = 0; index < count; index += 1) {
+      const eventId = ulid();
+      const source = `bulk-${index}`;
+      const input: CaptureEventInput = {
+        schema: "kizuki.event/v1",
+        connector_id: "fixture",
+        source_record_id: source,
+        kind: "message",
+        occurred_at: "2026-09-01T00:00:00Z",
+        observed_at: "2026-09-01T00:00:00Z",
+        text: "bulkcatchupword",
+        subjects: [],
+        deleted: false,
+        attachments: [],
+        metadata: {},
+      };
+      const contentHash = computeContentHash(input);
+      const originBinding = computeOriginBinding(
+        { event_id: eventId, content_hash_version: 2, content_hash: contentHash, text_hash: textHash, origin: "external" },
+        "2026-09-01T00:00:01.000Z",
+        "capture",
+        null,
+      );
+      insert.run(eventId, source, contentHash, textHash, originBinding);
+    }
+  })();
+}
 
 function snapshotSearch(db: Database) {
   return {
@@ -119,6 +162,16 @@ test("the default rebuild reconstructs its existing lexical floor", async () => 
   expect(result.documents).toBe(actual);
   expect(result).toMatchObject({ backend: "sqlite-floor", floor_documents: actual });
 });
+
+test("sqlite-floor rebuild completes a 12000-record corpus that a port snapshot still refuses", async () => {
+  fixture = await serveFixture();
+  seedBulkEvents(fixture.db, 12_000);
+  const port = { rebuildFromDocuments: async () => { throw new Error("engine should not snapshot"); } } as never;
+  await expect(rebuildRetrieval(fixture.db, fixture.vaultPath, port)).rejects.toThrow(/rebuild corpus exceeds.*records/);
+  const result = await rebuildRetrieval(fixture.db, fixture.vaultPath);
+  expect(result.backend).toBe("sqlite-floor");
+  expect(result.documents).toBeGreaterThan(12_000);
+}, 180_000);
 
 
 test("selected port reports its validated corpus including readable claims separately from floor rows", async () => {

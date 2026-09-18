@@ -36,14 +36,25 @@ export interface RailSyncResult {
   readonly errors: readonly string[];
 }
 
+export interface RailRefreshResult {
+  readonly degraded: readonly string[];
+  readonly upserts: number;
+}
+
 export interface RailHooks {
   readonly sync?: () => Promise<RailSyncResult>;
   /** Host-owned derived stores refresh after a successful or partial write pass. */
-  readonly refresh?: () => Promise<readonly string[]>;
+  readonly refresh?: () => Promise<readonly string[] | RailRefreshResult>;
   readonly claims?: ClaimsIo;
   readonly model_ref?: string | null;
   readonly producer?: ProducerPort;
   readonly embedding_backlog?: number;
+}
+
+function refreshReport(raw: readonly string[] | RailRefreshResult | undefined): RailRefreshResult {
+  if (raw === undefined) return { degraded: [], upserts: 0 };
+  if ("upserts" in raw) return { degraded: raw.degraded, upserts: raw.upserts };
+  return { degraded: raw, upserts: 0 };
 }
 
 /** One host binding, owned and released by exactly one rail attempt. */
@@ -128,7 +139,7 @@ async function runSyncRail(
   // with a zeroed failed rail would hide a real write and understate budget.
   let refreshed: readonly string[];
   try {
-    refreshed = hooks?.refresh === undefined ? [] : await hooks.refresh();
+    refreshed = refreshReport(hooks?.refresh === undefined ? undefined : await hooks.refresh()).degraded;
   } catch (error) {
     refreshed = [redactReceiptError(error)];
   }
@@ -159,28 +170,26 @@ async function runRetrievalSweep(
   hooks: RailHooks | undefined,
 ): Promise<Partial<RunReceipt>> {
   const pending = pendingRetrievalOps(db).length;
-  if (hooks?.claims === undefined) {
-    return {
-      status: pending === 0 ? "ok" : "degraded",
-      retrieval: {
-        upserts: 0,
-        removals: 0,
-        pending_ops: pending,
-        degraded: pending === 0 ? [] : ["retrieval-unavailable"],
-      },
-    };
+  const ops = hooks?.claims === undefined
+    ? { retried: 0, pending }
+    : await retryRetrievalOps(hooks.claims);
+  let refresh: RailRefreshResult = { degraded: [], upserts: 0 };
+  try {
+    refresh = refreshReport(await hooks?.refresh?.());
+  } catch {
+    refresh = { degraded: ["retrieval refresh unavailable"], upserts: 0 };
   }
-  const result = await retryRetrievalOps(hooks.claims);
-  let refreshed: readonly string[] = [];
-  try { refreshed = await hooks.refresh?.() ?? []; }
-  catch { refreshed = ["retrieval refresh unavailable"]; }
-  const degraded = [...(result.pending === 0 ? [] : ["retrieval-ops-pending"]), ...refreshed];
+  const degraded = [
+    ...(hooks?.claims === undefined && pending > 0 ? ["retrieval-unavailable"] : []),
+    ...(ops.pending === 0 ? [] : ["retrieval-ops-pending"]),
+    ...refresh.degraded,
+  ];
   return {
     status: degraded.length === 0 ? "ok" : "degraded",
     retrieval: {
-      upserts: result.retried,
+      upserts: ops.retried + refresh.upserts,
       removals: 0,
-      pending_ops: result.pending,
+      pending_ops: ops.pending,
       degraded,
     },
   };

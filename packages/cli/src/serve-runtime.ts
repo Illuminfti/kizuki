@@ -25,7 +25,7 @@ import {
 } from "@kizuki/core";
 import { chatCompletionsUrl, parseOpenAiCompatibleConfig, parseSystemOneJevConfig, registerLlmPorts, registerSystemOnePorts, endpointHost, modelRef } from "@kizuki/llm";
 import { listHostConnections, loadConnector, closeHostConnector } from "./connections";
-import { tryRefreshDerived } from "./derived";
+import { indexFreshness, tryRefreshDerived } from "./derived";
 import { tokenResolver } from "./secrets";
 import { loadSystemOneBinding } from "./vault-config";
 
@@ -274,18 +274,23 @@ export async function createServeRuntime(options: ServeRuntimeOptions): Promise<
           : result;
       },
       refresh: async () => {
-        const degraded: string[] = [];
-        if (options.retrieval !== undefined) {
+        if (options.retrieval?.rebuildFromDocuments !== undefined) {
           try {
-            if (options.retrieval.rebuildFromDocuments === undefined) throw new Error("rebuild unavailable");
-            // Reuse the public bounded, authority-preserving projection. The engine
-            // stages it before replacement, including edits, deletions and page writes.
-            await options.retrieval.rebuildFromDocuments(readRetrievalDocuments(options.db, options.vaultPath));
-          } catch { degraded.push("retrieval refresh unavailable"); }
+            await options.retrieval.rebuildFromDocuments(
+              readRetrievalDocuments(options.db, options.vaultPath),
+            );
+          } catch {
+            // A corpus that exceeds the engine snapshot bound still has to
+            // catch up the lexical floor. Query uses that floor unless a
+            // host-bound engine is already current.
+          }
         }
-        const result = tryRefreshDerived(options.db, options.vaultPath);
-        if (result.degraded.length > 0) degraded.push("derived index refresh degraded");
-        return degraded;
+        const report = tryRefreshDerived(options.db, options.vaultPath);
+        const freshness = indexFreshness(options.db, options.vaultPath);
+        return {
+          degraded: [...report.degraded, ...freshness.degraded],
+          upserts: report.events + report.pages,
+        };
       },
     },
     async close(): Promise<void> {
