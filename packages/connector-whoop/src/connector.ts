@@ -220,6 +220,7 @@ export class WhoopConnector implements Connector {
     }
     private async call(path: string, budget: Budget, query?: URLSearchParams, method: 'GET' | 'DELETE' = 'GET') {
         const state = this.require();
+        const g = this.generation;
         if (state.retry_at !== null && compareInstants(state.retry_at, this.now().toISOString()) > 0)
             throw failure('rate_limited');
         const url = new URL('/developer/v2/' + path, ORIGIN);
@@ -241,7 +242,7 @@ export class WhoopConnector implements Connector {
             }
             if (error instanceof HttpFailure) {
                 if (error.status === 401)
-                    this.status = 'unauthenticated';
+                    this.invalidate(g);
                 throw failure(error.status === 401 ? 'unauthenticated' : error.status === 404 ? 'coverage_gap' : 'provider_error');
             }
             throw error;
@@ -302,6 +303,7 @@ export class WhoopConnector implements Connector {
         if (this.busy || this.pendingTokens > 0 || this.writes > 0)
             throw failure('unavailable');
         this.busy = true;
+        const g = this.generation;
         try {
             const state = this.require();
             const budget = new Budget();
@@ -371,6 +373,8 @@ export class WhoopConnector implements Connector {
             }
         }
         catch (error) {
+            if (error instanceof KizukiError && error.message === failure('identity_mismatch').message)
+                this.invalidate(g);
             return {
                 events: [], cursor, status: 'unavailable', detail: error instanceof Error && error.name === 'KizukiError' ? error.message : 'WHOOP unavailable; bounded capture refused'
             };
