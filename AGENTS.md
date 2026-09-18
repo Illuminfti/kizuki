@@ -25,7 +25,8 @@ Before proposing work, read:
    refactor, or PR review.
 
 For active campaign context, inspect the live issue and pull-request state.
-While issue #4 is open and not superseded, treat it as the durable handoff.
+Issue #497 is the single authority for live packet dependencies, ownership and
+progress; while it is open and not superseded, treat it as the durable handoff.
 Do not copy an old issue body, branch head, or test count into a new claim
 without checking it again.
 
