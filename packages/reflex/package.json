@@ -1,0 +1,14 @@
+{
+  "name": "@kizuki/reflex",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test": "bun test test",
+    "demo": "bun run demo/run.ts",
+    "demo:build": "bun run demo/build.ts"
+  },
+  "dependencies": {
+    "@kizuki/core": "workspace:*"
+  }
+}

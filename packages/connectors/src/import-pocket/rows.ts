@@ -33,7 +33,10 @@ function pocketColumns(
   where: string,
 ): string[] {
   const columns = header.map((name) => name.trim().toLowerCase());
-  if (!REQUIRED_COLUMNS.every((name) => columns.includes(name))) {
+  if (
+    new Set(columns).size !== columns.length ||
+    !REQUIRED_COLUMNS.every((name) => columns.includes(name))
+  ) {
     throw notPocketExport(where);
   }
   return columns;

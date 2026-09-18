@@ -41,6 +41,15 @@ const successIf = '${{ success() }}';
 const linuxArtifactName = 'linux-x64-${{ github.event.pull_request.head.sha || github.sha }}';
 const linuxReceiptPath = '${{ runner.temp }}/kizuki-artifact-proof/receipt.json';
 
+const pinnedSecretsJob = `
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: ${pinnedCheckout}
+        with: { fetch-depth: 0, ref: "${pinnedRef}" }
+      - run: bun run ci:secrets`;
+
 function ciWorkflow(overrides?: {
   name?: string;
   extraJob?: string;
@@ -80,7 +89,7 @@ ${testSteps}
             ${linuxReceiptPath}
           retention-days: 7
           if-no-files-found: error
-${overrides?.extraJob ?? ""}`;
+${overrides?.extraJob ?? ""}${pinnedSecretsJob}`;
 }
 
 describe("workflow validation", () => {
@@ -147,6 +156,27 @@ describe("workflow validation", () => {
       expect(validateWorkflowText(path, current.replace(original, trigger))).toEqual([
         expect.objectContaining({ reason: "ci must run on every pull request and every push to main without filters" }),
       ]);
+    }
+  });
+
+  test("required workflows check retains unfiltered pull request and main push triggers", () => {
+    const path = ".github/workflows/workflows.yml";
+    const current = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+    expect(validateWorkflowText(path, current)).toEqual([]);
+    expect(validateWorkflowText(path, current.replace("  pull_request:", "  pull_request: {}"))).toEqual([]);
+    for (const text of [
+      current.replace("  pull_request:\n", ""),
+      current.replace("  pull_request:", "  pull_request: { paths: ['scripts/**'] }"),
+      current.replace("  pull_request:", "  pull_request: { branches: [main] }"),
+      current.replace("  pull_request:", "  pull_request: { types: [opened] }"),
+      current.replace("  push: { branches: [main] }\n", ""),
+      current.replace("branches: [main]", "branches: [release]"),
+      current.replace("branches: [main]", "branches: [main], paths-ignore: ['docs/**']"),
+    ]) {
+      expect(text).not.toBe(current);
+      expect(validateWorkflowText(path, text)).toContainEqual(expect.objectContaining({
+        reason: "workflows must run on every pull request and every push to main without filters",
+      }));
     }
   });
 
@@ -237,8 +267,51 @@ jobs:
       - run: bun test
 `;
     expect(validateWorkflowText(".github/workflows/ci.yml", withoutTest)).toEqual([
-      expect.objectContaining({ reason: expect.stringContaining('job "test"') }),
+      expect.objectContaining({ reason: expect.stringContaining('required main check context "test"') }),
+      expect.objectContaining({ reason: expect.stringContaining('required main check context "secrets"') }),
     ]);
+  });
+
+  test("deleting or renaming a required main check job fails the validator", () => {
+    const path = ".github/workflows/ci.yml";
+    const withSecrets = ciWorkflow();
+    expect(validateWorkflowText(path, withSecrets)).toEqual([]);
+    const withoutSecrets = withSecrets.slice(0, withSecrets.indexOf("\n  secrets:"));
+    expect(validateWorkflowText(path, withoutSecrets).some(failure => failure.reason.includes('required main check context "secrets"'))).toBe(true);
+    const renamedSecrets = withSecrets.replace("  secrets:", "  secret-patterns:");
+    expect(validateWorkflowText(path, renamedSecrets).some(failure => failure.reason.includes('required main check context "secrets"'))).toBe(true);
+
+    const workflowsPath = ".github/workflows/workflows.yml";
+    const workflowsText = `name: workflows
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  workflows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: bun run ci:workflows
+`;
+    expect(validateWorkflowText(workflowsPath, workflowsText)).toEqual([]);
+    const renamedWorkflows = workflowsText.replace("  workflows:", "  guard:");
+    expect(validateWorkflowText(workflowsPath, renamedWorkflows).some(failure => failure.reason.includes('required main check context "workflows"'))).toBe(true);
+  });
+
+  test("required check producers keep their reported names and cannot skip", () => {
+    for (const [file, jobs] of [["ci.yml", ["test", "secrets"]], ["workflows.yml", ["workflows"]]] as const) {
+      const path = `.github/workflows/${file}`;
+      const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+      for (const job of jobs) {
+        for (const setting of ["name: renamed", "strategy: { matrix: { os: [ubuntu-latest] } }", "if: false"]) {
+          const changed = text.replace(`  ${job}:`, `  ${job}:\n    ${setting}`);
+          expect(changed).not.toBe(text);
+          expect(validateWorkflowText(path, changed).some(failure =>
+            failure.reason.includes(`required main check context "${job}"`))).toBe(true);
+        }
+        expect(validateWorkflowText(path, text.replace(`  ${job}:`, `  ${job}:\n    name: ${job}`))).toEqual([]);
+      }
+    }
   });
 
   test("rejects skip-on-missing hashFiles conditions", () => {
@@ -325,6 +398,28 @@ test("macOS validator rejects removal or bypass of each native proof obligation"
   for (const [name, mutate] of mutations) {
     const doc = Bun.YAML.parse(text); mutate(doc);
     expect(validateWorkflowText(path, JSON.stringify(doc)).length, name).toBeGreaterThan(0);
+  }
+});
+
+test("ci secrets retains both unconditional secret scan commands", () => {
+  const path = ".github/workflows/ci.yml";
+  const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  expect(validateWorkflowText(path, text)).toEqual([]);
+  for (const command of ["bun run ci:secrets", "bash scripts/ci-gitleaks.sh"]) {
+    const doc = Bun.YAML.parse(text) as any;
+    doc.jobs.secrets.steps = doc.jobs.secrets.steps.filter((step: any) => step.run !== command);
+    expect(validateWorkflowText(path, JSON.stringify(doc))).toContainEqual(
+      expect.objectContaining({ reason: `ci secrets must run the unconditional ${command} gate` }),
+    );
+  }
+  const mutations: [string, (doc: any) => void][] = [
+    ["masked secret scan", d => { d.jobs.secrets.steps.find((step: any) => step.run === "bun run ci:secrets").run += " || true"; }],
+    ["conditional secret scan", d => { d.jobs.secrets.steps.find((step: any) => step.run === "bun run ci:secrets").if = "false"; }],
+    ["job run defaults", d => { d.jobs.secrets.defaults = { run: { shell: "bash" } }; }],
+  ];
+  for (const [name, mutate] of mutations) {
+    const doc = Bun.YAML.parse(text); mutate(doc);
+    expect(validateWorkflowText(path, JSON.stringify(doc)).some(failure => failure.reason.includes("unconditional")), name).toBe(true);
   }
 });
 

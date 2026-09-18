@@ -37,7 +37,7 @@ function exact(value: unknown, keys: string): Record<string, unknown> { const ro
     throw failure(); return row; }
 export function id(value: unknown): string { if (typeof value !== 'string' || !value || Buffer.byteLength(value) > 1024 || /[\s\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2060-\u206f]/u.test(value))
     throw failure(); return value; }
-export function calendar(value: unknown): string { const valueId = id(value); if (valueId.toLowerCase() === 'primary')
+export function calendar(value: unknown): string { const valueId = id(value); if (valueId.toLowerCase() === 'primary' || valueId === '.' || valueId === '..')
     throw failure('misconfigured'); return valueId; }
 export function fields(value: unknown): Field[] { if (!Array.isArray(value) || value.some(v => !FIELDS.includes(v)) || new Set(value).size !== value.length)
     throw failure('misconfigured'); return FIELDS.filter(v => value.includes(v)); }
