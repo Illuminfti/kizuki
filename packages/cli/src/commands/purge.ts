@@ -8,6 +8,7 @@ import {
 import type { PurgeFilter, PurgePreview } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { withReadVault, withVault } from "../context";
+import { refreshAndPublishDerived } from "../derived";
 import { jsonEnvelope } from "../output";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
@@ -101,6 +102,9 @@ export const purgeCommand: Command = {
       }
       return withVault(io, async (ctx) => {
         const report = await resumePurge(ctx.db, ctx.vaultPath, verifyId, ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval });
+        // Verification rewrites held canon; the derived cursor has to follow the
+        // shrunk ledger or doctor and query read the vault as permanently stale.
+        const derived = await refreshAndPublishDerived(ctx.db, ctx.vaultPath, ctx.retrieval);
         if (asJson) {
           io.out(
             jsonEnvelope("purge", report.ok ? "ok" : "error", {
@@ -113,7 +117,7 @@ export const purgeCommand: Command = {
                 found: op.proof?.found ?? [],
                 provenance: op.proof?.provenance ?? { checked: 0, found: [] },
               })),
-            }),
+            }, { degraded: derived.degraded }),
           );
         } else {
           for (const op of report.operations) {
@@ -126,6 +130,7 @@ export const purgeCommand: Command = {
           io.out(
             `${pad("canon", 23)} pages rewritten ${report.pages_rewritten}    ${hold}`,
           );
+          for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
           if (!report.ok) {
             // Every store proof is settled, so a repeat run replays the same
             // failing canon rewrite. Name the pages instead of inviting a retry
@@ -226,13 +231,17 @@ export const purgeCommand: Command = {
           allow_empty: allowEmpty,
           ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
         });
+        // The purge deleted events out from under the derived cursor. Without a
+        // refresh the counts never reconcile and every later read reports
+        // index-behind-ledger.
+        const derived = await refreshAndPublishDerived(ctx.db, ctx.vaultPath, ctx.retrieval);
         if (asJson) {
           io.out(
             jsonEnvelope("purge", "ok", {
               ...outcome,
               irreversible_events: true,
               undo_restores_canon_only: true,
-            }),
+            }, { degraded: derived.degraded }),
           );
         } else {
           io.out(
@@ -247,6 +256,7 @@ export const purgeCommand: Command = {
           for (const op of outcome.purge_ops) {
             io.out(`op ${op.store} state=${op.state}`);
           }
+          for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
         }
         return 0;
       } catch (error) {

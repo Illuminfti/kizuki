@@ -38,14 +38,23 @@ test("freeze a human task sheet without inventing results or acceptance", () => 
     { step: "audit", outcome: "UNRECORDED", elapsed_ms: null, receipt_reference: null },
     { step: "undo", outcome: "UNRECORDED", elapsed_ms: null, receipt_reference: null },
   ]);
+  expect(session.tasks.find(task => task.id === "accessibility")?.instruction)
+    .toContain("Report any inaccessible steps separately for each mode");
   expect(session.tasks.find(task => task.id === "correction-audit-undo")?.instruction)
     .toContain("query it again or inspect its updated context");
+  expect(session.tasks.find(task => task.id === "install")?.instruction)
+    .toContain("Install to a stable path, use normal init, and check that its supervisor service is active and enabled using the public instructions.");
+  expect(session.tasks.find(task => task.id === "canon-agent-query")?.instruction)
+    .toContain("Explain whether the result is useful to you and why, without sharing private source contents.");
   expect(session.tasks.find(task => task.id === "recovery")?.instruction)
     .toContain("verify both query and context against the restored content");
+  expect(session.worksheet_generator_sha256).toBe(hash(readFileSync(join(import.meta.dir, "unfamiliar-user-session.ts"))));
   expect(session.participant_instructions_sha256).toBe(hash(JSON.stringify(
     session.tasks.map(({ id, instruction, required_outcome }) => [id, instruction, required_outcome]),
   )));
   expect(session.started_at).toBeNull();
+  expect(session.timer_interruptions).toEqual([]);
+  expect(session.tasks.every(task => task.interruption_notes === null)).toBe(true);
   expect(session.independent_eligibility_reference).toBeNull();
   for (const name of LEGACY_PACKAGE_FILES) expect(session.package_sha256[name]).toBe(hash(readFileSync(join(directory, name))));
   expect(session.protocol_sha256).toBe(hash(readFileSync(join(import.meta.dir, "../docs/unfamiliar-user-proof.md"))));

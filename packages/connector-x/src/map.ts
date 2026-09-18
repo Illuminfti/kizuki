@@ -133,8 +133,6 @@ function mentionsFrom(
   raw.forEach((value, index) => {
     const item = requiredObject(value, `${where}.entities.${field}[${index}]`);
     const id = nativeId(item["id_str"] ?? item["id"], `${where}.entities.${field}[${index}].id`);
-    if (seen.has(id)) return;
-    seen.add(id);
     const username = optionalString(
       item["screen_name"] ?? item["username"],
       `${where}.entities.${field}[${index}].screen_name`,
@@ -143,6 +141,8 @@ function mentionsFrom(
     if (username !== null && !/^[A-Za-z0-9_]{1,64}$/.test(username)) {
       throw archiveError("parse_error", `${where}.entities.${field}[${index}].screen_name is invalid`);
     }
+    if (seen.has(id)) return;
+    seen.add(id);
     result.push({
       subject_id: userSubjectId(id),
       role: "about",

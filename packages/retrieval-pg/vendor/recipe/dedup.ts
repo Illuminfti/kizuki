@@ -141,6 +141,28 @@ function capPerPage(
   return kept;
 }
 
+/** Insert into a descending-score list without reordering its other rows. */
+function insertByScore(
+  output: RecipeCandidate[],
+  row: RecipeCandidate,
+): void {
+  const idx = output.findIndex((existing) => existing.score < row.score);
+  if (idx === -1) {
+    output.push(row);
+    return;
+  }
+  output.splice(idx, 0, row);
+}
+
+/**
+ * The guarantee is document-level and keyed off the pre-dedup input, not off
+ * the surviving rows: layers 1-4 can evict every chunk of a document, and a
+ * low-scored owner_correction chunk of an over-represented kind is exactly the
+ * row type diversity drops first. A document that still has rows gets its
+ * lowest-scored surviving chunk swapped for the correction; a document with no
+ * surviving row has its best correction restored, so no earlier layer can
+ * silently drop the owner's own correction.
+ */
 function guaranteePrivilegedAuthority(
   results: readonly RecipeCandidate[],
   preDedup: readonly RecipeCandidate[],
@@ -151,18 +173,25 @@ function guaranteePrivilegedAuthority(
     existing.push(row);
     byPage.set(pageKey(row), existing);
   }
+  const bestPrivileged = new Map<string, RecipeCandidate>();
+  for (const row of preDedup) {
+    if (!isPrivilegedAuthority(row.authority)) continue;
+    const key = pageKey(row);
+    const best = bestPrivileged.get(key);
+    if (best === undefined || row.score > best.score) {
+      bestPrivileged.set(key, row);
+    }
+  }
   const output = [...results];
-  for (const [key, pageChunks] of byPage) {
+  for (const [key, candidate] of bestPrivileged) {
+    const pageChunks = byPage.get(key);
+    if (pageChunks === undefined) {
+      insertByScore(output, candidate);
+      continue;
+    }
     if (pageChunks.some((row) => isPrivilegedAuthority(row.authority))) {
       continue;
     }
-    const candidate = preDedup
-      .filter(
-        (row) =>
-          pageKey(row) === key && isPrivilegedAuthority(row.authority),
-      )
-      .sort((left, right) => right.score - left.score)[0];
-    if (candidate === undefined) continue;
     const lowestIdx = output.reduce((minIdx, row, idx) => {
       if (pageKey(row) !== key) return minIdx;
       if (minIdx === -1) return idx;

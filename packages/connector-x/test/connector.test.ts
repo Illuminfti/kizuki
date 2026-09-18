@@ -305,6 +305,53 @@ describe("local X archive connector", () => {
     expect(retry.cursor).toBe(savedCursor);
   });
 
+  test("media snapshot traversal sorts post IDs and attachment filenames", async () => {
+    const root = await temporaryArchive();
+    const media = path.join(root, "data", "tweets_media");
+    await mkdir(media);
+    // Mixed-width IDs distinguish canonical lexical order from numeric order.
+    const ids = ["9", "10", ...Array.from({ length: 20 }, (_, index) => String(1000 + index))];
+    const sortedIds = [...ids].sort();
+    await writeFile(path.join(root, "data", "tweets.js"), tweetsSource(0, ids.map((id) => tweet(id))));
+    for (const id of [...ids].reverse()) {
+      for (const suffix of ["b", "a", "c"]) {
+        await writeFile(path.join(media, `${id}-${suffix}.jpg`), "bytes");
+      }
+    }
+    const snapshot = await scanArchive(root);
+    expect([...snapshot.media.keys()]).toEqual(sortedIds);
+    const first = await new XArchiveConnector({ path: root }).backfill(null);
+    for (const [index, event] of first.events.entries()) {
+      expect(event.attachments.map((entry) => entry.filename))
+        .toEqual(["a", "b", "c"].map((suffix) => `${ids[index]}-${suffix}.jpg`));
+    }
+    expect(first.events).toHaveLength(ids.length);
+    const replay = await new XArchiveConnector({ path: root }).backfill(first.cursor);
+    expect(replay).toEqual({ events: [], cursor: first.cursor });
+    // Rebuilding the media directory changes filesystem identities, not content.
+    await rm(media, { recursive: true });
+    await mkdir(media);
+    for (const id of sortedIds) {
+      for (const suffix of ["c", "b", "a"]) {
+        await writeFile(path.join(media, `${id}-${suffix}.jpg`), "bytes");
+      }
+    }
+    expect((await scanArchive(root)).sha256).toBe(snapshot.sha256);
+    expect(await new XArchiveConnector({ path: root }).backfill(first.cursor))
+      .toEqual({ events: [], cursor: first.cursor });
+    await writeFile(path.join(media, "1000-a.jpg"), "changed size");
+    expect((await scanArchive(root)).sha256).not.toBe(snapshot.sha256);
+    const changed = await new XArchiveConnector({ path: root }).backfill(first.cursor);
+    expect(changed.events).toHaveLength(ids.length);
+    expect(changed.cursor).not.toBe(first.cursor);
+    expect(changed.events.map((event) => event.source_record_id))
+      .toEqual(first.events.map((event) => event.source_record_id));
+    const changedPost = changed.events.find((event) => event.source_record_id === "post:1000");
+    expect(changedPost?.attachments.map((entry) => entry.byte_size)).toEqual([12, 5, 5]);
+    expect(await new XArchiveConnector({ path: root }).backfill(changed.cursor))
+      .toEqual({ events: [], cursor: changed.cursor });
+  });
+
   test("fixture is offline and production input sources remain synthetic", async () => {
     const events = await new XArchiveConnector({ path: "/not-used-by-fixture" }).fixture();
     expect(events).toHaveLength(2);
