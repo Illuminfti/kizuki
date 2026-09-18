@@ -30,10 +30,11 @@ async function call(host: ReturnType<typeof createAppHost>, route: string, body:
 async function done(host: ReturnType<typeof createAppHost>, route: string, body: unknown = {}) {
     const start = await call(host, route, body);
     expect(start.ok).toBe(true);
-    for (let i = 0; i < 200; i++) {
+    // Setup observes the installed unit for SERVICE_SETTLE_MS before answering.
+    for (let i = 0; i < 600; i++) {
         const result = (await call(host, 'operation', { id: start.data.operation_id })).data;
         if (result.state !== 'running') return result;
-        await Bun.sleep(5);
+        await Bun.sleep(25);
     }
     throw Error('synthetic operation did not finish');
 }
@@ -65,7 +66,7 @@ test('default app setup installs the existing native service and reopening obser
         expect((await call(reopened, 'service_status')).data.state).toBe('absent');
         expect(f.installs).toBe(1);
     } finally { await reopened.close(); }
-});
+}, 40_000);
 
 test.each(['request', 'launcher'])('explicit %s opt-out persists and can enable the native service later', async source => {
     const f = fixture(source === 'launcher'), host = f.open(), path = join(f.env.HOME!, 'Kizuki');
