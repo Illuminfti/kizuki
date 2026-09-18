@@ -72,28 +72,28 @@ describe("custody refusal copy", () => {
   });
 
   test("a unit that did not stay running names the unit, the state and where to look", () => {
-    const lines = serviceNotRunningLines(status({ state: "disabled", detail: "failed" }), "/home/stranger/kizuki");
-    expect(lines.join("\n")).toContain("kizuki@synthetic.service");
-    expect(lines.join("\n")).toContain("failed");
-    expect(lines.join("\n")).toContain("journalctl --user -u kizuki@synthetic.service");
-    expect(lines.join("\n")).toContain("/home/stranger/kizuki");
+    const text = serviceNotRunningLines(status({ state: "disabled", detail: "failed" }), "/home/stranger/kizuki").join("\n");
+    expect(text).toContain("kizuki@synthetic.service was installed but did not stay running");
+    expect(text).toContain("supervisor state failed");
+    expect(text).toContain("journalctl --user -u kizuki@synthetic.service");
+    expect(text).toContain("/home/stranger/kizuki");
   });
 });
 
 describe("supervisor failure rendering", () => {
   test("replaces the coarse state with the observed one and leaves other failures alone", () => {
     expect(supervisorFailureLine("supervisor unknown", status({ state: "unknown", detail: "activating" })))
-      .toContain("kizuki@synthetic.service");
-    expect(supervisorFailureLine("supervisor unknown", status({ state: "unknown", detail: "activating" })))
-      .toContain("activating");
+      .toBe("supervisor kizuki@synthetic.service state=activating enabled=yes"
+        + "; see: journalctl --user -u kizuki@synthetic.service -n 50");
     expect(supervisorFailureLine("supervisor disabled", status({ state: "disabled", detail: "failed" })))
-      .toContain("failed");
+      .toContain("state=failed");
     expect(supervisorFailureLine("rail loop: down", status())).toBe("rail loop: down");
   });
 
   test("an unqueryable supervisor still says so rather than borrowing a state", () => {
     const line = supervisorFailureLine("supervisor unknown",
       status({ state: "unknown", detail: "supervisor state could not be queried" }));
+    expect(line).toContain("state=unknown");
     expect(line).toContain("supervisor state could not be queried");
   });
 });
@@ -106,12 +106,11 @@ describe("doctor reports the observed supervisor state", () => {
     expect(runCli(env, "init", vault, "--no-default", "--no-service").exitCode).toBe(0);
     expect(runCli({ ...env, KIZUKI_VAULT: vault }, "serve", "--install").exitCode).toBe(0);
     const id = readFileSync(join(vault, ".kizuki", "vault-id"), "utf8").trim();
-    for (const [activity, expected] of [["failed", "failed"], ["activating", "activating"]] as const) {
-      const doctor = runCli({ ...env, KIZUKI_VAULT: vault, TEST_SUPERVISOR_ACTIVITY: activity },
-        "doctor");
+    for (const activity of ["failed", "activating"] as const) {
+      const doctor = runCli({ ...env, KIZUKI_VAULT: vault, TEST_SUPERVISOR_ACTIVITY: activity }, "doctor");
       expect(doctor.stdout).not.toContain("serve-failure supervisor unknown");
-      expect(doctor.stdout).toContain(`serve-failure supervisor kizuki@${id}.service`);
-      expect(doctor.stdout).toContain(expected);
+      expect(doctor.stdout).toContain(
+        `serve-failure supervisor kizuki@${id}.service state=${activity} enabled=yes`);
     }
   }, 30_000);
 });
