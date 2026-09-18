@@ -184,8 +184,10 @@ export {
 export type {
   LegacyFrontmatter,
   LegacyWikiConfig,
+  LegacyWikiDeps,
   LegacyWikiFieldReport,
   LegacyWikiFile,
+  LegacyWikiIdentity,
   LegacyWikiMapping,
   LegacyWikiPageReport,
   LegacyWikiReport,

@@ -1,5 +1,8 @@
 import {
   HealthReport,
+  MAX_CURSOR_BYTES,
+  MAX_SYNC_BATCH_BYTES,
+  MAX_SYNC_BATCH_EVENTS,
   PAGE_CANDIDATE_KEY,
   freezeManifest,
   isPlainObject,
@@ -73,20 +76,35 @@ const MANIFEST: Manifest = freezeManifest({
   auth_modes: [...LEGACY_WIKI_AUTH_MODES],
 });
 
-interface SnapshotEntry {
+export interface LegacyWikiIdentity {
   /** So an edited page is re-emitted and a copied wiki with fresh mtimes is not. */
   hash: string;
   /** So a page added later cannot take a target this page is already staged at. */
   target: string;
 }
 
+/** Factory-only. Never serialized into connection config or protected state. */
+export interface LegacyWikiDeps {
+  /**
+   * Latest live `[relpath, {hash,target}]` identities for this source.
+   * Called when the resume cursor cannot carry the snapshot inside
+   * `MAX_CURSOR_BYTES`.
+   */
+  committedFiles?: () =>
+    | ReadonlyArray<readonly [string, LegacyWikiIdentity]>
+    | Promise<ReadonlyArray<readonly [string, LegacyWikiIdentity]>>;
+}
+
 interface LegacyWikiCursor {
   schema: typeof LEGACY_WIKI_CURSOR_SCHEMA;
   mapping_hash: string;
+  after: string | null;
+  exhausted: boolean;
   /** Every page the ledger still holds a record for: the ones this run
    * emitted, plus the ones it could not read and therefore could not decide
-   * anything about. A page dropped from here can never be withdrawn again. */
-  files: Record<string, SnapshotEntry>;
+   * anything about. A page dropped from here can never be withdrawn again.
+   * Omitted from the wire form when the map would exceed MAX_CURSOR_BYTES. */
+  files: Record<string, LegacyWikiIdentity>;
 }
 
 function contentHash(content: string): string {
@@ -100,30 +118,67 @@ function targetOf(event: CaptureEventInput): string | null {
   return typeof target === "string" ? target : null;
 }
 
-function encodeCursor(
-  scan: ScanResult,
-  events: CaptureEventInput[],
-  mappingHash: string,
-  carried: Record<string, SnapshotEntry>,
-): Cursor {
-  const hashes = new Map(
-    scan.files.map((file) => [file.relpath, contentHash(file.content)]),
-  );
-  // The unseen pages first: a page this walk could not read keeps the entry
-  // the last run left, so a later run that does see it gone can still say so.
-  const files: Record<string, SnapshotEntry> = { ...carried };
-  for (const event of events) {
-    const hash = hashes.get(event.source_record_id);
-    const target = targetOf(event);
-    if (hash === undefined || target === null) continue;
-    files[event.source_record_id] = { hash, target };
+function utf8Bytes(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
+}
+
+function sortedFiles(
+  files: Record<string, LegacyWikiIdentity>,
+): Record<string, LegacyWikiIdentity> {
+  const sorted: Record<string, LegacyWikiIdentity> = {};
+  for (const relpath of Object.keys(files).sort(compareStrings)) {
+    const entry = files[relpath];
+    if (entry !== undefined) sorted[relpath] = entry;
   }
-  const cursor: LegacyWikiCursor = {
+  return sorted;
+}
+
+function encodeCursor(
+  mappingHash: string,
+  files: Record<string, LegacyWikiIdentity>,
+  after: string | null,
+  exhausted: boolean,
+): Cursor {
+  const body = {
     schema: LEGACY_WIKI_CURSOR_SCHEMA,
     mapping_hash: mappingHash,
-    files,
+    after,
+    exhausted,
+    files: sortedFiles(files),
   };
-  return JSON.stringify(cursor);
+  const withFiles = JSON.stringify(body);
+  if (utf8Bytes(withFiles) <= MAX_CURSOR_BYTES) return withFiles;
+  const { files: _files, ...compact } = body;
+  return JSON.stringify(compact);
+}
+
+function takePage(events: readonly CaptureEventInput[]): {
+  page: CaptureEventInput[];
+  rest: CaptureEventInput[];
+} {
+  const page: CaptureEventInput[] = [];
+  let encoded = 2;
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index];
+    if (event === undefined) break;
+    const extra = utf8Bytes(JSON.stringify(event)) + (page.length === 0 ? 0 : 1);
+    if (page.length === 0 && encoded + extra > MAX_SYNC_BATCH_BYTES) {
+      throw new KizukiError(
+        "parse_error",
+        `${LEGACY_WIKI_CONNECTOR_ID}: event exceeds the capture page bound`,
+      );
+    }
+    if (
+      page.length > 0 &&
+      (page.length >= MAX_SYNC_BATCH_EVENTS ||
+        encoded + extra > MAX_SYNC_BATCH_BYTES)
+    ) {
+      return { page, rest: events.slice(index) };
+    }
+    page.push(event);
+    encoded += extra;
+  }
+  return { page, rest: [] };
 }
 
 export type Withdrawal = { relpath: string; reason: "absent" | "excluded" };
@@ -151,7 +206,7 @@ export interface SnapshotReconciliation {
  * imported.
  */
 export function reconcileSnapshot(
-  previous: Record<string, SnapshotEntry>,
+  previous: Record<string, LegacyWikiIdentity>,
   scan: ScanResult,
   emitted: ReadonlySet<string>,
 ): SnapshotReconciliation {
@@ -198,10 +253,10 @@ export function reconcileSnapshot(
 
 /** The entries a run keeps without deciding anything about them. */
 function carriedEntries(
-  previous: Record<string, SnapshotEntry>,
+  previous: Record<string, LegacyWikiIdentity>,
   carried: string[],
-): Record<string, SnapshotEntry> {
-  const kept: Record<string, SnapshotEntry> = {};
+): Record<string, LegacyWikiIdentity> {
+  const kept: Record<string, LegacyWikiIdentity> = {};
   for (const relpath of carried) {
     const entry = previous[relpath];
     if (entry !== undefined) kept[relpath] = entry;
@@ -209,7 +264,7 @@ function carriedEntries(
   return kept;
 }
 
-function isSnapshotEntry(raw: unknown): raw is SnapshotEntry {
+function isLegacyWikiIdentity(raw: unknown): raw is LegacyWikiIdentity {
   return (
     isPlainObject(raw) &&
     typeof raw["hash"] === "string" &&
@@ -232,10 +287,36 @@ function decodeCursor(cursor: Cursor): LegacyWikiCursor {
   if (
     !isPlainObject(parsed) ||
     parsed["schema"] !== LEGACY_WIKI_CURSOR_SCHEMA ||
-    typeof parsed["mapping_hash"] !== "string" ||
-    !isPlainObject(parsed["files"]) ||
-    !Object.values(parsed["files"]).every(isSnapshotEntry)
+    typeof parsed["mapping_hash"] !== "string"
   ) {
+    throw new KizukiError(
+      "parse_error",
+      `${LEGACY_WIKI_CONNECTOR_ID}: malformed cursor`,
+    );
+  }
+  const hasFiles = Object.hasOwn(parsed, "files");
+  const filesRaw = parsed["files"];
+  if (
+    hasFiles &&
+    (!isPlainObject(filesRaw) ||
+      !Object.values(filesRaw).every(isLegacyWikiIdentity))
+  ) {
+    throw new KizukiError(
+      "parse_error",
+      `${LEGACY_WIKI_CONNECTOR_ID}: malformed cursor`,
+    );
+  }
+  const hasAfter = Object.hasOwn(parsed, "after");
+  const afterRaw = parsed["after"];
+  if (hasAfter && afterRaw !== null && typeof afterRaw !== "string") {
+    throw new KizukiError(
+      "parse_error",
+      `${LEGACY_WIKI_CONNECTOR_ID}: malformed cursor`,
+    );
+  }
+  const hasExhausted = Object.hasOwn(parsed, "exhausted");
+  const exhaustedRaw = parsed["exhausted"];
+  if (hasExhausted && typeof exhaustedRaw !== "boolean") {
     throw new KizukiError(
       "parse_error",
       `${LEGACY_WIKI_CONNECTOR_ID}: malformed cursor`,
@@ -244,12 +325,14 @@ function decodeCursor(cursor: Cursor): LegacyWikiCursor {
   return {
     schema: LEGACY_WIKI_CURSOR_SCHEMA,
     mapping_hash: parsed["mapping_hash"],
-    files: parsed["files"] as Record<string, SnapshotEntry>,
+    after: typeof afterRaw === "string" ? afterRaw : null,
+    exhausted: hasExhausted ? exhaustedRaw === true : !hasAfter,
+    files: hasFiles ? (filesRaw as Record<string, LegacyWikiIdentity>) : {},
   };
 }
 
 function pinnedTargets(
-  files: Record<string, SnapshotEntry>,
+  files: Record<string, LegacyWikiIdentity>,
 ): Record<string, string> {
   const pinned: Record<string, string> = {};
   for (const [relpath, entry] of Object.entries(files)) {
@@ -292,10 +375,11 @@ export class LegacyWikiConnector implements Connector {
   readonly mapping: LegacyWikiMapping;
   readonly mappingHash: string;
   readonly reportPath: string | null;
+  readonly #committedFiles: LegacyWikiDeps["committedFiles"];
   #report: LegacyWikiReport | null = null;
   #degraded = 0;
 
-  constructor(config: LegacyWikiConfig) {
+  constructor(config: LegacyWikiConfig, deps: LegacyWikiDeps = {}) {
     this.path = requirePathConfig(config, LEGACY_WIKI_CONNECTOR_ID);
     const loaded = loadMapping(
       config.mapping,
@@ -309,6 +393,7 @@ export class LegacyWikiConnector implements Connector {
       this.path,
       LEGACY_WIKI_CONNECTOR_ID,
     );
+    this.#committedFiles = deps.committedFiles;
   }
 
   manifest(): Manifest {
@@ -330,37 +415,14 @@ export class LegacyWikiConnector implements Connector {
 
   async backfill(cursor: Cursor | null): Promise<SyncBatch> {
     // A fresh sweep emits every page. A returned snapshot resumes through the
-    // same diff path as sync, so a host draining batches can reach exhaustion.
+    // same path as sync, so a host draining batches can reach exhaustion.
     if (cursor !== null) return this.sync(cursor);
-    const { scan, events } = await this.#run([], {});
-    return this.#batch(null, scan, events, events);
+    return this.#sweep(null);
   }
 
   async sync(cursor: Cursor | null): Promise<SyncBatch> {
     if (cursor === null) return this.backfill(null);
-    const previous = decodeCursor(cursor);
-    const changed = previous.mapping_hash !== this.mappingHash;
-    const notes = changed ? ["mapping_changed"] : [];
-    // A mapping change replans the whole wiki, so the old targets no longer
-    // describe it; every page is re-emitted anyway, consistently.
-    const { scan, events } = await this.#run(
-      notes,
-      changed ? {} : pinnedTargets(previous.files),
-    );
-
-    const hashes = new Map(
-      scan.files.map((file) => [file.relpath, contentHash(file.content)]),
-    );
-    // A copy: the snapshot is built from every page the walk planned, and the
-    // filtering and the tombstones below are not part of that.
-    const kept = changed
-      ? [...events]
-      : events.filter(
-          (event) =>
-            hashes.get(event.source_record_id) !==
-            previous.files[event.source_record_id]?.hash,
-        );
-    return this.#batch(previous, scan, events, kept);
+    return this.#sweep(cursor);
   }
 
   async revoke(): Promise<void> {}
@@ -382,45 +444,95 @@ export class LegacyWikiConnector implements Connector {
     return this.#report;
   }
 
-  /**
-   * One batch: the events this run reports, plus a tombstone for every page
-   * the snapshot held that the import no longer covers, and a cursor that
-   * keeps whatever this walk could not decide about.
-   */
-  #batch(
+  async #identities(
     previous: LegacyWikiCursor | null,
-    scan: ScanResult,
-    planned: CaptureEventInput[],
-    reported: CaptureEventInput[],
-  ): SyncBatch {
-    if (previous === null) {
-      return {
-        events: reported,
-        cursor: encodeCursor(scan, planned, this.mappingHash, {}),
-      };
+  ): Promise<Record<string, LegacyWikiIdentity>> {
+    if (previous !== null && Object.keys(previous.files).length > 0) {
+      return { ...previous.files };
     }
-    const emitted = new Set(planned.map((event) => event.source_record_id));
-    const { withdrawn, carried } = reconcileSnapshot(
-      previous.files,
-      scan,
-      emitted,
-    );
-    const observedAt = new Date().toISOString();
-    const events = [...reported];
-    for (const withdrawal of withdrawn) {
-      events.push(tombstone(withdrawal, observedAt));
+    if (this.#committedFiles === undefined) {
+      return previous === null ? {} : { ...previous.files };
     }
-    events.sort((a, b) =>
-      compareStrings(a.source_record_id, b.source_record_id),
+    const rows = await this.#committedFiles();
+    const files: Record<string, LegacyWikiIdentity> = {};
+    for (const [relpath, entry] of rows) files[relpath] = entry;
+    return files;
+  }
+
+  /**
+   * One bounded page: changed pages after the resume point, then tombstones
+   * once the walk has named every current page. The cursor stays inside
+   * MAX_CURSOR_BYTES by dropping the identity map when it no longer fits.
+   */
+  async #sweep(cursor: Cursor | null): Promise<SyncBatch> {
+    const previous = cursor === null ? null : decodeCursor(cursor);
+    const identities = await this.#identities(previous);
+    const mappingChanged =
+      previous !== null && previous.mapping_hash !== this.mappingHash;
+    const { scan, events: planned } = await this.#run(
+      mappingChanged ? ["mapping_changed"] : [],
+      mappingChanged ? {} : pinnedTargets(identities),
     );
+    const hashes = new Map(
+      scan.files.map((file) => [file.relpath, contentHash(file.content)]),
+    );
+    const after = previous?.after ?? null;
+    const paging = previous !== null && !previous.exhausted && !mappingChanged;
+    const candidates = (
+      previous === null || mappingChanged
+        ? planned
+        : paging
+          ? planned.filter(
+              (event) =>
+                after === null ||
+                compareStrings(event.source_record_id, after) > 0,
+            )
+          : planned.filter(
+              (event) =>
+                hashes.get(event.source_record_id) !==
+                identities[event.source_record_id]?.hash,
+            )
+    ).sort((left, right) =>
+      compareStrings(left.source_record_id, right.source_record_id),
+    );
+    const { page, rest } = takePage(candidates);
+    const filesDone = rest.length === 0;
+    const nextFiles: Record<string, LegacyWikiIdentity> = { ...identities };
+    for (const event of page) {
+      const hash = hashes.get(event.source_record_id);
+      const target = targetOf(event);
+      if (hash === undefined || target === null) continue;
+      nextFiles[event.source_record_id] = { hash, target };
+    }
+
+    const events = [...page];
+    if (filesDone && previous !== null && (previous.exhausted || paging)) {
+      const emitted = new Set(planned.map((event) => event.source_record_id));
+      const { withdrawn, carried } = reconcileSnapshot(
+        identities,
+        scan,
+        emitted,
+      );
+      const observedAt = new Date().toISOString();
+      for (const withdrawal of withdrawn) {
+        delete nextFiles[withdrawal.relpath];
+        events.push(tombstone(withdrawal, observedAt));
+      }
+      Object.assign(nextFiles, carriedEntries(identities, carried));
+      events.sort((left, right) =>
+        compareStrings(left.source_record_id, right.source_record_id),
+      );
+    }
+
+    const last = page[page.length - 1];
+    const exhausted = filesDone;
+    const nextAfter = exhausted
+      ? null
+      : (last?.source_record_id ?? after);
     return {
       events,
-      cursor: encodeCursor(
-        scan,
-        planned,
-        this.mappingHash,
-        carriedEntries(previous.files, carried),
-      ),
+      cursor: encodeCursor(this.mappingHash, nextFiles, nextAfter, exhausted),
+      has_more: !exhausted,
     };
   }
 
@@ -456,8 +568,9 @@ export class LegacyWikiConnector implements Connector {
 
 export function createLegacyWikiConnector(
   config: LegacyWikiConfig,
+  deps: LegacyWikiDeps = {},
 ): LegacyWikiConnector {
-  return new LegacyWikiConnector(config);
+  return new LegacyWikiConnector(config, deps);
 }
 
 export { LEGACY_WIKI_CONNECTOR_ID, parseLegacyWikiMapping } from "./mapping";
