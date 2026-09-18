@@ -127,7 +127,25 @@ export const purgeCommand: Command = {
             `${pad("canon", 23)} pages rewritten ${report.pages_rewritten}    ${hold}`,
           );
           if (!report.ok) {
-            io.err(`retry: kizuki purge --verify ${verifyId}`);
+            // Every store proof is settled, so a repeat run replays the same
+            // failing canon rewrite. Name the pages instead of inviting a retry
+            // that cannot change the outcome.
+            const rewriteStalled =
+              report.held_pages.length > 0 &&
+              report.operations.every((op) => op.state === "done");
+            if (rewriteStalled) {
+              io.err(
+                `hold remains on ${plural(report.held_pages.length, "page")}: ${report.held_pages.join(", ")}`,
+              );
+              io.err(
+                "every store proof is complete; the canon rewrite of those pages failed, so repeating --verify alone cannot lift the hold",
+              );
+              io.err(
+                `check kizuki doctor, and that each held page and its parent directories are owned by you and are not group- or world-writable, then retry: kizuki purge --verify ${verifyId}`,
+              );
+            } else {
+              io.err(`retry: kizuki purge --verify ${verifyId}`);
+            }
           }
         }
         return report.ok ? 0 : 1;

@@ -397,7 +397,11 @@ resurrected by undo; canon rewrites stay reversible. `--include-aliases` is
 retired and refuses before planning or deletion. `--verify` prints per-store
 absence proofs and `pending`/`done`/`failed` operation state. While any inert
 legacy identity row remains, identity absence is unprovable rather than
-successful.
+successful. When every store proof is complete and a hold still remains, the
+canon rewrite itself failed: `--verify` then names the held page paths and
+points at `kizuki doctor` and page ownership and permissions, instead of
+offering a bare retry that replays the same failure. `--json` reports the same
+paths as `data.held_pages`, which is empty once the hold is lifted.
 
 Subject purges use an exact raw `subject_id` in its emitting connector's
 namespace: `--subject ID --connector ID`. Bare subject IDs are refused,
