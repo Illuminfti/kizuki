@@ -55,7 +55,11 @@ test("RFC 0002 records the Cue/D10 boundary without amending D10", () => {
   const section = clarification(readFileSync(RFC, "utf8"));
   expect(cueErrors(section)).toEqual([]);
   expect(readFileSync(DECISIONS, "utf8")).toContain(D10);
-  expect(readFileSync(RFC4, "utf8")).toContain("Status: **Proposed — not binding and not implemented**.");
+  // D22 (2026-09-18) accepts only a named minimal slice of RFC 0004; the rest stays
+  // Proposed, so RFC 0004 still cannot amend the Cue/D10 boundary by itself.
+  const rfc4 = readFileSync(RFC4, "utf8");
+  expect(rfc4).toContain("Status: **Accepted as a minimal slice** (owner decision D22, 2026-09-18)");
+  expect(rfc4).toContain("Everything else in this RFC remains Proposed and is not implemented by that acceptance.");
 });
 
 test("removing runtime revalidation or treating approval as a grant fails the Cue/D10 guard", () => {

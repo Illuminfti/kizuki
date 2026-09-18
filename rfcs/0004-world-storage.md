@@ -1,6 +1,6 @@
-# RFC 0004 storage and codec appendix
+# RFC 0004, Appendix A: storage and codec
 
-Status: **Proposed, pending independent review; not accepted or implemented**.
+Status: **Appendix to RFC 0004, Proposed; pending independent review; not accepted or implemented** (D22 records that this file is an appendix, not a second RFC 0004).
 Frozen source and evaluation baseline: `a96c5f4a4455d22fb4b40537c308c6d019a36d0d`.
 Reviewed integration base: `ad7ecca9902a97ac40fb8b28438df56c6d27a54e` (2026-09-06).
 Source line references and fixture comparisons retain the frozen baseline.

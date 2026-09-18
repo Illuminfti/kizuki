@@ -317,7 +317,9 @@ describe("doctor on a freshly initialised single-connector vault", () => {
         }),
       );
       const report = inspectServeDoctor(db, path, { now: NOW });
-      expect(report.calibration.confidence_spread).toBeCloseTo(0);
+      // Every row is policy-capped, so there is no measurable population:
+      // null says "no informative confidence", not "a flat producer".
+      expect(report.calibration.confidence_spread).toBeNull();
       expect(report.calibration.failures).toEqual([]);
       expect(report.failures).not.toContain("confidence_not_produced");
       expect(report.ok).toBe(true);
