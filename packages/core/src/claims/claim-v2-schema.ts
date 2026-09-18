@@ -4,8 +4,9 @@ import type { Database } from "bun:sqlite";
  * RFC 0003 §"Shared claim storage and immutable support" (B1b). Durable home
  * for `kizuki.claim/v2` semantics and their immutable support children.
  *
- * Nothing in the production path writes these tables yet: B1b installs the
- * floor, B1c adds the shared prepare/commit writer, B1d the versioned reader.
+ * B1b installs the floor. B1c (`commitClaimV2`) writes semantics and support
+ * inside the existing prepare/commit transaction. B1d (`readClaimRecord`)
+ * returns a discriminated v1/v2 record. There is still no public v2 Core writer.
  * The DDL is additive and idempotent so a re-run of migration 31 is a no-op.
  */
 
