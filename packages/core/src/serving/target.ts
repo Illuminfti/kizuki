@@ -144,6 +144,7 @@ const OUT_OF_SCOPE: Record<DenyReason, string> = {
   tool_not_granted: "the target is outside the grant",
   unknown_agent: "the target is outside the grant",
   rate_limited: "the target is outside the grant",
+  busy: "the target is outside the grant",
   invalid_arguments: "the target is outside the grant",
   error: "the target is outside the grant",
 };

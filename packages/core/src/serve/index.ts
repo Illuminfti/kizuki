@@ -101,7 +101,7 @@ export {
 export type { SupervisorCommandResult, SupervisorHost, SupervisorTimeoutAdapter } from "./supervisor";
 export { FILE_NOTIFIER_ID, briefPath, createFileNotifier } from "./notifier-file";
 export { dueRails, runRail, runServeOnce } from "./rails";
-export type { RailHooks, RailRuntime, RailSyncResult, RunRailOptions } from "./rails";
+export type { RailHooks, RailRefreshReport, RailRuntime, RailSyncResult, RunRailOptions } from "./rails";
 export { runWritePass } from "./write-pass";
 export type { WritePassOptions, WritePassResult } from "./write-pass";
 export {
@@ -113,6 +113,14 @@ export type { ServeDoctorOptions } from "./doctor";
 export { startServeHttp } from "./http";
 export type { ServeHttpHandle, ServeHttpOptions } from "./http";
 export { readServePid, runServeDaemon, servePidPath, serveStatus } from "./daemon";
+export {
+  asLeaseHeld,
+  LEASE_HELD_CODE,
+  leaseHeldMessage,
+  ledgerLeaseHolder,
+  LedgerLeaseHeldError,
+  withLeaseHeldRefusal,
+} from "./lease-held";
 export type { ServeDaemonOptions, ServeStatus } from "./daemon";
 export { SERVE_SURFACE_ID, createServeSurfacePort } from "./surface";
 export type { ServeSurfaceOptions } from "./surface";

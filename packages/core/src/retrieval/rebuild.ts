@@ -19,15 +19,48 @@ import { sha256Hex } from "../util/hash";
 import { isRfc3339 } from "../util/time";
 import { fatalCanonSkips, isLiveCanonPage, listCanonPagesReport, stringArray } from "../vault/pages";
 
-export const MAX_REBUILD_RECORDS = 10_000;
-const MAX_SOURCE_BYTES = 64 * 1024 * 1024;
+/**
+ * An explicit resource budget, not a product ceiling. The lexical floor streams
+ * the ledger and canon and only pays the entry and byte budgets. `max_records`
+ * bounds the in-memory projection a configured retrieval port receives, which
+ * is the only path that has to hold the corpus at once.
+ */
+export interface RebuildBudget {
+  /** Ledger events, live claims and canon pages the projection may hold. */
+  readonly max_records: number;
+  /** Directory entries the canon preflight may inspect. */
+  readonly max_filesystem_entries: number;
+  /** Canon file bytes, and event plus claim text bytes, the rebuild may read. */
+  readonly max_source_bytes: number;
+}
 
-function tooLarge(): never {
-  throw new PortError("config_invalid", "rebuild corpus exceeds 10000 records, 20000 filesystem entries, or 64 MiB of source text", false);
+export const DEFAULT_REBUILD_BUDGET: RebuildBudget = {
+  max_records: 1_000_000,
+  max_filesystem_entries: 200_000,
+  max_source_bytes: 64 * 1024 * 1024,
+};
+
+export function resolveRebuildBudget(overrides: Partial<RebuildBudget> = {}): RebuildBudget {
+  const budget = { ...DEFAULT_REBUILD_BUDGET, ...overrides };
+  for (const [key, value] of Object.entries(budget)) {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new PortError("config_invalid", `rebuild budget ${key} must be a positive integer`, false);
+    }
+  }
+  return budget;
+}
+
+/** Name the actual count, the budget it passed, and the flag that raises it. */
+function overBudget(what: string, actual: number, limit: number, flag: string): never {
+  throw new PortError(
+    "config_invalid",
+    `rebuild corpus exceeds its ${what} budget: ${actual} > ${limit}; raise it with ${flag}`,
+    false,
+  );
 }
 
 /** Inspect only the named vault; refuse oversized or linked canon before reading it. */
-function boundCanon(vaultPath: string): void {
+function boundCanon(vaultPath: string, budget: RebuildBudget): void {
   let entries = 0;
   let bytes = 0;
   const root = resolve(vaultPath);
@@ -36,7 +69,9 @@ function boundCanon(vaultPath: string): void {
     const directory = pending.pop()!;
     const atRoot = directory === root;
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (++entries > MAX_REBUILD_RECORDS * 2) tooLarge();
+      if (++entries > budget.max_filesystem_entries) {
+        overBudget("filesystem entry", entries, budget.max_filesystem_entries, "--max-entries");
+      }
       if (atRoot && (entry.name === ".kizuki" || entry.name === "archive")) continue;
       const path = join(directory, entry.name);
       if (entry.isSymbolicLink()) {
@@ -45,7 +80,9 @@ function boundCanon(vaultPath: string): void {
       if (entry.isDirectory()) pending.push(path);
       else if (entry.isFile() && entry.name.endsWith(".md")) {
         bytes += lstatSync(path).size;
-        if (bytes > MAX_SOURCE_BYTES) tooLarge();
+        if (bytes > budget.max_source_bytes) {
+          overBudget("canon byte", bytes, budget.max_source_bytes, "--max-source-bytes");
+        }
       }
     }
   }
@@ -58,8 +95,12 @@ interface RebuildSnapshot {
 }
 
 /** No database transaction spans a port call. Revision hashes stay host-owned. */
-function readRebuildSnapshot(db: Database, vaultPath: string): RebuildSnapshot {
-  boundCanon(vaultPath);
+function readRebuildSnapshot(
+  db: Database,
+  vaultPath: string,
+  budget: RebuildBudget = DEFAULT_REBUILD_BUDGET,
+): RebuildSnapshot {
+  boundCanon(vaultPath, budget);
   return db.transaction(() => {
     const totals = db.query<{ n: number; bytes: number }, []>(
       "SELECT count(*) AS n,coalesce(sum(length(CAST(text AS BLOB))),0) AS bytes FROM events",
@@ -67,10 +108,16 @@ function readRebuildSnapshot(db: Database, vaultPath: string): RebuildSnapshot {
     const claimTotal = db.query<{ n: number; bytes: number }, []>(
       "SELECT count(*) AS n,coalesce(sum(length(CAST(body AS BLOB))),0) AS bytes FROM claims WHERE status='live'",
     ).get()!;
-    if (totals.n + claimTotal.n > MAX_REBUILD_RECORDS || totals.bytes + claimTotal.bytes > MAX_SOURCE_BYTES) tooLarge();
+    const sourceBytes = totals.bytes + claimTotal.bytes;
+    if (sourceBytes > budget.max_source_bytes) {
+      overBudget("source byte", sourceBytes, budget.max_source_bytes, "--max-source-bytes");
+    }
     const ctx = { db, vaultPath, principal: OWNER, sourcePurpose: "derive" as const };
     const index = loadCanon(ctx);
-    if (index.pages.length + totals.n + claimTotal.n > MAX_REBUILD_RECORDS) tooLarge();
+    const records = index.pages.length + totals.n + claimTotal.n;
+    if (records > budget.max_records) {
+      overBudget("record", records, budget.max_records, "--max-records");
+    }
     const docs: RetrievalDoc[] = [];
     const revisions = new Map<string, string>();
     const admit = (input: RetrievalDoc, revision: unknown): void => {
@@ -108,7 +155,7 @@ function readRebuildSnapshot(db: Database, vaultPath: string): RebuildSnapshot {
         occurred_at: source.occurred_at, updated_at: row.observed_at }, null);
     }
     const reader = claimReader(db, OWNER.grant, { owner: true, purpose: "derive" });
-    for (const claim of listClaims(db, { status: "live", limit: MAX_REBUILD_RECORDS })) {
+    for (const claim of listClaims(db, { status: "live", limit: budget.max_records })) {
       if (reader.canRead(claim)) admit({ ...claimRetrievalDoc(claim), sensitivity: sourceSensitivity(db, claim.provenance, claim.sensitivity) }, claim);
     }
     return { epoch: sourcePolicyEpoch(db), docs: docs.sort((a, b) => a.doc_id < b.doc_id ? -1 : a.doc_id > b.doc_id ? 1 : 0), revisions };
@@ -116,14 +163,27 @@ function readRebuildSnapshot(db: Database, vaultPath: string): RebuildSnapshot {
 }
 
 /** A bounded owner-authorized snapshot; dates come only from authoritative records. */
-export function readRetrievalDocuments(db: Database, vaultPath: string): RetrievalDoc[] {
-  return readRebuildSnapshot(db, vaultPath).docs;
+export function readRetrievalDocuments(
+  db: Database,
+  vaultPath: string,
+  budget: Partial<RebuildBudget> = {},
+): RetrievalDoc[] {
+  return readRebuildSnapshot(db, vaultPath, resolveRebuildBudget(budget)).docs;
+}
+
+/** The projection size, for callers that need the count and not the documents. */
+export function countRetrievalDocuments(
+  db: Database,
+  vaultPath: string,
+  budget: Partial<RebuildBudget> = {},
+): number {
+  return readRebuildSnapshot(db, vaultPath, resolveRebuildBudget(budget)).docs.length;
 }
 
 export type RebuildLayer = "all" | "search" | "graph";
 
-function graphFloorReport(db: Database, vaultPath: string) {
-  boundCanon(vaultPath);
+function graphFloorReport(db: Database, vaultPath: string, budget: RebuildBudget) {
+  boundCanon(vaultPath, budget);
   const report = listCanonPagesReport(vaultPath);
   if (fatalCanonSkips(report.skipped).length > 0) {
     throw new Error("canon is unreadable; derived rebuild refused");
@@ -138,8 +198,8 @@ function graphFloorReport(db: Database, vaultPath: string) {
   };
 }
 
-function searchFloorReport(db: Database, vaultPath: string) {
-  boundCanon(vaultPath);
+function searchFloorReport(db: Database, vaultPath: string, budget: RebuildBudget) {
+  boundCanon(vaultPath, budget);
   const report = listCanonPagesReport(vaultPath);
   if (fatalCanonSkips(report.skipped).length > 0) {
     throw new Error("canon is unreadable; derived rebuild refused");
@@ -163,75 +223,89 @@ async function rebuildUnderFence(
   port: RetrievalPort | undefined,
   expired: () => boolean,
   layer: RebuildLayer,
+  budget: RebuildBudget,
 ) {
   assertVaultMutationScope(scope, { db, vault_path: vaultPath });
   if (layer === "graph" || layer === "search") {
     if (port !== undefined) {
       throw new PortError("config_invalid", "partial layer rebuild is not supported for a configured retrieval engine", false);
     }
-    return layer === "graph" ? graphFloorReport(db, vaultPath) : searchFloorReport(db, vaultPath);
+    return layer === "graph" ? graphFloorReport(db, vaultPath, budget) : searchFloorReport(db, vaultPath, budget);
   }
   if (port !== undefined && sourcePolicyEpoch(db) > 0 && !isLocalSourcePort(port)) throw new PortError("unavailable", "source egress authorization unavailable", false);
-  const snapshot = readRebuildSnapshot(db, vaultPath);
+  if (port === undefined) {
+    // The lexical floor streams the ledger and canon itself. Projecting the
+    // whole corpus first only to discard it is what made a normal estate
+    // refuse its own repair verb.
+    boundCanon(vaultPath, budget);
+    return floorReport(db, vaultPath, undefined);
+  }
+  const snapshot = readRebuildSnapshot(db, vaultPath, budget);
   const { docs } = snapshot;
-  if (port !== undefined) {
-    for (const doc of docs) requireSourceEvents(db, doc.provenance, { owner: true, purpose: "derive", port });
-    if (port.rebuildFromDocuments === undefined) {
-      throw new PortError("not_supported", "configured retrieval does not support atomic authoritative rebuild", false);
-    }
-    const store = port.descriptor.id;
-    recordSourceStoreWrite(db, port, docs.flatMap(doc => doc.provenance));
-    let failure: unknown;
-    try { await port.rebuildFromDocuments(structuredClone(docs)); } catch (error) { failure = error; }
-    // Keep final admission and the floor rebuild in one synchronous continuation.
-    const remaining = new Map(snapshot.docs.map(doc => [doc.doc_id, doc]));
-    let refused = false;
-    let unreadable: unknown;
-    do {
-      let current: RebuildSnapshot | undefined;
-      try { current = readRebuildSnapshot(db, vaultPath); }
-      catch (error) { unreadable = error; }
-      const discardAll = expired() || port.descriptor.id !== store || current === undefined;
-      if (discardAll || snapshot.epoch !== current?.epoch) refused = true;
-      const invalid = [...remaining.values()].filter(doc => discardAll ||
-        current!.revisions.get(doc.doc_id) !== snapshot.revisions.get(doc.doc_id) ||
-        !sourceEventsAllowed(db, doc.provenance, { owner: true, purpose: "derive", port }));
-      if (invalid.length === 0) break;
-      refused = true;
-      const ids = invalid.slice(0, 100).map(doc => doc.doc_id);
-      try {
-        await port.remove(ids);
-        const proof = validateAbsenceProof(await port.verifyAbsent(ids), ids);
-        if (proof.found.length !== 0 || proof.store !== store || port.descriptor.id !== store) {
-          throw new PortError("unavailable", "source rebuild cleanup could not establish absence", true);
-        }
-      } catch (error) {
-        // recordSourceStoreWrite's durable pending obligation is deliberately retained.
-        invalidateLocalSourcePort(port);
-        throw new PortError("unavailable", "source rebuild cleanup could not establish absence", true, { cause: error });
-      }
-      for (const id of ids) remaining.delete(id);
-    } while (remaining.size > 0);
-    if (refused) throw new PortError("unavailable", "source authorization changed during rebuild; current evidence must be rebuilt", true,
-      unreadable === undefined ? undefined : { cause: unreadable });
-    if (failure !== undefined) throw failure;
-    const snapshotIds = [...remaining.keys()];
-    for (let offset = 0; offset < snapshotIds.length; offset += 100) {
-      const ids = snapshotIds.slice(offset, offset + 100);
+  for (const doc of docs) requireSourceEvents(db, doc.provenance, { owner: true, purpose: "derive", port });
+  if (port.rebuildFromDocuments === undefined) {
+    throw new PortError("not_supported", "configured retrieval does not support atomic authoritative rebuild", false);
+  }
+  const store = port.descriptor.id;
+  recordSourceStoreWrite(db, port, docs.flatMap(doc => doc.provenance));
+  let failure: unknown;
+  try { await port.rebuildFromDocuments(structuredClone(docs)); } catch (error) { failure = error; }
+  // Keep final admission and the floor rebuild in one synchronous continuation.
+  const remaining = new Map(snapshot.docs.map(doc => [doc.doc_id, doc]));
+  let refused = false;
+  let unreadable: unknown;
+  do {
+    let current: RebuildSnapshot | undefined;
+    try { current = readRebuildSnapshot(db, vaultPath, budget); }
+    catch (error) { unreadable = error; }
+    const discardAll = expired() || port.descriptor.id !== store || current === undefined;
+    if (discardAll || snapshot.epoch !== current?.epoch) refused = true;
+    const invalid = [...remaining.values()].filter(doc => discardAll ||
+      current!.revisions.get(doc.doc_id) !== snapshot.revisions.get(doc.doc_id) ||
+      !sourceEventsAllowed(db, doc.provenance, { owner: true, purpose: "derive", port }));
+    if (invalid.length === 0) break;
+    refused = true;
+    const ids = invalid.slice(0, 100).map(doc => doc.doc_id);
+    try {
+      await port.remove(ids);
       const proof = validateAbsenceProof(await port.verifyAbsent(ids), ids);
-      const found = new Set(proof.found);
-      if (found.size !== ids.length || proof.store !== store || port.descriptor.id !== store) {
-        throw new PortError("unavailable", "rebuild document set did not match the authoritative snapshot", true);
+      if (proof.found.length !== 0 || proof.store !== store || port.descriptor.id !== store) {
+        throw new PortError("unavailable", "source rebuild cleanup could not establish absence", true);
       }
+    } catch (error) {
+      // recordSourceStoreWrite's durable pending obligation is deliberately retained.
+      invalidateLocalSourcePort(port);
+      throw new PortError("unavailable", "source rebuild cleanup could not establish absence", true, { cause: error });
+    }
+    for (const id of ids) remaining.delete(id);
+  } while (remaining.size > 0);
+  if (refused) throw new PortError("unavailable", "source authorization changed during rebuild; current evidence must be rebuilt", true,
+    unreadable === undefined ? undefined : { cause: unreadable });
+  if (failure !== undefined) throw failure;
+  const snapshotIds = [...remaining.keys()];
+  for (let offset = 0; offset < snapshotIds.length; offset += 100) {
+    const ids = snapshotIds.slice(offset, offset + 100);
+    const proof = validateAbsenceProof(await port.verifyAbsent(ids), ids);
+    const found = new Set(proof.found);
+    if (found.size !== ids.length || proof.store !== store || port.descriptor.id !== store) {
+      throw new PortError("unavailable", "rebuild document set did not match the authoritative snapshot", true);
     }
   }
+  return floorReport(db, vaultPath, { store: port.descriptor.id, documents: docs.length });
+}
+
+function floorReport(
+  db: Database,
+  vaultPath: string,
+  projected: { store: string; documents: number } | undefined,
+) {
   const floor = rebuildDerived(db, vaultPath);
   const floorDocuments = floor.search.pages + floor.search.events;
   return {
-    backend: port === undefined ? "sqlite-floor" as const : "retrieval-port" as const,
-    documents: port === undefined ? floorDocuments : docs.length,
+    backend: projected === undefined ? "sqlite-floor" as const : "retrieval-port" as const,
+    documents: projected?.documents ?? floorDocuments,
     floor_documents: floorDocuments,
-    store: port?.descriptor.id ?? "kizuki.retrieval.fts5",
+    store: projected?.store ?? "kizuki.retrieval.fts5",
     generation: floor.generation,
   };
 }
@@ -241,9 +315,10 @@ export async function rebuildRetrieval(
   db: Database,
   vaultPath: string,
   port?: RetrievalPort,
-  options?: { layer?: RebuildLayer },
+  options?: { layer?: RebuildLayer; budget?: Partial<RebuildBudget> },
 ) {
   vaultPath = resolve(vaultPath);
+  const budget = resolveRebuildBudget(options?.budget ?? {});
   const layer = options?.layer ?? "all";
   if (layer !== "all" && layer !== "graph" && layer !== "search") {
     throw new PortError("config_invalid", "rebuild supports --layer all, search, or graph only", false);
@@ -252,7 +327,7 @@ export async function rebuildRetrieval(
   let timer: ReturnType<typeof setTimeout> | undefined;
   const configured = port?.descriptor?.method_timeouts_ms?.["rebuildFromDocuments"];
   const deadline = typeof configured === "number" && Number.isFinite(configured) && configured > 0 ? Math.min(configured, 30_000) : 30_000;
-  const operation = withVaultMutationAsync({ db, vault_path: vaultPath }, scope => rebuildUnderFence(scope, db, vaultPath, port, () => timedOut, layer))
+  const operation = withVaultMutationAsync({ db, vault_path: vaultPath }, scope => rebuildUnderFence(scope, db, vaultPath, port, () => timedOut, layer, budget))
     .catch(error => {
       if (error instanceof VaultMutationError && error.code === "writer_busy") {
         throw new PortError("unavailable", "canon writer is busy; retry rebuild", true);

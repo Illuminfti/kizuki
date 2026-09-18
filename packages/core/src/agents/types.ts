@@ -147,6 +147,8 @@ export type DenyReason =
   | "unknown_agent"
   | "rate_limited"
   | "held"
+  /** Another writer holds the ledger; the same call succeeds on retry. */
+  | "busy"
   /** A call refused before any data was read. */
   | "invalid_arguments"
   /** The engine failed; the cause never leaves core. */
