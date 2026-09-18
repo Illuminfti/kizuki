@@ -37,6 +37,9 @@ Modifications marked relative to the public tip:
   contribute the same chunk, so cosine re-scoring cannot silently discard it.
 - Adjacency and type-diversity accounting are document-level; duplicate chunks
   cannot impersonate independent documents or crowd distinct documents out.
+- The owner_correction guarantee is evaluated against the pre-dedup input, so
+  a document whose only chunk the near-duplicate layers evict still returns its
+  highest-scored correction.
 - Hop walks emit each stored edge once and report truncation only when another
   eligible edge exists beyond the requested limit.
 

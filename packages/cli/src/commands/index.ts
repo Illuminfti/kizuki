@@ -9,6 +9,7 @@ import { exportCommand } from "./export";
 import { importCommand } from "./import";
 import { rebuildCommand } from "./rebuild";
 import { recoverCommand } from "./recover";
+import { reflexCommand } from "./reflex";
 import { restoreCommand } from "./restore";
 import { initCommand } from "./init";
 import { modelsCommand } from "./models";
@@ -68,5 +69,6 @@ export const COMMANDS: readonly Command[] = [
   restoreCommand,
   rebuildCommand,
   recoverCommand,
+  reflexCommand,
   versionCommand,
 ];

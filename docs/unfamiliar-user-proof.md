@@ -46,7 +46,9 @@ output in the approved private evidence location, not the repository.
 
 The worksheet binds every package member hash (including distribution files
 when present), source SHA, target, this protocol, the acceptance checker and
-the participant task wording. It is a collection aid, not the trusted
+the participant task wording. `worksheet_generator_sha256` records the local
+worksheet script's bytes, including its observation-field definitions. It does
+not cover imported dependencies or attest which code ran. It is a collection aid, not the trusted
 `human.unfamiliar-user` producer. All observations start unrecorded; generating
 it proves neither package qualification nor human acceptance.
 
@@ -102,7 +104,10 @@ If help, manual rescue or author intervention occurs, record it immediately.
 That attempt fails the zero-coaching requirement. A later attempt has a new
 identifier and retains the earlier failure; it does not erase or relabel it.
 Record timer interruption or ambiguous evidence as unresolved rather than
-estimating a passing duration.
+estimating a passing duration. Use `timer_interruptions` for session-wide
+interruptions and `interruption_notes` on each affected task. The empty list
+and null notes are blank collection fields, not evidence of uninterrupted
+timing; never subtract an interruption to manufacture a passing milestone.
 
 ## Verify native lifecycle separately
 

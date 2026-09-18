@@ -31,6 +31,12 @@ export function distillTakeoutActivity(source: string | Uint8Array): {
   activities: Activity[];
   receipt: { input_sha256: string; input_bytes: number; records: number };
 } {
+  if (typeof source !== "string" && !(source instanceof Uint8Array)) {
+    // Fail closed on runtime type drift: no String() coercion and no access to
+    // getter surfaces (length/toString) of a hostile or non-text input. The
+    // check precedes the size test, which would otherwise read a hostile length.
+    throw new Error("Takeout activity source must be text or bytes");
+  }
   if (source.length > MAX_BYTES ||
     (typeof source === "string" && Buffer.byteLength(source, "utf8") > MAX_BYTES)) {
     throw new Error("Takeout activity exceeds byte limit");
