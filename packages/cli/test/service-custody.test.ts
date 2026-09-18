@@ -88,7 +88,7 @@ describe("custody refusal copy", () => {
 
   test("a launch the supervisor did not make, a root launch and a lost hold each read differently", () => {
     const outside = custodyUnavailableMessage("/home/stranger/kizuki", unit, "not_supervised");
-    expect(outside).toContain("the supervisor did not start this process");
+    expect(outside).toContain("no proof that the supervisor started it");
     expect(outside).not.toContain("/tmp");
     const root = custodyUnavailableMessage("/home/stranger/kizuki", unit, "root_user");
     expect(root).toContain("refuses to run as root");

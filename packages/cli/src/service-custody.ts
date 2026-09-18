@@ -81,7 +81,7 @@ export function custodyUnavailableMessage(
   }
   if (reason === "not_supervised") {
     return [
-      `${head} this launch mode belongs to the installed unit, and the supervisor did not start this process.`,
+      `${head} this launch mode belongs to the installed unit, and this process carries no proof that the supervisor started it.`,
       `run the loop yourself instead: ${serveExecHint(vaultPath)}`,
       ...inspectUnitLines(unit),
     ].join("\n");
