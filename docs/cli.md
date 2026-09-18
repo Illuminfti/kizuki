@@ -397,7 +397,10 @@ resurrected by undo; canon rewrites stay reversible. `--include-aliases` is
 retired and refuses before planning or deletion. `--verify` prints per-store
 absence proofs and `pending`/`done`/`failed` operation state. While any inert
 legacy identity row remains, identity absence is unprovable rather than
-successful.
+successful. A completed deletion and a completed `--verify` both refresh the
+derived index cursor so `doctor` and `query` keep reading the shrunk ledger as
+fresh; any refresh warning is printed as `degraded:` and carried in the JSON
+envelope's `degraded` list.
 
 Subject purges use an exact raw `subject_id` in its emitting connector's
 namespace: `--subject ID --connector ID`. Bare subject IDs are refused,
