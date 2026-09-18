@@ -84,6 +84,32 @@ describe("attribution verification", () => {
     },
   );
 
+  test.each([".", ",", ";", ":", "!", "?", "..."])(
+    "accepts a bare canonical URL at sentence end followed by %p",
+    (punctuation) => {
+      expect(failures(`${exactCredit}: ${canonicalUrl}${punctuation}`)).toEqual([]);
+    },
+  );
+
+  test.each(['."', ").", ".,"])(
+    "accepts a bare canonical URL followed by punctuation and a delimiter %p",
+    (tail) => {
+      expect(failures(`${exactCredit}: ${canonicalUrl}${tail}`)).toEqual([]);
+    },
+  );
+
+  test.each(["./path", "?query=1", ":8080", "#fragment", "+suffix"])(
+    "rejects a canonical URL extended after sentence punctuation %p",
+    (extension) => {
+      expect(failures(`${exactCredit}: ${canonicalUrl}${extension}`)).toEqual([
+        expect.objectContaining({
+          reason: "public attribution URL is not the exact delimited canonical URL",
+        }),
+        expect.objectContaining({ reason: "public attribution is missing the canonical URL" }),
+      ]);
+    },
+  );
+
   test.each(["ftp", "file", "ws", "git+https"])(
     "rejects a modified %s scheme even alongside valid credit",
     (scheme) => {

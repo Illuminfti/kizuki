@@ -29,6 +29,8 @@ Select one already-extracted activity JSON file, not a ZIP or whole Takeout tree
 The spike refuses more than 1 MiB of supplied UTF-8 text or 10,000 records before
 projection. Pass original bytes rather than permissively decoding an export first:
 malformed UTF-8 is refused, and only the selected byte view is hashed and counted.
+Runtime input that is neither text nor a byte view is refused without coercion,
+so a caller type error cannot silently convert a value into text.
 It rejects input whose UTF-8 encoding is lossy, such as lone
 surrogates, and any selected field whose JSON escape decodes to a lone
 surrogate, so distinct source strings cannot share one receipt. It validates all

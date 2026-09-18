@@ -8,7 +8,7 @@ import { releaseTarget } from "./release-targets";
 const hash = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
 
 const TASKS = [
-  ["install", "Install the supplied package and create a private workspace using only public instructions.", "Normal init installs an active, enabled supervisor service; no hidden setup."],
+  ["install", "Install the supplied package and create a private workspace using only public instructions. Install to a stable path, use normal init, and check that its supervisor service is active and enabled using the public instructions.", "Normal init installs an active, enabled supervisor service; no hidden setup."],
   ["source-consent", "Connect the agreed supported source after reviewing its consent.", "Explicit account, fields, history and destinations; ingestion from that scope only."],
   ["canon-agent-query", "Find useful knowledge from your source through an authorized agent and inspect its provenance.", "Autonomous model-written canon and an authorized agent query within 900000 ms of receiving the package; source-linked usefulness recorded."],
   ["model-boundary", "Explain what remains available without a model and what requires one.", "Capture, ledger, search, timeline, context, audit and undo remain available; canon writing requires a configured model."],
