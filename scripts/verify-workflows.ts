@@ -155,6 +155,11 @@ const SUCCESS_PRECONDITION = "${{ success() }}";
 const LINUX_PROOF_COMMAND =
   'bun run build:release\nbun run smoke:release\nbun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-artifact-proof"';
 const LINUX_RECEIPT_CHECK = 'test -f "$RUNNER_TEMP/kizuki-artifact-proof/receipt.json"';
+const SURFACE_PROOF_COMMAND =
+  'mkdir -p "$RUNNER_TEMP/kizuki-surface"\n' +
+  'bun scripts/capability-proof.ts --candidate ${{ github.event.pull_request.head.sha || github.sha }}' +
+  ' --out "$RUNNER_TEMP/kizuki-surface/receipt.json"';
+const SURFACE_RECEIPT_CHECK = 'test -f "$RUNNER_TEMP/kizuki-surface/receipt.json"';
 const LINUX_ARTIFACT_NAME = "linux-x64-${{ github.event.pull_request.head.sha || github.sha }}";
 const LINUX_ARTIFACT_PATH =
   "dist/kizuki-*/bun-linux-x64-baseline/\n${{ runner.temp }}/kizuki-artifact-proof/receipt.json";
@@ -260,6 +265,17 @@ function hasNativeLifecycleProof(job: unknown): boolean {
     isNativeArtifactUpload(steps[8], "native-service-lifecycle-${{ matrix.os }}-${{ github.sha }}", "dist/kizuki-*/bun-linux-x64-baseline/\ndist/kizuki-*/bun-darwin-arm64/\n${{ runner.temp }}/kizuki-native-artifact-proof/receipt.json\n${{ runner.temp }}/kizuki-native-service-lifecycle/receipt.json", "${{ !cancelled() }}");
 }
 
+// The surface inventory receipt is produced from the same event-derived head the
+// diff checker binds, outside the checkout, immediately before the native proof
+// tail. Dropping it would leave surface.capabilities-and-docs unreachable.
+function hasSurfaceInventoryProof(job: Record<string, unknown>): boolean {
+  const steps = job["steps"];
+  if (!Array.isArray(steps) || steps.length < 6) return false;
+  const surface = steps.length - 6;
+  return isBareCommand(steps[surface], SURFACE_PROOF_COMMAND) &&
+    isBareCommand(steps[surface + 1], SURFACE_RECEIPT_CHECK);
+}
+
 function hasLinuxNativeProof(document: Record<string, unknown>, job: Record<string, unknown>): boolean {
   const steps = job["steps"];
   if (!Array.isArray(steps) || steps.length < 4 || document["defaults"] !== undefined ||
@@ -326,6 +342,12 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
       failures.push({
         path,
         reason: "ci test must verify the native proof receipt before retaining the Linux package",
+      });
+    }
+    if (isRecord(job) && !hasSurfaceInventoryProof(job)) {
+      failures.push({
+        path,
+        reason: "ci test must produce the surface inventory receipt for the event head before the native proof",
       });
     }
     if (isRecord(job) && (!Array.isArray(steps) || !steps.some((step) => isBareCommand(step, "bun run verify")))) {

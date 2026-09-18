@@ -24,6 +24,12 @@ jobs:
         run: test "$(git rev-parse --is-shallow-repository)" = "false"
       - name: verify
         run: bun run verify
+      - name: surface inventory receipt
+        run: |
+          mkdir -p "$RUNNER_TEMP/kizuki-surface"
+          bun scripts/capability-proof.ts --candidate ${{ github.event.pull_request.head.sha || github.sha }} --out "$RUNNER_TEMP/kizuki-surface/receipt.json"
+      - name: require surface inventory receipt
+        run: test -f "$RUNNER_TEMP/kizuki-surface/receipt.json"
       - name: native package smoke
         run: |
           bun run build:release
