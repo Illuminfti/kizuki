@@ -1417,7 +1417,7 @@ describe("openLedger migrations", () => {
     ).toThrow();
     const fresh = openLedger(":memory:");
     expect(schemaVersion(fresh)).toBe(LEDGER_SCHEMA_VERSION);
-    expect(schemaVersion(fresh)).toBe(30);
+    expect(schemaVersion(fresh)).toBe(31);
     expect(tableColumns(fresh, "event_purges")).toContain("proof_digest");
     fresh.close();
     db.close();
@@ -1479,7 +1479,7 @@ describe("openLedger migrations", () => {
     ).toThrow();
     const fresh = openLedger(":memory:");
     expect(schemaVersion(fresh)).toBe(LEDGER_SCHEMA_VERSION);
-    expect(schemaVersion(fresh)).toBe(30);
+    expect(schemaVersion(fresh)).toBe(31);
     fresh.close();
     db.close();
   });
@@ -1541,7 +1541,7 @@ describe("openLedger migrations", () => {
     ).toThrow();
     const fresh = openLedger(":memory:");
     expect(schemaVersion(fresh)).toBe(LEDGER_SCHEMA_VERSION);
-    expect(schemaVersion(fresh)).toBe(30);
+    expect(schemaVersion(fresh)).toBe(31);
     fresh.close();
     db.close();
   });
