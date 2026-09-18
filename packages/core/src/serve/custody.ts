@@ -8,12 +8,26 @@ import { openCanonFiles } from "../vault/canon-files";
 import { observeAncestorOwner } from "./custody-observation";
 import { connectServiceCustody, custodyEndpointStat } from "./custody-startup";
 
+/** The condition a refusal actually observed. Only environment facts the
+ * daemon can state without inference are named; every guard that could also be
+ * a hijack signal stays `custody_unproven` so no surface invents a cause. */
+export type ServiceCustodyFailure =
+  | "unsupported_platform"
+  | "not_supervised"
+  | "root_user"
+  | "custody_unproven";
+
 /** This channel reports current metadata for held directories. It grants no
  * ledger, page, source, or filesystem mutation authority. */
 export class ServiceCustodyError extends Error {
-  constructor() { super("service_custody_unavailable"); this.name = "ServiceCustodyError"; }
+  readonly reason: ServiceCustodyFailure;
+  constructor(reason: ServiceCustodyFailure = "custody_unproven") {
+    super("service_custody_unavailable");
+    this.name = "ServiceCustodyError";
+    this.reason = reason;
+  }
 }
-function fail(): never { throw new ServiceCustodyError(); }
+function fail(reason: ServiceCustodyFailure = "custody_unproven"): never { throw new ServiceCustodyError(reason); }
 function same(a: BigIntStats, b: BigIntStats): boolean { return a.dev === b.dev && a.ino === b.ino; }
 function ownedDirectory(fd: number, privateMode = false): BigIntStats {
   const value = fstatSync(fd, { bigint: true });
@@ -50,15 +64,15 @@ function sameProcess(a: ReturnType<typeof processIdentity>, b: ReturnType<typeof
 }
 interface Binding { path: string; id: string; invocation: string; bytes: Buffer; group: string; uid: number; }
 function binding(vaultPath: string, vaultId: string, env: Readonly<Record<string, string | undefined>>): Binding {
-  if (process.platform !== "linux" || process.arch !== "x64" || !process.geteuid ||
-      !isAbsolute(vaultPath) || vaultPath !== resolve(vaultPath) || vaultPath === "/" ||
+  if (process.platform !== "linux" || process.arch !== "x64" || !process.geteuid) fail("unsupported_platform");
+  if (!isAbsolute(vaultPath) || vaultPath !== resolve(vaultPath) || vaultPath === "/" ||
       !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(vaultId)) fail();
   const invocation = env.INVOCATION_ID;
-  if (invocation === undefined || !/^[0-9a-f]{32}$/.test(invocation)) fail();
+  if (invocation === undefined || !/^[0-9a-f]{32}$/.test(invocation)) fail("not_supervised");
   const uid = process.geteuid();
-  if (uid === 0) fail();
+  if (uid === 0) fail("root_user");
   const group = unifiedGroup(process.pid);
-  if (!group.endsWith(`/kizuki@${vaultId}.service`)) fail();
+  if (!group.endsWith(`/kizuki@${vaultId}.service`)) fail("not_supervised");
   return { path: vaultPath, id: vaultId, invocation, bytes: Buffer.from(invocation, "hex"), group, uid };
 }
 
