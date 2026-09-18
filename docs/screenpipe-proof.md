@@ -32,7 +32,8 @@ The proof then drives the public CLI end to end: `init`, `connect screenpipe
 --source DB`, `connect grant`, `backfill`, ledger `query`, `export`, a repeated
 `backfill`, `sync`, a repeated `query`, `connect status`, `connect revoke`, an
 absence query, `connect resume-revocation`, a purged-absence query, the purged
-`connect status`, and a final `backfill` that must be refused for want of consent.
+`connect status`, and a final `backfill` over the unchanged database that must be
+refused as `source_capture_denied` and print nothing on stdout.
 A repeated `backfill` must store nothing and duplicate nothing: both snapshot
 watermarks are already consumed. The incremental `sync` re-presents the same
 three settled rows once and must store nothing while recording three duplicates,
