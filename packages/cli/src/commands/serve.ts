@@ -21,7 +21,7 @@ import type { CliIo, Command, CommandHelpSchema } from "./index";
 import { serveSupervisorHost } from "../service-host";
 import { createServeRuntime } from "../serve-runtime";
 import { runServiceCustodyBroker, startServiceCustody, ServiceCustodyError, type ServiceCustodyHandle } from "@kizuki/core/internal";
-import { launchServiceCustodyBroker } from "../service-custody";
+import { custodyUnavailableMessage, launchServiceCustodyBroker } from "../service-custody";
 import { isAbsolute, resolve } from "node:path";
 
 /** Supervisor-only launch modes. Parsed so installed units can start; omitted from public help. */
@@ -64,19 +64,27 @@ export const serveCommand: Command = {
           io.vaultOverride === null || !isAbsolute(io.vaultOverride) || resolve(io.vaultOverride) !== io.vaultOverride) {
         throw new ServiceCustodyError();
       }
-      const mode = modes[0]!, id = parsed.options.get(mode)!;
-      if (mode === "--custody-broker-launch") {
-        await launchServiceCustodyBroker(io.vaultOverride, id, io.env);
-        return 0;
+      const mode = modes[0]!, id = parsed.options.get(mode)!, vault = io.vaultOverride;
+      // The service log is the only place these failures are read, so they
+      // carry the prerequisite and the command instead of a bare code.
+      try {
+        if (mode === "--custody-broker-launch") {
+          await launchServiceCustodyBroker(vault, id, io.env);
+          return 0;
+        }
+        if (mode === "--custody-broker-child") return runServiceCustodyBroker(vault, id, io.env);
+        custody = await startServiceCustody(vault, id, io.env, () => {
+          // Lost metadata authority is a daemon failure, including while a rail
+          // would otherwise catch an adapter error. Durable recovery handles the
+          // same boundary as a killed service; never continue with stale custody.
+          io.err(custodyUnavailableMessage(vault));
+          process.exit(1);
+        });
+      } catch (error) {
+        if (!(error instanceof ServiceCustodyError)) throw error;
+        io.err(custodyUnavailableMessage(vault));
+        return 1;
       }
-      if (mode === "--custody-broker-child") return runServiceCustodyBroker(io.vaultOverride, id, io.env);
-      custody = await startServiceCustody(io.vaultOverride, id, io.env, () => {
-        // Lost metadata authority is a daemon failure, including while a rail
-        // would otherwise catch an adapter error. Durable recovery handles the
-        // same boundary as a killed service; never continue with stale custody.
-        io.err("service_custody_unavailable");
-        process.exit(1);
-      });
     }
     try { return await withVault(io, async (ctx) => {
       const kind = detectSupervisorKind(io.env);

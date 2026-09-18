@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHelpers } from "./helpers";
+import { fakeSystemd } from "./serve/supervisor-fixture";
 
 const { cleanup, isolatedEnv, runCli, tempDir } = createHelpers();
 afterEach(cleanup);
@@ -180,6 +181,32 @@ describe("init", () => {
     expect(doctor.exitCode).toBe(1);
     expect(doctor.stderr).toContain("not owner-only");
   });
+
+  test("prints the unit's observed state, not the installer's momentary confirmation", () => {
+    const root = tempDir();
+    const env = { ...fakeSystemd(root, isolatedEnv()), KIZUKI_SUPERVISOR: "systemd" };
+    const vault = join(root, "vault");
+    const result = runCli({ ...env, TEST_SUPERVISOR_DIES_SECONDS: "1" }, "init", vault, "--no-default");
+    expect(result.exitCode, result.stderr).toBe(0);
+    // The unit the installer confirmed has already stopped; ask the supervisor again.
+    const observed = runCli(env, "serve", "--vault", vault, "status");
+    expect(observed.stdout).toContain("failed");
+    expect(result.stdout).not.toContain("state=active");
+    expect(result.stdout).toContain("state=failed");
+    expect(result.stdout).toContain("service not running");
+    expect(result.stdout).toContain("journalctl --user -u kizuki@");
+    expect(readFileSync(join(vault, ".kizuki", "serve-intent"), "utf8").trim()).toBe("installed");
+  }, 30_000);
+
+  test("prints an observed active state when the unit keeps running", () => {
+    const root = tempDir();
+    const env = { ...fakeSystemd(root, isolatedEnv()), KIZUKI_SUPERVISOR: "systemd" };
+    const vault = join(root, "vault");
+    const result = runCli(env, "init", vault, "--no-default");
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain("state=active");
+    expect(result.stdout).not.toContain("service not running");
+  }, 30_000);
 
   test("repeated init converges after a partial journal", () => {
     const env = isolatedEnv();
