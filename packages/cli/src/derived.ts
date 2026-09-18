@@ -4,6 +4,8 @@ import type { Database } from "bun:sqlite";
 import type { CanonReceipt, CaptureEvent, LedgerCursor, RetrievalPort } from "@kizuki/core";
 import {
   count,
+  countCanonReceipts,
+  countSince,
   isLiveCanonPage,
   isPlainObject,
   listCanonPagesReport,
@@ -11,7 +13,7 @@ import {
   pendingRetrievalOps,
   readSince,
 } from "@kizuki/core";
-import { indexEvent, indexPage, publishLedgerEvent, removeCanonPath } from "@kizuki/core/internal";
+import { indexEvents, indexPage, publishLedgerEvent, removeCanonPath } from "@kizuki/core/internal";
 import { writeAtomicFile } from "./atomic-file";
 
 export const INDEX_CURSOR_SCHEMA = "kizuki.cli.index-cursor/v1" as const;
@@ -31,7 +33,26 @@ export interface IndexReport {
   events: number;
   pages: number;
   cursor: IndexCursor;
+  /** Records the next pass would still take in. Zero only when the index is current. */
+  remaining: number;
   degraded: string[];
+}
+
+/** Records per durable batch: one commit, and persisted progress, per batch. */
+export const DERIVED_BATCH_RECORDS = 500;
+
+/**
+ * Records one serve pass may index before it records progress and yields. A
+ * pass that never finishes never records anything, so a large estate stays
+ * behind forever; a bounded pass always leaves the next one less to do.
+ */
+export const DERIVED_PASS_RECORDS = 50_000;
+
+export interface CatchUpOptions {
+  /** Records this call may index. Absent means catch up completely. */
+  readonly limit?: number;
+  /** Called with the cursor after every durable batch. */
+  readonly onBatch?: (cursor: IndexCursor) => void;
 }
 
 function cursorPath(vaultPath: string): string {
@@ -103,32 +124,39 @@ export function indexEventsFromCursor(
   db: Database,
   cursor: IndexCursor,
   onEvent?: (event: CaptureEvent) => void,
+  options: CatchUpOptions = {},
 ): {
   indexed: number;
   cursor: IndexCursor;
+  /** False when the pass stopped on its record budget with events still behind. */
+  done: boolean;
 } {
   let next = cursor;
   let since = eventSince(cursor);
   let indexed = 0;
+  const limit = options.limit ?? Number.POSITIVE_INFINITY;
   for (;;) {
-    const page = readSince(db, since, 500);
+    if (indexed >= limit) return { indexed, cursor: next, done: false };
+    const size = Math.min(DERIVED_BATCH_RECORDS, limit - indexed);
+    const page = readSince(db, since, size);
     if (page.events.length === 0) break;
-    for (const event of page.events) {
-      indexEvent(db, event);
-      onEvent?.(event);
-      indexed += 1;
-    }
+    // One commit per batch. A commit per event costs one durable write per
+    // record, which is why a large estate never finished a catch-up pass.
+    indexEvents(db, page.events);
+    for (const event of page.events) onEvent?.(event);
+    indexed += page.events.length;
     if (page.cursor !== null) {
       next = {
         ...next,
         accepted_at: page.cursor.accepted_at,
         event_id: page.cursor.event_id,
       };
+      options.onBatch?.(next);
     }
-    if (page.cursor === null || page.events.length < 500) break;
+    if (page.cursor === null || page.events.length < size) break;
     since = page.cursor;
   }
-  return { indexed, cursor: next };
+  return { indexed, cursor: next, done: true };
 }
 
 function receiptAfter(left: string | null, right: string): boolean {
@@ -153,10 +181,9 @@ export function* walkCanonReceipts(
   }
 }
 
+/** Row count only; freshness runs on every read and must not parse every receipt. */
 export function countCanonReceiptRows(db: Database): number {
-  let n = 0;
-  for (const _ of walkCanonReceipts(db)) n += 1;
-  return n;
+  return countCanonReceipts(db);
 }
 
 function withdrawIndexedCanon(db: Database, pagePath: string, pageId?: string): void {
@@ -168,14 +195,21 @@ export function indexReceiptsFromCursor(
   vaultPath: string,
   cursor: IndexCursor,
   scanPages: typeof listCanonPagesReport = listCanonPagesReport,
-): { indexed: number; cursor: IndexCursor } {
+  options: CatchUpOptions = {},
+): { indexed: number; cursor: IndexCursor; done: boolean } {
   let pages: Map<string, ReturnType<typeof listCanonPagesReport>["pages"][number]> | undefined;
   let indexed = 0;
   let lastId = cursor.receipt_id;
-  let seen = 0;
+  let processed = 0;
+  let batched = 0;
+  let done = true;
+  const limit = options.limit ?? Number.POSITIVE_INFINITY;
   for (const receipt of walkCanonReceipts(db)) {
-    seen += 1;
     if (!receiptAfter(cursor.receipt_id, receipt.receipt_id)) continue;
+    if (processed >= limit) {
+      done = false;
+      break;
+    }
     if (pages === undefined) {
       const report = scanPages(vaultPath);
       pages = new Map(report.pages.map((page) => [page.relPath, page]));
@@ -197,39 +231,67 @@ export function indexReceiptsFromCursor(
       }
     }
     if (lastId === null || receipt.receipt_id > lastId) lastId = receipt.receipt_id;
+    processed += 1;
+    if ((batched += 1) >= DERIVED_BATCH_RECORDS) {
+      batched = 0;
+      options.onBatch?.({ ...cursor, receipt_id: lastId });
+    }
   }
-  return { indexed, cursor: { ...cursor, receipt_id: lastId, receipts_seen: seen } };
+  return {
+    indexed,
+    done,
+    // The "index is current" marker only moves when the walk actually ended.
+    cursor: {
+      ...cursor,
+      receipt_id: lastId,
+      receipts_seen: done ? countCanonReceipts(db) : cursor.receipts_seen,
+    },
+  };
 }
 
 export function refreshDerived(
   db: Database,
   vaultPath: string,
   onEvent?: (event: CaptureEvent) => void,
+  options: { limit?: number } = {},
 ): IndexReport {
   const start = readIndexCursor(vaultPath);
-  const events = indexEventsFromCursor(db, start, onEvent);
-  const pages = indexReceiptsFromCursor(db, vaultPath, events.cursor);
+  const limit = options.limit ?? Number.POSITIVE_INFINITY;
+  const onBatch = (batch: IndexCursor): void => writeIndexCursor(vaultPath, batch);
+  const events = indexEventsFromCursor(db, start, onEvent, { limit, onBatch });
+  const pages = indexReceiptsFromCursor(db, vaultPath, events.cursor, listCanonPagesReport, {
+    limit: Math.max(0, limit - events.indexed),
+    onBatch,
+  });
   const cursor: IndexCursor = {
     ...pages.cursor,
-    events_seen: count(db),
+    // Only a walk that reached the end may claim the ledger is fully indexed.
+    events_seen: events.done ? count(db) : start.events_seen,
   };
   writeIndexCursor(vaultPath, cursor);
   return {
     events: events.indexed,
     pages: pages.indexed,
     cursor,
+    remaining: indexBacklog(db, cursor),
     degraded: [],
   };
 }
 
-export function tryRefreshDerived(db: Database, vaultPath: string): IndexReport {
+export function tryRefreshDerived(
+  db: Database,
+  vaultPath: string,
+  options: { limit?: number } = {},
+): IndexReport {
   try {
-    return refreshDerived(db, vaultPath);
+    return refreshDerived(db, vaultPath, undefined, options);
   } catch (error) {
+    const cursor = readIndexCursor(vaultPath);
     return {
       events: 0,
       pages: 0,
-      cursor: readIndexCursor(vaultPath),
+      cursor,
+      remaining: indexBacklog(db, cursor),
       degraded: [
         `derived-index: ${error instanceof Error ? error.message : String(error)}`,
       ],
@@ -249,10 +311,12 @@ export async function refreshAndPublishDerived(
   try {
     report = refreshDerived(db, vaultPath, (event) => pending.push(event));
   } catch (error) {
+    const cursor = readIndexCursor(vaultPath);
     return {
       events: 0,
       pages: 0,
-      cursor: readIndexCursor(vaultPath),
+      cursor,
+      remaining: indexBacklog(db, cursor),
       degraded: [`derived-index: ${error instanceof Error ? error.message : String(error)}`],
     };
   }
@@ -270,6 +334,26 @@ export async function refreshAndPublishDerived(
   }
 }
 
+function indexMarkersCurrent(db: Database, cursor: IndexCursor): boolean {
+  return count(db) === cursor.events_seen && countCanonReceipts(db) === cursor.receipts_seen;
+}
+
+/**
+ * Records the next catch-up pass would take in. Zero only when the index is
+ * current, so a sweep can report progress instead of an empty pass while it is
+ * still behind.
+ */
+export function indexBacklog(db: Database, vaultPathOrCursor: string | IndexCursor): number {
+  const cursor =
+    typeof vaultPathOrCursor === "string" ? readIndexCursor(vaultPathOrCursor) : vaultPathOrCursor;
+  const behind =
+    countSince(db, eventSince(cursor)) + countCanonReceipts(db, cursor.receipt_id);
+  if (behind > 0) return behind;
+  // Positionally current, but a marker still disagrees (a purge shrank the
+  // ledger, say). One more pass re-stamps it.
+  return indexMarkersCurrent(db, cursor) ? 0 : 1;
+}
+
 export function indexFreshness(
   db: Database,
   vaultPath: string,
@@ -279,7 +363,7 @@ export function indexFreshness(
   if (count(db) !== cursor.events_seen) {
     degraded.push("index-behind-ledger");
   }
-  if (countCanonReceiptRows(db) !== cursor.receipts_seen) {
+  if (countCanonReceipts(db) !== cursor.receipts_seen) {
     degraded.push("index-behind-receipts");
   }
   if (pendingRetrievalOps(db, 1).length > 0) {

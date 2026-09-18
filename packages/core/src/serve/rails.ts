@@ -36,10 +36,19 @@ export interface RailSyncResult {
   readonly errors: readonly string[];
 }
 
+/** One bounded derived catch-up pass reported back to the rail. */
+export interface RailRefreshReport {
+  /** Derived records this pass brought current. */
+  readonly indexed: number;
+  /** Records still behind afterwards. Zero only when derived state is current. */
+  readonly remaining: number;
+  readonly degraded: readonly string[];
+}
+
 export interface RailHooks {
   readonly sync?: () => Promise<RailSyncResult>;
   /** Host-owned derived stores refresh after a successful or partial write pass. */
-  readonly refresh?: () => Promise<readonly string[]>;
+  readonly refresh?: () => Promise<RailRefreshReport>;
   readonly claims?: ClaimsIo;
   readonly model_ref?: string | null;
   readonly producer?: ProducerPort;
@@ -128,7 +137,7 @@ async function runSyncRail(
   // with a zeroed failed rail would hide a real write and understate budget.
   let refreshed: readonly string[];
   try {
-    refreshed = hooks?.refresh === undefined ? [] : await hooks.refresh();
+    refreshed = hooks?.refresh === undefined ? [] : (await hooks.refresh()).degraded;
   } catch (error) {
     refreshed = [redactReceiptError(error)];
   }
@@ -171,16 +180,23 @@ async function runRetrievalSweep(
     };
   }
   const result = await retryRetrievalOps(hooks.claims);
-  let refreshed: readonly string[] = [];
-  try { refreshed = await hooks.refresh?.() ?? []; }
-  catch { refreshed = ["retrieval refresh unavailable"]; }
-  const degraded = [...(result.pending === 0 ? [] : ["retrieval-ops-pending"]), ...refreshed];
+  // A derived index behind the ledger or receipts is work, not an empty pass.
+  // The host catches up in bounded batches and reports what is left, so the
+  // rail can record progress and refuse to call itself current too early.
+  let refreshed: RailRefreshReport;
+  try { refreshed = await hooks.refresh?.() ?? { indexed: 0, remaining: 0, degraded: [] }; }
+  catch (error) { refreshed = { indexed: 0, remaining: 1, degraded: [redactReceiptError(error)] }; }
+  const degraded = [
+    ...(result.pending === 0 ? [] : ["retrieval-ops-pending"]),
+    ...(refreshed.remaining === 0 ? [] : ["derived-index-behind"]),
+    ...refreshed.degraded,
+  ];
   return {
     status: degraded.length === 0 ? "ok" : "degraded",
     retrieval: {
-      upserts: result.retried,
+      upserts: result.retried + refreshed.indexed,
       removals: 0,
-      pending_ops: result.pending,
+      pending_ops: result.pending + refreshed.remaining,
       degraded,
     },
   };

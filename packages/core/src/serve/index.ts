@@ -101,7 +101,7 @@ export {
 export type { SupervisorCommandResult, SupervisorHost, SupervisorTimeoutAdapter } from "./supervisor";
 export { FILE_NOTIFIER_ID, briefPath, createFileNotifier } from "./notifier-file";
 export { dueRails, runRail, runServeOnce } from "./rails";
-export type { RailHooks, RailRuntime, RailSyncResult, RunRailOptions } from "./rails";
+export type { RailHooks, RailRefreshReport, RailRuntime, RailSyncResult, RunRailOptions } from "./rails";
 export { runWritePass } from "./write-pass";
 export type { WritePassOptions, WritePassResult } from "./write-pass";
 export {
