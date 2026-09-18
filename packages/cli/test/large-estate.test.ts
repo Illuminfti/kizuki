@@ -92,4 +92,28 @@ describe("a large estate", () => {
     },
     120_000,
   );
+
+  test(
+    "budget options are validated and refused alongside --prune-old",
+    async () => {
+      const fixture = helpers.tempVault();
+      for (const [args, diagnostic] of [
+        [["rebuild", "--max-records"], "missing value for --max-records"],
+        [["rebuild", "--max-records", "0"], "--max-records expects a positive integer"],
+        [["rebuild", "--max-entries", "x"], "--max-entries expects a positive integer"],
+        [["rebuild", "--max-source-bytes", "-1"], "--max-source-bytes expects a positive integer"],
+        [
+          ["rebuild", "--prune-old", "--max-source-bytes", "8"],
+          "rebuild --prune-old cannot be combined with --layer, --port, --confirm, or a budget option",
+        ],
+      ] as const) {
+        const result = await helpers.runCliAsync(fixture.env, ...args);
+        expect(result.exitCode).toBe(2);
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toContain(`error: ${diagnostic}`);
+        expect(result.stderr).toContain("usage: kizuki rebuild");
+      }
+    },
+    120_000,
+  );
 });

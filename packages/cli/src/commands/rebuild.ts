@@ -2,6 +2,7 @@ import {
   rebuildRetrieval,
   persistConfiguredRetrieval,
   countRetrievalDocuments,
+  DEFAULT_REBUILD_BUDGET,
   readRetrievalEngineSpace,
   planFullReembed,
   formatReembedRefusal,
@@ -24,8 +25,19 @@ import type { Command, CommandHelpSchema } from "./index";
 export const REBUILD_SCHEMA = {
   options: ["--layer", "--port", "--max-records", "--max-entries", "--max-source-bytes"],
   flags: ["--json", "--prune-old", "--confirm"],
-  defaults: { "--layer": "all" },
-  bounds: { "--layer": "all|search|graph" },
+  // Budget defaults are read from the budget itself so help cannot drift from it.
+  defaults: {
+    "--layer": "all",
+    "--max-records": String(DEFAULT_REBUILD_BUDGET.max_records),
+    "--max-entries": String(DEFAULT_REBUILD_BUDGET.max_filesystem_entries),
+    "--max-source-bytes": String(DEFAULT_REBUILD_BUDGET.max_source_bytes),
+  },
+  bounds: {
+    "--layer": "all|search|graph",
+    "--max-records": "N",
+    "--max-entries": "N",
+    "--max-source-bytes": "N",
+  },
 } as const satisfies CommandHelpSchema;
 
 const BUDGET_OPTIONS = {
@@ -57,7 +69,9 @@ function nextConfiguredEmbeddingSpace(vaultPath: string): string | null {
 
 export const rebuildCommand: Command = {
   name: "rebuild",
-  usage: "rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm] [--json]",
+  usage:
+    "rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm]" +
+    " [--max-records N] [--max-entries N] [--max-source-bytes N] [--json]",
   summary: "rebuild configured retrieval and the lexical floor, or prune inactive retrieval stores",
   schema: REBUILD_SCHEMA,
   async run(io, args) {

@@ -470,8 +470,7 @@ in place.
 ## rebuild
 
 ```text
-usage: kizuki rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm]
-                      [--max-records N] [--max-entries N] [--max-source-bytes N] [--json]
+usage: kizuki rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm] [--max-records N] [--max-entries N] [--max-source-bytes N] [--json]
 ```
 
 Reconstructs derived retrieval from the vault. `--layer all` rebuilds the
