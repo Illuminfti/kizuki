@@ -53,7 +53,7 @@ package, by name only. No credential value is written to `BUILD.json`,
 before this field existed omit it and claim nothing about credentials.
 
 A credential-free package refuses Telegram sign-in before any prompt, browser
-or network call, with this message and nothing else:
+or network call, with this message:
 
 ```
 kizuki.telegram: app credentials are not compiled in; build with KIZUKI_TELEGRAM_API_ID and KIZUKI_TELEGRAM_API_HASH set (see packages/connector-telegram/README.md)
