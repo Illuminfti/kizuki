@@ -317,3 +317,36 @@ test("rebuild verifies the snapshot document set and golden recall", async () =>
     temporary.cleanup();
   }
 });
+
+test("the lexical floor rebuilds an estate above the historical record ceiling", async () => {
+  fixture = await serveFixture();
+  const records = 12_000;
+  fixture.db.transaction(() => {
+    for (let index = 0; index < records; index += 1) {
+      putEvent(fixture!.db, {
+        source_record_id: `ceiling-${index}`,
+        text: `record ${index} estateword`,
+      });
+    }
+  }).immediate();
+  const report = await rebuildRetrieval(fixture.db, fixture.vaultPath);
+  expect(report.backend).toBe("sqlite-floor");
+  expect(report.floor_documents).toBeGreaterThanOrEqual(records);
+}, 300_000);
+
+test("a record budget refusal names the actual count and the flag that raises it", async () => {
+  fixture = await serveFixture();
+  for (let index = 0; index < 8; index += 1) {
+    putEvent(fixture.db, { source_record_id: `budget-${index}`, text: `record ${index}` });
+  }
+  expect(() => readRetrievalDocuments(fixture!.db, fixture!.vaultPath, { max_records: 2 }))
+    .toThrow(/record budget: \d+ > 2; raise it with --max-records/);
+  expect(readRetrievalDocuments(fixture.db, fixture.vaultPath).length).toBeGreaterThan(2);
+});
+
+test("an entry budget refusal names the actual count and the flag that raises it", async () => {
+  fixture = await serveFixture();
+  await expect(rebuildRetrieval(fixture.db, fixture.vaultPath, undefined, {
+    budget: { max_filesystem_entries: 1 },
+  })).rejects.toThrow(/filesystem entry budget: 2 > 1; raise it with --max-entries/);
+});

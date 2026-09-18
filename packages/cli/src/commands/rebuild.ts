@@ -1,7 +1,8 @@
 import {
   rebuildRetrieval,
   persistConfiguredRetrieval,
-  readRetrievalDocuments,
+  countRetrievalDocuments,
+  DEFAULT_REBUILD_BUDGET,
   readRetrievalEngineSpace,
   planFullReembed,
   formatReembedRefusal,
@@ -9,6 +10,7 @@ import {
   loadConfiguredRetrieval,
   PortError,
   type EmbeddingPort,
+  type RebuildBudget,
   type RetrievalPort,
 } from "@kizuki/core";
 import { parseArguments, UsageError } from "../args";
@@ -21,11 +23,43 @@ import { loadVaultConfig } from "../vault-config";
 import type { Command, CommandHelpSchema } from "./index";
 
 export const REBUILD_SCHEMA = {
-  options: ["--layer", "--port"],
+  options: ["--layer", "--port", "--max-records", "--max-entries", "--max-source-bytes"],
   flags: ["--json", "--prune-old", "--confirm"],
-  defaults: { "--layer": "all" },
-  bounds: { "--layer": "all|search|graph" },
+  // Budget defaults are read from the budget itself so help cannot drift from it.
+  defaults: {
+    "--layer": "all",
+    "--max-records": String(DEFAULT_REBUILD_BUDGET.max_records),
+    "--max-entries": String(DEFAULT_REBUILD_BUDGET.max_filesystem_entries),
+    "--max-source-bytes": String(DEFAULT_REBUILD_BUDGET.max_source_bytes),
+  },
+  bounds: {
+    "--layer": "all|search|graph",
+    "--max-records": "N",
+    "--max-entries": "N",
+    "--max-source-bytes": "N",
+  },
 } as const satisfies CommandHelpSchema;
+
+const BUDGET_OPTIONS = {
+  "--max-records": "max_records",
+  "--max-entries": "max_filesystem_entries",
+  "--max-source-bytes": "max_source_bytes",
+} as const;
+
+/** Each budget dimension is raisable by the flag its refusal names. */
+function parseBudget(options: Map<string, string>): Partial<RebuildBudget> {
+  const budget: Partial<Record<(typeof BUDGET_OPTIONS)[keyof typeof BUDGET_OPTIONS], number>> = {};
+  for (const [flag, key] of Object.entries(BUDGET_OPTIONS)) {
+    const raw = options.get(flag);
+    if (raw === undefined) continue;
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new UsageError(`${flag} expects a positive integer`);
+    }
+    budget[key] = value;
+  }
+  return budget;
+}
 
 function nextConfiguredEmbeddingSpace(vaultPath: string): string | null {
   const extra = loadVaultConfig(vaultPath).ports.extra["embedding"];
@@ -35,7 +69,9 @@ function nextConfiguredEmbeddingSpace(vaultPath: string): string | null {
 
 export const rebuildCommand: Command = {
   name: "rebuild",
-  usage: "rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm] [--json]",
+  usage:
+    "rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm]" +
+    " [--max-records N] [--max-entries N] [--max-source-bytes N] [--json]",
   summary: "rebuild configured retrieval and the lexical floor, or prune inactive retrieval stores",
   schema: REBUILD_SCHEMA,
   async run(io, args) {
@@ -50,8 +86,10 @@ export const rebuildCommand: Command = {
     if (parsed.positionals.length > 0 || (layer !== "all" && layer !== "graph" && layer !== "search")) {
       throw new UsageError("rebuild supports --layer all, search, or graph; other partial layers are not implemented");
     }
-    if (pruneOld && (parsed.options.has("--layer") || portId !== undefined || confirm)) {
-      throw new UsageError("rebuild --prune-old cannot be combined with --layer, --port, or --confirm");
+    const budget = parseBudget(parsed.options);
+    if (pruneOld && (parsed.options.has("--layer") || portId !== undefined || confirm ||
+        Object.keys(budget).length > 0)) {
+      throw new UsageError("rebuild --prune-old cannot be combined with --layer, --port, --confirm, or a budget option");
     }
     return withVault(io, async ctx => {
       if (pruneOld) {
@@ -79,17 +117,19 @@ export const rebuildCommand: Command = {
           const storeId = portId ?? loadConfiguredRetrieval(ctx.vaultPath).id;
           const previousSpace = readRetrievalEngineSpace(ctx.vaultPath, storeId);
           const nextSpace = nextConfiguredEmbeddingSpace(ctx.vaultPath);
-          const documents = readRetrievalDocuments(ctx.db, ctx.vaultPath).length;
+          // Pricing a re-embed is the only reason to size the projection, and
+          // sizing it reads the whole corpus. Do not pay that for a plain rebuild.
+          const documents = (): number => countRetrievalDocuments(ctx.db, ctx.vaultPath, budget);
           const throughputDocsPerS = inspectServeDoctor(ctx.db, ctx.vaultPath).stores.embedding_throughput_docs_per_s;
           if (nextSpace !== null && nextSpace !== previousSpace) {
-            const plan = planFullReembed({ previousSpace, nextSpace, documents, throughputDocsPerS });
+            const plan = planFullReembed({ previousSpace, nextSpace, documents: documents(), throughputDocsPerS });
             if (plan !== null && !confirm) throw new UsageError(formatReembedRefusal(plan));
           }
           if (storeId !== "kizuki.retrieval.fts5") {
             embedding = await openConfiguredEmbedding(ctx.vaultPath);
             const liveSpace = embedding?.space().id ?? null;
             if (liveSpace !== null && liveSpace !== previousSpace) {
-              const plan = planFullReembed({ previousSpace, nextSpace: liveSpace, documents, throughputDocsPerS });
+              const plan = planFullReembed({ previousSpace, nextSpace: liveSpace, documents: documents(), throughputDocsPerS });
               if (plan !== null && !confirm) throw new UsageError(formatReembedRefusal(plan));
             }
             if (previousSpace !== null && embedding === undefined) {
@@ -106,7 +146,7 @@ export const rebuildCommand: Command = {
             embedding === undefined ? {} : { embedding },
           );
         }
-        const result = await rebuildRetrieval(ctx.db, ctx.vaultPath, selected, { layer });
+        const result = await rebuildRetrieval(ctx.db, ctx.vaultPath, selected, { layer, budget });
         if (layer === "all" || layer === "search") refreshDerived(ctx.db, ctx.vaultPath);
         if (portId !== undefined && layer === "all") {
           persistConfiguredRetrieval(ctx.db, ctx.vaultPath, result.store);

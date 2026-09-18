@@ -5,6 +5,7 @@ import { ConnectionStateStore } from '../src/ledger/connection-state';
 import { enrollConnection } from '../src/ledger/enroll';
 import { listConnections, disconnect, type Connection } from '../src/ledger/connections';
 import { openLedger } from '../src/ledger/db';
+import { withControlWait } from '../src/ledger/busy';
 import { connector, io, temporaryDirectories } from './connections-helpers';
 const dirs=temporaryDirectories('new-enrollment-');afterEach(dirs.cleanup);
 const bytes=(text:string)=>new TextEncoder().encode(text);
@@ -33,7 +34,9 @@ test('two native database handles race same identity; verification executes unde
  const delayed=()=>connector(async(_io,writer)=>{await start;await writer.write(bytes('same-account'));return{display:'synthetic'};});
  let locked=false;
  const verify=(candidate:Uint8Array,existing:readonly {connection:Connection;state:Uint8Array|null}[])=>{
-  if(!locked){expect(()=>other.exec('BEGIN IMMEDIATE')).toThrow();locked=true;}unique(candidate,existing);
+  // Exclusion, not patience: probe under the control wait so the assertion is
+  // about the writer lock this verifier holds, not the ordinary batch timeout.
+  if(!locked){withControlWait(other,()=>{expect(()=>other.exec('BEGIN IMMEDIATE')).toThrow();});locked=true;}unique(candidate,existing);
  };
  try{
   const first=enrollConnection(db,a,delayed(),io,verify),second=enrollConnection(other,b,delayed(),io,unique);
