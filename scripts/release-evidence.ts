@@ -139,6 +139,9 @@ export function receiptInstant(value: string): string {
 function relativePosix(value: unknown): string {
   const path = text(value, 256);
   if (!/^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/.test(path)) reject("invalid-identity");
+  // `.` and `..` match the segment character class; a receipt must never steer a
+  // read outside the checkout it claims to describe.
+  if (path.split("/").some(segment => segment === "." || segment === "..")) reject("invalid-identity");
   return path;
 }
 function strictlySorted(items: readonly string[]): boolean {
@@ -241,7 +244,9 @@ export function gateReceiptMappingError(rows: readonly GateReceiptReference[]): 
 }
 
 export function inspectOptionalVerifier(root: string, file: string): VerifierEntry {
-  const path = resolve(root, file);
+  const base = resolve(root), path = resolve(base, file);
+  // No caller may read outside the checkout, whatever path a receipt names.
+  if (path !== base && !path.startsWith(`${base}/`)) reject("verifier-file-outside-checkout");
   let stat;
   try { stat = lstatSync(path); }
   catch (error) {
@@ -791,6 +796,12 @@ export const P0_DISPOSITION_PRODUCER = "kizuki.p0-disposition/v1";
 export const JOURNEY_PRODUCER = "kizuki.journey-proof/v1";
 export const CONNECTOR_PRODUCER = "kizuki.connector-evidence/v1";
 export const REQUIRED_CHECKS_PRODUCER_FILES = ["scripts/release-evidence.ts", "scripts/required-checks.ts"] as const;
+/** No journey or connector producer entrypoint has landed yet, so the shared
+ * receipt module is the whole producer surface. A later lane that adds a
+ * producer script extends these lists; leaving them unpinned would let a receipt
+ * author choose which files the revision is computed over. */
+export const JOURNEY_PRODUCER_FILES = ["scripts/release-evidence.ts"] as const;
+export const CONNECTOR_PRODUCER_FILES = ["scripts/release-evidence.ts"] as const;
 export const P0_DISPOSITION_PRODUCER_FILES = ["scripts/p0-disposition.ts", "scripts/release-evidence.ts"] as const;
 /** The three branch-protection contexts, in their required order. */
 export const REQUIRED_CONTEXTS = ["test", "secrets", "workflows"] as const;
@@ -914,7 +925,7 @@ export function evaluateJourneyReceipt(value: unknown, binding: JourneyBinding):
   refuseRawOutput(value);
   const row = exact(value, "schema,identity,journey_id,acceptance_credit,steps");
   if (row.schema !== JOURNEY_PRODUCER) reject("invalid-schema");
-  familyIdentity(row.identity, JOURNEY_PRODUCER, binding, "local-operator-custody", "authorized-operator");
+  familyIdentity(row.identity, JOURNEY_PRODUCER, binding, "local-operator-custody", "authorized-operator", JOURNEY_PRODUCER_FILES);
   const journey_id = kebab(row.journey_id);
   if (!(JOURNEYS as readonly string[]).includes(journey_id)) reject("unknown-journey");
   if (journey_id !== binding.journey_id) reject("mismatched-gate-or-target");
@@ -933,7 +944,7 @@ export function evaluateConnectorReceipt(value: unknown, binding: ConnectorBindi
   if (connector_id !== binding.connector_id) reject("mismatched-gate-or-target");
   // A file import can never stand in for a live account, whatever it claims.
   if (kebab(row.evidence_class) !== entry.evidence) reject("connector-evidence-class-mismatch");
-  familyIdentity(row.identity, CONNECTOR_PRODUCER, binding, CONNECTOR_SOURCE_CLASSES[entry.evidence], "authorized-operator");
+  familyIdentity(row.identity, CONNECTOR_PRODUCER, binding, CONNECTOR_SOURCE_CLASSES[entry.evidence], "authorized-operator", CONNECTOR_PRODUCER_FILES);
   acceptanceCredit(row.acceptance_credit);
   receiptSteps(row.steps);
   return { status: "PASS", reason: "connector-steps-passed", creditDigest: true };

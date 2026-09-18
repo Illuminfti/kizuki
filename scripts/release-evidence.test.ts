@@ -3,11 +3,11 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  CONNECTORS, CONNECTOR_PRODUCER, EVALUATOR_ROOT, EvidenceError, JOURNEYS, JOURNEY_PRODUCER,
-  P0_DISPOSITION_PRODUCER, P0_DISPOSITION_PRODUCER_FILES, P0_LABEL, RECEIPT_FAMILIES,
+  CONNECTORS, CONNECTOR_PRODUCER, CONNECTOR_PRODUCER_FILES, EVALUATOR_ROOT, EvidenceError, JOURNEYS, JOURNEY_PRODUCER,
+  JOURNEY_PRODUCER_FILES, P0_DISPOSITION_PRODUCER, P0_DISPOSITION_PRODUCER_FILES, P0_LABEL, RECEIPT_FAMILIES,
   REQUIRED_CHECKS_PRODUCER, REQUIRED_CHECKS_PRODUCER_FILES, REQUIRED_CONTEXTS,
   consumeConnectorReceipt, consumeJourneyReceipt, evaluateConnectorReceipt, evaluateJourneyReceipt,
-  evaluateP0DispositionReceipt, evaluateRequiredChecksReceipt, evaluatorRevision, producerRevision,
+  evaluateP0DispositionReceipt, evaluateRequiredChecksReceipt, evaluatorRevision, inspectOptionalVerifier, producerRevision,
 } from "./release-evidence";
 
 const digest = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
@@ -52,7 +52,7 @@ function p0Body(patch: Record<string, unknown> = {}) {
     candidate_committed_at: recorded, snapshot_at: later, open_issues: [] as unknown[], ...patch,
   };
 }
-const journeyIdentity = () => identity(JOURNEY_PRODUCER, ["scripts/release-evidence.ts"], "local-operator-custody", "authorized-operator");
+const journeyIdentity = () => identity(JOURNEY_PRODUCER, JOURNEY_PRODUCER_FILES, "local-operator-custody", "authorized-operator");
 function journeyBody(journey_id: string, patch: Record<string, unknown> = {}) {
   return { schema: JOURNEY_PRODUCER, identity: journeyIdentity(), journey_id, acceptance_credit: true, steps: [step("install"), step("resume")], ...patch };
 }
@@ -60,7 +60,7 @@ const connectorSource = { "live-account": "live-account-operator", "file-import"
 function connectorBody(connector_id: string, evidence_class: "live-account" | "file-import" | "local-source", patch: Record<string, unknown> = {}) {
   return {
     schema: CONNECTOR_PRODUCER,
-    identity: identity(CONNECTOR_PRODUCER, ["scripts/release-evidence.ts"], connectorSource[evidence_class], "authorized-operator"),
+    identity: identity(CONNECTOR_PRODUCER, CONNECTOR_PRODUCER_FILES, connectorSource[evidence_class], "authorized-operator"),
     connector_id, evidence_class, acceptance_credit: true, steps: [step("enroll")], ...patch,
   };
 }
@@ -217,4 +217,51 @@ test("the consumable family registry covers exactly the four wired producers", (
   expect(Object.keys(RECEIPT_FAMILIES).sort()).toEqual([
     CONNECTOR_PRODUCER, JOURNEY_PRODUCER, P0_DISPOSITION_PRODUCER, REQUIRED_CHECKS_PRODUCER,
   ].sort());
+});
+
+test("journey and connector receipts cannot choose which producer files bind them", () => {
+  // A self-consistent revision over a file the family never produces is still refused.
+  const forged = ["package.json"];
+  expect(reasonOf(() => evaluateJourneyReceipt(journeyBody("connect-resume", {
+    identity: identity(JOURNEY_PRODUCER, forged, "local-operator-custody", "authorized-operator"),
+  }), { ...binding, journey_id: "connect-resume" }))).toBe("producer-files-mismatch");
+  expect(reasonOf(() => evaluateConnectorReceipt(connectorBody("telegram", "live-account", {
+    identity: identity(CONNECTOR_PRODUCER, forged, "live-account-operator", "authorized-operator"),
+  }), { ...binding, connector_id: "telegram" }))).toBe("producer-files-mismatch");
+  expect([...JOURNEY_PRODUCER_FILES]).toEqual(["scripts/release-evidence.ts"]);
+  expect([...CONNECTOR_PRODUCER_FILES]).toEqual(["scripts/release-evidence.ts"]);
+});
+
+test("a receipt cannot steer the evaluator outside its own checkout", () => {
+  const traversal = ["../../../../etc/passwd"];
+  for (const family of [
+    () => evaluateJourneyReceipt(journeyBody("connect-resume", {
+      identity: identity(JOURNEY_PRODUCER, traversal, "local-operator-custody", "authorized-operator"),
+    }), { ...binding, journey_id: "connect-resume" }),
+    () => evaluateConnectorReceipt(connectorBody("telegram", "live-account", {
+      identity: identity(CONNECTOR_PRODUCER, traversal, "live-account-operator", "authorized-operator"),
+    }), { ...binding, connector_id: "telegram" }),
+    () => evaluateRequiredChecksReceipt(checksBody({
+      identity: { ...checksIdentity(), producer_files: traversal, producer_revision: revision(traversal) },
+    }), binding),
+  ]) expect(reasonOf(family)).toBe("invalid-identity");
+  // The path segments `.` and `..` are rejected before any filesystem access, and
+  // the reader itself refuses a resolved path outside the checkout.
+  expect(reasonOf(() => inspectOptionalVerifier(EVALUATOR_ROOT, "../../../../etc/passwd"))).toBe("verifier-file-outside-checkout");
+  expect(reasonOf(() => inspectOptionalVerifier(EVALUATOR_ROOT, "scripts/../../etc/passwd"))).toBe("verifier-file-outside-checkout");
+  expect(reasonOf(() => evaluatorRevision(EVALUATOR_ROOT)(["../../../../etc/definitely-missing"]))).toBe("verifier-file-outside-checkout");
+});
+
+test("the journey and connector families bind the evaluator's real checkout bytes", () => {
+  const bind = evaluatorRevision(EVALUATOR_ROOT);
+  const real = (producer: string, files: readonly string[], source_class: string) =>
+    identity(producer, files, source_class, "authorized-operator", { producer_revision: bind(files) });
+  expect(evaluateJourneyReceipt(journeyBody("connect-resume", {
+    identity: real(JOURNEY_PRODUCER, JOURNEY_PRODUCER_FILES, "local-operator-custody"),
+  }), { candidate_source_sha: source, revision: bind, journey_id: "connect-resume" })).toEqual({
+    status: "PASS", reason: "journey-steps-passed", creditDigest: true,
+  });
+  expect(reasonOf(() => evaluateJourneyReceipt(journeyBody("connect-resume", {
+    identity: identity(JOURNEY_PRODUCER, JOURNEY_PRODUCER_FILES, "local-operator-custody", "authorized-operator"),
+  }), { candidate_source_sha: source, revision: bind, journey_id: "connect-resume" }))).toBe("producer-revision-mismatch");
 });

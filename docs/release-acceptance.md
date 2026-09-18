@@ -157,11 +157,23 @@ status; an arbitrary receipt cannot supply release credit.
 
 Four further families share one receipt shape. A receipt names its producer
 files and the revision of those files, binds the exact candidate source SHA, and
-declares a `source_class` and `actor_class` from the fixed lists. The evaluator
-recomputes the producer revision from its own checkout, so a receipt whose
-producer bytes differ is refused. A receipt records observations only; the
-evaluator computes the verdict, and an evaluator that cannot certify returns
-`UNVERIFIABLE` with a stated reason rather than `PASS`.
+declares a `source_class` and `actor_class` from the fixed lists. Each family
+pins the exact producer file list it accepts, so a receipt naming any other file
+is refused before the evaluator reads anything; the evaluator then recomputes
+that revision from its own checkout, so a receipt whose producer bytes differ is
+refused too. Producer paths are checkout-relative and may contain no `.` or `..`
+segment, and the evaluator refuses to read a path that resolves outside its
+checkout, so a receipt cannot steer it at the host filesystem. A receipt records
+observations only; the evaluator computes the verdict, and an evaluator that
+cannot certify returns `UNVERIFIABLE` with a stated reason rather than `PASS`.
+
+The producer revision binds the bytes of the producing code, not the work the
+receipt describes. For `kizuki.journey-proof/v1` and `kizuki.connector-evidence/v1`
+no producer entrypoint has landed yet, so the pinned list is
+`scripts/release-evidence.ts` alone and the revision attests only to the shared
+receipt module. Those two families still depend on the operator's custody of the
+steps they record; a later lane that lands a journey or connector producer script
+adds it to the pinned list.
 
 `kizuki.required-checks/v1` (`scripts/required-checks.ts`) records exactly
 `test`, `secrets` and `workflows` with each context's conclusion, run ID and

@@ -7,7 +7,7 @@ import { COMMANDS } from "../packages/cli/src/commands/index";
 import { printRootHelp } from "../packages/cli/src/help";
 import { evaluateRelease, gates, parseAcceptanceArgs, releaseDecision, writeAcceptanceReport } from "./go-no-go";
 import {
-  CAPABILITY_PROOF_FILE, CHECKOUT_LIMITS, CONNECTORS, CONNECTOR_PRODUCER, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, JOURNEY_PRODUCER,
+  CAPABILITY_PROOF_FILE, CHECKOUT_LIMITS, CONNECTORS, CONNECTOR_PRODUCER, CONNECTOR_PRODUCER_FILES, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, JOURNEY_PRODUCER, JOURNEY_PRODUCER_FILES,
   P0_DISPOSITION_PRODUCER, REQUIRED_CHECKS_PRODUCER, REQUIRED_CONTEXTS, SURFACE_DOC_FILES, SURFACE_GATE, SURFACE_OBSERVED_FILES, SURFACE_PRODUCER, SURFACE_PRODUCER_FILES, TARGETS,
   assertCheckoutCustody, assertProductCheckoutCustody, bindEvaluatorCheckout, cliVerbSequence, collectProductSources, consumeSurfaceReceipt, evaluateSurfaceReceipt, evaluatorRevision, inspectOptionalVerifier, read, surfaceProducerActive,
 } from "./release-evidence";
@@ -1307,10 +1307,15 @@ function retain(root: string, name: string, body: unknown) {
   writeFileSync(path, bytes);
   return { path, sha256: digest(bytes) };
 }
-function familyIdentity(producer: string, source_class: string, actor_class: string) {
-  const producer_files = ["scripts/release-evidence.ts"];
+function familyIdentity(producer: string, source_class: string, actor_class: string, files?: readonly string[]) {
+  const producer_files = [...(files ?? (producer === JOURNEY_PRODUCER ? JOURNEY_PRODUCER_FILES : CONNECTOR_PRODUCER_FILES))];
+  // A traversal path has no evaluator revision at all; the receipt still has to be
+  // constructible so the evaluator gets its chance to refuse it.
+  let producer_revision: string;
+  try { producer_revision = evaluatorRevision(EVALUATOR_ROOT)(producer_files); }
+  catch { producer_revision = digest(JSON.stringify(producer_files)); }
   return {
-    candidate_source_sha: source, producer, producer_revision: evaluatorRevision(EVALUATOR_ROOT)(producer_files),
+    candidate_source_sha: source, producer, producer_revision,
     producer_files, source_class, actor_class, attempt_id: ATTEMPT, recorded_at: RECORDED,
   };
 }
@@ -1425,6 +1430,14 @@ test("a complete journey receipt credits only its own gate and raw output is ref
     ["journey-unpassed.json", journeyReceipt("daily-loop", { steps: [receiptStep("one", { passed: false, exit_code: 1 })] }), "step-not-passed"],
     ["journey-withheld.json", journeyReceipt("daily-loop", { acceptance_credit: false }), "acceptance-credit-withheld"],
     ["journey-foreign.json", journeyReceipt("useful-insight"), "mismatched-gate-or-target"],
+    // A receipt naming an in-repo file the family never produces, with a matching
+    // revision, must not buy provenance; nor may it name a path outside the checkout.
+    ["journey-forged-files.json", journeyReceipt("daily-loop", {
+      identity: familyIdentity(JOURNEY_PRODUCER, "local-operator-custody", "authorized-operator", ["package.json"]),
+    }), "producer-files-mismatch"],
+    ["journey-traversal.json", journeyReceipt("daily-loop", {
+      identity: familyIdentity(JOURNEY_PRODUCER, "local-operator-custody", "authorized-operator", ["../../../../etc/passwd"]),
+    }), "invalid-identity"],
   ] as const) {
     const retained = retain(f.root, name, body);
     asV3(f, [receiptRef(JOURNEY_PRODUCER, "journey.daily-loop", null, retained.path, retained.sha256)]);
