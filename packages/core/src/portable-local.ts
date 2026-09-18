@@ -92,15 +92,24 @@ function checkSnapshots(files: ReturnType<typeof openCanonFiles>, snapshots: rea
 /** Generic manifest verification must never open this member by pathname first. */
 export function hashPortableLocal(root: string): { sha256: string; size: number } {
   const parent = openCanonFiles(dirname(root));
-  let files: ReturnType<typeof openCanonFiles> | undefined;
+  let files: ReturnType<typeof openCanonFiles>;
+  try { parent.assertPrivateDirectory(basename(root)); files = openCanonFiles(root); }
+  catch (error) { parent.close(); throw error; }
+  const snapshots: CanonFileSnapshot[] = [];
+  // Both holding directories bound the hash restore verification trusts, so the
+  // whole gate repeats after the read, exactly as readPortableBackup repeats it.
+  const check = (): void => {
+    parent.assertPrivateDirectory(basename(root)); files.assertPrivateDirectory("connections");
+    checkSnapshots(files, snapshots);
+  };
   try {
-    parent.assertPrivateDirectory(basename(root));
-    files = openCanonFiles(root); files.assertPrivateDirectory("connections");
+    check();
     const snapshot = files.readPrivate(PORTABLE_LOCAL_STREAM); if (snapshot === null) fail();
+    snapshots.push(snapshot);
     const bytes = snapshot.bytes;
-    checkSnapshots(files, [snapshot]); parent.assertPrivateDirectory(basename(root));
+    check();
     return { sha256: sha256Hex(bytes), size: bytes.byteLength };
-  } finally { try { files?.close(); } finally { parent.close(); } }
+  } finally { try { files.close(); } finally { parent.close(); } }
 }
 
 /** Immutable expected bytes and fresh native reads bind inputs through publication. */

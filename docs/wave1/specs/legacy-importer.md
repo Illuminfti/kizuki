@@ -452,8 +452,9 @@ export interface LegacyFrontmatter {
 export function parseLegacyFrontmatter(markdown: string): LegacyFrontmatter;
 ```
 
-Detection: optional BOM, then a first line exactly `---`; the block ends at
-the next line exactly `---` or `...`; no closing line → `unparsed`
+Detection: optional BOM, then a first line of `---` alone apart from trailing
+spaces or tabs; the block ends at the next line of `---` or `...` alone apart
+from trailing spaces or tabs; no closing line → `unparsed`
 ("no closing fence"). Block ≤ 64 KiB else `unparsed` ("frontmatter exceeds
 64 KiB"). Supported YAML subset: block mappings (`key: value`, keys
 `[^\s:#][^:]*` trimmed), nested mappings and block sequences by space

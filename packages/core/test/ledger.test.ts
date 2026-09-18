@@ -234,6 +234,30 @@ describe("replay", () => {
     db.close();
   });
 
+  test("an offset-written since selects the same rows as its UTC twin", () => {
+    const db = openLedger(":memory:");
+    storedEvent(db, event("before", { occurred_at: "2026-02-02T16:59:59Z" }));
+    storedEvent(db, event("after", { occurred_at: "2026-02-02T17:00:01Z" }));
+    const utc = [...replay(db, { since: "2026-02-02T17:00:00Z" })].map(
+      ({ source_record_id }) => source_record_id,
+    );
+    const offset = [...replay(db, { since: "2026-02-02T12:00:00-05:00" })].map(
+      ({ source_record_id }) => source_record_id,
+    );
+    expect(utc).toEqual(["after"]);
+    expect(offset).toEqual(utc);
+    db.close();
+  });
+
+  test("since refuses an instant that has no RFC3339 UTC spelling", () => {
+    const db = openLedger(":memory:");
+    // Valid RFC3339, but the UTC equivalent falls outside year 9999.
+    expect(() => [...replay(db, { since: "9999-12-31T23:59:59-14:00" })]).toThrow(
+      /no RFC3339 UTC spelling/,
+    );
+    db.close();
+  });
+
   test("since distinguishes nanoseconds inside one millisecond", () => {
     const db = openLedger(":memory:");
     storedEvent(db, event("before", {

@@ -92,12 +92,17 @@ The `env:` reference accepts an environment-variable name. The `file:`
 reference must be absolute and name an owner-only regular local file. Kizuki
 stores the reference, never the token value.
 
-Keep Beeper running during capture. `backfill beeper` and `sync beeper`
-walk the available message history in bounded pages, resuming an interrupted
-walk from its saved cursor. A completed walk restarts from the newest page
-next time; unchanged records deduplicate. This conservative polling also
-finds edits and explicit deletion markers present in the local history.
-Messages merely absent from a later response are never treated as deleted.
+Keep Beeper running during capture. `backfill beeper` walks the available
+message history backward in bounded pages, resuming an interrupted walk from
+its saved cursor, and remembers the newest point the walk started from. `sync
+beeper` then polls forward from that point and stops once nothing newer is
+left, so a scheduled sync costs one page when the account is quiet. A sync
+that finds no remembered point reads one newest page to establish it, and a
+sync handed an unfinished walk finishes that walk first. Running `backfill
+beeper` again after a completed walk starts over from the newest page;
+unchanged records deduplicate. This conservative polling also finds edits and
+explicit deletion markers present in the local history. Messages merely absent
+from a later response are never treated as deleted.
 Pages contain at most 20 messages. Attachment references, filenames, MIME
 types, and known byte sizes are retained; file contents and download URLs
 are not captured.

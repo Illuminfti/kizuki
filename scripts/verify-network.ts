@@ -569,24 +569,45 @@ function isScannedFile(file: string): boolean {
   );
 }
 
+/** Network binaries a shell word may name; `ssh`/`telnet` stay out of shell scanning. */
+const shellNetworkBinaries = new Set(["curl", "wget", "ncat", "netcat", "nc"]);
+
+/**
+ * Name a shell word invokes, so `/usr/bin/curl`, `./curl` and `bin/wget` read as
+ * the binary they run. URL-shaped words keep their whole text: `https://host/curl`
+ * fetches a path, it does not run one.
+ */
+function shellNetworkBinary(word: string): string | null {
+  if (word.includes("://")) return null;
+  const base = word.split("/").pop() ?? word;
+  return shellNetworkBinaries.has(base) ? base : null;
+}
+
+/** Shell metacharacters and quotes that end one word and start the next. */
+const SHELL_WORD_BREAK = /[`$;&|(){}<>"'\s]/;
+
 export function scanShellText(file: string, source: string): NetworkFinding[] {
   const pending: Array<Omit<NetworkFinding, "site"> & { base: string }> = [];
   const lines = source.split(/\r?\n/);
-  const command = /(?:^|[`$;&|(\s])(curl|wget|ncat|netcat|nc)(?=\s|$)/g;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!;
     const trimmed = line.trim();
     if (trimmed.length === 0 || trimmed.startsWith("#")) continue;
     const commandLine = trimmed.replace(/\s+#.*$/, "");
-    command.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = command.exec(commandLine)) !== null) {
-      const cmd = match[1]!;
-      const column = line.indexOf(cmd) + 1;
+    const indent = line.length - line.trimStart().length;
+    let start = 0;
+    for (let cursor = 0; cursor <= commandLine.length; cursor += 1) {
+      const atEnd = cursor === commandLine.length;
+      if (!atEnd && !SHELL_WORD_BREAK.test(commandLine[cursor]!)) continue;
+      const word = commandLine.slice(start, cursor);
+      start = cursor + 1;
+      if (word.length === 0) continue;
+      const cmd = shellNetworkBinary(word);
+      if (cmd === null) continue;
       pending.push({
         file,
         line: index + 1,
-        column: column > 0 ? column : 1,
+        column: indent + cursor - cmd.length + 1,
         reason: `network subprocess: ${cmd}`,
         base: `(toplevel).${cmd}`,
       });

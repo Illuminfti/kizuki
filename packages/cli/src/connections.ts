@@ -1,4 +1,4 @@
-import { XApiConnector, createXApiConnector, inspectXApiState, type XApiConfig, createMarkdownFolderConnector, MARKDOWN_FOLDER_CONNECTOR_ID, MAX_FILES, LEGACY_EVENTS_AUTH_MODES, LEGACY_EVENTS_CONNECTOR_ID, LEGACY_WIKI_AUTH_MODES, LEGACY_WIKI_CONNECTOR_ID, REGISTRY, getConnector, type MarkdownFolderConfig, type MarkdownFolderDeps } from "@kizuki/connectors";
+import { XApiConnector, createXApiConnector, inspectXApiState, type XApiConfig, createMarkdownFolderConnector, MARKDOWN_FOLDER_CONNECTOR_ID, MAX_FILES, LEGACY_EVENTS_AUTH_MODES, LEGACY_EVENTS_CONNECTOR_ID, LEGACY_WIKI_AUTH_MODES, LEGACY_WIKI_CONNECTOR_ID, REGISTRY, getConnector, createLegacyWikiConnector, type MarkdownFolderConfig, type MarkdownFolderDeps, type LegacyWikiConfig, type LegacyWikiDeps, type LegacyWikiIdentity } from "@kizuki/connectors";
 import { xApiClient, xApiRequiredFields, xApiStateConfig } from "./x-api";
 import type { ConnectionStateReader } from "@kizuki/core";
 import { GoogleCalendarConnector, createGoogleCalendarConnector, inspectGoogleCalendarState, type GoogleCalendarConnectorConfig } from "@kizuki/connector-google-calendar";
@@ -48,7 +48,10 @@ export class ConnectionError extends Error {
 const SOURCE_KEY = /^[0-9A-HJKMNPQRSTVWXYZ]{26}$/;
 const MARKDOWN_SHA256 = /^[0-9a-f]{64}$/;
 
-type HostConnectorFactoryDeps = Partial<TelegramDeps> & Partial<MarkdownFolderDeps>;
+type HostConnectorFactoryDeps = Partial<TelegramDeps> &
+  Partial<MarkdownFolderDeps> & {
+    wikiCommittedFiles?: LegacyWikiDeps["committedFiles"];
+  };
 
 /**
  * Latest live Markdown identities for one enrolled source. Identifier and
@@ -115,6 +118,75 @@ export function markdownCommittedIdentities(
     }
     seen.add(relpath);
     files.push([relpath, { sha256, size }]);
+  }
+  return files;
+}
+
+const WIKI_MAX_FILES = 50_000;
+
+/**
+ * Latest live wiki identities for one enrolled source. Identifier and
+ * metadata only; never event text. Fail closed on an incompatible inventory.
+ */
+export function wikiCommittedIdentities(
+  db: Database,
+  sourceKey: string,
+): Array<[string, LegacyWikiIdentity]> {
+  if (!SOURCE_KEY.test(sourceKey)) {
+    throw new ConnectionError("wiki committed identities require a source key");
+  }
+  let rows: Array<{ relpath: string; hash: unknown; target: unknown }>;
+  try {
+    rows = db
+      .query<{ relpath: string; hash: unknown; target: unknown }, [string, string, number]>(
+        `SELECT relpath, hash, target FROM (
+           SELECT e.source_record_id AS relpath,
+                  json_extract(e.metadata, '$.sha256') AS hash,
+                  json_extract(e.metadata, '$.page_candidate.target') AS target,
+                  e.deleted,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY e.source_record_id
+                    ORDER BY e.accepted_at DESC, e.event_id DESC
+                  ) AS rn
+             FROM events e
+             JOIN source_event_bindings b ON b.event_id = e.event_id
+            WHERE b.source_key = ?
+              AND e.connector_id = ?
+         )
+         WHERE rn = 1 AND deleted = 0
+         LIMIT ?`,
+      )
+      .all(sourceKey, LEGACY_WIKI_CONNECTOR_ID, WIKI_MAX_FILES + 1);
+  } catch (error) {
+    throw new ConnectionError(
+      `wiki committed identities are unreadable: ${errorText(error)}`,
+    );
+  }
+  if (rows.length > WIKI_MAX_FILES) {
+    throw new ConnectionError("wiki committed identities exceed the scan bound");
+  }
+  const files: Array<[string, LegacyWikiIdentity]> = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const relpath = row.relpath;
+    const hash = row.hash;
+    const target = row.target;
+    if (
+      typeof relpath !== "string" ||
+      relpath.length === 0 ||
+      new TextEncoder().encode(relpath).byteLength > EVENT_LIMITS.sourceRecordIdBytes ||
+      seen.has(relpath) ||
+      typeof hash !== "string" ||
+      !MARKDOWN_SHA256.test(hash) ||
+      typeof target !== "string" ||
+      target.length === 0
+    ) {
+      throw new ConnectionError(
+        "wiki committed identities are incompatible with scan policy",
+      );
+    }
+    seen.add(relpath);
+    files.push([relpath, { hash, target }]);
   }
   return files;
 }
@@ -479,7 +551,7 @@ export async function loadConnector(
   store: ConnectionStateReader,
   db: Database,
   env: Record<string, string | undefined> = process.env,
-  factory: (id: string, config?: unknown, deps?: HostConnectorFactoryDeps) => Connector = (id, config, deps) => id === "kizuki.telegram" ? new TelegramConnector(config as TelegramConnectorConfig, deps) : id === "kizuki.gmail" ? createGmailConnector(config as GmailConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.google-calendar" ? createGoogleCalendarConnector(config as GoogleCalendarConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.x" ? createXApiConnector(config as XApiConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.markdown-folder" ? createMarkdownFolderConnector(config as MarkdownFolderConfig, deps?.committedFiles ? { committedFiles: deps.committedFiles } : {}) : getConnector(id, config),
+  factory: (id: string, config?: unknown, deps?: HostConnectorFactoryDeps) => Connector = (id, config, deps) => id === "kizuki.telegram" ? new TelegramConnector(config as TelegramConnectorConfig, deps) : id === "kizuki.gmail" ? createGmailConnector(config as GmailConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.google-calendar" ? createGoogleCalendarConnector(config as GoogleCalendarConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.x" ? createXApiConnector(config as XApiConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.markdown-folder" ? createMarkdownFolderConnector(config as MarkdownFolderConfig, deps?.committedFiles ? { committedFiles: deps.committedFiles } : {}) : id === LEGACY_WIKI_CONNECTOR_ID ? createLegacyWikiConnector(config as LegacyWikiConfig, deps?.wikiCommittedFiles ? { committedFiles: deps.wikiCommittedFiles } : {}) : getConnector(id, config),
 ): Promise<Connector> {
   try { sourceCaptureAdmission(db, selected.connection.connector_id, selected.connection.source_key); }
   catch (error) {
@@ -577,6 +649,7 @@ export async function loadConnector(
   }
   const telegram = selected.connection.connector_id === "kizuki.telegram";
   const markdown = selected.connection.connector_id === "kizuki.markdown-folder";
+  const wiki = selected.connection.connector_id === LEGACY_WIKI_CONNECTOR_ID;
   const connector = factory(
     selected.connection.connector_id,
     selected.state.config,
@@ -587,7 +660,12 @@ export async function loadConnector(
             committedFiles: () =>
               markdownCommittedIdentities(db, selected.connection.source_key),
           }
-        : undefined,
+        : wiki
+          ? {
+              wikiCommittedFiles: () =>
+                wikiCommittedIdentities(db, selected.connection.source_key),
+            }
+          : undefined,
   );
   const config = selected.state.config;
   const ref = "state_ref" in config ? config.state_ref : "token_secret_ref" in config

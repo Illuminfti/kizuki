@@ -149,7 +149,7 @@ describe("claims authority", () => {
         provenance: ids,
         claim_id: "01CLAIM000000000000000000A",
         object: "acme",
-        confidence: 0.9,
+        confidence: 0.3,
         valid_from: "2026-01-01T00:00:00.000Z",
         events: facts,
       }),
@@ -228,6 +228,31 @@ describe("claims authority", () => {
       listClaims(db, { status: "live" }).find((row) => row.predicate === "employment.role")
         ?.claim_id,
     ).toBe("01CLAIM000000000000000000F");
+
+    // Recency is read before confidence: the contested margin guards tier <= 2
+    // pairs only, so a later correction wins even with lower confidence.
+    const laterCorrection = await insertClaim(
+      { db, now: () => "2026-09-02T12:05:00.000Z" },
+      claimInput(ids[0], {
+        provenance: [nativeOwnerEvent(db, "Grace is a partner.")],
+        claim_id: "01CLAIM000000000000000000G",
+        predicate: "employment.role",
+        object: "partner",
+        body: "Grace is a partner.",
+        producer: "owner",
+        intent: "correct",
+        confidence: 0.6,
+        valid_from: "2026-07-01T00:00:00.000Z",
+        events: facts.map((fact) => ({ ...fact, taint: "owner" as const })),
+      }),
+    );
+    expect(laterCorrection.outcome).toBe("stored");
+    if (laterCorrection.outcome !== "stored") return;
+    expect(laterCorrection.superseded[0]?.rule).toBe("R3");
+    expect(
+      listClaims(db, { status: "live" }).find((row) => row.predicate === "employment.role")
+        ?.claim_id,
+    ).toBe("01CLAIM000000000000000000G");
     db.close();
   });
 
@@ -260,6 +285,61 @@ describe("claims authority", () => {
     expect(listClaims(db, { status: "live" })).toHaveLength(2);
     expect(listSupersessions(db)).toEqual([]);
     db.close();
+  });
+
+  test("a recency winner below the loser's confidence is contested, not superseding", async () => {
+    const db = claimsDb();
+    const { ids, facts } = evidencePair(db);
+    const live = await insertClaim(
+      { db },
+      claimInput(ids[0], {
+        provenance: ids,
+        object: "acme",
+        confidence: 0.82,
+        valid_from: "2026-01-01T00:00:00.000Z",
+        events: facts,
+      }),
+    );
+    expect(live.outcome).toBe("stored");
+
+    const later = await insertClaim(
+      { db },
+      claimInput(ids[0], {
+        provenance: ids,
+        body: "Grace moved to partnerships lead at Initech in July.",
+        object: "initech",
+        confidence: 0.79,
+        valid_from: "2026-07-01T00:00:00.000Z",
+        events: facts,
+      }),
+    );
+    expect(later.outcome).toBe("contested");
+    expect(
+      listClaims(db, { status: "live" })
+        .map((row) => row.object)
+        .sort(),
+    ).toEqual(["acme", "initech"]);
+    expect(listSupersessions(db)).toEqual([]);
+    db.close();
+  });
+
+  test("a negative confidence margin between same-tier claims resolves to R4", () => {
+    const live = evidenceConflict({
+      claim_id: "01CLAIM000000000000000000L",
+      object: "acme",
+      confidence: 0.82,
+      valid_from: "2026-01-01T00:00:00.000Z",
+    });
+    const incoming = evidenceConflict({
+      claim_id: "01CLAIM000000000000000000N",
+      object: "initech",
+      confidence: 0.79,
+      valid_from: "2026-07-01T00:00:00.000Z",
+    });
+    expect(resolveConflict(incoming, live)).toEqual({
+      action: "contested",
+      rule: "R4",
+    });
   });
 
   test("a single-source untrusted claim is clamped to model inference", async () => {
