@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { evaluateRelease } from "./go-no-go";
@@ -22,7 +22,7 @@ function executablePackage(target = linux) {
   const names = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"];
   writeFileSync(join(artifact, "kizuki"), "#!/bin/sh\necho native-attestation-fixture\nexit 0\n", { mode: 0o755 });
   chmodSync(join(artifact, "kizuki"), 0o755);
-  writeFileSync(join(artifact, "kizuki-mcp"), "#!/bin/sh\necho native-attestation-mcp-fixture >&2\nexit 0\n", { mode: 0o755 });
+  writeFileSync(join(artifact, "kizuki-mcp"), "#!/bin/sh\necho native-attestation-mcp-fixture >&2\nexit 2\n", { mode: 0o755 });
   chmodSync(join(artifact, "kizuki-mcp"), 0o755);
   writeFileSync(join(artifact, "README.txt"), "Synthetic README.txt evaluator fixture.");
   writeFileSync(join(artifact, "BUILD.json"), JSON.stringify({ schema: "kizuki.release-build/v1", source_sha: source, target, bun_version: "1.3.14" }));
@@ -80,7 +80,7 @@ test("producer executes the package binary and the evaluator accepts that exact 
   expect(produced).toMatchObject({ producer: NATIVE_ATTESTATION_PRODUCER, gate_id: `native.${linux}`, target: linux, path: out });
   const body = JSON.parse(readFileSync(out, "utf8"));
   expect(body.mcp_argv).toEqual(["kizuki-mcp"]);
-  expect(body.mcp_exit_code).toBe(0);
+  expect(body.mcp_exit_code).toBe(2);
   expect(body.mcp_stderr_sha256).toBe(digest("native-attestation-mcp-fixture\n"));
   expect(evaluateNativeAttestationReceipt(body, expectedBinding(body.package_sha256))).toMatchObject({
     status: "PASS", reason: "native-host-execution-attested", creditDigest: true,
@@ -154,6 +154,25 @@ test("producer refuses a non-runnable MCP binary instead of attesting CLI-only e
   expect(() => runNativeAttestation({ candidate: source, artifact: f.artifact, out: join(f.root, "native.json") })).toThrow("native-mcp-execution-failed");
 });
 
+test.each([0, 1, 127, 255])("producer refuses MCP exit %i instead of the no-argument usage exit", (exitCode) => {
+  const f = executablePackage();
+  writeFileSync(join(f.artifact, "kizuki-mcp"), `#!/bin/sh\nexit ${exitCode}\n`);
+  const names = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"];
+  writeFileSync(join(f.artifact, "SHA256SUMS"), names.map(name => `${digest(readFileSync(join(f.artifact, name)))}  ${name}`).join("\n") + "\n");
+  const out = join(f.root, "native.json");
+  expect(() => runNativeAttestation({ candidate: source, artifact: f.artifact, out })).toThrow("native-mcp-execution-failed");
+  expect(existsSync(out)).toBe(false);
+});
+
+test.each([0, 1, 127, 255])("evaluator refuses a passing receipt with MCP exit %i", (exitCode) => {
+  const f = executablePackage();
+  const out = join(f.root, "native.json");
+  runNativeAttestation({ candidate: source, artifact: f.artifact, out });
+  const body = JSON.parse(readFileSync(out, "utf8"));
+  body.mcp_exit_code = exitCode;
+  expect(() => evaluateNativeAttestationReceipt(body, expectedBinding(body.package_sha256))).toThrow("invalid-outcome");
+});
+
 test.each(["kizuki", "kizuki-mcp"])("producer cannot credit %s exiting successfully from its timeout handler", binary => {
   const f = executablePackage();
   writeFileSync(join(f.artifact, binary), "#!/bin/sh\ntrap 'exit 0' TERM\nwhile :; do :; done\n");
@@ -170,7 +189,7 @@ test.each([
   ["kizuki-mcp", "stdout"], ["kizuki-mcp", "stderr"],
 ] as const)("producer refuses oversized %s %s without publishing a receipt", (binary, stream) => {
   const f = executablePackage();
-  writeFileSync(join(f.artifact, binary), `#!/bin/sh\nprintf '%1048577s' x ${stream === "stderr" ? ">&2" : ""}\nexit 0\n`);
+  writeFileSync(join(f.artifact, binary), `#!/bin/sh\nprintf '%1048577s' x ${stream === "stderr" ? ">&2" : ""}\nexit ${binary === "kizuki" ? 0 : 2}\n`);
   const names = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"];
   writeFileSync(join(f.artifact, "SHA256SUMS"), names.map(name => `${digest(readFileSync(join(f.artifact, name)))}  ${name}`).join("\n") + "\n");
   const out = join(f.root, "native.json");
@@ -181,7 +200,7 @@ test.each([
 
 test.each(["kizuki", "kizuki-mcp"])("producer accepts %s output at the byte bound", binary => {
   const f = executablePackage();
-  writeFileSync(join(f.artifact, binary), "#!/bin/sh\nprintf '%1048576s' x\nexit 0\n");
+  writeFileSync(join(f.artifact, binary), `#!/bin/sh\nprintf '%1048576s' x\nexit ${binary === "kizuki" ? 0 : 2}\n`);
   const names = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"];
   writeFileSync(join(f.artifact, "SHA256SUMS"), names.map(name => `${digest(readFileSync(join(f.artifact, name)))}  ${name}`).join("\n") + "\n");
   const out = join(f.root, "native.json");

@@ -7,7 +7,11 @@ interface AttributionFailure {
   reason: string;
 }
 
-const delimiter = /[\s<>"'()[\]{}|`]/;
+// Brackets, braces and pipes can be part of a link destination; treating
+// them as boundaries would accept a canonical URL with an added suffix.
+// Non-ASCII spaces are URL data in Markdown destinations, not separators.
+const delimiter = /[ \t\r\n<>"'()`]/;
+const trailingSentencePunctuation = /^[.,;:!?]+/u;
 const tokenCharacter = /[\p{ID_Continue}\u200C\u200D]/u;
 
 function requiredEnvironment(name: string): string {
@@ -16,13 +20,6 @@ function requiredEnvironment(name: string): string {
     throw new Error(`${name} is required`);
   }
   return value;
-}
-
-function location(text: string, offset: number): { line: number; column: number } {
-  const prefix = text.slice(0, offset);
-  const line = prefix.split("\n").length;
-  const lastNewline = prefix.lastIndexOf("\n");
-  return { line, column: offset - lastNewline };
 }
 
 function schemeStart(text: string, offset: number): number | null {
@@ -66,7 +63,9 @@ function hasTokenBoundaries(text: string, offset: number, length: number): boole
 
 function hasUrlBoundaries(text: string, offset: number, length: number): boolean {
   const before = characterBefore(text, offset);
-  const after = characterAt(text, offset + length);
+  // Sentence punctuation after a URL is prose; only a delimiter may follow it.
+  const tail = text.slice(offset + length).match(trailingSentencePunctuation);
+  const after = characterAt(text, offset + length + (tail?.[0].length ?? 0));
   return (
     (before === undefined || delimiter.test(before)) &&
     (after === undefined || delimiter.test(after))
@@ -90,6 +89,10 @@ export function validateAttributionText(
   const failures: AttributionFailure[] = [];
   let hasExactCredit = false;
   let hasCanonicalUrl = false;
+  // Matches arrive in source order, so diagnostics share one newline scan.
+  let line = 1;
+  let lastNewline = -1;
+  let nextNewline = text.indexOf("\n");
   for (const match of text.matchAll(literalPattern(exactSpelling))) {
     const offset = match.index;
     if (offset === undefined) continue;
@@ -112,10 +115,15 @@ export function validateAttributionText(
     }
 
     if (!valid) {
-      const point = location(text, offset);
+      while (nextNewline >= 0 && nextNewline < offset) {
+        line += 1;
+        lastNewline = nextNewline;
+        nextNewline = text.indexOf("\n", nextNewline + 1);
+      }
       failures.push({
         path,
-        ...point,
+        line,
+        column: offset - lastNewline,
         reason: urlStart === null
           ? "public attribution does not use the exact spelling"
           : "public attribution URL is not the exact delimited canonical URL",

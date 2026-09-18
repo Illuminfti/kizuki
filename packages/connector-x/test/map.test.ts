@@ -154,6 +154,33 @@ test("long-form note and extended text replace truncated full_text without slici
   })).toThrow("must be an object");
 });
 
+test("mention validation is independent of duplicate order and self filtering", () => {
+  const valid = { id_str: "8", screen_name: "peer" };
+  for (const screen_name of [42, "x".repeat(65), "bad\u0000name"]) {
+    const invalid = { id_str: "8", screen_name };
+    for (const user_mentions of [
+      [valid, invalid],
+      [invalid, valid],
+      [{ id_str: self.account_id, screen_name }],
+    ]) {
+      expect(() => mapped({ entities: { user_mentions } }))
+        .toThrow("screen_name is invalid");
+    }
+    expect(() => mapped({
+      note_tweet: {
+        text: "note",
+        entities: { mentions: [{ id: self.account_id, username: screen_name }] },
+      },
+    })).toThrow("screen_name is invalid");
+  }
+  expect(mapped({ entities: { user_mentions: [
+    { id_str: self.account_id, screen_name: "owner" }, valid, valid,
+  ] } }).subjects).toEqual([
+    { subject_id: "x:user:123", role: "from", display_name: "@owner" },
+    { subject_id: "x:user:8", role: "about", display_name: "@peer" },
+  ]);
+});
+
 test("quoted and replied ids stay in metadata and foreign nested text is not spliced", () => {
   const event = mapped({
     full_text: "owner quote",

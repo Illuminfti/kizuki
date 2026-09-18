@@ -29,7 +29,7 @@ import { resolveSensitivity } from "../sensitivity/resolve";
 import { getConnectorSensitivity } from "../sensitivity/store";
 import { cascadeTombstone, produceForEvent } from "../staging/producers";
 import type { ProducerGrants } from "../staging/producers";
-import { fileProposal } from "../staging/proposals";
+import { fileProposal, StagingError } from "../staging/proposals";
 import type { SourceTombstoneContext } from "../canon/source-tombstone";
 import { DeadlineError, withDeadline } from "../util/deadline";
 import { ulid } from "../util/ulid";
@@ -118,8 +118,20 @@ function processEvent(
       const produced = produceForEvent(accepted.event, grants);
       if (produced.status !== "ok") return result;
       for (const proposal of produced.proposals) {
-        if (fileProposal(db, proposal).outcome === "stored") {
-          result.proposals_created += 1;
+        // Acceptance and extraction are separate steps. A proposal the
+        // staging contract refuses, such as an estate page longer than the
+        // body bound, is this event's error and not grounds to unwrite the raw
+        // row the ledger already accepted: rolling that back would drop the
+        // text from the estate outright rather than leave it unextracted.
+        // fileProposal validates before it writes and files under its own
+        // savepoint, so nothing half staged survives the refusal.
+        try {
+          if (fileProposal(db, proposal).outcome === "stored") {
+            result.proposals_created += 1;
+          }
+        } catch (error) {
+          if (!(error instanceof StagingError)) throw error;
+          result.errors.push(error.message);
         }
       }
       return result;

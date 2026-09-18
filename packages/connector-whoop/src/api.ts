@@ -74,7 +74,7 @@ function retry(response: Response): number {
     const reset = response.headers.get('x-ratelimit-reset');
     return reset && /^\d{1,10}$/.test(reset) ? Math.max(1, Number(reset)) : 60;
 }
-async function read(response: Response): Promise<unknown> {
+async function read(response: Response, signal: AbortSignal): Promise<unknown> {
     const length = response.headers.get('content-length');
     if (length !== null && (!/^\d+$/.test(length) || Number(length) > 2 * 1024 * 1024)) {
         void response.body?.cancel().catch(() => {
@@ -85,8 +85,11 @@ async function read(response: Response): Promise<unknown> {
     if (!response.body)
         throw failure();
     const reader = response.body.getReader(), chunks: Uint8Array[] = [];
+    const cancel = () => { void reader.cancel().catch(() => {}); };
+    signal.addEventListener('abort', cancel, { once: true });
     let size = 0;
     try {
+        if (signal.aborted) throw failure('timeout');
         for (;;) {
             const part = await reader.read();
             if (part.done)
@@ -98,10 +101,12 @@ async function read(response: Response): Promise<unknown> {
         }
     }
     finally {
+        signal.removeEventListener('abort', cancel);
         void reader.cancel().catch(() => {
         });
         reader.releaseLock();
     }
+    if (signal.aborted) throw failure('timeout');
     const bytes = new Uint8Array(size);
     let offset = 0;
     for (const chunk of chunks) {
@@ -119,7 +124,7 @@ async function read(response: Response): Promise<unknown> {
 }
 /** Exact sanctioned routes, no redirects or raw provider diagnostics. */
 export async function request(url: URL, token: string, budget: Budget, fetcher: WhoopFetch = (r) => fetch(r), method: 'GET' | 'DELETE' = 'GET'): Promise<Record<string, unknown>> {
-    if (url.origin !== ORIGIN || url.username || url.password || url.hash || !ROUTES.has(url.pathname) || (method === 'DELETE') !== (url.pathname === '/developer/v2/user/access') || url.href.length > 4096)
+    if ((method !== 'GET' && method !== 'DELETE') || url.origin !== ORIGIN || url.username || url.password || url.hash || !ROUTES.has(url.pathname) || (method === 'DELETE') !== (url.pathname === '/developer/v2/user/access') || url.href.length > 4096)
         throw failure('misconfigured');
     const requestMs = budget.requestMs();
     const controller = new AbortController();
@@ -146,7 +151,7 @@ export async function request(url: URL, token: string, budget: Budget, fetcher: 
                     });
                     return {};
                 }
-                return object(await read(response));
+                return object(await read(response, controller.signal));
             })()]);
     }
     catch (error) {

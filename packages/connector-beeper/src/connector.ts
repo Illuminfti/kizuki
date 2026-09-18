@@ -1,6 +1,7 @@
 import { HealthReport, KizukiError, freezeManifest, isPlainObject } from "@kizuki/core";
 import type { AttachmentRef, CaptureEventInput, Connector, Cursor, Manifest, SecretResolver, SyncBatch } from "@kizuki/core";
 import { BEEPER_CURSOR_SCHEMA, encodeBeeperCursor, parseBeeperCursor } from "./cursor";
+import type { BeeperCursor } from "./cursor";
 
 export const BEEPER_CONNECTOR_ID = "kizuki.beeper" as const;
 const DEFAULT_BASE_URL = "http://127.0.0.1:23373";
@@ -20,7 +21,7 @@ const MANIFEST: Manifest = freezeManifest({
   schema: "kizuki.connector/v1", connector_id: BEEPER_CONNECTOR_ID, version: "0.1.0",
   contract_minor: 1, implementation: "@kizuki/connector-beeper", allowed_egress: ["127.0.0.1"],
   cursor_schema: BEEPER_CURSOR_SCHEMA, kinds: ["message"],
-  capabilities: { backfill: true, sync: true, tombstones: true, purge: false, fixture: true },
+  capabilities: { backfill: true, sync: true, tombstones: true, purge: false, fixture: true, sync_from_backfill_before_first_success: true },
   required_secrets: [], emits_sensitivity_hint: true,
   default_sensitivity: "private", sensitivity_floor: "personal", auth_modes: ["secret_ref"],
 });
@@ -67,8 +68,8 @@ export class BeeperConnector implements Connector {
         : this.#health("misconfigured", checked_at, "Beeper Desktop returned an invalid health response");
     } catch { return this.#health("unreachable", checked_at, "Beeper Desktop could not be reached"); }
   }
-  backfill(cursor: Cursor | null): Promise<SyncBatch> { return this.#advance(cursor); }
-  sync(cursor: Cursor | null): Promise<SyncBatch> { return this.#advance(cursor); }
+  backfill(cursor: Cursor | null): Promise<SyncBatch> { return this.#advance(cursor, "backfill"); }
+  sync(cursor: Cursor | null): Promise<SyncBatch> { return this.#advance(cursor, "sync"); }
   async revoke(): Promise<void> { this.#revoked = true; this.#token = null; }
   async purgeSource(_subject_id: string): Promise<never> {
     this.#assertActive();
@@ -77,25 +78,48 @@ export class BeeperConnector implements Connector {
   async fixture(): Promise<CaptureEventInput[]> {
     return [mapMessage({ id: "message-1", accountID: "account-1", chatID: "chat-1", senderID: "user-1", sortKey: "1", timestamp: "2026-01-02T03:04:05.000Z", text: "Synthetic Beeper message", attachments: [] }, "2026-01-02T03:04:06.000Z")];
   }
-  async #advance(cursor: Cursor | null): Promise<SyncBatch> {
+  async #advance(cursor: Cursor | null, mode: "backfill" | "sync"): Promise<SyncBatch> {
     this.#assertConnected();
-    const prior = cursor === null ? null : parseBeeperCursor(cursor).cursor;
+    const prior: BeeperCursor = cursor === null
+      ? { schema: BEEPER_CURSOR_SCHEMA, phase: mode === "backfill" ? "backfill" : "sync", before: null, after: null }
+      : parseBeeperCursor(cursor);
+    // A sync handed an unfinished backward walk finishes that walk before polling forward.
+    const walkingBack = mode === "backfill" || (prior.phase === "backfill" && prior.before !== null);
+    const forward = !walkingBack && prior.after !== null;
     let page: Page;
-    try { page = await this.#read(prior); } catch (error) {
+    try { page = await this.#read(forward ? "after" : "before", forward ? prior.after : walkingBack ? prior.before : null); } catch (error) {
       if (error instanceof KizukiError && error.code !== "unreachable") throw error;
       return { events: [], cursor, status: "unavailable", detail: "Beeper Desktop could not be reached" };
     }
     const observed = this.#deps.now().toISOString();
     const events = page.items.map((item) => mapMessage(item, observed));
-    const next = page.hasMore ? page.oldestCursor : undefined;
-    if (page.hasMore && (next === undefined || next === prior)) throw new KizukiError("parse_error", "kizuki.beeper: invalid pagination cursor");
     this.#lastSuccessAt = observed;
-    return { events, cursor: next === undefined ? null : encodeBeeperCursor(next), has_more: page.hasMore };
+    return { events, ...(walkingBack ? this.#backward(prior, page) : this.#forward(prior, page)) };
   }
-  async #read(cursor: string | null): Promise<Page> {
+  /** Backward walk: page toward older history, remembering the newest point it started from. */
+  #backward(prior: BeeperCursor, page: Page): { cursor: Cursor | null; has_more: boolean } {
+    const next = page.hasMore ? page.oldestCursor : undefined;
+    if (page.hasMore && (next === undefined || next === prior.before)) throw invalidPagination();
+    // Only the top of a walk observes the true newest point; later pages are older.
+    const after = prior.before === null ? page.newestCursor ?? prior.after : prior.after;
+    if (next !== undefined) return { cursor: encodeBeeperCursor({ phase: "backfill", before: next, after }), has_more: true };
+    // History is exhausted: hand the forward anchor to the next incremental sweep.
+    return { cursor: after === null ? null : encodeBeeperCursor({ phase: "sync", before: null, after }), has_more: false };
+  }
+  /** Incremental sweep: one newest page to establish an anchor, then pages newer than it. */
+  #forward(prior: BeeperCursor, page: Page): { cursor: Cursor | null; has_more: boolean } {
+    if (prior.after === null) {
+      const anchor = page.newestCursor ?? null;
+      return { cursor: anchor === null ? null : encodeBeeperCursor({ phase: "sync", before: null, after: anchor }), has_more: false };
+    }
+    if (page.hasMore && (page.newestCursor === undefined || page.newestCursor === prior.after)) throw invalidPagination();
+    const after = page.newestCursor ?? prior.after;
+    return { cursor: encodeBeeperCursor({ phase: "sync", before: null, after }), has_more: page.hasMore };
+  }
+  async #read(direction: "before" | "after", cursor: string | null): Promise<Page> {
     const url = new URL("/v1/messages/search", this.#config.baseUrl);
     url.searchParams.set("limit", String(PAGE_LIMIT));
-    url.searchParams.set("direction", "before");
+    url.searchParams.set("direction", direction);
     url.searchParams.set("excludeLowPriority", "false");
     url.searchParams.set("includeMuted", "true");
     if (cursor !== null) url.searchParams.set("cursor", cursor);
@@ -103,7 +127,7 @@ export class BeeperConnector implements Connector {
     try { response = await this.#request(url); }
     catch { throw unavailable("Beeper Desktop could not be reached"); }
     if (response.redirected || !response.ok) throw unavailable(response.status === 401 || response.status === 403 ? "Beeper token was rejected" : "Beeper Desktop request failed");
-    return parsePage(await boundedText(response));
+    return parsePage(await boundedText(response), direction);
   }
   async #request(path: string | URL): Promise<Response> {
     const url = typeof path === "string" ? new URL(path, this.#config.baseUrl) : path;
@@ -142,13 +166,13 @@ async function boundedText(response: Response): Promise<string> {
   const joined = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { joined.set(chunk, offset); offset += chunk.byteLength; } return new TextDecoder().decode(joined);
 }
 
-function parsePage(text: string): Page {
+function parsePage(text: string, direction: "before" | "after"): Page {
   let raw: unknown; try { raw = JSON.parse(text); } catch { throw new KizukiError("parse_error", "kizuki.beeper: malformed response"); }
   if (!isPlainObject(raw) || !Array.isArray(raw.items) || typeof raw.hasMore !== "boolean" || raw.items.length > PAGE_LIMIT) throw new KizukiError("parse_error", "kizuki.beeper: malformed response");
   const items = raw.items.map(parseMessage);
   if (raw.hasMore && items.length === 0) throw new KizukiError("parse_error", "kizuki.beeper: empty page claims more history");
   const oldestCursor = optionalCursor(raw.oldestCursor); const newestCursor = optionalCursor(raw.newestCursor);
-  if (raw.hasMore && oldestCursor === undefined) throw new KizukiError("parse_error", "kizuki.beeper: malformed pagination response");
+  if (raw.hasMore && (direction === "before" ? oldestCursor : newestCursor) === undefined) throw new KizukiError("parse_error", "kizuki.beeper: malformed pagination response");
   return { items, hasMore: raw.hasMore, ...(oldestCursor === undefined ? {} : { oldestCursor }), ...(newestCursor === undefined ? {} : { newestCursor }) };
 }
 function optionalCursor(value: unknown): string | undefined { if (value === undefined || value === null) return undefined; if (typeof value !== "string" || value.length === 0 || new TextEncoder().encode(value).byteLength > 8 * 1024) throw new KizukiError("parse_error", "kizuki.beeper: malformed pagination response"); return value; }
@@ -197,3 +221,4 @@ function attachmentRefs(message: Message): AttachmentRef[] {
   }));
 }
 function unavailable(detail: string): KizukiError { return new KizukiError("unreachable", `kizuki.beeper: ${detail}`); }
+function invalidPagination(): KizukiError { return new KizukiError("parse_error", "kizuki.beeper: invalid pagination cursor"); }
