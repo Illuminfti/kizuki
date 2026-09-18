@@ -34,7 +34,7 @@ export function releaseDecision(profile: Profile, rows: readonly Gate[]) {
     const row = byId.get(item.id);
     return row !== undefined && row.required === true && row.target === item.target && row.scope === item.scope;
   });
-  const accepted = complete && required.every(item => byId.get(item.id)!.status === "PASS") && !rows.some(item => item.status === "FAIL");
+  const accepted = complete && rows.every(item => (!item.required || item.status === "PASS") && item.status !== "FAIL");
   return { decision: accepted ? "GO" as const : "NO-GO" as const, release_1_0_accepted: profile === "1.0" && accepted };
 }
 interface ArtifactReference { producer: ArtifactProofSchema; target: string; directory: string; proof: string; proof_sha256: string; }

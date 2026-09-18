@@ -54,6 +54,7 @@ describe("no-return owner-gate surfaces", () => {
       ".",
       "./contracts",
       "./internal",
+      "./reflex",
       "./testing",
     ]);
   });

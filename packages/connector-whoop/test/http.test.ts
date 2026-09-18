@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { Budget, request } from '../src/api';
+import { Budget, HttpFailure, request } from '../src/api';
 
 test('invalid Retry-After falls back to WHOOP reset seconds', async () => {
     for (const retryAfter of ['', 'invalid', '-1', '1.5',
@@ -78,6 +78,24 @@ test('RFC850 Retry-After uses one clock sample for year resolution and delay', a
     }
 });
 
+test('RFC850 year and delay use the same wall-clock snapshot', async () => {
+    const originalNow = Date.now;
+    const now = Date.UTC(2026, 8, 17), target = Date.UTC(2050, 0, 1);
+    let samples = 0;
+    try {
+        await expect(request(new URL('https://api.prod.whoop.com/developer/v2/cycle'), 'synthetic', new Budget(), async () => {
+            // Change the clock only after transport admission, during retry parsing.
+            Date.now = () => now + samples++ * 1000;
+            return new Response(null, {
+                status: 429, headers: { 'retry-after': 'Saturday, 01-Jan-50 00:00:00 GMT' }
+            });
+        })).rejects.toMatchObject({ status: 429, retrySeconds: (target - now) / 1000 });
+        expect(samples).toBe(1);
+    } finally {
+        Date.now = originalNow;
+    }
+});
+
 test('overlong Retry-After dates fall back before date parsing', async () => {
     const originalParse = Date.parse;
     let parses = 0;
@@ -118,6 +136,20 @@ test('asctime Retry-After accepts both single-digit day representations', async 
     }
 });
 
+test('rate limiting falls back to WHOOP reset seconds when Retry-After is invalid', async () => {
+    for (const retryAfter of ['', 'invalid', '-1']) {
+        try {
+            await request(new URL('https://api.prod.whoop.com/developer/v2/cycle'), 'synthetic', new Budget(), async () => new Response(null, {
+                status: 429, headers: { 'retry-after': retryAfter, 'x-ratelimit-reset': '120' }
+            }));
+            throw new Error('expected rate limit refusal');
+        } catch (error) {
+            expect(error).toBeInstanceOf(HttpFailure);
+            expect((error as HttpFailure).retrySeconds).toBe(120);
+        }
+    }
+});
+
 test('rate limit headers preserve precedence and reject malformed reset delays', async () => {
     const cases: [Record<string, string>, number][] = [
         [{ 'retry-after': '30', 'x-ratelimit-reset': '120' }, 30],
@@ -129,6 +161,9 @@ test('rate limit headers preserve precedence and reject malformed reset delays',
         [{ 'x-ratelimit-reset': '0' }, 1],
         [{ 'x-ratelimit-reset': '-1' }, 60],
         [{ 'x-ratelimit-reset': 'Wed, 01 Jan 2020 00:00:00 GMT' }, 60],
+        [{ 'retry-after': '1.5', 'x-ratelimit-reset': '120' }, 120],
+        [{ 'retry-after': 'Sun, 31 Feb 2030 00:00:00 GMT', 'x-ratelimit-reset': '120' }, 120],
+        [{ 'retry-after': 'Thu, 01 Jan 2020 00:00:00 GMT', 'x-ratelimit-reset': '120' }, 120],
         [{}, 60]
     ];
     for (const [headers, seconds] of cases) {
@@ -168,6 +203,35 @@ test('declared and streamed oversized bodies refuse and hanging HTTP is bounded/
     }))).rejects.toThrow('timeout');
     expect(Date.now() - start).toBeLessThan(6500);
 }, 8000);
+test('runtime methods outside the sanctioned read and revoke operations refuse before transport', async () => {
+    const budget = new Budget();
+    let calls = 0;
+    for (const method of ['POST', 'PUT', 'PATCH', 'HEAD', 'get']) {
+        for (const path of ['/developer/v2/cycle', '/developer/v2/user/access']) {
+            await expect(request(new URL(`https://api.prod.whoop.com${path}`), 'synthetic', budget, async () => {
+                calls++;
+                return Response.json({});
+            }, method as 'GET')).rejects.toThrow('misconfigured');
+        }
+    }
+    expect(calls).toBe(0);
+    // Refused inputs must not consume the operation's request allowance.
+    for (let n = 0; n < 48; n++)
+        expect(budget.requestMs()).toBeGreaterThan(0);
+});
+
+test('response-body timeout cancels a stalled stream and releases its reader', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(new TextEncoder().encode('{')); },
+        cancel() { cancelled = true; }
+    });
+    await expect(request(new URL('https://api.prod.whoop.com/developer/v2/cycle'), 'synthetic', new Budget(), async () => new Response(body))).rejects.toThrow('timeout');
+    await Bun.sleep(0);
+    expect(cancelled).toBe(true);
+    expect(body.locked).toBe(false);
+}, 8000);
+
 test('operation request budget refuses its forty-ninth call', () => {
     const budget = new Budget();
     for (let n = 0; n < 48; n++)

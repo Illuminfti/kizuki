@@ -10,9 +10,11 @@ import type { ServeHttpHandle } from "./http";
 import {
   acquireLease,
   heartbeatLease,
+  leaseState,
   releaseLease,
   thisProcess,
   type LeaseProcess,
+  type LeaseState,
 } from "./leases";
 import { recoverRunJournal } from "./receipts";
 import { dueRails, runRail, type RailHooks, type RailRuntime } from "./rails";
@@ -40,7 +42,7 @@ export interface ServeDaemonOptions {
 export interface ServeStatus {
   readonly pid: number | null;
   readonly running: boolean;
-  readonly lease: "held" | "free" | "busy";
+  readonly lease: LeaseState;
   readonly http: { host: string; port: number } | null;
 }
 
@@ -214,14 +216,10 @@ export function serveStatus(
   process: LeaseProcess = thisProcess(),
 ): ServeStatus {
   const pid = readServePid(vaultPath);
-  const lease = acquireLease(db, process);
-  if (lease.acquired) {
-    releaseLease(db, process);
-  }
   return {
     pid,
     running: pid !== null && process.isAlive(pid),
-    lease: lease.reason === "busy" ? "busy" : lease.acquired ? "free" : "free",
+    lease: leaseState(db, process),
     http: null,
   };
 }

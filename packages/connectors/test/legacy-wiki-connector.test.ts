@@ -14,7 +14,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { initVault, isPlainObject, runBatch } from "@kizuki/core";
+import {
+  initVault,
+  isPlainObject,
+  MAX_CURSOR_BYTES,
+  runBatch,
+} from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { KizukiError } from "../src/errors";
@@ -448,6 +453,77 @@ describe("backfill and sync", () => {
       ledger.acceptMany(second.events).every((r) => r.status === "duplicate"),
     ).toBe(true);
   });
+
+  test("a 5000-page wiki backfills with a bounded cursor, resumes, and tombstones", async () => {
+    writeMapping();
+    mkdirSync(join(wiki, "p"));
+    const count = 5000;
+    for (let index = 0; index < count; index += 1) {
+      writeFileSync(
+        join(wiki, "p", `${String(index).padStart(4, "0")}.md`),
+        `---\ntitle: P${index}\n---\n${index}\n`,
+      );
+    }
+    const identities: Array<[string, { hash: string; target: string }]> = [];
+    const remember = (batch: { events: CaptureEventInput[] }): void => {
+      const next = new Map(identities);
+      for (const event of batch.events) {
+        if (event.deleted) {
+          next.delete(event.source_record_id);
+          continue;
+        }
+        const hash = event.metadata["sha256"];
+        const pageTarget = target(event);
+        if (typeof hash !== "string" || pageTarget === undefined) continue;
+        next.set(event.source_record_id, { hash, target: pageTarget });
+      }
+      identities.length = 0;
+      for (const entry of next) identities.push(entry);
+    };
+    const connector = () =>
+      createLegacyWikiConnector(
+        { path: wiki },
+        { committedFiles: () => identities },
+      );
+
+    const first = await connector().backfill(null);
+    expect(new TextEncoder().encode(first.cursor ?? "").byteLength).toBeLessThanOrEqual(
+      MAX_CURSOR_BYTES,
+    );
+    expect(first.has_more).toBe(true);
+    expect(first.events.length).toBeGreaterThan(0);
+    remember(first);
+
+    const resumed = await connector().backfill(first.cursor);
+    expect(resumed.events[0]?.source_record_id).not.toBe(
+      first.events[0]?.source_record_id,
+    );
+    remember(resumed);
+
+    let cursor = resumed.cursor;
+    let pages = 2;
+    while (pages < 20) {
+      const batch = await connector().backfill(cursor);
+      expect(
+        new TextEncoder().encode(batch.cursor ?? "").byteLength,
+      ).toBeLessThanOrEqual(MAX_CURSOR_BYTES);
+      remember(batch);
+      cursor = batch.cursor;
+      pages += 1;
+      if (batch.has_more !== true) break;
+    }
+    expect(identities).toHaveLength(count);
+
+    rmSync(join(wiki, "p", "2500.md"));
+    const sync = await connector().sync(cursor);
+    expect(sync.events.filter((event) => event.deleted)).toEqual([
+      expect.objectContaining({
+        source_record_id: "p/2500.md",
+        deleted: true,
+        text: "",
+      }),
+    ]);
+  }, 60_000);
 });
 
 describe("hostile files", () => {

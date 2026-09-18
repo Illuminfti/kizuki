@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { verifyPackageDirectory } from "./release-artifacts";
+import { mcpSession } from "./smoke-release-mcp";
 
 import { selectedReleaseTarget } from "./release-targets";
 import { parseBuildInfo } from "./stranger-proof";
@@ -39,29 +40,6 @@ function runJson(command: string, args: string[], env: Record<string, string>): 
   const result = Bun.spawnSync([command, ...args], { env, stderr: "pipe", stdout: "pipe", timeout: 30_000 });
   if (result.exitCode !== 0) throw new Error("compiled JSON command failed");
   return { stdout: result.stdout.toString(), stderr: result.stderr.toString() };
-}
-
-async function mcpSession(env: Record<string, string>, args: string[], requests: string[]): Promise<{ code: number; output: string; diagnostics: string }> {
-  const child = Bun.spawn([mcp, ...args], { env, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-  for (const request of requests) child.stdin.write(`${request}\n`);
-  child.stdin.end();
-  const output = new Response(child.stdout).text();
-  const stderr = new Response(child.stderr).text();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("MCP smoke timed out")); }, 15_000); });
-    // Keep the deadline active until both output streams have also closed.
-    const [code, stdout, diagnostics] = await Promise.race([
-      Promise.all([child.exited, output, stderr]),
-      timeout,
-    ]);
-    if (diagnostics.length > 16_384) throw new Error("MCP smoke diagnostics overflow");
-    return { code, output: stdout, diagnostics };
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-    await child.exited;
-  }
 }
 
 const rootTemp = mkdtempSync(join(tmpdir(), "kizuki-release-smoke-"));
@@ -173,20 +151,20 @@ try {
     '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"query":"Ada","scope":"all"}}}',
     '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_page","arguments":{"path":"missing.md"}}}',
   ];
-  const agentSession = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], agentRequests);
+  const agentSession = await mcpSession(mcp, env, ["--vault", vault, "--token-ref", `file:${credential}`], agentRequests);
   const responses = agentSession.output.trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as { id?: number; result?: unknown });
   if (agentSession.code !== 0 || !responses.some(response => response.id === 2 && JSON.stringify(response.result).includes("Ada")) ||
       !responses.some(response => response.id === 3 && JSON.stringify(response.result).includes("tool_not_granted")) ||
       `${agentSession.output}${agentSession.diagnostics}`.includes(envelope.token) || `${agentSession.output}${agentSession.diagnostics}`.includes(credential)) throw new Error("agent MCP authorization smoke failed");
-  const secondSession = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], agentRequests.slice(0, 3));
+  const secondSession = await mcpSession(mcp, env, ["--vault", vault, "--token-ref", `file:${credential}`], agentRequests.slice(0, 3));
   if (secondSession.code !== 0 || !secondSession.output.includes("Ada") || `${secondSession.output}${secondSession.diagnostics}`.includes(envelope.token) || `${secondSession.output}${secondSession.diagnostics}`.includes(credential)) throw new Error("second agent MCP session failed");
   const revoked = runJson(cli, ["agent", "revoke", "reader-private", "--vault", vault, "--json"], env);
   const revokedResult = JSON.parse(revoked.stdout) as { schema?: string; status?: string; data?: Enrollment };
   if (revokedResult.schema !== "kizuki.cli.agent/v1" || revokedResult.status !== "ok" || revokedResult.data?.authority !== "revoked" || `${revoked.stdout}${revoked.stderr}`.includes(envelope.token) || `${revoked.stdout}${revoked.stderr}`.includes(credential)) throw new Error("agent revocation smoke failed");
-  const rejected = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], [agentRequests[0]!]);
+  const rejected = await mcpSession(mcp, env, ["--vault", vault, "--token-ref", `file:${credential}`], [agentRequests[0]!]);
   if (rejected.code === 0 || `${rejected.output}${rejected.diagnostics}`.includes(envelope.token) || `${rejected.output}${rejected.diagnostics}`.includes(credential)) throw new Error("revoked credential reconnected");
 
-  const ownerSession = await mcpSession(env, ["--vault", vault, "--owner"], [
+  const ownerSession = await mcpSession(mcp, env, ["--vault", vault, "--owner"], [
     agentRequests[0]!,
     agentRequests[1]!,
     '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}',
