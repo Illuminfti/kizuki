@@ -48,7 +48,8 @@ const pinnedSecretsJob = `
     steps:
       - uses: ${pinnedCheckout}
         with: { fetch-depth: 0, ref: "${pinnedRef}" }
-      - run: bun run ci:secrets`;
+      - run: bun run ci:secrets
+      - run: bash scripts/ci-gitleaks.sh`;
 
 function ciWorkflow(overrides?: {
   name?: string;
