@@ -342,7 +342,7 @@ function emptyOutcome(): PurgeOutcome {
   };
 }
 
-const RECORDED_SELECTOR_KINDS = ["event", "connector", "record", "source", "subject"] as const;
+const RECORDED_SELECTOR_KINDS = ["event", "connector", "record", "source", "subject", "event+connector"] as const;
 type RecordedSelectorKind = (typeof RECORDED_SELECTOR_KINDS)[number];
 
 function recordedSelectorKind(filter: PurgeFilter): RecordedSelectorKind | null {
@@ -356,11 +356,14 @@ function recordedSelectorKind(filter: PurgeFilter): RecordedSelectorKind | null 
     return "subject";
   }
   const n = Number(event) + Number(source) + Number(connector) + Number(record);
-  if (n !== 1) return null;
-  if (event) return "event";
-  if (connector) return "connector";
-  if (record) return "record";
-  if (source) return "source";
+  if (n === 1) {
+    if (event) return "event";
+    if (connector) return "connector";
+    if (record) return "record";
+    if (source) return "source";
+    return null;
+  }
+  if (n === 2 && event && connector) return "event+connector";
   return null;
 }
 

@@ -27,7 +27,7 @@ class Element {
     replaceChildren(...nodes: Element[]) { this.children = []; this.ownText = ''; this.append(...nodes); }
     replaceWith(node: Element) { if (this.parent) { const at = this.parent.children.indexOf(this); this.parent.children[at] = node; node.parent = this.parent; } }
     remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); }
-    setAttribute(key: string, value: string) { this.attributes[key] = value; if (key === 'class') this.className = value; }
+    setAttribute(key: string, value: string) { this.attributes[key] = value; if (key === 'class') this.className = value; if (key === 'value') this.value = value; }
     getAttribute(key: string) { return this.attributes[key] ?? null; }
     addEventListener(name: string, fn: (event: any) => unknown) { (this.listeners[name] ??= []).push(fn); }
     fire(name: string, event: unknown = {}) { return Promise.all((this.listeners[name] ?? []).map(fn => fn(event))); }
@@ -67,6 +67,36 @@ function fixture() {
     return { evaluate, reply, requests, storageWrites, clipboardWrites, main: ids.get('main')!, dialog: ids.get('dialog')!, notice: ids.get('notification')!, window };
 }
 const status = (operations: unknown[] = [], epoch = '1') => ({ vault: { ready: true }, visibility_epoch: epoch, operations });
+
+test('Activity distinguishes loading and unavailable from an empty receipt history and can retry', async () => {
+    const f = fixture();
+    f.evaluate(`navigate('activity')`);
+    expect(f.main.textContent).toContain('Loading activity');
+    expect(f.main.textContent).not.toContain('No receipted changes yet');
+    const pending = f.requests.splice(f.requests.findIndex(row => row.route === 'activity'), 1)[0]!;
+    pending.result.resolve({ status: 503, json: async () => ({ ok: false, error: { code: 'unavailable' } }) });
+    await tick();
+    expect(f.main.textContent).toContain('Activity is unavailable');
+    expect(f.main.textContent).not.toContain('No receipted changes yet');
+    const retry = findAction(f.main, 'Retry activity').fire('click');
+    expect(f.main.textContent).toContain('Loading activity');
+    f.reply('activity', { receipts: [] }); await retry;
+    expect(f.main.textContent).toContain('No receipted changes yet');
+    expect(f.main.textContent).not.toContain('Activity is unavailable');
+});
+
+test('Activity clears previously displayed receipts when their refresh fails', async () => {
+    const f = fixture();
+    f.evaluate(`state.view='activity'; state.receipts=[{id:'old',page:'STALE_PAGE'}]; render();`);
+    expect(f.main.textContent).toContain('STALE_PAGE');
+    const work = f.evaluate<Promise<void>>('loadActivity()');
+    expect(f.main.textContent).not.toContain('STALE_PAGE');
+    const pending = f.requests.splice(0, 1)[0]!;
+    pending.result.resolve({ status: 503, json: async () => ({ ok: false, error: { code: 'unavailable' } }) });
+    await work;
+    expect(f.main.textContent).toContain('Activity is unavailable');
+    expect(f.main.textContent).not.toContain('STALE_PAGE');
+});
 
 test('Activity names the receipt action while preserving exact references in closed details', () => {
     for (const [action, title] of [['create', 'Memory page created'], ['edit', 'Memory page updated'], ['archive', 'Memory page removed'], ['unknown', 'Memory change'], ['toString', 'Memory change']] as const) {
@@ -185,6 +215,50 @@ test('failed workspace creation returns to setup options instead of a modal dead
     expect(f.main.textContent).not.toContain('Completed');
 });
 
+test('failed setup restores submitted choices after a refresh rebuilds the form', async () => {
+    const f = fixture();
+    const setupStatus = { vault: { ready: false }, setup_location: '/tmp/kizuki-empty', setup_no_service: false, visibility_epoch: 'uninitialized', operations: [] };
+    f.evaluate(`state.status=${JSON.stringify(setupStatus)}; render();`);
+    f.main.querySelector('#setup-path')!.value = '/tmp/existing-notes';
+    f.main.querySelector('#setup-no-service')!.checked = true;
+    const work = f.evaluate<Promise<void>>('initialize()');
+    f.reply('initialize', { operation_id: 'init' }); await tick();
+    const refreshed = f.evaluate<Promise<void>>('refresh()');
+    f.reply('status', setupStatus); await tick();
+    f.reply('catalog', { sources: [] }); await refreshed;
+    f.reply('operation', { id: 'init', kind: 'initialize', state: 'failed', error: { code: 'unavailable' } });
+    await work; await tick();
+    expect(f.main.querySelector('#setup-path')!.value).toBe('/tmp/existing-notes');
+    expect(f.main.querySelector('#setup-no-service')!.checked).toBe(true);
+    expect(f.main.querySelector('#setup-path')!.focused).toBe(true);
+    const retry = f.evaluate<Promise<void>>('initialize()');
+    expect(f.requests.find(row => row.route === 'initialize')!.payload).toEqual({ path: '/tmp/existing-notes', no_service: true });
+    f.reply('initialize', { operation_id: 'retry' }); await tick();
+    f.reply('operation', { id: 'retry', kind: 'initialize', state: 'failed', error: { code: 'unavailable' } });
+    await retry;
+    expect(f.storageWrites).toHaveLength(0);
+});
+
+test('failed setup keeps its error visible when refresh already reports a ready workspace', async () => {
+    const f = fixture();
+    f.evaluate(`state.status={vault:{ready:false},visibility_epoch:'1',operations:[]}; render();`);
+    const work = f.evaluate<Promise<void>>('initialize()');
+    f.reply('initialize', { operation_id: 'init' }); await tick();
+    const refreshed = f.evaluate<Promise<void>>('refresh()');
+    f.reply('status', status()); await tick();
+    f.reply('catalog', { sources: [] });
+    f.reply('sources', { sources: [] }); await refreshed;
+    const currentView = f.main.children[0];
+    f.reply('operation', { id: 'init', kind: 'initialize', state: 'failed', error: { code: 'invalid_request' } });
+    await work; await tick();
+    expect(f.dialog.open).toBe(false);
+    expect(f.notice.hidden).toBe(false);
+    expect(f.notice.textContent).toContain('A workspace already exists');
+    expect(f.main.children[0]).toBe(currentView);
+    expect(f.main.querySelector('#setup-path')).toBeNull();
+    expect(f.storageWrites).toHaveLength(0);
+});
+
 test('successful setup opens sources without a stale completed banner and focuses Connect', async () => {
     const f = fixture();
     f.evaluate(`state.status={vault:{ready:false},visibility_epoch:'uninitialized',operations:[]}; state.sources=[]; render();`);
@@ -209,6 +283,20 @@ test('memory keeps Markdown onboarding when a source still needs permission or i
     f.evaluate(`state.sources[0].consent='active'; state.sources[0].last_run=null; state.sources[0].stored=0; render();`);
     expect(f.main.textContent).toContain('Import this source to search it');
     expect(findAction(f.main, 'Import history')).toBeTruthy();
+});
+
+test('sources distinguish incomplete history from a finished backfill without promising complete coverage', () => {
+    const f = fixture();
+    f.evaluate(`state.view='sources'; Object.assign(state.sources[0], {last_run:'2026-09-07T00:00:00Z', stored:3, backfill_complete:false}); render();`);
+    expect(f.main.textContent).toContain('History import is incomplete');
+    expect(f.main.textContent).toContain('3 saved in the last check');
+    f.evaluate(`state.sources[0].backfill_complete=true; render();`);
+    expect(f.main.textContent).toContain('History import reached the end reported by this source');
+    expect(f.main.textContent).not.toContain('History import is incomplete');
+    expect(f.main.textContent).toContain('This does not confirm complete date coverage');
+    f.evaluate(`state.sources[0].last_run=null; state.sources[0].backfill_complete=null; render();`);
+    expect(f.main.textContent).toContain('No capture checkpoint yet');
+    expect(f.main.textContent).not.toContain('3 saved in the last check');
 });
 
 test('source enrollment focuses the labeled folder field instead of the close control', () => {
@@ -275,6 +363,32 @@ test('failed folder enrollment restores the labeled path instead of leaving a cl
     expect(f.dialog.querySelector('.form-error')!.textContent).toContain('outside your Kizuki workspace');
     expect(f.dialog.textContent).toContain('Connect folder');
 });
+
+for (const [provider, fields] of [['gmail', ['attachments']], ['google-calendar', []]] as const) {
+    test(`failed ${provider} enrollment preserves selected fields on retry`, async () => {
+        const f = fixture();
+        f.evaluate(`state.catalog=[{id:${JSON.stringify(provider)},title:'Synthetic Google source',detail:'Synthetic',available:true,fields:['text','attachments'],required_fields:['text']}]; enrollment(state.catalog[0]);`);
+        f.dialog.querySelector('#field-text')!.checked = false;
+        f.dialog.querySelector('#field-attachments')!.checked = fields.length > 0;
+        const calendar = f.dialog.querySelector('#calendar-id');
+        if (calendar) calendar.value = 'synthetic-calendar';
+        const work = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+        const payload = f.requests[0]!.payload;
+        expect(payload.fields).toEqual([...fields]);
+        f.reply('enroll', { operation_id: 'enroll-fields' }); await tick();
+        f.reply('operation', { id: 'enroll-fields', kind: 'enroll', state: 'failed', error: { code: 'unavailable' } });
+        await work; await tick();
+        expect(f.dialog.querySelector('#field-text')!.checked).toBe(false);
+        expect(f.dialog.querySelector('#field-attachments')!.checked).toBe(fields.length > 0);
+        expect(f.dialog.querySelector('.form-error')!.textContent).not.toBe('');
+        const retry = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+        expect(f.requests[0]!.payload).toEqual(payload);
+        f.reply('enroll', { operation_id: 'retry-fields' }); await tick();
+        f.reply('operation', { id: 'retry-fields', kind: 'enroll', state: 'failed', error: { code: 'unavailable' } });
+        await retry;
+        expect(f.storageWrites).toEqual([]);
+    });
+}
 
 test('a queued native close and late success leave a newly opened dialog intact', async () => {
     const f = fixture();

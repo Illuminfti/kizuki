@@ -1,5 +1,8 @@
 import { validateEventInput, type AttachmentRef, type CaptureEventInput, type SubjectRef } from "@kizuki/core";
-import { MAX_PAGE_POSTS, X_API_CONNECTOR_ID, digest, failure, id, instant, object, token, type XApiSelection } from "./state";
+import { MAX_PAGE_POSTS, X_API_CONNECTOR_ID, digest, enumValue, failure, id, instant, object, token, type XApiSelection } from "./state";
+
+export const MEDIA_KINDS = ["photo", "video", "animated_gif"] as const;
+export const REFERENCE_KINDS = ["retweeted", "quoted", "replied_to"] as const;
 
 export const MAX_POST_TEXT_BYTES = 128 * 1024;
 export const MAX_API_BATCH_BYTES = 3 * 1024 * 1024;
@@ -69,8 +72,9 @@ function mediaRefs(raw: Record<string, unknown>, selected: XApiSelection): Map<s
   const included = optionalObject(raw.includes);
   for (const item of included?.media === undefined ? [] : array(included.media, MAX_PAGE_POSTS * 16)) {
     const value = object(item), key = mediaKey(value.media_key);
-    if (!["photo", "video", "animated_gif"].includes(String(value.type)) || result.has(key)) throw failure();
-    result.set(key, { media_key: key, kind: value.type as MediaRef["kind"], url: value.url === undefined ? null : url(value.url),
+    const kind = enumValue(value.type, MEDIA_KINDS);
+    if (result.has(key)) throw failure();
+    result.set(key, { media_key: key, kind, url: value.url === undefined ? null : url(value.url),
       preview_url: value.preview_image_url === undefined ? null : url(value.preview_image_url) });
   }
   return result;
@@ -86,8 +90,7 @@ function mapPost(raw: unknown, account: string, selected: XApiSelection, observe
   const relation = selected.fields.includes("relationships");
   const refs = relation ? aliased(value, "referenced_posts", "referenced_tweets", raw => array(raw, 3).map(item => {
     const ref = object(item);
-    if (!["retweeted", "quoted", "replied_to"].includes(String(ref.type))) throw failure();
-    return { id: id(ref.id), type: String(ref.type) };
+    return { id: id(ref.id), type: enumValue(ref.type, REFERENCE_KINDS) };
   })) ?? [] : [];
   const edits = aliased(value, "edit_history_post_ids", "edit_history_tweet_ids", raw => array(raw, 16).map(id)) ?? [postId];
   if (!edits.includes(postId) || edits.length === 0 || new Set(edits).size !== edits.length) throw failure();

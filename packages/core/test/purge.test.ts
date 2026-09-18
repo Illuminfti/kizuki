@@ -194,7 +194,7 @@ describe("purgeEvents", () => {
         )
         .get(eventId)?.selector_kind ?? null;
     expect(kinds(target.event_id)).toBe("event");
-    expect(kinds(lone.event_id)).toBeNull();
+    expect(kinds(lone.event_id)).toBe("event+connector");
     const keep = db
       .query<{ event_id: string }, [string, string]>(
         "SELECT event_id FROM event_purges WHERE event_id NOT IN (?, ?) ORDER BY event_id",
@@ -209,7 +209,7 @@ describe("purgeEvents", () => {
       .map((row) => row.selector_kind);
     expect(mailProofs.filter((kind) => kind === "event")).toEqual(["event"]);
     expect(mailProofs.filter((kind) => kind === "connector")).toEqual(["connector"]);
-    expect(mailProofs.filter((kind) => kind === null)).toEqual([null]);
+    expect(mailProofs.filter((kind) => kind === "event+connector")).toEqual(["event+connector"]);
     db.close();
     const reopened = openLedger(path);
     expect(
@@ -227,7 +227,7 @@ describe("purgeEvents", () => {
             WHERE receipt_id = (SELECT receipt_id FROM event_purges WHERE event_id = ?)`,
         )
         .get(lone.event_id),
-    ).toEqual({ selector_kind: null });
+    ).toEqual({ selector_kind: "event+connector" });
     expect(
       reopened
         .query<{ selector_kind: string | null }, [string]>(
