@@ -69,6 +69,60 @@ function jobHasFullHistoryCheckout(job: Record<string, unknown>): boolean {
   });
 }
 
+// A file a job asserts into existence under the runner temporary directory is
+// evidence produced by that run. Unless an upload-artifact step retains it the
+// runner is torn down with the file still on it, so no downstream gate can ever
+// be handed the receipt. The rule is structural rather than a match on one
+// filename, so the next receipt added here cannot regress the same way.
+const REQUIRED_FILE = /\btest\s+-f\s+(?:"([^"\n]*)"|'([^'\n]*)'|([^\s;&|]+))/g;
+const RUNNER_TEMP = "$RUNNER_TEMP";
+const RUNNER_TEMP_PREFIX =
+  /^(?:\$\{\{\s*runner\.temp\s*\}\}|\$\{RUNNER_TEMP\}|\$RUNNER_TEMP)(?=\/)/;
+
+function runnerTempPath(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  const prefix = RUNNER_TEMP_PREFIX.exec(trimmed);
+  return prefix === null ? undefined : RUNNER_TEMP + trimmed.slice(prefix[0].length);
+}
+
+function requiredRunnerTempFiles(job: Record<string, unknown>): string[] {
+  const steps = job["steps"];
+  if (!Array.isArray(steps)) return [];
+  const required = new Set<string>();
+  for (const step of steps) {
+    if (!isRecord(step)) continue;
+    const run = step["run"];
+    if (typeof run !== "string") continue;
+    for (const match of run.matchAll(REQUIRED_FILE)) {
+      const file = runnerTempPath(match[1] ?? match[2] ?? match[3] ?? "");
+      if (file !== undefined) required.add(file);
+    }
+  }
+  return [...required];
+}
+
+function retainedRunnerTempPaths(job: Record<string, unknown>): string[] {
+  const steps = job["steps"];
+  if (!Array.isArray(steps)) return [];
+  const retained: string[] = [];
+  for (const step of steps) {
+    if (!isRecord(step) || !isUploadArtifactStep(step)) continue;
+    const settings = step["with"];
+    const listed = isRecord(settings) ? settings["path"] : undefined;
+    if (typeof listed !== "string") continue;
+    for (const line of listed.split("\n")) {
+      const entry = runnerTempPath(line);
+      if (entry !== undefined) retained.push(entry);
+    }
+  }
+  return retained;
+}
+
+function isRetained(file: string, retained: readonly string[]): boolean {
+  return retained.some((entry) =>
+    entry === file || file.startsWith(entry.endsWith("/") ? entry : entry + "/"));
+}
+
 function validateJobs(
   path: string,
   jobs: Record<string, unknown>,
@@ -98,6 +152,15 @@ function validateJobs(
     const steps = rawJob["steps"];
     if (rawJob["uses"] === undefined && (!Array.isArray(steps) || steps.length === 0)) {
       failures.push({ path, reason: `job "${name}" has no steps` });
+    }
+    const retained = retainedRunnerTempPaths(rawJob);
+    for (const file of requiredRunnerTempFiles(rawJob)) {
+      if (!isRetained(file, retained)) {
+        failures.push({
+          path,
+          reason: `job "${name}" requires ${file} to exist but no upload-artifact step retains it`,
+        });
+      }
     }
     if (jobRunsHistoryScan(rawJob) && !jobHasFullHistoryCheckout(rawJob)) {
       failures.push({
