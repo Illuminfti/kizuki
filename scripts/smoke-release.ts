@@ -42,7 +42,6 @@ function runJson(command: string, args: string[], env: Record<string, string>): 
   return { stdout: result.stdout.toString(), stderr: result.stderr.toString() };
 }
 
-
 const rootTemp = mkdtempSync(join(tmpdir(), "kizuki-release-smoke-"));
 try {
   const vault = join(rootTemp, "vault");
@@ -165,12 +164,13 @@ try {
   const rejected = await mcpSession(mcp, env, ["--vault", vault, "--token-ref", `file:${credential}`], [agentRequests[0]!]);
   if (rejected.code === 0 || `${rejected.output}${rejected.diagnostics}`.includes(envelope.token) || `${rejected.output}${rejected.diagnostics}`.includes(credential)) throw new Error("revoked credential reconnected");
 
-  const { code, output, diagnostics } = await mcpSession(mcp, env, ["--vault", vault, "--owner"], [
-    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"release-smoke","version":"0"}}}',
+  const ownerSession = await mcpSession(mcp, env, ["--vault", vault, "--owner"], [
+    agentRequests[0]!,
+    agentRequests[1]!,
     '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}',
   ]);
-  if (code !== 0) throw new Error(`MCP smoke failed: ${diagnostics}`);
-  if (!output.includes('"tools"')) throw new Error("MCP tools/list did not respond");
+  if (ownerSession.code !== 0) throw new Error("owner MCP smoke failed");
+  if (!ownerSession.output.includes('"tools"')) throw new Error("MCP tools/list did not respond");
 
   verifyPackageDirectory(release, build);
   process.stdout.write(`release smoke passed: ${release}\n`);

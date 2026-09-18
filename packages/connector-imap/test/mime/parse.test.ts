@@ -120,6 +120,26 @@ describe("content type parameters", () => {
     expect(parseContentType(header).params["name"]).toBe(expected);
   });
 
+  test.each(["%2G", "%G2", "%+1", "%1-", "% 1", "%A", "%"])(
+    "preserves malformed percent escape %s in extended parameters",
+    (escape) => {
+      const value = `report${escape}.txt`;
+      expect(
+        parseDisposition(`attachment; filename*=utf-8''${value}`)?.params["filename"],
+      ).toBe(value);
+      expect(
+        parseContentType(`text/plain; name*0*=utf-8''report; name*1*=${escape}.txt`)
+          .params["name"],
+      ).toBe(value);
+    },
+  );
+
+  test("decodes valid hex pairs around a malformed percent escape", () => {
+    expect(
+      parseDisposition("attachment; filename*=utf-8''%41%2G%4a.txt")?.params["filename"],
+    ).toBe("A%2GJ.txt");
+  });
+
   test("decodes a single extended parameter", () => {
     const disposition = parseDisposition("attachment; filename*=utf-8''r%C3%A9sum%C3%A9.pdf");
     expect(disposition?.params["filename"]).toBe("résumé.pdf");

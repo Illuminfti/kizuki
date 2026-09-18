@@ -7,6 +7,7 @@ export async function mcpSession(mcp: string, env: Record<string, string>, args:
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("MCP smoke timed out")); }, 15_000); });
+    // Keep the deadline active until both output streams have also closed.
     const [code, stdout, diagnostics] = await Promise.race([
       Promise.all([child.exited, output, stderr]),
       timeout,
