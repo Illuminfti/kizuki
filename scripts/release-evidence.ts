@@ -801,13 +801,23 @@ export const P0_DISPOSITION_PRODUCER = "kizuki.p0-disposition/v1";
 export const JOURNEY_PRODUCER = "kizuki.journey-proof/v1";
 export const CONNECTOR_PRODUCER = "kizuki.connector-evidence/v1";
 export const REQUIRED_CHECKS_PRODUCER_FILES = ["scripts/release-evidence.ts", "scripts/required-checks.ts"] as const;
-/** No journey or connector producer entrypoint has landed yet, so the shared
+/** No journey producer entrypoint has landed yet, so for that family the shared
  * receipt module is the whole producer surface. A later lane that adds a
- * producer script extends these lists; leaving them unpinned would let a receipt
+ * producer script extends the list; leaving it unpinned would let a receipt
  * author choose which files the revision is computed over. While a list names
  * this module alone, its evaluator cannot certify that any step ran. */
 export const JOURNEY_PRODUCER_FILES = ["scripts/release-evidence.ts"] as const;
-export const CONNECTOR_PRODUCER_FILES = ["scripts/release-evidence.ts"] as const;
+/** The connector producer has landed: the shared receipt builder plus the
+ * file-import and local-source proof entrypoints and their fixtures. A receipt
+ * naming any other list is refused before the evaluator reads a step. */
+export const CONNECTOR_PRODUCER_FILES = [
+  "scripts/connector-evidence.ts",
+  "scripts/file-import-proof-fixtures.ts",
+  "scripts/file-import-proof.ts",
+  "scripts/release-evidence.ts",
+  "scripts/screenpipe-proof-fixtures.ts",
+  "scripts/screenpipe-proof.ts",
+] as const;
 export const P0_DISPOSITION_PRODUCER_FILES = ["scripts/p0-disposition.ts", "scripts/release-evidence.ts"] as const;
 /** The shared receipt module; holding it proves nothing about executed work. */
 export const EVALUATOR_MODULE_FILE = "scripts/release-evidence.ts";
@@ -823,6 +833,11 @@ export const CHECK_CONCLUSIONS = ["success", "failure", "cancelled", "timed_out"
 export const P0_LABEL = "severity:p0";
 /** A connector's evidence class fixes the operator class that can witness it. */
 export const CONNECTOR_SOURCE_CLASSES = { "live-account": "live-account-operator", "file-import": "file-import-operator", "local-source": "local-source-operator" } as const;
+/** Evidence classes this repository can actually produce. A file import and an
+ * offline read of a stopped local database are executable here; a live account
+ * is not, so no producer in the pinned list can witness one. A live-account
+ * receipt therefore keeps ending in UNVERIFIABLE however well formed it is. */
+export const PRODUCED_EVIDENCE_CLASSES = ["file-import", "local-source"] as const;
 export const FAMILY_LIMITS = { issues: 64, steps: 128, command: 16, command_chars: 512, skew_ms: 300_000 } as const;
 const RAW_OUTPUT_KEYS = ["stdout", "stderr", "output"] as const;
 
@@ -964,7 +979,9 @@ export function evaluateConnectorReceipt(value: unknown, binding: ConnectorBindi
   const identity = familyIdentity(row.identity, CONNECTOR_PRODUCER, binding, CONNECTOR_SOURCE_CLASSES[entry.evidence], "authorized-operator", CONNECTOR_PRODUCER_FILES);
   acceptanceCredit(row.acceptance_credit);
   receiptSteps(row.steps);
-  if (!producerEntrypointLanded(identity.producer_files)) return { status: "UNVERIFIABLE", reason: "connector-producer-not-landed", creditDigest: false };
+  if (!producerEntrypointLanded(identity.producer_files) || !(PRODUCED_EVIDENCE_CLASSES as readonly string[]).includes(entry.evidence)) {
+    return { status: "UNVERIFIABLE", reason: "connector-producer-not-landed", creditDigest: false };
+  }
   return { status: "PASS", reason: "connector-steps-passed", creditDigest: true };
 }
 
