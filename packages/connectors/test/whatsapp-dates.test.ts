@@ -133,6 +133,18 @@ test("two-digit and four-digit years both resolve", () => {
   ).toEqual(["2026-01-04T09:00", "2026-01-05T09:00:30"]);
 });
 
+test("four-digit years are not silently expanded as two-digit years", () => {
+  for (const order of ["dmy", "mdy"] as const) {
+    for (const year of ["0000", "0026", "0099"]) {
+      expect(thrown(() => stamps(`4/1/${year}, 09:00 - Ada: hi`, order)).code)
+        .toBe("parse_error");
+    }
+    expect(stamps("4/1/00, 09:00 - Ada: hi", order)).toEqual([
+      order === "dmy" ? "2000-01-04T09:00" : "2000-04-01T09:00",
+    ]);
+  }
+});
+
 test("resolveTimezone accepts the host zone and fixed offsets", () => {
   expect(resolveTimezone(undefined)).toBe(
     Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -144,6 +156,19 @@ test("resolveTimezone accepts the host zone and fixed offsets", () => {
 test("resolveTimezone refuses an impossible or unknown zone", () => {
   for (const value of ["+15:00", "-00:99", "Not/AZone", ""]) {
     expect(thrown(() => resolveTimezone(value)).code).toBe("misconfigured");
+  }
+});
+
+test("fixed offsets stop at the inclusive fourteen-hour boundary", () => {
+  for (const sign of ["+", "-"]) {
+    for (const offset of ["13:59", "14:00"]) {
+      expect(resolveTimezone(`${sign}${offset}`)).toBe(`${sign}${offset}`);
+    }
+    for (const offset of ["14:01", "14:30", "14:59"]) {
+      const error = thrown(() => resolveTimezone(`${sign}${offset}`));
+      expect(error.code).toBe("misconfigured");
+      expect(error.message).toContain("time zone offset out of range");
+    }
   }
 });
 
