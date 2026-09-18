@@ -11,8 +11,8 @@ import {
 } from "./screenpipe-proof-fixtures";
 import type { ScreenpipeFixtureShape } from "./screenpipe-proof-fixtures";
 import {
-  SCREENPIPE_LIMITS, SCREENPIPE_REFUSALS, connectObservation, expectedScreenpipeSteps, exportObservation,
-  parseScreenpipeArgs, refusalObservation, runCounts, statusCount,
+  SCREENPIPE_LIMITS, SCREENPIPE_REFUSALS, connectObservation, deniedCaptureObservation, expectedScreenpipeSteps,
+  exportObservation, parseScreenpipeArgs, refusalObservation, runCounts, statusCount,
 } from "./screenpipe-proof";
 
 const roots: string[] = [];
@@ -135,9 +135,17 @@ test("run counts refuse invented totals, hidden errors and unexpected diagnostic
   expect(() => runCounts(line(3, 0, 9, 0), "", expected)).toThrow();
   expect(() => runCounts(line(3, 0, 8, 0), "error: synthetic\n", expected)).toThrow();
   expect(() => runCounts(line(3, 0, 8, 0) + "extra\n", "", expected)).toThrow();
-  const denied = { stored: 0, duplicates: 0, proposals: 0, errors: ["source_capture_denied"], degraded: ["index-behind-ledger"] };
-  expect(runCounts(line(0, 0, 0, 1), `consent-required: kizuki connect grant --source ${KEY} --policy POLICY.json --expected-revision 3 --operation-id UNIQUE_ID\nerror: source_capture_denied\n`, denied).errors).toBe(1);
-  expect(() => runCounts(line(0, 0, 0, 1), "error: something_else\n", denied)).toThrow();
+  const duplicates = { stored: 0, duplicates: 3, proposals: 0, errors: [] as string[], degraded: [] as string[] };
+  expect(runCounts(`kizuki.screenpipe source=${KEY} ${line(0, 3, 0, 0)}`, "", duplicates).duplicates).toBe(3);
+  expect(() => runCounts(`kizuki.screenpipe source=${KEY} ${line(0, 0, 0, 0)}`, "", duplicates)).toThrow();
+});
+
+test("a purged source must be refused capture with its own consent hint", () => {
+  const denial = `error: source_capture_denied; consent-required: kizuki connect grant --source ${KEY} --policy POLICY.json --expected-revision 3 --operation-id UNIQUE_ID\n`;
+  expect(deniedCaptureObservation("", denial, KEY).consent).toBe("denied");
+  expect(() => deniedCaptureObservation("events_stored=3 duplicates=0\n", denial, KEY)).toThrow();
+  expect(() => deniedCaptureObservation("", denial, "01JJ0000000000000000000009")).toThrow();
+  expect(() => deniedCaptureObservation("", "error: source_capture_denied\n", KEY)).toThrow();
 });
 
 test("status cardinality refuses a connection a refused database must not have created", () => {
