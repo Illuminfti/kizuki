@@ -172,6 +172,9 @@ export interface PurgeVerifyReport {
   operations: PurgeOperationResult[];
   pages_rewritten: number;
   hold_lifted: boolean;
+  /** Page paths this verification observed still held for this batch. Empty
+   * when the hold was lifted, and when no ready batch could be read at all. */
+  held_pages: string[];
   ok: boolean;
 }
 
@@ -1605,6 +1608,7 @@ function emptyVerifyReport(receiptId: string, batchId: string | null = null): Pu
     operations: [],
     pages_rewritten: 0,
     hold_lifted: false,
+    held_pages: [],
     ok: false,
   };
 }
@@ -1679,7 +1683,8 @@ async function verifyPurgeOwned(
   }
   // Recheck after every external verification and owned close have settled. No erased subject
   // dictionary is retained, so legacy identity absence requires an empty table.
-  const holdLifted = !readHolds(db).some(hold => hold.proposal_id === batchId);
+  const heldPages = readHolds(db).filter(hold => hold.proposal_id === batchId).map(hold => hold.page_path);
+  const holdLifted = heldPages.length === 0;
   const finalOps = listOps(db, batchId);
   if (!holdLifted || !recognizedPurgeReceipt(db, receiptId) || !legacyIdentityAbsenceProvable(db) ||
       !eventPurgeIntegrityOk(db, batchId) || anyPurgedEventPresent(db, eventIds) ||
@@ -1696,6 +1701,7 @@ async function verifyPurgeOwned(
     operations,
     pages_rewritten: pagesRewritten,
     hold_lifted: holdLifted,
+    held_pages: heldPages,
     ok,
   };
   } finally { if (closePending) await binding.port?.close(); }

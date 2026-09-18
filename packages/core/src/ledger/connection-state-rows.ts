@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { isRfc3339 } from "../util/time";
+import { withControlWait } from "./busy";
 import { LedgerError } from "./connections";
 
 /** The one column a staged swap and a fresh timestamp both read. */
@@ -41,6 +42,10 @@ function isLockedDatabase(error: unknown): boolean {
  * released first, it would race a recovery in another process that had already
  * repaired this journal, and the restore would then delete the bytes that
  * recovery had just put back.
+ *
+ * The connection's ordinary busy wait does not apply here. This lock fails
+ * closed: a live holder means another writer owns the swap, and the caller has
+ * to see that now rather than after a long queue behind an unrelated batch.
  */
 export function writeLocked(
   db: Database,
@@ -48,7 +53,7 @@ export function writeLocked(
   rollback?: () => void,
 ): void {
   try {
-    db.transaction(() => {
+    withControlWait(db, () => db.transaction(() => {
       if (rollback === undefined) {
         work();
         return;
@@ -65,7 +70,7 @@ export function writeLocked(
         }
         throw error;
       }
-    }).immediate();
+    }).immediate());
   } catch (error) {
     if (isLockedDatabase(error)) {
       throw new LedgerError(LOCKED_CONTROL_STORE, { cause: error });

@@ -150,13 +150,33 @@ function insertDocument(db: Database, doc: SearchDocument): void {
   );
 }
 
-function insertFtsRow(db: Database, doc: SearchDocument): void {
-  db.query<never, [string]>("DELETE FROM search_docs WHERE doc_id = ?").run(
-    doc.docId,
+/**
+ * FTS5 cannot index `doc_id`, so deleting by it scans the whole index and an
+ * incremental catch-up costs O(corpus) per record. Every companion row is
+ * therefore addressed by its authoritative `search_documents` rowid, which the
+ * primary key resolves in log time. The full projection copies rowids too, so
+ * the two tables stay addressable by the same key.
+ */
+function documentRowId(db: Database, docId: string): number | null {
+  return (
+    db
+      .query<{ rowid: number }, [string]>(
+        "SELECT rowid FROM search_documents WHERE doc_id = ?",
+      )
+      .get(docId)?.rowid ?? null
   );
+}
+
+function deleteFtsRow(db: Database, rowid: number | null): void {
+  if (rowid === null) return;
+  db.query<never, [number]>("DELETE FROM search_docs WHERE rowid = ?").run(rowid);
+}
+
+function insertFtsRow(db: Database, doc: SearchDocument, rowid: number): void {
   db.query<
     never,
     [
+      number,
       string,
       string,
       string,
@@ -173,9 +193,10 @@ function insertFtsRow(db: Database, doc: SearchDocument): void {
     ]
   >(
     `INSERT INTO search_docs (
-       ${DOCUMENT_COLUMNS}
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       rowid, ${DOCUMENT_COLUMNS}
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
+    rowid,
     doc.docId,
     doc.scope,
     doc.title,
@@ -193,24 +214,31 @@ function insertFtsRow(db: Database, doc: SearchDocument): void {
 }
 
 function insertDoc(db: Database, doc: SearchDocument): void {
+  // INSERT OR REPLACE gives the row a new rowid, so withdraw the old companion
+  // before the authoritative row moves.
+  deleteFtsRow(db, documentRowId(db, doc.docId));
   insertDocument(db, doc);
-  insertFtsRow(db, doc);
+  const rowid = documentRowId(db, doc.docId);
+  if (rowid !== null) insertFtsRow(db, doc, rowid);
 }
 
 export function deleteDoc(db: Database, scope: DocScope, docId: string): void {
   const id = namespaced(scope, docId);
+  deleteFtsRow(db, documentRowId(db, id));
   db.query<never, [string]>("DELETE FROM search_documents WHERE doc_id = ?").run(
     id,
   );
-  db.query<never, [string]>("DELETE FROM search_docs WHERE doc_id = ?").run(id);
 }
 
 /** Withdraw every canon search row for a vault-relative path, including stale ids. */
 export function removeCanonPath(db: Database, path: string, pageId?: string): void {
   initSearch(db);
   if (pageId !== undefined && pageId.length > 0) deleteDoc(db, "canon", pageId);
+  db.query(
+    `DELETE FROM search_docs WHERE rowid IN (
+       SELECT rowid FROM search_documents WHERE scope='canon' AND path=?)`,
+  ).run(path);
   db.query("DELETE FROM search_documents WHERE scope='canon' AND path=?").run(path);
-  db.query("DELETE FROM search_docs WHERE scope='canon' AND path=?").run(path);
 }
 
 export function replacePage(db: Database, page: CanonPage): void {
@@ -255,8 +283,20 @@ export function indexPage(db: Database, page: CanonPage): void {
 }
 
 export function indexEvent(db: Database, event: CaptureEvent): void {
+  indexEvents(db, [event]);
+}
+
+/**
+ * Index one bounded batch of ledger events in a single transaction. A
+ * per-event transaction pays one durable commit per record, which is what
+ * makes a large estate never finish catching up.
+ */
+export function indexEvents(db: Database, events: readonly CaptureEvent[]): void {
+  if (events.length === 0) return;
   initSearch(db);
-  db.transaction(() => replaceEvent(db, event)).immediate();
+  db.transaction(() => {
+    for (const event of events) replaceEvent(db, event);
+  }).immediate();
 }
 
 export function removeDoc(db: Database, scope: DocScope, docId: string): void {
@@ -342,8 +382,8 @@ export function projectSearchDocs(db: Database, pages: readonly CanonPage[] = []
   }
   db.exec("DELETE FROM search_docs");
   db.exec(
-    `INSERT INTO search_docs (${DOCUMENT_COLUMNS})
-     SELECT ${DOCUMENT_COLUMNS} FROM search_documents`,
+    `INSERT INTO search_docs (rowid, ${DOCUMENT_COLUMNS})
+     SELECT rowid, ${DOCUMENT_COLUMNS} FROM search_documents`,
   );
   // A schema-only recovery has no canon snapshot. Preserve ledger search and
   // require a canon rebuild instead of trusting the old companion payload.

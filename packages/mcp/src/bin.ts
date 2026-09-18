@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { authenticateAgentCredential, initAgents, PortError, PortRegistry, bindLocalSourcePort, loadConfiguredRetrieval } from "@kizuki/core";
+import { authenticateAgentCredential, initAgents, isLedgerBusy, LEDGER_BUSY_TIMEOUT_MS, leaseHeldMessage, PortError, PortRegistry, bindLocalSourcePort, loadConfiguredRetrieval } from "@kizuki/core";
 import { registerEmbeddedRetrieval } from "@kizuki/retrieval-pg";
 import { openLedger, initGraph, initSearch } from "@kizuki/core/internal";
 import type { Principal, RetrievalPort } from "@kizuki/core";
@@ -91,13 +91,15 @@ export async function main(argv: string[]): Promise<void> {
 
   let db: ReturnType<typeof openLedger> | undefined;
   try {
-    db = openLedger(join(stateDir, "kizuki.db"), { busyTimeoutMs: 5000 });
+    db = openLedger(join(stateDir, "kizuki.db"), { busyTimeoutMs: LEDGER_BUSY_TIMEOUT_MS });
     initSearch(db);
     initGraph(db);
     initAgents(db);
-  } catch {
+  } catch (error) {
     db?.close();
-    refuse("vault could not open");
+    // Opening runs schema repair, which is a write. Name the holder rather
+    // than reporting a healthy vault as unopenable.
+    refuse(isLedgerBusy(error) ? leaseHeldMessage(options.vault) : "vault could not open");
   }
 
   let principal: Principal;

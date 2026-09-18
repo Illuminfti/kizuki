@@ -1,3 +1,4 @@
+import { withControlWait } from "./busy";
 import {
   sourceErasureReport,
   eraseSourcePayload,
@@ -394,7 +395,9 @@ export function setSourceGrant(
       policy,
     ]),
   );
-  return db
+  // Consent publication fails closed: a second writer holding the ledger owns
+  // this decision, and the caller must hear that rather than queue behind it.
+  return withControlWait(db, () => db
     .transaction(() => {
       const prior = replay(db, request.operation_id, digest, {
         action: "grant",
@@ -446,7 +449,7 @@ export function setSourceGrant(
         policy_digest: policyDigest,
       });
     })
-    .immediate();
+    .immediate());
 }
 /** Commit denial independently of purge or canon lock acquisition. */
 export function revokeSourceGrant(
@@ -457,7 +460,7 @@ export function revokeSourceGrant(
   const digest = sha256Hex(
     JSON.stringify(["revoke", request.source_key, request.expected_revision]),
   );
-  return db
+  return withControlWait(db, () => db
     .transaction(() => {
       const prior = replay(db, request.operation_id, digest, {
         action: "revoke",
@@ -485,7 +488,7 @@ export function revokeSourceGrant(
         policy_digest: current.policy_digest,
       });
     })
-    .immediate();
+    .immediate());
 }
 /** Retry native purge using the receipt ID reserved durably before the first attempt. */
 export async function resumeSourceRevocation(

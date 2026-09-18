@@ -82,13 +82,13 @@ function json(status: number, body: unknown): Response {
 
 function refused(error: unknown): Response {
   if (error instanceof ServeError) {
-    const status = error.code === "rate_limited" ? 429 : 400;
+    const status = error.code === "rate_limited" ? 429 : error.code === "busy" ? 503 : 400;
     return json(status, {
       ok: false,
       error: {
         code: error.code,
         message: error.message,
-        retryable: false,
+        retryable: error.code === "busy",
         retry_after_seconds: error.retry_after_seconds,
       },
     });
