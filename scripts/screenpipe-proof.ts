@@ -114,6 +114,13 @@ export function exportObservation(stdout: string, stderr: string, directory: str
   return { ...empty(), stored: events.length };
 }
 
+/** After purge the unchanged source must be refused capture, not swept again. */
+export function deniedCaptureObservation(stdout: string, stderr: string, source: string): Observation {
+  check(stdout === "", "unexpected-denial-stdout");
+  check(stderr === `error: source_capture_denied; consent-required: kizuki connect grant --source ${source} --policy POLICY.json --expected-revision 3 --operation-id UNIQUE_ID\n`, "missing-or-extra-capture-denial");
+  return { ...empty(), consent: "denied" };
+}
+
 export function statusCount(stdout: string, stderr: string, expected: number): Observation {
   check(stderr === "", "unexpected-status-diagnostics");
   const body = envelope(stdout, "connect"), data = exact(body.data, "connections");
@@ -238,9 +245,7 @@ export async function runScreenpipeProof(args: ScreenpipeProofArgs): Promise<str
     await queryFor("purged-query", SCREENPIPE_SENTINEL, 0);
     await run("purge-status", "valid", ["connect", "status", "--source", sourceKey!, "--json"], 0,
       (stdout, stderr) => { check(stderr === "", "unexpected-purge-diagnostics"); return consentObservation(stdout, sourceKey!, "purged", SCREENPIPE_CONNECTOR_ID, operation); });
-    await run("denied-backfill", "valid", ["backfill", "screenpipe"], 1, (stdout, stderr) => runCounts(stdout, stderr, {
-      stored: 0, duplicates: 0, proposals: 0, errors: ["source_capture_denied"], degraded: ["index-behind-ledger"],
-    }));
+    await run("denied-backfill", "valid", ["backfill", "screenpipe"], 1, (stdout, stderr) => deniedCaptureObservation(stdout, stderr, sourceKey!));
 
     // A running screenpipe holds its database. Reading it would tear state, so
     // enrolment must refuse rather than observe a half-written snapshot.
