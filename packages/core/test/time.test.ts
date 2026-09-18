@@ -70,6 +70,26 @@ describe("canonicalizeRfc3339Utc", () => {
     expect(canonicalizeRfc3339Utc("not-a-time")).toBeNull();
   });
 
+  test("every canonical form is itself accepted by isRfc3339", () => {
+    for (const s of [
+      "2026-01-02T03:04:05+01:00",
+      "2026-06-30T23:59:60Z",
+      "0001-01-01T00:00:00Z",
+      "9999-12-31T23:59:59Z",
+    ]) {
+      const canonical = canonicalizeRfc3339Utc(s);
+      expect(canonical).not.toBeNull();
+      expect(isRfc3339(canonical!)).toBe(true);
+    }
+  });
+
+  test("rejects instants whose UTC form leaves years 0001-9999", () => {
+    // Valid RFC3339 input, but shifting the offset away has no RFC3339
+    // spelling, so canonicalize refuses rather than emitting year 10000/0000.
+    expect(canonicalizeRfc3339Utc("9999-12-31T23:59:59-14:00")).toBeNull();
+    expect(canonicalizeRfc3339Utc("0001-01-01T00:00:00+14:00")).toBeNull();
+  });
+
   test("offset-equivalent forms compare equal as strings after canonicalize", () => {
     const left = canonicalizeRfc3339Utc("2026-06-01T12:00:00-05:00");
     const right = canonicalizeRfc3339Utc("2026-06-01T17:00:00Z");

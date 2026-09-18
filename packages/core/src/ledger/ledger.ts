@@ -365,9 +365,13 @@ export function normalizeReplayFilter(filter: ReplayFilter): ReplayFilter {
     out.kind = assertIdentifier(filter.kind, "kind", LEDGER_KIND_MAX);
   }
   if (filter.since !== undefined) {
+    if (!isRfc3339(filter.since)) {
+      throw new LedgerStoreError("usage", "since must be an RFC3339 timestamp");
+    }
     const canonical = canonicalizeRfc3339Utc(filter.since);
     if (canonical === null) {
-      throw new LedgerStoreError("usage", "since must be an RFC3339 timestamp");
+      // Valid RFC3339, but its UTC equivalent leaves years 0001-9999.
+      throw new LedgerStoreError("usage", "since has no RFC3339 UTC spelling");
     }
     out.since = canonical;
   }

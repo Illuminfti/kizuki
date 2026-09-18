@@ -60,7 +60,10 @@ export function isRfc3339(s: unknown): s is string {
 /** Canonical UTC spelling for lexical-safe storage and compare.
  * Offset-equivalent RFC3339 inputs map to one `...Z` form with nine nanos.
  * Leap second `:60` maps to nanosecond 999999999 of minute 59 (same as SQL).
- * Returns null when `isRfc3339` would reject.
+ * Returns null when `isRfc3339` would reject, and also when shifting the
+ * offset away carries the instant outside years 0001-9999: RFC3339 has no
+ * spelling for those, so emitting one would hand callers a string their own
+ * validators refuse. Rejecting fails closed instead.
  */
 export function canonicalizeRfc3339Utc(s: string): string | null {
   if (!isRfc3339(s)) return null;
@@ -84,7 +87,9 @@ export function canonicalizeRfc3339Utc(s: string): string | null {
   if (!Number.isFinite(nanos)) return null;
 
   const utc = new Date(epochSecond * 1_000);
-  const yyyy = String(utc.getUTCFullYear()).padStart(4, "0");
+  const year = utc.getUTCFullYear();
+  if (year < 1 || year > 9_999) return null;
+  const yyyy = String(year).padStart(4, "0");
   const mm = String(utc.getUTCMonth() + 1).padStart(2, "0");
   const dd = String(utc.getUTCDate()).padStart(2, "0");
   const hh = String(utc.getUTCHours()).padStart(2, "0");
