@@ -7,7 +7,7 @@ import { statusQualification } from "./qualification";
 import { ArtifactProofError, PROOF_JSON_LIMITS, SQLITE_ENGINE_POLICY, parseProofJson as json, validateArtifactProof } from "./artifact-proof";
 import type { ArtifactProofIdentity, ArtifactProofSchema } from "./artifact-proof";
 import {
-  CAPABILITY_PROOF_FILE, CONNECTORS, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, NATIVE_ATTESTATION_PRODUCER, SURFACE_GATE, SURFACE_PRODUCER, TARGETS,
+  CAPABILITY_PROOF_FILE, CONNECTORS, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, NATIVE_ATTESTATION_PRODUCER, RECEIPT_FAMILIES, SURFACE_GATE, SURFACE_PRODUCER, TARGETS,
   absolute, consumeNativeAttestationReceipt, consumeSurfaceReceipt, digest, exact, gateReceiptMappingError, hash, inspectOptionalVerifier, parseGateReceipts, parents, read, reject, surfaceProducerActive, text,
 } from "./release-evidence";
 import type { GateReceiptReference } from "./release-evidence";
@@ -118,11 +118,12 @@ export function gates(): Gate[] {
     add(`native.${target}`, "native-execution-attestation", "UNVERIFIABLE", "producer-revision-and-native-attestation-unavailable", true, target);
     add(`lifecycle.${target}`, "native-installed-service", "UNVERIFIABLE", "trusted-online-lifecycle-observation-required", true, target);
   }
-  add("candidate.required-checks", "exact-candidate-ci"); add("candidate.independent-review", "independent-review");
-  add("candidate.current-p0-disposition", "current-head-findings", "UNVERIFIABLE", "trusted-snapshot-and-freshness-policy-unavailable");
+  add("candidate.required-checks", "exact-candidate-ci", "MISSING", "required-checks-receipt-missing");
+  add("candidate.independent-review", "independent-review");
+  add("candidate.current-p0-disposition", "current-head-findings", "MISSING", "p0-disposition-receipt-missing");
   add("surface.capabilities-and-docs", "product-surface-inventory");
-  for (const journey of JOURNEYS) add(`journey.${journey}`, "complete-product-journey");
-  for (const connector of CONNECTORS) add(`connector.${connector.id}`, connector.evidence);
+  for (const journey of JOURNEYS) add(`journey.${journey}`, "complete-product-journey", "MISSING", "journey-receipt-missing");
+  for (const connector of CONNECTORS) add(`connector.${connector.id}`, connector.evidence, "MISSING", "connector-receipt-missing");
   add("human.unfamiliar-user", "non-author-zero-coaching");
   add("owner.seven-day-rails", "supervised-owner-observation", "NOT_IMPLEMENTED", "superseded-readiness-gate", false);
   add("estate.fourteen-day-parity", "paired-estate-observation", "NOT_IMPLEMENTED", "superseded-readiness-gate", false);
@@ -171,6 +172,19 @@ export function evaluateRelease(profile: Profile, evidencePath: string) {
         const file = read(ref.path, LIMITS.family_receipt);
         if (file.sha256 !== ref.sha256) reject("receipt-digest-mismatch");
         const evaluated = consumeSurfaceReceipt(json(file.bytes), EVALUATOR_ROOT, index.candidate_source_sha);
+        file.unchanged();
+        gate.status = evaluated.status; gate.reason = evaluated.reason; gate.evidence_sha256 = evaluated.creditDigest ? file.sha256 : null;
+      } catch (error) { fail(gate, error); }
+    }
+    // Families whose evaluator needs only the receipt and the evaluator checkout.
+    for (const ref of index.gate_receipts) {
+      const family = RECEIPT_FAMILIES[ref.producer];
+      if (!family) continue;
+      const gate = row(ref.gate_id);
+      try {
+        const file = read(ref.path, family.limit);
+        if (file.sha256 !== ref.sha256) reject("receipt-digest-mismatch");
+        const evaluated = family.consume(json(file.bytes), EVALUATOR_ROOT, index.candidate_source_sha, ref.gate_id);
         file.unchanged();
         gate.status = evaluated.status; gate.reason = evaluated.reason; gate.evidence_sha256 = evaluated.creditDigest ? file.sha256 : null;
       } catch (error) { fail(gate, error); }
