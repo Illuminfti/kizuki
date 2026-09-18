@@ -72,8 +72,12 @@ frozen C3 catalogue uses, plus `index.json`. Each receipt declares
 lists the executed steps — capture, idempotent repeat, revoke, the refusal that
 follows it, and physical purge with its receipted status. A format whose cases
 did not all pass keeps its receipt with `acceptance_credit: false`, which the
-evaluator refuses outright rather than skipping. A format the harness never
-reached emits no receipt and names its blocker in `index.json`'s `unresolved`.
+evaluator refuses outright rather than skipping. A run-level integrity failure —
+the artifact package or its proof changing under the observation, the checkout
+going dirty, a fixture source rewritten mid-run — withholds credit from every
+format and names itself per format in `unresolved`, so the acceptance surface
+cannot be more optimistic than `receipt.json`'s own verdict. A format the harness
+never reached emits no receipt and names its blocker in `index.json`'s `unresolved`.
 The evaluator's receipt schema is closed, so the observed row counts and the
 honest limits each importer's own behaviour showed are recorded in `index.json`
 beside the receipts rather than in them. A live-account connector id is refused

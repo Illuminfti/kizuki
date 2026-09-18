@@ -281,16 +281,20 @@ export async function runFileImportProof(args: FileImportArgs): Promise<string> 
     artifact: identity, fixture_files: fixtureFiles, cases, failures, passed };
   const output = join(args.report, "receipt.json"); writeFileSync(output, JSON.stringify(receipt, null, 2) + "\n", { flag: "wx", mode: 0o600 });
   if (diagnostics.length) writeFileSync(join(args.report, "synthetic-diagnostics.json"), JSON.stringify({ scope: "generated_synthetic_inputs_only", diagnostics }, null, 2) + "\n", { flag: "wx", mode: 0o600 });
-  emitFileImportConnectorEvidence(args.report, sourceSha, referenceDay, cases);
+  emitFileImportConnectorEvidence(args.report, sourceSha, referenceDay, cases, failures);
   if (!passed) throw new Error(`file-import fixture proof failed; receipt retained at ${output}`);
   return output;
 }
 
 /** One acceptance receipt per format, beside the unchanged diagnostic receipt.
  * A format whose cases did not all pass keeps its receipt and withholds credit;
- * a format the harness never reached names its blocker in `unresolved`. */
+ * a format the harness never reached names its blocker in `unresolved`. The
+ * run-level failures the harness collected outside any one case — artifact
+ * custody broken mid-run, the checkout going dirty, a fixture source rewritten
+ * under the observation — withhold credit from every format, so the acceptance
+ * surface never outruns the diagnostic receipt's own verdict. */
 export function emitFileImportConnectorEvidence(
-  report: string, sourceSha: string, referenceDay: string, cases: readonly CaseReceipt[],
+  report: string, sourceSha: string, referenceDay: string, cases: readonly CaseReceipt[], runFailures: readonly string[],
 ): void {
   const unresolved: string[] = [];
   const entries: { receipt: ConnectorEvidenceReceipt; emission: ConnectorEvidenceEmission }[] = [];
@@ -302,7 +306,8 @@ export function emitFileImportConnectorEvidence(
     const observed = cases.find(item => item.format === fixture.format);
     const steps = (observed?.steps ?? []).filter(step => step.exit_code >= 0);
     if (!observed || steps.length === 0) { unresolved.push(`${fixture.connector}:no-command-was-executed`); continue; }
-    const acceptance_credit = observed.failures.length === 0 && observed.steps.every(step => step.passed);
+    const acceptance_credit = runFailures.length === 0 && observed.failures.length === 0 && observed.steps.every(step => step.passed);
+    if (runFailures.length > 0) unresolved.push(`${fixture.connector}:run-integrity:${runFailures[0]}`);
     try {
       entries.push({
         receipt: buildConnectorEvidenceReceipt({
