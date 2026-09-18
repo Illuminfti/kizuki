@@ -25,6 +25,12 @@ Related:
 stranger proof. Estate cutover and seven-/fourteen-day calendar observation
 are not readiness or 1.0 tag prerequisites ([D19](decision-log.md#owner-amendment-to-readiness-2026-09-05)).
 [D21](decision-log.md) makes the entire #497 world-model map day-one 1.0;
-closed packets and RFC fixtures are not shipped surfaces. Stranger proof is
-not in this tree. Product, connector, model, security, recovery, platform,
-independent review, and unfamiliar-human requirements remain.
+closed packets and RFC fixtures are not shipped surfaces. The automated
+native-artifact isolation proof is in this tree:
+[stranger-proof.md](stranger-proof.md) documents `bun run proof:artifact`,
+which the `test` job of `.github/workflows/ci.yml` runs. That proof does not
+establish human stranger acceptance, a model/canon proof, or live-connector
+qualification. The D19 artifact rails and the D21 minimal world-model journey
+are both required for 1.0 and are built in parallel. Product, connector,
+model, security, recovery, platform, independent review, and unfamiliar-human
+requirements remain.
