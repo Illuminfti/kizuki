@@ -171,9 +171,11 @@ edits, deletions and secret chats are not captured.
 Project app credentials (`KIZUKI_TELEGRAM_API_ID` and
 `KIZUKI_TELEGRAM_API_HASH`) are required. Missing credentials refuse before
 any prompt or network connection. From a source checkout, export those
-variables. The current native release build (`scripts/build-release.ts`)
-compiles with `KIZUKI_COMPILED` only and does not inline Telegram app
-credentials; a binary that includes them is a separate build. See
+variables. The native release build (`scripts/build-release.ts`) inlines that
+pair when both are set in its environment and records their names, never their
+values, in the package's `BUILD.json`; a package built with neither set records
+`compiled_credentials: []` and still reads the two variables from its own
+environment at run time. See
 [the Telegram connector README](../packages/connector-telegram/README.md).
 
 Re-sign-in preserves account identity, source key, and checkpoint. A different

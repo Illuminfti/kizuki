@@ -112,6 +112,23 @@ export function validateFrontmatterValue(value: unknown, key: string): string[] 
 }
 
 /**
+ * The serve loop's daily brief is a deterministic rollup rendered from rail
+ * state, not an extraction over ledger events, so it has no events to name.
+ * It is the one declared exemption from the "name at least one event" rule
+ * (RFC 0002 section 12: the zero-model path stays useful and loud, not broken).
+ * `archived` is not the honest alternative: that status is the deletion
+ * tombstone (`core-spine` "deletion"), and serving withholds archived pages,
+ * which would silently hide the brief from `query`, `search` and `timeline`.
+ *
+ * The exemption is provenance shape only. A sourceless page is still refused
+ * as retrieval evidence by `assessLivePageEvidence`, so a page carrying these
+ * markers can never borrow authority it did not earn.
+ */
+export function isDeterministicRollup(data: Record<string, unknown>): boolean {
+  return data["type"] === "rollup" && data["x-brief-producer"] === "deterministic";
+}
+
+/**
  * Strict provenance shape for diagnostics. Keep the legacy writer/scanner
  * schema separate until owner-edit and purge postimages have complete support.
  */
@@ -122,7 +139,7 @@ export function parsePageSources(data: Record<string, unknown>): ValidationResul
     return { ok: false, errors: ["sources: must be a string array"] };
   }
   const errors = validateFrontmatterValue(sources, "sources");
-  if (sources.length === 0 && data["status"] !== "archived") {
+  if (sources.length === 0 && data["status"] !== "archived" && !isDeterministicRollup(data)) {
     errors.push("sources: must name at least one event unless archived");
   }
   if (sources.some((source) => source.trim().length === 0)) {

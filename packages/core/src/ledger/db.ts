@@ -16,7 +16,8 @@ import {
   readSchemaVersion,
 } from "./integrity";
 import type { LedgerHealth } from "./integrity";
-import { LEDGER_BUSY_TIMEOUT_MS } from "./limits";
+import { retryWhileBusy } from "./busy";
+import { LEDGER_BUSY_TIMEOUT_MAX_MS, LEDGER_BUSY_TIMEOUT_MS } from "./limits";
 import { applyPurgeV5, applyEventPurgeIntegrityV22, applyEventPurgeSelectorKindV24, applyEventPurgeSelectorKindV26, applyEventPurgeSelectorKindV27, applyEventPurgeSelectorKindV28, applyEventPurgeSelectorKindV29, applyEventPurgeSelectorKindV30 } from "./purge-schema";
 import { applyPurgeBatchesV19 } from "./purge-batch-schema";
 import { applyEventIdentityV16 } from "./event-identity-schema";
@@ -25,6 +26,7 @@ import { applySourceSurvivorLineageV20 } from "./canon-source-survivor-lineage";
 import { applyCanonRecoveryV21 } from "./canon-recovery-schema";
 import { oneShotAll, oneShotRun, tableColumns, tableExists } from "./schema";
 import { applyLedgerV16 } from "./schema-v16";
+import { applyClaimV2TablesV31 } from "./migrations/claim-v2-v31";
 
 interface Migration {
   version: number;
@@ -216,6 +218,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 28, apply: applyEventPurgeSelectorKindV28 },
   { version: 29, apply: applyEventPurgeSelectorKindV29 },
   { version: 30, apply: applyEventPurgeSelectorKindV30 },
+  { version: 31, apply: applyClaimV2TablesV31 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
@@ -301,7 +304,7 @@ function migrate(db: Database, options: { includeStaging?: boolean } = {}): void
 
 function validatedBusyTimeout(value: number | undefined): number {
   const timeout = value ?? LEDGER_BUSY_TIMEOUT_MS;
-  if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 5000) {
+  if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > LEDGER_BUSY_TIMEOUT_MAX_MS) {
     throw new TypeError("invalid ledger busy timeout");
   }
   return timeout;
@@ -311,15 +314,22 @@ function configureLedgerBusyTimeout(db: Database, timeout: number): void {
   db.exec(`PRAGMA busy_timeout = ${timeout}`);
 }
 
+/**
+ * Repair to the current schema. Every step is a write and every step is
+ * idempotent, so one bounded retry around the whole of it is the budget: a
+ * live daemon rail must not turn opening a vault into a raw lock failure.
+ */
 export function ensureLedgerSchema(
   db: Database,
   options: { includeStaging?: boolean } = {},
 ): void {
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA foreign_keys = ON");
-  migrate(db, options);
-  initServe(db);
-  initCanon(db);
+  retryWhileBusy(() => {
+    db.exec("PRAGMA journal_mode = WAL");
+    db.exec("PRAGMA foreign_keys = ON");
+    migrate(db, options);
+    initServe(db);
+    initCanon(db);
+  });
 }
 
 export function openLedger(

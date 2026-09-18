@@ -10,12 +10,12 @@ const hash = (bytes: string | Buffer) => createHash("sha256").update(bytes).dige
 const TASKS = [
   ["install", "Install the supplied package and create a private workspace using only public instructions. Install to a stable path, use normal init, and check that its supervisor service is active and enabled using the public instructions.", "Normal init installs an active, enabled supervisor service; no hidden setup."],
   ["source-consent", "Connect the agreed supported source after reviewing its consent.", "Explicit account, fields, history and destinations; ingestion from that scope only."],
-  ["canon-agent-query", "Find useful knowledge from your source through an authorized agent and inspect its provenance.", "Autonomous model-written canon and an authorized agent query within 900000 ms of receiving the package; source-linked usefulness recorded."],
+  ["canon-agent-query", "Find useful knowledge from your source through an authorized agent and inspect its provenance. Explain whether the result is useful to you and why, without sharing private source contents.", "Autonomous model-written canon and an authorized agent query within 900000 ms of receiving the package; source-linked usefulness recorded."],
   ["model-boundary", "Explain what remains available without a model and what requires one.", "Capture, ledger, search, timeline, context, audit and undo remain available; canon writing requires a configured model."],
   ["correction-audit-undo", "Correct a belief, query it again or inspect its updated context, inspect the change and its receipt, then undo it.", "Observe correction, subsequent query/context, audit and undo separately; no approval queue."],
   ["source-health-revoke", "Inspect source health, then revoke the selected source.", "Participant understands health and revocation outcome; record errors without account contents."],
   ["recovery", "Use the documented backup and clean-target restore route, then verify both query and context against the restored content.", "Record completion, failures and losses; technical restore/purge qualification remains separate."],
-  ["accessibility", "Try the supported keyboard, reduced-motion and small-screen routes.", "Record each mode's outcome and inaccessible steps; automation is not a human outcome."],
+  ["accessibility", "Try the supported keyboard, reduced-motion and small-screen routes. Report any inaccessible steps separately for each mode without sharing private source contents.", "Record each mode's outcome and inaccessible steps; automation is not a human outcome."],
 ] as const;
 
 export function prepareSession(directory: string) {
@@ -36,6 +36,7 @@ export function prepareSession(directory: string) {
     target: build.target,
     bun_version: build.bun_version,
     package_sha256,
+    worksheet_generator_sha256: hash(readFileSync(import.meta.path)),
     protocol_sha256: hash(protocol),
     acceptance_checker_sha256: hash(policy),
     participant_instructions_sha256: hash(JSON.stringify(TASKS)),
@@ -50,6 +51,7 @@ export function prepareSession(directory: string) {
     source_and_model_authorization_reference: null,
     started_at: null,
     monotonic_start_ms: null,
+    timer_interruptions: [],
     first_useful_result_ms: null,
     canon_agent_milestone_ms: null,
     usefulness: null,
@@ -63,6 +65,7 @@ export function prepareSession(directory: string) {
     tasks: TASKS.map(([id, instruction, required_outcome]) => ({
       id, instruction, required_outcome, outcome: "UNRECORDED", elapsed_ms: null,
       interventions: null, confusion: null, inaccessible_steps: null, error_recovery: null,
+      interruption_notes: null,
     })),
   };
 }

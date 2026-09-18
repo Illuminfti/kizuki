@@ -196,6 +196,26 @@ export function getCanonReceipt(db: Database, receiptId: string): CanonReceipt |
   return row === null ? null : rowToReceipt(row);
 }
 
+/**
+ * Canon receipts recorded after `afterReceiptId`, or all of them when null.
+ * Freshness checks run on every read, so they count rows instead of
+ * materializing and parsing every receipt.
+ */
+export function countCanonReceipts(
+  db: Database,
+  afterReceiptId: string | null = null,
+): number {
+  if (!tableExists(db, "canon_receipts")) return 0;
+  if (afterReceiptId === null) {
+    return db.query<{ count: number }, []>(
+      "SELECT COUNT(*) AS count FROM canon_receipts",
+    ).get()?.count ?? 0;
+  }
+  return db.query<{ count: number }, [string]>(
+    "SELECT COUNT(*) AS count FROM canon_receipts WHERE receipt_id > ?",
+  ).get(afterReceiptId)?.count ?? 0;
+}
+
 export interface ListCanonReceiptsOptions {
   page_path?: string;
   writer?: string;
@@ -276,6 +296,24 @@ export function laterReceiptsForPage(
     )
     .all(pagePath, after.at, after.at, after.receipt_id)
     .map(rowToReceipt);
+}
+
+/** The next receipt on the same page, including reverted writes; one indexed row. */
+export function nextReceiptForPage(
+  db: Database,
+  pagePath: string,
+  after: { at: string; receipt_id: string },
+): CanonReceipt | null {
+  if (!tableExists(db, "canon_receipts")) return null;
+  const row = db
+    .query<CanonReceiptRow, [string, string, string, string]>(
+      `SELECT * FROM canon_receipts
+        WHERE page_path = ?
+          AND (at > ? OR (at = ? AND receipt_id > ?))
+        ORDER BY at, receipt_id LIMIT 1`,
+    )
+    .get(pagePath, after.at, after.at, after.receipt_id);
+  return row === null ? null : rowToReceipt(row);
 }
 
 export function latestReceiptForPage(db: Database, pagePath: string): CanonReceipt | null {

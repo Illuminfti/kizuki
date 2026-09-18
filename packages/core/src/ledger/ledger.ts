@@ -7,11 +7,12 @@ import type {
 } from "../contracts/event";
 import { canonicalSerialize, computeContentHash, computeLegacyContentHash, sha256Hex } from "../util/hash";
 import { instantBoundPair, instantPairSql } from "../query/sql";
-import { isRfc3339 } from "../util/time";
+import { canonicalizeRfc3339Utc, isRfc3339 } from "../util/time";
 import { isUlid, ulid } from "../util/ulid";
 import { EventRecordError, eventFromRow as fromRow, type EventRow } from "./event-record";
 import { EventOriginError, classifyNewEventOrigin } from "./event-origin";
 import { computeOriginBinding, nativeRequestDigest } from "./event-origin-binding";
+import { runImmediate } from "./busy";
 import { classifySqliteFailure, LedgerStoreError } from "./errors";
 import { LEDGER_ID_MAX, LEDGER_KIND_MAX, MAX_READ_SINCE, REPLAY_PAGE_SIZE } from "./limits";
 import { tableExists } from "./schema";
@@ -112,7 +113,7 @@ export function accept(
       };
     }
 
-    return db.transaction((): AcceptResult => {
+    return runImmediate(db, (): AcceptResult => {
       if (deps.source !== undefined) { normalized = authorizeSourceCapture(db, normalized, deps.source); contentHash = computeContentHash(normalized); }
       const textHash = sha256Hex(normalized.text);
       let duplicate = db
@@ -175,7 +176,7 @@ export function accept(
         throw new LedgerStoreError("corrupt", "stored event could not be read back");
       }
       return { status: "stored", event: decodeStored(stored, db) };
-    }).immediate();
+    });
   } catch (error) {
     const infra = classifySqliteFailure(error);
     if (infra !== null) throw infra;
@@ -368,7 +369,12 @@ export function normalizeReplayFilter(filter: ReplayFilter): ReplayFilter {
     if (!isRfc3339(filter.since)) {
       throw new LedgerStoreError("usage", "since must be an RFC3339 timestamp");
     }
-    out.since = filter.since;
+    const canonical = canonicalizeRfc3339Utc(filter.since);
+    if (canonical === null) {
+      // Valid RFC3339, but its UTC equivalent leaves years 0001-9999.
+      throw new LedgerStoreError("usage", "since has no RFC3339 UTC spelling");
+    }
+    out.since = canonical;
   }
   return out;
 }
@@ -483,6 +489,22 @@ export function latestLedgerCursor(db: Database): LedgerCursor | null {
           LIMIT 1`,
       )
       .get() ?? null
+  );
+}
+
+/**
+ * Events accepted after `cursor`. A bounded catch-up plans its remaining work
+ * from this count instead of walking the pages it has not read yet.
+ */
+export function countSince(db: Database, cursor: LedgerCursor | null): number {
+  if (cursor === null) return count(db);
+  return (
+    db
+      .query<{ count: number }, [string, string, string]>(
+        `SELECT COUNT(*) AS count FROM events
+         WHERE accepted_at > ? OR (accepted_at = ? AND event_id > ?)`,
+      )
+      .get(cursor.accepted_at, cursor.accepted_at, cursor.event_id)?.count ?? 0
   );
 }
 

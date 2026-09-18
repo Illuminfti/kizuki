@@ -8,6 +8,7 @@ import {
   ensureVaultId,
   PortError,
   readVaultId,
+  withLeaseHeldRefusal,
 } from "@kizuki/core";
 import type { ConnectionStateReader, RetrievalPort } from "@kizuki/core";
 import { assertBoundVaultId, inspectLedgerIdentity, LedgerIdentityError, LEDGER_SCHEMA_VERSION, ledgerNotReadyError, openLedgerRead, openReadyLedgerRead, openLedger, ledgerAccepted, readLedgerMark, sealLedger, initSearch } from "@kizuki/core/internal";
@@ -151,9 +152,21 @@ export async function withVault<T>(
 ): Promise<T> {
   const path = configPath(io.env);
   const config = readConfig(path);
-  const vaultPath = assertVault(
-    resolveVault(io.env, config, io.vaultOverride),
-  );
+  const resolved = resolveVault(io.env, config, io.vaultOverride);
+  // Opening, migrating, sealing and every ingest batch below are writes. A
+  // live serve rail makes them contend, and contention is a lease the caller
+  // can wait out, never a raw lock failure.
+  return withLeaseHeldRefusal(resolved, () => withOpenVault(io, fn, options, path, resolved));
+}
+
+async function withOpenVault<T>(
+  io: CliIo,
+  fn: (ctx: VaultContext) => Promise<T>,
+  options: { retrieval?: "required" | "optional" | "none" },
+  path: string,
+  resolved: string,
+): Promise<T> {
+  const vaultPath = assertVault(resolved);
   const db = openVaultDb(vaultPath);
   const store = new ConnectionStateStore(join(vaultPath, ".kizuki"));
   let retrieval: RetrievalPort | undefined;
@@ -195,7 +208,20 @@ export async function withReadVault<T>(
   options: { audit?: boolean; retrieval?: "optional" | "none" } = {},
 ): Promise<T> {
   const path = configPath(io.env);
-  const vaultPath = assertVaultLayout(resolveVault(io.env, readConfig(path), io.vaultOverride));
+  const resolved = resolveVault(io.env, readConfig(path), io.vaultOverride);
+  // A read verb keeps a private audit writer; ordinary daemon activity must
+  // never turn either handle into `database is locked`.
+  return withLeaseHeldRefusal(resolved, () => withOpenReadVault(io, fn, options, path, resolved));
+}
+
+async function withOpenReadVault<T>(
+  io: CliIo,
+  fn: (ctx: ReadVaultContext) => Promise<T>,
+  options: { audit?: boolean; retrieval?: "optional" | "none" },
+  path: string,
+  resolved: string,
+): Promise<T> {
+  const vaultPath = assertVaultLayout(resolved);
   assertVaultControl(vaultPath, { repairPermissions: false });
   assertBoundVaultId(vaultPath);
   let binding = openReadyLedgerRead(vaultPath, { audit: options.audit ?? false });
