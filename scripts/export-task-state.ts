@@ -11,7 +11,7 @@ export function exportTaskState(text: string): string {
       throw new Error("Invalid task record");
     }
     const snapshot: Record<string, unknown> = { ...task };
-    for (const field of ["assignee", "claimedAt", "heartbeatAt", "leaseExpiresAt"]) {
+    for (const field of ["assignee", "claimedAt", "heartbeatAt", "lastHeartbeatAt", "leaseExpiresAt"]) {
       delete snapshot[field];
     }
     if (snapshot["status"] === "in_progress") snapshot["status"] = "pending";

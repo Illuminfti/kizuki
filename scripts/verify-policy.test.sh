@@ -5,6 +5,19 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=verify.sh
 source "$script_dir/verify.sh"
 
+# Sourcing must not dispatch main when argv[0] differs only by case.
+# A failing allocator bounds an accidental main invocation before any gates run.
+source_probe=0
+source_output="$(bash -O nocasematch -c '
+  mktemp() { return 73; }
+  source "$1"
+  printf "loaded"
+' "$script_dir/VERIFY.SH" "$script_dir/verify.sh")" || source_probe=$?
+if ((source_probe != 0)) || [ "$source_output" != loaded ]; then
+  printf 'policy test failed: sourcing dispatched main under nocasematch\n' >&2
+  exit 1
+fi
+
 fixture_root="$(mktemp -d)"
 shallow_copy=""
 cleanup() {
@@ -14,6 +27,78 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+# The policy subprocess needs bash on PATH even if this script was launched
+# through an absolute interpreter path. Missing commands get preflight errors.
+for missing_command in bun git grep bash; do
+  (
+    command() {
+      if [ "$2" = "$missing_command" ]; then return 1; fi
+      builtin command "$@"
+    }
+    status=0
+    assert_required_commands >"$fixture_root/commands.out" 2>"$fixture_root/commands.err" || status=$?
+    if ((status != 2)) || [[ -s "$fixture_root/commands.out" ]] ||
+       [ "$(cat -- "$fixture_root/commands.err")" != "verification failed: required command missing: $missing_command" ]; then
+      printf 'policy test failed: missing command escaped preflight: %s\n' "$missing_command" >&2
+      exit 1
+    fi
+  )
+done
+
+# Failed scratch-file allocation must stop before invoking a tracked scanner.
+for helper in assert_safe_tracked_paths assert_safe_tracked_text; do
+  for errexit in on off; do
+    (
+      mktemp() { return 73; }
+      git() { printf 'called' >"$fixture_root/allocation-producer"; return 0; }
+      if [ "$errexit" = on ]; then set -e; else set +e; fi
+      status=0
+      "$helper" 'unused-pattern' >"$fixture_root/allocation.out" 2>"$fixture_root/allocation.err" || status=$?
+      case "$-" in *e*) actual_errexit=on ;; *) actual_errexit=off ;; esac
+      if ((status != 73)) || [ "$actual_errexit" != "$errexit" ] ||
+         [[ -e "$fixture_root/allocation-producer" ]] || [[ -s "$fixture_root/allocation.out" ]] ||
+         [ "$(cat -- "$fixture_root/allocation.err")" != 'verification failed: tracked scanner temporary-file allocation exited 73' ]; then
+        printf 'policy test failed: tracked scanner continued after allocation failure\n' >&2
+        exit 1
+      fi
+    )
+  done
+done
+
+# Allocation counters live on disk because command substitutions are subshells.
+# Either allocation failure must stop before gates and release any first file.
+for fail_at in 1 2; do
+  for errexit in on off; do
+    (
+      printf '0\n' >"$fixture_root/main-alloc-count"
+      mktemp() {
+        read -r allocation_count <"$fixture_root/main-alloc-count"
+        allocation_count=$((allocation_count + 1))
+        printf '%s\n' "$allocation_count" >"$fixture_root/main-alloc-count"
+        if ((allocation_count == fail_at)); then return 73; fi
+        printf '' >"$fixture_root/main-scratch"
+        printf '%s\n' "$fixture_root/main-scratch"
+      }
+      bun() { return 99; }
+      bash() { return 99; }
+      git() { return 99; }
+      if [ "$errexit" = on ]; then set -e; else set +e; fi
+      status=0
+      main >"$fixture_root/main-alloc.out" 2>"$fixture_root/main-alloc.err" || status=$?
+      case "$-" in *e*) actual_errexit=on ;; *) actual_errexit=off ;; esac
+      read -r allocation_count <"$fixture_root/main-alloc-count"
+      if ((status != 73 || allocation_count != fail_at)) ||
+         [ "$actual_errexit" != "$errexit" ] ||
+         [[ -e "$fixture_root/main-scratch" ]] ||
+         [[ -s "$fixture_root/main-alloc.out" ]] ||
+         [ "$(cat -- "$fixture_root/main-alloc.err")" != 'verification failed: commit-message scratch allocation exited 73' ]; then
+        printf 'policy test failed: main scratch allocation failure was unstructured\n' >&2
+        exit 1
+      fi
+    )
+  done
+done
 
 git -C "$fixture_root" init -q
 git -C "$fixture_root" config user.name verifier
@@ -155,6 +240,133 @@ if (
   exit 1
 fi
 rm -rf -- "$shallow_copy"
+
+# A caller's case-insensitive pattern option must not broaden Git's boolean protocol.
+for matching in on off; do
+  for probe_output in false true FALSE False TRUE unexpected ''; do
+    (
+      git() { printf '%s\n' "$probe_output"; }
+      if [[ "$matching" == on ]]; then shopt -s nocasematch; else shopt -u nocasematch; fi
+      status=0
+      assert_full_history >"$fixture_root/history-case.out" 2>"$fixture_root/history-case.err" || status=$?
+      if shopt -q nocasematch; then actual_matching=on; else actual_matching=off; fi
+      expected_status=2
+      expected_error='verification failed: could not determine whether the clone is shallow'
+      if [ "$probe_output" = false ]; then
+        expected_status=0
+        expected_error=''
+      elif [ "$probe_output" = true ]; then
+        expected_error='verification failed: shallow clone cannot scan reachable commit messages'
+      fi
+      if ((status != expected_status)) || [ "$actual_matching" != "$matching" ] ||
+         [[ -s "$fixture_root/history-case.out" ]] ||
+         [ "$(<"$fixture_root/history-case.err")" != "$expected_error" ]; then
+        printf 'policy test failed: history boolean parsing depended on nocasematch\n' >&2
+        exit 1
+      fi
+    )
+  done
+done
+
+# A failed history probe must not turn partial stdout into a successful check.
+# Conditional callers suppress errexit, so status handling must be explicit.
+for errexit in on off; do
+  for probe_output in false true FALSE unexpected ''; do
+    (
+      git() { printf '%s\n' "$probe_output"; return 7; }
+      if [[ "$errexit" == on ]]; then set -e; else set +e; fi
+      status=0
+      assert_full_history >"$fixture_root/history-probe.out" 2>"$fixture_root/history-probe.err" || status=$?
+      case "$-" in *e*) actual_errexit=on ;; *) actual_errexit=off ;; esac
+      if ((status != 7)) || [[ "$actual_errexit" != "$errexit" ]] ||
+         [[ -s "$fixture_root/history-probe.out" ]] ||
+         [[ "$( <"$fixture_root/history-probe.err" )" != 'verification failed: history probe exited 7' ]]; then
+        printf 'policy test failed: failed history probe lost status, shell state or diagnostic\n' >&2
+        exit 1
+      fi
+    )
+  done
+done
+
+# The scanner wrapper must not flip a conditional caller's errexit.
+for errexit in on off; do
+  for scanner_status in 1 0; do
+    (
+      git() { printf 'match\n'; return "$scanner_status"; }
+      if [[ "$errexit" == on ]]; then set -e; else set +e; fi
+      status=0
+      assert_no_match 'regression scanner' git \
+        >"$fixture_root/scanner.out" 2>"$fixture_root/scanner.err" || status=$?
+      case "$-" in *e*) actual_errexit=on ;; *) actual_errexit=off ;; esac
+      expected_status=0
+      expected_error=''
+      if [ "$scanner_status" -eq 0 ]; then
+        expected_status=1
+        expected_error=$'verification failed: regression scanner matched\nmatch'
+      fi
+      if ((status != expected_status)) || [[ "$actual_errexit" != "$errexit" ]] ||
+         [[ -s "$fixture_root/scanner.out" ]] ||
+         [ "$(cat -- "$fixture_root/scanner.err")" != "$expected_error" ]; then
+        printf 'policy test failed: assert_no_match changed caller errexit state\n' >&2
+        exit 1
+      fi
+    )
+  done
+done
+
+# The tracked-path matcher must preserve the caller's nocasematch and errexit.
+for errexit in on off; do
+  for matching in on off; do
+    for scanner_status in 0 1; do
+      for forbidden_path in "packages/${name_re}.ts" packages/safe.ts; do
+        (
+          git() { printf '%s\0' "$forbidden_path"; return "$scanner_status"; }
+          if [ "$matching" = on ]; then shopt -s nocasematch; else shopt -u nocasematch; fi
+          if [ "$errexit" = on ]; then set -e; else set +e; fi
+          status=0
+          assert_safe_tracked_paths 'G''brain' \
+            >"$fixture_root/tracked-state.out" 2>"$fixture_root/tracked-state.err" || status=$?
+          if shopt -q nocasematch; then actual_matching=on; else actual_matching=off; fi
+          case "$-" in *e*) actual_errexit=on ;; *) actual_errexit=off ;; esac
+          expected_status=0
+          expected_error=''
+          if [ "$scanner_status" -eq 1 ]; then
+            expected_status=1
+            expected_error='verification failed: tracked-path producer exited 1'
+          elif [ "$forbidden_path" != packages/safe.ts ]; then
+            expected_status=1
+            expected_error="verification failed: forbidden identifier in tracked path
+$forbidden_path"
+          fi
+          if ((status != expected_status)) || [ "$actual_matching" != "$matching" ] ||
+             [ "$actual_errexit" != "$errexit" ] ||
+             [[ -s "$fixture_root/tracked-state.out" ]] ||
+             [ "$(cat -- "$fixture_root/tracked-state.err")" != "$expected_error" ]; then
+            printf 'policy test failed: tracked-path helper changed caller shell state\n' >&2
+            exit 1
+          fi
+        )
+      done
+    done
+  done
+done
+
+# The reachable-commit producer wrapper must not flip a conditional caller's errexit.
+for errexit in on off; do
+  (
+    git() { printf 'records\n'; return 5; }
+    if [[ "$errexit" == on ]]; then set -e; else set +e; fi
+    status=0
+    write_reachable_commit_records "$fixture_root/producer-state.records" \
+      >/dev/null 2>"$fixture_root/producer-state.err" || status=$?
+    case "$-" in *e*) actual_errexit=on ;; *) actual_errexit=off ;; esac
+    if ((status != 5)) || [[ "$actual_errexit" != "$errexit" ]] ||
+       [[ "$(cat -- "$fixture_root/producer-state.err")" != 'verification failed: reachable commit-message producer exited 5' ]]; then
+      printf 'policy test failed: reachable-commit producer wrapper changed caller errexit state\n' >&2
+      exit 1
+    fi
+  )
+done
 
 restrict_root="$(mktemp -d)"
 git -C "$restrict_root" init -q
@@ -575,6 +787,18 @@ if ! grep -F 'verify-secrets.ts' "$script_dir/verify.sh" >/dev/null; then
   printf 'policy test failed: secrets gate is not invoked\n' >&2
   exit 1
 fi
+# Every helper file the script executes through bun must be in the pre-flight
+# inventory, so a missing or renamed helper fails before the first gate runs.
+helper_inventory="$(sed -n '/^assert_required_helpers()/,/^}/p' "$script_dir/verify.sh")"
+while IFS= read -r invoked_helper; do
+  if ! printf '%s\n' "$helper_inventory" | grep -F "$invoked_helper" >/dev/null; then
+    printf 'policy test failed: preflight helper inventory omits %s\n' "$invoked_helper" >&2
+    exit 1
+  fi
+done < <(sed -n \
+  -e 's/.*"\$verify_script_dir\/\([a-z0-9-]*\.ts\)".*/\1/p' \
+  -e 's/.*bun run scripts\/\([a-z0-9-]*\.ts\).*/\1/p' \
+  "$script_dir/verify.sh")
 if grep -F 'strip_git_trailers' "$script_dir/verify.sh" >/dev/null; then
   printf 'policy test failed: global trailer exemption remains\n' >&2
   exit 1

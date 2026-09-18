@@ -150,9 +150,11 @@ function appendPercentDecoded(bytes: number[], payload: string): void {
   for (let index = 0; index < payload.length; index += 1) {
     const character = payload[index] ?? "";
     if (character === "%" && index + 2 < payload.length) {
-      const code = Number.parseInt(payload.slice(index + 1, index + 3), 16);
-      if (Number.isFinite(code)) {
-        bytes.push(code);
+      const pair = payload.slice(index + 1, index + 3);
+      // parseInt accepts partial pairs, signs and whitespace; malformed escapes
+      // must stay literal rather than silently changing attachment metadata.
+      if (/^[0-9a-f]{2}$/i.test(pair)) {
+        bytes.push(Number.parseInt(pair, 16));
         index += 2;
         continue;
       }

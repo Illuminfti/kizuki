@@ -9,10 +9,8 @@ assert_no_match() {
   local output
   local status
 
-  set +e
-  output="$("$@" 2>&1)"
-  status=$?
-  set -e
+  status=0
+  output="$("$@" 2>&1)" || status=$?
 
   case "$status" in
     0)
@@ -63,35 +61,45 @@ assert_safe_tracked_paths() {
   local paths_file
   local status
 
-  paths_file="$(mktemp)"
-  set +e
-  git ls-files -z >"$paths_file"
-  status=$?
-  set -e
+  status=0
+  paths_file="$(mktemp)" || status=$?
+  if ((status != 0)); then
+    printf 'verification failed: tracked scanner temporary-file allocation exited %d\n' "$status" >&2
+    return "$status"
+  fi
+  git ls-files -z >"$paths_file" || status=$?
   if ((status != 0)); then
     rm -f -- "$paths_file"
     printf 'verification failed: tracked-path producer exited %d\n' "$status" >&2
     return "$status"
   fi
 
-  shopt -s nocasematch
+  local restore_nocasematch=0
+  if ! shopt -q nocasematch; then
+    shopt -s nocasematch
+    restore_nocasematch=1
+  fi
   while IFS= read -r -d '' path; do
     if [[ "$path" =~ $identifier_re ]]; then
-      shopt -u nocasematch
+      if ((restore_nocasematch)); then shopt -u nocasematch; fi
       rm -f -- "$paths_file"
       printf 'verification failed: forbidden identifier in tracked path\n%s\n' "$path" >&2
       return 1
     fi
   done <"$paths_file"
-  shopt -u nocasematch
+  if ((restore_nocasematch)); then shopt -u nocasematch; fi
   rm -f -- "$paths_file"
 }
 
 assert_safe_tracked_text() {
   local identifier_re="$1"
   local records_file
-  local status
-  records_file="$(mktemp)"
+  local status=0
+  records_file="$(mktemp)" || status=$?
+  if ((status != 0)); then
+    printf 'verification failed: tracked scanner temporary-file allocation exited %d\n' "$status" >&2
+    return "$status"
+  fi
   if git grep --no-color -I -n -z -i -E "$identifier_re" >"$records_file"; then
     if bun "$verify_script_dir/verify-tracked-text.ts" "$identifier_re" <"$records_file"; then
       status=0
@@ -112,7 +120,7 @@ assert_safe_tracked_text() {
 
 assert_required_commands() {
   local cmd
-  for cmd in bun git grep; do
+  for cmd in bun git grep bash; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       printf 'verification failed: required command missing: %s\n' "$cmd" >&2
       return 2
@@ -131,6 +139,7 @@ assert_required_helpers() {
     "$verify_script_dir/verify-rfc-tests.ts" \
     "$verify_script_dir/verify-dependencies.ts" \
     "$verify_script_dir/verify-workflows.ts" \
+    "$verify_script_dir/verify-maestro.ts" \
     "$verify_script_dir/network-allowlist.txt" \
     "$verify_script_dir/verify-policy.test.sh" \
     "$verify_script_dir/ci-restrict-origin-refs.sh" \
@@ -145,12 +154,17 @@ assert_required_helpers() {
 
 assert_full_history() {
   local shallow
-  shallow="$(git rev-parse --is-shallow-repository)"
-  if [[ "$shallow" == "true" ]]; then
+  local status=0
+  shallow="$(git rev-parse --is-shallow-repository)" || status=$?
+  if ((status != 0)); then
+    printf 'verification failed: history probe exited %d\n' "$status" >&2
+    return "$status"
+  fi
+  if [ "$shallow" = "true" ]; then
     printf 'verification failed: shallow clone cannot scan reachable commit messages\n' >&2
     return 2
   fi
-  if [[ "$shallow" != "false" ]]; then
+  if [ "$shallow" != "false" ]; then
     printf 'verification failed: could not determine whether the clone is shallow\n' >&2
     return 2
   fi
@@ -171,10 +185,8 @@ write_reachable_commit_records() {
   local records_file="$1"
   local status
 
-  set +e
-  git --no-replace-objects log --all -z --encoding=none --no-show-signature --format=%H%x00%B >"$records_file"
-  status=$?
-  set -e
+  status=0
+  git --no-replace-objects log --all -z --encoding=none --no-show-signature --format=%H%x00%B >"$records_file" || status=$?
   if ((status != 0)); then
     printf 'verification failed: reachable commit-message producer exited %d\n' "$status" >&2
     return "$status"
@@ -211,10 +223,20 @@ main() {
   local commit_records
   local commit_messages
   local cleanup_command
+  local status=0
 
   dependency_re="$(phone_home_dependency_pattern)"
-  commit_records="$(mktemp)"
-  commit_messages="$(mktemp)"
+  commit_records="$(mktemp)" || status=$?
+  if ((status != 0)); then
+    printf 'verification failed: commit-message scratch allocation exited %d\n' "$status" >&2
+    return "$status"
+  fi
+  commit_messages="$(mktemp)" || status=$?
+  if ((status != 0)); then
+    rm -f -- "$commit_records"
+    printf 'verification failed: commit-message scratch allocation exited %d\n' "$status" >&2
+    return "$status"
+  fi
   printf -v cleanup_command 'rm -f -- %q %q' "$commit_records" "$commit_messages"
   trap "$cleanup_command" EXIT
 
@@ -261,6 +283,6 @@ main() {
   printf 'VERIFY_OK\n'
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   main "$@"
 fi

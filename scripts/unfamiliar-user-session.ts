@@ -14,7 +14,7 @@ const TASKS = [
   ["model-boundary", "Explain what remains available without a model and what requires one.", "Capture, ledger, search, timeline, context, audit and undo remain available; canon writing requires a configured model."],
   ["correction-audit-undo", "Correct a belief, query it again or inspect its updated context, inspect the change and its receipt, then undo it.", "Observe correction, subsequent query/context, audit and undo separately; no approval queue."],
   ["source-health-revoke", "Inspect source health, then revoke the selected source.", "Participant understands health and revocation outcome; record errors without account contents."],
-  ["recovery", "Use the documented backup and clean-target restore route, then query restored content.", "Record completion, failures and losses; technical restore/purge qualification remains separate."],
+  ["recovery", "Use the documented backup and clean-target restore route, then verify both query and context against the restored content.", "Record completion, failures and losses; technical restore/purge qualification remains separate."],
   ["accessibility", "Try the supported keyboard, reduced-motion and small-screen routes.", "Record each mode's outcome and inaccessible steps; automation is not a human outcome."],
 ] as const;
 

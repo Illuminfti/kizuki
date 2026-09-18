@@ -23,5 +23,20 @@ export {
   registerFts5RetrievalPort,
 } from "./fts5";
 export { eventRetrievalDoc, publishLedgerEvent } from "./events";
+export {
+  MAX_RERANK_CANDIDATES,
+  RETRIEVAL_SENSITIVITY_CHOICE_CRITERIA,
+  RETRIEVAL_SENSITIVITY_QUESTION_ID,
+  mapSystemOneSensitivityChoice,
+  rerankWithSystemOne,
+  validateChoiceCriteriaDict,
+} from "./systemone-rerank";
+export type {
+  RerankWithSystemOneInput,
+  SystemOneRankedCandidate,
+  SystemOneRerankCandidate,
+  SystemOneRerankResult,
+  SystemOneRerankSensitivity,
+} from "./systemone-rerank";
 
 registerFts5RetrievalPort();
