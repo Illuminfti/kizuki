@@ -5,6 +5,7 @@ import { join } from "node:path";
 export function fakeSystemd(root: string, env: Record<string, string | undefined>): Record<string, string | undefined> {
   const bin = join(root, "synthetic-bin"); mkdirSync(bin, { mode: 0o700 });
   const state = join(root, "synthetic-service-state"); writeFileSync(state, "absent\n", { mode: 0o600 });
+  const started = join(root, "synthetic-service-started");
   writeFileSync(join(bin, "systemctl"), `#!/bin/sh
 if [ "$TEST_SUPERVISOR_FAIL" = "$2" ]; then exit 1; fi
 state="\${TEST_SUPERVISOR_STATE:-$(cat "$TEST_SUPERVISOR_FILE")}"
@@ -25,6 +26,7 @@ case "$2" in
     exit 0 ;;
   start)
     printf 'active\\n' > "$TEST_SUPERVISOR_FILE"
+    date +%s > "$TEST_SUPERVISOR_STARTED"
     if [ "$TEST_SUPERVISOR_SLEEP" = start ] || [ "$TEST_SUPERVISOR_SLEEP" = restart ]; then sleep 6; fi
     exit 0 ;;
   restart)
@@ -37,18 +39,26 @@ case "$2" in
     exit 0 ;;
   is-enabled)
     case "$state" in
-      active|enabled) printf 'enabled\\n'; exit 0 ;;
+      active|enabled|failed) printf 'enabled\\n'; exit 0 ;;
       masked) printf 'masked\\n'; exit 1 ;;
       disabled) printf 'disabled\\n'; exit 1 ;;
       *) printf 'not-found\\n'; exit 4 ;;
     esac ;;
   is-active)
     if [ -n "$TEST_SUPERVISOR_ACTIVITY" ]; then printf '%s\\n' "$TEST_SUPERVISOR_ACTIVITY"; exit "\${TEST_SUPERVISOR_ACTIVITY_EXIT:-3}"; fi
+    if [ "$state" = active ] && [ -n "$TEST_SUPERVISOR_DIES_SECONDS" ]; then
+      age=$(( $(date +%s) - $(cat "$TEST_SUPERVISOR_STARTED" 2>/dev/null || printf 0) ))
+      if [ "$age" -ge "$TEST_SUPERVISOR_DIES_SECONDS" ]; then
+        printf 'failed\\n' > "$TEST_SUPERVISOR_FILE"; printf 'failed\\n'; exit 3
+      fi
+    fi
     if [ "$state" = active ]; then printf 'active\\n'; exit 0; fi
+    if [ "$state" = failed ]; then printf 'failed\\n'; exit 3; fi
     if [ "$state" = absent ]; then printf 'inactive\\n'; exit 4; fi
     printf 'inactive\\n'; exit 3 ;;
   *) exit 1 ;;
 esac
 `, { mode: 0o700 });
-  return { ...env, PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`, TEST_SUPERVISOR_FILE: state };
+  return { ...env, PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+    TEST_SUPERVISOR_FILE: state, TEST_SUPERVISOR_STARTED: started };
 }
