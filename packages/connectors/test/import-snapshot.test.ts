@@ -1,6 +1,5 @@
-import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { expect, test } from "bun:test";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   MAX_CURSOR_BYTES,
@@ -23,21 +22,10 @@ import {
 } from "../src";
 import { IMPORT_SNAPSHOT_CURSOR_SCHEMA, runSnapshot } from "../src/import-snapshot";
 import { sha256Hex } from "../src/source-id";
+import { rootTest } from "./temp-root";
 
 const SOURCE_KEY = "01JJ0000000000000000000019";
-const roots: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
-});
-
-async function syntheticDir(): Promise<string> {
-  const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-snapshot-core-"));
-  roots.push(root);
-  return root;
-}
+const snapshotTest = rootTest("kizuki-snapshot-core-");
 
 function conversations(count: number, text: (index: number) => string): unknown[] {
   return Array.from({ length: count }, (_, index) => ({
@@ -131,7 +119,7 @@ function legacyV1Cursor(connectorId: string, text: string): string {
   });
 }
 
-test("Core runToCompletion captures 200 records with a bounded resume cursor", async () => {
+snapshotTest("Core runToCompletion captures 200 records with a bounded resume cursor", async (syntheticDir) => {
   const root = await syntheticDir();
   const file = path.join(root, "conversations.json");
   await writeConversations(file, 200, (index) => `msg-${index}`);
@@ -164,7 +152,7 @@ test("Core runToCompletion captures 200 records with a bounded resume cursor", a
   }
 }, 30_000);
 
-test("Core runToCompletion pages a capture larger than 4MiB", async () => {
+snapshotTest("Core runToCompletion pages a capture larger than 4MiB", async (syntheticDir) => {
   const root = await syntheticDir();
   const file = path.join(root, "conversations.json");
   const payload = "x".repeat(850_000);
@@ -195,7 +183,7 @@ test("Core runToCompletion pages a capture larger than 4MiB", async () => {
   }
 }, 30_000);
 
-test("Core can interrupt and restart a paged snapshot without loss", async () => {
+snapshotTest("Core can interrupt and restart a paged snapshot without loss", async (syntheticDir) => {
   const root = await syntheticDir();
   const file = path.join(root, "conversations.json");
   const count = MAX_SYNC_BATCH_EVENTS + 1;
@@ -249,7 +237,7 @@ test("Core can interrupt and restart a paged snapshot without loss", async () =>
   }
 }, 60_000);
 
-test("a changed export mid-drain rescans and keeps prior captures", async () => {
+snapshotTest("a changed export mid-drain rescans and keeps prior captures", async (syntheticDir) => {
   const root = await syntheticDir();
   const file = path.join(root, "conversations.json");
   const count = MAX_SYNC_BATCH_EVENTS + 1;
@@ -288,7 +276,7 @@ test("a changed export mid-drain rescans and keeps prior captures", async () => 
   }
 }, 60_000);
 
-test("an exhausted snapshot does not repeat empty success", async () => {
+snapshotTest("an exhausted snapshot does not repeat empty success", async (syntheticDir) => {
   const root = await syntheticDir();
   const file = path.join(root, "conversations.json");
   await writeConversations(file, 3, (index) => `idle-${index}`);
@@ -333,7 +321,7 @@ test("an exhausted snapshot does not repeat empty success", async () => {
   }
 });
 
-test("a legacy v1 exhausted cursor idles unchanged and rescans a new export", async () => {
+snapshotTest("a legacy v1 exhausted cursor idles unchanged and rescans a new export", async (syntheticDir) => {
   const root = await syntheticDir();
   const file = path.join(root, "conversations.json");
   const text = await writeConversations(file, 2, (index) => `legacy-${index}`);
@@ -361,7 +349,7 @@ test("a legacy v1 exhausted cursor idles unchanged and rescans a new export", as
   );
 });
 
-test("snapshot pages stay inside host cursor, count, and byte bounds", async () => {
+snapshotTest("snapshot pages stay inside host cursor, count, and byte bounds", async (syntheticDir) => {
   const root = await syntheticDir();
   const file = path.join(root, "conversations.json");
   const count = MAX_SYNC_BATCH_EVENTS + 1;
@@ -384,7 +372,7 @@ test("snapshot pages stay inside host cursor, count, and byte bounds", async () 
   expect(snapshotCursor(pages[1]?.cursor ?? null).exhausted).toBe(true);
 }, 30_000);
 
-test("dirty records never complete and remain retryable after repair", async () => {
+snapshotTest("dirty records never complete and remain retryable after repair", async (syntheticDir) => {
   const root = await syntheticDir();
   const file = path.join(root, "conversations.json");
   const valid = conversations(3, (index) => `keep-${index}`);
@@ -429,7 +417,7 @@ test("dirty records never complete and remain retryable after repair", async () 
   }
 }, 30_000);
 
-test("a corrupt snapshot cursor is refused", async () => {
+snapshotTest("a corrupt snapshot cursor is refused", async (syntheticDir) => {
   const root = await syntheticDir();
   const file = path.join(root, "conversations.json");
   await writeConversations(file, 1, () => "ok");
@@ -445,7 +433,7 @@ test("a corrupt snapshot cursor is refused", async () => {
   }
 });
 
-test("an offset beyond the matching export is refused instead of completing it", async () => {
+snapshotTest("an offset beyond the matching export is refused instead of completing it", async (syntheticDir) => {
   const file = path.join(await syntheticDir(), "conversations.json");
   await writeConversations(file, 1, () => "keep");
   const connector = createChatGptImportConnector({ path: file });
@@ -458,7 +446,7 @@ test("an offset beyond the matching export is refused instead of completing it",
   });
 });
 
-test("one oversized parser event never escapes the snapshot byte bound", async () => {
+snapshotTest("one oversized parser event never escapes the snapshot byte bound", async (syntheticDir) => {
   const file = path.join(await syntheticDir(), "conversations.json");
   await writeConversations(file, 1, () => "keep");
   const connector = createChatGptImportConnector({ path: file });
