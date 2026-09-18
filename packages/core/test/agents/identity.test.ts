@@ -382,6 +382,7 @@ describe("least-privilege enrollment", () => {
     const ownerHarness = authenticate(db, addAgent(db, "owner-harness", OWNER_AGENT_GRANT).token);
     expect(ordinary?.grant).toEqual(DEFAULT_GRANT);
     expect(ownerHarness?.grant).toEqual(OWNER_AGENT_GRANT);
+    expect(OWNER_AGENT_GRANT.tools).toContain("correct");
     expect(OWNER.grant.tools).toEqual([...TOOLS]);
     db.close();
   });
