@@ -156,6 +156,36 @@ describe("serve doctor", () => {
     db.close();
   });
 
+  // Test contributed by PR #987 (agent/oracle-backlog-983).
+  test("an ok retrieval-sweep idle streak is not reported down", () => {
+    const { path, db } = vault();
+    writeServeIntent(path, "installed");
+    for (let index = 1; index <= 5; index += 1) {
+      persistRunReceipt(
+        db,
+        path,
+        receipt(`2026-09-0${index}`, {
+          run_id: `01JBRETSWEEP0000000000000${index}`,
+          rail: "retrieval-sweep",
+        }),
+      );
+    }
+    const report = inspectServeDoctor(db, path, {
+      now: "2026-09-03T00:10:00Z",
+      supervisor: host({
+        kind: "systemd",
+        state: "active",
+        unit: "kizuki@x.service",
+        enabled: true,
+        detail: "active",
+      }),
+    });
+    const sweep = report.rails.find((rail) => rail.rail === "retrieval-sweep");
+    expect(sweep?.status).toBe("ok");
+    expect(sweep?.reason).toBeNull();
+    db.close();
+  });
+
   test("doctor reports canon writing off with no model configured", () => {
     const { path, db } = vault();
     writeServeIntent(path, "opted-out");

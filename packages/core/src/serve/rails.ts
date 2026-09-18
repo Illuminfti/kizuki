@@ -163,40 +163,41 @@ async function runSyncRail(
   };
 }
 
+/**
+ * A derived index behind the ledger or receipts is work, not an empty pass.
+ * The host catches up in bounded batches and reports what is left, so the rail
+ * records progress and refuses to call itself current too early. A refresh that
+ * throws leaves work outstanding rather than reading as nothing to do.
+ */
+async function refreshDerivedOnce(hooks: RailHooks | undefined): Promise<RailRefreshReport> {
+  try {
+    return (await hooks?.refresh?.()) ?? { indexed: 0, remaining: 0, degraded: [] };
+  } catch (error) {
+    return { indexed: 0, remaining: 1, degraded: [redactReceiptError(error)] };
+  }
+}
+
 async function runRetrievalSweep(
   db: Database,
   hooks: RailHooks | undefined,
 ): Promise<Partial<RunReceipt>> {
-  const pending = pendingRetrievalOps(db).length;
-  if (hooks?.claims === undefined) {
-    return {
-      status: pending === 0 ? "ok" : "degraded",
-      retrieval: {
-        upserts: 0,
-        removals: 0,
-        pending_ops: pending,
-        degraded: pending === 0 ? [] : ["retrieval-unavailable"],
-      },
-    };
-  }
-  const result = await retryRetrievalOps(hooks.claims);
-  // A derived index behind the ledger or receipts is work, not an empty pass.
-  // The host catches up in bounded batches and reports what is left, so the
-  // rail can record progress and refuse to call itself current too early.
-  let refreshed: RailRefreshReport;
-  try { refreshed = await hooks.refresh?.() ?? { indexed: 0, remaining: 0, degraded: [] }; }
-  catch (error) { refreshed = { indexed: 0, remaining: 1, degraded: [redactReceiptError(error)] }; }
+  // Catch-up does not depend on a claims port, so it runs either way.
+  const refreshed = await refreshDerivedOnce(hooks);
+  const ops =
+    hooks?.claims === undefined
+      ? { retried: 0, pending: pendingRetrievalOps(db).length, code: "retrieval-unavailable" }
+      : { ...(await retryRetrievalOps(hooks.claims)), code: "retrieval-ops-pending" };
   const degraded = [
-    ...(result.pending === 0 ? [] : ["retrieval-ops-pending"]),
+    ...(ops.pending === 0 ? [] : [ops.code]),
     ...(refreshed.remaining === 0 ? [] : ["derived-index-behind"]),
     ...refreshed.degraded,
   ];
   return {
     status: degraded.length === 0 ? "ok" : "degraded",
     retrieval: {
-      upserts: result.retried + refreshed.indexed,
+      upserts: ops.retried + refreshed.indexed,
       removals: 0,
-      pending_ops: result.pending + refreshed.remaining,
+      pending_ops: ops.pending + refreshed.remaining,
       degraded,
     },
   };

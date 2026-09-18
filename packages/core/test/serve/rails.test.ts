@@ -119,6 +119,21 @@ describe("rails", () => {
     db.close();
   });
 
+  test("a sweep without a claims port still catches the derived index up", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-rails-"));
+    dirs.push(directory);
+    const vault = join(directory, "vault");
+    initVault(vault);
+    const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
+    const receipt = await runRail(db, vault, "retrieval-sweep", {
+      hooks: { refresh: async () => ({ indexed: 12, remaining: 0, degraded: [] }) },
+    });
+    expect(receipt.status).toBe("ok");
+    expect(receipt.retrieval.upserts).toBe(12);
+    expect(receipt.retrieval.pending_ops).toBe(0);
+    db.close();
+  });
+
   test("a refresh that throws is recorded as outstanding work, not an empty pass", async () => {
     const directory = mkdtempSync(join(tmpdir(), "kizuki-rails-"));
     dirs.push(directory);
