@@ -11,6 +11,7 @@ import {
   runRail,
   runServeDaemon,
   serveExecHint,
+  systemdUnitName,
   thisProcess,
   uninstallServeService,
 } from "@kizuki/core";
@@ -66,7 +67,10 @@ export const serveCommand: Command = {
       }
       const mode = modes[0]!, id = parsed.options.get(mode)!, vault = io.vaultOverride;
       // The service log is the only place these failures are read, so they
-      // carry the prerequisite and the command instead of a bare code.
+      // carry what the refusal observed instead of a bare code. The unit name
+      // is derived, not queried: this process is the unit. An id core would
+      // refuse names no unit, so the message omits it rather than echo it.
+      const unit = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(id) ? systemdUnitName(id) : null;
       try {
         if (mode === "--custody-broker-launch") {
           await launchServiceCustodyBroker(vault, id, io.env);
@@ -77,12 +81,12 @@ export const serveCommand: Command = {
           // Lost metadata authority is a daemon failure, including while a rail
           // would otherwise catch an adapter error. Durable recovery handles the
           // same boundary as a killed service; never continue with stale custody.
-          io.err(custodyUnavailableMessage(vault));
+          io.err(custodyUnavailableMessage(vault, unit, "custody_lost"));
           process.exit(1);
         });
       } catch (error) {
         if (!(error instanceof ServiceCustodyError)) throw error;
-        io.err(custodyUnavailableMessage(vault));
+        io.err(custodyUnavailableMessage(vault, unit, error.reason));
         return 1;
       }
     }

@@ -60,15 +60,50 @@ describe("installed service observation", () => {
 });
 
 describe("custody refusal copy", () => {
-  test("names the missing prerequisite and a command to run", () => {
-    const message = custodyUnavailableMessage("/home/stranger/kizuki");
+  const unit = "kizuki@synthetic.service";
+
+  test("an unexplained refusal names the vault and where to look, and diagnoses nothing", () => {
+    const message = custodyUnavailableMessage("/home/stranger/kizuki", unit);
     expect(message).not.toBe("service_custody_unavailable");
     expect(message).toContain("service_custody_unavailable");
     expect(message).toContain("/home/stranger/kizuki");
-    expect(message).toContain("owned by you or by root");
-    expect(message).toContain("/tmp");
-    expect(message).toMatch(/\binit\b/);
+    expect(message).toContain(`journalctl --user -u ${unit} -n 50`);
     expect(message).toMatch(/\bdoctor\b/);
+    // The ancestor-ownership prerequisite is one candidate among several, and
+    // recreating the vault is never prescribed for a cause nothing observed.
+    expect(message).toContain("possible causes");
+    expect(message).toContain("/tmp");
+    expect(message).not.toMatch(/\binit\b/);
+  });
+
+  test("an unsupported machine says so instead of blaming the vault", () => {
+    const message = custodyUnavailableMessage("/home/stranger/kizuki", unit, "unsupported_platform", "linux arm64");
+    expect(message).toContain("linux arm64");
+    expect(message).toContain("Linux x64");
+    expect(message).toContain("nothing about the vault is wrong");
+    expect(message).toContain("serve --uninstall --vault /home/stranger/kizuki");
+    expect(message).not.toContain("/tmp");
+    expect(message).not.toContain("possible causes");
+  });
+
+  test("a launch the supervisor did not make, a root launch and a lost hold each read differently", () => {
+    const outside = custodyUnavailableMessage("/home/stranger/kizuki", unit, "not_supervised");
+    expect(outside).toContain("the supervisor did not start this process");
+    expect(outside).not.toContain("/tmp");
+    const root = custodyUnavailableMessage("/home/stranger/kizuki", unit, "root_user");
+    expect(root).toContain("refuses to run as root");
+    expect(root).not.toContain("/tmp");
+    const lost = custodyUnavailableMessage("/home/stranger/kizuki", unit, "custody_lost");
+    expect(lost).toContain("lost its proof of custody");
+    expect(lost).toContain(`journalctl --user -u ${unit} -n 50`);
+    expect(lost).not.toContain("possible causes");
+    expect(new Set([outside, root, lost]).size).toBe(3);
+  });
+
+  test("a refusal with no unit to name omits the inspection line rather than invent one", () => {
+    const message = custodyUnavailableMessage("/home/stranger/kizuki", null, "custody_lost");
+    expect(message).not.toContain("journalctl");
+    expect(message).toContain("lost its proof of custody");
   });
 
   test("a unit that did not stay running names the unit, the state and where to look", () => {
@@ -95,6 +130,17 @@ describe("supervisor failure rendering", () => {
       status({ state: "unknown", detail: "supervisor state could not be queried" }));
     expect(line).toContain("state=unknown");
     expect(line).toContain("supervisor state could not be queried");
+  });
+
+  test("a host with no supervisor reports state=none, not its own description of itself", () => {
+    const none = status({
+      kind: "none", state: "none", unit: null, enabled: false,
+      detail: "supervisor: none (loop runs only while you run it)",
+    });
+    const line = supervisorFailureLine("supervisor none", none);
+    expect(line).toStartWith("supervisor none state=none enabled=no");
+    expect(line).not.toContain("state=supervisor");
+    expect(line).not.toContain("journalctl");
   });
 });
 

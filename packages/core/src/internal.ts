@@ -18,7 +18,7 @@ export type { SqliteRuntime } from "./ledger/runtime";
 export { assertBoundVaultId } from "./serve/vault-id";
 export { SERVICE_BROKER_REAP_SECONDS, SERVICE_READY_SECONDS } from "./serve/units";
 export { startServiceCustody, runServiceCustodyBroker, validateServiceCustodyLaunch, ServiceCustodyError } from "./serve/custody";
-export type { ServiceCustodyHandle } from "./serve/custody";
+export type { ServiceCustodyFailure, ServiceCustodyHandle } from "./serve/custody";
 export { indexEvent, indexEvents, indexPage, initSearch, removeCanonPath, removeDoc } from "./search";
 export { eventRetrievalDoc, publishLedgerEvent } from "./retrieval/events";
 export { initGraph } from "./graph";

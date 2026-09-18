@@ -1,4 +1,5 @@
 import { SERVICE_BROKER_REAP_SECONDS, SERVICE_READY_SECONDS, ServiceCustodyError, validateServiceCustodyLaunch } from "@kizuki/core/internal";
+import type { ServiceCustodyFailure } from "@kizuki/core/internal";
 import { serveExecHint } from "@kizuki/core";
 import type { SupervisorStatus } from "@kizuki/core";
 import { INVOCATION, serveArgs } from "./runtime";
@@ -50,15 +51,60 @@ export async function launchServiceCustodyBroker(
   }
 }
 
+/** Custody can also be lost after the daemon has been running, which is not a
+ * startup refusal and never shares its copy. */
+export type CustodyFailureReason = ServiceCustodyFailure | "custody_lost";
+
+function inspectUnitLines(unit: string | null): string[] {
+  return unit === null ? [] : [`see: journalctl --user -u ${unit} -n 50`];
+}
+
 /** A supervised start explains itself only through the service log, so the
- * refusal has to carry the prerequisite and the command that proves it. */
-export function custodyUnavailableMessage(vaultPath: string): string {
+ * refusal has to carry what was observed and the command that follows from it.
+ * Most guards here also fire on a hijack attempt, so only conditions the
+ * daemon read directly are stated as the cause; the rest are offered as
+ * possibilities and never as a diagnosis the service did not make. */
+export function custodyUnavailableMessage(
+  vaultPath: string,
+  unit: string | null = null,
+  reason: CustodyFailureReason = "custody_unproven",
+  machine = `${process.platform} ${process.arch}`,
+): string {
+  const head = "service_custody_unavailable:";
+  if (reason === "unsupported_platform") {
+    return [
+      `${head} the background service holds vault custody only on Linux x64, and this machine reports ${machine}.`,
+      "The installed unit cannot start here; nothing about the vault is wrong.",
+      `remove the unit: ${INVOCATION} serve --uninstall --vault ${vaultPath}`,
+      `run the loop yourself: ${serveExecHint(vaultPath)}`,
+    ].join("\n");
+  }
+  if (reason === "not_supervised") {
+    return [
+      `${head} this launch mode belongs to the installed unit, and the supervisor did not start this process.`,
+      `run the loop yourself instead: ${serveExecHint(vaultPath)}`,
+      ...inspectUnitLines(unit),
+    ].join("\n");
+  }
+  if (reason === "root_user") {
+    return [
+      `${head} the background service refuses to run as root; it must run as the user who owns ${vaultPath}.`,
+      `install it as that user: ${INVOCATION} serve --install --vault ${vaultPath}`,
+      ...inspectUnitLines(unit),
+    ].join("\n");
+  }
+  if (reason === "custody_lost") {
+    return [
+      `${head} the service lost its proof of custody of ${vaultPath} while running and stopped rather than keep writing with authority it can no longer prove.`,
+      ...inspectUnitLines(unit),
+      `then confirm the vault: ${INVOCATION} doctor --vault ${vaultPath}`,
+    ].join("\n");
+  }
   return [
-    `service_custody_unavailable: the background service could not confirm who owns the directories above ${vaultPath}.`,
-    "Every directory above the vault must be owned by you or by root and must stay unchanged while the service starts.",
-    "A shared directory such as /tmp does not qualify; it changes while the service is starting.",
-    `Create the vault somewhere only you write, such as your home directory: ${INVOCATION} init <path> --adopt`,
-    `Then confirm it: ${INVOCATION} doctor --vault <path>`,
+    `${head} the background service could not prove it holds custody of ${vaultPath}, and the check it stopped on is not named here.`,
+    "possible causes: the vault or its .kizuki directory is writable by anyone but you; a directory above the vault changed while the service started, which a shared directory such as /tmp does; or something other than the installed unit tried to start the service.",
+    ...inspectUnitLines(unit),
+    `then confirm the vault: ${INVOCATION} doctor --vault ${vaultPath}`,
   ].join("\n");
 }
 
@@ -101,10 +147,13 @@ export async function observeInstalledService(
 
 /** The coarse SupervisorState folds a crashed unit into `disabled` and a
  * restarting one into `unknown`. The supervisor's own word survives in the
- * detail; a stranger needs that word, not the category. A detail that only
- * reports the query itself is not a state and is never borrowed as one. */
+ * detail; a stranger needs that word, not the category. A detail that reports
+ * the query or the host instead of the unit is not a state and is never
+ * borrowed as one, including the sentence a host with no supervisor returns in
+ * place of one. */
 export function observedSupervisorState(status: SupervisorStatus): string {
-  return status.detail.length === 0 || status.detail.startsWith("supervisor ") ? status.state : status.detail;
+  const describesHost = status.kind === "none" || status.detail.startsWith("supervisor");
+  return status.detail.length === 0 || describesHost ? status.state : status.detail;
 }
 
 function inspectCommand(status: SupervisorStatus): string | null {
