@@ -983,13 +983,26 @@ function batchHasEventPurges(db: Database, batchId: string): boolean {
     ).get(batchId) !== null;
 }
 
+/**
+ * True once the receipt-bound proof schema exists. Before it does, the ledger predates
+ * `proof_digest` and the open path binds the digests during migration, so absent proof
+ * identity is an unmigrated schema rather than a corrupted receipt. `assertLedgerSchema`
+ * already refuses a ledger declaring v28+ without the column, so a dropped column cannot
+ * launder corruption past this predicate on a current ledger.
+ */
+function eventPurgeProofSchemaPresent(db: Database): boolean {
+  return tableExists(db, "event_purge_proofs") && tableExists(db, "event_purges") &&
+    tableColumns(db, "event_purges").includes("proof_digest");
+}
+
+/** A batch whose stored proof rows are absent or fail their bound digest on a migrated ledger. */
+function eventPurgeProofsCorrupt(db: Database, batchId: string): boolean {
+  return eventPurgeProofSchemaPresent(db) && !eventPurgeIntegrityOk(db, batchId);
+}
+
 function eventPurgeIntegrityOk(db: Database, batchId: string): boolean {
   const hasEventPurges = batchHasEventPurges(db, batchId);
-  if (
-    !tableExists(db, "event_purge_proofs") ||
-    !tableExists(db, "event_purges") ||
-    !tableColumns(db, "event_purges").includes("proof_digest")
-  ) {
+  if (!eventPurgeProofSchemaPresent(db)) {
     return !hasEventPurges;
   }
   if (!tableExists(db, "purge_batch_receipts")) return true;
@@ -1472,7 +1485,10 @@ function rewriteHolds(
   const { db, vault_path: vaultPath } = ownerIo;
   const rewritten: PurgeRewriteRef[] = [];
   const holds = readHolds(db);
-  const unprovedReceipts = new Set(holds.filter(hold => readBatch(db, hold.proposal_id)?.state !== "ready").map(hold => hold.proposal_id));
+  const unprovedReceipts = new Set(holds.filter(hold =>
+    readBatch(db, hold.proposal_id)?.state !== "ready" ||
+    eventPurgeProofsCorrupt(db, hold.proposal_id),
+  ).map(hold => hold.proposal_id));
   for (const op of listOps(db)) {
     try {
       if (op.state !== "done" || !proofIsEmpty(checkedPurgeProof(op.proof, op, batchEventIds(db, op.receipt_id)))) unprovedReceipts.add(op.receipt_id);
