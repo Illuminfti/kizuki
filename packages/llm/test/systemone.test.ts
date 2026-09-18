@@ -113,6 +113,36 @@ describe("systemone jev port", () => {
     }
   });
 
+  test("choice criteria must be a dict, not an array", async () => {
+    fake = startFakeEndpoint(() => noulBody());
+    const temporary = temporaryLlmContext(SYSTEMONE_JEV_DESCRIPTOR, {
+      base_url: fake.origin + "/v1",
+      max_retries: 0,
+    });
+    try {
+      const port = createSystemOneJevPort(temporary.ctx);
+      await expect(
+        port.evaluate({
+          state: "synthetic capture",
+          questions: {
+            sensitivity: {
+              type: "choice",
+              instructions: "Classify sensitivity.",
+              criteria: ["secret", "sensitive"] as unknown as Record<string, string | null>,
+            },
+          },
+          deadline_ms: 5_000,
+        }),
+      ).rejects.toMatchObject({
+        code: "config_invalid",
+        message: "choice criteria must be an object",
+      });
+      expect(fake.requests).toHaveLength(0);
+    } finally {
+      temporary.cleanup();
+    }
+  });
+
   test("schema mismatch is a rejected response, not a default noul", async () => {
     fake = startFakeEndpoint(() =>
       Response.json({ model: "jev-latest", answers: { supported: { type: "choice", choice: "yes" } } }),

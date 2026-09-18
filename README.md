@@ -153,7 +153,7 @@ That is how one successful task can improve the next agent's starting point with
 
 Kizuki is already a local-first capture-to-context substrate. The current revision can bring selected sources into an append-only ledger, extract source-linked claims, search them, compile bounded context packets, write model-produced canon through one receipted autonomous writer, correct live claims, audit writes and undo them.
 
-The richer world-model architecture above is the direction being built on top of those foundations. **No roadmap concept becomes a public feature until its implementation and acceptance proof exist.**
+The richer world-model architecture above is the direction being built on top of those foundations. **No roadmap concept becomes a public feature until its implementation and acceptance proof exist.** Owner decision D21 (2026-09-17): 1.0 is the entire #497 world-model map on day one, not capture-to-context and not a later programme. Closed GitHub packets and RFC fixtures are not shipped surfaces.
 
 > **Pre-alpha · v0.1.0.** The local capture-to-context loop is runnable from a checkout. Autonomous canon writing requires a usable model bound by the running host. Capture, search, context, audit and undo remain useful without one. This is not a 1.0 release or a published installer.
 
