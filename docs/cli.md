@@ -290,6 +290,14 @@ malformed private legacy marks remain unsealed until a successful write. After a
 still needs a model before those claims become pages. Loop creates land
 under `auto/`; human pages stay where they are.
 
+Purge deletes event rows and their derived projections in one transaction, so
+the stored index cursor's event count is all that trails a successful erasure.
+Doctor reports that shortfall as `index-behind-ledger accounted for by N erased
+events` and stays ok; the next import, sync, or `kizuki rebuild --confirm`
+rewrites the cursor. A shortfall the recorded purge receipts do not cover, and
+a cursor behind a grown ledger, stay reported problems, and the report then
+ends with `next: kizuki rebuild --confirm` rather than a `tell` suggestion.
+
 Doctor validates existing configuration and credentials without constructing a
 model runtime. Pending model or connection-state journals remain untouched and
 make the report degraded; inspecting the vault does not authorize recovery or

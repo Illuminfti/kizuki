@@ -739,6 +739,20 @@ export function readHolds(db: Database): CanonHold[] {
     .all();
 }
 
+/**
+ * Recorded physical erasures. Purge is the only path that removes an event row,
+ * and every removal writes one receipt, so this bounds how far a stored event
+ * count may legitimately sit above the live ledger.
+ */
+export function countPurgedEvents(db: Database): number {
+  if (!tableExists(db, "event_purges")) return 0;
+  return (
+    db
+      .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM event_purges")
+      .get()?.count ?? 0
+  );
+}
+
 export function isHeld(db: Database, page_path: string): boolean {
   if (!tableExists(db, "canon_holds")) return false;
   return (

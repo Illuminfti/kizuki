@@ -29,6 +29,7 @@ import { listHostConnections, loadConnector } from "../connections";
 import { withReadVault } from "../context";
 import type { ReadVaultContext } from "../context";
 import { countCanonReceiptRows, indexFreshness, walkCanonReceipts } from "../derived";
+import type { IndexFreshness } from "../derived";
 import { clean, errorText, jsonEnvelope } from "../output";
 import { effectiveVaultConfig, loadVaultConfig } from "../vault-config";
 import { inspectModelBinding } from "../serve-runtime";
@@ -88,6 +89,7 @@ interface DoctorReport {
   holds: { page_path: string; id: string }[];
   problems: { page: string; error: string }[];
   hash_drift: HashDriftCoverage;
+  index: IndexFreshness;
   serve: ReturnType<typeof inspectServeDoctor>;
   doctrine: { file: string; state: string }[];
   ledger: ReturnType<typeof inspectLedgerHealth>;
@@ -123,10 +125,12 @@ export const doctorCommand: Command = {
       );
       ctx.assertCurrent();
       if (parsed.flags.has("--json")) {
+        const erasure = erasureNote(report.index);
         io.out(
           jsonEnvelope("doctor", report.ok ? "ok" : "error", report, {
             degraded: [
               ...report.problems.map((problem) => problem.error),
+              ...(erasure === null ? [] : [erasure]),
               ...(report.hash_drift.sampled
                 ? [hashDriftCoverageLine(report.hash_drift)]
                 : []),
@@ -372,7 +376,15 @@ async function collect(
   problems.push(...hashDriftResult.problems);
 
   const freshness = indexFreshness(ctx.db, vaultPath);
-  for (const reason of freshness.degraded) {
+  // Purge deletes event rows and their derived projections in the same
+  // transaction, leaving only the stored event count behind. docs/file-import-proof.md
+  // records that reading as expected after erasure, and doctor is a read
+  // context that cannot refresh the cursor itself, so failing on it would send
+  // the owner to `rebuild` for bookkeeping the next indexing run rewrites.
+  const freshnessProblems = freshness.degraded.filter(
+    (reason) => !(reason === "index-behind-ledger" && freshness.erased_behind > 0),
+  );
+  for (const reason of freshnessProblems) {
     problems.push({ page: "-", error: reason });
   }
 
@@ -408,7 +420,7 @@ async function collect(
     !unhealthy &&
     purge.ok &&
     serve.ok &&
-    freshness.fresh &&
+    freshnessProblems.length === 0 &&
     problems.length === 0;
 
   const toDoctorClaim = (claim: {
@@ -447,6 +459,7 @@ async function collect(
     holds,
     problems,
     hash_drift: hashDriftResult.coverage,
+    index: freshness,
     serve,
     doctrine: vault.doctrine,
     ledger,
@@ -454,6 +467,13 @@ async function collect(
     canon_recovery: canonRecovery,
     ok: ok && ledger.ok,
   };
+}
+
+/** Visible, non-failing note for a cursor shortfall that recorded erasure explains. */
+function erasureNote(index: IndexFreshness): string | null {
+  if (index.erased_behind <= 0) return null;
+  const rows = index.erased_behind === 1 ? "1 erased event" : `${index.erased_behind} erased events`;
+  return `index-behind-ledger accounted for by ${rows}; kizuki rebuild --confirm refreshes the cursor`;
 }
 
 function printHuman(io: CliIo, report: DoctorReport): void {
@@ -505,6 +525,8 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   }
   io.out(`receipts=${report.receipts} orphans=${report.orphans.length}`);
   io.out(hashDriftCoverageLine(report.hash_drift));
+  const erasure = erasureNote(report.index);
+  if (erasure !== null) io.out(`index ${erasure}`);
   for (const orphan of report.orphans) io.out(orphan);
   for (const hold of report.holds) {
     io.out(`hold ${hold.page_path} id=${hold.id}`);
@@ -525,6 +547,12 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     io.out(`serve-failure ${failure}`);
   }
   io.out(`status=${report.ok ? "ok" : "failed"}`);
+  // A reported index problem outranks the optional authoring step: the owner
+  // cannot act on `tell` output they have been told is stale.
+  if (report.problems.some((problem) => problem.error === "index-behind-ledger")) {
+    io.out("next: kizuki rebuild --confirm");
+    return;
+  }
   const firstLive = report.live_claims[0];
   if (firstLive !== undefined) {
     io.out(`next: kizuki tell "<statement>" --claim ${firstLive.claim_id}`);

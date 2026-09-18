@@ -4,6 +4,7 @@ import type { Database } from "bun:sqlite";
 import type { CanonReceipt, CaptureEvent, LedgerCursor, RetrievalPort } from "@kizuki/core";
 import {
   count,
+  countPurgedEvents,
   isLiveCanonPage,
   isPlainObject,
   listCanonPagesReport,
@@ -270,14 +271,32 @@ export async function refreshAndPublishDerived(
   }
 }
 
+export interface IndexFreshness {
+  fresh: boolean;
+  degraded: string[];
+  /**
+   * Ledger rows the stored cursor counted that recorded physical erasure has
+   * since removed. Purge is the only path that deletes an event row and it
+   * writes a receipt per removal, so a shortfall covered by those receipts is
+   * erasure rather than an index that fell behind the ledger.
+   */
+  erased_behind: number;
+}
+
 export function indexFreshness(
   db: Database,
   vaultPath: string,
-): { fresh: boolean; degraded: string[] } {
+): IndexFreshness {
   const cursor = readIndexCursor(vaultPath);
   const degraded: string[] = [];
-  if (count(db) !== cursor.events_seen) {
+  const events = count(db);
+  let erasedBehind = 0;
+  if (events !== cursor.events_seen) {
     degraded.push("index-behind-ledger");
+    const shortfall = cursor.events_seen - events;
+    if (shortfall > 0 && shortfall <= countPurgedEvents(db)) {
+      erasedBehind = shortfall;
+    }
   }
   if (countCanonReceiptRows(db) !== cursor.receipts_seen) {
     degraded.push("index-behind-receipts");
@@ -285,5 +304,5 @@ export function indexFreshness(
   if (pendingRetrievalOps(db, 1).length > 0) {
     degraded.push("retrieval-ops-pending");
   }
-  return { fresh: degraded.length === 0, degraded };
+  return { fresh: degraded.length === 0, degraded, erased_behind: erasedBehind };
 }

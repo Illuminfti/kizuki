@@ -677,6 +677,7 @@ export {
   PURGE_SCHEMA_VERSION,
   PurgeError,
   applyPurgeV5,
+  countPurgedEvents,
   createVaultFts5Port,
   inspectPurgeHealth,
   isHeld,
