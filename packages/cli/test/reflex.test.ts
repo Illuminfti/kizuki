@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ensureVaultId, bindSourceEvent, setSourceGrant } from "@kizuki/core";
+import { ensureVaultId, hardenLedgerFile, setSourceGrant } from "@kizuki/core";
+import { bindSourceEvent } from "../../core/src/ledger/source-grants";
 import { sealLedger } from "@kizuki/core/internal";
 import { REFLEX_LIMITS } from "@kizuki/core/reflex";
 import { serveFixture } from "../../core/test/serving/helpers";
@@ -11,7 +12,7 @@ import type { CliIo } from "../src/commands/index";
 
 let f: Fixture;
 let server: ReturnType<typeof Bun.serve> | undefined;
-beforeEach(async () => { f = await serveFixture(); ensureVaultId(f.vaultPath); sealLedger(f.vaultPath, f.db); });
+beforeEach(async () => { f = await serveFixture(); ensureVaultId(f.vaultPath); hardenLedgerFile(join(f.vaultPath, ".kizuki", "kizuki.db")); sealLedger(f.vaultPath, f.db); });
 afterEach(() => { server?.stop(true); server = undefined; f.dispose(); });
 function io(): { io: CliIo; out: string[]; err: string[] } {
   const out: string[] = [], err: string[] = [];
