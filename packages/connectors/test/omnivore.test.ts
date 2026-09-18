@@ -340,6 +340,32 @@ test("a malformed publication date is absent, not a refusal", async () => {
   expect(validateEventInput(events[0]!).ok).toBe(true);
 });
 
+test("metadata truncation preserves complete Unicode characters", async () => {
+  for (const character of ["é", "界", "😀"]) {
+    const width = Buffer.byteLength(character, "utf8");
+    for (let remaining = 0; remaining <= width; remaining += 1) {
+      const prefix = "T".repeat(EVENT_LIMITS.metadataStringBytes - remaining);
+      const title = `${prefix}${character}x`;
+      const events = await omnivoreEvents(
+        mapOmnivoreFiles(metadataFile([
+          {
+            id: "unicode-title",
+            slug: "unicode-title",
+            title,
+            savedAt: "2026-01-01T09:00:00Z",
+          },
+        ])),
+        FIXTURE_OBSERVED_AT,
+      );
+      expect(events[0]?.text).toBe(title);
+      expect(events[0]?.metadata["title"]).toBe(
+        remaining === width ? `${prefix}${character}` : prefix,
+      );
+      expect(validateEventInput(events[0]!).ok).toBe(true);
+    }
+  }
+});
+
 test("a title past the metadata string budget still stores in text", async () => {
   const title = "T".repeat(EVENT_LIMITS.metadataStringBytes + 24);
   const events = await omnivoreEvents(

@@ -22,6 +22,7 @@ import type {
 import { AUTHORITY_TIERS, CLAIM_SCHEMA, canonicalizeProducer, isClaimKind, isProducer } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
 import { labelClaimSensitivity } from "../sensitivity/store";
+import { stricter } from "../sensitivity/resolve";
 import { isRfc3339 } from "../util/time";
 import { ulid } from "../util/ulid";
 import {
@@ -1128,6 +1129,15 @@ function applyClaimInsert(
   if (exact !== null && externalEvidence(io.db, exact.provenance) && (sourceEventsAllowed(io.db, exact.provenance, sourceScope) ||
       (historicalInputAllowed() && exact.model_ref === (input.model_ref ?? null) &&
        JSON.stringify(exact.provenance) === JSON.stringify(input.provenance)))) {
+    // A stricter label is not new evidence and must not renew confirmation.
+    const sensitivity = stricter(exact.sensitivity, claim.sensitivity);
+    if (sensitivity !== exact.sensitivity) {
+      io.db.query("UPDATE claims SET sensitivity = ? WHERE claim_id = ?")
+        .run(sensitivity, exact.claim_id);
+      const relabeled = { ...exact, sensitivity };
+      enqueueRetrieval(io.db, io, relabeled, at);
+      return { outcome: "duplicate", claim: relabeled, dedup: mode };
+    }
     return { outcome: "duplicate", claim: exact, dedup: mode };
   }
 

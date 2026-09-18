@@ -159,6 +159,19 @@ test("resolveTimezone refuses an impossible or unknown zone", () => {
   }
 });
 
+test("fixed offsets stop at the inclusive fourteen-hour boundary", () => {
+  for (const sign of ["+", "-"]) {
+    for (const offset of ["13:59", "14:00"]) {
+      expect(resolveTimezone(`${sign}${offset}`)).toBe(`${sign}${offset}`);
+    }
+    for (const offset of ["14:01", "14:30", "14:59"]) {
+      const error = thrown(() => resolveTimezone(`${sign}${offset}`));
+      expect(error.code).toBe("misconfigured");
+      expect(error.message).toContain("time zone offset out of range");
+    }
+  }
+});
+
 test("a fixed offset is plain arithmetic", () => {
   expect(localToUtc("2026-01-04T09:15", "+00:00")).toBe(
     "2026-01-04T09:15:00.000Z",
