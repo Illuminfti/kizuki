@@ -14,7 +14,11 @@ import { distributionIdentity } from "./release-notices";
 import { verifyGithubNativeArchive } from "./github-native-artifact";
 import { evaluateRelease } from "./go-no-go";
 import { resolve } from "node:path";
-import { GITHUB_REPOSITORY_ID, inspectGithubCandidate, inspectGithubNativeArtifacts, inspectGithubNativeJobs, inspectGithubNativeIndexBinding, validateGithubCommandBindings, bindGithubNativeProducer, bindGithubLifecycleProducer, inspectGithubLifecycleIndexBinding, parseGithubEvidenceArgs, inspectGithubCurrentP0, inspectGithubP0Disposition } from "./github-release-evidence";
+import { GITHUB_REPOSITORY_ID, inspectGithubCandidate, inspectGithubNativeArtifacts, inspectGithubNativeJobs, inspectGithubNativeIndexBinding, validateGithubCommandBindings, bindGithubNativeProducer, bindGithubLifecycleProducer, inspectGithubLifecycleIndexBinding, parseGithubEvidenceArgs, inspectGithubCurrentP0 } from "./github-release-evidence";
+import type { GithubP0Observation } from "./github-release-evidence";
+import { EVALUATOR_ROOT, consumeP0DispositionReceipt, consumeRequiredChecksReceipt } from "./release-evidence";
+import { candidateCommittedAt, p0DispositionReceipt } from "./p0-disposition";
+import { requiredChecksContexts, requiredChecksReceipt } from "./required-checks";
 
 const SHA = "a".repeat(40);
 const REPO = { id: GITHUB_REPOSITORY_ID, full_name: "fixture-owner/fixture-repo", private: false };
@@ -554,6 +558,13 @@ function p0Index(root: string, sha: string, receipts: { producer: string; gate_i
   writeFileSync(index, JSON.stringify({ schema: "kizuki.acceptance-evidence/v4", candidate_source_sha: sha, artifacts: [], fixture_observation: null, gate_receipts: receipts }));
   return index;
 }
+/** The collector's own path: emit the receipt, then let the evaluator judge. */
+function p0Disposition(observed: GithubP0Observation, root: string, candidate: string) {
+  return consumeP0DispositionReceipt(p0DispositionReceipt({
+    candidate_source_sha: candidate, root: EVALUATOR_ROOT, candidate_committed_at: candidateCommittedAt(root, candidate),
+    snapshot_at: observed.completed_at, open_issues: observed.inventory.map(issue => ({ number: issue.number, updated_at: issue.updated_at })),
+  }), EVALUATOR_ROOT, candidate);
+}
 function p0Gate(report: ReturnType<typeof evaluateRelease>) {
   return report.gates.find(row => row.id === "candidate.current-p0-disposition")!;
 }
@@ -563,19 +574,19 @@ test("stable ancestor main and zero exact-label issues yield online P0 PASS; off
   const observed = await inspectGithubCurrentP0(transport.get, git.candidateSha, git.root);
   expect(git.mainSha).not.toBe(git.candidateSha);
   expect(observed).toMatchObject({ candidate_source_sha: git.candidateSha, main_sha_before: git.mainSha, main_sha_after: git.mainSha, count: 0, inventory: [] });
-  expect(inspectGithubP0Disposition(observed)).toEqual({ status: "PASS", reason: "github-current-p0-inventory-clear" });
+  expect(p0Disposition(observed, git.root, git.candidateSha)).toEqual({ status: "PASS", reason: "current-p0-inventory-clear", creditDigest: true });
   expect(transport.calls).toContain(`/repositories/${GITHUB_REPOSITORY_ID}`);
   expect(transport.calls).toContain(`/repos/${REPO.full_name}/git/ref/heads/main`);
   expect(transport.calls.filter(path => path.includes("/issues")).every(path => path.includes("labels=severity%3Ap0") && !path.includes("labels=severity:p0"))).toBe(true);
   expect(p0Gate(evaluateRelease("rc", p0Index(git.root, git.candidateSha)))).toMatchObject({
-    status: "UNVERIFIABLE", reason: "trusted-snapshot-and-freshness-policy-unavailable", evidence_sha256: null,
+    status: "MISSING", reason: "p0-disposition-receipt-missing", evidence_sha256: null,
   });
 });
 
 test("one valid open exact-label issue yields FAIL and retains no title or body", async () => {
   const git = p0Git(), issue = p0IssueRow(501, 12, { labels: [{ id: 1, name: "bug", color: "ffffff" }, { id: 2, name: "severity:p0", color: "b60205", description: "secret" }] });
   const observed = await inspectGithubCurrentP0(p0Transport(git, { issues: [issue] }).get, git.candidateSha, git.root);
-  expect(inspectGithubP0Disposition(observed)).toEqual({ status: "FAIL", reason: "github-current-p0-findings-open" });
+  expect(p0Disposition(observed, git.root, git.candidateSha)).toEqual({ status: "FAIL", reason: "current-p0-findings-open:12", creditDigest: true });
   expect(observed.inventory).toEqual([{ id: 501, number: 12, updated_at: "2026-09-07T00:00:00Z", labels: [{ name: "bug" }, { name: "severity:p0" }] }]);
   const retained = JSON.stringify(observed);
   expect(retained).not.toContain("synthetic-title-12");
@@ -589,7 +600,7 @@ test("main that is not an ancestor or that changes before the final read is UNVE
   const descendant = await inspectGithubCurrentP0(p0Transport(git).get, git.candidateSha, git.root);
   expect(descendant.main_sha_before).toBe(git.mainSha);
   expect(descendant.main_sha_before).not.toBe(git.candidateSha);
-  expect(inspectGithubP0Disposition(descendant).status).toBe("PASS");
+  expect(p0Disposition(descendant, git.root, git.candidateSha).status).toBe("PASS");
   await expect(inspectGithubCurrentP0(p0Transport(git, { mainBefore: git.candidateSha }).get, git.mainSha, git.root)).rejects.toThrow("github-p0-main-not-ancestor");
   await expect(inspectGithubCurrentP0(p0Transport(git, { mainAfter: git.candidateSha }).get, git.candidateSha, git.root)).rejects.toThrow("github-p0-main-changed");
 });
@@ -629,7 +640,7 @@ test("two-page inventory succeeds only when complete; a changed final inventory 
   expect(observed.count).toBe(26);
   expect(observed.inventory.map(row => row.number)).toEqual(issues.map(row => row.number).sort((a, b) => a - b));
   expect(transport.calls.filter(path => path.endsWith("page=2"))).toHaveLength(2);
-  expect(inspectGithubP0Disposition(observed).status).toBe("FAIL");
+  expect(p0Disposition(observed, git.root, git.candidateSha).status).toBe("FAIL");
   const added = [...issues, p0IssueRow(5000, 99)];
   await expect(inspectGithubCurrentP0(p0Transport(git, { issues, finalIssues: added }).get, git.candidateSha, git.root)).rejects.toThrow("github-p0-inventory-changed");
   await expect(inspectGithubCurrentP0(p0Transport(git, { issues, finalIssues: issues.slice(1) }).get, git.candidateSha, git.root)).rejects.toThrow("github-p0-inventory-changed");
@@ -665,7 +676,21 @@ test("a saved github-observation.json or handcrafted p0-disposition receipt cann
     const report = evaluateRelease("rc", p0Index(root, SHA, [{
       producer: "kizuki.p0-disposition/v1", gate_id: "candidate.current-p0-disposition", target: null, path, sha256: digest(readFileSync(path)),
     }]));
-    expect(p0Gate(report)).toMatchObject({ status: "UNVERIFIABLE", reason: "trusted-snapshot-and-freshness-policy-unavailable", evidence_sha256: null });
+    expect(p0Gate(report)).toMatchObject({ status: "FAIL", reason: "invalid-schema", evidence_sha256: null });
     expect(report.decision).not.toBe("GO");
   }
+});
+
+test("a collector-emitted required-checks receipt reaches the gate through the shared evaluator", () => {
+  const observed = [
+    { path: CI, run: { id: 101, updated_at: "2026-09-07T00:01:00Z" }, jobs: [{ name: "test", conclusion: "success" }, { name: "secrets", conclusion: "success" }] },
+    { path: WORKFLOWS, run: { id: 201, updated_at: "2026-09-07T00:02:00Z" }, jobs: [{ name: "workflows", conclusion: "success" }] },
+  ];
+  const receipt = requiredChecksReceipt({ candidate_source_sha: SHA, root: EVALUATOR_ROOT, contexts: requiredChecksContexts(observed) });
+  expect(consumeRequiredChecksReceipt(receipt, EVALUATOR_ROOT, SHA)).toEqual({
+    status: "PASS", reason: "exact-candidate-required-checks-passed", creditDigest: true,
+  });
+  const red = observed.map(row => ({ ...row, jobs: row.jobs.map(job => job.name === "workflows" ? { ...job, conclusion: "failure" } : job) }));
+  const redReceipt = requiredChecksReceipt({ candidate_source_sha: SHA, root: EVALUATOR_ROOT, contexts: requiredChecksContexts(red) });
+  expect(consumeRequiredChecksReceipt(redReceipt, EVALUATOR_ROOT, SHA)).toMatchObject({ status: "FAIL", reason: "required-context-not-successful" });
 });

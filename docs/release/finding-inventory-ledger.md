@@ -6,10 +6,12 @@ producer, change `scripts/go-no-go.ts`, or claim that readiness is met.
 
 Read [release acceptance](../release-acceptance.md) for the full gate inventory.
 [D19](../decision-log.md#owner-amendment-to-readiness-2026-09-05) requires zero
-live P0 findings on the exact candidate. The checker currently leaves
-`candidate.current-p0-disposition` at `UNVERIFIABLE` with reason
-`trusted-snapshot-and-freshness-policy-unavailable`. Offline evaluation cannot
-credit a saved GitHub observation or a `kizuki.p0-disposition/v1` receipt.
+live P0 findings on the exact candidate. Without a receipt the checker leaves
+`candidate.current-p0-disposition` at `MISSING` with reason
+`p0-disposition-receipt-missing`. Offline evaluation consumes a
+`kizuki.p0-disposition/v1` receipt bound to the candidate and to the evaluator's
+own producer bytes; a saved GitHub observation is not such a receipt, and
+receipt consistency is not an independent observation of GitHub.
 
 ## Gate obligation
 
@@ -18,12 +20,14 @@ credit a saved GitHub observation or a `kizuki.p0-disposition/v1` receipt.
 | Gate id         | `candidate.current-p0-disposition`   |
 | Scope           | `current-head-findings`              |
 | Required        | yes for both `rc` and `1.0` profiles |
-| Current adapter | online GitHub overlay only; offline default remains `UNVERIFIABLE` |
+| Current adapter | offline `kizuki.p0-disposition/v1` receipt, or the online collector emitting that receipt; default without one is `MISSING` |
 
 ## Online collector
 
-`evaluateReleaseOnline` in `scripts/github-release-evidence.ts` overlays this
-gate from a live GitHub inventory. That overlay is not an offline producer.
+`evaluateReleaseOnline` in `scripts/github-release-evidence.ts` observes a live
+GitHub inventory, emits a `kizuki.p0-disposition/v1` receipt from it, and applies
+that receipt through the same consume function the offline index uses. The live
+observation is what the offline path cannot reproduce.
 
 - Exact open-issue label: `severity:p0`. Titles, bodies, authors and comments
   are not fetched for retention; kept rows are `{ id, number, updated_at, labels }`.
@@ -34,8 +38,8 @@ gate from a live GitHub inventory. That overlay is not an offline producer.
 - Freshness is code-owned: 60 seconds maximum observation window and 5 seconds
   future-completion skew. An evidence index or receipt cannot supply a duration
   or timestamp.
-- Empty valid inventory: `PASS` / `github-current-p0-inventory-clear`.
-- One or more valid open rows: `FAIL` / `github-current-p0-findings-open`.
+- Empty valid inventory: `PASS` / `current-p0-inventory-clear`.
+- One or more valid open rows: `FAIL` / `current-p0-findings-open:<issue numbers>`.
 - Transport, schema, pagination, ref, freshness, custody or race failure:
   `UNVERIFIABLE` with a `github-p0-*` reason and no evidence digest.
 
