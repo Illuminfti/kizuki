@@ -370,7 +370,7 @@ export function parseChatGptExport(
         });
       }
       const sourceRecordId = encodeSourceRecordId([conversationId, nodeId]);
-      const fingerprint = `${occurredAt}\n${extracted.text}\n${extracted.attachments
+      const fingerprint = `${role}\n${occurredAt}\n${extracted.text}\n${extracted.attachments
         .map((attachment) => attachment.attachment_id)
         .join(",")}`;
       const prior = seen.get(sourceRecordId);
