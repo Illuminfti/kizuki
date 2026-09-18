@@ -1599,14 +1599,15 @@ export const OWNER_AGENT_GRANT: Grant = {
   subjects: null,
   since: null,
   until: null,
-  tools: ["search", "get_page", "query_entities", "timeline", "context_packet", "graph_neighbors", "system_health", "propose"],
+  tools: ["search", "get_page", "query_entities", "timeline", "context_packet", "graph_neighbors", "system_health", "propose", "correct"],
   rate_limit_per_minute: 60,
   relay_owner_corrections: true,
 };
 ```
 
 used only when a caller explicitly passes it, for harnesses the owner runs
-themselves. It is never an implicit fallback for `addAgent`. Enforcement is
+themselves. It is never an implicit fallback for `addAgent`. D22 adds
+`correct` to this preset. Existing stored grants stay unchanged. Enforcement is
 unchanged and stays in the query engine
 below the prompt layer: `authorize()` checks `held` first, then
 `missing_sensitivity`, then `above_ceiling`, then type, subject and time.

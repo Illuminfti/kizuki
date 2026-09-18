@@ -236,6 +236,7 @@ describe("OWNER_AGENT_GRANT", () => {
     expect(DEFAULT_GRANT.ceiling).toBe("public");
     expect(OWNER_AGENT_GRANT.ceiling).toBe("private");
     expect(OWNER_AGENT_GRANT.tools).toContain("propose");
+    expect(OWNER_AGENT_GRANT.tools).toContain("correct");
     expect(DEFAULT_GRANT.tools).toEqual([]);
 
     const db = agentsDb();
