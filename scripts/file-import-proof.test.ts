@@ -201,7 +201,7 @@ function reasonOf(run: () => unknown): string {
   }
 }
 
-test("every file format's promoted receipt consumes to PASS for its own connector gate", () => {
+test("every file format's promoted receipt is consumable for its own connector gate", () => {
   expect(connectorProducerRevision(EVALUATOR_ROOT)).toMatch(/^[a-f0-9]{64}$/);
   const cases = fileImportFixtures(DAY).map(fixture => caseReceipt({ format: fixture.format, connector_id: fixture.connector }));
   const { index, receipts } = emitInto(cases);
@@ -212,8 +212,11 @@ test("every file format's promoted receipt consumes to PASS for its own connecto
   for (const [id, receipt] of Object.entries(receipts)) {
     expect(receipt.evidence_class).toBe("file-import");
     expect(receipt.acceptance_credit).toBe(true);
+    // The receipt survives every denial the evaluator applies. It still buys no
+    // credit: the connector family pins the evaluator's own module alone, so a
+    // revision computed over it binds bytes every operator already holds.
     expect(consumeConnectorReceipt(receipt, EVALUATOR_ROOT, CANDIDATE, `connector.${id}`)).toEqual({
-      status: "PASS", reason: "connector-steps-passed", creditDigest: true,
+      status: "UNVERIFIABLE", reason: "connector-producer-not-landed", creditDigest: false,
     });
   }
   expect(index.emissions.every((row: { row_counts: Record<string, number> }) => row.row_counts.events_stored === 1)).toBe(true);
@@ -230,7 +233,11 @@ test("a format whose cases partially failed withholds credit and consumes to FAI
   expect(index.unresolved).toEqual([]);
   expect(receipts["pocket"].acceptance_credit).toBe(false);
   expect(reasonOf(() => consumeConnectorReceipt(receipts["pocket"], EVALUATOR_ROOT, CANDIDATE, "connector.pocket"))).toBe("acceptance-credit-withheld");
-  expect(consumeConnectorReceipt(receipts["ics"], EVALUATOR_ROOT, CANDIDATE, "connector.ics").status).toBe("PASS");
+  // Withheld credit is refused outright; a passing sibling reaches the terminal
+  // verdict instead, which is UNVERIFIABLE until a producer entrypoint is pinned.
+  expect(consumeConnectorReceipt(receipts["ics"], EVALUATOR_ROOT, CANDIDATE, "connector.ics")).toEqual({
+    status: "UNVERIFIABLE", reason: "connector-producer-not-landed", creditDigest: false,
+  });
 });
 
 test("a format the harness never reached names its blocker instead of emitting a receipt", () => {

@@ -170,24 +170,31 @@ observations only; the evaluator computes the verdict, and an evaluator that
 cannot certify returns `UNVERIFIABLE` with a stated reason rather than `PASS`.
 
 The producer revision binds the bytes of the producing code, not the work the
-receipt describes. For `kizuki.journey-proof/v1` no producer entrypoint has
-landed yet, so the pinned list is `scripts/release-evidence.ts` alone and the
-revision attests only to the shared receipt module, which every operator already
-holds. A receipt bound to that list alone records no executed work, so that
-evaluator keeps every denial path and ends in `UNVERIFIABLE`
-(`journey-producer-not-landed`) instead of `PASS`, crediting no evidence digest.
-A later lane that lands a journey producer script adds it to the pinned list, and
-the terminal verdict becomes `PASS` for a receipt that survives every denial.
+receipt describes. For `kizuki.journey-proof/v1` and `kizuki.connector-evidence/v1`
+the pinned list is `scripts/release-evidence.ts` alone, so the revision attests
+only to the shared receipt module, which every operator already holds. A receipt
+bound to that list alone records no executed work, so those two evaluators keep
+every denial path and end in `UNVERIFIABLE` (`journey-producer-not-landed`,
+`connector-producer-not-landed`) instead of `PASS`, crediting no evidence digest.
 
-`kizuki.connector-evidence/v1` has landed producers. Its pinned list is the
-shared receipt builder `scripts/connector-evidence.ts`, the file-import proof
-`scripts/file-import-proof.ts` with its fixtures, the local-source proof
-`scripts/screenpipe-proof.ts` with its fixtures, and the evaluator module. Those
-producers can witness two of the three evidence classes: a file import and an
-offline read of a stopped local database. Nothing in this repository can witness
-a live account, so a `live-account` receipt still ends in `UNVERIFIABLE`
-(`connector-producer-not-landed`) however well formed it is, and the six
-live-account obligations stay unmet until a real account is observed.
+The connector family now has producers: `scripts/file-import-proof.ts` for the
+eight file-import formats and `scripts/screenpipe-proof.ts` for the one
+local-source connector, both writing through `scripts/connector-evidence.ts`.
+Neither is pinned, deliberately. Pinning a producer file is what flips this
+family's terminal verdict to `PASS`, and a revision over a pinned list is
+recomputable by anyone holding the checkout: it says which bytes were in the
+tree, never that they were executed. A credited connector receipt would attest
+to the pinned producer bytes and the candidate SHA and nothing else, so an
+operator holding the checkout could author one by hand. Nothing in the receipt
+binds the artifact the harness observed, and the consent-arc rule the producers
+enforce (`REQUIRED_EVIDENCE_STEPS` in `scripts/connector-evidence.ts`) lives in
+the producer, where the evaluator never reads it. The nine witnessable connector
+gates therefore stay `UNVERIFIABLE`, and the producers stand as runnable evidence
+a reader can execute rather than as acceptance credit, until the evaluator can
+tell an executed receipt from an authored one by requiring the arc itself and
+binding the observed package and artifact-proof digests. The six live-account
+obligations stay unmet regardless: nothing in this repository can witness an
+account.
 
 `kizuki.required-checks/v1` (`scripts/required-checks.ts`) records exactly
 `test`, `secrets` and `workflows` with each context's conclusion, run ID and

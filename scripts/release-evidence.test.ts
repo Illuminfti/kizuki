@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   CONNECTORS, CONNECTOR_PRODUCER, CONNECTOR_PRODUCER_FILES, EVALUATOR_ROOT, EvidenceError, JOURNEYS, JOURNEY_PRODUCER,
-  JOURNEY_PRODUCER_FILES, P0_DISPOSITION_PRODUCER, P0_DISPOSITION_PRODUCER_FILES, P0_LABEL, PRODUCED_EVIDENCE_CLASSES, RECEIPT_FAMILIES,
+  JOURNEY_PRODUCER_FILES, P0_DISPOSITION_PRODUCER, P0_DISPOSITION_PRODUCER_FILES, P0_LABEL, RECEIPT_FAMILIES,
   REQUIRED_CHECKS_PRODUCER, REQUIRED_CHECKS_PRODUCER_FILES, REQUIRED_CONTEXTS,
   consumeConnectorReceipt, consumeJourneyReceipt, evaluateConnectorReceipt, evaluateJourneyReceipt,
   evaluateP0DispositionReceipt, evaluateRequiredChecksReceipt, evaluatorRevision, inspectOptionalVerifier, producerEntrypointLanded, producerRevision,
@@ -20,14 +20,11 @@ const now = Date.parse("2026-09-18T02:00:00.000Z");
 const revision = (files: readonly string[]) => digest(JSON.stringify([...files]));
 const binding = { candidate_source_sha: source, revision };
 const p0Binding = { ...binding, now };
-/** The journey family pins no producer entrypoint yet, so a receipt that
- * survives every denial still buys no credit: the evaluator cannot certify that
- * a step ran. The connector family has landed producers for the two evidence
- * classes this repository can execute; a live account is not one of them. */
+/** Neither family pins a producer entrypoint yet, so a receipt that survives
+ * every denial still buys no credit: the evaluator cannot certify that a step
+ * ran. A later lane that lands a producer script flips these to PASS. */
 const JOURNEY_TERMINAL = { status: "UNVERIFIABLE", reason: "journey-producer-not-landed", creditDigest: false } as const;
 const CONNECTOR_TERMINAL = { status: "UNVERIFIABLE", reason: "connector-producer-not-landed", creditDigest: false } as const;
-const CONNECTOR_PASS = { status: "PASS", reason: "connector-steps-passed", creditDigest: true } as const;
-const connectorTerminal = (evidence: string) => evidence === "live-account" ? CONNECTOR_TERMINAL : CONNECTOR_PASS;
 
 function identity(producer: string, files: readonly string[], source_class: string, actor_class: string, patch: Record<string, unknown> = {}) {
   return {
@@ -161,16 +158,14 @@ test("every journey id is consumable and none is special-cased", () => {
   }
 });
 
-test("a hand-authored journey or live-account receipt cannot buy acceptance credit", () => {
-  // The journey list names the evaluator's own module alone. Every operator holds
+test("a hand-authored journey or connector receipt cannot buy acceptance credit", () => {
+  // Both pinned lists name the evaluator's own module alone. Every operator holds
   // that file and can recompute its hash, so the revision check binds no executed
-  // work and the terminal verdict must not be PASS. The connector list names real
-  // producers, but none of them can witness a live account.
+  // work and the terminal verdict must not be PASS.
   expect(producerEntrypointLanded(JOURNEY_PRODUCER_FILES)).toBe(false);
-  expect(producerEntrypointLanded(CONNECTOR_PRODUCER_FILES)).toBe(true);
+  expect(producerEntrypointLanded(CONNECTOR_PRODUCER_FILES)).toBe(false);
   expect(producerEntrypointLanded(REQUIRED_CHECKS_PRODUCER_FILES)).toBe(true);
   expect(producerEntrypointLanded(P0_DISPOSITION_PRODUCER_FILES)).toBe(true);
-  expect([...PRODUCED_EVIDENCE_CLASSES]).toEqual(["file-import", "local-source"]);
   for (const verdict of [
     evaluateJourneyReceipt(journeyBody("install-recover"), { ...binding, journey_id: "install-recover" }),
     evaluateConnectorReceipt(connectorBody("telegram", "live-account"), { ...binding, connector_id: "telegram" }),
@@ -212,9 +207,9 @@ test("a file-import connector receipt can never satisfy a live-account gate", ()
 test("each connector receipt needs the operator class its evidence family requires", () => {
   for (const entry of CONNECTORS) {
     const gate = { ...binding, connector_id: entry.id };
-    expect(evaluateConnectorReceipt(connectorBody(entry.id, entry.evidence), gate)).toEqual(connectorTerminal(entry.evidence));
+    expect(evaluateConnectorReceipt(connectorBody(entry.id, entry.evidence), gate)).toEqual(CONNECTOR_TERMINAL);
     const wrongActor = connectorBody(entry.id, entry.evidence, {
-      identity: identity(CONNECTOR_PRODUCER, CONNECTOR_PRODUCER_FILES, "synthetic-fixture", "authorized-operator"),
+      identity: identity(CONNECTOR_PRODUCER, ["scripts/release-evidence.ts"], "synthetic-fixture", "authorized-operator"),
     });
     expect(reasonOf(() => evaluateConnectorReceipt(wrongActor, gate))).toBe("invalid-identity");
   }
@@ -252,10 +247,7 @@ test("journey and connector receipts cannot choose which producer files bind the
     identity: identity(CONNECTOR_PRODUCER, forged, "live-account-operator", "authorized-operator"),
   }), { ...binding, connector_id: "telegram" }))).toBe("producer-files-mismatch");
   expect([...JOURNEY_PRODUCER_FILES]).toEqual(["scripts/release-evidence.ts"]);
-  expect([...CONNECTOR_PRODUCER_FILES]).toEqual([
-    "scripts/connector-evidence.ts", "scripts/file-import-proof-fixtures.ts", "scripts/file-import-proof.ts",
-    "scripts/release-evidence.ts", "scripts/screenpipe-proof-fixtures.ts", "scripts/screenpipe-proof.ts",
-  ]);
+  expect([...CONNECTOR_PRODUCER_FILES]).toEqual(["scripts/release-evidence.ts"]);
 });
 
 test("a receipt cannot steer the evaluator outside its own checkout", () => {
