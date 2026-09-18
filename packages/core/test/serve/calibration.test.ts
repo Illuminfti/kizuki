@@ -221,7 +221,7 @@ describe("doctor calibration", () => {
     db.close();
   });
 
-  test("first-fill still fails the lower bound when extracted claims are dropped", async () => {
+  test("first-fill withholds the lower bound and reports the measured rate", async () => {
     const { path, db } = vault();
     await storeNovel(db, 0, IN_WINDOW);
     persistRunReceipt(
@@ -234,9 +234,13 @@ describe("doctor calibration", () => {
       }),
     );
     const report = inspectServeDoctor(db, path, { now: NOW });
+    // Strict dedup and admission drop most of a first pass; that is the
+    // designed shape, not drift. The rate is still reported truthfully.
     expect(report.calibration.write_rate).toBeCloseTo(0.1);
-    expect(report.ok).toBe(false);
-    expect(report.failures.some((item) => item.startsWith("write_rate "))).toBe(true);
+    expect(report.calibration.bands_enforced).toBe(false);
+    expect(report.calibration.bands_reason).toBe("initial-capture");
+    expect(report.failures.some((item) => item.startsWith("write_rate "))).toBe(false);
+    expect(report.ok).toBe(true);
     db.close();
   });
 
