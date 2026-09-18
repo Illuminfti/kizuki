@@ -11,7 +11,7 @@ const MAX_URL_BYTES = 8 * 1024;
 const MAX_MENTIONS = 128;
 
 function byteLength(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
+  return Buffer.byteLength(value, "utf8");
 }
 
 function optionalNativeId(value: unknown, field: string): string | null {
@@ -138,6 +138,9 @@ function mentionsFrom(
       `${where}.entities.${field}[${index}].screen_name`,
       64,
     );
+    if (username !== null && !/^[A-Za-z0-9_]{1,64}$/.test(username)) {
+      throw archiveError("parse_error", `${where}.entities.${field}[${index}].screen_name is invalid`);
+    }
     if (seen.has(id)) return;
     seen.add(id);
     result.push({
