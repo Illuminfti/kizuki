@@ -113,6 +113,9 @@ export class ImapConnector implements Connector {
   }
 
   async connect(resolve: SecretResolver): Promise<void> {
+    // Re-enrollment replaces the credential set; a failed attempt must not
+    // leave the previous account or mailbox scope usable as a fallback.
+    this.state = null;
     const ref = this.config.secret_ref;
     if (typeof ref !== "string" || !ref.startsWith("file:")) {
       throw new KizukiError(

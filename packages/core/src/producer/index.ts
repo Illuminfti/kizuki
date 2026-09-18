@@ -39,6 +39,7 @@ export {
   registerModelProducerPort,
   validateProduceInput,
 } from "./model";
+export { admitExtractedClaims } from "./systemone-admit";
 export type {
   ModelProducerConfig,
   ModelProducerOptions,

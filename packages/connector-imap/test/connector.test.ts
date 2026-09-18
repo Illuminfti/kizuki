@@ -107,6 +107,30 @@ describe("connect fails closed", () => {
     expect((error as KizukiError).code).toBe("misconfigured");
   });
 
+  test.each(["resolver", "malformed", "authentication"])(
+    "a failed reconnect (%s) cannot reuse the previous credentials",
+    async (failure) => {
+      const { connector, resolve } = connectorFor(server());
+      await connector.connect(resolve);
+      const rejected: SecretResolver = failure === "resolver"
+        ? async () => { throw new Error("state unavailable"); }
+        : failure === "malformed"
+          ? async () => "{}"
+          : resolverFor(fixtureState({ password: "wrong-fixture-password" }));
+
+      await expect(connector.connect(rejected)).rejects.toThrow(KizukiError);
+      expect((await connector.health()).state).toBe("disabled");
+      await expect(connector.backfill(null)).rejects.toThrow("not signed in");
+      await expect(connector.sync(null)).rejects.toThrow("not signed in");
+      expect((await connector.purgeSource("email:ada@acme.example"))
+        .unreachable_source_record_ids).toEqual([]);
+
+      await connector.connect(resolve);
+      expect((await connector.health()).state).toBe("ok");
+      expect((await connector.backfill(null)).events.length).toBeGreaterThan(0);
+    },
+  );
+
   test("backfill before connect refuses", async () => {
     const error = await createImapConnector({ secret_ref: REF })
       .backfill(null)

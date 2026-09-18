@@ -98,6 +98,24 @@ test("one refresh follows 401; a second 401 and explicit revoke do not silently 
   expect((await port.health()).state).toBe("disabled"); await expect(port.sync(null)).rejects.toThrow();
 });
 
+test("saved state discriminators reject non-string values before provider work", async () => {
+  const f = new XApiFixture(1), raw = parseState(f.state);
+  const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
+  for (const revocation of ["active", "pending", "revoked"] as const) {
+    expect(parseState(bytes({ ...raw, revocation })).revocation).toBe(revocation);
+    for (const invalid of [[revocation], [[revocation]]]) {
+      const malformed = bytes({ ...raw, revocation: invalid });
+      expect(() => parseState(malformed)).toThrow("invalid_state");
+      const port = createXApiConnector(f.config(), f.deps());
+      try {
+        await expect(port.connect(async () => new TextDecoder().decode(malformed))).rejects.toThrow("invalid_state");
+      } finally { await port.close(); }
+    }
+  }
+  expect(() => parseState(bytes({ ...raw, schema: [raw.schema] }))).toThrow("invalid_state");
+  expect(f.requests).toEqual([]); expect(f.forms).toEqual([]); expect(f.authorizations).toEqual([]);
+});
+
 test("saved token strings and malformed state refuse before network without secret prose", async () => {
   const f = new XApiFixture(1), raw = parseState(f.state); raw.oauth.tokens.refresh_token = "bad\nsecret";
   expect(() => encodeState(raw)).toThrow("invalid_state");

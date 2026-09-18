@@ -234,6 +234,19 @@ export {
   eraseOwnedFts5Generation,
   registerFts5RetrievalPort,
   retrievalDocId,
+  MAX_RERANK_CANDIDATES,
+  RETRIEVAL_SENSITIVITY_CHOICE_CRITERIA,
+  RETRIEVAL_SENSITIVITY_QUESTION_ID,
+  mapSystemOneSensitivityChoice,
+  rerankWithSystemOne,
+  validateChoiceCriteriaDict,
+} from "./retrieval";
+export type {
+  RerankWithSystemOneInput,
+  SystemOneRankedCandidate,
+  SystemOneRerankCandidate,
+  SystemOneRerankResult,
+  SystemOneRerankSensitivity,
 } from "./retrieval";
 export {
   EMBEDDING_CAPABILITIES,
@@ -259,6 +272,30 @@ export type {
   LlmResponse,
   LlmUsage,
 } from "./contracts/llm";
+export {
+  SYSTEMONE_ADMIT_NOUL_MIN,
+  SYSTEMONE_CAPABILITIES,
+  SYSTEMONE_CONTRACT,
+  SYSTEMONE_CONTRACT_MINOR,
+  SYSTEMONE_QUESTION_TYPES,
+} from "./contracts/systemone";
+export type {
+  SystemOneAnswer,
+  SystemOneCapability,
+  SystemOneChoiceAnswer,
+  SystemOneChoiceQuestion,
+  SystemOneNoulAnswer,
+  SystemOneNoulQuestion,
+  SystemOnePort,
+  SystemOneQuestion,
+  SystemOneQuestionType,
+  SystemOneRequest,
+  SystemOneResponse,
+  SystemOneScoreAnswer,
+  SystemOneScoreQuestion,
+  SystemOneState,
+  SystemOneUsage,
+} from "./contracts/systemone";
 export {
   DROPPED_DRAFT_REASONS,
   PRODUCER_CAPABILITIES,
@@ -290,6 +327,7 @@ export {
   EXTRACT_INPUT_CHARS,
   MODEL_PRODUCER_DESCRIPTOR,
   MODEL_PRODUCER_ID,
+  admitExtractedClaims,
   buildExtractionMessages,
   createModelProducerPort,
   escapeFenceText,
@@ -375,6 +413,7 @@ export {
   runRetrievalConformance,
   runStorageConformance,
   runSurfaceConformance,
+  runSystemOneConformance,
 } from "./contracts/conformance";
 export type {
   ConformanceContext,
@@ -395,6 +434,7 @@ export type {
   RetrievalConformanceHarness,
   StorageConformanceHarness,
   SurfaceConformanceHarness,
+  SystemOneConformanceHarness,
 } from "./contracts/conformance";
 export {
   KIZUKI_ERROR_CODES,

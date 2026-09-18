@@ -121,8 +121,12 @@ export function parseDateTime(
   params: Record<string, string>,
 ): IcsInstant {
   const compact = value.trim();
-  const isDateValue =
-    (params["VALUE"] ?? "").toUpperCase() === "DATE" || DATE_ONLY.test(compact);
+  const valueType = (params["VALUE"] ?? "").toUpperCase();
+  if (valueType !== "" && valueType !== "DATE" && valueType !== "DATE-TIME") {
+    malformed();
+  }
+  if (valueType === "DATE-TIME" && DATE_ONLY.test(compact)) malformed();
+  const isDateValue = valueType === "DATE" || DATE_ONLY.test(compact);
   if (isDateValue) {
     const local = parseLocal(compact);
     if (!DATE_ONLY.test(compact)) malformed();
