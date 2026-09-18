@@ -20,12 +20,20 @@ export const EMPTY_STREAK = 5;
 export const RETRIEVAL_SLA_SECONDS = 900;
 export const RUN_RECEIPT_RETENTION_DAYS = 7;
 /**
- * Steady-state write ratio once dedup/supersession can absorb claims.
- * The upper bound is skipped only for a true initial capture: a live or
- * superseded corpus exists, none of it was asserted before the latest
- * extracting receipt started, and every asserted_at parses. A later
- * extracting receipt in the same week applies the ceiling once that corpus
- * is present. The lower bound still fires when extracted claims are dropped.
+ * Steady-state keep ratio, chosen against a vault whose corpus already
+ * absorbs drafts: RFC 0002 E4 measured 69.9% kept against a 33-50% target,
+ * so 0.75 is the ceiling above which dedup and supersession are provably
+ * not biting, and 0.15 the floor below which admission is discarding
+ * evidence the producer paid to extract. Both numbers describe a running
+ * vault, not a first fill.
+ *
+ * The band is therefore enforced only in steady state. `CalibrationDoctor`
+ * reports `bands_enforced` with the reason it was skipped: a true initial
+ * capture (a live or superseded corpus exists, none of it was asserted
+ * before the latest extracting receipt started, and every asserted_at
+ * parses), a sample too small to be a control, an unreadable receipt clock,
+ * or no receipts at all. A later extracting receipt in the same week
+ * applies both bounds once that corpus is present.
  */
 export const CALIBRATION_BAND = { min: 0.15, max: 0.75 } as const;
 export const CONFIDENCE_SPREAD_MIN = 0.02;
@@ -250,6 +258,15 @@ export interface StoreDoctor {
   readonly degraded: string[];
 }
 
+/** Why `CALIBRATION_BAND` was measured but not used as a verdict. */
+export const CALIBRATION_BANDS_REASONS = [
+  "no-receipts",
+  "insufficient-sample",
+  "initial-capture",
+  "receipt-clock-unparseable",
+] as const;
+export type CalibrationBandsReason = (typeof CALIBRATION_BANDS_REASONS)[number];
+
 export interface CalibrationDoctor {
   readonly window_days: number;
   readonly write_rate: number | null;
@@ -257,6 +274,12 @@ export interface CalibrationDoctor {
   readonly confidence_spread: number | null;
   readonly canon_writes_today: number;
   readonly top_subjects: { subject: string; writes: number }[];
+  /**
+   * False when `write_rate` is reported for information only. The rate
+   * itself is never adjusted; only the band verdict is withheld.
+   */
+  readonly bands_enforced: boolean;
+  readonly bands_reason: CalibrationBandsReason | null;
   readonly failures: string[];
 }
 
