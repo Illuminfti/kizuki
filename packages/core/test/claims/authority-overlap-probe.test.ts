@@ -209,9 +209,13 @@ describe("claim admission across every overlapping interval", () => {
       expect(result.reason).toBe("below_authority");
       expect(claimsConflict(result.claim, first)).toBe(true);
       expect(claimsConflict(result.claim, other)).toBe(true);
-      expect(resolveConflict(result.claim, first)).toEqual({
-        action: "supersede", winner: reverseIntervals ? "live" : "incoming", rule: "R3",
-      });
+      // Reversed intervals make the live claim the recency winner at lower
+      // confidence, which RFC 0002 R4 keeps contested rather than superseding.
+      expect(resolveConflict(result.claim, first)).toEqual(
+        reverseIntervals
+          ? { action: "contested", rule: "R4" }
+          : { action: "supersede", winner: "incoming", rule: "R3" },
+      );
       expect(resolveConflict(result.claim, other)).toEqual({ action: "skip", reason: "below_authority", rule: "R1" });
       expect(getClaim(db, result.claim.claim_id)?.status).toBe("skipped");
       expect(snapshot()).toEqual(before);

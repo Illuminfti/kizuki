@@ -93,7 +93,9 @@ function sameTierResolution(
     allowMargin &&
     AUTHORITY_TIERS[incoming.authority] <= 2 &&
     AUTHORITY_TIERS[live.authority] <= 2 &&
-    margin >= 0 &&
+    // RFC 0002 §16.2: R4 applies whenever R3's winner does not exceed the
+    // loser by CONFLICT_MARGIN, including when recency alone selected a
+    // winner whose confidence is lower (a negative margin).
     margin < CONFLICT_MARGIN
   ) {
     return { action: "contested", rule: "R4" };
