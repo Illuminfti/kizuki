@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { readFileSync, renameSync, symlinkSync } from "node:fs";
 import * as filesystem from "node:fs/promises";
 import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
@@ -24,20 +24,9 @@ import {
   createMarkdownFolderConnector,
 } from "../src";
 import { MAX_FILE_BYTES } from "../src/markdown-folder";
+import { ROUND_TRIP_TIMEOUT_MS, rootTest } from "./temp-root";
 
-const roots: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
-});
-
-async function syntheticDir(prefix: string): Promise<string> {
-  const root = await mkdtemp(path.join(os.tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
+const markdownTest = rootTest("kizuki-fleet-markdown-");
 
 function named<T extends { source_record_id: string }>(
   events: readonly T[],
@@ -75,7 +64,7 @@ function grantMarkdown(db: ReturnType<typeof openLedger>, source: string, operat
   });
 }
 
-test("Core completes changing deletion pages before reporting malformed Markdown", async () => {
+markdownTest("Core completes changing deletion pages before reporting malformed Markdown", async (syntheticDir) => {
   const selected = await syntheticDir("kizuki-markdown-changing-pages-");
   const db = openLedger(":memory:"), source = "01JJ0000000000000000000001";
   try {
@@ -133,7 +122,7 @@ test("Core completes changing deletion pages before reporting malformed Markdown
   } finally { db.close(); }
 });
 
-test("file pages include new and edited identities below the previous watermark", async () => {
+markdownTest("file pages include new and edited identities below the previous watermark", async (syntheticDir) => {
   const selected = await syntheticDir("kizuki-markdown-lower-keys-");
   await writeFile(path.join(selected, "m.md"), "Synthetic m before\n");
   await writeFile(path.join(selected, "z.md"), "Synthetic z\n");
@@ -152,7 +141,7 @@ test("file pages include new and edited identities below the previous watermark"
   expect((await connector.backfill(fourth.cursor)).events).toEqual([]);
 });
 
-test("selecting an independent folder captures only that folder's ordinary markdown", async () => {
+markdownTest("selecting an independent folder captures only that folder's ordinary markdown", async (syntheticDir) => {
   const parent = await syntheticDir("kizuki-fleet-markdown-select-");
   const selected = path.join(parent, "notes");
   await mkdir(path.join(selected, "nested"), { recursive: true });
@@ -194,7 +183,7 @@ test("selecting an independent folder captures only that folder's ordinary markd
   expect(named(repeat.events, "nested/beta.md").subjects).toEqual(beta.subjects);
 });
 
-test("resume reports one mixed ordinary-file lifecycle without repeating identities", async () => {
+markdownTest("resume reports one mixed ordinary-file lifecycle without repeating identities", async (syntheticDir) => {
   const selected = await syntheticDir("kizuki-fleet-markdown-life-");
   await Promise.all([
     writeFile(path.join(selected, "kept.md"), "SYNTHETIC_KEPT\n"),
@@ -259,7 +248,7 @@ test("resume reports one mixed ordinary-file lifecycle without repeating identit
   expect(named(fresh.events, "edited.md").text).toBe("SYNTHETIC_AFTER\n");
 });
 
-test("ordinary files with identical text keep distinct stable identities", async () => {
+markdownTest("ordinary files with identical text keep distinct stable identities", async (syntheticDir) => {
   const selected = await syntheticDir("kizuki-fleet-markdown-twins-");
   await Promise.all([
     writeFile(path.join(selected, "twin-a.md"), "SYNTHETIC_SAME_TEXT\n"),
@@ -288,7 +277,7 @@ test("ordinary files with identical text keep distinct stable identities", async
   expect(idle.has_more).toBe(false);
 });
 
-test("nested Unicode frontmatter notes round-trip through Core backfill", async () => {
+markdownTest("nested Unicode frontmatter notes round-trip through Core backfill", async (syntheticDir) => {
   const selected = await syntheticDir("kizuki-markdown-unicode-");
   const db = openLedger(":memory:"), source = "01JJ0000000000000000000002";
   const nested = path.join(selected, "journal", "café");
@@ -332,7 +321,7 @@ test("nested Unicode frontmatter notes round-trip through Core backfill", async 
   } finally { db.close(); }
 });
 
-test("a bounded oversize note is isolated while its sibling still imports", async () => {
+markdownTest("a bounded oversize note is isolated while its sibling still imports", async (syntheticDir) => {
   const selected = await syntheticDir("kizuki-markdown-oversize-");
   const db = openLedger(":memory:"), source = "01JJ0000000000000000000003";
   try {
@@ -352,7 +341,7 @@ test("a bounded oversize note is isolated while its sibling still imports", asyn
   } finally { db.close(); }
 });
 
-test("file pages stay inside the host sync batch byte bound", async () => {
+markdownTest("file pages stay inside the host sync batch byte bound", async (syntheticDir) => {
   const selected = await syntheticDir("kizuki-markdown-batch-bytes-");
   const db = openLedger(":memory:"), source = "01JJ0000000000000000000005";
   const payload = "x".repeat(850_000);
@@ -380,7 +369,7 @@ test("file pages stay inside the host sync batch byte bound", async () => {
   } finally { db.close(); }
 });
 
-test("a many-file folder keeps a resume cursor inside Core's bound", async () => {
+markdownTest("a many-file folder keeps a resume cursor inside Core's bound", async (syntheticDir) => {
   const selected = await syntheticDir("kizuki-markdown-many-");
   const db = openLedger(":memory:"), source = "01JJ0000000000000000000004";
   try {
@@ -400,7 +389,7 @@ test("a many-file folder keeps a resume cursor inside Core's bound", async () =>
   } finally { db.close(); }
 });
 
-test("a snapshot that cannot fit the resume cursor fails closed", async () => {
+markdownTest("a snapshot that cannot fit the resume cursor fails closed", async (syntheticDir) => {
   const selected = await syntheticDir("kizuki-markdown-cursor-limit-");
   await Promise.all(
     Array.from({ length: 200 }, () => {
@@ -418,7 +407,7 @@ test("a snapshot that cannot fit the resume cursor fails closed", async () => {
   expect(batch.detail).toContain("cursor_limit");
 });
 
-test("tombstones require a snapshot cursor, not a null sync", async () => {
+markdownTest("tombstones require a snapshot cursor, not a null sync", async (syntheticDir) => {
   const selected = await syntheticDir("kizuki-markdown-null-sync-");
   await writeFile(path.join(selected, "kept.md"), "SYNTHETIC_KEPT\n");
   await writeFile(path.join(selected, "removed.md"), "SYNTHETIC_REMOVED\n");
@@ -434,7 +423,7 @@ test("tombstones require a snapshot cursor, not a null sync", async () => {
   ]);
 });
 
-test("a symlink inside the folder is skipped without capturing its target", async () => {
+markdownTest("a symlink inside the folder is skipped without capturing its target", async (syntheticDir) => {
   const parent = await syntheticDir("kizuki-markdown-symlink-");
   const selected = path.join(parent, "notes");
   const outside = path.join(parent, "outside.md");
@@ -493,7 +482,7 @@ describe("1500 unique host-backed files", () => {
     grantMarkdown(db, source, "synthetic-markdown-scale-1500");
     connector = hostMarkdown(db, source, selected, 1000);
     first = await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill");
-  });
+  }, ROUND_TRIP_TIMEOUT_MS);
 
   afterAll(async () => {
     db?.close();
@@ -512,16 +501,16 @@ describe("1500 unique host-backed files", () => {
   test("repeating the capture emits no duplicates", async () => {
     expect(await runToCompletion(db, connector, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill"))
       .toMatchObject({ stored: 0, duplicates: 0, errors: [] });
-  });
+  }, ROUND_TRIP_TIMEOUT_MS);
 
   test("a fresh connector resumes without duplicates", async () => {
     const restarted = hostMarkdown(db, source, selected, 1000);
     expect(await runToCompletion(db, restarted, MARKDOWN_FOLDER_CONNECTOR_ID, source, "backfill"))
       .toMatchObject({ stored: 0, duplicates: 0, errors: [] });
-  });
+  }, ROUND_TRIP_TIMEOUT_MS);
 });
 
-test("fresh host-backed connectors drain edits and deletes from committed identities", async () => {
+markdownTest("fresh host-backed connectors drain edits and deletes from committed identities", async (syntheticDir) => {
   const selected = await syntheticDir("kizuki-markdown-restart-edit-");
   const db = openLedger(":memory:"), source = "01JJ0000000000000000000016";
   try {
@@ -547,7 +536,7 @@ test("fresh host-backed connectors drain edits and deletes from committed identi
   } finally { db.close(); }
 });
 
-test("source-scoped committed identities do not contaminate an identical relpath on another source", async () => {
+markdownTest("source-scoped committed identities do not contaminate an identical relpath on another source", async (syntheticDir) => {
   const parent = await syntheticDir("kizuki-markdown-isolation-");
   const leftDir = path.join(parent, "a");
   const rightDir = path.join(parent, "b");
@@ -591,7 +580,7 @@ test("source-scoped committed identities do not contaminate an identical relpath
   } finally { db.close(); }
 });
 
-test("a crash after the Core event transaction before checkpoint keeps events and proposals", async () => {
+markdownTest("a crash after the Core event transaction before checkpoint keeps events and proposals", async (syntheticDir) => {
   const selected = await syntheticDir("kizuki-markdown-crash-checkpoint-");
   const db = openLedger(":memory:"), source = "01JJ0000000000000000000019";
   try {
@@ -634,7 +623,7 @@ test("a crash after the Core event transaction before checkpoint keeps events an
   } finally { db.close(); }
 });
 
-test("files that appear between host-backed pages are still emitted", async () => {
+markdownTest("files that appear between host-backed pages are still emitted", async (syntheticDir) => {
   const selected = await syntheticDir("kizuki-markdown-compact-lower-keys-");
   const db = openLedger(":memory:"), source = "01JJ0000000000000000000020";
   try {
@@ -666,7 +655,7 @@ test("files that appear between host-backed pages are still emitted", async () =
   } finally { db.close(); }
 });
 
-test("a nested directory replaced with a vault auto or archive symlink stores nothing", async () => {
+markdownTest("a nested directory replaced with a vault auto or archive symlink stores nothing", async (syntheticDir) => {
   const parent = await syntheticDir("kizuki-markdown-vault-race-");
   const vault = path.join(parent, "vault");
   initVault(vault);
@@ -719,7 +708,7 @@ test("a nested directory replaced with a vault auto or archive symlink stores no
   }
 });
 
-test("a nested directory replaced at the final open stores no vault bytes and no false tombstones", async () => {
+markdownTest("a nested directory replaced at the final open stores no vault bytes and no false tombstones", async (syntheticDir) => {
   const parent = await syntheticDir("kizuki-markdown-vault-final-open-");
   const vault = path.join(parent, "vault");
   initVault(vault);
@@ -786,7 +775,7 @@ test("a nested directory replaced at the final open stores no vault bytes and no
   }
 });
 
-test("a no-proc nested directory replaced after the inode pin stores no vault bytes and no false tombstones", async () => {
+markdownTest("a no-proc nested directory replaced after the inode pin stores no vault bytes and no false tombstones", async (syntheticDir) => {
   const parent = await syntheticDir("kizuki-markdown-vault-noproc-open-");
   const vault = path.join(parent, "vault");
   initVault(vault);
