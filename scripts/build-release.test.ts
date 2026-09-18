@@ -39,9 +39,14 @@ async function compileProbe(directory: string, name: string, environment: Record
     define: { KIZUKI_COMPILED: "true", ...resolveCompiledCredentials(environment).define },
   });
   if (!built.success) throw new Error(`probe build failed: ${built.logs.join("\n")}`);
-  const run = Bun.spawnSync([binary], { env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, stdout: "pipe", stderr: "pipe" });
+  return { binary, ...runProbe(binary, {}) };
+}
+
+/** Runs a compiled probe with nothing inherited but `PATH`, so the run environment is exactly what is passed. */
+function runProbe(binary: string, environment: Record<string, string>): ProbeRun {
+  const run = Bun.spawnSync([binary], { env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...environment }, stdout: "pipe", stderr: "pipe" });
   const stdout = run.stdout.toString();
-  return { binary, exit: run.exitCode, stdout, stderr: run.stderr.toString(), report: JSON.parse(stdout) };
+  return { exit: run.exitCode, stdout, stderr: run.stderr.toString(), report: JSON.parse(stdout) };
 }
 
 /** The text files a package ships, built by the same producers the release build uses. */
@@ -95,6 +100,12 @@ test("an unset pair still builds, records no credential, and refuses sign-in wit
     for (const value of Object.values(SYNTHETIC)) expect(readFileSync(probe.binary).includes(value)).toBe(false);
 
     expect(packageTexts(directory, resolved.names)["BUILD.json"]).toContain('"compiled_credentials": []');
+
+    // The two reads fall back to the live environment, so an operator holding a
+    // registered pair can supply it to a credential-free package without rebuilding.
+    const supplied = runProbe(probe.binary, { ...SYNTHETIC });
+    expect(supplied.exit).toBe(0);
+    expect(supplied.report).toEqual({ configured: true, refusal: null });
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
