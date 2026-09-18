@@ -29,6 +29,7 @@ export interface AppSource {
     revision: number;
     required_fields: string[];
     last_run: string | null;
+    backfill_complete: boolean | null;
     stored: number;
     errors: number;
     revoke_operation: string | null;

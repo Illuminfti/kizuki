@@ -234,6 +234,19 @@ export {
   eraseOwnedFts5Generation,
   registerFts5RetrievalPort,
   retrievalDocId,
+  MAX_RERANK_CANDIDATES,
+  RETRIEVAL_SENSITIVITY_CHOICE_CRITERIA,
+  RETRIEVAL_SENSITIVITY_QUESTION_ID,
+  mapSystemOneSensitivityChoice,
+  rerankWithSystemOne,
+  validateChoiceCriteriaDict,
+} from "./retrieval";
+export type {
+  RerankWithSystemOneInput,
+  SystemOneRankedCandidate,
+  SystemOneRerankCandidate,
+  SystemOneRerankResult,
+  SystemOneRerankSensitivity,
 } from "./retrieval";
 export {
   EMBEDDING_CAPABILITIES,

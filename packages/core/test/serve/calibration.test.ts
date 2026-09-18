@@ -117,7 +117,7 @@ describe("doctor calibration", () => {
     );
     const report = inspectServeDoctor(db, path, { now: NOW });
     expect(report.calibration.write_rate).toBeCloseTo(1);
-    expect(report.calibration.confidence_spread).toBeCloseTo(0);
+    expect(report.calibration.confidence_spread).toBeNull();
     expect(report.calibration.failures).toEqual([]);
     expect(report.failures.some((item) => item.startsWith("write_rate "))).toBe(false);
     expect(report.failures).not.toContain("confidence_not_produced");
@@ -140,11 +140,32 @@ describe("doctor calibration", () => {
     );
     const report = inspectServeDoctor(db, path, { now: NOW });
     expect(report.calibration.write_rate).toBeCloseTo(0.4);
-    expect(report.calibration.confidence_spread).toBeCloseTo(0);
+    expect(report.calibration.confidence_spread).toBeNull();
     expect(report.calibration.failures).toEqual([]);
     expect(report.failures).not.toContain("confidence_not_produced");
     expect(report.ok).toBe(true);
     db.close();
+  });
+
+  test("reported confidence spread excludes policy-capped claims in a mixed corpus", async () => {
+    const { path, db } = vault();
+    try {
+      for (let index = 0; index < 8; index += 1) {
+        await storeNovel(db, index, IN_WINDOW);
+        await storeCorroborated(db, index, PRIOR, 0.9);
+      }
+      persistRunReceipt(db, path, receipt("2026-08-27", {
+        run_id: "01JBMIXEDCONF0000000000001",
+        claims_extracted: 10,
+        claims_written: 4,
+      }));
+      const report = inspectServeDoctor(db, path, { now: NOW });
+      expect(report.calibration.confidence_spread).toBeCloseTo(0);
+      expect(report.calibration.failures).toContain("confidence_not_produced");
+      expect(report.ok).toBe(false);
+    } finally {
+      db.close();
+    }
   });
 
   test("a mature vault still fails an out-of-band write rate", async () => {
