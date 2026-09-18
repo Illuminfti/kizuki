@@ -388,6 +388,19 @@ export type {
   SurfaceResponse,
 } from "./contracts/surface";
 export {
+  WORLD_VOCABULARY,
+  WORLD_VOCABULARY_PREDICATES,
+  WORLD_VOCABULARY_SCHEMA,
+  getWorldVocabularySpec,
+  isWorldVocabularyPredicate,
+} from "./contracts/world-vocabulary";
+export type {
+  WorldEndpointKind,
+  WorldObjectKind,
+  WorldVocabularyPredicate,
+  WorldVocabularySpec,
+} from "./contracts/world-vocabulary";
+export {
   RemotePortClient,
   connectRemotePort,
   createRemoteRetrievalPort,
