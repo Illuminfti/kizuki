@@ -5,7 +5,7 @@ const SESSION_KEY = 'kizuki.app.session';
 const main = document.getElementById('main');
 const dialog = document.getElementById('dialog');
 const notice = document.getElementById('notification');
-const state = { view: 'memory', status: null, service: null, model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], hits: null, query: '', degraded: [], busy: false, operation: null, setupError: null };
+const state = { view: 'memory', status: null, service: null, model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], activityStatus: 'idle', hits: null, query: '', degraded: [], busy: false, operation: null, setupError: null };
 let bearer = null;
 let noticeTimer;
 let dialogCleanup = null;
@@ -108,7 +108,7 @@ function staleResponse() { return Object.assign(new Error('Response superseded.'
 function invalidatePrivateView() {
   privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++; serviceSequence++; modelSequence++; agentsSequence++;
   privateViewValid = false;
-  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.service = null; state.model = null; state.modelError = false; state.agents = null; state.agentsError = false; state.operation = null;
+  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.activityStatus = 'idle'; state.service = null; state.model = null; state.modelError = false; state.agents = null; state.agentsError = false; state.operation = null;
   clearDialogTransient();
   if (dialog.open) closeDialog();
   dialog.replaceChildren();
@@ -334,7 +334,7 @@ function renderSources() {
       const active = source.consent === 'active';
       const removing = source.consent === 'denied';
       const status = active ? 'Permission granted' : source.consent === 'purged' ? 'Removed' : removing ? 'Removal pending' : 'Needs permission';
-      const row = el('div', { class: 'source-row' }, el('div', { class: 'source-icon' }, icon(providerIcon(source.connector_id))), el('div', { class: 'source-info' }, el('h3', {}, sourceLabel(source)), el('p', {}, el('span', { class: `badge${active ? ' badge-active' : ''}` }, status)), el('p', {}, `${safeCount(source.stored)} new in the last check · ${dateText(source.last_run)}`), source.errors > 0 && el('p', {}, 'The last capture reported a problem. Check before relying on complete coverage.')));
+      const row = el('div', { class: 'source-row' }, el('div', { class: 'source-icon' }, icon(providerIcon(source.connector_id))), el('div', { class: 'source-info' }, el('h3', {}, sourceLabel(source)), el('p', {}, el('span', { class: `badge${active ? ' badge-active' : ''}` }, status)), el('p', {}, source.last_run ? `${safeCount(source.stored)} saved in the last check · ${dateText(source.last_run)}` : 'No capture checkpoint yet.'), el('p', {}, source.backfill_complete === true ? 'History import reached the end reported by this source. This does not confirm complete date coverage.' : source.backfill_complete === false ? 'History import is incomplete. Use Import history to continue from the saved checkpoint when permitted.' : 'History import coverage has not been confirmed.'), source.errors > 0 && el('p', {}, 'The last capture reported a problem. Check before relying on complete coverage.')));
       const actions = el('div', { class: 'source-actions' });
       if (active) actions.append(button('Import history', () => capture(source)), button('Privacy', () => privacy(source)));
       else if (removing) actions.append(button('Check removal', () => resumeRemoval(source)));
@@ -455,6 +455,9 @@ function activityTitle(action) {
 }
 function renderActivity() {
   const section = el('section', {}, heading('A clear history.', 'See receipted changes to your memory. Undo restores the previous state when its receipt still applies.'));
+  if (state.activityStatus === 'loading') { section.append(el('p', { role: 'status', 'aria-busy': 'true' }, 'Loading activity…')); return section; }
+  if (state.activityStatus === 'unavailable') { section.append(empty('Activity is unavailable.', 'The latest receipt history could not be checked. Retry before relying on this view.', button('Retry activity', loadActivity, 'primary'))); return section; }
+  if (state.activityStatus === 'idle' && !state.receipts.length) { section.append(empty('Check your activity.', 'Load the latest receipt history from this device.', button('Load activity', loadActivity, 'primary'))); return section; }
   if (!state.receipts.length) { section.append(empty('No receipted changes yet.', 'Imported sources are searchable right away. Changes to your memory pages appear here when they happen.')); return section; }
   const list = el('ol', { class: 'activity-list' });
   for (const receipt of state.receipts) list.append(el('li', { class: 'activity-item' }, el('div', { class: 'activity-top' }, el('div', {}, el('h3', {}, activityTitle(receipt.action)), el('p', {}, `${dateText(receipt.at)}${receipt.reverted ? ' · Undone' : ''}`)), !receipt.reverted && button('Undo', () => undo(receipt))), el('details', { class: 'result-details' }, el('summary', {}, 'Change details'), el('p', {}, 'Page: ', el('code', {}, receipt.page)), el('p', {}, 'Receipt: ', el('code', {}, receipt.id)))));
@@ -464,12 +467,19 @@ async function loadActivity() {
   if (!bearer || !privateViewValid) return;
   const sequence = ++activitySequence, session = bearer, generation = privacyGeneration, epoch = state.status?.visibility_epoch;
   const current = () => sequence === activitySequence && session === bearer && generation === privacyGeneration && epoch === state.status?.visibility_epoch && privateViewValid;
+  state.activityStatus = 'loading'; state.receipts = [];
+  if (state.view === 'activity') render();
   try {
     const result = await api('activity', { limit: 30 });
     if (!current()) return;
-    state.receipts = result.receipts;
+    state.receipts = result.receipts; state.activityStatus = 'loaded';
     if (state.view === 'activity') render();
-  } catch (error) { if (current() && error.code !== 'stale_response') message(error.message); }
+  } catch (error) {
+    if (!current() || error.code === 'stale_response') return;
+    state.activityStatus = 'unavailable';
+    if (state.view === 'activity') render();
+    message(error.message);
+  }
 }
 function undo(receipt) {
   const content = openDialog('Undo this change?', 'Kizuki will use the saved receipt to restore the previous state. If the page or a dependent change has moved on, the undo will refuse safely.', 'activity');
@@ -773,12 +783,13 @@ function operationErrorMessage(route, operation, payload) {
   if (code) return humanError(code);
   return 'Completion is not confirmed. Check the source state before trying again.';
 }
-function showSetupFailure(text) {
-  const path = document.getElementById('setup-path')?.value || '';
-  const noService = document.getElementById('setup-no-service')?.checked === true;
+function showSetupFailure(text, payload) {
+  const path = payload.path || '';
+  const noService = payload.no_service === true;
   state.setupError = text;
   if (dialog.open) closeDialog();
-  if (state.status?.vault.ready || !bearer) return;
+  if (!bearer) return;
+  if (state.status?.vault.ready) { message(text); return; }
   render();
   const details = main.querySelector('details');
   if (details) details.open = true;
@@ -794,6 +805,12 @@ function restoreEnrollment(payload, text) {
   const pathInput = dialog.querySelector('#source-path'), calendarInput = dialog.querySelector('#calendar-id');
   if (pathInput && payload.path) pathInput.value = payload.path;
   if (calendarInput && payload.calendar_id) calendarInput.value = payload.calendar_id;
+  if (Array.isArray(payload.fields)) {
+    for (const name of provider.fields) {
+      const checkbox = dialog.querySelector(`#field-${name}`);
+      if (checkbox) checkbox.checked = payload.fields.includes(name);
+    }
+  }
   const errorLine = dialog.querySelector('.form-error');
   if (errorLine) errorLine.textContent = text;
   (pathInput || calendarInput || firstFocusable(dialog))?.focus({ preventScroll: true });
@@ -842,7 +859,7 @@ async function launchOperation(route, payload, title, done) {
     const text = error.message;
     const ownsDialog = dialog.open && dialog.contains(content);
     if (route === 'revoke') await refresh();
-    if (route === 'initialize' && ownsDialog) { showSetupFailure(text); return; }
+    if (route === 'initialize' && ownsDialog) { showSetupFailure(text, payload); return; }
     if (route === 'enroll' && ownsDialog && restoreEnrollment(payload, text)) return;
     progress.setAttribute('aria-busy', 'false'); progress.replaceChildren(el('p', { class: 'form-error', role: 'alert' }, text));
     if (route === 'capture') {
