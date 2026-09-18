@@ -863,6 +863,34 @@ describe("purgeEvents", () => {
     }
   }
 
+  test("resume still rewrites held canon on a ledger predating the proof schema", async () => {
+    const db = openLedger(":memory:");
+    try {
+      const target = storedEvent(db, event("target"));
+      const vaultPath = temporaryVault();
+      const raw = serializePage({
+        data: {
+          id: "page-legacy", title: "legacy", type: "fact", status: "active",
+          sensitivity: "personal", taint: "clean", sources: [target.event_id],
+        },
+        body: "synthetic evidence\n",
+      });
+      putCanonFile(vaultPath, "facts/legacy.md", raw);
+      const outcome = purgeEvents(db, vaultPath, { event_id: target.event_id }, "record request");
+      const receiptId = outcome.receipts[0]!.receipt_id;
+      // An unmigrated ledger carries no receipt-bound proof identity at all. That is a schema
+      // the open path migrates, not a corrupted receipt, so the hold gate must not read it as one.
+      db.exec("ALTER TABLE event_purges DROP COLUMN proof_digest");
+      const report = await resumePurge(db, vaultPath, receiptId);
+      expect(report.hold_lifted).toBe(true);
+      expect(report.pages_rewritten).toBe(1);
+      expect(isHeld(db, "facts/legacy.md")).toBe(false);
+      expect(readFileSync(join(vaultPath, "facts/legacy.md"), "utf8")).not.toContain(target.event_id);
+    } finally {
+      db.close();
+    }
+  });
+
   test("does not lift a hold on an id-less page with no sources", async () => {
     const db = openLedger(":memory:");
     const target = storedEvent(db, event("target"));
