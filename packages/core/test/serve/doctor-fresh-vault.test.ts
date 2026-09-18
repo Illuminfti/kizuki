@@ -330,16 +330,14 @@ describe("doctor on a freshly initialised single-connector vault", () => {
     const { path, db } = vault();
     try {
       for (let index = 0; index < 18; index += 1) await storeSingleSource(db, index, IN_WINDOW);
-      persistRunReceipt(
-        db,
-        path,
-        backfill({
+      persistRunReceipt(db, path, {
+        ...backfill({
           run_id: "01JBUNPARSEABLECLOCK000001",
           claims_extracted: 18,
           claims_written: 18,
-          started_at: "not-a-clock",
         }),
-      );
+        started_at: "not-a-clock",
+      });
       const report = inspectServeDoctor(db, path, { now: NOW });
       expect(report.calibration.write_rate).toBeCloseTo(1);
       expect(report.calibration.bands_enforced).toBe(false);
