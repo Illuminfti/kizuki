@@ -1030,6 +1030,7 @@ export type {
   LeaseAcquireResult,
   LeaseProcess,
   LeaseRow,
+  LeaseState,
   ModelDoctor,
   RailDoctor,
   RailHooks,
