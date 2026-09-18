@@ -65,6 +65,16 @@ test.skipIf(!OFFLINE)("a session the provider has finished answers no", async ()
 });
 
 test.skipIf(!OFFLINE)(
+  "a duplicated auth key is a finished session, not a parse error",
+  async () => {
+    pages.invoke = async () => {
+      throw new RPCError("AUTH_KEY_DUPLICATED");
+    };
+    expect(await api().isAuthorized()).toBe(false);
+  },
+);
+
+test.skipIf(!OFFLINE)(
   "a transport fault is not mistaken for a revoked session",
   async () => {
     pages.invoke = async () => {
@@ -144,6 +154,19 @@ test.skipIf(!OFFLINE)(
   async () => {
     const seen: string[] = [];
     pages.signInErrors = [new RPCError("AUTH_KEY_UNREGISTERED")];
+    const caught = await thrown(() => api().start(signInFlow(seen)));
+    pages.signInErrors = [];
+
+    expect((caught as TelegramConnectorError).code).toBe("unauthenticated");
+    expect(seen).toEqual([]);
+  },
+);
+
+test.skipIf(!OFFLINE)(
+  "a duplicated auth key during sign-in ends it without another credential prompt",
+  async () => {
+    const seen: string[] = [];
+    pages.signInErrors = [new RPCError("AUTH_KEY_DUPLICATED")];
     const caught = await thrown(() => api().start(signInFlow(seen)));
     pages.signInErrors = [];
 

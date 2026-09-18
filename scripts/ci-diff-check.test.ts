@@ -60,6 +60,14 @@ test("a newly created branch checks its whole tree and invalid or missing SHAs r
   expect(f.check("workflow_dispatch", {}).exitCode).not.toBe(0);
 });
 
+test("push refuses identical endpoints instead of certifying an empty range", () => {
+  const f = fixture(); const after = f.commit("clean\n");
+  const result = f.check("push", { before: after, after });
+  expect(result.exitCode).not.toBe(0);
+  expect(result.stderr.toString()).toContain("push requires distinct commit endpoints");
+  expect(result.stdout.toString()).not.toContain("diff integrity:");
+});
+
 test("clean push and initial clean tree pass with reported exact endpoints", () => {
   const f = fixture(); const before = f.commit("clean\n"); const after = f.commit("also clean\n");
   for (const start of [before, "0".repeat(40)]) {

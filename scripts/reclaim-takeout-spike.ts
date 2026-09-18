@@ -16,7 +16,9 @@ interface Activity {
 
 function boundedText(value: unknown, bytes: number): value is string {
   return typeof value === "string" && value.trim().length > 0 &&
-    Buffer.byteLength(value, "utf8") <= bytes;
+    Buffer.byteLength(value, "utf8") <= bytes &&
+    // JSON escapes can decode to lone surrogates despite lossless source bytes.
+    Buffer.from(value, "utf8").toString("utf8") === value;
 }
 
 /**
@@ -25,22 +27,25 @@ function boundedText(value: unknown, bytes: number): value is string {
  * positions are not vendor IDs and the receipt is not a ledger admission proof.
  * Unknown fields are intentionally omitted, not interpreted as facts.
  */
-export function distillTakeoutActivity(source: string): {
+export function distillTakeoutActivity(source: string | Uint8Array): {
   activities: Activity[];
   receipt: { input_sha256: string; input_bytes: number; records: number };
 } {
-  if (source.length > MAX_BYTES || Buffer.byteLength(source, "utf8") > MAX_BYTES) {
+  if (source.length > MAX_BYTES ||
+    (typeof source === "string" && Buffer.byteLength(source, "utf8") > MAX_BYTES)) {
     throw new Error("Takeout activity exceeds byte limit");
   }
-  // UTF-8 encoding replaces lone surrogates, which would let distinct source
-  // strings share a receipt while projecting different titles. Refuse that loss.
-  const input = Buffer.from(source, "utf8");
-  if (input.toString("utf8") !== source) {
+  // Copy only the selected byte view; the receipt binds the original encoding,
+  // not replacement characters introduced by a caller's permissive decoder.
+  const input = typeof source === "string" ? Buffer.from(source, "utf8") : Buffer.from(source);
+  const text = input.toString("utf8");
+  if ((typeof source === "string" && text !== source) ||
+    !Buffer.from(text, "utf8").equals(input)) {
     throw new Error("Takeout activity must be lossless UTF-8");
   }
   let rows: unknown;
   try {
-    rows = JSON.parse(source) as unknown;
+    rows = JSON.parse(text) as unknown;
   } catch {
     // JSON parser diagnostics can repeat private source text.
     throw new Error("Takeout activity must be valid JSON");
