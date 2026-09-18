@@ -89,7 +89,8 @@ const SHA256 = /^[0-9a-f]{64}$/;
 const MODES = new Set<ClaimV2Perspective["mode"]>([
   "asserted", "quoted", "reported", "hypothetical", "suggested", "questioned", "uncertain"
 ]);
-const SNAPSHOT_LIMITS: ExactJsonLimits = {
+/** Untrusted-JSON snapshot bound shared by the v2 payload and its admission record. */
+export const CLAIM_V2_SNAPSHOT_LIMITS: ExactJsonLimits = {
   maxDepth: 8, maxKeysPerObject: 16, maxArrayLength: 256, maxStringBytes: 1200, maxKeyBytes: 64, maxTotalBytes: 512 * 1024
 };
 const INVALID: ClaimV2ValidationResult = Object.freeze({ ok: false, errors: Object.freeze(["invalid claim/v2 payload"] as const) });
@@ -144,7 +145,7 @@ function sorted(refs: readonly RawSubjectRef[]): boolean {
 export function validateClaimV2Semantic(input: unknown): ClaimV2ValidationResult {
   try {
     const errors: string[] = [];
-    const snapshot = cloneExactJson(input, "claim_v2", SNAPSHOT_LIMITS, errors);
+    const snapshot = cloneExactJson(input, "claim_v2", CLAIM_V2_SNAPSHOT_LIMITS, errors);
     if (snapshot === undefined || !isPlainObject(snapshot) || snapshot.schema !== CLAIM_V2_SCHEMA) {
       return INVALID;
     }

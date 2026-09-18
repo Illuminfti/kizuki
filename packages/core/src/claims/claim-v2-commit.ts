@@ -1,9 +1,22 @@
 import type { Database } from "bun:sqlite";
-import { CLAIM_V2_SCHEMA, type ClaimV2Semantic } from "../contracts/claim-v2";
+import type { Sensitivity } from "../agents/types";
+import {
+  CLAIM_V2_SCHEMA,
+  CLAIM_V2_SNAPSHOT_LIMITS,
+  type ClaimV2Semantic,
+} from "../contracts/claim-v2";
 import type { TextAnchor } from "../contracts/producer-v2";
 import { CLAIM_SCHEMA, type Claim } from "../contracts/proposal";
+import {
+  inspectSourceGrant,
+  requireSourceEvents,
+  sourceSensitivity,
+  type SourceReadScope,
+} from "../ledger/source-grants";
+import { stricter } from "../sensitivity/resolve";
 import { canonicalJson } from "../util/hash";
 import { isRfc3339 } from "../util/time";
+import { cloneExactJson, isPlainObject, type ExactJson } from "../util/validate";
 import { supportKey, type ClaimV2SupportEventRef } from "./claim-v2-keys";
 import {
   fromClaimV2SemanticRow,
@@ -32,6 +45,8 @@ export interface ClaimV2SupportAdmission {
 export interface ClaimV2CommitInput {
   readonly semantic: unknown;
   readonly support: ClaimV2SupportAdmission;
+  /** The reading scope the caller is authorized for, as `prepareClaimInsert` derives it. */
+  readonly scope: SourceReadScope;
 }
 
 export interface ClaimV2CommitResult {
@@ -63,7 +78,14 @@ function eventHash(db: Database, eventId: string): string {
   return row.content_hash;
 }
 
-function requireSupport(input: ClaimV2SupportAdmission): void {
+/**
+ * The admission record is caller-supplied JSON headed for a durable column, so
+ * it is snapshotted under the same bound as the v2 payload before it is bound
+ * as a parameter. An unbounded blob is ledger bloat and an unreviewed sink for
+ * personal data no erasure path knows how to scrub; an `undefined` one would
+ * serialize to SQL NULL against a NOT NULL column.
+ */
+function requireSupport(input: ClaimV2SupportAdmission): ExactJson {
   if (input.source_key.length === 0) {
     throw new ClaimError("schema_invalid", "claim/v2 support needs a source key");
   }
@@ -85,6 +107,86 @@ function requireSupport(input: ClaimV2SupportAdmission): void {
       "claim/v2 support needs an RFC 3339 admitted_at",
     );
   }
+  const errors: string[] = [];
+  const admission = cloneExactJson(
+    input.admission,
+    "claim_v2_admission",
+    CLAIM_V2_SNAPSHOT_LIMITS,
+    errors,
+  );
+  if (admission === undefined || errors.length > 0 || !isPlainObject(admission)) {
+    throw new ClaimError(
+      "schema_invalid",
+      "claim/v2 support needs a valid admission",
+    );
+  }
+  return admission;
+}
+
+/**
+ * `source_key` and `grant_revision` snapshot the *verified* source identity at
+ * admission, so they are checked here rather than trusted: every cited event
+ * must actually be bound to that source, the caller must be allowed to read
+ * those events under its own scope, and the snapshot must name the grant
+ * revision that is live now. Without this, evidence supplied by one source
+ * could be recorded as admitted under another source's consent, and the first
+ * source's revocation sweep - which is keyed on `source_key` - would miss it.
+ */
+function requireAdmittedSource(
+  db: Database,
+  support: ClaimV2SupportAdmission,
+  scope: SourceReadScope,
+): void {
+  for (const event of support.events) {
+    const binding = db
+      .query<{ source_key: string }, [string]>(
+        "SELECT source_key FROM source_event_bindings WHERE event_id = ?",
+      )
+      .get(event.event_id);
+    if (binding === null || binding.source_key !== support.source_key) {
+      throw new ClaimError(
+        "provenance_unresolved",
+        "claim/v2 support cites an event its named source did not supply",
+      );
+    }
+  }
+  requireSourceEvents(
+    db,
+    support.events.map((event) => event.event_id),
+    scope,
+  );
+  const grant = inspectSourceGrant(db, support.source_key);
+  if (
+    grant === null ||
+    grant.status !== "active" ||
+    grant.revision !== support.grant_revision
+  ) {
+    throw new ClaimError(
+      "provenance_unresolved",
+      "claim/v2 support needs the live grant revision of its source",
+    );
+  }
+}
+
+/**
+ * Support binds events that the v1 provenance may not carry, and a by-event
+ * index makes them reachable from the claim. The claim's label therefore has
+ * to absorb their source floors too, or a reader filtering on
+ * `claims.sensitivity` would expand support it is not cleared for. Mirrors the
+ * raise `applyClaimInsert` performs over the v1 provenance.
+ */
+function raiseClaimSensitivity(
+  db: Database,
+  claimId: string,
+  current: Sensitivity,
+  eventIds: readonly string[],
+): void {
+  const raised = stricter(current, sourceSensitivity(db, eventIds, current));
+  if (raised === current) return;
+  db.query("UPDATE claims SET sensitivity = ? WHERE claim_id = ?").run(
+    raised,
+    claimId,
+  );
 }
 
 export function commitClaimV2(
@@ -96,8 +198,8 @@ export function commitClaimV2(
     throw new Error("prepared claim requires a transaction");
   }
   const parent = db
-    .query<{ claim_id: string }, [string]>(
-      "SELECT claim_id FROM claims WHERE claim_id = ?",
+    .query<{ claim_id: string; sensitivity: Sensitivity }, [string]>(
+      "SELECT claim_id, sensitivity FROM claims WHERE claim_id = ?",
     )
     .get(claimId);
   if (parent === null) {
@@ -107,7 +209,7 @@ export function commitClaimV2(
     );
   }
 
-  requireSupport(input.support);
+  const admission = requireSupport(input.support);
   const mapped = toClaimV2SemanticRow(claimId, input.semantic);
   if (!mapped.ok) {
     throw new ClaimError("schema_invalid", "invalid claim/v2 payload");
@@ -123,6 +225,7 @@ export function commitClaimV2(
       );
     }
   }
+  requireAdmittedSource(db, input.support, input.scope);
 
   const existing = db
     .query<{ semantic_key: string }, [string]>(
@@ -164,21 +267,36 @@ export function commitClaimV2(
     events: input.support.events,
     anchors: input.support.anchors,
   });
-  const written = db.query(
-    `INSERT OR IGNORE INTO claim_v2_support
-       (support_key, claim_id, anchors, source_key, grant_revision, admission, admitted_at)
-     VALUES (?,?,?,?,?,?,?)`,
-  ).run(
-    supportKeyValue,
-    claimId,
-    canonicalJson(input.support.anchors),
-    input.support.source_key,
-    input.support.grant_revision,
-    canonicalJson(input.support.admission),
-    input.support.admitted_at,
-  );
-  const duplicateSupport = written.changes === 0;
+  // Duplicate support is a primary-key collision on a key we can look up, so it
+  // is read rather than inferred from a swallowed write: `OR IGNORE` would
+  // report any other constraint failure as an already-recorded sighting and
+  // leave a durable claim behind with no evidence chain at all.
+  const duplicateSupport =
+    db
+      .query<{ support_key: string }, [string]>(
+        "SELECT support_key FROM claim_v2_support WHERE support_key = ?",
+      )
+      .get(supportKeyValue) !== null;
   if (!duplicateSupport) {
+    const written = db.query(
+      `INSERT INTO claim_v2_support
+         (support_key, claim_id, anchors, source_key, grant_revision, admission, admitted_at)
+       VALUES (?,?,?,?,?,?,?)`,
+    ).run(
+      supportKeyValue,
+      claimId,
+      canonicalJson(input.support.anchors),
+      input.support.source_key,
+      input.support.grant_revision,
+      canonicalJson(admission),
+      input.support.admitted_at,
+    );
+    if (written.changes !== 1) {
+      throw new ClaimError(
+        "schema_invalid",
+        "claim/v2 support row was refused by the ledger",
+      );
+    }
     const insertEvent = db.query(
       "INSERT INTO claim_v2_support_events (support_key, event_id, event_content_hash) VALUES (?,?,?)",
     );
@@ -190,6 +308,12 @@ export function commitClaimV2(
       );
     }
   }
+  raiseClaimSensitivity(
+    db,
+    claimId,
+    parent.sensitivity,
+    input.support.events.map((event) => event.event_id),
+  );
 
   return {
     semantic_key: row.semantic_key,
