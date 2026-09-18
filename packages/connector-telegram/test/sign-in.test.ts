@@ -8,6 +8,8 @@ import {
   fixtureAccount,
 } from "../src/fixture";
 import { parseState } from "../src/state";
+import { TelegramConnectorError } from "../src/api";
+import { runSignIn, waitSeconds } from "../src/sign-in";
 import {
   CapturingWriter,
   ScriptedIo,
@@ -52,7 +54,7 @@ test("the two-step password is prompted only when the account has one", async ()
   await guarded.connector.signIn(io, new CapturingWriter());
 
   expect(io.prompts.map((prompt) => prompt.secret)).toEqual([
-    false,
+    true,
     false,
     true,
   ]);
@@ -69,6 +71,7 @@ test("a malformed phone number is refused before anything is dialled", async () 
   const error = await rejection(() => connector.signIn(io, writer));
   expect(error.code).toBe("invalid_phone");
   expect(error.message).not.toContain("5551234");
+  expect(io.prompts.map((prompt) => prompt.secret)).toEqual([true]);
   expect(api.calls).toEqual([]);
   expect(writer.writes).toEqual([]);
 });
@@ -89,6 +92,49 @@ test("a third rejected code abandons sign-in without writing state", async () =>
   expect(api.calls.map((call) => call.method)).toContain("disconnect");
 });
 
+test("an adapter returning after abort cannot complete enrollment", async () => {
+  const { connector, api } = harness({ config: {} });
+  api.start = async (flow) => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (await flow.onError("PHONE_CODE_INVALID")) return;
+    }
+  };
+  const writer = new CapturingWriter();
+  const error = await rejection(() =>
+    connector.signIn(new ScriptedIo([PHONE]), writer),
+  );
+
+  expect(error.code).toBe("sign_in_aborted");
+  expect(writer.writes).toEqual([]);
+  expect(api.calls.map((call) => call.method)).toEqual([
+    "connect",
+    "disconnect",
+  ]);
+});
+
+test("an adapter swallowing blank-answer abandonment cannot complete enrollment", async () => {
+  const { connector, api } = harness({ config: {} });
+  api.start = async (flow) => {
+    try {
+      await flow.code();
+    } catch {
+      return;
+    }
+  };
+  const writer = new CapturingWriter();
+  const error = await rejection(() =>
+    connector.signIn(new ScriptedIo([PHONE, "", " ", "\t"]), writer),
+  );
+
+  expect(error.code).toBe("sign_in_aborted");
+  expect(error.message).toContain("nothing was entered");
+  expect(writer.writes).toEqual([]);
+  expect(api.calls.map((call) => call.method)).toEqual([
+    "connect",
+    "disconnect",
+  ]);
+});
+
 test("a short wait is honoured once and then sign-in continues", async () => {
   const account = fixtureAccount();
   account.sign_in = { code: "22222", flood: { seconds: 30, times: 1 } };
@@ -99,6 +145,26 @@ test("a short wait is honoured once and then sign-in continues", async () => {
   expect(await connector.signIn(io, writer)).toEqual({ display: "@ada" });
   expect(sleeps).toEqual([30_000]);
   expect(io.notices).toEqual(["Telegram asked us to wait 30s"]);
+});
+
+test("invalid cooldowns propagate without sleeping or retrying sign-in", async () => {
+  for (const seconds of [0, -1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    const { api, sleeps } = harness({ config: {} });
+    const io = new ScriptedIo([]);
+    const error = new TelegramConnectorError("flood_wait", "invalid cooldown", {
+      retry_after: seconds,
+    });
+    let starts = 0;
+    api.start = async () => { starts += 1; throw error; };
+
+    expect(waitSeconds(error)).toBeNull();
+    expect(await rejection(() => runSignIn(api, io, PHONE, async ms => {
+      sleeps.push(ms);
+    }))).toBe(error);
+    expect(starts).toBe(1);
+    expect(sleeps).toEqual([]);
+    expect(io.notices).toEqual([]);
+  }
 });
 
 test("a long wait is reported to the owner rather than slept through", async () => {
