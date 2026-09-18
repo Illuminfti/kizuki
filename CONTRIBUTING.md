@@ -96,9 +96,14 @@ a test to hide a defect.
 ## Documentation
 
 Every command, path, and capability claim must match the live tree. Separate
-implemented behavior from accepted design. 1.0 is stranger proof plus estate
-cutover; neither is done. Do not invent an installer, a docs site, or a
-packaged binary.
+implemented behavior from accepted design. 1.0 is the world model, and
+readiness is proved the D19 way: a stranger installs and uses Kizuki, an
+executable stranger proof runs, zero live P0s stand on the exact candidate,
+and the install path is honest. Estate cutover and the seven-/fourteen-day
+elapsed gates are superseded and are not 1.0 prerequisites
+([D19](docs/decision-log.md#owner-amendment-to-readiness-2026-09-05),
+[D21](docs/decision-log.md)). 1.0 is not tagged. Do not invent an installer, a
+docs site, or a packaged binary.
 
 Agent playbooks live under `.agents/skills/`. [AGENTS.md](AGENTS.md) is
 repository policy.
