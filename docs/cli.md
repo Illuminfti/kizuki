@@ -403,7 +403,11 @@ affected pages cannot be enumerated, so preview and deletion both refuse with
 deletion and a completed `--verify` both refresh the derived index cursor so
 `doctor` and `query` keep reading the shrunk ledger as fresh; any refresh
 warning is printed as `degraded:` and carried in the JSON envelope's
-`degraded` list.
+`degraded` list. When every store proof is complete and a hold still remains,
+the canon rewrite itself failed: `--verify` then names the held page paths and
+points at `kizuki doctor` and page ownership and permissions, instead of
+offering a bare retry that replays the same failure. `--json` reports the same
+paths as `data.held_pages`, which is empty once the hold is lifted.
 
 Subject purges use an exact raw `subject_id` in its emitting connector's
 namespace: `--subject ID --connector ID`. Bare subject IDs are refused,
