@@ -23,6 +23,7 @@ import {
   requireActiveConnection,
   type ConnectionRunStatus,
 } from "../ledger/connections";
+import { isLedgerBusy, runImmediate } from "../ledger/busy";
 import { LedgerStoreError } from "../ledger/errors";
 import { accept } from "../ledger/ledger";
 import { resolveSensitivity } from "../sensitivity/resolve";
@@ -79,64 +80,62 @@ function processEvent(
   source?: SourceAdmission,
   context?: SourceTombstoneContext,
 ): EventResult {
-  return db
-    .transaction((): EventResult => {
-      const result: EventResult = {
-        stored: 0,
-        duplicates: 0,
-        errors: [],
-        proposals_created: 0,
-        withdrawn: 0,
-        retractions_filed: 0,
-      };
-      const accepted = accept(db, input, source === undefined ? {} : { source });
-      if (accepted.status === "error") {
-        switch (accepted.kind) {
-          case "infrastructure":
-            throw new LedgerStoreError("infrastructure", accepted.error);
-          case "validation":
-            result.errors.push(accepted.error);
-            return result;
-          default: {
-            const _exhaustive: never = accepted.kind;
-            throw new LedgerStoreError("infrastructure", String(_exhaustive));
-          }
+  return runImmediate(db, (): EventResult => {
+    const result: EventResult = {
+      stored: 0,
+      duplicates: 0,
+      errors: [],
+      proposals_created: 0,
+      withdrawn: 0,
+      retractions_filed: 0,
+    };
+    const accepted = accept(db, input, source === undefined ? {} : { source });
+    if (accepted.status === "error") {
+      switch (accepted.kind) {
+        case "infrastructure":
+          throw new LedgerStoreError("infrastructure", accepted.error);
+        case "validation":
+          result.errors.push(accepted.error);
+          return result;
+        default: {
+          const _exhaustive: never = accepted.kind;
+          throw new LedgerStoreError("infrastructure", String(_exhaustive));
         }
       }
-      if (accepted.status === "duplicate") {
-        result.duplicates = 1;
-        return result;
-      }
-
-      result.stored = 1;
-      if (accepted.event.deleted) {
-        const cascade = cascadeTombstone(db, accepted.event, context);
-        result.withdrawn = cascade.withdrawn.length;
-        result.retractions_filed = cascade.retractions_filed.length;
-        return result;
-      }
-      const produced = produceForEvent(accepted.event, grants);
-      if (produced.status !== "ok") return result;
-      for (const proposal of produced.proposals) {
-        // Acceptance and extraction are separate steps. A proposal the
-        // staging contract refuses, such as an estate page longer than the
-        // body bound, is this event's error and not grounds to unwrite the raw
-        // row the ledger already accepted: rolling that back would drop the
-        // text from the estate outright rather than leave it unextracted.
-        // fileProposal validates before it writes and files under its own
-        // savepoint, so nothing half staged survives the refusal.
-        try {
-          if (fileProposal(db, proposal).outcome === "stored") {
-            result.proposals_created += 1;
-          }
-        } catch (error) {
-          if (!(error instanceof StagingError)) throw error;
-          result.errors.push(error.message);
-        }
-      }
+    }
+    if (accepted.status === "duplicate") {
+      result.duplicates = 1;
       return result;
-    })
-    .immediate();
+    }
+
+    result.stored = 1;
+    if (accepted.event.deleted) {
+      const cascade = cascadeTombstone(db, accepted.event, context);
+      result.withdrawn = cascade.withdrawn.length;
+      result.retractions_filed = cascade.retractions_filed.length;
+      return result;
+    }
+    const produced = produceForEvent(accepted.event, grants);
+    if (produced.status !== "ok") return result;
+    for (const proposal of produced.proposals) {
+      // Acceptance and extraction are separate steps. A proposal the
+      // staging contract refuses, such as an estate page longer than the
+      // body bound, is this event's error and not grounds to unwrite the raw
+      // row the ledger already accepted: rolling that back would drop the
+      // text from the estate outright rather than leave it unextracted.
+      // fileProposal validates before it writes and files under its own
+      // savepoint, so nothing half staged survives the refusal.
+      try {
+        if (fileProposal(db, proposal).outcome === "stored") {
+          result.proposals_created += 1;
+        }
+      } catch (error) {
+        if (!(error instanceof StagingError)) throw error;
+        result.errors.push(error.message);
+      }
+    }
+    return result;
+  });
 }
 
 const HAS_MORE_ERROR = "sync batch has_more must be an own boolean data property";
@@ -282,6 +281,11 @@ export function runBatch(
       result.withdrawn += event.withdrawn;
       result.retractions_filed += event.retractions_filed;
     } catch (error) {
+      // Contention is not a bad record, and it is not this source failing.
+      // Each write above already retried within its bound; past that the
+      // checkpoint stays where it was, so the caller replays this batch from
+      // the same cursor and the events already committed deduplicate.
+      if (isLedgerBusy(error)) throw error;
       result.errors.push(errorText(error));
       if (error instanceof LedgerStoreError) {
         return result;
@@ -487,62 +491,60 @@ function persistRun(
     cursor: committed_cursor,
   };
   const started = new Date().toISOString();
-  return db
-    .transaction((): RunResult => {
-      requireActiveConnection(db, connector_id, source_key);
-      const checkpoint = persistCheckpointRow(
-        db,
-        connector_id,
-        source_key,
-        committed_cursor,
-        mode,
-        storedResult,
-        backfillComplete,
-      );
-      const run: ConnectionRun = {
-        run_id: ulid(),
-        connector_id,
-        source_key,
-        mode,
-        started_at: started,
-        finished_at: checkpoint.last_run_at,
-        previous_cursor,
-        attempted_cursor:
-          attempted_cursor === null
-            ? null
-            : attempted_cursor === committed_cursor
-              ? committed_cursor
-              : decodeAttemptedCursor(attempted_cursor),
-        committed_cursor,
-        stored: storedResult.stored,
-        duplicates: storedResult.duplicates,
-        errors: storedResult.errors,
-        status,
-      };
-      db.query(
-        `INSERT INTO connection_runs
-           (run_id, connector_id, source_key, mode, started_at, finished_at,
-            previous_cursor, attempted_cursor, committed_cursor,
-            stored, duplicates, errors, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        run.run_id,
-        run.connector_id,
-        run.source_key,
-        run.mode,
-        run.started_at,
-        run.finished_at,
-        run.previous_cursor,
-        run.attempted_cursor,
-        run.committed_cursor,
-        run.stored,
-        run.duplicates,
-        JSON.stringify(run.errors),
-        run.status,
-      );
-      return checkpoint.last_result;
-    })
-    .immediate();
+  return runImmediate(db, (): RunResult => {
+    requireActiveConnection(db, connector_id, source_key);
+    const checkpoint = persistCheckpointRow(
+      db,
+      connector_id,
+      source_key,
+      committed_cursor,
+      mode,
+      storedResult,
+      backfillComplete,
+    );
+    const run: ConnectionRun = {
+      run_id: ulid(),
+      connector_id,
+      source_key,
+      mode,
+      started_at: started,
+      finished_at: checkpoint.last_run_at,
+      previous_cursor,
+      attempted_cursor:
+        attempted_cursor === null
+          ? null
+          : attempted_cursor === committed_cursor
+            ? committed_cursor
+            : decodeAttemptedCursor(attempted_cursor),
+      committed_cursor,
+      stored: storedResult.stored,
+      duplicates: storedResult.duplicates,
+      errors: storedResult.errors,
+      status,
+    };
+    db.query(
+      `INSERT INTO connection_runs
+         (run_id, connector_id, source_key, mode, started_at, finished_at,
+          previous_cursor, attempted_cursor, committed_cursor,
+          stored, duplicates, errors, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      run.run_id,
+      run.connector_id,
+      run.source_key,
+      run.mode,
+      run.started_at,
+      run.finished_at,
+      run.previous_cursor,
+      run.attempted_cursor,
+      run.committed_cursor,
+      run.stored,
+      run.duplicates,
+      JSON.stringify(run.errors),
+      run.status,
+    );
+    return checkpoint.last_result;
+  });
 }
 
 interface ConnectorStep { result: RunResult; terminal: boolean; continue_empty?: boolean; }

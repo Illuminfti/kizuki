@@ -1,6 +1,6 @@
 # Public authoritative retrieval rebuild
 
-`kizuki rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm] [--json]` reconstructs derived retrieval
+`kizuki rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm] [--max-records N] [--max-entries N] [--max-source-bytes N] [--json]` reconstructs derived retrieval
 from the named vault. `--layer all` rebuilds the configured retrieval store and
 the SQLite lexical/search/graph floor. With the default FTS selection, only the
 existing lexical floor is rebuilt; no second FTS store is opened. `--layer search`
@@ -32,7 +32,8 @@ the configured embedding port and rebuilds vectors in that space. RFC 0002 secti
 implementation provides full reconstruction, search-only and graph-only SQLite floor rebuild
 without opening a configured engine, port selection that persists the default on a successful full rebuild, confirmed embedding-space re-embed, and prune-old.
 
-`readRetrievalDocuments(db, vaultPath)` is the shared projection boundary. It
+`readRetrievalDocuments(db, vaultPath, budget?)` is the shared projection
+boundary, and `countRetrievalDocuments` sizes it without retaining it. It
 reads current canon bytes and their hash-bound receipt authority, live events
 through the serving source resolver, and readable live claims through the same
 claim policy used by serving. Held, unlabelled, retracted and unsupported
@@ -47,11 +48,19 @@ migration 2 makes `updated_at` nullable and places unknown dates last in the
 embedding queue. FTS uses its existing empty-string storage convention for
 unknown dates; the public document contract uses null.
 
-The preflight refuses more than 10,000 combined ledger events, live claims and
-canon pages, more than 20,000 filesystem entries, more than 64 MiB of canon
-files, or more than 64 MiB of event/claim text. It inspects only the requested
-vault, skips `.kizuki` and `archive`, and refuses symbolic links. These bounded
-limits are explicit, not silent truncation.
+Rebuild runs under an explicit resource budget rather than a fixed corpus
+ceiling. `max_records` (default 1,000,000, `--max-records`) bounds the
+in-memory projection a configured retrieval port is handed at once;
+`max_filesystem_entries` (default 200,000, `--max-entries`) bounds the vault
+directory entries the preflight inspects; `max_source_bytes` (default 64 MiB,
+`--max-source-bytes`) bounds canon file bytes and event plus claim text bytes.
+The SQLite lexical floor streams the ledger and canon through `rebuildDerived`
+and never projects the corpus first, so a floor rebuild pays only the entry and
+byte budgets. The preflight inspects only the requested vault, skips `.kizuki`
+and `archive`, and refuses symbolic links. Exceeding a budget refuses before any
+store changes, and the refusal names the actual count, the budget it passed, and
+the flag that raises it. These bounded limits are explicit, not silent
+truncation.
 
 PostgreSQL stages documents and embeddings before one transactional replacement;
 source or embedding failure retains the old active index. FTS stages validated
