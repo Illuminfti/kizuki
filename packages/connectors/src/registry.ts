@@ -433,7 +433,7 @@ enroll(
 );
 // OAuth state, persistence and interactive sign-in require trusted host
 // composition through createXApiConnector(config, deps). An unbound registry
-// instance fails closed, and the CLI does not enroll this connector yet.
+// instance fails closed.
 enroll(
   X_API_CONNECTOR_ID,
   ["backfill", "sync", "fixture", "sign_in"],
