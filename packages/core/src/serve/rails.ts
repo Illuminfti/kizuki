@@ -241,9 +241,10 @@ function renderBrief(now: string, extra: string[]): string {
       id: `rollup:brief-${day}`,
       title: `Daily brief ${day}`,
       type: "rollup",
-      status: "active",
+      status: "archived",
       sensitivity: "personal",
       taint: "clean",
+      sources: [],
       "x-brief-producer": "deterministic",
     },
     body: [
