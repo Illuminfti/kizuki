@@ -26,6 +26,7 @@ import { applySourceSurvivorLineageV20 } from "./canon-source-survivor-lineage";
 import { applyCanonRecoveryV21 } from "./canon-recovery-schema";
 import { oneShotAll, oneShotRun, tableColumns, tableExists } from "./schema";
 import { applyLedgerV16 } from "./schema-v16";
+import { applyClaimV2TablesV31 } from "./migrations/claim-v2-v31";
 
 interface Migration {
   version: number;
@@ -217,6 +218,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 28, apply: applyEventPurgeSelectorKindV28 },
   { version: 29, apply: applyEventPurgeSelectorKindV29 },
   { version: 30, apply: applyEventPurgeSelectorKindV30 },
+  { version: 31, apply: applyClaimV2TablesV31 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
