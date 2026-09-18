@@ -26,10 +26,10 @@ Before proposing work, read:
 
 For active campaign context, inspect the live issue and pull-request state.
 Issue #4 (the 120-hour RC control plane) is closed. `docs/decision-log.md` D21
-names the #497 epic as the execution map for 1.0, and README.md and
-`docs/CURRENT.md` treat #497 as the single authority for live packet
-dependencies, ownership and progress. Read the live state of #497 and the
-open pull requests, not a closed packet. Do not copy an old issue body,
+names the #497 epic as the execution map for 1.0, README.md names #497 the
+single authority for live packet dependencies, ownership and progress, and
+`docs/CURRENT.md` makes that map the readiness bar. Read the live state of
+#497 and the open pull requests, not a closed packet. Do not copy an old issue body,
 branch head, or test count into a new claim without checking it again.
 
 ## What Kizuki is
