@@ -36,6 +36,7 @@ export function prepareSession(directory: string) {
     target: build.target,
     bun_version: build.bun_version,
     package_sha256,
+    worksheet_generator_sha256: hash(readFileSync(import.meta.path)),
     protocol_sha256: hash(protocol),
     acceptance_checker_sha256: hash(policy),
     participant_instructions_sha256: hash(JSON.stringify(TASKS)),
@@ -50,6 +51,7 @@ export function prepareSession(directory: string) {
     source_and_model_authorization_reference: null,
     started_at: null,
     monotonic_start_ms: null,
+    timer_interruptions: [],
     first_useful_result_ms: null,
     canon_agent_milestone_ms: null,
     usefulness: null,
@@ -63,6 +65,7 @@ export function prepareSession(directory: string) {
     tasks: TASKS.map(([id, instruction, required_outcome]) => ({
       id, instruction, required_outcome, outcome: "UNRECORDED", elapsed_ms: null,
       interventions: null, confusion: null, inaccessible_steps: null, error_recovery: null,
+      interruption_notes: null,
     })),
   };
 }
