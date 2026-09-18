@@ -10,6 +10,20 @@ export interface FileCase {
   valid: Record<string, string | Uint8Array>; invalid: Record<string, string | Uint8Array>;
   invalid_mode: "blocked" | "failed_run" | "partial"; invalid_events: number; invalid_error: string;
 }
+/** Every file importer reads an export the owner already holds. None of them
+ * polls a provider, so none of them sees anything the export left out. */
+export const FILE_IMPORT_SHARED_LIMIT =
+  "export import, not live sync: only the records present in the owner's exported files are visible";
+/** What the harness actually observed a malformed source do, per failure mode. */
+export const FILE_IMPORT_MODE_LIMITS = {
+  blocked: "a malformed export is refused before enrollment; no connection and no evidence are created",
+  failed_run: "a malformed source fails the run with zero stored events and retains a public failed-run summary",
+  partial: "unparseable records are reported as errors while valid records in the same export stay queryable",
+} as const;
+/** The honest limits this proof witnessed for one format, in receipt order. */
+export function fileImportLimits(fixture: Pick<FileCase, "invalid_mode" | "invalid_error">): string[] {
+  return [FILE_IMPORT_SHARED_LIMIT, `${FILE_IMPORT_MODE_LIMITS[fixture.invalid_mode]} (${fixture.invalid_error})`];
+}
 export function fileImportFixtures(referenceDay: string): FileCase[] {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(referenceDay) || !Number.isFinite(Date.parse(referenceDay))) throw new Error("invalid fixture reference day");
   const tomorrow = new Date(Date.parse(referenceDay) + 86_400_000).toISOString().slice(0, 10).replaceAll("-", "");

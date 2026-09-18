@@ -907,12 +907,13 @@ test("a self-attested x-archive file-import receipt cannot pass connector qualif
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
-  // The body above is malformed and dies at schema validation. A well-formed
-  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  // The body above is malformed and dies at schema validation. A receipt bound to
+  // the landed file-import producer's exact revision reaches the evaluator and is
+  // credited; local-operator custody, not independent execution, is the trust scope.
   const authored = retain(f.root, "connector-x-archive-authored.json", connectorReceipt("x-archive", "file-import", "file-import-operator"));
   asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.x-archive", null, authored.path, authored.sha256)]);
   const reached = evaluateRelease("1.0", f.indexPath);
-  expect(gate(reached, "connector.x-archive")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(gate(reached, "connector.x-archive")).toMatchObject({ status: "PASS", reason: "connector-steps-passed", evidence_sha256: authored.sha256 });
   expect(reached.decision).toBe("NO-GO");
 });
 
@@ -956,12 +957,13 @@ test("a self-attested markdown-folder file-import receipt cannot pass connector 
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
-  // The body above is malformed and dies at schema validation. A well-formed
-  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  // The body above is malformed and dies at schema validation. A receipt bound to
+  // the landed file-import producer's exact revision reaches the evaluator and is
+  // credited; local-operator custody, not independent execution, is the trust scope.
   const authored = retain(f.root, "connector-markdown-folder-authored.json", connectorReceipt("markdown-folder", "file-import", "file-import-operator"));
   asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.markdown-folder", null, authored.path, authored.sha256)]);
   const reached = evaluateRelease("1.0", f.indexPath);
-  expect(gate(reached, "connector.markdown-folder")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(gate(reached, "connector.markdown-folder")).toMatchObject({ status: "PASS", reason: "connector-steps-passed", evidence_sha256: authored.sha256 });
   expect(reached.decision).toBe("NO-GO");
 });
 
@@ -987,12 +989,13 @@ test("a self-attested chatgpt-export file-import receipt cannot pass connector q
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
-  // The body above is malformed and dies at schema validation. A well-formed
-  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  // The body above is malformed and dies at schema validation. A receipt bound to
+  // the landed file-import producer's exact revision reaches the evaluator and is
+  // credited; local-operator custody, not independent execution, is the trust scope.
   const authored = retain(f.root, "connector-chatgpt-export-authored.json", connectorReceipt("chatgpt-export", "file-import", "file-import-operator"));
   asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.chatgpt-export", null, authored.path, authored.sha256)]);
   const reached = evaluateRelease("1.0", f.indexPath);
-  expect(gate(reached, "connector.chatgpt-export")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(gate(reached, "connector.chatgpt-export")).toMatchObject({ status: "PASS", reason: "connector-steps-passed", evidence_sha256: authored.sha256 });
   expect(reached.decision).toBe("NO-GO");
 });
 
