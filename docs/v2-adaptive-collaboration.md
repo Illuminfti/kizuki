@@ -8,7 +8,7 @@ The source of this checklist is the owner intent and numbered scope recorded in 
 
 Receipt keys below refer to the issue's sections:
 
-- T1–T5: the five numbered entries under “Real Illumi turns (verbatim intent)”. T1 requests deeper knowledge and developing taste around interests; T2 requires this in v2; T3 requests GitHub tracking; T4 requests evidence-backed models and bounded prediction; T5 requests task-aware collaboration context beyond a static profile.
+- T1–T5: the five numbered entries under “Real owner turns (verbatim intent)”. T1 requests deeper knowledge and developing taste around interests; T2 requires this in v2; T3 requests GitHub tracking; T4 requests evidence-backed models and bounded prediction; T5 requests task-aware collaboration context beyond a static profile.
 - A1–A7: the seven numbered items under “Scope A — Adaptive Domain World Models”.
 - B1–B7: the seven numbered items under “Scope B — Collaboration Model via World Slices”. The issue labels these shapes as assistant steals, not owner quotations.
 
