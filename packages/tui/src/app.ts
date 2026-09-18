@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { listAuditReceipts, listCanonPagesReport, listCanonReceipts, undoReceipt } from "@kizuki/core";
+import { listAuditReceipts, listCanonPagesReport, nextReceiptForPage, undoReceipt } from "@kizuki/core";
 import type { AuditReceipt, CanonIo } from "@kizuki/core";
 import { parseFrontmatter } from "@kizuki/core";
 import { colorsEnabled, paint, sanitize, truncate } from "./ansi";
@@ -94,15 +94,11 @@ function afterBody(
   }
   if (db === undefined) return { body: null, error: null };
   // Immediate successor, including reverted writes: their archive is this after-image.
-  const next = listCanonReceipts(db, {
-    page_path: receipt.page_path,
-    newest_first: false,
-    limit: 10_000,
-  }).find(
-    (row) =>
-      row.at > receipt.at || (row.at === receipt.at && row.receipt_id > receipt.receipt_id),
-  );
-  if (next === undefined || next.archive_path === null) return { body: null, error: null };
+  const next = nextReceiptForPage(db, receipt.page_path, {
+    at: receipt.at,
+    receipt_id: receipt.receipt_id,
+  });
+  if (next === null || next.archive_path === null) return { body: null, error: null };
   return readBody(vaultPath, next.archive_path);
 }
 
