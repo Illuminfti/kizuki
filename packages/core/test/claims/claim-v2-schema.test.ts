@@ -13,6 +13,10 @@ import {
 } from "../../src/claims/claim-v2-rows";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../../src/ledger/db";
 import { canonicalJson } from "../../src/util/hash";
+import { exportVault, restoreVault, verifyBackup } from "../../src/export";
+import { accept } from "../../src/ledger/ledger";
+import { validEvent } from "../fixtures";
+import { tempVault } from "../helpers/vault";
 import { claimsDb, putEvent } from "./helpers";
 
 const EVENT_ID = "01JCV2EVENTAAAAAAAAAAAAAA1";
@@ -391,5 +395,38 @@ test("support rows fail closed on missing claims, missing events and duplicates"
     });
   } finally {
     db.close();
+  }
+});
+
+test("a vault at ledger 31 backs up and restores with empty claim/v2 tables", () => {
+  const vault = tempVault("kizuki-claim-v2-vault-");
+  const parent = mkdtempSync(join(tmpdir(), "kizuki-claim-v2-backup-"));
+  const db = openLedger(":memory:");
+  try {
+    const stored = accept(db, validEvent());
+    expect(stored.status).toBe("stored");
+
+    const backup = join(parent, "dump");
+    const manifest = exportVault(db, vault.path, backup);
+    expect(manifest.schema_versions.ledger).toBe(31);
+    expect(() => verifyBackup(backup)).not.toThrow();
+
+    const target = join(parent, "restored");
+    restoreVault(backup, target);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    try {
+      expect(schemaVersion(restored)).toBe(31);
+      for (const table of ["claim_v2_semantics", "claim_v2_support", "claim_v2_support_events"]) {
+        expect(
+          restored.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM ${table}`).get(),
+        ).toEqual({ n: 0 });
+      }
+    } finally {
+      restored.close();
+    }
+  } finally {
+    db.close();
+    rmSync(parent, { recursive: true, force: true });
+    vault.dispose();
   }
 });

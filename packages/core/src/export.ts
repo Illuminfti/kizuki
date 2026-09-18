@@ -2007,11 +2007,14 @@ function assertBackupFormat(manifest: ExportManifest): void {
   // Ledger29 widens selector_kind to event|connector|record|source|subject for namespaced
   // subject selectors. Bare subject ids remain refused and unrecorded. Compound rows restore as NULL.
   // Ledger30 records event+connector compound selector_kind. Other compounds restore as NULL.
+  // Ledger31 adds the empty claim/v2 semantic and support tables (RFC 0003 B1b).
+  // No writer fills them in 1.0, so a v3 backup at 31 carries no v2 rows and
+  // restores into freshly created empty tables; exporting them belongs to B1d.
   // Future migrations must make their own explicit compatibility decision.
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
       versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
       versions.ledger !== 19 && versions.ledger !== 20 &&
-      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27 || versions.ledger === 28 || versions.ledger === 29 || versions.ledger === 30))) {
+      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27 || versions.ledger === 28 || versions.ledger === 29 || versions.ledger === 30 || versions.ledger === 31))) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
