@@ -16,7 +16,8 @@ Run its synthetic acceptance cases with:
 ## Local-only boundary
 
 Use only the data subject's own explicitly selected export. The function accepts
-text; it opens no file, downloads nothing, invokes no model, embeds nothing,
+text or original UTF-8 bytes (`Uint8Array`, including `Buffer`); it opens no file,
+downloads nothing, invokes no model, embeds nothing,
 and writes no state. Do not send input, projected titles, or receipts to a remote
 endpoint. A digest is still private, linkable metadata. This boundary applies to
 this experiment; it is not proof that future integration enforces source egress
@@ -26,15 +27,18 @@ policy. No registry entry or public CLI verb is added.
 
 Select one already-extracted activity JSON file, not a ZIP or whole Takeout tree.
 The spike refuses more than 1 MiB of supplied UTF-8 text or 10,000 records before
-projection. It rejects input whose UTF-8 encoding is lossy, such as lone
-surrogates, so distinct source strings cannot share one receipt. It validates all
+projection. Pass original bytes rather than permissively decoding an export first:
+malformed UTF-8 is refused, and only the selected byte view is hashed and counted.
+It rejects input whose UTF-8 encoding is lossy, such as lone
+surrogates, and any selected field whose JSON escape decodes to a lone
+surrogate, so distinct source strings cannot share one receipt. It validates all
 records before returning any result, preserves
 source timestamp precision and offsets, and omits unselected fields such as
 location information. Duplicate rows retain distinct positions. Positions bound
 to the input digest are provenance pointers, not stable provider record IDs.
 
 This is bounded selective ingestion, not multi-GB streaming. The caller has
-already allocated the input string. A production reader still needs bounded
+already allocated the input string or byte view. A production reader still needs bounded
 streaming, explicit selection/consent, archive handling, interruption/resume,
 ledger admission and purge proofs. The synthetic shape is not a current vendor
 schema compatibility claim. A versioned, representative export must be qualified

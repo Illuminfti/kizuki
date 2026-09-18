@@ -77,6 +77,19 @@ describe("local X archive connector", () => {
     await expect(connector.purgeSource("x:user:123")).rejects.toMatchObject({ code: "not_supported" });
   });
 
+  test("coverage counts imported attachments rather than orphan media files", async () => {
+    const root = await temporaryArchive();
+    const media = path.join(root, "data", "tweets_media");
+    await mkdir(media);
+    await writeFile(path.join(media, "1742012345678901234-photo.jpg"), "attached");
+    await writeFile(path.join(media, "999-orphan.jpg"), "not imported");
+    const connector = new XArchiveConnector({ path: root });
+    const batch = await connector.backfill(null);
+    expect(batch.events.flatMap((event) => event.attachments)).toHaveLength(1);
+    expect((await connector.health()).detail).toContain("media_refs=1;");
+    expect((await scanArchive(root)).coverage.media_references).toBe(1);
+  });
+
   test("resets a changed same-account snapshot and never infers deletions", async () => {
     const root = await temporaryArchive();
     const connector = new XArchiveConnector({ path: root });
@@ -171,6 +184,49 @@ describe("local X archive connector", () => {
     await expect(scanArchive(root)).rejects.toMatchObject({ code: "parse_error" });
   });
 
+  test("a newline-terminated timestamp refuses the whole archive at scan, health and backfill", async () => {
+    const root = await temporaryArchive();
+    await writeFile(
+      path.join(root, "data", "tweets.js"),
+      tweetsSource(0, [tweet("1742012345678901234", "synthetic trailing newline", "Tue Jan 02 03:04:05 +0000 2024\n")]),
+    );
+    const connector = new XArchiveConnector({ path: root });
+    await expect(connector.backfill(null)).rejects.toMatchObject({ code: "parse_error" });
+    expect(await connector.health()).toMatchObject({
+      state: "misconfigured",
+      detail: "kizuki.import-x-archive: post created_at is missing or invalid",
+    });
+    await expect(scanArchive(root)).rejects.toMatchObject({ code: "parse_error" });
+  });
+
+  test("rejects invalid account usernames even in an empty archive", async () => {
+    const root = await temporaryArchive();
+    await writeFile(path.join(root, "data", "tweets.js"), tweetsSource(0, []));
+    for (const username of ["owner\n", "owner\r", "owner\u2028", "owner\u2029", "", "a".repeat(65), "bad-name", null, 123]) {
+      await writeFile(path.join(root, "data", "account.js"),
+        `window.YTD.account.part0 = ${JSON.stringify([{ account: { accountId: "123", username } }])};`);
+      const connector = new XArchiveConnector({ path: root });
+      await expect(connector.backfill(null)).rejects.toMatchObject({
+        code: "parse_error", message: "kizuki.import-x-archive: account username is invalid",
+      });
+      expect(await connector.health()).toMatchObject({
+        state: "misconfigured", detail: "kizuki.import-x-archive: account username is invalid",
+      });
+    }
+  });
+
+  test("preserves optional and boundary-length account usernames", async () => {
+    const root = await temporaryArchive();
+    for (const username of [undefined, "a", "A_09".repeat(16)]) {
+      await writeFile(path.join(root, "data", "account.js"),
+        `window.YTD.account.part0 = ${JSON.stringify([{ account: { accountId: "123", username } }])};`);
+      expect((await scanArchive(root)).identity).toEqual({ account_id: "123", username: username ?? null });
+      const batch = await new XArchiveConnector({ path: root }).backfill(null);
+      expect(batch.events).toHaveLength(2);
+      expect(batch.events[0]?.subjects[0]?.display_name).toBe(username === undefined ? undefined : `@${username}`);
+    }
+  });
+
   test("rejects another account rather than applying its cursor", async () => {
     const firstRoot = await temporaryArchive();
     const cursor = (await new XArchiveConnector({ path: firstRoot }).backfill(null)).cursor;
@@ -232,6 +288,12 @@ describe("local X archive connector", () => {
     const savedCursor = first.cursor!;
 
     await writeFile(path.join(media, name(256)), "bytes");
+    const oversized = new XArchiveConnector({ path: root });
+    expect(await oversized.health()).toMatchObject({
+      state: "misconfigured",
+      detail: "kizuki.import-x-archive: one post has more than 256 media references",
+    });
+    await expect(oversized.connect(async () => "unused")).rejects.toMatchObject({ code: "parse_error" });
     await expect(new XArchiveConnector({ path: root }).backfill(savedCursor)).rejects.toMatchObject({
       code: "parse_error",
       message: expect.stringContaining("more than 256 media references"),

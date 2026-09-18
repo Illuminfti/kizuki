@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EVENT_LIMITS } from "../src/contracts/event";
 import { exportVault, restoreVault, verifyBackup, type ExportManifest } from "../src/export";
 import { eventPurgeProofDigest } from "../src/ledger/purge-schema";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
@@ -51,16 +52,18 @@ function rows(backup: string, table: typeof TABLES[number]): Record<string, unkn
   return readFileSync(join(backup, "ledger", `${table}.jsonl`), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
 }
 
-function rewriteEventPurgesJsonl(
+function rewriteLedgerJsonl(
   backup: string,
+  file: "event_purges.jsonl" | "event_purge_proofs.jsonl",
   rewrite: (row: Record<string, unknown>) => Record<string, unknown>,
 ): Record<string, unknown>[] {
-  const path = join(backup, "ledger", "event_purges.jsonl");
+  const path = join(backup, "ledger", file);
   const rows = readFileSync(path, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>);
   const bytes = Buffer.from(rows.map((row) => `${JSON.stringify(rewrite(row))}\n`).join(""));
   writeFileSync(path, bytes);
+  const key = `ledger/${file}`;
   const manifest = JSON.parse(readFileSync(join(backup, "manifest.json"), "utf8")) as ExportManifest;
-  manifest.files["ledger/event_purges.jsonl"] = {
+  manifest.files[key] = {
     count: rows.length,
     size: bytes.length,
     mode: 0o600,
@@ -74,6 +77,13 @@ function rewriteEventPurgesJsonl(
   writeFileSync(join(backup, "manifest.json"), `${JSON.stringify({ ...unsigned, manifest_sha256: new Bun.CryptoHasher("sha256").update(`${JSON.stringify(unsigned, null, 2)}\n`).digest("hex") }, null, 2)}\n`);
   chmodSync(join(backup, "manifest.json"), 0o600);
   return rows;
+}
+
+function rewriteEventPurgesJsonl(
+  backup: string,
+  rewrite: (row: Record<string, unknown>) => Record<string, unknown>,
+): Record<string, unknown>[] {
+  return rewriteLedgerJsonl(backup, "event_purges.jsonl", rewrite);
 }
 
 function rewriteBackup(
@@ -135,7 +145,7 @@ describe("completed purge history backup", () => {
     await runPurge(f.db, f.vault, { source_record_id: leftover.source_record_id }, "retire fixture");
     const before = f.db.query("SELECT receipt_id, selector_kind FROM event_purge_proofs ORDER BY receipt_id").all();
     expect(before.map((row) => (row as { selector_kind: string | null }).selector_kind).sort()).toEqual(
-      ["event", "record", null].sort(),
+      ["event", "record", "event+connector"].sort(),
     );
     exportVault(f.db, f.vault, f.backup);
     restoreVault(f.backup, f.restored);
@@ -224,6 +234,52 @@ describe("completed purge history backup", () => {
     expect(rows).toHaveLength(1);
     expect(() => restoreVault(f.backup, f.restored)).toThrow("event purge proof does not match receipt proof_digest");
     expect(existsSync(f.restored)).toBe(false);
+  });
+
+  test("refuses restored purge proof ids that exceed the UTF-8 byte limit", async () => {
+    const f = fixture();
+    const event = f.event("atlas-one");
+    await runPurge(f.db, f.vault, { event_id: event.event_id }, "retire fixture");
+    exportVault(f.db, f.vault, f.backup);
+    const oversized = "é".repeat(EVENT_LIMITS.sourceRecordIdBytes / 2 + 1);
+    expect(oversized.length).toBeLessThanOrEqual(EVENT_LIMITS.sourceRecordIdBytes);
+    expect(Buffer.byteLength(oversized, "utf8")).toBeGreaterThan(EVENT_LIMITS.sourceRecordIdBytes);
+    const rows = rewriteLedgerJsonl(f.backup, "event_purge_proofs.jsonl", (row) => ({
+      ...row,
+      source_record_id: oversized,
+    }));
+    expect(rows).toHaveLength(1);
+    rewriteEventPurgesJsonl(f.backup, (row) => {
+      const rest = { ...row };
+      delete rest.proof_digest;
+      return rest;
+    });
+    expect(() => restoreVault(f.backup, f.restored)).toThrow("source_record_id: invalid length");
+    expect(existsSync(f.restored)).toBe(false);
+  });
+
+  test("restores a purge proof id at the UTF-8 byte limit", async () => {
+    const f = fixture();
+    const event = f.event("atlas-one");
+    const result = await runPurge(f.db, f.vault, { event_id: event.event_id }, "retire fixture");
+    exportVault(f.db, f.vault, f.backup);
+    const exact = "é".repeat(EVENT_LIMITS.sourceRecordIdBytes / 2);
+    expect(Buffer.byteLength(exact, "utf8")).toBe(EVENT_LIMITS.sourceRecordIdBytes);
+    rewriteLedgerJsonl(f.backup, "event_purge_proofs.jsonl", (row) => ({
+      ...row,
+      source_record_id: exact,
+    }));
+    rewriteEventPurgesJsonl(f.backup, (row) => {
+      const rest = { ...row };
+      delete rest.proof_digest;
+      return rest;
+    });
+    restoreVault(f.backup, f.restored);
+    const copy = f.openRestored();
+    expect(copy.query("SELECT source_record_id FROM event_purge_proofs").all()).toEqual([
+      { source_record_id: exact },
+    ]);
+    expect((await verifyPurge(copy, f.restored, result.receipts[0]!.receipt_id)).ok).toBe(true);
   });
 
   test("omitted proof_digest restores by binding stored proof bytes", async () => {

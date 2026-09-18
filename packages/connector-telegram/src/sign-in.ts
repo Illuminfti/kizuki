@@ -35,7 +35,9 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/gu;
 export function waitSeconds(error: unknown): number | null {
   return error instanceof TelegramConnectorError &&
     error.code === "flood_wait" &&
-    error.retry_after !== undefined
+    error.retry_after !== undefined &&
+    Number.isSafeInteger(error.retry_after) &&
+    error.retry_after > 0
     ? error.retry_after
     : null;
 }
@@ -100,22 +102,23 @@ export async function runSignIn(
       ),
     onError: async (name) => reject(rejectionNotice(name)),
   };
+  const assertActive = (error?: unknown): void => {
+    // Preserve our stop decision whether the adapter throws or returns.
+    if (abandoned !== null) throw abandoned;
+    if (aborted) {
+      throw new TelegramConnectorError(
+        "sign_in_aborted",
+        "kizuki.telegram: sign-in was abandoned after repeated rejected attempts",
+        { cause: safeCause(error) },
+      );
+    }
+  };
   let waited = false;
   for (;;) {
     try {
       await api.start(flow);
-      return;
     } catch (error) {
-      // The owner entered nothing, repeatedly. Whatever the library made of
-      // that on the way out, the reason it stopped is the one to report.
-      if (abandoned !== null) throw abandoned;
-      if (aborted) {
-        throw new TelegramConnectorError(
-          "sign_in_aborted",
-          "kizuki.telegram: sign-in was abandoned after repeated rejected attempts",
-          { cause: safeCause(error) },
-        );
-      }
+      assertActive(error);
       const seconds = waitSeconds(error);
       if (waited || seconds === null || seconds > MAX_SILENT_WAIT_SECONDS) {
         throw error;
@@ -123,7 +126,10 @@ export async function runSignIn(
       waited = true;
       io.notify(`Telegram asked us to wait ${seconds}s`);
       await sleep(seconds * 1000);
+      continue;
     }
+    assertActive();
+    return;
   }
 }
 
@@ -157,6 +163,7 @@ export async function enroll(
   const phone = (
     await io.prompt(
       "Telegram phone number (international format, e.g. +15551234567): ",
+      { secret: true },
     )
   ).trim();
   if (!PHONE_FORMAT.test(phone)) {

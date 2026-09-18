@@ -10,7 +10,7 @@ import {
 
 export const VAULT_CONFIG_PATH = ".kizuki/serve.toml";
 
-const PORT_KEYS = ["retrieval", "embedding", "llm", "notifier", "surface"] as const;
+const PORT_KEYS = ["retrieval", "embedding", "llm", "systemone", "notifier", "surface"] as const;
 type PortKey = (typeof PORT_KEYS)[number];
 
 const KNOWN_PORT_IDS: Readonly<Record<PortKey, readonly string[]>> = {
@@ -21,6 +21,7 @@ const KNOWN_PORT_IDS: Readonly<Record<PortKey, readonly string[]>> = {
     "kizuki.llm.openai-compatible",
     "kizuki.llm.gguf",
   ],
+  systemone: ["kizuki.systemone.jev"],
   notifier: [],
   surface: ["kizuki.surface.cli", "kizuki.surface.mcp-stdio"],
 };
@@ -29,6 +30,7 @@ export interface VaultPorts {
   retrieval: string;
   embedding: string;
   llm: string;
+  systemone: string | null;
   notifier: string[];
   surface: string[];
   extra: Record<string, Record<string, unknown>>;
@@ -92,6 +94,42 @@ export function vaultConfigPath(vaultPath: string): string {
   return join(vaultPath, VAULT_CONFIG_PATH);
 }
 
+/**
+ * Unredacted `[ports.systemone]` table for binding. Doctor display still uses
+ * `loadVaultConfig().ports.extra`, which redacts secret_ref.
+ */
+export function loadSystemOneBinding(
+  vaultPath: string,
+): { id: string; config: Record<string, unknown>; secret_ref: string | null } | null {
+  const path = vaultConfigPath(vaultPath);
+  if (!existsSync(path)) return null;
+  let parsed: unknown;
+  try {
+    parsed = Bun.TOML.parse(readFileSync(path, "utf8"));
+  } catch {
+    throw new VaultConfigError(`${path}: invalid TOML`);
+  }
+  if (!isPlainObject(parsed) || !isPlainObject(parsed["ports"])) return null;
+  const table = parsed["ports"]["systemone"];
+  if (table === undefined) return null;
+  if (typeof table === "string") {
+    assertKnownPort("systemone", table, path);
+    return { id: table, config: {}, secret_ref: null };
+  }
+  if (!isPlainObject(table) || typeof table["id"] !== "string") {
+    throw new VaultConfigError(`${path}: [ports.systemone] must be a table with id`);
+  }
+  assertKnownPort("systemone", table["id"], path);
+  const config: Record<string, unknown> = { ...table };
+  delete config["id"];
+  const secret = config["secret_ref"];
+  return {
+    id: table["id"],
+    config,
+    secret_ref: typeof secret === "string" ? secret : null,
+  };
+}
+
 export function loadVaultConfig(vaultPath: string): VaultConfig {
   const path = vaultConfigPath(vaultPath);
   const serve = loadServeConfig(vaultPath);
@@ -100,6 +138,7 @@ export function loadVaultConfig(vaultPath: string): VaultConfig {
     retrieval: "kizuki.retrieval.fts5",
     embedding: "kizuki.embedding.none",
     llm: model_ref === null ? "kizuki.llm.none" : "kizuki.llm.openai-compatible",
+    systemone: null,
     notifier: [],
     surface: ["kizuki.surface.cli"],
     extra: Object.create(null) as Record<string, Record<string, unknown>>,
@@ -133,6 +172,7 @@ export function loadVaultConfig(vaultPath: string): VaultConfig {
         !key.startsWith("retrieval") &&
         !key.startsWith("embedding") &&
         !key.startsWith("llm") &&
+        !key.startsWith("systemone") &&
         !key.startsWith("notifier") &&
         !key.startsWith("surface")
       ) {
@@ -155,9 +195,17 @@ export function loadVaultConfig(vaultPath: string): VaultConfig {
       ports.llm = table["llm"]["id"];
       ports.extra["llm"] = redactTable(table["llm"]);
     }
+    if (typeof table["systemone"] === "string") {
+      assertKnownPort("systemone", table["systemone"], path);
+      ports.systemone = table["systemone"];
+    } else if (isPlainObject(table["systemone"]) && typeof table["systemone"]["id"] === "string") {
+      assertKnownPort("systemone", table["systemone"]["id"], path);
+      ports.systemone = table["systemone"]["id"];
+      ports.extra["systemone"] = redactTable(table["systemone"]);
+    }
     ports.notifier = asStringList(table["notifier"], ports.notifier);
     ports.surface = asStringList(table["surface"], ports.surface);
-    for (const key of ["retrieval", "embedding", "llm"] as const) {
+    for (const key of ["retrieval", "embedding", "llm", "systemone"] as const) {
       const nested = table[key];
       if (isPlainObject(nested) && typeof table[key] !== "string") {
         ports.extra[key] = redactTable(nested);
@@ -195,6 +243,7 @@ export function effectiveVaultConfig(config: VaultConfig): Record<string, unknow
       retrieval: config.ports.retrieval,
       embedding: config.ports.embedding,
       llm: config.ports.llm,
+      systemone: config.ports.systemone,
       notifier: config.ports.notifier,
       surface: config.ports.surface,
       extra: config.ports.extra,
