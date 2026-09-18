@@ -169,3 +169,116 @@ test("passes the shared connector conformance suite with synthetic local API dat
   });
   expect(result).toEqual({ pass: true, failures: [] });
 });
+
+const newer = { id: "m3", accountID: "a1", chatID: "c1", senderID: "u3", sortKey: "003", timestamp: "2026-01-02T03:06:05Z", text: "arrived after the walk" };
+
+test("ends the backward walk on a forward anchor and then polls only newer messages", async () => {
+  const seen: (string | null)[][] = [];
+  const value = await connected(async (input) => {
+    const url = new URL(input.toString());
+    const direction = url.searchParams.get("direction");
+    const cursor = url.searchParams.get("cursor");
+    seen.push([direction, cursor]);
+    if (direction === "before") {
+      return cursor === null
+        ? reply({ items: [first], hasMore: true, oldestCursor: "older", newestCursor: "newest" })
+        : reply({ items: [deleted], hasMore: false, oldestCursor: "oldest", newestCursor: "older" });
+    }
+    return cursor === "newest"
+      ? reply({ items: [newer], hasMore: false, newestCursor: "newest-2" })
+      : reply({ items: [], hasMore: false });
+  });
+  const opening = await value.backfill(null);
+  expect(opening.has_more).toBe(true);
+  const closing = await value.backfill(opening.cursor);
+  expect(closing.has_more).toBe(false);
+  expect(closing.cursor).not.toBeNull();
+
+  const caught = await value.sync(closing.cursor);
+  expect(caught.events.map((event) => event.source_record_id)).toEqual(['["a1","c1","m3"]']);
+  expect(caught.has_more).toBe(false);
+  const quiet = await value.sync(caught.cursor);
+  expect(quiet.events).toEqual([]);
+  expect(quiet.cursor).toBe(caught.cursor);
+  expect(seen).toEqual([["before", null], ["before", "older"], ["after", "newest"], ["after", "newest-2"]]);
+});
+
+test("sync without a stored anchor reads one newest page instead of draining history", async () => {
+  const seen: (string | null)[][] = [];
+  const value = await connected(async (input) => {
+    const url = new URL(input.toString());
+    seen.push([url.searchParams.get("direction"), url.searchParams.get("cursor")]);
+    return url.searchParams.get("direction") === "before"
+      ? reply({ items: [first], hasMore: true, oldestCursor: "older", newestCursor: "top" })
+      : reply({ items: [], hasMore: false });
+  });
+  const bootstrap = await value.sync(null);
+  expect(bootstrap.events).toHaveLength(1);
+  expect(bootstrap.has_more).toBe(false);
+  const polled = await value.sync(bootstrap.cursor);
+  expect(polled.events).toEqual([]);
+  expect(seen).toEqual([["before", null], ["after", "top"]]);
+});
+
+test("a sync resumed from an unfinished backward walk finishes it before polling forward", async () => {
+  const seen: (string | null)[][] = [];
+  const value = await connected(async (input) => {
+    const url = new URL(input.toString());
+    const cursor = url.searchParams.get("cursor");
+    seen.push([url.searchParams.get("direction"), cursor]);
+    return url.searchParams.get("direction") === "before"
+      ? reply({ items: [deleted], hasMore: false, oldestCursor: "oldest", newestCursor: "older" })
+      : reply({ items: [], hasMore: false });
+  });
+  const unfinished = JSON.stringify({ schema: "kizuki.beeper-cursor/v1", phase: "backfill", before: "older", after: "newest" });
+  const drained = await value.sync(unfinished);
+  expect(drained.has_more).toBe(false);
+  const polled = await value.sync(drained.cursor);
+  expect(polled.events).toEqual([]);
+  expect(seen).toEqual([["before", "older"], ["after", "newest"]]);
+});
+
+test("accepts a checkpoint written before the forward poll existed", async () => {
+  const seen: (string | null)[][] = [];
+  const value = await connected(async (input) => {
+    const url = new URL(input.toString());
+    seen.push([url.searchParams.get("direction"), url.searchParams.get("cursor")]);
+    return reply({ items: [first], hasMore: false, newestCursor: "top" });
+  });
+  const legacy = JSON.stringify({ schema: "kizuki.beeper-cursor/v1", cursor: "older" });
+  const batch = await value.backfill(legacy);
+  expect(batch.events).toHaveLength(1);
+  expect(seen).toEqual([["before", "older"]]);
+});
+
+test("refuses a forward page that does not advance the anchor", async () => {
+  const value = await connected(async () => reply({ items: [newer], hasMore: true, newestCursor: "same" }));
+  const anchored = JSON.stringify({ schema: "kizuki.beeper-cursor/v1", phase: "sync", before: null, after: "same" });
+  await expect(value.sync(anchored)).rejects.toThrow("invalid pagination cursor");
+  const unanchored = await connected(async () => reply({ items: [newer], hasMore: true }));
+  const point = JSON.stringify({ schema: "kizuki.beeper-cursor/v1", phase: "sync", before: null, after: "point" });
+  await expect(unanchored.sync(point)).rejects.toThrow("malformed pagination response");
+});
+
+test("manifest declares that the first sync resumes an unfinished backward walk", () => {
+  const manifest = connector(async () => reply({ items: [], hasMore: false })).manifest();
+  expect(manifest.capabilities.sync_from_backfill_before_first_success).toBe(true);
+});
+
+test("a walk restarted from the top anchors on the newest point it sees now", async () => {
+  let top = "newest-1";
+  const seen: (string | null)[][] = [];
+  const value = await connected(async (input) => {
+    const url = new URL(input.toString());
+    seen.push([url.searchParams.get("direction"), url.searchParams.get("cursor")]);
+    return url.searchParams.get("direction") === "before"
+      ? reply({ items: [first], hasMore: false, newestCursor: top })
+      : reply({ items: [], hasMore: false });
+  });
+  const opening = await value.backfill(null);
+  top = "newest-2";
+  const restarted = await value.backfill(opening.cursor);
+  expect(restarted.cursor).not.toBe(opening.cursor);
+  await value.sync(restarted.cursor);
+  expect(seen).toEqual([["before", null], ["before", null], ["after", "newest-2"]]);
+});
