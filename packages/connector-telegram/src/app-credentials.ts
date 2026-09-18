@@ -2,10 +2,11 @@ import { TelegramConnectorError } from "./api";
 import type { AppCredentials } from "./api";
 
 /**
- * Literal member expressions at module top level: that exact shape is what
- * `bun build --env 'KIZUKI_TELEGRAM_*'` and `--define` substitute at build
- * time. Reading through an indirection defeats the substitution, and at
- * development time these two lines read the live environment instead.
+ * Literal member expressions at module top level: that exact shape is what the
+ * release build substitutes, name by name, through `Bun.build`'s `define`
+ * (see `scripts/build-release.ts`). Reading through an indirection defeats the
+ * substitution, and a build that compiled neither in leaves these two lines
+ * reading the live environment.
  */
 const COMPILED_API_ID: string = process.env.KIZUKI_TELEGRAM_API_ID ?? "0";
 const COMPILED_API_HASH: string = process.env.KIZUKI_TELEGRAM_API_HASH ?? "";

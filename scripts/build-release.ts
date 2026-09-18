@@ -21,6 +21,81 @@ export const PACKAGED_CLI_COMMANDS = {
   restore: ["./kizuki", "restore", "--from", "/absolute/backup", "--into", "/absolute/restored"],
 } as const;
 
+/**
+ * Every app credential this build may compile into the package, by name, with
+ * the rule its value must satisfy. These are project app identifiers the
+ * provider issues once per project, never an owner secret. The list is closed,
+ * not a prefix glob: an unrelated `KIZUKI_*` variable in the build environment
+ * is neither inlined nor recorded. Each rule is at least as strict as the
+ * runtime check in `packages/connector-telegram/src/app-credentials.ts`, so a
+ * package that records a name always produces a binary that accepts it.
+ */
+export const COMPILED_CREDENTIAL_GROUPS = [
+  {
+    source: "kizuki.telegram",
+    values: {
+      KIZUKI_TELEGRAM_API_HASH: /^[0-9a-f]{32}$/,
+      KIZUKI_TELEGRAM_API_ID: /^[1-9][0-9]{0,14}$/,
+    },
+  },
+] as const;
+
+/** One provider's app credentials: every name is required, or none of them. */
+export interface CredentialGroup {
+  readonly source: string;
+  readonly values: Readonly<Record<string, RegExp>>;
+}
+
+export interface CompiledCredentials {
+  /** Names only, ascending. No value reaches BUILD.json, an error or a log. */
+  readonly names: readonly string[];
+  /** `Bun.build` substitutions for exactly those names. */
+  readonly define: Readonly<Record<string, string>>;
+}
+
+const CREDENTIAL_NAME = /^KIZUKI_[A-Z0-9]+(?:_[A-Z0-9]+)*$/;
+
+/**
+ * Decides what this build compiles in. A group is all or nothing: a half-set
+ * pair fails the build rather than producing a binary that refuses sign-in
+ * while the package claims the credential is present. An empty environment is
+ * not a failure; it produces a credential-free package that says so.
+ */
+export function resolveCompiledCredentials(
+  environment: Readonly<Record<string, string | undefined>>,
+  groups: readonly CredentialGroup[] = COMPILED_CREDENTIAL_GROUPS,
+): CompiledCredentials {
+  const names: string[] = [];
+  const define: Record<string, string> = {};
+  const declared = new Set<string>();
+  for (const group of groups) {
+    const groupNames = Object.keys(group.values);
+    if (groupNames.length === 0) {
+      throw new Error(`release credential group ${group.source} names no credential`);
+    }
+    for (const name of groupNames) {
+      if (!CREDENTIAL_NAME.test(name) || declared.has(name)) {
+        throw new Error(`release credential allowlist is malformed: ${name}`);
+      }
+      declared.add(name);
+    }
+    const missing = groupNames.filter((name) => (environment[name] ?? "") === "");
+    if (missing.length === groupNames.length) continue;
+    if (missing.length > 0) {
+      throw new Error(`release credentials for ${group.source} are incomplete: ${missing.join(", ")} unset`);
+    }
+    for (const name of groupNames) {
+      // The value never appears in the refusal: a build log is not a vault.
+      if (!group.values[name]!.test(environment[name]!)) {
+        throw new Error(`release credential ${name} is malformed`);
+      }
+      define[`process.env.${name}`] = JSON.stringify(environment[name]!);
+      names.push(name);
+    }
+  }
+  return { names: names.sort(), define };
+}
+
 export function packagedCommandLine(argv: readonly string[]): string {
   return `  ${argv.join(" ")}`;
 }
@@ -128,6 +203,7 @@ if (import.meta.main) {
   }).version;
   const selected = selectedReleaseTarget();
   const target = selected.target;
+  const credentials = resolveCompiledCredentials(process.env);
 
   const dist = resolve(root, "dist");
   const release = join(dist, `kizuki-${version}`);
@@ -172,7 +248,7 @@ if (import.meta.main) {
           autoloadDotenv: false,
           autoloadBunfig: false,
         },
-        define: { KIZUKI_COMPILED: "true" },
+        define: { KIZUKI_COMPILED: "true", ...credentials.define },
         metafile: true,
       });
       if (!result.success || !result.metafile) {
@@ -193,6 +269,7 @@ if (import.meta.main) {
         source_sha: sourceSha,
         target,
         bun_version: Bun.version,
+        compiled_credentials: credentials.names,
         distribution: materials.distribution,
       }, null, 2)}\n`,
       "utf8",
