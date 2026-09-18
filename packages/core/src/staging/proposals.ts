@@ -498,11 +498,14 @@ function corroborateCompatClaim(
   );
   db.query(
     `UPDATE claims
-        SET provenance = ?, corroboration = ?, last_confirmed_at = ?, sensitivity = ?
+        SET provenance = ?, corroboration = ?,
+            last_confirmed_at = CASE WHEN ? THEN ? ELSE last_confirmed_at END,
+            sensitivity = ?
       WHERE claim_id = ?`,
   ).run(
     JSON.stringify(merged),
     bump ? live.corroboration + 1 : live.corroboration,
+    bump ? 1 : 0,
     at,
     sensitivity,
     live.claim_id,

@@ -21,8 +21,44 @@ for (const changed of ['updated', 'date', 'zone', 'status', 'id'] as const)
         expect(b.status).toBe('unavailable');
         expect(f.state).toEqual(old);
     });
-for (const selected of ['primary', 'PRIMARY'])
-    test(`ambiguous ${selected} alias refuses before transport`, async () => { const f = new CalendarFixture(); const c = createGoogleCalendarConnector({ client: { id: 'synthetic' }, calendar_id: selected, fields: FIELDS, secret_ref: 'file:synthetic' }, { fetch: f.fetch, persist: f.persist }); await expect(c.connect(async () => new TextDecoder().decode(f.state))).rejects.toMatchObject({ code: 'misconfigured' }); expect(f.calls).toEqual([]); });
+for (const selected of ['primary', 'PRIMARY', '.', '..'])
+    test(`unsupported calendar ${selected} refuses enrollment and reconnect before side effects`, async () => {
+        const f = new CalendarFixture();
+        let effects = 0;
+        const unexpected = async (): Promise<never> => { effects++; throw new Error('Unexpected enrollment side effect'); };
+        const c = createGoogleCalendarConnector({ client: { id: 'synthetic' }, calendar_id: selected, fields: FIELDS, secret_ref: 'file:synthetic' }, {
+            fetch: f.fetch, persist: unexpected, oauth: { listen: unexpected, postForm: unexpected },
+        });
+        await expect(c.signIn({ prompt: unexpected, notify: unexpected, openUrl: unexpected }, { write: unexpected })).rejects.toMatchObject({ code: 'misconfigured' });
+        await expect(c.connect(unexpected)).rejects.toMatchObject({ code: 'misconfigured' });
+        expect(effects).toBe(0);
+        expect(f.calls).toEqual([]);
+    });
+test('persisted dot-segment calendars are refused on restart before transport or persistence', async () => {
+    const f = new CalendarFixture();
+    const raw = JSON.parse(new TextDecoder().decode(f.state));
+    let writes = 0;
+    for (const selected of ['.', '..']) {
+        raw.calendar = selected;
+        f.state = new TextEncoder().encode(JSON.stringify(raw));
+        const before = f.state.slice();
+        expect(() => parseState(f.state)).toThrow();
+        await expect(f.connected(async () => { writes++; })).rejects.toMatchObject({ code: 'source_schema' });
+        expect(f.state).toEqual(before);
+    }
+    expect(writes).toBe(0);
+    expect(f.calls).toEqual([]);
+});
+test('canonical calendar identifiers with embedded dots remain supported', async () => {
+    const f = new CalendarFixture();
+    f.calendar = 'synthetic.calendar';
+    const state = parseState(f.state);
+    state.calendar = f.calendar;
+    f.state = encodeState(state);
+    const batch = await (await f.connected()).backfill(null);
+    expect(batch.events).toHaveLength(2);
+    expect(f.calls[1]).toContain('/calendars/synthetic.calendar/events?');
+});
 test('account and calendar cursor confusion refuses before provider', async () => { const f = new CalendarFixture(), c = await f.connected(), b = await c.backfill(null); const wrong = JSON.parse(b.cursor!); wrong.calendar = 'another-calendar'; const calls = f.calls.length; await expect(c.sync(JSON.stringify(wrong))).rejects.toThrow(); expect(f.calls).toHaveLength(calls); });
 test('empty intermediate pages are drained with a bounded GET count', async () => {
     const f = new CalendarFixture();

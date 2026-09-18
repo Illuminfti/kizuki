@@ -14,6 +14,16 @@ const WORKFLOW_NAME = /\.(?:ya?ml)$/;
 const VERIFY_COMMAND = /(?:bun run verify|scripts\/verify\.sh|bun run ci:secrets|scripts\/verify-secrets\.ts)/;
 const SETUP_BUN = /setup-bun@/;
 
+// Branch protection on main requires these check contexts. Each entry maps a
+// workflow file to the jobs that must keep producing a context of the same
+// name: deleting or renaming one leaves the required check permanently
+// unreported and blocks every merge until an admin edits the protection
+// settings (issue #106).
+const REQUIRED_MAIN_CHECK_JOBS: Record<string, string[]> = {
+  "ci.yml": ["test", "secrets"],
+  "workflows.yml": ["workflows"],
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -112,12 +122,24 @@ function validateJobs(
     }
   }
 
-  if (path.endsWith("/ci.yml") || path.endsWith(".github/workflows/ci.yml")) {
-    if (!("test" in jobs)) {
+  const file = path.slice(path.lastIndexOf("/") + 1);
+  for (const job of REQUIRED_MAIN_CHECK_JOBS[file] ?? []) {
+    if (jobs[job] === undefined) {
       failures.push({
         path,
-        reason: 'ci.yml must keep job "test" so existing pull requests keep ci / test',
+        reason: `required main check context "${job}" has no producing job; branch protection blocks every merge until it reports`,
       });
+    } else if (isRecord(jobs[job])) {
+      const producer = jobs[job];
+      if ((producer["name"] !== undefined && producer["name"] !== job) || producer["strategy"] !== undefined) {
+        failures.push({
+          path,
+          reason: `required main check context "${job}" must retain its exact name without a matrix`,
+        });
+      }
+      if (producer["if"] !== undefined) {
+        failures.push({ path, reason: `required main check context "${job}" must run unconditionally` });
+      }
     }
   }
   return failures;
@@ -283,10 +305,8 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
   if (!("on" in document)) {
     failures.push({ path, reason: "workflow is missing on:" });
   }
-  if (path.endsWith("/ci.yml") || path.endsWith(".github/workflows/ci.yml")) {
-    if (document["name"] !== "ci") {
-      failures.push({ path, reason: 'ci.yml name must remain "ci"' });
-    }
+  const file = path.slice(path.lastIndexOf("/") + 1);
+  if (Object.hasOwn(REQUIRED_MAIN_CHECK_JOBS, file)) {
     const trigger = document["on"];
     const push = isRecord(trigger) ? trigger["push"] : undefined;
     const pullRequest = isRecord(trigger) ? trigger["pull_request"] : undefined;
@@ -294,9 +314,24 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
         !(pullRequest === null || (isRecord(pullRequest) && Object.keys(pullRequest).length === 0)) ||
         !isRecord(push) || Object.keys(push).length !== 1 ||
         !Array.isArray(push["branches"]) || push["branches"].length !== 1 || push["branches"][0] !== "main") {
-      failures.push({ path, reason: "ci must run on every pull request and every push to main without filters" });
+      failures.push({ path, reason: `${file.slice(0, -4)} must run on every pull request and every push to main without filters` });
+    }
+  }
+  if (path.endsWith("/ci.yml") || path.endsWith(".github/workflows/ci.yml")) {
+    if (document["name"] !== "ci") {
+      failures.push({ path, reason: 'ci.yml name must remain "ci"' });
     }
     const jobs = document["jobs"];
+    const secrets = isRecord(jobs) ? jobs["secrets"] : undefined;
+    if (isRecord(secrets)) {
+      const secretSteps = secrets["steps"];
+      for (const command of ["bun run ci:secrets", "bash scripts/ci-gitleaks.sh"]) {
+        if (document["defaults"] !== undefined || secrets["defaults"] !== undefined ||
+            !Array.isArray(secretSteps) || !secretSteps.some(step => isBareCommand(step, command))) {
+          failures.push({ path, reason: `ci secrets must run the unconditional ${command} gate` });
+        }
+      }
+    }
     const job = isRecord(jobs) ? jobs["test"] : undefined;
     const steps = isRecord(job) ? job["steps"] : undefined;
     if (isRecord(job) && !hasLinuxNativeProof(document, job)) {

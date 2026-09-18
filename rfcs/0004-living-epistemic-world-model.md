@@ -1,6 +1,6 @@
 # RFC 0004: A claim-backed world model and scoped views
 
-Status: **Proposed — not binding and not implemented**. Date: 2026-09-05.
+Status: **Accepted as a minimal slice** (owner decision D22, 2026-09-18): `DurableObservation`, the world-vocabulary registry, `ConceptCard`, a minimal `SituationCard`, and `readWorldView` with the `concept` and `situation` operations, exposed through the `world_view` seam. Everything else in this RFC remains Proposed and is not implemented by that acceptance. Original date: 2026-09-05.
 Owner: Kizuki core. Design packet: #481.
 Frozen source and evaluation baseline: `a96c5f4a4455d22fb4b40537c308c6d019a36d0d`.
 Reviewed integration base: `ad7ecca9902a97ac40fb8b28438df56c6d27a54e` (2026-09-06).
@@ -471,7 +471,7 @@ temporal constraints. A graph engine adds no necessary authority primitive.
 
 Choose existing `claims` plus normalized common support/history children, small
 identity bookkeeping and rebuildable indexes. No new dependency is selected.
-The [storage and codec appendix](0004-world-storage.md) gives the proposed
+The [storage and codec appendix (Appendix A to this RFC)](0004-world-storage.md) gives the proposed
 closed payloads, component version allocation, exact event/source and composite
 ownership constraints, normalized Observation/endpoint/dependency/history tables,
 raw handle/receipt lifecycle, wire mapping and bounded cache schema. It extends
