@@ -86,3 +86,18 @@ test("missing or conflicting mention expansion identity refuses instead of guess
   expect(() => parsePage({ data: [conflict], meta: { result_count: 1 }, includes: { users: [{ id: "8", username: "peer" }] } }, "7", selected, "2026-02-01T00:00:00Z")).toThrow("identity_mismatch");
   expect(parsePage({ data: [row], meta: { result_count: 1 } }, "7", selection({ ...selected, fields: [] }), "2026-02-01T00:00:00Z").events[0]!.subjects).toEqual([{ subject_id: "x:user:7", role: "from" }]);
 });
+
+test("type discriminators must be exact strings, not coercible look-alikes", () => {
+  const shape = (media: unknown, references: unknown[] = []) => ({
+    data: [{ ...post(), attachments: { media_keys: ["3_100"] }, referenced_tweets: references }],
+    meta: { result_count: 1, newest_id: "100", oldest_id: "100" },
+    includes: { media: [media] },
+  });
+  const photo = { media_key: "3_100", type: "photo", url: "https://pbs.twimg.com/media/synthetic.jpg" };
+  for (const type of [["photo"], { toString: () => "photo" }]) {
+    expect(() => parsePage(shape({ media_key: "3_100", type }), "7", selected, "2026-01-03T00:00:00Z")).toThrow("X API");
+    expect(() => parsePage(shape(photo, [{ type, id: "91" }]), "7", selected, "2026-01-03T00:00:00Z")).toThrow("X API");
+  }
+  expect(() => parsePage(shape(photo), "7", selected, "2026-01-03T00:00:00Z")).not.toThrow();
+  expect(() => parsePage(shape({ ...photo, type: "video" }), "7", selected, "2026-01-03T00:00:00Z")).not.toThrow();
+});
