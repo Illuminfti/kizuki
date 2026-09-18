@@ -19,6 +19,16 @@ export const LEDGER_BUSY_ATTEMPTS = 4;
 /** Backoff before retry N of a busy immediate transaction. */
 export const LEDGER_BUSY_BACKOFF_MS = 50;
 
+/**
+ * Wait for the control-store swap lock, which fails closed rather than
+ * queueing. A durable connection-state swap and the row naming it must land
+ * together or not at all, so a writer already holding the lock means this one
+ * refuses and the caller retries the whole operation. The short wait absorbs a
+ * transient overlap with an ordinary ledger batch without ever blocking a
+ * publication behind a long one.
+ */
+export const LEDGER_CONTROL_BUSY_TIMEOUT_MS = 250;
+
 /** Hard cap for `readSince`. Bulk walks page; they do not raise this. */
 export const MAX_READ_SINCE = 1_000;
 

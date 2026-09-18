@@ -1,15 +1,30 @@
 import type { Database } from "bun:sqlite";
 import { classifySqliteFailure, LedgerStoreError } from "./errors";
-import { LEDGER_BUSY_ATTEMPTS, LEDGER_BUSY_BACKOFF_MS } from "./limits";
+import {
+  LEDGER_BUSY_ATTEMPTS,
+  LEDGER_BUSY_BACKOFF_MS,
+  LEDGER_CONTROL_BUSY_TIMEOUT_MS,
+} from "./limits";
 
 /**
  * SQLite reports a contended write as SQLITE_BUSY or SQLITE_LOCKED, and Bun
  * renders both as `database is locked`. Every seam that turns contention into
  * a retry or a typed refusal asks here, so no caller matches that text twice.
+ *
+ * Only the failure SQLite itself raised counts. An error that already carries
+ * its own closed contract, such as the ledger identity diagnostic that renders
+ * `sqlite_code=SQLITE_BUSY` into its message, keeps that contract; reading
+ * contention out of rendered text would replace a deliberate refusal with this
+ * one.
  */
 export function isLedgerBusy(error: unknown): boolean {
   if (error instanceof LedgerStoreError) return error.code === "busy";
-  return classifySqliteFailure(error)?.code === "busy";
+  if (!(error instanceof Error)) return false;
+  const code = "code" in error ? error.code : undefined;
+  if (typeof code === "string") {
+    return code.startsWith("SQLITE_BUSY") || code.startsWith("SQLITE_LOCKED");
+  }
+  return error.name === "SQLiteError" && classifySqliteFailure(error)?.code === "busy";
 }
 
 /**
@@ -46,6 +61,40 @@ export function runImmediate<T>(
   work: () => T,
   attempts: number = LEDGER_BUSY_ATTEMPTS,
 ): T {
-  if (db.inTransaction) return db.transaction(work).immediate();
-  return retryWhileBusy(() => db.transaction(work).immediate(), attempts);
+  const run = (): T => db.transaction(work).immediate();
+  let nested: boolean;
+  try {
+    nested = db.inTransaction;
+  } catch {
+    // A closed or otherwise unusable handle reports itself through the
+    // transaction it refuses, which is the failure callers already classify.
+    return run();
+  }
+  if (nested) return run();
+  return retryWhileBusy(run, attempts);
+}
+
+/**
+ * Run one control-store publication, which fails closed instead of queueing.
+ * Consent and connection-state writes must land with the file or row they name
+ * or not at all, so a live holder means another writer owns that publication
+ * and this caller has to hear it now, not after the ordinary batch wait. The
+ * connection's usual wait is restored either way.
+ */
+export function withControlWait<T>(db: Database, work: () => T): T {
+  let previous: number | undefined;
+  try {
+    previous = db.query<{ timeout: number }, []>("PRAGMA busy_timeout").get()?.timeout;
+    db.exec(`PRAGMA busy_timeout=${LEDGER_CONTROL_BUSY_TIMEOUT_MS}`);
+  } catch {
+    // A handle that cannot report its wait cannot be narrowed or restored.
+    return work();
+  }
+  try {
+    return work();
+  } finally {
+    if (previous !== undefined) {
+      try { db.exec(`PRAGMA busy_timeout=${previous}`); } catch { /* closed handle */ }
+    }
+  }
 }
