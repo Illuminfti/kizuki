@@ -429,4 +429,6 @@ test("a vault at ledger 31 backs up and restores with empty claim/v2 tables", ()
     rmSync(parent, { recursive: true, force: true });
     vault.dispose();
   }
-});
+  // Export and restore touch the real filesystem twice; the shared build box
+  // regularly needs more than bun's 5s default.
+}, 30_000);
