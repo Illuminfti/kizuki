@@ -1,5 +1,5 @@
 /** Host-side wait when another connection holds the ledger. */
-export const LEDGER_BUSY_TIMEOUT_MS = 1_000;
+export const LEDGER_BUSY_TIMEOUT_MS = 5_000;
 
 /** Hard cap for `readSince`. Bulk walks page; they do not raise this. */
 export const MAX_READ_SINCE = 1_000;
