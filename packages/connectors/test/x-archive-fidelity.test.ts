@@ -1,6 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { describe, expect, test } from "bun:test";
+import { mkdir, truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { validateEventInput, type CaptureEventInput } from "@kizuki/core";
 import {
@@ -11,6 +10,7 @@ import {
   parseCursor,
   parseYtd,
 } from "@kizuki/connector-x";
+import { rootTest, type RootFactory } from "./temp-root";
 
 const OBSERVED = "2026-06-01T15:00:00.000Z";
 const ACCOUNT_ID = "123456789012345678";
@@ -28,8 +28,7 @@ const CORE_STAMPS = [
   "origin_binding",
 ] as const;
 
-const roots: string[] = [];
-afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
+const archiveTest = rootTest("kizuki-x-fid-");
 
 function tweet(fields: Record<string, unknown>) {
   return {
@@ -53,9 +52,11 @@ function assertIngress(event: CaptureEventInput): void {
   for (const key of CORE_STAMPS) expect(key in event).toBe(false);
 }
 
-async function writeArchive(files: Record<string, string | Uint8Array>): Promise<string> {
-  const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-x-fid-"));
-  roots.push(root);
+async function writeArchive(
+  makeRoot: RootFactory,
+  files: Record<string, string | Uint8Array>,
+): Promise<string> {
+  const root = await makeRoot();
   for (const [relative, body] of Object.entries(files)) {
     const full = path.join(root, relative);
     await mkdir(path.dirname(full), { recursive: true });
@@ -88,10 +89,10 @@ describe("X archive import source fidelity", () => {
     )).toThrow("invalid archive wrapper");
   });
 
-  test("a synthetic archive keeps long Unicode owner text, quote/reply ids, and file attachment descriptors", async () => {
+  archiveTest("a synthetic archive keeps long Unicode owner text, quote/reply ids, and file attachment descriptors", async (makeRoot) => {
     const long = "A longer synthetic owner post. ".repeat(40).trim();
     const unicode = "合成 cafe\u0301 🐦 العربية";
-    const root = await writeArchive({
+    const root = await writeArchive(makeRoot, {
       "data/account.js": ACCOUNT,
       "data/tweets.js": ytdTweets([
         tweet({
@@ -170,9 +171,9 @@ describe("X archive import source fidelity", () => {
     ]);
   });
 
-  test("malformed wrappers, oversized parts, duplicate ids, and resume keep the last durable cursor", async () => {
+  archiveTest("malformed wrappers, oversized parts, duplicate ids, and resume keep the last durable cursor", async (makeRoot) => {
     const secret = "private-archive-token";
-    const malformed = await writeArchive({
+    const malformed = await writeArchive(makeRoot, {
       "data/account.js": ACCOUNT,
       "data/tweets.js": `window.YTD.tweets.part0 = [${secret}];`,
     });
@@ -184,7 +185,7 @@ describe("X archive import source fidelity", () => {
       expect(String(error)).not.toContain(secret);
     }
 
-    const invalidDate = await writeArchive({
+    const invalidDate = await writeArchive(makeRoot, {
       "data/account.js": ACCOUNT,
       "data/tweets.js": ytdTweets([tweet({
         full_text: "synthetic invalid date",
@@ -194,14 +195,14 @@ describe("X archive import source fidelity", () => {
     await expect(connector(invalidDate).backfill(null))
       .rejects.toMatchObject({ code: "parse_error" });
 
-    const oversized = await writeArchive({
+    const oversized = await writeArchive(makeRoot, {
       "data/account.js": ACCOUNT,
       "data/tweets.js": ytdTweets([tweet({})]),
     });
     await truncate(path.join(oversized, "data", "tweets.js"), MAX_PART_BYTES + 1);
     await expect(connector(oversized).backfill(null)).rejects.toThrow("exceeds");
 
-    const duplicate = await writeArchive({
+    const duplicate = await writeArchive(makeRoot, {
       "data/account.js": ACCOUNT,
       "data/tweets.js": ytdTweets([tweet({ full_text: "first" })]),
       "data/tweets-part1.js": ytdTweets([tweet({ full_text: "same id later" })], 1),
@@ -209,7 +210,7 @@ describe("X archive import source fidelity", () => {
     await expect(connector(duplicate).backfill(null))
       .rejects.toMatchObject({ code: "parse_error" });
 
-    const resumable = await writeArchive({
+    const resumable = await writeArchive(makeRoot, {
       "data/account.js": ACCOUNT,
       "data/tweets.js": ytdTweets([tweet({ full_text: "part zero" })]),
       "data/tweets-part1.js": ytdTweets([tweet({

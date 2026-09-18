@@ -11,7 +11,7 @@ import { ulid } from "../src/util/ulid";
 import { doctorVault } from "../src/vault/doctor";
 import { serializePage } from "../src/vault/frontmatter";
 import { listCanonPagesReport } from "../src/vault/pages";
-import { pageProvenanceErrors } from "../src/vault/provenance";
+import { assessLivePageEvidence, pageProvenanceErrors } from "../src/vault/provenance";
 import { parsePageSources, validatePage } from "../src/vault/schema";
 import { putEvent } from "./claims/helpers";
 import { tempVault } from "./helpers/vault";
@@ -57,6 +57,31 @@ test("source shape requires a bounded nonempty list while archived history may b
     errors: ["sources: exceeds 100 items"] });
   expect(validatePage(data("valid", ["event-a"]))).toEqual([]);
   expect(validatePage(data("archived", [], "archived"))).toEqual([]);
+});
+
+test("the deterministic brief rollup is the only live page allowed to name no events", () => {
+  const rollup = (extra: Record<string, unknown> = {}) => ({
+    id: "rollup:brief-2026-09-03", title: "Daily brief 2026-09-03", type: "rollup",
+    status: "active", sensitivity: "personal", taint: "clean", sources: [],
+    "x-brief-producer": "deterministic", ...extra,
+  });
+  expect(parsePageSources(rollup())).toEqual({ ok: true, value: [] });
+  expect(validatePage(rollup())).toEqual([]);
+  // A model-narrated brief summarizes events, so it still has to name them.
+  expect(parsePageSources(rollup({ "x-brief-producer": "llm" }))).toEqual({
+    ok: false, errors: ["sources: must name at least one event unless archived"],
+  });
+  // The marker exempts nothing but a rollup.
+  expect(parsePageSources(rollup({ type: "fact" }))).toEqual({
+    ok: false, errors: ["sources: must name at least one event unless archived"],
+  });
+  // The exemption is provenance shape only; it never buys retrieval authority.
+  const f = fixture();
+  const page = { relPath: "dashboards/brief-2026-09-03.md", contentHash: "h", body: "",
+    data: rollup() } as unknown as Parameters<typeof assessLivePageEvidence>[1];
+  expect(assessLivePageEvidence(f.db, page)).toEqual({
+    admitted: false, reason: "sources_unavailable",
+  });
 });
 
 test("doctor identifies unrecorded owner pages while the existing scanner and target index preserve them", () => {

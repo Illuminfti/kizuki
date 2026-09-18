@@ -1,17 +1,17 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { expect, spyOn } from "bun:test";
+import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import * as filesystem from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { initVault } from "@kizuki/core";
 import { createMarkdownFolderConnector } from "../src/markdown-folder";
+import { rootTest, type RootFactory } from "./temp-root";
 
-const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-function fixture() {
-  // Vault custody rejects aliased ancestors, including macOS's /tmp alias.
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "kizuki-markdown-vault-"))), vault = join(root, "vault");
-  roots.push(root); initVault(vault); mkdirSync(join(vault, "auto"));
+const vaultTest = rootTest("kizuki-markdown-vault-");
+function fixture(makeRoot: RootFactory) {
+  // Vault custody rejects aliased ancestors, including macOS's /tmp alias;
+  // the factory resolves every root through realpath before handing it over.
+  const root = makeRoot.sync(), vault = join(root, "vault");
+  initVault(vault); mkdirSync(join(vault, "auto"));
   writeFileSync(join(vault, "auto", "synthetic.md"), "SYNTHETIC_GENERATED_CANON\n");
   writeFileSync(join(root, "first.md"), "SYNTHETIC_ORDINARY_SOURCE\n");
   return { root, vault };
@@ -91,8 +91,8 @@ function hideDescriptorPathsAndReplaceAfterParentOpen(
   };
 }
 
-test("a vault, its descendants, and a scanned ancestor refuse the whole capture", async () => {
-  const { root, vault } = fixture();
+vaultTest("a vault, its descendants, and a scanned ancestor refuse the whole capture", async (makeRoot) => {
+  const { root, vault } = fixture(makeRoot);
   for (const source of [vault, join(vault, "auto"), join(vault, "archive"), join(vault, ".kizuki"), root]) {
     const connector = createMarkdownFolderConnector({ path: source });
     await expect(connector.backfill(null)).rejects.toThrow("source_contains_kizuki_vault");
@@ -100,19 +100,19 @@ test("a vault, its descendants, and a scanned ancestor refuse the whole capture"
   }
 });
 
-test("aliases and excluded control names cannot hide vault identity", async () => {
-  const { root, vault } = fixture();
+vaultTest("aliases and excluded control names cannot hide vault identity", async (makeRoot) => {
+  const { root, vault } = fixture(makeRoot);
   const alias = join(root, "alias"); symlinkSync(join(vault, "auto"), alias);
   await expect(createMarkdownFolderConnector({ path: alias }).backfill(null)).rejects.toThrow("source_contains_kizuki_vault");
   await expect(createMarkdownFolderConnector({ path: vault, exclude: [".kizuki"] }).backfill(null)).rejects.toThrow("source_contains_kizuki_vault");
-  const source = mkdtempSync("/tmp/kizuki-markdown-control-"); roots.push(source);
+  const source = makeRoot.sync("kizuki-markdown-control-");
   writeFileSync(join(source, "note.md"), "SYNTHETIC_SOURCE\n");
   symlinkSync(join(source, "absent-control-target"), join(source, ".kizuki"));
   await expect(createMarkdownFolderConnector({ path: source }).backfill(null)).rejects.toThrow("source_contains_kizuki_vault");
 });
 
-test("a source becoming a vault refuses restart without turning prior notes into tombstones", async () => {
-  const source = mkdtempSync("/tmp/kizuki-markdown-source-"); roots.push(source);
+vaultTest("a source becoming a vault refuses restart without turning prior notes into tombstones", async (makeRoot) => {
+  const source = makeRoot.sync("kizuki-markdown-source-");
   writeFileSync(join(source, "note.md"), "SYNTHETIC_SOURCE\n");
   const connector = createMarkdownFolderConnector({ path: source });
   const first = await connector.backfill(null);
@@ -123,8 +123,8 @@ test("a source becoming a vault refuses restart without turning prior notes into
   expect((await connector.sync(first.cursor)).events).toEqual([]);
 });
 
-test("replacing a nested directory with a vault auto or archive symlink at the final open emits no vault bytes", async () => {
-  const { root, vault } = fixture();
+vaultTest("replacing a nested directory with a vault auto or archive symlink at the final open emits no vault bytes", async (makeRoot) => {
+  const { root, vault } = fixture(makeRoot);
   writeFileSync(join(vault, "auto", "inside.md"), "MUST_NOT_CAPTURE\n");
   writeFileSync(join(vault, "auto", "leak.md"), "MUST_NOT_CAPTURE\n");
   writeFileSync(join(vault, "archive", "inside.md"), "MUST_NOT_CAPTURE\n");
@@ -162,8 +162,8 @@ test("replacing a nested directory with a vault auto or archive symlink at the f
   }
 });
 
-test("a final-open vault swap does not tombstone a previously captured nested file", async () => {
-  const { root, vault } = fixture();
+vaultTest("a final-open vault swap does not tombstone a previously captured nested file", async (makeRoot) => {
+  const { root, vault } = fixture(makeRoot);
   writeFileSync(join(vault, "auto", "inside.md"), "MUST_NOT_CAPTURE\n");
   const source = join(root, "notes-open-tombstone");
   const nested = join(source, "nested");
@@ -202,8 +202,8 @@ test("a final-open vault swap does not tombstone a previously captured nested fi
   }
 });
 
-test("a no-proc final-open vault swap emits no vault bytes", async () => {
-  const { root, vault } = fixture();
+vaultTest("a no-proc final-open vault swap emits no vault bytes", async (makeRoot) => {
+  const { root, vault } = fixture(makeRoot);
   writeFileSync(join(vault, "auto", "inside.md"), "MUST_NOT_CAPTURE\n");
   writeFileSync(join(vault, "auto", "leak.md"), "MUST_NOT_CAPTURE\n");
   writeFileSync(join(vault, "archive", "inside.md"), "MUST_NOT_CAPTURE\n");
@@ -240,8 +240,8 @@ test("a no-proc final-open vault swap emits no vault bytes", async () => {
   }
 });
 
-test("a no-proc final-open vault swap does not tombstone a previously captured nested file", async () => {
-  const { root, vault } = fixture();
+vaultTest("a no-proc final-open vault swap does not tombstone a previously captured nested file", async (makeRoot) => {
+  const { root, vault } = fixture(makeRoot);
   writeFileSync(join(vault, "auto", "inside.md"), "MUST_NOT_CAPTURE\n");
   const source = join(root, "notes-noproc-open-tombstone");
   const nested = join(source, "nested");
@@ -279,8 +279,8 @@ test("a no-proc final-open vault swap does not tombstone a previously captured n
   }
 });
 
-test("replacing a nested directory with a vault auto or archive symlink refuses the scan", async () => {
-  const { root, vault } = fixture();
+vaultTest("replacing a nested directory with a vault auto or archive symlink refuses the scan", async (makeRoot) => {
+  const { root, vault } = fixture(makeRoot);
   writeFileSync(join(vault, "auto", "leak.md"), "MUST_NOT_CAPTURE\n");
   writeFileSync(join(vault, "archive", "leak.md"), "MUST_NOT_CAPTURE\n");
   for (const child of ["auto", "archive"] as const) {
@@ -311,8 +311,8 @@ test("replacing a nested directory with a vault auto or archive symlink refuses 
   }
 });
 
-test("an independent sibling folder remains a usable source", async () => {
-  const { root } = fixture();
+vaultTest("an independent sibling folder remains a usable source", async (makeRoot) => {
+  const { root } = fixture(makeRoot);
   const source = join(root, "notes"); mkdirSync(source);
   writeFileSync(join(source, "note.md"), "SYNTHETIC_SIBLING_SOURCE\n");
   const result = await createMarkdownFolderConnector({ path: source }).backfill(null);

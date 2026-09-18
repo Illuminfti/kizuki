@@ -30,6 +30,7 @@ export {
   laterReceiptsForPage,
   latestReceiptForPage,
   listCanonReceipts,
+  nextReceiptForPage,
   parseReceiptLine,
   readReceiptsLog,
   receiptsForClaim,

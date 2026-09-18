@@ -385,6 +385,7 @@ describe("public surface", () => {
       "markClaimsAfterPurge",
       "markClaimsPurged",
       "newFenceNonce",
+      "nextReceiptForPage",
       "normalizeObject",
       "normalizePurgeReason",
       "normalizeReplayFilter",
