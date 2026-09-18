@@ -44,14 +44,18 @@ export function supersededReleaseDefinitionClaims(text: string): string[] {
     : [];
 }
 
-/** `rfcs/0004-world-storage.md` is Appendix A to RFC 0004, not a second RFC. */
+/**
+ * `rfcs/0004-world-storage.md` is Appendix A to RFC 0004, not a second RFC.
+ * Naming it as one, or labelling a link to it "RFC ...", makes the appendix
+ * look like a separate binding document.
+ */
 export function appendixMiscitedAsRfc(text: string): string[] {
   const errors: string[] = [];
-  if (/RFC\s*0004[- ]world[- ]storage/i.test(text)) {
+  if (/RFC\s*0004[-\s]world[-\s]storage/i.test(text)) {
     errors.push("cites the world-storage appendix as an RFC by name");
   }
-  if (/\bRFC\b[^.\n]{0,40}\(?\[?0004-world-storage\.md/i.test(text)) {
-    errors.push("links the world-storage appendix as an RFC");
+  if (/\[\s*RFC\b[^\]]*\]\([^)]*0004-world-storage\.md[^)]*\)/i.test(text)) {
+    errors.push("labels a link to the world-storage appendix as an RFC");
   }
   return errors;
 }
@@ -84,4 +88,10 @@ test("the stale phrasings this gate retired still fail it", () => {
   expect(supersededReleaseDefinitionClaims("1.0 is stranger proof plus estate\ncutover; neither is done.").length)
     .toBeGreaterThan(0);
   expect(appendixMiscitedAsRfc("See RFC 0004-world-storage for the codec.").length).toBeGreaterThan(0);
+  expect(appendixMiscitedAsRfc("[RFC 0004 storage](rfcs/0004-world-storage.md)").length).toBeGreaterThan(0);
+});
+
+test("the appendix gate accepts the appendix named as an appendix", () => {
+  const honest = "The [storage and codec appendix (Appendix A to this RFC)](0004-world-storage.md) gives the codec.";
+  expect(appendixMiscitedAsRfc(honest)).toEqual([]);
 });
