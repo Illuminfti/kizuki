@@ -104,6 +104,7 @@ export const OWNER_AGENT_GRANT: Grant = freezeGrant({
     "graph_neighbors",
     "system_health",
     "propose",
+    "correct",
   ],
   rate_limit_per_minute: 60,
   relay_owner_corrections: true,
