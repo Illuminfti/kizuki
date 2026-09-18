@@ -25,9 +25,12 @@ Before proposing work, read:
    refactor, or PR review.
 
 For active campaign context, inspect the live issue and pull-request state.
-While issue #4 is open and not superseded, treat it as the durable handoff.
-Do not copy an old issue body, branch head, or test count into a new claim
-without checking it again.
+Issue #4 (the 120-hour RC control plane) is closed. `docs/decision-log.md` D21
+names the #497 epic as the execution map for 1.0, and README.md and
+`docs/CURRENT.md` treat #497 as the single authority for live packet
+dependencies, ownership and progress. Read the live state of #497 and the
+open pull requests, not a closed packet. Do not copy an old issue body,
+branch head, or test count into a new claim without checking it again.
 
 ## What Kizuki is
 
@@ -124,7 +127,7 @@ requests, their changed files, and recent commits. With GitHub CLI this is
 typically:
 
 ```bash
-gh issue view 4
+gh issue view 497
 gh pr list --state open
 gh pr view <number> --json headRefName,headRefOid,baseRefName,isDraft,files
 ```
