@@ -29,11 +29,13 @@ export const SCREENPIPE_SOURCE_URL =
 export const SCREENPIPE_EXPECTED = {
   backfill_stored: 3,
   backfill_duplicates: 0,
-  /** Both stream cursors are exhausted; a repeat sweep stores and duplicates nothing. */
+  /** Both snapshot watermarks are consumed, so a repeat backfill reads nothing. */
   repeat_stored: 0,
   repeat_duplicates: 0,
+  /** An incremental sweep re-presents the same settled rows once; the
+   * append-only ledger recognises every one of them and stores nothing. */
   sync_stored: 0,
-  sync_duplicates: 0,
+  sync_duplicates: 3,
   /** One capture note per emitted row, plus the app, site and speaker subjects. */
   proposals_created: 8,
   query_hits: 1,
