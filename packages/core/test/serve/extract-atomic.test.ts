@@ -67,12 +67,14 @@ test("failed batch rolls back corroboration and recovery does not repeat its inc
   const f = fixture();
   try {
     const event = putEvent(f.db);
+    // The batch must carry genuinely new evidence: re-citing `event` would be a replay.
+    const confirmation = putEvent(f.db, { source_record_id: "rec-confirmation" });
     const initial = await insertClaim({ db: f.db }, claimInput(event, { subject: "person:first", body: "The first existing claim.",
       producer: "model", confidence: 0.2 }));
     if (initial.outcome !== "stored") throw new Error("fixture claim was not stored");
     const before = getClaim(f.db, initial.claim.claim_id);
     const calls = { count: 0 };
-    const options = { producer: producer([draft(event, "person:first"), draft(event, "person:second")], calls),
+    const options = { producer: producer([draft(confirmation, "person:first"), draft(event, "person:second")], calls),
       model_ref: "fixture:atomic", claims: { db: f.db }, budget: createBudgetTracker({ canon_writes_per_run: 8 }) };
     f.db.exec("CREATE TRIGGER fail_second BEFORE INSERT ON claims WHEN NEW.subject='person:second' BEGIN SELECT RAISE(ABORT,'atomic interruption'); END");
     await expect(runWritePass(f.db, f.path, options)).rejects.toThrow("atomic interruption");
@@ -142,6 +144,8 @@ test("retrieval failure and restart drain the outbox without replaying corrobora
   const f = fixture();
   try {
     const event = putEvent(f.db);
+    // The batch must carry genuinely new evidence: re-citing `event` would be a replay.
+    const confirmation = putEvent(f.db, { source_record_id: "rec-confirmation" });
     const initial = await insertClaim({ db: f.db }, claimInput(event, { subject: "person:first", body: "The first existing claim.",
       producer: "model", confidence: 0.2 }));
     if (initial.outcome !== "stored") throw new Error("fixture claim was not stored");
@@ -154,7 +158,7 @@ test("retrieval failure and restart drain the outbox without replaying corrobora
     }
     const retrieval = new FailingPort();
     const calls = { count: 0 };
-    const model = producer([draft(event, "person:first")], calls);
+    const model = producer([draft(confirmation, "person:first")], calls);
     const budget = createBudgetTracker({ canon_writes_per_run: 8 });
     await runWritePass(f.db, f.path, { producer: model, model_ref: "fixture:atomic", claims: { db: f.db, retrieval }, budget });
     expect(getClaim(f.db, initial.claim.claim_id)?.corroboration).toBe(2);
