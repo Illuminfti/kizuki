@@ -21,6 +21,9 @@ export function assessLivePageEvidence(
   if (canonPageRecoveryPending(db, page.relPath)) return { admitted: false, reason: "recovery_pending" };
   const sources = parsePageSources(page.data);
   if (!sources.ok) return { admitted: false, reason: "sources_unavailable" };
+  // Shape-valid but sourceless pages (the deterministic brief rollup) are not
+  // evidence. Fail closed rather than admit a page that names no event.
+  if (sources.value.length === 0) return { admitted: false, reason: "sources_unavailable" };
   const sourceIds = [...new Set(sources.value.map(eventIdFromReference))];
   try {
     for (const id of sourceIds) {

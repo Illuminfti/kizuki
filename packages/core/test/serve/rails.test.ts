@@ -52,11 +52,16 @@ describe("rails", () => {
     expect(brief.startsWith("---\n")).toBe(true);
     const parsed = parseFrontmatter(brief);
     expect(validatePage(parsed.data)).toEqual([]);
-    const vaultDoctor = doctorVault(vault);
+    // The rollup is a deterministic notification, not evidence-backed canon:
+    // it names no events, and it stays live and queryable rather than archived.
+    expect(parsed.data["sources"]).toEqual([]);
+    expect(parsed.data["status"]).toBe("active");
+    const vaultDoctor = doctorVault(vault, db);
     const briefPage = vaultDoctor.pages.find(
       (page) => page.page === "dashboards/brief-2026-09-03.md",
     );
     expect(briefPage?.errors ?? ["missing brief page"]).toEqual([]);
+    expect(vaultDoctor.counts.invalid).toBe(0);
     expect(brief).toContain("There is no review queue");
     expect(brief).toContain("kizuki tell");
     expect(brief).not.toContain("kizuki review");
