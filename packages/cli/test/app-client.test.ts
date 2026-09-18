@@ -285,6 +285,22 @@ test('memory keeps Markdown onboarding when a source still needs permission or i
     expect(findAction(f.main, 'Import history')).toBeTruthy();
 });
 
+test('first import explains permitted source access without calling Gmail a Markdown folder', async () => {
+    const f = fixture();
+    f.evaluate(`state.view='memory'; state.hits=null; state.sources=[{...state.sources[0],source_key:'gmail-synthetic',connector_id:'kizuki.gmail',display_name:'Gmail',consent:'active',last_run:null}]; render();`);
+    expect(f.main.textContent).toContain('Import reads only the information permitted for this source');
+    expect(f.main.textContent).toContain('Search works without a model');
+    expect(f.main.textContent).not.toContain('reads your Markdown');
+    const work = findAction(f.main, 'Import history').fire('click'); await tick();
+    expect(f.requests[0]!.route).toBe('capture');
+    expect(f.requests[0]!.payload).toEqual({ source_key: 'gmail-synthetic', mode: 'backfill' });
+    f.reply('capture', { operation_id: 'gmail-import' }); await tick();
+    f.reply('operation', { id: 'gmail-import', kind: 'capture', state: 'failed', error: { code: 'unavailable' } });
+    await work;
+    expect(f.dialog.textContent).toContain('Import did not finish');
+    expect(findAction(f.dialog, 'Try again')).toBeTruthy();
+});
+
 test('sources distinguish incomplete history from a finished backfill without promising complete coverage', () => {
     const f = fixture();
     f.evaluate(`state.view='sources'; Object.assign(state.sources[0], {last_run:'2026-09-07T00:00:00Z', stored:3, backfill_complete:false}); render();`);
