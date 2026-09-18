@@ -26,6 +26,7 @@ export {
   PAGE_ACTIONS,
   RECEIPTS_PATH,
   RECEIPT_KINDS,
+  countCanonReceipts,
   getCanonReceipt,
   laterReceiptsForPage,
   latestReceiptForPage,

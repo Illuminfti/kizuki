@@ -2,6 +2,7 @@ import { Database, constants } from "bun:sqlite";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { openCredentialDirectory, type CredentialDirectory } from "../agents/credential-file";
+import { LEDGER_BUSY_TIMEOUT_MS } from "./limits";
 
 type IdentityPhase = "open" | "tables" | "version" | "transaction" | "close";
 type IdentityDiagnostic =
@@ -78,6 +79,12 @@ function readIdentity(db: Database): { schemaVersion: number; accepted: number }
   return { schemaVersion: versions[0]!.version, accepted };
 }
 
+/** A read-only handle still waits for a live writer rather than failing at once. */
+function bounded(db: Database): Database {
+  db.exec(`PRAGMA busy_timeout = ${LEDGER_BUSY_TIMEOUT_MS}`);
+  return db;
+}
+
 function readAndClose(db: Database): { schemaVersion: number; accepted: number } {
   try { return atPhase("transaction", () => db.transaction(() => readIdentity(db)).deferred()); }
   finally {
@@ -90,7 +97,7 @@ function readAndClose(db: Database): { schemaVersion: number; accepted: number }
 export function inspectLedgerIdentity(vaultPath: string): { schemaVersion: number; accepted: number } {
   const path = join(resolve(vaultPath), ".kizuki", "kizuki.db");
   if (process.platform !== "darwin") {
-    try { return readAndClose(atPhase("open", () => new Database(path, { readonly: true }))); }
+    try { return readAndClose(atPhase("open", () => bounded(new Database(path, { readonly: true })))); }
     catch (error) { throw new LedgerIdentityError("invalid_ledger", { cause: error },
       error instanceof LedgerIdentityError ? error.diagnostic : undefined); }
   }
@@ -106,7 +113,7 @@ export function inspectLedgerIdentity(vaultPath: string): { schemaVersion: numbe
     if (observedSidecars.some(value => value !== null)) {
       // Live SQLite must see committed WAL frames. Never substitute a main-only
       // immutable view when a journal is present, even if that journal is empty.
-      const result = readAndClose(atPhase("open", () => new Database(path, { readonly: true })));
+      const result = readAndClose(atPhase("open", () => bounded(new Database(path, { readonly: true }))));
       try {
         const current = directory.inspectFileIdentity("kizuki.db");
         if (current === null || current.dev !== original.dev || current.ino !== original.ino ||
@@ -128,8 +135,8 @@ export function inspectLedgerIdentity(vaultPath: string): { schemaVersion: numbe
     let result: { schemaVersion: number; accepted: number } | undefined;
     let failure: unknown;
     try {
-      result = readAndClose(atPhase("open", () => new Database(`${pathToFileURL(path).href}?immutable=1&mode=ro`,
-        constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI | constants.SQLITE_OPEN_NOFOLLOW)));
+      result = readAndClose(atPhase("open", () => bounded(new Database(`${pathToFileURL(path).href}?immutable=1&mode=ro`,
+        constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI | constants.SQLITE_OPEN_NOFOLLOW))));
     } catch (error) { failure = error; }
     // Check even when SQLite refused: a raced writer is busy, not evidence that
     // a previously admitted ledger is foreign or safe to repair.

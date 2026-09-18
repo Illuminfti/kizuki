@@ -60,7 +60,12 @@ function produced(receipt: RunReceipt): boolean {
     receipt.claims_written > 0 ||
     receipt.canon_writes > 0 ||
     receipt.retrieval.upserts > 0 ||
-    receipt.retrieval.removals > 0
+    receipt.retrieval.removals > 0 ||
+    // A retrieval sweep with nothing outstanding finished its whole job. Only
+    // a sweep that leaves work behind is an unproductive pass.
+    (receipt.rail === "retrieval-sweep" &&
+      receipt.status === "ok" &&
+      receipt.retrieval.pending_ops === 0)
   );
 }
 

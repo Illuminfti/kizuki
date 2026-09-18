@@ -104,6 +104,7 @@ export const OWNER_AGENT_GRANT: Grant = freezeGrant({
     "graph_neighbors",
     "system_health",
     "propose",
+    "correct",
   ],
   rate_limit_per_minute: 60,
   relay_owner_corrections: true,
@@ -147,6 +148,8 @@ export type DenyReason =
   | "unknown_agent"
   | "rate_limited"
   | "held"
+  /** Another writer holds the ledger; the same call succeeds on retry. */
+  | "busy"
   /** A call refused before any data was read. */
   | "invalid_arguments"
   /** The engine failed; the cause never leaves core. */
