@@ -31,7 +31,7 @@ import { sha256Hex } from "../util/hash";
 import { isVisibleIdentifier } from "../util/opaque-identifier";
 import { isUlid, ulid } from "../util/ulid";
 import { parseFrontmatter } from "../vault/frontmatter";
-import { listCanonPagesReport } from "../vault/pages";
+import { MAX_CANON_PAGES, MAX_CANON_WALK_BYTES, listCanonPagesReport } from "../vault/pages";
 import type { CanonPage } from "../vault/pages";
 import { eventPurgeProofDigest, initPurgeOps, PURGE_SLA_SECONDS } from "./purge-schema";
 import { tableColumns, tableExists } from "./schema";
@@ -50,6 +50,7 @@ export const PURGE_ERROR_CODES = [
   "delete_mismatch",
   "absence_failed",
   "canon_changed",
+  "canon_scan_truncated",
   "identity_unsupported",
   "subject_namespace_required",
   "subject_source_required",
@@ -489,9 +490,21 @@ function retrievalPresence(vaultPath: string): Exclude<PurgeStorePresence, "unav
     : "not_configured";
 }
 
+/**
+ * Every canon page as it stands right now. A truncated walk cannot enumerate
+ * the pages that cite a purged event, so purge refuses rather than proving
+ * totality over a partial scan. The walk-level truncation marker names the
+ * vault root, not a page, and is never opened.
+ */
 function collectCanonSnapshot(vaultPath: string): PageFingerprint[] {
   if (vaultPath === ":memory:" || vaultPath.length === 0) return [];
   const report = listCanonPagesReport(vaultPath);
+  if (report.truncated) {
+    throw new PurgeError(
+      "canon_scan_truncated",
+      `purge refused: canon scan stopped at its bound (${MAX_CANON_PAGES} pages or ${MAX_CANON_WALK_BYTES} bytes); the affected pages cannot be enumerated`,
+    );
+  }
   const rows: PageFingerprint[] = [];
   for (const page of report.pages) {
     rows.push({
