@@ -113,6 +113,14 @@ export type { ServeDoctorOptions } from "./doctor";
 export { startServeHttp } from "./http";
 export type { ServeHttpHandle, ServeHttpOptions } from "./http";
 export { readServePid, runServeDaemon, servePidPath, serveStatus } from "./daemon";
+export {
+  asLeaseHeld,
+  LEASE_HELD_CODE,
+  leaseHeldMessage,
+  ledgerLeaseHolder,
+  LedgerLeaseHeldError,
+  withLeaseHeldRefusal,
+} from "./lease-held";
 export type { ServeDaemonOptions, ServeStatus } from "./daemon";
 export { SERVE_SURFACE_ID, createServeSurfacePort } from "./surface";
 export type { ServeSurfaceOptions } from "./surface";

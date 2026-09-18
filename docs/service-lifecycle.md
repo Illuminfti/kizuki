@@ -20,6 +20,22 @@ When uninstalling a stopped systemd service that retains a failure record,
 Kizuki resets that unit's failure record before removing the definition. It
 checks the stopped state again; it does not reset failures for other units.
 
+## The daemon and owner commands share one ledger
+
+The installed service and any owner-invoked command write to the same SQLite
+ledger, which admits one writer at a time. Rails take the write lock for the
+length of one batch and never hold a write transaction across a network or
+model call, and every connection opens with a bounded busy timeout, so `sync`,
+`backfill`, `import`, `query` and `context` keep working while the service
+runs. A contended batch is retried within a bound and resumes from its
+checkpoint.
+
+When a writer outlasts every retry, the command stops with `lease_held`, names
+the process holding the writer lease and says that running the same command
+again resumes from the last checkpoint. Stopping the service is not required
+for ordinary capture; it remains the way to release a lease held by a stuck
+process. The MCP adapter refuses the same case as `busy` with a retry hint.
+
 Definitions and service intent use bounded private files, atomic replacement and
 directory synchronization. A process lock serializes changes for one vault. A
 private transaction snapshot retains the previous definition and intent until

@@ -1,3 +1,4 @@
+import { isLedgerBusy } from "../ledger/busy";
 import { purgeReadEpoch } from "../derived-holds";
 import { canonReadGeneration } from "../canon/write-intent";
 import { sourcePolicyEpoch } from "../ledger/source-grants";
@@ -17,7 +18,7 @@ import type { ClaimsIo } from "../claims/store";
 import { claimsEpoch } from "./epoch";
 import { compareText } from "../util/order";
 import { isPlainObject } from "../util/validate";
-import { ServeError, ENVELOPE_SCHEMA } from "./types";
+import { LEDGER_BUSY_RETRY_AFTER_SECONDS, ServeError, ENVELOPE_SCHEMA } from "./types";
 import type {
   CanonChunk,
   Denied,
@@ -272,6 +273,15 @@ function enter(
   return { live: { ...live, sourcePurpose: tool === "correct" ? "correction" : tool === "propose" ? "derive" : live.sourcePurpose ?? "recall" }, audit_id: reserved.audit_id };
 }
 
+/** Contention reads as a retry, never as a broken engine or a denied grant. */
+function ledgerBusyServeError(error: unknown): ServeError {
+  return new ServeError(
+    "busy",
+    "the ledger is busy while another writer holds it; retry this call",
+    { retry_after_seconds: LEDGER_BUSY_RETRY_AFTER_SECONDS, cause: error },
+  );
+}
+
 /** Whatever `run` threw becomes an audited refusal with a stable message. */
 function failed(
   live: ServeContext,
@@ -287,6 +297,12 @@ function failed(
   if (error instanceof ServeError) {
     record(error.code);
     throw error;
+  }
+  if (isLedgerBusy(error)) {
+    // The audit row is itself a write; a busy ledger may refuse it too. The
+    // caller still gets the typed refusal rather than a raw lock failure.
+    try { record("busy"); } catch { /* recorded when the ledger frees up */ }
+    throw ledgerBusyServeError(error);
   }
   if (error instanceof RangeError) {
     record("invalid_arguments");
@@ -337,6 +353,21 @@ export function gate<T>(
   args: Record<string, unknown>,
   run: (call: ServeCall) => Served<T>,
 ): Envelope<T> {
+  try {
+    return gated(ctx, tool, args, run);
+  } catch (error) {
+    // Reserving and updating the audit row are writes outside `failed`.
+    if (error instanceof ServeError || !isLedgerBusy(error)) throw error;
+    throw ledgerBusyServeError(error);
+  }
+}
+
+function gated<T>(
+  ctx: ServeContext,
+  tool: Tool,
+  args: Record<string, unknown>,
+  run: (call: ServeCall) => Served<T>,
+): Envelope<T> {
   const at = new Date().toISOString();
   const { live, audit_id } = enter(ctx, tool, args, at);
   const sourceEpoch = sourcePolicyEpoch(live.db);
@@ -368,6 +399,20 @@ export function gate<T>(
  * come through here; nothing else about the order changes.
  */
 export async function gateAsync<T>(
+  ctx: ServeContext,
+  tool: Tool,
+  args: Record<string, unknown>,
+  run: (call: ServeCall) => Promise<Served<T>>,
+): Promise<Envelope<T>> {
+  try {
+    return await gatedAsync(ctx, tool, args, run);
+  } catch (error) {
+    if (error instanceof ServeError || !isLedgerBusy(error)) throw error;
+    throw ledgerBusyServeError(error);
+  }
+}
+
+async function gatedAsync<T>(
   ctx: ServeContext,
   tool: Tool,
   args: Record<string, unknown>,

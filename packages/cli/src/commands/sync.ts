@@ -1,5 +1,5 @@
 import { closeHostConnector } from "../connections";
-import { runRail, runToCompletion } from "@kizuki/core";
+import { asLeaseHeld, runRail, runToCompletion } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import {
   ConnectionError,
@@ -97,7 +97,10 @@ export const syncCommand: Command = {
             }
             for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
           } finally { await closeHostConnector(connector); }
-        } catch (error) {
+        } catch (raw) {
+          // One busy source must not be reported as a broken connector, and
+          // must not stop the sources after it.
+          const error = asLeaseHeld(ctx.vaultPath, raw) ?? raw;
           failed = true;
           io.err(
             `error: ${selected.connection.connector_id} source=${selected.connection.source_key}: ${error instanceof Error ? error.message : String(error)}`,

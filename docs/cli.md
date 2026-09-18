@@ -92,6 +92,8 @@ source grant permitting capture. The three policy options must appear together;
 they apply explicit consent before reading content. Without a grant, import
 enrolls the source, refuses capture, and prints the source key and grant command. For local
 Beeper messages, use `connect beeper` followed by `backfill beeper`.
+An import runs alongside the serve daemon: see
+[Running commands while the daemon writes](#running-commands-while-the-daemon-writes).
 
 ## connect
 
@@ -243,6 +245,20 @@ retrieval requirements.
 The Beeper connector conservatively rescans available history on each completed
 sync cycle to observe edits and explicit tombstones; unchanged records deduplicate.
 
+### Running commands while the daemon writes
+
+The serve daemon and an owner-invoked capture share one SQLite ledger, and
+SQLite admits one writer at a time. Every ledger connection opens with a
+bounded busy timeout, and a contended batch is retried within a bound, so
+ordinary rail activity does not interrupt a bulk import or a read.
+
+Each batch commits with its checkpoint before the next one is requested, so an
+interrupted run resumes rather than replays; events already committed
+deduplicate on the next pass. If a writer holds the ledger past every retry,
+the command stops with `lease_held`, naming the process that holds the writer
+lease and stating that running the same command again resumes from the last
+checkpoint. `database is locked` is not an error this CLI reports.
+
 ## query
 
 ```text
@@ -253,6 +269,11 @@ FTS floor. Ceiling is `private`. Unlabeled hits are withheld on stderr
 (`withheld=N (no sensitivity label)`). A stale or partial index exits `1`
 unless `--degraded` is set. Zero labeled hits and zero withheld prints
 `0 hits` on stderr.
+
+Reads wait out ordinary daemon writes rather than failing: `query` and
+`context` keep the owner access-audit writer on the same bounded busy timeout
+as every other ledger connection, and report `lease_held` rather than a lock
+error when a writer outlasts it.
 
 Query and context reads never initialize or repair a vault. They retain the
 required owner access-audit rows, while data queries use a logically query-only
@@ -361,7 +382,10 @@ user service when a supervisor exists. The CLI still runs when the daemon is
 down. Before a rail writes canon, `serve` binds the selected LLM port from
 `[ports.llm]`; a model name by itself never enables writes. `kizuki doctor`
 reports a complete binding as `on` and an incomplete configuration as
-`unverified`.
+`unverified`. Rails hold the ledger only for the length of one batch; they
+never keep a write transaction open across a network or model call, so owner
+verbs keep working while the loop runs. See
+[Running commands while the daemon writes](#running-commands-while-the-daemon-writes).
 
 ## models
 
@@ -560,6 +584,12 @@ search results and context packets include `retrieval-unavailable`. The session
 does not steal another process's lease or reconnect the engine mid-session.
 An explicit `--retrieval ID` remains required. Unknown engines and invalid
 configuration refuse startup. No model is needed for the lexical floor.
+
+Two agent clients and the serve daemon can hold the same ledger at once. The
+adapter opens it with the same bounded busy timeout as the CLI. A call that a
+live writer outlasts is refused as `busy` with `retry_after_seconds`, never as
+a lock error, and the identical call succeeds on retry. Startup names the
+holder rather than reporting a healthy vault as unopenable.
 
 ## agent
 

@@ -84,6 +84,9 @@ export type Envelope<T = undefined> = {
   data?: T;
 };
 
+/** How long a caller should wait before retrying a contended ledger. */
+export const LEDGER_BUSY_RETRY_AFTER_SECONDS = 1;
+
 /**
  * `message` is stable and generic: no captured text, no path, and no
  * caller-supplied id. The original failure rides on `cause` for the owner's
