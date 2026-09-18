@@ -54,6 +54,22 @@ describe("committed Maestro state validation", () => {
     }
   });
 
+  test("rejects lone surrogate task and candidate IDs without changing or exposing them", () => {
+    for (const id of ["lane-\uD800", "lane-\uDC00", "lane-\uD800x\uDC00"]) {
+      const source = { id, status: "done" };
+      const close = { id, sourceTaskId: id };
+      expect(validateMaestroState([source], [close])).toEqual([
+        "task 1: invalid record or id",
+        "candidate 1: invalid record or id",
+      ]);
+      expect(source.id).toBe(id);
+      expect(close.id).toBe(id);
+    }
+    for (const id of ["lane-日本語", "lane-\uD83D\uDE00", "lane-�"]) {
+      expect(validateMaestroState([{ id, status: "done" }], [{ id, sourceTaskId: id }])).toEqual([]);
+    }
+  });
+
   test("rejects padded statuses on tasks and candidates without mutating them", () => {
     for (const status of [" in_progress", "in_progress ", "\tin_progress", "in_progress\n", "\u00a0in_progress"]) {
       const paddedTask = { ...task, status };
@@ -86,6 +102,69 @@ describe("committed Maestro state validation", () => {
       expect(source.supersededBy).toBe(supersededBy);
       expect(close.supersededBy).toBe(supersededBy);
     }
+  });
+
+  test("rejects lone surrogate statuses without mutating or exposing them", () => {
+    const joined = (errors: string[]) => errors.join("\n");
+    for (const status of ["\uD800pending", "pending\uDC00", "in_prog\uD800ress"]) {
+      const corruptedTask = { ...task, status };
+      const corruptedCandidate = { ...candidate, status };
+      expect(validateMaestroState([corruptedTask], [])).toEqual(["task 1: invalid status"]);
+      expect(validateMaestroState([historical], [corruptedCandidate])).toEqual([
+        "candidate 1: invalid status",
+        "candidate 1: candidate status disagrees with source task",
+      ]);
+      expect(joined(validateMaestroState([corruptedTask], []))).not.toContain(status);
+      expect(corruptedTask.status).toBe(status);
+      expect(corruptedCandidate.status).toBe(status);
+    }
+    expect(validateMaestroState([task], [])).toEqual([]);
+    expect(validateMaestroState([{ ...task, status: "in_progress" }], [])).toEqual([
+      "task 1: live reservation in committed state",
+    ]);
+  });
+
+  test("rejects lone surrogate supersession references even when candidate and task agree", () => {
+    for (const supersededBy of [`${pointer}\uD800`, `\uDC00${pointer}`]) {
+      const source = { ...historical, supersededBy };
+      const close = { ...candidate, supersededBy };
+      expect(validateMaestroState([source], [])).toEqual(["task 1: invalid supersession reference"]);
+      expect(validateMaestroState([source], [close])).toEqual([
+        "task 1: invalid supersession reference",
+      ]);
+      expect(source.supersededBy).toBe(supersededBy);
+      expect(close.supersededBy).toBe(supersededBy);
+    }
+  });
+
+  test("rejects lone surrogates in other committed text without mutating or exposing them", () => {
+    const joined = (errors: string[]) => errors.join("\n");
+    for (const [field, value] of [
+      ["title", "Wave \uD800"],
+      ["description", "see \uDC00 docs"],
+      ["closeReason", "Superseded \uD800 by RFC"],
+      ["note", "\uDC80"],
+    ] as const) {
+      const corruptedTask = { ...task, [field]: value };
+      expect(validateMaestroState([corruptedTask], [])).toEqual(["task 1: invalid text"]);
+      expect(joined(validateMaestroState([corruptedTask], []))).not.toContain(value);
+      expect((corruptedTask as Record<string, unknown>)[field]).toBe(value);
+      const corruptedCandidate = { ...candidate, [field]: value };
+      expect(validateMaestroState([historical], [corruptedCandidate])).toEqual([
+        "candidate 1: invalid text",
+      ]);
+      expect((corruptedCandidate as Record<string, unknown>)[field]).toBe(value);
+    }
+    for (const corrupted of [
+      { ...task, labels: ["ok", "\uD800"] },
+      { ...task, meta: { deep: ["\uDC80"] } },
+      { ...task, note: { nested: { deeper: "\uDFFF" } } },
+    ]) {
+      expect(validateMaestroState([corrupted], [])).toEqual(["task 1: invalid text"]);
+    }
+    expect(validateMaestroState([
+      { ...task, title: "日本語 — §18.4", description: "ok \uFFFD text", labels: ["領域"] },
+    ], [])).toEqual([]);
   });
 
   test("accepts done close candidates using the historical task status", () => {
@@ -174,6 +253,84 @@ describe("committed Maestro state validation", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test("CLI rejects invalid UTF-8 in tasks and candidates without rewriting bytes", () => {
+    const root = mkdtempSync(join(tmpdir(), "maestro-utf8-"));
+    try {
+      mkdirSync(join(root, "scripts"));
+      const state = join(root, ".maestro", "tasks");
+      mkdirSync(join(state, "candidates"), { recursive: true });
+      const script = join(root, "scripts", "verify-maestro.ts");
+      writeFileSync(script, readFileSync(join(import.meta.dir, "verify-maestro.ts")));
+      const taskPath = join(state, "tasks.jsonl");
+      const candidatePath = join(state, "candidates", "example.json");
+      const decoder = new TextDecoder("utf-8", { fatal: true });
+      const isValidUtf8 = (bytes: Buffer) => {
+        try { decoder.decode(bytes); return true; } catch { return false; }
+      };
+      for (const target of [taskPath, candidatePath]) {
+        for (const bytes of [Buffer.from("日本語 �"), Buffer.from([0xef, 0xbf, 0xbd]),
+          Buffer.from([0xff]), Buffer.from([0xc3]), Buffer.from([0xc0, 0xaf])]) {
+          writeFileSync(taskPath, JSON.stringify(historical) + "\n");
+          writeFileSync(candidatePath, JSON.stringify(candidate));
+          const record = target === taskPath ? historical : candidate;
+          const input = Buffer.concat([
+            Buffer.from(JSON.stringify(record).slice(0, -1) + ',"note":"'),
+            bytes, Buffer.from('"}\n'),
+          ]);
+          writeFileSync(target, input);
+          const beforeTask = readFileSync(taskPath);
+          const beforeCandidate = readFileSync(candidatePath);
+          const result = spawnSync(process.execPath, [script], {
+            encoding: "utf8", timeout: 5000, killSignal: "SIGKILL",
+          });
+          const valid = isValidUtf8(bytes);
+          expect(result.error).toBeUndefined();
+          expect(result.signal).toBeNull();
+          expect(result.status).toBe(valid ? 0 : 1);
+          expect(result.stdout).toBe(valid ? "Maestro committed state verification passed\n" : "");
+          expect(result.stderr).toBe(valid ? "" : "Maestro committed state is missing or malformed\n");
+          expect(readFileSync(taskPath)).toEqual(beforeTask);
+          expect(readFileSync(candidatePath)).toEqual(beforeCandidate);
+        }
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  for (const target of ["tasks", "candidate"]) {
+    test(`CLI rejects a leading BOM in ${target} without changing bytes`, () => {
+      const root = mkdtempSync(join(tmpdir(), "maestro-bom-"));
+      try {
+        mkdirSync(join(root, "scripts"));
+        const state = join(root, ".maestro", "tasks");
+        mkdirSync(join(state, "candidates"), { recursive: true });
+        const script = join(root, "scripts", "verify-maestro.ts");
+        writeFileSync(script, readFileSync(join(import.meta.dir, "verify-maestro.ts")));
+        const taskPath = join(state, "tasks.jsonl");
+        const candidatePath = join(state, "candidates", "example.json");
+        writeFileSync(taskPath, JSON.stringify(historical) + "\n");
+        writeFileSync(candidatePath, JSON.stringify(candidate));
+        const path = target === "tasks" ? taskPath : candidatePath;
+        writeFileSync(path, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), readFileSync(path)]));
+        const beforeTask = readFileSync(taskPath);
+        const beforeCandidate = readFileSync(candidatePath);
+        const result = spawnSync(process.execPath, [script], {
+          encoding: "utf8", timeout: 5000, killSignal: "SIGKILL",
+        });
+        expect(result.error).toBeUndefined();
+        expect(result.signal).toBeNull();
+        expect(result.status).toBe(1);
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toBe("Maestro committed state is missing or malformed\n");
+        expect(readFileSync(taskPath)).toEqual(beforeTask);
+        expect(readFileSync(candidatePath)).toEqual(beforeCandidate);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
 
   test("validates the repository ledger and every close candidate", () => {
     const root = join(import.meta.dir, "..", ".maestro", "tasks");
