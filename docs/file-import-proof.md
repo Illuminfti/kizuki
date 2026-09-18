@@ -4,9 +4,12 @@ This synthetic fixture harness exercises the compiled CLI for eight local export
 formats: ICS, Markdown folders, ChatGPT, Claude, X archives, WhatsApp, Pocket and
 Omnivore. It uses serialized files, explicit source consent and separate temporary
 vaults. It accesses no account and supplies no live-account, unfamiliar-user or
-overall release credit. It does supply the eight `connector.<id>` acceptance
-gates whose C3 evidence class is `file-import`; the ninth witnessable connector,
-`kizuki.screenpipe`, has its own [local-source proof](screenpipe-proof.md).
+overall release credit. It writes the acceptance receipts for the eight
+`connector.<id>` gates whose C3 evidence class is `file-import`; those gates stay
+`UNVERIFIABLE` until the evaluator can distinguish an executed receipt from an
+authored one (see [release-acceptance.md](release-acceptance.md)). The ninth
+witnessable connector, `kizuki.screenpipe`, has its own
+[local-source proof](screenpipe-proof.md).
 
 Build and prove one package, then run the file-format proof against those bytes:
 
@@ -69,7 +72,7 @@ frozen C3 catalogue uses, plus `index.json`. Each receipt declares
 lists the executed steps — capture, idempotent repeat, revoke, the refusal that
 follows it, and physical purge with its receipted status. A format whose cases
 did not all pass keeps its receipt with `acceptance_credit: false`, which the
-evaluator consumes to `FAIL` rather than skipping. A format the harness never
+evaluator refuses outright rather than skipping. A format the harness never
 reached emits no receipt and names its blocker in `index.json`'s `unresolved`.
 The evaluator's receipt schema is closed, so the observed row counts and the
 honest limits each importer's own behaviour showed are recorded in `index.json`

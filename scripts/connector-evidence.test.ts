@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
-import { CONNECTORS, EVALUATOR_ROOT, EvidenceError, consumeConnectorReceipt } from "./release-evidence";
+import {
+  CONNECTORS, CONNECTOR_PRODUCER_FILES, EVALUATOR_ROOT, EvidenceError, consumeConnectorReceipt, producerEntrypointLanded,
+} from "./release-evidence";
 import {
   ConnectorEvidenceError, LIVE_ACCOUNT_REFUSAL, REQUIRED_EVIDENCE_STEPS,
   buildConnectorEvidenceReceipt, connectorEvidenceEntry, connectorProducerRevision, writeConnectorEvidence,
@@ -12,6 +14,10 @@ import { join } from "node:path";
 const CANDIDATE = "a".repeat(40);
 const REVISION = connectorProducerRevision(EVALUATOR_ROOT);
 const WITNESSABLE = CONNECTORS.filter(entry => entry.evidence !== "live-account");
+/** The verdict a well-formed connector receipt reaches today. The evaluator
+ * cannot separate an executed receipt from an authored one, so it credits
+ * neither; see docs/release-acceptance.md. */
+const TERMINAL = { status: "UNVERIFIABLE", reason: "connector-producer-not-landed", creditDigest: false } as const;
 const LIVE = CONNECTORS.filter(entry => entry.evidence === "live-account");
 
 function step(id: string, patch: Record<string, unknown> = {}) {
@@ -47,14 +53,31 @@ test("the catalogue offers exactly nine connectors this repository can witness",
   expect(LIVE.map(entry => entry.id).sort()).toEqual(["gmail", "google-calendar", "imap", "telegram", "whoop", "x-api"]);
 });
 
-test("every witnessable connector's receipt consumes to PASS for its own gate", () => {
+test("every witnessable connector's receipt survives every denial for its own gate", () => {
   for (const entry of WITNESSABLE) {
     const receipt = receiptFor(entry.connector_id, entry.evidence as EvidenceClass);
     expect(receipt.connector_id).toBe(entry.id);
     expect(receipt.evidence_class).toBe(entry.evidence);
-    expect(consumeConnectorReceipt(receipt, EVALUATOR_ROOT, CANDIDATE, `connector.${entry.id}`)).toEqual({
-      status: "PASS", reason: "connector-steps-passed", creditDigest: true,
-    });
+    expect(consumeConnectorReceipt(receipt, EVALUATOR_ROOT, CANDIDATE, `connector.${entry.id}`)).toEqual(TERMINAL);
+  }
+});
+
+test("a hand-authored receipt cannot buy connector acceptance credit", () => {
+  // The producer refuses a receipt that skips the consent arc, but that rule
+  // lives in the producer and the evaluator never consults it. The evaluator's
+  // own defence is the pinned producer list: while it names the evaluator module
+  // alone, the revision is recomputable by anyone holding the checkout, so the
+  // terminal verdict is UNVERIFIABLE and no receipt, executed or authored,
+  // moves a connector gate to PASS. Extending that list is what grants credit,
+  // so this assertion guards the flip, not the file list for its own sake.
+  expect([...CONNECTOR_PRODUCER_FILES]).toEqual(["scripts/release-evidence.ts"]);
+  expect(producerEntrypointLanded(CONNECTOR_PRODUCER_FILES)).toBe(false);
+  const executed = receiptFor("kizuki.ics", "file-import");
+  const forged = { ...executed, steps: [step("i-never-ran")] };
+  for (const receipt of [executed, forged]) {
+    const verdict = consumeConnectorReceipt(receipt, EVALUATOR_ROOT, CANDIDATE, "connector.ics");
+    expect(verdict).toEqual(TERMINAL);
+    expect(verdict.status).not.toBe("PASS");
   }
 });
 
@@ -142,7 +165,7 @@ test("the emitted directory keeps one receipt per connector and names every bloc
     expect(index.schema).toBe("kizuki.connector-evidence-emission/v1");
     expect(index.unresolved).toEqual(["kizuki.telegram:owner-blocked-live-account"]);
     for (const row of written.receipts) {
-      expect(consumeConnectorReceipt(JSON.parse(readFileSync(row.path, "utf8")), EVALUATOR_ROOT, CANDIDATE, `connector.${row.connector_id}`).status).toBe("PASS");
+      expect(consumeConnectorReceipt(JSON.parse(readFileSync(row.path, "utf8")), EVALUATOR_ROOT, CANDIDATE, `connector.${row.connector_id}`)).toEqual(TERMINAL);
     }
   } finally { rmSync(report, { recursive: true, force: true }); }
 });

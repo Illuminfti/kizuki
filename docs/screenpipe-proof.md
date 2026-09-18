@@ -70,10 +70,12 @@ stderr digests. Captured text is never retained; on failure the private
 `synthetic-diagnostics.json` holds bounded output from these generated inputs.
 
 `connector-evidence/screenpipe.json` is the acceptance receipt:
-`kizuki.connector-evidence/v1` with `evidence_class: "local-source"`, credited
-only when every step passed. `connector-evidence/index.json` records the observed
-row counts and the connector's own documented limits beside it, and names any
-blocker in `unresolved`.
+`kizuki.connector-evidence/v1` with `evidence_class: "local-source"`, claiming
+credit only when every step passed. `connector-evidence/index.json` records the
+observed row counts and the connector's own documented limits beside it, and
+names any blocker in `unresolved`. The `connector.screenpipe` gate stays
+`UNVERIFIABLE` until the evaluator can distinguish an executed receipt from an
+authored one; see [release-acceptance.md](release-acceptance.md).
 
 Verification: `bun test scripts/screenpipe-proof.test.ts` checks the fixture
 inventory, the refusal messages and the observation oracles against the connector
