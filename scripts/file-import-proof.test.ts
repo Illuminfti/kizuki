@@ -183,9 +183,9 @@ function caseReceipt(patch: Partial<CaseReceipt> & Pick<CaseReceipt, "format" | 
     steps: REQUIRED_EVIDENCE_STEPS["file-import"].map(id => passedStep(id)), failures: [], ...patch,
   } as CaseReceipt;
 }
-function emitInto(cases: CaseReceipt[]) {
+function emitInto(cases: CaseReceipt[], runFailures: readonly string[] = []) {
   const report = mkdtempSync(join(tmpdir(), "kizuki-file-import-evidence-"));
-  emitFileImportConnectorEvidence(report, CANDIDATE, DAY, cases);
+  emitFileImportConnectorEvidence(report, CANDIDATE, DAY, cases, runFailures);
   const directory = join(report, "connector-evidence");
   const index = JSON.parse(readFileSync(join(directory, "index.json"), "utf8"));
   const names = readdirSync(directory).filter(name => name !== "index.json");
@@ -238,6 +238,23 @@ test("a format whose cases partially failed withholds credit and consumes to FAI
   expect(consumeConnectorReceipt(receipts["ics"], EVALUATOR_ROOT, CANDIDATE, "connector.ics")).toEqual({
     status: "UNVERIFIABLE", reason: "connector-producer-not-landed", creditDigest: false,
   });
+});
+
+test("a run-level integrity failure withholds credit from every format", () => {
+  // Every case passed, but the harness itself observed the artifact package or
+  // the checkout change under the run. Credit is the run's verdict, not the
+  // cases': otherwise a receipt from an artifact proven to have moved would buy
+  // a 1.0 connector gate while `receipt.json` records `passed: false`.
+  const cases = fileImportFixtures(DAY).map(fixture => caseReceipt({ format: fixture.format, connector_id: fixture.connector }));
+  const { index, receipts } = emitInto(cases, ["artifact-package-changed"]);
+  expect(Object.keys(receipts)).toHaveLength(FILE_FORMATS.length);
+  for (const [id, receipt] of Object.entries(receipts)) {
+    expect(receipt.acceptance_credit).toBe(false);
+    expect(reasonOf(() => consumeConnectorReceipt(receipt, EVALUATOR_ROOT, CANDIDATE, `connector.${id}`))).toBe("acceptance-credit-withheld");
+  }
+  expect(index.unresolved.sort()).toEqual(fileImportFixtures(DAY)
+    .map(fixture => `${fixture.connector}:run-integrity:artifact-package-changed`).sort());
+  expect(index.emissions.every((row: { acceptance_credit: boolean }) => row.acceptance_credit === false)).toBe(true);
 });
 
 test("a format the harness never reached names its blocker instead of emitting a receipt", () => {
