@@ -126,6 +126,12 @@
         "zod": "4.5.4",
       },
     },
+    "packages/reflex": {
+      "name": "@kizuki/reflex",
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
+    },
     "packages/retrieval-pg": {
       "name": "@kizuki/retrieval-pg",
       "dependencies": {
@@ -180,6 +186,8 @@
     "@kizuki/llm": ["@kizuki/llm@workspace:packages/llm"],
 
     "@kizuki/mcp": ["@kizuki/mcp@workspace:packages/mcp"],
+
+    "@kizuki/reflex": ["@kizuki/reflex@workspace:packages/reflex"],
 
     "@kizuki/retrieval-pg": ["@kizuki/retrieval-pg@workspace:packages/retrieval-pg"],
 

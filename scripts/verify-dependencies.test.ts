@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   DependencyPolicyError,
+  inspectDependencyPolicy,
   inspectLockfileDependencies,
   verifyLockfileDependencies,
 } from "./verify-dependencies";
@@ -116,6 +117,23 @@ test("a neutrally named transitive dependency cannot bypass capability policy", 
       ),
     ),
   ).toThrow(/integrity mismatch/);
+});
+
+test("policy package identities are own keys, not object prototype members", () => {
+  const parsed = inspectDependencyPolicy(policy(Object.fromEntries([
+    ["__proto__", { integrity: "sha512-abc=" }],
+  ])));
+  expect(Object.getPrototypeOf(parsed.packages)).toBeNull();
+  expect(Object.hasOwn(parsed.packages, "__proto__")).toBe(true);
+  expect(parsed.packages["__proto__"]?.integrity).toBe("sha512-abc=");
+
+  for (const identity of ["constructor", "toString", "__proto__"]) {
+    const root = tree(
+      lockfile(`"fixture": ["${identity}", "", {}, "sha512-abc="]`),
+      policy({}),
+    );
+    expect(() => verifyLockfileDependencies(root)).toThrow(`unclassified fixture -> ${identity}`);
+  }
 });
 
 test("malformed lockfiles and unsupported versions fail", () => {
