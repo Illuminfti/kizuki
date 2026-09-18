@@ -3,6 +3,7 @@ import type { Sensitivity } from "../agents/types";
 import {
   CLAIM_V2_SCHEMA,
   CLAIM_V2_SNAPSHOT_LIMITS,
+  isTextAnchorList,
   type ClaimV2Semantic,
 } from "../contracts/claim-v2";
 import type { TextAnchor } from "../contracts/producer-v2";
@@ -105,6 +106,27 @@ function requireSupport(input: ClaimV2SupportAdmission): ExactJson {
     throw new ClaimError(
       "schema_invalid",
       "claim/v2 support needs an RFC 3339 admitted_at",
+    );
+  }
+  // Anchors are caller-supplied, hashed into the support key and written
+  // durably, so they pass exactly the guard the semantic's own anchors pass -
+  // one predicate, not a second looser parser - and may point only at events
+  // this support already cites. An anchor on a foreign or more sensitive event
+  // would otherwise publish that event's id and its exact character offsets
+  // under this claim's label, reachable by `claim_v2_support.claim_id`, while
+  // every consent check below runs on `events` alone and so never raises the
+  // claim to that event's source floor.
+  if (!isTextAnchorList(input.anchors, 0)) {
+    throw new ClaimError(
+      "schema_invalid",
+      "claim/v2 support needs well-formed anchors",
+    );
+  }
+  const cited = new Set(input.events.map((event) => event.event_id));
+  if (!input.anchors.every((anchor) => cited.has(anchor.event_id))) {
+    throw new ClaimError(
+      "provenance_unresolved",
+      "claim/v2 support anchors an event its support does not cite",
     );
   }
   const errors: string[] = [];

@@ -356,6 +356,7 @@ test("support that cites an event the ledger does not hold is refused", async ()
                 event_content_hash: eventHash(db, eventId),
               },
             ],
+            anchors: [],
           },
           scope: SCOPE,
         });
@@ -398,6 +399,7 @@ test("support that cites another source's event is refused", async () => {
                 event_content_hash: eventHash(db, otherEvent),
               },
             ],
+            anchors: [{ event_id: otherEvent, start_utf16: 0, end_utf16: 4 }],
           },
           scope: SCOPE,
         });
@@ -405,6 +407,94 @@ test("support that cites another source's event is refused", async () => {
     ).toThrow(/its named source did not supply/);
     expect(counts(db, "claims")).toBe(0);
     expect(counts(db, "claim_v2_support")).toBe(0);
+  } finally {
+    db.close();
+  }
+});
+
+/**
+ * Anchors are the one part of an admission that names a location inside an
+ * event, so an anchor on an event the support does not cite would publish that
+ * event's id and its exact offsets under this claim's label while every
+ * consent check runs on the cited events alone.
+ */
+test("support that anchors an event outside its cited set is refused", async () => {
+  const db = claimsDb();
+  try {
+    const { sourceKey, eventId } = granted(db);
+    const closedSource = grantedSource(db, "private", "closed-anchor-fixture");
+    const closedEvent = grantedEvent(db, closedSource, {
+      connectorId: "closed-anchor-fixture",
+    });
+    const semantic = assertion(eventId);
+    const prepared = await prepareClaimInsert(
+      { db },
+      claimInput(eventId, { sensitivity: "personal" }),
+    );
+    expect(() =>
+      db.transaction(() => {
+        const stored = prepared.apply();
+        if (stored.outcome !== "stored") throw new Error("expected stored");
+        commitClaimV2(db, stored.claim.claim_id, {
+          semantic,
+          support: {
+            ...supportFor(db, sourceKey, eventId, semantic.anchors),
+            anchors: [
+              { event_id: closedEvent, start_utf16: 0, end_utf16: 9 },
+            ],
+          },
+          scope: SCOPE,
+        });
+      }).immediate(),
+    ).toThrow(/anchors an event its support does not cite/);
+    expect(counts(db, "claims")).toBe(0);
+    expect(counts(db, "claim_v2_support")).toBe(0);
+  } finally {
+    db.close();
+  }
+});
+
+test("support anchors pass the same guard the semantic's anchors pass", async () => {
+  const db = claimsDb();
+  try {
+    const { sourceKey, eventId } = granted(db);
+    const semantic = assertion(eventId);
+    const malformed: unknown[] = [
+      [{ event_id: eventId, start_utf16: 0.5, end_utf16: 4 }],
+      [{ event_id: eventId, start_utf16: 4, end_utf16: 4 }],
+      [{ event_id: eventId, start_utf16: -1, end_utf16: 4 }],
+      [{ event_id: "not-a-ulid", start_utf16: 0, end_utf16: 4 }],
+      [{ event_id: eventId, start_utf16: 0, end_utf16: 4, note: "extra" }],
+      [
+        { event_id: eventId, start_utf16: 0, end_utf16: 2 },
+        { event_id: eventId, start_utf16: 0, end_utf16: 2 },
+      ],
+      Array.from({ length: 9 }, (_, index) => ({
+        event_id: eventId,
+        start_utf16: index,
+        end_utf16: index + 1,
+      })),
+      "not an array",
+    ];
+    for (const anchors of malformed) {
+      const prepared = await prepareClaimInsert({ db }, claimInput(eventId));
+      expect(() =>
+        db.transaction(() => {
+          const stored = prepared.apply();
+          if (stored.outcome !== "stored") throw new Error("expected stored");
+          commitClaimV2(db, stored.claim.claim_id, {
+            semantic,
+            support: {
+              ...supportFor(db, sourceKey, eventId, semantic.anchors),
+              anchors: anchors as ClaimV2Assertion["anchors"],
+            },
+            scope: SCOPE,
+          });
+        }).immediate(),
+      ).toThrow(/needs well-formed anchors/);
+      expect(counts(db, "claims")).toBe(0);
+      expect(counts(db, "claim_v2_support")).toBe(0);
+    }
   } finally {
     db.close();
   }
@@ -553,7 +643,9 @@ test("support events raise the claim's sensitivity label", async () => {
       commitClaimV2(db, stored.claim.claim_id, {
         semantic,
         support: {
-          ...supportFor(db, closedSource, closedEvent, semantic.anchors),
+          ...supportFor(db, closedSource, closedEvent, [
+            { event_id: closedEvent, start_utf16: 0, end_utf16: 5 },
+          ]),
           source_key: closedSource,
         },
         scope: SCOPE,

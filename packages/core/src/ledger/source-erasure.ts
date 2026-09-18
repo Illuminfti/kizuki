@@ -10,10 +10,45 @@ import { listCanonPagesReport, stringArray } from "../vault/pages";
 import { sha256Hex } from "../util/hash";
 import { rebuildDerived } from "../derived";
 import { collectLegacyPurgeSubjects, parseLegacyIdentityEvidence, resolveLegacyIdentityRef, scanLegacyIdentityRows } from "../claims/identity";
+import { tableExists } from "./schema";
 
 /** Unique schema-compatible tombstone derived only from opaque identity, never old content. */
 export function sourceBodyTombstoneHash(table: "claims" | "proposals", id: string): string {
   return sha256Hex(JSON.stringify(["kizuki.source-erased-body/v1", table, id]));
+}
+
+/** True once migration 31 has installed the claim/v2 semantic and support tables. */
+export function claimV2TablesPresent(db: Database): boolean {
+  return (
+    tableExists(db, "claim_v2_semantics") &&
+    tableExists(db, "claim_v2_support") &&
+    tableExists(db, "claim_v2_support_events")
+  );
+}
+
+export interface SourceClaimQuery {
+  /** A `SELECT claim_id` the caller embeds in `claim_id IN (...)`. */
+  readonly sql: string;
+  readonly binds: readonly string[];
+}
+
+/**
+ * Every claim whose payload this source is answerable for. The v1 provenance
+ * join alone stopped being the whole answer once `commitClaimV2` began writing
+ * `claim_v2_support`: that support deliberately binds events the v1 provenance
+ * does not carry, and it names the admitting source directly, so a
+ * support-only claim would never be enumerated and its `claim_v2_semantics`
+ * row - subject, predicate and the whole canonical payload - would outlive a
+ * purge that still reported `logical_absence`. RFC 0002 invariant 3.
+ */
+export function sourceClaimIdsQuery(db: Database, source: string): SourceClaimQuery {
+  const provenance =
+    "SELECT c.claim_id FROM claims c JOIN json_each(c.provenance) p JOIN source_event_bindings b ON b.event_id=p.value WHERE b.source_key=?";
+  if (!claimV2TablesPresent(db)) return { sql: provenance, binds: [source] };
+  return {
+    sql: `${provenance} UNION SELECT s.claim_id FROM claim_v2_support s JOIN claim_v2_support_events e ON e.support_key=s.support_key JOIN source_event_bindings b ON b.event_id=e.event_id WHERE b.source_key=? UNION SELECT claim_id FROM claim_v2_support WHERE source_key=?`,
+    binds: [source, source, source],
+  };
 }
 
 export interface SourceErasureReport {
@@ -143,11 +178,12 @@ export function eraseSourcePayload(
     if (ids.size >= 1_000_000) throw new Error("source erasure event limit exceeded");
     ids.add(row.event_id);
   }
+  const claimSet = sourceClaimIdsQuery(db, source);
   const claims = db
-    .query<{ claim_id: string; claim_key: string | null }, [string]>(
-      "SELECT DISTINCT c.claim_id,c.claim_key FROM claims c JOIN json_each(c.provenance) p JOIN source_event_bindings b ON b.event_id=p.value WHERE b.source_key=? LIMIT 10001",
+    .query<{ claim_id: string; claim_key: string | null }, string[]>(
+      `SELECT claim_id,claim_key FROM claims WHERE claim_id IN (${claimSet.sql}) LIMIT 10001`,
     )
-    .all(source);
+    .all(...claimSet.binds);
   const proposals = db.query<{proposal_id:string},[string]>(
     "SELECT DISTINCT p.proposal_id FROM proposals p JOIN json_each(p.provenance) e JOIN source_event_bindings b ON b.event_id=e.value WHERE b.source_key=? LIMIT 10001"
   ).all(source);
@@ -216,6 +252,21 @@ export function eraseSourcePayload(
       db.query(
         "UPDATE claims SET body='',body_hash=?,claim_key=NULL,object=NULL,target=NULL,subject=NULL,predicate=NULL,subjects='[]',frontmatter='{}',model_ref=NULL,producer='deterministic',status='purged' WHERE claim_id=?",
       ).run(sourceBodyTombstoneHash("claims", row.claim_id), row.claim_id);
+    if (claimV2TablesPresent(db)) {
+      // The v2 children hold their own copy of the personal fields: the
+      // semantic payload, and support anchors carrying exact offsets into this
+      // source's events. Tombstoning the `claims` row leaves both behind, so
+      // they are erased here, in the same transaction, before the sweep is
+      // allowed to certify absence.
+      const dropSemantic = db.query(
+        "DELETE FROM claim_v2_semantics WHERE claim_id=?",
+      );
+      for (const row of claims) dropSemantic.run(row.claim_id);
+      db.query(
+        "DELETE FROM claim_v2_support_events WHERE support_key IN (SELECT support_key FROM claim_v2_support WHERE source_key=?)",
+      ).run(source);
+      db.query("DELETE FROM claim_v2_support WHERE source_key=?").run(source);
+    }
     // Capture keys before erasure, then remove only bindings with no surviving reference.
     for (const key of new Set(claims.map(row => row.claim_key).filter((key): key is string => key !== null)))
       db.query("DELETE FROM claim_bindings WHERE claim_key=? AND NOT EXISTS (SELECT 1 FROM claims WHERE claim_key=?)").run(key, key);

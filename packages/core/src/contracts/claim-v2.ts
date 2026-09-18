@@ -130,7 +130,13 @@ function anchor(value: unknown): value is TextAnchor {
     end > start;
 }
 
-function anchors(value: unknown, min: number): value is readonly TextAnchor[] {
+/**
+ * The one text-anchor guard: bounded to 8, well-formed non-negative UTF-16
+ * spans over ULID event ids, deduped. Exported so the claim/v2 support writer
+ * validates caller-supplied anchors against exactly this shape rather than
+ * growing a second, looser parser beside it.
+ */
+export function isTextAnchorList(value: unknown, min: number): value is readonly TextAnchor[] {
   return Array.isArray(value) &&
     value.length >= min &&
     value.length <= 8 &&
@@ -174,7 +180,7 @@ function validateAssertion(value: Record<string, unknown>): ClaimV2ValidationRes
     !isPerspective(value.perspective) ||
     !Array.isArray(value.context) ||
     !value.context.every(rawRef) ||
-    !anchors(value.anchors, 1)) {
+    !isTextAnchorList(value.anchors, 1)) {
     return INVALID;
   }
   if (value.polarity !== "positive" && value.polarity !== "negative") {
@@ -231,7 +237,7 @@ function isPerspective(value: unknown): value is ClaimV2Perspective {
     !MODES.has(value.mode as ClaimV2Perspective["mode"]) ||
     (value.interpretation !== "explicit" &&
     value.interpretation !== "inferred") ||
-    !anchors(value.anchors, 0)) {
+    !isTextAnchorList(value.anchors, 0)) {
     return false;
   }
   const roles = [value.holder, value.speaker, value.addressee];

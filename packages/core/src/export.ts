@@ -101,6 +101,9 @@ const MAX_EXTRACT_BATCH_BACKUP_BYTES = 2_000_000;
 const MAX_EVENT_BACKUP_ROW_BYTES = EVENT_LIMITS.eventBytes + 2_048;
 const MAX_MACHINE_BYTE_INTENT_ROW_BYTES = 512;
 const IDENTITY_BACKUP = "claims/identity_links.jsonl";
+const CLAIM_V2_SEMANTICS_BACKUP = "claims/claim_v2_semantics.jsonl";
+const CLAIM_V2_SUPPORT_BACKUP = "claims/claim_v2_support.jsonl";
+const CLAIM_V2_SUPPORT_EVENTS_BACKUP = "claims/claim_v2_support_events.jsonl";
 // Allow worst-case JSON escaping within the scanner's 1 MiB raw-text budget.
 const MAX_IDENTITY_BACKUP_BYTES = 8_388_608;
 const MAX_IDENTITY_BACKUP_ROW_BYTES = 131_072;
@@ -340,6 +343,38 @@ interface BindingRow {
   claim_key: string;
   page_id: string;
   bound_at: string;
+}
+
+interface ClaimV2SemanticRow {
+  claim_id: string;
+  semantic_key: string;
+  schema: string;
+  discriminator: string;
+  subject_kind: string | null;
+  subject_id: string | null;
+  predicate: string | null;
+  object_kind: string | null;
+  polarity: string | null;
+  temporal_basis: string | null;
+  valid_from: string | null;
+  valid_to: string | null;
+  payload: string;
+}
+
+interface ClaimV2SupportRow {
+  support_key: string;
+  claim_id: string;
+  anchors: string;
+  source_key: string;
+  grant_revision: number;
+  admission: string;
+  admitted_at: string;
+}
+
+interface ClaimV2SupportEventRow {
+  support_key: string;
+  event_id: string;
+  event_content_hash: string;
 }
 
 interface SensitivityRow {
@@ -1180,6 +1215,71 @@ function* pageBindings(db: Database): Generator<BindingRow> {
   }
 }
 
+/**
+ * RFC 0003 B1d: a v2 claim and its evidence chain travel with the `claims` row
+ * they extend. A backup that carried the claim but not its semantics would
+ * restore a claim whose v2 discriminator silently downgrades to v1, and one
+ * that carried semantics but not support would restore exactly the durable
+ * claim with an empty evidence chain the writer refuses to create.
+ */
+function* pageClaimV2Semantics(db: Database): Generator<ClaimV2SemanticRow> {
+  if (!tableExists(db, "claim_v2_semantics")) return;
+  let cursor: string | null = null;
+  while (true) {
+    const rows: ClaimV2SemanticRow[] = cursor === null
+      ? db.query<ClaimV2SemanticRow, [number]>(
+          "SELECT * FROM claim_v2_semantics ORDER BY claim_id LIMIT ?",
+        ).all(PAGE)
+      : db.query<ClaimV2SemanticRow, [string, number]>(
+          "SELECT * FROM claim_v2_semantics WHERE claim_id > ? ORDER BY claim_id LIMIT ?",
+        ).all(cursor, PAGE);
+    if (rows.length === 0) break;
+    yield* rows;
+    if (rows.length < PAGE) break;
+    cursor = rows.at(-1)!.claim_id;
+  }
+}
+
+function* pageClaimV2Support(db: Database): Generator<ClaimV2SupportRow> {
+  if (!tableExists(db, "claim_v2_support")) return;
+  let cursor: string | null = null;
+  while (true) {
+    const rows: ClaimV2SupportRow[] = cursor === null
+      ? db.query<ClaimV2SupportRow, [number]>(
+          "SELECT * FROM claim_v2_support ORDER BY support_key LIMIT ?",
+        ).all(PAGE)
+      : db.query<ClaimV2SupportRow, [string, number]>(
+          "SELECT * FROM claim_v2_support WHERE support_key > ? ORDER BY support_key LIMIT ?",
+        ).all(cursor, PAGE);
+    if (rows.length === 0) break;
+    yield* rows;
+    if (rows.length < PAGE) break;
+    cursor = rows.at(-1)!.support_key;
+  }
+}
+
+function* pageClaimV2SupportEvents(db: Database): Generator<ClaimV2SupportEventRow> {
+  if (!tableExists(db, "claim_v2_support_events")) return;
+  let cursor: { support_key: string; event_id: string } | null = null;
+  while (true) {
+    const rows: ClaimV2SupportEventRow[] = cursor === null
+      ? db.query<ClaimV2SupportEventRow, [number]>(
+          `SELECT support_key, event_id, event_content_hash FROM claim_v2_support_events
+           ORDER BY support_key, event_id LIMIT ?`,
+        ).all(PAGE)
+      : db.query<ClaimV2SupportEventRow, [string, string, string, number]>(
+          `SELECT support_key, event_id, event_content_hash FROM claim_v2_support_events
+           WHERE support_key > ? OR (support_key = ? AND event_id > ?)
+           ORDER BY support_key, event_id LIMIT ?`,
+        ).all(cursor.support_key, cursor.support_key, cursor.event_id, PAGE);
+    if (rows.length === 0) break;
+    yield* rows;
+    if (rows.length < PAGE) break;
+    const last = rows.at(-1)!;
+    cursor = { support_key: last.support_key, event_id: last.event_id };
+  }
+}
+
 function* pageIdentityLinks(db: Database): Generator<Record<string, unknown>> {
   for (const row of scanLegacyIdentityRows(db)) {
     yield {
@@ -1729,6 +1829,9 @@ function exportVaultOwned(
         options.signal,
       );
       writeStream(staging, "claims/bindings.jsonl", pageBindings(db), files, options.signal);
+      writeStream(staging, CLAIM_V2_SEMANTICS_BACKUP, pageClaimV2Semantics(db), files, options.signal);
+      writeStream(staging, CLAIM_V2_SUPPORT_BACKUP, pageClaimV2Support(db), files, options.signal);
+      writeStream(staging, CLAIM_V2_SUPPORT_EVENTS_BACKUP, pageClaimV2SupportEvents(db), files, options.signal);
       writeStream(
         staging,
         "claims/identity_links.jsonl",
@@ -2007,9 +2110,10 @@ function assertBackupFormat(manifest: ExportManifest): void {
   // Ledger29 widens selector_kind to event|connector|record|source|subject for namespaced
   // subject selectors. Bare subject ids remain refused and unrecorded. Compound rows restore as NULL.
   // Ledger30 records event+connector compound selector_kind. Other compounds restore as NULL.
-  // Ledger31 adds the empty claim/v2 semantic and support tables (RFC 0003 B1b).
-  // No writer fills them in 1.0, so a v3 backup at 31 carries no v2 rows and
-  // restores into freshly created empty tables; exporting them belongs to B1d.
+  // Ledger31 adds the claim/v2 semantic and support tables (RFC 0003 B1b), which
+  // `commitClaimV2` fills (B1c). A v3 backup at 31 therefore streams them beside
+  // claims/claims.jsonl and restores them in foreign-key order. Backups written
+  // before those files existed name none of them and restore empty tables.
   // Future migrations must make their own explicit compatibility decision.
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
       versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
@@ -2225,6 +2329,56 @@ function insertBinding(db: Database, raw: Record<string, unknown>): void {
     asString(raw.claim_key, "claim_key"),
     asString(raw.page_id, "page_id"),
     asString(raw.bound_at, "bound_at"),
+  );
+}
+
+function insertClaimV2Semantic(db: Database, raw: Record<string, unknown>): void {
+  db.query(
+    `INSERT INTO claim_v2_semantics
+       (claim_id, semantic_key, schema, discriminator, subject_kind, subject_id,
+        predicate, object_kind, polarity, temporal_basis, valid_from, valid_to, payload)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    asString(raw.claim_id, "claim_id"),
+    asString(raw.semantic_key, "semantic_key"),
+    asString(raw.schema, "schema"),
+    asString(raw.discriminator, "discriminator"),
+    asStringOrNull(raw.subject_kind, "subject_kind"),
+    asStringOrNull(raw.subject_id, "subject_id"),
+    asStringOrNull(raw.predicate, "predicate"),
+    asStringOrNull(raw.object_kind, "object_kind"),
+    asStringOrNull(raw.polarity, "polarity"),
+    asStringOrNull(raw.temporal_basis, "temporal_basis"),
+    asStringOrNull(raw.valid_from, "valid_from"),
+    asStringOrNull(raw.valid_to, "valid_to"),
+    asString(raw.payload, "payload"),
+  );
+}
+
+function insertClaimV2Support(db: Database, raw: Record<string, unknown>): void {
+  db.query(
+    `INSERT INTO claim_v2_support
+       (support_key, claim_id, anchors, source_key, grant_revision, admission, admitted_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    asString(raw.support_key, "support_key"),
+    asString(raw.claim_id, "claim_id"),
+    asString(raw.anchors, "anchors"),
+    asString(raw.source_key, "source_key"),
+    asNumber(raw.grant_revision, "grant_revision"),
+    asString(raw.admission, "admission"),
+    asString(raw.admitted_at, "admitted_at"),
+  );
+}
+
+function insertClaimV2SupportEvent(db: Database, raw: Record<string, unknown>): void {
+  db.query(
+    `INSERT INTO claim_v2_support_events (support_key, event_id, event_content_hash)
+     VALUES (?, ?, ?)`,
+  ).run(
+    asString(raw.support_key, "support_key"),
+    asString(raw.event_id, "event_id"),
+    asString(raw.event_content_hash, "event_content_hash"),
   );
 }
 
@@ -2625,6 +2779,19 @@ export function restoreVault(
         }
         for (const row of streamRows(source, manifest, "claims/bindings.jsonl", false)) {
           insertBinding(db, row);
+        }
+        // Order is a foreign-key order: the `claims` rows above, then their
+        // semantics, then support, then the event links whose targets the
+        // events stream already restored. Backups written before ledger31 name
+        // none of these files and stream nothing.
+        for (const row of streamRows(source, manifest, CLAIM_V2_SEMANTICS_BACKUP, false)) {
+          insertClaimV2Semantic(db, row);
+        }
+        for (const row of streamRows(source, manifest, CLAIM_V2_SUPPORT_BACKUP, false)) {
+          insertClaimV2Support(db, row);
+        }
+        for (const row of streamRows(source, manifest, CLAIM_V2_SUPPORT_EVENTS_BACKUP, false)) {
+          insertClaimV2SupportEvent(db, row);
         }
         let identityCount = 0;
         for (const row of streamRows(source, manifest, IDENTITY_BACKUP, manifest.schema === BACKUP_SCHEMA)) {
