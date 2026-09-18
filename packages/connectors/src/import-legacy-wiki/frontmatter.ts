@@ -35,6 +35,10 @@ export const MAX_FRONTMATTER_BYTES = 64 * 1024;
 export { MAX_FRONTMATTER_DEPTH, MAX_FRONTMATTER_KEYS } from "./yaml-subset";
 
 const OPEN_FENCE = /^---[ \t]*(?:\r?\n|$)/;
+// A fence line closes on its marker alone: editors and exporters leave
+// trailing blanks behind, and the opening fence has always ignored them.
+const CLOSE_FENCE = /^(---|\.\.\.)[ \t]*\r?(?:\n|$)/m;
+const SECOND_DOCUMENT = /^\s*---[ \t]*\r?(?:\n|$)/;
 
 function startsSequence(content: string): boolean {
   return content === "-" || content.startsWith("- ");
@@ -170,7 +174,7 @@ function splitBlock(text: string): Block | null {
   const opening = OPEN_FENCE.exec(text);
   if (opening === null) return null;
   const remainder = text.slice(opening[0].length);
-  const fence = /^(---|\.\.\.)\r?(?:\n|$)/m.exec(remainder);
+  const fence = CLOSE_FENCE.exec(remainder);
   if (fence === null) return null;
   return {
     text: remainder.slice(0, fence.index),
@@ -199,7 +203,7 @@ export function parseLegacyFrontmatter(markdown: string): LegacyFrontmatter {
   if (Buffer.byteLength(block.text, "utf8") > MAX_FRONTMATTER_BYTES) {
     return unparsed("frontmatter exceeds 64 KiB", block.body);
   }
-  if (block.closer === "..." && /^\s*---\r?(\n|$)/.test(block.body)) {
+  if (block.closer === "..." && SECOND_DOCUMENT.test(block.body)) {
     return unparsed("a second document", block.body);
   }
 

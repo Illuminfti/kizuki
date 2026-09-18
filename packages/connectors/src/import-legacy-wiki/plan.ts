@@ -295,6 +295,7 @@ function planPage(
       metadata: {
         relpath,
         size: file.size,
+        sha256: new Bun.CryptoHasher("sha256").update(file.content).digest("hex"),
         mapping_hash: opts.mappingHash,
         frontmatter_status: parsed.status,
         ...("frontmatter" in frontmatter

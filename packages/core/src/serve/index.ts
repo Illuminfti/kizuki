@@ -57,7 +57,7 @@ export {
   releaseLease,
   thisProcess,
 } from "./leases";
-export type { LeaseAcquireResult, LeaseProcess } from "./leases";
+export type { LeaseAcquireResult, LeaseProcess, LeaseState } from "./leases";
 export {
   getRunReceipt,
   listRunReceipts,

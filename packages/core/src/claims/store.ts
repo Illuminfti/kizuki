@@ -444,14 +444,32 @@ function structuralMatch(incoming: Claim, live: Claim): boolean {
 }
 
 function corroborate(db: Database, live: Claim, incoming: Claim, at: string): Claim {
+  // Same monotonic label rule as the exact-replay path above.
+  const sensitivity: Sensitivity = stricter(live.sensitivity, incoming.sensitivity);
+  // Merge support once; only new citations can confirm evidence.
+  const existingEvidence = new Set(live.provenance);
+  const previousSupportCount = existingEvidence.size;
+  for (const eventId of incoming.provenance) existingEvidence.add(eventId);
+  // Rephrasing already-cited evidence may tighten policy, not confirm evidence.
+  if (existingEvidence.size === previousSupportCount) {
+    if (sensitivity === live.sensitivity) return live;
+    db.query("UPDATE claims SET sensitivity = ? WHERE claim_id = ?")
+      .run(sensitivity, live.claim_id);
+    return { ...live, sensitivity };
+  }
   const next: Claim = {
     ...live,
     confidence: Math.max(live.confidence, incoming.confidence),
     corroboration: live.corroboration + 1,
     authority: higherAuthority(incoming.authority, live.authority),
     last_confirmed_at: at,
+    sensitivity,
+    provenance: [...existingEvidence],
   };
   persistClaim(db, next);
+  // persistClaim owns neither column, so the merged support and label are written here.
+  db.query("UPDATE claims SET provenance = ?, sensitivity = ? WHERE claim_id = ?")
+    .run(JSON.stringify(next.provenance), next.sensitivity, next.claim_id);
   return getClaim(db, live.claim_id) ?? next;
 }
 
@@ -1153,7 +1171,7 @@ function applyClaimInsert(
   // conflict/R5 when the object or polarity differs (RFC 0002 §5.2, §6.3).
   if (structural !== undefined) {
     const confirmed = corroborate(io.db, structural, claim, at);
-    enqueueRetrieval(io.db, io, confirmed, at);
+    if (confirmed !== structural) enqueueRetrieval(io.db, io, confirmed, at);
     return { outcome: "duplicate", claim: confirmed, dedup: mode };
   }
 
