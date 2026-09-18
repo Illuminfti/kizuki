@@ -23,10 +23,48 @@ sha256sum -c SHA256SUMS
 New packages contain `kizuki`, `kizuki-mcp`, `README.txt`, `LICENSE`,
 `THIRD-PARTY-NOTICES.txt`, `BUILD.json`, and `SHA256SUMS`. The manifest hashes
 the preceding six files. Build V2 records source SHA, target, pinned Bun
-revision and material inventory from both actual compile graphs. Unresolved
+revision, the app credential names compiled in (see below) and material
+inventory from both actual compile graphs. Unresolved
 notice, embedded-asset and source information remains explicit; distribution
 has not been assessed. Legacy five-file Build V1 packages remain readable. The build refuses to
 overwrite an existing target and stages output before publishing it.
+
+### App credentials
+
+`bun run build:release` compiles in app credentials only from the closed
+allowlist in `scripts/build-release.ts`. That list holds one group today, the
+Telegram project app identifiers `KIZUKI_TELEGRAM_API_ID` and
+`KIZUKI_TELEGRAM_API_HASH`, taken from the build environment:
+
+```bash
+KIZUKI_TELEGRAM_API_ID=... KIZUKI_TELEGRAM_API_HASH=... bun run build:release
+```
+
+Nothing else is inlined. Another `KIZUKI_*` variable present at build time is
+neither compiled in nor recorded, and no flag widens the list. A group is all
+or nothing: exactly one of the pair, or a value the connector would reject,
+fails the build instead of producing a package that refuses sign-in while
+claiming the credential is there. Building with neither set succeeds and
+produces a credential-free package.
+
+`BUILD.json` records `compiled_credentials`, the names compiled into that
+package, by name only. No credential value is written to `BUILD.json`,
+`README.txt`, `SHA256SUMS`, a build log or a build error. Packages built
+before this field existed omit it and claim nothing about credentials.
+
+A credential-free package refuses Telegram sign-in before any prompt, browser
+or network call, with this message and nothing else:
+
+```
+kizuki.telegram: app credentials are not compiled in; build with KIZUKI_TELEGRAM_API_ID and KIZUKI_TELEGRAM_API_HASH set (see packages/connector-telegram/README.md)
+```
+
+`kizuki connect` lists that source as unavailable with `project app
+credentials missing`, and the same refusal applies to opening a session for an
+already-enrolled Telegram source, so backfill and sync are refused too. Such a
+package still reads those two variables from its own environment at run time:
+an operator holding a registered pair can supply them without rebuilding.
+`compiled_credentials` describes the build, not the run.
 
 `bun run smoke:release` exercises the built package with a synthetic vault. It
 proves version/help, init with `--no-service`, Markdown import, query, context
