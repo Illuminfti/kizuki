@@ -33,8 +33,11 @@ The proof then drives the public CLI end to end: `init`, `connect screenpipe
 `backfill`, `sync`, a repeated `query`, `connect status`, `connect revoke`, an
 absence query, `connect resume-revocation`, a purged-absence query, the purged
 `connect status`, and a final `backfill` that must be refused for want of consent.
-Repeat sweeps must store nothing and duplicate nothing: both stream cursors are
-exhausted. Query identities must be unchanged across the repeat.
+A repeated `backfill` must store nothing and duplicate nothing: both snapshot
+watermarks are already consumed. The incremental `sync` re-presents the same
+three settled rows once and must store nothing while recording three duplicates,
+which is what an append-only ledger recognising known evidence looks like. Query
+identities must be unchanged across the repeat.
 
 One frame carries a browser URL whose path segment has the credential shape the
 connector documents. The exported ledger is read back from `export`: that segment
