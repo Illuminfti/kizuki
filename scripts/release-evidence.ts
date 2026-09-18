@@ -130,6 +130,12 @@ export function recordedAt(value: unknown): string {
   if (Number.isNaN(date.getTime()) || date.toISOString() !== raw) reject("invalid-recorded-at");
   return raw;
 }
+/** Canonical receipt instant. Observed timestamps may omit milliseconds. */
+export function receiptInstant(value: string): string {
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) reject("invalid-recorded-at");
+  return recordedAt(new Date(parsed).toISOString());
+}
 function relativePosix(value: unknown): string {
   const path = text(value, 256);
   if (!/^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/.test(path)) reject("invalid-identity");
@@ -762,3 +768,203 @@ export function evaluateSurfaceReceipt(value: unknown, expected: ExpectedSurface
   if (outcome === "fail") return { status: "FAIL", reason: "surface-outcome-fail", creditDigest: true };
   return { status: "UNVERIFIABLE", reason: "surface-outcome-unresolved", creditDigest: true };
 }
+
+/* --------------------------------------------------------------------------
+ * Shared receipt families.
+ *
+ * A family receipt records observations only; the evaluator computes the
+ * verdict. Every receipt names its producer files and the revision of those
+ * files, binds to the exact candidate source SHA, and declares a source and
+ * actor class from the lists above. An evaluator that cannot certify returns
+ * UNVERIFIABLE with a stated reason; it never returns PASS.
+ *
+ * Receipts carry `stdout_sha256`/`stderr_sha256`. Captured command output is
+ * attacker-controlled and may contain secrets, so a receipt that carries raw
+ * output instead of a digest is refused rather than read.
+ * ------------------------------------------------------------------------ */
+
+export const REQUIRED_CHECKS_PRODUCER = "kizuki.required-checks/v1";
+export const P0_DISPOSITION_PRODUCER = "kizuki.p0-disposition/v1";
+export const JOURNEY_PRODUCER = "kizuki.journey-proof/v1";
+export const CONNECTOR_PRODUCER = "kizuki.connector-evidence/v1";
+export const REQUIRED_CHECKS_PRODUCER_FILES = ["scripts/release-evidence.ts", "scripts/required-checks.ts"] as const;
+export const P0_DISPOSITION_PRODUCER_FILES = ["scripts/p0-disposition.ts", "scripts/release-evidence.ts"] as const;
+/** The three branch-protection contexts, in their required order. */
+export const REQUIRED_CONTEXTS = ["test", "secrets", "workflows"] as const;
+export const CHECK_CONCLUSIONS = ["success", "failure", "cancelled", "timed_out", "action_required", "neutral", "skipped", "stale", "startup_failure"] as const;
+export const P0_LABEL = "severity:p0";
+/** A connector's evidence class fixes the operator class that can witness it. */
+export const CONNECTOR_SOURCE_CLASSES = { "live-account": "live-account-operator", "file-import": "file-import-operator", "local-source": "local-source-operator" } as const;
+export const FAMILY_LIMITS = { issues: 64, steps: 128, command: 16, command_chars: 512, skew_ms: 300_000 } as const;
+const RAW_OUTPUT_KEYS = ["stdout", "stderr", "output"] as const;
+
+export interface FamilyBinding {
+  candidate_source_sha: string;
+  /** The evaluator's own revision for the producer files a receipt names. */
+  revision: (files: readonly string[]) => string;
+}
+export interface JourneyBinding extends FamilyBinding { journey_id: string }
+export interface ConnectorBinding extends FamilyBinding { connector_id: string }
+export interface P0Binding extends FamilyBinding { now: number }
+export interface ReceiptStep {
+  id: string; command: string[]; exit_code: number; passed: boolean; stdout_sha256: string; stderr_sha256: string;
+}
+
+/** Bind declared producer files to the evaluator's own checkout bytes. */
+export function evaluatorRevision(root: string): (files: readonly string[]) => string {
+  return files => producerRevision(files.map(path => {
+    const entry = inspectOptionalVerifier(root, path);
+    if (entry.status !== "PRESENT" || entry.sha256 === null) reject("producer-files-unavailable");
+    return { path, sha256: entry.sha256 };
+  }));
+}
+
+function refuseRawOutput(value: unknown): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  for (const key of RAW_OUTPUT_KEYS) if (key in value) reject("receipt-carries-raw-output");
+}
+
+function familyIdentity(
+  value: unknown, producer: string, binding: FamilyBinding,
+  source_class: string, actor_class: string, producer_files?: readonly string[],
+) {
+  const identity = parseSharedIdentity(value, producer, binding.candidate_source_sha);
+  if (identity.source_class !== source_class || identity.actor_class !== actor_class) reject("invalid-identity");
+  if (producer_files && !equalJson(identity.producer_files, [...producer_files])) reject("producer-files-mismatch");
+  if (identity.producer_revision !== binding.revision(identity.producer_files)) reject("producer-revision-mismatch");
+  return identity;
+}
+
+function commandLine(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > FAMILY_LIMITS.command) reject("invalid-schema");
+  return value.map(item => text(item, FAMILY_LIMITS.command_chars));
+}
+
+function positiveInteger(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) reject("invalid-schema");
+  return value;
+}
+
+/** Executed evidence for a journey or connector obligation. */
+function receiptSteps(value: unknown): ReceiptStep[] {
+  if (!Array.isArray(value) || value.length > FAMILY_LIMITS.steps) reject("invalid-schema");
+  if (value.length === 0) reject("empty-step-list");
+  const steps = value.map(item => {
+    refuseRawOutput(item);
+    const row = exact(item, "id,command,exit_code,passed,stdout_sha256,stderr_sha256");
+    if (typeof row.passed !== "boolean") reject("invalid-schema");
+    if (typeof row.exit_code !== "number" || !Number.isSafeInteger(row.exit_code) || row.exit_code < 0 || row.exit_code > 255) reject("invalid-schema");
+    return {
+      id: kebab(row.id), command: commandLine(row.command), exit_code: row.exit_code, passed: row.passed,
+      stdout_sha256: digest(row.stdout_sha256), stderr_sha256: digest(row.stderr_sha256),
+    };
+  });
+  if (new Set(steps.map(step => step.id)).size !== steps.length) reject("invalid-schema");
+  if (steps.some(step => !step.passed)) reject("step-not-passed");
+  return steps;
+}
+
+function acceptanceCredit(value: unknown): void {
+  if (value === false) reject("acceptance-credit-withheld");
+  if (value !== true) reject("invalid-schema");
+}
+
+export function evaluateRequiredChecksReceipt(value: unknown, binding: FamilyBinding): SurfaceEvaluation {
+  refuseRawOutput(value);
+  const row = exact(value, "schema,identity,contexts");
+  if (row.schema !== REQUIRED_CHECKS_PRODUCER) reject("invalid-schema");
+  familyIdentity(row.identity, REQUIRED_CHECKS_PRODUCER, binding, "exact-candidate-ci-snapshot", "retained-ci-snapshot", REQUIRED_CHECKS_PRODUCER_FILES);
+  if (!Array.isArray(row.contexts) || row.contexts.length !== REQUIRED_CONTEXTS.length) reject("required-contexts-mismatch");
+  const contexts = row.contexts.map(item => {
+    const entry = exact(item, "context,conclusion,run_id,completed_at");
+    const conclusion = text(entry.conclusion, 32);
+    if (!(CHECK_CONCLUSIONS as readonly string[]).includes(conclusion)) reject("invalid-schema");
+    return { context: text(entry.context, 64), conclusion, run_id: positiveInteger(entry.run_id), completed_at: recordedAt(entry.completed_at) };
+  });
+  if (!equalJson(contexts.map(item => item.context), [...REQUIRED_CONTEXTS])) reject("required-contexts-mismatch");
+  if (!contexts.every(item => item.conclusion === "success")) return { status: "FAIL", reason: "required-context-not-successful", creditDigest: true };
+  return { status: "PASS", reason: "exact-candidate-required-checks-passed", creditDigest: true };
+}
+
+export function evaluateP0DispositionReceipt(value: unknown, binding: P0Binding): SurfaceEvaluation {
+  refuseRawOutput(value);
+  const row = exact(value, "schema,identity,label,candidate_committed_at,snapshot_at,open_issues");
+  if (row.schema !== P0_DISPOSITION_PRODUCER) reject("invalid-schema");
+  familyIdentity(row.identity, P0_DISPOSITION_PRODUCER, binding, "findings-snapshot", "retained-ci-snapshot", P0_DISPOSITION_PRODUCER_FILES);
+  if (text(row.label, 64) !== P0_LABEL) reject("p0-label-mismatch");
+  const committed = recordedAt(row.candidate_committed_at), snapshot = recordedAt(row.snapshot_at);
+  if (!Array.isArray(row.open_issues) || row.open_issues.length > FAMILY_LIMITS.issues) reject("invalid-schema");
+  const issues = row.open_issues.map(item => {
+    const entry = exact(item, "number,updated_at");
+    return { number: positiveInteger(entry.number), updated_at: recordedAt(entry.updated_at) };
+  });
+  const numbers = issues.map(item => item.number);
+  if (new Set(numbers).size !== numbers.length) reject("invalid-schema");
+  // A snapshot taken before the candidate existed cannot describe its findings.
+  if (Date.parse(snapshot) < Date.parse(committed)) return { status: "UNVERIFIABLE", reason: "p0-snapshot-predates-candidate", creditDigest: false };
+  if (Date.parse(snapshot) - binding.now > FAMILY_LIMITS.skew_ms) return { status: "UNVERIFIABLE", reason: "p0-snapshot-after-evaluation", creditDigest: false };
+  if (numbers.length > 0) return { status: "FAIL", reason: `current-p0-findings-open:${[...numbers].sort((left, right) => left - right).join(",")}`, creditDigest: true };
+  return { status: "PASS", reason: "current-p0-inventory-clear", creditDigest: true };
+}
+
+export function evaluateJourneyReceipt(value: unknown, binding: JourneyBinding): SurfaceEvaluation {
+  refuseRawOutput(value);
+  const row = exact(value, "schema,identity,journey_id,acceptance_credit,steps");
+  if (row.schema !== JOURNEY_PRODUCER) reject("invalid-schema");
+  familyIdentity(row.identity, JOURNEY_PRODUCER, binding, "local-operator-custody", "authorized-operator");
+  const journey_id = kebab(row.journey_id);
+  if (!(JOURNEYS as readonly string[]).includes(journey_id)) reject("unknown-journey");
+  if (journey_id !== binding.journey_id) reject("mismatched-gate-or-target");
+  acceptanceCredit(row.acceptance_credit);
+  receiptSteps(row.steps);
+  return { status: "PASS", reason: "journey-steps-passed", creditDigest: true };
+}
+
+export function evaluateConnectorReceipt(value: unknown, binding: ConnectorBinding): SurfaceEvaluation {
+  refuseRawOutput(value);
+  const row = exact(value, "schema,identity,connector_id,evidence_class,acceptance_credit,steps");
+  if (row.schema !== CONNECTOR_PRODUCER) reject("invalid-schema");
+  const connector_id = kebab(row.connector_id);
+  const entry = CONNECTORS.find(item => item.id === connector_id);
+  if (!entry) reject("unknown-connector");
+  if (connector_id !== binding.connector_id) reject("mismatched-gate-or-target");
+  // A file import can never stand in for a live account, whatever it claims.
+  if (kebab(row.evidence_class) !== entry.evidence) reject("connector-evidence-class-mismatch");
+  familyIdentity(row.identity, CONNECTOR_PRODUCER, binding, CONNECTOR_SOURCE_CLASSES[entry.evidence], "authorized-operator");
+  acceptanceCredit(row.acceptance_credit);
+  receiptSteps(row.steps);
+  return { status: "PASS", reason: "connector-steps-passed", creditDigest: true };
+}
+
+function gateSuffix(gate_id: string, prefix: string): string {
+  if (!gate_id.startsWith(prefix)) reject("mismatched-gate-or-target");
+  return gate_id.slice(prefix.length);
+}
+function familyBinding(root: string, candidateSha: string): FamilyBinding {
+  return { candidate_source_sha: digest(candidateSha, 40), revision: evaluatorRevision(root) };
+}
+
+export function consumeRequiredChecksReceipt(value: unknown, root: string, candidateSha: string): SurfaceEvaluation {
+  return evaluateRequiredChecksReceipt(value, familyBinding(root, candidateSha));
+}
+export function consumeP0DispositionReceipt(value: unknown, root: string, candidateSha: string, now = Date.now()): SurfaceEvaluation {
+  return evaluateP0DispositionReceipt(value, { ...familyBinding(root, candidateSha), now });
+}
+export function consumeJourneyReceipt(value: unknown, root: string, candidateSha: string, gate_id: string): SurfaceEvaluation {
+  return evaluateJourneyReceipt(value, { ...familyBinding(root, candidateSha), journey_id: gateSuffix(gate_id, "journey.") });
+}
+export function consumeConnectorReceipt(value: unknown, root: string, candidateSha: string, gate_id: string): SurfaceEvaluation {
+  return evaluateConnectorReceipt(value, { ...familyBinding(root, candidateSha), connector_id: gateSuffix(gate_id, "connector.") });
+}
+
+export interface ReceiptFamily {
+  limit: number;
+  consume: (value: unknown, root: string, candidateSha: string, gate_id: string) => SurfaceEvaluation;
+}
+/** Families the offline evaluator consumes from an index gate reference. */
+export const RECEIPT_FAMILIES: Readonly<Record<string, ReceiptFamily>> = {
+  [REQUIRED_CHECKS_PRODUCER]: { limit: EVIDENCE_LIMITS.family_receipt, consume: (value, root, sha) => consumeRequiredChecksReceipt(value, root, sha) },
+  [P0_DISPOSITION_PRODUCER]: { limit: EVIDENCE_LIMITS.family_receipt, consume: (value, root, sha) => consumeP0DispositionReceipt(value, root, sha) },
+  [JOURNEY_PRODUCER]: { limit: EVIDENCE_LIMITS.journey_connector_receipt, consume: consumeJourneyReceipt },
+  [CONNECTOR_PRODUCER]: { limit: EVIDENCE_LIMITS.journey_connector_receipt, consume: consumeConnectorReceipt },
+};
