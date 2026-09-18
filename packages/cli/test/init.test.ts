@@ -184,9 +184,11 @@ describe("init", () => {
 
   test("prints the unit's observed state, not the installer's momentary confirmation", () => {
     const root = tempDir();
-    const env = { ...fakeSystemd(root, isolatedEnv()), KIZUKI_SUPERVISOR: "systemd" };
+    // The unit answers the installer's two activity probes and has failed by the next one.
+    const env = { ...fakeSystemd(root, isolatedEnv()), KIZUKI_SUPERVISOR: "systemd",
+      TEST_SUPERVISOR_DIES_AFTER_QUERIES: "2" };
     const vault = join(root, "vault");
-    const result = runCli({ ...env, TEST_SUPERVISOR_DIES_SECONDS: "1" }, "init", vault, "--no-default");
+    const result = runCli(env, "init", vault, "--no-default");
     expect(result.exitCode, result.stderr).toBe(0);
     // The unit the installer confirmed has already stopped; ask the supervisor again.
     const observed = runCli(env, "serve", "--vault", vault, "status");

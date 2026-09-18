@@ -1,11 +1,14 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** Exercises the real command adapter against a synthetic executable, never the host service manager. */
+/** Exercises the real command adapter against a synthetic executable, never the
+ * host service manager. TEST_SUPERVISOR_DIES_AFTER_QUERIES models a unit that
+ * answers that many activity probes after a start and has failed by the next
+ * one, the way a supervisor reports a process that exits once it is running. */
 export function fakeSystemd(root: string, env: Record<string, string | undefined>): Record<string, string | undefined> {
   const bin = join(root, "synthetic-bin"); mkdirSync(bin, { mode: 0o700 });
   const state = join(root, "synthetic-service-state"); writeFileSync(state, "absent\n", { mode: 0o600 });
-  const started = join(root, "synthetic-service-started");
+  const queries = join(root, "synthetic-service-active-queries");
   writeFileSync(join(bin, "systemctl"), `#!/bin/sh
 if [ "$TEST_SUPERVISOR_FAIL" = "$2" ]; then exit 1; fi
 state="\${TEST_SUPERVISOR_STATE:-$(cat "$TEST_SUPERVISOR_FILE")}"
@@ -26,7 +29,7 @@ case "$2" in
     exit 0 ;;
   start)
     printf 'active\\n' > "$TEST_SUPERVISOR_FILE"
-    date +%s > "$TEST_SUPERVISOR_STARTED"
+    printf '0\\n' > "$TEST_SUPERVISOR_QUERIES"
     if [ "$TEST_SUPERVISOR_SLEEP" = start ] || [ "$TEST_SUPERVISOR_SLEEP" = restart ]; then sleep 6; fi
     exit 0 ;;
   restart)
@@ -46,9 +49,10 @@ case "$2" in
     esac ;;
   is-active)
     if [ -n "$TEST_SUPERVISOR_ACTIVITY" ]; then printf '%s\\n' "$TEST_SUPERVISOR_ACTIVITY"; exit "\${TEST_SUPERVISOR_ACTIVITY_EXIT:-3}"; fi
-    if [ "$state" = active ] && [ -n "$TEST_SUPERVISOR_DIES_SECONDS" ]; then
-      age=$(( $(date +%s) - $(cat "$TEST_SUPERVISOR_STARTED" 2>/dev/null || printf 0) ))
-      if [ "$age" -ge "$TEST_SUPERVISOR_DIES_SECONDS" ]; then
+    if [ "$state" = active ] && [ -n "$TEST_SUPERVISOR_DIES_AFTER_QUERIES" ]; then
+      asked=$(( $(cat "$TEST_SUPERVISOR_QUERIES" 2>/dev/null || printf 0) + 1 ))
+      printf '%s\\n' "$asked" > "$TEST_SUPERVISOR_QUERIES"
+      if [ "$asked" -gt "$TEST_SUPERVISOR_DIES_AFTER_QUERIES" ]; then
         printf 'failed\\n' > "$TEST_SUPERVISOR_FILE"; printf 'failed\\n'; exit 3
       fi
     fi
@@ -60,5 +64,5 @@ case "$2" in
 esac
 `, { mode: 0o700 });
   return { ...env, PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
-    TEST_SUPERVISOR_FILE: state, TEST_SUPERVISOR_STARTED: started };
+    TEST_SUPERVISOR_FILE: state, TEST_SUPERVISOR_QUERIES: queries };
 }
