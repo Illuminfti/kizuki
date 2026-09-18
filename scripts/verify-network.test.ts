@@ -302,6 +302,33 @@ describe("network source verification", () => {
     expect(scanShellText("scripts/tool.sh", "echo curling tonight\n")).toEqual([]);
   });
 
+  test("scanShellText reads a path-qualified command by its basename", () => {
+    expect(
+      scanShellText("scripts/tool.sh", "/usr/bin/curl -fsSL https://example.invalid\n").map((item) => item.reason),
+    ).toEqual(["network subprocess: curl"]);
+    expect(scanShellText("scripts/tool.sh", "./curl https://example.invalid\n").map((item) => item.reason)).toEqual([
+      "network subprocess: curl",
+    ]);
+    expect(scanShellText("scripts/tool.sh", "bin/wget https://example.invalid\n").map((item) => item.reason)).toEqual([
+      "network subprocess: wget",
+    ]);
+    expect(
+      scanShellText("scripts/tool.sh", "exec /usr/bin/nc example.invalid 443\n").map((item) => item.reason),
+    ).toEqual(["network subprocess: nc"]);
+    expect(
+      scanShellText(
+        ".github/workflows/ci.yml",
+        "jobs:\n  test:\n    steps:\n      - run: /usr/bin/wget https://example.invalid\n",
+      ).map((item) => ({ line: item.line, reason: item.reason })),
+    ).toEqual([{ line: 4, reason: "network subprocess: wget" }]);
+  });
+
+  test("scanShellText keeps path-shaped names that are not network binaries quiet", () => {
+    expect(scanShellText("scripts/tool.sh", "printf '%s' https://example.invalid/curl\n")).toEqual([]);
+    expect(scanShellText("scripts/tool.sh", "cat docs/nc.md\n")).toEqual([]);
+    expect(scanShellText("scripts/tool.sh", "bun run scripts/encode.ts\n")).toEqual([]);
+  });
+
   test("the tracked tree has no unallowlisted network calls or stale entries", async () => {
     const scan = await scanTrackedSources();
     expect(scan.findings).toEqual([]);

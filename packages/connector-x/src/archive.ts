@@ -282,7 +282,8 @@ async function scanMedia(directory: string): Promise<{
   }
   return {
     directory: { path: directory, identity: directoryIdentity },
-    byPost: mutable,
+    // Directory enumeration order must not change snapshot identity on replay.
+    byPost: new Map([...mutable].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)),
   };
 }
 
