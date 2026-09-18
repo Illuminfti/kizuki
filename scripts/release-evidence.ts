@@ -600,6 +600,9 @@ function sameHashes(left: Record<string, string>, right: Record<string, string>)
   return keys.length === Object.keys(right).length && keys.every(key => left[key] === right[key]);
 }
 
+/** The packaged kizuki-mcp exits 2 from its usage path when invoked with no arguments (packages/mcp/src/bin.ts). */
+export const NATIVE_MCP_USAGE_EXIT_CODE = 2;
+
 export function evaluateNativeAttestationReceipt(value: unknown, expected: NativeAttestationExpected): SurfaceEvaluation {
   const row = exact(value, "schema,identity,target,host_platform,host_arch,host_kernel_release,bun_version,execution_class,binary_sha256,package_sha256,argv,exit_code,stdout_sha256,mcp_argv,mcp_exit_code,mcp_stderr_sha256,outcome,failures");
   if (row.schema !== NATIVE_ATTESTATION_PRODUCER) reject("invalid-schema");
@@ -636,7 +639,7 @@ export function evaluateNativeAttestationReceipt(value: unknown, expected: Nativ
   const outcome = text(row.outcome, 16);
   if (outcome !== "pass" && outcome !== "fail" && outcome !== "unresolved") reject("invalid-outcome");
   const failures = failureList(row.failures);
-  if (outcome === "pass" && (failures.length !== 0 || row.exit_code !== 0)) reject("invalid-outcome");
+  if (outcome === "pass" && (failures.length !== 0 || row.exit_code !== 0 || row.mcp_exit_code !== NATIVE_MCP_USAGE_EXIT_CODE)) reject("invalid-outcome");
   if (outcome === "fail" && failures.length === 0) reject("invalid-outcome");
   if (host_platform !== expected.evaluator_platform || host_arch !== expected.evaluator_arch) {
     return { status: "UNVERIFIABLE", reason: "evaluator-cannot-certify-native-target", creditDigest: false };

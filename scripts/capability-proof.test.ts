@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseCapabilityArgs } from "./capability-proof";
 import { CAPABILITY_PROOF_FILE, EVALUATOR_ROOT, SURFACE_DOC_FILES, SURFACE_GATE, SURFACE_PRODUCER, hash } from "./release-evidence";
+import { TOOL_DESCRIPTIONS } from "../packages/mcp/src/index";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -177,3 +178,18 @@ test.each(["write", "sync", "competing-output", "source-change"])("publication r
   expect(JSON.parse(child.stdout.toString())).toEqual({ failed: true, injected: true,
     final: mode === "competing-output" ? "competing evidence" : null, pending: [] });
 }, 30_000);
+
+/** CI consumes this receipt, so the advertised tool surface has to be exactly
+ * the compiled one: a new tool that skips the receipt fails here, not in review. */
+test("receipt pins the surface schema and the compiled MCP tool surface", () => {
+  const f = fixture(), child = f.emit();
+  expect(child.exitCode, child.stderr.toString()).toBe(0);
+  const receipt = JSON.parse(readFileSync(f.out, "utf8"));
+  expect(receipt.schema).toBe("kizuki.surface-inventory/v1");
+  expect(receipt.schema).toBe(SURFACE_PRODUCER);
+  expect(receipt.identity.producer).toBe(SURFACE_PRODUCER);
+  const tools = Object.keys(TOOL_DESCRIPTIONS);
+  expect(tools.length).toBeGreaterThan(0);
+  expect(receipt.mcp_tools).toEqual(tools);
+  expect(new Set(receipt.mcp_tools).size).toBe(receipt.mcp_tools.length);
+}, 60_000);

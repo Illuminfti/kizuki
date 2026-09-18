@@ -203,7 +203,7 @@ describe("doctor liveness", () => {
     expect(result.stderr).not.toMatch(/sk-[A-Za-z0-9]{10,}/);
   }, 15_000);
 
-  test("doctor reports missing provenance on a generated brief without rewriting it", () => {
+  test("a generated brief leaves doctor ok and is not rewritten by reading it", () => {
     const setup = supervisedVault();
     const once = runCli(setup.env, "serve", "--once", "--no-http");
     expect(once.exitCode).toBe(0);
@@ -217,7 +217,7 @@ describe("doctor liveness", () => {
     expect(brief.startsWith("---\n")).toBe(true);
 
     const doctor = runCli(setup.env, "doctor", "--json");
-    expect(doctor.exitCode).toBe(1);
+    expect(doctor.exitCode).toBe(0);
     const report = (
       JSON.parse(doctor.stdout) as {
         data: {
@@ -227,11 +227,9 @@ describe("doctor liveness", () => {
         };
       }
     ).data;
-    expect(report.ok).toBe(false);
+    expect(report.ok).toBe(true);
     expect(report.serve.ok).toBe(true);
-    expect(
-      report.problems.filter((problem) => problem.page.startsWith("dashboards/brief-")),
-    ).toEqual([{ page: `dashboards/${briefName}`, error: "sources: is required" }]);
+    expect(report.problems).toEqual([]);
     expect(readFileSync(join(setup.vault, "dashboards", briefName ?? ""), "utf8")).toBe(brief);
 
     runCli({ ...setup.env, KIZUKI_SUPERVISOR: "systemd" }, "serve", "--install");
@@ -251,11 +249,12 @@ describe("doctor liveness", () => {
         data: { problems: { page: string; error: string }[] };
       }
     ).data;
+    // A masked supervisor is the only complaint left; the brief is not one.
     expect(
       maskedReport.problems.filter((problem) =>
         problem.page.startsWith("dashboards/brief-"),
       ),
-    ).toEqual([{ page: `dashboards/${briefName}`, error: "sources: is required" }]);
+    ).toEqual([]);
   }, 30_000);
 
   test("init without a supervisor prints the exact serve command", () => {
