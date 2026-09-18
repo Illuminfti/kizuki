@@ -285,10 +285,13 @@ deletion from a shorter later export.
 ## Not enrollable from this CLI
 
 - **WHOOP.** `@kizuki/connector-whoop` is a synthetic-tested provider
-  component. It is not registered in the CLI. Native enrollment, live-account
-  qualification, and provider OAuth compatibility are unrun. WHOOP documents a
-  Client Secret as server-side only; local desktop custody of that secret is
-  not sanctioned here. Public docs that mention an eight-character OAuth state
-  or omit PKCE do not prove that WHOOP rejects Core's flow. See
+  component. It is not registered in the CLI, and `kizuki connect` prints it in
+  this section rather than leaving it out of the catalog. Native enrollment,
+  live-account qualification, and provider OAuth compatibility are unrun:
+  WHOOP's documented eight-character OAuth state and registered redirect are
+  unqualified against Core's PKCE and dynamic loopback callback, and local
+  desktop custody of the server-side Client Secret WHOOP documents is not
+  sanctioned here. Public docs that mention an eight-character OAuth state or
+  omit PKCE do not prove that WHOOP rejects Core's flow. See
   [WHOOP](whoop.md).
 - Composio and WhatsApp Business API remain explicitly deferred.
