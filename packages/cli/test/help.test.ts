@@ -493,6 +493,7 @@ describe("help", () => {
       const body = JSON.parse(result.stdout) as {
         data: {
           name: string;
+          usage: string;
           options: string[];
           flags: string[];
           defaults: Record<string, string>;
@@ -501,15 +502,41 @@ describe("help", () => {
         };
       };
       expect(body.data.name).toBe("rebuild");
-      expect(body.data.options).toEqual(["--layer", "--port"]);
+      expect(body.data.usage).toBe(
+        "rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm]" +
+          " [--max-records N] [--max-entries N] [--max-source-bytes N] [--json]",
+      );
+      expect(body.data.options).toEqual([
+        "--layer",
+        "--port",
+        "--max-records",
+        "--max-entries",
+        "--max-source-bytes",
+      ]);
       expect(body.data.flags).toEqual(["--json", "--prune-old", "--confirm"]);
-      expect(body.data.defaults).toEqual({ "--layer": "all" });
-      expect(body.data.bounds).toEqual({ "--layer": "all|search|graph" });
+      // The budget defaults are the shipped rebuild budget, named in full so a
+      // refusal can point at the flag that raises the bound it reports.
+      expect(body.data.defaults).toEqual({
+        "--layer": "all",
+        "--max-records": "1000000",
+        "--max-entries": "200000",
+        "--max-source-bytes": "67108864",
+      });
+      expect(body.data.bounds).toEqual({
+        "--layer": "all|search|graph",
+        "--max-records": "N",
+        "--max-entries": "N",
+        "--max-source-bytes": "N",
+      });
       expect(body.data.irreversible).toBe(false);
     }
-    expect(runCli(env, "rebuild", "--help").stdout).toContain("--layer  all|search|graph  default all");
-    expect(runCli(env, "rebuild", "--help").stdout).toContain("--prune-old");
-    expect(runCli(env, "rebuild", "--help").stdout).toContain("--confirm");
+    const rendered = runCli(env, "rebuild", "--help").stdout;
+    expect(rendered).toContain("--layer  all|search|graph  default all");
+    expect(rendered).toContain("--max-records  N  default 1000000");
+    expect(rendered).toContain("--max-entries  N  default 200000");
+    expect(rendered).toContain("--max-source-bytes  N  default 67108864");
+    expect(rendered).toContain("--prune-old");
+    expect(rendered).toContain("--confirm");
     for (const [args, diagnostic] of [
       [["rebuild", "--nope"], "unknown option --nope"],
       [["rebuild", "--json", "--json"], "repeated flag --json"],
@@ -527,7 +554,10 @@ describe("help", () => {
     expect(extra.stdout).toBe("");
     expect(extra.stderr).toContain("error: rebuild supports --layer all, search, or graph");
     expect(extra.stderr).toContain("usage: kizuki rebuild");
-  });
+    // Eight CLI subprocesses, two fewer than before. The explicit deadline
+    // matches the other subprocess-heavy suites; process startup, not this
+    // assertion set, is what the default five seconds has to cover.
+  }, 20_000);
 
   test("app structured help matches its parser", () => {
     const env = isolatedEnv();

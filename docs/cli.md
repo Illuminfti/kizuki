@@ -387,6 +387,15 @@ never keep a write transaction open across a network or model call, so owner
 verbs keep working while the loop runs. See
 [Running commands while the daemon writes](#running-commands-while-the-daemon-writes).
 
+The `retrieval-sweep` rail retries pending retrieval operations and catches
+the lexical index up to the ledger and to canon receipts. A pass indexes a
+bounded number of records, commits each batch, and records its position, so an
+interrupted pass still leaves the next one less to do. The pass reports what it
+indexed as `retrieval.upserts` and what remains as `retrieval.pending_ops`; it
+is `ok` only when nothing remains, and reports `derived-index-behind` while the
+index is still behind. A sweep with nothing outstanding is a complete pass, not
+an idle one, so it does not accrue an empty streak in `serve status`.
+
 ## models
 
 Status: shipped
@@ -493,7 +502,7 @@ in place.
 ## rebuild
 
 ```text
-usage: kizuki rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm] [--json]
+usage: kizuki rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm] [--max-records N] [--max-entries N] [--max-source-bytes N] [--json]
 ```
 
 Reconstructs derived retrieval from the vault. `--layer all` rebuilds the
@@ -517,7 +526,17 @@ work from doctor's measured embed-backfill throughput (`unmeasured` when none
 exists). A confirmed space change binds the configured embedding port and
 rebuilds vectors in that space. The public CLI refuses when that binding is
 unavailable instead of discarding vector state. Other layers are not implemented and exit 2. `--prune-old` cannot
-be combined with `--layer`, `--port`, or `--confirm`.
+be combined with `--layer`, `--port`, `--confirm`, or a budget option.
+
+Rebuild has no fixed corpus ceiling. It runs under an explicit resource budget:
+`--max-records N` (documents a configured retrieval port may be handed at once,
+default 1000000), `--max-entries N` (vault directory entries the preflight may
+inspect, default 200000), and `--max-source-bytes N` (canon file bytes, and
+event plus claim text bytes, default 67108864). The SQLite floor streams the
+ledger and canon and never holds the corpus in memory, so only a configured
+retrieval port pays the record budget. Exceeding a budget refuses before any
+store changes, and the refusal names the actual count, the budget it passed,
+and the flag that raises it.
 
 The result identifies `backend` (`sqlite-floor` or `retrieval-port`), `store`,
 `documents`, `floor_documents`, and the floor's `generation`. With default

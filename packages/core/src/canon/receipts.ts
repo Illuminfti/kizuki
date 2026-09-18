@@ -196,6 +196,26 @@ export function getCanonReceipt(db: Database, receiptId: string): CanonReceipt |
   return row === null ? null : rowToReceipt(row);
 }
 
+/**
+ * Canon receipts recorded after `afterReceiptId`, or all of them when null.
+ * Freshness checks run on every read, so they count rows instead of
+ * materializing and parsing every receipt.
+ */
+export function countCanonReceipts(
+  db: Database,
+  afterReceiptId: string | null = null,
+): number {
+  if (!tableExists(db, "canon_receipts")) return 0;
+  if (afterReceiptId === null) {
+    return db.query<{ count: number }, []>(
+      "SELECT COUNT(*) AS count FROM canon_receipts",
+    ).get()?.count ?? 0;
+  }
+  return db.query<{ count: number }, [string]>(
+    "SELECT COUNT(*) AS count FROM canon_receipts WHERE receipt_id > ?",
+  ).get(afterReceiptId)?.count ?? 0;
+}
+
 export interface ListCanonReceiptsOptions {
   page_path?: string;
   writer?: string;

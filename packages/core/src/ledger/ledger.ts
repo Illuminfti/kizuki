@@ -492,6 +492,22 @@ export function latestLedgerCursor(db: Database): LedgerCursor | null {
   );
 }
 
+/**
+ * Events accepted after `cursor`. A bounded catch-up plans its remaining work
+ * from this count instead of walking the pages it has not read yet.
+ */
+export function countSince(db: Database, cursor: LedgerCursor | null): number {
+  if (cursor === null) return count(db);
+  return (
+    db
+      .query<{ count: number }, [string, string, string]>(
+        `SELECT COUNT(*) AS count FROM events
+         WHERE accepted_at > ? OR (accepted_at = ? AND event_id > ?)`,
+      )
+      .get(cursor.accepted_at, cursor.accepted_at, cursor.event_id)?.count ?? 0
+  );
+}
+
 export function count(db: Database): number {
   return (
     db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM events").get()

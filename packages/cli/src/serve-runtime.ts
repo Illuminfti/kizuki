@@ -25,7 +25,7 @@ import {
 } from "@kizuki/core";
 import { chatCompletionsUrl, parseOpenAiCompatibleConfig, parseSystemOneJevConfig, registerLlmPorts, registerSystemOnePorts, endpointHost, modelRef } from "@kizuki/llm";
 import { listHostConnections, loadConnector, closeHostConnector } from "./connections";
-import { tryRefreshDerived } from "./derived";
+import { DERIVED_PASS_RECORDS, tryRefreshDerived } from "./derived";
 import { tokenResolver } from "./secrets";
 import { loadSystemOneBinding } from "./vault-config";
 
@@ -283,9 +283,11 @@ export async function createServeRuntime(options: ServeRuntimeOptions): Promise<
             await options.retrieval.rebuildFromDocuments(readRetrievalDocuments(options.db, options.vaultPath));
           } catch { degraded.push("retrieval refresh unavailable"); }
         }
-        const result = tryRefreshDerived(options.db, options.vaultPath);
+        // Bounded per pass: progress is written after every batch, so an
+        // interrupted pass still leaves the next one less to do.
+        const result = tryRefreshDerived(options.db, options.vaultPath, { limit: DERIVED_PASS_RECORDS });
         if (result.degraded.length > 0) degraded.push("derived index refresh degraded");
-        return degraded;
+        return { indexed: result.events + result.pages, remaining: result.remaining, degraded };
       },
     },
     async close(): Promise<void> {
