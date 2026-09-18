@@ -244,6 +244,9 @@ function renderBrief(now: string, extra: string[]): string {
       status: "active",
       sensitivity: "personal",
       taint: "clean",
+      // Rendered from rail state, not from ledger events: the honest
+      // provenance is an explicit empty list, declared in `parsePageSources`.
+      sources: [],
       "x-brief-producer": "deterministic",
     },
     body: [

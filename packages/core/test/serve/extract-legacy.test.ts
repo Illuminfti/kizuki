@@ -96,6 +96,9 @@ test("upgrade refuses a committed structural prefix without changing any authori
     journalExtractBatch(f.db, await mineLiveDrafts(f.db, f.model), "fixture:legacy-partial", f.model);
     const pending = readDurableExtractBatch(f.db, f.model)!;
     await insertClaim({ db: f.db }, producedClaimInput(f.db, pending.filing_drafts[0]!, "model", pending.model_ref));
+    // Seed the historical replay effect explicitly: current insertion no longer
+    // counts the same evidence twice, but upgrades must preserve old rows.
+    f.db.query("UPDATE claims SET corroboration = 2 WHERE claim_id = ?").run(initial.claim.claim_id);
     makePreAtomic(f.db);
     // Retain unrelated pending work too, so refusal cannot hide a queue reset or refresh.
     const later = putEvent(f.db, { source_record_id: "later-deferred-input" });
@@ -193,6 +196,9 @@ test("a bare-digest legacy backup preserves its committed structural effect and 
     journalExtractBatch(f.db, await mineLiveDrafts(f.db, f.model), "fixture:legacy-backup", f.model);
     const pending = readDurableExtractBatch(f.db, f.model)!;
     await insertClaim({ db: f.db }, producedClaimInput(f.db, pending.filing_drafts[0]!, "model", pending.model_ref));
+    // Seed the historical replay effect explicitly: current insertion no longer
+    // counts the same evidence twice, but upgrades must preserve old rows.
+    f.db.query("UPDATE claims SET corroboration = 2 WHERE claim_id = ?").run(initial.claim.claim_id);
     makePreAtomic(f.db);
     const journal = f.db.query("SELECT * FROM extract_batches").all();
     const claim = getClaim(f.db, initial.claim.claim_id);

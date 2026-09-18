@@ -155,6 +155,7 @@ test("a claim revision cannot retain the prior projection through the same live 
   const first = await insertClaim({ db: f.db }, input);
   if (first.outcome !== "stored") throw new Error("fixture claim was not stored");
   const before = readRetrievalDocuments(f.db, f.vault).find(doc => doc.kind === "claim");
+  if (before === undefined) throw new Error("fixture claim projection was not produced");
   const port = new SettlementPort();
   port.afterPublish = async () => {
     const result = await insertClaim({ db: f.db }, { ...input,
@@ -163,8 +164,11 @@ test("a claim revision cannot retain the prior projection through the same live 
   };
   await expect(rebuildRetrieval(f.db, f.vault, port)).rejects.toThrow("source authorization changed");
   expect(getClaim(f.db, first.claim.claim_id)?.corroboration).toBe(2);
-  expect(readRetrievalDocuments(f.db, f.vault).find(doc => doc.kind === "claim")).toEqual(before);
-  expect(getClaim(f.db, first.claim.claim_id)?.provenance).toEqual([original]);
+  // The revision keeps the published doc_id and every other projected field, and
+  // every source it cites is still live, so only the removal proves the retirement.
+  expect(readRetrievalDocuments(f.db, f.vault).find(doc => doc.kind === "claim"))
+    .toEqual({ ...before, provenance: [original, confirmation] });
+  expect(getClaim(f.db, first.claim.claim_id)?.provenance).toEqual([original, confirmation]);
   expect(port.removed).toEqual([[`claim:${first.claim.claim_id}`]]);
   expect([...liveEventIds(f.db, [original, confirmation])].sort()).toEqual([original, confirmation]);
 });

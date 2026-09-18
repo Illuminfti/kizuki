@@ -5,7 +5,7 @@ import { release as kernelRelease } from "node:os";
 import { dirname, join } from "node:path";
 import { packageFiles, parseBuildInfo, verifyPackageDirectory } from "./release-artifacts";
 import {
-  EVALUATOR_ROOT, EVIDENCE_LIMITS, EvidenceError, NATIVE_ATTESTATION_PRODUCER, NATIVE_ATTESTATION_PRODUCER_FILES,
+  EVALUATOR_ROOT, EVIDENCE_LIMITS, EvidenceError, NATIVE_ATTESTATION_PRODUCER, NATIVE_ATTESTATION_PRODUCER_FILES, NATIVE_MCP_USAGE_EXIT_CODE,
   absolute, digest, evaluateNativeAttestationReceipt, hash, inspectOptionalVerifier, parents, producerRevision, read, reject,
 } from "./release-evidence";
 import type { GateReceiptReference } from "./release-evidence";
@@ -84,7 +84,8 @@ export function runNativeAttestation(args: NativeAttestationArgs): GateReceiptRe
   const child = spawn(join(artifact, "kizuki"), ["--help"]);
   if (child === null || child.exitCode !== 0) reject("native-execution-failed");
   const mcp = spawn(join(artifact, "kizuki-mcp"), []);
-  if (mcp === null || mcp.exitCode === null) reject("native-mcp-execution-failed");
+  // The no-argument MCP command must reach its usage path, not any startup outcome.
+  if (mcp === null || mcp.exitCode !== NATIVE_MCP_USAGE_EXIT_CODE) reject("native-mcp-execution-failed");
   const producer_files = producerFiles(EVALUATOR_ROOT);
   const receipt = {
     schema: NATIVE_ATTESTATION_PRODUCER,

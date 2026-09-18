@@ -1240,6 +1240,24 @@ function syntheticPass(rows = gates()) {
   return rows.map(row => row.required ? { ...row, status: "PASS" as const, reason: "synthetic-helper" } : { ...row });
 }
 
+test.each(["rc", "1.0"] as const)("%s helper honors the required flag on every supplied row", profile => {
+  const complete = syntheticPass();
+  const optional = complete.filter(row => !row.required).map(row => row.id);
+  expect(optional.length).toBeGreaterThan(0);
+  for (const id of optional) {
+    for (const required of [true, false]) {
+      for (const status of ["PASS", "FAIL", "MISSING", "UNVERIFIABLE", "NOT_IMPLEMENTED"] as const) {
+        const rows = complete.map(row => row.id === id ? { ...row, required, status } : row);
+        const accepted = status !== "FAIL" && (!required || status === "PASS");
+        expect(releaseDecision(profile, rows)).toEqual({
+          decision: accepted ? "GO" : "NO-GO",
+          release_1_0_accepted: profile === "1.0" && accepted,
+        });
+      }
+    }
+  }
+});
+
 test.each(["rc", "1.0"] as const)("%s helper GO requires the complete mandatory inventory", profile => {
   const complete = syntheticPass();
   const accepted = releaseDecision(profile, complete);

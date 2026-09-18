@@ -17,9 +17,11 @@ class Element {
     checked = false;
     disabled = false;
     focused = false;
+    isConnected = true;
     namespaceURI = 'http://www.w3.org/2000/svg';
     constructor(public tag = 'div') {}
     get tagName() { return this.tag.toUpperCase(); }
+    get parentElement(): Element | null { return this.parent; }
     set textContent(text: string) { this.ownText = text; this.children = []; }
     get textContent(): string { return this.ownText + this.children.map(child => child.textContent).join(''); }
     append(...nodes: Element[]) { for (const node of nodes) { node.parent = this; this.children.push(node); } }
@@ -67,6 +69,134 @@ function fixture() {
     return { evaluate, reply, requests, storageWrites, clipboardWrites, main: ids.get('main')!, dialog: ids.get('dialog')!, notice: ids.get('notification')!, window };
 }
 const status = (operations: unknown[] = [], epoch = '1') => ({ vault: { ready: true }, visibility_epoch: epoch, operations });
+
+test('dialog initial focus skips hidden controls and hidden containers', () => {
+    for (const nested of [false, true]) {
+        const f = fixture();
+        f.evaluate(`
+            const content = openDialog('Source setup', 'Synthetic');
+            globalThis.unavailable = el('input');
+            const concealed = ${nested} ? el('div', {}, unavailable) : unavailable;
+            concealed.hidden = true;
+            globalThis.available = el('button', { class: 'button-primary' }, 'Continue');
+            content.append(concealed, available);
+            focusDialog(content);
+        `);
+        expect(f.evaluate<boolean>('unavailable.focused')).toBe(false);
+        expect(f.evaluate<boolean>('available.focused')).toBe(true);
+    }
+});
+
+test('dialog initial focus skips hidden-type inputs', () => {
+    const f = fixture();
+    f.evaluate(`
+        const content = openDialog('Source setup', 'Synthetic');
+        globalThis.unavailable = el('input', { type: 'hidden' });
+        globalThis.available = el('input', { type: 'text' });
+        content.append(unavailable, available);
+        focusDialog(content);
+    `);
+    expect(f.evaluate<boolean>('unavailable.focused')).toBe(false);
+    expect(f.evaluate<boolean>('available.focused')).toBe(true);
+});
+
+test('dialog initial focus skips collapsed details but preserves controls in its first summary', () => {
+    for (const open of [false, true]) for (const inSummary of [false, true]) {
+        const f = fixture();
+        f.evaluate(`
+            const content = openDialog('Source setup', 'Synthetic');
+            globalThis.nested = el('input', { type: 'text' });
+            const summary = el('summary', {}, 'Options', ${inSummary} ? nested : null);
+            content.append(el('details', { open: ${open} }, summary, ${inSummary} ? null : nested));
+            globalThis.available = el('button', { class: 'button-primary' }, 'Continue');
+            content.append(available);
+            focusDialog(content);
+        `);
+        expect(f.evaluate<boolean>('nested.focused')).toBe(open || inSummary);
+        expect(f.evaluate<boolean>('available.focused')).toBe(!open && !inSummary);
+    }
+});
+
+test('native dialog cancellation restores focus and releases its return target', async () => {
+    const f = fixture();
+    f.evaluate(`document.activeElement=el('button'); globalThis.opener=document.activeElement; openDialog('Source setup','Synthetic');`);
+    await f.dialog.fire('cancel');
+    f.dialog.close();
+    await tick();
+    expect(f.evaluate<boolean>('opener.focused')).toBe(true);
+    expect(f.evaluate('dialogReturnFocus')).toBeNull();
+    expect(f.evaluate('closingDialogGeneration')).toBeNull();
+});
+
+test('dialog dismissal returns focus to main when its opener is detached, disabled or hidden', async () => {
+    for (const cancel of [false, true]) for (const unavailable of ['isConnected=false', 'disabled=true', 'hidden=true']) {
+        const f = fixture();
+        f.evaluate(`document.activeElement=el('button'); globalThis.opener=document.activeElement; openDialog('Source setup','Synthetic'); opener.${unavailable};`);
+        if (cancel) { await f.dialog.fire('cancel'); f.dialog.close(); }
+        else f.evaluate('closeDialog()');
+        await tick();
+        expect(f.main.focused).toBe(true);
+        expect(f.evaluate<boolean>('opener.focused')).toBe(false);
+        expect(f.evaluate('dialogReturnFocus')).toBeNull();
+    }
+});
+
+test('dialog dismissal skips openers inside hidden ancestors but preserves visible nested openers', async () => {
+    for (const cancel of [false, true]) for (const hidden of [false, true]) {
+        const f = fixture();
+        f.evaluate(`globalThis.opener=el('button'); globalThis.container=el('section', {}, el('div', {}, opener)); main.append(container); document.activeElement=opener; openDialog('Source setup','Synthetic'); container.hidden=${hidden};`);
+        if (cancel) { await f.dialog.fire('cancel'); f.dialog.close(); }
+        else f.evaluate('closeDialog()');
+        await tick();
+        expect(f.main.focused).toBe(hidden);
+        expect(f.evaluate<boolean>('opener.focused')).toBe(!hidden);
+        expect(f.evaluate('dialogReturnFocus')).toBeNull();
+        expect(f.evaluate('closingDialogGeneration')).toBeNull();
+    }
+});
+
+test('dialog dismissal returns focus to main when opened from the document body', async () => {
+    for (const cancel of [false, true]) {
+        const f = fixture();
+        f.evaluate(`document.body=el('body'); document.activeElement=document.body; openDialog('Source setup','Synthetic');`);
+        if (cancel) { await f.dialog.fire('cancel'); f.dialog.close(); }
+        else f.evaluate('closeDialog()');
+        await tick();
+        expect(f.main.focused).toBe(true);
+        expect(f.evaluate<boolean>('document.body.focused')).toBe(false);
+        expect(f.evaluate('dialogReturnFocus')).toBeNull();
+        expect(f.evaluate('closingDialogGeneration')).toBeNull();
+    }
+});
+
+test('dialog dismissal returns focus to main when opened without a usable active element', async () => {
+    for (const cancel of [false, true]) for (const active of ['null', 'dialog']) {
+        const f = fixture();
+        f.evaluate(`document.activeElement=${active}; openDialog('Source setup','Synthetic');`);
+        expect(f.evaluate<boolean>('dialogReturnFocus === main')).toBe(true);
+        if (cancel) { await f.dialog.fire('cancel'); f.dialog.close(); }
+        else f.evaluate('closeDialog()');
+        await tick();
+        expect(f.main.focused).toBe(true);
+        expect(f.evaluate('dialogReturnFocus')).toBeNull();
+        expect(f.evaluate('closingDialogGeneration')).toBeNull();
+    }
+});
+
+test('a queued cancellation close leaves a newer dialog and its cleanup intact', async () => {
+    const f = fixture();
+    f.evaluate(`openDialog('Old source','Synthetic'); globalThis.cleanups=0; dialogCleanup=()=>{cleanups++};`);
+    await f.dialog.fire('cancel');
+    f.dialog.close();
+    f.evaluate(`openDialog('New source','Synthetic'); dialogCleanup=()=>{cleanups++};`);
+    await tick();
+    expect(f.dialog.open).toBe(true);
+    expect(f.dialog.textContent).toContain('New source');
+    expect(f.evaluate<number>('cleanups')).toBe(1);
+    f.evaluate('closeDialog()');
+    await tick();
+    expect(f.evaluate<number>('cleanups')).toBe(2);
+});
 
 test('Activity distinguishes loading and unavailable from an empty receipt history and can retry', async () => {
     const f = fixture();
@@ -283,6 +413,22 @@ test('memory keeps Markdown onboarding when a source still needs permission or i
     f.evaluate(`state.sources[0].consent='active'; state.sources[0].last_run=null; state.sources[0].stored=0; render();`);
     expect(f.main.textContent).toContain('Import this source to search it');
     expect(findAction(f.main, 'Import history')).toBeTruthy();
+});
+
+test('first import explains permitted source access without calling Gmail a Markdown folder', async () => {
+    const f = fixture();
+    f.evaluate(`state.view='memory'; state.hits=null; state.sources=[{...state.sources[0],source_key:'gmail-synthetic',connector_id:'kizuki.gmail',display_name:'Gmail',consent:'active',last_run:null}]; render();`);
+    expect(f.main.textContent).toContain('Import reads only the information permitted for this source');
+    expect(f.main.textContent).toContain('Search works without a model');
+    expect(f.main.textContent).not.toContain('reads your Markdown');
+    const work = findAction(f.main, 'Import history').fire('click'); await tick();
+    expect(f.requests[0]!.route).toBe('capture');
+    expect(f.requests[0]!.payload).toEqual({ source_key: 'gmail-synthetic', mode: 'backfill' });
+    f.reply('capture', { operation_id: 'gmail-import' }); await tick();
+    f.reply('operation', { id: 'gmail-import', kind: 'capture', state: 'failed', error: { code: 'unavailable' } });
+    await work;
+    expect(f.dialog.textContent).toContain('Import did not finish');
+    expect(findAction(f.dialog, 'Try again')).toBeTruthy();
 });
 
 test('sources distinguish incomplete history from a finished backfill without promising complete coverage', () => {

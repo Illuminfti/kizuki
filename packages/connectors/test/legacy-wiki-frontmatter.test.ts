@@ -63,6 +63,49 @@ describe("block detection", () => {
     expect(result.body).toBe(source);
   });
 
+  test("trailing blanks on the opening fence do not hide the block", () => {
+    const result = parseLegacyFrontmatter("---  \ntitle: Ada\n---\nbody\n");
+    expect(result.status).toBe("parsed");
+    expect(result.data).toEqual({ title: "Ada" });
+    expect(result.body).toBe("body\n");
+  });
+
+  test("trailing blanks on the closing fence do not hide the block", () => {
+    const result = parseLegacyFrontmatter(
+      "---\ntitle: Ada\nborn: 1815\n---  \t \nbody\n",
+    );
+    expect(result.status).toBe("parsed");
+    expect(result.data).toEqual({ title: "Ada", born: 1815 });
+    expect(result.body).toBe("body\n");
+  });
+
+  test("trailing blanks close a dot-dot-dot block, including at CRLF", () => {
+    const spaced = parseLegacyFrontmatter("---\ntitle: Ada\n...\t\nbody\n");
+    expect(spaced.status).toBe("parsed");
+    expect(spaced.data).toEqual({ title: "Ada" });
+    expect(spaced.body).toBe("body\n");
+
+    const crlf = parseLegacyFrontmatter(
+      "---\r\ntitle: Ada\r\n---  \r\nbody\r\n",
+    );
+    expect(crlf.status).toBe("parsed");
+    expect(crlf.data).toEqual({ title: "Ada" });
+    expect(crlf.body).toBe("body\r\n");
+  });
+
+  test("a closing fence with trailing blanks at end of file leaves no body", () => {
+    const result = parseLegacyFrontmatter("---\ntitle: Ada\n--- ");
+    expect(result.status).toBe("parsed");
+    expect(result.data).toEqual({ title: "Ada" });
+    expect(result.body).toBe("");
+  });
+
+  test("a second document is refused when its fence carries trailing blanks", () => {
+    expect(
+      refused("---\ntitle: Ada\n...\n---  \ntitle: Grace\n---\nbody\n"),
+    ).toEqual(["a second document"]);
+  });
+
   test("a body that starts with a rule stays body", () => {
     const result = parseLegacyFrontmatter("---\ntitle: Ada\n---\n---\nbody\n");
     expect(result.status).toBe("parsed");
