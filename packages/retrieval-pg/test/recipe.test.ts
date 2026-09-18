@@ -121,6 +121,50 @@ describe("vendored retrieval recipe", () => {
     expect(kept.some((row) => row.id === "page:other")).toBe(true);
   });
 
+  test("dedup restores a corrected document that type diversity evicted whole", () => {
+    // Three model_inference claims fill the per-kind quota (ceil(5 * 0.6) = 3)
+    // before the lowest-scored claim is reached, so the corrected document has
+    // no surviving chunk left for the guarantee to repair in place.
+    const kept = dedupResults([
+      candidate("claim:one", 5, { kind: "claim", authority: "model_inference", text: "one" }),
+      candidate("claim:two", 4, { kind: "claim", authority: "model_inference", text: "two" }),
+      candidate("claim:three", 3, { kind: "claim", authority: "model_inference", text: "three" }),
+      candidate("page:memo", 2, { kind: "page", text: "memo" }),
+      candidate("claim:corrected", 1, {
+        kind: "claim",
+        authority: "owner_correction",
+        text: "corrected",
+      }),
+    ]);
+    expect(kept.some((row) => row.id === "claim:corrected")).toBe(true);
+    expect(kept.filter((row) => row.id === "claim:corrected")).toHaveLength(1);
+    // Restoring the corrected document must not evict anything already kept.
+    expect(kept.map((row) => row.id).sort()).toEqual([
+      "claim:corrected",
+      "claim:one",
+      "claim:three",
+      "claim:two",
+      "page:memo",
+    ]);
+    expect(kept.map((row) => row.score)).toEqual([5, 4, 3, 2, 1]);
+  });
+
+  test("dedup swaps a corrected chunk back into a document that survived", () => {
+    const kept = dedupResults([
+      candidate("page:memo", 5, { chunk_id: 0, text: "alpha beta gamma" }),
+      candidate("page:memo", 4, { chunk_id: 1, text: "delta epsilon zeta" }),
+      candidate("page:memo", 1, {
+        chunk_id: 2,
+        authority: "owner_correction",
+        text: "eta theta iota",
+      }),
+    ]);
+    expect(kept).toHaveLength(2);
+    expect(
+      kept.some((row) => row.authority === "owner_correction"),
+    ).toBe(true);
+  });
+
   test("cosine re-score blends 0.7 fused + 0.3 vector and does not leave raw scale", () => {
     const query = new Float32Array([1, 0]);
     const aligned = new Float32Array([1, 0]);
