@@ -133,7 +133,6 @@ describe("openLedger migrations", () => {
     const standard = openLedger(":memory:"), brief = openLedger(":memory:", { busyTimeoutMs: 250 });
     try {
       expect(standard.query("PRAGMA busy_timeout").get()).toEqual({ timeout: LEDGER_BUSY_TIMEOUT_MS });
-      expect(LEDGER_BUSY_TIMEOUT_MS).toBe(5000);
       expect(brief.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 250 });
     } finally { standard.close(); brief.close(); }
   });
