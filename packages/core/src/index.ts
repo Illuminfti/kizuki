@@ -557,6 +557,7 @@ export {
   chooseCandidate,
   createBudgetTracker,
   getCanonReceipt,
+  countCanonReceipts,
   initCanon,
   inspectPageIndex,
   inspectCanonRecovery,
@@ -654,6 +655,7 @@ export {
 export {
   accept,
   count,
+  countSince,
   latestLedgerCursor,
   normalizeReplayFilter,
   readSince,
@@ -1035,6 +1037,7 @@ export type {
   ModelDoctor,
   RailDoctor,
   RailHooks,
+  RailRefreshReport,
   RailRuntime,
   RailId,
   RailSpec,
@@ -1068,7 +1071,14 @@ export type { ConfiguredRetrieval, RetrievalPortState } from "./retrieval/config
 export { tryAdvisoryFileLock } from "./util/advisory-file-lock";
 export type { AdvisoryFileLock } from "./util/advisory-file-lock";
 
-export { readRetrievalDocuments, rebuildRetrieval, MAX_REBUILD_RECORDS } from "./retrieval/rebuild";
+export {
+  countRetrievalDocuments,
+  readRetrievalDocuments,
+  rebuildRetrieval,
+  resolveRebuildBudget,
+  DEFAULT_REBUILD_BUDGET,
+} from "./retrieval/rebuild";
+export type { RebuildBudget } from "./retrieval/rebuild";
 export { planFullReembed, embeddingThroughputFromReceipts, formatReembedRefusal } from "./retrieval/reembed";
 export type { ReembedPlan } from "./retrieval/reembed";
 export { claimRetrievalDoc } from "./claims/store";
@@ -1076,6 +1086,15 @@ export { claimRetrievalDoc } from "./claims/store";
 export { ESTATE_IMPORT_LIMITS } from "./contracts/estate-import";
 export type { EstateIssueCode, EstateImportIssue, EstateImportMapping, EstateImportReport, EstateSlice, EstateRecord, EstateAuthorization } from "./contracts/estate-import";
 export { EstateImportError, planEstateImport } from "./import/estate";
+export {
+  asLeaseHeld,
+  LEASE_HELD_CODE,
+  leaseHeldMessage,
+  ledgerLeaseHolder,
+  LedgerLeaseHeldError,
+  withLeaseHeldRefusal,
+} from "./serve/lease-held";
+export { isLedgerBusy } from "./ledger/busy";
 export { evaluateQualification, QUALIFICATION_WINDOW_MS } from "./serve/qualification";
 export type { QualificationProfile, QualificationRail, QualificationReceipt, QualificationProcess, QualificationSample } from "./serve/qualification";
 
