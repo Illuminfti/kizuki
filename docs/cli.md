@@ -92,6 +92,8 @@ source grant permitting capture. The three policy options must appear together;
 they apply explicit consent before reading content. Without a grant, import
 enrolls the source, refuses capture, and prints the source key and grant command. For local
 Beeper messages, use `connect beeper` followed by `backfill beeper`.
+An import runs alongside the serve daemon: see
+[Running commands while the daemon writes](#running-commands-while-the-daemon-writes).
 
 ## connect
 
@@ -243,6 +245,20 @@ retrieval requirements.
 The Beeper connector conservatively rescans available history on each completed
 sync cycle to observe edits and explicit tombstones; unchanged records deduplicate.
 
+### Running commands while the daemon writes
+
+The serve daemon and an owner-invoked capture share one SQLite ledger, and
+SQLite admits one writer at a time. Every ledger connection opens with a
+bounded busy timeout, and a contended batch is retried within a bound, so
+ordinary rail activity does not interrupt a bulk import or a read.
+
+Each batch commits with its checkpoint before the next one is requested, so an
+interrupted run resumes rather than replays; events already committed
+deduplicate on the next pass. If a writer holds the ledger past every retry,
+the command stops with `lease_held`, naming the process that holds the writer
+lease and stating that running the same command again resumes from the last
+checkpoint. `database is locked` is not an error this CLI reports.
+
 ## query
 
 ```text
@@ -253,6 +269,11 @@ FTS floor. Ceiling is `private`. Unlabeled hits are withheld on stderr
 (`withheld=N (no sensitivity label)`). A stale or partial index exits `1`
 unless `--degraded` is set. Zero labeled hits and zero withheld prints
 `0 hits` on stderr.
+
+Reads wait out ordinary daemon writes rather than failing: `query` and
+`context` keep the owner access-audit writer on the same bounded busy timeout
+as every other ledger connection, and report `lease_held` rather than a lock
+error when a writer outlasts it.
 
 Query and context reads never initialize or repair a vault. They retain the
 required owner access-audit rows, while data queries use a logically query-only
@@ -361,7 +382,19 @@ user service when a supervisor exists. The CLI still runs when the daemon is
 down. Before a rail writes canon, `serve` binds the selected LLM port from
 `[ports.llm]`; a model name by itself never enables writes. `kizuki doctor`
 reports a complete binding as `on` and an incomplete configuration as
-`unverified`.
+`unverified`. Rails hold the ledger only for the length of one batch; they
+never keep a write transaction open across a network or model call, so owner
+verbs keep working while the loop runs. See
+[Running commands while the daemon writes](#running-commands-while-the-daemon-writes).
+
+The `retrieval-sweep` rail retries pending retrieval operations and catches
+the lexical index up to the ledger and to canon receipts. A pass indexes a
+bounded number of records, commits each batch, and records its position, so an
+interrupted pass still leaves the next one less to do. The pass reports what it
+indexed as `retrieval.upserts` and what remains as `retrieval.pending_ops`; it
+is `ok` only when nothing remains, and reports `derived-index-behind` while the
+index is still behind. A sweep with nothing outstanding is a complete pass, not
+an idle one, so it does not accrue an empty streak in `serve status`.
 
 ## models
 
@@ -399,7 +432,15 @@ absence proofs and `pending`/`done`/`failed` operation state. While any inert
 legacy identity row remains, identity absence is unprovable rather than
 successful. If the canon scan stops at its page-count or byte bound, the
 affected pages cannot be enumerated, so preview and deletion both refuse with
-`canon_scan_truncated` instead of purging against a partial scan.
+`canon_scan_truncated` instead of purging against a partial scan. A completed
+deletion and a completed `--verify` both refresh the derived index cursor so
+`doctor` and `query` keep reading the shrunk ledger as fresh; any refresh
+warning is printed as `degraded:` and carried in the JSON envelope's
+`degraded` list. When every store proof is complete and a hold still remains,
+the canon rewrite itself failed: `--verify` then names the held page paths and
+points at `kizuki doctor` and page ownership and permissions, instead of
+offering a bare retry that replays the same failure. `--json` reports the same
+paths as `data.held_pages`, which is empty once the hold is lifted.
 
 Subject purges use an exact raw `subject_id` in its emitting connector's
 namespace: `--subject ID --connector ID`. Bare subject IDs are refused,
@@ -461,7 +502,7 @@ in place.
 ## rebuild
 
 ```text
-usage: kizuki rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm] [--json]
+usage: kizuki rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm] [--max-records N] [--max-entries N] [--max-source-bytes N] [--json]
 ```
 
 Reconstructs derived retrieval from the vault. `--layer all` rebuilds the
@@ -485,7 +526,17 @@ work from doctor's measured embed-backfill throughput (`unmeasured` when none
 exists). A confirmed space change binds the configured embedding port and
 rebuilds vectors in that space. The public CLI refuses when that binding is
 unavailable instead of discarding vector state. Other layers are not implemented and exit 2. `--prune-old` cannot
-be combined with `--layer`, `--port`, or `--confirm`.
+be combined with `--layer`, `--port`, `--confirm`, or a budget option.
+
+Rebuild has no fixed corpus ceiling. It runs under an explicit resource budget:
+`--max-records N` (documents a configured retrieval port may be handed at once,
+default 1000000), `--max-entries N` (vault directory entries the preflight may
+inspect, default 200000), and `--max-source-bytes N` (canon file bytes, and
+event plus claim text bytes, default 67108864). The SQLite floor streams the
+ledger and canon and never holds the corpus in memory, so only a configured
+retrieval port pays the record budget. Exceeding a budget refuses before any
+store changes, and the refusal names the actual count, the budget it passed,
+and the flag that raises it.
 
 The result identifies `backend` (`sqlite-floor` or `retrieval-port`), `store`,
 `documents`, `floor_documents`, and the floor's `generation`. With default
@@ -552,6 +603,12 @@ search results and context packets include `retrieval-unavailable`. The session
 does not steal another process's lease or reconnect the engine mid-session.
 An explicit `--retrieval ID` remains required. Unknown engines and invalid
 configuration refuse startup. No model is needed for the lexical floor.
+
+Two agent clients and the serve daemon can hold the same ledger at once. The
+adapter opens it with the same bounded busy timeout as the CLI. A call that a
+live writer outlasts is refused as `busy` with `retry_after_seconds`, never as
+a lock error, and the identical call succeeds on retry. Startup names the
+holder rather than reporting a healthy vault as unopenable.
 
 ## agent
 

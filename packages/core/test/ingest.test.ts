@@ -1255,6 +1255,32 @@ describe("a batch that does not match the enrolled connection", () => {
     expect(staged?.body).toBe("UNQUOTED BODY");
     db.close();
   });
+
+  test("a page too long for staging still lands in the ledger", async () => {
+    const db = database();
+    // Past the staging body bound, far inside the event text bound: the page
+    // is admissible evidence even though no claim can be cut from it.
+    const oversized = "a".repeat(64_001);
+    const connector = new FixtureConnector(
+      { events: [candidate({ text: oversized })], cursor: "next" },
+      undefined,
+      { page_candidates: true },
+    );
+    const result = await runBackfill(db, connector, "fixture", SOURCE);
+    expect(result.stored).toBe(1);
+    expect(result.proposals_created).toBe(0);
+    expect(result.errors).toEqual(["body: must be at most 64000 characters"]);
+    // Acceptance is its own step. A refused proposal does not unwrite the raw
+    // row the ledger already accepted, or the text would be lost outright.
+    expect(
+      db
+        .query<{ text: string }, []>("SELECT text FROM events")
+        .all()
+        .map((row) => row.text.length),
+    ).toEqual([oversized.length]);
+    expect(listProposals(db)).toEqual([]);
+    db.close();
+  });
 });
 
 describe("hostile live event records", () => {

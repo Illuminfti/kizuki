@@ -7,7 +7,7 @@ import * as core from "../src/index";
 import { insertClaim } from "../src/claims/store";
 import { LEDGER_SCHEMA_VERSION, inspectOpenLedgerHealth, openLedger } from "../src/ledger/db";
 import { classifySqliteFailure, LedgerStoreError } from "../src/ledger/errors";
-import { LEDGER_BUSY_TIMEOUT_MS, MAX_READ_SINCE } from "../src/ledger/limits";
+import { LEDGER_BUSY_TIMEOUT_MS, LEDGER_CONTROL_BUSY_TIMEOUT_MS, MAX_READ_SINCE } from "../src/ledger/limits";
 import { accept, readSince, replay } from "../src/ledger/ledger";
 import { validEvent } from "./fixtures";
 
@@ -124,7 +124,10 @@ describe("ledger p1 store", () => {
       stored(writer, "rec-lock");
       writer.exec("BEGIN EXCLUSIVE");
       const reader = new Database(path);
-      reader.exec(`PRAGMA busy_timeout = ${LEDGER_BUSY_TIMEOUT_MS}`);
+      // What is under test is how a contended write is classified, not how
+      // long a connection waits first. Probe with the control-store wait so
+      // this stays a refusal rather than the ordinary batch timeout.
+      reader.exec(`PRAGMA busy_timeout = ${LEDGER_CONTROL_BUSY_TIMEOUT_MS}`);
       let failed: unknown;
       try {
         reader.exec("BEGIN EXCLUSIVE");
