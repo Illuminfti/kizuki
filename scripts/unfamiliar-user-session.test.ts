@@ -44,6 +44,8 @@ test("freeze a human task sheet without inventing results or acceptance", () => 
     .toContain("query it again or inspect its updated context");
   expect(session.tasks.find(task => task.id === "install")?.instruction)
     .toContain("Install to a stable path, use normal init, and check that its supervisor service is active and enabled using the public instructions.");
+  expect(session.tasks.find(task => task.id === "canon-agent-query")?.instruction)
+    .toContain("Explain whether the result is useful to you and why, without sharing private source contents.");
   expect(session.tasks.find(task => task.id === "recovery")?.instruction)
     .toContain("verify both query and context against the restored content");
   expect(session.worksheet_generator_sha256).toBe(hash(readFileSync(join(import.meta.dir, "unfamiliar-user-session.ts"))));
