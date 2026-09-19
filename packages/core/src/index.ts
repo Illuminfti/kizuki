@@ -908,6 +908,9 @@ export {
   servePropose,
   serveSearch,
   serveTimeline,
+  WorldViewError,
+  isWorldWireToken,
+  readWorldView,
 } from "./serving";
 export type {
   CanonChunk,
@@ -937,6 +940,12 @@ export type {
   SubjectLabelDegradation,
   Served,
   TimelineArgs,
+  WorldKnownAt,
+  WorldObjectRef,
+  WorldReadInput,
+  WorldReadResult,
+  WorldSnapshotRef,
+  WorldValidQuery,
 } from "./serving";
 
 export {
