@@ -96,9 +96,12 @@ a test to hide a defect.
 ## Documentation
 
 Every command, path, and capability claim must match the live tree. Separate
-implemented behavior from accepted design. 1.0 is stranger proof plus estate
-cutover; neither is done. Do not invent an installer, a docs site, or a
-packaged binary.
+implemented behavior from accepted design. 1.0 is the world model
+([D21](docs/decision-log.md)) built on the RFC scope and public world-model
+journey accepted by [D22](docs/decision-log.md), proved the way
+[D19](docs/decision-log.md) defines readiness. D19 supersedes the release
+definition C1 recorded. None of it is done. Do not invent an installer, a
+docs site, or a packaged binary.
 
 Agent playbooks live under `.agents/skills/`. [AGENTS.md](AGENTS.md) is
 repository policy.

@@ -4,6 +4,11 @@ Evidence date: 7 September 2026. The checked-in acceptance checker inventories
 the fixed RC and 1.0 obligations and validates the supported local evidence.
 The current producer set cannot establish release `GO`: independent review,
 live accounts and unfamiliar-user acceptance still need their required evidence.
+The required-checks, p0-disposition, journey and connector families now have
+offline consume functions, so a supplied receipt reaches its gate and an absent
+one reports `MISSING` rather than an unimplemented adapter. The journey and
+connector families cannot yet certify: with no producer entrypoint pinned, a
+complete receipt reports `UNVERIFIABLE` and earns no evidence credit.
 The online collector can qualify current CI, native packages and complete
 installed-service lifecycle receipts under the contracts below. The current readiness bar is a stranger who
 can install and use the product, zero live P0 findings, and honest installation.
@@ -59,6 +64,14 @@ latest-attempt read refuses changes during collection.
 ```bash
 bun scripts/github-release-evidence.ts --profile rc --evidence /absolute/evidence/index.json --checkout /absolute/clean-candidate --out /absolute/new-github-evaluation
 ```
+
+The collector emits `required-checks.json` and `p0-disposition.json` into its
+output directory and applies them through the same consume functions the offline
+index uses, so both entry points reach a gate by one code path. A required row
+that fails the collector's own job and authored-step review is a failing
+candidate and emits no receipt. The emitted receipts and their digests are
+listed in `github-observation.json`; each is a valid `gate_receipts` entry for a
+later offline index.
 
 The collector uses existing `gh` read access and performs GET requests only.
 Native archive inspection also requires Python 3 with its standard `zipfile`
@@ -143,6 +156,55 @@ The `kizuki.acceptance-evidence/v3` index extends v2 with a required
 receipt path and SHA-256. V3 accepts at most forty references and 32 KiB of index
 bytes. Unsupported evidence families retain their explicit missing-adapter
 status; an arbitrary receipt cannot supply release credit.
+
+Four further families share one receipt shape. A receipt names its producer
+files and the revision of those files, binds the exact candidate source SHA, and
+declares a `source_class` and `actor_class` from the fixed lists. Each family
+pins the exact producer file list it accepts, so a receipt naming any other file
+is refused before the evaluator reads anything; the evaluator then recomputes
+that revision from its own checkout, so a receipt whose producer bytes differ is
+refused too. Producer paths are checkout-relative and may contain no `.` or `..`
+segment, and the evaluator refuses to read a path that resolves outside its
+checkout, so a receipt cannot steer it at the host filesystem. A receipt records
+observations only; the evaluator computes the verdict, and an evaluator that
+cannot certify returns `UNVERIFIABLE` with a stated reason rather than `PASS`.
+
+The producer revision binds the bytes of the producing code, not the work the
+receipt describes. For `kizuki.journey-proof/v1` and `kizuki.connector-evidence/v1`
+no producer entrypoint has landed yet, so the pinned list is
+`scripts/release-evidence.ts` alone and the revision attests only to the shared
+receipt module, which every operator already holds. A receipt bound to that list
+alone records no executed work, so those two evaluators keep every denial path
+and end in `UNVERIFIABLE` (`journey-producer-not-landed`,
+`connector-producer-not-landed`) instead of `PASS`, crediting no evidence digest.
+A later lane that lands a journey or connector producer script adds it to the
+pinned list, and the terminal verdict becomes `PASS` for a receipt that survives
+every denial.
+
+`kizuki.required-checks/v1` (`scripts/required-checks.ts`) records exactly
+`test`, `secrets` and `workflows` with each context's conclusion, run ID and
+completion time. A different candidate, a context set that is not exactly those
+three in order, or a conclusion other than `success` cannot pass.
+
+`kizuki.p0-disposition/v1` (`scripts/p0-disposition.ts`) records the queried
+`severity:p0` label, the candidate's commit time, the snapshot time and the open
+issue numbers. An empty inventory passes; a non-empty one fails and names the
+issue numbers; a snapshot taken before the candidate commit, or after this
+evaluation, is `UNVERIFIABLE`. Binding the commit time to the candidate SHA is
+the producer's observation from a checkout that holds the commit; the evaluator
+only enforces that ordering.
+
+`kizuki.journey-proof/v1` and `kizuki.connector-evidence/v1` are generic. Each
+receipt names its journey or connector, declares acceptance credit, and lists
+executed steps that all passed. An unknown identifier, an identifier that does
+not match the consumed gate, an empty step list, a step that did not pass, or
+withheld acceptance credit is refused. A connector receipt must declare the
+evidence class the frozen C3 catalogue records for that connector and carry the
+matching operator source class, so a file-import receipt can never satisfy a
+live-account gate. Steps carry `stdout_sha256` and `stderr_sha256`; a receipt
+that carries raw captured output instead of a digest is refused unread. A
+receipt that clears every one of those checks is still hand-authorable today, so
+neither family can grant a gate `PASS` until its producer entrypoint lands.
 
 The implemented `kizuki.surface-inventory/v1` producer is
 `scripts/capability-proof.ts`. Its receipt binds the exact candidate's public
@@ -240,9 +302,9 @@ can set `release_1_0_accepted` after every required row passes.
 | `engine.<target>` for both targets | Both copied executables report the matching qualified SQLite identity and pinned Bun; v1 is missing, unknown identities fail |
 | `native.<target>` for both targets | Trusted producer revision and native execution attestation; `UNVERIFIABLE` |
 | `lifecycle.<target>` for both targets | Online current paired native v2: install, distinct prior candidate upgrade, historical migration/recovery, native states, synthetic model matrix/recovery, restart, uninstall and complete cleanup; saved receipts remain unverified |
-| `candidate.required-checks` | Exact-candidate required CI/check identities; adapter `NOT_IMPLEMENTED` |
+| `candidate.required-checks` | Exactly `test`, `secrets` and `workflows` concluded `success` on the exact candidate; v3 receipt adapter implemented, `MISSING` without a receipt |
 | `candidate.independent-review` | Independent specification/security and regression review; adapter `NOT_IMPLEMENTED` |
-| `candidate.current-p0-disposition` | Complete current-head findings and explicit freshness policy; `UNVERIFIABLE` |
+| `candidate.current-p0-disposition` | Open `severity:p0` inventory for the exact candidate, snapshotted no earlier than the candidate commit; v3 receipt adapter implemented, `MISSING` without a receipt |
 | `surface.capabilities-and-docs` | Exact-candidate executable surface and documentation inventory; v3 receipt adapter implemented |
 | `journey.connect-resume` | Complete connector capability, limit, cursor, sensitivity and account/history/edit/delete/restart evidence |
 | `journey.correct-belief` | Correction, supersession, provenance, canon/query/context/MCP agreement and undo |
@@ -252,16 +314,20 @@ can set `release_1_0_accepted` after every required row passes.
 | `journey.daily-loop` | Deployed named contracts, one goal authority, missing data cases and normal-week usefulness |
 | `journey.useful-insight` | Named question/insight contracts, insufficient-evidence cases and human usefulness |
 | `journey.install-recover` | Both native packages and lifecycles, backup/clean restore and unfamiliar-user proof |
-| `connector.<id>` for all fifteen C3 entries | Per-provider/file conformance and applicable real-source evidence; adapters `NOT_IMPLEMENTED` |
+| `connector.<id>` for all fifteen C3 entries | Per-provider/file conformance and applicable real-source evidence; generic v3 receipt adapter implemented and bound to each entry's evidence class, `MISSING` without a receipt, `UNVERIFIABLE` with one until a connector producer lands |
 | `human.unfamiliar-user` | Non-author, fresh machine, zero coaching and fifteen-minute milestone; adapter `NOT_IMPLEMENTED` |
 | `owner.seven-day-rails` | Optional post-readiness diagnostic; `NOT_IMPLEMENTED`, `superseded-readiness-gate` |
 | `estate.fourteen-day-parity` | Optional post-readiness diagnostic; `NOT_IMPLEMENTED`, `superseded-readiness-gate` |
 | `owner.final-cutover` | Separate operational decision; `NOT_IMPLEMENTED`, `superseded-readiness-gate` |
 | `diagnostic.fixture-observation` | Existing strict original-directory fixture observer; diagnostic only |
 
-All eight journey adapters remain `NOT_IMPLEMENTED`, even where constituent
-product behavior or component tests exist. Adapter status describes acceptance
-evidence support, not whether a product feature exists.
+The eight journey rows share one generic adapter keyed by `journey_id`, and the
+fifteen connector rows share one generic adapter keyed by `connector_id`. Both
+adapters are implemented; no producer in this tree emits their receipts yet, so
+both families report `MISSING` without a receipt and `UNVERIFIABLE` with one.
+Each of the eight journey rows below reads the same way: a supplied receipt is
+checked against every denial path and then reported `UNVERIFIABLE`. Adapter status describes acceptance evidence
+support, not whether a product feature exists.
 
 The frozen C3 catalogue is Telegram user sign-in, Gmail, Google Calendar,
 IMAP, ICS, WHOOP, X API, screenpipe, Markdown folder, ChatGPT export, Claude
@@ -292,9 +358,12 @@ display actual observed and credited duration, last observation and pending
 boundary rails, with `release_credit: false`. Nothing advances observation
 time, starts a service, opens an account, or calls a model.
 
-The offline checker has no trusted attempt inventory or current remote CI status.
-Neither path has an actor/account authority source, review source or P0 freshness
-policy. These gaps
+The offline checker has no trusted attempt inventory or current remote CI status;
+it validates a required-checks or p0-disposition receipt's consistency with the
+candidate and the evaluator's own producer bytes, which is not an independent
+observation of GitHub. Neither path has an actor/account authority source or a
+review source, and P0 freshness is only the receipt's own ordering against the
+candidate commit and this evaluation. These gaps
 cannot be filled by a handwritten passing flag or selecting a green rerun.
 Retain failed attempts and unresolved findings with the candidate; future
 adapters must validate their complete disposition before granting acceptance.
@@ -311,7 +380,7 @@ run, and does not itself produce a trusted passing receipt.
 ## Verification
 
 ```bash
-bun test scripts/github-release-evidence.test.ts scripts/artifact-proof.test.ts scripts/artifact-engine.test.ts scripts/go-no-go.test.ts scripts/stranger-proof.test.ts scripts/release-artifacts.test.ts scripts/release-targets.test.ts scripts/qualification.test.ts
+bun test scripts/github-release-evidence.test.ts scripts/artifact-proof.test.ts scripts/artifact-engine.test.ts scripts/go-no-go.test.ts scripts/release-evidence.test.ts scripts/required-checks.test.ts scripts/stranger-proof.test.ts scripts/release-artifacts.test.ts scripts/release-targets.test.ts scripts/qualification.test.ts
 bun run typecheck
 bun run verify
 ```

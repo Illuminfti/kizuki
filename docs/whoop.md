@@ -4,7 +4,9 @@
 protected OAuth state supplied by a trusted host. This is a synthetic-tested
 provider component. It is not registered in the CLI, does not implement native
 interactive enrollment, and has no real-account or copied-artifact qualification.
-No provider application or account was created to build it.
+No provider application or account was created to build it. `kizuki connect`
+names it in its not-enrollable section so the absence is visible; that entry is
+advisory text and enrolls nothing.
 
 ## Access and custody
 

@@ -45,6 +45,7 @@ async function storeMeasurable(
   db: ReturnType<typeof openLedger>,
   index: number,
   confidence: number,
+  at = "2026-08-27T00:00:00Z",
 ) {
   const text = `synthetic loop person ${index} works at org-${index}.`;
   const first = putEvent(db, {
@@ -58,7 +59,7 @@ async function storeMeasurable(
     text,
   });
   const result = await insertClaim(
-    { db, now: () => "2026-08-27T00:00:00Z" },
+    { db, now: () => at },
     claimInput(first, {
       subject: `person:loop-${index}`,
       subjects: [`person:loop-${index}`],
@@ -185,5 +186,74 @@ test("a second receipt against an in-window corpus still fails the write-rate ce
   expect(report.calibration.failures[0]).toContain(`${CALIBRATION_BAND.min}`);
   expect(report.calibration.failures[0]).toContain(`${CALIBRATION_BAND.max}`);
   expect(report.failures).not.toContain("confidence_not_produced");
+  db.close();
+});
+
+test("a true first fill reports the keep rate without enforcing the band", async () => {
+  const { path, db } = vault();
+  await storeMeasurable(db, 0, 0.5, "2026-08-27T00:00:00Z");
+  persistRunReceipt(
+    db,
+    path,
+    receipt("2026-08-27", {
+      run_id: "01JBCALIBFIRSTFILL00000001",
+      claims_extracted: 20,
+      claims_written: 1,
+      claims_deduped: 19,
+    }),
+  );
+  const report = inspectServeDoctor(db, path, { now: "2026-08-28T00:00:00Z" });
+  expect(report.calibration.write_rate).toBeCloseTo(0.05);
+  expect(report.calibration.bands_enforced).toBe(false);
+  expect(report.calibration.bands_reason).toBe("initial-capture");
+  expect(report.calibration.failures).toEqual([]);
+  expect(report.failures.some((item) => item.startsWith("write_rate "))).toBe(false);
+  db.close();
+});
+
+test("a sample too small to be a control is reported, not failed", async () => {
+  const { path, db } = vault();
+  for (let index = 0; index < 8; index += 1) {
+    await storeMeasurable(db, index, 0.2 + index * 0.08, "2026-08-01T00:00:00Z");
+  }
+  persistRunReceipt(
+    db,
+    path,
+    receipt("2026-08-27", {
+      run_id: "01JBCALIBSMALLSAMPLE000001",
+      claims_extracted: 4,
+      claims_written: 0,
+      claims_deduped: 4,
+    }),
+  );
+  const report = inspectServeDoctor(db, path, { now: "2026-08-28T00:00:00Z" });
+  expect(report.calibration.write_rate).toBeCloseTo(0);
+  expect(report.calibration.bands_enforced).toBe(false);
+  expect(report.calibration.bands_reason).toBe("insufficient-sample");
+  expect(report.calibration.failures).toEqual([]);
+  db.close();
+});
+
+test("a steady-state corpus still fails the lower bound on an adequate sample", async () => {
+  const { path, db } = vault();
+  for (let index = 0; index < 8; index += 1) {
+    await storeMeasurable(db, index, 0.2 + index * 0.08, "2026-08-01T00:00:00Z");
+  }
+  persistRunReceipt(
+    db,
+    path,
+    receipt("2026-08-27", {
+      run_id: "01JBCALIBSTEADYLOW00000001",
+      claims_extracted: 20,
+      claims_written: 1,
+      claims_deduped: 19,
+    }),
+  );
+  const report = inspectServeDoctor(db, path, { now: "2026-08-28T00:00:00Z" });
+  expect(report.calibration.write_rate).toBeCloseTo(0.05);
+  expect(report.calibration.bands_enforced).toBe(true);
+  expect(report.calibration.bands_reason).toBeNull();
+  expect(report.calibration.failures[0]).toContain(`${CALIBRATION_BAND.min}`);
+  expect(report.ok).toBe(false);
   db.close();
 });

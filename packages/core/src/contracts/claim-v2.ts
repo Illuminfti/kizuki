@@ -89,7 +89,8 @@ const SHA256 = /^[0-9a-f]{64}$/;
 const MODES = new Set<ClaimV2Perspective["mode"]>([
   "asserted", "quoted", "reported", "hypothetical", "suggested", "questioned", "uncertain"
 ]);
-const SNAPSHOT_LIMITS: ExactJsonLimits = {
+/** Untrusted-JSON snapshot bound shared by the v2 payload and its admission record. */
+export const CLAIM_V2_SNAPSHOT_LIMITS: ExactJsonLimits = {
   maxDepth: 8, maxKeysPerObject: 16, maxArrayLength: 256, maxStringBytes: 1200, maxKeyBytes: 64, maxTotalBytes: 512 * 1024
 };
 const INVALID: ClaimV2ValidationResult = Object.freeze({ ok: false, errors: Object.freeze(["invalid claim/v2 payload"] as const) });
@@ -129,7 +130,13 @@ function anchor(value: unknown): value is TextAnchor {
     end > start;
 }
 
-function anchors(value: unknown, min: number): value is readonly TextAnchor[] {
+/**
+ * The one text-anchor guard: bounded to 8, well-formed non-negative UTF-16
+ * spans over ULID event ids, deduped. Exported so the claim/v2 support writer
+ * validates caller-supplied anchors against exactly this shape rather than
+ * growing a second, looser parser beside it.
+ */
+export function isTextAnchorList(value: unknown, min: number): value is readonly TextAnchor[] {
   return Array.isArray(value) &&
     value.length >= min &&
     value.length <= 8 &&
@@ -144,7 +151,7 @@ function sorted(refs: readonly RawSubjectRef[]): boolean {
 export function validateClaimV2Semantic(input: unknown): ClaimV2ValidationResult {
   try {
     const errors: string[] = [];
-    const snapshot = cloneExactJson(input, "claim_v2", SNAPSHOT_LIMITS, errors);
+    const snapshot = cloneExactJson(input, "claim_v2", CLAIM_V2_SNAPSHOT_LIMITS, errors);
     if (snapshot === undefined || !isPlainObject(snapshot) || snapshot.schema !== CLAIM_V2_SCHEMA) {
       return INVALID;
     }
@@ -173,7 +180,7 @@ function validateAssertion(value: Record<string, unknown>): ClaimV2ValidationRes
     !isPerspective(value.perspective) ||
     !Array.isArray(value.context) ||
     !value.context.every(rawRef) ||
-    !anchors(value.anchors, 1)) {
+    !isTextAnchorList(value.anchors, 1)) {
     return INVALID;
   }
   if (value.polarity !== "positive" && value.polarity !== "negative") {
@@ -230,7 +237,7 @@ function isPerspective(value: unknown): value is ClaimV2Perspective {
     !MODES.has(value.mode as ClaimV2Perspective["mode"]) ||
     (value.interpretation !== "explicit" &&
     value.interpretation !== "inferred") ||
-    !anchors(value.anchors, 0)) {
+    !isTextAnchorList(value.anchors, 0)) {
     return false;
   }
   const roles = [value.holder, value.speaker, value.addressee];

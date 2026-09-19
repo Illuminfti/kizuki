@@ -7,9 +7,12 @@ import { COMMANDS } from "../packages/cli/src/commands/index";
 import { printRootHelp } from "../packages/cli/src/help";
 import { evaluateRelease, gates, parseAcceptanceArgs, releaseDecision, writeAcceptanceReport } from "./go-no-go";
 import {
-  CAPABILITY_PROOF_FILE, CHECKOUT_LIMITS, CONNECTORS, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, SURFACE_DOC_FILES, SURFACE_GATE, SURFACE_OBSERVED_FILES, SURFACE_PRODUCER, SURFACE_PRODUCER_FILES, TARGETS,
-  assertCheckoutCustody, assertProductCheckoutCustody, bindEvaluatorCheckout, cliVerbSequence, collectProductSources, consumeSurfaceReceipt, evaluateSurfaceReceipt, inspectOptionalVerifier, read, surfaceProducerActive,
+  CAPABILITY_PROOF_FILE, CHECKOUT_LIMITS, CONNECTORS, CONNECTOR_PRODUCER, CONNECTOR_PRODUCER_FILES, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, JOURNEY_PRODUCER, JOURNEY_PRODUCER_FILES,
+  P0_DISPOSITION_PRODUCER, REQUIRED_CHECKS_PRODUCER, REQUIRED_CONTEXTS, SURFACE_DOC_FILES, SURFACE_GATE, SURFACE_OBSERVED_FILES, SURFACE_PRODUCER, SURFACE_PRODUCER_FILES, TARGETS,
+  assertCheckoutCustody, assertProductCheckoutCustody, bindEvaluatorCheckout, cliVerbSequence, collectProductSources, consumeSurfaceReceipt, evaluateSurfaceReceipt, evaluatorRevision, inspectOptionalVerifier, read, surfaceProducerActive,
 } from "./release-evidence";
+import { requiredChecksReceipt } from "./required-checks";
+import { p0DispositionReceipt } from "./p0-disposition";
 import type { ExpectedSurfaceInventory } from "./release-evidence";
 import { initQualification } from "./qualification";
 import { initVault } from "../packages/core/src/vault/init";
@@ -562,14 +565,21 @@ test("a self-attested telegram live-account receipt cannot pass connector qualif
   const result = evaluateRelease("1.0", f.indexPath);
   expect(gate(result, "evidence.index").status).toBe("PASS");
   expect(gate(result, "connector.telegram")).toMatchObject({
-    status: "NOT_IMPLEMENTED",
+    status: "FAIL",
     evidence_sha256: null,
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-telegram-authored.json", connectorReceipt("telegram", "live-account", "live-account-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.telegram", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.telegram")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
-test("inactive families keep default states while an active surface producer refuses missing receipts", () => {
+test("unimplemented families keep their default state while implemented families refuse an unreadable receipt", () => {
   const f = fixture(), missing = join(f.root, "never-opened.json");
   const receipts = [
     ...TARGETS.flatMap(platform => [
@@ -595,12 +605,12 @@ test("inactive families keep default states while an active surface producer ref
     expect(gate(result, `native.${platform}`)).toMatchObject({ status: "FAIL", evidence_sha256: null });
     expect(gate(result, `lifecycle.${platform}`)).toMatchObject({ status: "UNVERIFIABLE", reason: "trusted-online-lifecycle-observation-required", evidence_sha256: null });
   }
-  expect(gate(result, "candidate.required-checks").status).toBe("NOT_IMPLEMENTED");
+  expect(gate(result, "candidate.required-checks")).toMatchObject({ status: "FAIL", evidence_sha256: null });
   expect(gate(result, "candidate.independent-review").status).toBe("NOT_IMPLEMENTED");
-  expect(gate(result, "candidate.current-p0-disposition").status).toBe("UNVERIFIABLE");
+  expect(gate(result, "candidate.current-p0-disposition")).toMatchObject({ status: "FAIL", evidence_sha256: null });
   expect(gate(result, SURFACE_GATE)).toMatchObject({ status: "FAIL", evidence_sha256: null });
-  for (const id of JOURNEYS) expect(gate(result, `journey.${id}`).status).toBe("NOT_IMPLEMENTED");
-  for (const item of CONNECTORS) expect(gate(result, `connector.${item.id}`).status).toBe("NOT_IMPLEMENTED");
+  for (const id of JOURNEYS) expect(gate(result, `journey.${id}`)).toMatchObject({ status: "FAIL", evidence_sha256: null });
+  for (const item of CONNECTORS) expect(gate(result, `connector.${item.id}`)).toMatchObject({ status: "FAIL", evidence_sha256: null });
   expect(gate(result, "human.unfamiliar-user").status).toBe("NOT_IMPLEMENTED");
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
@@ -621,11 +631,18 @@ test("a self-graded journey-proof receipt cannot pass correct-belief", () => {
   const result = evaluateRelease("1.0", f.indexPath);
   expect(gate(result, "evidence.index").status).toBe("PASS");
   expect(gate(result, "journey.correct-belief")).toMatchObject({
-    status: "NOT_IMPLEMENTED",
+    status: "FAIL",
     evidence_sha256: null,
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-graded receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "journey-correct-belief-authored.json", journeyReceipt("correct-belief"));
+  asV3(f, [receiptRef(JOURNEY_PRODUCER, "journey.correct-belief", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "journey.correct-belief")).toMatchObject({ status: "UNVERIFIABLE", reason: "journey-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("a self-graded journey-proof receipt cannot pass install-recover", () => {
@@ -643,11 +660,18 @@ test("a self-graded journey-proof receipt cannot pass install-recover", () => {
   const result = evaluateRelease("1.0", f.indexPath);
   expect(gate(result, "evidence.index").status).toBe("PASS");
   expect(gate(result, "journey.install-recover")).toMatchObject({
-    status: "NOT_IMPLEMENTED",
+    status: "FAIL",
     evidence_sha256: null,
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-graded receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "journey-install-recover-authored.json", journeyReceipt("install-recover"));
+  asV3(f, [receiptRef(JOURNEY_PRODUCER, "journey.install-recover", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "journey.install-recover")).toMatchObject({ status: "UNVERIFIABLE", reason: "journey-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("a self-attested gmail live-account receipt cannot pass connector qualification", () => {
@@ -665,11 +689,18 @@ test("a self-attested gmail live-account receipt cannot pass connector qualifica
   const result = evaluateRelease("1.0", f.indexPath);
   expect(gate(result, "evidence.index").status).toBe("PASS");
   expect(gate(result, "connector.gmail")).toMatchObject({
-    status: "NOT_IMPLEMENTED",
+    status: "FAIL",
     evidence_sha256: null,
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-gmail-authored.json", connectorReceipt("gmail", "live-account", "live-account-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.gmail", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.gmail")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("v3 index byte cap is 32 KiB while v1 stays at 16 KiB", () => {
@@ -698,11 +729,18 @@ test("a self-attested google-calendar live-account receipt cannot pass connector
   const result = evaluateRelease("1.0", f.indexPath);
   expect(gate(result, "evidence.index").status).toBe("PASS");
   expect(gate(result, "connector.google-calendar")).toMatchObject({
-    status: "NOT_IMPLEMENTED",
+    status: "FAIL",
     evidence_sha256: null,
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-google-calendar-authored.json", connectorReceipt("google-calendar", "live-account", "live-account-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.google-calendar", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.google-calendar")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("optional capability verifier is MISSING until a regular file exists and other errors are fatal", () => {
@@ -736,11 +774,18 @@ test("a self-attested imap live-account receipt cannot pass connector qualificat
   const result = evaluateRelease("1.0", f.indexPath);
   expect(gate(result, "evidence.index").status).toBe("PASS");
   expect(gate(result, "connector.imap")).toMatchObject({
-    status: "NOT_IMPLEMENTED",
+    status: "FAIL",
     evidence_sha256: null,
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-imap-authored.json", connectorReceipt("imap", "live-account", "live-account-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.imap", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.imap")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("cli verb sequence follows the unique printRootHelp command-row order", () => {
@@ -773,11 +818,18 @@ test("a self-attested whoop live-account receipt cannot pass connector qualifica
   const result = evaluateRelease("1.0", f.indexPath);
   expect(gate(result, "evidence.index").status).toBe("PASS");
   expect(gate(result, "connector.whoop")).toMatchObject({
-    status: "NOT_IMPLEMENTED",
+    status: "FAIL",
     evidence_sha256: null,
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-whoop-authored.json", connectorReceipt("whoop", "live-account", "live-account-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.whoop", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.whoop")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("surface validator recomputes inventories and refuses a self-declared empty disagreement list", () => {
@@ -812,11 +864,18 @@ test("a self-attested x-api live-account receipt cannot pass connector qualifica
   const result = evaluateRelease("1.0", f.indexPath);
   expect(gate(result, "evidence.index").status).toBe("PASS");
   expect(gate(result, "connector.x-api")).toMatchObject({
-    status: "NOT_IMPLEMENTED",
+    status: "FAIL",
     evidence_sha256: null,
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-x-api-authored.json", connectorReceipt("x-api", "live-account", "live-account-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.x-api", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.x-api")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("a self-attested x-archive file-import receipt cannot pass connector qualification", () => {
@@ -836,17 +895,25 @@ test("a self-attested x-archive file-import receipt cannot pass connector qualif
   expect(gate(result, "connector.x-archive")).toMatchObject({
     required: true,
     scope: "file-import",
-    status: "NOT_IMPLEMENTED",
+    status: "FAIL",
     evidence_sha256: null,
   });
   expect(gate(result, "connector.x-api")).toMatchObject({
     required: true,
     scope: "live-account",
-    status: "NOT_IMPLEMENTED",
+    status: "MISSING",
+    reason: "connector-receipt-missing",
     evidence_sha256: null,
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-x-archive-authored.json", connectorReceipt("x-archive", "file-import", "file-import-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.x-archive", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.x-archive")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("surface identity, revision, RFC3339 and receipt custody failures do not credit a digest", () => {
@@ -884,11 +951,18 @@ test("a self-attested markdown-folder file-import receipt cannot pass connector 
   const result = evaluateRelease("1.0", f.indexPath);
   expect(gate(result, "evidence.index").status).toBe("PASS");
   expect(gate(result, "connector.markdown-folder")).toMatchObject({
-    status: "NOT_IMPLEMENTED",
+    status: "FAIL",
     evidence_sha256: null,
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-markdown-folder-authored.json", connectorReceipt("markdown-folder", "file-import", "file-import-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.markdown-folder", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.markdown-folder")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test("a self-attested chatgpt-export file-import receipt cannot pass connector qualification", () => {
@@ -908,11 +982,18 @@ test("a self-attested chatgpt-export file-import receipt cannot pass connector q
   expect(gate(result, "connector.chatgpt-export")).toMatchObject({
     required: true,
     scope: "file-import",
-    status: "NOT_IMPLEMENTED",
+    status: "FAIL",
     evidence_sha256: null,
   });
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
+  // The body above is malformed and dies at schema validation. A well-formed
+  // self-authored receipt reaches the evaluator and still cannot buy credit.
+  const authored = retain(f.root, "connector-chatgpt-export-authored.json", connectorReceipt("chatgpt-export", "file-import", "file-import-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, "connector.chatgpt-export", null, authored.path, authored.sha256)]);
+  const reached = evaluateRelease("1.0", f.indexPath);
+  expect(gate(reached, "connector.chatgpt-export")).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(reached.decision).toBe("NO-GO");
 });
 
 test.each([
@@ -939,7 +1020,7 @@ test.each([
   expect(gate(result, `connector.${id}`)).toMatchObject({
     required: true,
     scope,
-    status: "NOT_IMPLEMENTED",
+    status: "FAIL",
     evidence_sha256: null,
   });
   expect(result.decision).toBe("NO-GO");
@@ -1233,7 +1314,9 @@ test("finding ledger separates GitHub closure from verified-fixed candidate proo
   const f = fixture();
   f.index.artifacts = [];
   f.save();
-  expect(gate(evaluateRelease("rc", f.indexPath), "candidate.current-p0-disposition").status).toBe("UNVERIFIABLE");
+  expect(gate(evaluateRelease("rc", f.indexPath), "candidate.current-p0-disposition")).toMatchObject({
+    status: "MISSING", reason: "p0-disposition-receipt-missing",
+  });
 });
 
 function syntheticPass(rows = gates()) {
@@ -1287,4 +1370,172 @@ test.each(["rc", "1.0"] as const)("%s helper GO requires the complete mandatory 
     const broken = complete.map(row => row.id === "human.unfamiliar-user" ? { ...row, status } : row);
     expect(releaseDecision(profile, broken)).toEqual({ decision: "NO-GO", release_1_0_accepted: false });
   }
+});
+
+const ATTEMPT = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+const RECORDED = "2026-09-18T00:30:00.000Z";
+const CONTEXTS = REQUIRED_CONTEXTS.map((context, index) => ({ context, conclusion: "success", run_id: 100 + index, completed_at: "2026-09-18T00:20:00.000Z" }));
+const P0_INPUT = {
+  candidate_source_sha: source, root: EVALUATOR_ROOT, candidate_committed_at: "2026-09-18T00:00:00.000Z",
+  snapshot_at: "2026-09-18T00:25:00.000Z", open_issues: [] as { number: number; updated_at: string }[], attempt_id: ATTEMPT, recorded_at: RECORDED,
+};
+function retain(root: string, name: string, body: unknown) {
+  const path = join(root, name), bytes = JSON.stringify(body);
+  writeFileSync(path, bytes);
+  return { path, sha256: digest(bytes) };
+}
+function familyIdentity(producer: string, source_class: string, actor_class: string, files?: readonly string[]) {
+  const producer_files = [...(files ?? (producer === JOURNEY_PRODUCER ? JOURNEY_PRODUCER_FILES : CONNECTOR_PRODUCER_FILES))];
+  // A traversal path has no evaluator revision at all; the receipt still has to be
+  // constructible so the evaluator gets its chance to refuse it.
+  let producer_revision: string;
+  try { producer_revision = evaluatorRevision(EVALUATOR_ROOT)(producer_files); }
+  catch { producer_revision = digest(JSON.stringify(producer_files)); }
+  return {
+    candidate_source_sha: source, producer, producer_revision,
+    producer_files, source_class, actor_class, attempt_id: ATTEMPT, recorded_at: RECORDED,
+  };
+}
+function receiptStep(id: string, patch: Record<string, unknown> = {}) {
+  return { id, command: ["kizuki", "--help"], exit_code: 0, passed: true, stdout_sha256: "0".repeat(64), stderr_sha256: "1".repeat(64), ...patch };
+}
+function journeyReceipt(journey_id: string, patch: Record<string, unknown> = {}) {
+  return {
+    schema: JOURNEY_PRODUCER, identity: familyIdentity(JOURNEY_PRODUCER, "local-operator-custody", "authorized-operator"),
+    journey_id, acceptance_credit: true, steps: [receiptStep("connect"), receiptStep("resume")], ...patch,
+  };
+}
+function connectorReceipt(connector_id: string, evidence_class: string, source_class: string) {
+  return {
+    schema: CONNECTOR_PRODUCER, identity: familyIdentity(CONNECTOR_PRODUCER, source_class, "authorized-operator"),
+    connector_id, evidence_class, acceptance_credit: true, steps: [receiptStep("enroll")],
+  };
+}
+function candidateReceipts(f: ReturnType<typeof fixture>) {
+  const checks = retain(f.root, "required-checks.json", requiredChecksReceipt({ candidate_source_sha: source, root: EVALUATOR_ROOT, contexts: CONTEXTS, attempt_id: ATTEMPT, recorded_at: RECORDED }));
+  const findings = retain(f.root, "p0-disposition.json", p0DispositionReceipt(P0_INPUT));
+  return { checks, findings, refs: [
+    receiptRef(REQUIRED_CHECKS_PRODUCER, "candidate.required-checks", null, checks.path, checks.sha256),
+    receiptRef(P0_DISPOSITION_PRODUCER, "candidate.current-p0-disposition", null, findings.path, findings.sha256),
+  ] };
+}
+
+test("required-checks and p0-disposition receipts move exactly their own gates", () => {
+  const f = fixture();
+  const baseline = evaluateRelease("1.0", asV3(f).indexPath);
+  const supplied = candidateReceipts(f);
+  asV3(f, supplied.refs);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "candidate.required-checks")).toMatchObject({
+    status: "PASS", reason: "exact-candidate-required-checks-passed", scope: "exact-candidate-ci", evidence_sha256: supplied.checks.sha256,
+  });
+  expect(gate(result, "candidate.current-p0-disposition")).toMatchObject({
+    status: "PASS", reason: "current-p0-inventory-clear", scope: "current-head-findings", evidence_sha256: supplied.findings.sha256,
+  });
+  const moved = ["candidate.required-checks", "candidate.current-p0-disposition", "evidence.index"];
+  const projection = (report: typeof result) => report.gates.filter(row => !moved.includes(row.id)).map(row => ({ id: row.id, status: row.status, reason: row.reason }));
+  expect(projection(result)).toEqual(projection(baseline));
+  expect(result.decision).toBe("NO-GO");
+  expect(result.release_1_0_accepted).toBe(false);
+});
+
+test("the same receipts twice yield a byte-identical verdict and stable evidence digests", () => {
+  const f = fixture();
+  asV3(f, candidateReceipts(f).refs);
+  const first = evaluateRelease("1.0", f.indexPath), second = evaluateRelease("1.0", f.indexPath);
+  expect(JSON.stringify(second)).toBe(JSON.stringify(first));
+  expect(gate(second, "candidate.required-checks").evidence_sha256).toBe(gate(first, "candidate.required-checks").evidence_sha256);
+});
+
+test("an absent receipt leaves an implemented family MISSING and still refuses GO", () => {
+  const f = asV3(fixture());
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, "candidate.required-checks")).toMatchObject({ status: "MISSING", reason: "required-checks-receipt-missing", required: true, evidence_sha256: null });
+  expect(gate(result, "candidate.current-p0-disposition")).toMatchObject({ status: "MISSING", reason: "p0-disposition-receipt-missing", required: true, evidence_sha256: null });
+  for (const id of JOURNEYS) expect(gate(result, `journey.${id}`)).toMatchObject({ status: "MISSING", reason: "journey-receipt-missing" });
+  for (const item of CONNECTORS) expect(gate(result, `connector.${item.id}`)).toMatchObject({ status: "MISSING", reason: "connector-receipt-missing" });
+  expect(gate(result, "candidate.independent-review")).toMatchObject({ status: "NOT_IMPLEMENTED", reason: "trusted-producer-not-implemented" });
+  expect(gate(result, "human.unfamiliar-user")).toMatchObject({ status: "NOT_IMPLEMENTED", reason: "trusted-producer-not-implemented" });
+  expect(releaseDecision("1.0", result.gates)).toEqual({ decision: "NO-GO", release_1_0_accepted: false });
+  expect(result.decision).toBe("NO-GO");
+});
+
+test("a tampered receipt digest, candidate or context cannot supply candidate credit", () => {
+  const f = fixture(), supplied = candidateReceipts(f);
+  asV3(f, [{ ...supplied.refs[0]!, sha256: "f".repeat(64) }, supplied.refs[1]!]);
+  expect(gate(evaluateRelease("1.0", f.indexPath), "candidate.required-checks")).toMatchObject({ status: "FAIL", reason: "receipt-digest-mismatch", evidence_sha256: null });
+  const foreign = retain(f.root, "foreign-candidate.json", requiredChecksReceipt({
+    candidate_source_sha: "b".repeat(40), root: EVALUATOR_ROOT, contexts: CONTEXTS, attempt_id: ATTEMPT, recorded_at: RECORDED,
+  }));
+  asV3(f, [receiptRef(REQUIRED_CHECKS_PRODUCER, "candidate.required-checks", null, foreign.path, foreign.sha256)]);
+  expect(gate(evaluateRelease("1.0", f.indexPath), "candidate.required-checks")).toMatchObject({ status: "FAIL", reason: "candidate-mismatch", evidence_sha256: null });
+  const partial = retain(f.root, "partial-contexts.json", requiredChecksReceipt({
+    candidate_source_sha: source, root: EVALUATOR_ROOT, contexts: CONTEXTS.slice(0, 2), attempt_id: ATTEMPT, recorded_at: RECORDED,
+  }));
+  asV3(f, [receiptRef(REQUIRED_CHECKS_PRODUCER, "candidate.required-checks", null, partial.path, partial.sha256)]);
+  expect(gate(evaluateRelease("1.0", f.indexPath), "candidate.required-checks")).toMatchObject({ status: "FAIL", reason: "required-contexts-mismatch" });
+  const red = retain(f.root, "red-contexts.json", requiredChecksReceipt({
+    candidate_source_sha: source, root: EVALUATOR_ROOT, contexts: CONTEXTS.map(row => row.context === "test" ? { ...row, conclusion: "failure" } : row), attempt_id: ATTEMPT, recorded_at: RECORDED,
+  }));
+  asV3(f, [receiptRef(REQUIRED_CHECKS_PRODUCER, "candidate.required-checks", null, red.path, red.sha256)]);
+  expect(gate(evaluateRelease("1.0", f.indexPath), "candidate.required-checks")).toMatchObject({ status: "FAIL", reason: "required-context-not-successful", evidence_sha256: red.sha256 });
+});
+
+test("open p0 findings and a stale snapshot are reported without granting credit", () => {
+  const f = fixture();
+  const open = retain(f.root, "p0-open.json", p0DispositionReceipt({ ...P0_INPUT, open_issues: [{ number: 91, updated_at: "2026-09-18T00:10:00.000Z" }] }));
+  asV3(f, [receiptRef(P0_DISPOSITION_PRODUCER, "candidate.current-p0-disposition", null, open.path, open.sha256)]);
+  expect(gate(evaluateRelease("1.0", f.indexPath), "candidate.current-p0-disposition")).toMatchObject({ status: "FAIL", reason: "current-p0-findings-open:91" });
+  const stale = retain(f.root, "p0-stale.json", p0DispositionReceipt({ ...P0_INPUT, candidate_committed_at: "2026-09-18T00:26:00.000Z" }));
+  asV3(f, [receiptRef(P0_DISPOSITION_PRODUCER, "candidate.current-p0-disposition", null, stale.path, stale.sha256)]);
+  expect(gate(evaluateRelease("1.0", f.indexPath), "candidate.current-p0-disposition")).toMatchObject({
+    status: "UNVERIFIABLE", reason: "p0-snapshot-predates-candidate", evidence_sha256: null,
+  });
+});
+
+test("a complete journey receipt reaches only its own gate, buys no credit, and raw output is refused", () => {
+  const f = fixture();
+  const proof = retain(f.root, "journey-connect-resume.json", journeyReceipt("connect-resume"));
+  asV3(f, [receiptRef(JOURNEY_PRODUCER, "journey.connect-resume", null, proof.path, proof.sha256)]);
+  const result = evaluateRelease("1.0", f.indexPath);
+  // Every denial path below still holds; the terminal verdict cannot be PASS while
+  // the family pins no producer beyond the evaluator's own module.
+  expect(gate(result, "journey.connect-resume")).toMatchObject({ status: "UNVERIFIABLE", reason: "journey-producer-not-landed", evidence_sha256: null });
+  expect(gate(result, "journey.correct-belief")).toMatchObject({ status: "MISSING", reason: "journey-receipt-missing" });
+  expect(result.decision).toBe("NO-GO");
+  for (const [name, body, reason] of [
+    ["journey-empty.json", journeyReceipt("daily-loop", { steps: [] }), "empty-step-list"],
+    ["journey-raw.json", journeyReceipt("daily-loop", { steps: [{ ...receiptStep("one"), stdout: "synthetic captured output" }] }), "receipt-carries-raw-output"],
+    ["journey-unpassed.json", journeyReceipt("daily-loop", { steps: [receiptStep("one", { passed: false, exit_code: 1 })] }), "step-not-passed"],
+    ["journey-withheld.json", journeyReceipt("daily-loop", { acceptance_credit: false }), "acceptance-credit-withheld"],
+    ["journey-foreign.json", journeyReceipt("useful-insight"), "mismatched-gate-or-target"],
+    // A receipt naming an in-repo file the family never produces, with a matching
+    // revision, must not buy provenance; nor may it name a path outside the checkout.
+    ["journey-forged-files.json", journeyReceipt("daily-loop", {
+      identity: familyIdentity(JOURNEY_PRODUCER, "local-operator-custody", "authorized-operator", ["package.json"]),
+    }), "producer-files-mismatch"],
+    ["journey-traversal.json", journeyReceipt("daily-loop", {
+      identity: familyIdentity(JOURNEY_PRODUCER, "local-operator-custody", "authorized-operator", ["../../../../etc/passwd"]),
+    }), "invalid-identity"],
+  ] as const) {
+    const retained = retain(f.root, name, body);
+    asV3(f, [receiptRef(JOURNEY_PRODUCER, "journey.daily-loop", null, retained.path, retained.sha256)]);
+    expect(gate(evaluateRelease("1.0", f.indexPath), "journey.daily-loop")).toMatchObject({ status: "FAIL", reason, evidence_sha256: null });
+  }
+});
+
+test.each(["telegram", "whoop"])("a file-import connector receipt cannot satisfy the %s live-account gate", id => {
+  const f = fixture();
+  const misdeclared = retain(f.root, `connector-${id}-file-import.json`, connectorReceipt(id, "file-import", "file-import-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, `connector.${id}`, null, misdeclared.path, misdeclared.sha256)]);
+  expect(gate(evaluateRelease("1.0", f.indexPath), `connector.${id}`)).toMatchObject({
+    status: "FAIL", reason: "connector-evidence-class-mismatch", scope: "live-account", evidence_sha256: null,
+  });
+  // A correctly declared live-account receipt clears the class check and still
+  // buys no credit: it is hand-authorable, so the evaluator cannot certify it.
+  const live = retain(f.root, `connector-${id}-live.json`, connectorReceipt(id, "live-account", "live-account-operator"));
+  asV3(f, [receiptRef(CONNECTOR_PRODUCER, `connector.${id}`, null, live.path, live.sha256)]);
+  const result = evaluateRelease("1.0", f.indexPath);
+  expect(gate(result, `connector.${id}`)).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
+  expect(result.decision).toBe("NO-GO");
 });
