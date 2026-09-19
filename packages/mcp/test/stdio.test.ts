@@ -70,7 +70,7 @@ describe("the stdio process entry", () => {
     expect(health.content).toHaveLength(1);
     expect(JSON.parse(health.content[0].text)).toEqual(health.structuredContent);
     expect(health.structuredContent.data.runtime).toEqual(readSqliteRuntime(running.db));
-    expect(result.stderr.trim()).toBe("kizuki-mcp ready principal=owner tools=9");
+    expect(result.stderr.trim()).toBe("kizuki-mcp ready principal=owner tools=10");
   });
 
   test("an owner session answers a handshake and exits cleanly", async () => {
@@ -103,11 +103,12 @@ describe("the stdio process entry", () => {
       "context_packet",
       "graph_neighbors",
       "system_health",
+      "world_view",
       "propose",
       "correct",
     ]);
     expect(result.stderr.trim()).toBe(
-      "kizuki-mcp ready principal=owner tools=9",
+      "kizuki-mcp ready principal=owner tools=10",
     );
   });
 
@@ -284,7 +285,7 @@ describe("the stdio process entry", () => {
     );
     expect(result.code).toBe(0);
     expect(result.stderr.trim()).toBe(
-      "kizuki-mcp ready principal=reader-private tools=9",
+      "kizuki-mcp ready principal=reader-private tools=10",
     );
   });
 

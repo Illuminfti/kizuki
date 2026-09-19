@@ -205,3 +205,39 @@ export const PROPOSE_INPUT = z.strictObject({
   provenance: z.array(ID).min(1).max(64),
   confidence: z.number().min(0).max(1).optional(),
 });
+
+const WIRE_TOKEN = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+const WORLD_OBJECT_REF = z.strictObject({
+  kind: z.literal("object"),
+  token: WIRE_TOKEN,
+});
+const WORLD_SNAPSHOT_REF = z.strictObject({
+  kind: z.literal("snapshot"),
+  token: WIRE_TOKEN,
+});
+const WORLD_VALID = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("all") }),
+  z.strictObject({ kind: z.literal("unknown_only") }),
+  z.strictObject({ kind: z.literal("at"), at: RFC3339 }),
+  z.strictObject({ kind: z.literal("overlap"), from: RFC3339, until: RFC3339 }),
+]);
+const WORLD_KNOWN_AT = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("current") }),
+  z.strictObject({ kind: z.literal("time"), at: RFC3339 }),
+  z.strictObject({ kind: z.literal("snapshot"), ref: WORLD_SNAPSHOT_REF }),
+]);
+
+export const WORLD_VIEW_INPUT = z.union([
+  z.strictObject({
+    operation: z.literal("situation"),
+    situation: WORLD_OBJECT_REF,
+    valid: WORLD_VALID,
+    knownAt: WORLD_KNOWN_AT,
+  }),
+  z.strictObject({
+    operation: z.literal("concept"),
+    concept: WORLD_OBJECT_REF,
+    valid: WORLD_VALID,
+    knownAt: WORLD_KNOWN_AT,
+  }),
+]);
