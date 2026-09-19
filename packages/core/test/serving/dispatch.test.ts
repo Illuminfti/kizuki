@@ -38,6 +38,15 @@ describe("dispatchServeTool", () => {
       context_packet: { query: "ada" },
       graph_neighbors: { id: "person:ada" },
       system_health: {},
+      world_view: {
+        operation: "situation",
+        situation: {
+          kind: "object",
+          token: Buffer.from(Uint8Array.from({ length: 32 }, () => 1)).toString("base64url"),
+        },
+        valid: { kind: "all" },
+        knownAt: { kind: "current" },
+      },
       propose: {
         kind: "claim",
         body: "dispatch fixture claim",

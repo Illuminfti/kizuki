@@ -921,6 +921,7 @@ export {
   servePropose,
   serveSearch,
   serveTimeline,
+  serveWorldView,
   WorldViewError,
   isWorldWireToken,
   readWorldView,

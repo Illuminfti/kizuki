@@ -53,6 +53,18 @@ describe("the advertised output schema describes what the server sends", () => {
       ["timeline", { day: "2026-02-28" }],
       ["graph_neighbors", { id: "person:ada" }],
       ["system_health", {}],
+      [
+        "world_view",
+        {
+          operation: "situation",
+          situation: {
+            kind: "object",
+            token: Buffer.from(Uint8Array.from({ length: 32 }, () => 1)).toString("base64url"),
+          },
+          valid: { kind: "all" },
+          knownAt: { kind: "current" },
+        },
+      ],
     ] as const) {
       const result = await call(client, name, args);
       expect(result.isError ?? false).toBe(false);

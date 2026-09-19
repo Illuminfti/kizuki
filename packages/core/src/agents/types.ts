@@ -6,6 +6,7 @@ export const TOOLS = [
   "context_packet",
   "graph_neighbors",
   "system_health",
+  "world_view",
   "propose",
   "correct",
 ] as const;
@@ -103,6 +104,7 @@ export const OWNER_AGENT_GRANT: Grant = freezeGrant({
     "context_packet",
     "graph_neighbors",
     "system_health",
+    "world_view",
     "propose",
     "correct",
   ],

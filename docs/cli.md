@@ -358,7 +358,8 @@ usage: kizuki world --operation situation|concept --ref TOKEN [--json]
 Exact Concept or Situation lookup for a 32-byte base64url object token.
 Uses Core `readWorldView`. This revision has no world projection, so a
 valid lookup returns `not_found` for absent, erased, or inaccessible
-anchors. It does not register MCP `world_view`. `--json` prints
+anchors. MCP `world_view` and loopback HTTP `/v1/world_view` (plus
+`/v1/mcp/world_view`) dispatch the same Core lookup. `--json` prints
 `kizuki.cli.world/v1`. Malformed operations and tokens are usage errors
 before the vault is opened.
 
