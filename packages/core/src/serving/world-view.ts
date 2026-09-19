@@ -1,7 +1,10 @@
 import { compareRfc3339 } from "../agents/time";
 import { isRfc3339 } from "../util/time";
 import { isPlainObject } from "../util/validate";
-import type { ServeContext } from "./types";
+import { auditArguments, gate } from "./gate";
+import type { Served } from "./gate";
+import { ServeError } from "./types";
+import type { Envelope, ServeContext } from "./types";
 
 const WIRE_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
@@ -117,8 +120,8 @@ function parseKnownAt(value: unknown): WorldKnownAt | null {
 /**
  * Owner world lookup for the D22 concept and situation operations.
  * There is no world projection on this revision, so a valid exact lookup is
- * `not_found` for absent, erased, or inaccessible anchors. MCP `world_view`
- * is not registered here.
+ * `not_found` for absent, erased, or inaccessible anchors. MCP and HTTP
+ * `world_view` dispatch through `serveWorldView`.
  */
 export function readWorldView(_ctx: ServeContext, input: unknown): WorldReadResult {
   if (!isPlainObject(input)) throw new WorldViewError();
@@ -135,4 +138,25 @@ export function readWorldView(_ctx: ServeContext, input: unknown): WorldReadResu
     throw new WorldViewError();
   }
   return { status: "not_found" };
+}
+
+export function serveWorldView(
+  ctx: ServeContext,
+  args: Record<string, unknown>,
+): Envelope<WorldReadResult> {
+  return gate(ctx, "world_view", auditArguments(args), ({ ctx: live }): Served<WorldReadResult> => {
+    try {
+      return {
+        canon: [],
+        quoted: [],
+        withheld: [],
+        data: readWorldView(live, args),
+      };
+    } catch (error) {
+      if (error instanceof WorldViewError) {
+        throw new ServeError("invalid_arguments", "invalid arguments: world_view");
+      }
+      throw error;
+    }
+  });
 }

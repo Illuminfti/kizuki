@@ -16,6 +16,7 @@ import { serveSearch } from "./search";
 import type { SearchArgs } from "./search";
 import { serveTimeline } from "./timeline";
 import type { TimelineArgs } from "./timeline";
+import { serveWorldView } from "./world-view";
 import { ServeError } from "./types";
 import type { Envelope, ServeContext } from "./types";
 
@@ -43,6 +44,8 @@ export async function dispatchServeTool(
       return await serveGraph(ctx, args as unknown as GraphArgs);
     case "system_health":
       return serveHealth(ctx);
+    case "world_view":
+      return serveWorldView(ctx, args);
     case "propose":
       return await servePropose(ctx, args as unknown as ProposeArgs);
     case "correct":
