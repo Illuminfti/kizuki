@@ -7,6 +7,7 @@ import {
   hardenLedgerFile,
   initVault,
   installServeService,
+  queryServeService,
   serveExecHint,
   writeServeIntent,
 } from "@kizuki/core";
@@ -21,6 +22,12 @@ import {
 } from "../config";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 import { serveSupervisorHost } from "../service-host";
+import {
+  observeInstalledService,
+  observedSupervisorState,
+  serviceNotRunningLines,
+  serviceRunning,
+} from "../service-custody";
 import { assertSealedLedgerReady } from "../context";
 
 export const INIT_SCHEMA = {
@@ -104,13 +111,16 @@ export function createInitCommand(supervisor: typeof serveSupervisorHost = serve
       io.out("supervisor: none (loop runs only while you run it)");
       io.out(`run: ${serveExecHint(vaultPath)}`);
     } else {
-      let installed;
-      try { installed = installServeService(vaultPath, supervisor(io.env, vaultPath)); }
+      const host = supervisor(io.env, vaultPath);
+      try { installServeService(vaultPath, host); }
       catch (error) { throw new InitServiceError(error); }
+      // A supervisor calls the unit active the moment it is forked. Watch the
+      // unit the installer just wrote before reporting anything about it.
+      const status = await observeInstalledService(() => queryServeService(vaultPath, host));
       io.out(vaultPath);
-      io.out(`supervisor=${installed.status.kind} state=${installed.status.state}`);
-      if (installed.status.state !== "active") {
-        io.out(`run: ${serveExecHint(vaultPath)}`);
+      io.out(`supervisor=${status.kind} state=${observedSupervisorState(status)}`);
+      if (!serviceRunning(status)) {
+        for (const line of serviceNotRunningLines(status, vaultPath)) io.out(line);
       }
     }
     if (wrote) io.out(`default_vault set in ${path}`);

@@ -9,7 +9,7 @@ import { custodyNative } from "../../src/util/custody-native";
 import { openCanonFiles } from "../../src/vault/canon-files";
 import { initVault } from "../../src/vault/init";
 import { doctorVault } from "../../src/vault/doctor";
-import { serviceAncestorOwner, startServiceCustody } from "../../src/serve/custody";
+import { ServiceCustodyError, serviceAncestorOwner, startServiceCustody } from "../../src/serve/custody";
 import { connectServiceCustody } from "../../src/serve/custody-startup";
 
 const roots: string[] = [];
@@ -34,6 +34,16 @@ describe("service metadata custody composition", () => {
       const files = openCanonFiles(vault);
       try { files.assertPrivateDirectory(".kizuki"); } finally { files.close(); }
     } finally { closeSync(root); }
+  });
+
+  test("a refusal carries the condition it observed and never a cause it inferred", async () => {
+    const { vault } = fixture();
+    const supported = process.platform === "linux" && process.arch === "x64";
+    // No INVOCATION_ID is checked before ownership, uid or cgroup, so the
+    // reason is the same whichever user runs the suite.
+    await expect(startServiceCustody(vault, "synthetic-vault", {}, () => {}))
+      .rejects.toMatchObject({ reason: supported ? "not_supervised" : "unsupported_platform" });
+    expect(new ServiceCustodyError().reason).toBe("custody_unproven");
   });
 
   test.skipIf(process.platform !== "linux" || process.arch !== "x64")(
