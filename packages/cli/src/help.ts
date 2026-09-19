@@ -9,7 +9,7 @@ export type HelpTopic = Pick<Command, "name" | "usage" | "summary" | "schema">;
 
 const GROUPS: readonly { title: string; names: readonly string[] }[] = [
   { title: "Start", names: ["app", "init", "import", "doctor"] },
-  { title: "Recall", names: ["query", "context"] },
+  { title: "Recall", names: ["query", "context", "world"] },
   { title: "Sources", names: ["connect", "backfill", "sync"] },
   { title: "Correct", names: ["tell", "undo", "audit"] },
   { title: "Run", names: ["serve", "models", "agent"] },
@@ -31,6 +31,10 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
     `${INVOCATION} context --purpose recall --query "acme" --budget 1200`,
     `${INVOCATION} context --since 2020-01-01T00:00:00.000Z --until 2030-01-01T00:00:00.000Z --query "Atlas"`,
     `${INVOCATION} context --json`,
+  ],
+  world: [
+    `${INVOCATION} world --operation situation --ref TOKEN`,
+    `${INVOCATION} world --operation concept --ref TOKEN --json`,
   ],
   doctor: [`${INVOCATION} doctor`, `${INVOCATION} doctor --json`],
   connect: [

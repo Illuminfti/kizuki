@@ -20,6 +20,7 @@ const IMPLEMENTED_NON_GATE_VERBS = [
   "undo",
   "query",
   "context",
+  "world",
   "doctor",
   "serve",
   "purge",
