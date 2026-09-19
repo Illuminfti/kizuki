@@ -349,6 +349,19 @@ Claims and derived statements follow the live grant and
 [context privacy rules](context-privacy.md), including fail-closed provenance
 and bounded audit coverage.
 
+## world
+
+```text
+usage: kizuki world --operation situation|concept --ref TOKEN [--json]
+```
+
+Exact Concept or Situation lookup for a 32-byte base64url object token.
+Uses Core `readWorldView`. This revision has no world projection, so a
+valid lookup returns `not_found` for absent, erased, or inaccessible
+anchors. It does not register MCP `world_view`. `--json` prints
+`kizuki.cli.world/v1`. Malformed operations and tokens are usage errors
+before the vault is opened.
+
 ## undo
 
 ```text
