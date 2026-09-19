@@ -1,4 +1,5 @@
 import { invalidateLocalSourcePort } from "./source-grants";
+import { claimV2TablesPresent } from "./source-erasure";
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { bindCanonFiles, requireCanonFiles, snapshotCanonIo, withCanonMutationAsync, withCanonMutationSync } from "../canon/io";
 import { settleWriteReservations } from "../serve/budget-ledger";
@@ -1161,6 +1162,17 @@ function purgeEventsOwned(
     const deleteEvent = db.query<never, [string]>(
       "DELETE FROM events WHERE event_id = ?",
     );
+    // `claim_v2_support_events.event_id` carries ON DELETE CASCADE, and the
+    // cascaded row lands in the same change count as the event itself, which
+    // the one-row assertion below reads as a purge that hit the wrong number
+    // of events. Drop the evidence link first so the event delete stays the
+    // single row it certifies. The surviving support row is a derived
+    // provenance union and is rebuildable (RFC 0002 invariant 4).
+    const deleteSupportEvents = claimV2TablesPresent(db)
+      ? db.query<never, [string]>(
+          "DELETE FROM claim_v2_support_events WHERE event_id = ?",
+        )
+      : null;
 
     const holds: { page_path: string; proposal_id: string }[] = [];
     const holdReason = recordedReason;
@@ -1192,6 +1204,7 @@ function purgeEventsOwned(
       );
       insertProof.run(receipt.receipt_id, candidate.content_hash, candidate.source_record_id, selectorKind);
       db.query("INSERT INTO purge_batch_receipts VALUES(?,?)").run(receipt.receipt_id, batchReceipt);
+      deleteSupportEvents?.run(candidate.event_id);
       const deleted = deleteEvent.run(candidate.event_id);
       assertDeleted(deleted.changes, candidate.event_id);
       receipts.push(receipt);
