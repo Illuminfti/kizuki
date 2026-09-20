@@ -5,6 +5,7 @@ import { seedConnectorSensitivity } from "../../src/sensitivity/store";
 import {
   getClaim,
   insertClaim,
+  listClaims,
   listSupersessions,
   markClaimsPurged,
   prepareClaimInsert,
@@ -70,6 +71,62 @@ describe("claims provenance", () => {
       expect(listSupersessions(db)).toEqual([]);
     } finally {
       db.close();
+    }
+  });
+
+  test("structural corroboration requires overlapping validity", async () => {
+    const cases = [
+      {
+        name: "disjoint",
+        incoming: { valid_from: "2026-09-01T00:00:00.000Z", valid_to: null },
+        outcome: "stored",
+        rows: 2,
+      },
+      {
+        name: "adjacent",
+        incoming: { valid_from: "2026-02-01T00:00:00.000Z", valid_to: "2026-03-01T00:00:00.000Z" },
+        outcome: "stored",
+        rows: 2,
+      },
+      {
+        name: "overlap",
+        incoming: { valid_from: "2026-01-15T00:00:00.000Z", valid_to: "2026-02-15T00:00:00.000Z" },
+        outcome: "duplicate",
+        rows: 1,
+      },
+      {
+        name: "open-ended overlap",
+        incoming: { valid_from: "2026-01-15T00:00:00.000Z", valid_to: null },
+        outcome: "duplicate",
+        rows: 1,
+      },
+    ] as const;
+
+    for (const fixture of cases) {
+      const db = claimsDb();
+      try {
+        const firstEvent = putEvent(db, { source_record_id: `${fixture.name}-first` });
+        const secondEvent = putEvent(db, { source_record_id: `${fixture.name}-second` });
+        const first = await insertClaim({ db }, claimInput(firstEvent, {
+          body: "Grace worked at Acme during January.",
+          valid_from: "2026-01-01T00:00:00.000Z",
+          valid_to: "2026-02-01T00:00:00.000Z",
+        }));
+        expect(first.outcome).toBe("stored");
+
+        const second = await insertClaim({ db }, claimInput(secondEvent, {
+          body: "A separately dated observation places Grace at Acme.",
+          ...fixture.incoming,
+        }));
+        expect(second.outcome).toBe(fixture.outcome);
+        expect(listClaims(db)).toHaveLength(fixture.rows);
+        if (second.outcome === "duplicate") {
+          expect(second.claim.corroboration).toBe(2);
+          expect(second.claim.provenance).toEqual([firstEvent, secondEvent]);
+        }
+      } finally {
+        db.close();
+      }
     }
   });
 
