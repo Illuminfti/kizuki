@@ -115,5 +115,14 @@ export function assertExactDims(
         false,
       );
     }
+    for (const value of vector) {
+      if (!Number.isFinite(value)) {
+        throw new PortError(
+          "space_mismatch",
+          "embedding produced a non-finite value",
+          false,
+        );
+      }
+    }
   }
 }
