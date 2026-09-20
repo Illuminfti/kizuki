@@ -498,14 +498,9 @@ export class LegacyWikiConnector implements Connector {
     const { page, rest } = takePage(candidates);
     const filesDone = rest.length === 0;
     const nextFiles: Record<string, LegacyWikiIdentity> = { ...identities };
-    for (const event of page) {
-      const hash = hashes.get(event.source_record_id);
-      const target = targetOf(event);
-      if (hash === undefined || target === null) continue;
-      nextFiles[event.source_record_id] = { hash, target };
-    }
 
-    const events = [...page];
+    let events = [...page];
+    let withdrawalsRemain = false;
     if (filesDone && previous !== null && (previous.exhausted || paging)) {
       const emitted = new Set(planned.map((event) => event.source_record_id));
       const { withdrawn, carried } = reconcileSnapshot(
@@ -514,18 +509,28 @@ export class LegacyWikiConnector implements Connector {
         emitted,
       );
       const observedAt = new Date().toISOString();
-      for (const withdrawal of withdrawn) {
-        delete nextFiles[withdrawal.relpath];
-        events.push(tombstone(withdrawal, observedAt));
-      }
-      Object.assign(nextFiles, carriedEntries(identities, carried));
-      events.sort((left, right) =>
-        compareStrings(left.source_record_id, right.source_record_id),
+      const tombstones = withdrawn.map((withdrawal) =>
+        tombstone(withdrawal, observedAt),
       );
+      const paged = takePage([...page, ...tombstones]);
+      events = paged.page;
+      withdrawalsRemain = paged.rest.length > 0;
+      Object.assign(nextFiles, carriedEntries(identities, carried));
     }
 
-    const last = page[page.length - 1];
-    const exhausted = filesDone;
+    for (const event of events) {
+      if (event.deleted) {
+        delete nextFiles[event.source_record_id];
+        continue;
+      }
+      const hash = hashes.get(event.source_record_id);
+      const target = targetOf(event);
+      if (hash === undefined || target === null) continue;
+      nextFiles[event.source_record_id] = { hash, target };
+    }
+
+    const last = events[events.length - 1];
+    const exhausted = filesDone && !withdrawalsRemain;
     const nextAfter = exhausted
       ? null
       : (last?.source_record_id ?? after);
