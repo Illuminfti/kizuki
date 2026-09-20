@@ -7,18 +7,21 @@ import { packageFiles, parseBuildInfo, requireAbsent, requireRegularFile, verify
 import { distributionIdentity } from "./release-notices";
 import { requireNativeHost, releaseTarget } from "./release-targets";
 import { proofEnvironment } from "./stranger-proof";
-import { FILE_FORMATS, FILE_IMPORT_POLICY, fileImportFixtures } from "./file-import-proof-fixtures";
+import { FILE_FORMATS, FILE_IMPORT_POLICY, fileImportFixtures, fileImportLimits } from "./file-import-proof-fixtures";
 import type { FileCase, FileFormat } from "./file-import-proof-fixtures";
+import { buildConnectorEvidenceReceipt, connectorProducerRevision, writeConnectorEvidence } from "./connector-evidence";
+import type { ConnectorEvidenceEmission, ConnectorEvidenceReceipt } from "./connector-evidence";
 
 const ROOT = resolve(import.meta.dir, "..");
 const PRODUCER_FILES = ["scripts/file-import-proof.ts", "scripts/file-import-proof-fixtures.ts"] as const;
 const TIMEOUT = 30_000, STREAM_LIMIT = 65_536;
-const hash = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
-function check(ok: unknown, code: string): asserts ok { if (!ok) throw new Error(code); }
-type Observation = { stored: number | null; duplicates: number | null; proposals: number | null; errors: number | null; degraded: string[]; withheld: number | null; hit_ids: string[]; consent: string | null; purge: string | null; last_run: string | null };
-const empty = (): Observation => ({ stored: null, duplicates: null, proposals: null, errors: null, degraded: [], withheld: null, hit_ids: [], consent: null, purge: null, last_run: null });
-interface Step { id: string; command: string[]; expected_exit: number; exit_code: number; passed: boolean; stdout_sha256: string; stderr_sha256: string; observation: Observation; failure: string | null; }
-interface CaseReceipt { format: FileFormat; connector_id: string; source_key: string | null; invalid_source_key: string | null; expected_events: number; expected_proposals: number; expected_repeat_duplicates: number; expected_last_batch_stored: number; steps: Step[]; failures: string[]; }
+/** Shared with the local-source proof; both harnesses observe one compiled CLI. */
+export const hash = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+export function check(ok: unknown, code: string): asserts ok { if (!ok) throw new Error(code); }
+export type Observation = { stored: number | null; duplicates: number | null; proposals: number | null; errors: number | null; degraded: string[]; withheld: number | null; hit_ids: string[]; consent: string | null; purge: string | null; last_run: string | null };
+export const empty = (): Observation => ({ stored: null, duplicates: null, proposals: null, errors: null, degraded: [], withheld: null, hit_ids: [], consent: null, purge: null, last_run: null });
+export interface Step { id: string; command: string[]; expected_exit: number; exit_code: number; passed: boolean; stdout_sha256: string; stderr_sha256: string; observation: Observation; failure: string | null; }
+export interface CaseReceipt { format: FileFormat; connector_id: string; source_key: string | null; invalid_source_key: string | null; expected_events: number; expected_proposals: number; expected_repeat_duplicates: number; expected_last_batch_stored: number; steps: Step[]; failures: string[]; }
 export interface FileImportArgs { artifact: string; artifact_proof: string; report: string; }
 export function parseFileImportArgs(argv: string[]): FileImportArgs {
   const values = new Map<string, string>();
@@ -30,11 +33,11 @@ export function parseFileImportArgs(argv: string[]): FileImportArgs {
   if (values.size !== 3) throw new Error("file-import proof requires --artifact DIR --artifact-proof FILE --report NEWDIR");
   return { artifact: values.get("--artifact")!, artifact_proof: values.get("--artifact-proof")!, report: values.get("--report")! };
 }
-function exact(value: unknown, keys: string): Record<string, any> {
+export function exact(value: unknown, keys: string): Record<string, any> {
   check(value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).sort().join() === keys.split(",").sort().join(), "unexpected-object-fields");
   return value as Record<string, any>;
 }
-function envelope(stdout: string, command: string) {
+export function envelope(stdout: string, command: string) {
   const body = exact(parseProofJson(stdout), "schema,status,data,degraded,warnings");
   check(body.schema === `kizuki.cli.${command}/v1` && ["ok", "degraded"].includes(body.status), "unexpected-envelope-status");
   check(Array.isArray(body.degraded) && body.degraded.every((x: unknown) => typeof x === "string") && Array.isArray(body.warnings) && body.warnings.length === 0, "unexpected-envelope-diagnostics");
@@ -88,7 +91,7 @@ export function queryObservation(stdout: string, stderr: string, fixture: Pick<F
   check(stderr === expectedStderr, "unexpected-query-diagnostics");
   return { ...empty(), degraded: [...body.degraded], withheld: data.withheld, hit_ids: ids.sort() };
 }
-async function child(executable: string, argv: string[], cwd: string, env: Record<string, string>) {
+export async function child(executable: string, argv: string[], cwd: string, env: Record<string, string>) {
   const proc = Bun.spawn([executable, ...argv], { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; proc.kill("SIGKILL"); }, TIMEOUT);
@@ -149,6 +152,45 @@ export function expectedFileImportSteps(fixture: FileCase): string[] {
   return ["init", "import", "query", "status", "repeat-import", "repeat-query", "repeat-status", "revoke", "revoked-query", "resume-revocation", "purged-query", "purge-status", "denied-reimport", "denied-reimport-query",
     "invalid-init", "invalid-import", "invalid-query", "invalid-status", ...(fixture.invalid_mode !== "blocked" ? ["invalid-repeat", "invalid-repeat-query", "invalid-repeat-status"] : [])];
 }
+/** The candidate revision this proof must bind, and a checker that refuses to
+ * let the checkout move or dirty underneath a running observation. */
+export function sourceRevision(root: string): { source_sha: string; clean: () => void } {
+  const git = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: root, stdout: "pipe", stderr: "pipe" });
+  check(git.exitCode === 0, "source-revision-unavailable");
+  const source_sha = git.stdout.toString().trim();
+  const clean = () => {
+    const state = Bun.spawnSync(["git", "status", "--porcelain"], { cwd: root, stdout: "pipe", stderr: "pipe" });
+    const head = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: root, stdout: "pipe", stderr: "pipe" });
+    check(state.exitCode === 0 && state.stdout.length === 0 && head.exitCode === 0 && head.stdout.toString().trim() === source_sha, "source-revision-dirty-or-changed");
+  };
+  return { source_sha, clean };
+}
+
+export interface ArtifactCustody { identity: unknown; executable: string; unchanged: () => void }
+/** Bind a compiled package to its BUILD.json and artifact proof, copy it outside
+ * the checkout, and hand back a recheck the caller runs after every command. */
+export function artifactCustody(artifact: string, artifactProofPath: string, sourceSha: string, workspace: string): ArtifactCustody {
+  const build = parseBuildInfo(join(artifact, "BUILD.json"));
+  check(build.schema === "kizuki.release-build/v2" && build.source_sha === sourceSha, "artifact-source-or-version-mismatch");
+  requireNativeHost(releaseTarget(build.target)); verifyPackageDirectory(artifact, build);
+  requireRegularFile(artifactProofPath); check(lstatSync(artifactProofPath).size <= 1_048_576, "artifact-proof-size");
+  const artifactProof = readFileSync(artifactProofPath), names = packageFiles(build);
+  const hashes = Object.fromEntries(names.map(name => [name, hash(readFileSync(join(artifact, name)))]));
+  const validated = validateArtifactProof(parseProofJson(artifactProof), { source_sha: sourceSha, target: build.target, bun_version: build.bun_version, package_sha256: hashes as any, build });
+  check(validated.schema === "kizuki.artifact-proof/v3" && validated.engine.status === "PASS", "artifact-proof-not-qualified");
+  const identity = { build_schema: build.schema, source_sha: build.source_sha, target: build.target, bun_version: build.bun_version, package_sha256: hashes, artifact_proof_sha256: hash(artifactProof), distribution_identity: distributionIdentity(build.distribution) };
+  const copied = join(workspace, "package"); cpSync(artifact, copied, { recursive: true, dereference: false, errorOnExist: true });
+  const unchanged = () => {
+    check(hash(readFileSync(artifactProofPath)) === hash(artifactProof), "artifact-proof-changed");
+    for (const directory of [artifact, copied]) {
+      verifyPackageDirectory(directory, build);
+      for (const name of names) check(hash(readFileSync(join(directory, name))) === hashes[name], "package-changed");
+    }
+  };
+  unchanged();
+  return { identity, executable: join(copied, "kizuki"), unchanged };
+}
+
 export async function runFileImportProof(args: FileImportArgs): Promise<string> {
   requireAbsent(args.report); mkdirSync(args.report, { mode: 0o700 });
   const workspace = realpathSync(mkdtempSync(join(tmpdir(), "kizuki-file-import-proof-")));
@@ -158,23 +200,13 @@ export async function runFileImportProof(args: FileImportArgs): Promise<string> 
   let identity: unknown = null, sourceSha = "unavailable";
   const producerHashes = Object.fromEntries(PRODUCER_FILES.map(path => [path, hash(readFileSync(join(ROOT, path)))]));
   try {
-    const git = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
-    check(git.exitCode === 0, "source-revision-unavailable"); sourceSha = git.stdout.toString().trim();
-    const clean = () => { const state = Bun.spawnSync(["git", "status", "--porcelain"], { cwd: ROOT, stdout: "pipe", stderr: "pipe" }); const head = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: ROOT, stdout: "pipe", stderr: "pipe" }); check(state.exitCode === 0 && state.stdout.length === 0 && head.exitCode === 0 && head.stdout.toString().trim() === sourceSha, "source-revision-dirty-or-changed"); };
+    const revision = sourceRevision(ROOT); sourceSha = revision.source_sha;
+    const clean = revision.clean;
     clean();
-    const build = parseBuildInfo(join(args.artifact, "BUILD.json"));
-    check(build.schema === "kizuki.release-build/v2" && build.source_sha === sourceSha, "artifact-source-or-version-mismatch");
-    requireNativeHost(releaseTarget(build.target)); verifyPackageDirectory(args.artifact, build);
-    requireRegularFile(args.artifact_proof); check(lstatSync(args.artifact_proof).size <= 1_048_576, "artifact-proof-size");
-    const artifactProof = readFileSync(args.artifact_proof), names = packageFiles(build);
-    const hashes = Object.fromEntries(names.map(name => [name, hash(readFileSync(join(args.artifact, name)))]));
-    const validated = validateArtifactProof(parseProofJson(artifactProof), { source_sha: sourceSha, target: build.target, bun_version: build.bun_version, package_sha256: hashes as any, build });
-    check(validated.schema === "kizuki.artifact-proof/v3" && validated.engine.status === "PASS", "artifact-proof-not-qualified");
-    identity = { build_schema: build.schema, source_sha: build.source_sha, target: build.target, bun_version: build.bun_version, package_sha256: hashes, artifact_proof_sha256: hash(artifactProof), distribution_identity: distributionIdentity(build.distribution) };
-    const copied = join(workspace, "package"); cpSync(args.artifact, copied, { recursive: true, dereference: false, errorOnExist: true });
-    const unchanged = () => { check(hash(readFileSync(args.artifact_proof)) === hash(artifactProof), "artifact-proof-changed"); for (const directory of [args.artifact, copied]) { verifyPackageDirectory(directory, build); for (const name of names) check(hash(readFileSync(join(directory, name))) === hashes[name], "package-changed"); } };
-    unchanged();
-    const executable = join(copied, "kizuki"), fixtures = fileImportFixtures(referenceDay);
+    const custody = artifactCustody(args.artifact, args.artifact_proof, sourceSha, workspace);
+    identity = custody.identity;
+    const unchanged = custody.unchanged;
+    const executable = custody.executable, fixtures = fileImportFixtures(referenceDay);
     for (const fixture of fixtures) {
       const entry: CaseReceipt = { format: fixture.format, connector_id: fixture.connector, source_key: null, invalid_source_key: null, expected_events: fixture.events, expected_proposals: fixture.proposals, expected_repeat_duplicates: fixture.repeat_duplicates, expected_last_batch_stored: fixture.last_batch_stored, steps: [], failures: [] }; cases.push(entry);
       for (const scenario of ["valid", "invalid"] as const) {
@@ -249,8 +281,49 @@ export async function runFileImportProof(args: FileImportArgs): Promise<string> 
     artifact: identity, fixture_files: fixtureFiles, cases, failures, passed };
   const output = join(args.report, "receipt.json"); writeFileSync(output, JSON.stringify(receipt, null, 2) + "\n", { flag: "wx", mode: 0o600 });
   if (diagnostics.length) writeFileSync(join(args.report, "synthetic-diagnostics.json"), JSON.stringify({ scope: "generated_synthetic_inputs_only", diagnostics }, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+  emitFileImportConnectorEvidence(args.report, sourceSha, referenceDay, cases, failures);
   if (!passed) throw new Error(`file-import fixture proof failed; receipt retained at ${output}`);
   return output;
+}
+
+/** One acceptance receipt per format, beside the unchanged diagnostic receipt.
+ * A format whose cases did not all pass keeps its receipt and withholds credit;
+ * a format the harness never reached names its blocker in `unresolved`. The
+ * run-level failures the harness collected outside any one case — artifact
+ * custody broken mid-run, the checkout going dirty, a fixture source rewritten
+ * under the observation — withhold credit from every format, so the acceptance
+ * surface never outruns the diagnostic receipt's own verdict. */
+export function emitFileImportConnectorEvidence(
+  report: string, sourceSha: string, referenceDay: string, cases: readonly CaseReceipt[], runFailures: readonly string[],
+): void {
+  const unresolved: string[] = [];
+  const entries: { receipt: ConnectorEvidenceReceipt; emission: ConnectorEvidenceEmission }[] = [];
+  let producer_revision: string;
+  try { producer_revision = connectorProducerRevision(ROOT); }
+  catch (error) { unresolved.push(`producer-revision-unavailable:${error instanceof Error ? error.message : "unknown"}`); producer_revision = ""; }
+  const fixtures = fileImportFixtures(referenceDay);
+  for (const fixture of fixtures) {
+    const observed = cases.find(item => item.format === fixture.format);
+    const steps = (observed?.steps ?? []).filter(step => step.exit_code >= 0);
+    if (!observed || steps.length === 0) { unresolved.push(`${fixture.connector}:no-command-was-executed`); continue; }
+    const acceptance_credit = runFailures.length === 0 && observed.failures.length === 0 && observed.steps.every(step => step.passed);
+    if (runFailures.length > 0) unresolved.push(`${fixture.connector}:run-integrity:${runFailures[0]}`);
+    try {
+      entries.push({
+        receipt: buildConnectorEvidenceReceipt({
+          connector_id: fixture.connector, candidate_source_sha: sourceSha, producer_revision,
+          acceptance_credit,
+          steps: steps.map(step => ({ id: step.id, command: step.command, exit_code: step.exit_code, passed: step.passed, stdout_sha256: step.stdout_sha256, stderr_sha256: step.stderr_sha256 })),
+        }),
+        emission: {
+          connector_id: fixture.connector, evidence_class: "file-import", acceptance_credit,
+          row_counts: { events_stored: fixture.events, proposals_created: fixture.proposals, repeat_duplicates: fixture.repeat_duplicates, last_batch_stored: fixture.last_batch_stored, malformed_source_events: fixture.invalid_events },
+          limits: fileImportLimits(fixture),
+        },
+      });
+    } catch (error) { unresolved.push(`${fixture.connector}:${error instanceof Error ? error.message : "receipt-refused"}`); }
+  }
+  writeConnectorEvidence(report, entries, unresolved);
 }
 if (import.meta.main) {
   try { console.log(await runFileImportProof(parseFileImportArgs(process.argv.slice(2)))); }

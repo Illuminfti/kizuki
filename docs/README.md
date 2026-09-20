@@ -19,6 +19,8 @@ Related:
 - [legacy-import.md](legacy-import.md) — estate importers
 - [event-identity-origin.md](event-identity-origin.md) — event revisions, machine origin and backup compatibility
 - [stranger-proof.md](stranger-proof.md) — automated native-artifact isolation prerequisite
+- [file-import-proof.md](file-import-proof.md) — copied-package proof and acceptance evidence for the eight file-import connectors
+- [screenpipe-proof.md](screenpipe-proof.md) — copied-package proof and acceptance evidence for the one local-source connector
 - [wave1/](wave1/) — historical lane specs; many are VOID or superseded
 
 1.0 is not tagged. RFC 0002 §1.3, as amended 2026-09-05, still requires
