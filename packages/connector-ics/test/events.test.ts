@@ -76,6 +76,59 @@ describe("the fixture calendar maps to exact events", () => {
     });
   });
 
+  test("maps RFC 5545 DST gap and overlap civil times through calendarEvents", () => {
+    const nowNy = new Date("2026-03-08T07:30:00Z");
+    const ny = calendarEvents(
+      parseIcs(
+        [
+          "BEGIN:VCALENDAR",
+          "VERSION:2.0",
+          "BEGIN:VEVENT",
+          "UID:dst@example.invalid",
+          "DTSTART;TZID=America/New_York:20260308T023000",
+          "SUMMARY:Transition appointment",
+          "END:VEVENT",
+          "END:VCALENDAR",
+        ].join("\r\n"),
+      ),
+      {
+        slugSource: "synthetic",
+        observedAt: "2026-01-01T00:00:00Z",
+        now: nowNy,
+      },
+    );
+    expect(ny.events[0]?.occurred_at).toBe("2026-03-08T07:30:00.000Z");
+    expect(ny.events[0]?.metadata["tz"]).toEqual({
+      tzid: "America/New_York",
+      approximation: "none",
+    });
+
+    const berlin = calendarEvents(
+      parseIcs(
+        [
+          "BEGIN:VCALENDAR",
+          "VERSION:2.0",
+          "BEGIN:VEVENT",
+          "UID:dst@example.invalid",
+          "DTSTART;TZID=Europe/Berlin:20261025T023000",
+          "SUMMARY:Transition appointment",
+          "END:VEVENT",
+          "END:VCALENDAR",
+        ].join("\r\n"),
+      ),
+      {
+        slugSource: "synthetic",
+        observedAt: "2026-01-01T00:00:00Z",
+        now: new Date("2026-10-25T00:30:00Z"),
+      },
+    );
+    expect(berlin.events[0]?.occurred_at).toBe("2026-10-25T00:30:00.000Z");
+    expect(berlin.events[0]?.metadata["tz"]).toEqual({
+      tzid: "Europe/Berlin",
+      approximation: "none",
+    });
+  });
+
   test("an all-day event is flagged and keeps its end date", () => {
     const event = byId().get("allday-1@acme.example");
     expect(event?.occurred_at).toBe("2026-03-15T00:00:00.000Z");

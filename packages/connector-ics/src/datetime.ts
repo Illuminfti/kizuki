@@ -174,6 +174,41 @@ export function vtimezoneFixedOffset(
   return zone.standardOffsetMinutes;
 }
 
+/**
+ * RFC 5545 §3.3.5: an overlapping civil time is the first occurrence; a
+ * nonexistent civil time uses the UTC offset in effect before the gap.
+ */
+function rfc5545CivilUtcMs(
+  tzid: string,
+  localAsUtcMs: number,
+  zones: ZoneResolver,
+  seedOffset: number,
+): number {
+  const probes = [
+    localAsUtcMs,
+    localAsUtcMs - 24 * 60 * 60_000,
+    localAsUtcMs + 24 * 60 * 60_000,
+    localAsUtcMs - 3 * 60 * 60_000,
+    localAsUtcMs + 3 * 60 * 60_000,
+  ];
+  const offsets = new Set<number>();
+  for (const probe of probes) {
+    const offset = zones.offsetMinutes(tzid, probe);
+    if (offset !== null) offsets.add(offset);
+  }
+  offsets.add(seedOffset);
+
+  const matching: number[] = [];
+  for (const offset of offsets) {
+    const utcMs = localAsUtcMs - offset * 60_000;
+    if (zones.offsetMinutes(tzid, utcMs) === offset) matching.push(utcMs);
+  }
+  if (matching.length > 0) return Math.min(...matching);
+
+  const before = zones.offsetMinutes(tzid, localAsUtcMs - 24 * 60 * 60_000);
+  return localAsUtcMs - (before ?? seedOffset) * 60_000;
+}
+
 /** The ledger only accepts RFC3339, so an unrepresentable shift is refused. */
 function converted(
   iso: string,
@@ -204,10 +239,10 @@ export function toUtc(
 
   const first = zones.offsetMinutes(instant.tzid, guess);
   if (first !== null) {
-    // Second pass so a start near a DST transition keeps its civil time.
-    const provisional = guess - first * 60_000;
-    const second = zones.offsetMinutes(instant.tzid, provisional) ?? first;
-    return converted(new Date(guess - second * 60_000).toISOString(), "none");
+    return converted(
+      new Date(rfc5545CivilUtcMs(instant.tzid, guess, zones, first)).toISOString(),
+      "none",
+    );
   }
   const fixed = vtimezoneFixedOffset(file.get(instant.tzid));
   if (fixed !== null) {
