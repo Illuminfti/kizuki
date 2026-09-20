@@ -18,6 +18,8 @@ import {
   initVault,
   isPlainObject,
   MAX_CURSOR_BYTES,
+  MAX_SYNC_BATCH_BYTES,
+  MAX_SYNC_BATCH_EVENTS,
   runBatch,
 } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
@@ -523,6 +525,51 @@ describe("backfill and sync", () => {
         text: "",
       }),
     ]);
+  }, 60_000);
+
+  test("a withdrawal sweep pages tombstones inside the ingress envelope", async () => {
+    writeMapping();
+    const count = MAX_SYNC_BATCH_EVENTS + 1;
+    const identities: Array<[string, { hash: string; target: string }]> = [];
+    for (let index = 0; index < count; index += 1) {
+      const relpath = `gone/${String(index).padStart(4, "0")}.md`;
+      identities.push([
+        relpath,
+        { hash: "a".repeat(64), target: `entities/topics/gone-${index}.md` },
+      ]);
+    }
+    const connector = createLegacyWikiConnector(
+      { path: wiki },
+      { committedFiles: () => identities },
+    );
+    const primed = await connector.sync(null);
+    expect(primed.events).toEqual([]);
+    const first = await connector.sync(primed.cursor);
+    expect(first.events.length).toBeGreaterThan(0);
+    expect(first.events.length).toBeLessThanOrEqual(MAX_SYNC_BATCH_EVENTS);
+    expect(
+      Buffer.byteLength(JSON.stringify(first.events), "utf8"),
+    ).toBeLessThanOrEqual(MAX_SYNC_BATCH_BYTES);
+    expect(first.events.every((event) => event.deleted === true)).toBe(true);
+    expect(first.has_more).toBe(true);
+    const db = openLedger(":memory:");
+    expect(runBatch(db, first, GRANTED).stored).toBe(first.events.length);
+
+    const remembered = new Set(first.events.map((event) => event.source_record_id));
+    identities.splice(
+      0,
+      identities.length,
+      ...identities.filter(([relpath]) => !remembered.has(relpath)),
+    );
+    const second = await connector.sync(first.cursor);
+    expect(second.events.length).toBeGreaterThan(0);
+    expect(second.events.length).toBeLessThanOrEqual(MAX_SYNC_BATCH_EVENTS);
+    expect(second.events.every((event) => event.deleted === true)).toBe(true);
+    expect(
+      second.events.some((event) => remembered.has(event.source_record_id)),
+    ).toBe(false);
+    expect(runBatch(db, second, GRANTED).stored).toBe(second.events.length);
+    db.close();
   }, 60_000);
 });
 
