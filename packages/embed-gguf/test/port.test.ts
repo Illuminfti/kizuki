@@ -189,6 +189,37 @@ describe("kizuki.embedding.gguf", () => {
     }
   });
 
+  test("finite GGUF weights cannot return non-finite vectors", async () => {
+    const temporary = temporaryEmbed();
+    cleanups.push(temporary.cleanup);
+    const table = buildFixtureTable();
+    table.weights.fill(3e38);
+    expect(table.weights.every(Number.isFinite)).toBe(true);
+    const modelPath = join(temporary.root, "models", "overflow.gguf");
+    writeFileSync(modelPath, writeEmbeddingTableGguf(table));
+    const port = createGgufEmbeddingPort({
+      ...temporary.ctx,
+      config: { ...temporary.ctx.config, model_path: modelPath },
+    });
+    try {
+      for (const run of [
+        () => port.embedQuery(["grace"]),
+        () => port.embedDocs(fixtureChunks()),
+      ]) {
+        try {
+          await run();
+          throw new Error("expected non-finite embedding refusal");
+        } catch (error) {
+          expect(error).toBeInstanceOf(PortError);
+          expect((error as PortError).code).toBe("space_mismatch");
+          expect((error as PortError).retryable).toBe(false);
+        }
+      }
+    } finally {
+      await port.close();
+    }
+  });
+
   test("over-budget batch or context throws PortError, not an empty list", async () => {
     const temporary = temporaryEmbed({
       context_size: 4,
