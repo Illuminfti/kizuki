@@ -45,6 +45,13 @@ function splitParams(value: string): { head: string; params: Record<string, stri
   const pieces: string[] = [];
   for (let index = 0; index < value.length; index += 1) {
     const character = value[index] ?? "";
+    // A quoted-pair belongs to the value; its escaped quote cannot end it.
+    // Keep both bytes until unquoting below, including escaped backslashes.
+    if (quoted && character === "\\" && index + 1 < value.length) {
+      current += character + value[index + 1];
+      index += 1;
+      continue;
+    }
     if (character === '"') {
       quoted = !quoted;
       current += character;
