@@ -308,4 +308,22 @@ describe("the stdio process entry", () => {
     expect(both.code).toBe(2);
     expect(both.stderr.startsWith("usage:")).toBe(true);
   });
+
+  test("a cancelled in-flight request still lets EOF close the session", async () => {
+    const running = live();
+    const input = [
+      JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "cancel-audit", version: "0" } } }),
+      JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+      JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+      JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 2, reason: "synthetic cancellation" } }),
+      JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 2, reason: "repeat" } }),
+      JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 99, reason: "unknown" } }),
+      "",
+    ].join("\n");
+    const result = await run(["--vault", running.vaultPath, "--owner"], input);
+    expect(result.code).toBe(0);
+    const ids = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line).id as number);
+    expect(ids).toContain(1);
+    expect(ids.every((id) => id === 1 || id === 2)).toBe(true);
+  });
 });
