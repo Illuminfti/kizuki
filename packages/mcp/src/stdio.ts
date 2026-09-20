@@ -11,6 +11,21 @@ function isAnswer(message: object): boolean {
   return "id" in message && !("method" in message);
 }
 
+function isCancelled(message: object): boolean {
+  return "method" in message && (message as { method: unknown }).method === "notifications/cancelled";
+}
+
+function cancelledRequestId(message: object): unknown {
+  if (!("params" in message)) return undefined;
+  const params = (message as { params: unknown }).params;
+  if (typeof params !== "object" || params === null || !("requestId" in params)) return undefined;
+  return (params as { requestId: unknown }).requestId;
+}
+
+function requestKey(id: unknown): string {
+  return JSON.stringify(id);
+}
+
 /** Resolves once the pipe has taken everything already handed to it. */
 async function drained(): Promise<void> {
   await new Promise<void>((resolve) => {
@@ -32,6 +47,7 @@ export async function runStdio(ctx: ServeContext): Promise<void> {
   // answers the transport has sent is what makes the shutdown wait for the
   // work rather than for a fixed number of turns.
   let inFlight = 0;
+  const outstanding = new Set<string>();
   let ended = false;
   let close: (() => void) | null = null;
   const settle = (): void => {
@@ -39,6 +55,21 @@ export async function runStdio(ctx: ServeContext): Promise<void> {
     const stop = close;
     close = null;
     stop();
+  };
+  const begin = (id: unknown): void => {
+    if (id === undefined) return;
+    const key = requestKey(id);
+    if (outstanding.has(key)) return;
+    outstanding.add(key);
+    inFlight += 1;
+  };
+  const end = (id: unknown): void => {
+    if (id === undefined) return;
+    const key = requestKey(id);
+    if (!outstanding.has(key)) return;
+    outstanding.delete(key);
+    inFlight -= 1;
+    settle();
   };
 
   const deliver = transport.onmessage?.bind(transport);
@@ -49,10 +80,9 @@ export async function runStdio(ctx: ServeContext): Promise<void> {
     } finally {
       // A write that fails still ends the request it was answering; leaving
       // the count up would wedge the shutdown on work that cannot finish.
-      if (isAnswer(message)) {
-        inFlight -= 1;
-        settle();
-      }
+      // Cancellation can also settle a request when the SDK suppresses the
+      // answer; only an id still in outstanding moves the count.
+      if (isAnswer(message)) end((message as { id: unknown }).id);
     }
   };
 
@@ -60,7 +90,8 @@ export async function runStdio(ctx: ServeContext): Promise<void> {
 
   const handle = transport.onmessage?.bind(transport) ?? deliver;
   transport.onmessage = (message) => {
-    if (isRequest(message)) inFlight += 1;
+    if (isRequest(message)) begin((message as { id: unknown }).id);
+    else if (isCancelled(message)) end(cancelledRequestId(message));
     handle?.(message);
   };
 
