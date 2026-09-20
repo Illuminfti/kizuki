@@ -8,6 +8,7 @@ import type {
   SecretResolver,
   SyncBatch,
 } from "@kizuki/core";
+import { MAX_SYNC_BATCH_BYTES, MAX_SYNC_BATCH_EVENTS } from "@kizuki/core";
 import { KizukiError, notSupported } from "../errors";
 import { defaultMappingPath, loadMapping } from "../legacy/mapping-file";
 import { resolveReportPath, writeReport } from "../legacy/report-file";
@@ -201,30 +202,52 @@ export class LegacyEventsConnector implements Connector {
       previous === null || restarted !== null
         ? emptyTotals(from)
         : previous.run;
+    let encoded = 2;
+    let lastConsumed = from;
+    let stoppedEarly = false;
     for (const row of rows) {
       const result = rowToEvent(row, this.mapping, {
         observedAt: new Date().toISOString(),
         mappingHash: this.mappingHash,
       });
-      totals.counts.rows += 1;
-      if ("skipped" in result) {
+      if (!("skipped" in result)) {
+        const extra =
+          new TextEncoder().encode(JSON.stringify(result.event)).byteLength +
+          (events.length === 0 ? 0 : 1);
+        if (events.length === 0 && encoded + extra > MAX_SYNC_BATCH_BYTES) {
+          throw new KizukiError(
+            "parse_error",
+            `${LEGACY_EVENTS_CONNECTOR_ID}: event exceeds the capture page bound`,
+          );
+        }
+        if (
+          events.length > 0 &&
+          (events.length >= MAX_SYNC_BATCH_EVENTS ||
+            encoded + extra > MAX_SYNC_BATCH_BYTES)
+        ) {
+          stoppedEarly = true;
+          break;
+        }
+        events.push(result.event);
+        encoded += extra;
+        totals.counts.events += 1;
+        const kind = result.event.kind;
+        totals.counts.kinds[kind] = (totals.counts.kinds[kind] ?? 0) + 1;
+        if (result.event.deleted) totals.counts.tombstones += 1;
+        const dropped = result.event.metadata["__blobs"];
+        if (Array.isArray(dropped)) totals.counts.blobs_dropped += dropped.length;
+      } else {
         totals.counts.skipped += 1;
         if (totals.skipped.length < MAX_REPORTED_SKIPS) {
           totals.skipped.push(result.skipped);
         }
-        continue;
       }
-      events.push(result.event);
-      totals.counts.events += 1;
-      const kind = result.event.kind;
-      totals.counts.kinds[kind] = (totals.counts.kinds[kind] ?? 0) + 1;
-      if (result.event.deleted) totals.counts.tombstones += 1;
-      const dropped = result.event.metadata["__blobs"];
-      if (Array.isArray(dropped)) totals.counts.blobs_dropped += dropped.length;
+      totals.counts.rows += 1;
+      lastConsumed = row.position;
     }
 
-    const done = rows.length < BATCH_ROWS;
-    const to = rows[rows.length - 1]?.position ?? from;
+    const done = !stoppedEarly && rows.length < BATCH_ROWS;
+    const to = lastConsumed;
     const cursor: LegacyEventsCursor = {
       schema: LEGACY_EVENTS_CURSOR_SCHEMA,
       mapping_hash: this.mappingHash,
