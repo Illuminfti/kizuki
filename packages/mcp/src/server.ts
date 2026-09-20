@@ -12,6 +12,7 @@ import {
   PROPOSE_INPUT,
   SEARCH_INPUT,
   TIMELINE_INPUT,
+  WORLD_VIEW_INPUT,
 } from "./schemas";
 import { SERVER_VERSION } from "./version";
 
@@ -28,6 +29,7 @@ export const TOOL_DESCRIPTIONS: Record<Tool, string> = {
   context_packet: `Build one purpose-scoped Markdown brief within a token budget. Pass purpose (session, recall, correction, audit), and advertise capabilities=["delta"] with retain_prefix plus prior_hash to skip an unchanged body. Optional hooks negotiate session_start, turn, pre_compaction, post_compaction, or session_end; unsupported hooks stay pull-only through this tool and are never invented host hooks. ${TAINT_RULE}`,
   graph_neighbors: `List the links around a note, a subject or a record. ${TAINT_RULE}`,
   system_health: `Report vault, ledger, connector and agent counts for this principal. ${TAINT_RULE}`,
+  world_view: `Read the current Concept or Situation for an exact 32-byte object token. Valid lookups that are absent, erased, or inaccessible return not_found. ${TAINT_RULE}`,
   propose: `File a claim for the receipted writer to act on. It never changes canon by itself. ${TAINT_RULE}`,
   correct: `Relay the owner's own correction of something the store has wrong, naming the claim, the claim key or the subject it is about. The statement is recorded verbatim, retires the claim it contradicts and rewrites the note bound to it, under one receipt that undo reverses; pass "object" to say what the claim should read instead, or "dry_run" to see what would change. ${TAINT_RULE}`,
 };
@@ -183,6 +185,18 @@ export function createServer(ctx: ServeContext): McpServer {
       annotations: READ_ONLY,
     },
     () => respond(() => dispatchServeTool(ctx, "system_health", {})),
+  );
+
+  server.registerTool(
+    "world_view",
+    {
+      title: "Read a Concept or Situation",
+      description: TOOL_DESCRIPTIONS.world_view,
+      inputSchema: WORLD_VIEW_INPUT,
+      outputSchema: ENVELOPE_SHAPE,
+      annotations: READ_ONLY,
+    },
+    (args) => respond(() => dispatchServeTool(ctx, "world_view", args)),
   );
 
   server.registerTool(

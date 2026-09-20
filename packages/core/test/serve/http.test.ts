@@ -78,6 +78,37 @@ describe("serve http", () => {
     expect(refusal.error.code).toBe("invalid_arguments");
     expect(refusal.error.message).toContain("query");
 
+    const token = Buffer.from(Uint8Array.from({ length: 32 }, () => 1)).toString("base64url");
+    const worldBody = JSON.stringify({
+      operation: "situation",
+      situation: { kind: "object", token },
+      valid: { kind: "all" },
+      knownAt: { kind: "current" },
+    });
+    const worldHeaders = {
+      authorization: "Bearer test-token-not-a-secret-fixture",
+      "content-type": "application/json",
+    };
+    const world = await fetch(`${handle.url}/v1/world_view`, {
+      method: "POST",
+      headers: worldHeaders,
+      body: worldBody,
+    });
+    expect(world.status).toBe(200);
+    const worldJson = (await world.json()) as {
+      ok: boolean;
+      value: { tool: string; data: { status: string } };
+    };
+    expect(worldJson.ok).toBe(true);
+    expect(worldJson.value.tool).toBe("world_view");
+    expect(worldJson.value.data.status).toBe("not_found");
+    const worldAlias = await fetch(`${handle.url}/v1/mcp/world_view`, {
+      method: "POST",
+      headers: worldHeaders,
+      body: worldBody,
+    });
+    expect(worldAlias.status).toBe(200);
+
     await handle.stop();
     db.close();
   });

@@ -548,6 +548,7 @@ describe("public surface", () => {
       "serveSearch",
       "serveStatus",
       "serveTimeline",
+      "serveWorldView",
       "setGrant",
       "setSourceGrant",
       "sha256Hex",
