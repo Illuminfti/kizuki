@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initVault, listClaims, setSourceGrant, registerConnection, runBackfill, runSync } from "@kizuki/core";
+import { initVault, listClaims, setSourceGrant, registerConnection, runBackfill, runSync, runBatch, MAX_SYNC_BATCH_BYTES } from "@kizuki/core";
 import { getCheckpoint } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { KizukiError } from "../src/errors";
@@ -148,6 +148,38 @@ describe("paging and resume", () => {
     const connector = createLegacyEventsConnector({ path: dbPath });
     expect(await drain(connector)).toBe(2200);
     expect(connector.lastReport()?.run.done).toBe(true);
+  });
+
+  test("a dense page stops before the serialized-byte envelope", async () => {
+    const body = "x".repeat(5000);
+    const lines = Array.from({ length: 1000 }, (_, index) =>
+      JSON.stringify({
+        id: `dense-${index}`,
+        type: "note",
+        ts: 1_767_225_600 + index,
+        subject: `N${index}`,
+        body,
+      }),
+    );
+    writeFileSync(jsonlPath, `${lines.join("\n")}\n`);
+    writeMapping(jsonlPath, { table: null });
+    const connector = createLegacyEventsConnector({ path: jsonlPath });
+    const first = await connector.backfill(null);
+    expect(first.events.length).toBeGreaterThan(0);
+    expect(first.events.length).toBeLessThan(1000);
+    expect(
+      Buffer.byteLength(JSON.stringify(first.events), "utf8"),
+    ).toBeLessThanOrEqual(MAX_SYNC_BATCH_BYTES);
+    expect(connector.lastReport()?.run.done).toBe(false);
+    const db = openLedger(":memory:");
+    expect(runBatch(db, first, { page_candidates: false }).stored).toBe(first.events.length);
+    const second = await connector.backfill(first.cursor);
+    expect(second.events.length).toBeGreaterThan(0);
+    expect(
+      second.events.map((event) => event.source_record_id),
+    ).not.toEqual(first.events.map((event) => event.source_record_id));
+    expect(runBatch(db, second, { page_candidates: false }).stored).toBe(second.events.length);
+    db.close();
   });
 
   test("backfill(null) twice yields the same first page", async () => {
