@@ -163,21 +163,40 @@ describe("zone resolution", () => {
       intlZones,
       NO_ZONES,
     );
-    // 02:30 local does not exist on this date; the two-pass resolution lands
-    // just past the gap rather than failing or picking an arbitrary offset.
+    // 02:30 local does not exist; RFC 5545 uses the offset before the gap (CET).
     expect(gap.approximation).toBe("none");
     expect(gap.iso).toBe("2026-03-29T01:30:00.000Z");
   });
 
-  test("resolves an ambiguous fall-back time deterministically", () => {
+  test("resolves an ambiguous fall-back time to the first occurrence", () => {
     const overlap = toUtc(
       { kind: "zoned", local: "20261025T023000", tzid: "Europe/Berlin" },
       intlZones,
       NO_ZONES,
     );
-    // 02:30 occurs twice; two-pass resolution picks the later (CET) instant.
+    // 02:30 occurs twice; RFC 5545 §3.3.5 takes the first (CEST) occurrence.
     expect(overlap.approximation).toBe("none");
-    expect(overlap.iso).toBe("2026-10-25T01:30:00.000Z");
+    expect(overlap.iso).toBe("2026-10-25T00:30:00.000Z");
+  });
+
+  test("uses the offset before a New York spring gap", () => {
+    const gap = toUtc(
+      { kind: "zoned", local: "20260308T023000", tzid: "America/New_York" },
+      intlZones,
+      NO_ZONES,
+    );
+    expect(gap.approximation).toBe("none");
+    expect(gap.iso).toBe("2026-03-08T07:30:00.000Z");
+  });
+
+  test("keeps an ordinary New York fall instant", () => {
+    const winter = toUtc(
+      { kind: "zoned", local: "20261101T013000", tzid: "America/New_York" },
+      intlZones,
+      NO_ZONES,
+    );
+    expect(winter.approximation).toBe("none");
+    expect(winter.iso).toBe("2026-11-01T05:30:00.000Z");
   });
 
   test("a UTC instant converts to civil time in the series zone", () => {
