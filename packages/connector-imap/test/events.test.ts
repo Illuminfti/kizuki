@@ -54,6 +54,33 @@ describe("record ids and dates", () => {
 });
 
 describe("the fixture messages map to exact events", () => {
+  test("an escaped quote in a MIME name does not hide the following charset", () => {
+    const event = build([
+      String.raw`Content-Type: text/plain; name="note\"part.txt"; charset=iso-8859-1`,
+      "Content-Transfer-Encoding: base64",
+      "",
+      "Y2Fm6Q==",
+    ].join("\r\n"));
+    expect(validateEventInput(event).ok).toBe(true);
+    expect(event.text).toBe("café");
+  });
+
+  test.each([
+    [String.raw`attachment; filename="note\";part.txt"`, 'note";part.txt'],
+    [String.raw`attachment; filename="note\\"; size=4`, "note"],
+  ])("preserves quoted-pair attachment names: %s", (disposition, filename) => {
+    const event = build([
+      "Content-Type: application/octet-stream",
+      `Content-Disposition: ${disposition}`,
+      "",
+      "data",
+    ].join("\r\n"));
+    expect(validateEventInput(event).ok).toBe(true);
+    // Attachment names intentionally remove path separators after MIME decoding.
+    expect(event.attachments[0]?.filename).toBe(filename);
+    expect(event.attachments[0]?.byte_size).toBe(4);
+  });
+
   test("every fixture event validates and is an email", () => {
     const events = fixtureEvents();
     expect(events.length).toBeGreaterThanOrEqual(12);
