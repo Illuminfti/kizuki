@@ -1,6 +1,6 @@
 import { completedEventPurgeProofs } from "../ledger/purge";
 import { sha256Hex } from "../util/hash";
-import { selectWorldMaterialization, worldClaimHandle, worldCanonPath, assertWorldBasis } from "./world-materialization";
+import { worldBasisMetadata, selectWorldMaterialization, worldClaimHandle, worldCanonPath, assertWorldBasis } from "./world-materialization";
 import { eraseWorldReceipt, isWorldCanonReceipt, type RetainedWorldCanonReceipt, type WorldCanonBasis } from "./world-receipt";
 import { isErasedReceipt, rowToReceiptRecord, type CanonReceiptRow, latestWorldReceiptRecord, latestReceiptForPage } from "./receipts";
 import { stageSourceErasureIntent, readSourceErasureIntent, appendSourceErasureReceipt, isLiveSourceSurvivorPath, isLiveSourceSurvivorReceipt, type SourceErasureIntent } from "./source-erasure-intent";
@@ -515,6 +515,7 @@ export function applyCanonWriteOwned(
     if (!sourceDeletion && !typed) requireExternalEvents(io.db, union([provenance, existingSources(prepared.page)]));
     if (existing !== null && new CanonAuthorityResolver(io.db, [target.rel_path]).basis(target.rel_path, existing.hash) === null) recoveryFailure("historical_orphan");
   };
+  const typedMetadata=worldBasis===null?null:worldBasisMetadata(io.db,worldBasis.after);
   const receipt: CanonReceipt = {
     receipt_id: receiptId,
     kind: "write",
@@ -527,8 +528,8 @@ export function applyCanonWriteOwned(
     writer: opts.writer,
     producer: typed ? "deterministic" : primary.producer,
     model_ref: typed ? null : primary.model_ref,
-    authority: lowestAuthority(claims),
-    confidence: meanConfidence(claims),
+    authority: typedMetadata?.authority??lowestAuthority(claims),
+    confidence: typedMetadata?.confidence??meanConfidence(claims),
     sensitivity: prepared.sensitivity,
     taint: prepared.taint,
     provenance,
@@ -813,13 +814,14 @@ function applyWorldPurgeRewrite(scope:VaultMutationScope,io:CanonIo,input:PurgeR
   }
   const after=prepared===null?null:Buffer.from(serializePage(prepared.page));
   const at=nowOf(io),purgeReceiptId=proof[0]!.purge_receipt_id;
+  const typedMetadata=worldBasisMetadata(io.db,materialization?.basis??null);
   const receipt:RetainedWorldCanonReceipt={
     schema:"kizuki.canon-receipt/v2",state:"retained",own_id_origin:"core",prior_receipt_id:latest.receipt_id,
     basis:{schema:"kizuki.world-canon-basis/v1",before:latest.basis.after,after:materialization?.basis??null},
     receipt_id:mintId(io),kind:"purge_rewrite",claim_ids:claims.map(claim=>claim.claim_id),page_path:input.rel_path,page_action:after===null?"archive":"edit",
     before_hash:existing?.hash??ABSENT_PAGE_HASH,after_hash:after===null?ABSENT_PAGE_HASH:hashBytes(after),archive_path:null,writer:"loop",producer:"deterministic",model_ref:null,
-    authority:claims.length===0?"owner_correction":claims.reduce((tier,claim)=>AUTHORITY_TIERS[claim.authority]<AUTHORITY_TIERS[tier]?claim.authority:tier,claims[0]!.authority),
-    confidence:claims.length===0?1:Math.min(...claims.map(claim=>claim.confidence)),sensitivity:prepared?.sensitivity??"private",taint:prepared?.taint??"clean",provenance:sources,
+    authority:typedMetadata?.authority??"owner_correction",
+    confidence:typedMetadata?.confidence??1,sensitivity:prepared?.sensitivity??"private",taint:prepared?.taint??"clean",provenance:sources,
     superseded:[],candidates:[],retrieval_ops:[],reverts:null,reverted_by:null,at,
   };
   const archives=new Map<string,string>();

@@ -1,6 +1,6 @@
 import { isSensitivity } from "../agents/types";
 import { isWorldCanonReceipt } from "./world-receipt";
-import { assertWorldBasis } from "./world-materialization";
+import { assertWorldBasis, worldBasisMetadata } from "./world-materialization";
 import { getCanonReceiptRecord, isErasedReceipt, latestWorldReceiptRecord } from "./receipts";
 import { requireSourceEvents } from "../ledger/source-grants";
 import { stringArray } from "../vault/pages";
@@ -178,7 +178,8 @@ async function finishUndoProjection(scope: VaultMutationScope, io: CanonIo, rece
 
 async function applyUndo(scope: VaultMutationScope, io: CanonIo, original: CanonReceipt, current: string): Promise<UndoReceiptResult> {
   const revertId = mintId(io), at = nowOf(io);
-  const authority = new CanonAuthorityResolver(io.db, [original.page_path]).before(original.receipt_id);
+  const typedMetadata=isWorldCanonReceipt(original)?worldBasisMetadata(io.db,original.basis.before??original.basis.after,true):null;
+  const authority = typedMetadata?.authority??new CanonAuthorityResolver(io.db, [original.page_path]).before(original.receipt_id);
   const deleting = original.page_action === "create" && original.kind !== "revert";
   if (!deleting && original.archive_path === null) throw new UndoError("not_undoable", "undo: no archive copy exists; this write is not undoable");
   const page = deleting ? null : loadArchivePage(io, original.archive_path!);
@@ -198,7 +199,7 @@ async function applyUndo(scope: VaultMutationScope, io: CanonIo, original: Canon
     page_action: page === null ? "archive" : before === null ? "create" : "edit",
     before_hash: original.after_hash, after_hash: after === null ? ABSENT_PAGE_HASH : hashBytes(after),
     archive_path: before === null ? null : archiveRelPath(original.page_path, revertId), writer: "revert",
-    producer: original.producer, model_ref: original.model_ref, authority, confidence: original.confidence,
+    producer: original.producer, model_ref: original.model_ref, authority, confidence: typedMetadata?.confidence??original.confidence,
     sensitivity: typedImage?page.data["sensitivity"] as CanonReceipt["sensitivity"]:original.sensitivity, taint: typedImage?page.data["taint"] as CanonReceipt["taint"]:original.taint, provenance: [...original.provenance],
     superseded: [...original.superseded], candidates: [], retrieval_ops: ops,
     reverts: original.receipt_id, reverted_by: null, at,
