@@ -8,13 +8,18 @@ export function syntheticModelReply(raw: unknown): unknown {
   if (body.model !== "native-lifecycle-synthetic" || body.tools !== undefined || !Array.isArray(body.messages) || body.messages.length !== 2 ||
       typeof body.messages[1]?.content !== "string") throw Error("request_shape");
   const prompt = body.messages[1].content;
-  const event = /record ([A-Za-z0-9:_.-]+) from/.exec(prompt)?.[1], subjectJson = /"subject":"((?:\\.|[^"\\])*)"/.exec(prompt)?.[1];
-  if (!event || !subjectJson) throw Error("request_binding");
-  const subject = JSON.parse(`"${subjectJson}"`);
+  const event = /event:([0-9A-HJKMNP-TV-Z]{26})/.exec(prompt)?.[1];
+  if (event === undefined) throw Error("request_binding");
+  const anchor = { event_id: event, start_utf16: 0, end_utf16: 3 };
   return { id: "native-synthetic", object: "chat.completion", created: 1, model: body.model,
-    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ claims: [{ kind: "claim", subject,
-      predicate: "employment.role", object: "Orchard library coordinator", polarity: "positive", body: "Ada coordinates Orchard library operations.",
-      valid_from: null, valid_to: null, confidence: 0.7, sensitivity: "public", event_ids: [event] }] }) } }],
+    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({
+      schema: "kizuki.producer-response/v2", mentions: [{ id: "m0", label: "Ada", anchor, candidate_refs: [] }], claims: [{
+        id: "c0", subject: { kind: "mention", id: "m0" }, predicate: "employment.role", object: { kind: "literal", value: "Orchard library coordinator" },
+        perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] }, context: [],
+        polarity: "positive", body: "Ada coordinates Orchard library operations.", valid_from: null, valid_to: null, temporal_basis: "unknown",
+        confidence: 0.7, sensitivity: "public", anchors: [anchor],
+      }],
+    }) } }],
     usage: { prompt_tokens: 10, completion_tokens: 10 } };
 }
 
