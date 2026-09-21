@@ -1,13 +1,14 @@
 import { sourcePolicyEpoch, sourceEventsAllowed, isLocalSourcePort, sourcePortBindingDigest } from "../ledger/source-grants";
 import { createHash } from "node:crypto";
 import { parseExtractResponse } from "../producer/schema";
-import { invokeProducer } from "../producer/result";
+import { invokeProducer, invokeProducerV2 } from "../producer/result";
 import { tableExists } from "../ledger/schema";
 import { isRfc3339 } from "../util/time";
 import { isUlid } from "../util/ulid";
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent } from "../contracts/event";
 import type { ClaimDraft, ProduceInput, ProducerPort, QuotedEvent } from "../contracts/producer";
+import type { ExtractResponseV2, ProduceInputV2, ProducerV2Port } from "../contracts/producer-v2";
 import { predicateIds } from "../claims/predicates";
 import { historicalClaimReplaySignature, listClaims } from "../claims/store";
 import type { InsertClaimInput, InsertClaimResult, PreparedClaimInsert } from "../claims/store";
@@ -17,7 +18,16 @@ import { advanceExtractCheckpoint } from "./extract-checkpoint";
 import { readEvent, readSince } from "../ledger/ledger";
 import type { LedgerCursor } from "../ledger/ledger";
 import { validateEventOrigin, requireExternalEvents, SelfOriginError } from "../ledger/event-origin";
-import { EXTRACT_BATCH, MODEL_PRODUCER_ID, planModelExtraction } from "../producer";
+import { EXTRACT_BATCH, MODEL_PRODUCER_ID, planModelExtraction, planModelExtractionV2 } from "../producer";
+import { prepareWorldDrafts, type WorldDraftInsert } from "../producer/world-drafts";
+import { canonicalJson } from "../util/hash";
+import {
+  isProducerV2,
+  parseDurableWorldDrafts,
+  serializeDurableWorldDrafts,
+  worldProduceInput,
+  type ExtractionProducerPort,
+} from "./extract-v2";
 
 const EXTRACT_SOURCE_KEY = "extract";
 const DEFERRED_SCAN_KEY = "extract-deferred-scan";
@@ -47,9 +57,14 @@ export function shouldAdvanceExtractCursor(result: ExtractMine): boolean {
 }
 
 export interface MineResult {
+  readonly filing_version?: 1 | 2;
   readonly source_epoch?: number;
   readonly mined: ExtractMine;
   readonly drafts: readonly ClaimDraft[];
+  readonly world?: {
+    readonly input: ProduceInputV2;
+    readonly response: ExtractResponseV2;
+  };
   /** The checkpoint observed before the model call. */
   readonly previous_cursor: string | null;
   readonly input_ids?: readonly string[];
@@ -62,12 +77,12 @@ export interface MineResult {
 
 export interface DurableExtractBatch {
   /** Null identifies a pre-atomic decision, retained only for storage and purge. */
-  readonly filing_version: 1 | null;
+  readonly filing_version: 1 | 2 | null;
   readonly previous_cursor: string | null;
   readonly cursor: LedgerCursor;
-  readonly drafts: readonly ClaimDraft[];
+  readonly drafts: readonly (ClaimDraft | WorldDraftInsert)[];
   /** Current process view; durable drafts and their integrity stay immutable. */
-  readonly filing_drafts: readonly ClaimDraft[];
+  readonly filing_drafts: readonly (ClaimDraft | WorldDraftInsert)[];
   readonly model_ref: string | null;
   readonly input_ids: readonly string[];
   readonly mode: "frontier" | "deferred";
@@ -102,9 +117,10 @@ export class LegacyExtractReconciliationError extends Error {
 }
 
 /** A version tag is a filing contract, never a migration inferred from row contents. */
-export function extractBatchFilingVersion(value: string | null): 1 | null {
+export function extractBatchFilingVersion(value: string | null): 1 | 2 | null {
   if (value === null || /^[a-f0-9]{64}$/.test(value)) return null;
   if (/^atomic-v1:[a-f0-9]{64}$/.test(value)) return 1;
+  if (/^atomic-v2:[a-f0-9]{64}$/.test(value)) return 2;
   throw new Error("durable extraction filing version is corrupt or unsupported");
 }
 
@@ -122,19 +138,43 @@ export function requireAtomicExtractReplay(db: Database): void {
 const NULL_CURSOR = "";
 const encodeCursor = (cursor: LedgerCursor): string => `${cursor.accepted_at}\t${cursor.event_id}`;
 function integrity(batch: DurableExtractBatch): string {
+  if (batch.filing_version === 2) {
+    const digest = createHash("sha256").update("kizuki.extract-filing/atomic-v2\0").update(canonicalJson({
+      decision_schema: "kizuki.extract-decision/v2",
+      producer_contract: "kizuki.producer/v2",
+      draft_schema: "kizuki.claim/v2",
+      integrity_schema: "kizuki.extract-integrity/v2",
+      previous_cursor: batch.previous_cursor,
+      cursor: encodeCursor(batch.cursor),
+      model_ref: batch.model_ref,
+      input_ids: batch.input_ids,
+      mode: batch.mode,
+      model_inputs: batch.model_inputs,
+      deferred_inputs: batch.deferred_inputs,
+      outcome: batch.outcome,
+      drafts: batch.drafts,
+    })).digest("hex");
+    return `atomic-v2:${digest}`;
+  }
   const hash = createHash("sha256");
   if (batch.filing_version === 1) hash.update("kizuki.extract-filing/atomic-v1\0");
   const digest = hash.update(JSON.stringify([
     batch.previous_cursor, encodeCursor(batch.cursor), batch.model_ref, batch.input_ids, batch.mode,
     batch.model_inputs, batch.deferred_inputs, batch.outcome,
-    batch.drafts.map(d => [d.kind,d.subject,d.predicate,d.object,d.polarity,d.body,d.valid_from,d.valid_to,d.confidence,d.sensitivity,d.event_ids]),
+    batch.drafts.map(d => {
+      const draft = d as ClaimDraft;
+      return [draft.kind,draft.subject,draft.predicate,draft.object,draft.polarity,draft.body,draft.valid_from,draft.valid_to,draft.confidence,draft.sensitivity,draft.event_ids];
+    }),
   ])).digest("hex");
   return batch.filing_version === 1 ? `atomic-v1:${digest}` : digest;
 }
 function legacyIntegrity(batch: DurableExtractBatch): string {
   return createHash("sha256").update(JSON.stringify([
     batch.previous_cursor, encodeCursor(batch.cursor), batch.model_ref, batch.input_ids, batch.outcome,
-    batch.drafts.map(d => [d.kind,d.subject,d.predicate,d.object,d.polarity,d.body,d.valid_from,d.valid_to,d.confidence,d.sensitivity,d.event_ids]),
+    batch.drafts.map(d => {
+      const draft = d as ClaimDraft;
+      return [draft.kind,draft.subject,draft.predicate,draft.object,draft.polarity,draft.body,draft.valid_from,draft.valid_to,draft.confidence,draft.sensitivity,draft.event_ids];
+    }),
   ])).digest("hex");
 }
 function observedStart(db: Database, eventIds: readonly string[]): string {
@@ -157,10 +197,11 @@ function observedStart(db: Database, eventIds: readonly string[]): string {
 /** Materialization and historical replay authority must bind the same time. */
 export function producedClaimInput(
   db: Database,
-  draft: ClaimDraft,
+  draft: ClaimDraft | WorldDraftInsert,
   producer: InsertClaimInput["producer"],
   modelRef: string | null,
 ): InsertClaimInput {
+  if ("world_admission" in draft) return draft;
   return {
     kind: draft.kind,
     subject: draft.subject,
@@ -179,8 +220,20 @@ export function producedClaimInput(
     ...(draft.valid_to === null ? {} : { valid_to: draft.valid_to }),
   };
 }
-function historicalClaimSignatures(db: Database, drafts: readonly ClaimDraft[], modelRef: string | null): string[] {
-  return drafts.map(draft => historicalClaimReplaySignature(producedClaimInput(db, draft, "model", modelRef)));
+function isWorldDraft(draft: ClaimDraft | WorldDraftInsert): draft is WorldDraftInsert {
+  return "world_admission" in draft;
+}
+function draftEventIds(draft: ClaimDraft | WorldDraftInsert): readonly string[] {
+  return isWorldDraft(draft) ? draft.provenance : draft.event_ids;
+}
+function historicalClaimSignatures(
+  db: Database,
+  drafts: readonly (ClaimDraft | WorldDraftInsert)[],
+  modelRef: string | null,
+): string[] {
+  return drafts.map(draft => historicalClaimReplaySignature(
+    isWorldDraft(draft) ? draft : producedClaimInput(db, draft, "model", modelRef),
+  ));
 }
 function interval(db: Database, previous: string | null, boundary: LedgerCursor): CaptureEvent[] {
   const events = readSince(db, parseCursor(previous), EXTRACT_BATCH).events;
@@ -189,7 +242,7 @@ function interval(db: Database, previous: string | null, boundary: LedgerCursor)
   if (index < 0 || row?.accepted_at !== boundary.accepted_at) throw new Error("durable extraction boundary is invalid");
   return events.slice(0, index + 1);
 }
-function sourceInput(db: Database, event: CaptureEvent, producer: ProducerPort | undefined): DeferredInput {
+function sourceInput(db: Database, event: CaptureEvent, producer: ExtractionProducerPort | undefined): DeferredInput {
   const binding = db.query<{ source_key: string }, [string]>(
     "SELECT source_key FROM source_event_bindings WHERE event_id=?",
   ).get(event.event_id);
@@ -219,8 +272,8 @@ function extractEligible(db: Database, event: CaptureEvent): boolean {
   return !event.deleted && validateEventOrigin(db, event).origin === "external";
 }
 
-function filingDrafts(db: Database, drafts: readonly ClaimDraft[]): ClaimDraft[] {
-  return drafts.filter(draft => draft.event_ids.every(eventId => {
+function filingDrafts<T extends ClaimDraft | WorldDraftInsert>(db: Database, drafts: readonly T[]): T[] {
+  return drafts.filter(draft => draftEventIds(draft).every(eventId => {
     const event = readEvent(db, eventId);
     if (event === null) throw new Error("durable extraction input is missing");
     return validateEventOrigin(db, event).origin === "external";
@@ -355,17 +408,51 @@ function queuedEvents(db: Database): CaptureEvent[] {
   });
 }
 function saveBatch(db: Database, batch: DurableExtractBatch, legacyManifest = false): void {
+  const serializedDrafts = batch.filing_version === 2
+    ? serializeDurableWorldDrafts(batch.drafts as readonly WorldDraftInsert[], batch.model_ref)
+    : JSON.stringify(batch.drafts);
   db.query(`INSERT INTO extract_batches (previous_cursor,cursor,drafts,model_ref,created_at,input_ids,integrity,outcome,batch_mode,model_inputs,deferred_inputs)
     VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(previous_cursor) DO UPDATE SET
     cursor=excluded.cursor,drafts=excluded.drafts,model_ref=excluded.model_ref,input_ids=excluded.input_ids,integrity=excluded.integrity,outcome=excluded.outcome,
     batch_mode=excluded.batch_mode,model_inputs=excluded.model_inputs,deferred_inputs=excluded.deferred_inputs`).run(
-    batch.previous_cursor ?? NULL_CURSOR, encodeCursor(batch.cursor), JSON.stringify(batch.drafts), batch.model_ref,
+    batch.previous_cursor ?? NULL_CURSOR, encodeCursor(batch.cursor), serializedDrafts, batch.model_ref,
     new Date().toISOString(), JSON.stringify(batch.input_ids), legacyManifest ? legacyIntegrity(batch) : integrity(batch), batch.outcome, batch.mode,
     legacyManifest ? null : JSON.stringify(batch.model_inputs), legacyManifest ? null : JSON.stringify(batch.deferred_inputs),
   );
 }
+
+function journalWorldDrafts(
+  db: Database,
+  mined: MineResult,
+  events: readonly CaptureEvent[],
+  modelRef: string | null,
+): readonly WorldDraftInsert[] {
+  if (mined.world === undefined) throw new Error("producer v2 decision is incomplete");
+  const input = worldProduceInput(events);
+  if (canonicalJson(input) !== canonicalJson(mined.world.input)) {
+    throw new Error("extraction inputs changed during model call");
+  }
+  const contextEvents = events.map(event => {
+    const identity = db.query<{ accepted_at: string }, [string]>(
+      "SELECT accepted_at FROM events WHERE event_id=?",
+    ).get(event.event_id);
+    if (identity === null) throw new Error("produced claim source observation is unavailable");
+    return {
+      ...event,
+      accepted_at: identity.accepted_at,
+      source_key: sourceKey(db, event.event_id),
+      // No supplied handles are emitted until Core has a qualified namespace mapper.
+      subjects: [],
+    };
+  });
+  return prepareWorldDrafts(mined.world.response, input, {
+    events: contextEvents,
+    supplied_refs: new Map(),
+    model_ref: modelRef,
+  });
+}
 /** Persist the entire decision before filing; no model is called again on replay. */
-export function journalExtractBatch(db: Database, mined: MineResult, modelRef: string | null, producer?: ProducerPort): void {
+export function journalExtractBatch(db: Database, mined: MineResult, modelRef: string | null, producer?: ExtractionProducerPort): void {
   if (mined.mined.status !== "ok" || mined.cursor === null) return;
   db.transaction(() => {
     requireAtomicExtractReplay(db);
@@ -385,15 +472,18 @@ export function journalExtractBatch(db: Database, mined: MineResult, modelRef: s
       throw new Error("deferred extraction inputs changed during model call");
     }
     if (db.query("SELECT 1 FROM extract_batches LIMIT 1").get() !== null) throw new Error("extraction decision already pending");
-    saveBatch(db, { filing_version: 1, previous_cursor: mined.previous_cursor, cursor: mined.cursor!, drafts: mined.drafts,
-      filing_drafts: mined.drafts,
+    const filingVersion = mined.filing_version ?? 1;
+    const drafts = filingVersion === 2 ? journalWorldDrafts(db, mined, events, modelRef) : mined.drafts;
+    if (drafts.length === 0) throw new Error("durable extraction batch is corrupt");
+    saveBatch(db, { filing_version: filingVersion, previous_cursor: mined.previous_cursor, cursor: mined.cursor!, drafts,
+      filing_drafts: drafts,
       model_ref: modelRef, input_ids: events.map(event => event.event_id), mode, model_inputs: modelInputs,
       deferred_inputs: [...(mined.deferred_inputs ?? [])], outcome: "ok", authorization_epoch: null });
     readDurableExtractBatch(db, producer);
   }).immediate();
 }
 
-export function readDurableExtractBatch(db: Database, producer?: ProducerPort): DurableExtractBatch | null {
+export function readDurableExtractBatch(db: Database, producer?: ExtractionProducerPort): DurableExtractBatch | null {
   return db.transaction(() => readStoredExtractBatch(db, true, producer)).immediate();
 }
 interface StoredExtractRow {
@@ -465,13 +555,19 @@ function parseStoredExtractBatch(row: StoredExtractRow): DurableExtractBatch {
   const cursor = parseCursor(row.cursor);
   const previous = row.previous_cursor === NULL_CURSOR ? null : parseCursor(row.previous_cursor);
   const validCursor = (value: LedgerCursor | null): value is LedgerCursor => value !== null && isUlid(value.event_id) && isRfc3339(value.accepted_at);
-  const parsed = parseExtractResponse(`{"claims":${row.drafts}}`);
+  let drafts: readonly (ClaimDraft | WorldDraftInsert)[];
+  if (filingVersion === 2) drafts = parseDurableWorldDrafts(row.drafts, row.model_ref);
+  else {
+    const parsed = parseExtractResponse(`{"claims":${row.drafts}}`);
+    if (!parsed.ok) throw new Error("durable extraction batch is corrupt");
+    drafts = parsed.claims;
+  }
   const legacyManifest = row.model_inputs === null && row.deferred_inputs === null;
-  if (!validCursor(cursor) || (row.previous_cursor !== NULL_CURSOR && !validCursor(previous)) || !parsed.ok ||
+  if (!validCursor(cursor) || (row.previous_cursor !== NULL_CURSOR && !validCursor(previous)) ||
       ((row.integrity === null) !== (row.input_ids === null)) ||
       ((row.model_inputs === null || row.deferred_inputs === null) && !legacyManifest) ||
       !["ok", "purged"].includes(row.outcome) || !["frontier", "deferred"].includes(row.batch_mode) ||
-      (legacyManifest && (row.batch_mode !== "frontier" || filingVersion === 1)) || (row.outcome === "ok" && parsed.claims.length === 0)) {
+      (legacyManifest && (row.batch_mode !== "frontier" || filingVersion !== null)) || (row.outcome === "ok" && drafts.length === 0)) {
     throw new Error("durable extraction batch is corrupt");
   }
   const modelInputs = inputList(row.model_inputs, "model inputs");
@@ -490,7 +586,7 @@ function parseStoredExtractBatch(row: StoredExtractRow): DurableExtractBatch {
     ids = decoded;
   }
   const original: DurableExtractBatch = { filing_version: filingVersion, previous_cursor: row.previous_cursor || null, cursor,
-    drafts: parsed.claims, filing_drafts: [], model_ref: row.model_ref, input_ids: ids,
+    drafts, filing_drafts: [], model_ref: row.model_ref, input_ids: ids,
     mode: row.batch_mode as DurableExtractBatch["mode"], model_inputs: modelInputs, deferred_inputs: deferredInputs,
     outcome: row.outcome as DurableExtractBatch["outcome"], authorization_epoch: null };
   if (row.integrity !== null && row.integrity !== (legacyManifest ? legacyIntegrity(original) : integrity(original))) {
@@ -499,7 +595,7 @@ function parseStoredExtractBatch(row: StoredExtractRow): DurableExtractBatch {
   if (!legacyManifest) {
     const modelIds = modelInputs.map(input => input.event_id);
     const deferredIds = deferredInputs.map(input => input.event_id);
-    if (parsed.claims.some(draft => draft.event_ids.some(id => !modelIds.includes(id)))) {
+    if (drafts.some(draft => draftEventIds(draft).some(id => !modelIds.includes(id)))) {
       throw new Error("durable extraction provenance is invalid");
     }
     const order = new Map(ids.map((id, index) => [id, index]));
@@ -513,7 +609,7 @@ function parseStoredExtractBatch(row: StoredExtractRow): DurableExtractBatch {
   return original;
 }
 
-function readStoredExtractBatch(db: Database, enforceConsent: boolean, producer?: ProducerPort): DurableExtractBatch | null {
+function readStoredExtractBatch(db: Database, enforceConsent: boolean, producer?: ExtractionProducerPort): DurableExtractBatch | null {
   const rows = storedExtractRows(db);
   if (rows.length === 0) return null;
   if (rows.length !== 1) throw new Error("durable extraction batch is corrupt");
@@ -530,10 +626,10 @@ function readStoredExtractBatch(db: Database, enforceConsent: boolean, producer?
   });
   const ids = events.map(event => event.event_id);
   if (row.input_ids !== null && row.input_ids !== JSON.stringify(ids)) throw new Error("durable extraction inputs changed");
-  if (legacyManifest) validateLegacyInputPartition(db, events, stored.drafts);
+  if (legacyManifest) validateLegacyInputPartition(db, events, stored.drafts as readonly ClaimDraft[]);
   else validateInputPartition(db, mode, cursor, events, modelInputs, deferredInputs);
-  const sent = modelInputs.length === 0 ? [...new Set(stored.drafts.flatMap(draft => [...draft.event_ids]))] : modelInputs.map(input => input.event_id);
-  if (stored.drafts.some(draft => draft.event_ids.some(id => !sent.includes(id)))) throw new Error("durable extraction provenance is invalid");
+  const sent = modelInputs.length === 0 ? [...new Set(stored.drafts.flatMap(draft => [...draftEventIds(draft)]))] : modelInputs.map(input => input.event_id);
+  if (stored.drafts.some(draft => draftEventIds(draft).some(id => !sent.includes(id)))) throw new Error("durable extraction provenance is invalid");
   const original = { ...stored, input_ids: ids };
   const view = filingDrafts(db, stored.drafts);
   const externalSent = sent.filter(id => {
@@ -565,9 +661,9 @@ export function validateDurableExtractStorage(db: Database): void {
   readStoredExtractBatch(db, false);
 }
 
-function matchingDurableBatch(db: Database, batch: DurableExtractBatch, producer?: ProducerPort): DurableExtractBatch | null {
+function matchingDurableBatch(db: Database, batch: DurableExtractBatch, producer?: ExtractionProducerPort): DurableExtractBatch | null {
   requireAtomicExtractReplay(db);
-  if (batch.filing_version !== 1) throw new LegacyExtractReconciliationError();
+  if (batch.filing_version === null) throw new LegacyExtractReconciliationError();
   if (batch.authorization_epoch === null || batch.authorization_epoch !== sourcePolicyEpoch(db)) {
     throw new DurableExtractAuthorizationError();
   }
@@ -584,7 +680,7 @@ function finishDurableBatch(db: Database, batch: DurableExtractBatch): void {
 }
 
 /** Complete an already handled decision; extraction filing uses the atomic operation below. */
-export function completeDurableExtractBatch(db: Database, batch: DurableExtractBatch, producer?: ProducerPort): boolean {
+export function completeDurableExtractBatch(db: Database, batch: DurableExtractBatch, producer?: ExtractionProducerPort): boolean {
   return db.transaction(() => {
     const current = matchingDurableBatch(db, batch, producer);
     if (current === null) return false;
@@ -597,7 +693,7 @@ export function completeDurableExtractBatch(db: Database, batch: DurableExtractB
 export function fileAndCompleteDurableExtractBatch(
   db: Database,
   batch: DurableExtractBatch,
-  producer: ProducerPort,
+  producer: ExtractionProducerPort,
   prepared: readonly PreparedClaimInsert[],
 ): InsertClaimResult[] | null {
   if (db.inTransaction) throw new Error("extraction filing requires a top-level transaction");
@@ -660,7 +756,7 @@ export function purgeExtractInputs(db: Database, eventIds: ReadonlySet<string>, 
   saveBatch(db, { ...batch, previous_cursor: nextPrevious, input_ids: remaining, cursor: { event_id: last, accepted_at: row.accepted_at },
     model_inputs: batch.model_inputs.filter(input => !eventIds.has(input.event_id)),
     deferred_inputs: batch.deferred_inputs.filter(input => !eventIds.has(input.event_id)),
-    drafts: batch.drafts.filter(draft => !draft.event_ids.some(id => eventIds.has(id))),
+    drafts: batch.drafts.filter(draft => !draftEventIds(draft).some(id => eventIds.has(id))),
     filing_drafts: [], outcome: "purged",
     authorization_epoch: null }, legacyManifest);
   if (unhashedLegacy) {
@@ -730,9 +826,11 @@ export function commitExtractCursor(db: Database, mined: MineResult): boolean {
  * Session/outcome mine. Unavailable or rejected never advances the cursor
  * (None ≠ []). Empty and ok do.
  */
+export function mineLiveDrafts(db: Database, producer: ProducerPort): Promise<MineResult>;
+export function mineLiveDrafts(db: Database, producer: ProducerV2Port): Promise<MineResult>;
 export async function mineLiveDrafts(
   db: Database,
-  producer: ProducerPort,
+  producer: ExtractionProducerPort,
 ): Promise<MineResult> {
   requireAtomicExtractReplay(db);
   const previous_cursor = readExtractCursor(db);
@@ -832,16 +930,35 @@ export async function mineLiveDrafts(
         object: claim.object, polarity: claim.polarity, confidence: claim.confidence })), predicates: [...predicateIds()] },
       budget: { max_calls: 2, max_input_tokens: 8_000, max_output_tokens: 2_000 } };
   };
-  // Keep an impossible first record on the ordinary observed-producer path:
-  // native preflight will publish an exact zero-call refusal, never a drop.
-  let selectedCount = 1;
-  let selectedInput = inputFor(usable.slice(0, 1));
-  for (let count = 1; count <= usable.length; count++) {
-    const candidate = count === 1 ? selectedInput : inputFor(usable.slice(0, count));
-    const plan = planModelExtraction(candidate);
-    // Capped context can change when a subject is added, so inspect every
-    // prefix instead of assuming prompt size grows monotonically.
-    if (plan.status === "ready" && plan.calls.length === 1) { selectedCount = count; selectedInput = candidate; }
+  const v2 = isProducerV2(producer);
+  let selectedCount = v2 ? 0 : 1;
+  let selectedInput: ProduceInput | ProduceInputV2 = v2
+    ? worldProduceInput(usable.slice(0, 1))
+    : inputFor(usable.slice(0, 1));
+  if (v2) {
+    for (let count = 1; count <= usable.length; count++) {
+      const candidate = worldProduceInput(usable.slice(0, count));
+      try {
+        const plan = planModelExtractionV2(candidate);
+        if (plan.status === "ready") { selectedCount = count; selectedInput = plan.input; }
+      } catch {
+        // Structural bounds are host-side refusal. They never call the port or advance the cursor.
+      }
+    }
+    if (selectedCount === 0) {
+      return { filing_version: 2, source_epoch, mined: { status: "rejected", reason: "producer v2 input exceeds structural or budget limits" },
+        drafts: [], previous_cursor, cursor: null, input_ids: inputIds, mode, model_inputs: modelInputs, deferred_inputs: deferredInputs };
+    }
+  } else {
+    // Keep an impossible first record on the ordinary observed-producer path:
+    // native preflight will publish an exact zero-call refusal, never a drop.
+    for (let count = 1; count <= usable.length; count++) {
+      const candidate = count === 1 ? selectedInput as ProduceInput : inputFor(usable.slice(0, count));
+      const plan = planModelExtraction(candidate);
+      // Capped context can change when a subject is added, so inspect every
+      // prefix instead of assuming prompt size grows monotonically.
+      if (plan.status === "ready" && plan.calls.length === 1) { selectedCount = count; selectedInput = candidate; }
+    }
   }
   if (selectedCount < usable.length) {
     usable = usable.slice(0, selectedCount);
@@ -860,11 +977,34 @@ export async function mineLiveDrafts(
   if (admitted.length !== usable.length) {
     return { mined: { status: "unavailable", reason: "event origin changed before extraction" }, drafts: [], previous_cursor, cursor: null };
   }
-  selectedInput = inputFor(usable);
+  selectedInput = v2 ? worldProduceInput(usable) : inputFor(usable);
   const selectedIds = new Set(usable.map(event => event.event_id));
   if (source_epoch !== sourcePolicyEpoch(db)) return denied();
-  const { result: produced } = await invokeProducer(producer, selectedInput);
-
+  if (v2) {
+    const produced = (await invokeProducerV2(producer, selectedInput as ProduceInputV2)).result;
+    if (source_epoch !== sourcePolicyEpoch(db)) return denied();
+    usable = db.transaction(() => usable.filter(event => extractEligible(db, event))).immediate();
+    if (usable.length === 0) {
+      return { filing_version: 2, source_epoch, mined: { status: "empty" }, drafts: [], previous_cursor, cursor,
+        input_ids: inputIds, mode, model_inputs: modelInputs, deferred_inputs: deferredInputs };
+    }
+    if (usable.length !== selectedIds.size) return denied();
+    if (produced.status === "unavailable") {
+      return { filing_version: 2, source_epoch, mined: { status: "unavailable", reason: produced.reason }, drafts: [], previous_cursor, cursor,
+        input_ids: inputIds, mode, model_inputs: modelInputs, deferred_inputs: deferredInputs };
+    }
+    if (produced.status === "rejected") {
+      return { filing_version: 2, source_epoch, mined: { status: "rejected", reason: produced.reason }, drafts: [], previous_cursor, cursor,
+        input_ids: inputIds, mode, model_inputs: modelInputs, deferred_inputs: deferredInputs };
+    }
+    const mined: ExtractMine = produced.response.claims.length === 0
+      ? { status: "empty" }
+      : { status: "ok", count: produced.response.claims.length };
+    return { filing_version: 2, source_epoch, mined, drafts: [],
+      ...(mined.status === "ok" ? { world: { input: selectedInput as ProduceInputV2, response: produced.response } } : {}),
+      previous_cursor, cursor, input_ids: inputIds, mode, model_inputs: modelInputs, deferred_inputs: deferredInputs };
+  }
+  const produced = (await invokeProducer(producer, selectedInput as ProduceInput)).result;
   if (source_epoch !== sourcePolicyEpoch(db)) return denied();
   usable = db.transaction(() => usable.filter(event => extractEligible(db, event))).immediate();
   if (usable.length === 0) {

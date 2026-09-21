@@ -1,6 +1,7 @@
 import { recordSourceStoreWrite } from "../ledger/source-stores";
 import { historicalSourceWriteAllowed, inspectSourceGrant, sourceEventsAllowed, requireSourceEvents, sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity, type SourceReadScope } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
+import { worldClaimReplaySignature } from "./replay-signature";
 import { SelfOriginError, validateEventOrigin, requireExternalEvents } from "../ledger/event-origin";
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "../canon/source-tombstone";
 import { eventFromRow, type EventRow } from "../ledger/event-record";
@@ -97,6 +98,10 @@ export interface InsertClaimInput {
 
 /** Exact internal identity of a claim produced by a historical durable decision. */
 export function historicalClaimReplaySignature(input: InsertClaimInput): string {
+  const world = input as InsertClaimInput & { semantic?: unknown; world_admission?: unknown };
+  if (world.semantic !== undefined || world.world_admission !== undefined) {
+    return worldClaimReplaySignature(input);
+  }
   return JSON.stringify([
     input.kind, input.target ?? null, input.subject ?? null, input.predicate ?? null,
     input.object ?? null, input.polarity ?? "positive", input.body, input.frontmatter ?? {},

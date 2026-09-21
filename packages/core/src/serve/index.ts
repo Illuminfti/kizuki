@@ -101,7 +101,17 @@ export {
 export type { SupervisorCommandResult, SupervisorHost, SupervisorTimeoutAdapter } from "./supervisor";
 export { FILE_NOTIFIER_ID, briefPath, createFileNotifier } from "./notifier-file";
 export { dueRails, runRail, runServeOnce } from "./rails";
-export type { RailHooks, RailRefreshReport, RailRuntime, RailSyncResult, RunRailOptions } from "./rails";
+export type {
+  RailHooks,
+  RailHooksV2,
+  RailRefreshReport,
+  RailRuntime,
+  RailRuntimeV2,
+  RailSyncResult,
+  RunRailOptions,
+  RunRailOptionsV2,
+} from "./rails";
+export type { ExtractionProducerPort } from "./extract-v2";
 export { runWritePass } from "./write-pass";
 export type { WritePassOptions, WritePassResult } from "./write-pass";
 export {

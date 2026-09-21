@@ -19,9 +19,11 @@ import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../c
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { machineOriginPath } from "../canon/origin";
 import type { Claim } from "../contracts/proposal";
-import type { ProduceResult, ProducerDiagnostic, ProducerPort } from "../contracts/producer";
+import type { ClaimDraft, ProduceResult, ProducerDiagnostic, ProducerPort } from "../contracts/producer";
+import type { ProduceResultV2, ProducerV2Port } from "../contracts/producer-v2";
 import { formatProducerDiagnostic, readProducerDiagnostic } from "../producer/diagnostics";
-import { invokeProducer } from "../producer/result";
+import { invokeProducer, invokeProducerV2 } from "../producer/result";
+import type { WorldDraftInsert } from "../producer/world-drafts";
 import type { RunModelReport } from "./types";
 import {
   prepareClaimInsert,
@@ -41,6 +43,7 @@ import {
   requireAtomicExtractReplay,
   type DurableExtractBatch,
 } from "./extract";
+import { isProducerV2, type ExtractionProducerPort } from "./extract-v2";
 import { redactReceiptError } from "./receipts";
 
 /** One sync pass never materializes more than this many unwritten claims. */
@@ -80,7 +83,9 @@ function count(metrics: ProduceMetrics, reason: string): void {
   metrics.rejected[reason] = (metrics.rejected[reason] ?? 0) + 1;
 }
 
-function observe(metrics: ProduceMetrics, result: ProduceResult, wallMs: number): void {
+type ExtractionProduceResult = ProduceResult | ProduceResultV2;
+
+function observe(metrics: ProduceMetrics, result: ExtractionProduceResult, wallMs: number): void {
   metrics.wall_ms += wallMs;
   if (result.status !== "ok") {
     const diagnostic = readProducerDiagnostic(result.diagnostic);
@@ -108,7 +113,30 @@ function observe(metrics: ProduceMetrics, result: ProduceResult, wallMs: number)
   }
 }
 
-function observedProducer(producer: ProducerPort, metrics: ProduceMetrics, record: (result?: ProduceResult) => void): ProducerPort {
+function observedProducer(
+  producer: ExtractionProducerPort,
+  metrics: ProduceMetrics,
+  record: (result?: ExtractionProduceResult) => void,
+): ExtractionProducerPort {
+  if (isProducerV2(producer)) {
+    const observed: ProducerV2Port = {
+      descriptor: producer.descriptor,
+      model_ref: producer.model_ref,
+      health: () => producer.health(),
+      close: () => producer.close(),
+      async produce(input) {
+        const started = performance.now();
+        record();
+        const validated = await invokeProducerV2(producer, input);
+        const result = validated.result;
+        observe(metrics, result, Math.max(0, Math.round(performance.now() - started)));
+        if (validated.usage_known) record(result);
+        else { metrics.usage_unknown = true; metrics.calls = Math.max(1, metrics.calls); }
+        return result;
+      },
+    };
+    return inheritSourcePortBindings(producer, observed);
+  }
   const observed: ProducerPort = {
     descriptor: producer.descriptor,
     health: () => producer.health(),
@@ -147,11 +175,15 @@ function metricResult(metrics: ProduceMetrics): Pick<WritePassResult, "claims_re
   };
 }
 
+function producedCount(result: ExtractionProduceResult): number {
+  return result.status === "ok" ? ("claims" in result ? result.claims.length : result.response.claims.length) : 0;
+}
+
 export interface WritePassOptions {
   readonly budget: BudgetTracker;
   readonly run_id?: string;
   readonly model_ref?: string | null;
-  readonly producer?: ProducerPort;
+  readonly producer?: ExtractionProducerPort;
   readonly claims?: ClaimsIo;
   /** RFC3339 clock shared with rails, receipt timestamps, and reservation days. */
   readonly now?: () => string;
@@ -281,11 +313,14 @@ async function runWritePassOwned(
       }
     } else if (stopped === null) {
     const runId = options.run_id ?? ulid();
-    const mined = await mineLiveDrafts(db, observedProducer(options.producer, metrics, (result) => {
+    const observed = observedProducer(options.producer, metrics, (result) => {
       db.query("INSERT INTO extract_usage(run_id,model_ref,metrics,created_at,holder_pid) VALUES (?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET metrics=excluded.metrics").run(
-        runId, options.model_ref ?? null, JSON.stringify(result === undefined ? { claims_rejected: {}, claims_extracted: 0, model: { ...metricResult(metrics).model, calls: 1, usage_unknown: true } } : { ...metricResult(metrics), claims_extracted: result.status === "ok" ? result.claims.length : 0 }), new Date().toISOString(), process.pid,
+        runId, options.model_ref ?? null, JSON.stringify(result === undefined ? { claims_rejected: {}, claims_extracted: 0, model: { ...metricResult(metrics).model, calls: 1, usage_unknown: true } } : { ...metricResult(metrics), claims_extracted: producedCount(result) }), new Date().toISOString(), process.pid,
       );
-    }));
+    });
+    const mined = isProducerV2(observed)
+      ? await mineLiveDrafts(db, observed)
+      : await mineLiveDrafts(db, observed);
     switch (mined.mined.status) {
       case "unavailable":
         stopped = `model:${mined.mined.reason}`;
@@ -441,11 +476,17 @@ function newOccupyingWrites(before: Set<string>, after: Set<string>): number {
 async function fileProducedDrafts(
   io: ClaimsIo,
   batch: DurableExtractBatch,
-  producer: ProducerPort,
+  producer: ExtractionProducerPort,
 ): Promise<{ deduped: number; superseded: number } | null> {
   const prepared = [];
-  for (const draft of batch.filing_drafts) {
-    prepared.push(await prepareClaimInsert(io, producedClaimInput(io.db, draft, "model", batch.model_ref)));
+  if (batch.filing_version === 2) {
+    for (const draft of batch.filing_drafts as readonly WorldDraftInsert[]) {
+      prepared.push(await prepareClaimInsert(io, draft));
+    }
+  } else {
+    for (const draft of batch.filing_drafts as readonly ClaimDraft[]) {
+      prepared.push(await prepareClaimInsert(io, producedClaimInput(io.db, draft, "model", batch.model_ref)));
+    }
   }
   const results = fileAndCompleteDurableExtractBatch(io.db, batch, producer, prepared);
   if (results === null) return null;
