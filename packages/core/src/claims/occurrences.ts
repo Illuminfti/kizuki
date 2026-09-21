@@ -1,13 +1,14 @@
 import type { Database } from "bun:sqlite";
 import { rawSubjectRefKey, type ClaimV2Assertion, type QualifiedSuppliedRef, type RawSubjectRef } from "../contracts/claim-v2";
 import type { TextAnchor } from "../contracts/producer-v2";
-import { sha256Hex } from "../util/hash";
+import { canonicalJson, sha256Hex } from "../util/hash";
 import { utf8ByteLength } from "../util/validate";
 import { assertionEndpoints } from "../world/allocation";
 import { ClaimError } from "./errors";
 import { eventFromRow, type EventRow } from "../ledger/event-record";
 import { semanticKey } from "./claim-v2-keys";
 import { readClaimV2Semantic } from "./claim-v2-commit";
+import { isUlid } from "../util/ulid";
 
 export interface OccurrenceEventIdentity {
   readonly connector_id: string; readonly source_record_id: string; readonly event_id: string;
@@ -35,7 +36,12 @@ function anchors(semantic: ClaimV2Assertion): readonly TextAnchor[] {
 }
 
 function qualifiedSupplied(ref: RawSubjectRef): ref is QualifiedSuppliedRef {
-  return ref.kind === "supplied" && "namespace" in ref;
+  if (typeof ref !== "object" || ref === null || Object.keys(ref).length !== 3 || ref.kind !== "supplied" ||
+      !Object.hasOwn(ref, "namespace") || typeof ref.id !== "string" || ref.id.length === 0) return false;
+  const namespace = (ref as QualifiedSuppliedRef).namespace;
+  return typeof namespace === "object" && namespace !== null && Object.keys(namespace).length === 2 &&
+    typeof namespace.connector_id === "string" && namespace.connector_id.length > 0 &&
+    typeof namespace.source_key === "string" && isUlid(namespace.source_key);
 }
 
 function sameRef(left: RawSubjectRef, right: RawSubjectRef): boolean {
@@ -56,10 +62,16 @@ function nativeTarget(event: ReturnType<typeof eventFromRow>): { readonly claim_
   const target = event.metadata.world_target;
   if (typeof target !== "object" || target === null || Array.isArray(target) || Object.keys(target).length !== 4) return null;
   const value = target as { claim_id?: unknown; semantic_key?: unknown; subject?: unknown; predicate?: unknown };
-  if (typeof value.claim_id !== "string" || typeof value.semantic_key !== "string" || typeof value.predicate !== "string" ||
+  if (typeof value.claim_id !== "string" || !isUlid(value.claim_id) || typeof value.semantic_key !== "string" || !/^[a-f0-9]{64}$/.test(value.semantic_key) || typeof value.predicate !== "string" ||
       typeof value.subject !== "object" || value.subject === null) return null;
   const subject = value.subject as RawSubjectRef;
   return qualifiedSupplied(subject) ? { claim_id: value.claim_id, semantic_key: value.semantic_key, subject, predicate: value.predicate } : null;
+}
+
+function isNativeCorrection(db: Database, event: ReturnType<typeof eventFromRow>): boolean {
+  return event.connector_id === "kizuki.owner" && event.origin_binding_kind === "native" &&
+    db.query("SELECT 1 FROM native_owner_evidence WHERE event_id=? AND origin='correction'").get(event.event_id) !== null &&
+    db.query("SELECT 1 FROM source_event_bindings WHERE event_id=?").get(event.event_id) === null;
 }
 
 /** Validates world endpoint provenance without mutating the ledger. */
@@ -75,9 +87,10 @@ export function validateWorldEndpointProofs(
   });
   if (cited.length !== anchors(semantic).length) throw new ClaimError("provenance_unresolved", "world endpoint cites an invalid event");
   if (sourceKey === null) {
-    const target = cited.map(({ event }) => nativeTarget(event)).find((value): value is NonNullable<typeof value> => value !== null);
-    if (target === undefined || !sameRef(semantic.subject, target.subject) || semantic.predicate !== target.predicate ||
-        !cited.some(({ event }) => hasSubject(event, target.subject.id))) {
+    const target = cited.map(({ event }) => isNativeCorrection(db, event) ? nativeTarget(event) : null).find((value): value is NonNullable<typeof value> => value !== null);
+    if (target === undefined || canonicalJson(semantic.subject) !== canonicalJson(target.subject) || semantic.predicate !== target.predicate ||
+        !cited.some(({ event }) => isNativeCorrection(db, event) && hasSubject(event, target.subject.id)) ||
+        assertionEndpoints(semantic).some(ref => !qualifiedSupplied(ref) || canonicalJson(ref) !== canonicalJson(target.subject))) {
       throw new ClaimError("provenance_unresolved", "native world endpoint lacks its immutable correction target");
     }
     if (!options.restore) {

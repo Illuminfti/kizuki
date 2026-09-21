@@ -38,6 +38,14 @@ function semantic(db: ReturnType<typeof fixture>["db"], sourceKey: string, event
     subject: { kind: "occurrence", id: mintOccurrenceId({ ...event, event_id: eventId }, sourceKey, anchor) } };
 }
 
+function suppliedSemantic(db: ReturnType<typeof fixture>["db"], sourceKey: string, eventId: string): ClaimV2Assertion {
+  const event = db.query<{ connector_id: string }, [string]>("SELECT connector_id FROM events WHERE event_id=?").get(eventId)!;
+  return { schema: CLAIM_V2_SCHEMA, discriminator: "assertion", predicate: "role.holds",
+    object: { kind: "literal", value: "partnerships lead" }, perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] },
+    context: [], polarity: "positive", valid_from: "2026-01-01T00:00:00.000Z", valid_to: null, temporal_basis: "explicit", anchors: [{ event_id: eventId, start_utf16: 0, end_utf16: 5 }],
+    subject: { kind: "supplied", id: "person:ada", namespace: { connector_id: event.connector_id, source_key: sourceKey } } };
+}
+
 function input(db: ReturnType<typeof fixture>["db"], sourceKey: string, eventId: string) {
   const typed = semantic(db, sourceKey, eventId);
   return { kind: "claim" as const, body: "attacker supplied body", provenance: [eventId], producer: "deterministic" as const, confidence: 1,
@@ -80,14 +88,18 @@ test("qualified world admission rolls back when migration 32 is absent", async (
 test("a native correction is a separate support contribution and forged native support fails", async () => {
   const { db, eventId, sourceKey } = fixture(true);
   try {
-    const initial = await insertClaim({ db }, input(db, sourceKey, eventId));
+    const initialSemantic = suppliedSemantic(db, sourceKey, eventId);
+    const initialInput = input(db, sourceKey, eventId);
+    const initial = await insertClaim({ db }, { ...initialInput, semantic: initialSemantic,
+      world_admission: { ...initialInput.world_admission, semantic: initialSemantic } });
     if (initial.outcome !== "stored") throw new Error("initial world claim missing");
     const correction = recordNativeCorrection(db, {
       ...validEvent(), connector_id: "kizuki.owner", source_record_id: `correction-${crypto.randomUUID()}`,
-      text: "Grace now leads strategy.", metadata: { taint: "owner", origin: "external" },
+      text: "Grace now leads strategy.", metadata: { world_target: {
+        claim_id: initial.claim.claim_id, semantic_key: semanticKey(initialSemantic), subject: initialSemantic.subject, predicate: initialSemantic.predicate,
+      } },
     }, "a".repeat(64));
-    const next = semantic(db, "native-owner", correction.event_id);
-    const corrected = { ...next, object: { kind: "literal" as const, value: "strategy lead" }, valid_from: "2026-01-02T00:00:00.000Z",
+    const corrected = { ...initialSemantic, object: { kind: "literal" as const, value: "strategy lead" }, valid_from: "2026-01-02T00:00:00.000Z",
       anchors: [{ event_id: correction.event_id, start_utf16: 0, end_utf16: 5 }] };
     const result = await insertClaim({ db }, {
       ...input(db, "native-owner", correction.event_id), body: "Grace now leads strategy.", semantic: corrected,
