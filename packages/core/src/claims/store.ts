@@ -309,6 +309,9 @@ function preparedWorldCommit(
     throw new ClaimError("schema_invalid", "world admission needs its matching typed semantic");
   }
   const anchors = completeWorldAnchors(input.semantic);
+  if (anchors.length === 0) {
+    throw new ClaimError("provenance_unresolved", "world admission needs complete semantic anchors");
+  }
   const supportEventIds = [...new Set(anchors.map((anchor) => anchor.event_id))];
   const native = input.intent === "correct" && input.provenance.length === 1 &&
     db.query("SELECT 1 FROM native_owner_evidence WHERE event_id=? AND origin='correction'").get(input.provenance[0]!) !== null;
