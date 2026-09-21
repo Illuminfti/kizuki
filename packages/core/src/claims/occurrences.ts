@@ -72,8 +72,13 @@ export function ensureClaimOccurrences(
 
 export function validateStoredClaimOccurrences(db: Database): void {
   for (const row of db.query<{ occurrence_id: string; event_id: string; content_hash_version: number; event_content_hash: string; text_hash: string; origin_binding: string; accepted_at: string; source_key: string | null; start_utf16: number; end_utf16: number }, []>("SELECT * FROM claim_occurrences").iterate()) {
-    const event = db.query<{ connector_id: string; source_record_id: string; content_hash_version: number; content_hash: string; text_hash: string; origin_binding: string; accepted_at: string }, [string]>("SELECT connector_id,source_record_id,content_hash_version,content_hash,text_hash,origin_binding,accepted_at FROM events WHERE event_id=?").get(row.event_id);
-    if (event === null || event.content_hash !== row.event_content_hash || event.text_hash !== row.text_hash || event.origin_binding !== row.origin_binding || event.accepted_at !== row.accepted_at ||
+    const event = db.query<{ connector_id: string; source_record_id: string; content_hash_version: number; content_hash: string; text_hash: string; origin_binding: string; accepted_at: string; text: string; origin_binding_kind: string }, [string]>("SELECT connector_id,source_record_id,content_hash_version,content_hash,text_hash,origin_binding,accepted_at,text,origin_binding_kind FROM events WHERE event_id=?").get(row.event_id);
+    const boundary = (offset: number) => offset >= 0 && offset <= event!.text.length &&
+      !(offset > 0 && offset < event!.text.length && /[\\uD800-\\uDBFF]/.test(event!.text[offset - 1]!) && /[\\uDC00-\\uDFFF]/.test(event!.text[offset]!));
+    const sourceValid = row.source_key === null
+      ? event?.origin_binding_kind === "native" && db.query("SELECT 1 FROM native_owner_evidence WHERE event_id=? AND origin='correction'").get(row.event_id) !== null && db.query("SELECT 1 FROM source_event_bindings WHERE event_id=?").get(row.event_id) === null
+      : db.query("SELECT 1 FROM source_event_bindings WHERE event_id=? AND source_key=?").get(row.event_id, row.source_key) !== null;
+    if (event === null || !sourceValid || event.content_hash_version !== row.content_hash_version || event.content_hash !== row.event_content_hash || event.text_hash !== row.text_hash || event.origin_binding !== row.origin_binding || event.accepted_at !== row.accepted_at || !boundary(row.start_utf16) || !boundary(row.end_utf16) || row.end_utf16 <= row.start_utf16 ||
       tuple([event.connector_id,row.source_key ?? "native-owner",event.source_record_id,row.event_id,String(event.content_hash_version),event.content_hash,event.text_hash,String(row.start_utf16),String(row.end_utf16)]) !== row.occurrence_id) throw new ClaimError("schema_invalid", "stored occurrence proof is invalid");
   }
 }
