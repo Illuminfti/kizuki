@@ -716,6 +716,8 @@ test("an excluded receipt is not retained by its uploaded parent directory", () 
     "!${{ runner.temp }}/kizuki-other/receipt.json",
     "!${{ runner.temp }}/kizuki-other/**",
     "!**/receipt.json",
+    "${{ format('!{0}/kizuki-other/receipt.json', runner.temp) }}",
+    "${{ runner.temp }}/${{ inputs.additional_paths }}",
   ]) {
     const upload = receiptUpload("|\n            ${{ runner.temp }}/kizuki-other/\n            " + exclusion);
     expect(validateWorkflowText(".github/workflows/other.yml", receiptWorkflow(upload))).toContainEqual(
