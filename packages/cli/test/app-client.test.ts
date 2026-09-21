@@ -902,12 +902,14 @@ test('unreadable existing model settings do not expose a replacement form', asyn
 });
 
 const readGrant = { ceiling: 'public', types: null, subjects: null, since: null, until: null, tools: ['search', 'get_page'], rate_limit_per_minute: 60, relay_owner_corrections: false };
-test('World renders actual shared-reader cards, admission evidence and unavailable state', () => {
+test('World renders shared-reader statements with honest confidence and unavailable state', () => {
     const f = fixture();
     f.evaluate(`state.view='world'; state.worldKind='concepts'; state.world={schema:'kizuki.world-view/v1',operation:'find_concepts',result:{status:'current',view:{status:'not_issued'},data:{schema:'kizuki.concept-matches/v1',matches:[{ref:{kind:'object',token:'A'.repeat(43)},labels:['Bayesian reasoning']}],coverage:{status:'partial',gaps:['traversal_limit']}}}}; render();`);
     expect(f.main.textContent).toContain('Bayesian reasoning'); expect(f.main.textContent).toContain('Some results may be missing');
-    f.evaluate(`state.world={schema:'kizuki.world-view/v1',operation:'concept',result:{status:'current',view:{status:'not_issued'},data:{schema:'kizuki.concept-card/v1',concept:{labels:[{text:'Bayesian reasoning'}]},summary:{text:'Update beliefs with evidence.',admissions:[]},definitions:[{predicate:'concept.definition',object:{kind:'literal',value:'Revise beliefs using evidence'},assessments:[{epistemicKind:'model_inference',authority:'model',confidence:{kind:'known',value:.8},evidence:[{}]}]}],relations:[],coverage:{status:'complete_for_query'}}}}; render();`);
-    expect(f.main.textContent).toContain('Update beliefs with evidence.'); expect(f.main.textContent).toContain('Admitted evidence and confidence'); expect(f.main.textContent).toContain('80% confidence'); expect(f.main.textContent).toContain('evidence attached');
+    f.evaluate(`state.world={schema:'kizuki.world-view/v1',operation:'concept',result:{status:'current',view:{status:'not_issued'},data:{schema:'kizuki.concept-card/v1',concept:{labels:[{text:'Bayesian reasoning'}]},summary:{text:'Update beliefs with evidence.',admissions:[]},definitions:[{predicate:'concept.definition',polarity:'negative',perspective:{mode:'hypothetical'},object:{kind:'literal',value:'Revise beliefs using evidence'},assessments:[{epistemicKind:'model_inference',authority:'model_inference',confidence:{kind:'known',value:.8},evidence:[{}]}]}],relations:[],coverage:{status:'complete_for_query'}}}}; render();`);
+    expect(f.main.textContent).toContain('Update beliefs with evidence.'); expect(f.main.textContent).toContain('Supporting statements and confidence'); expect(f.main.textContent).toContain('80% confidence'); expect(f.main.textContent).toContain('1 supporting passage');
+    for (const text of ['Definition', 'Model interpretation', 'Negated statement', 'Hypothetical statement', 'Original source text is not included here.']) expect(f.main.textContent).toContain(text);
+    for (const jargon of ['concept.definition', 'model_inference', 'admitted', 'opaque']) expect(f.main.textContent).not.toContain(jargon);
     f.evaluate(`state.world={schema:'kizuki.world-view/v1',operation:'concept',result:{status:'unavailable',reason:'storage'}}; render();`);
     expect(f.main.textContent).toContain('World view is not available here.');
 });
@@ -921,6 +923,51 @@ test('World ignores stale responses and clears its private projection on privacy
     expect(f.main.textContent).toContain('No concepts found.');
     f.evaluate(`state.world={status:'not_found'}; invalidatePrivateView();`);
     expect(f.evaluate('state.world')).toBeNull();
+});
+const worldMatches = (label: string) => ({ schema: 'kizuki.world-view/v1', operation: 'find_concepts', result: { status: 'current', view: { status: 'not_issued' }, data: { schema: 'kizuki.concept-matches/v1', matches: [{ ref: { kind: 'object', token: 'A'.repeat(43) }, labels: [label] }], coverage: { status: 'complete_for_query' } } } });
+test('World navigation shows loading until the real result arrives', async () => {
+    const f = fixture(); f.evaluate(`navigate('world')`);
+    expect(f.main.textContent).toContain('Loading concepts');
+    expect(f.main.textContent).not.toContain('No world view yet');
+    expect(f.main.querySelector('section')?.getAttribute('aria-busy')).toBe('true');
+    f.reply('world_view', worldMatches('Current concept')); await tick();
+    expect(f.main.textContent).toContain('Current concept');
+    expect(f.main.textContent).not.toContain('Loading concepts');
+});
+test('World refresh rechecks the selected detail and permission changes clear query and selection', async () => {
+    const f = fixture();
+    f.evaluate(`state.view='world'; state.worldQuery='PRIVATE_QUERY'; loadWorld({kind:'object',token:'A'.repeat(43)});`);
+    f.reply('world_view', worldMatches('Previous result')); await tick();
+    const work = f.evaluate<Promise<void>>('refresh()');
+    f.reply('status', status()); await tick(); f.reply('catalog', { sources: [] }); f.reply('sources', { sources: [] }); await work;
+    expect(f.requests.find(x => x.route === 'world_view')?.payload).toMatchObject({ operation: 'concept', concept: { kind: 'object', token: 'A'.repeat(43) } });
+    expect(f.main.textContent).toContain('Loading concept');
+    const pulse = f.evaluate<Promise<void>>('checkVisibility()');
+    f.reply('status', status([], '2')); await tick();
+    f.reply('status', status([], '2')); await tick();
+    f.reply('catalog', { sources: [] }); f.reply('sources', { sources: [] }); await pulse;
+    expect(f.evaluate('state.worldQuery')).toBe(''); expect(f.evaluate('state.worldRef')).toBeNull();
+    expect(f.requests.filter(x => x.route === 'world_view').at(-1)?.payload).toMatchObject({ operation: 'find_concepts', label: '' });
+    f.reply('world_view', worldMatches('STALE_PRIVATE_RESULT')); await tick();
+    expect(f.main.textContent).not.toContain('STALE_PRIVATE_RESULT');
+    f.reply('world_view', worldMatches('Current allowed result')); await tick();
+    expect(f.main.textContent).toContain('Current allowed result');
+});
+test('World failed detail retry keeps the selected item and stale replies cannot end its loading state', async () => {
+    const f = fixture();
+    f.evaluate(`state.view='world'; loadWorld({kind:'object',token:'A'.repeat(43)});`);
+    f.requests.shift()!.result.resolve({ status: 503, json: async () => ({ ok: false, error: { code: 'unavailable' } }) }); await tick();
+    const retry = findAction(f.main, 'Try again').fire('click'); await tick();
+    expect(f.requests[0]!.payload).toMatchObject({ operation: 'concept', concept: { kind: 'object', token: 'A'.repeat(43) } });
+    f.evaluate('loadWorld(null)');
+    f.reply('world_view', worldMatches('STALE_DETAIL')); await retry;
+    expect(f.main.textContent).toContain('Loading concepts'); expect(f.main.textContent).not.toContain('STALE_DETAIL');
+    f.reply('world_view', worldMatches('Fresh search')); await tick();
+    expect(f.main.textContent).toContain('Fresh search');
+    f.evaluate(`state.worldQuery='PRIVATE_QUERY'; loadWorld(); disconnect();`);
+    f.reply('world_view', worldMatches('AFTER_LOGOUT')); await tick();
+    expect(f.evaluate('state.worldQuery')).toBe(''); expect(f.evaluate('state.worldRef')).toBeNull();
+    expect(f.main.textContent).not.toContain('AFTER_LOGOUT');
 });
 test('agent enrollment reviews all eight grant fields before submitting a read-only identity', async () => {
     const f = fixture(); f.evaluate('agentEnrollment()');
