@@ -710,3 +710,16 @@ test("an upload before the required receipt check cannot prove retention", () =>
     expect.objectContaining({ reason: expect.stringMatching(discardedReceipt) }),
   );
 });
+
+test("an excluded receipt is not retained by its uploaded parent directory", () => {
+  for (const exclusion of [
+    "!${{ runner.temp }}/kizuki-other/receipt.json",
+    "!${{ runner.temp }}/kizuki-other/**",
+    "!**/receipt.json",
+  ]) {
+    const upload = receiptUpload("|\n            ${{ runner.temp }}/kizuki-other/\n            " + exclusion);
+    expect(validateWorkflowText(".github/workflows/other.yml", receiptWorkflow(upload))).toContainEqual(
+      expect.objectContaining({ reason: expect.stringMatching(discardedReceipt) }),
+    );
+  }
+});

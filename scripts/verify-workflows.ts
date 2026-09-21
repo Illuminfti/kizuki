@@ -115,6 +115,9 @@ function retainedRunnerTempPaths(job: Record<string, unknown>): RetainedRunnerTe
     const settings = step["with"];
     const listed = isRecord(settings) ? settings["path"] : undefined;
     if (typeof listed !== "string") continue;
+    // Artifact glob exclusions can remove a receipt from an otherwise retained
+    // directory. Credit only an upload with an unambiguous inclusion list.
+    if (listed.split("\n").some(line => line.trim().startsWith("!"))) continue;
     for (const line of listed.split("\n")) {
       const entry = runnerTempPath(line);
       if (entry !== undefined) retained.push({ path: entry, condition: step["if"], step: index });
