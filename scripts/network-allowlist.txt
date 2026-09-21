@@ -44,6 +44,8 @@ packages/core/test/serve/http.test.ts:(toplevel).fetch#3:loopback fetch against 
 packages/core/test/serve/http.test.ts:(toplevel).fetch#4:loopback fetch against the standing serve endpoint
 packages/core/test/serve/http.test.ts:(toplevel).fetch#5:authenticated synthetic world-view read against the loopback serve endpoint
 packages/core/test/serve/http.test.ts:(toplevel).fetch#6:authenticated synthetic world-view alias read against the loopback serve endpoint
+packages/core/test/serve/http.test.ts:(toplevel).fetch#7:authenticated synthetic Concept discovery against the loopback serve endpoint
+packages/core/test/serve/http.test.ts:(toplevel).fetch#8:authenticated synthetic Concept detail against the loopback serve endpoint
 packages/core/test/serve/http-retrieval.test.ts:(toplevel).fetch#1:synthetic loopback HTTP reads against the host-bound retrieval surface
 packages/connector-gmail/src/api.ts:getJson.fetch#1:explicitly enrolled Gmail read-only capture and OIDC identity; fixed Google HTTPS endpoints, no redirects, bounded GET requests
 packages/connector-google-calendar/src/api.ts:getJson.fetch#1:explicitly configured read-only Google Calendar fixed-host GET transport
