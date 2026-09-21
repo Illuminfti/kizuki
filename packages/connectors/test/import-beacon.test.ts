@@ -52,7 +52,7 @@ test("missing upstream IDs use full content identities independent of record ord
   const left = parseBeaconExport(jsonl([raw]), observed);
   const right = parseBeaconExport(jsonl([BEACON_FIXTURE_EXPORT[1], raw]), observed);
   expect(left.errors).toEqual([]);
-  expect(left.events[0]!.source_record_id).toBe(right.events[1]!.source_record_id);
+  expect(right.events.map(event => event.source_record_id)).toContain(left.events[0]!.source_record_id);
   expect(left.events[0]!.source_record_id).toMatch(/sha256:[a-f0-9]{64}$/);
 });
 
@@ -64,6 +64,53 @@ test("malformed, oversized, unsupported and deep records have bounded content-fr
   expect(parsed.events).toHaveLength(1); expect(parsed.errors).toHaveLength(5);
   expect(JSON.stringify(parsed.errors)).not.toContain("SYNTHETIC_PRIVATE_SECRET");
   expect(parsed.errors.map(error => error.code)).toEqual(["invalid_json", "record_limit", "unsupported_schema", "invalid_record", "invalid_record"]);
+});
+
+test("Beacon requires a nonempty event category", () => {
+  const record = BEACON_FIXTURE_EXPORT[0]!;
+  for (const category of [undefined, "", 7, {}]) {
+    const event = { ...record.event } as Record<string, unknown>;
+    if (category === undefined) delete event["category"];
+    else event["category"] = category;
+    const parsed = parseBeaconExport(jsonl([{ ...record, event }]), observed);
+    expect(parsed.events).toEqual([]);
+    expect(parsed.errors).toEqual([{ location: "line:1", code: "invalid_record", reason: "Beacon record was not imported" }]);
+  }
+});
+
+test("accepted records use a total precise timestamp and writer-sequence order independent of JSONL order", () => {
+  const first = BEACON_FIXTURE_EXPORT[0]!;
+  const { sequence: _sequence, ...withoutSequence } = first;
+  const records = [
+    { ...first, timestamp: "2026-09-21T12:00:00.123456790Z", sequence: 9, event: { ...first.event, id: "nano-later" } },
+    { ...first, timestamp: "2026-09-21T12:00:00.123456789+00:00", sequence: 3, event: { ...first.event, id: "equal-third" } },
+    { ...first, timestamp: "2026-09-21T12:00:00.123456789Z", sequence: 1, event: { ...first.event, id: "equal-first" } },
+    { ...first, timestamp: "2026-09-21T12:00:00.123456789Z", sequence: 2, event: { ...first.event, id: "equal-second" } },
+    { ...withoutSequence, timestamp: "2026-09-21T12:00:00.123456789Z", event: { ...first.event, id: "missing-sequence" } },
+  ];
+  const parsed = parseBeaconExport(jsonl([...records].reverse()), observed);
+  expect(parsed.errors).toEqual([]);
+  expect(parsed.events.map(event => (event.metadata["beacon"] as { record: { event: { id: string } } }).record.event.id))
+    .toEqual(["missing-sequence", "equal-first", "equal-second", "equal-third", "nano-later"]);
+  expect(parseBeaconExport(jsonl(records), observed).events.map(event => event.source_record_id))
+    .toEqual(parsed.events.map(event => event.source_record_id));
+
+  const equalTime = records.slice(2);
+  const permutations = (items: typeof equalTime): typeof equalTime[] => items.length <= 1
+    ? [items]
+    : items.flatMap((item, index) => permutations([...items.slice(0, index), ...items.slice(index + 1)])
+      .map(rest => [item, ...rest]));
+  const expected = parseBeaconExport(jsonl(equalTime), observed).events.map(event => event.source_record_id);
+  for (const permutation of permutations(equalTime)) {
+    expect(parseBeaconExport(jsonl(permutation), observed).events.map(event => event.source_record_id)).toEqual(expected);
+  }
+
+  const sameSequence = [
+    { ...first, sequence: 4, event: { ...first.event, id: "same-sequence-a" } },
+    { ...first, sequence: 4, event: { ...first.event, id: "same-sequence-b" } },
+  ];
+  const fallback = parseBeaconExport(jsonl(sameSequence), observed).events.map(event => event.source_record_id).sort();
+  expect(parseBeaconExport(jsonl([...sameSequence].reverse()), observed).events.map(event => event.source_record_id)).toEqual(fallback);
 });
 
 test("shared snapshot cursor drains, replays, rescans changed exports and never implies deletion", async () => {
@@ -98,14 +145,16 @@ test("normalized action variants retain reported evidence; native transcripts an
 
 test("large snapshots resume after bounded pages without losing records", async () => {
   const fixture = BEACON_FIXTURE_EXPORT[0]!;
-  const rows = Array.from({ length: MAX_SYNC_BATCH_EVENTS + 1 }, (_, id) => ({ ...fixture, event: { ...fixture.event, id: `page-${id}` } }));
-  const path = file(jsonl(rows)), connector = createBeaconImportConnector({ path });
+  const rows = Array.from({ length: MAX_SYNC_BATCH_EVENTS + 1 }, (_, id) => ({ ...fixture, sequence: id + 1, event: { ...fixture.event, id: `page-${id}` } }));
+  const path = file(jsonl([...rows].reverse())), connector = createBeaconImportConnector({ path });
   const first = await connector.backfill(null);
   expect(first.events).toHaveLength(MAX_SYNC_BATCH_EVENTS); expect(first.has_more).toBe(true);
   expect(Buffer.byteLength(JSON.stringify(first.events))).toBeLessThanOrEqual(MAX_SYNC_BATCH_BYTES);
   const second = await createBeaconImportConnector({ path }).backfill(first.cursor);
   expect(second.events).toHaveLength(1); expect(second.has_more).toBe(false);
   expect(new Set([...first.events, ...second.events].map(event => event.source_record_id)).size).toBe(rows.length);
+  expect([...first.events, ...second.events].map(event => (event.metadata["beacon"] as { record: { sequence: number } }).record.sequence))
+    .toEqual(rows.map(row => row.sequence));
 });
 
 test("malformed UTF-8 and oversized snapshot files fail before capture", async () => {

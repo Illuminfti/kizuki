@@ -1,4 +1,4 @@
-import { freezeManifest, isPlainObject, isRfc3339, policyForConnector, validateEventInput } from "@kizuki/core";
+import { compareRfc3339, freezeManifest, isPlainObject, isRfc3339, policyForConnector, validateEventInput } from "@kizuki/core";
 import type { CaptureEventInput, Connector, Cursor, Manifest, PurgePlan, SecretResolver } from "@kizuki/core";
 import { notSupported, KizukiError } from "../errors";
 import type { ImportParseResult, ImportRecordError } from "../import-report";
@@ -68,12 +68,12 @@ function normalize(raw: unknown, observedAt: string): { event: CaptureEventInput
   if (raw["vendor"] !== "beacon" || raw["product"] !== "endpoint-agent" || raw["schema_version"] !== "1.0") return { code: "unsupported_schema" };
   const info = raw["event"], harness = raw["harness"], endpoint = raw["endpoint"];
   if (!isPlainObject(info) || !isPlainObject(harness) || !isPlainObject(endpoint) || info["kind"] !== "agent_runtime" ||
-      !nonempty(endpoint["os"]) || !isRfc3339(raw["timestamp"]) ||
+      !nonempty(endpoint["os"]) || !isRfc3339(raw["timestamp"]) || !nonempty(info["category"]) ||
       !["info", "low", "medium", "high", "critical"].includes(raw["severity"] as string) ||
       !optionalEnum(info["fidelity"], ["observed", "inferred"]) ||
       !optionalEnum(harness["collection_method"], ["hook", "poll", "otlp", "plugin"]) ||
       !optionalEnum(raw["origin"], ["local", "cloud", "ci"]) ||
-      (raw["sequence"] !== undefined && (!Number.isSafeInteger(raw["sequence"]) || (raw["sequence"] as number) < 0)) ||
+      (raw["sequence"] !== undefined && (!Number.isSafeInteger(raw["sequence"]) || (raw["sequence"] as number) < 1)) ||
       (info["id"] !== undefined && !nonempty(info["id"]))) return { code: "invalid_record" };
   if (harness["name"] !== "claude_code" && harness["name"] !== "codex") return { code: "unsupported_harness" };
   if (typeof info["action"] !== "string" || !ACTIONS.has(info["action"])) return { code: "unsupported_action" };
@@ -104,6 +104,26 @@ function normalize(raw: unknown, observedAt: string): { event: CaptureEventInput
   return result.ok ? { event: result.value } : { code: "invalid_record" };
 }
 
+function writerSequence(event: CaptureEventInput): number | null {
+  const beacon = event.metadata["beacon"];
+  if (!isPlainObject(beacon) || !isPlainObject(beacon["record"])) return null;
+  const sequence = beacon["record"]["sequence"];
+  return typeof sequence === "number" && Number.isSafeInteger(sequence) && sequence >= 1 ? sequence : null;
+}
+
+/** Timestamp is evidence; the optional writer sequence provides a deterministic equal-time key. */
+function compareEvents(left: CaptureEventInput, right: CaptureEventInput): number {
+  const timestamp = compareRfc3339(left.occurred_at, "Beacon timestamp", right.occurred_at, "Beacon timestamp");
+  if (timestamp !== 0) return timestamp;
+  // Missing writer sequence is an explicit deterministic bucket, not a claim
+  // that the event preceded any other event in Beacon's causal history.
+  const leftSequence = writerSequence(left) ?? 0, rightSequence = writerSequence(right) ?? 0;
+  if (leftSequence !== rightSequence) {
+    return leftSequence < rightSequence ? -1 : 1;
+  }
+  return left.source_record_id < right.source_record_id ? -1 : left.source_record_id > right.source_record_id ? 1 : 0;
+}
+
 /** Beacon's normalized runtime.jsonl, not a native harness transcript reader. */
 export function parseBeaconExport(source: string, observedAt: string): ImportParseResult {
   if (Buffer.byteLength(source, "utf8") > MAX_BEACON_EXPORT_BYTES) throw new KizukiError("parse_error", "Beacon export exceeds the import byte limit");
@@ -132,5 +152,5 @@ export function parseBeaconExport(source: string, observedAt: string): ImportPar
     }
     events.set(event.source_record_id, event);
   }
-  return { events: [...events.values()], errors };
+  return { events: [...events.values()].sort(compareEvents), errors };
 }
