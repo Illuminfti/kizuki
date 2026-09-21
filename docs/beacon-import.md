@@ -36,7 +36,8 @@ this capture seam. There is no runtime dependency or hosted service contract.
 
 The accepted envelope has `vendor: beacon`, `product: endpoint-agent`,
 `schema_version: "1.0"`, `event.kind: agent_runtime`, an RFC3339 timestamp,
-severity, endpoint OS, and `harness.name` of `claude_code` or `codex`.
+nonempty `event.category`, severity, endpoint OS, and `harness.name` of
+`claude_code` or `codex`.
 Hook, poll, OTLP and plugin collection labels are retained when present.
 Native Claude conversation JSONL and Codex rollout JSONL are different formats
 and are refused here. Supported normalized actions are:
@@ -67,8 +68,11 @@ does not invent a correction, confidence score, lesson, or success verdict.
 
 - Native `event.id` is preserved with the harness in a length-delimited source
   record identity. Missing IDs use the full SHA-256 of the canonical source
-  record, explicitly in a different identity domain. Local sequence numbers
-  never become global IDs. Capture binds the event to the enrolled source;
+  record, explicitly in a different identity domain. Accepted snapshots sort by
+  RFC3339 timestamp, then Beacon's optional per-writer sequence (which starts
+  at 1), then source-record identity. A missing sequence has a deterministic
+  local sort bucket only; it makes no causal or global ordering claim. Local
+  sequence numbers never become global IDs. Capture binds the event to the enrolled source;
   another enrollment cannot take over an existing event binding.
 - Exact repeats deduplicate. A changed snapshot is rescanned through the
   shared digest/offset cursor. Changed content under an existing ID in a later

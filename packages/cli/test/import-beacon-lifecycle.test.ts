@@ -26,10 +26,11 @@ function setup(rows: unknown[] = BEACON_FIXTURE_EXPORT) {
 }
 
 test("public Beacon import captures nested evidence, replays and keeps changed records as revisions", () => {
-  const o = setup();
+  const o = setup([...BEACON_FIXTURE_EXPORT].reverse());
   const first = h.runCli(o.env, "import", "beacon", "--source", o.source, ...fixtureConsent(o.root));
   expect(first.exitCode, first.stderr).toBe(0); expect(first.stdout).toContain("events_stored=4");
   const before = state(o.vault); expect(before.events).toHaveLength(4); expect(before.native).toBe(0);
+  expect(before.events.map(event => ((event.metadata["beacon"] as { record: { sequence: number } }).record.sequence))).toEqual([1, 2, 3, 4]);
   expect(before.bindings).toHaveLength(4); expect(new Set(before.bindings.map(row => row.source_key))).toEqual(new Set([before.sources[0]!.source_key]));
   expect(before.events.every(event => event.origin_binding_kind === "capture")).toBe(true);
   expect(before.events.find(event => event.text.includes("1 test failed"))!.metadata["beacon"]).toMatchObject({ record: { command: { exit_code: 1 } } });
@@ -38,7 +39,7 @@ test("public Beacon import captures nested evidence, replays and keeps changed r
   const repeat = h.runCli(o.env, "import", "import-beacon", "--source", o.source);
   expect(repeat.exitCode, repeat.stderr).toBe(0); expect(repeat.stdout).toContain("events_stored=0");
   // A changed snapshot rescans; the same immutable evidence is still replay.
-  writeFileSync(o.source, jsonl([...BEACON_FIXTURE_EXPORT].reverse()));
+  writeFileSync(o.source, jsonl(BEACON_FIXTURE_EXPORT));
   const reordered = h.runCli(o.env, "import", "beacon", "--source", o.source);
   expect(reordered.exitCode, reordered.stderr).toBe(0); expect(reordered.stdout).toContain("duplicates=4");
   const changed = { ...BEACON_FIXTURE_EXPORT[0], prompt: { text: "Actually preserve the original failing test." } };
