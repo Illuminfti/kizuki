@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { CLAIM_V2_SCHEMA, type ClaimV2Assertion } from "../../src/contracts/claim-v2";
 import { readClaimRecord } from "../../src/claims/claim-v2-commit";
+import { semanticKey } from "../../src/claims/claim-v2-keys";
 import { insertClaim } from "../../src/claims/store";
 import { registerConnection } from "../../src/ledger/connections";
 import { openLedger } from "../../src/ledger/db";
@@ -47,7 +48,7 @@ test("production insertion writes typed world meaning, derived admission, and en
     expect(first.outcome).toBe("stored");
     const claim = first.outcome === "stored" ? first.claim : null;
     if (claim === null) throw new Error("claim not stored");
-    expect(claim.body).toBe("Grace leads partnerships.");
+    expect(claim.body).toBe(`[world:${semanticKey(semantic(eventId))}]`);
     expect(claim.subject).toBeNull();
     const record = readClaimRecord(db, claim.claim_id);
     expect(record?.schema).toBe(CLAIM_V2_SCHEMA);
