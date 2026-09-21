@@ -9,7 +9,7 @@ import {
 } from "@kizuki/core";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { recordedPage } from "../../core/test/helpers/recorded-page";
-import { ENVELOPE_SHAPE, PACKET_INPUT } from "../src/schemas";
+import { CORRECT_INPUT, ENVELOPE_SHAPE, PACKET_INPUT } from "../src/schemas";
 import { call, connectClient, envelopeOf } from "./client";
 import { mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
@@ -27,6 +27,25 @@ function live(): McpFixture {
   fixture = mcpFixture();
   return fixture;
 }
+
+test("correct input accepts an exact opaque world claim selector", () => {
+  const token = "A".repeat(42) + "A";
+  expect(
+    CORRECT_INPUT.parse({
+      statement: "Use the updated literal.",
+      target: { world_claim: { kind: "claim", token } },
+    }),
+  ).toEqual({
+    statement: "Use the updated literal.",
+    target: { world_claim: { kind: "claim", token } },
+  });
+  expect(() =>
+    CORRECT_INPUT.parse({
+      statement: "Use the updated literal.",
+      target: { world_claim: { kind: "claim", token }, claim_id: "01J8T0Y8YAZP3GW8P6GQJ1A4KE" },
+    }),
+  ).toThrow();
+});
 
 /**
  * The SDK client builds an output validator from `tools/list` and applies it

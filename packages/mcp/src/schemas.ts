@@ -176,7 +176,8 @@ export const CORRECT_INPUT = z.strictObject({
       claim_id: ID.optional(),
       claim_key: z.string().regex(/^[0-9a-f]{64}$/).optional(),
       subject: ID.optional(),
-    })
+      world_claim: z.strictObject({ kind: z.literal("claim"), token: z.string().regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/) }).optional(),
+    }).refine((target) => [target.claim_id, target.claim_key, target.subject, target.world_claim].filter((value) => value !== undefined).length <= 1, "target names exactly one selector")
     .optional(),
   object: z.string().min(1).max(1024).optional(),
   dry_run: z.boolean().optional(),
