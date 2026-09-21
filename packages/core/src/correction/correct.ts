@@ -12,6 +12,8 @@ import { CanonWriteError } from "../canon/errors";
 import type { CanonIo } from "../canon";
 import { getCanonReceipt } from "../canon/receipts";
 import { getClaim, insertClaim, listClaims, supersedeLiveGroup } from "../claims/store";
+import { readClaimV2Semantic } from "../claims/claim-v2-commit";
+import { CLAIM_V2_SCHEMA } from "../contracts/claim-v2";
 import type { Claim, FrontmatterValue, Producer } from "../contracts/proposal";
 import { recordNativeCorrection } from "./evidence";
 import { requireSourceEvents } from "../ledger/source-grants";
@@ -418,6 +420,20 @@ async function insertCorrection(
   const producer: Producer = io.producer ?? "owner";
   const relay = io.relay_owner_corrections !== false;
   const intent = relay ? ("correct" as const) : ("propose" as const);
+  const priorSemantic = readClaimV2Semantic(io.db, live.claim_id);
+  if (priorSemantic !== null && (priorSemantic.discriminator !== "assertion" || priorSemantic.object.kind !== "literal" || intent !== "correct")) {
+    throw new CorrectError("ledger_rejected", "typed correction needs a supported literal owner correction");
+  }
+  const typedSemantic = priorSemantic === null ? undefined : {
+    ...priorSemantic,
+    schema: CLAIM_V2_SCHEMA,
+    object: { kind: "literal" as const, value: parsed.object ?? input.statement },
+    perspective: { ...priorSemantic.perspective, anchors: [] },
+    valid_from: at,
+    valid_to: null,
+    temporal_basis: "observed" as const,
+    anchors: [{ event_id: eventId, start_utf16: 0, end_utf16: input.statement.length }],
+  };
   const result = await insertClaim(
     { db: io.db, now: () => at, ...(io.retrieval === undefined ? {} : { retrieval: io.retrieval }) },
     {
@@ -429,8 +445,8 @@ async function insertCorrection(
       polarity: parsed.polarity,
       body: input.statement,
       frontmatter: portableFrontmatter(live),
-      provenance: [...new Set([eventId, ...provenance])],
-      subjects: live.subject !== null ? [live.subject] : [],
+      provenance: typedSemantic === undefined ? [...new Set([eventId, ...provenance])] : [eventId],
+      subjects: typedSemantic === undefined && live.subject !== null ? [live.subject] : [],
       producer,
       confidence: 1,
       sensitivity: live.sensitivity,
@@ -446,6 +462,17 @@ async function insertCorrection(
           text: input.statement,
         },
       ],
+      ...(typedSemantic === undefined ? {} : {
+        semantic: typedSemantic,
+        world_admission: {
+          schema: "kizuki.world-admission/v1" as const,
+          semantic: typedSemantic,
+          rendering: { body: input.statement, frontmatter: portableFrontmatter(live) },
+          authority: "owner_correction" as const,
+          confidence: 1,
+          epistemicKind: "owner_assertion" as const,
+        },
+      }),
     },
   );
   if (
