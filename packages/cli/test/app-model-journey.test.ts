@@ -7,7 +7,9 @@ import { startApp } from '../src/commands/app';
 import type { CliIo } from '../src/commands';
 import { createHelpers } from './helpers';
 import { traceSyntheticAppFailures } from './app-native-diagnostics';
-import { defaultChatCompletion, startFakeEndpoint, type SeenRequest } from '../../llm/test/fake-endpoint';
+import { startFakeEndpoint, type SeenRequest } from '../../llm/test/fake-endpoint';
+
+import { worldModelCompletion } from './world-model-completion';
 
 const h = createHelpers();
 afterEach(h.cleanup);
@@ -19,17 +21,7 @@ const policy: SourceGrantPolicy = {
     retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private',
 };
 function completion(request: SeenRequest): Response {
-    const body = request.body as { model: string; messages: { content: string }[] };
-    const prompt = body.messages.map(message => message.content).join('\n');
-    const eventId = /record ([A-Za-z0-9:_.-]+) from/.exec(prompt)?.[1];
-    if (!eventId) return defaultChatCompletion('Synthetic connection works.');
-    const subjectJson = /"subject":"((?:\\.|[^"\\])*)"/.exec(prompt)?.[1];
-    if (!subjectJson) throw Error('synthetic subject missing');
-    return defaultChatCompletion(JSON.stringify({ claims: [{
-        kind: 'claim', subject: JSON.parse(`"${subjectJson}"`), predicate: 'employment.role',
-        object: 'orchard library collaborator', polarity: 'positive', body: 'Ada contributes to the orchard library.',
-        valid_from: null, valid_to: null, confidence: 0.7, sensitivity: 'private', event_ids: [eventId],
-    }] }));
+    return worldModelCompletion(request, 'orchard library collaborator', 'Ada contributes to the orchard library.', true);
 }
 
 test.each(['Kizuki', 'My Kizuki Vault'])('authenticated first use in %s separates connection tests, source permission and receipted model processing', async (vaultName) => {
@@ -153,7 +145,8 @@ test.each(['Kizuki', 'My Kizuki Vault'])('authenticated first use in %s separate
         const targets = (await call('correction_targets', { page_id: memory.id })).data;
         const target = targets.claims.find((claim: any) => claim.object === 'orchard library collaborator');
         expect(target).toBeDefined();
-        const correction = { claim_id: target.claim_id, statement: 'Ada is an orchard library coordinator.\nI confirmed this directly.', object: 'orchard library coordinator' };
+        expect(target.target.world_claim.kind).toBe('claim');
+        const correction = { target: target.target, statement: 'orchard library coordinator' };
         const priorActivity = (await call('activity')).data.receipts.length;
         const preview = await call('correction_preview', correction);
         expect(preview.ok).toBe(true);
