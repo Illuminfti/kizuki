@@ -30,7 +30,6 @@ import {
   type SituationCard,
   validateSituationCard,
 } from "../contracts/situation-card";
-import { getWorldVocabularySpec } from "../contracts/world-vocabulary";
 import { eventDecision, readServableEvents } from "../serving/ledger";
 import type { ServeContext } from "../serving/types";
 import type { WorldValidQuery } from "../serving/world-view";
@@ -125,8 +124,6 @@ export function eligibleWorldClaim(
     !validFor(semantic, valid)
   )
     return null;
-  const spec = getWorldVocabularySpec(semantic.predicate);
-  if (spec === undefined) return null;
   const endpoints = assertionEndpoints(semantic);
   if (
     ctx.principal.grant.subjects !== null &&

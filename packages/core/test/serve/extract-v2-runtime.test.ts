@@ -226,10 +226,12 @@ test("typed production input preserves the existing registered literal predicate
     const result = await runWritePass(f.db, f.vault, f.options());
     expect(result.errors).toEqual([]);
     expect(result.claims_extracted).toBe(1);
+    expect(result.canon_writes).toBe(1);
     expect(f.calls.count).toBe(1);
     const stored = f.db.query<{ payload: string }, []>("SELECT payload FROM claim_v2_semantics").get();
     expect(JSON.parse(stored!.payload)).toMatchObject({ predicate: "employment.role", object: { kind: "literal", value: "orchard library collaborator" } });
     expect(f.db.query<{ body: string; object: string | null }, []>("SELECT body,object FROM claims").get()).toEqual({ body: "", object: null });
+    expect(f.db.query<{ receipt_id: string | null }, []>("SELECT receipt_id FROM claims").get()?.receipt_id).not.toBeNull();
   } finally { f.close(); }
 });
 
