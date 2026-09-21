@@ -1,6 +1,7 @@
 import { isSensitivity } from "../agents/types";
 import { isWorldCanonReceipt } from "./world-receipt";
 import { assertWorldBasis } from "./world-materialization";
+import { canonicalJson } from "../util/hash";
 import { getCanonReceiptRecord, isErasedReceipt, latestWorldReceiptRecord } from "./receipts";
 import { requireSourceEvents } from "../ledger/source-grants";
 import { stringArray } from "../vault/pages";
@@ -53,6 +54,14 @@ function laterIds(io: CanonIo, receipt: CanonReceipt): string[] {
     at: receipt.at,
     receipt_id: receipt.receipt_id,
   }).map((row) => row.receipt_id);
+}
+
+function hasCurrentTypedBasis(io: CanonIo, receipt: CanonReceipt): boolean {
+  if (!isWorldCanonReceipt(receipt)) return true;
+  const current = latestWorldReceiptRecord(io.db, receipt.page_path);
+  return current !== null && !isErasedReceipt(current) && isWorldCanonReceipt(current) &&
+    current.after_hash === receipt.after_hash &&
+    canonicalJson(current.basis.after) === canonicalJson(receipt.basis.after);
 }
 
 function loadArchivePage(io: CanonIo, archivePath: string): VaultPage {
@@ -141,7 +150,7 @@ export async function undoReceiptOwned(
 
   const current = currentHash(io, original.page_path);
   const later = laterIds(io, original);
-  if (current !== original.after_hash) {
+  if (current !== original.after_hash || !hasCurrentTypedBasis(io, original)) {
     if (opts.cascade === true && later.length > 0) {
       for (const id of later) {
         await undoReceiptOwned(scope, io, id, { cascade: false });
@@ -179,7 +188,9 @@ async function finishUndoProjection(scope: VaultMutationScope, io: CanonIo, rece
 async function applyUndo(scope: VaultMutationScope, io: CanonIo, original: CanonReceipt, current: string): Promise<UndoReceiptResult> {
   const revertId = mintId(io), at = nowOf(io);
   const authority = new CanonAuthorityResolver(io.db, [original.page_path]).before(original.receipt_id);
-  const deleting = original.page_action === "create" && original.kind !== "revert";
+  const deleting = (original.page_action === "create" && original.kind !== "revert") ||
+    (isWorldCanonReceipt(original) && original.kind === "revert" && original.page_action === "create" &&
+      original.before_hash === ABSENT_PAGE_HASH && original.basis.before === null);
   if (!deleting && original.archive_path === null) throw new UndoError("not_undoable", "undo: no archive copy exists; this write is not undoable");
   const page = deleting ? null : loadArchivePage(io, original.archive_path!);
   const files = requireCanonFiles(scope, io), snapshot = files.read(original.page_path);

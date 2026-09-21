@@ -1,5 +1,5 @@
 import { completedEventPurgeProofs } from "../ledger/purge";
-import { sha256Hex } from "../util/hash";
+import { canonicalJson, sha256Hex } from "../util/hash";
 import { selectWorldMaterialization, worldClaimHandle, worldCanonPath, assertWorldBasis } from "./world-materialization";
 import { eraseWorldReceipt, isWorldCanonReceipt, type RetainedWorldCanonReceipt, type WorldCanonBasis } from "./world-receipt";
 import { isErasedReceipt, rowToReceiptRecord, type CanonReceiptRow, latestWorldReceiptRecord } from "./receipts";
@@ -496,7 +496,16 @@ export function applyCanonWriteOwned(
   const expectedAfter = hashBytes(Buffer.from(serializePage(prepared.page)));
   const admit = (): void => {
     persistedClaims(io, persisted, typed);
-    if (worldBasis !== null) { assertWorldBasis(io.db,worldBasis.before,true);assertWorldBasis(io.db,worldBasis.after); }
+    if (worldBasis !== null) {
+      const current = latestWorldReceiptRecord(io.db, target.rel_path);
+      if ((current?.receipt_id ?? null) !== worldPriorId ||
+        (current === null || isErasedReceipt(current)
+          ? existing !== null || worldBasis.before !== null
+          : !isWorldCanonReceipt(current) || current.after_hash !== existing?.hash || canonicalJson(current.basis.after) !== canonicalJson(worldBasis.before))) {
+        throw new CanonWriteError("decision_stale", "typed canon predecessor changed before byte admission");
+      }
+      assertWorldBasis(io.db,worldBasis.before,true);assertWorldBasis(io.db,worldBasis.after);
+    }
     assertProvenance(io, provenance);
     requireSourceEvents(io.db, existingSources(prepared.page), { owner: true, purpose: "derive" });
     if (sourceSensitivity(io.db, provenance, prepared.sensitivity) !== prepared.page.data["sensitivity"]) {
