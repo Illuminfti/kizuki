@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { EXTRACT_RESPONSE_V2_SCHEMA, type ExtractResponseV2, type ProduceInputV2 } from "../../src/contracts/producer-v2";
 import { mintOccurrenceId, type OccurrenceEventIdentity } from "../../src/claims/occurrences";
 import { prepareWorldDrafts, type WorldDraftContext } from "../../src/producer/world-drafts";
+import type { InsertClaimInput } from "../../src/claims/store";
 
 const eventId = "00000000000000000000000001";
 const anchor = { event_id: eventId, start_utf16: 0, end_utf16: 4 } as const;
@@ -13,7 +14,8 @@ const response: ExtractResponseV2 = { schema: EXTRACT_RESPONSE_V2_SCHEMA, mentio
 test("grounds local mentions in the exact immutable event tuple and preserves model-only admission", () => {
   const [draft] = prepareWorldDrafts(response, input, context);
   expect(draft).toMatchObject({ producer: "model", model_ref: "fixture-model", semantic: { subject: { kind: "occurrence", id: mintOccurrenceId(event, "source-1", anchor) }, temporal_basis: "unknown", valid_from: null, valid_to: null }, world_admission: { authority: "model_inference", confidence: 0.8, epistemicKind: "model_inference", rendering: { body: "Mira is a person." } } });
-  expect(draft?.provenance).toEqual([eventId]);
+  const insert: InsertClaimInput = draft!;
+  expect(insert.provenance).toEqual([eventId]);
 });
 
 test("rejects forged supplied subjects, unsupported mentions, and anchors outside the selected event", () => {
