@@ -22,6 +22,7 @@ export type CanonWriteErrorCode =
 export type UndoErrorCode =
   | "writer_busy"
   | "receipt_unknown"
+  | "erased"
   | "already_reverted"
   | "page_changed"
   | "archive_missing"

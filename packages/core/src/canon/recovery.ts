@@ -1,3 +1,4 @@
+import { isWorldCanonReceipt } from "./world-receipt";
 import type { VaultMutationScope } from "../vault/mutation-scope";
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationSync } from "./io";
 import { openOrdinaryRecoveryReceiptStream } from "./receipt-stream";
@@ -137,11 +138,11 @@ export function commitCanonWrite(scope: VaultMutationScope, io: CanonIo, prepare
       admission(); charge?.(); admission();
       const snapshot = captureCanonAdmission(io.db, prepared.receipt, prepared.completion, prepared.before, prepared.after);
       intent = persistCanonWriteIntent(io.db, {
-        version: 1, receipt: prepared.receipt, before_base64: prepared.before?.toString("base64") ?? null,
+        version: isWorldCanonReceipt(prepared.receipt) ? 2 : 1, receipt: prepared.receipt, before_base64: prepared.before?.toString("base64") ?? null,
         after_base64: prepared.after?.toString("base64") ?? null, completion: prepared.completion, admission: snapshot, checkpoint,
         stages: { live_stage: canonStageRelPath(prepared.receipt.page_path, prepared.receipt.receipt_id),
           archive_stage: prepared.receipt.archive_path === null ? null : canonStageRelPath(prepared.receipt.archive_path, prepared.receipt.receipt_id) },
-      });
+      } as CanonWriteIntent);
       stream.verifyBinding();
     };
     if (prepared.receipt.writer === "loop") commitMachineByteIntent(io.db, prepared.receipt, admit);

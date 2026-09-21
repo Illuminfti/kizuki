@@ -1,3 +1,5 @@
+import { pendingWorldCanonClaims, worldClaimHandle, worldCanonPath } from "../canon/world-materialization";
+import { pageIndexByPath } from "../canon/store";
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "../canon/source-tombstone";
 import { inheritSourcePortBindings } from "../ledger/source-grants";
 import { SelfOriginError, requireExternalEvents } from "../ledger/event-origin";
@@ -388,6 +390,23 @@ async function runWritePassOwned(
       stopped,
       errors,
     };
+  }
+
+  for (const typedClaims of pendingWorldCanonClaims(db, WRITE_PASS_LIMIT)) {
+    if (canonWrites >= WRITE_PASS_LIMIT) break;
+    const primary=typedClaims[0]!;
+    const path=worldCanonPath(worldClaimHandle(db,primary.claim_id)!);
+    const indexed=pageIndexByPath(db,path);
+    const decision:TargetDecision=indexed===null?{action:"create",rel_path:path}:{action:"edit",page_id:indexed.page_id,rel_path:path,reason:"explicit"};
+    const before=occupyingWriteIds(db);
+    try {
+      const receipt=applyCanonWriteOwned(scope,io,typedClaims,decision,{writer:"loop",budget:options.budget});
+      canonWrites+=1;written+=receipt.claim_ids.length;
+    } catch(error) {
+      if(!(error instanceof BudgetExhausted))canonWrites+=newOccupyingWrites(before,occupyingWriteIds(db));
+      if(error instanceof BudgetExhausted){stopped=error.stopped;break;}
+      errors.push(redactReceiptError(error));
+    }
   }
 
   const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN);

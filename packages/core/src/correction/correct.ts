@@ -1,3 +1,4 @@
+import { worldClaimHandle, worldCanonPath } from "../canon/world-materialization";
 import { semanticKey } from "../claims/claim-v2-keys";
 import type { Database } from "bun:sqlite";
 import { assertStoredPageRelPath } from "../canon/paths";
@@ -157,6 +158,12 @@ function portableFrontmatter(live: Claim): Record<string, FrontmatterValue> {
 }
 
 function pagePathForClaim(db: Database, claim: Claim): string | null {
+  if (db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1").get(claim.claim_id) !== null) {
+    const handle=worldClaimHandle(db,claim.claim_id);
+    if(handle===null)return null;
+    const path=worldCanonPath(handle);
+    return db.query("SELECT 1 FROM page_index WHERE rel_path=?").get(path)===null?null:path;
+  }
   if (claim.receipt_id === null) return null;
   if (!tableExists(db, "canon_receipts")) return null;
   const path = (
@@ -513,6 +520,11 @@ interface AffectedPage {
 }
 
 function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPage[] {
+  if(io.db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1").get(winner.claim_id)!==null) {
+    const path=pagePathForClaim(io.db,winner);if(path===null)return [];
+    const page=readVaultPage(io,path),id=page?.data["id"];
+    return typeof id==="string"?[{page_id:id,rel_path:path,relevance:1}]:[];
+  }
   const seen = new Map<string, AffectedPage>();
   const add = (pageId: string, relPath: string, relevance: number): void => {
     if (activePagePath(relPath) === null) return;
@@ -770,10 +782,11 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
     }
     const stored = getClaim(io.db, claim.claim_id);
     if (stored === null || stored.receipt_id !== null) continue;
-    const decision = resolveTarget(canon, stored);
+    const typed = io.db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1").get(stored.claim_id)!==null;
+    const decision = typed ? {action:"edit" as const,page_id:page.page_id,rel_path:page.rel_path,reason:"explicit" as const} : resolveTarget(canon, stored);
     if (decision.action === "skip") continue;
     const writeDecision =
-      decision.action === "create"
+      typed || decision.action === "create"
         ? decision
         : {
             action: "supersede" as const,

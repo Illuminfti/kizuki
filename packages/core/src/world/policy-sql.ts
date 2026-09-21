@@ -16,7 +16,7 @@ export function authorizedSupportSql(
   bindings.push(SENSITIVITY_ORDER[grant.ceiling]);
   const source = sourceServingSql(
     ctx.db,
-    { owner: ctx.principal.kind === "owner", purpose: "recall" },
+    { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" },
     SENSITIVITY_ORDER[grant.ceiling],
   );
   if (source !== null) {

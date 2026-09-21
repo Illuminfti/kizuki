@@ -39,7 +39,7 @@ import { assertionEndpoints } from "./allocation";
 import { issueWorldRef, type WorldNamespace, type WireRef } from "./references";
 
 export class WorldProjectionBudgetError extends Error {}
-type ReadBudget = { bytes: number };
+export type ReadBudget = { bytes: number };
 function charge(budget: ReadBudget, value: string): void {
   budget.bytes += Buffer.byteLength(value, "utf8");
   if (budget.bytes > 2 * 1024 * 1024) throw new WorldProjectionBudgetError();
@@ -60,12 +60,12 @@ type Support = {
   admission: string;
   admitted_at: string;
 };
-type EligibleSupport = {
+export type EligibleSupport = {
   row: Support;
   admission: WorldAdmission;
   events: readonly { event_id: string; event_content_hash: string }[];
 };
-type Eligible = {
+export type Eligible = {
   claimId: string;
   semantic: ClaimV2Assertion;
   supports: EligibleSupport[];
@@ -108,14 +108,16 @@ function validFor(
 }
 
 /** Every candidate support proves its own complete rendering, events and endpoint memberships. */
-function eligibleClaim(
+export function eligibleWorldClaim(
   ctx: ServeContext,
   claimId: string,
   valid: WorldValidQuery,
   budget: ReadBudget,
+  options: { historical?: true; supportKeys?: readonly string[] } = {},
 ): Eligible | null {
   const claim = getClaim(ctx.db, claimId);
-  if (claim === null || claim.status !== "live") return null;
+  if (claim === null || (options.historical ? !["live", "superseded", "reverted"].includes(claim.status) : claim.status !== "live")) return null;
+  if (ctx.db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1").get(claimId) === null) return null;
   const semantic = readClaimV2Semantic(ctx.db, claimId);
   if (
     semantic === null ||
@@ -151,8 +153,8 @@ function eligibleClaim(
     .query<
       Support,
       (string | number)[]
-    >(`SELECT s.* FROM claim_v2_support s WHERE claim_id=? AND ${permitted.sql} ORDER BY support_key LIMIT ?`)
-    .all(claimId, ...permitted.bindings, MAX_SUPPORTS + 1)) {
+    >(`SELECT s.* FROM claim_v2_support s WHERE claim_id=? AND ${permitted.sql}${options.supportKeys === undefined ? "" : " AND support_key IN (SELECT value FROM json_each(?))"} ORDER BY support_key LIMIT ?`)
+    .all(claimId, ...permitted.bindings, ...(options.supportKeys === undefined ? [] : [JSON.stringify(options.supportKeys)]), MAX_SUPPORTS + 1)) {
     let parsed: unknown;
     charge(budget, row.admission);
     try {
@@ -443,7 +445,7 @@ export function projectWorldCard(
     ...permitted.bindings,
     MAX_RELATIONS + 1,
   )) {
-    const item = eligibleClaim(ctx, row.claim_id, valid, budget);
+    const item = eligibleWorldClaim(ctx, row.claim_id, valid, budget);
     if (item === null) continue;
     if (items.length === MAX_RELATIONS) {
       overflow = true;
@@ -648,7 +650,7 @@ export function discoverWorld(
         MAX_RELATIONS + 1,
       );
     for (const candidate of candidates.slice(0, MAX_RELATIONS)) {
-      const item = eligibleClaim(ctx, candidate.claim_id, valid, budget);
+      const item = eligibleWorldClaim(ctx, candidate.claim_id, valid, budget);
       if (item === null) continue;
       const semantic = item.semantic;
       if (

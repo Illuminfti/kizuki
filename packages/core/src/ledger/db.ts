@@ -1,3 +1,4 @@
+import { applyWorldCanonV33 } from "../canon/world-schema";
 import { Database } from "bun:sqlite";
 import { manageDatabaseLifetime } from "./lifetime";
 import { configureLedgerWalLifecycle } from "./wal-lifecycle";
@@ -221,6 +222,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 30, apply: applyEventPurgeSelectorKindV30 },
   { version: 31, apply: applyClaimV2TablesV31 },
   { version: 32, apply: applyWorldTables },
+  { version: 33, apply: applyWorldCanonV33 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
@@ -293,14 +295,25 @@ function migrate(db: Database, options: { includeStaging?: boolean } = {}): void
     return;
   }
 
-  db.transaction(() => {
-    for (const migration of pending) {
-      if (migration.sql !== undefined) db.exec(migration.sql);
-      migration.apply?.(db);
-      writeSchemaVersion(db, migration.version);
-    }
-    repairClaimsCompatibility(db, options);
-  }).immediate();
+  // SQLite requires FK enforcement disabled outside a table-rebuild transaction.
+  // The full FK oracle runs before commit; observers see either complete schema.
+  const rebuildReceipts = pending.some(migration => migration.version === 33);
+  if (rebuildReceipts && db.inTransaction) throw new LedgerStoreError("corrupt", "typed canon migration requires an outer transaction");
+  if (rebuildReceipts) db.exec("PRAGMA foreign_keys=OFF");
+  try {
+    db.transaction(() => {
+      for (const migration of pending) {
+        if (migration.sql !== undefined) db.exec(migration.sql);
+        migration.apply?.(db);
+        writeSchemaVersion(db, migration.version);
+      }
+      repairClaimsCompatibility(db, options);
+      if (rebuildReceipts && db.query("PRAGMA foreign_key_check").get() !== null)
+        throw new LedgerStoreError("corrupt", "typed canon migration violated foreign keys");
+    }).immediate();
+  } finally {
+    if (rebuildReceipts) db.exec("PRAGMA foreign_keys=ON");
+  }
   assertLedgerSchema(db, latest);
 }
 

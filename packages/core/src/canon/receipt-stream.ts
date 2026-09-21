@@ -11,7 +11,7 @@ import { assertCanonFiles } from "../vault/canon-files";
 import { serviceAncestorOwner } from "../serve/custody";
 import { assertVaultMutationScope, type VaultMutationScope } from "../vault/mutation-scope";
 import { requireCanonFiles } from "./io";
-import { parseReceiptLine, RECEIPTS_PATH } from "./receipts";
+import { parseReceiptRecordLine, isErasedReceipt, RECEIPTS_PATH } from "./receipts";
 import type { CanonIo } from "./store";
 
 const SOURCE_STREAM_LIMIT = 32n * 1024n * 1024n;
@@ -72,7 +72,8 @@ function hash(value: unknown): boolean { return typeof value === "string" && /^[
 function nullableString(value: unknown): boolean { return value === null || nonempty(value); }
 function receiptId(line: string): string {
   try {
-    const row = parseReceiptLine(line);
+    const row = parseReceiptRecordLine(line);
+    if (isErasedReceipt(row)) return row.receipt_id;
     if (!nonempty(row.receipt_id) || row.receipt_id.length > 128 || /[\u0000-\u001f\u007f]/.test(row.receipt_id) ||
         !["write", "revert", "purge_rewrite"].includes(row.kind) || !["create", "edit", "archive"].includes(row.page_action) ||
         !strings(row.claim_ids) || !strings(row.provenance) || !(row.before_hash === null || hash(row.before_hash)) || !hash(row.after_hash) ||

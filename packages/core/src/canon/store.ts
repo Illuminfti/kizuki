@@ -1,3 +1,4 @@
+import { isWorldCanonReceipt } from "./world-receipt";
 import type { Database } from "bun:sqlite";
 import { lstatSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -173,6 +174,9 @@ export function insertReceiptRow(
       receipt.reverts,
       receipt.reverted_by,
     );
+    if (isWorldCanonReceipt(receipt)) {
+      db.query("UPDATE canon_receipts SET record_codec=?,receipt_state='retained',world_basis=?,own_id_origin='core' WHERE receipt_id=?").run(receipt.schema, JSON.stringify(receipt.basis), receipt.receipt_id);
+    }
     if (intent !== null) {
       using remove = db.prepare("DELETE FROM canon_machine_byte_intents WHERE receipt_id=?");
       remove.run(receipt.receipt_id);

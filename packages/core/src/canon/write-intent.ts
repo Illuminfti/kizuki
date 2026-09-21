@@ -1,3 +1,6 @@
+import { isWorldCanonReceipt, parseWorldCanonReceipt, type RetainedWorldCanonReceipt } from "./world-receipt";
+import { assertWorldBasis } from "./world-materialization";
+import { validateRetainedReceipt } from "./receipt-validation";
 import type { Database } from "bun:sqlite";
 import { requireSourceEvents, sourcePolicyEpoch } from "../ledger/source-grants";
 import { MAX_CANON_IMAGE_BYTES, MAX_CANON_INTENT_BYTES, MAX_CANON_IDENTITY_BINDINGS } from "../ledger/canon-recovery-schema";
@@ -46,7 +49,7 @@ export interface CanonAdmission {
   supersessions_digest: string;
   claim_bindings_digest: string;
 }
-export interface CanonWriteIntent {
+interface CanonWriteIntentV1 {
   version: 1;
   receipt: CanonReceipt;
   before_base64: string | null;
@@ -56,6 +59,7 @@ export interface CanonWriteIntent {
   checkpoint: OrdinaryReceiptCheckpoint;
   stages: { live_stage: string; archive_stage: string | null };
 }
+export type CanonWriteIntent = CanonWriteIntentV1 | (Omit<CanonWriteIntentV1, "version" | "receipt"> & {version: 2; receipt: RetainedWorldCanonReceipt});
 export interface CanonRecoverySummary {
   pending: boolean;
   receipt_id: string | null;
@@ -95,30 +99,20 @@ export function decodeCanonImage(value: string | null): Buffer | null {
 
 /** Closed receipt data, rather than the permissive legacy log reader. */
 export function validateCanonIntentReceipt(value: unknown): asserts value is CanonReceipt {
-  object(value, ["receipt_id", "kind", "claim_ids", "page_path", "page_action", "before_hash", "after_hash", "archive_path", "writer", "producer", "model_ref", "authority", "confidence", "sensitivity", "taint", "provenance", "superseded", "candidates", "retrieval_ops", "reverts", "reverted_by", "at"]);
-  if (!isUlid(value.receipt_id)) recoveryFailure("intent_invalid");
-  oneOf(value.kind, ["write", "revert", "purge_rewrite"]);
-  ids(value.claim_ids); id(value.page_path); assertPageRelPath(value.page_path);
-  oneOf(value.page_action, ["create", "edit", "archive"]);
-  if (value.before_hash !== null) hash(value.before_hash); hash(value.after_hash);
-  nullableText(value.archive_path); oneOf(value.writer, ["loop", "correction", "revert", "import"]);
-  if (typeof value.producer !== "string" || (!/^(deterministic|model|owner)$/.test(value.producer) && !/^agent:[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value.producer))) recoveryFailure("intent_invalid");
-  nullableText(value.model_ref);
-  oneOf(value.authority, ["owner_correction", "owner_authored", "connector_evidence", "model_inference"]);
-  if (typeof value.confidence !== "number" || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1) recoveryFailure("intent_invalid");
-  oneOf(value.sensitivity, ["public", "personal", "private"]); oneOf(value.taint, ["clean", "quoted"]); ids(value.provenance);
-  array(value.superseded); for (const item of value.superseded) { object(item, ["claim_id", "claim_key"]); id(item.claim_id); id(item.claim_key); }
-  array(value.candidates, 512); for (const item of value.candidates) { object(item, ["page_id", "rel_path", "authority", "created_at"]); id(item.page_id); id(item.rel_path); assertPageRelPath(item.rel_path); oneOf(item.authority, ["owner_correction", "owner_authored", "connector_evidence", "model_inference"]); text(item.created_at, 64); }
-  array(value.retrieval_ops, 512); for (const item of value.retrieval_ops) { object(item, ["store", "op", "doc"]); id(item.store); oneOf(item.op, ["upsert", "remove"]); id(item.doc); if (!item.doc.startsWith("page:")) recoveryFailure("intent_invalid"); }
-  nullableText(value.reverts); if (value.reverted_by !== null || !isRfc3339(value.at)) recoveryFailure("intent_invalid");
-  assertReceiptPaths(value as unknown as CanonReceipt);
+  try { validateRetainedReceipt(value); } catch { recoveryFailure("intent_invalid"); }
 }
 
+export function validateVersionedCanonReceipt(value: unknown, version: unknown): asserts value is CanonReceipt {
+  if (version === 1) { validateCanonIntentReceipt(value); return; }
+  if (version !== 2) recoveryFailure("intent_invalid");
+  const typed = parseWorldCanonReceipt(value, validateCanonIntentReceipt);
+  if (typed === null || typed.state !== "retained") recoveryFailure("intent_invalid");
+}
 export function parseCanonWriteIntent(value: unknown): CanonWriteIntent {
   object(value, ["version", "receipt", "before_base64", "after_base64", "completion", "admission", "checkpoint", "stages"]);
-  if (value.version !== 1) recoveryFailure("intent_invalid");
-  validateCanonIntentReceipt(value.receipt);
+  validateVersionedCanonReceipt(value.receipt, value.version);
   const receipt = value.receipt;
+  if (isWorldCanonReceipt(receipt) && ((receipt.before_hash === null) !== (receipt.basis.before === null) || (receipt.after_hash === ABSENT_PAGE_HASH) !== (receipt.basis.after === null))) recoveryFailure("intent_invalid");
   const before = decodeCanonImage(value.before_base64 as string | null), after = decodeCanonImage(value.after_base64 as string | null);
   if ((before === null ? (receipt.kind === "revert" ? ABSENT_PAGE_HASH : null) : hashBytes(before)) !== receipt.before_hash ||
       (after === null ? ABSENT_PAGE_HASH : hashBytes(after)) !== receipt.after_hash ||
@@ -181,6 +175,7 @@ function pageSources(bytes: Buffer | null): string[] {
 export function captureCanonAdmission(db: Database, receipt: CanonReceipt, completion: CanonCompletion, before: Buffer | null, after: Buffer | null, knownClaims?: string[]): CanonAdmission {
   const claimIds = [...new Set(knownClaims ?? [
     ...receipt.claim_ids, ...receipt.superseded.map(ref => ref.claim_id),
+    ...(isWorldCanonReceipt(receipt) ? [...(receipt.basis.before ?? []), ...(receipt.basis.after ?? [])].map(item => item.claim_id) : []),
     ...db.query<{ claim_id: string }, [string]>(`SELECT c.claim_id FROM claims c JOIN canon_receipts r ON r.receipt_id=c.receipt_id WHERE r.page_path=? ORDER BY c.claim_id LIMIT ${MAX_BINDINGS + 1}`).all(receipt.page_path).map(row => row.claim_id),
   ])].sort();
   if (claimIds.length > MAX_BINDINGS) recoveryFailure("intent_invalid");
@@ -201,6 +196,12 @@ export function captureCanonAdmission(db: Database, receipt: CanonReceipt, compl
   };
 }
 export function assertCanonAdmission(db: Database, intent: CanonWriteIntent): void {
+  if (isWorldCanonReceipt(intent.receipt)) {
+    try {
+      assertWorldBasis(db, intent.receipt.basis.before, true);
+      assertWorldBasis(db, intent.receipt.basis.after, intent.completion.mode === "revert");
+    } catch { recoveryFailure("authority_changed", intent.receipt.receipt_id); }
+  }
   const current = captureCanonAdmission(db, intent.receipt, intent.completion, decodeCanonImage(intent.before_base64), decodeCanonImage(intent.after_base64), intent.admission.claims.map(claim => claim.id));
   if (current.source_epoch !== intent.admission.source_epoch || digest(current.events) !== digest(intent.admission.events) || digest(current.claims) !== digest(intent.admission.claims) || digest(current.sources) !== digest(intent.admission.sources)) recoveryFailure("authority_changed", intent.receipt.receipt_id);
   if (digest(current) !== digest(intent.admission)) recoveryFailure("predecessor_changed", intent.receipt.receipt_id);

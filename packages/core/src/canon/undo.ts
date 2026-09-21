@@ -1,3 +1,6 @@
+import { isWorldCanonReceipt } from "./world-receipt";
+import { assertWorldBasis } from "./world-materialization";
+import { getCanonReceiptRecord, isErasedReceipt } from "./receipts";
 import { requireSourceEvents } from "../ledger/source-grants";
 import { stringArray } from "../vault/pages";
 import { CanonAuthorityResolver } from "./authority";
@@ -114,10 +117,13 @@ export async function undoReceiptOwned(
     if (readCanonWriteIntent(io.db) !== null) recoveryFailure("authority_changed", pending.receipt.receipt_id);
     return finishUndoProjection(scope, io, pending.receipt);
   }
+  const record = getCanonReceiptRecord(io.db, receiptId);
+  if (record !== null && isErasedReceipt(record)) throw new UndoError("erased", "undo: receipt was erased with its source evidence");
   const original = getCanonReceipt(io.db, receiptId);
   if (original === null) {
     throw new UndoError("receipt_unknown", `undo: receipt ${receiptId} is unknown`);
   }
+  if (isWorldCanonReceipt(original)) { assertWorldBasis(io.db,original.basis.before,true);assertWorldBasis(io.db,original.basis.after,true); }
   assertReceiptPaths(original);
   assertPageRelPath(original.page_path);
   // Settle an older acknowledged/scheduled projection before admitting a successor.
@@ -193,6 +199,7 @@ async function applyUndo(scope: VaultMutationScope, io: CanonIo, original: Canon
     sensitivity: original.sensitivity, taint: original.taint, provenance: [...original.provenance],
     superseded: [...original.superseded], candidates: [], retrieval_ops: ops,
     reverts: original.receipt_id, reverted_by: null, at,
+    ...(isWorldCanonReceipt(original) ? {schema:original.schema,state:original.state,own_id_origin:original.own_id_origin,basis:{schema:original.basis.schema,before:original.basis.after,after:original.basis.before}} : {}),
   };
   commitCanonWrite(scope, io, { receipt: revert, before, after,
     completion: { mode: "revert", claim_kind: "revert", page_id: pageId, subject_key: subjectOf(page), original_receipt_id: original.receipt_id },

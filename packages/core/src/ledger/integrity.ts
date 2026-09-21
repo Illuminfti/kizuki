@@ -1,3 +1,4 @@
+import { assertWorldCanonSchema } from "../canon/world-schema";
 import type { Database } from "bun:sqlite";
 import { assertWorldSchema } from "../world/schema";
 import { assertAgentEnrollmentSchema } from "../agents/enrollment-schema";
@@ -140,6 +141,7 @@ export function assertLedgerSchema(db: Database, expectedVersion: number): void 
     );
   }
   if(expectedVersion>=32) assertWorldSchema(db);
+  if(expectedVersion>=33) assertWorldCanonSchema(db);
   const missing = REQUIRED_TABLES.filter((name) => !tableExists(db, name));
   if (missing.length > 0) {
     throw new LedgerStoreError("corrupt", `ledger schema missing tables: ${missing.join(",")}`);
