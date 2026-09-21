@@ -98,3 +98,26 @@ test("CLI discovers a real admitted concept then reads the issued object token",
   expect(JSON.parse(read.stdout).data.data.result.data.definitions[0].object.value).toBe("Revise beliefs using evidence");
   expect(runCli(setup.env,"world","--operation","concept","--ref","A".repeat(42)+"B").exitCode).toBe(2);
 });
+
+test("CLI tell corrects a world card's opaque claim token", async () => {
+  const setup = tempVault(), db = openLedger(join(setup.vault, ".kizuki/kizuki.db"));
+  try { await worldFixture(db); } finally { db.close(); }
+  const found = runCli(setup.env, "world", "--operation", "find_concepts", "--label", "Bayesian", "--json");
+  expect(found.exitCode).toBe(0);
+  const ref = JSON.parse(found.stdout).data.data.result.data.matches[0].ref;
+  const before = runCli(setup.env, "world", "--operation", "concept", "--ref", ref.token, "--json");
+  expect(before.exitCode).toBe(0);
+  const claim = JSON.parse(before.stdout).data.data.result.data.definitions[0].claim;
+  const correction = runCli(
+    setup.env,
+    "tell",
+    "Use posterior odds after new evidence.",
+    "--world-claim",
+    claim.token,
+    "--json",
+  );
+  expect(correction.exitCode).toBe(0);
+  const after = runCli(setup.env, "world", "--operation", "concept", "--ref", ref.token, "--json");
+  expect(after.exitCode).toBe(0);
+  expect(after.stdout).toContain("Use posterior odds after new evidence.");
+});

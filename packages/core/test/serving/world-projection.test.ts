@@ -215,6 +215,7 @@ test("physical event purge erases admissions, allocated handles and all dependen
 import { revokeAgent } from "../../src/agents";
 import { correct } from "../../src/correction/correct";
 import { serveCorrect } from "../../src/serving/correct";
+import { dispatchServeTool } from "../../src/serving/dispatch";
 
 const find = (label = "") => ({
   operation: "find_concepts",
@@ -374,11 +375,16 @@ test("a public opaque claim ref corrects its current principal-scoped world clai
     const before = readWorldView(f.ctx, lookup(f.ref));
     if ("status" in before || before.result.status !== "current" || !("definitions" in before.result.data)) throw new Error("missing world definition");
     const claim = before.result.data.definitions[0]!.claim;
-    const result = await serveCorrect({ ...f.ctx, vaultPath: vault.path }, {
-      statement: "Use posterior odds after new evidence.", object: "Use posterior odds after new evidence.",
-      target: { world_claim: claim },
-    });
-    expect(result.data?.claim_id).not.toBeNull();
+    const result = await dispatchServeTool(
+      { ...f.ctx, vaultPath: vault.path },
+      "correct",
+      {
+        statement: "Use posterior odds after new evidence.",
+        object: "Use posterior odds after new evidence.",
+        target: { world_claim: claim },
+      },
+    );
+    expect(JSON.stringify(result)).toContain('"claim_id"');
     expect(JSON.stringify(readWorldView(f.ctx, lookup(f.ref)))).toContain("Use posterior odds after new evidence.");
   } finally { db.close(); vault.dispose(); }
 });
@@ -416,11 +422,12 @@ test("opaque world claim refs never mint native corrections after access is with
     if ("status" in agentCard || agentCard.result.status !== "current" || !("definitions" in agentCard.result.data))
       throw new Error("missing agent world definition");
     const agentClaim = agentCard.result.data.definitions[0]!.claim;
+    const stalePrincipal = agentCtx.principal;
     setGrant(db, "opaque-other-principal", { ...OWNER_AGENT_GRANT, subjects: ["topic:elsewhere"] });
     const beforeNarrowed = evidenceCount();
     await expect(
       serveCorrect(
-        { ...f.ctx, vaultPath: vault.path, principal: authenticate(db, agent.token)! },
+        { ...f.ctx, vaultPath: vault.path, principal: stalePrincipal },
         { statement: "This must never create native evidence.", target: { world_claim: agentClaim } },
       ),
     ).rejects.toThrow("names no live claim");
@@ -435,6 +442,32 @@ test("opaque world claim refs never mint native corrections after access is with
 
     purgeEvents(db, vault.path, { event_id: f.eventId }, "opaque-correction-erased");
     await refuseWithoutEvidence(f.ctx, "names no live claim");
+  } finally { db.close(); vault.dispose(); }
+});
+
+test("raw serving rejects non-exact opaque claim selectors before native evidence", async () => {
+  const vault = tempVault(), db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
+  try {
+    const f = await worldFixture(db);
+    const card = readWorldView(f.ctx, lookup(f.ref));
+    if ("status" in card || card.result.status !== "current" || !("definitions" in card.result.data))
+      throw new Error("missing world definition");
+    const claim = card.result.data.definitions[0]!.claim;
+    const evidenceCount = () =>
+      (db.query<{ n: number }, []>("SELECT count(*) AS n FROM native_owner_evidence").get()!).n;
+    for (const target of [
+      { world_claim: { ...claim }, extra: true },
+      { world_claim: { ...claim, extra: true } },
+    ]) {
+      const before = evidenceCount();
+      await expect(
+        serveCorrect(
+          { ...f.ctx, vaultPath: vault.path },
+          { statement: "This must never create native evidence.", target } as never,
+        ),
+      ).rejects.toThrow("names no live claim");
+      expect(evidenceCount()).toBe(before);
+    }
   } finally { db.close(); vault.dispose(); }
 });
 
