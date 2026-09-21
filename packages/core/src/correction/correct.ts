@@ -597,12 +597,7 @@ function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPa
  */
 export async function correct(io: CorrectIo, input: CorrectInput): Promise<CorrectResult> {
   io = snapshotCorrectIo(io);
-  const { statement, target, scope, dry_run } = input;
-  input = Object.freeze({ statement,
-    ...(target === undefined ? {} : { target: Object.freeze({ ...target }) }),
-    ...(scope === undefined ? {} : { scope: Object.freeze({ ...scope }) }),
-    ...(dry_run === undefined ? {} : { dry_run }),
-  });
+  input = captureCorrectInput(input);
   try {
     return await withCanonMutationAsync(io, (owner, owned) => correctOwned(owner, owned, input));
   } catch (error) {
@@ -611,6 +606,24 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
     }
     throw error;
   }
+}
+
+/** Runs the same correction writer under an already-held canon mutation. */
+export async function correctWithinMutation(
+  scope: VaultMutationScope,
+  io: CorrectIo,
+  input: CorrectInput,
+): Promise<CorrectResult> {
+  return correctOwned(scope, io, captureCorrectInput(input));
+}
+
+function captureCorrectInput(input: CorrectInput): CorrectInput {
+  const { statement, target, scope, dry_run } = input;
+  return Object.freeze({ statement,
+    ...(target === undefined ? {} : { target: Object.freeze({ ...target }) }),
+    ...(scope === undefined ? {} : { scope: Object.freeze({ ...scope }) }),
+    ...(dry_run === undefined ? {} : { dry_run }),
+  });
 }
 
 async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: CorrectInput): Promise<CorrectResult> {

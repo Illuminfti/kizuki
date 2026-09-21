@@ -321,13 +321,13 @@ through Core's existing undo path, and then resumes inspection.
 ## tell
 
 ```text
-usage: kizuki tell "<statement>" [--claim CLAIM_ID] [--since TIME] [--until TIME] [--dry-run] [--json] [--verbose]
+usage: kizuki tell "<statement>" [--claim CLAIM_ID|--world-claim TOKEN] [--since TIME] [--until TIME] [--dry-run] [--json] [--verbose]
 ```
 
-Owner correction. `--claim` is required and must name a **live** claim;
-`doctor` lists live ids separately from leftover skipped rows. Rewrites
-affected canon in the same pass. No model required. Prints an undo line
-when a receipt is minted.
+Owner correction. `--claim` names a **live** legacy claim; `--world-claim`
+accepts the opaque claim token emitted by `kizuki world` for the current owner
+namespace. The options are mutually exclusive. Rewrites affected canon in the
+same pass. No model required. Prints an undo line when a receipt is minted.
 
 ## context
 
