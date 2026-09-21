@@ -13,14 +13,14 @@ describe("world vocabulary v1", () => {
     expect(WORLD_VOCABULARY.map((entry) => entry.predicate)).toEqual([
       ...WORLD_VOCABULARY_PREDICATES,
     ]);
-    expect(new Set(WORLD_VOCABULARY_PREDICATES).size).toBe(12);
+    expect(new Set(WORLD_VOCABULARY_PREDICATES).size).toBe(18);
   });
 
   test("locks endpoint shapes and trusted vocabulary values", () => {
     expect(getWorldVocabularySpec("world.kind")).toMatchObject({
       subject: "raw",
       objects: ["vocabulary"],
-      vocabulary_values: ["world/concept"],
+      vocabulary_values: ["world/concept","world/situation"],
     });
     expect(getWorldVocabularySpec("concept.example")).toMatchObject({
       subject: "concept",

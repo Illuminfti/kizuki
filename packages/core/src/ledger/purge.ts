@@ -1,3 +1,4 @@
+import { eraseWorldEventSupports } from "../world/erasure";
 import { invalidateLocalSourcePort } from "./source-grants";
 import { claimV2TablesPresent } from "./source-erasure";
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
@@ -1204,6 +1205,7 @@ function purgeEventsOwned(
       );
       insertProof.run(receipt.receipt_id, candidate.content_hash, candidate.source_record_id, selectorKind);
       db.query("INSERT INTO purge_batch_receipts VALUES(?,?)").run(receipt.receipt_id, batchReceipt);
+      eraseWorldEventSupports(db,candidate.event_id);
       deleteSupportEvents?.run(candidate.event_id);
       const deleted = deleteEvent.run(candidate.event_id);
       assertDeleted(deleted.changes, candidate.event_id);

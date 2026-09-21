@@ -958,6 +958,7 @@ export type {
   WorldObjectRef,
   WorldReadInput,
   WorldReadResult,
+  WorldViewEnvelope,
   WorldSnapshotRef,
   WorldValidQuery,
 } from "./serving";

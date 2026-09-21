@@ -1,3 +1,4 @@
+import { canonicalJson } from "../util/hash";
 import { isVisibleIdentifier } from "../util/opaque-identifier";
 import { EVENT_LIMITS } from "./event";
 import { isRfc3339 } from "../util/time";
@@ -9,10 +10,21 @@ import type { TextAnchor } from "./producer-v2";
 
 export const CLAIM_V2_SCHEMA = "kizuki.claim/v2" as const;
 
-export type RawSubjectRef = {
-  readonly kind: "occurrence" | "supplied";
-  readonly id: string;
-};
+export type SuppliedNamespace = {readonly connector_id:string;readonly source_key:string};
+export type QualifiedSuppliedRef = {readonly kind:"supplied";readonly id:string;readonly namespace:SuppliedNamespace};
+/** The two-field supplied arm decodes historical v2 only; world admission requires namespace. */
+export type RawSubjectRef = {readonly kind:"occurrence"|"supplied";readonly id:string} | QualifiedSuppliedRef;
+export function rawSubjectNamespace(ref:RawSubjectRef):string {
+  return ref.kind==="supplied" && "namespace" in ref ? canonicalJson(ref.namespace) : "";
+}
+export function rawSubjectRefKey(ref:RawSubjectRef):string {
+  const namespace=rawSubjectNamespace(ref);
+  return `${ref.kind}\0${ref.id}${namespace===""?"":`\0${namespace}`}`;
+}
+export function isQualifiedRawSubjectRef(ref:RawSubjectRef):boolean {
+  return ref.kind==="occurrence" || "namespace" in ref;
+}
+
 
 export type ClaimV2Object = {
   readonly kind: "literal";
@@ -102,7 +114,10 @@ function exact(value: Record<string, unknown>, keys: readonly string[]): boolean
 
 function rawRef(value: unknown): value is RawSubjectRef {
   return isPlainObject(value) &&
-    exact(value, ["kind", "id"]) &&
+    (exact(value,["kind","id"]) || (value.kind==="supplied" && exact(value,["kind","id","namespace"]) &&
+      isPlainObject(value.namespace) && exact(value.namespace,["connector_id","source_key"]) &&
+      typeof value.namespace.connector_id==="string" && isVisibleIdentifier(value.namespace.connector_id) &&
+      utf8ByteLength(value.namespace.connector_id)<=EVENT_LIMITS.identifierBytes && isUlid(value.namespace.source_key))) &&
     (value.kind === "occurrence" ||
     value.kind === "supplied") &&
     typeof value.id === "string" &&
@@ -113,7 +128,7 @@ function rawRef(value: unknown): value is RawSubjectRef {
 }
 
 function refKey(value: RawSubjectRef): string {
-  return `${value.kind}\u0000${value.id}`;
+  return rawSubjectRefKey(value);
 }
 
 function anchor(value: unknown): value is TextAnchor {
@@ -136,10 +151,10 @@ function anchor(value: unknown): value is TextAnchor {
  * validates caller-supplied anchors against exactly this shape rather than
  * growing a second, looser parser beside it.
  */
-export function isTextAnchorList(value: unknown, min: number): value is readonly TextAnchor[] {
+export function isTextAnchorList(value: unknown, min: number, max = 8): value is readonly TextAnchor[] {
   return Array.isArray(value) &&
     value.length >= min &&
-    value.length <= 8 &&
+    value.length <= max &&
     value.every(anchor) &&
     new Set(value.map(item => `${item.event_id}:${item.start_utf16}:${item.end_utf16}`)).size === value.length;
 }
@@ -296,4 +311,32 @@ function isIdentityChange(value: unknown): value is IdentityChange {
     previous = key;
   }
   return true;
+}
+
+/** Private durable meaning; support-specific source spans live only in admissions. */
+export const CLAIM_MEANING_SCHEMA = "kizuki.claim-meaning/v1" as const;
+export type ClaimMeaning = Omit<ClaimV2Assertion,"schema"|"anchors"|"perspective"> & {
+  readonly schema:typeof CLAIM_MEANING_SCHEMA;
+  readonly perspective:Omit<ClaimV2Perspective,"anchors">;
+};
+export function claimMeaning(assertion:ClaimV2Assertion):ClaimMeaning {
+  const {anchors:_anchors,perspective,schema:_schema,...meaning}=assertion;
+  const {anchors:_perspectiveAnchors,...roles}=perspective;
+  return {schema:CLAIM_MEANING_SCHEMA,...meaning,perspective:roles};
+}
+export function validateClaimMeaning(input:unknown):ClaimMeaning|null {
+  const errors:string[]=[];
+  const value=cloneExactJson(input,"claim_meaning",CLAIM_V2_SNAPSHOT_LIMITS,errors);
+  if(errors.length>0 || !isPlainObject(value) || value.schema!==CLAIM_MEANING_SCHEMA || value.discriminator!=="assertion" ||
+    !exact(value,["schema","discriminator","subject","predicate","object","perspective","context","polarity","valid_from","valid_to","temporal_basis"]) ||
+    !rawRef(value.subject) || typeof value.predicate!=="string" || !TOKEN.test(value.predicate) || !isObject(value.object) ||
+    !isPlainObject(value.perspective) || !exact(value.perspective,["holder","speaker","addressee","mode","interpretation"]) ||
+    ![value.perspective.holder,value.perspective.speaker,value.perspective.addressee].every(ref=>ref===null||rawRef(ref)) ||
+    !MODES.has(value.perspective.mode as ClaimV2Perspective["mode"]) || !["explicit","inferred"].includes(value.perspective.interpretation as string) ||
+    !Array.isArray(value.context) || value.context.length>8 || !value.context.every(rawRef) || !sorted(value.context as RawSubjectRef[]) ||
+    !["positive","negative"].includes(value.polarity as string) || !["explicit","observed","unknown"].includes(value.temporal_basis as string) ||
+    (value.valid_from!==null&&!isRfc3339(value.valid_from)) || (value.valid_to!==null&&!isRfc3339(value.valid_to))) return null;
+  if(value.temporal_basis==="unknown" ? value.valid_from!==null||value.valid_to!==null : value.valid_from===null) return null;
+  if(typeof value.valid_from==="string"&&typeof value.valid_to==="string"&&compareRfc3339(value.valid_to,"valid_to",value.valid_from,"valid_from")<=0) return null;
+  return value as unknown as ClaimMeaning;
 }

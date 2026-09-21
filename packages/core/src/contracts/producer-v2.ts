@@ -193,8 +193,9 @@ function anchorKey(anchor: TextAnchor): string {
   return `${anchor.event_id}\u0000${anchor.start_utf16}\u0000${anchor.end_utf16}`;
 }
 
-function isBoundary(text: string, offset: number): boolean {
-  if (offset <= 0 || offset >= text.length) {
+export function isUtf16TextBoundary(text: string, offset: number): boolean {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > text.length) return false;
+  if (offset === 0 || offset === text.length) {
     return true;
   }
   const before = text.charCodeAt(offset - 1);
@@ -215,7 +216,7 @@ function readAnchor(value: unknown, events: ReadonlyMap<string, string>, path: s
     return `${path} is invalid`;
   }
   const text = events.get(eventId);
-  if (text === undefined || start < 0 || end <= start || end > text.length || !isBoundary(text, start) || !isBoundary(text, end)) {
+  if (text === undefined || start < 0 || end <= start || end > text.length || !isUtf16TextBoundary(text, start) || !isUtf16TextBoundary(text, end)) {
     return `${path} is outside quoted text`;
   }
   return { event_id: eventId, start_utf16: start, end_utf16: end };

@@ -1,5 +1,5 @@
-import type { ClaimV2Semantic } from "../contracts/claim-v2";
-import { validateClaimV2Semantic } from "../contracts/claim-v2";
+import type { ClaimV2Semantic, ClaimMeaning } from "../contracts/claim-v2";
+import { validateClaimV2Semantic, claimMeaning, validateClaimMeaning } from "../contracts/claim-v2";
 import { canonicalJson } from "../util/hash";
 import { semanticKey } from "./claim-v2-keys";
 
@@ -48,6 +48,7 @@ const INVALID: ClaimV2RowResult<never> = Object.freeze({
 export function toClaimV2SemanticRow(
   claimId: string,
   semantic: unknown,
+  worldMeaning = false,
 ): ClaimV2RowResult<ClaimV2SemanticRow> {
   const validated = validateClaimV2Semantic(semantic);
   if (!validated.ok) return INVALID;
@@ -57,7 +58,7 @@ export function toClaimV2SemanticRow(
     semantic_key: semanticKey(value),
     schema: value.schema,
     discriminator: value.discriminator,
-    payload: canonicalJson(value),
+    payload: canonicalJson(worldMeaning && value.discriminator === "assertion" ? claimMeaning(value) : value),
   };
   if (value.discriminator === "identity_control") {
     return {
@@ -97,13 +98,15 @@ export function toClaimV2SemanticRow(
  */
 export function fromClaimV2SemanticRow(
   row: Pick<ClaimV2SemanticRow, "payload">,
-): ClaimV2RowResult<ClaimV2Semantic> {
+): ClaimV2RowResult<ClaimV2Semantic | ClaimMeaning> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(row.payload);
   } catch {
     return INVALID;
   }
+  const meaning = validateClaimMeaning(parsed);
+  if (meaning !== null) return {ok:true,value:meaning};
   const validated = validateClaimV2Semantic(parsed);
   if (!validated.ok) return INVALID;
   return { ok: true, value: validated.value };

@@ -9,7 +9,8 @@ import {
   type ClaimMeaning,
   type ClaimV2Semantic,
 } from "../contracts/claim-v2";
-import type { TextAnchor } from "../contracts/producer-v2";
+import { isUtf16TextBoundary, type TextAnchor } from "../contracts/producer-v2";
+import { readEvent } from "../ledger/ledger";
 import { CLAIM_SCHEMA, type Claim } from "../contracts/proposal";
 import {
   inspectSourceGrant,
@@ -29,7 +30,7 @@ import {
 import { ClaimError } from "./errors";
 import { ensureClaimOccurrences } from "./occurrences";
 import { getClaim } from "./store";
-import { parseWorldAdmission, type WorldAdmission } from "../contracts/world-admission";
+import { parseWorldAdmission, completeWorldAnchors, type WorldAdmission } from "../contracts/world-admission";
 import { allocateWorldEndpoints } from "../world/allocation";
 import { WORLD_TABLES } from "../world/schema";
 import { tableColumns, tableExists } from "../ledger/schema";
@@ -135,7 +136,7 @@ function requireSupport(input: ClaimV2SupportAdmission): ExactJson {
   // under this claim's label, reachable by `claim_v2_support.claim_id`, while
   // every consent check below runs on `events` alone and so never raises the
   // claim to that event's source floor.
-  if (!isTextAnchorList(input.anchors, 0)) {
+  if (!isTextAnchorList(input.anchors, 0, 16)) {
     throw new ClaimError(
       "schema_invalid",
       "claim/v2 support needs well-formed anchors",
@@ -314,7 +315,7 @@ export function commitClaimV2(
   if (input.world_admission !== undefined && suppliedWorld === null) {
     throw new ClaimError("schema_invalid", "world admission is invalid");
   }
-  if (suppliedWorld !== null && semanticKey(suppliedWorld.semantic) !== semanticKey(input.semantic as ClaimV2Semantic)) {
+  if (suppliedWorld !== null && canonicalJson(suppliedWorld.semantic) !== canonicalJson(input.semantic)) {
     throw new ClaimError("schema_invalid", "world admission does not match claim/v2 meaning");
   }
   if (suppliedWorld !== null && !worldTablesPresent(db)) {
@@ -343,11 +344,15 @@ export function commitClaimV2(
   if (supportOrigin === "native_owner") requireNativeOwnerSupport(db, input.support);
   else requireAdmittedSource(db, input.support, input.scope);
   if (suppliedWorld !== null && mapped.value.discriminator === "assertion") {
-    const supportAnchors = new Set(input.support.anchors.map((anchor) => `${anchor.event_id}:${anchor.start_utf16}:${anchor.end_utf16}`));
-    const assertion = input.semantic as ClaimV2Semantic;
-    if (assertion.discriminator === "assertion" &&
-      [...assertion.anchors, ...assertion.perspective.anchors].some((anchor) => !supportAnchors.has(`${anchor.event_id}:${anchor.start_utf16}:${anchor.end_utf16}`))) {
-      throw new ClaimError("provenance_unresolved", "claim/v2 semantic anchors need matching support");
+    if(input.accepted_world===undefined) throw new ClaimError("schema_invalid","qualified world authority must come from the shared writer");
+    const expectedAnchors=completeWorldAnchors(suppliedWorld.semantic);
+    if(canonicalJson(expectedAnchors)!==canonicalJson(input.support.anchors))
+      throw new ClaimError("provenance_unresolved","world support needs the complete canonical anchor union");
+    for(const anchor of expectedAnchors) {
+      const event=readEvent(db,anchor.event_id);
+      if(event===null || event.origin!=="external" || anchor.end_utf16>event.text.length ||
+        !isUtf16TextBoundary(event.text,anchor.start_utf16) || !isUtf16TextBoundary(event.text,anchor.end_utf16))
+        throw new ClaimError("provenance_unresolved","world support anchor is outside its immutable event text");
     }
   }
 

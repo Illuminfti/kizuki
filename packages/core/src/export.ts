@@ -1,3 +1,5 @@
+import { WORLD_TABLES, WORLD_TABLE_COLUMNS } from "./world/schema";
+import { assertWorldState } from "./world/integrity";
 import { capturePortableAdapter, capturePortableLocal, hashPortableLocal, readPortableBackup, restorePortableLocal, PORTABLE_LOCAL_STREAM, type PortableLocalAdapter } from "./portable-local";
 export type { PortableLocalAdapter } from "./portable-local";
 import { assertVaultMutationScope, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "./vault/mutation-scope";
@@ -1146,7 +1148,7 @@ function* pageClaims(db: Database): Generator<Record<string, unknown>> {
         .all(cursor.created_at, cursor.created_at, cursor.claim_id, PAGE);
     }
     if (rows.length === 0) break;
-    for (const row of rows) yield claimRecord(row);
+    for (const row of rows) yield {...claimRecord(row),is_world_typed:(row as ClaimRow & {is_world_typed?:number}).is_world_typed??0};
     const last: ClaimRow | undefined = rows.at(-1);
     if (last === undefined || rows.length < PAGE) break;
     cursor = { created_at: last.created_at, claim_id: last.claim_id };
@@ -1829,6 +1831,10 @@ function exportVaultOwned(
         options.signal,
       );
       writeStream(staging, "claims/bindings.jsonl", pageBindings(db), files, options.signal);
+      assertWorldState(db);
+      for (const table of WORLD_TABLES) {
+        writeStream(staging, `world/${table}.jsonl`, db.query(`SELECT * FROM ${table} ORDER BY ${WORLD_TABLE_COLUMNS[table].join(",")}`).iterate(), files, options.signal);
+      }
       writeStream(staging, CLAIM_V2_SEMANTICS_BACKUP, pageClaimV2Semantics(db), files, options.signal);
       writeStream(staging, CLAIM_V2_SUPPORT_BACKUP, pageClaimV2Support(db), files, options.signal);
       writeStream(staging, CLAIM_V2_SUPPORT_EVENTS_BACKUP, pageClaimV2SupportEvents(db), files, options.signal);
@@ -2118,7 +2124,7 @@ function assertBackupFormat(manifest: ExportManifest): void {
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
       versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
       versions.ledger !== 19 && versions.ledger !== 20 &&
-      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27 || versions.ledger === 28 || versions.ledger === 29 || versions.ledger === 30 || versions.ledger === 31))) {
+      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27 || versions.ledger === 28 || versions.ledger === 29 || versions.ledger === 30 || versions.ledger === 31 || versions.ledger === 32))) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -2244,6 +2250,10 @@ function insertPurgeProof(db: Database, raw: Record<string, unknown>): void {
 }
 
 function restoreClaimContentHash(raw: Record<string, unknown>): string {
+  if(raw.is_world_typed===1) {
+    if(raw.content_hash!=="") throw new Error("typed claim cannot carry a legacy content signature");
+    return "";
+  }
   const recorded = raw.content_hash;
   if (typeof recorded === "string" && CLAIM_CONTENT_HASH.test(recorded)) {
     return recorded;
@@ -2271,8 +2281,8 @@ function insertClaimRow(db: Database, raw: Record<string, unknown>): void {
         subject, predicate, object, polarity, claim_key, authority,
         sensitivity, taint, model_ref, valid_from, valid_to, asserted_at,
         retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at,
-        content_hash)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        content_hash, is_world_typed)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     asString(raw.claim_id, "claim_id"),
     asString(raw.kind, "kind"),
@@ -2304,6 +2314,7 @@ function insertClaimRow(db: Database, raw: Record<string, unknown>): void {
     asNumber(raw.corroboration ?? 1, "corroboration"),
     asStringOrNull(raw.last_confirmed_at, "last_confirmed_at"),
     restoreClaimContentHash(raw),
+    asNumber(raw.is_world_typed ?? 0, "is_world_typed"),
   );
 }
 
@@ -2358,8 +2369,8 @@ function insertClaimV2Semantic(db: Database, raw: Record<string, unknown>): void
 function insertClaimV2Support(db: Database, raw: Record<string, unknown>): void {
   db.query(
     `INSERT INTO claim_v2_support
-       (support_key, claim_id, anchors, source_key, grant_revision, admission, admitted_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (support_key, claim_id, anchors, source_key, grant_revision, admission, admitted_at, support_origin)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     asString(raw.support_key, "support_key"),
     asString(raw.claim_id, "claim_id"),
@@ -2368,6 +2379,7 @@ function insertClaimV2Support(db: Database, raw: Record<string, unknown>): void 
     asNumber(raw.grant_revision, "grant_revision"),
     asString(raw.admission, "admission"),
     asString(raw.admitted_at, "admitted_at"),
+    asString(raw.support_origin ?? "source", "support_origin"),
   );
 }
 
@@ -2793,6 +2805,18 @@ export function restoreVault(
         for (const row of streamRows(source, manifest, CLAIM_V2_SUPPORT_EVENTS_BACKUP, false)) {
           insertClaimV2SupportEvent(db, row);
         }
+        if (manifest.schema_versions.ledger >= 32) {
+          for (const table of WORLD_TABLES) {
+            const columns = WORLD_TABLE_COLUMNS[table];
+            for (const row of streamRows(source, manifest, `world/${table}.jsonl`, true)) {
+              if (Object.keys(row).length !== columns.length || !columns.every(key => Object.hasOwn(row,key))) throw new Error("world backup row has unexpected fields");
+              const values = columns.map(key => { const value=row[key];
+                if(value!==null && typeof value!=="string" && typeof value!=="number") throw new Error("world backup value invalid");
+                return value; });
+              db.query(`INSERT INTO ${table}(${columns.join(",")}) VALUES (${columns.map(()=>"?").join(",")})`).run(...values);
+            }
+          }
+        }
         let identityCount = 0;
         for (const row of streamRows(source, manifest, IDENTITY_BACKUP, manifest.schema === BACKUP_SCHEMA)) {
           insertIdentityLink(db, row, manifest.schema);
@@ -2870,6 +2894,13 @@ export function restoreVault(
           installEventIdentityGuards(db);
         }
         validateRestoredEventOrigins(db);
+        if (manifest.schema_versions.ledger >= 32) {
+          // Agent enrollment is local and nonportable; its old namespaces cannot
+          // survive without the matching current identity/grant after restore.
+          db.exec(`DELETE FROM world_authorization_namespaces WHERE principal_id<>'owner' AND NOT EXISTS(
+            SELECT 1 FROM agents a JOIN agent_grants g USING(agent_id) WHERE a.agent_id=principal_id AND a.revoked_at IS NULL AND a.quarantined_at IS NULL)`);
+          assertWorldState(db);
+        }
         validateDurableExtractStorage(db);
       }).immediate();
 

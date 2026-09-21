@@ -260,7 +260,7 @@ export function syncCompatProposals(db: Database): void {
         ELSE status
       END,
       created_at, body_hash, content_hash
-    FROM claims;
+    FROM claims ${columnNames(db,"claims").has("is_world_typed") ? "WHERE is_world_typed=0" : ""};
   `);
   applyLegacyStagingIdempotency(db);
 }
@@ -484,7 +484,7 @@ export function applyLegacyStagingIdempotency(db: Database): void {
             SELECT p.content_hash FROM proposals p
              WHERE p.proposal_id = claims.claim_id
           )
-        WHERE EXISTS (
+        WHERE ${columnNames(db,"claims").has("is_world_typed") ? "is_world_typed=0 AND" : ""} EXISTS (
             SELECT 1 FROM proposals p
              WHERE p.proposal_id = claims.claim_id AND p.content_hash <> ''
           )`,
@@ -501,7 +501,7 @@ export function applyLegacyStagingIdempotency(db: Database): void {
     `CREATE UNIQUE INDEX claims_idempotency
        ON claims (kind, coalesce(target, ''), body_hash)
        WHERE status = 'live' AND kind <> 'purge_review'
-         AND (content_hash IS NULL OR content_hash = '')`,
+         AND (content_hash IS NULL OR content_hash = '') ${columnNames(db,"claims").has("is_world_typed") ? "AND is_world_typed=0" : ""}`,
   );
   db.exec(
     `CREATE UNIQUE INDEX claims_signature_idempotency

@@ -16,6 +16,7 @@ import { serveSearch } from "./search";
 import type { SearchArgs } from "./search";
 import { serveTimeline } from "./timeline";
 import type { TimelineArgs } from "./timeline";
+import type { WorldViewEnvelope } from "./world-view";
 import { serveWorldView } from "./world-view";
 import { ServeError } from "./types";
 import type { Envelope, ServeContext } from "./types";
@@ -28,7 +29,7 @@ export async function dispatchServeTool(
   ctx: ServeContext,
   tool: Tool,
   args: Record<string, unknown>,
-): Promise<Envelope<unknown>> {
+): Promise<Envelope<unknown> | WorldViewEnvelope> {
   switch (tool) {
     case "search":
       return serveSearch(ctx, args as unknown as SearchArgs);

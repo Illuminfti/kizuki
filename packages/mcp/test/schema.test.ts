@@ -184,7 +184,7 @@ describe("the advertised output schema describes what the server sends", () => {
     expect(text).toEqual(structured);
   });
 
-  test("every tool advertises optional source_policy with the exact three members", async () => {
+  test("legacy tools retain source_policy while world advertises its closed v2 envelope", async () => {
     const client = await connectClient(live().owner(), open);
     const tools = (await client.listTools()).tools;
     expect(tools.map((tool) => tool.name)).toEqual([...TOOLS]);
@@ -193,6 +193,11 @@ describe("the advertised output schema describes what the server sends", () => {
         required?: string[];
         properties?: { source_policy?: { required?: string[] } };
       };
+      if(tool.name==="world_view") {
+        expect(advertised.required?.slice().sort()).toEqual(["at","canon","data","principal","quoted","schema","tool"]);
+        expect(Object.keys(advertised.properties??{}).sort()).toEqual(["at","canon","data","principal","quoted","schema","tool"]);
+        continue;
+      }
       expect(advertised.required?.slice().sort()).toEqual(
         ["at", "canon", "denied", "principal", "quoted", "schema", "tool"],
       );

@@ -296,3 +296,15 @@ test("the support key separates spans, events, sources and semantics", () => {
 test("semantic and support identities stay in separate domains", () => {
   expect(supportKey(supportInput())).not.toBe(SEMANTIC);
 });
+
+test("legacy two-field supplied identities retain the pre-namespace semantic and support bytes",()=>{
+ const legacy=assertion({subject:{kind:"supplied",id:"original"},object:{kind:"subject",ref:{kind:"supplied",id:"object"}}});
+ expect(validateClaimV2Semantic(legacy).ok).toBe(true);
+ expect(semanticKey(legacy)).toBe("64b6cf98deccbbfc292d09a59deabb4487cc6af6ed9cc8c782bee5745fa743db");
+ expect(supportKey({semantic_key:semanticKey(legacy),source_key:EVENT_ID,grant_revision:1,events:[{event_id:EVENT_ID,event_content_hash:DIGEST}],anchors:legacy.anchors})).toBe("7d16b8a6dac4d10a2bf430cc29f94eb0f216ca8047529475a80263b85d7e3cac");
+ const qualified={...legacy,subject:{kind:"supplied" as const,id:"original",namespace:{connector_id:"fixture",source_key:EVENT_ID}}};
+ expect(validateClaimV2Semantic(qualified).ok).toBe(true);
+ expect(semanticKey(qualified)).not.toBe(semanticKey(legacy));
+ expect(semanticKey({...qualified,subject:{...qualified.subject,namespace:{...qualified.subject.namespace,connector_id:"other"}}})).not.toBe(semanticKey(qualified));
+ expect(semanticKey({...qualified,subject:{...qualified.subject,namespace:{...qualified.subject.namespace,source_key:OTHER_EVENT_ID}}})).not.toBe(semanticKey(qualified));
+});
