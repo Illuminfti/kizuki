@@ -2,7 +2,7 @@ import { expect,test } from "bun:test";
 import { openLedger } from "../../src/ledger/db";
 import { ulid } from "../../src/util/ulid";
 import { getCanonReceipt, getCanonReceiptRecord, parseReceiptRecordLine, rowToReceipt, type CanonReceipt, type CanonReceiptRow } from "../../src/canon/receipts";
-import { insertReceiptRow } from "../../src/canon/store";
+import { insertReceiptRow, insertErasedReceiptRow, eraseReceiptRow } from "../../src/canon/store";
 import { eraseWorldReceipt, parseWorldCanonReceipt, type RetainedWorldCanonReceipt } from "../../src/canon/world-receipt";
 import { validateCanonIntentReceipt } from "../../src/canon/write-intent";
 function receipt():CanonReceipt {
@@ -34,5 +34,15 @@ test("v1 wire and strict intent validation stay unchanged; typed history permits
   expect(getCanonReceiptRecord(db,old.receipt_id)).toEqual(old);
   const reverted={...typed(),reverted_by:ulid()};expect(parseWorldCanonReceipt(reverted)).toEqual(reverted);
   expect(()=>validateCanonIntentReceipt({...old,reverted_by:ulid()})).toThrow();
+ }finally{db.close();}
+});
+
+test("erased rows round trip without old paths or hashes in storage",()=>{
+ const db=openLedger(":memory:");try {
+  const old=typed(),erased=eraseWorldReceipt(old.receipt_id,ulid(),old.at);insertReceiptRow(db,old,"claim");eraseReceiptRow(db,erased);
+  expect(getCanonReceipt(db,old.receipt_id)).toBeNull();expect(getCanonReceiptRecord(db,old.receipt_id)).toEqual(erased);
+  const row=db.query<Record<string,unknown>,[string]>("SELECT * FROM canon_receipts WHERE receipt_id=?").get(old.receipt_id)!;
+  for(const key of ["page_path","before_hash","after_hash","claim_ids","provenance","world_basis","archive_path"])expect(row[key]).toBeNull();
+  const another=eraseWorldReceipt(ulid(),erased.purge_receipt_id,old.at);insertErasedReceiptRow(db,another);expect(getCanonReceiptRecord(db,another.receipt_id)).toEqual(another);
  }finally{db.close();}
 });
