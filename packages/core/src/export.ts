@@ -38,8 +38,15 @@ import { rebuildPageIndex } from "./canon";
 import { CANON_SCHEMA_VERSION } from "./canon/schema";
 import {
   type CanonReceiptRow,
-  rowToReceipt,
+  isErasedReceipt,
+  rowToReceiptRecord,
 } from "./canon/receipts";
+import { insertErasedReceiptRow, insertReceiptRow } from "./canon/store";
+import { isWorldCanonReceipt, parseWorldCanonReceipt } from "./canon/world-receipt";
+import { assertWorldCanonPage, assertWorldReceiptBasis } from "./canon/world-materialization";
+import { canonicalJson } from "./util/hash";
+import { openCanonFiles } from "./vault/canon-files";
+import { ABSENT_PAGE_HASH, hashBytes } from "./vault/write";
 import { contentSignature } from "./claims/hash";
 import { CLAIMS_SCHEMA_VERSION, syncCompatProposals } from "./claims/schema";
 import { canonicalizeProducer, isProducer } from "./contracts/proposal";
@@ -748,10 +755,10 @@ function vaultInventory(db: Database, root: string): VaultInventory {
   }
   if (tableExists(db, "canon_receipts")) {
     let receipts = 0;
-    for (const row of db.query<{
-      page_path: string; archive_path: string | null; before_hash: string | null; after_hash: string;
-    }, []>("SELECT page_path,archive_path,before_hash,after_hash FROM canon_receipts ORDER BY receipt_id").iterate()) {
+    for (const stored of db.query<CanonReceiptRow, []>("SELECT * FROM canon_receipts ORDER BY receipt_id").iterate()) {
       if (++receipts > MAX_INVENTORY_ENTRIES) throw new Error("export receipt inventory exceeds its bound");
+      const row = rowToReceiptRecord(stored);
+      if (isErasedReceipt(row)) continue;
       // Source erasure keeps inert receipt history after clearing its file references.
       if (row.page_path === "" && row.archive_path === null) continue;
       if (!ordinaryPath(row.page_path)) throw new Error("export receipt names an unsupported page path");
@@ -1324,7 +1331,10 @@ function* pageConnectorSensitivity(db: Database): Generator<SensitivityRow> {
 }
 
 function receiptRecord(row: CanonReceiptRow): Record<string, unknown> {
-  return { ...rowToReceipt(row), claim_kind: row.kind };
+  const receipt = rowToReceiptRecord(row);
+  return isErasedReceipt(receipt) || isWorldCanonReceipt(receipt)
+    ? { ...receipt }
+    : { ...receipt, claim_kind: row.kind };
 }
 
 function* pageReceipts(db: Database): Generator<Record<string, unknown>> {
@@ -1335,16 +1345,16 @@ function* pageReceipts(db: Database): Generator<Record<string, unknown>> {
     if (cursor === null) {
       rows = db
         .query<CanonReceiptRow, [number]>(
-          "SELECT * FROM canon_receipts ORDER BY at, receipt_id LIMIT ?",
+          "SELECT * FROM canon_receipts ORDER BY COALESCE(at,erased_at), receipt_id LIMIT ?",
         )
         .all(PAGE);
     } else {
       rows = db
         .query<CanonReceiptRow, [string, string, string, number]>(
           `SELECT * FROM canon_receipts
-           WHERE at > ?
-              OR (at = ? AND receipt_id > ?)
-           ORDER BY at, receipt_id LIMIT ?`,
+           WHERE COALESCE(at,erased_at) > ?
+              OR (COALESCE(at,erased_at) = ? AND receipt_id > ?)
+           ORDER BY COALESCE(at,erased_at), receipt_id LIMIT ?`,
         )
         .all(cursor.at, cursor.at, cursor.receipt_id, PAGE);
     }
@@ -1352,7 +1362,7 @@ function* pageReceipts(db: Database): Generator<Record<string, unknown>> {
     for (const row of rows) yield receiptRecord(row);
     const last: CanonReceiptRow | undefined = rows.at(-1);
     if (last === undefined || rows.length < PAGE) break;
-    cursor = { at: last.at, receipt_id: last.receipt_id };
+    cursor = { at: last.at ?? last.erased_at!, receipt_id: last.receipt_id };
   }
 }
 
@@ -1852,6 +1862,7 @@ function exportVaultOwned(
         files,
         options.signal,
       );
+      assertTypedCanonReceipts(db, join(staging, "vault"));
       writeStream(staging, "canon/receipts.jsonl", pageReceipts(db), files, options.signal);
       if (schema.ledger >= 20) {
         writeStream(staging, SOURCE_SURVIVOR_LINEAGE_BACKUP, sourceSurvivorLineageExportRows(db), files, options.signal);
@@ -2124,11 +2135,16 @@ function assertBackupFormat(manifest: ExportManifest): void {
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
       versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
       versions.ledger !== 19 && versions.ledger !== 20 &&
-      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27 || versions.ledger === 28 || versions.ledger === 29 || versions.ledger === 30 || versions.ledger === 31 || versions.ledger === 32))) {
+      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27 || versions.ledger === 28 || versions.ledger === 29 || versions.ledger === 30 || versions.ledger === 31 || versions.ledger === 32 || versions.ledger === 33))) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
     throw new Error("legacy backup ledger schema is invalid");
+  }
+  // Ledger33/canon5 is the first discriminated retained/erased receipt stream.
+  if (!Number.isSafeInteger(versions.canon) || versions.canon < 0 || versions.canon > CANON_SCHEMA_VERSION ||
+      (versions.ledger >= 33 ? versions.canon !== 5 : versions.canon >= 5)) {
+    throw new Error("backup canon schema is incompatible with its ledger");
   }
 }
 
@@ -2476,7 +2492,23 @@ function insertConnectionRow(db: Database, raw: Record<string, unknown>): void {
   );
 }
 
-function insertReceipt(db: Database, raw: Record<string, unknown>): void {
+function insertReceipt(db: Database, raw: Record<string, unknown>, versions: BackupSchemaVersions): void {
+  if (Object.hasOwn(raw, "schema")) {
+    if (versions.ledger < 33 || versions.canon !== 5) throw new Error("typed canon receipt requires ledger33/canon5");
+    const receipt = parseWorldCanonReceipt(raw);
+    if (receipt === null) throw new Error("backup typed canon receipt is invalid");
+    if (receipt.state === "erased") insertErasedReceiptRow(db, receipt);
+    else insertReceiptRow(db, receipt, receipt.kind === "revert" ? "revert" : receipt.kind === "purge_rewrite" ? "purge_review" : "claim");
+    return;
+  }
+  if (["state", "own_id_origin", "basis", "purge_receipt_id", "erased_at", "integrity"].some(key => Object.hasOwn(raw, key)) ||
+      (Array.isArray(raw.claim_ids) && raw.claim_ids.some(id => typeof id === "string" &&
+        db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1").get(id) !== null)) ||
+      (typeof raw.receipt_id === "string" && db.query("SELECT 1 FROM claims WHERE receipt_id=? AND is_world_typed=1").get(raw.receipt_id) !== null) ||
+      (typeof raw.page_path === "string" && /^auto\/world\/[a-f0-9]{32}\.md$/.test(raw.page_path) &&
+        db.query("SELECT 1 FROM semantic_handles WHERE handle_id=?").get(raw.page_path.slice(11, -3)) !== null)) {
+    throw new Error("backup typed canon receipt discriminator is missing");
+  }
   const pagePath = asString(raw.page_path, "page_path");
   const archivePath = asStringOrNull(raw.archive_path, "archive_path");
   assertReceiptPaths({ page_path: pagePath, archive_path: archivePath });
@@ -2512,6 +2544,55 @@ function insertReceipt(db: Database, raw: Record<string, unknown>): void {
     asStringOrNull(raw.reverts, "reverts"),
     asStringOrNull(raw.reverted_by, "reverted_by"),
   );
+}
+
+/** Retained historical undo bases remain exact; source erasure cannot be restored as retained history. */
+function assertTypedCanonReceipts(db: Database, vaultPath: string): void {
+  if (db.query("SELECT 1 FROM canon_receipts WHERE record_codec='kizuki.canon-receipt/v2' LIMIT 1").get() === null) return;
+  if (db.query("SELECT 1 FROM canon_receipts WHERE receipt_state='erased' LIMIT 1").get() !== null &&
+      findMismatchedEventPurgeProof(db, PAGE) !== null) {
+    throw new Error("backup erased canon receipt has invalid purge proof");
+  }
+  const files = openCanonFiles(vaultPath);
+  const pages = new Set<string>();
+  try {
+    for (const row of db.query<CanonReceiptRow, []>("SELECT * FROM canon_receipts WHERE record_codec='kizuki.canon-receipt/v2'").iterate()) {
+      const receipt = rowToReceiptRecord(row);
+      if (isErasedReceipt(receipt)) {
+        // Purge history is validated before this pass in both capture and restore.
+        // A self-consistent terminal hash cannot manufacture that completed act.
+        if (db.query(`SELECT 1 FROM event_purges e JOIN purge_batch_receipts m USING(receipt_id)
+            JOIN purge_batches b USING(batch_id) WHERE e.receipt_id=? AND e.proof_digest IS NOT NULL AND b.state='ready'`).get(receipt.purge_receipt_id) === null) {
+          throw new Error("backup erased canon receipt has no completed purge");
+        }
+        continue;
+      }
+      if (!isWorldCanonReceipt(receipt)) throw new Error("backup typed canon receipt is invalid");
+      assertWorldReceiptBasis(db, receipt, { historical: true });
+      const before = receipt.archive_path === null ? null : files.read(receipt.archive_path);
+      try { assertWorldCanonPage(db, receipt, before?.bytes ?? null, "before"); }
+      finally { before?.close(); }
+      pages.add(receipt.page_path);
+      if (pages.size > MAX_CANON_PAGES) throw new Error("backup typed canon page inventory exceeds its bound");
+    }
+    for (const path of pages) {
+      const snapshot = files.read(path);
+      try {
+        const bytes = snapshot?.bytes ?? null, hash = bytes === null ? ABSENT_PAGE_HASH : hashBytes(bytes);
+        let basis: string | null = null, matches = 0;
+        for (const row of db.query<CanonReceiptRow, [string, string]>(`SELECT * FROM canon_receipts
+            WHERE record_codec='kizuki.canon-receipt/v2' AND receipt_state='retained' AND page_path=? AND after_hash=?`).iterate(path, hash)) {
+          const receipt = rowToReceiptRecord(row);
+          if (isErasedReceipt(receipt) || !isWorldCanonReceipt(receipt)) throw new Error("backup typed canon receipt is invalid");
+          const current = canonicalJson(receipt.basis.after);
+          if (basis !== null && basis !== current) throw new Error("backup typed canon page basis is ambiguous");
+          basis = current; matches++;
+          assertWorldCanonPage(db, receipt, bytes, "after");
+        }
+        if (matches === 0) throw new Error("backup typed canon page has no matching receipt");
+      } finally { snapshot?.close(); }
+    }
+  } finally { files.close(); }
 }
 
 function isSha256(value: unknown): value is string {
@@ -2829,7 +2910,7 @@ export function restoreVault(
         // restore and purge. Opaque malformed support remains inert history.
         scanLegacyIdentityRows(db);
         for (const row of streamRows(source, manifest, "canon/receipts.jsonl", true)) {
-          insertReceipt(db, row);
+          insertReceipt(db, row, manifest.schema_versions);
         }
         restoreSourceSurvivorLineage(db, source, manifest);
         for (const row of portable?.connections ?? streamRows(source, manifest, "connections.jsonl", true)) {
@@ -2901,6 +2982,7 @@ export function restoreVault(
             SELECT 1 FROM agents a JOIN agent_grants g USING(agent_id) WHERE a.agent_id=principal_id AND a.revoked_at IS NULL AND a.quarantined_at IS NULL)`);
           assertWorldState(db);
         }
+        assertTypedCanonReceipts(db, staging);
         validateDurableExtractStorage(db);
       }).immediate();
 

@@ -84,7 +84,7 @@ function historicalConnection(backup: string, manifest: ExportManifest, source: 
     count: 1, sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"), size: Buffer.byteLength(bytes), mode: 0o600,
   };
   manifest.schema = schema;
-  if (schema === V2_BACKUP_SCHEMA) manifest.schema_versions.ledger = 20;
+  if (schema === V2_BACKUP_SCHEMA) { manifest.schema_versions.ledger = 20; manifest.schema_versions.canon = 4; }
   if (schema !== BACKUP_SCHEMA) {
     for (const table of ["purge_batches", "purge_batch_receipts", "purge_ops"]) {
       delete manifest.files[`ledger/${table}.jsonl`];
@@ -98,6 +98,7 @@ function historicalConnection(backup: string, manifest: ExportManifest, source: 
   }
   if (schema === LEGACY_BACKUP_SCHEMA) {
     manifest.schema_versions.ledger = 15;
+    manifest.schema_versions.canon = 4;
     delete manifest.files["ledger/canon-machine-byte-intents.jsonl"];
     unlinkSync(join(backup, "ledger", "canon-machine-byte-intents.jsonl"));
   }
