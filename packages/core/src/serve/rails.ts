@@ -8,6 +8,7 @@ import { pendingRetrievalOps, retryRetrievalOps } from "../claims/store";
 import type { ClaimsIo } from "../claims/store";
 import type { BudgetTracker } from "../canon/budget";
 import type { ProducerPort } from "../contracts/producer";
+import type { ProducerV2Port } from "../contracts/producer-v2";
 import { inspectPurgeHealth, listPurgeRecoveryReceipts, resumePurge } from "../ledger/purge";
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
@@ -45,21 +46,37 @@ export interface RailRefreshReport {
   readonly degraded: readonly string[];
 }
 
-export interface RailHooks {
+interface RailHooksBase {
   readonly sync?: () => Promise<RailSyncResult>;
   /** Host-owned derived stores refresh after a successful or partial write pass. */
   readonly refresh?: () => Promise<RailRefreshReport>;
   readonly claims?: ClaimsIo;
   readonly model_ref?: string | null;
-  readonly producer?: ProducerPort;
   readonly embedding_backlog?: number;
 }
+
+export interface RailHooks extends RailHooksBase {
+  readonly producer?: ProducerPort;
+}
+
+export interface RailHooksV2 extends RailHooksBase {
+  readonly producer?: ProducerV2Port;
+}
+
+type AnyRailHooks = RailHooks | RailHooksV2;
 
 /** One host binding, owned and released by exactly one rail attempt. */
 export interface RailRuntime {
   readonly hooks: RailHooks;
   close(): Promise<void>;
 }
+
+export interface RailRuntimeV2 {
+  readonly hooks: RailHooksV2;
+  close(): Promise<void>;
+}
+
+type AnyRailRuntime = RailRuntime | RailRuntimeV2;
 
 const processInstance = crypto.randomUUID();
 
@@ -71,6 +88,16 @@ export interface RunRailOptions {
   readonly crashAfter?: CrashPoint;
 }
 
+export interface RunRailOptionsV2 {
+  readonly execution?: RunExecution;
+  readonly now?: () => string;
+  readonly hooks?: RailHooksV2;
+  readonly acquireRuntime?: () => Promise<RailRuntimeV2>;
+  readonly crashAfter?: CrashPoint;
+}
+
+type AnyRunRailOptions = RunRailOptions | RunRailOptionsV2;
+
 function dayOf(at: string): string {
   return at.slice(0, 10);
 }
@@ -79,7 +106,7 @@ function dayOf(at: string): string {
  * A host must bind a model port and hand its capability to the rail. Raw
  * serve.toml values are configuration intent, never permission to write.
  */
-function withResolvedModel(hooks: RailHooks | undefined): RailHooks | undefined {
+function withResolvedModel(hooks: AnyRailHooks | undefined): AnyRailHooks | undefined {
   if (hooks === undefined) return undefined;
   return { ...hooks, model_ref: hooks.model_ref ?? null };
 }
@@ -110,7 +137,7 @@ async function runSyncRail(
   db: Database,
   vaultPath: string,
   budget: BudgetTracker,
-  hooks: RailHooks | undefined,
+  hooks: AnyRailHooks | undefined,
   runId: string,
   now: () => string,
 ): Promise<Partial<RunReceipt>> {
@@ -169,7 +196,7 @@ async function runSyncRail(
  * records progress and refuses to call itself current too early. A refresh that
  * throws leaves work outstanding rather than reading as nothing to do.
  */
-async function refreshDerivedOnce(hooks: RailHooks | undefined): Promise<RailRefreshReport> {
+async function refreshDerivedOnce(hooks: AnyRailHooks | undefined): Promise<RailRefreshReport> {
   try {
     return (await hooks?.refresh?.()) ?? { indexed: 0, remaining: 0, degraded: [] };
   } catch (error) {
@@ -179,7 +206,7 @@ async function refreshDerivedOnce(hooks: RailHooks | undefined): Promise<RailRef
 
 async function runRetrievalSweep(
   db: Database,
-  hooks: RailHooks | undefined,
+  hooks: AnyRailHooks | undefined,
 ): Promise<Partial<RunReceipt>> {
   // Catch-up does not depend on a claims port, so it runs either way.
   const refreshed = await refreshDerivedOnce(hooks);
@@ -206,7 +233,7 @@ async function runRetrievalSweep(
 async function runPurgeSweep(
   db: Database,
   vaultPath: string,
-  hooks: RailHooks | undefined,
+  hooks: AnyRailHooks | undefined,
   now: string,
 ): Promise<Partial<RunReceipt>> {
   const pending = listPurgeRecoveryReceipts(db);
@@ -235,7 +262,7 @@ async function runPurgeSweep(
   };
 }
 
-async function runEmbedBackfill(hooks: RailHooks | undefined): Promise<Partial<RunReceipt>> {
+async function runEmbedBackfill(hooks: AnyRailHooks | undefined): Promise<Partial<RunReceipt>> {
   const backlog = hooks?.embedding_backlog ?? 0;
   if (backlog === 0) {
     return { status: "ok" };
@@ -321,11 +348,32 @@ function runJournalPrune(
 
 const activeRuns = new Set<string>();
 
-export async function runRail(
+export function runRail(
   db: Database,
   vaultPath: string,
   rail: RailId,
-  options: RunRailOptions = {},
+  options?: RunRailOptions,
+): Promise<RunReceipt>;
+export function runRail(
+  db: Database,
+  vaultPath: string,
+  rail: RailId,
+  options: RunRailOptionsV2,
+): Promise<RunReceipt>;
+export function runRail(
+  db: Database,
+  vaultPath: string,
+  rail: RailId,
+  options: AnyRunRailOptions = {},
+): Promise<RunReceipt> {
+  return runRailImpl(db, vaultPath, rail, options);
+}
+
+async function runRailImpl(
+  db: Database,
+  vaultPath: string,
+  rail: RailId,
+  options: AnyRunRailOptions,
 ): Promise<RunReceipt> {
   const runId = ulid();
   activeRuns.add(runId);
@@ -334,9 +382,9 @@ export async function runRail(
     const started = now();
     const totals = emptyRunTotals();
     let partial: Partial<RunReceipt> = {};
-    let hooks: RailHooks | undefined;
+    let hooks: AnyRailHooks | undefined;
     let budget: BudgetTracker | undefined;
-    let runtime: RailRuntime | undefined;
+    let runtime: AnyRailRuntime | undefined;
     let interrupted = false;
     try {
       if (options.hooks !== undefined && options.acquireRuntime !== undefined) {
@@ -460,15 +508,25 @@ export async function runRail(
   } finally { activeRuns.delete(runId); }
 }
 
+export function runServeOnce(
+  db: Database,
+  vaultPath: string,
+  options?: RunRailOptions & { rails?: RailId[] },
+): Promise<RunReceipt[]>;
+export function runServeOnce(
+  db: Database,
+  vaultPath: string,
+  options: RunRailOptionsV2 & { rails?: RailId[] },
+): Promise<RunReceipt[]>;
 export async function runServeOnce(
   db: Database,
   vaultPath: string,
-  options: RunRailOptions & { rails?: RailId[] } = {},
+  options: AnyRunRailOptions & { rails?: RailId[] } = {},
 ): Promise<RunReceipt[]> {
   const rails = options.rails ?? listSchedules(db).filter((row) => row.enabled).map((row) => row.rail);
   const receipts: RunReceipt[] = [];
   for (const rail of rails) {
-    receipts.push(await runRail(db, vaultPath, rail, options));
+    receipts.push(await runRailImpl(db, vaultPath, rail, options));
   }
   return receipts;
 }
