@@ -1,4 +1,5 @@
 import { pageIndexByPath } from "./store";
+import { getCanonReceipt } from "./receipts";
 import type { TargetDecision } from "./arbiter";
 import { parseFrontmatter } from "../vault/frontmatter";
 import { hashBytes, ABSENT_PAGE_HASH } from "../vault/write";
@@ -114,10 +115,46 @@ function assertWorldReceiptMetadata(db:Database,receipt:RetainedWorldCanonReceip
  if(canonicalJson([...receipt.provenance].sort())!==canonicalJson(provenance))throw new Error("typed receipt provenance differs from admitted support");
 }
 
+/** Claim ownership controls undo, separately from membership in either rendered image. */
+function assertWorldReceiptOwnership(db:Database,receipt:RetainedWorldCanonReceipt):void {
+ const fail=():never=>{throw new Error("typed receipt ownership differs from its admitted operation");};
+ const seen=new Set<string>();
+ let current=receipt;
+ while(true) {
+  if(seen.has(current.receipt_id)||seen.size>=4096)fail();
+  seen.add(current.receipt_id);
+  if(current.kind==="write") {
+   const before=new Set((current.basis.before??[]).map(item=>item.claim_id));
+   const after=new Set((current.basis.after??[]).map(item=>item.claim_id));
+   const owned=new Set(current.claim_ids);
+   if(current.reverts!==null||owned.size!==current.claim_ids.length||current.claim_ids.some(id=>!after.has(id)||before.has(id)))fail();
+   for(const id of after) {
+    const claim=getClaim(db,id);if(claim===null)fail();
+    // An unfinished admission and its committed owner must include every newly
+    // acquired assertion. A later purge may transfer an older owner's survivors.
+    if((claim!.receipt_id===null||claim!.receipt_id===current.receipt_id)&&!owned.has(id))fail();
+   }
+   return;
+  }
+  if(current.kind!=="revert")return;
+  if(current.reverts===null)fail();
+  const target=getCanonReceipt(db,current.reverts!);
+  if(target===null||!isWorldCanonReceipt(target)||target.page_path!==current.page_path||
+   (target.archive_path===null&&!(target.kind==="write"&&target.page_action==="create"))||
+   canonicalJson(current.claim_ids)!==canonicalJson(target.claim_ids)||
+   canonicalJson(current.superseded)!==canonicalJson(target.superseded)||
+   canonicalJson(current.basis.before)!==canonicalJson(target.basis.after)||
+   canonicalJson(current.basis.after)!==canonicalJson(target.basis.before)||
+   current.before_hash!==target.after_hash||current.after_hash!==(target.before_hash??ABSENT_PAGE_HASH))fail();
+  current=target as RetainedWorldCanonReceipt;
+ }
+}
+
 /** Restore and reads share the same exact semantic-handle namespace check. */
 export function assertWorldReceiptBasis(db:Database,receipt:RetainedWorldCanonReceipt,options:{historical?:boolean}={}):void {
  if(!isWorldCanonReceipt(receipt))throw new Error("typed receipt required");
  assertWorldReceiptMetadata(db,receipt);
+ assertWorldReceiptOwnership(db,receipt);
  for(const image of [receipt.basis.before,receipt.basis.after]) {
   assertWorldBasis(db,image,options.historical??false);
   for(const item of image??[]) {
@@ -132,6 +169,7 @@ export function assertWorldCanonPage(db:Database,receipt:RetainedWorldCanonRecei
  const basis=receipt.basis[image],expected=image==="before"?receipt.before_hash:receipt.after_hash;
  if(bytes===null) {
   if(basis!==null||(image==="before"&&receipt.kind!=="revert"?null:ABSENT_PAGE_HASH)!==expected)throw new Error("typed canon image missing");
+  assertWorldReceiptOwnership(db,receipt);
   return;
  }
  if(basis===null||hashBytes(bytes)!==expected)throw new Error("typed canon image differs from receipt");
@@ -155,4 +193,5 @@ export function assertWorldCanonPage(db:Database,receipt:RetainedWorldCanonRecei
  if(page.body!==body||page.data["title"]!==title||page.data["type"]!==type||page.data["status"]!=="active"||canonicalJson(page.data["sources"])!==canonicalJson(sources)||Object.keys(page.data).sort().join(",")!=="id,sensitivity,sources,status,taint,title,type")throw new Error("typed canon image is not the admitted rendering");
  if(!isSensitivity(page.data["sensitivity"])||SENSITIVITY_ORDER[page.data["sensitivity"]]<minimumSensitivity||(quoted&&page.data["taint"]!=="quoted"))throw new Error("typed canon image classification below admitted basis");
  if(image==="after"&&(page.data["sensitivity"]!==receipt.sensitivity||page.data["taint"]!==receipt.taint))throw new Error("typed canon image classification differs from receipt");
+ assertWorldReceiptOwnership(db,receipt);
 }
