@@ -678,3 +678,35 @@ test("a receipt a job requires to exist must be retained by an upload-artifact p
     );
   }
 });
+
+test("receipt retention must cover its execution condition, not merely mention it", () => {
+  const guarded = "inputs.native_adapter_only != true";
+  for (const [required, retained, accepted] of [
+    [`${guarded}`, `${guarded}`, true],
+    [`${guarded}`, `success() && ${guarded}`, true],
+    [`${guarded}`, `!(${guarded})`, false],
+    [`${guarded}`, `false && ${guarded}`, false],
+    [`${guarded}`, `${guarded} && false`, false],
+    ["!cancelled()", "success()", false],
+    ["!cancelled()", "always()", true],
+    ["!cancelled()", "!cancelled()", true],
+  ] as const) {
+    const doc = Bun.YAML.parse(receiptWorkflow(receiptUpload("${{ runner.temp }}/kizuki-other/receipt.json"))) as any;
+    const requiredStep = doc.jobs.proof.steps.find((step: any) => typeof step.run === "string" && step.run.includes("test -f"));
+    const upload = doc.jobs.proof.steps.find((step: any) => typeof step.uses === "string" && step.uses.startsWith("actions/upload-artifact@"));
+    requiredStep.if = "${{ " + required + " }}";
+    upload.if = "${{ " + retained + " }}";
+    const failures = validateWorkflowText(".github/workflows/other.yml", JSON.stringify(doc));
+    expect(failures.some(failure => discardedReceipt.test(failure.reason)), `${required} -> ${retained}`).toBe(!accepted);
+  }
+});
+
+test("an upload before the required receipt check cannot prove retention", () => {
+  const doc = Bun.YAML.parse(receiptWorkflow(receiptUpload("${{ runner.temp }}/kizuki-other/receipt.json"))) as any;
+  const steps = doc.jobs.proof.steps;
+  const uploadIndex = steps.findIndex((step: any) => typeof step.uses === "string" && step.uses.startsWith("actions/upload-artifact@"));
+  steps.unshift(...steps.splice(uploadIndex, 1));
+  expect(validateWorkflowText(".github/workflows/other.yml", JSON.stringify(doc))).toContainEqual(
+    expect.objectContaining({ reason: expect.stringMatching(discardedReceipt) }),
+  );
+});

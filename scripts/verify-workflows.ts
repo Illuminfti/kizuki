@@ -85,21 +85,21 @@ function runnerTempPath(raw: string): string | undefined {
   return prefix === null ? undefined : RUNNER_TEMP + trimmed.slice(prefix[0].length);
 }
 
-type RunnerTempRequirement = { file: string; condition: unknown };
-type RetainedRunnerTempPath = { path: string; condition: unknown };
+type RunnerTempRequirement = { file: string; condition: unknown; step: number };
+type RetainedRunnerTempPath = { path: string; condition: unknown; step: number };
 
 function requiredRunnerTempFiles(job: Record<string, unknown>): RunnerTempRequirement[] {
   const steps = job["steps"];
   if (!Array.isArray(steps)) return [];
   const required: RunnerTempRequirement[] = [];
-  for (const step of steps) {
+  for (const [index, step] of steps.entries()) {
     if (!isRecord(step)) continue;
     const run = step["run"];
     if (typeof run !== "string") continue;
     for (const match of run.matchAll(REQUIRED_FILE)) {
       const file = runnerTempPath(match[1] ?? match[2] ?? match[3] ?? "");
-      if (file !== undefined && !required.some(entry => entry.file === file && entry.condition === step["if"])) {
-        required.push({ file, condition: step["if"] });
+      if (file !== undefined) {
+        required.push({ file, condition: step["if"], step: index });
       }
     }
   }
@@ -110,14 +110,14 @@ function retainedRunnerTempPaths(job: Record<string, unknown>): RetainedRunnerTe
   const steps = job["steps"];
   if (!Array.isArray(steps)) return [];
   const retained: RetainedRunnerTempPath[] = [];
-  for (const step of steps) {
+  for (const [index, step] of steps.entries()) {
     if (!isRecord(step) || !isUploadArtifactStep(step) || !hasExecutableRetentionCondition(step)) continue;
     const settings = step["with"];
     const listed = isRecord(settings) ? settings["path"] : undefined;
     if (typeof listed !== "string") continue;
     for (const line of listed.split("\n")) {
       const entry = runnerTempPath(line);
-      if (entry !== undefined) retained.push({ path: entry, condition: step["if"] });
+      if (entry !== undefined) retained.push({ path: entry, condition: step["if"], step: index });
     }
   }
   return retained;
@@ -129,14 +129,24 @@ function hasExecutableRetentionCondition(step: Record<string, unknown>): boolean
 }
 
 function conditionCanRetain(required: unknown, retention: unknown): boolean {
-  if (retention === undefined || retention === "${{ success() }}" || retention === "${{ always() }}") return true;
-  if (typeof required !== "string" || typeof retention !== "string") return false;
-  const requiredExpression = required.replace(/^\$\{\{\s*|\s*\}\}$/g, "").trim();
-  return requiredExpression.length > 0 && retention.includes(requiredExpression);
+  const expression = (value: unknown): string | undefined =>
+    value === undefined || value === true ? "success()" :
+      typeof value === "string" ? value.replace(/^\$\{\{\s*|\s*\}\}$/g, "").trim() : undefined;
+  const requiredExpression = expression(required), retainedExpression = expression(retention);
+  if (requiredExpression === undefined || retainedExpression === undefined || requiredExpression.length === 0) return false;
+  if (retainedExpression === "always()" || retainedExpression === requiredExpression) return true;
+  // GitHub adds success() implicitly only when an expression has no status
+  // function. A check using !cancelled()/always() can still run after failure;
+  // a success-only upload cannot retain that check's diagnostic receipt.
+  const hasStatus = /\b(?:success|failure|cancelled|always)\s*\(/.test(requiredExpression);
+  if (hasStatus) return false;
+  return retainedExpression === "success()" ||
+    retainedExpression === `success() && ${requiredExpression}`;
 }
 
 function isRetained(required: RunnerTempRequirement, retained: readonly RetainedRunnerTempPath[]): boolean {
   return retained.some((entry) =>
+    entry.step > required.step &&
     (entry.path === required.file || required.file.startsWith(entry.path.endsWith("/") ? entry.path : entry.path + "/")) &&
     conditionCanRetain(required.condition, entry.condition));
 }
