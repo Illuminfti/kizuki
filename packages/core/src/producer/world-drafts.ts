@@ -1,4 +1,4 @@
-import { CLAIM_V2_SCHEMA, type ClaimV2Assertion, type ClaimV2Object, type RawSubjectRef } from "../contracts/claim-v2";
+import { CLAIM_V2_SCHEMA, rawSubjectRefKey, validateClaimV2Semantic, type ClaimV2Assertion, type ClaimV2Object, type RawSubjectRef, type QualifiedSuppliedRef } from "../contracts/claim-v2";
 import type { AuthorityTier, FrontmatterValue } from "../contracts/proposal";
 import {
   type ExtractResponseV2,
@@ -43,7 +43,7 @@ export interface WorldDraftContext {
   /** Immutable event revisions selected by the host, keyed by event id. */
   readonly events: readonly WorldDraftEvent[];
   /** Host-created capability map; keys are request-local supplied handles only. */
-  readonly supplied_refs: ReadonlyMap<string, RawSubjectRef>;
+  readonly supplied_refs: ReadonlyMap<string, QualifiedSuppliedRef>;
   readonly model_ref: string | null;
 }
 
@@ -58,10 +58,6 @@ function fail(detail: string): never {
 function completeAnchors(claim: RichClaimDraft): readonly TextAnchor[] {
   const anchors = [...claim.anchors, ...claim.perspective.anchors];
   return [...new Map(anchors.map(anchor => [anchorKey(anchor), anchor])).values()];
-}
-
-function refKey(ref: RawSubjectRef): string {
-  return `${ref.kind}\u0000${ref.id}`;
 }
 
 /**
@@ -88,7 +84,7 @@ export function prepareWorldDrafts(
   if (supplied.size !== input.supplied_refs.length || context.supplied_refs.size !== supplied.size) fail("supplied handle set differs from quoted input");
   for (const [handle, raw] of context.supplied_refs) {
     const anchors = supplied.get(handle);
-    if (anchors === undefined || raw.kind !== "supplied") fail("supplied handle is not a trusted raw subject");
+    if (anchors === undefined || raw.kind !== "supplied" || raw.namespace === undefined || raw.namespace === null) fail("supplied handle is not a qualified trusted raw subject");
     const cited = new Set(anchors.map(anchorKey));
     if (cited.size !== anchors.length) fail("supplied handle has duplicate anchors");
   }
@@ -108,7 +104,11 @@ export function prepareWorldDrafts(
       if (raw === undefined || anchors === undefined) fail("supplied reference is unsupported by claim evidence");
       const cited = anchors.filter(anchor => claimAnchors.has(anchorKey(anchor)));
       if (cited.length === 0) fail("supplied reference is unsupported by claim evidence");
-      if (!cited.some(anchor => eventById.get(anchor.event_id)?.subjects.some(subject => subject.kind === raw.kind && subject.id === raw.id))) {
+      if (!cited.some(anchor => {
+        const event = eventById.get(anchor.event_id);
+        return event !== undefined && event.connector_id === raw.namespace.connector_id && event.source_key === raw.namespace.source_key &&
+          event.subjects.some(subject => subject.kind === "supplied" && subject.id === raw.id);
+      })) {
         fail("supplied raw subject is absent from its cited event");
       }
       return raw;
@@ -138,13 +138,17 @@ export function prepareWorldDrafts(
         interpretation: claim.perspective.interpretation,
         anchors: claim.perspective.anchors,
       },
-      context: [...claim.context.map(ref => resolve(ref, anchorKeys))].sort((left, right) => refKey(left).localeCompare(refKey(right))),
+      context: [...claim.context.map(ref => resolve(ref, anchorKeys))].sort((left, right) => {
+        const a = rawSubjectRefKey(left), b = rawSubjectRefKey(right);
+        return a < b ? -1 : a > b ? 1 : 0;
+      }),
       polarity: claim.polarity,
       valid_from: claim.valid_from,
       valid_to: claim.valid_to,
       temporal_basis: claim.temporal_basis,
       anchors: claim.anchors,
     };
+    if (!validateClaimV2Semantic(semantic).ok) fail("resolved claim is not a canonical typed assertion");
     const provenance = [...new Set(anchors.map(anchor => anchor.event_id))].sort();
     const admission = {
       schema: "kizuki.world-admission/v1" as const,
