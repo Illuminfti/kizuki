@@ -24,7 +24,7 @@ import { buildExtractionV2Messages } from "./prompt-v2";
 
 export const MODEL_PRODUCER_V2_ID = "kizuki.producer.model.v2" as const;
 export const MODEL_PRODUCER_V2_DESCRIPTOR: PortDescriptor = validatePortDescriptor({ id: MODEL_PRODUCER_V2_ID, kind: "producer", contract: PRODUCER_V2_CONTRACT, contract_minor: 0, supports: ["model"], requires_lease: false, optional_package: null });
-const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 const MAX_BUDGET_TOKENS = 1_000_000;
 const safeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value);
 

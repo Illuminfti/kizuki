@@ -173,7 +173,7 @@ export type ProduceResultV2 = {
 } | Extract<ProduceResult, {
   status: "rejected";
 }>;
-const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 const RESPONSE_KEYS = ["schema", "mentions", "claims"] as const;
 const MENTION_KEYS = ["id", "label", "anchor", "candidate_refs"] as const;
 const CLAIM_KEYS = [
