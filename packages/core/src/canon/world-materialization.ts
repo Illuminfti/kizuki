@@ -139,8 +139,10 @@ function assertWorldReceiptOwnership(db:Database,receipt:RetainedWorldCanonRecei
   if(current.kind!=="revert")return;
   if(current.reverts===null)fail();
   const target=getCanonReceipt(db,current.reverts!);
+  const deletesTypedRedo=target!==null&&isWorldCanonReceipt(target)&&target.kind==="revert"&&
+   target.page_action==="create"&&target.before_hash===ABSENT_PAGE_HASH&&target.basis.before===null;
   if(target===null||!isWorldCanonReceipt(target)||target.page_path!==current.page_path||
-   (target.archive_path===null&&!(target.kind==="write"&&target.page_action==="create"))||
+   (target.archive_path===null&&!(target.kind==="write"&&target.page_action==="create")&&!deletesTypedRedo)||
    canonicalJson(current.claim_ids)!==canonicalJson(target.claim_ids)||
    canonicalJson(current.superseded)!==canonicalJson(target.superseded)||
    canonicalJson(current.basis.before)!==canonicalJson(target.basis.after)||
