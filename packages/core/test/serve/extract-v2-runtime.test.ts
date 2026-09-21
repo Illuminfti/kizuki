@@ -39,7 +39,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function fixture(supplied = false) {
+function fixture(supplied = false, role = false) {
   const root = mkdtempSync(join(tmpdir(), "extract-v2-runtime-"));
   roots.push(root);
   const vault = join(root, "vault");
@@ -68,7 +68,7 @@ function fixture(supplied = false) {
     ...validEvent(),
     connector_id: "kizuki.fixture",
     source_record_id: "world-runtime",
-    text: "Flux is a synthetic transformation.",
+    text: role ? "Ada joined the orchard library project." : "Flux is a synthetic transformation.",
     subjects: supplied ? [{ subject_id: "concept:flux", role: "about", display_name: "Flux" }] : [],
   }, { source: { source_key: sourceKey, expected_revision: 1 } });
   if (accepted.status !== "stored") throw new Error("fixture capture failed");
@@ -90,7 +90,7 @@ function fixture(supplied = false) {
     async produce(input: ProduceInputV2) {
       calls.count += 1;
       const eventId = input.events[0]!.event_id;
-      const anchor = { event_id: eventId, start_utf16: 0, end_utf16: 4 };
+      const anchor = { event_id: eventId, start_utf16: 0, end_utf16: role ? 3 : 4 };
       if (supplied) {
         expect(input.supplied_refs).toEqual([{ id: "s0", anchors: [anchor] }]);
         expect(JSON.stringify(input)).not.toContain("concept:flux");
@@ -115,8 +115,8 @@ function fixture(supplied = false) {
         status: "ok" as const,
         response: {
           schema: EXTRACT_RESPONSE_V2_SCHEMA,
-          mentions: supplied ? [] : [{ id: "m0", label: "Flux", anchor, candidate_refs: [] }],
-          claims: [
+          mentions: supplied ? [] : [{ id: "m0", label: role ? "Ada" : "Flux", anchor, candidate_refs: [] }],
+          claims: role ? [claim("role", "employment.role", { kind: "literal", value: "orchard library collaborator" }, "Ada is an orchard library collaborator.")] : [
             claim("c0", "world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/concept" } }, "Flux is a concept."),
             claim("c1", "concept.label", { kind: "literal", value: "Flux" }, "The concept is called Flux."),
             claim("c2", "concept.definition", { kind: "literal", value: "A synthetic transformation." }, "Flux is a synthetic transformation."),
@@ -218,6 +218,19 @@ test("v2 filing rollback survives reopen and replays without another provider ca
   } finally {
     f.close();
   }
+});
+
+test("typed production input preserves the existing registered literal predicates", async () => {
+  const f = fixture(false, true);
+  try {
+    const result = await runWritePass(f.db, f.vault, f.options());
+    expect(result.errors).toEqual([]);
+    expect(result.claims_extracted).toBe(1);
+    expect(f.calls.count).toBe(1);
+    const stored = f.db.query<{ payload: string }, []>("SELECT payload FROM claim_v2_semantics").get();
+    expect(JSON.parse(stored!.payload)).toMatchObject({ predicate: "employment.role", object: { kind: "literal", value: "orchard library collaborator" } });
+    expect(f.db.query<{ body: string; object: string | null }, []>("SELECT body,object FROM claims").get()).toEqual({ body: "", object: null });
+  } finally { f.close(); }
 });
 
 test("source-qualified supplied handles survive durable replay and actual typed filing", async () => {

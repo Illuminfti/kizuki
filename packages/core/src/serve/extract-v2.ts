@@ -1,4 +1,5 @@
 import type { CaptureEvent } from "../contracts/event";
+import { PREDICATE_REGISTRY } from "../claims/predicates";
 import {
   WORLD_VOCABULARY,
 } from "../contracts/world-vocabulary";
@@ -29,10 +30,13 @@ const objectKinds = (objects: readonly string[]): ProduceInputV2["predicates"][n
   return [...new Set(mapped)].sort() as ProduceInputV2["predicates"][number]["object_kinds"];
 };
 
-const WORLD_PREDICATES: ProduceInputV2["predicates"] = WORLD_VOCABULARY.map(spec => ({
+const WORLD_PREDICATES: ProduceInputV2["predicates"] = [...PREDICATE_REGISTRY.map(spec => ({
+  id: spec.id,
+  object_kinds: ["literal"] as const,
+})), ...WORLD_VOCABULARY.map(spec => ({
   id: spec.predicate,
   object_kinds: objectKinds(spec.objects),
-}));
+}))];
 const WORLD_VOCABULARY_REFS = [...new Set(WORLD_VOCABULARY.flatMap(spec => spec.vocabulary_values ?? []))].sort();
 
 /** Closed producer-v2 input. Only the host's qualified mapper supplies handles. */
