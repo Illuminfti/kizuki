@@ -273,6 +273,10 @@ export function worldReceiptChain(db: Database, pagePath: string): WorldCanonRec
     ancestry.add(root.receipt_id);
     root = read(root.prior_receipt_id);
   }
+  // A retained root must prove an initial creation. A purge rewrite or revert
+  // cannot turn into one merely by dropping its edge to erased history.
+  if (!isErasedReceipt(root) && (root.kind !== "write" || root.page_action !== "create" ||
+      root.before_hash !== null || root.basis.before !== null || root.reverts !== null)) fail();
   const result: WorldCanonReceiptRecord[] = [], seen = new Set<string>();
   let current = root;
   while (true) {

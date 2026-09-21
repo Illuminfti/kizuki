@@ -226,6 +226,10 @@ function pageSources(bytes: Buffer | null): string[] {
   if (!Array.isArray(sources) || !sources.every(item => typeof item === "string")) recoveryFailure("intent_invalid");
   return sources.map(eventIdFromReference);
 }
+/** Capture and withdrawal must bind the same typed or legacy current record. */
+export function canonPredecessorDigest(db: Database, receipt: CanonReceipt): string {
+  return digest(isWorldCanonReceipt(receipt) ? latestWorldReceiptRecord(db, receipt.page_path) : latestReceiptForPage(db, receipt.page_path));
+}
 export function captureCanonAdmission(db: Database, receipt: CanonReceipt, completion: CanonCompletion, before: Buffer | null, after: Buffer | null, knownClaims?: string[]): CanonAdmission {
   const claimIds = [...new Set(knownClaims ?? [
     ...receipt.claim_ids, ...receipt.superseded.map(ref => ref.claim_id),
@@ -242,7 +246,7 @@ export function captureCanonAdmission(db: Database, receipt: CanonReceipt, compl
     claims: claimIds.map(id => ({ id, digest: queryDigest(db, "SELECT * FROM claims WHERE claim_id=?", id) })),
     events: eventIds.map(id => ({ id, digest: eventDigest(db, id) })), sources,
     derive_ids: [...new Set((completion.mode === "purge" ? pageSources(after) : [...receipt.provenance, ...pageSources(after)]).map(eventIdFromReference))].sort(),
-    predecessor_digest: digest(isWorldCanonReceipt(receipt) ? latestWorldReceiptRecord(db,receipt.page_path) : latestReceiptForPage(db, receipt.page_path)),
+    predecessor_digest: canonPredecessorDigest(db, receipt),
     original_digest: digest(completion.original_receipt_id === null ? null : getCanonReceipt(db, completion.original_receipt_id)),
     page_index_digest: digest(pageIndexByPath(db, receipt.page_path)),
     supersessions_digest: digest(boundedRows(db, "SELECT * FROM claim_supersessions WHERE winner IN (SELECT value FROM json_each(?)) OR loser IN (SELECT value FROM json_each(?)) ORDER BY winner,loser", claimJson, claimJson)),
@@ -262,8 +266,8 @@ export function assertCanonAdmission(db: Database, intent: CanonWriteIntent): vo
     const proofs=completedEventPurgeProofs(db,intent.erasure.proofs.map(item=>item.event_id));
     if(proofs===null||JSON.stringify(proofs)!==JSON.stringify(intent.erasure.proofs))recoveryFailure("authority_changed",intent.receipt.receipt_id);
     const match=/^auto\/world\/([0-9a-f]{32})\.md$/.exec(intent.receipt.page_path);
-    const prior=latestReceiptForPage(db,intent.receipt.page_path);
-    if(match===null||prior===null||!isWorldCanonReceipt(prior)||prior.after_hash!==intent.receipt.before_hash||digest(prior.basis.after)!==digest(intent.receipt.basis.before))recoveryFailure("predecessor_changed",intent.receipt.receipt_id);
+    const prior=latestWorldReceiptRecord(db,intent.receipt.page_path);
+    if(match===null||prior===null||(isErasedReceipt(prior)?intent.receipt.before_hash!==ABSENT_PAGE_HASH||intent.receipt.basis.before!==null:prior.after_hash!==intent.receipt.before_hash||digest(prior.basis.after)!==digest(intent.receipt.basis.before)))recoveryFailure("predecessor_changed",intent.receipt.receipt_id);
     const purged=new Set(proofs.map(proof=>proof.event_id));
     const rows=db.query<CanonReceiptRow,[string]>("SELECT * FROM canon_receipts WHERE page_path=? AND record_codec='kizuki.canon-receipt/v2' ORDER BY receipt_id LIMIT 8193").all(intent.receipt.page_path);
     if(rows.length>8192)recoveryFailure("intent_invalid",intent.receipt.receipt_id);

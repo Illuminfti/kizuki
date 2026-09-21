@@ -2,7 +2,7 @@ import { completedEventPurgeProofs } from "../ledger/purge";
 import { sha256Hex } from "../util/hash";
 import { worldBasisMetadata, selectWorldMaterialization, worldClaimHandle, worldCanonPath, assertWorldBasis } from "./world-materialization";
 import { eraseWorldReceipt, isWorldCanonReceipt, type RetainedWorldCanonReceipt, type WorldCanonBasis } from "./world-receipt";
-import { isErasedReceipt, rowToReceiptRecord, type CanonReceiptRow, latestWorldReceiptRecord, latestReceiptForPage } from "./receipts";
+import { isErasedReceipt, rowToReceiptRecord, type CanonReceiptRow, latestWorldReceiptRecord } from "./receipts";
 import { stageSourceErasureIntent, readSourceErasureIntent, appendSourceErasureReceipt, isLiveSourceSurvivorPath, isLiveSourceSurvivorReceipt, type SourceErasureIntent } from "./source-erasure-intent";
 import {
   getSourceSurvivorLineage,
@@ -794,8 +794,8 @@ function applyWorldPurgeRewrite(scope:VaultMutationScope,io:CanonIo,input:PurgeR
   const records=rows.map(rowToReceiptRecord);
   if(records.some(record=>isErasedReceipt(record)||!isWorldCanonReceipt(record)))throw new CanonWriteError("decision_stale","typed canon history is not retained");
   const retained=records as RetainedWorldCanonReceipt[];
-  const latest=latestReceiptForPage(io.db,input.rel_path);
-  if(latest===null||!isWorldCanonReceipt(latest)||latest.after_hash!==(existing?.hash??ABSENT_PAGE_HASH))throw new CanonWriteError("decision_stale","typed canon preimage has no current receipt");
+  const latest=latestWorldReceiptRecord(io.db,input.rel_path);
+  if(latest===null||(isErasedReceipt(latest)?existing!==null:latest.after_hash!==(existing?.hash??ABSENT_PAGE_HASH)))throw new CanonWriteError("decision_stale","typed canon preimage has no current receipt");
   const match=/^auto\/world\/([0-9a-f]{32})\.md$/.exec(input.rel_path);
   const proof=completedEventPurgeProofs(io.db,input.purged_event_ids.map(eventIdFromReference));
   if(match===null||proof===null||proof.length===0)throw new CanonWriteError("decision_stale","typed erasure requires completed event purge proofs");
@@ -817,7 +817,7 @@ function applyWorldPurgeRewrite(scope:VaultMutationScope,io:CanonIo,input:PurgeR
   const typedMetadata=worldBasisMetadata(io.db,materialization?.basis??null);
   const receipt:RetainedWorldCanonReceipt={
     schema:"kizuki.canon-receipt/v2",state:"retained",own_id_origin:"core",prior_receipt_id:latest.receipt_id,
-    basis:{schema:"kizuki.world-canon-basis/v1",before:latest.basis.after,after:materialization?.basis??null},
+    basis:{schema:"kizuki.world-canon-basis/v1",before:isErasedReceipt(latest)?null:latest.basis.after,after:materialization?.basis??null},
     receipt_id:mintId(io),kind:"purge_rewrite",claim_ids:claims.map(claim=>claim.claim_id),page_path:input.rel_path,page_action:after===null?"archive":"edit",
     before_hash:existing?.hash??ABSENT_PAGE_HASH,after_hash:after===null?ABSENT_PAGE_HASH:hashBytes(after),archive_path:null,writer:"loop",producer:"deterministic",model_ref:null,
     authority:typedMetadata?.authority??"owner_correction",
