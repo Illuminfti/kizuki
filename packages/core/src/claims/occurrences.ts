@@ -1,11 +1,13 @@
 import type { Database } from "bun:sqlite";
-import type { ClaimV2Assertion, RawSubjectRef } from "../contracts/claim-v2";
+import { rawSubjectRefKey, type ClaimV2Assertion, type QualifiedSuppliedRef, type RawSubjectRef } from "../contracts/claim-v2";
 import type { TextAnchor } from "../contracts/producer-v2";
 import { sha256Hex } from "../util/hash";
 import { utf8ByteLength } from "../util/validate";
 import { assertionEndpoints } from "../world/allocation";
 import { ClaimError } from "./errors";
 import { eventFromRow, type EventRow } from "../ledger/event-record";
+import { semanticKey } from "./claim-v2-keys";
+import { readClaimV2Semantic } from "./claim-v2-commit";
 
 export interface OccurrenceEventIdentity {
   readonly connector_id: string; readonly source_record_id: string; readonly event_id: string;
@@ -13,6 +15,12 @@ export interface OccurrenceEventIdentity {
   readonly origin_binding: string; readonly accepted_at: string;
 }
 export interface WorldOccurrenceDraft { readonly anchor: TextAnchor; readonly label: string; }
+export interface WorldEndpointProofOptions { readonly restore?: boolean; }
+type OccurrenceProof = {
+  readonly occurrence_id: string; readonly event_id: string; readonly content_hash_version: number;
+  readonly event_content_hash: string; readonly text_hash: string; readonly origin_binding: string;
+  readonly accepted_at: string; readonly source_key: string | null; readonly start_utf16: number; readonly end_utf16: number;
+};
 function tuple(parts: readonly string[]): string {
   const domain = "kizuki.claim/v2#occurrence";
   return sha256Hex(`${utf8ByteLength(domain)}:${domain}${parts.map((part) => `${utf8ByteLength(part)}:${part}`).join("")}`);
@@ -26,48 +34,102 @@ function anchors(semantic: ClaimV2Assertion): readonly TextAnchor[] {
   return [...semantic.anchors, ...semantic.perspective.anchors];
 }
 
+function qualifiedSupplied(ref: RawSubjectRef): ref is QualifiedSuppliedRef {
+  return ref.kind === "supplied" && "namespace" in ref;
+}
+
+function sameRef(left: RawSubjectRef, right: RawSubjectRef): boolean {
+  return rawSubjectRefKey(left) === rawSubjectRefKey(right);
+}
+
+function eventForAnchor(db: Database, anchor: TextAnchor): { readonly row: EventRow; readonly event: ReturnType<typeof eventFromRow> } | null {
+  const row = db.query<EventRow, [string]>("SELECT * FROM events WHERE event_id=?").get(anchor.event_id);
+  if (row === null) return null;
+  try { return { row, event: eventFromRow(row, db) }; } catch { return null; }
+}
+
+function hasSubject(event: ReturnType<typeof eventFromRow>, id: string): boolean {
+  return event.subjects.some(subject => subject.subject_id === id);
+}
+
+function nativeTarget(event: ReturnType<typeof eventFromRow>): { readonly claim_id: string; readonly semantic_key: string; readonly subject: RawSubjectRef; readonly predicate: string } | null {
+  const target = event.metadata.world_target;
+  if (typeof target !== "object" || target === null || Array.isArray(target) || Object.keys(target).length !== 4) return null;
+  const value = target as { claim_id?: unknown; semantic_key?: unknown; subject?: unknown; predicate?: unknown };
+  if (typeof value.claim_id !== "string" || typeof value.semantic_key !== "string" || typeof value.predicate !== "string" ||
+      typeof value.subject !== "object" || value.subject === null) return null;
+  const subject = value.subject as RawSubjectRef;
+  return qualifiedSupplied(subject) ? { claim_id: value.claim_id, semantic_key: value.semantic_key, subject, predicate: value.predicate } : null;
+}
+
+/** Validates world endpoint provenance without mutating the ledger. */
+export function validateWorldEndpointProofs(
+  db: Database,
+  semantic: ClaimV2Assertion,
+  sourceKey: string | null,
+  options: WorldEndpointProofOptions = {},
+): readonly OccurrenceProof[] {
+  const cited = anchors(semantic).flatMap(anchor => {
+    const stored = eventForAnchor(db, anchor);
+    return stored === null ? [] : [{ anchor, ...stored }];
+  });
+  if (cited.length !== anchors(semantic).length) throw new ClaimError("provenance_unresolved", "world endpoint cites an invalid event");
+  if (sourceKey === null) {
+    const target = cited.map(({ event }) => nativeTarget(event)).find((value): value is NonNullable<typeof value> => value !== null);
+    if (target === undefined || !sameRef(semantic.subject, target.subject) || semantic.predicate !== target.predicate ||
+        !cited.some(({ event }) => hasSubject(event, target.subject.id))) {
+      throw new ClaimError("provenance_unresolved", "native world endpoint lacks its immutable correction target");
+    }
+    if (!options.restore) {
+      const prior = db.query<{ status: string }, [string]>("SELECT status FROM claims WHERE claim_id=?").get(target.claim_id);
+      const priorSemantic = prior?.status === "live" ? readClaimV2Semantic(db, target.claim_id) : null;
+      if (priorSemantic === null || semanticKey(priorSemantic) !== target.semantic_key || priorSemantic.discriminator !== "assertion" ||
+          !sameRef(priorSemantic.subject, target.subject) || priorSemantic.predicate !== target.predicate) {
+        throw new ClaimError("provenance_unresolved", "native world endpoint target is not a live attested claim");
+      }
+    }
+  }
+  const proofs: OccurrenceProof[] = [];
+  for (const ref of assertionEndpoints(semantic)) {
+    if (ref.kind === "supplied") {
+      if (sourceKey === null) continue;
+      if (!qualifiedSupplied(ref)) throw new ClaimError("provenance_unresolved", "qualified world supplied reference needs a source namespace");
+      const found = cited.some(({ event }) =>
+        ref.namespace.source_key === sourceKey && event.connector_id === ref.namespace.connector_id &&
+        db.query("SELECT 1 FROM source_event_bindings WHERE event_id=? AND source_key=?").get(event.event_id, ref.namespace.source_key) !== null &&
+        hasSubject(event, ref.id));
+      if (!found) throw new ClaimError("provenance_unresolved", "supplied world reference is not present in its namespaced cited event");
+      continue;
+    }
+    const match = cited.find(({ anchor, event }) => mintOccurrenceId({
+      connector_id: event.connector_id, source_record_id: event.source_record_id, event_id: event.event_id,
+      content_hash_version: event.content_hash_version, content_hash: event.content_hash, text_hash: event.text_hash,
+      origin_binding: event.origin_binding, accepted_at: "",
+    }, sourceKey, anchor) === ref.id);
+    if (match === undefined) throw new ClaimError("provenance_unresolved", "occurrence world reference has no canonical cited-event proof");
+    proofs.push({ occurrence_id: ref.id, event_id: match.event.event_id,
+      content_hash_version: match.event.content_hash_version, event_content_hash: match.event.content_hash,
+      text_hash: match.event.text_hash, origin_binding: match.event.origin_binding, accepted_at: match.row.accepted_at,
+      source_key: sourceKey, start_utf16: match.anchor.start_utf16, end_utf16: match.anchor.end_utf16 });
+  }
+  return proofs;
+}
+
 /** Mints only references grounded by the exact immutable event revision. */
 export function ensureClaimOccurrences(
   db: Database,
   semantic: ClaimV2Assertion,
   sourceKey: string | null,
 ): void {
-  for (const ref of assertionEndpoints(semantic)) {
-    if (ref.kind === "supplied") {
-      const found = anchors(semantic).some((anchor) => {
-        const row = db.query<{ subjects: string }, [string]>("SELECT subjects FROM events WHERE event_id=?").get(anchor.event_id);
-        if (row === null) return false;
-        try { return (JSON.parse(row.subjects) as unknown[]).some((subject) =>
-          typeof subject === "object" && subject !== null && (subject as { subject_id?: unknown }).subject_id === ref.id);
-        } catch { return false; }
-      });
-      if (!found) throw new ClaimError("provenance_unresolved", "supplied world reference is not present in cited event subjects");
-      continue;
-    }
-    const anchor = anchors(semantic).find((candidate) => {
-      const row = db.query<{ connector_id: string; source_record_id: string; content_hash_version: number; content_hash: string; text_hash: string }, [string]>(
-        "SELECT connector_id,source_record_id,content_hash_version,content_hash,text_hash FROM events WHERE event_id=?",
-      ).get(candidate.event_id);
-      return row !== null && mintOccurrenceId({ ...row, event_id: candidate.event_id, origin_binding: "", accepted_at: "" }, sourceKey, candidate) === ref.id;
-    });
-    if (anchor === undefined) throw new ClaimError("provenance_unresolved", "occurrence world reference has no canonical cited-event proof");
-    const row = db.query<{ connector_id: string; content_hash_version: number; content_hash: string; text_hash: string }, [string]>(
-      "SELECT connector_id,content_hash_version,content_hash,text_hash FROM events WHERE event_id=?",
-    ).get(anchor.event_id);
-    if (row === null) throw new ClaimError("provenance_unresolved", "occurrence event is missing");
+  for (const proof of validateWorldEndpointProofs(db, semantic, sourceKey)) {
     const prior = db.query<{ event_id: string; content_hash_version: number; event_content_hash: string; text_hash: string; origin_binding: string; accepted_at: string; source_key: string | null; start_utf16: number; end_utf16: number }, [string]>(
       "SELECT * FROM claim_occurrences WHERE occurrence_id=?",
-    ).get(ref.id);
-    const identity = db.query<{ origin_binding: string; accepted_at: string }, [string]>("SELECT origin_binding,accepted_at FROM events WHERE event_id=?").get(anchor.event_id);
-    if (identity === null) throw new ClaimError("provenance_unresolved", "occurrence event is missing");
-    const proof = { event_id: anchor.event_id,
-      content_hash_version: row.content_hash_version, event_content_hash: row.content_hash, text_hash: row.text_hash, origin_binding: identity.origin_binding, accepted_at: identity.accepted_at, source_key: sourceKey,
-      start_utf16: anchor.start_utf16, end_utf16: anchor.end_utf16 };
+    ).get(proof.occurrence_id);
     if (prior !== null && (prior.event_id !== proof.event_id || prior.content_hash_version !== proof.content_hash_version || prior.event_content_hash !== proof.event_content_hash || prior.text_hash !== proof.text_hash || prior.origin_binding !== proof.origin_binding || prior.accepted_at !== proof.accepted_at || prior.source_key !== proof.source_key || prior.start_utf16 !== proof.start_utf16 || prior.end_utf16 !== proof.end_utf16)) throw new ClaimError("schema_invalid", "occurrence identity collision has a different mint tuple");
     if (prior === null) db.query(
       `INSERT INTO claim_occurrences(occurrence_id,event_id,content_hash_version,event_content_hash,text_hash,origin_binding,accepted_at,source_key,start_utf16,end_utf16)
        VALUES (?,?,?,?,?,?,?,?,?,?)`,
-    ).run(ref.id, proof.event_id, proof.content_hash_version, proof.event_content_hash, proof.text_hash, proof.origin_binding, proof.accepted_at, proof.source_key, proof.start_utf16, proof.end_utf16);
+    ).run(proof.occurrence_id, proof.event_id, proof.content_hash_version, proof.event_content_hash, proof.text_hash, proof.origin_binding, proof.accepted_at, proof.source_key, proof.start_utf16, proof.end_utf16);
   }
 }
 

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
 import { CLAIM_V2_SCHEMA, type ClaimV2Assertion } from "../../src/contracts/claim-v2";
 import { recordNativeCorrection } from "../../src/correction/evidence";
-import { ensureClaimOccurrences, mintOccurrenceId, validateStoredClaimOccurrences, type OccurrenceEventIdentity } from "../../src/claims/occurrences";
+import { ensureClaimOccurrences, mintOccurrenceId, validateStoredClaimOccurrences, validateWorldEndpointProofs, type OccurrenceEventIdentity } from "../../src/claims/occurrences";
 import { registerConnection } from "../../src/ledger/connections";
 import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
@@ -77,10 +77,31 @@ function occurrenceSemanticAt(event: StoredEvent, sourceKey: string | null, anch
   };
 }
 
+function suppliedSemantic(event: StoredEvent, sourceKey: string): ClaimV2Assertion {
+  const anchor = { event_id: event.event_id, start_utf16: 0, end_utf16: 1 };
+  return {
+    schema: CLAIM_V2_SCHEMA, discriminator: "assertion",
+    subject: { kind: "supplied", id: "person:ada", namespace: { connector_id: event.connector_id, source_key: sourceKey } },
+    predicate: "role.holds", object: { kind: "literal", value: "fixture subject" },
+    perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] },
+    context: [], polarity: "positive", valid_from: "2026-01-01T00:00:00.000Z", valid_to: null,
+    temporal_basis: "explicit", anchors: [anchor],
+  };
+}
+
 function seedOccurrence(db: Database, event: StoredEvent, sourceKey: string | null): ClaimV2Assertion {
   const semantic = occurrenceSemantic(event, sourceKey);
   ensureClaimOccurrences(db, semantic, sourceKey);
   return semantic;
+}
+
+function seedStoredOccurrence(db: Database, event: StoredEvent, sourceKey: string | null): void {
+  const anchor = { event_id: event.event_id, start_utf16: 1, end_utf16: 3 };
+  db.query(`INSERT INTO claim_occurrences(occurrence_id,event_id,content_hash_version,event_content_hash,text_hash,origin_binding,accepted_at,source_key,start_utf16,end_utf16)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+    mintOccurrenceId(event, sourceKey, anchor), event.event_id, event.content_hash_version, event.content_hash,
+    event.text_hash, event.origin_binding, event.accepted_at, sourceKey, anchor.start_utf16, anchor.end_utf16,
+  );
 }
 
 function expectInvalid(db: Database): void {
@@ -92,13 +113,45 @@ test("stored source and native occurrence proofs restore when every immutable id
   const native = nativeFixture();
   try {
     seedOccurrence(source.db, source.event, source.sourceKey);
-    seedOccurrence(native.db, native.event, null);
+    seedStoredOccurrence(native.db, native.event, null);
     expect(() => validateStoredClaimOccurrences(source.db)).not.toThrow();
     expect(() => validateStoredClaimOccurrences(native.db)).not.toThrow();
   } finally {
     source.db.close();
     native.db.close();
   }
+});
+
+test("qualified supplied endpoints require their exact cited connector and source binding", () => {
+  const fixture = sourceFixture();
+  try {
+    const qualified = suppliedSemantic(fixture.event, fixture.sourceKey);
+    expect(validateWorldEndpointProofs(fixture.db, qualified, fixture.sourceKey)).toEqual([]);
+    const legacy: ClaimV2Assertion = { ...qualified, subject: { kind: "supplied", id: "person:ada" } };
+    expect(() => validateWorldEndpointProofs(fixture.db, legacy, fixture.sourceKey)).toThrow("qualified world supplied reference needs a source namespace");
+    const otherSource = grantSource(fixture.db, "other-fixture");
+    const wrongNamespace = suppliedSemantic(fixture.event, otherSource);
+    expect(() => validateWorldEndpointProofs(fixture.db, wrongNamespace, fixture.sourceKey)).toThrow("namespaced cited event");
+  } finally { fixture.db.close(); }
+});
+
+test("native endpoint proof restores from immutable target metadata without a live prior claim", () => {
+  const db = openLedger(":memory:");
+  applyWorldTables(db);
+  const sourceKey = ulid();
+  const subject = { kind: "supplied" as const, id: "person:ada", namespace: { connector_id: "fixture", source_key: sourceKey } };
+  try {
+    const native = recordNativeCorrection(db, {
+      ...validEvent(), connector_id: "kizuki.owner", source_record_id: `native-target-${crypto.randomUUID()}`,
+      text: "Ada is the fixture subject.", metadata: {
+        world_target: { claim_id: ulid(), semantic_key: "a".repeat(64), subject, predicate: "role.holds" },
+      },
+    }, "b".repeat(64));
+    const event = readEvent(db, native.event_id);
+    const semantic: ClaimV2Assertion = { ...suppliedSemantic(event, sourceKey), subject };
+    expect(validateWorldEndpointProofs(db, semantic, null, { restore: true })).toEqual([]);
+    expect(() => validateWorldEndpointProofs(db, semantic, null)).toThrow("live attested claim");
+  } finally { db.close(); }
 });
 
 test("restore rejects an occurrence whose stored source binding names another source", () => {
@@ -115,7 +168,7 @@ test("restore rejects an occurrence whose stored source binding names another so
 test("restore rejects a native occurrence relabeled as source-backed", () => {
   const fixture = nativeFixture();
   try {
-    seedOccurrence(fixture.db, fixture.event, null);
+    seedStoredOccurrence(fixture.db, fixture.event, null);
     const sourceKey = grantSource(fixture.db);
     const anchor = { event_id: fixture.event.event_id, start_utf16: 1, end_utf16: 3 };
     fixture.db.query("UPDATE claim_occurrences SET source_key=?,occurrence_id=?").run(sourceKey, mintOccurrenceId(fixture.event, sourceKey, anchor));
