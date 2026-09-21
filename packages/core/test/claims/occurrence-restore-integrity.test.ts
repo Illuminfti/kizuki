@@ -151,6 +151,39 @@ test("native endpoint proof restores from immutable target metadata without a li
     const semantic: ClaimV2Assertion = { ...suppliedSemantic(event, sourceKey), subject };
     expect(validateWorldEndpointProofs(db, semantic, null, { restore: true })).toEqual([]);
     expect(() => validateWorldEndpointProofs(db, semantic, null)).toThrow("live attested claim");
+    const foreign: ClaimV2Assertion = { ...semantic, context: [{ kind: "supplied", id: "person:other", namespace: subject.namespace }] };
+    expect(() => validateWorldEndpointProofs(db, foreign, null, { restore: true })).toThrow("immutable correction target");
+  } finally { db.close(); }
+});
+
+test("source metadata cannot masquerade as a native correction proof", () => {
+  const fixture = sourceFixture();
+  try {
+    const subject = { kind: "supplied" as const, id: "person:ada", namespace: { connector_id: "fixture", source_key: fixture.sourceKey } };
+    const accepted = accept(fixture.db, {
+      ...validEvent(), connector_id: "fixture", source_record_id: `masquerade-${crypto.randomUUID()}`,
+      metadata: { world_target: { claim_id: ulid(), semantic_key: "a".repeat(64), subject, predicate: "role.holds" } },
+    }, { source: { source_key: fixture.sourceKey, expected_revision: 1 } });
+    if (accepted.status !== "stored") throw new Error("masquerade fixture event was refused");
+    const event = readEvent(fixture.db, accepted.event.event_id);
+    const semantic: ClaimV2Assertion = { ...suppliedSemantic(event, fixture.sourceKey), subject };
+    expect(() => validateWorldEndpointProofs(fixture.db, semantic, null, { restore: true })).toThrow("immutable correction target");
+  } finally { fixture.db.close(); }
+});
+
+test("native target metadata rejects an extended supplied reference", () => {
+  const db = openLedger(":memory:");
+  applyWorldTables(db);
+  const sourceKey = ulid();
+  const subject = { kind: "supplied" as const, id: "person:ada", namespace: { connector_id: "fixture", source_key: sourceKey } };
+  try {
+    const native = recordNativeCorrection(db, {
+      ...validEvent(), connector_id: "kizuki.owner", source_record_id: `native-extended-${crypto.randomUUID()}`,
+      metadata: { world_target: { claim_id: ulid(), semantic_key: "a".repeat(64), subject: { ...subject, extra: "forged" }, predicate: "role.holds" } },
+    }, "c".repeat(64));
+    const event = readEvent(db, native.event_id);
+    const semantic: ClaimV2Assertion = { ...suppliedSemantic(event, sourceKey), subject };
+    expect(() => validateWorldEndpointProofs(db, semantic, null, { restore: true })).toThrow("immutable correction target");
   } finally { db.close(); }
 });
 
