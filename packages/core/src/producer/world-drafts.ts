@@ -7,9 +7,10 @@ import {
   type TextAnchor,
 } from "../contracts/producer-v2";
 import { mintOccurrenceId, type OccurrenceEventIdentity } from "../claims/occurrences";
+import type { InsertClaimInput } from "../claims/store";
 
 /** The portion of the shared writer input produced by the model adapter. */
-export interface WorldDraftInsert {
+export interface WorldDraftInsert extends InsertClaimInput {
   readonly kind: "claim";
   readonly body: string;
   readonly frontmatter: Record<string, FrontmatterValue>;
