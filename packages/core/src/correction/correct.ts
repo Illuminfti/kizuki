@@ -387,10 +387,10 @@ function correctionMeaning(io:CorrectIo,live:Claim) {
   const prior=readClaimV2Semantic(io.db,live.claim_id);
   if(prior===null) return null;
   if(prior.schema!=="kizuki.claim-meaning/v1" || prior.discriminator!=="assertion" || prior.object.kind!=="literal" ||
-    prior.subject.kind!=="supplied" || !("namespace" in prior.subject) || prior.context.length!==0 || prior.polarity!=="positive" ||
+    (prior.subject.kind!=="occurrence" && !("namespace" in prior.subject)) || prior.context.length!==0 || prior.polarity!=="positive" ||
     prior.perspective.holder!==null || prior.perspective.speaker!==null || prior.perspective.addressee!==null ||
     prior.perspective.mode!=="asserted" || prior.perspective.interpretation!=="explicit" || io.relay_owner_corrections===false)
-    throw new CorrectError("ledger_rejected","typed correction requires a plain supplied-subject literal assertion");
+    throw new CorrectError("ledger_rejected","typed correction requires a plain qualified-subject literal assertion");
   return prior;
 }
 

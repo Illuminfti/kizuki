@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { OWNER } from "../../src/agents";
 import { insertClaim } from "../../src/claims/store";
+import { mintOccurrenceId } from "../../src/claims/occurrences";
 import type { ClaimV2Assertion } from "../../src/contracts/claim-v2";
 import type { RetrievalPort } from "../../src/contracts/retrieval";
 import { WORLD_ADMISSION_SCHEMA } from "../../src/contracts/world-admission";
@@ -23,6 +24,7 @@ export async function worldFixture(
     sourceKey?: string;
     perspectiveEvidence?: boolean;
     retrieval?: RetrievalPort;
+    occurrence?: boolean;
   } = {},
 ) {
   const sourceKey = options.sourceKey ?? ulid(),
@@ -83,7 +85,11 @@ export async function worldFixture(
     const semantic: ClaimV2Assertion = {
       schema: "kizuki.claim/v2",
       discriminator: "assertion",
-      subject: {
+      subject: options.occurrence ? {
+        kind: "occurrence",
+        id: mintOccurrenceId({ ...event, accepted_at: "" }, sourceKey,
+          { event_id: event.event_id, start_utf16: 0, end_utf16: label.length }),
+      } : {
         kind: "supplied",
         id: subject,
         namespace: { connector_id: connector, source_key: sourceKey },

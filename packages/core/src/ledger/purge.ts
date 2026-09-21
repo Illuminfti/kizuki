@@ -1199,15 +1199,11 @@ function purgeEventsOwned(
       `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
        VALUES (?, ?, ?, ?)`,
     );
-    const deleteEvent = db.query<never, [string]>(
-      "DELETE FROM events WHERE event_id = ?",
+    const deleteEvent = db.query<{ event_id: string }, [string]>(
+      "DELETE FROM events WHERE event_id = ? RETURNING event_id",
     );
-    // `claim_v2_support_events.event_id` carries ON DELETE CASCADE, and the
-    // cascaded row lands in the same change count as the event itself, which
-    // the one-row assertion below reads as a purge that hit the wrong number
-    // of events. Drop the evidence link first so the event delete stays the
-    // single row it certifies. The surviving support row is a derived
-    // provenance union and is rebuildable (RFC 0002 invariant 4).
+    // Remove legacy support-event links as part of the same purge transaction.
+    // The surviving support row is derived and rebuildable (RFC 0002 invariant 4).
     const deleteSupportEvents = claimV2TablesPresent(db)
       ? db.query<never, [string]>(
           "DELETE FROM claim_v2_support_events WHERE event_id = ?",
@@ -1246,8 +1242,10 @@ function purgeEventsOwned(
       db.query("INSERT INTO purge_batch_receipts VALUES(?,?)").run(receipt.receipt_id, batchReceipt);
       eraseWorldEventSupports(db,candidate.event_id);
       deleteSupportEvents?.run(candidate.event_id);
-      const deleted = deleteEvent.run(candidate.event_id);
-      assertDeleted(deleted.changes, candidate.event_id);
+      // Bun's run().changes includes FK cascades such as occurrence snapshots.
+      // RETURNING counts only the exact event rows this receipt certifies.
+      const deleted = deleteEvent.all(candidate.event_id);
+      assertDeleted(deleted.length, candidate.event_id);
       receipts.push(receipt);
     }
 

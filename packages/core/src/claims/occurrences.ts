@@ -44,6 +44,11 @@ function qualifiedSupplied(ref: RawSubjectRef): ref is QualifiedSuppliedRef {
     typeof namespace.source_key === "string" && isUlid(namespace.source_key);
 }
 
+function canonicalOccurrence(ref: RawSubjectRef): boolean {
+  return typeof ref === "object" && ref !== null && Object.keys(ref).length === 2 &&
+    ref.kind === "occurrence" && typeof ref.id === "string" && /^[a-f0-9]{64}$/.test(ref.id);
+}
+
 function sameRef(left: RawSubjectRef, right: RawSubjectRef): boolean {
   return rawSubjectRefKey(left) === rawSubjectRefKey(right);
 }
@@ -65,7 +70,8 @@ function nativeTarget(event: ReturnType<typeof eventFromRow>): { readonly claim_
   if (typeof value.claim_id !== "string" || !isUlid(value.claim_id) || typeof value.semantic_key !== "string" || !/^[a-f0-9]{64}$/.test(value.semantic_key) || typeof value.predicate !== "string" ||
       typeof value.subject !== "object" || value.subject === null) return null;
   const subject = value.subject as RawSubjectRef;
-  return qualifiedSupplied(subject) ? { claim_id: value.claim_id, semantic_key: value.semantic_key, subject, predicate: value.predicate } : null;
+  return qualifiedSupplied(subject) || canonicalOccurrence(subject)
+    ? { claim_id: value.claim_id, semantic_key: value.semantic_key, subject, predicate: value.predicate } : null;
 }
 
 function isNativeCorrection(db: Database, event: ReturnType<typeof eventFromRow>): boolean {
@@ -90,7 +96,7 @@ export function validateWorldEndpointProofs(
     const target = cited.map(({ event }) => isNativeCorrection(db, event) ? nativeTarget(event) : null).find((value): value is NonNullable<typeof value> => value !== null);
     if (target === undefined || canonicalJson(semantic.subject) !== canonicalJson(target.subject) || semantic.predicate !== target.predicate ||
         !cited.some(({ event }) => isNativeCorrection(db, event) && hasSubject(event, target.subject.id)) ||
-        assertionEndpoints(semantic).some(ref => !qualifiedSupplied(ref) || canonicalJson(ref) !== canonicalJson(target.subject))) {
+        assertionEndpoints(semantic).some(ref => canonicalJson(ref) !== canonicalJson(target.subject))) {
       throw new ClaimError("provenance_unresolved", "native world endpoint lacks its immutable correction target");
     }
     if (!options.restore) {
@@ -101,6 +107,11 @@ export function validateWorldEndpointProofs(
         throw new ClaimError("provenance_unresolved", "native world endpoint target is not a live attested claim");
       }
     }
+    // The immutable correction target attests the existing endpoint. It does
+    // not mint an occurrence from the owner's replacement text or retain the
+    // original source event after erasure. Admission checks the live prior;
+    // restore checks this independent native attestation instead.
+    return [];
   }
   const proofs: OccurrenceProof[] = [];
   for (const ref of assertionEndpoints(semantic)) {
