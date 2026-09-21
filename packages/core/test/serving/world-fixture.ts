@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { OWNER } from "../../src/agents";
 import { insertClaim } from "../../src/claims/store";
 import type { ClaimV2Assertion } from "../../src/contracts/claim-v2";
+import type { RetrievalPort } from "../../src/contracts/retrieval";
 import { WORLD_ADMISSION_SCHEMA } from "../../src/contracts/world-admission";
 import { registerConnection } from "../../src/ledger/connections";
 import { accept } from "../../src/ledger/ledger";
@@ -21,6 +22,7 @@ export async function worldFixture(
     connector?: string;
     sourceKey?: string;
     perspectiveEvidence?: boolean;
+    retrieval?: RetrievalPort;
   } = {},
 ) {
   const sourceKey = options.sourceKey ?? ulid(),
@@ -114,7 +116,7 @@ export async function worldFixture(
       ],
     };
     const stored = await insertClaim(
-      { db },
+      { db, ...(options.retrieval === undefined ? {} : { retrieval: options.retrieval }) },
       {
         kind: "claim",
         body: `${predicate}: ${JSON.stringify(object)}`,
