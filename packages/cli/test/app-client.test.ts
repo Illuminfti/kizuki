@@ -202,16 +202,16 @@ test('Activity distinguishes loading and unavailable from an empty receipt histo
     const f = fixture();
     f.evaluate(`navigate('activity')`);
     expect(f.main.textContent).toContain('Loading activity');
-    expect(f.main.textContent).not.toContain('No receipted changes yet');
+    expect(f.main.textContent).not.toContain('No receipted memory changes yet');
     const pending = f.requests.splice(f.requests.findIndex(row => row.route === 'activity'), 1)[0]!;
     pending.result.resolve({ status: 503, json: async () => ({ ok: false, error: { code: 'unavailable' } }) });
     await tick();
     expect(f.main.textContent).toContain('Activity is unavailable');
-    expect(f.main.textContent).not.toContain('No receipted changes yet');
+    expect(f.main.textContent).not.toContain('No receipted memory changes yet');
     const retry = findAction(f.main, 'Retry activity').fire('click');
     expect(f.main.textContent).toContain('Loading activity');
     f.reply('activity', { receipts: [] }); await retry;
-    expect(f.main.textContent).toContain('No receipted changes yet');
+    expect(f.main.textContent).toContain('No receipted memory changes yet');
     expect(f.main.textContent).not.toContain('Activity is unavailable');
 });
 
@@ -435,14 +435,14 @@ test('sources distinguish incomplete history from a finished backfill without pr
     const f = fixture();
     f.evaluate(`state.view='sources'; Object.assign(state.sources[0], {last_run:'2026-09-07T00:00:00Z', stored:3, backfill_complete:false}); render();`);
     expect(f.main.textContent).toContain('History import is incomplete');
-    expect(f.main.textContent).toContain('3 saved in the last check');
+    expect(f.main.textContent).toContain('Last check: 3 new items');
     f.evaluate(`state.sources[0].backfill_complete=true; render();`);
     expect(f.main.textContent).toContain('History import reached the end reported by this source');
     expect(f.main.textContent).not.toContain('History import is incomplete');
     expect(f.main.textContent).toContain('This does not confirm complete date coverage');
     f.evaluate(`state.sources[0].last_run=null; state.sources[0].backfill_complete=null; render();`);
     expect(f.main.textContent).toContain('No capture checkpoint yet');
-    expect(f.main.textContent).not.toContain('3 saved in the last check');
+    expect(f.main.textContent).not.toContain('Last check: 3 new items');
 });
 
 test('source enrollment focuses the labeled folder field instead of the close control', () => {
@@ -590,11 +590,11 @@ test('partial initialization refreshes the saved vault and opens background reco
     f.reply('operation', job); await tick();
     f.reply('status', status([job], 'ready')); await tick();
     f.reply('catalog', { sources: [] }); f.reply('sources', { sources: [] }); await tick();
-    if (f.requests.some(request => request.route === 'service_status')) f.reply('service_status', {state:'absent',kind:'systemd',intent:'unknown',detail:'Enable background activity to retry.',checked_at:'2026-09-05T00:00:00Z'});
     await work; await tick();
+    if (f.requests.some(request => request.route === 'service_status')) { f.reply('service_status', {state:'absent',kind:'systemd',intent:'unknown',detail:'Enable background activity to retry.',checked_at:'2026-09-05T00:00:00Z'}); await tick(); }
     expect(f.evaluate<boolean>('state.status.vault.ready')).toBe(true);
     expect(f.evaluate<string>('state.view')).toBe('settings');
-    expect(f.main.textContent).toContain('Enable background activity');
+    expect(f.main.textContent).toContain('Workspace and service');
     expect(f.notice.textContent).toContain('workspace is saved');
 });
 
@@ -809,6 +809,28 @@ test('processing reports real run receipt counts and does not equate capture wit
     expect(f.main.textContent).not.toContain('9 memory writes');
 });
 
+test('Agents is a first-class destination that distinguishes stored access from a live connection', () => {
+    const f = fixture();
+    f.evaluate(`state.view='agents'; state.agents=[{name:'client-a',revoked_at:null,grant:{ceiling:'private',types:null,subjects:null,since:null,until:null,tools:['search','get_page'],rate_limit_per_minute:60,relay_owner_corrections:false}},{name:'client-b',revoked_at:'2026-09-07T00:00:00Z',grant:{ceiling:'public',types:null,subjects:null,since:null,until:null,tools:['search'],rate_limit_per_minute:60,relay_owner_corrections:false}}]; render();`);
+    expect(f.main.textContent).toContain('Agent access.'); expect(f.main.textContent).toContain('Access active'); expect(f.main.textContent).toContain('Access revoked');
+    expect(f.main.textContent).toContain('does not infer a live client connection'); expect(f.main.textContent).toContain('Search memory, Read memory pages');
+    expect(findAction(f.main, 'Revoke access')).toBeTruthy();
+});
+
+test('completed capture receipt is dismissed after navigation while failed capture remains recoverable', () => {
+    const f = fixture();
+    f.evaluate(`state.operation={id:'capture-complete',kind:'capture',state:'succeeded',counts:{stored:1}}; navigate('activity');`);
+    expect(f.main.textContent).not.toContain('Import progress saved');
+    f.evaluate(`state.operation={id:'capture-failed',kind:'capture',state:'failed',error:{code:'unavailable'}}; navigate('sources');`);
+    expect(f.main.textContent).toContain('This step needs attention');
+});
+
+test('empty Activity explains model-free evidence and links to real next actions', () => {
+    const f = fixture(); f.evaluate(`state.view='activity'; state.activityStatus='loaded'; state.receipts=[]; render();`);
+    expect(f.main.textContent).toContain('Import creates searchable source evidence');
+    expect(findAction(f.main, 'Search evidence')).toBeTruthy(); expect(findAction(f.main, 'Model settings')).toBeTruthy();
+});
+
 test('late model status and save cannot reopen private panels after disconnect', async () => {
     const f = fixture(); const work = f.evaluate<Promise<void>>('modelSettings()');
     f.evaluate('disconnect()'); f.reply('model_status', modelStatus()); await work;
@@ -938,6 +960,15 @@ test('agent records and deferred enrollment results cannot return after privacy 
     const f = fixture(); const work = f.evaluate<Promise<void>>('loadAgents()');
     f.evaluate('invalidatePrivateView()'); f.reply('agents', { agents: [{ name: 'PRIVATE_AGENT' }] }); await work;
     expect(f.evaluate('state.agents')).toBeNull(); expect(f.main.textContent + f.dialog.textContent).not.toContain('PRIVATE_AGENT');
+});
+
+test('agent route rerenders a stored authorization after the agents response arrives', async () => {
+    const f = fixture(); f.evaluate(`state.view='agents'; render();`);
+    const work = f.evaluate<Promise<void>>('loadAgents()');
+    f.reply('agents', { agents: [{ name: 'reader-client', revoked_at: null, grant: readGrant }] }); await work;
+    expect(f.main.textContent).toContain('reader-client');
+    expect(f.main.textContent).toContain('Access active');
+    expect(f.main.textContent).toContain('does not infer a live client connection');
 });
 
 test('agent setup refuses invalid names and reversed time windows before enrollment', async () => {

@@ -5,7 +5,7 @@ const SESSION_KEY = 'kizuki.app.session';
 const main = document.getElementById('main');
 const dialog = document.getElementById('dialog');
 const notice = document.getElementById('notification');
-const state = { view: 'memory', status: null, service: null, model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], activityStatus: 'idle', hits: null, query: '', degraded: [], busy: false, operation: null, setupError: null };
+const state = { view: 'memory', status: null, service: null, model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], activityStatus: 'idle', hits: null, query: '', degraded: [], busy: false, operation: null, dismissedCaptureId: null, setupError: null };
 let bearer = null;
 let noticeTimer;
 let dialogCleanup = null;
@@ -25,6 +25,7 @@ const icons = {
   memory: ['M7 3.5h10a2 2 0 0 1 2 2v15l-7-3-7 3v-15a2 2 0 0 1 2-2Z', 'M9 8h6M9 11.5h4'],
   sources: ['M5 4h4v4H5zM15 16h4v4h-4zM4 16h5v4H4z', 'M7 8v3a3 3 0 0 0 3 3h4a3 3 0 0 1 3 3M7 14v2M15 4h5v5h-5zM15 7h-3a5 5 0 0 0-5 5'],
   activity: ['M3 12h4l3-8 4 16 3-8h4'],
+  agents: ['M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM16 10a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM3.5 20a4.5 4.5 0 0 1 9 0M13 20a3.5 3.5 0 0 1 7 0'],
   settings: ['M5 4v16M12 4v16M19 4v16', 'M3 8h4M10 16h4M17 9h4'],
   folder: ['M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z'],
   mail: ['M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z', 'm3 6 9 7 9-7'],
@@ -163,17 +164,19 @@ function renderDisconnected() {
   main.replaceChildren(el('section', { class: 'empty-state' }, icon('lock'), el('h2', {}, 'Open Kizuki to continue'), el('p', {}, 'This private workspace opens from the Kizuki app on your device. Close this tab and open the app again to reconnect.')));
 }
 function navigate(view, focus = true) {
-  if (!['memory', 'sources', 'activity', 'settings'].includes(view)) return;
+  if (!['memory', 'sources', 'activity', 'agents', 'settings'].includes(view)) return;
+  if (state.operation?.kind === 'capture' && state.operation.state === 'succeeded') state.dismissedCaptureId = state.operation.id ?? 'completed-capture';
   if (dialog.open) closeDialog();
   state.view = view;
   render();
   if (focus) main.focus({ preventScroll: true });
   if (view === 'activity' && state.status?.vault.ready) loadActivity();
-  if (view === 'settings' && state.status?.vault.ready) { loadService(); loadAgents(); }
+  if (view === 'settings' && state.status?.vault.ready) loadService();
+  if (view === 'agents' && state.status?.vault.ready) loadAgents();
   if (['settings', 'sources'].includes(view) && state.status?.vault.ready) loadModel();
 }
 function renderNavigation() {
-  document.getElementById('navigation').replaceChildren(...[['memory', 'Memory'], ['sources', 'Sources'], ['activity', 'Activity'], ['settings', 'Settings']].map(([id, title]) => el('a', { class: 'nav-link', href: `#${id}`, 'aria-current': state.view === id ? 'page' : undefined, onclick: event => { event.preventDefault(); navigate(id); } }, icon(id), title)));
+  document.getElementById('navigation').replaceChildren(...[['memory', 'Memory'], ['sources', 'Sources'], ['activity', 'Activity'], ['agents', 'Agents'], ['settings', 'Settings']].map(([id, title]) => el('a', { class: 'nav-link', href: `#${id}`, 'aria-current': state.view === id ? 'page' : undefined, onclick: event => { event.preventDefault(); navigate(id); } }, icon(id), title)));
   document.getElementById('view-label').textContent = state.view.charAt(0).toUpperCase() + state.view.slice(1);
 }
 function heading(title, description, action) { return el('div', { class: 'page-heading' }, el('div', {}, el('h1', {}, title), description && el('p', {}, description)), action); }
@@ -338,7 +341,7 @@ function renderSources() {
       const active = source.consent === 'active';
       const removing = source.consent === 'denied';
       const status = active ? 'Permission granted' : source.consent === 'purged' ? 'Removed' : removing ? 'Removal pending' : 'Needs permission';
-      const row = el('div', { class: 'source-row' }, el('div', { class: 'source-icon' }, icon(providerIcon(source.connector_id))), el('div', { class: 'source-info' }, el('h3', {}, sourceLabel(source)), el('p', {}, el('span', { class: `badge${active ? ' badge-active' : ''}` }, status)), el('p', {}, source.last_run ? `${safeCount(source.stored)} saved in the last check · ${dateText(source.last_run)}` : 'No capture checkpoint yet.'), el('p', {}, source.backfill_complete === true ? 'History import reached the end reported by this source. This does not confirm complete date coverage.' : source.backfill_complete === false ? 'History import is incomplete. Use Import history to continue from the saved checkpoint when permitted.' : 'History import coverage has not been confirmed.'), source.errors > 0 && el('p', {}, 'The last capture reported a problem. Check before relying on complete coverage.')));
+      const row = el('div', { class: 'source-row' }, el('div', { class: 'source-icon' }, icon(providerIcon(source.connector_id))), el('div', { class: 'source-info' }, el('h3', {}, sourceLabel(source)), el('p', {}, el('span', { class: `badge${active ? ' badge-active' : ''}` }, status)), el('p', {}, source.last_run ? `Last check: ${safeCount(source.stored)} new item${source.stored === 1 ? '' : 's'} · ${dateText(source.last_run)}` : 'No capture checkpoint yet.'), source.last_run && el('p', {}, 'This is the most recent check, not a lifetime capture total.'), el('p', {}, source.backfill_complete === true ? 'History import reached the end reported by this source. This does not confirm complete date coverage.' : source.backfill_complete === false ? 'History import is incomplete. Use Import history to continue from the saved checkpoint when permitted.' : 'History import coverage has not been confirmed.'), source.errors > 0 && el('p', {}, 'The last capture reported a problem. Check before relying on complete coverage.')));
       const actions = el('div', { class: 'source-actions' });
       if (active) actions.append(button('Import history', () => capture(source)), button('Privacy', () => privacy(source)));
       else if (removing) actions.append(button('Check removal', () => resumeRemoval(source)));
@@ -440,7 +443,7 @@ function consent(source) {
   });
   focusDialog(content);
 }
-async function capture(source) { await launchOperation('capture', { source_key: source.source_key, mode: 'backfill' }, 'Importing your history', async (operation, present) => { await refresh(); if (!present()) return; navigate('memory'); message(operation.counts ? `${safeCount(operation.counts.stored)} saved · ${safeCount(operation.counts.duplicates)} already present${operation.counts.errors ? ` · ${safeCount(operation.counts.errors)} problems reported` : ''}` : 'Capture completed. Check Sources for its latest coverage.'); }); }
+async function capture(source) { await launchOperation('capture', { source_key: source.source_key, mode: 'backfill' }, 'Importing your history', async (operation, present) => { await refresh(); if (!present()) return; state.dismissedCaptureId = operation.id; navigate('memory'); message(operation.counts ? `${safeCount(operation.counts.stored)} saved · ${safeCount(operation.counts.duplicates)} already present${operation.counts.errors ? ` · ${safeCount(operation.counts.errors)} problems reported` : ''}` : 'Capture completed. Check Sources for its latest coverage.'); }); }
 function privacy(source) {
   const content = openDialog('This source stays under your control.', sourceLabel(source), 'lock');
   content.append(el('div', { class: 'consent-summary' }, ...[['Current permission', source.consent], ['Fields needed by this connection', source.required_fields.join(', ')], ['Last capture', dateText(source.last_run)]].map(([label,value]) => el('div', {}, el('span', {}, label), el('strong', {}, value)))), el('p', { class: 'dialog-description' }, 'Remove this source to stop capture and start deleting its information from Kizuki. Removal may wait for another operation to release a store. The source stops being used immediately; original files and the provider account are unaffected.'), el('div', { class: 'form-actions' }, button('Keep source', () => closeDialog()), button('Remove source', async () => {
@@ -467,7 +470,7 @@ function renderActivity() {
   if (state.activityStatus === 'loading') { section.append(el('p', { role: 'status', 'aria-busy': 'true' }, 'Loading activity…')); return section; }
   if (state.activityStatus === 'unavailable') { section.append(empty('Activity is unavailable.', 'The latest receipt history could not be checked. Retry before relying on this view.', button('Retry activity', loadActivity, 'primary'))); return section; }
   if (state.activityStatus === 'idle' && !state.receipts.length) { section.append(empty('Check your activity.', 'Load the latest receipt history from this device.', button('Load activity', loadActivity, 'primary'))); return section; }
-  if (!state.receipts.length) { section.append(empty('No receipted changes yet.', 'Imported sources are searchable right away. Changes to your memory pages appear here when they happen.')); return section; }
+  if (!state.receipts.length) { section.append(empty('No receipted memory changes yet.', 'Import creates searchable source evidence. Activity records receipted memory-page writes, such as model processing or corrections; it does not treat capture as a canon change.', el('div', { class: 'empty-actions' }, button('Search evidence', () => navigate('memory'), 'primary'), button('Model settings', () => navigate('settings'))))); return section; }
   const list = el('ol', { class: 'activity-list' });
   for (const receipt of state.receipts) list.append(el('li', { class: 'activity-item' }, el('div', { class: 'activity-top' }, el('div', {}, el('h3', {}, activityTitle(receipt.action)), el('p', {}, `${dateText(receipt.at)}${receipt.reverted ? ' · Undone' : ''}`)), !receipt.reverted && button('Undo', () => undo(receipt))), el('details', { class: 'result-details' }, el('summary', {}, 'Change details'), el('p', {}, 'Page: ', el('code', {}, receipt.page)), el('p', {}, 'Receipt: ', el('code', {}, receipt.id)))));
   section.append(list); return section;
@@ -638,11 +641,11 @@ async function loadAgents() {
     const result = await api('agents');
     if (sequence !== agentsSequence || !privateViewValid || !bearer) return;
     state.agents = result.agents; state.agentsError = false;
-    if (state.view === 'settings') render();
+    if (state.view === 'agents') render();
   } catch (error) {
     if (sequence === agentsSequence && privateViewValid && bearer && error.code !== 'stale_response') {
       state.agents = null; state.agentsError = true;
-      if (state.view === 'settings') render();
+      if (state.view === 'agents') render();
       message(error.message);
     }
   }
@@ -653,11 +656,24 @@ function grantSummary(grant) {
   const rows = [['Sensitivity ceiling', grant.ceiling], ['Record types', scope(grant.types, 'All record types')], ['Subjects', scope(grant.subjects, 'All subjects')], ['From', grant.since || 'No start limit'], ['Until', grant.until || 'No end limit'], ['Tools', grant.tools.length ? grant.tools.map(tool => agentReadTools.find(([id]) => id === tool)?.[1] || tool).join(', ') : 'None'], ['Requests per minute', grant.rate_limit_per_minute], ['Owner correction relay', grant.relay_owner_corrections ? 'On' : 'Off']];
   return el('dl', { class: 'grant-summary' }, ...rows.map(([label, value]) => el('div', {}, el('dt', {}, label), el('dd', {}, value))));
 }
+function agentToolSummary(grant) {
+  if (!grant?.tools?.length) return 'No read tools';
+  return grant.tools.map(tool => agentReadTools.find(([id]) => id === tool)?.[1] || tool).join(', ');
+}
 function renderAgents() {
-  const section = el('section', { class: 'agent-settings', 'aria-labelledby': 'agent-settings-title' }, el('div', { class: 'section-header' }, el('h2', { id: 'agent-settings-title' }, 'Let an agent read your memory'), button('Set up an agent', agentEnrollment)), el('p', {}, 'Give each assistant its own limited access. Review what it may read, then add its launch configuration to that assistant on this device.'));
-  if (!state.agents) section.append(el('p', { class: 'model-note' }, state.agentsError ? 'Agent access could not be checked. Refresh before relying on its status.' : 'Checking existing agents…'), button('Refresh agents', loadAgents));
-  else if (!state.agents.length) section.append(el('p', { class: 'model-note' }, 'No agents are connected yet. The setup starts with read-only access to public information.'));
-  else for (const agent of state.agents) section.append(el('article', { class: 'agent-row' }, el('div', { class: 'section-header' }, el('h3', {}, agent.name), el('span', { class: 'badge' }, agent.revoked_at ? 'Revoked' : 'Enrolled')), el('details', { class: 'result-details' }, el('summary', {}, 'View all permissions'), grantSummary(agent.grant)), !agent.revoked_at && button('Revoke access', () => agentRevoke(agent))));
+  const section = el('section', { class: 'agents-page', 'aria-labelledby': 'agents-title' }, heading('Agent access.', 'Create distinct, bounded local access for each assistant. Enrolled access is not proof that an assistant is currently connected or has used it.', button('Set up an agent', agentEnrollment, 'primary')));
+  section.append(el('div', { class: 'status-note' }, icon('lock'), el('p', {}, 'For two independent clients, create one named access record for each, add each generated local MCP configuration to that client, then have both search an allowed source. Revoke either record here without changing the other.')));
+  if (!state.agents) section.append(empty(state.agentsError ? 'Agent access could not be checked.' : 'Checking agent access.', state.agentsError ? 'Refresh before relying on enrolled or revoked state.' : 'This local workspace is reading its enrolled access records.', button('Refresh agents', loadAgents, 'primary')));
+  else if (!state.agents.length) section.append(empty('No agent access enrolled.', 'Set up a distinct read-only identity for an assistant. Its grant is separate from owner access and it can be revoked later.', button('Set up an agent', agentEnrollment, 'primary')));
+  else {
+    const list = el('div', { class: 'agent-list' });
+    for (const agent of state.agents) {
+      const revoked = agent.revoked_at !== null;
+      const summary = agent.grant ? `Sensitivity: ${agent.grant.ceiling} · Tools: ${agentToolSummary(agent.grant)}` : 'Current grant details are unavailable.';
+      list.append(el('article', { class: 'agent-card' }, el('div', { class: 'agent-card-top' }, el('div', {}, el('h2', {}, agent.name), el('p', {}, summary)), el('span', { class: `badge${revoked ? '' : ' badge-active'}` }, revoked ? 'Access revoked' : 'Access active')), !revoked && el('p', { class: 'agent-note' }, 'This confirms stored authorization only. It does not infer a live client connection or successful use.'), revoked && el('p', { class: 'agent-note' }, `Revoked ${dateText(agent.revoked_at)}. Existing clients must recheck access before each call.`), el('details', { class: 'result-details' }, el('summary', {}, 'View exact grant'), grantSummary(agent.grant)), !revoked && button('Revoke access', () => agentRevoke(agent), 'danger')));
+    }
+    section.append(list);
+  }
   return section;
 }
 function agentEnrollment() {
@@ -725,16 +741,18 @@ function agentRevoke(agent) {
   focusDialog(content);
 }
 function renderSettings() {
-  return el('section', {}, heading('Simply yours.', 'A local workspace, clear permissions, and room to grow when you need it.'), renderModelSettings(), renderAgents(), el('div', { class: 'settings-list' },
+  return el('section', {}, heading('Workspace settings.', 'Model setup, local custody and background activity for this device.'), renderModelSettings(), el('section', { class: 'settings-group', 'aria-labelledby': 'workspace-settings-title' }, el('h2', { id: 'workspace-settings-title' }, 'Workspace and service'), el('div', { class: 'settings-list' },
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Workspace'), el('p', {}, 'Your memory stays in a local folder you control.')), el('span', { class: 'settings-value' }, state.status?.vault.name || 'Not created')),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Background activity'), el('p', {}, state.service?.detail || 'Refresh to check background activity.'), state.service && el('small', {}, `Checked ${dateText(state.service.checked_at)}`)), el('div', { class: 'form-actions' }, button('Refresh', loadService), state.service && state.service.state !== 'active' && state.service.kind !== 'none' && button('Enable background activity', () => launchOperation('install_service', {}, 'Setting up background activity', async (_operation, present) => { await refresh(); if (present()) await loadService(); }), 'primary'))),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Source privacy'), el('p', {}, 'Each source has its own permission. Imported content stays on this device unless you separately allow a model to use it.')), button('Manage sources', () => navigate('sources'))),
-    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'App session'), el('p', {}, 'This tab remembers only its local app capability. Search results and source content are not stored in browser storage.')), button('Disconnect tab', disconnect))),
-    el('div', { class: 'status-note' }, icon('info'), el('p', {}, 'Search works without a model. Automatic organisation needs a working model and your permission to use each source.')));
+    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Agent access'), el('p', {}, 'Enroll, inspect or revoke bounded assistant access from its dedicated view.')), button('Manage agents', () => navigate('agents'))),
+    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'App session'), el('p', {}, 'This tab remembers only its local app capability. Search results and source content are not stored in browser storage.')), button('Disconnect tab', disconnect)),
+    )), el('div', { class: 'status-note' }, icon('info'), el('p', {}, 'Search works without a model. Automatic organisation needs a working model and your permission to use each source.')));
 }
 function renderOperation() {
   const operation = state.operation;
   if (!operation) return null;
+  if (operation.kind === 'capture' && operation.state === 'succeeded' && state.dismissedCaptureId === (operation.id ?? 'completed-capture')) return null;
   if ((operation.kind === 'initialize' || operation.kind === 'enroll') && operation.state !== 'running') return null;
   const running = operation.state === 'running';
   const title = operation.kind === 'correct' ? (running ? 'Applying your correction' : 'Correction result') : operation.kind === 'agent_enroll' || operation.kind === 'agent_revoke' ? (running ? 'Updating agent access' : 'Agent access result') : operation.kind === 'model_test' ? (running ? 'Testing your model connection' : operation.state === 'succeeded' ? 'Connection test completed' : 'Connection test needs attention') : operation.kind === 'run_pass' ? (running ? 'Organising your memory' : operation.state === 'succeeded' ? 'Processing run completed' : 'Processing needs attention') : running ? 'Working on your source' : operation.state === 'failed' ? 'This step needs attention' : operation.state === 'unknown' ? 'Completion is not yet confirmed' : operation.kind === 'capture' ? 'Import progress saved' : 'Completed';
@@ -746,7 +764,7 @@ function render() {
   if (!bearer) { renderDisconnected(); return; }
   if (!privateViewValid) { main.replaceChildren(empty('Refreshing your workspace.', 'Checking current permissions before showing saved information.')); return; }
   if (!state.status) return;
-  const content = !state.status.vault.ready ? renderWelcome() : state.view === 'memory' ? renderMemory() : state.view === 'sources' ? renderSources() : state.view === 'activity' ? renderActivity() : renderSettings();
+  const content = !state.status.vault.ready ? renderWelcome() : state.view === 'memory' ? renderMemory() : state.view === 'sources' ? renderSources() : state.view === 'activity' ? renderActivity() : state.view === 'agents' ? renderAgents() : renderSettings();
   const operation = renderOperation(); if (operation) content.prepend(operation);
   main.replaceChildren(content);
 }
@@ -776,7 +794,7 @@ async function refresh() {
     reconcileOperation(status.operations);
     render();
     if (status.vault.ready && ['settings', 'sources'].includes(state.view)) void loadModel();
-    if (status.vault.ready && state.view === 'settings') void loadAgents();
+    if (status.vault.ready && state.view === 'agents') void loadAgents();
   } catch (error) { if (bearer && sequence === refreshSequence && error.code !== 'stale_response') { invalidatePrivateView(); main.replaceChildren(empty('Let’s reconnect.', error.message, button('Try again', refresh, 'primary'))); } }
 }
 function initializeFailureMessage(code) {
