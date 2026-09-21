@@ -629,12 +629,11 @@ export function applyPurgeRewrite(
     }
     throw error;
   }
+  const typedErasure=applyWorldPurgeRewrite(scope,io,input,existing);
+  if(typedErasure!==null)return typedErasure;
   if (existing === null) {
     throw new CanonWriteError("page_missing", `page ${input.rel_path} is gone`);
   }
-
-  const typedErasure=applyWorldPurgeRewrite(scope,io,input,existing);
-  if(typedErasure!==null)return typedErasure;
 
   if (input.source_erasure !== undefined) {
     const owned = readOwnedCanonPage(io, input.rel_path);
@@ -784,7 +783,7 @@ export function applyPurgeRewrite(
 }
 
 /** Rebuild typed pages from independent admitted support; erase both receipt images on source loss. */
-function applyWorldPurgeRewrite(scope:VaultMutationScope,io:CanonIo,input:PurgeRewriteInput,existing:ExistingPage):CanonReceipt|null {
+function applyWorldPurgeRewrite(scope:VaultMutationScope,io:CanonIo,input:PurgeRewriteInput,existing:ExistingPage|null):CanonReceipt|null {
   const rows=io.db.query<CanonReceiptRow,[string]>("SELECT * FROM canon_receipts WHERE page_path=? AND record_codec='kizuki.canon-receipt/v2' ORDER BY receipt_id LIMIT 8193").all(input.rel_path);
   if(rows.length===0)return null;
   if(rows.length>8192)throw new CanonWriteError("batch_too_large","typed canon history exceeds erasure bound");
@@ -792,18 +791,18 @@ function applyWorldPurgeRewrite(scope:VaultMutationScope,io:CanonIo,input:PurgeR
   if(records.some(record=>isErasedReceipt(record)||!isWorldCanonReceipt(record)))throw new CanonWriteError("decision_stale","typed canon history is not retained");
   const retained=records as RetainedWorldCanonReceipt[];
   const latest=latestReceiptForPage(io.db,input.rel_path);
-  if(latest===null||!isWorldCanonReceipt(latest)||latest.after_hash!==existing.hash)throw new CanonWriteError("decision_stale","typed canon preimage has no current receipt");
+  if(latest===null||!isWorldCanonReceipt(latest)||latest.after_hash!==(existing?.hash??ABSENT_PAGE_HASH))throw new CanonWriteError("decision_stale","typed canon preimage has no current receipt");
   const match=/^auto\/world\/([0-9a-f]{32})\.md$/.exec(input.rel_path);
   const proof=completedEventPurgeProofs(io.db,input.purged_event_ids.map(eventIdFromReference));
   if(match===null||proof===null||proof.length===0)throw new CanonWriteError("decision_stale","typed erasure requires completed event purge proofs");
   const purged=new Set(proof.map(item=>item.event_id));
   const affected=retained.filter(record=>record.provenance.some(id=>purged.has(eventIdFromReference(id))));
   if(affected.length===0)throw new CanonWriteError("decision_stale","typed erasure lacks attributed receipts");
-  const materialization=selectWorldMaterialization(io.db,match[1]!);
+  const materialization=existing===null?null:selectWorldMaterialization(io.db,match[1]!);
   const claims=materialization?.claims??[],sources=union(claims.map(claim=>claim.provenance));
-  const pageId=existing.page.data["id"];
-  if(typeof pageId!=="string"||pageId.length===0)throw new CanonWriteError("decision_stale","typed canon identity missing");
-  const prepared=materialization===null?null:prepareCreate(claims.map(claim=>({...claim,frontmatter:{type:materialization.pageType,title:materialization.title}})),pageId,sources,false);
+  const pageId=existing?.page.data["id"]??null;
+  if(existing!==null&&(typeof pageId!=="string"||pageId.length===0))throw new CanonWriteError("decision_stale","typed canon identity missing");
+  const prepared=materialization===null?null:prepareCreate(claims.map(claim=>({...claim,frontmatter:{type:materialization.pageType,title:materialization.title}})),pageId as string,sources,false);
   if(prepared!==null) {
     prepared.sensitivity=sourceSensitivity(io.db,sources,prepared.sensitivity);
     prepared.page.data["sensitivity"]=prepared.sensitivity;
@@ -815,7 +814,7 @@ function applyWorldPurgeRewrite(scope:VaultMutationScope,io:CanonIo,input:PurgeR
     schema:"kizuki.canon-receipt/v2",state:"retained",own_id_origin:"core",
     basis:{schema:"kizuki.world-canon-basis/v1",before:latest.basis.after,after:materialization?.basis??null},
     receipt_id:mintId(io),kind:"purge_rewrite",claim_ids:claims.map(claim=>claim.claim_id),page_path:input.rel_path,page_action:after===null?"archive":"edit",
-    before_hash:existing.hash,after_hash:after===null?ABSENT_PAGE_HASH:hashBytes(after),archive_path:null,writer:"loop",producer:"deterministic",model_ref:null,
+    before_hash:existing?.hash??ABSENT_PAGE_HASH,after_hash:after===null?ABSENT_PAGE_HASH:hashBytes(after),archive_path:null,writer:"loop",producer:"deterministic",model_ref:null,
     authority:claims.length===0?"owner_correction":claims.reduce((tier,claim)=>AUTHORITY_TIERS[claim.authority]<AUTHORITY_TIERS[tier]?claim.authority:tier,claims[0]!.authority),
     confidence:claims.length===0?1:Math.min(...claims.map(claim=>claim.confidence)),sensitivity:prepared?.sensitivity??"private",taint:prepared?.taint??"clean",provenance:sources,
     superseded:[],candidates:[],retrieval_ops:[],reverts:null,reverted_by:null,at,
@@ -826,7 +825,7 @@ function applyWorldPurgeRewrite(scope:VaultMutationScope,io:CanonIo,input:PurgeR
     archives.set(record.archive_path,record.before_hash);
   }
   return commitWorldCanonErasure(scope,io,{receipt,after,
-    completion:{mode:"purge",claim_kind:"purge_review",page_id:pageId,subject_key:null,original_receipt_id:null},
+    completion:{mode:"purge",claim_kind:"purge_review",page_id:typeof pageId==="string"?pageId:null,subject_key:null,original_receipt_id:null},
     erasure:{proofs:proof,redactions:affected.map(record=>eraseWorldReceipt(record.receipt_id,purgeReceiptId,at)),
       receipt_guards:affected.map(record=>({receipt_id:record.receipt_id,digest:sha256Hex(JSON.stringify(record))})),
       archives:[...archives].map(([path,hash])=>({path,hash})),final_receipt:worldErasureFinalReceipt(receipt,purgeReceiptId)},
