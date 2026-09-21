@@ -1,5 +1,4 @@
-import { pendingWorldCanonClaims, worldClaimHandle, worldCanonPath } from "../canon/world-materialization";
-import { pageIndexByPath } from "../canon/store";
+import { pendingWorldCanonClaims, worldCanonTarget } from "../canon/world-materialization";
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "../canon/source-tombstone";
 import { inheritSourcePortBindings } from "../ledger/source-grants";
 import { SelfOriginError, requireExternalEvents } from "../ledger/event-origin";
@@ -395,9 +394,7 @@ async function runWritePassOwned(
   for (const typedClaims of pendingWorldCanonClaims(db, WRITE_PASS_LIMIT)) {
     if (canonWrites >= WRITE_PASS_LIMIT) break;
     const primary=typedClaims[0]!;
-    const path=worldCanonPath(worldClaimHandle(db,primary.claim_id)!);
-    const indexed=pageIndexByPath(db,path);
-    const decision:TargetDecision=indexed===null?{action:"create",rel_path:path}:{action:"edit",page_id:indexed.page_id,rel_path:path,reason:"explicit"};
+    const decision=worldCanonTarget(db,primary.claim_id);
     const before=occupyingWriteIds(db);
     try {
       const receipt=applyCanonWriteOwned(scope,io,typedClaims,decision,{writer:"loop",budget:options.budget});

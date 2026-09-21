@@ -154,6 +154,11 @@ export function eraseSourceCanon(
       .all(source)
       .map((row) => row.event_id),
   );
+  const typedPaths=db.query<{page_path:string},[string]>("SELECT DISTINCT c.page_path FROM canon_receipts c JOIN json_each(c.provenance) p JOIN source_event_bindings b ON b.event_id=p.value WHERE b.source_key=? AND c.record_codec='kizuki.canon-receipt/v2' AND c.receipt_state='retained'").all(source);
+  for(const {page_path} of typedPaths) {
+    try {applyPurgeRewrite(scope,io,{rel_path:page_path,purged_event_ids:[...eventIds],purged_claim_ids:[],purged_claim_bodies:[]});}
+    catch{return false;}
+  }
   const receipts = db
     .query<Receipt, [string]>(
       "SELECT * FROM canon_receipts WHERE page_path!='' AND page_path IN (SELECT c.page_path FROM canon_receipts c JOIN json_each(c.provenance) p JOIN source_event_bindings b ON b.event_id=p.value WHERE b.source_key=?) ORDER BY at,receipt_id LIMIT 10001",
