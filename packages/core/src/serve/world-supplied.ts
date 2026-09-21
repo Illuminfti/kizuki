@@ -3,13 +3,15 @@ import { rawSubjectRefKey, type QualifiedSuppliedRef } from "../contracts/claim-
 import { MAX_V2_QUOTED_UTF16, MAX_V2_TRUSTED_REFS, type ProducerV2SuppliedRef, type TextAnchor } from "../contracts/producer-v2";
 
 const word = /[\p{L}\p{N}_]/u;
+const graphemes = new Intl.Segmenter("und", { granularity: "grapheme" });
 
 /** One exact, whole occurrence. Ambiguous or normalized names confer nothing. */
-function uniqueSpan(text: string, token: string): { start: number; end: number } | null {
+function uniqueSpan(text: string, token: string, boundaries: ReadonlySet<number>): { start: number; end: number } | null {
   if (!token || token.trim() !== token) return null;
   const start = text.indexOf(token);
   if (start < 0 || text.indexOf(token, start + 1) >= 0) return null;
   const end = start + token.length;
+  if (!boundaries.has(start) || !boundaries.has(end)) return null;
   const before = Array.from(text.slice(Math.max(0, start - 2), start)).at(-1) ?? "";
   const after = Array.from(text.slice(end, end + 2))[0] ?? "";
   const first = Array.from(token.slice(0, 2))[0]!, last = Array.from(token.slice(-2)).at(-1)!;
@@ -32,6 +34,8 @@ export function worldSuppliedReferences(
     if (event.text.length > MAX_V2_QUOTED_UTF16) continue;
     const source_key = sourceKey(event.event_id);
     if (source_key === null) continue;
+    const boundaries = new Set([...graphemes.segment(event.text)].map(segment => segment.index));
+    boundaries.add(event.text.length);
     const tokens = new Map<string, Set<string>>();
     const subjects = new Map<string, Set<string>>();
     for (const subject of event.subjects) {
@@ -47,7 +51,7 @@ export function worldSuppliedReferences(
     for (const id of [...subjects.keys()].sort()) {
       const candidates = [id, ...[...subjects.get(id)!].filter(token => token !== id).sort()];
       const span = candidates.flatMap(token => {
-        const match = tokens.get(token)?.size === 1 ? uniqueSpan(event.text, token) : null;
+        const match = tokens.get(token)?.size === 1 ? uniqueSpan(event.text, token, boundaries) : null;
         return match === null ? [] : [match];
       })[0];
       if (span === undefined) continue;

@@ -27,6 +27,9 @@ test("names alone, repeated matches, shared labels, normalized matches and word 
     event("Mira defines flux.", [mira, { subject_id: "person:99", role: "to", display_name: "Mira" }]),
     event("MIRA defines flux.", [mira]),
     event("Mirage defines flux.", [mira]),
+    event("Mira\u0301 defines flux.", [mira]),
+    event("👩‍💻 defines flux.", [{ ...mira, display_name: "👩" }]),
+    event("✈️ defines flux.", [{ ...mira, display_name: "✈" }]),
     event("Mira defines flux.", [{ ...mira, display_name: " Mira " }]),
   ]) expect(worldSuppliedReferences([candidate], () => sourceA).input).toEqual([]);
   const raw = worldSuppliedReferences([event("person:42 defines flux.", [mira, { subject_id: "person:99", role: "to", display_name: "Mira" }])], () => sourceA);
@@ -38,4 +41,8 @@ test("UTF-16 witnesses and duplicate roles remain deterministic without changing
   const mapped = worldSuppliedReferences([event("🧭 Mira defines flux.", [mira, { ...mira, role: "about" }])], () => sourceA);
   expect(mapped.input).toEqual([{ id: "s0", anchors: [{ event_id: first, start_utf16: 3, end_utf16: 7 }] }]);
   expect(mapped.refs.get("s0")).toEqual({ kind: "supplied", id: "person:42", namespace: { connector_id: "fixture", source_key: sourceA } });
+  for (const label of ["Mira\u0301", "👩‍💻", "✈️"]) {
+    expect(worldSuppliedReferences([event(`${label} defines flux.`, [{ ...mira, display_name: label }])], () => sourceA).input)
+      .toEqual([{ id: "s0", anchors: [{ event_id: first, start_utf16: 0, end_utf16: label.length }] }]);
+  }
 });
