@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { openLedger } from "../../src/ledger/db";
 import { initVault } from "../../src/vault/init";
 import { startServeHttp } from "../../src/serve/http";
+import { worldFixture } from "../serving/world-fixture";
 import { ServeDaemonError } from "../../src/serve/types";
 
 const dirs: string[] = [];
@@ -108,6 +109,13 @@ describe("serve http", () => {
       body: worldBody,
     });
     expect(worldAlias.status).toBe(200);
+
+    await worldFixture(db);
+    const found=await fetch(`${handle.url}/v1/world_view`,{method:"POST",headers:worldHeaders,body:JSON.stringify({operation:"find_concepts",label:"Bayesian",valid:{kind:"all"},knownAt:{kind:"current"}})});
+    const discovery=await found.json() as {value:{schema:string;data:{result:{data:{matches:{ref:{kind:"object";token:string}}[]}}}}};
+    expect(discovery.value.schema).toBe("kizuki.envelope/v2");
+    const read=await fetch(`${handle.url}/v1/mcp/world_view`,{method:"POST",headers:worldHeaders,body:JSON.stringify({operation:"concept",concept:discovery.value.data.result.data.matches[0]!.ref,valid:{kind:"all"},knownAt:{kind:"current"}})});
+    expect(read.status).toBe(200);expect(await read.text()).toContain("Revise beliefs using evidence");
 
     await handle.stop();
     db.close();

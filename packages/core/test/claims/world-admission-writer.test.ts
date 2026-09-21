@@ -3,7 +3,7 @@ import { CLAIM_V2_SCHEMA, type ClaimV2Assertion } from "../../src/contracts/clai
 import { readClaimRecord } from "../../src/claims/claim-v2-commit";
 import { semanticKey } from "../../src/claims/claim-v2-keys";
 import { mintOccurrenceId } from "../../src/claims/occurrences";
-import { insertClaim } from "../../src/claims/store";
+import { prepareClaimInsert,insertClaim } from "../../src/claims/store";
 import { registerConnection } from "../../src/ledger/connections";
 import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
@@ -11,12 +11,12 @@ import { recordNativeCorrection } from "../../src/correction/evidence";
 import { setSourceGrant } from "../../src/ledger/source-grants";
 import { seedConnectorSensitivity } from "../../src/sensitivity/store";
 import { ulid } from "../../src/util/ulid";
-import { applyWorldTables } from "../../src/world/schema";
+import { removeWorldSchema } from "../helpers/world-schema";
 import { validEvent } from "../fixtures";
 
 function fixture(withWorldTables: boolean) {
   const db = openLedger(":memory:");
-  if (withWorldTables) applyWorldTables(db);
+  if (!withWorldTables) {removeWorldSchema(db);db.exec("UPDATE schema_version SET version=31");}
   const sourceKey = ulid();
   registerConnection(db, "fixture", sourceKey);
   seedConnectorSensitivity(db, { connector_id: "fixture", source_key: sourceKey }, { default_sensitivity: "personal", sensitivity_floor: "personal" });
@@ -72,7 +72,7 @@ test("production insertion writes typed world meaning, derived admission, and en
 test("qualified world admission rolls back when migration 32 is absent", async () => {
   const { db, eventId, sourceKey } = fixture(false);
   try {
-    await expect(insertClaim({ db }, input(db, sourceKey, eventId))).rejects.toThrow("migration_required");
+    await expect(prepareClaimInsert({ db }, input(db, sourceKey, eventId))).rejects.toThrow("migration_required");
     expect(db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims").get()?.n).toBe(0);
   } finally { db.close(); }
 });

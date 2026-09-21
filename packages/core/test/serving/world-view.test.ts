@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { openLedger } from "../../src/ledger/db";
 import { expect, test } from "bun:test";
 import { OWNER } from "../../src/agents/types";
 import {
@@ -20,7 +20,7 @@ const SNAPSHOT = token(2);
 
 function ctx() {
   return {
-    db: new Database(":memory:"),
+    db: openLedger(":memory:"),
     vaultPath: "/tmp/kizuki-world-view-test",
     principal: OWNER,
   };
@@ -75,7 +75,7 @@ test("overlap validity must end after it starts", () => {
   ).toThrow(WorldViewError);
 });
 
-test("a snapshot knownAt is accepted and still not_found", () => {
+test("a snapshot knownAt explicitly reports unavailable history", () => {
   expect(
     readWorldView(
       ctx(),
@@ -83,5 +83,10 @@ test("a snapshot knownAt is accepted and still not_found", () => {
         knownAt: { kind: "snapshot", ref: { kind: "snapshot", token: SNAPSHOT } },
       }),
     ),
-  ).toEqual({ status: "not_found" });
+  ).toEqual({ schema:"kizuki.world-view/v1",operation:"situation",result:{status:"unavailable",reason:"history"} });
+});
+
+ test("noncanonical base64 pad bits are refused",()=> {
+  const alias="A".repeat(42)+"B";
+  expect(()=>readWorldView(ctx(),situationInput({situation:{kind:"object",token:alias}}))).toThrow(WorldViewError);
 });

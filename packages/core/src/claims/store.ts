@@ -26,6 +26,7 @@ import { tableColumns, tableExists } from "../ledger/schema";
 import { labelClaimSensitivity } from "../sensitivity/store";
 import { stricter } from "../sensitivity/resolve";
 import { isRfc3339 } from "../util/time";
+import { canonicalJson } from "../util/hash";
 import { ulid } from "../util/ulid";
 import {
   authorityFor,
@@ -46,7 +47,7 @@ import {
   type DedupMode,
 } from "./dedup";
 import { ClaimError } from "./errors";
-import { commitClaimV2 } from "./claim-v2-commit";
+import { readClaimV2Semantic, commitClaimV2 } from "./claim-v2-commit";
 import { semanticKey } from "./claim-v2-keys";
 import { claimKey, hashBody, normalizeObject, objectsMatch } from "./hash";
 import { isRegisteredPredicate } from "./predicates";
@@ -290,7 +291,7 @@ function assertInput(input: InsertClaimInput): void {
   if (hasWorld) {
     const admission = parseWorldAdmission(input.world_admission);
     if (admission === null || input.semantic === undefined ||
-      semanticKey(admission.semantic) !== semanticKey(input.semantic)) {
+      canonicalJson(admission.semantic) !== canonicalJson(input.semantic)) {
       throw new ClaimError("schema_invalid", "world admission needs its matching typed semantic");
     }
   }
@@ -304,7 +305,7 @@ function preparedWorldCommit(
 ) {
   if (input.world_admission === undefined || input.semantic === undefined) return null;
   const admission = parseWorldAdmission(input.world_admission);
-  if (admission === null || semanticKey(admission.semantic) !== semanticKey(input.semantic)) {
+  if (admission === null || canonicalJson(admission.semantic) !== canonicalJson(input.semantic)) {
     throw new ClaimError("schema_invalid", "world admission needs its matching typed semantic");
   }
   const anchors = completeWorldAnchors(input.semantic);
@@ -351,13 +352,14 @@ function preparedWorldCommit(
 }
 
 function acceptedWorldValues(input: InsertClaimInput, events: EventFacts[]) {
+  const authorityBody=input.world_admission?.rendering.body ?? input.body;
   const producer = canonicalizeProducer(input.producer);
-  const ownerAttested = events.some((event) => event.taint === "owner" && event.text === input.body);
+  const ownerAttested = events.some((event) => event.taint === "owner" && event.text === authorityBody);
   const assigned = authorityFor(
     {
       producer: producer === "owner" && !ownerAttested ? "deterministic" : producer,
       taint: input.taint ?? "clean",
-      body: input.body,
+      body: authorityBody,
       provenance: input.provenance,
       confidence: input.confidence,
       ...(input.intent === "correct" && !ownerAttested ? {} : { intent: input.intent }),
@@ -367,7 +369,7 @@ function acceptedWorldValues(input: InsertClaimInput, events: EventFacts[]) {
     {
       producer: input.producer === "owner" && !ownerAttested ? "deterministic" : input.producer,
       taint: input.taint ?? "clean",
-      body: input.body,
+      body: authorityBody,
       provenance: input.provenance,
       ...(input.intent === "correct" && !ownerAttested ? {} : { intent: input.intent }),
       ...(input.relay_ceiling === undefined ? {} : { relayCeiling: input.relay_ceiling }),
@@ -767,11 +769,12 @@ export function countClaims(
 /** Live writable claims the receipted writer has not yet materialized. */
 export function countUnwrittenLiveClaims(db: Database): number {
   if (!tableExists(db, "claims")) return 0;
+  const typed=tableExists(db,"claim_v2_semantics") ? "AND NOT EXISTS (SELECT 1 FROM claim_v2_semantics v2 WHERE v2.claim_id=claims.claim_id)" : "";
   return (
     db
       .query<{ n: number }, []>(
         `SELECT count(*) AS n FROM claims
-          WHERE status = 'live' AND receipt_id IS NULL AND kind <> 'purge_review'`,
+          WHERE status = 'live' AND receipt_id IS NULL AND kind <> 'purge_review' ${typed}`,
       )
       .get()?.n ?? 0
   );
@@ -1006,6 +1009,20 @@ export function supersedeLiveGroup(
   return out;
 }
 
+/** Typed targeted correction shares the existing supersession journal and transaction. */
+export function supersedeExactWorldClaim(db:Database,winner:Claim,loserId:string,at:string):void {
+  if(!db.inTransaction) throw new ClaimError("schema_invalid","typed supersession requires the claim transaction");
+  const loser=getClaim(db,loserId),prior=readClaimV2Semantic(db,loserId),next=readClaimV2Semantic(db,winner.claim_id);
+  if(loser===null || loser.status!=="live" || winner.status!=="live" || winner.authority!=="owner_correction" ||
+    prior===null || next===null || prior.schema!=="kizuki.claim-meaning/v1" || next.schema!=="kizuki.claim-meaning/v1" ||
+    prior.discriminator!=="assertion" || next.discriminator!=="assertion" || prior.predicate!==next.predicate ||
+    canonicalJson(prior.subject)!==canonicalJson(next.subject) || winner.claim_id===loserId)
+    throw new ClaimError("schema_invalid","typed correction target changed");
+  const priorValidTo=loser.valid_to;
+  persistClaim(db,{...loser,status:"superseded",superseded_by:winner.claim_id,retracted_at:at,valid_to:minTimestamp(loser.valid_to,winner.valid_from)});
+  writeSupersession(db,winner.claim_id,loser.claim_id,"R5",priorValidTo,at);
+}
+
 function remainingProvenanceCount(db: Database, claim: Claim): number {
   if (!tableExists(db, "events") || claim.provenance.length === 0) return 0;
   const placeholders = claim.provenance.map(() => "?").join(", ");
@@ -1103,8 +1120,6 @@ export async function prepareClaimInsert(
     // neutral: source-specific rendering belongs only in immutable support.
     input = {
       ...input,
-      // A semantic-key marker keeps legacy idempotency distinct without
-      // retaining source rendering in a v1-readable column.
       body: "",
       frontmatter: {},
       subject: null,
@@ -1183,6 +1198,7 @@ function applyClaimInsert(
   }
   resolveProvenance(io.db, input.provenance);
 
+  const authorityBody=input.world_admission?.rendering.body ?? input.body;
   const producer = canonicalizeProducer(input.producer);
   const sourceControl = requireIncomingClaimOrigin(io, input);
   const subject = input.subject ?? input.subjects?.[0] ?? null;
@@ -1192,7 +1208,7 @@ function applyClaimInsert(
   const key =
     subject !== null && predicate !== null ? claimKey(subject, predicate) : null;
   const events = loadEventFacts(io.db, input.provenance);
-  const ownerAttested = events.some(event => event.taint === "owner" && event.text === input.body);
+  const ownerAttested = events.some(event => event.taint === "owner" && event.text === authorityBody);
   const authorityProducer = producer === "owner" && !ownerAttested ? "deterministic" : producer;
   const authorityIntent = input.intent === "correct" && !ownerAttested ? undefined : input.intent;
   const authorityEvents = events.map(event => ({...event, taint: ownerAttested ? event.taint : "untrusted" as const}));
@@ -1216,7 +1232,7 @@ function applyClaimInsert(
     {
       producer: authorityProducer,
       taint: input.taint ?? "clean",
-      body: input.body,
+      body: authorityBody,
       provenance: input.provenance,
       confidence: input.confidence,
       ...(authorityIntent === undefined ? {} : { intent: authorityIntent }),
@@ -1226,7 +1242,7 @@ function applyClaimInsert(
     {
       producer: input.producer === "owner" && !ownerAttested ? "deterministic" : input.producer,
       taint: input.taint ?? "clean",
-      body: input.body,
+      body: authorityBody,
       provenance: input.provenance,
       ...(authorityIntent === undefined ? {} : { intent: authorityIntent }),
       ...(input.relay_ceiling === undefined

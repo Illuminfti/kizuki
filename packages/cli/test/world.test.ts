@@ -43,11 +43,12 @@ describe("world", () => {
     const body = JSON.parse(result.stdout) as {
       schema: string;
       status: string;
-      data: { status: string };
+      data: { schema: string; data: { status: string } };
     };
     expect(body.schema).toBe("kizuki.cli.world/v1");
     expect(body.status).toBe("ok");
-    expect(body.data).toEqual({ status: "not_found" });
+    expect(body.data.schema).toBe("kizuki.envelope/v2");
+    expect(body.data.data).toEqual({ status: "not_found" });
   });
 
   test("missing vault is a runtime error before lookup", () => {
@@ -78,4 +79,22 @@ describe("world", () => {
       expect(result.stderr).toContain(message);
     }
   }, 15_000);
+});
+
+import { openLedger } from "../../core/src/ledger/db";
+import { worldFixture } from "../../core/test/serving/world-fixture";
+import { join } from "node:path";
+
+test("CLI discovers a real admitted concept then reads the issued object token",async()=>{
+  const setup=tempVault(),db=openLedger(join(setup.vault,".kizuki/kizuki.db"));
+  try {await worldFixture(db);} finally {db.close();}
+  const found=runCli(setup.env,"world","--operation","find_concepts","--label","Bayesian","--json");
+  expect(found.exitCode).toBe(0);
+  const discovery=JSON.parse(found.stdout).data;
+  expect(discovery.schema).toBe("kizuki.envelope/v2");
+  const ref=discovery.data.result.data.matches[0].ref;
+  const read=runCli(setup.env,"world","--operation","concept","--ref",ref.token,"--json");
+  expect(read.exitCode).toBe(0);
+  expect(JSON.parse(read.stdout).data.data.result.data.definitions[0].object.value).toBe("Revise beliefs using evidence");
+  expect(runCli(setup.env,"world","--operation","concept","--ref","A".repeat(42)+"B").exitCode).toBe(2);
 });
