@@ -60,7 +60,8 @@ export interface RailHooks extends RailHooksBase {
 }
 
 export interface RailHooksV2 extends RailHooksBase {
-  readonly producer?: ProducerV2Port;
+  /** The runtime selects v1 for epoch-zero journals and v2 for managed sources. */
+  readonly producer?: ProducerPort | ProducerV2Port;
 }
 
 type AnyRailHooks = RailHooks | RailHooksV2;

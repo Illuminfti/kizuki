@@ -843,6 +843,11 @@ export async function mineLiveDrafts(
   const previous_cursor = readExtractCursor(db);
   const source_epoch = sourcePolicyEpoch(db);
   const denied = (): MineResult => ({ mined: { status: "unavailable", reason: "source authorization unavailable" }, drafts: [], previous_cursor, cursor: null });
+  // Epoch-zero journals retain their declared v1 producer route. Once source
+  // authority exists, a stale v1 runtime must not invoke a model or publish a
+  // legacy draft for a source-bound event.
+  const v2 = isProducerV2(producer);
+  if (source_epoch > 0 && !v2) return denied();
   if (source_epoch > 0 && !isLocalSourcePort(producer) && !sourceEventsAllowed(db, [], { owner: false, purpose: "extract", model: true, port: producer })) return denied();
   const scope = { owner: false, purpose: "extract" as const, model: true, port: producer };
   let mode: "frontier" | "deferred" = "frontier";
@@ -937,7 +942,6 @@ export async function mineLiveDrafts(
         object: claim.object, polarity: claim.polarity, confidence: claim.confidence })), predicates: [...predicateIds()] },
       budget: { max_calls: 2, max_input_tokens: 8_000, max_output_tokens: 2_000 } };
   };
-  const v2 = isProducerV2(producer);
   let selectedCount = v2 ? 0 : 1;
   let selectedInput: ProduceInput | ProduceInputV2 = v2
     ? worldInput(db, usable.slice(0, 1))
