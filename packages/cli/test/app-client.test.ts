@@ -946,7 +946,7 @@ test('World refresh rechecks the selected detail and permission changes clear qu
     f.reply('status', status([], '2')); await tick();
     f.reply('status', status([], '2')); await tick();
     f.reply('catalog', { sources: [] }); f.reply('sources', { sources: [] }); await pulse;
-    expect(f.evaluate('state.worldQuery')).toBe(''); expect(f.evaluate('state.worldRef')).toBeNull();
+    expect(f.evaluate<string>('state.worldQuery')).toBe(''); expect(f.evaluate('state.worldRef')).toBeNull();
     expect(f.requests.filter(x => x.route === 'world_view').at(-1)?.payload).toMatchObject({ operation: 'find_concepts', label: '' });
     f.reply('world_view', worldMatches('STALE_PRIVATE_RESULT')); await tick();
     expect(f.main.textContent).not.toContain('STALE_PRIVATE_RESULT');
@@ -966,7 +966,7 @@ test('World failed detail retry keeps the selected item and stale replies cannot
     expect(f.main.textContent).toContain('Fresh search');
     f.evaluate(`state.worldQuery='PRIVATE_QUERY'; loadWorld(); disconnect();`);
     f.reply('world_view', worldMatches('AFTER_LOGOUT')); await tick();
-    expect(f.evaluate('state.worldQuery')).toBe(''); expect(f.evaluate('state.worldRef')).toBeNull();
+    expect(f.evaluate<string>('state.worldQuery')).toBe(''); expect(f.evaluate('state.worldRef')).toBeNull();
     expect(f.main.textContent).not.toContain('AFTER_LOGOUT');
 });
 test('agent enrollment reviews all eight grant fields before submitting a read-only identity', async () => {
