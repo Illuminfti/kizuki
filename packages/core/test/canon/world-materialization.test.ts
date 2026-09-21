@@ -164,3 +164,61 @@ test("typed receipt authority, confidence, renderer and history provenance remai
   }
  }finally{f.dispose();}
 });
+
+import {getCanonReceipt} from "../../src/canon/receipts";
+test("typed correction cannot acquire pre-existing assertions or omit its admitted ownership",async()=>{
+ const f=canonFixture();try {
+  initSearch(f.db);initGraph(f.db);
+  const world=await worldFixture(f.db),claims=world.claims.map(id=>getClaim(f.db,id)!);
+  const path=worldCanonPath(worldClaimHandle(f.db,claims[0]!.claim_id)!);
+  const original=applyCanonWrite(f.io,claims,{action:"create",rel_path:path},{writer:"loop",budget:budget()});
+  if(!isWorldCanonReceipt(original))throw new Error("typed receipt expected");
+  expect(()=>assertWorldReceiptBasis(f.db,{...original,claim_ids:[]},{historical:true})).toThrow("ownership");
+  const correction=await correct(f.io,{statement:"Use prior odds and the likelihood ratio.",target:{claim_id:world.claims[2]!}});
+  const receipt=getCanonReceipt(f.db,correction.receipt_id!)!;
+  if(!isWorldCanonReceipt(receipt))throw new Error("typed correction expected");
+  const forged={...receipt,claim_ids:[world.claims[0]!,...receipt.claim_ids]};
+  expect(()=>assertWorldReceiptBasis(f.db,forged,{historical:true})).toThrow("ownership");
+  const bytes=readFileSync(join(f.vault,path));
+  f.db.query("UPDATE canon_receipts SET claim_ids=? WHERE receipt_id=?").run(JSON.stringify(forged.claim_ids),receipt.receipt_id);
+  await expect(undoReceipt(f.io,receipt.receipt_id)).rejects.toThrow("ownership");
+  expect(readFileSync(join(f.vault,path))).toEqual(bytes);
+  expect(getClaim(f.db,world.claims[0]!)!.status).toBe("live");
+  expect(getClaim(f.db,receipt.claim_ids[0]!)!.status).toBe("live");
+  expect(f.db.query("SELECT COUNT(*) AS n FROM canon_write_intents").get()).toEqual({n:0});
+  f.db.query("UPDATE canon_receipts SET claim_ids=? WHERE receipt_id=?").run(JSON.stringify(receipt.claim_ids),receipt.receipt_id);
+  await undoReceipt(f.io,receipt.receipt_id);
+  expect(world.claims.every(id=>getClaim(f.db,id)!.status==="live")).toBe(true);
+ }finally{f.dispose();}
+});
+
+test("typed reconfirmation owns no earlier claims and remains undoable",async()=>{
+ const f=canonFixture();try {
+  const world=await worldFixture(f.db),claims=world.claims.map(id=>getClaim(f.db,id)!);
+  const path=worldCanonPath(worldClaimHandle(f.db,claims[0]!.claim_id)!);
+  applyCanonWrite(f.io,claims,{action:"create",rel_path:path},{writer:"loop",budget:budget()});
+  const pageId=f.db.query<{page_id:string},[string]>("SELECT page_id FROM page_index WHERE rel_path=?").get(path)!.page_id;
+  const reconfirmed=applyCanonWrite(f.io,claims,{action:"edit",rel_path:path,page_id:pageId,reason:"explicit"},{writer:"loop",budget:budget()});
+  expect(reconfirmed.claim_ids).toEqual([]);
+  if(!isWorldCanonReceipt(reconfirmed))throw new Error("typed reconfirmation expected");
+  assertWorldReceiptBasis(f.db,reconfirmed,{historical:true});
+  await undoReceipt(f.io,reconfirmed.receipt_id);
+  expect(world.claims.every(id=>getClaim(f.db,id)!.status==="live")).toBe(true);
+ }finally{f.dispose();}
+});
+
+test("typed revert ownership and images remain bound to the exact recorded target",async()=>{
+ const f=canonFixture();try {
+  const world=await worldFixture(f.db),claims=world.claims.map(id=>getClaim(f.db,id)!);
+  const path=worldCanonPath(worldClaimHandle(f.db,claims[0]!.claim_id)!);
+  const first=applyCanonWrite(f.io,claims,{action:"create",rel_path:path},{writer:"loop",budget:budget()});
+  const undone=await undoReceipt(f.io,first.receipt_id);
+  if(!isWorldCanonReceipt(undone))throw new Error("typed revert expected");
+  expect(()=>assertWorldReceiptBasis(f.db,{...undone,claim_ids:undone.claim_ids.slice(1)},{historical:true})).toThrow("ownership");
+  expect(()=>assertWorldReceiptBasis(f.db,{...undone,reverts:undone.receipt_id},{historical:true})).toThrow("ownership");
+  const redone=await undoReceipt(f.io,undone.receipt_id);
+  if(!isWorldCanonReceipt(redone))throw new Error("typed redo expected");
+  assertWorldReceiptBasis(f.db,redone,{historical:true});
+  expect(world.claims.every(id=>getClaim(f.db,id)!.status==="live")).toBe(true);
+ }finally{f.dispose();}
+});

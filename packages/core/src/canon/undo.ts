@@ -1,6 +1,6 @@
 import { isSensitivity } from "../agents/types";
 import { isWorldCanonReceipt } from "./world-receipt";
-import { assertWorldBasis, worldBasisMetadata } from "./world-materialization";
+import { assertWorldReceiptBasis, worldBasisMetadata } from "./world-materialization";
 import { getCanonReceiptRecord, isErasedReceipt, latestWorldReceiptRecord } from "./receipts";
 import { requireSourceEvents } from "../ledger/source-grants";
 import { stringArray } from "../vault/pages";
@@ -124,7 +124,7 @@ export async function undoReceiptOwned(
   if (original === null) {
     throw new UndoError("receipt_unknown", `undo: receipt ${receiptId} is unknown`);
   }
-  if (isWorldCanonReceipt(original)) { assertWorldBasis(io.db,original.basis.before,true);assertWorldBasis(io.db,original.basis.after,true); }
+  if (isWorldCanonReceipt(original)) assertWorldReceiptBasis(io.db,original,{historical:true});
   assertReceiptPaths(original);
   assertPageRelPath(original.page_path);
   // Settle an older acknowledged/scheduled projection before admitting a successor.
