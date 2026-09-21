@@ -216,6 +216,14 @@ import { revokeAgent } from "../../src/agents";
 import { correct } from "../../src/correction/correct";
 import { serveCorrect } from "../../src/serving/correct";
 import { dispatchServeTool } from "../../src/serving/dispatch";
+import { bindLocalSourcePort } from "../../src/ledger/source-grants";
+import { pendingRetrievalOps, retryRetrievalOps } from "../../src/claims/store";
+import type { RetrievalDoc } from "../../src/contracts/retrieval";
+import {
+  DIRECT_RETRIEVAL_DESCRIPTOR,
+  ReferenceRetrievalPort,
+} from "../contracts/reference-retrieval";
+import { temporaryPortContext } from "../contracts/fixtures";
 
 const find = (label = "") => ({
   operation: "find_concepts",
@@ -387,6 +395,127 @@ test("a public opaque claim ref corrects its current principal-scoped world clai
     expect(JSON.stringify(result)).toContain('"claim_id"');
     expect(JSON.stringify(readWorldView(f.ctx, lookup(f.ref)))).toContain("Use posterior odds after new evidence.");
   } finally { db.close(); vault.dispose(); }
+});
+
+class WorldCorrectionRetrieval extends ReferenceRetrievalPort {
+  failing = false;
+  semanticLookups = 0;
+
+  hasClaim(claimId: string): boolean {
+    return this.docs.has(`claim:${claimId}`);
+  }
+
+  override async search(query: Parameters<ReferenceRetrievalPort["search"]>[0]) {
+    this.semanticLookups += 1;
+    return super.search(query);
+  }
+
+  override async upsert(docs: readonly RetrievalDoc[]) {
+    if (this.failing) throw new Error("synthetic retrieval unavailable");
+    return super.upsert(docs);
+  }
+
+  override async remove(ids: readonly string[]) {
+    if (this.failing) throw new Error("synthetic retrieval unavailable");
+    return super.remove(ids);
+  }
+}
+
+async function worldCorrectionFixture() {
+  const vault = tempVault();
+  let db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
+  const temporary = temporaryPortContext(DIRECT_RETRIEVAL_DESCRIPTOR);
+  const retrieval = bindLocalSourcePort(
+    new WorldCorrectionRetrieval(temporary.ctx),
+    { store_id: "local:world-correction" },
+  );
+  const world = await worldFixture(db, { retrieval });
+  const before = readWorldView(world.ctx, lookup(world.ref));
+  if (
+    "status" in before ||
+    before.result.status !== "current" ||
+    !("definitions" in before.result.data)
+  ) throw new Error("missing world definition");
+  return {
+    vault,
+    temporary,
+    retrieval,
+    world,
+    claim: before.result.data.definitions[0]!.claim,
+    oldClaimId: world.claims[2]!,
+    db: () => db,
+    reopen: () => {
+      db.close();
+      db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
+      return db;
+    },
+    dispose: () => {
+      db.close();
+      temporary.cleanup();
+      vault.dispose();
+    },
+  };
+}
+
+test("world claim correction withdraws the old retrieval doc and publishes the owner correction", async () => {
+  const f = await worldCorrectionFixture();
+  try {
+    expect(f.retrieval.hasClaim(f.oldClaimId)).toBe(true);
+    const result = await serveCorrect(
+      {
+        ...f.world.ctx,
+        vaultPath: f.vault.path,
+        retrieval: f.retrieval,
+      },
+      {
+        statement: "Use posterior odds after new evidence.",
+        target: { world_claim: f.claim },
+      },
+    );
+    const correctionId = result.data?.claim_id;
+    expect(correctionId).toBeString();
+    expect(f.retrieval.hasClaim(f.oldClaimId)).toBe(false);
+    expect(f.retrieval.hasClaim(correctionId!)).toBe(true);
+    expect(pendingRetrievalOps(f.db())).toEqual([]);
+    expect(f.retrieval.semanticLookups).toBe(0);
+  } finally {
+    f.dispose();
+  }
+});
+
+test("world claim correction leaves a durable retrieval retry after publication failure", async () => {
+  const f = await worldCorrectionFixture();
+  try {
+    f.retrieval.failing = true;
+    const result = await serveCorrect(
+      {
+        ...f.world.ctx,
+        vaultPath: f.vault.path,
+        retrieval: f.retrieval,
+      },
+      {
+        statement: "Use posterior odds after new evidence.",
+        target: { world_claim: f.claim },
+      },
+    );
+    const correctionId = result.data?.claim_id;
+    expect(correctionId).toBeString();
+    expect(pendingRetrievalOps(f.db()).map((op) => op.doc_id).sort()).toEqual(
+      [f.oldClaimId, correctionId!].sort(),
+    );
+
+    const reopened = f.reopen();
+    f.retrieval.failing = false;
+    expect(await retryRetrievalOps({ db: reopened, retrieval: f.retrieval })).toEqual({
+      retried: 2,
+      pending: 0,
+    });
+    expect(f.retrieval.hasClaim(f.oldClaimId)).toBe(false);
+    expect(f.retrieval.hasClaim(correctionId!)).toBe(true);
+    expect(f.retrieval.semanticLookups).toBe(0);
+  } finally {
+    f.dispose();
+  }
 });
 
 test("opaque world claim refs never mint native corrections after access is withdrawn", async () => {
