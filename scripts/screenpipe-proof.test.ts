@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -12,8 +12,9 @@ import {
 import type { ScreenpipeFixtureShape } from "./screenpipe-proof-fixtures";
 import {
   SCREENPIPE_LIMITS, SCREENPIPE_REFUSALS, connectObservation, deniedCaptureObservation, expectedScreenpipeSteps,
-  exportObservation, parseScreenpipeArgs, refusalObservation, runCounts, statusCount,
+  emitScreenpipeConnectorEvidence, exportObservation, parseScreenpipeArgs, refusalObservation, runCounts, statusCount,
 } from "./screenpipe-proof";
+import { empty } from "./file-import-proof";
 
 const roots: string[] = [];
 afterAll(() => { for (const root of roots) rmSync(root, { recursive: true, force: true }); });
@@ -176,4 +177,36 @@ test("the recorded limits stay the connector's own documented ones", () => {
   expect(SCREENPIPE_LIMITS.length).toBe(4);
   expect(SCREENPIPE_LIMITS.join(" ")).toContain("ledger purge is the path that removes imported evidence");
   expect(SCREENPIPE_LIMITS.join(" ")).toContain("no source-side purge");
+});
+
+test("connector evidence emits only counts observed by successful steps and names failed run integrity", () => {
+  const report = mkdtempSync(join(tmpdir(), "kizuki-screenpipe-emission-"));
+  roots.push(report);
+  emitScreenpipeConnectorEvidence(report, "a".repeat(40), [{
+    id: "connect", command: ["connect", "screenpipe"], expected_exit: 0, exit_code: 1, passed: false,
+    stdout_sha256: "b".repeat(64), stderr_sha256: "c".repeat(64),
+    observation: { ...empty(), stored: SCREENPIPE_EXPECTED.backfill_stored, proposals: SCREENPIPE_EXPECTED.proposals_created },
+    failure: "synthetic-connect-refusal",
+  }], false);
+  const index = JSON.parse(readFileSync(join(report, "connector-evidence", "index.json"), "utf8"));
+  expect(index.emissions[0].row_counts).toEqual({});
+  expect(index.unresolved).toContain(`${SCREENPIPE_CONNECTOR_ID}:failed-step:connect:synthetic-connect-refusal`);
+  expect(index.unresolved).toContain(`${SCREENPIPE_CONNECTOR_ID}:run-integrity:proof-failed`);
+  expect(index.emissions[0].acceptance_credit).toBe(false);
+});
+
+test("connector evidence uses observed capture counts instead of fixture constants", () => {
+  const report = mkdtempSync(join(tmpdir(), "kizuki-screenpipe-observed-"));
+  roots.push(report);
+  const step = (id: string, observation: ReturnType<typeof empty>) => ({
+    id, command: [id], expected_exit: 0, exit_code: 0, passed: true,
+    stdout_sha256: "b".repeat(64), stderr_sha256: "c".repeat(64), observation, failure: null,
+  });
+  emitScreenpipeConnectorEvidence(report, "a".repeat(40), [
+    step("backfill", { ...empty(), stored: 7, proposals: 11 }),
+    step("repeat-backfill", { ...empty(), duplicates: 5 }),
+    step("sync", { ...empty(), stored: 2 }),
+  ], false);
+  const index = JSON.parse(readFileSync(join(report, "connector-evidence", "index.json"), "utf8"));
+  expect(index.emissions[0].row_counts).toEqual({ events_stored: 7, proposals_created: 11, repeat_duplicates: 5, sync_stored: 2 });
 });
