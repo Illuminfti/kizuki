@@ -40,6 +40,7 @@ import {
   type CanonReceiptRow,
   isErasedReceipt,
   rowToReceiptRecord,
+  worldReceiptChain,
 } from "./canon/receipts";
 import { insertErasedReceiptRow, insertReceiptRow } from "./canon/store";
 import { isWorldCanonReceipt, parseWorldCanonReceipt } from "./canon/world-receipt";
@@ -2501,7 +2502,7 @@ function insertReceipt(db: Database, raw: Record<string, unknown>, versions: Bac
     else insertReceiptRow(db, receipt, receipt.kind === "revert" ? "revert" : receipt.kind === "purge_rewrite" ? "purge_review" : "claim");
     return;
   }
-  if (["state", "own_id_origin", "basis", "purge_receipt_id", "erased_at", "integrity"].some(key => Object.hasOwn(raw, key)) ||
+  if (["state", "own_id_origin", "basis", "prior_receipt_id", "purge_receipt_id", "erased_at", "integrity"].some(key => Object.hasOwn(raw, key)) ||
       (Array.isArray(raw.claim_ids) && raw.claim_ids.some(id => typeof id === "string" &&
         db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1").get(id) !== null)) ||
       (typeof raw.receipt_id === "string" && db.query("SELECT 1 FROM claims WHERE receipt_id=? AND is_world_typed=1").get(raw.receipt_id) !== null) ||
@@ -2553,6 +2554,22 @@ function assertTypedCanonReceipts(db: Database, vaultPath: string): void {
       findMismatchedEventPurgeProof(db, PAGE) !== null) {
     throw new Error("backup erased canon receipt has invalid purge proof");
   }
+  // Erased-only histories carry no page identity, but their opaque operation
+  // edges still form closed, bounded chains. Validate those too, without
+  // retaining erased source or page metadata to identify the component.
+  const topology = db.query<{ total: number; reached: number }, []>(`
+    WITH RECURSIVE history(receipt_id, depth) AS (
+      SELECT receipt_id, 1 FROM canon_receipts
+        WHERE record_codec='kizuki.canon-receipt/v2' AND prior_receipt_id IS NULL
+      UNION ALL
+      SELECT child.receipt_id, parent.depth+1 FROM canon_receipts child
+        JOIN history parent ON child.prior_receipt_id=parent.receipt_id
+        WHERE child.record_codec='kizuki.canon-receipt/v2' AND parent.depth<4096
+    )
+    SELECT (SELECT count(*) FROM canon_receipts WHERE record_codec='kizuki.canon-receipt/v2') AS total,
+           (SELECT count(*) FROM history) AS reached
+  `).get()!;
+  if (topology.total !== topology.reached) throw new Error("backup typed canon receipt lineage invalid");
   const files = openCanonFiles(vaultPath);
   const pages = new Set<string>();
   try {
@@ -2576,20 +2593,14 @@ function assertTypedCanonReceipts(db: Database, vaultPath: string): void {
       if (pages.size > MAX_CANON_PAGES) throw new Error("backup typed canon page inventory exceeds its bound");
     }
     for (const path of pages) {
+      const current = worldReceiptChain(db, path).at(-1);
+      if (current === undefined) throw new Error("backup typed canon page has no causal receipt");
       const snapshot = files.read(path);
       try {
-        const bytes = snapshot?.bytes ?? null, hash = bytes === null ? ABSENT_PAGE_HASH : hashBytes(bytes);
-        let basis: string | null = null, matches = 0;
-        for (const row of db.query<CanonReceiptRow, [string, string]>(`SELECT * FROM canon_receipts
-            WHERE record_codec='kizuki.canon-receipt/v2' AND receipt_state='retained' AND page_path=? AND after_hash=?`).iterate(path, hash)) {
-          const receipt = rowToReceiptRecord(row);
-          if (isErasedReceipt(receipt) || !isWorldCanonReceipt(receipt)) throw new Error("backup typed canon receipt is invalid");
-          const current = canonicalJson(receipt.basis.after);
-          if (basis !== null && basis !== current) throw new Error("backup typed canon page basis is ambiguous");
-          basis = current; matches++;
-          assertWorldCanonPage(db, receipt, bytes, "after");
-        }
-        if (matches === 0) throw new Error("backup typed canon page has no matching receipt");
+        const bytes = snapshot?.bytes ?? null;
+        if (isErasedReceipt(current)) {
+          if (bytes !== null) throw new Error("backup erased canon head retains a live page");
+        } else assertWorldCanonPage(db, current, bytes, "after");
       } finally { snapshot?.close(); }
     }
   } finally { files.close(); }

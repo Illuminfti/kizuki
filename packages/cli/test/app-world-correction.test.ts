@@ -14,10 +14,10 @@ import { createHelpers } from './helpers';
 const h = createHelpers();
 afterEach(h.cleanup);
 
-async function fixture() {
+async function fixture(occurrence = false) {
     const setup = h.tempVault(), dbPath = join(setup.vault, '.kizuki', 'kizuki.db');
     const db = openLedger(dbPath);
-    const world = await worldFixture(db);
+    const world = await worldFixture(db, { occurrence });
     const path = worldCanonPath(worldClaimHandle(db, world.claims[0]!)!);
     applyCanonWrite({ db, vault_path: setup.vault }, world.claims.map(id => getClaim(db, id)!),
         { action: 'create', rel_path: path }, { writer: 'loop', budget: budget() });
@@ -47,8 +47,8 @@ async function fixture() {
     return { ...setup, dbPath, world, path, pageId, request, done, nativeEvents, close: app.close };
 }
 
-test('authenticated App corrects a typed writer page and undoes the actual rewrite', async () => {
-    const f = await fixture();
+test.each([false, true])('authenticated App corrects a typed writer page and undoes the actual rewrite (occurrence=%s)', async (occurrence) => {
+    const f = await fixture(occurrence);
     try {
         const before = readFileSync(join(f.vault, f.path), 'utf8');
         const targets = await f.request('correction_targets', { page_id: f.pageId });

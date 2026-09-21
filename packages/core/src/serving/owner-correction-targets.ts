@@ -43,8 +43,8 @@ export function inspectOwnerPageCorrectionTargets(ctx: Pick<ServeContext, 'db' |
                 const semantic = eligible.semantic;
                 // This is presentation of the writer's current grammar, not
                 // admission. Preview and write recheck it inside serveCorrect.
-                const supported = semantic.object.kind === 'literal' && semantic.subject.kind === 'supplied' &&
-                    'namespace' in semantic.subject && semantic.context.length === 0 && semantic.polarity === 'positive' &&
+                const supported = semantic.object.kind === 'literal' &&
+                    (semantic.subject.kind === 'occurrence' || 'namespace' in semantic.subject) && semantic.context.length === 0 && semantic.polarity === 'positive' &&
                     semantic.perspective.holder === null && semantic.perspective.speaker === null && semantic.perspective.addressee === null &&
                     semantic.perspective.mode === 'asserted' && semantic.perspective.interpretation === 'explicit';
                 claims.push({ kind: 'world', target: supported ? { world_claim: issueWorldRef(ctx.db, namespace, 'claim', item.claim_id) } : null,

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OWNER } from "../src/agents";
-import { getCanonReceiptRecord } from "../src/canon/receipts";
+import { getCanonReceiptRecord, isErasedReceipt, readReceiptRecords } from "../src/canon/receipts";
 import { eraseWorldReceipt, isWorldCanonReceipt } from "../src/canon/world-receipt";
 import { insertErasedReceiptRow } from "../src/canon/store";
 import { undoReceipt } from "../src/canon/undo";
@@ -49,14 +49,14 @@ test("erased receipt storage crosses export pagination and refuses unproved term
   await runPurge(f.db, f.vault, { event_id: event.event.event_id }, "fixture erasure");
   const purge = f.db.query<{ receipt_id: string }, []>("SELECT receipt_id FROM event_purges").get()!;
   // Storage pagination oracle; the actual writer-erasure lifecycle is separate.
-  const records = Array.from({ length: 257 }, () => eraseWorldReceipt(ulid(), purge.receipt_id, "2026-09-21T00:00:00.000Z"));
+  const records = Array.from({ length: 257 }, () => eraseWorldReceipt(ulid(), purge.receipt_id, "2026-09-21T00:00:00.000Z", null));
   f.db.transaction(() => { for (const record of records) insertErasedReceiptRow(f.db, record); }).immediate();
   const backup = join(root, "backup"), target = join(root, "restored");
   expect(exportVault(f.db, f.vault, backup).files["canon/receipts.jsonl"]!.count).toBe(257);
   restoreVault(backup, target); const db = openCopy(target);
   expect(db.query("SELECT count(*) AS n FROM canon_receipts WHERE receipt_state='erased'").get()).toEqual({ n: 257 });
   expect(getCanonReceiptRecord(db, records.at(-1)!.receipt_id)).toEqual(records.at(-1)!);
-  changeBackup(backup, row => eraseWorldReceipt(row.receipt_id as string, ulid(), "2026-09-21T00:00:00.000Z") as unknown as Record<string, unknown>);
+  changeBackup(backup, row => eraseWorldReceipt(row.receipt_id as string, ulid(), "2026-09-21T00:00:00.000Z", row.prior_receipt_id as string | null) as unknown as Record<string, unknown>);
   expect(() => restoreVault(backup, join(root, "unproved"))).toThrow("backup erased canon receipt has no completed purge");
   expect(existsSync(join(root, "unproved"))).toBe(false);
 });
@@ -214,8 +214,8 @@ for (const alteration of ["unknown-version", "unknown-field", "changed-basis", "
       if (alteration === "unknown-version") return { ...row, schema: "kizuki.canon-receipt/v3" };
       if (alteration === "unknown-field") return { ...row, surprise: "ignored?" };
       if (alteration === "removed-schema") { const { schema: _schema, ...rest } = row; return rest; }
-      if (alteration === "downgraded-receipt") { const { schema: _schema, state: _state, own_id_origin: _origin, basis: _basis, ...rest } = row; return rest; }
-      if (alteration === "unlinked-downgrade") { const { schema: _schema, state: _state, own_id_origin: _origin, basis: _basis, ...rest } = row; return { ...rest, claim_ids: [] }; }
+      if (alteration === "downgraded-receipt") { const { schema: _schema, state: _state, own_id_origin: _origin, basis: _basis, prior_receipt_id: _prior, ...rest } = row; return rest; }
+      if (alteration === "unlinked-downgrade") { const { schema: _schema, state: _state, own_id_origin: _origin, basis: _basis, prior_receipt_id: _prior, ...rest } = row; return { ...rest, claim_ids: [] }; }
       if (alteration === "changed-basis") { const basis = structuredClone(f.receipt.basis); return { ...row, basis: { ...basis, after: basis.after!.map(value => ({ ...value, semantic_key: "0".repeat(64) })) } }; }
       return row;
     }, alteration === "downgraded-manifest" ? 4 : undefined);
@@ -223,3 +223,54 @@ for (const alteration of ["unknown-version", "unknown-field", "changed-basis", "
     expect(existsSync(f.restored)).toBe(false);
   });
 }
+
+
+test("actual writer erasure survives export and restore without resurrecting source or page", async () => {
+  const f = await fixture();
+  await runPurge(f.db, f.vault, { event_id: f.world.eventId }, "erase typed source and page");
+  const receipts = readReceiptRecords(f.vault);
+  expect(receipts).toHaveLength(2);
+  expect(receipts.every(isErasedReceipt)).toBe(true);
+  expect(existsSync(join(f.vault, f.receipt.page_path))).toBe(false);
+  exportVault(f.db, f.vault, f.backup); restoreVault(f.backup, f.restored);
+  const copy = openCopy(f.restored);
+  expect(receipts.map(receipt => getCanonReceiptRecord(copy, receipt.receipt_id))).toEqual(receipts);
+  expect(copy.query("SELECT event_id FROM events WHERE event_id=?").get(f.world.eventId)).toBeNull();
+  expect(copy.query("SELECT count(*) AS n FROM claim_v2_semantics").get()).toEqual({ n: 0 });
+  expect(existsSync(join(f.restored, f.receipt.page_path))).toBe(false);
+  expect(readWorldView({ db: copy, vaultPath: f.restored, principal: OWNER }, {
+    operation: "find_concepts", label: "Bayesian updating", valid: { kind: "all" }, knownAt: { kind: "current" },
+  })).toMatchObject({ result: { data: { matches: [] } } });
+});
+
+test.each(["missing", "cycle", "fork"] as const)("restore rejects %s edges in entirely erased actual history", async mode => {
+  const f = await fixture();
+  await runPurge(f.db, f.vault, { event_id: f.world.eventId }, "erase all typed history");
+  const receipts = readReceiptRecords(f.vault);
+  expect(receipts).toHaveLength(2);
+  exportVault(f.db, f.vault, f.backup);
+  const forkParent = ulid();
+  changeBackup(f.backup, row => {
+    const prior = mode === "missing" ? ulid() : mode === "cycle"
+      ? receipts.find(receipt => receipt.receipt_id !== row.receipt_id)!.receipt_id
+      : forkParent;
+    return eraseWorldReceipt(row.receipt_id as string, row.purge_receipt_id as string, row.erased_at as string, prior) as unknown as Record<string, unknown>;
+  });
+  // Manifest and individual receipt integrity are valid; the operation graph is not.
+  expect(verifyBackup(f.backup).schema_versions.canon).toBe(5);
+  expect(() => restoreVault(f.backup, f.restored)).toThrow();
+  expect(existsSync(f.restored)).toBe(false);
+});
+
+test("a rehashed backup cannot detach a surviving page from its erased ancestry", async () => {
+  const f = await fixture();
+  await correct(f.io, { statement: "Use independent owner evidence.", target: { claim_id: f.world.claims[2]! } });
+  await runPurge(f.db, f.vault, { event_id: f.world.eventId }, "erase original source");
+  const records = readReceiptRecords(f.vault);
+  expect(records.filter(isErasedReceipt)).toHaveLength(2);
+  exportVault(f.db, f.vault, f.backup);
+  changeBackup(f.backup, row => row.state === "retained" ? { ...row, prior_receipt_id: null } : row);
+  expect(verifyBackup(f.backup).schema_versions.canon).toBe(5);
+  expect(() => restoreVault(f.backup, f.restored)).toThrow("lineage invalid");
+  expect(existsSync(f.restored)).toBe(false);
+});
