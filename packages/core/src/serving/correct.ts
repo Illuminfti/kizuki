@@ -25,6 +25,11 @@ import { groupByKey, readable, resolve } from "./target";
 import type { CorrectTarget } from "./target";
 import { ServeError } from "./types";
 import type { Envelope, ServeContext } from "./types";
+import { resolveWorldClaim, worldNamespace } from "../world/references";
+import { isWorldWireToken } from "./world-view";
+import { correct as correctTypedClaim } from "../correction/correct";
+import { readClaimV2Semantic } from "../claims/claim-v2-commit";
+import { getCanonReceipt } from "../canon/receipts";
 
 const MAX_STATEMENT_CHARS = 2_000;
 const MAX_OBJECT_CHARS = 1_024;
@@ -98,6 +103,111 @@ function recordId(statement: string, target: CorrectTarget): string {
     .update("\0")
     .update(canonical)
     .digest("hex");
+}
+
+function resolvedWorldTarget(ctx: ServeContext, target: CorrectTarget | undefined): CorrectTarget | undefined {
+  if (target?.world_claim === undefined) return target;
+  if (target.claim_id !== undefined || target.claim_key !== undefined || target.subject !== undefined ||
+      target.world_claim.kind !== "claim" || !isWorldWireToken(target.world_claim.token)) {
+    throw refuse("target", "names no live claim");
+  }
+  const claimId = resolveWorldClaim(ctx.db, worldNamespace(ctx.db, ctx.principal), target.world_claim.token);
+  if (claimId === null) throw refuse("target", "names no live claim");
+  return { claim_id: claimId };
+}
+
+/**
+ * World cards name neutral typed parents.  Their correction must therefore
+ * enter the typed correction writer, which creates the native owner evidence
+ * and preserves the support journal; the legacy writer cannot infer a
+ * predicate from the intentionally blank parent row.
+ */
+function isWorldClaimTarget(
+  ctx: ServeContext,
+  target: CorrectTarget | undefined,
+): target is CorrectTarget & { claim_id: string } {
+  return target?.claim_id !== undefined && readClaimV2Semantic(ctx.db, target.claim_id) !== null;
+}
+
+async function correctWorldClaim(
+  ctx: ServeContext,
+  args: CorrectArgs,
+  target: CorrectTarget & { claim_id: string },
+): Promise<Served<CorrectData>> {
+  if (args.object !== undefined && args.object !== args.statement)
+    throw refuse("object", "must equal statement for a typed world correction");
+  const claim = getClaim(ctx.db, target.claim_id);
+  if (claim === null || claim.status !== "live")
+    throw refuse("target", "names no live claim");
+  const reader = claimReader(ctx.db, ctx.principal.grant, {
+    owner: ctx.principal.kind === "owner",
+    purpose: "correction",
+  });
+  if (!reader.canRead(claim))
+    throw new ServeError("held", "source authorization does not permit this correction");
+  const result = await correctTypedClaim(
+    {
+      db: ctx.db,
+      vault_path: ctx.vaultPath,
+      ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
+      producer:
+        ctx.principal.kind === "owner"
+          ? "owner"
+          : `agent:${ctx.principal.agent.name}`,
+      relay_owner_corrections:
+        ctx.principal.kind === "owner" || ctx.principal.grant.relay_owner_corrections,
+      grant: ctx.principal.grant,
+    },
+    {
+      statement: args.statement,
+      target,
+      ...(args.dry_run === true ? { dry_run: true } : {}),
+    },
+  );
+  return {
+    canon: [],
+    quoted: [],
+    withheld:
+      result.recovery_pending === undefined
+        ? []
+        : [{ id: "tool:correct", reason: "error" as const }],
+    data: {
+      ...(result.recovery_pending === undefined
+        ? {}
+        : { recovery_pending: result.recovery_pending }),
+      receipt_id: result.receipt_id,
+      event_id: result.event_id,
+      claim_id: result.claim_ids[0] ?? null,
+      superseded: result.superseded.map(({ claim_id, claim_key }) => ({
+        claim_id,
+        claim_key,
+      })),
+      rewritten: result.rewritten.flatMap((rewrite) => {
+        if (rewrite.receipt_id === null) return [];
+        const receipt = getCanonReceipt(ctx.db, rewrite.receipt_id);
+        if (receipt === null) return [];
+        return [{
+          page_path: rewrite.page_path,
+          page_action: receipt.page_action,
+          before_hash: rewrite.before_hash,
+          after_hash: rewrite.after_hash,
+          receipt_id: rewrite.receipt_id,
+          diff: rewrite.diff,
+        }];
+      }),
+      ambiguous: result.ambiguous.map(({ claim_key, claim_ids }) => ({
+        claim_key,
+        claim_ids,
+      })),
+      answer: result.answer,
+    },
+    audit_ids: {
+      claim_ids: [
+        ...result.claim_ids,
+        ...result.superseded.map(({ claim_id }) => claim_id),
+      ],
+    },
+  };
 }
 
 function recordStatement(
@@ -225,6 +335,11 @@ export async function serveCorrect(
       const io = snapshotCanonIo({ db: ctx.db, vault_path: ctx.vaultPath });
       ctx = Object.freeze({ ...ctx, db: io.db, vaultPath: io.vault_path });
       try {
+        const effectiveTarget = ctx.db
+          .transaction(() => resolvedWorldTarget(ctx, args.target))
+          .immediate();
+        if (args.target?.world_claim !== undefined && isWorldClaimTarget(ctx, effectiveTarget))
+          return await correctWorldClaim(ctx, args, effectiveTarget);
         return await withCanonMutationAsync(io, async (scope, canon) => {
       const grant = ctx.principal.grant;
       const statement = text("statement", args.statement, MAX_STATEMENT_CHARS);
@@ -233,7 +348,7 @@ export async function serveCorrect(
           ? undefined
           : text("object", args.object, MAX_OBJECT_CHARS);
       // A filed native recording remains replayable after its target was retired.
-      if (args.target !== undefined && args.dry_run !== true) {
+      if (effectiveTarget !== undefined && args.dry_run !== true) {
         const recorded = ctx.db
           .query<
             { event_id: string; request_digest: string },
@@ -241,7 +356,7 @@ export async function serveCorrect(
           >(
             "SELECT e.event_id,n.request_digest FROM events e JOIN native_owner_evidence n ON n.event_id=e.event_id WHERE e.connector_id=? AND e.source_record_id=?",
           )
-          .get(CORRECTION_CONNECTOR, recordId(statement, args.target));
+          .get(CORRECTION_CONNECTOR, recordId(statement, effectiveTarget));
         if (recorded !== null) {
           if (
             recorded.request_digest !==
@@ -292,7 +407,7 @@ export async function serveCorrect(
           }
         }
       }
-      const resolved = resolve(ctx, args.target);
+      const resolved = resolve(ctx, effectiveTarget);
       const sourceReader = claimReader(ctx.db, grant, {
         owner: ctx.principal.kind === "owner",
         purpose: "correction",
