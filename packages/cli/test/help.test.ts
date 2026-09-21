@@ -96,7 +96,7 @@ describe("help", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("tell");
     expect(runCli(env, "help", "tell").stdout).toContain(
-      'usage: kizuki tell "<statement>" [--claim CLAIM_ID]',
+      'usage: kizuki tell "<statement>" [--claim CLAIM_ID|--world-claim TOKEN]',
     );
   });
 
@@ -244,13 +244,14 @@ describe("help", () => {
         };
       };
       expect(body.data.name).toBe("tell");
-      expect(body.data.options).toEqual(["--claim", "--since", "--until"]);
+      expect(body.data.options).toEqual(["--claim", "--world-claim", "--since", "--until"]);
       expect(body.data.flags).toEqual(["--dry-run", "--json", "--verbose"]);
       expect(body.data.bounds).toEqual({ "--since": "TIME", "--until": "TIME" });
       expect(body.data.irreversible).toBe(false);
     }
     const text = runCli(env, "tell", "--help");
     expect(text.stdout).toContain("--claim");
+    expect(text.stdout).toContain("--world-claim");
     expect(text.stdout).toContain("--since");
     expect(text.stdout).toContain("--until");
     expect(text.stdout).toContain("--dry-run");
