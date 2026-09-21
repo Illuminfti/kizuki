@@ -327,15 +327,21 @@ export {
   EXTRACT_INPUT_CHARS,
   MODEL_PRODUCER_DESCRIPTOR,
   MODEL_PRODUCER_ID,
+  MODEL_PRODUCER_V2_DESCRIPTOR,
+  MODEL_PRODUCER_V2_ID,
   admitExtractedClaims,
   buildExtractionMessages,
   createModelProducerPort,
+  createModelProducerV2Port,
   escapeFenceText,
   hasFenceLeak,
   newFenceNonce,
   parseExtractResponse,
   registerModelProducerPort,
+  registerModelProducerV2Port,
 } from "./producer";
+export type { ProducerV2Port, ProduceInputV2, ProduceResultV2 } from "./contracts/producer-v2";
+export { PRODUCER_V2_CONTRACT } from "./contracts/producer-v2";
 export type {
   ExtractionBatch,
   ModelProducerConfig,

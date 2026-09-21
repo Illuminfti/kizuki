@@ -6,6 +6,7 @@ import { temporaryProducerContext, scriptedLlm } from "./helpers";
 import { WORLD_VOCABULARY } from "../../src/contracts/world-vocabulary";
 import type { SystemOnePort, SystemOneRequest, SystemOneResponse } from "../../src/contracts/systemone";
 import { PortError, validatePortDescriptor, type PortHealth } from "../../src/contracts/ports";
+import { PortRegistry, MODEL_PRODUCER_V2_ID, PRODUCER_V2_CONTRACT, registerModelProducerV2Port, type ProducerV2Port } from "../../src";
 
 const input: ProduceInputV2 = {
   events: [{ event_id: "00000000000000000000000001", text: "Mira joined Northwind." }],
@@ -73,6 +74,19 @@ test("v2 consumes a real fenced prompt and returns local drafts without durable 
   const result = await port.produce(input);
   expect(result).toMatchObject({ status: "ok", response: { claims: [{ subject: { kind: "mention", id: "m0" } }] }, usage: { calls: 1 } });
   expect(llm.requests).toHaveLength(1);
+});
+
+test("typed producer binds through the public registry and releases its own capability", async () => {
+  const temp = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR); cleanups.push(temp.cleanup);
+  const registry = new PortRegistry(), llm = scriptedLlm(() => JSON.stringify(response));
+  registerModelProducerV2Port(() => llm, registry);
+  await expect(registry.bindFromConfig<ProducerV2Port>("producer", { producer: MODEL_PRODUCER_V2_ID }, temp.ctx)).rejects.toThrow("contract");
+  const bound = await registry.bindFromConfig<ProducerV2Port>("producer", { producer: MODEL_PRODUCER_V2_ID }, temp.ctx, PRODUCER_V2_CONTRACT);
+  expect(bound.d.contract).toBe("kizuki.producer/v2");
+  expect((await bound.port.produce(input)).status).toBe("ok");
+  await bound.port.close();
+  await expect(bound.port.produce(input)).rejects.toThrow("closed");
+  expect((await llm.health()).status).toBe("ready");
 });
 
 test("v2 rejects injected fence leaks, invalid references and malformed anchors", async () => {

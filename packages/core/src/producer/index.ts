@@ -50,6 +50,7 @@ export {
   MODEL_PRODUCER_V2_DESCRIPTOR,
   MODEL_PRODUCER_V2_ID,
   createModelProducerV2Port,
+  registerModelProducerV2Port,
   planModelExtractionV2,
   validateProduceInputV2,
 } from "./model-v2";

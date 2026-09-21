@@ -22,6 +22,8 @@ import { callModel, DEFAULT_PRODUCER_DEADLINE_MS, EXTRACT_MAX_OUTPUT_TOKENS, CHA
 import { hasFenceLeak, hasParsedFenceLeak, newFenceNonce } from "./fence";
 import { buildExtractionV2Messages } from "./prompt-v2";
 import { admitExtractedClaimsV2 } from "./systemone-admit";
+import { registerPort, type PortRegistry } from "../contracts/registry";
+import type { SystemOnePort } from "../contracts/systemone";
 
 export const MODEL_PRODUCER_V2_ID = "kizuki.producer.model.v2" as const;
 export const MODEL_PRODUCER_V2_DESCRIPTOR: PortDescriptor = validatePortDescriptor({ id: MODEL_PRODUCER_V2_ID, kind: "producer", contract: PRODUCER_V2_CONTRACT, contract_minor: 0, supports: ["model"], requires_lease: false, optional_package: null });
@@ -139,4 +141,18 @@ export function createModelProducerV2Port(ctx: PortContext, options: ModelProduc
     },
     async close() { closed = true; },
   };
+}
+
+/** Registers the typed producer with model and judge capabilities owned by its host. */
+export function registerModelProducerV2Port(
+  llmFor: (ctx: PortContext) => LlmPort,
+  registry?: PortRegistry,
+  systemoneFor?: (ctx: PortContext) => SystemOnePort | undefined,
+): void {
+  const factory = (ctx: PortContext): ProducerV2Port => {
+    const systemone = systemoneFor?.(ctx);
+    return createModelProducerV2Port(ctx, { llm: llmFor(ctx), ...(systemone === undefined ? {} : { systemone }) });
+  };
+  if (registry === undefined) registerPort(MODEL_PRODUCER_V2_DESCRIPTOR, factory);
+  else registry.registerPort(MODEL_PRODUCER_V2_DESCRIPTOR, factory);
 }
