@@ -3,6 +3,7 @@ import { hashBytes, ABSENT_PAGE_HASH } from "../vault/write";
 import { isWorldCanonReceipt, type RetainedWorldCanonReceipt } from "./world-receipt";
 import type { Database } from "bun:sqlite";
 import { OWNER } from "../agents";
+import { SENSITIVITY_ORDER, isSensitivity } from "../agents/types";
 import { getClaim } from "../claims/store";
 import { semanticKey } from "../claims/claim-v2-keys";
 import { readClaimV2Semantic } from "../claims/claim-v2-commit";
@@ -102,11 +103,13 @@ export function assertWorldCanonPage(db:Database,receipt:RetainedWorldCanonRecei
  if(basis===null||hashBytes(bytes)!==expected)throw new Error("typed canon image differs from receipt");
  assertWorldBasis(db,basis,true);
  const ctx=context(db),budget:ReadBudget={bytes:0},bodies:string[]=[],sources:string[]=[];
- let title="Knowledge record",type="topic";
+ let title="Knowledge record",type="topic",minimumSensitivity=0,quoted=false;
  for(const item of basis) {
   const handle=worldClaimHandle(db,item.claim_id);if(handle===null||worldCanonPath(handle)!==receipt.page_path)throw new Error("typed receipt handle mismatch");
   const eligible=eligibleWorldClaim(ctx,item.claim_id,{kind:"all"},budget,{historical:true,supportKeys:item.supports.map(support=>support.support_key)})!;
   const support=eligible.supports.find(support=>support.row.support_key===item.supports[0]!.support_key)!;
+  const claim=getClaim(db,item.claim_id)!;
+  minimumSensitivity=Math.max(minimumSensitivity,SENSITIVITY_ORDER[claim.sensitivity]);quoted ||= claim.taint==="quoted";
   const body=support.admission.rendering.body.trim();if(body.length)bodies.push(body);
   for(const event of support.events)if(!sources.includes(event.event_id))sources.push(event.event_id);
   const semantic=eligible.semantic;
@@ -116,5 +119,6 @@ export function assertWorldCanonPage(db:Database,receipt:RetainedWorldCanonRecei
  const page=parseFrontmatter(Buffer.from(bytes).toString("utf8"));
  const body=`${bodies.join(bodies.some(body=>body.includes("\n"))?"\n\n":" ")}\n`;
  if(page.body!==body||page.data["title"]!==title||page.data["type"]!==type||page.data["status"]!=="active"||canonicalJson(page.data["sources"])!==canonicalJson(sources)||Object.keys(page.data).sort().join(",")!=="id,sensitivity,sources,status,taint,title,type")throw new Error("typed canon image is not the admitted rendering");
+ if(!isSensitivity(page.data["sensitivity"])||SENSITIVITY_ORDER[page.data["sensitivity"]]<minimumSensitivity||(quoted&&page.data["taint"]!=="quoted"))throw new Error("typed canon image classification below admitted basis");
  if(image==="after"&&(page.data["sensitivity"]!==receipt.sensitivity||page.data["taint"]!==receipt.taint))throw new Error("typed canon image classification differs from receipt");
 }
