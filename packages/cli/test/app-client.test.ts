@@ -809,11 +809,11 @@ test('processing reports real run receipt counts and does not equate capture wit
     expect(f.main.textContent).not.toContain('9 memory writes');
 });
 
-test('Agents is a first-class destination that distinguishes stored access from a live connection', () => {
+test('Agents is a first-class destination with separate human-readable permissions', () => {
     const f = fixture();
     f.evaluate(`state.view='agents'; state.agents=[{name:'client-a',revoked_at:null,grant:{ceiling:'private',types:null,subjects:null,since:null,until:null,tools:['search','get_page'],rate_limit_per_minute:60,relay_owner_corrections:false}},{name:'client-b',revoked_at:'2026-09-07T00:00:00Z',grant:{ceiling:'public',types:null,subjects:null,since:null,until:null,tools:['search'],rate_limit_per_minute:60,relay_owner_corrections:false}}]; render();`);
-    expect(f.main.textContent).toContain('Agent access.'); expect(f.main.textContent).toContain('Access active'); expect(f.main.textContent).toContain('Access revoked');
-    expect(f.main.textContent).toContain('does not infer a live client connection'); expect(f.main.textContent).toContain('Search memory, Read memory pages');
+    expect(f.main.textContent).toContain('Give each assistant its own access to your memory.'); expect(f.main.textContent).toContain('Access enabled'); expect(f.main.textContent).toContain('Access revoked');
+    expect(f.main.textContent).toContain('Private memory · Search memory, Read memory pages'); expect(f.main.textContent).toContain('Each assistant gets separate permissions.');
     expect(findAction(f.main, 'Revoke access')).toBeTruthy();
 });
 
@@ -967,8 +967,8 @@ test('agent route rerenders a stored authorization after the agents response arr
     const work = f.evaluate<Promise<void>>('loadAgents()');
     f.reply('agents', { agents: [{ name: 'reader-client', revoked_at: null, grant: readGrant }] }); await work;
     expect(f.main.textContent).toContain('reader-client');
-    expect(f.main.textContent).toContain('Access active');
-    expect(f.main.textContent).toContain('does not infer a live client connection');
+    expect(f.main.textContent).toContain('Access enabled');
+    expect(f.main.textContent).toContain('Public memory · Search memory, Read memory pages');
 });
 
 test('agent setup refuses invalid names and reversed time windows before enrollment', async () => {

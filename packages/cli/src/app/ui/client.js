@@ -660,17 +660,21 @@ function agentToolSummary(grant) {
   if (!grant?.tools?.length) return 'No read tools';
   return grant.tools.map(tool => agentReadTools.find(([id]) => id === tool)?.[1] || tool).join(', ');
 }
+function agentMemorySummary(grant) {
+  const labels = { public: 'Public memory', personal: 'Public and personal memory', private: 'Private memory' };
+  return labels[grant?.ceiling] || `${grant?.ceiling || 'Unknown'} memory`;
+}
 function renderAgents() {
-  const section = el('section', { class: 'agents-page', 'aria-labelledby': 'agents-title' }, heading('Agent access.', 'Create distinct, bounded local access for each assistant. Enrolled access is not proof that an assistant is currently connected or has used it.', button('Set up an agent', agentEnrollment, 'primary')));
-  section.append(el('div', { class: 'status-note' }, icon('lock'), el('p', {}, 'For two independent clients, create one named access record for each, add each generated local MCP configuration to that client, then have both search an allowed source. Revoke either record here without changing the other.')));
+  const section = el('section', { class: 'agents-page', 'aria-labelledby': 'agents-title' }, heading('Agent access.', 'Give each assistant its own access to your memory.', button('Set up an agent', agentEnrollment, 'primary')));
+  section.append(el('div', { class: 'status-note' }, icon('lock'), el('p', {}, 'Each assistant gets separate permissions. You can revoke access at any time. Create access, copy its configuration to the assistant, then ask it to search an allowed source.')));
   if (!state.agents) section.append(empty(state.agentsError ? 'Agent access could not be checked.' : 'Checking agent access.', state.agentsError ? 'Refresh before relying on enrolled or revoked state.' : 'This local workspace is reading its enrolled access records.', button('Refresh agents', loadAgents, 'primary')));
   else if (!state.agents.length) section.append(empty('No agent access enrolled.', 'Set up a distinct read-only identity for an assistant. Its grant is separate from owner access and it can be revoked later.', button('Set up an agent', agentEnrollment, 'primary')));
   else {
     const list = el('div', { class: 'agent-list' });
     for (const agent of state.agents) {
       const revoked = agent.revoked_at !== null;
-      const summary = agent.grant ? `Sensitivity: ${agent.grant.ceiling} · Tools: ${agentToolSummary(agent.grant)}` : 'Current grant details are unavailable.';
-      list.append(el('article', { class: 'agent-card' }, el('div', { class: 'agent-card-top' }, el('div', {}, el('h2', {}, agent.name), el('p', {}, summary)), el('span', { class: `badge${revoked ? '' : ' badge-active'}` }, revoked ? 'Access revoked' : 'Access active')), !revoked && el('p', { class: 'agent-note' }, 'This confirms stored authorization only. It does not infer a live client connection or successful use.'), revoked && el('p', { class: 'agent-note' }, `Revoked ${dateText(agent.revoked_at)}. Existing clients must recheck access before each call.`), el('details', { class: 'result-details' }, el('summary', {}, 'View exact grant'), grantSummary(agent.grant)), !revoked && button('Revoke access', () => agentRevoke(agent), 'danger')));
+      const summary = agent.grant ? `${agentMemorySummary(agent.grant)} · ${agentToolSummary(agent.grant)}` : 'Current grant details are unavailable.';
+      list.append(el('article', { class: 'agent-card' }, el('div', { class: 'agent-card-top' }, el('div', {}, el('h2', {}, agent.name), el('p', {}, summary)), el('span', { class: `badge${revoked ? '' : ' badge-active'}` }, revoked ? 'Access revoked' : 'Access enabled')), el('details', { class: 'result-details' }, el('summary', {}, 'View exact grant'), grantSummary(agent.grant)), !revoked && button('Revoke access', () => agentRevoke(agent), 'danger')));
     }
     section.append(list);
   }
@@ -745,7 +749,7 @@ function renderSettings() {
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Workspace'), el('p', {}, 'Your memory stays in a local folder you control.')), el('span', { class: 'settings-value' }, state.status?.vault.name || 'Not created')),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Background activity'), el('p', {}, state.service?.detail || 'Refresh to check background activity.'), state.service && el('small', {}, `Checked ${dateText(state.service.checked_at)}`)), el('div', { class: 'form-actions' }, button('Refresh', loadService), state.service && state.service.state !== 'active' && state.service.kind !== 'none' && button('Enable background activity', () => launchOperation('install_service', {}, 'Setting up background activity', async (_operation, present) => { await refresh(); if (present()) await loadService(); }), 'primary'))),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Source privacy'), el('p', {}, 'Each source has its own permission. Imported content stays on this device unless you separately allow a model to use it.')), button('Manage sources', () => navigate('sources'))),
-    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Agent access'), el('p', {}, 'Enroll, inspect or revoke bounded assistant access from its dedicated view.')), button('Manage agents', () => navigate('agents'))),
+    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Agent access'), el('p', {}, 'Set up, inspect or revoke separate assistant permissions.')), button('Manage agents', () => navigate('agents'))),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'App session'), el('p', {}, 'This tab remembers only its local app capability. Search results and source content are not stored in browser storage.')), button('Disconnect tab', disconnect)),
     )), el('div', { class: 'status-note' }, icon('info'), el('p', {}, 'Search works without a model. Automatic organisation needs a working model and your permission to use each source.')));
 }
