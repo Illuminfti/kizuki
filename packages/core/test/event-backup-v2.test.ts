@@ -206,7 +206,7 @@ test("imports an exact legacy v1 record and annotates it under the v2 schema", (
   manifest.schema = LEGACY_BACKUP_SCHEMA;
   removePurgeHistoryStreams(backup, manifest);
   removeLineageStream(backup, manifest);
-  manifest.schema_versions = { ...manifest.schema_versions, ledger: 15 };
+  manifest.schema_versions = { ...manifest.schema_versions, ledger: 15, canon: 4 };
   writeJsonl(backup, manifest, "ledger/events.jsonl", [legacy]);
   unlinkSync(join(backup, "ledger/canon-machine-byte-intents.jsonl"));
   delete manifest.files["ledger/canon-machine-byte-intents.jsonl"];
@@ -230,7 +230,7 @@ test("refuses a v1 envelope that carries a v2-only event field", () => {
   manifest.schema = LEGACY_BACKUP_SCHEMA;
   removePurgeHistoryStreams(backup, manifest);
   removeLineageStream(backup, manifest);
-  manifest.schema_versions = { ...manifest.schema_versions, ledger: 15 };
+  manifest.schema_versions = { ...manifest.schema_versions, ledger: 15, canon: 4 };
   unlinkSync(join(backup, "ledger/canon-machine-byte-intents.jsonl"));
   delete manifest.files["ledger/canon-machine-byte-intents.jsonl"];
   signManifest(backup, manifest);
@@ -285,7 +285,7 @@ test("roundtrips mixed legacy-bound v1 and capture-bound v2 events", () => {
     manifest.schema = LEGACY_BACKUP_SCHEMA;
     removePurgeHistoryStreams(backup, manifest);
     removeLineageStream(backup, manifest);
-    manifest.schema_versions = { ...manifest.schema_versions, ledger: 15 };
+    manifest.schema_versions = { ...manifest.schema_versions, ledger: 15, canon: 4 };
     writeJsonl(backup, manifest, "ledger/events.jsonl", [legacy]);
     unlinkSync(join(backup, "ledger/canon-machine-byte-intents.jsonl"));
     delete manifest.files["ledger/canon-machine-byte-intents.jsonl"];
@@ -439,7 +439,7 @@ test("explicit legacy restore binds an original native proof to its unchanged v1
     manifest.schema = LEGACY_BACKUP_SCHEMA;
     removePurgeHistoryStreams(backup, manifest);
     removeLineageStream(backup, manifest);
-    manifest.schema_versions = { ...manifest.schema_versions, ledger: 15 };
+    manifest.schema_versions = { ...manifest.schema_versions, ledger: 15, canon: 4 };
     signManifest(backup, manifest);
     const target = join(temporary("kizuki-backup-legacy-native-"), "vault");
     restoreVault(backup, target);
@@ -466,7 +466,7 @@ test.each(["safe unmatched frontier", "completed frontier", "ambiguous deferred 
       manifest.schema = LEGACY_BACKUP_SCHEMA;
       removePurgeHistoryStreams(backup, manifest);
       removeLineageStream(backup, manifest);
-      manifest.schema_versions = { ...manifest.schema_versions, ledger: 15 };
+      manifest.schema_versions = { ...manifest.schema_versions, ledger: 15, canon: 4 };
       writeJsonl(backup, manifest, "ledger/events.jsonl", [legacy]);
       writeJsonl(backup, manifest, "canon/receipts.jsonl", [loopReceipt(validEvent().text,
         state === "direct receipt provenance" ? [current.event_id as string] : [])]);
