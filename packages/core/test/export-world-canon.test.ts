@@ -131,6 +131,13 @@ test("event purge scrubs a superseded source claim before a native correction ba
     target: { claim_id: world.claims[2]! },
   });
   expect(f.db.query("SELECT status FROM claims WHERE claim_id=?").get(world.claims[2]!)).toEqual({ status: "superseded" });
+  const stale = f.db.query<{
+    claim_id: string; semantic_key: string; schema: string; discriminator: string;
+    subject_kind: string | null; subject_id: string | null; predicate: string | null;
+    object_kind: string | null; polarity: string | null; temporal_basis: string | null;
+    valid_from: string | null; valid_to: string | null; payload: string;
+  }, [string]>("SELECT * FROM claim_v2_semantics WHERE claim_id=?").get(world.claims[2]!);
+  if (stale === null) throw new Error("missing source semantic fixture");
   purgeEvents(f.db, f.vault, { event_id: world.eventId }, "erase corrected source");
   expect(f.db.query("SELECT status,body,frontmatter,subjects,producer,claim_key,object,target,subject,predicate,model_ref FROM claims WHERE claim_id=?").get(world.claims[2]!)).toEqual({
     status: "superseded", body: "", frontmatter: "{}", subjects: "[]", claim_key: null,
@@ -139,6 +146,13 @@ test("event purge scrubs a superseded source claim before a native correction ba
   });
   expect(f.db.query("SELECT event_id FROM native_owner_evidence WHERE event_id=?").get(corrected.event_id)).toEqual({ event_id: corrected.event_id });
   const backup = join(root, "backup"), restored = join(root, "restored");
+  f.db.query("INSERT INTO claim_v2_semantics VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").run(
+    stale.claim_id, stale.semantic_key, stale.schema, stale.discriminator, stale.subject_kind,
+    stale.subject_id, stale.predicate, stale.object_kind, stale.polarity, stale.temporal_basis,
+    stale.valid_from, stale.valid_to, stale.payload,
+  );
+  expect(() => exportVault(f.db, f.vault, backup)).toThrow("source_export_denied");
+  f.db.query("DELETE FROM claim_v2_semantics WHERE claim_id=?").run(world.claims[2]!);
   f.db.query("UPDATE claims SET body=? WHERE claim_id=?").run("leaked source bytes", world.claims[2]!);
   expect(() => exportVault(f.db, f.vault, backup)).toThrow("source_export_denied");
   f.db.query("UPDATE claims SET body='' WHERE claim_id=?").run(world.claims[2]!);

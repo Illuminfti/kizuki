@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { readClaimV2Semantic } from "../../src/claims/claim-v2-commit";
 import { validateWorldEndpointProofs } from "../../src/claims/occurrences";
 import { getClaim } from "../../src/claims/store";
+import { correct } from "../../src/correction/correct";
 import type { ClaimV2Assertion } from "../../src/contracts/claim-v2";
 import { exportVault, restoreVault } from "../../src/export";
 import { initGraph } from "../../src/graph/schema";
@@ -74,10 +75,10 @@ test("opaque occurrence correction preserves its attested subject through source
     try {
       expect(readClaimV2Semantic(restored, id!)).toEqual(meaning);
       assertWorldState(restored);
-      const again = await serveCorrect({ ...f.ctx, db: restored, vaultPath: restoredPath }, {
+      const again = await correct({ db: restored, vault_path: restoredPath }, {
         statement: "Update odds only with independent evidence.", target: { claim_id: id! },
       });
-      expect(readClaimV2Semantic(restored, again.data!.claim_id!)!).toMatchObject({
+      expect(readClaimV2Semantic(restored, again.claim_ids[0]!)!).toMatchObject({
         subject: prior.subject, object: { kind: "literal", value: "Update odds only with independent evidence." },
       });
       assertWorldState(restored);
