@@ -1070,6 +1070,18 @@ function eventPurgeIntegrityOk(db: Database, batchId: string): boolean {
   ).get(batchId) === null;
 }
 
+/** Retained typed history remains purge-owned even when undo removed the live page. */
+function typedHistoryPaths(db:Database,eventIds:ReadonlySet<string>):string[] {
+  if(!tableExists(db,"canon_receipts")||!tableColumns(db,"canon_receipts").includes("record_codec"))return [];
+  const rows=db.query<{page_path:string},[string]>("SELECT DISTINCT c.page_path FROM canon_receipts c JOIN json_each(c.provenance) p WHERE c.record_codec='kizuki.canon-receipt/v2' AND c.receipt_state='retained' AND p.value IN (SELECT value FROM json_each(?)) ORDER BY c.page_path LIMIT 8193").all(JSON.stringify([...eventIds]));
+  if(rows.length>8192)throw new PurgeError("absence_failed","typed canon history exceeds purge bound");
+  return rows.map(row=>row.page_path);
+}
+function typedHistorySources(db:Database,pagePath:string):string[] {
+  if(!tableExists(db,"canon_receipts")||!tableColumns(db,"canon_receipts").includes("record_codec"))return [];
+  return db.query<{event_id:string},[string]>("SELECT DISTINCT p.value AS event_id FROM canon_receipts c JOIN json_each(c.provenance) p WHERE c.page_path=? AND c.record_codec='kizuki.canon-receipt/v2' AND c.receipt_state='retained' ORDER BY p.value LIMIT 32769").all(pagePath).map(row=>row.event_id);
+}
+
 export interface CompletedEventPurgeProof {
   readonly event_id:string;
   readonly purge_receipt_id:string;
@@ -1172,6 +1184,7 @@ function purgeEventsOwned(
     purgeExtractInputs(db, purgedIds, { receipt_id: batchReceipt, created_at: purgedAt });
     const { matched, holdPaths } = holdPathsFor(snapshot, purgedIds);
     assertSnapshotStillHolds(vaultPath, snapshot, holdPaths);
+    for(const path of typedHistoryPaths(db,purgedIds))holdPaths.add(path);
 
     const receipts: PurgeReceipt[] = [];
     const insertReceipt = db.query<
@@ -1494,6 +1507,7 @@ function catchUpHolds(db: Database, vaultPath: string, batchId: string): {
   const { matched, holdPaths } = holdPathsFor(snapshot, new Set(eventIds));
   return db.transaction(() => {
     assertSnapshotStillHolds(vaultPath, snapshot, holdPaths);
+    for(const path of typedHistoryPaths(db,new Set(eventIds)))holdPaths.add(path);
     const priorHolds = new Set(readHolds(db).filter(hold => hold.proposal_id === batchId).map(hold => hold.page_path));
     let expanded = false;
     for (const relPath of holdPaths) {
@@ -1553,8 +1567,11 @@ function rewriteHolds(
     // A held page cannot be republished until the complete store closure has
     // an exact, validated absence proof. Legacy malformed receipts stay held.
     if (unprovedPages.has(hold.page_path)) continue;
-    const sources = readHoldSources(vaultPath, hold.page_path);
-    if (sources === null) continue;
+    const pageSources = readHoldSources(vaultPath, hold.page_path);
+    const historySources=typedHistorySources(db,hold.page_path);
+    if(historySources.length>32768)continue;
+    const sources=[...new Set([...(pageSources??[]),...historySources])];
+    if(pageSources===null&&historySources.length===0)continue;
     const toRemove = purgedCitations(db, sources);
     if (toRemove.length === 0) {
       if (matchable.has(hold.page_path)) liftHold(db, hold.page_path);

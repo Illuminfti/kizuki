@@ -689,7 +689,7 @@ test("ledger31 migration is atomic on failure and preserves legacy rows", () => 
     db.close();
     db = openLedger(path);
     expect(db.query("SELECT version FROM schema_version").get()).toEqual({
-      version: 32,
+      version: 33,
     });
     expect(
       db.query("SELECT count(*) AS n FROM semantic_handles").get(),

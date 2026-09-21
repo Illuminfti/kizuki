@@ -3,6 +3,8 @@ import {existsSync,readFileSync} from "node:fs";
 import {join} from "node:path";
 import {canonFixture,budget} from "./helpers";
 import {worldFixture} from "../serving/world-fixture";
+import {parseFrontmatter,serializePage} from "../../src/vault/frontmatter";
+import {hashBytes} from "../../src/vault/write";
 import {getClaim} from "../../src/claims/store";
 import {applyCanonWrite} from "../../src/canon/apply";
 import {worldClaimHandle,worldCanonPath} from "../../src/canon/world-materialization";
@@ -65,12 +67,13 @@ test("source revocation erases both historical images while actual native correc
 });
 
 import {recoverCanonWrites} from "../../src/canon/recovery";
-import {readCanonWriteIntent,assertCanonAdmission} from "../../src/canon/write-intent";
+import {readCanonWriteIntent,assertCanonAdmission,parseCanonWriteIntent} from "../../src/canon/write-intent";
 test("typed erasure recovers exact published bytes and redacted log after receipt-row transaction failure",async()=>{
  const f=canonFixture();try {
   const world=await worldFixture(f.db),claims=world.claims.map(id=>getClaim(f.db,id)!);
   const path=worldCanonPath(worldClaimHandle(f.db,claims[0]!.claim_id)!);
   const original=applyCanonWrite(f.io,claims,{action:"create",rel_path:path},{writer:"loop",budget:budget()});
+  const originalBytes=readFileSync(join(f.vault,path));
   f.db.exec("CREATE TRIGGER interrupt_world_erasure BEFORE INSERT ON canon_receipts BEGIN SELECT RAISE(ABORT,'fixture receipt interruption'); END");
   await expect(runPurge(f.db,f.vault,{event_id:world.eventId},"interrupted world erasure")).rejects.toThrow("fixture receipt interruption");
   expect(existsSync(join(f.vault,path))).toBe(false);
@@ -79,6 +82,13 @@ test("typed erasure recovers exact published bytes and redacted log after receip
   if(intent.version!==3)throw new Error("typed erasure intent required");
   const tampered=structuredClone(intent);tampered.erasure.archives.push({path:"archive/unrelated.md",hash:original.after_hash});
   expect(()=>assertCanonAdmission(f.db,tampered)).toThrow("archive_changed");
+  const forged=structuredClone(intent),page=parseFrontmatter(originalBytes.toString("utf8"));
+  page.data["sources"]=[];page.body="Unadmitted replacement prose.\n";
+  const bytes=Buffer.from(serializePage(page));forged.after_base64=bytes.toString("base64");
+  forged.receipt={...forged.receipt,after_hash:hashBytes(bytes)};
+  expect(()=>parseCanonWriteIntent(forged)).toThrow("intent_invalid");
+  expect(()=>assertCanonAdmission(f.db,forged)).toThrow("intent_invalid");
+
   f.db.exec("DROP TRIGGER interrupt_world_erasure");
   expect(recoverCanonWrites(f.io).completed).toEqual([intent.receipt.receipt_id]);
   expect(isErasedReceipt(getCanonReceiptRecord(f.db,original.receipt_id)!)).toBe(true);
@@ -86,5 +96,23 @@ test("typed erasure recovers exact published bytes and redacted log after receip
   const lines=readFileSync(join(f.vault,".kizuki/receipts/promotions.jsonl"),"utf8").trim().split("\n").map(line=>JSON.parse(line));
   expect(lines.filter(line=>line.receipt_id===intent.receipt.receipt_id)).toHaveLength(1);
   expect(f.db.query("SELECT COUNT(*) AS n FROM canon_write_intents").get()).toEqual({n:0});
+ }finally{f.dispose();}
+});
+
+for(const mode of ["source","event"] as const)test(`${mode} purge erases archives and receipts after typed create was undone`,async()=>{
+ const f=canonFixture();try {
+  const world=await worldFixture(f.db),claims=world.claims.map(id=>getClaim(f.db,id)!);
+  const path=worldCanonPath(worldClaimHandle(f.db,claims[0]!.claim_id)!);
+  const original=applyCanonWrite(f.io,claims,{action:"create",rel_path:path},{writer:"loop",budget:budget()});
+  const undo=await undoReceipt(f.io,original.receipt_id);
+  expect(existsSync(join(f.vault,path))).toBe(false);expect(undo.archive_path).not.toBeNull();
+  if(mode==="source") {
+    revokeSourceGrant(f.db,{source_key:world.sourceKey,expected_revision:1,operation_id:"erase-undone-source"});
+    const result=await resumeSourceRevocation(f.db,f.vault,"erase-undone-source",{ownedRetrieval:{stores:async()=>({stores:[],absent_store_ids:[]})}});
+    expect({status:result.status,blockers:result.purge_blockers}).toEqual({status:"purged",blockers:[]});
+  }else await runPurge(f.db,f.vault,{event_id:world.eventId},"erase undone event");
+  expect(existsSync(join(f.vault,undo.archive_path!))).toBe(false);
+  for(const receipt of [original,undo])expect(isErasedReceipt(getCanonReceiptRecord(f.db,receipt.receipt_id)!)).toBe(true);
+  expect(readFileSync(join(f.vault,".kizuki/receipts/promotions.jsonl"),"utf8")).not.toContain(world.eventId);
  }finally{f.dispose();}
 });
