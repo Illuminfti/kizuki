@@ -20,6 +20,10 @@ import {getCanonReceiptRecord,isErasedReceipt} from "../../src/canon/receipts";
 import {readCanonWriteIntent} from "../../src/canon/write-intent";
 import {tempVault} from "../helpers/vault";
 import {recoverCanonWrites} from "../../src/canon/recovery";
+import {undoReceipt} from "../../src/canon/undo";
+import {parseWorldAdmission} from "../../src/contracts/world-admission";
+import {insertClaim} from "../../src/claims/store";
+import {worldReceiptChain} from "../../src/canon/receipts";
 
 test("typed reads use the actual relay grant and reject source withdrawal",async()=>{
  const f=canonFixture();try {
@@ -79,4 +83,30 @@ test("reopening a file-backed ledger recovers redacted typed erasure exactly onc
   expect(log.trim().split("\n").filter(line=>JSON.parse(line).receipt_id===receiptId)).toHaveLength(1);
   expect(log).not.toContain(world.eventId);expect(log).not.toContain(original.after_hash);
  }finally{db.close();vault.dispose();}
+});
+
+test("typed undo requires the current admitted basis when bytes are unchanged, then cascades safely",async()=>{
+ const f=canonFixture();try {
+  const world=await worldFixture(f.db),claims=world.claims.map(id=>getClaim(f.db,id)!);
+  const path=worldCanonPath(worldClaimHandle(f.db,claims[0]!.claim_id)!);
+  const first=applyCanonWrite(f.io,claims,{action:"create",rel_path:path},{writer:"loop",budget:budget()});
+  const admission=parseWorldAdmission(JSON.parse(f.db.query<{admission:string},[string]>("SELECT admission FROM claim_v2_support WHERE claim_id=?").get(world.claims[2]!)!.admission))!;
+  const semantic={...admission.semantic,object:{kind:"literal" as const,value:"Additional source assertion."}};
+  const inserted=await insertClaim({db:f.db},{kind:"claim",body:"",provenance:[world.eventId],producer:"deterministic",confidence:0.8,semantic,world_admission:{...admission,semantic,rendering:{body:"",frontmatter:{}}}});
+  if(inserted.outcome!=="stored")throw new Error("expected admitted typed assertion");
+  const pageId=f.db.query<{page_id:string},[string]>("SELECT page_id FROM page_index WHERE rel_path=?").get(path)!.page_id;
+  const second=applyCanonWrite(f.io,inserted.claim,{action:"edit",rel_path:path,page_id:pageId,reason:"explicit"},{writer:"loop",budget:budget()});
+  expect(second.after_hash).toBe(first.after_hash);
+  const bytes=readFileSync(join(f.vault,path));
+  const before=worldReceiptChain(f.db,path).map(receipt=>receipt.receipt_id);
+  await expect(undoReceipt(f.io,first.receipt_id)).rejects.toThrow("page changed");
+  expect(readFileSync(join(f.vault,path))).toEqual(bytes);
+  expect(worldReceiptChain(f.db,path).map(receipt=>receipt.receipt_id)).toEqual(before);
+  expect(readCanonWriteIntent(f.db)).toBeNull();
+  await undoReceipt(f.io,first.receipt_id,{cascade:true});
+  expect(existsSync(join(f.vault,path))).toBe(false);
+  const last=worldReceiptChain(f.db,path).at(-1)!;
+  if(isErasedReceipt(last))throw new Error("cascade must retain its undo receipt");
+  expect(last.basis.after).toBeNull();
+ }finally{f.dispose();}
 });

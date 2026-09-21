@@ -8,6 +8,7 @@ import { getClaim } from "../../src/claims/store";
 import { applyCanonWrite } from "../../src/canon/apply";
 import { worldClaimHandle,worldCanonPath,assertWorldReceiptBasis,assertWorldCanonPage } from "../../src/canon/world-materialization";
 import { isWorldCanonReceipt } from "../../src/canon/world-receipt";
+import { readCanonWriteIntent } from "../../src/canon/write-intent";
 
 test("real admitted typed claims render through the same canon writer while their legacy parents stay neutral",async()=>{
  const f=canonFixture();try {
@@ -93,7 +94,30 @@ test("typed create undo and redo preserve exact absent-image semantics and resto
   expect(redo.before_hash).toBe(ABSENT_PAGE_HASH);expect(redo.basis.before).toBeNull();
   assertWorldCanonPage(f.db,redo,null,"before");assertWorldCanonPage(f.db,redo,bytes,"after");
   expect(()=>assertWorldCanonPage(f.db,{...redo,before_hash:null},null,"before")).toThrow("image missing");
+  const secondUndo=await undoReceipt(f.io,redo.receipt_id);
+  expect(existsSync(join(f.vault,path))).toBe(false);
+  expect(isWorldCanonReceipt(secondUndo)).toBe(true);if(!isWorldCanonReceipt(secondUndo))throw new Error("typed second undo expected");
+  expect(secondUndo.basis.after).toBeNull();
+  const secondRedo=await undoReceipt(f.io,secondUndo.receipt_id);
+  expect(readFileSync(join(f.vault,path))).toEqual(bytes);
+  expect(isWorldCanonReceipt(secondRedo)).toBe(true);if(!isWorldCanonReceipt(secondRedo))throw new Error("typed second redo expected");
+  assertWorldCanonPage(f.db,secondRedo,bytes,"after");
   expect(world.claims.every(id=>getClaim(f.db,id)!.status==="live")).toBe(true);
+ }finally{f.dispose();}
+});
+
+test("typed redo rejects a hostile absent-before receipt shape without side effects",async()=>{
+ const f=canonFixture();try {
+  const world=await worldFixture(f.db),claims=world.claims.map(id=>getClaim(f.db,id)!);
+  const path=worldCanonPath(worldClaimHandle(f.db,claims[0]!.claim_id)!);
+  const original=applyCanonWrite(f.io,claims,{action:"create",rel_path:path},{writer:"loop",budget:budget()});
+  const undo=await undoReceipt(f.io,original.receipt_id),redo=await undoReceipt(f.io,undo.receipt_id);
+  f.db.query("UPDATE canon_receipts SET page_action='edit' WHERE receipt_id=?").run(redo.receipt_id);
+  const bytes=readFileSync(join(f.vault,path)),receiptCount=f.db.query<{count:number},[]>("SELECT COUNT(*) AS count FROM canon_receipts").get()!.count;
+  await expect(undoReceipt(f.io,redo.receipt_id)).rejects.toThrow("not undoable");
+  expect(readFileSync(join(f.vault,path))).toEqual(bytes);
+  expect(f.db.query<{count:number},[]>("SELECT COUNT(*) AS count FROM canon_receipts").get()!.count).toBe(receiptCount);
+  expect(readCanonWriteIntent(f.db)).toBeNull();
  }finally{f.dispose();}
 });
 
