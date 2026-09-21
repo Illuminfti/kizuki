@@ -32,6 +32,7 @@ import { parseWorldAdmission, type WorldAdmission } from "../contracts/world-adm
 import { allocateWorldEndpoints } from "../world/allocation";
 import { WORLD_TABLES } from "../world/schema";
 import { tableColumns, tableExists } from "../ledger/schema";
+import { eventFromRow, type EventRow } from "../ledger/event-record";
 
 /**
  * RFC 0003 B1c: the v2 children of the shared prepare/commit writer.
@@ -215,14 +216,22 @@ function requireNativeOwnerSupport(
     throw new ClaimError("schema_invalid", "native owner support has an invalid reserved source identity");
   }
   const event = support.events[0]!;
-  const proof = db.query<{ event_content_hash: string }, [string]>(
-    `SELECT n.event_content_hash FROM native_owner_evidence n
-      JOIN events e ON e.event_id=n.event_id
+  const proof = db.query<EventRow & { event_content_hash: string }, [string]>(
+    `SELECT e.*, n.event_content_hash FROM native_owner_evidence n
+       JOIN events e ON e.event_id=n.event_id
       WHERE n.event_id=? AND n.origin='correction' AND e.connector_id='kizuki.owner'
         AND e.origin_binding_kind='native'`,
   ).get(event.event_id);
   if (proof === null || proof.event_content_hash !== event.event_content_hash) {
     throw new ClaimError("provenance_unresolved", "native owner support needs its recorded correction event");
+  }
+  // Replays the immutable origin-binding validation, including the native
+  // request digest held privately in native_owner_evidence.
+  try { eventFromRow(proof, db); } catch {
+    throw new ClaimError("provenance_unresolved", "native owner support has an invalid origin proof");
+  }
+  if (db.query("SELECT 1 FROM source_event_bindings WHERE event_id=?").get(event.event_id) !== null) {
+    throw new ClaimError("provenance_unresolved", "native owner support may not be source-bound");
   }
 }
 
@@ -390,6 +399,14 @@ export function commitClaimV2(
         "SELECT support_key FROM claim_v2_support WHERE support_key = ?",
       )
       .get(supportKeyValue) !== null;
+  if (duplicateSupport && suppliedWorld !== null) {
+    const prior = db.query<{ admission: string }, [string]>(
+      "SELECT admission FROM claim_v2_support WHERE support_key=?",
+    ).get(supportKeyValue);
+    if (prior === null || prior.admission !== canonicalJson(admission)) {
+      throw new ClaimError("schema_invalid", "claim/v2 support conflicts with immutable admission");
+    }
+  }
   if (!duplicateSupport) {
     const columns = suppliedWorld === null
       ? "support_key, claim_id, anchors, source_key, grant_revision, admission, admitted_at"
