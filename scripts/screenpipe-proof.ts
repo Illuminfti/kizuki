@@ -297,11 +297,14 @@ export function emitScreenpipeConnectorEvidence(report: string, sourceSha: strin
   const unresolved: string[] = [];
   const entries: { receipt: ConnectorEvidenceReceipt; emission: ConnectorEvidenceEmission }[] = [];
   const executed = steps.filter(step => step.exit_code >= 0);
+  const failed = steps.filter(step => !step.passed);
   let producer_revision = "";
   try { producer_revision = connectorProducerRevision(ROOT); }
   catch (error) { unresolved.push(`producer-revision-unavailable:${error instanceof Error ? error.message : "unknown"}`); }
   if (executed.length === 0) unresolved.push(`${SCREENPIPE_CONNECTOR_ID}:no-command-was-executed`);
   else {
+    for (const step of failed) unresolved.push(`${SCREENPIPE_CONNECTOR_ID}:failed-step:${step.id}${step.failure ? `:${step.failure}` : ""}`);
+    if (!passed) unresolved.push(`${SCREENPIPE_CONNECTOR_ID}:run-integrity:proof-failed`);
     try {
       entries.push({
         receipt: buildConnectorEvidenceReceipt({
@@ -310,16 +313,29 @@ export function emitScreenpipeConnectorEvidence(report: string, sourceSha: strin
         }),
         emission: {
           connector_id: SCREENPIPE_CONNECTOR_ID, evidence_class: "local-source", acceptance_credit: passed,
-          row_counts: {
-            events_stored: SCREENPIPE_EXPECTED.backfill_stored, proposals_created: SCREENPIPE_EXPECTED.proposals_created,
-            repeat_duplicates: SCREENPIPE_EXPECTED.repeat_duplicates, sync_stored: SCREENPIPE_EXPECTED.sync_stored,
-          },
+          row_counts: observedScreenpipeCounts(steps),
           limits: SCREENPIPE_LIMITS,
         },
       });
     } catch (error) { unresolved.push(`${SCREENPIPE_CONNECTOR_ID}:${error instanceof Error ? error.message : "receipt-refused"}`); }
   }
   writeConnectorEvidence(report, entries, unresolved);
+}
+
+/** Emissions record only counters a successful named step actually observed. */
+function observedScreenpipeCounts(steps: readonly Step[]): Record<string, number> {
+  const count = (id: string, key: "stored" | "duplicates" | "proposals"): number | undefined => {
+    const step = steps.find(candidate => candidate.id === id && candidate.passed);
+    const value = step?.observation[key];
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  };
+  const counts: Record<string, number> = {};
+  const backfill = count("backfill", "stored"), proposals = count("backfill", "proposals"), repeat = count("repeat-backfill", "duplicates"), sync = count("sync", "stored");
+  if (backfill !== undefined) counts.events_stored = backfill;
+  if (proposals !== undefined) counts.proposals_created = proposals;
+  if (repeat !== undefined) counts.repeat_duplicates = repeat;
+  if (sync !== undefined) counts.sync_stored = sync;
+  return counts;
 }
 
 /** Stated by the connector's own README and witnessed by the steps above. */
