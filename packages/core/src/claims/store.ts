@@ -8,7 +8,7 @@ import { compareRfc3339 } from "../agents/time";
 import type { Sensitivity } from "../agents/types";
 import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../contracts/retrieval";
 import type { ClaimV2Assertion } from "../contracts/claim-v2";
-import { parseWorldAdmission, type WorldAdmission } from "../contracts/world-admission";
+import { completeWorldAnchors, parseWorldAdmission, type WorldAdmission } from "../contracts/world-admission";
 import { bareRetrievalId, retrievalDocId } from "../retrieval/ids";
 import type {
   AuthorityTier,
@@ -307,10 +307,8 @@ function preparedWorldCommit(
   if (admission === null || semanticKey(admission.semantic) !== semanticKey(input.semantic)) {
     throw new ClaimError("schema_invalid", "world admission needs its matching typed semantic");
   }
-  const supportEventIds = [...new Set([
-    ...input.semantic.anchors,
-    ...input.semantic.perspective.anchors,
-  ].map((anchor) => anchor.event_id))];
+  const anchors = completeWorldAnchors(input.semantic);
+  const supportEventIds = [...new Set(anchors.map((anchor) => anchor.event_id))];
   const native = input.intent === "correct" && input.provenance.length === 1 &&
     db.query("SELECT 1 FROM native_owner_evidence WHERE event_id=? AND origin='correction'").get(input.provenance[0]!) !== null;
   if (native && (supportEventIds.length !== 1 || supportEventIds[0] !== input.provenance[0])) {
@@ -331,10 +329,6 @@ function preparedWorldCommit(
   if (!native && (grant === null || grant.status !== "active")) {
     throw new ClaimError("provenance_unresolved", "world admission source grant is not active");
   }
-  const anchors = [...input.semantic.anchors, ...input.semantic.perspective.anchors]
-    .filter((anchor, index, values) => values.findIndex((other) =>
-      other.event_id === anchor.event_id && other.start_utf16 === anchor.start_utf16 && other.end_utf16 === anchor.end_utf16,
-    ) === index);
   return {
     semantic: input.semantic,
     support: {
