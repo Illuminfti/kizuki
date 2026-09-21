@@ -116,3 +116,30 @@ for(const mode of ["source","event"] as const)test(`${mode} purge erases archive
   expect(readFileSync(join(f.vault,".kizuki/receipts/promotions.jsonl"),"utf8")).not.toContain(world.eventId);
  }finally{f.dispose();}
 });
+
+import {insertClaim} from "../../src/claims/store";
+import {parseWorldAdmission} from "../../src/contracts/world-admission";
+test("event purge finds source history even when the current page has only independent native citations",async()=>{
+ const f=canonFixture();try {
+  initSearch(f.db);initGraph(f.db);
+  const world=await worldFixture(f.db),claims=world.claims.map(id=>getClaim(f.db,id)!);
+  const path=worldCanonPath(worldClaimHandle(f.db,claims[0]!.claim_id)!);
+  const oldAdmission=parseWorldAdmission(JSON.parse(f.db.query<{admission:string},[string]>("SELECT admission FROM claim_v2_support WHERE claim_id=?").get(world.claims[2]!)!.admission))!;
+  const original=applyCanonWrite(f.io,claims,{action:"create",rel_path:path},{writer:"loop",budget:budget()});
+  const removed=await undoReceipt(f.io,original.receipt_id);
+  const semantic={...oldAdmission.semantic,object:{kind:"literal" as const,value:"Source-supported second interpretation"}};
+  const result=await insertClaim({db:f.db},{kind:"claim",body:"Source-supported second interpretation",provenance:[world.eventId],producer:"deterministic",confidence:0.8,semantic,world_admission:{...oldAdmission,semantic,rendering:{body:"Source-supported second interpretation",frontmatter:{}}}});
+  if(result.outcome!=="stored")throw new Error("fresh source assertion required");
+  const second=applyCanonWrite(f.io,result.claim,{action:"create",rel_path:path},{writer:"loop",budget:budget()});
+  const correction=await correct(f.io,{statement:"Independent owner interpretation.",target:{claim_id:result.claim.claim_id}});
+  const corrected=getCanonReceipt(f.db,correction.receipt_id!)!;
+  expect(readFileSync(join(f.vault,path),"utf8")).not.toContain(world.eventId);
+  await runPurge(f.db,f.vault,{event_id:world.eventId},"erase historical source only");
+  expect(readFileSync(join(f.vault,path),"utf8")).toContain("Independent owner interpretation.");
+  for(const receipt of [original,removed,second,corrected]) {
+    expect(isErasedReceipt(getCanonReceiptRecord(f.db,receipt.receipt_id)!)).toBe(true);
+    if(receipt.archive_path!==null)expect(existsSync(join(f.vault,receipt.archive_path))).toBe(false);
+  }
+  expect(readFileSync(join(f.vault,".kizuki/receipts/promotions.jsonl"),"utf8")).not.toContain(world.eventId);
+ }finally{f.dispose();}
+});

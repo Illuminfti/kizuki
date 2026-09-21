@@ -254,6 +254,7 @@ export function assertCanonAdmission(db: Database, intent: CanonWriteIntent): vo
     try {
       if(intent.version!==3)assertWorldBasis(db, intent.receipt.basis.before, true);
       assertWorldBasis(db, intent.receipt.basis.after, intent.completion.mode === "revert");
+      if(intent.version!==3){assertWorldCanonPage(db,intent.receipt,decodeCanonImage(intent.before_base64),"before");assertWorldCanonPage(db,intent.receipt,decodeCanonImage(intent.after_base64),"after");}
     } catch { recoveryFailure("authority_changed", intent.receipt.receipt_id); }
   }
   if(intent.version===3) {

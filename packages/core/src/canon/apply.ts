@@ -448,6 +448,7 @@ export function applyCanonWriteOwned(
   const pageId = target.page_id ?? mintId(io);
   const receiptId = mintId(io);
   initCanon(io.db);
+  const ownedClaims=typed?claims.filter(item=>item.receipt_id===null):persisted;
   const outputProvenance = union(claims.map((item) => item.provenance));
   const provenance = typed ? union([outputProvenance, ...(existing === null ? [] : [existingSources(existing.page)])]) : outputProvenance;
   let worldBasis: WorldCanonBasis | null = null;
@@ -484,7 +485,7 @@ export function applyCanonWriteOwned(
   requireSourceEvents(io.db, Array.isArray(prepared.page.data["sources"]) ? prepared.page.data["sources"].filter((id): id is string => typeof id === "string") : [], { owner: true, purpose: "derive" });
   prepared.sensitivity = sourceSensitivity(io.db, provenance, prepared.sensitivity);
   prepared.page.data["sensitivity"] = prepared.sensitivity;
-  const superseded = typed ? io.db.query<{claim_id:string;claim_key:string},[string]>("SELECT s.loser AS claim_id,m.semantic_key AS claim_key FROM claim_supersessions s JOIN claim_v2_semantics m ON m.claim_id=s.loser WHERE s.winner IN (SELECT value FROM json_each(?)) ORDER BY s.loser").all(JSON.stringify(persisted.map(item=>item.claim_id))) : supersededRefs(io, decision);
+  const superseded = typed ? io.db.query<{claim_id:string;claim_key:string},[string]>("SELECT s.loser AS claim_id,m.semantic_key AS claim_key FROM claim_supersessions s JOIN claim_v2_semantics m ON m.claim_id=s.loser WHERE s.winner IN (SELECT value FROM json_each(?)) ORDER BY s.loser").all(JSON.stringify(ownedClaims.map(item=>item.claim_id))) : supersededRefs(io, decision);
   const retrievalOps: RetrievalOpRef[] =
     io.retrieval_store === undefined
       ? []
@@ -515,7 +516,7 @@ export function applyCanonWriteOwned(
   const receipt: CanonReceipt = {
     receipt_id: receiptId,
     kind: "write",
-    claim_ids: persisted.map((item) => item.claim_id),
+    claim_ids: ownedClaims.map((item) => item.claim_id),
     page_path: target.rel_path,
     page_action: prepared.action,
     before_hash: existing?.hash ?? null,

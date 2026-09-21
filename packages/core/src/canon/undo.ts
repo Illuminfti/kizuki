@@ -1,3 +1,4 @@
+import { isSensitivity } from "../agents/types";
 import { isWorldCanonReceipt } from "./world-receipt";
 import { assertWorldBasis } from "./world-materialization";
 import { getCanonReceiptRecord, isErasedReceipt } from "./receipts";
@@ -190,13 +191,15 @@ async function applyUndo(scope: VaultMutationScope, io: CanonIo, original: Canon
   const fallback = pageIndexByPath(io.db, original.page_path)?.page_id ?? null;
   const pageId = pageIdOf(page, fallback);
   const ops: RetrievalOpRef[] = original.retrieval_ops.map(op => ({ store: op.store, op: page === null ? "remove" : "upsert", doc: op.doc }));
+  const typedImage=isWorldCanonReceipt(original)&&page!==null;
+  if(typedImage&&(!isSensitivity(page.data["sensitivity"])||!["clean","quoted"].includes(String(page.data["taint"]))))throw new UndoError("archive_missing","undo: typed archive classification is invalid");
   const revert: CanonReceipt = {
     receipt_id: revertId, kind: "revert", claim_ids: [...original.claim_ids], page_path: original.page_path,
     page_action: page === null ? "archive" : before === null ? "create" : "edit",
     before_hash: original.after_hash, after_hash: after === null ? ABSENT_PAGE_HASH : hashBytes(after),
     archive_path: before === null ? null : archiveRelPath(original.page_path, revertId), writer: "revert",
     producer: original.producer, model_ref: original.model_ref, authority, confidence: original.confidence,
-    sensitivity: original.sensitivity, taint: original.taint, provenance: [...original.provenance],
+    sensitivity: typedImage?page.data["sensitivity"] as CanonReceipt["sensitivity"]:original.sensitivity, taint: typedImage?page.data["taint"] as CanonReceipt["taint"]:original.taint, provenance: [...original.provenance],
     superseded: [...original.superseded], candidates: [], retrieval_ops: ops,
     reverts: original.receipt_id, reverted_by: null, at,
     ...(isWorldCanonReceipt(original) ? {schema:original.schema,state:original.state,own_id_origin:original.own_id_origin,basis:{schema:original.basis.schema,before:original.basis.after,after:original.basis.before}} : {}),

@@ -4,7 +4,7 @@ import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { refreshDerivedPage, removeDerivedPage } from "../derived";
 import { MAX_CANON_INTENT_BYTES, MAX_CANON_IDENTITY_BINDINGS } from "../ledger/canon-recovery-schema";
-import { requireSourceEvents, sourcePolicyEpoch } from "../ledger/source-grants";
+import { requireSourceEvents, sourceSensitivity, sourcePolicyEpoch } from "../ledger/source-grants";
 import { recordSourceStoreWrite } from "../ledger/source-stores";
 import { FTS5_RETRIEVAL_ID } from "../retrieval/fts5";
 import { validateAbsenceProof, validateRetrievalDoc } from "../contracts/retrieval";
@@ -178,7 +178,7 @@ export async function retryCanonProjectionObligationsOwned(scope: VaultMutationS
         if (page === null || op.doc !== `page:${page.id}` || page.data["status"] !== "active") recoveryFailure("projection_pending", receipt_id);
         const subject = page.data["x-subject-id"];
         const document = validateRetrievalDoc({ doc_id: op.doc, kind: "page", title: typeof page.data["title"] === "string" ? page.data["title"] : page.id,
-          text: page.body, sensitivity: saved.value.receipt.sensitivity, taint: saved.value.receipt.taint,
+          text: page.body, sensitivity: sourceSensitivity(io.db,saved.value.derive_ids,saved.value.receipt.sensitivity), taint: saved.value.receipt.taint,
           authority: saved.value.receipt.authority, subjects: typeof subject === "string" ? [subject] : [],
           provenance: saved.value.derive_ids, occurred_at: null, updated_at: saved.value.receipt.at });
         recordSourceStoreWrite(io.db, port, document.provenance);

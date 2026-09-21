@@ -111,3 +111,42 @@ test("source floor changes stamp both actual typed page bytes and receipt classi
   assertWorldCanonPage(f.db,receipt,bytes,"after");
  }finally{f.dispose();}
 });
+
+test("single typed input owns every newly materialized assertion so undo stays undone",async()=>{
+ const f=canonFixture();try {
+  const world=await worldFixture(f.db),claim=getClaim(f.db,world.claims[0]!)!;
+  const path=worldCanonPath(worldClaimHandle(f.db,claim.claim_id)!);
+  const receipt=applyCanonWrite(f.io,claim,{action:"create",rel_path:path},{writer:"loop",budget:budget()});
+  expect(receipt.claim_ids).toEqual(world.claims);
+  expect(world.claims.every(id=>getClaim(f.db,id)!.receipt_id===receipt.receipt_id)).toBe(true);
+  await undoReceipt(f.io,receipt.receipt_id);
+  expect(world.claims.every(id=>getClaim(f.db,id)!.status==="reverted")).toBe(true);
+  const producer:ProducerPort={descriptor:{id:"kizuki.producer.fixture",kind:"producer",contract:"kizuki.producer/v1",contract_minor:1,supports:["model"],requires_lease:false,optional_package:null},health:async()=>({status:"ready",detail:{}}),close:async()=>{},produce:async()=>({status:"ok",claims:[],usage:{calls:0,input_tokens:0,output_tokens:0},dropped:[]})};
+  const result=await runWritePass(f.db,f.vault,{budget:budget(),model_ref:"fixture/model",claims:{db:f.db},producer});
+  expect(result.errors).toEqual([]);expect(result.canon_writes).toBe(0);expect(existsSync(join(f.vault,path))).toBe(false);
+ }finally{f.dispose();}
+});
+
+import {FixtureVectorPort} from "../claims/helpers";
+import {bindLocalSourcePort} from "../../src/ledger/source-grants";
+import {retryCanonProjectionObligations} from "../../src/canon/projection-obligations";
+test("typed undo restores exact historical labels while retrieval uses the current higher source floor",async()=>{
+ const retrieval=bindLocalSourcePort(new FixtureVectorPort(),{store_id:"local:typed-floor"});
+ const f=canonFixture({retrieval,retrieval_store:retrieval.descriptor.id});try {
+  initSearch(f.db);initGraph(f.db);
+  const world=await worldFixture(f.db),claims=world.claims.map(id=>getClaim(f.db,id)!);
+  const path=worldCanonPath(worldClaimHandle(f.db,claims[0]!.claim_id)!);
+  const original=applyCanonWrite(f.io,claims,{action:"create",rel_path:path},{writer:"loop",budget:budget()});
+  await retryCanonProjectionObligations(f.io);
+  const bytes=readFileSync(join(f.vault,path)),source=inspectSourceGrant(f.db,world.sourceKey)!;
+  setSourceGrant(f.db,{source_key:world.sourceKey,expected_revision:1,operation_id:"raise-undo-floor",policy:{...source.policy!,sensitivity_floor:"private"}});
+  const changed=await correct(f.io,{statement:"Use prior odds and the likelihood ratio.",target:{claim_id:world.claims[2]!}});
+  await retryCanonProjectionObligations(f.io);
+  const undone=await undoReceipt(f.io,changed.receipt_id!);
+  expect(readFileSync(join(f.vault,path))).toEqual(bytes);expect(undone.sensitivity).toBe("public");
+  expect(isWorldCanonReceipt(undone)).toBe(true);if(!isWorldCanonReceipt(undone))throw new Error("typed undo expected");
+  assertWorldCanonPage(f.db,undone,bytes,"after");
+  expect(retrieval.docs.get(original.retrieval_ops[0]!.doc)?.sensitivity).toBe("private");
+  expect(getClaim(f.db,world.claims[0]!)!.status).toBe("live");expect(getClaim(f.db,world.claims[1]!)!.status).toBe("live");
+ }finally{f.dispose();}
+});
