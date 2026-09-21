@@ -690,3 +690,29 @@ test("projection validates the complete assertion and perspective evidence union
     db.close();
   }
 });
+
+test("unsupported nonliteral correction fails before recording native evidence", async () => {
+  const vault = tempVault(),
+    db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
+  try {
+    const f = await worldFixture(db);
+    const before = db
+      .query("SELECT count(*) AS n FROM native_owner_evidence")
+      .get();
+    await expect(
+      correct(
+        { db, vault_path: vault.path },
+        {
+          statement: "Change classification",
+          target: { claim_id: f.claims[0]! },
+        },
+      ),
+    ).rejects.toThrow("plain supplied-subject literal");
+    expect(
+      db.query("SELECT count(*) AS n FROM native_owner_evidence").get(),
+    ).toEqual(before);
+  } finally {
+    db.close();
+    vault.dispose();
+  }
+});
