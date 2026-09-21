@@ -10,7 +10,7 @@ import { getClaim, insertClaim } from "../../src/claims/store";
 import type { ClaimDraft, ProducerPort } from "../../src/contracts/producer";
 import { openLedger } from "../../src/ledger/db";
 import { registerConnection } from "../../src/ledger/connections";
-import { setSourceGrant } from "../../src/ledger/source-grants";
+import { bindEpochZeroProducerPort, setSourceGrant } from "../../src/ledger/source-grants";
 import { purgeEvents } from "../../src/ledger/purge";
 import { exportVault, restoreVault } from "../../src/export";
 import { commitExtractCursor, completeDurableExtractBatch, fileAndCompleteDurableExtractBatch,
@@ -70,7 +70,7 @@ test("a stale v1 runtime refuses an unbound event once source policy exists befo
     const result = await runWritePass(f.db, f.vault, {
       budget: createBudgetTracker({ canon_writes_per_run: 1 }),
       model_ref: "fixture:stale-v1",
-      producer: f.model,
+      producer: bindEpochZeroProducerPort(f.model),
       claims: { db: f.db },
     });
     expect(f.calls.count).toBe(0);

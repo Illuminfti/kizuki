@@ -10,6 +10,7 @@ import {
   PortRegistry,
   SourceGrantError,
   bindSourceModelPort,
+  bindEpochZeroProducerPort,
   sourcePolicyEpoch,
   isPlainObject,
   registerModelProducerPort,
@@ -228,12 +229,12 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
       // the only route that invokes and persists producer/v2.
       if (sourcePolicyEpoch(options.db) === 0) {
         registerModelProducerPort(() => llm, registry, () => systemone);
-        producer = (await registry.bindFromConfig<ProducerPort>(
+        producer = bindEpochZeroProducerPort((await registry.bindFromConfig<ProducerPort>(
           "producer",
           { producer: MODEL_PRODUCER_ID },
           portContext(options.vaultPath, "producer", MODEL_PRODUCER_ID, {}, null, null, options.err),
           PRODUCER_CONTRACT,
-        )).port;
+        )).port);
       } else {
         registerModelProducerV2Port(() => llm, registry, () => systemone);
         producer = (await registry.bindFromConfig<ProducerV2Port>(

@@ -1,4 +1,4 @@
-import { sourcePolicyEpoch, sourceEventsAllowed, isLocalSourcePort, sourcePortBindingDigest } from "../ledger/source-grants";
+import { sourcePolicyEpoch, sourceEventsAllowed, isEpochZeroProducerPort, isLocalSourcePort, sourcePortBindingDigest } from "../ledger/source-grants";
 import { createHash } from "node:crypto";
 import { parseExtractResponse } from "../producer/schema";
 import { invokeProducer, invokeProducerV2 } from "../producer/result";
@@ -843,11 +843,10 @@ export async function mineLiveDrafts(
   const previous_cursor = readExtractCursor(db);
   const source_epoch = sourcePolicyEpoch(db);
   const denied = (): MineResult => ({ mined: { status: "unavailable", reason: "source authorization unavailable" }, drafts: [], previous_cursor, cursor: null });
-  // Epoch-zero journals retain their declared v1 producer route. Once source
-  // authority exists, a stale v1 runtime must not invoke a model or publish a
-  // legacy draft for a source-bound event.
   const v2 = isProducerV2(producer);
-  if (source_epoch > 0 && !v2) return denied();
+  // Only the CLI's host-marked epoch-zero runtime is stale here. Other v1
+  // ports remain an explicitly supported source-bound contract.
+  if (source_epoch > 0 && isEpochZeroProducerPort(producer)) return denied();
   if (source_epoch > 0 && !isLocalSourcePort(producer) && !sourceEventsAllowed(db, [], { owner: false, purpose: "extract", model: true, port: producer })) return denied();
   const scope = { owner: false, purpose: "extract" as const, model: true, port: producer };
   let mode: "frontier" | "deferred" = "frontier";
