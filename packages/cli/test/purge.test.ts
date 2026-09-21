@@ -40,7 +40,7 @@ describe("RFC 0002 §16.4 purge and undo", () => {
       throw new Error("acme.md was not imported");
     }
 
-    mkdirSync(join(setup.vault, "people"), { recursive: true });
+    mkdirSync(join(setup.vault, "people"), { recursive: true, mode: 0o700 });
     writeFileSync(
       join(setup.vault, "people/grace.md"),
       serializePage({
@@ -158,7 +158,7 @@ describe("RFC 0002 §16.4 purge and undo", () => {
     if (receipt === undefined) return;
 
     const verified = runCli(setup.env, "purge", "--verify", receipt);
-    expect(verified.exitCode).toBe(0);
+    expect(verified.exitCode, verified.stderr + verified.stdout).toBe(0);
     const proofDb = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
     try {
       const op = proofDb.query<{ ids: string }, [string]>("SELECT ids FROM purge_ops WHERE receipt_id=?").get(receipt)!;
