@@ -12,7 +12,7 @@ import { correct } from "../src/correction/correct";
 import { exportVault, restoreVault, verifyBackup, type ExportManifest } from "../src/export";
 import { openLedger } from "../src/ledger/db";
 import { accept } from "../src/ledger/ledger";
-import { runPurge } from "../src/ledger/purge";
+import { purgeEvents, runPurge } from "../src/ledger/purge";
 import { ulid } from "../src/util/ulid";
 import { runWritePass } from "../src/serve/write-pass";
 import type { ProducerPort } from "../src/contracts/producer";
@@ -119,6 +119,34 @@ test("typed correction and retained preimage remain exactly undoable after resto
   const undone = await undoReceipt({ db, vault_path: f.restored }, correction.receipt_id!);
   expect(isWorldCanonReceipt(undone)).toBe(true);
   expect(readFileSync(join(f.restored, f.receipt.page_path), "utf8")).toBe(before);
+});
+
+test("event purge scrubs a superseded source claim before a native correction backup", async () => {
+  const f = canonFixture(); dispose.push(f.dispose);
+  const root = mkdtempSync(join(tmpdir(), "kizuki-native-source-purge-backup-"));
+  dispose.push(() => rmSync(root, { recursive: true, force: true }));
+  const world = await worldFixture(f.db);
+  const corrected = await correct(f.io, {
+    statement: "Use prior odds and the likelihood ratio.",
+    target: { claim_id: world.claims[2]! },
+  });
+  expect(f.db.query("SELECT status FROM claims WHERE claim_id=?").get(world.claims[2]!)).toEqual({ status: "superseded" });
+  purgeEvents(f.db, f.vault, { event_id: world.eventId }, "erase corrected source");
+  expect(f.db.query("SELECT status,body,frontmatter,subjects,producer,claim_key,object,target,subject,predicate,model_ref FROM claims WHERE claim_id=?").get(world.claims[2]!)).toEqual({
+    status: "superseded", body: "", frontmatter: "{}", subjects: "[]", claim_key: null,
+    producer: "deterministic",
+    object: null, target: null, subject: null, predicate: null, model_ref: null,
+  });
+  expect(f.db.query("SELECT event_id FROM native_owner_evidence WHERE event_id=?").get(corrected.event_id)).toEqual({ event_id: corrected.event_id });
+  const backup = join(root, "backup"), restored = join(root, "restored");
+  f.db.query("UPDATE claims SET body=? WHERE claim_id=?").run("leaked source bytes", world.claims[2]!);
+  expect(() => exportVault(f.db, f.vault, backup)).toThrow("source_export_denied");
+  f.db.query("UPDATE claims SET body='' WHERE claim_id=?").run(world.claims[2]!);
+  exportVault(f.db, f.vault, backup);
+  restoreVault(backup, restored);
+  const copy = openCopy(restored);
+  expect(copy.query("SELECT status,body FROM claims WHERE claim_id=?").get(world.claims[2]!)).toEqual({ status: "superseded", body: "" });
+  expect(copy.query("SELECT event_id FROM native_owner_evidence WHERE event_id=?").get(corrected.event_id)).toEqual({ event_id: corrected.event_id });
 });
 
 test("restore refuses a typed correction whose retained undo preimage was removed", async () => {
