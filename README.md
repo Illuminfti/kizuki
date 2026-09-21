@@ -344,6 +344,10 @@ bun run verify
 
 ## Retrieval credit
 
+[Beacon](https://github.com/Asymptote-Labs/agent-beacon) informed the agent-run
+evidence capture seam. Kizuki's [local Beacon importer](docs/beacon-import.md)
+reads selected snapshots; Beacon is not installed or bundled.
+
 The hybrid retrieval recipe and entity-graph walk are a permitted fork of
 [GBrain](https://github.com/garrytan/gbrain) at public commit
 `8c70f6255047a7647adb30b1d6333a48068d9fa5`, vendored under

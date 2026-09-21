@@ -1,4 +1,5 @@
 import { exportPurgeFixture, imapPurgeFixture, telegramPurgeFixture } from "./purge-fixtures";
+import { BEACON_IMPORT_CONNECTOR_ID, BEACON_FIXTURE_EXPORT } from "../src/import-beacon";
 import { XApiFixture } from "@kizuki/connector-x/api/testkit";
 import { GOOGLE_CALENDAR_CONNECTOR_ID, createGoogleCalendarConnector } from "@kizuki/connector-google-calendar";
 import { CalendarFixture } from "../../connector-google-calendar/src/testing";
@@ -73,6 +74,7 @@ import { writeFixtureArchive as writeXFixtureArchive } from "@kizuki/connector-x
 const TELEGRAM_STATE_REF = "file:connections/01JJ0000000000000000000000.state";
 
 interface Layout {
+  beacon: string;
   markdown: string;
   chatGpt: string;
   claude: string;
@@ -91,6 +93,7 @@ interface Layout {
 
 function layoutFor(root: string): Layout {
   return {
+    beacon: path.join(root, "runtime.jsonl"),
     markdown: path.join(root, "markdown"),
     chatGpt: path.join(root, "chatgpt.json"),
     claude: path.join(root, "claude.json"),
@@ -189,6 +192,10 @@ function batteryFor(
           mutate: async () => unlink(layout.deletedMarkdown),
         },
       }),
+    [BEACON_IMPORT_CONNECTOR_ID]: () => runConformance(
+      getConnector(BEACON_IMPORT_CONNECTOR_ID, { path: layout.beacon }),
+      { unavailable: missingPath(BEACON_IMPORT_CONNECTOR_ID) },
+    ),
     [CHATGPT_IMPORT_CONNECTOR_ID]: () =>
       runConformance(
         getConnector(CHATGPT_IMPORT_CONNECTOR_ID, {
@@ -395,6 +402,7 @@ async function seedExports(layout: Layout): Promise<void> {
     writeFile(layout.deletedMarkdown, "# Delete me\n"),
     writeFile(layout.chatGpt, JSON.stringify(CHATGPT_FIXTURE_EXPORT)),
     writeFile(layout.claude, JSON.stringify(CLAUDE_FIXTURE_EXPORT)),
+    writeFile(layout.beacon, BEACON_FIXTURE_EXPORT.map(record => JSON.stringify(record)).join("\n")),
     writeFile(layout.pocket, POCKET_FIXTURE_EXPORT),
     writeFile(layout.ics, FIXTURE_ICS),
   ]);

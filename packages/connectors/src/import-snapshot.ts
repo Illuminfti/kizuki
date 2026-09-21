@@ -27,6 +27,8 @@ export const IMPORT_SNAPSHOT_CURSOR_SCHEMA =
 export interface SnapshotParse {
   parse(source: string, observedAt: string): ImportParseResult;
   connectorId: string;
+  /** A format may impose a smaller bound than the generic export ceiling. */
+  maxBytes?: number;
 }
 
 interface ExportIdentity {
@@ -237,7 +239,7 @@ async function readExport(
   const file = await readBoundedUtf8File(
     path,
     spec.connectorId,
-    undefined,
+    spec.maxBytes,
     "export",
   );
   return { text: file.text, parsed: spec.parse(file.text, observedAt) };

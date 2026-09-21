@@ -58,6 +58,7 @@ import {
   createClaudeImportConnector,
 } from "./import-claude";
 import type { ClaudeImportConfig } from "./import-claude";
+import { BEACON_IMPORT_CONNECTOR_ID, createBeaconImportConnector, type BeaconImportConfig } from "./import-beacon";
 import {
   WHATSAPP_IMPORT_CONNECTOR_ID,
   createWhatsAppImportConnector,
@@ -334,6 +335,13 @@ enroll(
   ["backfill", "sync", "fixture"],
   IN_TREE,
   (config) => createClaudeImportConnector(config as ClaudeImportConfig),
+  { ...LOCAL, cursor_schema: IMPORT_SNAPSHOT_CURSOR_SCHEMA },
+);
+enroll(
+  BEACON_IMPORT_CONNECTOR_ID,
+  ["backfill", "sync", "fixture"],
+  IN_TREE,
+  (config) => createBeaconImportConnector(config as BeaconImportConfig),
   { ...LOCAL, cursor_schema: IMPORT_SNAPSHOT_CURSOR_SCHEMA },
 );
 // OAuth state refresh and recovery require trusted host composition through

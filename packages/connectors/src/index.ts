@@ -88,6 +88,8 @@ export {
   parseClaudeExport,
 } from "./import-claude";
 export type { ClaudeImportConfig } from "./import-claude";
+export { BEACON_IMPORT_CONNECTOR_ID, BeaconImportConnector, createBeaconImportConnector, parseBeaconExport } from "./import-beacon";
+export type { BeaconImportConfig } from "./import-beacon";
 export {
   ICS_CONNECTOR_ID,
   IcsConnector,
