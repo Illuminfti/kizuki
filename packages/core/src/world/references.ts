@@ -162,3 +162,16 @@ export function resolveWorldObject(
       .get(ns.id, token)?.handle_id ?? null
   );
 }
+
+/** A claim token is lookup identity only; callers must still authorize the resolved claim. */
+export function resolveWorldClaim(
+  db: Database,
+  ns: WorldNamespace,
+  token: string,
+): string | null {
+  return db.query<{ claim_id: string }, [string, string]>(
+    `SELECT t.claim_id FROM world_wire_claim_targets t
+     JOIN world_wire_refs r USING(namespace_id,wire_ref)
+     WHERE t.namespace_id=? AND t.wire_ref=? AND r.ref_kind='claim'`,
+  ).get(ns.id, token)?.claim_id ?? null;
+}

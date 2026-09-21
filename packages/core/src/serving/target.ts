@@ -17,6 +17,7 @@ export interface CorrectTarget {
   claim_id?: string;
   claim_key?: string;
   subject?: string;
+  world_claim?: { readonly kind: "claim"; readonly token: string };
 }
 
 function refuse(field: string, rule: string): ServeError {
@@ -57,7 +58,7 @@ export function resolve(
   if (target === undefined) {
     throw refuse("target", "name a claim, a claim key or a subject");
   }
-  const named = [target.claim_id, target.claim_key, target.subject].filter(
+  const named = [target.claim_id, target.claim_key, target.subject, target.world_claim].filter(
     (value) => value !== undefined,
   );
   if (named.length !== 1) {
