@@ -1,6 +1,11 @@
 /** Local browser protocol. Only the app bearer belongs in sessionStorage. */
 import type { SourceGrantPolicy, Grant, AgentEnrollmentResult, SubjectLabel, WorldReadInput, WorldReadResult } from '@kizuki/core';
 import type { ServeIntent, SupervisorKind, SupervisorState } from '@kizuki/core';
+import type { inspectOwnerPageCorrectionTargets } from '@kizuki/core';
+export type AppWorldCorrectionTarget = { readonly world_claim: { readonly kind: 'claim'; readonly token: string } };
+export type AppCorrectionRequest = { statement: string; object?: string } & (
+    { claim_id: string; target?: never } | { target: AppWorldCorrectionTarget; claim_id?: never }
+);
 export interface AppServiceStatus {
     intent: ServeIntent | 'unknown';
     kind: SupervisorKind;
@@ -151,9 +156,9 @@ export interface AppProtocol {
     agents: { request: {}; response: { agents: { agent_id: string; name: string; grant: Grant; revoked_at: string | null }[] } };
     agent_enroll: { request: { name: string; grant: Grant; operation_id: string }; response: { operation_id: string } };
     agent_revoke: { request: { name: string }; response: { operation_id: string } };
-    correction_targets: { request: { page_id: string }; response: { claims: { claim_id: string; subject: string | null; predicate: string | null; object: string | null; body: string; authority: string; sensitivity: string }[]; truncated: boolean } };
-    correction_preview: { request: { claim_id: string; statement: string; object?: string }; response: { answer: string; affected_pages: number | null } };
-    correct: { request: { claim_id: string; statement: string; object?: string }; response: { operation_id: string } };
+    correction_targets: { request: { page_id: string }; response: ReturnType<typeof inspectOwnerPageCorrectionTargets> };
+    correction_preview: { request: AppCorrectionRequest; response: { answer: string; affected_pages: number | null } };
+    correct: { request: AppCorrectionRequest; response: { operation_id: string } };
     sources: {
         request: {};
         response: {

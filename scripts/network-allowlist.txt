@@ -64,6 +64,7 @@ packages/cli/test/app-host.test.ts:(toplevel).fetch#4:synthetic loopback asset a
 packages/cli/test/app-host.test.ts:(toplevel).fetch#5:synthetic loopback asset and authenticated local app host tests
 packages/cli/test/app-host.test.ts:(toplevel).fetch#6:synthetic loopback asset and authenticated local app host tests
 packages/cli/test/app-client.test.ts:(toplevel).fetch#1:authenticated requests to the actual ephemeral loopback app for written identity labels and shipped client rendering
+packages/cli/test/app-world-correction.test.ts:request.fetch#1:authenticated ephemeral loopback App correction preview, write, undo and policy refusal against a synthetic typed writer page
 packages/connector-x/src/api/client.ts:request.fetch#1:explicitly configured X own-post API fixed-origin GET transport; bounded requests and response body, no redirects or media downloads
 packages/cli/test/app-model-journey.test.ts:call.fetch#1:authenticated actual app requests restricted to its ephemeral loopback host with synthetic model evidence
 packages/cli/test/app-model-settings.test.ts:endpoint.Bun.serve#1:synthetic model endpoint bound to 127.0.0.1 for settings and fixed-prompt connection tests

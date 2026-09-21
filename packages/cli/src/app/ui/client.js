@@ -264,34 +264,52 @@ async function correction(hit) {
   try {
     const targets = await api('correction_targets', { page_id: hit.id });
     if (!current()) return;
-    claims = targets.claims;
+    const unsupported = targets.claims.filter(claim => claim.kind === 'world' && claim.target === null);
+    claims = targets.claims.filter(claim => claim.kind !== 'world' || claim.target !== null);
     content.querySelector('.dialog-description').textContent = 'Choose one recorded belief. Corrections change your memory pages; quoted source information stays unchanged.';
+    if (unsupported.length) content.append(el('details', { class: 'result-details' }, el('summary', {}, `${unsupported.length} recorded ${unsupported.length === 1 ? 'belief is' : 'beliefs are'} unavailable for correction`), el('p', {}, 'These assertions cannot be edited in this form yet. Nothing will be changed for them.'), ...unsupported.map(claim => el('blockquote', {}, claim.body))));
     if (!claims.length) { content.append(el('p', { class: 'status-note' }, 'No correctable beliefs are available for this page under your current permissions.')); focusDialog(content); return; }
     if (targets.truncated) content.append(el('p', { class: 'status-note' }, 'This list is limited. Additional beliefs may exist for this page.'));
     const form = el('form'); content.append(form);
-    choice = el('select', { id: 'correction-claim' }, ...claims.map(claim => el('option', { value: claim.claim_id }, claim.body.slice(0, 120)))); choice.value = claims[0].claim_id;
+    const reference = claim => claim.kind === 'world' ? claim.target.world_claim.token : claim.claim_id;
+    choice = el('select', { id: 'correction-claim' }, ...claims.map(claim => el('option', { value: reference(claim) }, claim.body.slice(0, 120)))); choice.value = reference(claims[0]);
     form.append(el('div', { class: 'form-field' }, el('label', { for: 'correction-claim' }, 'Recorded belief'), choice));
     beliefDetails = el('div', { class: 'belief-details' }); form.append(beliefDetails);
-    const selected = () => claims.find(claim => claim.claim_id === choice.value);
+    const selected = () => claims.find(claim => reference(claim) === choice.value);
     const showBelief = () => {
       const claim = selected(); beliefDetails.replaceChildren(); if (!claim) return;
-      beliefDetails.append(el('blockquote', {}, claim.body), el('dl', { class: 'grant-summary' }, el('div', {}, el('dt', {}, 'Current value'), el('dd', {}, claim.object))), el('details', { class: 'result-details' }, el('summary', {}, 'Belief details'), el('dl', { class: 'grant-summary' }, ...[['Subject', claim.subject], ['Relationship', claim.predicate], ['Belief reference', claim.claim_id]].map(([label, item]) => el('div', {}, el('dt', {}, label), el('dd', {}, el('code', {}, item))))), el('p', {}, `Recorded authority: ${claim.authority} · Privacy: ${claim.sensitivity}`)));
+      beliefDetails.append(el('blockquote', {}, claim.body), el('dl', { class: 'grant-summary' }, el('div', {}, el('dt', {}, 'Current value'), el('dd', {}, claim.object))), el('details', { class: 'result-details' }, el('summary', {}, 'Belief details'), el('dl', { class: 'grant-summary' }, ...[['Subject', claim.subject], ['Relationship', claim.predicate], ['Belief reference', reference(claim)]].filter(([, item]) => item !== null).map(([label, item]) => el('div', {}, el('dt', {}, label), el('dd', {}, el('code', {}, item))))), el('p', {}, `Recorded authority: ${claim.authority} · Privacy: ${claim.sensitivity}`)));
     }; showBelief();
     const mode = el('select', { id: 'correction-mode' }, el('option', { value: 'deny' }, 'Deny this belief'), el('option', { value: 'replace' }, 'Replace its value')); mode.value = 'deny';
-    form.append(el('div', { class: 'form-field' }, el('label', { for: 'correction-mode' }, 'What should change?'), mode), el('p', { class: 'model-note' }, 'Deny marks this belief as wrong without asserting a replacement. Replace uses the exact new value you enter below.'));
+    const modeField = el('div', { class: 'form-field' }, el('label', { for: 'correction-mode' }, 'What should change?'), mode);
+    const modeNote = el('p', { class: 'model-note' }, 'Deny marks this belief as wrong without asserting a replacement. Replace uses the exact new value you enter below.');
+    const worldNote = el('p', { class: 'model-note' }, 'Enter the exact replacement for this value. It will be recorded as your correction, with its own receipt and undo.');
+    form.append(modeField, modeNote, worldNote);
     const replacement = el('div'); value = field(replacement, 'New value', 'correction-value', 'The exact replacement value'); value.setAttribute('maxlength', '1024'); replacement.hidden = true; form.append(replacement);
     statement = el('textarea', { id: 'correction-statement', rows: '3', maxlength: '2000', placeholder: 'Explain the correction in your own words.', autocomplete: 'off' });
-    form.append(el('div', { class: 'form-field' }, el('label', { for: 'correction-statement' }, 'Your correction'), statement));
+    const statementField = el('div', { class: 'form-field' }, el('label', { for: 'correction-statement' }, 'Your correction'), statement);
+    form.append(statementField);
+    const showMode = () => {
+      const typed = selected()?.kind === 'world';
+      modeField.hidden = typed; modeNote.hidden = typed; worldNote.hidden = !typed; statementField.hidden = typed;
+      if (typed) mode.value = 'replace';
+      replacement.hidden = mode.value !== 'replace';
+      value.setAttribute('maxlength', typed ? '400' : '1024');
+    }; showMode();
     const errorLine = el('p', { class: 'form-error', role: 'alert' });
     const previewButton = el('button', { type: 'submit', class: 'button button-secondary' }, 'Preview correction');
     previewPanel = el('div', { class: 'correction-preview', 'aria-live': 'polite', tabindex: '-1' });
     const invalidatePreview = () => { previewSequence++; preview = null; previewPanel.replaceChildren(); previewButton.disabled = false; if (apply) apply.disabled = true; errorLine.textContent = ''; };
     for (const input of [choice, mode, statement, value]) { input.addEventListener('input', invalidatePreview); input.addEventListener('change', invalidatePreview); }
-    choice.addEventListener('change', showBelief);
+    choice.addEventListener('change', () => { showBelief(); showMode(); });
     mode.addEventListener('change', () => { replacement.hidden = mode.value !== 'replace'; if (replacement.hidden) value.value = ''; });
     const request = () => {
       const claim = selected();
       if (!claim) throw new Error('Choose a recorded belief before previewing.');
+      if (claim.kind === 'world') {
+        if (!value.value.trim() || value.value.length > 400 || new TextEncoder().encode(value.value).length > 1200) throw new Error('Enter an exact replacement, using up to 400 characters and 1,200 UTF-8 bytes.');
+        return { target: claim.target, statement: value.value };
+      }
       if (!['deny', 'replace'].includes(mode.value)) throw new Error('Choose whether to deny this belief or replace its value.');
       if (!statement.value.trim() || statement.value.length > 2000) throw new Error('Explain the correction in your own words, using up to 2,000 characters.');
       if (mode.value === 'replace' && (!value.value.trim() || value.value.length > 1024)) throw new Error('Enter an explicit new value, using up to 1,024 characters.');
@@ -318,7 +336,7 @@ async function correction(hit) {
         if (!current() || sequence !== previewSequence) return;
         preview = { request: payload };
         const count = result.affected_pages;
-        previewPanel.replaceChildren(el('h3', {}, 'Preview'), el('p', {}, 'Nothing has changed yet.'), el('p', {}, Object.hasOwn(payload, 'object') ? 'Replace the selected belief’s value with:' : 'Deny the selected belief without adding a replacement.'), ...(Object.hasOwn(payload, 'object') ? [el('blockquote', { class: 'result-text' }, payload.object)] : []), el('p', {}, 'Your correction:'), el('blockquote', { class: 'result-text' }, payload.statement), el('p', {}, Number.isSafeInteger(count) && count >= 0 ? `${safeCount(count)} memory ${count === 1 ? 'page' : 'pages'} currently affected.` : 'Current affected-page count unavailable.'), el('details', { class: 'result-details' }, el('summary', {}, 'Technical preview details'), el('p', { class: 'result-text' }, result.answer)), el('p', { class: 'model-note' }, 'Applying checks your current permissions again. The result may differ if the memory or source permissions change.'));
+        previewPanel.replaceChildren(el('h3', {}, 'Preview'), el('p', {}, 'Nothing has changed yet.'), el('p', {}, payload.target || Object.hasOwn(payload, 'object') ? 'Replace the selected belief’s value with:' : 'Deny the selected belief without adding a replacement.'), ...(Object.hasOwn(payload, 'object') ? [el('blockquote', { class: 'result-text' }, payload.object)] : []), ...(!payload.target ? [el('p', {}, 'Your correction:')] : []), el('blockquote', { class: 'result-text' }, payload.statement), el('p', {}, Number.isSafeInteger(count) && count >= 0 ? `${safeCount(count)} memory ${count === 1 ? 'page' : 'pages'} currently affected.` : 'Current affected-page count unavailable.'), el('details', { class: 'result-details' }, el('summary', {}, 'Technical preview details'), el('p', { class: 'result-text' }, result.answer)), el('p', { class: 'model-note' }, 'Applying checks your current permissions again. The result may differ if the memory or source permissions change.'));
         apply.disabled = false;
         previewPanel.focus({ preventScroll: true }); apply.scrollIntoView({ block: 'nearest' });
       } catch (error) { if (current() && sequence === previewSequence && error.code !== 'stale_response') errorLine.textContent = error.message; }

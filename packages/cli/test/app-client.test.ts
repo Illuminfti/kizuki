@@ -1051,11 +1051,61 @@ test('agent setup refuses invalid names and reversed time windows before enrollm
 });
 
 const belief = { claim_id: 'claim-a', subject: 'person:ada', predicate: 'works_at', object: 'Old company', body: 'Ada works at Old company.', authority: 'owner_authored', sensitivity: 'private' };
-async function openCorrection(f: ReturnType<typeof fixture>, claims = [belief], truncated = false) {
+async function openCorrection(f: ReturnType<typeof fixture>, claims: unknown[] = [belief], truncated = false) {
     const work = f.evaluate<Promise<void>>(`correction({id:'page-a',scope:'canon',title:'People'})`);
     expect(f.requests[0]!.payload).toEqual({ page_id: 'page-a' });
     f.reply('correction_targets', { claims, truncated }); await work;
 }
+
+const worldBelief = { kind: 'world', target: { world_claim: { kind: 'claim', token: 'a'.repeat(43) } },
+    unsupported_reason: null, subject: null, predicate: 'concept.definition', object: 'Old definition',
+    body: 'An admitted definition.', authority: 'model_inference', sensitivity: 'private' };
+test('typed correction shows the admitted value and submits its opaque target with the exact replacement', async () => {
+    const f = fixture();
+    await openCorrection(f, [worldBelief, { ...worldBelief, target: null, unsupported_reason: 'unsupported_assertion', body: 'A contextual assertion.' }]);
+    expect(f.dialog.textContent).toContain('A contextual assertion.');
+    expect(f.dialog.textContent).toContain('unavailable for correction');
+    expect(f.dialog.querySelector('#correction-claim')!.children).toHaveLength(1);
+    expect(f.dialog.querySelector('#correction-mode')!.parent!.hidden).toBe(true);
+    expect(f.dialog.querySelector('#correction-statement')!.parent!.hidden).toBe(true);
+    const value = f.dialog.querySelector('#correction-value')!;
+    expect(value.parent!.hidden).toBe(false);
+    value.value = 'Use prior odds and the likelihood ratio.';
+    const work = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} }); await tick();
+    const payload = { target: worldBelief.target, statement: value.value };
+    expect(f.requests[0]!.payload).toEqual(payload);
+    f.reply('correction_preview', { answer: 'One current page will be rewritten.', affected_pages: 1 }); await work;
+    expect(f.dialog.querySelector('.correction-preview')!.textContent).toContain('Replace the selected belief’s value with:');
+    expect(f.dialog.querySelector('.correction-preview')!.textContent).not.toContain('Deny the selected belief');
+    void findAction(f.dialog, 'Apply correction').fire('click'); await tick();
+    expect(f.requests[0]!.route).toBe('correct'); expect(f.requests[0]!.payload).toEqual(payload);
+    expect(f.storageWrites).toHaveLength(0);
+});
+
+test('unsupported typed assertions expose no write controls and typed replacement budgets fail before requests', async () => {
+    const unsupported = fixture();
+    await openCorrection(unsupported, [{ ...worldBelief, target: null, unsupported_reason: 'unsupported_assertion' }]);
+    expect(unsupported.dialog.querySelector('form')).toBeNull();
+    expect(unsupported.requests).toHaveLength(0);
+    const f = fixture(); await openCorrection(f, [worldBelief]);
+    for (const value of ['', 'x'.repeat(401), '😀'.repeat(201)]) {
+        f.dialog.querySelector('#correction-value')!.value = value;
+        await f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+        expect(f.requests).toHaveLength(0);
+        expect(f.dialog.textContent).toContain('Enter an exact replacement');
+    }
+});
+
+test('typed correction drafts and opaque targets disappear when source visibility changes', async () => {
+    const f = fixture(); await openCorrection(f, [worldBelief]);
+    f.dialog.querySelector('#correction-value')!.value = 'Private replacement';
+    const work = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} }); await tick();
+    f.evaluate('invalidatePrivateView()');
+    f.reply('correction_preview', { answer: 'LATE_PRIVATE_PREVIEW', affected_pages: 1 }); await work;
+    expect(f.dialog.textContent).not.toContain('Private replacement');
+    expect(f.dialog.textContent).not.toContain(worldBelief.target.world_claim.token);
+    expect(f.dialog.textContent).not.toContain('LATE_PRIVATE_PREVIEW');
+});
 
 test('correction action belongs only to canon search results and reads exact admitted page targets', async () => {
     const f = fixture(); f.evaluate(`state.hits=[{id:'page-a',scope:'canon',title:'People',text:'Memory page'},{id:'event-a',scope:'ledger',title:'Source',text:'Source quote'}]; render();`);

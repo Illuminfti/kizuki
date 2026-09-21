@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline, readWorldView } from '@kizuki/core';
-import type { Connector, SourceGrantPolicy } from '@kizuki/core';
+import type { Connector, SourceGrantPolicy, ServeContext } from '@kizuki/core';
 import { createGmailConnector, inspectGmailState, assertSameGmailIdentity } from '@kizuki/connector-gmail';
 import { createGoogleCalendarConnector, inspectGoogleCalendarState, assertSameGoogleCalendarIdentity } from '@kizuki/connector-google-calendar';
 import { inspectXApiState } from '@kizuki/connectors';
@@ -23,7 +23,7 @@ import { readModelSelection, readModelSettings, saveModelSettings, testModelSett
 import { enrollAppAgentSetup, revokeAppAgent } from './agents';
 import { inspectOwnerPageCorrectionTargets, inspectOwnerCorrectionPageCount, listAgents, serveCorrect, type Grant } from '@kizuki/core';
 import type { CliIo } from '../commands';
-import type { AppCatalogEntry, AppError, AppOperation, AppRoute, AppSource, AppServiceStatus, AppModelStatus, AppModelTest } from './protocol';
+import type { AppCatalogEntry, AppError, AppOperation, AppRoute, AppSource, AppServiceStatus, AppModelStatus, AppModelTest, AppWorldCorrectionTarget } from './protocol';
 export interface AppHostDeps {
     gmail?: GmailFactory;
     calendar?: GoogleCalendarFactory;
@@ -45,7 +45,7 @@ const ROUTES: Record<AppRoute, readonly string[]> = {
     model_status: [], model_save: ['expected_revision', 'selection', 'credential'], model_test: ['expected_revision'],
     source_model_consent: ['source_key', 'expected_revision', 'expected_model_revision', 'operation_id', 'allow'], run_pass: [],
     agents: [], agent_enroll: ['name', 'grant', 'operation_id'], agent_revoke: ['name'],
-    correction_targets: ['page_id'], correction_preview: ['claim_id', 'statement', 'object'], correct: ['claim_id', 'statement', 'object'],
+    correction_targets: ['page_id'], correction_preview: ['claim_id', 'target', 'statement', 'object'], correct: ['claim_id', 'target', 'statement', 'object'],
 };
 function object(value: unknown): Record<string, unknown> { if (value === null || typeof value !== 'object' || Array.isArray(value))
     throw new AppFailure('invalid_request'); return value as Record<string, unknown>; }
@@ -57,6 +57,16 @@ function boolean(value: unknown): boolean { if (value === undefined)
 function correctionText(value: unknown): string {
     if (typeof value !== 'string' || !value.trim() || value.length > 4096 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value)) throw new AppFailure('invalid_request');
     return value;
+}
+function correctionTarget(input: Record<string, unknown>): { claim_id: string } | AppWorldCorrectionTarget {
+    const legacy = Object.hasOwn(input, 'claim_id'), typed = Object.hasOwn(input, 'target');
+    if (legacy === typed) throw new AppFailure('invalid_request');
+    if (legacy) return { claim_id: string(input.claim_id, 128) };
+    const target = object(input.target), ref = object(target.world_claim);
+    if (Object.keys(target).length !== 1 || !Object.hasOwn(target, 'world_claim') ||
+        Object.keys(ref).length !== 2 || ref.kind !== 'claim' || typeof ref.token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(ref.token))
+        throw new AppFailure('invalid_request');
+    return Object.freeze({ world_claim: Object.freeze({ kind: 'claim' as const, token: ref.token }) });
 }
 function limit(value: unknown): number { if (value === undefined)
     return 20; if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > 50)
@@ -148,16 +158,19 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
         }
         if (route === 'correction_targets') {
             const page = string(input.page_id, 256);
-            return readContext(async ctx => inspectOwnerPageCorrectionTargets(ctx, page), true);
+            return context(async ctx => inspectOwnerPageCorrectionTargets(ctx, page));
         }
         if (route === 'correction_preview' || route === 'correct') {
-            const args = { target: { claim_id: string(input.claim_id, 128) }, statement: correctionText(input.statement),
+            const args = { target: correctionTarget(input), statement: correctionText(input.statement),
                 ...(input.object === undefined ? {} : { object: string(input.object, 4096) }) };
-            if (route === 'correction_preview') return readContext(async ctx => {
-                const result = await serveCorrect({ ...ctx, principal: OWNER }, { ...args, dry_run: true });
-                if (!result.data) throw new AppFailure('correction_failed');
-                return { answer: result.data.answer, affected_pages: inspectOwnerCorrectionPageCount(ctx, result.data.superseded.map(claim => claim.claim_id)) };
-            }, true);
+            if (route === 'correction_preview') {
+                const preview = async (ctx: Pick<ServeContext, 'db' | 'vaultPath' | 'retrieval'>) => {
+                    const result = await serveCorrect({ ...ctx, principal: OWNER }, { ...args, dry_run: true });
+                    if (!result.data) throw new AppFailure('correction_failed');
+                    return { answer: result.data.answer, affected_pages: inspectOwnerCorrectionPageCount(ctx, result.data.superseded.map(claim => claim.claim_id)) };
+                };
+                return 'world_claim' in args.target ? context(preview) : readContext(preview, true);
+            }
             return operation('correct', async () => context(async ctx => {
                 initAgents(ctx.db);
                 const result = await serveCorrect({ ...ctx, principal: OWNER }, args);

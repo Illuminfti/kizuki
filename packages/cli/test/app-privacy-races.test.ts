@@ -93,6 +93,7 @@ async function fixture() {
     expect(memory).toBeDefined();
     const target = (await call('correction_targets', { page_id: memory.id })).claims.find(claim => claim.object === MODEL_OBJECT)!;
     expect(target).toBeDefined();
+    if (!('claim_id' in target)) throw new Error('legacy fixture must return a legacy correction target');
     return { call, done, ledger, notes, vault, output, endpoint, memory, target, source };
 }
 
