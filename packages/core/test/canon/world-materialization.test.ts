@@ -150,3 +150,17 @@ test("typed undo restores exact historical labels while retrieval uses the curre
   expect(getClaim(f.db,world.claims[0]!)!.status).toBe("live");expect(getClaim(f.db,world.claims[1]!)!.status).toBe("live");
  }finally{f.dispose();}
 });
+
+test("typed receipt authority, confidence, renderer and history provenance remain bound to admitted support",async()=>{
+ const f=canonFixture();try {
+  const world=await worldFixture(f.db),claims=world.claims.map(id=>getClaim(f.db,id)!);
+  const path=worldCanonPath(worldClaimHandle(f.db,claims[0]!.claim_id)!);
+  const receipt=applyCanonWrite(f.io,claims,{action:"create",rel_path:path},{writer:"loop",budget:budget()});
+  if(!isWorldCanonReceipt(receipt))throw new Error("typed receipt expected");
+  const bytes=readFileSync(join(f.vault,path));
+  for(const patch of [{authority:"owner_correction" as const},{confidence:1},{producer:"owner" as const},{provenance:[]}]) {
+    const forged={...receipt,...patch};
+    expect(()=>{assertWorldReceiptBasis(f.db,forged,{historical:true});assertWorldCanonPage(f.db,forged,bytes,"after");}).toThrow();
+  }
+ }finally{f.dispose();}
+});
