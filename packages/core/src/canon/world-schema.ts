@@ -4,7 +4,7 @@ import { tableColumns } from "../ledger/schema";
 export const LEGACY_CANON_COLUMNS = ["receipt_id","claim_ids","provenance","sensitivity","page_path","kind","before_hash","after_hash","at","receipt_kind","page_action","archive_path","writer","producer","model_ref","authority","confidence","taint","candidates","superseded","retrieval_ops","reverts","reverted_by"] as const;
 const REQUIRED_RETAINED = ["claim_ids","provenance","page_path","kind","after_hash","at","receipt_kind","page_action","writer","producer","authority","confidence","taint","candidates","superseded","retrieval_ops"];
 const ERASED_NULL = LEGACY_CANON_COLUMNS.filter(key=>key!=="receipt_id" && key!=="sensitivity");
-const TYPED_COLUMNS = ["record_codec","receipt_state","world_basis","own_id_origin","purge_receipt_id","erased_at","erasure_integrity"];
+const TYPED_COLUMNS = ["record_codec","receipt_state","world_basis","own_id_origin","purge_receipt_id","erased_at","erasure_integrity","prior_receipt_id"];
 
 /** Same receipt stream and FK identity; only typed erased records may omit retained payload. */
 export function applyWorldCanonV33(db:Database):void {
@@ -23,10 +23,11 @@ export function applyWorldCanonV33(db:Database):void {
  candidates TEXT DEFAULT '[]', superseded TEXT DEFAULT '[]', retrieval_ops TEXT DEFAULT '[]',reverts TEXT,reverted_by TEXT,
  record_codec TEXT NOT NULL DEFAULT 'v1' CHECK(record_codec IN ('v1','kizuki.canon-receipt/v2')),
  receipt_state TEXT NOT NULL DEFAULT 'retained' CHECK(receipt_state IN ('retained','erased')),
+ prior_receipt_id TEXT CHECK(prior_receipt_id IS NULL OR (length(prior_receipt_id)=26 AND prior_receipt_id NOT GLOB '*[^0-9A-HJKMNP-TV-Z]*' AND prior_receipt_id<>receipt_id)),
  world_basis TEXT,own_id_origin TEXT,purge_receipt_id TEXT,erased_at TEXT,erasure_integrity TEXT,
  CHECK((receipt_state='retained' AND ${REQUIRED_RETAINED.map(key=>`${key} IS NOT NULL`).join(" AND ")}
    AND purge_receipt_id IS NULL AND erased_at IS NULL AND erasure_integrity IS NULL
-   AND ((record_codec='v1' AND world_basis IS NULL AND own_id_origin IS NULL)
+   AND ((record_codec='v1' AND world_basis IS NULL AND own_id_origin IS NULL AND prior_receipt_id IS NULL)
      OR (record_codec='kizuki.canon-receipt/v2' AND own_id_origin='core' AND world_basis IS NOT NULL AND json_valid(world_basis))))
  OR (record_codec='kizuki.canon-receipt/v2' AND receipt_state='erased' AND own_id_origin='core' AND sensitivity='private'
    AND ${ERASED_NULL.map(key=>`${key} IS NULL`).join(" AND ")} AND world_basis IS NULL
@@ -37,6 +38,7 @@ export function applyWorldCanonV33(db:Database):void {
  db.exec("DROP TABLE canon_receipts");
  db.exec("ALTER TABLE canon_receipts_v5 RENAME TO canon_receipts");
  for(const row of dependent) db.exec(row.sql);
+ db.exec("CREATE UNIQUE INDEX canon_world_prior ON canon_receipts(prior_receipt_id) WHERE prior_receipt_id IS NOT NULL");
  if(db.query("PRAGMA foreign_key_check").get()!==null) throw new Error("typed canon migration changed receipt identity");
  assertWorldCanonSchema(db);
 }

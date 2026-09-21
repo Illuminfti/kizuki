@@ -2,7 +2,7 @@ import { completedEventPurgeProofs } from "../ledger/purge";
 import { sha256Hex } from "../util/hash";
 import { selectWorldMaterialization, worldClaimHandle, worldCanonPath, assertWorldBasis } from "./world-materialization";
 import { eraseWorldReceipt, isWorldCanonReceipt, type RetainedWorldCanonReceipt, type WorldCanonBasis } from "./world-receipt";
-import { isErasedReceipt, rowToReceiptRecord, type CanonReceiptRow, latestReceiptForPage } from "./receipts";
+import { isErasedReceipt, rowToReceiptRecord, type CanonReceiptRow, latestWorldReceiptRecord, latestReceiptForPage } from "./receipts";
 import { stageSourceErasureIntent, readSourceErasureIntent, appendSourceErasureReceipt, isLiveSourceSurvivorPath, isLiveSourceSurvivorReceipt, type SourceErasureIntent } from "./source-erasure-intent";
 import {
   getSourceSurvivorLineage,
@@ -452,10 +452,12 @@ export function applyCanonWriteOwned(
   const outputProvenance = union(claims.map((item) => item.provenance));
   const provenance = typed ? union([outputProvenance, ...(existing === null ? [] : [existingSources(existing.page)])]) : outputProvenance;
   let worldBasis: WorldCanonBasis | null = null;
+  let worldPriorId: string | null = null;
   if (typed && materialization !== null) {
-    const previous = existing === null ? null : latestReceiptForPage(io.db,target.rel_path);
-    if (existing !== null && (previous === null || !isWorldCanonReceipt(previous) || previous.after_hash !== existing.hash)) throw new CanonWriteError("decision_stale", "typed canon predecessor is not recorded");
-    worldBasis = {schema:"kizuki.world-canon-basis/v1",before:previous !== null && isWorldCanonReceipt(previous) ? previous.basis.after : null,after:materialization.basis};
+    const previous = latestWorldReceiptRecord(io.db,target.rel_path);
+    worldPriorId = previous?.receipt_id ?? null;
+    if (existing !== null && (previous === null || isErasedReceipt(previous) || !isWorldCanonReceipt(previous) || previous.after_hash !== existing.hash)) throw new CanonWriteError("decision_stale", "typed canon predecessor is not recorded");
+    worldBasis = {schema:"kizuki.world-canon-basis/v1",before:previous !== null && !isErasedReceipt(previous) && isWorldCanonReceipt(previous) ? previous.basis.after : null,after:materialization.basis};
     assertWorldBasis(io.db,worldBasis.before,true);assertWorldBasis(io.db,worldBasis.after);
   }
   assertProvenance(io, provenance);
@@ -536,7 +538,7 @@ export function applyCanonWriteOwned(
     reverts: null,
     reverted_by: null,
     at: nowOf(io),
-    ...(worldBasis === null ? {} : {schema:"kizuki.canon-receipt/v2",state:"retained",own_id_origin:"core",basis:worldBasis}),
+    ...(worldBasis === null ? {} : {schema:"kizuki.canon-receipt/v2",state:"retained",own_id_origin:"core",prior_receipt_id:worldPriorId,basis:worldBasis}),
   };
 
   const priorSubject = existing?.page.data["x-subject-id"];
@@ -812,7 +814,7 @@ function applyWorldPurgeRewrite(scope:VaultMutationScope,io:CanonIo,input:PurgeR
   const after=prepared===null?null:Buffer.from(serializePage(prepared.page));
   const at=nowOf(io),purgeReceiptId=proof[0]!.purge_receipt_id;
   const receipt:RetainedWorldCanonReceipt={
-    schema:"kizuki.canon-receipt/v2",state:"retained",own_id_origin:"core",
+    schema:"kizuki.canon-receipt/v2",state:"retained",own_id_origin:"core",prior_receipt_id:latest.receipt_id,
     basis:{schema:"kizuki.world-canon-basis/v1",before:latest.basis.after,after:materialization?.basis??null},
     receipt_id:mintId(io),kind:"purge_rewrite",claim_ids:claims.map(claim=>claim.claim_id),page_path:input.rel_path,page_action:after===null?"archive":"edit",
     before_hash:existing?.hash??ABSENT_PAGE_HASH,after_hash:after===null?ABSENT_PAGE_HASH:hashBytes(after),archive_path:null,writer:"loop",producer:"deterministic",model_ref:null,
@@ -827,7 +829,7 @@ function applyWorldPurgeRewrite(scope:VaultMutationScope,io:CanonIo,input:PurgeR
   }
   return commitWorldCanonErasure(scope,io,{receipt,after,
     completion:{mode:"purge",claim_kind:"purge_review",page_id:typeof pageId==="string"?pageId:null,subject_key:null,original_receipt_id:null},
-    erasure:{proofs:proof,redactions:affected.map(record=>eraseWorldReceipt(record.receipt_id,purgeReceiptId,at)),
+    erasure:{proofs:proof,redactions:affected.map(record=>eraseWorldReceipt(record.receipt_id,purgeReceiptId,at,record.prior_receipt_id)),
       receipt_guards:affected.map(record=>({receipt_id:record.receipt_id,digest:sha256Hex(JSON.stringify(record))})),
       archives:[...archives].map(([path,hash])=>({path,hash})),final_receipt:worldErasureFinalReceipt(receipt,purgeReceiptId)},
   });

@@ -15,7 +15,7 @@ import { validatePage } from "../vault/schema";
 import { ABSENT_PAGE_HASH, archiveRelPath, canonStageRelPath, hashBytes } from "../vault/write";
 import { eventIdFromReference } from "../retrieval/ids";
 import { assertPageRelPath, assertReceiptPaths, assertStoredPageRelPath } from "./paths";
-import { latestReceiptForPage, getCanonReceipt, type CanonReceipt } from "./receipts";
+import { latestReceiptForPage, latestWorldReceiptRecord, getCanonReceipt, type CanonReceipt } from "./receipts";
 import { pageIndexByPath } from "./store";
 import { validateOrdinaryReceiptCheckpoint, type OrdinaryReceiptCheckpoint } from "./receipt-stream";
 
@@ -123,9 +123,9 @@ export function validateVersionedCanonReceipt(value: unknown, version: unknown):
 /** An absent historical-page purge is an internal operation, never a retained receipt record. */
 function validateWorldErasureTransientReceipt(value:unknown):asserts value is RetainedWorldCanonReceipt {
   if(isPlainObject(value)&&isPlainObject(value.basis)&&value.basis.before===null&&value.basis.after===null) {
-    object(value,[...CANON_RECEIPT_V1_KEYS,"schema","state","own_id_origin","basis"]);
+    object(value,[...CANON_RECEIPT_V1_KEYS,"schema","state","own_id_origin","prior_receipt_id","basis"]);
     object(value.basis,["schema","before","after"]);
-    if(value.schema!=="kizuki.canon-receipt/v2"||value.state!=="retained"||value.own_id_origin!=="core"||value.basis.schema!=="kizuki.world-canon-basis/v1"||value.kind!=="purge_rewrite"||value.before_hash!==ABSENT_PAGE_HASH||value.after_hash!==ABSENT_PAGE_HASH||value.archive_path!==null)recoveryFailure("intent_invalid");
+    if(value.schema!=="kizuki.canon-receipt/v2"||value.state!=="retained"||(value.prior_receipt_id!==null&&!isUlid(value.prior_receipt_id))||value.prior_receipt_id===value.receipt_id||value.own_id_origin!=="core"||value.basis.schema!=="kizuki.world-canon-basis/v1"||value.kind!=="purge_rewrite"||value.before_hash!==ABSENT_PAGE_HASH||value.after_hash!==ABSENT_PAGE_HASH||value.archive_path!==null)recoveryFailure("intent_invalid");
     validateCanonIntentReceipt(Object.fromEntries(CANON_RECEIPT_V1_KEYS.map(key=>[key,value[key]])));
     if(!Array.isArray(value.claim_ids)||value.claim_ids.length!==0)recoveryFailure("intent_invalid");
     return;
@@ -134,7 +134,7 @@ function validateWorldErasureTransientReceipt(value:unknown):asserts value is Re
 }
 
 export function worldErasureFinalReceipt(receipt:RetainedWorldCanonReceipt,purgeReceiptId:string):WorldCanonReceiptRecord {
-  if(receipt.basis.after===null)return eraseWorldReceipt(receipt.receipt_id,purgeReceiptId,receipt.at);
+  if(receipt.basis.after===null)return eraseWorldReceipt(receipt.receipt_id,purgeReceiptId,receipt.at,receipt.prior_receipt_id);
   return {...receipt,before_hash:null,basis:{...receipt.basis,before:null}};
 }
 function validateWorldErasure(value:unknown,receipt:CanonReceipt):void {
@@ -242,7 +242,7 @@ export function captureCanonAdmission(db: Database, receipt: CanonReceipt, compl
     claims: claimIds.map(id => ({ id, digest: queryDigest(db, "SELECT * FROM claims WHERE claim_id=?", id) })),
     events: eventIds.map(id => ({ id, digest: eventDigest(db, id) })), sources,
     derive_ids: [...new Set((completion.mode === "purge" ? pageSources(after) : [...receipt.provenance, ...pageSources(after)]).map(eventIdFromReference))].sort(),
-    predecessor_digest: digest(latestReceiptForPage(db, receipt.page_path)),
+    predecessor_digest: digest(isWorldCanonReceipt(receipt) ? latestWorldReceiptRecord(db,receipt.page_path) : latestReceiptForPage(db, receipt.page_path)),
     original_digest: digest(completion.original_receipt_id === null ? null : getCanonReceipt(db, completion.original_receipt_id)),
     page_index_digest: digest(pageIndexByPath(db, receipt.page_path)),
     supersessions_digest: digest(boundedRows(db, "SELECT * FROM claim_supersessions WHERE winner IN (SELECT value FROM json_each(?)) OR loser IN (SELECT value FROM json_each(?)) ORDER BY winner,loser", claimJson, claimJson)),
@@ -251,6 +251,7 @@ export function captureCanonAdmission(db: Database, receipt: CanonReceipt, compl
 }
 export function assertCanonAdmission(db: Database, intent: CanonWriteIntent): void {
   if (isWorldCanonReceipt(intent.receipt)) {
+    if ((latestWorldReceiptRecord(db,intent.receipt.page_path)?.receipt_id??null)!==intent.receipt.prior_receipt_id) recoveryFailure("predecessor_changed",intent.receipt.receipt_id);
     try {
       if(intent.version!==3)assertWorldBasis(db, intent.receipt.basis.before, true);
       assertWorldBasis(db, intent.receipt.basis.after, intent.completion.mode === "revert");

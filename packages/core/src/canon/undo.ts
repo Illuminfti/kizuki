@@ -1,7 +1,7 @@
 import { isSensitivity } from "../agents/types";
 import { isWorldCanonReceipt } from "./world-receipt";
 import { assertWorldBasis } from "./world-materialization";
-import { getCanonReceiptRecord, isErasedReceipt } from "./receipts";
+import { getCanonReceiptRecord, isErasedReceipt, latestWorldReceiptRecord } from "./receipts";
 import { requireSourceEvents } from "../ledger/source-grants";
 import { stringArray } from "../vault/pages";
 import { CanonAuthorityResolver } from "./authority";
@@ -202,7 +202,7 @@ async function applyUndo(scope: VaultMutationScope, io: CanonIo, original: Canon
     sensitivity: typedImage?page.data["sensitivity"] as CanonReceipt["sensitivity"]:original.sensitivity, taint: typedImage?page.data["taint"] as CanonReceipt["taint"]:original.taint, provenance: [...original.provenance],
     superseded: [...original.superseded], candidates: [], retrieval_ops: ops,
     reverts: original.receipt_id, reverted_by: null, at,
-    ...(isWorldCanonReceipt(original) ? {schema:original.schema,state:original.state,own_id_origin:original.own_id_origin,basis:{schema:original.basis.schema,before:original.basis.after,after:original.basis.before}} : {}),
+    ...(isWorldCanonReceipt(original) ? {schema:original.schema,state:original.state,own_id_origin:original.own_id_origin,prior_receipt_id:latestWorldReceiptRecord(io.db,original.page_path)?.receipt_id??null,basis:{schema:original.basis.schema,before:original.basis.after,after:original.basis.before}} : {}),
   };
   commitCanonWrite(scope, io, { receipt: revert, before, after,
     completion: { mode: "revert", claim_kind: "revert", page_id: pageId, subject_key: subjectOf(page), original_receipt_id: original.receipt_id },
