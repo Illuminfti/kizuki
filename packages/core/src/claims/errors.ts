@@ -1,5 +1,6 @@
 export const CLAIM_ERROR_CODES = [
   "identity_unsupported",
+  "migration_required",
   "provenance_unresolved",
   "schema_invalid",
   "unknown_predicate",
