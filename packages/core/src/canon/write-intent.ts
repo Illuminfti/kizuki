@@ -146,7 +146,10 @@ export function parseCanonWriteIntent(value: unknown): CanonWriteIntent {
   object(value, ["version", "receipt", "before_base64", "after_base64", "completion", "admission", "checkpoint", "stages",...(erasing?["erasure"]:[])]);
   validateVersionedCanonReceipt(value.receipt, erasing?2:value.version);
   const receipt = value.receipt;
-  if (!erasing && isWorldCanonReceipt(receipt) && ((receipt.before_hash === null) !== (receipt.basis.before === null) || (receipt.after_hash === ABSENT_PAGE_HASH) !== (receipt.basis.after === null))) recoveryFailure("intent_invalid");
+  if (!erasing && isWorldCanonReceipt(receipt)) {
+    const absentBefore=receipt.kind==="revert"?ABSENT_PAGE_HASH:null;
+    if((receipt.basis.before===null?receipt.before_hash!==absentBefore:receipt.before_hash===null||receipt.before_hash===ABSENT_PAGE_HASH)||(receipt.after_hash===ABSENT_PAGE_HASH)!==(receipt.basis.after===null))recoveryFailure("intent_invalid");
+  }
   const before = decodeCanonImage(value.before_base64 as string | null), after = decodeCanonImage(value.after_base64 as string | null);
   if (erasing) {
     if(before!==null||receipt.before_hash===null||receipt.archive_path!==null||receipt.kind!=="purge_rewrite"||(after===null?ABSENT_PAGE_HASH:hashBytes(after))!==receipt.after_hash)recoveryFailure("intent_invalid");
