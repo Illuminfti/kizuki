@@ -3,6 +3,7 @@ import { EXTRACT_RESPONSE_V2_SCHEMA, type ProduceInputV2 } from "../../src/contr
 import { createModelProducerV2Port, MODEL_PRODUCER_V2_DESCRIPTOR } from "../../src/producer/model-v2";
 import { validateProduceResult } from "../../src/producer/result";
 import { temporaryProducerContext, scriptedLlm } from "./helpers";
+import { WORLD_VOCABULARY } from "../../src/contracts/world-vocabulary";
 
 const input: ProduceInputV2 = {
   events: [{ event_id: "00000000000000000000000001", text: "Mira joined Northwind." }],
@@ -74,4 +75,33 @@ test("v2 rejects provider fence and response-schema attacks after one accountabl
     expect((await port.produce(input)).status).toBe("rejected");
     expect(llm.requests).toHaveLength(1);
   }
+});
+
+test("the real registered world vocabulary passes both model input and response boundaries", async () => {
+  const worldInput: ProduceInputV2 = {
+    ...input,
+    supplied_refs: [],
+    vocabulary_refs: [...new Set(WORLD_VOCABULARY.flatMap(spec => [...(spec.vocabulary_values ?? [])]))],
+    predicates: WORLD_VOCABULARY.map(spec => ({
+      id: spec.predicate,
+      object_kinds: [...new Set(spec.objects.map(kind => kind === "literal" || kind === "vocabulary" ? kind : "subject"))],
+    })),
+  };
+  for (const [predicate, value] of [
+    ["world.kind", "world/concept"],
+    ["learning.assistance", "learning/assisted"],
+    ["learning.assistance", "learning/unassisted"],
+  ]) {
+    const wire = {
+      ...response,
+      mentions: [{ ...response.mentions[0]!, candidate_refs: [] }],
+      claims: [{ ...response.claims[0]!, predicate, object: { kind: "vocabulary", ref: { kind: "vocabulary", id: value } } }],
+    };
+    const { port, llm } = producer(() => JSON.stringify(wire));
+    expect((await port.produce(worldInput)).status).toBe("ok");
+    expect(llm.requests).toHaveLength(1);
+  }
+  const unknown = { ...response, mentions: [{ ...response.mentions[0]!, candidate_refs: [] }],
+    claims: [{ ...response.claims[0]!, predicate: "world.kind", object: { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/unregistered" } } }] };
+  expect((await producer(() => JSON.stringify(unknown)).port.produce(worldInput)).status).toBe("rejected");
 });
