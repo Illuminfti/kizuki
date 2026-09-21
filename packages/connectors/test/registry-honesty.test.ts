@@ -45,6 +45,7 @@ const REGISTERED_SURFACE = [
   "kizuki.google-calendar kizuki.connector/v1 minor=1 lease=false package=@kizuki/connector-google-calendar supports=backfill+sync+tombstones+fixture+sign_in",
   "kizuki.ics kizuki.connector/v1 minor=1 lease=false package=@kizuki/connector-ics supports=backfill+sync+tombstones+fixture+sign_in",
   "kizuki.imap kizuki.connector/v1 minor=1 lease=false package=@kizuki/connector-imap supports=backfill+sync+tombstones+purge+fixture+sign_in",
+  "kizuki.import-beacon kizuki.connector/v1 minor=1 lease=false package=@kizuki/connectors supports=backfill+sync+fixture",
   "kizuki.import-chatgpt kizuki.connector/v1 minor=1 lease=false package=@kizuki/connectors supports=backfill+sync+fixture",
   "kizuki.import-claude kizuki.connector/v1 minor=1 lease=false package=@kizuki/connectors supports=backfill+sync+fixture",
   "kizuki.import-legacy-events kizuki.connector/v1 minor=1 lease=false package=@kizuki/connectors supports=backfill+sync+tombstones+fixture",

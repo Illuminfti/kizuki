@@ -17,6 +17,7 @@ Related:
 - [retrieval-engine-integration.md](retrieval-engine-integration.md): integrated memory adoption programme and work ownership, not shipped features
 - [retrieval-engine-acceptance.md](retrieval-engine-acceptance.md): 49 proposed acceptance obligations, not executed tests
 - [legacy-import.md](legacy-import.md) — estate importers
+- [beacon-import.md](beacon-import.md) — source-consented local agent-run snapshots
 - [event-identity-origin.md](event-identity-origin.md) — event revisions, machine origin and backup compatibility
 - [stranger-proof.md](stranger-proof.md) — automated native-artifact isolation prerequisite
 - [file-import-proof.md](file-import-proof.md) — copied-package proof and acceptance evidence for the eight file-import connectors

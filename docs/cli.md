@@ -92,6 +92,8 @@ source grant permitting capture. The three policy options must appear together;
 they apply explicit consent before reading content. Without a grant, import
 enrolls the source, refuses capture, and prints the source key and grant command. For local
 Beeper messages, use `connect beeper` followed by `backfill beeper`.
+Use `import beacon --source /absolute/path/runtime.jsonl` for an explicitly
+selected Beacon agent-run snapshot; see [format, consent and limits](beacon-import.md).
 An import runs alongside the serve daemon: see
 [Running commands while the daemon writes](#running-commands-while-the-daemon-writes).
 
