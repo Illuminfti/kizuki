@@ -3322,10 +3322,17 @@ type SourceExportClaimRow = {
 };
 
 /** A source-erased historical row retains only opaque identity and relation state. */
-function sourceErasedClaimRow(row: SourceExportClaimRow): boolean {
+function sourceErasedClaimRow(db: Database, row: SourceExportClaimRow, managed: readonly string[]): boolean {
   return row.body === "" && row.frontmatter === "{}" && row.subjects === "[]" && row.producer === "deterministic" &&
     row.claim_key === null && row.object === null && row.target === null &&
-    row.subject === null && row.predicate === null && row.model_ref === null;
+    row.subject === null && row.predicate === null && row.model_ref === null &&
+    (!tableExists(db, "claim_v2_semantics") || db.query("SELECT 1 FROM claim_v2_semantics WHERE claim_id=?").get(row.claim_id) === null) &&
+    (!tableExists(db, "claim_v2_support") || db.query("SELECT 1 FROM claim_v2_support WHERE claim_id=?").get(row.claim_id) === null) &&
+    managed.length > 0 && tableExists(db, "event_purges") &&
+    managed.every((eventId) =>
+      db.query("SELECT 1 FROM events WHERE event_id=?").get(eventId) === null &&
+      db.query("SELECT 1 FROM event_purges WHERE event_id=?").get(eventId) !== null,
+    );
 }
 
 function assertSourceExport(db: Database): void {
@@ -3343,9 +3350,9 @@ function assertSourceExport(db: Database): void {
   // but only a complete source-erasure tombstone is safe to export without
   // reauthorizing its now-missing source event.
   for (const row of db.query<SourceExportClaimRow, []>("SELECT claim_id,provenance,body,frontmatter,subjects,producer,claim_key,object,target,subject,predicate,model_ref FROM claims").iterate()) {
-    if (sourceErasedClaimRow(row)) continue;
     const ids = JSON.parse(row.provenance) as string[];
     const managed = ids.filter(id => db.query("SELECT 1 FROM source_event_bindings WHERE event_id=?").get(id) !== null);
+    if (sourceErasedClaimRow(db, row, managed)) continue;
     if (!sourceEventsAllowed(db, managed, { owner: true, purpose: "export" })) throw new Error("source_export_denied");
   }
   for (const row of db.query<{ event_id: string }, []>("SELECT event_id FROM source_event_bindings WHERE event_id IN (SELECT event_id FROM events)").iterate()) {
