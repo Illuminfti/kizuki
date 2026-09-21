@@ -87,7 +87,7 @@ async function fixture() {
     const target = (await call('correction_targets', { page_id: memory.id })).claims.find(claim => claim.object === MODEL_OBJECT)!;
     expect(target).toBeDefined();
     if (!('target' in target) || target.target === null) throw Error('expected supported typed correction target');
-    return { call, done, ledger, notes, vault, output, endpoint, memory, target, source };
+    return { call, done, ledger, notes, vault, output, endpoint, memory, target: { ...target, target: target.target }, source };
 }
 
 test('withdrawing only correction purpose preserves recall but refuses owner targets, preview and writes', async () => {

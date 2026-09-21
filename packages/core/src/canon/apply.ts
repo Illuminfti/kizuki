@@ -501,7 +501,7 @@ export function applyCanonWriteOwned(
       if ((current?.receipt_id ?? null) !== worldPriorId ||
         (current === null || isErasedReceipt(current)
           ? existing !== null || worldBasis.before !== null
-          : !isWorldCanonReceipt(current) || current.after_hash !== existing?.hash || canonicalJson(current.basis.after) !== canonicalJson(worldBasis.before))) {
+          : !isWorldCanonReceipt(current) || current.after_hash !== (existing?.hash ?? ABSENT_PAGE_HASH) || canonicalJson(current.basis.after) !== canonicalJson(worldBasis.before))) {
         throw new CanonWriteError("decision_stale", "typed canon predecessor changed before byte admission");
       }
       assertWorldBasis(io.db,worldBasis.before,true);assertWorldBasis(io.db,worldBasis.after);
