@@ -1014,18 +1014,59 @@ export function supersedeLiveGroup(
   return out;
 }
 
-/** Typed targeted correction shares the existing supersession journal and transaction. */
-export function supersedeExactWorldClaim(db:Database,winner:Claim,loserId:string,at:string):void {
-  if(!db.inTransaction) throw new ClaimError("schema_invalid","typed supersession requires the claim transaction");
-  const loser=getClaim(db,loserId),prior=readClaimV2Semantic(db,loserId),next=readClaimV2Semantic(db,winner.claim_id);
-  if(loser===null || loser.status!=="live" || winner.status!=="live" || winner.authority!=="owner_correction" ||
-    prior===null || next===null || prior.schema!=="kizuki.claim-meaning/v1" || next.schema!=="kizuki.claim-meaning/v1" ||
-    prior.discriminator!=="assertion" || next.discriminator!=="assertion" || prior.predicate!==next.predicate ||
-    canonicalJson(prior.subject)!==canonicalJson(next.subject) || winner.claim_id===loserId)
-    throw new ClaimError("schema_invalid","typed correction target changed");
-  const priorValidTo=loser.valid_to;
-  persistClaim(db,{...loser,status:"superseded",superseded_by:winner.claim_id,retracted_at:at,valid_to:minTimestamp(loser.valid_to,winner.valid_from)});
-  writeSupersession(db,winner.claim_id,loser.claim_id,"R5",priorValidTo,at);
+/** Typed targeted correction shares the existing supersession journal and retrieval outbox transaction. */
+export function supersedeExactWorldClaim(
+  io: Pick<ClaimsIo, "db" | "retrieval">,
+  winner: Claim,
+  loserId: string,
+  at: string,
+): void {
+  const { db } = io;
+  if (!db.inTransaction)
+    throw new ClaimError(
+      "schema_invalid",
+      "typed supersession requires the claim transaction",
+    );
+  const loser = getClaim(db, loserId);
+  const prior = readClaimV2Semantic(db, loserId);
+  const next = readClaimV2Semantic(db, winner.claim_id);
+  if (
+    loser === null ||
+    loser.status !== "live" ||
+    winner.status !== "live" ||
+    winner.authority !== "owner_correction" ||
+    prior === null ||
+    next === null ||
+    prior.schema !== "kizuki.claim-meaning/v1" ||
+    next.schema !== "kizuki.claim-meaning/v1" ||
+    prior.discriminator !== "assertion" ||
+    next.discriminator !== "assertion" ||
+    prior.predicate !== next.predicate ||
+    canonicalJson(prior.subject) !== canonicalJson(next.subject) ||
+    winner.claim_id === loserId
+  )
+    throw new ClaimError("schema_invalid", "typed correction target changed");
+  const priorValidTo = loser.valid_to;
+  const superseded = {
+    ...loser,
+    status: "superseded" as const,
+    superseded_by: winner.claim_id,
+    retracted_at: at,
+    valid_to: minTimestamp(loser.valid_to, winner.valid_from),
+  };
+  persistClaim(db, superseded);
+  writeSupersession(db, winner.claim_id, loser.claim_id, "R5", priorValidTo, at);
+  const retrieval = io.retrieval;
+  const retrievalAllowed =
+    sourcePolicyEpoch(db) === 0 ||
+    (retrieval !== undefined &&
+      isLocalSourcePort(retrieval) &&
+      sourceEventsAllowed(db, superseded.provenance, {
+        owner: true,
+        purpose: "correction",
+        port: retrieval,
+      }));
+  enqueueRetrieval(db, retrievalAllowed ? io : { db }, superseded, at);
 }
 
 function remainingProvenanceCount(db: Database, claim: Claim): number {

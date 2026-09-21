@@ -490,7 +490,7 @@ async function insertCorrection(
   const result=io.db.transaction(()=>{
     const inserted=prepared.apply();
     if(typedSemantic!==undefined && (inserted.outcome==="stored" || inserted.outcome==="duplicate")) {
-      supersedeExactWorldClaim(io.db,inserted.claim,live.claim_id,at);
+      supersedeExactWorldClaim(io, inserted.claim, live.claim_id, at);
     }
     return inserted;
   }).immediate();

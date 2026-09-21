@@ -390,7 +390,11 @@ export async function serveCorrect(
     "correct",
     auditArguments(args),
     async ({ ctx, at }): Promise<Served<CorrectData>> => {
-      const io = snapshotCanonIo({ db: ctx.db, vault_path: ctx.vaultPath });
+      const io = snapshotCanonIo({
+        db: ctx.db,
+        vault_path: ctx.vaultPath,
+        ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
+      });
       ctx = Object.freeze({ ...ctx, db: io.db, vaultPath: io.vault_path });
       try {
         if (worldClaim !== undefined)
