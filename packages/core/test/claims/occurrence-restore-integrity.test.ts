@@ -63,7 +63,10 @@ function nativeFixture() {
 }
 
 function occurrenceSemantic(event: StoredEvent, sourceKey: string | null): ClaimV2Assertion {
-  const anchor = { event_id: event.event_id, start_utf16: 1, end_utf16: 3 };
+  return occurrenceSemanticAt(event, sourceKey, { event_id: event.event_id, start_utf16: 1, end_utf16: 3 });
+}
+
+function occurrenceSemanticAt(event: StoredEvent, sourceKey: string | null, anchor: { readonly event_id: string; readonly start_utf16: number; readonly end_utf16: number }): ClaimV2Assertion {
   return {
     schema: CLAIM_V2_SCHEMA, discriminator: "assertion",
     subject: { kind: "occurrence", id: mintOccurrenceId(event, sourceKey, anchor) },
@@ -103,7 +106,8 @@ test("restore rejects an occurrence whose stored source binding names another so
   try {
     seedOccurrence(fixture.db, fixture.event, fixture.sourceKey);
     const otherSource = grantSource(fixture.db, "other-fixture");
-    fixture.db.query("UPDATE claim_occurrences SET source_key=?").run(otherSource);
+    const anchor = { event_id: fixture.event.event_id, start_utf16: 1, end_utf16: 3 };
+    fixture.db.query("UPDATE claim_occurrences SET source_key=?,occurrence_id=?").run(otherSource, mintOccurrenceId(fixture.event, otherSource, anchor));
     expectInvalid(fixture.db);
   } finally { fixture.db.close(); }
 });
@@ -113,7 +117,18 @@ test("restore rejects a native occurrence relabeled as source-backed", () => {
   try {
     seedOccurrence(fixture.db, fixture.event, null);
     const sourceKey = grantSource(fixture.db);
-    fixture.db.query("UPDATE claim_occurrences SET source_key=?").run(sourceKey);
+    const anchor = { event_id: fixture.event.event_id, start_utf16: 1, end_utf16: 3 };
+    fixture.db.query("UPDATE claim_occurrences SET source_key=?,occurrence_id=?").run(sourceKey, mintOccurrenceId(fixture.event, sourceKey, anchor));
+    expectInvalid(fixture.db);
+  } finally { fixture.db.close(); }
+});
+
+test("restore rejects a source occurrence relabeled as native", () => {
+  const fixture = sourceFixture();
+  try {
+    seedOccurrence(fixture.db, fixture.event, fixture.sourceKey);
+    const anchor = { event_id: fixture.event.event_id, start_utf16: 1, end_utf16: 3 };
+    fixture.db.query("UPDATE claim_occurrences SET source_key=NULL,occurrence_id=?").run(mintOccurrenceId(fixture.event, null, anchor));
     expectInvalid(fixture.db);
   } finally { fixture.db.close(); }
 });
@@ -131,8 +146,34 @@ test("restore rejects UTF-16 offsets which split a surrogate pair", () => {
   const fixture = sourceFixture();
   try {
     seedOccurrence(fixture.db, fixture.event, fixture.sourceKey);
-    fixture.db.query("UPDATE claim_occurrences SET start_utf16=2").run();
+    const split = { event_id: fixture.event.event_id, start_utf16: 2, end_utf16: 3 };
+    fixture.db.query("UPDATE claim_occurrences SET start_utf16=?,occurrence_id=?").run(split.start_utf16, mintOccurrenceId(fixture.event, fixture.sourceKey, split));
     expectInvalid(fixture.db);
+  } finally { fixture.db.close(); }
+});
+
+test("restore rejects an end offset which splits a surrogate pair", () => {
+  const fixture = sourceFixture();
+  try {
+    seedOccurrence(fixture.db, fixture.event, fixture.sourceKey);
+    const split = { event_id: fixture.event.event_id, start_utf16: 1, end_utf16: 2 };
+    fixture.db.query("UPDATE claim_occurrences SET end_utf16=?,occurrence_id=?").run(split.end_utf16, mintOccurrenceId(fixture.event, fixture.sourceKey, split));
+    expectInvalid(fixture.db);
+  } finally { fixture.db.close(); }
+});
+
+test("ASCII D, F, and u boundaries are valid occurrence offsets", () => {
+  const fixture = sourceFixture();
+  try {
+    const accepted = accept(fixture.db, {
+      ...validEvent(), connector_id: "fixture", source_record_id: `ascii-${crypto.randomUUID()}`,
+      text: "ADFuB",
+    }, { source: { source_key: fixture.sourceKey, expected_revision: 1 } });
+    if (accepted.status !== "stored") throw new Error("ASCII fixture event was refused");
+    const event = readEvent(fixture.db, accepted.event.event_id);
+    const semantic = occurrenceSemanticAt(event, fixture.sourceKey, { event_id: event.event_id, start_utf16: 1, end_utf16: 4 });
+    ensureClaimOccurrences(fixture.db, semantic, fixture.sourceKey);
+    expect(() => validateStoredClaimOccurrences(fixture.db)).not.toThrow();
   } finally { fixture.db.close(); }
 });
 
@@ -141,6 +182,16 @@ test("restore rejects a corrupted accepted-at snapshot", () => {
   try {
     seedOccurrence(fixture.db, fixture.event, fixture.sourceKey);
     fixture.db.query("UPDATE claim_occurrences SET accepted_at='2000-01-01T00:00:00.000Z'").run();
+    expectInvalid(fixture.db);
+  } finally { fixture.db.close(); }
+});
+
+test("restore rejects an event that fails canonical ledger integrity", () => {
+  const fixture = sourceFixture();
+  try {
+    seedOccurrence(fixture.db, fixture.event, fixture.sourceKey);
+    fixture.db.exec("DROP TRIGGER events_identity_update");
+    fixture.db.query("UPDATE events SET accepted_at='2000-01-01T00:00:00.000Z' WHERE event_id=?").run(fixture.event.event_id);
     expectInvalid(fixture.db);
   } finally { fixture.db.close(); }
 });
