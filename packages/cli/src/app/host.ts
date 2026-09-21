@@ -2,7 +2,7 @@ import { basename, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline } from '@kizuki/core';
+import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline, readWorldView } from '@kizuki/core';
 import type { Connector, SourceGrantPolicy } from '@kizuki/core';
 import { createGmailConnector, inspectGmailState, assertSameGmailIdentity } from '@kizuki/connector-gmail';
 import { createGoogleCalendarConnector, inspectGoogleCalendarState, assertSameGoogleCalendarIdentity } from '@kizuki/connector-google-calendar';
@@ -38,6 +38,7 @@ class AppOperationFailure extends AppFailure {
     constructor(code: string, readonly result: AppOperation['result']) { super(code); }
 }
 const ROUTES: Record<AppRoute, readonly string[]> = {
+    world_view: ['operation', 'label', 'valid', 'knownAt', 'concept', 'situation'],
     status: [], catalog: [], initialize: ['path', 'no_service'], service_status: [], install_service: [], sources: [], enroll: ['provider', 'path', 'fields', 'calendar_id', 'source_key', 'new_source'],
     consent: ['source_key', 'expected_revision', 'operation_id', 'policy'], capture: ['source_key', 'mode'], query: ['text', 'limit'], activity: ['limit'], undo: ['receipt_id', 'cascade'], operation: ['id'],
     revoke: ['source_key', 'expected_revision', 'operation_id'], resume_revocation: ['source_key', 'operation_id'],
@@ -122,6 +123,7 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
         ];
     }
     async function execute(route: AppRoute, input: Record<string, unknown>): Promise<unknown> {
+        if (route === 'world_view') return readContext(async ctx => readWorldView({ db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER }, input), true);
         if (route === 'catalog')
             return { sources: catalog() };
         if (route === 'agents') return readContext(async ctx => {

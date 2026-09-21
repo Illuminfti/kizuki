@@ -5,7 +5,7 @@ const SESSION_KEY = 'kizuki.app.session';
 const main = document.getElementById('main');
 const dialog = document.getElementById('dialog');
 const notice = document.getElementById('notification');
-const state = { view: 'memory', status: null, service: null, model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], activityStatus: 'idle', hits: null, query: '', degraded: [], busy: false, operation: null, dismissedCaptureId: null, setupError: null };
+const state = { view: 'memory', status: null, service: null, model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], activityStatus: 'idle', hits: null, query: '', degraded: [], busy: false, operation: null, dismissedCaptureId: null, setupError: null, world: null, worldError: false, worldKind: 'concepts', worldQuery: '' };
 let bearer = null;
 let noticeTimer;
 let dialogCleanup = null;
@@ -27,6 +27,7 @@ const icons = {
   activity: ['M3 12h4l3-8 4 16 3-8h4'],
   agents: ['M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM16 10a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM3.5 20a4.5 4.5 0 0 1 9 0M13 20a3.5 3.5 0 0 1 7 0'],
   settings: ['M5 4v16M12 4v16M19 4v16', 'M3 8h4M10 16h4M17 9h4'],
+  world: ['M4 12a8 8 0 1 0 16 0A8 8 0 0 0 4 12Z', 'M4 12h16M12 4c2 2 3 5 3 8s-1 6-3 8M12 4C10 6 9 9 9 12s1 6 3 8'],
   folder: ['M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z'],
   mail: ['M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z', 'm3 6 9 7 9-7'],
   calendar: ['M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2ZM3 10h18M8 3v4M16 3v4', 'M8 14h2M14 14h2M8 17h2'],
@@ -164,7 +165,7 @@ function renderDisconnected() {
   main.replaceChildren(el('section', { class: 'empty-state' }, icon('lock'), el('h2', {}, 'Open Kizuki to continue'), el('p', {}, 'This private workspace opens from the Kizuki app on your device. Close this tab and open the app again to reconnect.')));
 }
 function navigate(view, focus = true) {
-  if (!['memory', 'sources', 'activity', 'agents', 'settings'].includes(view)) return;
+  if (!['memory', 'sources', 'activity', 'agents', 'world', 'settings'].includes(view)) return;
   if (state.operation?.kind === 'capture' && state.operation.state === 'succeeded') state.dismissedCaptureId = state.operation.id ?? 'completed-capture';
   if (dialog.open) closeDialog();
   state.view = view;
@@ -173,10 +174,11 @@ function navigate(view, focus = true) {
   if (view === 'activity' && state.status?.vault.ready) loadActivity();
   if (view === 'settings' && state.status?.vault.ready) loadService();
   if (view === 'agents' && state.status?.vault.ready) loadAgents();
+  if (view === 'world' && state.status?.vault.ready) loadWorld();
   if (['settings', 'sources'].includes(view) && state.status?.vault.ready) loadModel();
 }
 function renderNavigation() {
-  document.getElementById('navigation').replaceChildren(...[['memory', 'Memory'], ['sources', 'Sources'], ['activity', 'Activity'], ['agents', 'Agents'], ['settings', 'Settings']].map(([id, title]) => el('a', { class: 'nav-link', href: `#${id}`, 'aria-current': state.view === id ? 'page' : undefined, onclick: event => { event.preventDefault(); navigate(id); } }, icon(id), title)));
+  document.getElementById('navigation').replaceChildren(...[['memory', 'Memory'], ['sources', 'Sources'], ['activity', 'Activity'], ['agents', 'Agents'], ['world', 'World'], ['settings', 'Settings']].map(([id, title]) => el('a', { class: 'nav-link', href: `#${id}`, 'aria-current': state.view === id ? 'page' : undefined, onclick: event => { event.preventDefault(); navigate(id); } }, icon(id), title)));
   document.getElementById('view-label').textContent = state.view.charAt(0).toUpperCase() + state.view.slice(1);
 }
 function heading(title, description, action) { return el('div', { class: 'page-heading' }, el('div', {}, el('h1', {}, title), description && el('p', {}, description)), action); }
@@ -753,6 +755,34 @@ function renderSettings() {
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'App session'), el('p', {}, 'This tab remembers only its local app capability. Search results and source content are not stored in browser storage.')), button('Disconnect tab', disconnect)),
     )), el('div', { class: 'status-note' }, icon('info'), el('p', {}, 'Search works without a model. Automatic organisation needs a working model and your permission to use each source.')));
 }
+function worldCoverage(coverage) {
+  if (!coverage || coverage.status !== 'partial') return null;
+  return el('details', { class: 'result-details' }, el('summary', {}, 'Some results may be missing'), el('p', {}, 'This view reached its current reading limit. It is not a complete map of your memory.'), Array.isArray(coverage.gaps) && coverage.gaps.length ? el('p', {}, `Details: ${coverage.gaps.join(', ')}.`) : null);
+}
+function worldTitle(item) { return Array.isArray(item.labels) && item.labels[0] ? item.labels[0] : 'Untitled'; }
+function renderWorld() {
+  const kind = state.worldKind, field = el('input', { id: 'world-query', type: 'search', placeholder: `Find ${kind}…`, 'aria-label': `Find ${kind}`, autocomplete: 'off' }); field.value = state.worldQuery;
+  const choose = value => { state.worldKind = value; state.world = null; state.worldError = false; loadWorld(); };
+  const form = el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); state.worldQuery = field.value; loadWorld(); } }, icon('search'), field, el('button', { class: 'button button-primary', type: 'submit' }, 'Find'));
+  const section = el('section', {}, heading('Your world.', 'Concepts and situations Kizuki can currently support with admitted evidence.'), el('div', { class: 'world-tabs', role: 'group', 'aria-label': 'World type' }, button('Concepts', () => choose('concepts'), state.worldKind === 'concepts' ? 'primary' : 'secondary'), button('Situations', () => choose('situations'), state.worldKind === 'situations' ? 'primary' : 'secondary')), form, el('p', { class: 'search-hint' }, 'Search still works on captured sources without a model. World views appear after an authorised model interpretation is admitted.'));
+  if (state.worldError) section.append(empty('World view is unavailable.', 'Kizuki could not read the current world view. Try again before relying on it.', button('Try again', loadWorld, 'primary')));
+  else if (state.world === null) section.append(empty('No world view yet.', 'Connect a source and allow a model to interpret it when you are ready. Your captured information remains searchable without a model.', button('Search memory', () => navigate('memory'), 'primary')));
+  else if (state.world.status === 'unavailable') section.append(empty('World view is not available here.', state.world.reason === 'history' ? 'Historical world snapshots are not available yet.' : 'Kizuki cannot read this world view right now.', button('Try again', loadWorld, 'primary')));
+  else if (state.world.status === 'not_found') section.append(empty(`No ${kind} found.`, 'Try another label, or search your captured sources for the original evidence.', button('Search memory', () => navigate('memory'), 'primary')));
+  else {
+    const result = state.world.result, data = result.data, matches = data.matches;
+    if (Array.isArray(matches)) section.append(matches.length ? el('div', { class: 'result-list' }, ...matches.map(item => el('article', { class: 'result-item' }, el('h3', {}, worldTitle(item)), el('p', {}, `${item.labels.length} admitted label${item.labels.length === 1 ? '' : 's'}`), button('View details', () => loadWorld(item.ref), 'quiet')))) : empty(`No ${kind} found.`, 'Try another label, or search your captured sources for the original evidence.', button('Search memory', () => navigate('memory'), 'primary')), worldCoverage(data.coverage));
+    else section.append(el('article', { class: 'result-item' }, el('h2', {}, worldTitle(data.concept || data.situation)), el('p', { class: 'result-text' }, data.summary || 'No summary is available.'), worldCoverage(data.coverage), el('details', { class: 'result-details' }, el('summary', {}, 'Evidence and relations'), el('p', {}, `Definitions: ${(data.definitions || []).length} · Relations: ${(data.relations || data.commitments || []).length} · Evidence is shown through this private view only.`))));
+  }
+  return section;
+}
+async function loadWorld(ref) {
+  const operation = ref ? (state.worldKind === 'concepts' ? 'concept' : 'situation') : (state.worldKind === 'concepts' ? 'find_concepts' : 'find_situations');
+  const payload = { operation, ...(ref ? { [operation]: ref } : { label: state.worldQuery }), valid: { kind: 'all' }, knownAt: { kind: 'current' } };
+  state.worldError = false;
+  try { state.world = await api('world_view', payload); if (state.view === 'world') render(); }
+  catch { state.worldError = true; if (state.view === 'world') render(); }
+}
 function renderOperation() {
   const operation = state.operation;
   if (!operation) return null;
@@ -768,7 +798,7 @@ function render() {
   if (!bearer) { renderDisconnected(); return; }
   if (!privateViewValid) { main.replaceChildren(empty('Refreshing your workspace.', 'Checking current permissions before showing saved information.')); return; }
   if (!state.status) return;
-  const content = !state.status.vault.ready ? renderWelcome() : state.view === 'memory' ? renderMemory() : state.view === 'sources' ? renderSources() : state.view === 'activity' ? renderActivity() : state.view === 'agents' ? renderAgents() : renderSettings();
+  const content = !state.status.vault.ready ? renderWelcome() : state.view === 'memory' ? renderMemory() : state.view === 'sources' ? renderSources() : state.view === 'activity' ? renderActivity() : state.view === 'agents' ? renderAgents() : state.view === 'world' ? renderWorld() : renderSettings();
   const operation = renderOperation(); if (operation) content.prepend(operation);
   main.replaceChildren(content);
 }
