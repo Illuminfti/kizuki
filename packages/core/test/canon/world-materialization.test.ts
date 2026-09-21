@@ -1,5 +1,6 @@
 import { expect,test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { parseFrontmatter,serializePage } from "../../src/vault/frontmatter";
 import { join } from "node:path";
 import { canonFixture,budget } from "./helpers";
 import { worldFixture } from "../serving/world-fixture";
@@ -10,7 +11,7 @@ import { isWorldCanonReceipt } from "../../src/canon/world-receipt";
 
 test("real admitted typed claims render through the same canon writer while their legacy parents stay neutral",async()=>{
  const f=canonFixture();try {
-  const world=await worldFixture(f.db);
+  const world=await worldFixture(f.db,{floor:"private"});
   const claim=getClaim(f.db,world.claims[0]!)!,path=worldCanonPath(worldClaimHandle(f.db,claim.claim_id)!);
   expect(claim.body).toBe("");expect(claim.subject).toBeNull();
   const receipt=applyCanonWrite(f.io,claim,{action:"create",rel_path:path},{writer:"loop",budget:budget()});
@@ -21,6 +22,9 @@ test("real admitted typed claims render through the same canon writer while thei
   assertWorldCanonPage(f.db,receipt,bytes,"after");
   const tampered=Buffer.from(bytes.toString("utf8").replace("Bayesian updating","Unadmitted replacement"));
   expect(()=>assertWorldCanonPage(f.db,{...receipt,after_hash:new Bun.CryptoHasher("sha256").update(tampered).digest("hex")},tampered,"after")).toThrow("admitted rendering");
+  const lowerPage=parseFrontmatter(bytes.toString("utf8"));lowerPage.data["sensitivity"]="public";
+  const lowered=Buffer.from(serializePage(lowerPage));
+  expect(()=>assertWorldCanonPage(f.db,{...receipt,before_hash:new Bun.CryptoHasher("sha256").update(lowered).digest("hex"),basis:{...receipt.basis,before:receipt.basis.after}},lowered,"before")).toThrow("classification below admitted basis");
   expect(readFileSync(join(f.vault,path),"utf8")).toContain("Bayesian updating");
   expect(getClaim(f.db,claim.claim_id)!.body).toBe("");
   expect(f.db.query("SELECT COUNT(*) AS n FROM canon_write_intents").get()).toEqual({n:0});
