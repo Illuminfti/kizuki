@@ -3306,6 +3306,28 @@ function assertNoPendingPurgeExport(db: Database): void {
   assertCompletedPurgeHistory(db);
 }
 
+type SourceExportClaimRow = {
+  readonly claim_id: string;
+  readonly provenance: string;
+  readonly body: string;
+  readonly frontmatter: string;
+  readonly subjects: string;
+  readonly producer: string;
+  readonly claim_key: string | null;
+  readonly object: string | null;
+  readonly target: string | null;
+  readonly subject: string | null;
+  readonly predicate: string | null;
+  readonly model_ref: string | null;
+};
+
+/** A source-erased historical row retains only opaque identity and relation state. */
+function sourceErasedClaimRow(row: SourceExportClaimRow): boolean {
+  return row.body === "" && row.frontmatter === "{}" && row.subjects === "[]" && row.producer === "deterministic" &&
+    row.claim_key === null && row.object === null && row.target === null &&
+    row.subject === null && row.predicate === null && row.model_ref === null;
+}
+
 function assertSourceExport(db: Database): void {
   const recovery = inspectCanonRecovery(db);
   if (recovery.pending || recovery.projection_pending > 0) throw new Error("canon_recovery_pending");
@@ -3316,9 +3338,12 @@ function assertSourceExport(db: Database): void {
     const grant = inspectSourceGrant(db, row.source_key)!;
     if (grant.status === "denied" || (grant.status === "active" && !grant.policy.purposes.includes("export"))) throw new Error("source_export_denied");
   }
-  // Native purge currently retains derived claim rows. Status alone cannot
-  // authorize copying their payload after a source denial.
-  for (const row of db.query<{ provenance: string }, []>("SELECT provenance FROM claims WHERE status!='purged' OR length(body)>0 OR object IS NOT NULL OR target IS NOT NULL OR subject IS NOT NULL OR predicate IS NOT NULL OR model_ref IS NOT NULL OR subjects!='[]' OR frontmatter!='{}'").iterate()) {
+  // A native correction can supersede a source claim that later gets erased.
+  // The historical row keeps its relationship status and opaque identifier,
+  // but only a complete source-erasure tombstone is safe to export without
+  // reauthorizing its now-missing source event.
+  for (const row of db.query<SourceExportClaimRow, []>("SELECT claim_id,provenance,body,frontmatter,subjects,producer,claim_key,object,target,subject,predicate,model_ref FROM claims").iterate()) {
+    if (sourceErasedClaimRow(row)) continue;
     const ids = JSON.parse(row.provenance) as string[];
     const managed = ids.filter(id => db.query("SELECT 1 FROM source_event_bindings WHERE event_id=?").get(id) !== null);
     if (!sourceEventsAllowed(db, managed, { owner: true, purpose: "export" })) throw new Error("source_export_denied");
