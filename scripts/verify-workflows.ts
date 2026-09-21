@@ -85,42 +85,60 @@ function runnerTempPath(raw: string): string | undefined {
   return prefix === null ? undefined : RUNNER_TEMP + trimmed.slice(prefix[0].length);
 }
 
-function requiredRunnerTempFiles(job: Record<string, unknown>): string[] {
+type RunnerTempRequirement = { file: string; condition: unknown };
+type RetainedRunnerTempPath = { path: string; condition: unknown };
+
+function requiredRunnerTempFiles(job: Record<string, unknown>): RunnerTempRequirement[] {
   const steps = job["steps"];
   if (!Array.isArray(steps)) return [];
-  const required = new Set<string>();
+  const required: RunnerTempRequirement[] = [];
   for (const step of steps) {
     if (!isRecord(step)) continue;
     const run = step["run"];
     if (typeof run !== "string") continue;
     for (const match of run.matchAll(REQUIRED_FILE)) {
       const file = runnerTempPath(match[1] ?? match[2] ?? match[3] ?? "");
-      if (file !== undefined) required.add(file);
+      if (file !== undefined && !required.some(entry => entry.file === file && entry.condition === step["if"])) {
+        required.push({ file, condition: step["if"] });
+      }
     }
   }
   return [...required];
 }
 
-function retainedRunnerTempPaths(job: Record<string, unknown>): string[] {
+function retainedRunnerTempPaths(job: Record<string, unknown>): RetainedRunnerTempPath[] {
   const steps = job["steps"];
   if (!Array.isArray(steps)) return [];
-  const retained: string[] = [];
+  const retained: RetainedRunnerTempPath[] = [];
   for (const step of steps) {
-    if (!isRecord(step) || !isUploadArtifactStep(step)) continue;
+    if (!isRecord(step) || !isUploadArtifactStep(step) || !hasExecutableRetentionCondition(step)) continue;
     const settings = step["with"];
     const listed = isRecord(settings) ? settings["path"] : undefined;
     if (typeof listed !== "string") continue;
     for (const line of listed.split("\n")) {
       const entry = runnerTempPath(line);
-      if (entry !== undefined) retained.push(entry);
+      if (entry !== undefined) retained.push({ path: entry, condition: step["if"] });
     }
   }
   return retained;
 }
 
-function isRetained(file: string, retained: readonly string[]): boolean {
+function hasExecutableRetentionCondition(step: Record<string, unknown>): boolean {
+  const condition = step["if"];
+  return condition !== false && condition !== "false" && condition !== "${{ false }}";
+}
+
+function conditionCanRetain(required: unknown, retention: unknown): boolean {
+  if (retention === undefined || retention === "${{ success() }}" || retention === "${{ always() }}") return true;
+  if (typeof required !== "string" || typeof retention !== "string") return false;
+  const requiredExpression = required.replace(/^\$\{\{\s*|\s*\}\}$/g, "").trim();
+  return requiredExpression.length > 0 && retention.includes(requiredExpression);
+}
+
+function isRetained(required: RunnerTempRequirement, retained: readonly RetainedRunnerTempPath[]): boolean {
   return retained.some((entry) =>
-    entry === file || file.startsWith(entry.endsWith("/") ? entry : entry + "/"));
+    (entry.path === required.file || required.file.startsWith(entry.path.endsWith("/") ? entry.path : entry.path + "/")) &&
+    conditionCanRetain(required.condition, entry.condition));
 }
 
 function validateJobs(
@@ -154,11 +172,11 @@ function validateJobs(
       failures.push({ path, reason: `job "${name}" has no steps` });
     }
     const retained = retainedRunnerTempPaths(rawJob);
-    for (const file of requiredRunnerTempFiles(rawJob)) {
-      if (!isRetained(file, retained)) {
+    for (const required of requiredRunnerTempFiles(rawJob)) {
+      if (!isRetained(required, retained)) {
         failures.push({
           path,
-          reason: `job "${name}" requires ${file} to exist but no upload-artifact step retains it`,
+          reason: `job "${name}" requires ${required.file} to exist but no upload-artifact step retains it`,
         });
       }
     }
