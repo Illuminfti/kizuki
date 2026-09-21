@@ -671,4 +671,10 @@ test("a receipt a job requires to exist must be retained by an upload-artifact p
   ]) {
     expect(validateWorkflowText(other, receiptWorkflow(receiptUpload(retained))), retained).toEqual([]);
   }
+
+  for (const condition of ["false", "${{ false }}", "${{ github.event_name == 'push' }}"]) {
+    expect(validateWorkflowText(other, receiptWorkflow(receiptUpload("${{ runner.temp }}/kizuki-other/receipt.json").replace(successIf, condition))), condition).toContainEqual(
+      expect.objectContaining({ reason: expect.stringMatching(discardedReceipt) }),
+    );
+  }
 });
