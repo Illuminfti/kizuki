@@ -323,6 +323,12 @@ function pageWhatsAppEvents(
     const event = events[index]!;
     const piece = utf8.encode(JSON.stringify(event)).byteLength;
     const nextBytes = bytes + piece + (page.length === 0 ? 0 : 1);
+    if (page.length === 0 && nextBytes > MAX_SYNC_BATCH_BYTES) {
+      throw new KizukiError(
+        "parse_error",
+        `${WHATSAPP_IMPORT_CONNECTOR_ID}: event exceeds the capture page bound`,
+      );
+    }
     if (
       page.length > 0 &&
       (page.length >= MAX_SYNC_BATCH_EVENTS ||

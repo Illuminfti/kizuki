@@ -180,6 +180,24 @@ test("an out-of-range checkpoint cannot silently drain an unchanged export", asy
   });
 });
 
+test("oversized chat metadata cannot escape the first page byte bound", async () => {
+  await withTempRoot(async (root) => {
+    const source = path.join(root, CHAT_FILE);
+    await writeFile(source, "1/13/26, 9:15 AM - Ada: hi");
+    const connector = createWhatsAppImportConnector({
+      path: source,
+      timezone: WHATSAPP_FIXTURE_TIMEZONE,
+      date_order: "mdy",
+      chat: "界".repeat(800_000),
+    });
+    for (const run of [() => connector.backfill(null), () => connector.sync(null)]) {
+      const error = await rejected(run);
+      expect(error.code).toBe("parse_error");
+      expect(error.message).toBe("kizuki.import-whatsapp: event exceeds the capture page bound");
+    }
+  });
+});
+
 test("a directory with no chat file or several is refused", async () => {
   await withTempRoot(async (root) => {
     const empty = path.join(root, "empty");
