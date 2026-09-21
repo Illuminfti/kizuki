@@ -117,8 +117,13 @@ function retainedRunnerTempPaths(job: Record<string, unknown>): RetainedRunnerTe
     if (typeof listed !== "string") continue;
     // Artifact glob exclusions can remove a receipt from an otherwise retained
     // directory. Credit only an upload with an unambiguous inclusion list.
-    if (listed.split("\n").some(line => line.trim().startsWith("!"))) continue;
-    for (const line of listed.split("\n")) {
+    const lines = listed.split("\n");
+    // Expressions can expand into extra lines or exclusions. Only the literal
+    // runner.temp prefix has a known path meaning; all other expressions make
+    // this upload unsuitable as structural evidence of receipt retention.
+    if (lines.some(line => line.trim().startsWith("!") ||
+      line.trim().replace(RUNNER_TEMP_PREFIX, RUNNER_TEMP).includes("${{"))) continue;
+    for (const line of lines) {
       const entry = runnerTempPath(line);
       if (entry !== undefined) retained.push({ path: entry, condition: step["if"], step: index });
     }
