@@ -105,7 +105,7 @@ export function assertWorldReceiptBasis(db:Database,receipt:RetainedWorldCanonRe
 export function assertWorldCanonPage(db:Database,receipt:RetainedWorldCanonReceipt,bytes:Uint8Array|null,image:"before"|"after"):void {
  const basis=receipt.basis[image],expected=image==="before"?receipt.before_hash:receipt.after_hash;
  if(bytes===null) {
-  if(basis!==null||(image==="before"?null:ABSENT_PAGE_HASH)!==expected)throw new Error("typed canon image missing");
+  if(basis!==null||(image==="before"&&receipt.kind!=="revert"?null:ABSENT_PAGE_HASH)!==expected)throw new Error("typed canon image missing");
   return;
  }
  if(basis===null||hashBytes(bytes)!==expected)throw new Error("typed canon image differs from receipt");

@@ -53,6 +53,7 @@ test("actual correction rewrites typed canon immediately and undo restores the a
   expect(pageDecision(index,OWNER.grant,index.byPath.get(path)!).allow).toBe(true);
   const undone=await undoReceipt(f.io,changed.receipt_id!);
   expect(isWorldCanonReceipt(undone)).toBe(true);
+  if(isWorldCanonReceipt(undone))assertWorldCanonPage(f.db,undone,readFileSync(join(f.vault,path)),"after");
   expect(readFileSync(join(f.vault,path),"utf8")).toBe(before);
   expect(getClaim(f.db,world.claims[2]!)!.status).toBe("live");
   expect(original.before_hash).toBeNull();
@@ -73,5 +74,25 @@ test("typed queue materializes admitted claims only inside the configured-model 
   expect(new Set(world.claims.map(id=>getClaim(f.db,id)!.receipt_id)).size).toBe(1);
   const again=await runWritePass(f.db,f.vault,{budget:budget(),model_ref:"fixture/model",claims:{db:f.db},producer});
   expect(again.canon_writes).toBe(0);
+ }finally{f.dispose();}
+});
+
+import {existsSync} from "node:fs";
+import {ABSENT_PAGE_HASH} from "../../src/vault/write";
+test("typed create undo and redo preserve exact absent-image semantics and restore the original page",async()=>{
+ const f=canonFixture();try {
+  const world=await worldFixture(f.db),claims=world.claims.map(id=>getClaim(f.db,id)!);
+  const path=worldCanonPath(worldClaimHandle(f.db,claims[0]!.claim_id)!);
+  const original=applyCanonWrite(f.io,claims,{action:"create",rel_path:path},{writer:"loop",budget:budget()});
+  const bytes=readFileSync(join(f.vault,path));
+  const undo=await undoReceipt(f.io,original.receipt_id);
+  expect(existsSync(join(f.vault,path))).toBe(false);
+  const redo=await undoReceipt(f.io,undo.receipt_id);
+  expect(readFileSync(join(f.vault,path))).toEqual(bytes);
+  expect(isWorldCanonReceipt(redo)).toBe(true);if(!isWorldCanonReceipt(redo))throw new Error("typed redo expected");
+  expect(redo.before_hash).toBe(ABSENT_PAGE_HASH);expect(redo.basis.before).toBeNull();
+  assertWorldCanonPage(f.db,redo,null,"before");assertWorldCanonPage(f.db,redo,bytes,"after");
+  expect(()=>assertWorldCanonPage(f.db,{...redo,before_hash:null},null,"before")).toThrow("image missing");
+  expect(world.claims.every(id=>getClaim(f.db,id)!.status==="live")).toBe(true);
  }finally{f.dispose();}
 });
