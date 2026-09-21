@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { tableExists } from "../ledger/schema";
 
 /** RFC 0002 §18.1 — canon-writer widens durable state to schema v4. */
-export const CANON_SCHEMA_VERSION = 4;
+export const CANON_SCHEMA_VERSION = 5;
 
 /**
  * The receipt row is the durable half of `CanonReceipt` (§4.5). Every column

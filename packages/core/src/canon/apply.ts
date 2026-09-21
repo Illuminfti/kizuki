@@ -1,3 +1,6 @@
+import { selectWorldMaterialization, worldClaimHandle, worldCanonPath, assertWorldBasis } from "./world-materialization";
+import { isWorldCanonReceipt, type WorldCanonBasis } from "./world-receipt";
+import { latestReceiptForPage } from "./receipts";
 import { stageSourceErasureIntent, readSourceErasureIntent, appendSourceErasureReceipt, isLiveSourceSurvivorPath, isLiveSourceSurvivorReceipt, type SourceErasureIntent } from "./source-erasure-intent";
 import {
   getSourceSurvivorLineage,
@@ -116,7 +119,7 @@ function composeBody(claims: readonly Claim[]): string {
   return `${bodies.join(separator)}\n`;
 }
 
-function assertBatch(claims: readonly Claim[]): Claim {
+function assertBatch(claims: readonly Claim[], typed = false): Claim {
   const primary = claims[0];
   if (primary === undefined) {
     throw new CanonWriteError("nothing_to_write", "a canon write needs at least one claim");
@@ -128,13 +131,13 @@ function assertBatch(claims: readonly Claim[]): Claim {
     );
   }
   for (const claim of claims) {
-    if (claim.producer !== primary.producer || claim.model_ref !== primary.model_ref) {
+    if (!typed && (claim.producer !== primary.producer || claim.model_ref !== primary.model_ref)) {
       throw new CanonWriteError("batch_mismatch", "one write, one producer and model reference");
     }
-    if (claim.target !== primary.target && (claim.subject === null || claim.subject !== primary.subject)) {
+    if (!typed && claim.target !== primary.target && (claim.subject === null || claim.subject !== primary.subject)) {
       throw new CanonWriteError("batch_mismatch", "every claim in a write shares the target or the subject");
     }
-    if (claim.kind !== primary.kind) {
+    if (!typed && claim.kind !== primary.kind) {
       throw new CanonWriteError("batch_mismatch", "every claim in a write shares one kind");
     }
     for (const reserved of RESERVED_KEYS) {
@@ -191,7 +194,7 @@ function claimContent(claim: Claim): Omit<Claim,
   return content;
 }
 
-function persistedClaims(io: CanonIo, claims: readonly Claim[]): Claim[] {
+function persistedClaims(io: CanonIo, claims: readonly Claim[], allowWritten = false): Claim[] {
   return claims.map((claim) => {
     const stored = getClaim(io.db, claim.claim_id);
     if (stored === null) {
@@ -203,7 +206,7 @@ function persistedClaims(io: CanonIo, claims: readonly Claim[]): Claim[] {
     if (stored.status !== "live") {
       throw new CanonWriteError("claim_not_live", `claim ${claim.claim_id} is ${stored.status}`);
     }
-    if (stored.receipt_id !== null) {
+    if (!allowWritten && stored.receipt_id !== null) {
       throw new CanonWriteError("decision_stale", `claim ${claim.claim_id} was already written`);
     }
     return stored;
@@ -419,11 +422,21 @@ export function applyCanonWriteOwned(
   }
   if (readCanonWriteIntent(io.db) !== null) recoveryFailure("recovery_pending");
   const supplied: Claim[] = Array.isArray(claim) ? [...(claim as readonly Claim[])] : [claim as Claim];
-  assertBatch(supplied);
   const target = targetOf(decision);
   if (canonPageRecoveryPending(io.db, target.rel_path)) recoveryFailure("projection_pending");
-  const claims = persistedClaims(io, supplied);
-  const primary = assertBatch(claims);
+  const typedFlags = supplied.map(item => io.db.query<{is_world_typed:number},[string]>("SELECT is_world_typed FROM claims WHERE claim_id=?").get(item.claim_id)?.is_world_typed === 1);
+  const typed = typedFlags.some(Boolean);
+  if (typed && !typedFlags.every(Boolean)) throw new CanonWriteError("batch_mismatch", "typed and legacy claims require separate writes");
+  assertBatch(supplied, typed);
+  const persisted = persistedClaims(io, supplied, typed);
+  const primary = assertBatch(persisted, typed);
+  let claims: readonly Claim[] = persisted;
+  const handle = typed ? worldClaimHandle(io.db, primary.claim_id) : null;
+  const materialization = handle === null ? null : selectWorldMaterialization(io.db, handle);
+  if (typed) {
+    if (handle === null || materialization === null || target.rel_path !== worldCanonPath(handle) || persisted.some(item => worldClaimHandle(io.db,item.claim_id) !== handle || !materialization.basis.some(basis => basis.claim_id === item.claim_id))) throw new CanonWriteError("decision_stale", "typed canon requires its exact admitted world handle");
+    claims = materialization.claims;
+  }
   // Historical rows remain readable, but only the dedicated purge pipeline can rewrite holds.
   if (primary.kind === "purge_review") {
     throw new CanonWriteError("claim_kind_retired", "purge_review cannot authorize an ordinary canon write");
@@ -433,7 +446,15 @@ export function applyCanonWriteOwned(
   const pageId = target.page_id ?? mintId(io);
   const receiptId = mintId(io);
   initCanon(io.db);
-  const provenance = union(claims.map((item) => item.provenance));
+  const outputProvenance = union(claims.map((item) => item.provenance));
+  const provenance = typed ? union([outputProvenance, ...(existing === null ? [] : [existingSources(existing.page)])]) : outputProvenance;
+  let worldBasis: WorldCanonBasis | null = null;
+  if (typed && materialization !== null) {
+    const previous = existing === null ? null : latestReceiptForPage(io.db,target.rel_path);
+    if (existing !== null && (previous === null || !isWorldCanonReceipt(previous) || previous.after_hash !== existing.hash)) throw new CanonWriteError("decision_stale", "typed canon predecessor is not recorded");
+    worldBasis = {schema:"kizuki.world-canon-basis/v1",before:previous !== null && isWorldCanonReceipt(previous) ? previous.basis.after : null,after:materialization.basis};
+    assertWorldBasis(io.db,worldBasis.before,true);assertWorldBasis(io.db,worldBasis.after);
+  }
   assertProvenance(io, provenance);
 
   if (decision.action === "create" && existing !== null) {
@@ -449,7 +470,9 @@ export function applyCanonWriteOwned(
   }
 
   const prepared =
-    existing === null
+    typed && materialization !== null
+      ? {...prepareCreate(materialization.claims.map(item => ({...item,frontmatter:{type:materialization.pageType,title:materialization.title}})), pageId, outputProvenance, false), action: existing === null ? "create" as const : "edit" as const}
+      : existing === null
       ? prepareCreate(claims, pageId, provenance, decision.action === "conflict")
       : prepareRevision(io, claims, primary, existing, decision, provenance);
   const invalid = validatePage(prepared.page.data);
@@ -458,7 +481,7 @@ export function applyCanonWriteOwned(
   }
   requireSourceEvents(io.db, Array.isArray(prepared.page.data["sources"]) ? prepared.page.data["sources"].filter((id): id is string => typeof id === "string") : [], { owner: true, purpose: "derive" });
   if (prepared.page.data["sensitivity"] === "public" || prepared.page.data["sensitivity"] === "personal" || prepared.page.data["sensitivity"] === "private") prepared.page.data["sensitivity"] = sourceSensitivity(io.db, provenance, prepared.page.data["sensitivity"]);
-  const superseded = supersededRefs(io, decision);
+  const superseded = typed ? io.db.query<{claim_id:string;claim_key:string},[string]>("SELECT s.loser AS claim_id,m.semantic_key AS claim_key FROM claim_supersessions s JOIN claim_v2_semantics m ON m.claim_id=s.loser WHERE s.winner IN (SELECT value FROM json_each(?)) ORDER BY s.loser").all(JSON.stringify(persisted.map(item=>item.claim_id))) : supersededRefs(io, decision);
   const retrievalOps: RetrievalOpRef[] =
     io.retrieval_store === undefined
       ? []
@@ -466,7 +489,8 @@ export function applyCanonWriteOwned(
 
   const expectedAfter = hashBytes(Buffer.from(serializePage(prepared.page)));
   const admit = (): void => {
-    persistedClaims(io, claims);
+    persistedClaims(io, persisted, typed);
+    if (worldBasis !== null) { assertWorldBasis(io.db,worldBasis.before,true);assertWorldBasis(io.db,worldBasis.after); }
     assertProvenance(io, provenance);
     requireSourceEvents(io.db, existingSources(prepared.page), { owner: true, purpose: "derive" });
     if (sourceSensitivity(io.db, provenance, prepared.sensitivity) !== prepared.page.data["sensitivity"]) {
@@ -482,21 +506,21 @@ export function applyCanonWriteOwned(
         throw new SourceTombstoneError("source_tombstone_stale");
       }
     }
-    if (!sourceDeletion) requireExternalEvents(io.db, union([provenance, existingSources(prepared.page)]));
+    if (!sourceDeletion && !typed) requireExternalEvents(io.db, union([provenance, existingSources(prepared.page)]));
     if (existing !== null && new CanonAuthorityResolver(io.db, [target.rel_path]).basis(target.rel_path, existing.hash) === null) recoveryFailure("historical_orphan");
   };
   const receipt: CanonReceipt = {
     receipt_id: receiptId,
     kind: "write",
-    claim_ids: claims.map((item) => item.claim_id),
+    claim_ids: persisted.map((item) => item.claim_id),
     page_path: target.rel_path,
     page_action: prepared.action,
     before_hash: existing?.hash ?? null,
     after_hash: expectedAfter,
     archive_path: existing === null ? null : archiveRelPath(target.rel_path, receiptId),
     writer: opts.writer,
-    producer: primary.producer,
-    model_ref: primary.model_ref,
+    producer: typed ? "deterministic" : primary.producer,
+    model_ref: typed ? null : primary.model_ref,
     authority: lowestAuthority(claims),
     confidence: meanConfidence(claims),
     sensitivity: prepared.sensitivity,
@@ -508,6 +532,7 @@ export function applyCanonWriteOwned(
     reverts: null,
     reverted_by: null,
     at: nowOf(io),
+    ...(worldBasis === null ? {} : {schema:"kizuki.canon-receipt/v2",state:"retained",own_id_origin:"core",basis:worldBasis}),
   };
 
   const priorSubject = existing?.page.data["x-subject-id"];

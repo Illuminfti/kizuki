@@ -1,3 +1,5 @@
+import { isWorldCanonReceipt } from "./world-receipt";
+import { assertWorldBasis } from "./world-materialization";
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { refreshDerivedPage, removeDerivedPage } from "../derived";
@@ -19,10 +21,10 @@ import { getCanonReceipt } from "./receipts";
 import { assertPageRelPath } from "./paths";
 import type { CanonReceipt, RetrievalOpRef } from "./receipts";
 import { pageIndexByPath, type CanonIo } from "./store";
-import { advanceCanonReadGeneration, canonReadGeneration, decodeCanonImage, recoveryFailure, validateCanonIntentReceipt, type CanonWriteIntent } from "./write-intent";
+import { advanceCanonReadGeneration, canonReadGeneration, decodeCanonImage, recoveryFailure, validateVersionedCanonReceipt, type CanonWriteIntent } from "./write-intent";
 
 export interface CanonProjectionObligation {
-  version: 1;
+  version: 1 | 2;
   receipt: CanonReceipt;
   page_id: string | null;
   after_base64: string | null;
@@ -50,7 +52,7 @@ function insert(db: Database, row: StoredObligation, sources: CanonProjectionObl
 export function enqueueCanonProjection(db: Database, intent: CanonWriteIntent): void {
   if (!db.inTransaction) recoveryFailure("nested_transaction");
   const obligation: CanonProjectionObligation = {
-    version: 1, receipt: intent.receipt, page_id: intent.completion.page_id, after_base64: intent.after_base64,
+    version: intent.version, receipt: intent.receipt, page_id: intent.completion.page_id, after_base64: intent.after_base64,
     source_epoch: intent.admission.source_epoch, sources: intent.admission.sources, derive_ids: intent.admission.derive_ids,
     external_ops: externalOperations(intent.receipt),
     external_execution: externalOperations(intent.receipt).map(() => "scheduled"),
@@ -67,9 +69,9 @@ export function readCanonProjectionObligation(db: Database, receiptId: string): 
   try { json = new TextDecoder("utf-8", { fatal: true }).decode(raw.obligation); parsed = JSON.parse(json); }
   catch { recoveryFailure("intent_invalid", receiptId); }
   if (sha256Hex(json) !== raw.digest || !isPlainObject(parsed) ||
-      Object.keys(parsed).sort().join(",") !== "after_base64,derive_ids,external_execution,external_ops,page_id,receipt,source_epoch,sources,version" || parsed.version !== 1) recoveryFailure("intent_invalid", receiptId);
+      Object.keys(parsed).sort().join(",") !== "after_base64,derive_ids,external_execution,external_ops,page_id,receipt,source_epoch,sources,version") recoveryFailure("intent_invalid", receiptId);
   const value = parsed as unknown as CanonProjectionObligation;
-  validateCanonIntentReceipt(value.receipt);
+  validateVersionedCanonReceipt(value.receipt, value.version);
   const receipt = value.receipt;
   if (receipt.receipt_id !== receiptId || receipt.page_path !== raw.page_path ||
       (value.page_id !== null && (typeof value.page_id !== "string" || !value.page_id.length || value.page_id.length > 1024)) ||
@@ -100,6 +102,7 @@ function verify(scope: VaultMutationScope, io: CanonIo, obligation: CanonProject
   if (!indexed || sourcePolicyEpoch(io.db) !== obligation.source_epoch ||
       JSON.stringify(getCanonReceipt(io.db, receipt.receipt_id)) !== JSON.stringify(receipt)) recoveryFailure("authority_changed", receipt.receipt_id);
   requireSourceEvents(io.db, obligation.derive_ids, { owner: true, purpose: "derive" });
+  if (isWorldCanonReceipt(receipt)) assertWorldBasis(io.db, receipt.basis.after);
   const expected = decodeCanonImage(obligation.after_base64);
   const snapshot = requireCanonFiles(scope, io).read(receipt.page_path);
   if (snapshot === null) { if (expected !== null) recoveryFailure("page_changed", receipt.receipt_id); return null; }

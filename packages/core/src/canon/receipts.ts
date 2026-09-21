@@ -1,3 +1,4 @@
+import { parseWorldCanonReceipt, type WorldCanonReceiptRecord, type ErasedWorldCanonReceipt } from "./world-receipt";
 import { assertReceiptPaths } from "./paths";
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
@@ -62,6 +63,7 @@ export interface CanonReceipt {
 }
 
 export interface CanonReceiptRow {
+  record_codec?: string; receipt_state?: string; world_basis?: string | null; own_id_origin?: string | null; purge_receipt_id?: string | null; erased_at?: string | null; erasure_integrity?: string | null;
   receipt_id: string;
   claim_ids: string;
   provenance: string;
@@ -96,8 +98,9 @@ function parseJson<T>(raw: string, fallback: T): T {
 }
 
 export function rowToReceipt(row: CanonReceiptRow): CanonReceipt {
+  if (row.receipt_state === "erased") throw new Error("canon_receipt_erased");
   assertReceiptPaths(row);
-  return {
+  const receipt: CanonReceipt = {
     receipt_id: row.receipt_id,
     kind: row.receipt_kind as ReceiptKind,
     claim_ids: parseJson<string[]>(row.claim_ids, []),
@@ -121,6 +124,24 @@ export function rowToReceipt(row: CanonReceiptRow): CanonReceipt {
     reverted_by: row.reverted_by,
     at: row.at,
   };
+  if (row.record_codec === "kizuki.canon-receipt/v2") {
+    const typed = parseWorldCanonReceipt({...receipt, schema:row.record_codec, state:row.receipt_state, own_id_origin:row.own_id_origin, basis:parseJson(row.world_basis ?? "", null)});
+    if (typed === null || typed.state !== "retained") throw new Error("canon_receipt_invalid");
+    return typed;
+  }
+  if (row.record_codec !== undefined && row.record_codec !== "v1") throw new Error("canon_receipt_invalid");
+  return receipt;
+}
+
+export type CanonReceiptRecord = CanonReceipt | WorldCanonReceiptRecord;
+export function rowToReceiptRecord(row: CanonReceiptRow): CanonReceiptRecord {
+  if (row.receipt_state !== "erased") return rowToReceipt(row);
+  const typed = parseWorldCanonReceipt({schema:row.record_codec,state:row.receipt_state,receipt_id:row.receipt_id,purge_receipt_id:row.purge_receipt_id,own_id_origin:row.own_id_origin,erased_at:row.erased_at,sensitivity:row.sensitivity,integrity:row.erasure_integrity});
+  if (typed === null || typed.state !== "erased") throw new Error("canon_receipt_invalid");
+  return typed;
+}
+export function isErasedReceipt(record: CanonReceiptRecord): record is ErasedWorldCanonReceipt {
+  return "state" in record && record.state === "erased";
 }
 
 interface LegacyLine {
@@ -169,31 +190,48 @@ function fromLegacyLine(line: LegacyLine): CanonReceipt {
   };
 }
 
-export function parseReceiptLine(line: string): CanonReceipt {
+export function parseReceiptRecordLine(line: string): CanonReceiptRecord {
   const parsed = JSON.parse(line) as Record<string, unknown>;
   if (typeof parsed["proposal_id"] === "string" && !("claim_ids" in parsed)) {
     return fromLegacyLine(parsed as unknown as LegacyLine);
+  }
+  if ("schema" in parsed) {
+    const typed = parseWorldCanonReceipt(parsed);
+    if (typed === null) throw new Error("canon_receipt_invalid");
+    return typed;
   }
   const receipt = parsed as unknown as CanonReceipt;
   assertReceiptPaths(receipt);
   return receipt;
 }
 
-export function readReceiptsLog(vaultPath: string): CanonReceipt[] {
+export function parseReceiptLine(line: string): CanonReceipt {
+  const receipt = parseReceiptRecordLine(line);
+  if (isErasedReceipt(receipt)) throw new Error("canon_receipt_erased");
+  return receipt;
+}
+export function readReceiptRecords(vaultPath: string): CanonReceiptRecord[] {
   const receiptsPath = join(vaultPath, RECEIPTS_PATH);
   if (!existsSync(receiptsPath)) return [];
   return readFileSync(receiptsPath, "utf8")
     .split("\n")
     .filter((line) => line.length > 0)
-    .map(parseReceiptLine);
+    .map(parseReceiptRecordLine);
 }
 
-export function getCanonReceipt(db: Database, receiptId: string): CanonReceipt | null {
+export function readReceiptsLog(vaultPath: string): CanonReceipt[] {
+  return readReceiptRecords(vaultPath).filter((record): record is CanonReceipt => !isErasedReceipt(record));
+}
+export function getCanonReceiptRecord(db: Database, receiptId: string): CanonReceiptRecord | null {
   if (!tableExists(db, "canon_receipts")) return null;
   const row = db
     .query<CanonReceiptRow, [string]>("SELECT * FROM canon_receipts WHERE receipt_id = ?")
     .get(receiptId);
-  return row === null ? null : rowToReceipt(row);
+  return row === null ? null : rowToReceiptRecord(row);
+}
+export function getCanonReceipt(db: Database, receiptId: string): CanonReceipt | null {
+  const record = getCanonReceiptRecord(db, receiptId);
+  return record === null || isErasedReceipt(record) ? null : record;
 }
 
 /**
@@ -236,7 +274,7 @@ export function listCanonReceipts(
   if (!tableExists(db, "canon_receipts")) return [];
   const limit = Math.min(Math.max(opts.limit ?? 200, 1), 10_000);
   const offset = Math.max(opts.offset ?? 0, 0);
-  const clauses: string[] = [];
+  const clauses: string[] = ["page_path IS NOT NULL"];
   const params: (string | number)[] = [];
   if (opts.page_path !== undefined) {
     clauses.push("page_path = ?");

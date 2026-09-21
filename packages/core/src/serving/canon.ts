@@ -143,7 +143,7 @@ export function pageDecision(
   // it as canon would hand a reader capture dressed as produced prose.
   const sourceCtx = index.sourceContext;
   if (index.generation !== canonReadGeneration(sourceCtx.db) || canonReadHeld(sourceCtx, page)) return { allow: false, reason: "held" };
-  const evidence = assessLivePageEvidence(sourceCtx.db, page);
+  const evidence = assessLivePageEvidence(sourceCtx.db, page, undefined, {...sourceCtx,principal:{...sourceCtx.principal,grant}});
   if (!evidence.admitted) return { allow: false, reason: "held" };
   if (!sourceEventsAllowed(sourceCtx.db, evidence.sourceIds, { owner: sourceCtx.principal.kind === "owner", purpose: sourceCtx.sourcePurpose ?? "recall" })) return { allow: false, reason: "held" };
   const original = sensitivity(page.data["sensitivity"]);
@@ -166,7 +166,7 @@ export function canonChunk(
 ): CanonChunk {
   assertCanonReadAdmission(index.sourceContext, page);
   if (index.generation !== canonReadGeneration(index.sourceContext.db)) throw new ServeError("held", "canon changed during request; retry");
-  const evidence = assessLivePageEvidence(index.sourceContext.db, page);
+  const evidence = assessLivePageEvidence(index.sourceContext.db, page, undefined, index.sourceContext);
   if (!evidence.admitted || !sourceEventsAllowed(index.sourceContext.db, evidence.sourceIds, {
     owner: index.sourceContext.principal.kind === "owner",
     purpose: index.sourceContext.sourcePurpose ?? "recall",

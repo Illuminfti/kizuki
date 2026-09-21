@@ -1,3 +1,8 @@
+import { OWNER } from "../agents";
+import { getCanonReceipt } from "../canon/receipts";
+import { isWorldCanonReceipt } from "../canon/world-receipt";
+import { worldBasisAllowed } from "../canon/world-materialization";
+import type { ServeContext } from "../serving/types";
 import type { Database } from "bun:sqlite";
 import { CanonAuthorityResolver, type CanonRevisionBasis } from "../canon/authority";
 import { canonPageRecoveryPending } from "../canon/write-intent";
@@ -16,6 +21,7 @@ export function assessLivePageEvidence(
   db: Database,
   page: CanonPage,
   resolver?: CanonAuthorityResolver,
+  context?: ServeContext,
 ): LivePageEvidence {
   if (!isLiveCanonPage(page)) return { admitted: false, reason: "inactive" };
   if (canonPageRecoveryPending(db, page.relPath)) return { admitted: false, reason: "recovery_pending" };
@@ -26,13 +32,19 @@ export function assessLivePageEvidence(
   if (sources.value.length === 0) return { admitted: false, reason: "sources_unavailable" };
   const sourceIds = [...new Set(sources.value.map(eventIdFromReference))];
   try {
+    const revision = (resolver ?? new CanonAuthorityResolver(db, [page.relPath])).basis(page.relPath, page.contentHash);
+    if (revision === null) return { admitted: false, reason: "revision_unrecorded" };
+    const receipt = getCanonReceipt(db,revision.receipt_id);
+    if (receipt !== null && isWorldCanonReceipt(receipt)) {
+      if (receipt.basis.after === null || !worldBasisAllowed(context ?? {db,vaultPath:"",principal:OWNER,sourcePurpose:"derive"},receipt.basis.after)) return {admitted:false,reason:"sources_unavailable"};
+      return {admitted:true,sourceIds,revision};
+    }
     for (const id of sourceIds) {
       const event = readLiveEvent(db, id);
       if (event === null || event.origin !== "external") {
         return { admitted: false, reason: "sources_unavailable" };
       }
     }
-    const revision = (resolver ?? new CanonAuthorityResolver(db, [page.relPath])).basis(page.relPath, page.contentHash);
     return revision === null
       ? { admitted: false, reason: "revision_unrecorded" }
       : { admitted: true, sourceIds, revision };
