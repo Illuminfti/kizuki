@@ -21,6 +21,7 @@ import { validateEventOrigin, requireExternalEvents, SelfOriginError } from "../
 import { EXTRACT_BATCH, MODEL_PRODUCER_ID, planModelExtraction, planModelExtractionV2 } from "../producer";
 import { prepareWorldDrafts, type WorldDraftInsert } from "../producer/world-drafts";
 import { canonicalJson } from "../util/hash";
+import { worldSuppliedReferences } from "./world-supplied";
 import {
   isProducerV2,
   parseDurableWorldDrafts,
@@ -261,6 +262,9 @@ function sourceKey(db: Database, eventId: string): string | null {
     "SELECT source_key FROM source_event_bindings WHERE event_id=?",
   ).get(eventId)?.source_key ?? null;
 }
+function worldInput(db: Database, events: readonly CaptureEvent[]): ProduceInputV2 {
+  return worldProduceInput(events, worldSuppliedReferences(events, eventId => sourceKey(db, eventId)).input);
+}
 function sourceIdentityMatches(db: Database, input: DeferredInput): boolean {
   return sourceKey(db, input.event_id) === input.source_key;
 }
@@ -428,7 +432,8 @@ function journalWorldDrafts(
   modelRef: string | null,
 ): readonly WorldDraftInsert[] {
   if (mined.world === undefined) throw new Error("producer v2 decision is incomplete");
-  const input = worldProduceInput(events);
+  const supplied = worldSuppliedReferences(events, eventId => sourceKey(db, eventId));
+  const input = worldProduceInput(events, supplied.input);
   if (canonicalJson(input) !== canonicalJson(mined.world.input)) {
     throw new Error("extraction inputs changed during model call");
   }
@@ -437,17 +442,19 @@ function journalWorldDrafts(
       "SELECT accepted_at FROM events WHERE event_id=?",
     ).get(event.event_id);
     if (identity === null) throw new Error("produced claim source observation is unavailable");
+    const source_key = sourceKey(db, event.event_id);
     return {
       ...event,
       accepted_at: identity.accepted_at,
-      source_key: sourceKey(db, event.event_id),
-      // No supplied handles are emitted until Core has a qualified namespace mapper.
-      subjects: [],
+      source_key,
+      subjects: source_key === null ? [] : event.subjects.map(subject => ({
+        kind: "supplied" as const, id: subject.subject_id, namespace: { connector_id: event.connector_id, source_key },
+      })),
     };
   });
   return prepareWorldDrafts(mined.world.response, input, {
     events: contextEvents,
-    supplied_refs: new Map(),
+    supplied_refs: supplied.refs,
     model_ref: modelRef,
   });
 }
@@ -933,11 +940,11 @@ export async function mineLiveDrafts(
   const v2 = isProducerV2(producer);
   let selectedCount = v2 ? 0 : 1;
   let selectedInput: ProduceInput | ProduceInputV2 = v2
-    ? worldProduceInput(usable.slice(0, 1))
+    ? worldInput(db, usable.slice(0, 1))
     : inputFor(usable.slice(0, 1));
   if (v2) {
     for (let count = 1; count <= usable.length; count++) {
-      const candidate = worldProduceInput(usable.slice(0, count));
+      const candidate = worldInput(db, usable.slice(0, count));
       try {
         const plan = planModelExtractionV2(candidate);
         if (plan.status === "ready") { selectedCount = count; selectedInput = plan.input; }
@@ -977,7 +984,7 @@ export async function mineLiveDrafts(
   if (admitted.length !== usable.length) {
     return { mined: { status: "unavailable", reason: "event origin changed before extraction" }, drafts: [], previous_cursor, cursor: null };
   }
-  selectedInput = v2 ? worldProduceInput(usable) : inputFor(usable);
+  selectedInput = v2 ? worldInput(db, usable) : inputFor(usable);
   const selectedIds = new Set(usable.map(event => event.event_id));
   if (source_epoch !== sourcePolicyEpoch(db)) return denied();
   if (v2) {

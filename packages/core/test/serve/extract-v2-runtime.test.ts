@@ -39,7 +39,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function fixture() {
+function fixture(supplied = false) {
   const root = mkdtempSync(join(tmpdir(), "extract-v2-runtime-"));
   roots.push(root);
   const vault = join(root, "vault");
@@ -69,7 +69,7 @@ function fixture() {
     connector_id: "kizuki.fixture",
     source_record_id: "world-runtime",
     text: "Flux is a synthetic transformation.",
-    subjects: [],
+    subjects: supplied ? [{ subject_id: "concept:flux", role: "about", display_name: "Flux" }] : [],
   }, { source: { source_key: sourceKey, expected_revision: 1 } });
   if (accepted.status !== "stored") throw new Error("fixture capture failed");
 
@@ -91,9 +91,13 @@ function fixture() {
       calls.count += 1;
       const eventId = input.events[0]!.event_id;
       const anchor = { event_id: eventId, start_utf16: 0, end_utf16: 4 };
+      if (supplied) {
+        expect(input.supplied_refs).toEqual([{ id: "s0", anchors: [anchor] }]);
+        expect(JSON.stringify(input)).not.toContain("concept:flux");
+      }
       const claim = (id: string, predicate: string, object: { kind: "literal"; value: string } | { kind: "vocabulary"; ref: { kind: "vocabulary"; id: string } }, body: string) => ({
         id,
-        subject: { kind: "mention" as const, id: "m0" },
+        subject: supplied ? { kind: "supplied" as const, id: "s0" } : { kind: "mention" as const, id: "m0" },
         predicate,
         object,
         perspective: { holder: null, speaker: null, addressee: null, mode: "asserted" as const, interpretation: "explicit" as const, anchors: [] },
@@ -111,7 +115,7 @@ function fixture() {
         status: "ok" as const,
         response: {
           schema: EXTRACT_RESPONSE_V2_SCHEMA,
-          mentions: [{ id: "m0", label: "Flux", anchor, candidate_refs: [] }],
+          mentions: supplied ? [] : [{ id: "m0", label: "Flux", anchor, candidate_refs: [] }],
           claims: [
             claim("c0", "world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/concept" } }, "Flux is a concept."),
             claim("c1", "concept.label", { kind: "literal", value: "Flux" }, "The concept is called Flux."),
@@ -214,6 +218,30 @@ test("v2 filing rollback survives reopen and replays without another provider ca
   } finally {
     f.close();
   }
+});
+
+test("source-qualified supplied handles survive durable replay and actual typed filing", async () => {
+  const f = fixture(true);
+  try {
+    const mined = await mineLiveDrafts(f.db, f.producer);
+    expect(mined.mined).toEqual({ status: "ok", count: 3 });
+    journalExtractBatch(f.db, mined, f.producer.model_ref, f.producer);
+    const raw = f.db.query<{ drafts: string }, []>("SELECT drafts FROM extract_batches").get()!.drafts;
+    const drafts = JSON.parse(raw);
+    expect(drafts.every((draft: { semantic: { subject: unknown } }) => JSON.stringify(draft.semantic.subject) === JSON.stringify({
+      id: "concept:flux", kind: "supplied", namespace: { connector_id: "kizuki.fixture", source_key: f.sourceKey },
+    }))).toBe(true);
+    expect(raw).not.toContain('"s0"');
+    f.reopen();
+    const result = await runWritePass(f.db, f.vault, f.options());
+    expect(result.errors).toEqual([]);
+    // Replay files the previous decision; its extraction/model counters stay zero.
+    expect(result.claims_extracted).toBe(0);
+    expect(result.model.calls).toBe(0);
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims WHERE is_world_typed=1").get()).toEqual({ n: 3 });
+    expect(f.calls.count).toBe(1);
+    expect(JSON.stringify(discoverConcept(f))).toContain("A synthetic transformation.");
+  } finally { f.close(); }
 });
 
 test("revoked source cannot file a pending v2 decision", async () => {

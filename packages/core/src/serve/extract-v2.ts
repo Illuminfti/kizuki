@@ -5,6 +5,7 @@ import {
 import {
   PRODUCER_V2_CONTRACT,
   type ProduceInputV2,
+  type ProducerV2SuppliedRef,
   type ProducerV2Port,
 } from "../contracts/producer-v2";
 import {
@@ -34,11 +35,11 @@ const WORLD_PREDICATES: ProduceInputV2["predicates"] = WORLD_VOCABULARY.map(spec
 }));
 const WORLD_VOCABULARY_REFS = [...new Set(WORLD_VOCABULARY.flatMap(spec => spec.vocabulary_values ?? []))].sort();
 
-/** Closed producer-v2 input. Supplied refs wait for a namespace-safe host mapper. */
-export function worldProduceInput(events: readonly CaptureEvent[]): ProduceInputV2 {
+/** Closed producer-v2 input. Only the host's qualified mapper supplies handles. */
+export function worldProduceInput(events: readonly CaptureEvent[], suppliedRefs: readonly ProducerV2SuppliedRef[] = []): ProduceInputV2 {
   return {
     events: events.map(event => ({ event_id: event.event_id, text: event.text })),
-    supplied_refs: [],
+    supplied_refs: suppliedRefs,
     vocabulary_refs: WORLD_VOCABULARY_REFS,
     predicates: WORLD_PREDICATES,
     budget: { max_calls: 1, max_input_tokens: 8_000, max_output_tokens: 2_000 },
