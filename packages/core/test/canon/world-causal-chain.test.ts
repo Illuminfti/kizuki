@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { canonFixture, budget } from "./helpers";
 import { worldFixture } from "../serving/world-fixture";
-import { getClaim } from "../../src/claims/store";
+import { getClaim, insertClaim } from "../../src/claims/store";
 import { applyCanonWrite } from "../../src/canon/apply";
 import { correct } from "../../src/correction/correct";
 import { undoReceipt } from "../../src/canon/undo";
@@ -15,6 +15,9 @@ import { initSearch } from "../../src/search";
 import { initGraph } from "../../src/graph";
 import { runPurge } from "../../src/ledger/purge";
 import { ulid } from "../../src/util/ulid";
+import { parseWorldAdmission } from "../../src/contracts/world-admission";
+import { readCanonWriteIntent } from "../../src/canon/write-intent";
+import { revokeSourceGrant, resumeSourceRevocation } from "../../src/ledger/source-grants";
 
 test("backdated typed correction and undo keep the actual current head and prior authority", async () => {
   let now = "2026-09-21T10:00:00.000Z";
@@ -106,5 +109,61 @@ test("cascade follows backdated children and the storage index rejects forks", a
     // The index enforces one child independently of the read-time graph guard.
     expect(() => f.db.query("UPDATE canon_receipts SET prior_receipt_id=? WHERE receipt_id=?")
       .run(first.receipt_id, reverted.receipt_id)).toThrow("UNIQUE constraint failed");
+  } finally { f.dispose(); }
+});
+
+
+test("a purge survivor cannot detach erased ancestry and become an initial write", async () => {
+  const f = canonFixture();
+  try {
+    initSearch(f.db); initGraph(f.db);
+    const world = await worldFixture(f.db), claims = world.claims.map(id => getClaim(f.db, id)!);
+    const path = worldCanonPath(worldClaimHandle(f.db, claims[0]!.claim_id)!);
+    applyCanonWrite(f.io, claims, { action: "create", rel_path: path }, { writer: "loop", budget: budget() });
+    await correct(f.io, { statement: "Independent surviving owner assertion.", target: { claim_id: world.claims[2]! } });
+    await runPurge(f.db, f.vault, { event_id: world.eventId }, "erase original source");
+    const chain = worldReceiptChain(f.db, path);
+    expect(chain).toHaveLength(3);
+    expect(chain.slice(0, 2).every(isErasedReceipt)).toBe(true);
+    const survivor = chain[2]!;
+    expect(isErasedReceipt(survivor)).toBe(false);
+    f.db.query("UPDATE canon_receipts SET prior_receipt_id=NULL WHERE receipt_id=?").run(survivor.receipt_id);
+    expect(() => worldReceiptChain(f.db, path)).toThrow("lineage invalid");
+  } finally { f.dispose(); }
+});
+
+test("source withdrawal clears an interrupted typed create after an erased predecessor", async () => {
+  const f = canonFixture();
+  try {
+    initSearch(f.db); initGraph(f.db);
+    const world = await worldFixture(f.db), claims = world.claims.map(id => getClaim(f.db, id)!);
+    const path = worldCanonPath(worldClaimHandle(f.db, claims[0]!.claim_id)!);
+    const admission = parseWorldAdmission(JSON.parse(f.db.query<{ admission: string }, [string]>(
+      "SELECT admission FROM claim_v2_support WHERE claim_id=?",
+    ).get(world.claims[2]!)!.admission))!;
+    const first = applyCanonWrite(f.io, claims, { action: "create", rel_path: path }, { writer: "loop", budget: budget() });
+    const correction = await correct(f.io, { statement: "Independent native assertion.", target: { claim_id: world.claims[2]! } });
+    await undoReceipt(f.io, correction.receipt_id!);
+    await undoReceipt(f.io, first.receipt_id);
+    await runPurge(f.db, f.vault, { event_id: correction.event_id! }, "erase native history after undo");
+    expect(isErasedReceipt(worldReceiptChain(f.db, path).at(-1)!)).toBe(true);
+    const semantic = { ...admission.semantic, object: { kind: "literal" as const, value: "A fresh source-supported assertion." } };
+    const inserted = await insertClaim({ db: f.db }, {
+      kind: "claim", body: "A fresh source-supported assertion.", provenance: [world.eventId], producer: "deterministic", confidence: 0.8,
+      semantic, world_admission: { ...admission, semantic, rendering: { body: "A fresh source-supported assertion.", frontmatter: {} } },
+    });
+    if (inserted.outcome !== "stored") throw new Error("fresh assertion missing");
+    f.db.exec("CREATE TRIGGER interrupt_typed_write BEFORE INSERT ON canon_receipts BEGIN SELECT RAISE(ABORT,'interrupted typed create'); END");
+    expect(() => applyCanonWrite(f.io, inserted.claim, { action: "create", rel_path: path }, { writer: "loop", budget: budget() }))
+      .toThrow("interrupted typed create");
+    f.db.exec("DROP TRIGGER interrupt_typed_write");
+    expect(readCanonWriteIntent(f.db)).not.toBeNull();
+    revokeSourceGrant(f.db, { source_key: world.sourceKey, expected_revision: 1, operation_id: "withdraw-erased-prior" });
+    const result = await resumeSourceRevocation(f.db, f.vault, "withdraw-erased-prior", {
+      ownedRetrieval: { stores: async () => ({ stores: [], absent_store_ids: [] }) },
+    });
+    expect({ status: result.status, blockers: result.purge_blockers }).toEqual({ status: "purged", blockers: [] });
+    expect(readCanonWriteIntent(f.db)).toBeNull();
+    expect(existsSync(join(f.vault, path))).toBe(false);
   } finally { f.dispose(); }
 });

@@ -1,15 +1,13 @@
 import type { VaultMutationScope } from "../vault/mutation-scope";
 import type { CanonFileSnapshot, CanonFiles } from "../vault/canon-files";
-import { sha256Hex } from "../util/hash";
 import { parseFrontmatter } from "../vault/frontmatter";
 import { eventIdFromReference } from "../retrieval/ids";
 import { oneShotGet } from "../ledger/schema";
 import { requireCanonFiles } from "./io";
-import { latestReceiptForPage } from "./receipts";
 import { openOrdinaryRecoveryReceiptStream } from "./receipt-stream";
 import { readCanonProjectionObligation } from "./projection-obligations";
 import type { CanonIo } from "./store";
-import { advanceCanonReadGeneration, assertIndependentSurvivorAdmission, decodeCanonImage, readCanonWriteIntent, recoveryFailure, type CanonWriteIntent } from "./write-intent";
+import { canonPredecessorDigest, advanceCanonReadGeneration, assertIndependentSurvivorAdmission, decodeCanonImage, readCanonWriteIntent, recoveryFailure, type CanonWriteIntent } from "./write-intent";
 
 function pageEventIds(bytes: Buffer, receiptId: string): string[] {
   const sources = parseFrontmatter(bytes.toString("utf8")).data["sources"];
@@ -95,7 +93,7 @@ export function withdrawPendingCanonWrite(scope: VaultMutationScope, io: CanonIo
       if (JSON.stringify(current) !== JSON.stringify(denied) ||
           db.query<{ digest: string }, [string]>("SELECT digest FROM canon_write_intents WHERE receipt_id=?").get(receipt.receipt_id)?.digest !== binding.digest ||
           db.query("SELECT 1 FROM canon_receipts WHERE receipt_id=?").get(receipt.receipt_id) !== null ||
-          sha256Hex(JSON.stringify(latestReceiptForPage(db, receipt.page_path))) !== intent.admission.predecessor_digest) {
+          canonPredecessorDigest(db, receipt) !== intent.admission.predecessor_digest) {
         recoveryFailure("authority_changed", receipt.receipt_id);
       }
       // An expected name or prefix is not durable creation custody. These
