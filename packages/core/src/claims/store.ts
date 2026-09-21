@@ -797,10 +797,13 @@ export function listUnwrittenLiveClaims(
 ): Claim[] {
   if (!tableExists(db, "claims")) return [];
   const bound = Number.isSafeInteger(limit) && limit > 0 ? limit : 32;
+  const typed = tableExists(db, "claim_v2_semantics")
+    ? "AND NOT EXISTS (SELECT 1 FROM claim_v2_semantics v2 WHERE v2.claim_id=claims.claim_id)"
+    : "";
   return db
     .query<ClaimRow, [number]>(
       `SELECT * FROM claims
-        WHERE status = 'live' AND receipt_id IS NULL AND kind <> 'purge_review'
+        WHERE status = 'live' AND receipt_id IS NULL AND kind <> 'purge_review' ${typed}
         ORDER BY created_at, claim_id
         LIMIT ?`,
     )
@@ -1092,12 +1095,14 @@ export async function prepareClaimInsert(
   if (input.world_admission !== undefined) {
     const admission = parseWorldAdmission(input.world_admission);
     if (admission === null) throw new ClaimError("schema_invalid", "world admission is invalid");
-    // World meaning is not a second v1 claim shape. The legacy columns stay
-    // neutral and only the support-specific rendering reaches the v1 row.
+    // World meaning is not a second v1 claim shape. Keep legacy presentation
+    // neutral: source-specific rendering belongs only in immutable support.
     input = {
       ...input,
-      body: admission.rendering.body,
-      frontmatter: { ...admission.rendering.frontmatter },
+      // A semantic-key marker keeps legacy idempotency distinct without
+      // retaining source rendering in a v1-readable column.
+      body: `[world:${semanticKey(admission.semantic)}]`,
+      frontmatter: {},
       subject: null,
       predicate: null,
       object: null,
