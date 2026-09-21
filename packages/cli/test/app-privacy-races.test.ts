@@ -9,7 +9,9 @@ import type { CliIo } from '../src/commands';
 import type { AppOperation, AppProtocol, AppRoute } from '../src/app/protocol';
 import { createHelpers } from './helpers';
 import { traceSyntheticAppFailures } from './app-native-diagnostics';
-import { defaultChatCompletion, startFakeEndpoint, type SeenRequest } from '../../llm/test/fake-endpoint';
+import { startFakeEndpoint, type SeenRequest } from '../../llm/test/fake-endpoint';
+
+import { worldModelCompletion } from './world-model-completion';
 
 const h = createHelpers(), cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { try { for (const close of cleanup.splice(0)) await close(); } finally { h.cleanup(); } });
@@ -23,16 +25,7 @@ const policy: SourceGrantPolicy = {
 };
 
 function completion(request: SeenRequest): Response {
-    const body = request.body as { messages: { content: string }[] };
-    const prompt = body.messages.map(message => message.content).join('\n');
-    const event = /record ([A-Za-z0-9:_.-]+) from/.exec(prompt)?.[1];
-    const subject = /"subject":"((?:\\.|[^"\\])*)"/.exec(prompt)?.[1];
-    if (!event || !subject) throw Error('synthetic extraction request is missing its bound evidence');
-    return defaultChatCompletion(JSON.stringify({ claims: [{
-        kind: 'claim', subject: JSON.parse(`"${subject}"`), predicate: 'employment.role',
-        object: MODEL_OBJECT, polarity: 'positive', body: SOURCE_TEXT,
-        valid_from: null, valid_to: null, confidence: 0.7, sensitivity: 'private', event_ids: [event],
-    }] }));
+    return worldModelCompletion(request, MODEL_OBJECT, SOURCE_TEXT);
 }
 
 /** Every setup action crosses the authenticated HTTP boundary; the database is
@@ -93,12 +86,12 @@ async function fixture() {
     expect(memory).toBeDefined();
     const target = (await call('correction_targets', { page_id: memory.id })).claims.find(claim => claim.object === MODEL_OBJECT)!;
     expect(target).toBeDefined();
+    if (!('target' in target) || target.target === null) throw Error('expected supported typed correction target');
     return { call, done, ledger, notes, vault, output, endpoint, memory, target, source };
 }
 
 test('withdrawing only correction purpose preserves recall but refuses owner targets, preview and writes', async () => {
-    const f = await fixture(), correction = { claim_id: f.target.claim_id,
-        statement: 'PRIVATE_CORRECTION_STATEMENT', object: 'PRIVATE_REPLACEMENT_OBJECT' };
+    const f = await fixture(), correction = { target: f.target.target, statement: 'PRIVATE_CORRECTION_STATEMENT' };
     const current = f.ledger(db => inspectSourceGrant(db, f.source)!.policy);
     const before = f.ledger(db => listCanonReceipts(db, { limit: 100 }).map(receipt => receipt.receipt_id));
     expect((await f.call('consent', { source_key: f.source, expected_revision: 2, operation_id: 'withdraw-correction-only',
@@ -111,7 +104,7 @@ test('withdrawing only correction purpose preserves recall but refuses owner tar
     expect(f.ledger(db => listCanonReceipts(db, { limit: 100 }).map(receipt => receipt.receipt_id))).toEqual(before);
     expect(f.ledger(db => db.query<{ count: number }, []>('SELECT count(*) AS count FROM events WHERE connector_id=\'kizuki.owner\'').get()!.count)).toBe(0);
     const publicJobs = JSON.stringify([(await f.call('status', {})).operations, refused, f.output]);
-    for (const privateText of [correction.statement, correction.object, SOURCE_TEXT, MODEL_OBJECT, KEY]) expect(publicJobs).not.toContain(privateText);
+    for (const privateText of [correction.statement, SOURCE_TEXT, MODEL_OBJECT, KEY]) expect(publicJobs).not.toContain(privateText);
     expect(f.endpoint.requests).toHaveLength(1);
 }, 15_000);
 
