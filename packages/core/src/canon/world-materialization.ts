@@ -1,3 +1,6 @@
+import { parseFrontmatter } from "../vault/frontmatter";
+import { hashBytes, ABSENT_PAGE_HASH } from "../vault/write";
+import { isWorldCanonReceipt, type RetainedWorldCanonReceipt } from "./world-receipt";
 import type { Database } from "bun:sqlite";
 import { OWNER } from "../agents";
 import { getClaim } from "../claims/store";
@@ -76,4 +79,42 @@ export function pendingWorldCanonClaims(db:Database,limit=32):Claim[][] {
   group.push(claim);groups.set(handle,group);
  }
  return [...groups.values()];
+}
+
+/** Restore and reads share the same exact semantic-handle namespace check. */
+export function assertWorldReceiptBasis(db:Database,receipt:RetainedWorldCanonReceipt,options:{historical?:boolean}={}):void {
+ if(!isWorldCanonReceipt(receipt))throw new Error("typed receipt required");
+ for(const image of [receipt.basis.before,receipt.basis.after]) {
+  assertWorldBasis(db,image,options.historical??false);
+  for(const item of image??[]) {
+   const handle=worldClaimHandle(db,item.claim_id);
+   if(handle===null||worldCanonPath(handle)!==receipt.page_path)throw new Error("typed receipt handle mismatch");
+  }
+ }
+}
+/** Reconstruct exact attributed prose rather than accepting rehashed backup text as evidence. */
+export function assertWorldCanonPage(db:Database,receipt:RetainedWorldCanonReceipt,bytes:Uint8Array|null,image:"before"|"after"):void {
+ const basis=receipt.basis[image],expected=image==="before"?receipt.before_hash:receipt.after_hash;
+ if(bytes===null) {
+  if(basis!==null||(image==="before"?null:ABSENT_PAGE_HASH)!==expected)throw new Error("typed canon image missing");
+  return;
+ }
+ if(basis===null||hashBytes(bytes)!==expected)throw new Error("typed canon image differs from receipt");
+ assertWorldBasis(db,basis,true);
+ const ctx=context(db),budget:ReadBudget={bytes:0},bodies:string[]=[],sources:string[]=[];
+ let title="Knowledge record",type="topic";
+ for(const item of basis) {
+  const handle=worldClaimHandle(db,item.claim_id);if(handle===null||worldCanonPath(handle)!==receipt.page_path)throw new Error("typed receipt handle mismatch");
+  const eligible=eligibleWorldClaim(ctx,item.claim_id,{kind:"all"},budget,{historical:true,supportKeys:item.supports.map(support=>support.support_key)})!;
+  const support=eligible.supports.find(support=>support.row.support_key===item.supports[0]!.support_key)!;
+  const body=support.admission.rendering.body.trim();if(body.length)bodies.push(body);
+  for(const event of support.events)if(!sources.includes(event.event_id))sources.push(event.event_id);
+  const semantic=eligible.semantic;
+  if(semantic.predicate==="world.kind"&&semantic.object.kind==="vocabulary"&&semantic.object.ref.id==="world/situation")type="project";
+  if((semantic.predicate==="concept.label"||semantic.predicate==="situation.label")&&semantic.object.kind==="literal"&&typeof semantic.object.value==="string")title=semantic.object.value;
+ }
+ const page=parseFrontmatter(Buffer.from(bytes).toString("utf8"));
+ const body=`${bodies.join(bodies.some(body=>body.includes("\n"))?"\n\n":" ")}\n`;
+ if(page.body!==body||page.data["title"]!==title||page.data["type"]!==type||page.data["status"]!=="active"||canonicalJson(page.data["sources"])!==canonicalJson(sources)||Object.keys(page.data).sort().join(",")!=="id,sensitivity,sources,status,taint,title,type")throw new Error("typed canon image is not the admitted rendering");
+ if(image==="after"&&(page.data["sensitivity"]!==receipt.sensitivity||page.data["taint"]!==receipt.taint))throw new Error("typed canon image classification differs from receipt");
 }
