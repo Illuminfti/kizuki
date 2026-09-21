@@ -30,6 +30,8 @@ import {
   type SituationCard,
   validateSituationCard,
 } from "../contracts/situation-card";
+import { getWorldVocabularySpec } from "../contracts/world-vocabulary";
+import { isRegisteredPredicate } from "../claims/predicates";
 import { eventDecision, readServableEvents } from "../serving/ledger";
 import type { ServeContext } from "../serving/types";
 import type { WorldValidQuery } from "../serving/world-view";
@@ -124,6 +126,10 @@ export function eligibleWorldClaim(
     !validFor(semantic, valid)
   )
     return null;
+  // Existing registry predicates retain their declared literal shape in v2.
+  // An otherwise valid assertion token is not a supported domain predicate.
+  if (getWorldVocabularySpec(semantic.predicate) === undefined &&
+      !(isRegisteredPredicate(semantic.predicate) && semantic.object.kind === "literal")) return null;
   const endpoints = assertionEndpoints(semantic);
   if (
     ctx.principal.grant.subjects !== null &&
