@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { validateProduceResult, invokeProducer } from "../../src/producer/result";
+import { validateProduceResult, invokeProducer, invokeProducerV2 } from "../../src/producer/result";
 import { draft, GRACE_EVENT, input } from "./helpers";
 import { MODEL_PRODUCER_DESCRIPTOR } from "../../src/producer/model";
+import { MODEL_PRODUCER_V2_DESCRIPTOR } from "../../src/producer/model-v2";
 import { EXTRACT_RESPONSE_V2_SCHEMA, PRODUCER_V2_CONTRACT, type ProducerV2ParseInput } from "../../src/contracts/producer-v2";
 
 const CANARY = "synthetic-private-result-canary";
@@ -108,6 +109,14 @@ describe("producer v2 complete result boundary", () => {
     expect(validateProduceResult(raw, PRODUCER_V2_CONTRACT, context)).toEqual({ usage_known: true, result: raw });
     expect(validateProduceResult(raw).usage_known).toBe(false);
     expect(validateProduceResult({ status: "ok", claims: [], usage }, PRODUCER_V2_CONTRACT, context).usage_known).toBe(false);
+  });
+
+  test("v2 invocation validates the bound contract and response", async () => {
+    const input = { events: context.events, supplied_refs: [], vocabulary_refs: [], predicates: [], budget: { max_calls: 1, max_input_tokens: 100, max_output_tokens: 100 } };
+    const port = { descriptor: MODEL_PRODUCER_V2_DESCRIPTOR, produce: async () => ({ status: "ok" as const, response, usage }) };
+    expect(await invokeProducerV2(port, input)).toEqual({ usage_known: true, result: { status: "ok", response, usage } });
+    const wrong = { descriptor: MODEL_PRODUCER_DESCRIPTOR, produce: port.produce };
+    expect(await invokeProducerV2(wrong as never, input)).toMatchObject({ usage_known: false, result: { status: "unavailable", reason: "unavailable", usage: { calls: 1 } } });
   });
 
   test("all v2 non-success reasons, usage and diagnostics are closed", () => {
