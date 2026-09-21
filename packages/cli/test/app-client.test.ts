@@ -902,6 +902,26 @@ test('unreadable existing model settings do not expose a replacement form', asyn
 });
 
 const readGrant = { ceiling: 'public', types: null, subjects: null, since: null, until: null, tools: ['search', 'get_page'], rate_limit_per_minute: 60, relay_owner_corrections: false };
+test('World renders actual shared-reader cards, admission evidence and unavailable state', () => {
+    const f = fixture();
+    f.evaluate(`state.view='world'; state.worldKind='concepts'; state.world={schema:'kizuki.world-view/v1',operation:'find_concepts',result:{status:'current',view:{status:'not_issued'},data:{schema:'kizuki.concept-matches/v1',matches:[{ref:{kind:'object',token:'A'.repeat(43)},labels:['Bayesian reasoning']}],coverage:{status:'partial',gaps:['traversal_limit']}}}}; render();`);
+    expect(f.main.textContent).toContain('Bayesian reasoning'); expect(f.main.textContent).toContain('Some results may be missing');
+    f.evaluate(`state.world={schema:'kizuki.world-view/v1',operation:'concept',result:{status:'current',view:{status:'not_issued'},data:{schema:'kizuki.concept-card/v1',concept:{labels:[{text:'Bayesian reasoning'}]},summary:{text:'Update beliefs with evidence.',admissions:[]},definitions:[{predicate:'concept.definition',object:{kind:'literal',value:'Revise beliefs using evidence'},assessments:[{epistemicKind:'model_inference',authority:'model',confidence:{kind:'known',value:.8},evidence:[{}]}]}],relations:[],coverage:{status:'complete_for_query'}}}}; render();`);
+    expect(f.main.textContent).toContain('Update beliefs with evidence.'); expect(f.main.textContent).toContain('Admitted evidence and confidence'); expect(f.main.textContent).toContain('80% confidence'); expect(f.main.textContent).toContain('evidence attached');
+    f.evaluate(`state.world={schema:'kizuki.world-view/v1',operation:'concept',result:{status:'unavailable',reason:'storage'}}; render();`);
+    expect(f.main.textContent).toContain('World view is not available here.');
+});
+test('World ignores stale responses and clears its private projection on privacy invalidation', async () => {
+    const f = fixture();
+    f.evaluate(`state.view='world'; loadWorld(); loadWorld();`);
+    expect(f.requests.filter(request => request.route === 'world_view')).toHaveLength(2);
+    f.reply('world_view', { status: 'not_found' }); await tick();
+    expect(f.main.textContent).not.toContain('No concepts found.');
+    f.reply('world_view', { status: 'not_found' }); await tick();
+    expect(f.main.textContent).toContain('No concepts found.');
+    f.evaluate(`state.world={status:'not_found'}; invalidatePrivateView();`);
+    expect(f.evaluate('state.world')).toBeNull();
+});
 test('agent enrollment reviews all eight grant fields before submitting a read-only identity', async () => {
     const f = fixture(); f.evaluate('agentEnrollment()');
     f.dialog.querySelector('#agent-name')!.value = 'research-helper';

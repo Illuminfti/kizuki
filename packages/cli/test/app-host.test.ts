@@ -6,6 +6,7 @@ import { createAppHost } from '../src/app/host';
 import { Database } from 'bun:sqlite';
 import { errorText } from '../src/output';
 import type { CliIo } from '../src/commands';
+import { worldFixture } from '../../core/test/serving/world-fixture';
 const h = createHelpers();
 afterEach(h.cleanup);
 const policy = { purposes: ['capture', 'recall', 'session'], allowed_fields: ['text', 'subjects', 'metadata', 'attachments'], retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' };
@@ -78,6 +79,25 @@ test('native local app enrolls folder, requires consent, captures and queries wi
     finally {
         await host.close();
     }
+});
+test('app world view accepts only the closed shared-reader request shape', async () => {
+    const setup = h.tempVault();
+    const db = openLedger(join(setup.vault, '.kizuki', 'kizuki.db'));
+    const seeded = await worldFixture(db);
+    db.close();
+    const io: CliIo = { env: setup.env, vaultOverride: setup.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out() {}, err() {}, prompt: async () => '' };
+    const host = createAppHost(io);
+    const call = async (body: unknown) => (await host.handle(new Request('http://127.0.0.1/app/v1/world_view', { method: 'POST', body: JSON.stringify(body) }))).json() as Promise<any>;
+    try {
+        const request = { operation: 'find_concepts', label: seeded.label, valid: { kind: 'all' }, knownAt: { kind: 'current' } };
+        const found = await call(request);
+        expect(found.ok, JSON.stringify(found)).toBe(true);
+        expect(found.data.result.data.matches[0].labels).toEqual([seeded.label]);
+        const detail = await call({ operation: 'concept', concept: found.data.result.data.matches[0].ref, valid: { kind: 'all' }, knownAt: { kind: 'current' } });
+        expect(detail.data.result.data.definitions[0].object.value).toBe('Revise beliefs using evidence');
+        expect((await call({ ...request, extra: true })).error.code).toBe('invalid_request');
+        expect((await call({ operation: 'find_concepts', label: 'Missing', valid: { kind: 'all' }, knownAt: { kind: 'time', at: '2026-01-01T00:00:00.000Z' } })).data.result.reason).toBe('history');
+    } finally { await host.close(); }
 });
 import { startApp } from '../src/commands/app';
 import { appAssets } from '../src/app/assets';

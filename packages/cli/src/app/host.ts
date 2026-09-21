@@ -123,7 +123,10 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
         ];
     }
     async function execute(route: AppRoute, input: Record<string, unknown>): Promise<unknown> {
-        if (route === 'world_view') return readContext(async ctx => readWorldView({ db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER }, input), true);
+        // The shared reader allocates opaque, principal-scoped wire references
+        // inside its own transaction. The App must use that one reader, not
+        // fabricate stable identifiers from its own view state.
+        if (route === 'world_view') return context(async ctx => readWorldView({ db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER }, input));
         if (route === 'catalog')
             return { sources: catalog() };
         if (route === 'agents') return readContext(async ctx => {

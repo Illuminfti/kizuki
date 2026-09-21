@@ -20,6 +20,7 @@ let activitySequence = 0;
 let serviceSequence = 0;
 let modelSequence = 0;
 let agentsSequence = 0;
+let worldSequence = 0;
 let privateViewValid = true;
 const icons = {
   memory: ['M7 3.5h10a2 2 0 0 1 2 2v15l-7-3-7 3v-15a2 2 0 0 1 2-2Z', 'M9 8h6M9 11.5h4'],
@@ -112,9 +113,9 @@ function sourceLabel(source) {
 }
 function staleResponse() { return Object.assign(new Error('Response superseded.'), { code: 'stale_response' }); }
 function invalidatePrivateView() {
-  privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++; serviceSequence++; modelSequence++; agentsSequence++;
+  privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++; serviceSequence++; modelSequence++; agentsSequence++; worldSequence++;
   privateViewValid = false;
-  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.activityStatus = 'idle'; state.service = null; state.model = null; state.modelError = false; state.agents = null; state.agentsError = false; state.operation = null;
+  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.activityStatus = 'idle'; state.service = null; state.model = null; state.modelError = false; state.agents = null; state.agentsError = false; state.operation = null; state.world = null; state.worldError = false;
   clearDialogTransient();
   if (dialog.open) closeDialog();
   dialog.replaceChildren();
@@ -759,29 +760,58 @@ function worldCoverage(coverage) {
   if (!coverage || coverage.status !== 'partial') return null;
   return el('details', { class: 'result-details' }, el('summary', {}, 'Some results may be missing'), el('p', {}, 'This view reached its current reading limit. It is not a complete map of your memory.'), Array.isArray(coverage.gaps) && coverage.gaps.length ? el('p', {}, `Details: ${coverage.gaps.join(', ')}.`) : null);
 }
-function worldTitle(item) { return Array.isArray(item.labels) && item.labels[0] ? item.labels[0] : 'Untitled'; }
+function worldTitle(node) { return Array.isArray(node?.labels) && node.labels[0]?.text ? node.labels[0].text : 'Untitled'; }
+function worldObjectText(relation) {
+  if (relation?.object?.kind === 'literal') return relation.object.value;
+  if (relation?.object?.kind === 'vocabulary') return relation.object.id;
+  return 'Another admitted item';
+}
+function worldAssessmentText(relation) {
+  const assessments = Array.isArray(relation?.assessments) ? relation.assessments : [];
+  if (!assessments.length) return 'No admission assessment is available.';
+  return assessments.map(assessment => {
+    const confidence = assessment.confidence?.kind === 'known' ? `${Math.round(assessment.confidence.value * 100)}% confidence` : 'confidence unknown';
+    const evidence = Array.isArray(assessment.evidence) && assessment.evidence.length ? 'evidence attached' : 'no evidence span';
+    return `${assessment.epistemicKind} · ${assessment.authority} · ${confidence} · ${evidence}`;
+  }).join('; ');
+}
+function worldRelation(label, relation) {
+  if (!relation) return null;
+  return el('div', { class: 'belief-details' }, el('h3', {}, label), el('p', { class: 'result-text' }, worldObjectText(relation)), el('p', {}, worldAssessmentText(relation)));
+}
 function renderWorld() {
   const kind = state.worldKind, field = el('input', { id: 'world-query', type: 'search', placeholder: `Find ${kind}…`, 'aria-label': `Find ${kind}`, autocomplete: 'off' }); field.value = state.worldQuery;
   const choose = value => { state.worldKind = value; state.world = null; state.worldError = false; loadWorld(); };
   const form = el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); state.worldQuery = field.value; loadWorld(); } }, icon('search'), field, el('button', { class: 'button button-primary', type: 'submit' }, 'Find'));
   const section = el('section', {}, heading('Your world.', 'Concepts and situations Kizuki can currently support with admitted evidence.'), el('div', { class: 'world-tabs', role: 'group', 'aria-label': 'World type' }, button('Concepts', () => choose('concepts'), state.worldKind === 'concepts' ? 'primary' : 'secondary'), button('Situations', () => choose('situations'), state.worldKind === 'situations' ? 'primary' : 'secondary')), form, el('p', { class: 'search-hint' }, 'Search still works on captured sources without a model. World views appear after an authorised model interpretation is admitted.'));
-  if (state.worldError) section.append(empty('World view is unavailable.', 'Kizuki could not read the current world view. Try again before relying on it.', button('Try again', loadWorld, 'primary')));
+  if (state.worldError) section.append(empty('World view is unavailable.', 'Kizuki could not read the current world view. Try again before relying on it.', button('Try again', () => loadWorld(), 'primary')));
   else if (state.world === null) section.append(empty('No world view yet.', 'Connect a source and allow a model to interpret it when you are ready. Your captured information remains searchable without a model.', button('Search memory', () => navigate('memory'), 'primary')));
-  else if (state.world.status === 'unavailable') section.append(empty('World view is not available here.', state.world.reason === 'history' ? 'Historical world snapshots are not available yet.' : 'Kizuki cannot read this world view right now.', button('Try again', loadWorld, 'primary')));
+  else if (state.world.status === 'unavailable') section.append(empty('World view is not available here.', state.world.reason === 'history' ? 'Historical world snapshots are not available yet.' : 'Kizuki cannot read this world view right now.', button('Try again', () => loadWorld(), 'primary')));
   else if (state.world.status === 'not_found') section.append(empty(`No ${kind} found.`, 'Try another label, or search your captured sources for the original evidence.', button('Search memory', () => navigate('memory'), 'primary')));
   else {
-    const result = state.world.result, data = result.data, matches = data.matches;
-    if (Array.isArray(matches)) section.append(matches.length ? el('div', { class: 'result-list' }, ...matches.map(item => el('article', { class: 'result-item' }, el('h3', {}, worldTitle(item)), el('p', {}, `${item.labels.length} admitted label${item.labels.length === 1 ? '' : 's'}`), button('View details', () => loadWorld(item.ref), 'quiet')))) : empty(`No ${kind} found.`, 'Try another label, or search your captured sources for the original evidence.', button('Search memory', () => navigate('memory'), 'primary')), worldCoverage(data.coverage));
-    else section.append(el('article', { class: 'result-item' }, el('h2', {}, worldTitle(data.concept || data.situation)), el('p', { class: 'result-text' }, data.summary || 'No summary is available.'), worldCoverage(data.coverage), el('details', { class: 'result-details' }, el('summary', {}, 'Evidence and relations'), el('p', {}, `Definitions: ${(data.definitions || []).length} · Relations: ${(data.relations || data.commitments || []).length} · Evidence is shown through this private view only.`))));
+    const result = state.world.result;
+    if (result.status === 'unavailable') section.append(empty('World view is not available here.', result.reason === 'history' ? 'Historical world snapshots are not available yet.' : 'Kizuki cannot read this world view right now.', button('Try again', () => loadWorld(), 'primary')));
+    else {
+      const data = result.data, matches = Array.isArray(data?.matches) ? data.matches : null;
+      if (matches !== null) {
+        section.append(matches.length ? el('div', { class: 'result-list' }, ...matches.map(item => el('article', { class: 'result-item' }, el('h3', {}, Array.isArray(item.labels) && item.labels[0] ? item.labels[0] : 'Untitled'), button('View details', () => loadWorld(item.ref), 'quiet')))) : empty(`No ${kind} found.`, 'Try another label, or search your captured sources for the original evidence.', button('Search memory', () => navigate('memory'), 'primary')));
+        const coverage = worldCoverage(data.coverage); if (coverage) section.append(coverage);
+      }
+      else {
+      const node = data.concept || data.situation, relations = data.concept ? [...(data.definitions || []), ...(data.relations || [])] : [data.objective, ...(data.commitments || []), data.blocker, data.recentChange, ...(data.uncertainty || [])].filter(Boolean);
+      section.append(el('article', { class: 'result-item' }, el('h2', {}, worldTitle(node)), el('p', { class: 'result-text' }, data.summary?.text || 'No summary is available.'), worldCoverage(data.coverage), el('details', { class: 'result-details' }, el('summary', {}, 'Admitted evidence and confidence'), el('p', {}, 'Each statement below is a current, evidence-qualified projection. References stay opaque.'), ...relations.map(relation => worldRelation(relation.predicate, relation)))));
+      }
+    }
   }
   return section;
 }
 async function loadWorld(ref) {
+  const sequence = ++worldSequence, session = bearer, generation = privacyGeneration;
   const operation = ref ? (state.worldKind === 'concepts' ? 'concept' : 'situation') : (state.worldKind === 'concepts' ? 'find_concepts' : 'find_situations');
   const payload = { operation, ...(ref ? { [operation]: ref } : { label: state.worldQuery }), valid: { kind: 'all' }, knownAt: { kind: 'current' } };
   state.worldError = false;
-  try { state.world = await api('world_view', payload); if (state.view === 'world') render(); }
-  catch { state.worldError = true; if (state.view === 'world') render(); }
+  try { const world = await api('world_view', payload); if (sequence !== worldSequence || session !== bearer || generation !== privacyGeneration) return; state.world = world; if (state.view === 'world') render(); }
+  catch (error) { if (sequence !== worldSequence || session !== bearer || generation !== privacyGeneration || error?.code === 'stale_response') return; state.worldError = true; if (state.view === 'world') render(); }
 }
 function renderOperation() {
   const operation = state.operation;
