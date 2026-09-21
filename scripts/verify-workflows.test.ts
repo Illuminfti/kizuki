@@ -725,3 +725,24 @@ test("an excluded receipt is not retained by its uploaded parent directory", () 
     );
   }
 });
+
+test("upload action paths do not expand shell variables", () => {
+  for (const path of [
+    "$RUNNER_TEMP/kizuki-other/receipt.json",
+    "${RUNNER_TEMP}/kizuki-other/receipt.json",
+    "${{ runner.temp }}/kizuki-other/../elsewhere/",
+    "${{ runner.temp }}/kizuki-other/[ab]*",
+  ]) {
+    expect(validateWorkflowText(".github/workflows/other.yml", receiptWorkflow(receiptUpload(path)))).toContainEqual(
+      expect.objectContaining({ reason: expect.stringMatching(discardedReceipt) }),
+    );
+  }
+});
+
+test("a receipt requirement cannot escape its retained parent", () => {
+  const workflow = receiptWorkflow(receiptUpload("${{ runner.temp }}/kizuki-other/"))
+    .replaceAll('$RUNNER_TEMP/kizuki-other/receipt.json', '$RUNNER_TEMP/kizuki-other/../elsewhere/receipt.json');
+  expect(validateWorkflowText(".github/workflows/other.yml", workflow)).toContainEqual(
+    expect.objectContaining({ reason: expect.stringMatching(discardedReceipt) }),
+  );
+});

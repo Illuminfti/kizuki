@@ -78,11 +78,28 @@ const REQUIRED_FILE = /\btest\s+-f\s+(?:"([^"\n]*)"|'([^'\n]*)'|([^\s;&|]+))/g;
 const RUNNER_TEMP = "$RUNNER_TEMP";
 const RUNNER_TEMP_PREFIX =
   /^(?:\$\{\{\s*runner\.temp\s*\}\}|\$\{RUNNER_TEMP\}|\$RUNNER_TEMP)(?=\/)/;
+const UPLOAD_TEMP_PREFIX = /^\$\{\{\s*runner\.temp\s*\}\}(?=\/)/;
 
 function runnerTempPath(raw: string): string | undefined {
   const trimmed = raw.trim();
   const prefix = RUNNER_TEMP_PREFIX.exec(trimmed);
   return prefix === null ? undefined : RUNNER_TEMP + trimmed.slice(prefix[0].length);
+}
+
+function literalReceiptSuffix(suffix: string): boolean {
+  return /^\/[A-Za-z0-9._/-]+$/.test(suffix) &&
+    !suffix.split("/").some(segment => segment === "." || segment === "..");
+}
+
+function uploadedRunnerTempPath(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  const prefix = UPLOAD_TEMP_PREFIX.exec(trimmed);
+  if (prefix === null) return undefined;
+  const suffix = trimmed.slice(prefix[0].length);
+  // An action input has no shell expansion. Retention credit also requires a
+  // literal path: a glob or parent traversal cannot prove directory coverage.
+  if (!literalReceiptSuffix(suffix)) return undefined;
+  return RUNNER_TEMP + suffix;
 }
 
 type RunnerTempRequirement = { file: string; condition: unknown; step: number };
@@ -122,9 +139,9 @@ function retainedRunnerTempPaths(job: Record<string, unknown>): RetainedRunnerTe
     // runner.temp prefix has a known path meaning; all other expressions make
     // this upload unsuitable as structural evidence of receipt retention.
     if (lines.some(line => line.trim().startsWith("!") ||
-      line.trim().replace(RUNNER_TEMP_PREFIX, RUNNER_TEMP).includes("${{"))) continue;
+      line.trim().replace(UPLOAD_TEMP_PREFIX, RUNNER_TEMP).includes("${{"))) continue;
     for (const line of lines) {
-      const entry = runnerTempPath(line);
+      const entry = uploadedRunnerTempPath(line);
       if (entry !== undefined) retained.push({ path: entry, condition: step["if"], step: index });
     }
   }
@@ -153,6 +170,7 @@ function conditionCanRetain(required: unknown, retention: unknown): boolean {
 }
 
 function isRetained(required: RunnerTempRequirement, retained: readonly RetainedRunnerTempPath[]): boolean {
+  if (!literalReceiptSuffix(required.file.slice(RUNNER_TEMP.length))) return false;
   return retained.some((entry) =>
     entry.step > required.step &&
     (entry.path === required.file || required.file.startsWith(entry.path.endsWith("/") ? entry.path : entry.path + "/")) &&
