@@ -1,3 +1,5 @@
+import { pageIndexByPath } from "./store";
+import type { TargetDecision } from "./arbiter";
 import { parseFrontmatter } from "../vault/frontmatter";
 import { hashBytes, ABSENT_PAGE_HASH } from "../vault/write";
 import { isWorldCanonReceipt, type RetainedWorldCanonReceipt } from "./world-receipt";
@@ -27,6 +29,12 @@ export function worldClaimHandle(db:Database,claimId:string):string|null {
  const semantic=readClaimV2Semantic(db,claimId);if(semantic===null||semantic.discriminator!=="assertion")return null;
  return db.query<{handle_id:string},[string,string,string]>("SELECT handle_id FROM semantic_bindings WHERE raw_kind=? AND raw_namespace=? AND raw_id=?").get(semantic.subject.kind,rawSubjectNamespace(semantic.subject),semantic.subject.id)?.handle_id??null;
 }
+export function worldCanonTarget(db:Database,claimId:string):TargetDecision {
+ const handle=worldClaimHandle(db,claimId);if(handle===null)throw new CanonWriteError("decision_stale","typed canon handle missing");
+ const path=worldCanonPath(handle),indexed=pageIndexByPath(db,path);
+ return indexed===null?{action:"create",rel_path:path}:{action:"edit",page_id:indexed.page_id,rel_path:path,reason:"explicit"};
+}
+
 function context(db:Database):ServeContext {return {db,vaultPath:"",principal:OWNER,sourcePurpose:"derive"};}
 function render(claim:Claim,support:EligibleSupport):Claim {
  return {...claim,body:support.admission.rendering.body,frontmatter:{},authority:support.admission.authority,confidence:support.admission.confidence,provenance:support.events.map(event=>event.event_id)};

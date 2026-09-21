@@ -49,7 +49,7 @@ function insert(db: Database, row: StoredObligation, sources: CanonProjectionObl
   db.query("INSERT INTO canon_projection_obligations VALUES (?,?,?,?)").run(row.receipt_id, row.page_path, row.obligation, row.digest);
   for (const source of sources) db.query("INSERT INTO canon_projection_sources VALUES (?,?,?)").run(row.receipt_id, source.source_key, source.event_id);
 }
-export function enqueueCanonProjection(db: Database, intent: CanonWriteIntent): void {
+export function enqueueCanonProjection(db: Database, intent: Exclude<CanonWriteIntent,{version:3}>): void {
   if (!db.inTransaction) recoveryFailure("nested_transaction");
   const obligation: CanonProjectionObligation = {
     version: intent.version, receipt: intent.receipt, page_id: intent.completion.page_id, after_base64: intent.after_base64,

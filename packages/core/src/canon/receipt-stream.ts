@@ -1,3 +1,4 @@
+import { parseWorldCanonReceipt, type ErasedWorldCanonReceipt, type WorldCanonReceiptRecord } from "./world-receipt";
 import { ptr } from "bun:ffi";
 import type { BigIntStats } from "node:fs";
 import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, ftruncateSync, openSync, readSync, writeSync } from "node:fs";
@@ -198,6 +199,44 @@ function verifyFile(parent: number, fd: number, readable: boolean, expected: Big
   finally { closeSync(named); }
 }
 
+export interface ReceiptRedactionPlan {
+  readonly checkpoint: OrdinaryReceiptCheckpoint;
+  readonly after_hash: string;
+  readonly after_length: number;
+}
+function redactedBytes(before:Buffer,erased:readonly ErasedWorldCanonReceipt[],final:WorldCanonReceiptRecord):Buffer {
+  receiptIds(before);
+  if(parseWorldCanonReceipt(final)===null)fail("receipt_invalid");
+  const replacements=new Map<string,ErasedWorldCanonReceipt>();
+  for(const item of erased) {
+    if(parseWorldCanonReceipt(item)?.state!=="erased"||replacements.has(item.receipt_id)||item.receipt_id===final.receipt_id)fail("receipt_invalid");
+    replacements.set(item.receipt_id,item);
+  }
+  const lines=before.length===0?[]:strictUtf8(before).slice(0,-1).split("\n");
+  for(let index=0;index<lines.length;index++) {
+    const record=parseReceiptRecordLine(lines[index]!);
+    if(record.receipt_id===final.receipt_id)fail("conflict");
+    const replacement=replacements.get(record.receipt_id);
+    if(replacement!==undefined) {
+      if(!("schema" in record)||record.schema!=="kizuki.canon-receipt/v2")fail("receipt_invalid");
+      lines[index]=JSON.stringify(replacement);replacements.delete(record.receipt_id);
+    }
+  }
+  if(replacements.size>0)fail("receipt_invalid");
+  const result=Buffer.from([...lines,JSON.stringify(final),""].join("\n"));
+  if(result.length>Number(SOURCE_STREAM_LIMIT))fail("bounds");
+  return result;
+}
+function readNamedSnapshot(parent:number,name:string):{fd:number;stat:BigIntStats;bytes:Buffer}|null {
+  const fd=result(api().symbols.openChild(parent,ptr(nameBytes(name)),0));if(fd===-2)return null;if(fd<0)fail("unsafe");
+  try {
+    const stat=fileStat(fd,true),bytes=Buffer.alloc(Number(stat.size));
+    for(let offset=0;offset<bytes.length;){const n=readSync(fd,bytes,offset,bytes.length-offset,offset);if(n<=0)fail("io");offset+=n;}
+    if(!sameFile(stat,fileStat(fd,true)))fail("changed");
+    return {fd,stat,bytes};
+  }catch(error){closeSync(fd);throw error;}
+}
+
 /** Fixed receipt child only. Byte custody does not confer receipt authority. */
 class ReceiptStream {
   #closed = false;
@@ -205,12 +244,12 @@ class ReceiptStream {
   #stat: BigIntStats;
   readonly #directories: readonly BigIntStats[];
   readonly #path: string;
-  readonly #fds: readonly [number, number, number, number];
+  #fds: [number, number, number, number];
   readonly #readable: boolean;
   readonly #ordinaryRecovery: boolean;
   readonly #assertOwner: () => void;
   constructor(path: string, fds: readonly [number, number, number, number], readable: boolean, assertOwner: () => void, ordinaryRecovery = false) {
-    this.#path = path; this.#fds = fds; this.#readable = readable; this.#assertOwner = assertOwner;
+    this.#path = path; this.#fds = [...fds]; this.#readable = readable; this.#assertOwner = assertOwner;
     this.#ordinaryRecovery = ordinaryRecovery;
     this.#directories = fds.slice(0, 3).map(fd => directoryStat(fd));
     this.#stat = fileStat(fds[3], readable);
@@ -282,6 +321,49 @@ class ReceiptStream {
       if (!this.#readBytes().equals(Buffer.concat([prefix, line]))) fail("changed");
     });
   }
+  planRedaction(erased:readonly ErasedWorldCanonReceipt[],final:WorldCanonReceiptRecord):ReceiptRedactionPlan {
+    return this.#guard(()=>{
+      const checkpoint=this.checkpoint(),after=redactedBytes(this.#readBytes(),erased,final);
+      return {checkpoint,after_hash:digest(after),after_length:after.length};
+    });
+  }
+  /** Atomic, purpose-bound replacement. Recovery accepts only the exact admitted postimage. */
+  reconcileRedaction(plan:ReceiptRedactionPlan,erased:readonly ErasedWorldCanonReceipt[],final:WorldCanonReceiptRecord):void {
+    this.#guard(()=>{
+      if(!this.#ordinaryRecovery||!hash(plan.after_hash)||!Number.isSafeInteger(plan.after_length)||plan.after_length<0||plan.after_length>Number(SOURCE_STREAM_LIMIT))fail("checkpoint_invalid");
+      const checkpoint=validateOrdinaryReceiptCheckpoint(plan.checkpoint),bytes=this.#readBytes();
+      if(![checkpoint.vault,checkpoint.control,checkpoint.directory].every((value,index)=>matchesIdentity(value,this.#directories[index]!)))fail("changed");
+      if(bytes.length===plan.after_length&&digest(bytes)===plan.after_hash){receiptIds(bytes);this.sync();return;}
+      if(!matchesIdentity(checkpoint.file,this.#stat)||bytes.length!==checkpoint.byte_length||digest(bytes)!==checkpoint.prefix_sha256)fail("changed");
+      const after=redactedBytes(bytes,erased,final);
+      if(after.length!==plan.after_length||digest(after)!==plan.after_hash)fail("changed");
+      const temporary=`.${FILE}.${final.receipt_id}.erased.tmp`,encoded=nameBytes(temporary),parent=this.#fds[2];
+      const created=api().symbols.createCredentialChild(parent,ptr(encoded));
+      let fd=created===-17?-17:result(created);
+      let offset=0,expectedTemporary:BigIntStats|null=null;
+      if(fd===-17) {
+        const saved=readNamedSnapshot(parent,temporary);if(saved===null)fail("changed");
+        try {if(saved.bytes.length>after.length||!saved.bytes.equals(after.subarray(0,saved.bytes.length)))fail("changed");offset=saved.bytes.length;expectedTemporary=saved.stat;}
+        finally{closeSync(saved.fd);}
+        fd=result(api().symbols.openReceiptReadAppendChild(parent,ptr(encoded),0));
+      }
+      if(fd<0)fail("unsafe");
+      let transferred=false;
+      try {
+        const opened=fileStat(fd,true);
+        if(expectedTemporary!==null&&!sameFile(expectedTemporary,opened))fail("changed");
+        while(offset<after.length){const n=writeSync(fd,after,offset,after.length-offset);if(n<=0)fail("io");offset+=n;}
+        fsyncSync(fd);
+        const saved=readNamedSnapshot(parent,temporary);if(saved===null)fail("changed");
+        try {if(!sameIdentity(saved.stat,fileStat(fd,true))||!saved.bytes.equals(after))fail("changed");}
+        finally{closeSync(saved.fd);}
+        this.#verify();
+        if(result(api().symbols.renameChild(parent,ptr(encoded),parent,ptr(nameBytes(FILE))))!==0)fail("io");
+        closeSync(this.#fds[3]);this.#fds[3]=fd;transferred=true;this.#stat=fileStat(fd,true);
+        this.sync();if(!this.#readBytes().equals(after))fail("changed");
+      }finally{if(!transferred)closeSync(fd);}
+    });
+  }
   /** Only the source-denial coordinator may authorize withdrawal of its pending receipt. */
   withdrawExact(input: OrdinaryReceiptCheckpoint, exactReceiptLine: Uint8Array): void {
     this.#guard(() => {
@@ -323,6 +405,7 @@ class ReceiptStream {
 
 export type ReceiptAppendStream = Pick<ReceiptStream, "append" | "sync" | "verifyBinding" | "close">;
 export type SourceErasureReceiptFile = ReceiptAppendStream & Pick<ReceiptStream, "readUtf8">;
+export type WorldErasureReceiptStream = Pick<ReceiptStream, "planRedaction" | "reconcileRedaction" | "sync" | "verifyBinding" | "close">;
 export type OrdinaryRecoveryReceiptStream = Pick<ReceiptStream, "checkpoint" | "reconcile" | "withdrawExact" | "sync" | "verifyBinding" | "close">;
 
 function openStream(scope: VaultMutationScope, io: CanonIo, readable: boolean, ordinaryRecovery = false): ReceiptStream {
@@ -381,4 +464,14 @@ export function openOrdinaryRecoveryReceiptStream(scope: VaultMutationScope, io:
   return Object.freeze({ checkpoint: () => stream.checkpoint(), reconcile: (checkpoint: OrdinaryReceiptCheckpoint, line: Uint8Array) => stream.reconcile(checkpoint, line),
     withdrawExact: (checkpoint: OrdinaryReceiptCheckpoint, line: Uint8Array) => stream.withdrawExact(checkpoint, line),
     sync: () => stream.sync(), verifyBinding: () => stream.verifyBinding(), close: () => stream.close() });
+}
+
+/** Only the typed erasure intent holder receives whole-stream redaction capability. */
+export function openWorldErasureReceiptStream(scope:VaultMutationScope,io:CanonIo):WorldErasureReceiptStream {
+  const stream=openStream(scope,io,true,true);
+  return Object.freeze({
+    planRedaction:(erased:readonly ErasedWorldCanonReceipt[],final:WorldCanonReceiptRecord)=>stream.planRedaction(erased,final),
+    reconcileRedaction:(plan:ReceiptRedactionPlan,erased:readonly ErasedWorldCanonReceipt[],final:WorldCanonReceiptRecord)=>stream.reconcileRedaction(plan,erased,final),
+    sync:()=>stream.sync(),verifyBinding:()=>stream.verifyBinding(),close:()=>stream.close(),
+  });
 }

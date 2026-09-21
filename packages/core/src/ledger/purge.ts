@@ -1070,6 +1070,32 @@ function eventPurgeIntegrityOk(db: Database, batchId: string): boolean {
   ).get(batchId) === null;
 }
 
+export interface CompletedEventPurgeProof {
+  readonly event_id:string;
+  readonly purge_receipt_id:string;
+  readonly batch_id:string;
+  readonly proof_digest:string;
+}
+/** Exact recorded absence authority reused by typed canon erasure and its recovery. */
+export function completedEventPurgeProofs(db:Database,eventIds:readonly string[]):CompletedEventPurgeProof[]|null {
+  const ids=[...new Set(eventIds)].sort();
+  if(ids.length===0||ids.length>32768||anyPurgedEventPresent(db,ids))return null;
+  const result:CompletedEventPurgeProof[]=[],checked=new Set<string>();
+  for(const eventId of ids) {
+    const rows=db.query<CompletedEventPurgeProof,[string]>(`SELECT e.event_id,e.receipt_id AS purge_receipt_id,m.batch_id,e.proof_digest FROM event_purges e JOIN purge_batch_receipts m USING(receipt_id) WHERE e.event_id=? ORDER BY e.receipt_id LIMIT 2`).all(eventId);
+    const row=rows[0];if(rows.length!==1||row===undefined||typeof row.proof_digest!=="string")return null;
+    if(!checked.has(row.batch_id)) {
+      if(readBatch(db,row.batch_id)?.state!=="ready"||eventPurgeProofsCorrupt(db,row.batch_id))return null;
+      for(const op of listOps(db,row.batch_id)) {
+        try {if(op.state!=="done"||!proofIsEmpty(checkedPurgeProof(op.proof,op,batchEventIds(db,row.batch_id))))return null;}catch{return null;}
+      }
+      checked.add(row.batch_id);
+    }
+    result.push(row);
+  }
+  return result;
+}
+
 /**
  * Phase 1 — short SQLite transaction (RFC 0002 §13.1). Canon is scanned
  * before the write lock. Holds land before derived stores are touched.

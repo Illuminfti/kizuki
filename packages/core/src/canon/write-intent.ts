@@ -1,5 +1,7 @@
-import { isWorldCanonReceipt, parseWorldCanonReceipt, type RetainedWorldCanonReceipt } from "./world-receipt";
-import { assertWorldBasis } from "./world-materialization";
+import { completedEventPurgeProofs, type CompletedEventPurgeProof } from "../ledger/purge";
+import { isErasedReceipt, rowToReceiptRecord, type CanonReceiptRow } from "./receipts";
+import { isWorldCanonReceipt, parseWorldCanonReceipt, type RetainedWorldCanonReceipt, type WorldCanonReceiptRecord, type ErasedWorldCanonReceipt, eraseWorldReceipt } from "./world-receipt";
+import { assertWorldBasis, assertWorldCanonPage, selectWorldMaterialization } from "./world-materialization";
 import { validateRetainedReceipt } from "./receipt-validation";
 import type { Database } from "bun:sqlite";
 import { requireSourceEvents, sourcePolicyEpoch } from "../ledger/source-grants";
@@ -12,7 +14,7 @@ import { parseFrontmatter, serializePage } from "../vault/frontmatter";
 import { validatePage } from "../vault/schema";
 import { ABSENT_PAGE_HASH, archiveRelPath, canonStageRelPath, hashBytes } from "../vault/write";
 import { eventIdFromReference } from "../retrieval/ids";
-import { assertPageRelPath, assertReceiptPaths } from "./paths";
+import { assertPageRelPath, assertReceiptPaths, assertStoredPageRelPath } from "./paths";
 import { latestReceiptForPage, getCanonReceipt, type CanonReceipt } from "./receipts";
 import { pageIndexByPath } from "./store";
 import { validateOrdinaryReceiptCheckpoint, type OrdinaryReceiptCheckpoint } from "./receipt-stream";
@@ -59,7 +61,17 @@ interface CanonWriteIntentV1 {
   checkpoint: OrdinaryReceiptCheckpoint;
   stages: { live_stage: string; archive_stage: string | null };
 }
-export type CanonWriteIntent = CanonWriteIntentV1 | (Omit<CanonWriteIntentV1, "version" | "receipt"> & {version: 2; receipt: RetainedWorldCanonReceipt});
+export interface WorldCanonErasure {
+  proofs:CompletedEventPurgeProof[];
+  redactions:ErasedWorldCanonReceipt[];
+  receipt_guards:{receipt_id:string;digest:string}[];
+  archives:{path:string;hash:string}[];
+  final_receipt:WorldCanonReceiptRecord;
+  log_after_hash:string;
+  log_after_length:number;
+}
+export type WorldCanonErasureIntent=Omit<CanonWriteIntentV1,"version"|"receipt"|"before_base64"> & {version:3;receipt:RetainedWorldCanonReceipt;before_base64:null;erasure:WorldCanonErasure};
+export type CanonWriteIntent = CanonWriteIntentV1 | (Omit<CanonWriteIntentV1, "version" | "receipt"> & {version: 2; receipt: RetainedWorldCanonReceipt}) | WorldCanonErasureIntent;
 export interface CanonRecoverySummary {
   pending: boolean;
   receipt_id: string | null;
@@ -108,13 +120,38 @@ export function validateVersionedCanonReceipt(value: unknown, version: unknown):
   const typed = parseWorldCanonReceipt(value, validateCanonIntentReceipt);
   if (typed === null || typed.state !== "retained") recoveryFailure("intent_invalid");
 }
+export function worldErasureFinalReceipt(receipt:RetainedWorldCanonReceipt,purgeReceiptId:string):WorldCanonReceiptRecord {
+  if(receipt.basis.after===null)return eraseWorldReceipt(receipt.receipt_id,purgeReceiptId,receipt.at);
+  return {...receipt,before_hash:null,basis:{...receipt.basis,before:null}};
+}
+function validateWorldErasure(value:unknown,receipt:CanonReceipt):void {
+  object(value,["proofs","redactions","receipt_guards","archives","final_receipt","log_after_hash","log_after_length"]);
+  if(!isWorldCanonReceipt(receipt))recoveryFailure("intent_invalid");
+  array(value.proofs);if(value.proofs.length===0)recoveryFailure("intent_invalid");
+  let previous="";
+  for(const proof of value.proofs){object(proof,["event_id","purge_receipt_id","batch_id","proof_digest"]);if(!isUlid(proof.event_id)||!isUlid(proof.purge_receipt_id)||!isUlid(proof.batch_id)||proof.event_id<=previous)recoveryFailure("intent_invalid");hash(proof.proof_digest);previous=proof.event_id;}
+  array(value.redactions);array(value.receipt_guards);if(value.redactions.length===0||value.redactions.length!==value.receipt_guards.length)recoveryFailure("intent_invalid");
+  const selected=new Set<string>();
+  for(const record of value.redactions){const parsed=parseWorldCanonReceipt(record);if(parsed===null||parsed.state!=="erased"||selected.has(parsed.receipt_id)||parsed.receipt_id===receipt.receipt_id||parsed.erased_at!==receipt.at||!(value.proofs as unknown as CompletedEventPurgeProof[]).some(proof=>proof.purge_receipt_id===parsed.purge_receipt_id))recoveryFailure("intent_invalid");selected.add(parsed.receipt_id);}
+  for(const guard of value.receipt_guards){object(guard,["receipt_id","digest"]);if(typeof guard.receipt_id!=="string"||!selected.delete(guard.receipt_id))recoveryFailure("intent_invalid");hash(guard.digest);}if(selected.size!==0)recoveryFailure("intent_invalid");
+  array(value.archives,8192);const paths=new Set<string>();
+  for(const archive of value.archives){object(archive,["path","hash"]);id(archive.path);assertStoredPageRelPath(archive.path);if(!archive.path.startsWith("archive/")||paths.has(archive.path))recoveryFailure("intent_invalid");hash(archive.hash);paths.add(archive.path);}
+  const final=parseWorldCanonReceipt(value.final_receipt),proof=(value.proofs as unknown as CompletedEventPurgeProof[])[0]!;
+  if(final===null||digest(final)!==digest(worldErasureFinalReceipt(receipt,proof.purge_receipt_id)))recoveryFailure("intent_invalid");
+  hash(value.log_after_hash);if(!Number.isSafeInteger(value.log_after_length)||Number(value.log_after_length)<0||Number(value.log_after_length)>32*1024*1024)recoveryFailure("intent_invalid");
+}
 export function parseCanonWriteIntent(value: unknown): CanonWriteIntent {
-  object(value, ["version", "receipt", "before_base64", "after_base64", "completion", "admission", "checkpoint", "stages"]);
-  validateVersionedCanonReceipt(value.receipt, value.version);
+  if (!isPlainObject(value)) recoveryFailure("intent_invalid");
+  const erasing=value.version===3;
+  object(value, ["version", "receipt", "before_base64", "after_base64", "completion", "admission", "checkpoint", "stages",...(erasing?["erasure"]:[])]);
+  validateVersionedCanonReceipt(value.receipt, erasing?2:value.version);
   const receipt = value.receipt;
-  if (isWorldCanonReceipt(receipt) && ((receipt.before_hash === null) !== (receipt.basis.before === null) || (receipt.after_hash === ABSENT_PAGE_HASH) !== (receipt.basis.after === null))) recoveryFailure("intent_invalid");
+  if (!erasing && isWorldCanonReceipt(receipt) && ((receipt.before_hash === null) !== (receipt.basis.before === null) || (receipt.after_hash === ABSENT_PAGE_HASH) !== (receipt.basis.after === null))) recoveryFailure("intent_invalid");
   const before = decodeCanonImage(value.before_base64 as string | null), after = decodeCanonImage(value.after_base64 as string | null);
-  if ((before === null ? (receipt.kind === "revert" ? ABSENT_PAGE_HASH : null) : hashBytes(before)) !== receipt.before_hash ||
+  if (erasing) {
+    if(before!==null||receipt.before_hash===null||receipt.archive_path!==null||receipt.kind!=="purge_rewrite"||(after===null?ABSENT_PAGE_HASH:hashBytes(after))!==receipt.after_hash)recoveryFailure("intent_invalid");
+    validateWorldErasure(value.erasure,receipt);
+  } else if ((before === null ? (receipt.kind === "revert" ? ABSENT_PAGE_HASH : null) : hashBytes(before)) !== receipt.before_hash ||
       (after === null ? ABSENT_PAGE_HASH : hashBytes(after)) !== receipt.after_hash ||
       receipt.archive_path !== (before === null ? null : archiveRelPath(receipt.page_path, receipt.receipt_id))) recoveryFailure("intent_invalid");
   object(value.completion, ["mode", "claim_kind", "page_id", "subject_key", "original_receipt_id"]);
@@ -198,9 +235,31 @@ export function captureCanonAdmission(db: Database, receipt: CanonReceipt, compl
 export function assertCanonAdmission(db: Database, intent: CanonWriteIntent): void {
   if (isWorldCanonReceipt(intent.receipt)) {
     try {
-      assertWorldBasis(db, intent.receipt.basis.before, true);
+      if(intent.version!==3)assertWorldBasis(db, intent.receipt.basis.before, true);
       assertWorldBasis(db, intent.receipt.basis.after, intent.completion.mode === "revert");
     } catch { recoveryFailure("authority_changed", intent.receipt.receipt_id); }
+  }
+  if(intent.version===3) {
+    const proofs=completedEventPurgeProofs(db,intent.erasure.proofs.map(item=>item.event_id));
+    if(proofs===null||JSON.stringify(proofs)!==JSON.stringify(intent.erasure.proofs))recoveryFailure("authority_changed",intent.receipt.receipt_id);
+    const match=/^auto\/world\/([0-9a-f]{32})\.md$/.exec(intent.receipt.page_path);
+    const prior=latestReceiptForPage(db,intent.receipt.page_path);
+    if(match===null||prior===null||!isWorldCanonReceipt(prior)||prior.after_hash!==intent.receipt.before_hash||digest(prior.basis.after)!==digest(intent.receipt.basis.before))recoveryFailure("predecessor_changed",intent.receipt.receipt_id);
+    const purged=new Set(proofs.map(proof=>proof.event_id));
+    const rows=db.query<CanonReceiptRow,[string]>("SELECT * FROM canon_receipts WHERE page_path=? AND record_codec='kizuki.canon-receipt/v2' ORDER BY receipt_id LIMIT 8193").all(intent.receipt.page_path);
+    if(rows.length>8192)recoveryFailure("intent_invalid",intent.receipt.receipt_id);
+    const affected:RetainedWorldCanonReceipt[]=[];
+    for(const row of rows){const record=rowToReceiptRecord(row);if(isErasedReceipt(record)||!isWorldCanonReceipt(record))recoveryFailure("receipt_changed",intent.receipt.receipt_id);if(record.provenance.some(id=>purged.has(eventIdFromReference(id))))affected.push(record);}
+    const guards=affected.map(record=>({receipt_id:record.receipt_id,digest:digest(record)}));
+    if(digest(guards)!==digest(intent.erasure.receipt_guards))recoveryFailure("receipt_changed",intent.receipt.receipt_id);
+    const archives=new Map<string,string>();
+    for(const record of affected)if(record.archive_path!==null&&record.before_hash!==null){const existing=archives.get(record.archive_path);if(existing!==undefined&&existing!==record.before_hash)recoveryFailure("archive_changed",intent.receipt.receipt_id);archives.set(record.archive_path,record.before_hash);}
+    if(digest([...archives].map(([path,hash])=>({path,hash})))!==digest(intent.erasure.archives))recoveryFailure("archive_changed",intent.receipt.receipt_id);
+    const selected=selectWorldMaterialization(db,match[1]!);
+    if(digest(selected?.basis??null)!==digest(intent.receipt.basis.after))recoveryFailure("authority_changed",intent.receipt.receipt_id);
+    const final=intent.erasure.final_receipt,after=decodeCanonImage(intent.after_base64);
+    if(!isErasedReceipt(final)){try{assertWorldCanonPage(db,final,after,"after");}catch{recoveryFailure("authority_changed",intent.receipt.receipt_id);}}
+
   }
   const current = captureCanonAdmission(db, intent.receipt, intent.completion, decodeCanonImage(intent.before_base64), decodeCanonImage(intent.after_base64), intent.admission.claims.map(claim => claim.id));
   if (current.source_epoch !== intent.admission.source_epoch || digest(current.events) !== digest(intent.admission.events) || digest(current.claims) !== digest(intent.admission.claims) || digest(current.sources) !== digest(intent.admission.sources)) recoveryFailure("authority_changed", intent.receipt.receipt_id);
