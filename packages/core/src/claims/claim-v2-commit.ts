@@ -106,7 +106,7 @@ function eventHash(db: Database, eventId: string): string {
  * personal data no erasure path knows how to scrub; an `undefined` one would
  * serialize to SQL NULL against a NOT NULL column.
  */
-function requireSupport(input: ClaimV2SupportAdmission): ExactJson {
+function requireSupport(input: ClaimV2SupportAdmission, maxAnchors: 8 | 16 = 8): ExactJson {
   if (input.source_key.length === 0) {
     throw new ClaimError("schema_invalid", "claim/v2 support needs a source key");
   }
@@ -136,7 +136,7 @@ function requireSupport(input: ClaimV2SupportAdmission): ExactJson {
   // under this claim's label, reachable by `claim_v2_support.claim_id`, while
   // every consent check below runs on `events` alone and so never raises the
   // claim to that event's source floor.
-  if (!isTextAnchorList(input.anchors, 0, 16)) {
+  if (!isTextAnchorList(input.anchors, 0, maxAnchors)) {
     throw new ClaimError(
       "schema_invalid",
       "claim/v2 support needs well-formed anchors",
@@ -324,7 +324,7 @@ export function commitClaimV2(
   const admission = requireSupport({
     ...input.support,
     admission: suppliedWorld === null ? input.support.admission : derivedWorldAdmission(parent, suppliedWorld, input.accepted_world),
-  });
+  }, suppliedWorld === null ? 8 : 16);
   const mapped = toClaimV2SemanticRow(claimId, input.semantic, suppliedWorld !== null);
   if (!mapped.ok) {
     throw new ClaimError("schema_invalid", "invalid claim/v2 payload");
