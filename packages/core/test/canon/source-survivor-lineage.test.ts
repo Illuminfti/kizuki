@@ -406,6 +406,7 @@ test("a legacy-format backup carrying lineage is refused before publication", as
     const manifest = exportVault(db, dir, backup);
     manifest.schema = V2_BACKUP_SCHEMA;
     manifest.schema_versions.ledger = 20;
+    manifest.schema_versions.canon = 4;
     // Remove v3 purge history so this fixture isolates the lineage format guard.
     for (const table of ["purge_batches", "purge_batch_receipts", "purge_ops"]) {
       const stream = `ledger/${table}.jsonl`;
@@ -429,7 +430,7 @@ test("supported backups without the stream restore without inventing checkpoints
     const manifest = exportVault(db, dir, backup);
     unlinkSync(join(backup, SOURCE_SURVIVOR_LINEAGE_BACKUP));
     delete manifest.files[SOURCE_SURVIVOR_LINEAGE_BACKUP];
-    manifest.schema_versions = { ...manifest.schema_versions, ledger: 19 };
+    manifest.schema_versions = { ...manifest.schema_versions, ledger: 19, canon: 4 };
     signManifest(backup, manifest);
     const report = restoreVault(backup, restoredDir);
     expect(report.recovery_warnings).toContain(LINEAGE_UNAVAILABLE_WARNING);

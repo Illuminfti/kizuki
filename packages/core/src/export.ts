@@ -3,7 +3,6 @@ import { assertWorldState } from "./world/integrity";
 import { capturePortableAdapter, capturePortableLocal, hashPortableLocal, readPortableBackup, restorePortableLocal, PORTABLE_LOCAL_STREAM, type PortableLocalAdapter } from "./portable-local";
 export type { PortableLocalAdapter } from "./portable-local";
 import { assertVaultMutationScope, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "./vault/mutation-scope";
-import { assertReceiptPaths } from "./canon/paths";
 import { canonReadGeneration, inspectCanonRecovery } from "./canon/write-intent";
 import { isRfc3339 } from "./util/time";
 import { sourcePolicyEpoch, inspectSourceGrant, sourceEventsAllowed } from "./ledger/source-grants";
@@ -42,8 +41,8 @@ import {
   rowToReceiptRecord,
   worldReceiptChain,
 } from "./canon/receipts";
-import { insertErasedReceiptRow, insertReceiptRow } from "./canon/store";
-import { isWorldCanonReceipt, parseWorldCanonReceipt } from "./canon/world-receipt";
+import { restoreCanonReceipts } from "./canon/restore";
+import { isWorldCanonReceipt } from "./canon/world-receipt";
 import { assertWorldCanonPage, assertWorldReceiptBasis } from "./canon/world-materialization";
 import { canonicalJson } from "./util/hash";
 import { openCanonFiles } from "./vault/canon-files";
@@ -2493,60 +2492,6 @@ function insertConnectionRow(db: Database, raw: Record<string, unknown>): void {
   );
 }
 
-function insertReceipt(db: Database, raw: Record<string, unknown>, versions: BackupSchemaVersions): void {
-  if (Object.hasOwn(raw, "schema")) {
-    if (versions.ledger < 33 || versions.canon !== 5) throw new Error("typed canon receipt requires ledger33/canon5");
-    const receipt = parseWorldCanonReceipt(raw);
-    if (receipt === null) throw new Error("backup typed canon receipt is invalid");
-    if (receipt.state === "erased") insertErasedReceiptRow(db, receipt);
-    else insertReceiptRow(db, receipt, receipt.kind === "revert" ? "revert" : receipt.kind === "purge_rewrite" ? "purge_review" : "claim");
-    return;
-  }
-  if (["state", "own_id_origin", "basis", "prior_receipt_id", "purge_receipt_id", "erased_at", "integrity"].some(key => Object.hasOwn(raw, key)) ||
-      (Array.isArray(raw.claim_ids) && raw.claim_ids.some(id => typeof id === "string" &&
-        db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1").get(id) !== null)) ||
-      (typeof raw.receipt_id === "string" && db.query("SELECT 1 FROM claims WHERE receipt_id=? AND is_world_typed=1").get(raw.receipt_id) !== null) ||
-      (typeof raw.page_path === "string" && /^auto\/world\/[a-f0-9]{32}\.md$/.test(raw.page_path) &&
-        db.query("SELECT 1 FROM semantic_handles WHERE handle_id=?").get(raw.page_path.slice(11, -3)) !== null)) {
-    throw new Error("backup typed canon receipt discriminator is missing");
-  }
-  const pagePath = asString(raw.page_path, "page_path");
-  const archivePath = asStringOrNull(raw.archive_path, "archive_path");
-  assertReceiptPaths({ page_path: pagePath, archive_path: archivePath });
-  db.query(
-    `INSERT INTO canon_receipts
-       (receipt_id, claim_ids, provenance, sensitivity, page_path, kind,
-        before_hash, after_hash, at, receipt_kind, page_action, archive_path,
-        writer, producer, model_ref, authority, confidence, taint,
-        candidates, superseded, retrieval_ops, reverts, reverted_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    asString(raw.receipt_id, "receipt_id"),
-    JSON.stringify(raw.claim_ids ?? []),
-    JSON.stringify(raw.provenance ?? []),
-    asString(raw.sensitivity, "sensitivity"),
-    pagePath,
-    asString(raw.claim_kind ?? "claim", "claim_kind"),
-    asStringOrNull(raw.before_hash, "before_hash"),
-    asString(raw.after_hash, "after_hash"),
-    asString(raw.at, "at"),
-    asString(raw.kind ?? "write", "kind"),
-    asString(raw.page_action ?? "edit", "page_action"),
-    archivePath,
-    asString(raw.writer ?? "import", "writer"),
-    asString(raw.producer ?? "deterministic", "producer"),
-    asStringOrNull(raw.model_ref, "model_ref"),
-    asString(raw.authority ?? "connector_evidence", "authority"),
-    asNumber(raw.confidence ?? 1, "confidence"),
-    asString(raw.taint ?? "quoted", "taint"),
-    JSON.stringify(raw.candidates ?? []),
-    JSON.stringify(raw.superseded ?? []),
-    JSON.stringify(raw.retrieval_ops ?? []),
-    asStringOrNull(raw.reverts, "reverts"),
-    asStringOrNull(raw.reverted_by, "reverted_by"),
-  );
-}
-
 /** Retained historical undo bases remain exact; source erasure cannot be restored as retained history. */
 function assertTypedCanonReceipts(db: Database, vaultPath: string): void {
   if (db.query("SELECT 1 FROM canon_receipts WHERE record_codec='kizuki.canon-receipt/v2' LIMIT 1").get() === null) return;
@@ -2920,9 +2865,7 @@ export function restoreVault(
         // The same raw-byte and aggregate-reference budget governs export,
         // restore and purge. Opaque malformed support remains inert history.
         scanLegacyIdentityRows(db);
-        for (const row of streamRows(source, manifest, "canon/receipts.jsonl", true)) {
-          insertReceipt(db, row, manifest.schema_versions);
-        }
+        restoreCanonReceipts(db, streamRows(source, manifest, "canon/receipts.jsonl", true), manifest.schema_versions);
         restoreSourceSurvivorLineage(db, source, manifest);
         for (const row of portable?.connections ?? streamRows(source, manifest, "connections.jsonl", true)) {
           insertConnectionRow(db, row);
