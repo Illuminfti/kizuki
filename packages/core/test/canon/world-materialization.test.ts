@@ -96,3 +96,18 @@ test("typed create undo and redo preserve exact absent-image semantics and resto
   expect(world.claims.every(id=>getClaim(f.db,id)!.status==="live")).toBe(true);
  }finally{f.dispose();}
 });
+
+import {setSourceGrant,inspectSourceGrant} from "../../src/ledger/source-grants";
+test("source floor changes stamp both actual typed page bytes and receipt classification",async()=>{
+ const f=canonFixture();try {
+  const world=await worldFixture(f.db),claims=world.claims.map(id=>getClaim(f.db,id)!);
+  const source=inspectSourceGrant(f.db,world.sourceKey)!;
+  setSourceGrant(f.db,{source_key:world.sourceKey,expected_revision:1,operation_id:"raise-materialization-floor",policy:{...source.policy!,sensitivity_floor:"private"}});
+  const path=worldCanonPath(worldClaimHandle(f.db,claims[0]!.claim_id)!);
+  const receipt=applyCanonWrite(f.io,claims,{action:"create",rel_path:path},{writer:"loop",budget:budget()});
+  expect(receipt.sensitivity).toBe("private");
+  expect(isWorldCanonReceipt(receipt)).toBe(true);if(!isWorldCanonReceipt(receipt))throw new Error("typed expected");
+  const bytes=readFileSync(join(f.vault,path));expect(parseFrontmatter(bytes.toString("utf8")).data["sensitivity"]).toBe("private");
+  assertWorldCanonPage(f.db,receipt,bytes,"after");
+ }finally{f.dispose();}
+});
