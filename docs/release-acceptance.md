@@ -288,6 +288,12 @@ fixture loader runs under the same exclusive-custody assumption between
 matching bounded snapshots. No source text, provider errors, paths,
 participant identity or account details are copied into the report.
 
+Product source custody allows at most 8 MiB across the complete runtime import
+closure and required evidence files, with a separate 1 MiB limit per file.
+The 1,024-file, 8,192-import and 8,192-resolution-entry bounds remain independent.
+Both source traversal and the final checkout snapshot refuse aggregate overflow;
+the limit is fixed and cannot be supplied by a candidate or receipt.
+
 ## Fixed gates
 
 The report always prints all 41 rows. Both profiles require the same readiness

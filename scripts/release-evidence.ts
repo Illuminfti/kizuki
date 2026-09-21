@@ -37,7 +37,10 @@ export const CONNECTORS = [
   { id: "omnivore", connector_id: "kizuki.import-omnivore", evidence: "file-import" },
 ] as const;
 export const EVIDENCE_LIMITS = { index: 16384, index_v3: 32768, family_receipt: 65536, journey_connector_receipt: 262144, depth: 32 } as const;
-export const CHECKOUT_LIMITS = { files: 1024, imports: 8192, resolution_entries: 8192, syntax_nodes: 262144, file_bytes: 1_048_576, total_bytes: 4_194_304, help_lines: 256, help_line_chars: 4096 } as const;
+// The world-view product and required evidence files exceed 4 MiB. Keep a
+// fixed aggregate capacity for the growing product, independent of the input;
+// the per-file, graph, syntax and resolution limits still apply separately.
+export const CHECKOUT_LIMITS = { files: 1024, imports: 8192, resolution_entries: 8192, syntax_nodes: 262144, file_bytes: 1_048_576, total_bytes: 8_388_608, help_lines: 256, help_line_chars: 4096 } as const;
 export const SURFACE_PRODUCER = "kizuki.surface-inventory/v1";
 export const SURFACE_GATE = "surface.capabilities-and-docs";
 export const SURFACE_PRODUCER_FILES = ["scripts/capability-proof.ts", "scripts/release-evidence.ts"] as const;
