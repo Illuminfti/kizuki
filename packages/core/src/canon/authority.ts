@@ -1,4 +1,4 @@
-import { getCanonReceipt } from "./receipts";
+import { getCanonReceipt, worldReceiptChain, isErasedReceipt } from "./receipts";
 import { isWorldCanonReceipt } from "./world-receipt";
 import type { Database } from "bun:sqlite";
 import { isAuthorityTier } from "../contracts/proposal";
@@ -105,6 +105,16 @@ export class CanonAuthorityResolver {
   }
   /** The materialized state immediately before a receipt, including undo-of-undo. */
   before(receiptId: string): AuthorityTier {
+    const typed = getCanonReceipt(this.db, receiptId);
+    if (typed !== null && isWorldCanonReceipt(typed)) {
+      try {
+        const chain = worldReceiptChain(this.db, typed.page_path);
+        const index = chain.findIndex(record => record.receipt_id === receiptId);
+        const previous = index > 0 ? chain[index - 1] : undefined;
+        return previous === undefined || isErasedReceipt(previous) || previous.basis.after === null
+          ? "model_inference" : previous.authority;
+      } catch { return "model_inference"; }
+    }
     const receipt = this.byId.get(receiptId) ?? this.lookup(receiptId, "");
     if (receipt === undefined || receipt.before_hash === null || !isAuthorityTier(receipt.authority)) {
       return "model_inference";
@@ -182,6 +192,15 @@ export class CanonAuthorityResolver {
       return UNAVAILABLE;
     }
     if (path === "") return UNAVAILABLE;
+    try {
+      const chain = worldReceiptChain(this.db, path);
+      if (chain.length > 0) {
+        const index = before === null ? chain.length : chain.findIndex(record => record.receipt_id === before.receipt_id);
+        const receipt = index > 0 ? chain[index - 1] : undefined;
+        if (receipt === undefined || isErasedReceipt(receipt) || receipt.after_hash !== hash || receipt.basis.after === null) return UNAVAILABLE;
+        return { authority: receipt.authority, basis: { receipt_id: receipt.receipt_id, after_hash: receipt.after_hash, at: receipt.at, authority: receipt.authority } };
+      }
+    } catch { return UNAVAILABLE; }
     const receipt = this.byPath.get(path)?.find(row => row.after_hash === hash && (before === null || earlier(row, before)));
     if (receipt === undefined) {
       return UNRECORDED;

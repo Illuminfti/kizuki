@@ -1,4 +1,8 @@
-import { parseWorldCanonReceipt, type WorldCanonReceiptRecord, type ErasedWorldCanonReceipt } from "./world-receipt";
+import { isWorldCanonReceipt, parseWorldCanonReceipt, type WorldCanonReceiptRecord, type ErasedWorldCanonReceipt } from "./world-receipt";
+import { completedEventPurgeProofs } from "../ledger/purge";
+import { canonicalJson } from "../util/hash";
+import { ABSENT_PAGE_HASH } from "../vault/write";
+import { RECEIPTS_PATH } from "./receipt-path";
 import { assertReceiptPaths } from "./paths";
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
@@ -9,11 +13,11 @@ import type {
   CanonicalProducer,
   ClaimTaint,
 } from "../contracts/proposal";
-import { tableExists } from "../ledger/schema";
+import { tableExists, tableColumns } from "../ledger/schema";
 import type { Writer } from "../vault/write";
 
 /** Shared with the pre-RFC promotion log so a vault keeps one receipt file. */
-export const RECEIPTS_PATH = ".kizuki/receipts/promotions.jsonl";
+export { RECEIPTS_PATH } from "./receipt-path";
 
 export const RECEIPT_KINDS = ["write", "revert", "purge_rewrite"] as const;
 export type ReceiptKind = (typeof RECEIPT_KINDS)[number];
@@ -63,7 +67,7 @@ export interface CanonReceipt {
 }
 
 export interface CanonReceiptRow {
-  record_codec?: string; receipt_state?: string; world_basis?: string | null; own_id_origin?: string | null; purge_receipt_id?: string | null; erased_at?: string | null; erasure_integrity?: string | null;
+  prior_receipt_id?: string | null; record_codec?: string; receipt_state?: string; world_basis?: string | null; own_id_origin?: string | null; purge_receipt_id?: string | null; erased_at?: string | null; erasure_integrity?: string | null;
   receipt_id: string;
   claim_ids: string;
   provenance: string;
@@ -125,7 +129,7 @@ export function rowToReceipt(row: CanonReceiptRow): CanonReceipt {
     at: row.at,
   };
   if (row.record_codec === "kizuki.canon-receipt/v2") {
-    const typed = parseWorldCanonReceipt({...receipt, schema:row.record_codec, state:row.receipt_state, own_id_origin:row.own_id_origin, basis:parseJson(row.world_basis ?? "", null)});
+    const typed = parseWorldCanonReceipt({...receipt, schema:row.record_codec, state:row.receipt_state, own_id_origin:row.own_id_origin, prior_receipt_id:row.prior_receipt_id, basis:parseJson(row.world_basis ?? "", null)});
     if (typed === null || typed.state !== "retained") throw new Error("canon_receipt_invalid");
     return typed;
   }
@@ -136,7 +140,7 @@ export function rowToReceipt(row: CanonReceiptRow): CanonReceipt {
 export type CanonReceiptRecord = CanonReceipt | WorldCanonReceiptRecord;
 export function rowToReceiptRecord(row: CanonReceiptRow): CanonReceiptRecord {
   if (row.receipt_state !== "erased") return rowToReceipt(row);
-  const typed = parseWorldCanonReceipt({schema:row.record_codec,state:row.receipt_state,receipt_id:row.receipt_id,purge_receipt_id:row.purge_receipt_id,own_id_origin:row.own_id_origin,erased_at:row.erased_at,sensitivity:row.sensitivity,integrity:row.erasure_integrity});
+  const typed = parseWorldCanonReceipt({schema:row.record_codec,state:row.receipt_state,receipt_id:row.receipt_id,prior_receipt_id:row.prior_receipt_id,purge_receipt_id:row.purge_receipt_id,own_id_origin:row.own_id_origin,erased_at:row.erased_at,sensitivity:row.sensitivity,integrity:row.erasure_integrity});
   if (typed === null || typed.state !== "erased") throw new Error("canon_receipt_invalid");
   return typed;
 }
@@ -234,6 +238,65 @@ export function getCanonReceipt(db: Database, receiptId: string): CanonReceipt |
   return record === null || isErasedReceipt(record) ? null : record;
 }
 
+/** One bounded causal history in the existing journal, including erased bridges.
+ * Erased records keep only opaque operation edges. Page identity comes from
+ * retained records; entirely erased histories with no retained page detach.
+ */
+export function worldReceiptChain(db: Database, pagePath: string): WorldCanonReceiptRecord[] {
+  if (!tableExists(db, "canon_receipts") || !tableColumns(db, "canon_receipts").includes("prior_receipt_id")) return [];
+  const anchors = db.query<{ receipt_id: string }, [string]>(
+    "SELECT receipt_id FROM canon_receipts WHERE page_path=? AND record_codec='kizuki.canon-receipt/v2' LIMIT 4097",
+  ).all(pagePath);
+  if (anchors.length === 0) return [];
+  const fail = (): never => { throw new Error("typed canon receipt lineage invalid"); };
+  if (anchors.length > 4096) fail();
+  const cache = new Map<string, WorldCanonReceiptRecord>();
+  const read = (id: string): WorldCanonReceiptRecord => {
+    const cached = cache.get(id); if (cached !== undefined) return cached;
+    if (cache.size >= 4096) fail();
+    const record = getCanonReceiptRecord(db, id);
+    if (record === null || (!isErasedReceipt(record) && !isWorldCanonReceipt(record))) return fail();
+    if (isErasedReceipt(record)) {
+      const event = db.query<{ event_id: string }, [string]>(
+        "SELECT event_id FROM event_purges WHERE receipt_id=?",
+      ).get(record.purge_receipt_id);
+      const proof = event === null ? null : completedEventPurgeProofs(db, [event.event_id]);
+      if (proof?.[0]?.purge_receipt_id !== record.purge_receipt_id) fail();
+    } else if (record.page_path !== pagePath) fail();
+    cache.set(id, record);
+    return record;
+  };
+  const ancestry = new Set<string>();
+  let root = read(anchors[0]!.receipt_id);
+  while (root.prior_receipt_id !== null) {
+    if (ancestry.has(root.receipt_id)) fail();
+    ancestry.add(root.receipt_id);
+    root = read(root.prior_receipt_id);
+  }
+  const result: WorldCanonReceiptRecord[] = [], seen = new Set<string>();
+  let current = root;
+  while (true) {
+    if (seen.has(current.receipt_id)) fail();
+    seen.add(current.receipt_id); result.push(current);
+    const children = db.query<{ receipt_id: string }, [string]>(
+      "SELECT receipt_id FROM canon_receipts WHERE prior_receipt_id=? LIMIT 2",
+    ).all(current.receipt_id);
+    if (children.length === 0) break;
+    if (children.length !== 1) fail();
+    const child = read(children[0]!.receipt_id);
+    if (!isErasedReceipt(current) && !isErasedReceipt(child) &&
+      ((child.before_hash ?? ABSENT_PAGE_HASH) !== current.after_hash ||
+       canonicalJson(child.basis.before) !== canonicalJson(current.basis.after))) fail();
+    current = child;
+  }
+  if (anchors.some(anchor => !seen.has(anchor.receipt_id))) fail();
+  return result;
+}
+
+export function latestWorldReceiptRecord(db: Database, pagePath: string): WorldCanonReceiptRecord | null {
+  return worldReceiptChain(db, pagePath).at(-1) ?? null;
+}
+
 /**
  * Canon receipts recorded after `afterReceiptId`, or all of them when null.
  * Freshness checks run on every read, so they count rows instead of
@@ -324,6 +387,13 @@ export function laterReceiptsForPage(
   after: { at: string; receipt_id: string },
 ): CanonReceipt[] {
   if (!tableExists(db, "canon_receipts")) return [];
+  const chain = worldReceiptChain(db, pagePath);
+  if (chain.length > 0) {
+    const index = chain.findIndex(record => record.receipt_id === after.receipt_id);
+    if (index < 0) throw new Error("typed canon receipt lineage invalid");
+    return chain.slice(index + 1).reverse().filter((record): record is import("./world-receipt").RetainedWorldCanonReceipt =>
+      !isErasedReceipt(record) && record.reverted_by === null);
+  }
   return db
     .query<CanonReceiptRow, [string, string, string, string]>(
       `SELECT * FROM canon_receipts
@@ -343,6 +413,13 @@ export function nextReceiptForPage(
   after: { at: string; receipt_id: string },
 ): CanonReceipt | null {
   if (!tableExists(db, "canon_receipts")) return null;
+  const chain = worldReceiptChain(db, pagePath);
+  if (chain.length > 0) {
+    const index = chain.findIndex(record => record.receipt_id === after.receipt_id);
+    if (index < 0) throw new Error("typed canon receipt lineage invalid");
+    const next = chain[index + 1];
+    return next === undefined || isErasedReceipt(next) ? null : next;
+  }
   const row = db
     .query<CanonReceiptRow, [string, string, string, string]>(
       `SELECT * FROM canon_receipts
@@ -356,6 +433,8 @@ export function nextReceiptForPage(
 
 export function latestReceiptForPage(db: Database, pagePath: string): CanonReceipt | null {
   if (!tableExists(db, "canon_receipts")) return null;
+  const typed = latestWorldReceiptRecord(db, pagePath);
+  if (typed !== null) return isErasedReceipt(typed) ? null : typed;
   // Receipt timestamps describe the asserted fact and may be backdated. The
   // page index instead records the receipt that produced the bytes on disk.
   if (tableExists(db, "page_index")) {

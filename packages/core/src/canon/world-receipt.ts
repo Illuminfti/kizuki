@@ -15,11 +15,11 @@ export interface WorldCanonBasis {
  readonly after:readonly WorldClaimBasis[]|null;
 }
 export type RetainedWorldCanonReceipt=CanonReceipt & {
- readonly schema:typeof WORLD_CANON_RECEIPT_SCHEMA;readonly state:"retained";readonly own_id_origin:"core";readonly basis:WorldCanonBasis;
+ readonly prior_receipt_id:string|null;readonly schema:typeof WORLD_CANON_RECEIPT_SCHEMA;readonly state:"retained";readonly own_id_origin:"core";readonly basis:WorldCanonBasis;
 };
 export interface ErasedWorldCanonReceipt {
  readonly schema:typeof WORLD_CANON_RECEIPT_SCHEMA;readonly state:"erased";readonly receipt_id:string;
- readonly purge_receipt_id:string;readonly own_id_origin:"core";readonly erased_at:string;readonly sensitivity:"private";readonly integrity:string;
+ readonly prior_receipt_id:string|null;readonly purge_receipt_id:string;readonly own_id_origin:"core";readonly erased_at:string;readonly sensitivity:"private";readonly integrity:string;
 }
 export type WorldCanonReceiptRecord=RetainedWorldCanonReceipt|ErasedWorldCanonReceipt;
 const HASH=/^[a-f0-9]{64}$/;
@@ -46,8 +46,8 @@ export function isWorldCanonReceipt(receipt:CanonReceipt):receipt is RetainedWor
 export function erasedWorldReceiptIntegrity(receipt:Omit<ErasedWorldCanonReceipt,"integrity">):string {
  return sha256Hex(`${WORLD_CANON_RECEIPT_SCHEMA}#erased\0${canonicalJson(receipt)}`);
 }
-export function eraseWorldReceipt(receiptId:string,purgeReceiptId:string,at:string):ErasedWorldCanonReceipt {
- const core={schema:WORLD_CANON_RECEIPT_SCHEMA,state:"erased" as const,receipt_id:receiptId,purge_receipt_id:purgeReceiptId,own_id_origin:"core" as const,erased_at:at,sensitivity:"private" as const};
+export function eraseWorldReceipt(receiptId:string,purgeReceiptId:string,at:string,priorReceiptId:string|null):ErasedWorldCanonReceipt {
+ const core={schema:WORLD_CANON_RECEIPT_SCHEMA,state:"erased" as const,receipt_id:receiptId,prior_receipt_id:priorReceiptId,purge_receipt_id:purgeReceiptId,own_id_origin:"core" as const,erased_at:at,sensitivity:"private" as const};
  return {...core,integrity:erasedWorldReceiptIntegrity(core)};
 }
 
@@ -55,14 +55,14 @@ export function eraseWorldReceipt(receiptId:string,purgeReceiptId:string,at:stri
 export function parseWorldCanonReceipt(input:unknown,validateRetained:(value:unknown)=>void = value => validateRetainedReceipt(value, true)):WorldCanonReceiptRecord|null {
  let value:unknown;const errors:string[]=[];
  try{value=cloneExactJson(input,"world_canon_receipt",{maxDepth:12,maxKeysPerObject:32,maxArrayLength:32768,maxStringBytes:4096,maxKeyBytes:128,maxTotalBytes:4*1024*1024},errors);}catch{return null;}
- if(errors.length||!isPlainObject(value)||value.schema!==WORLD_CANON_RECEIPT_SCHEMA||value.own_id_origin!=="core")return null;
+ if(errors.length||!isPlainObject(value)||value.schema!==WORLD_CANON_RECEIPT_SCHEMA||value.own_id_origin!=="core"||(value.prior_receipt_id!==null&&!isUlid(value.prior_receipt_id))||value.prior_receipt_id===value.receipt_id)return null;
  if(value.state==="erased") {
-  if(!exact(value,["schema","state","receipt_id","purge_receipt_id","own_id_origin","erased_at","sensitivity","integrity"])||!isUlid(value.receipt_id)||!isUlid(value.purge_receipt_id)||!isRfc3339(value.erased_at)||value.sensitivity!=="private"||typeof value.integrity!=="string")return null;
+  if(!exact(value,["schema","state","receipt_id","prior_receipt_id","purge_receipt_id","own_id_origin","erased_at","sensitivity","integrity"])||!isUlid(value.receipt_id)||!isUlid(value.purge_receipt_id)||!isRfc3339(value.erased_at)||value.sensitivity!=="private"||typeof value.integrity!=="string")return null;
   const {integrity,...fields}=value;
   if(erasedWorldReceiptIntegrity(fields as unknown as Omit<ErasedWorldCanonReceipt,"integrity">)!==integrity)return null;
   return value as unknown as ErasedWorldCanonReceipt;
  }
- if(value.state!=="retained"||!exact(value,[...CANON_RECEIPT_V1_KEYS,"schema","state","own_id_origin","basis"]))return null;
+ if(value.state!=="retained"||!exact(value,[...CANON_RECEIPT_V1_KEYS,"schema","state","own_id_origin","basis","prior_receipt_id"]))return null;
  const basis=parseWorldCanonBasis(value.basis);if(basis===null)return null;
  const legacy=Object.fromEntries(CANON_RECEIPT_V1_KEYS.map(key=>[key,value[key]]));
  try{validateRetained(legacy);}catch{return null;}
