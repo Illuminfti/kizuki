@@ -17,16 +17,14 @@ import {
   type LeaseState,
 } from "./leases";
 import { recoverRunJournal } from "./receipts";
-import { dueRails, runRail, type RailHooks, type RailRuntime } from "./rails";
+import { dueRails, runRail, type RailHooks, type RailHooksV2, type RailRuntime, type RailRuntimeV2 } from "./rails";
 import type { RetrievalPort } from "../contracts/retrieval";
 import { initServe, listSchedules } from "./schema";
 import { SERVE_PID_PATH, ServeDaemonError, isRailId, type CrashPoint, type RailId } from "./types";
 import { clearServeStopRequest, serveStopRequested } from "./stop-control";
 
-export interface ServeDaemonOptions {
+interface ServeDaemonOptionsBase {
   readonly now?: () => string;
-  readonly hooks?: RailHooks;
-  readonly acquireRuntime?: () => Promise<RailRuntime>;
   /** HTTP owns no per-rail runtime; this port belongs to the daemon's caller. */
   readonly retrieval?: RetrievalPort;
   readonly crashAfter?: CrashPoint;
@@ -38,6 +36,18 @@ export interface ServeDaemonOptions {
   readonly sleep?: (ms: number) => Promise<void>;
   readonly shouldContinue?: () => boolean;
 }
+
+export interface ServeDaemonOptions extends ServeDaemonOptionsBase {
+  readonly hooks?: RailHooks;
+  readonly acquireRuntime?: () => Promise<RailRuntime>;
+}
+
+export interface ServeDaemonOptionsV2 extends ServeDaemonOptionsBase {
+  readonly hooks?: RailHooksV2;
+  readonly acquireRuntime?: () => Promise<RailRuntimeV2>;
+}
+
+type AnyServeDaemonOptions = ServeDaemonOptions | ServeDaemonOptionsV2;
 
 export interface ServeStatus {
   readonly pid: number | null;
@@ -100,10 +110,20 @@ function clearPid(vaultPath: string, instanceId: string): void {
   unlinkSync(path); syncPidDirectory(path);
 }
 
+export function runServeDaemon(
+  db: Database,
+  vaultPath: string,
+  options?: ServeDaemonOptions,
+): Promise<{ receipts: number; http: ServeHttpHandle | null }>;
+export function runServeDaemon(
+  db: Database,
+  vaultPath: string,
+  options: ServeDaemonOptionsV2,
+): Promise<{ receipts: number; http: ServeHttpHandle | null }>;
 export async function runServeDaemon(
   db: Database,
   vaultPath: string,
-  options: ServeDaemonOptions = {},
+  options: AnyServeDaemonOptions = {},
 ): Promise<{ receipts: number; http: ServeHttpHandle | null }> {
   if (options.hooks !== undefined && options.acquireRuntime !== undefined) {
     throw new ServeDaemonError("runtime_options_conflict", "rail hooks and acquireRuntime are mutually exclusive");
@@ -169,11 +189,9 @@ export async function runServeDaemon(
         if (stopping || serveStopRequested(vaultPath, ownMarker)) break;
         if (!isRailId(rail)) continue;
         await runRail(db, vaultPath, rail, {
+          ...options,
           now: process.now,
           execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "once", due_at: null },
-          ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
-          ...(options.acquireRuntime === undefined ? {} : { acquireRuntime: options.acquireRuntime }),
-          ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
         });
         receipts += 1;
       }
@@ -186,11 +204,10 @@ export async function runServeDaemon(
       const rail = due[0];
       if (rail !== undefined) {
         await runRail(db, vaultPath, rail, {
+          ...options,
           now: process.now,
           execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "scheduled",
             due_at: listSchedules(db).find(row => row.rail === rail)?.next_run_at ?? process.now() },
-          ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
-          ...(options.acquireRuntime === undefined ? {} : { acquireRuntime: options.acquireRuntime }),
         });
         receipts += 1;
         continue;

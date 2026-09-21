@@ -2,13 +2,14 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
-  MODEL_PRODUCER_ID,
+  MODEL_PRODUCER_V2_ID,
+  PRODUCER_V2_CONTRACT,
   PortError,
   PortRegistry,
   SourceGrantError,
   bindSourceModelPort,
   isPlainObject,
-  registerModelProducerPort,
+  registerModelProducerV2Port,
   runToCompletion,
   readRetrievalDocuments,
   readAppModelConfiguration,
@@ -17,8 +18,8 @@ import {
   type ClaimsIo,
   type LlmPort,
   type PortContext,
-  type ProducerPort,
-  type RailRuntime,
+  type ProducerV2Port,
+  type RailRuntimeV2,
   type RailSyncResult,
   type RetrievalPort,
   type SystemOnePort,
@@ -44,7 +45,7 @@ interface LlmSelection {
   readonly secret_ref: string | null;
 }
 
-export type ServeRuntime = RailRuntime;
+export type ServeRuntime = RailRuntimeV2;
 
 function runtimeError(message: string): never {
   throw new ServeRuntimeError(`serve model configuration: ${message}`);
@@ -168,7 +169,7 @@ export async function inspectModelBinding(vaultPath: string, env: Record<string,
   return modelRef(selected.id, configured.model, endpointHost(configured.base_url));
 }
 
-async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; producer?: ProducerPort; systemone?: SystemOnePort }> {
+async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; producer?: ProducerV2Port; systemone?: SystemOnePort }> {
   let document: ReturnType<typeof readAppModelConfiguration>;
   try {
     document = readAppModelConfiguration(options.vaultPath, value => { parseLlmSelection(value); });
@@ -191,7 +192,7 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
     { llm: selected.id },
     portContext(options.vaultPath, "llm", selected.id, selected.config, selected.secret_ref, secret, options.err),
   )).port;
-  let producer: ProducerPort | undefined;
+  let producer: ProducerV2Port | undefined;
   let systemone: SystemOnePort | undefined;
   try {
     if (llm.model_ref !== null) {
@@ -217,11 +218,12 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
           portContext(options.vaultPath, "systemone", SYSTEMONE_JEV_ID, config, secretRef, systemoneSecret, options.err),
         )).port;
       }
-      registerModelProducerPort(() => llm, registry, () => systemone);
-      producer = (await registry.bindFromConfig<ProducerPort>(
+      registerModelProducerV2Port(() => llm, registry, () => systemone);
+      producer = (await registry.bindFromConfig<ProducerV2Port>(
         "producer",
-        { producer: MODEL_PRODUCER_ID },
-        portContext(options.vaultPath, "producer", MODEL_PRODUCER_ID, {}, null, null, options.err),
+        { producer: MODEL_PRODUCER_V2_ID },
+        portContext(options.vaultPath, "producer", MODEL_PRODUCER_V2_ID, {}, null, null, options.err),
+        PRODUCER_V2_CONTRACT,
       )).port;
       if (selected.id === MODEL_LLM_ID) {
         const configured = parseOpenAiCompatibleConfig(selected.config);

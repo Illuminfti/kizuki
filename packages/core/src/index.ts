@@ -1083,6 +1083,7 @@ export type {
   ScheduleRow,
   ServeConfig,
   ServeDaemonOptions,
+  ServeDaemonOptionsV2,
   ServeDoctorOptions,
   ServeDoctorReport,
   ServeHttpHandle,

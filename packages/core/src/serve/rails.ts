@@ -364,6 +364,12 @@ export function runRail(
   db: Database,
   vaultPath: string,
   rail: RailId,
+  options: AnyRunRailOptions,
+): Promise<RunReceipt>;
+export function runRail(
+  db: Database,
+  vaultPath: string,
+  rail: RailId,
   options: AnyRunRailOptions = {},
 ): Promise<RunReceipt> {
   return runRailImpl(db, vaultPath, rail, options);

@@ -131,7 +131,7 @@ export {
   LedgerLeaseHeldError,
   withLeaseHeldRefusal,
 } from "./lease-held";
-export type { ServeDaemonOptions, ServeStatus } from "./daemon";
+export type { ServeDaemonOptions, ServeDaemonOptionsV2, ServeStatus } from "./daemon";
 export { SERVE_SURFACE_ID, createServeSurfacePort } from "./surface";
 export type { ServeSurfaceOptions } from "./surface";
 export { evaluateQualification, QUALIFICATION_WINDOW_MS } from "./qualification";
