@@ -27,6 +27,7 @@ import {
   toClaimV2SemanticRow,
 } from "./claim-v2-rows";
 import { ClaimError } from "./errors";
+import { ensureClaimOccurrences } from "./occurrences";
 import { getClaim } from "./store";
 import { parseWorldAdmission, type WorldAdmission } from "../contracts/world-admission";
 import { allocateWorldEndpoints } from "../world/allocation";
@@ -258,7 +259,9 @@ function raiseClaimSensitivity(
 
 function worldTablesPresent(db: Database): boolean {
   return WORLD_TABLES.every((table) => tableExists(db, table)) &&
-    tableColumns(db, "claim_v2_support").includes("support_origin");
+    tableColumns(db, "claim_v2_support").includes("support_origin") &&
+    tableColumns(db, "claims").includes("is_world_typed") &&
+    tableExists(db, "claim_occurrences");
 }
 
 function derivedWorldAdmission(
@@ -447,6 +450,7 @@ export function commitClaimV2(
     input.support.events.map((event) => event.event_id),
   );
   if (suppliedWorld !== null) {
+    ensureClaimOccurrences(db, suppliedWorld.semantic, supportOrigin === "native_owner" ? null : input.support.source_key);
     allocateWorldEndpoints(db, suppliedWorld.semantic, supportKeyValue, input.support.admitted_at);
   }
 

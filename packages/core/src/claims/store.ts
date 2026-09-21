@@ -22,7 +22,7 @@ import type {
   Producer,
 } from "../contracts/proposal";
 import { AUTHORITY_TIERS, CLAIM_SCHEMA, canonicalizeProducer, isClaimKind, isProducer } from "../contracts/proposal";
-import { tableExists } from "../ledger/schema";
+import { tableColumns, tableExists } from "../ledger/schema";
 import { labelClaimSensitivity } from "../sensitivity/store";
 import { stricter } from "../sensitivity/resolve";
 import { isRfc3339 } from "../util/time";
@@ -433,15 +433,15 @@ function loadEventSensitivityHints(
     .map((row) => row.sensitivity_hint);
 }
 
-function insertRow(db: Database, claim: Claim): void {
+function insertRow(db: Database, claim: Claim, worldTyped = false): void {
   db.query(
     `INSERT INTO claims
        (claim_id, kind, target, body, frontmatter, provenance, subjects,
         producer, confidence, status, created_at, body_hash,
         subject, predicate, object, polarity, claim_key, authority,
         sensitivity, taint, model_ref, valid_from, valid_to, asserted_at,
-        retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at, is_world_typed)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     claim.claim_id,
     claim.kind,
@@ -472,6 +472,7 @@ function insertRow(db: Database, claim: Claim): void {
     claim.receipt_id,
     claim.corroboration,
     claim.last_confirmed_at,
+    worldTyped ? 1 : 0,
   );
 }
 
@@ -1097,13 +1098,14 @@ export async function prepareClaimInsert(
   if (input.world_admission !== undefined) {
     const admission = parseWorldAdmission(input.world_admission);
     if (admission === null) throw new ClaimError("schema_invalid", "world admission is invalid");
+    if (!tableColumns(io.db, "claims").includes("is_world_typed")) throw new ClaimError("migration_required", "world admission requires ledger migration 32");
     // World meaning is not a second v1 claim shape. Keep legacy presentation
     // neutral: source-specific rendering belongs only in immutable support.
     input = {
       ...input,
       // A semantic-key marker keeps legacy idempotency distinct without
       // retaining source rendering in a v1-readable column.
-      body: `[world:${semanticKey(admission.semantic)}]`,
+      body: "",
       frontmatter: {},
       subject: null,
       predicate: null,
@@ -1374,7 +1376,7 @@ function applyClaimInsert(
   }
 
   const stored: Claim = { ...claim, status: incomingStatus };
-  insertRow(io.db, stored);
+  insertRow(io.db, stored, input.world_admission !== undefined);
   if (incomingStatus !== "skipped") {
     enqueueRetrieval(io.db, io, stored, at);
   }
