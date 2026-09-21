@@ -4,6 +4,8 @@ import { createModelProducerV2Port, MODEL_PRODUCER_V2_DESCRIPTOR } from "../../s
 import { validateProduceResult } from "../../src/producer/result";
 import { temporaryProducerContext, scriptedLlm } from "./helpers";
 import { WORLD_VOCABULARY } from "../../src/contracts/world-vocabulary";
+import type { SystemOnePort, SystemOneRequest, SystemOneResponse } from "../../src/contracts/systemone";
+import { PortError, validatePortDescriptor } from "../../src/contracts/ports";
 
 const input: ProduceInputV2 = {
   events: [{ event_id: "00000000000000000000000001", text: "Mira joined Northwind." }],
@@ -14,6 +16,43 @@ const input: ProduceInputV2 = {
 const response = { schema: EXTRACT_RESPONSE_V2_SCHEMA, mentions: [{ id: "m0", label: "Mira", anchor: { event_id: "00000000000000000000000001", start_utf16: 0, end_utf16: 4 }, candidate_refs: [{ kind: "supplied", id: "s0" }] }], claims: [{ id: "c0", subject: { kind: "mention", id: "m0" }, predicate: "classification.instance_of", object: { kind: "vocabulary", ref: { kind: "vocabulary", id: "v-person" } }, perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] }, context: [], polarity: "positive", body: "Mira is a person.", valid_from: null, valid_to: null, temporal_basis: "unknown", confidence: 0.8, sensitivity: "personal", anchors: [{ event_id: "00000000000000000000000001", start_utf16: 0, end_utf16: 4 }] }] };
 const cleanups: (() => void)[] = []; afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
 function producer(script: Parameters<typeof scriptedLlm>[0]) { const temp = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR); cleanups.push(temp.cleanup); const llm = scriptedLlm(script); return { port: createModelProducerV2Port(temp.ctx, { llm }), llm }; }
+
+function judgedProducer(evaluate: (request: SystemOneRequest) => Promise<SystemOneResponse>, model_ref: string | null = "test-judge") {
+  const temp = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR);
+  cleanups.push(temp.cleanup);
+  const judge: SystemOnePort = {
+    descriptor: validatePortDescriptor({ id: "test.systemone.v2", kind: "systemone", contract: "kizuki.systemone/v1", contract_minor: 0, supports: ["evaluate"], requires_lease: false, optional_package: null }),
+    model_ref, evaluate, async health() { return { status: "ready", detail: {} }; }, async close() {},
+  };
+  const llm = scriptedLlm(() => JSON.stringify(response));
+  return createModelProducerV2Port(temp.ctx, { llm, systemone: judge });
+}
+
+test("v2 honors configured typed admission before returning extracted claims", async () => {
+  let calls = 0;
+  const port = judgedProducer(async request => {
+    calls++;
+    expect(request.state).toMatchObject({ events: input.events, mentions: response.mentions, claims: response.claims });
+    expect(request.questions).toHaveProperty("admit_0");
+    return { model: "test-judge", answers: { admit_0: { type: "noul", noul: 0.1 } }, usage: { input_tokens: 1, output_tokens: 1 } };
+  });
+  expect(await port.produce(input)).toMatchObject({ status: "ok", response: { claims: [] }, dropped: [{ reason: "systemone_rejected", id: "c0" }] });
+  expect(calls).toBe(1);
+  const accepted = judgedProducer(async () => ({ model: "test-judge", answers: { admit_0: { type: "noul", noul: 0.94 } }, usage: { input_tokens: 1, output_tokens: 1 } }));
+  expect(await accepted.produce(input)).toMatchObject({ status: "ok", response: { claims: response.claims } });
+});
+
+test("v2 fails closed for an unavailable or malformed configured judge", async () => {
+  const unavailable = judgedProducer(async () => { throw new PortError("unavailable", "private provider details", true); });
+  expect(await unavailable.produce(input)).toMatchObject({ status: "unavailable", reason: "unavailable", usage: { calls: 1 } });
+  for (const answers of [{}, { admit_0: { type: "noul", noul: NaN } }, { admit_0: { type: "noul", noul: 2 } }, { admit_0: { type: "noul", noul: 0.9 }, extra: { type: "noul", noul: 1 } }]) {
+    const port = judgedProducer(async () => ({ model: "test-judge", answers, usage: { input_tokens: 1, output_tokens: 1 } }) as SystemOneResponse);
+    expect(await port.produce(input)).toMatchObject({ status: "rejected", reason: "schema_invalid" });
+  }
+  const disabled = judgedProducer(async () => { throw new Error("must not evaluate"); }, null);
+  expect((await disabled.health()).status).toBe("unavailable");
+  expect(await disabled.produce(input)).toMatchObject({ status: "unavailable", reason: "unavailable" });
+});
 
 test("v2 consumes a real fenced prompt and returns local drafts without durable ids", async () => {
   expect(validateProduceResult({ status: "ok", response, usage: { calls: 1, input_tokens: 1, output_tokens: 1 } }, "kizuki.producer/v2", { events: input.events, supplied_refs: input.supplied_refs, vocabulary_refs: input.vocabulary_refs, predicates: input.predicates }).result.status).toBe("ok");

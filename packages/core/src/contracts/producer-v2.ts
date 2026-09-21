@@ -5,6 +5,7 @@ import { cloneExactJson, isPlainObject, utf8ByteLength } from "../util/validate"
 import type { Sensitivity } from "../agents/types";
 import type { ModelUsage, ProduceResult, ProducerDiagnostic } from "./producer";
 import type { LlmPort } from "./llm";
+import type { SystemOnePort } from "./systemone";
 import type { Port, PortDescriptor, PortHealth } from "./ports";
 /** Closed provider contract. Durable claim/v2 is deliberately separate. */
 
@@ -138,10 +139,10 @@ export interface ProducerV2Port extends Port {
   produce(input: ProduceInputV2): Promise<ProduceResultV2>;
 }
 
-export interface ModelProducerV2Options { readonly llm: LlmPort; }
+export interface ModelProducerV2Options { readonly llm: LlmPort; readonly systemone?: SystemOnePort; }
 
 export type DroppedDraftV2 = {
-  readonly reason: "unknown_predicate";
+  readonly reason: "unknown_predicate" | "systemone_rejected";
   readonly id: string;
 };
 

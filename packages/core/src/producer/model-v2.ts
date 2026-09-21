@@ -21,6 +21,7 @@ import type { ProducerDiagnostic } from "../contracts/producer";
 import { callModel, DEFAULT_PRODUCER_DEADLINE_MS, EXTRACT_MAX_OUTPUT_TOKENS, CHARS_PER_TOKEN, parseModelProducerConfig } from "./model";
 import { hasFenceLeak, hasParsedFenceLeak, newFenceNonce } from "./fence";
 import { buildExtractionV2Messages } from "./prompt-v2";
+import { admitExtractedClaimsV2 } from "./systemone-admit";
 
 export const MODEL_PRODUCER_V2_ID = "kizuki.producer.model.v2" as const;
 export const MODEL_PRODUCER_V2_DESCRIPTOR: PortDescriptor = validatePortDescriptor({ id: MODEL_PRODUCER_V2_ID, kind: "producer", contract: PRODUCER_V2_CONTRACT, contract_minor: 0, supports: ["model"], requires_lease: false, optional_package: null });
@@ -95,18 +96,25 @@ export function planModelExtractionV2(raw: unknown): ModelExtractionV2Plan {
 }
 
 export function createModelProducerV2Port(ctx: PortContext, options: ModelProducerV2Options): ProducerV2Port {
-  const config = parseModelProducerConfig(ctx.config), llm = options?.llm;
+  const config = parseModelProducerConfig(ctx.config), llm = options?.llm, systemone = options?.systemone;
   if (llm === undefined || typeof llm.complete !== "function") throw new PortError("config_invalid", "model producer requires a bound llm port", false);
   let closed = false;
   return {
     descriptor: MODEL_PRODUCER_V2_DESCRIPTOR,
     get model_ref() { return llm.model_ref; },
-    async health(): Promise<PortHealth> { if (closed) return { status: "unavailable", reason: "producer port is closed" }; return await llm.health(); },
+    async health(): Promise<PortHealth> {
+      if (closed) return { status: "unavailable", reason: "producer port is closed" };
+      const model = await llm.health();
+      if (model.status !== "ready" || systemone === undefined) return model;
+      if (systemone.model_ref === null) return { status: "unavailable", reason: "configured systemone is unavailable" };
+      return await systemone.health();
+    },
     async produce(raw: ProduceInputV2): Promise<ProduceResultV2> {
       if (closed) throw new PortError("unavailable", "producer port is closed", false);
       const usage = { calls: 0, input_tokens: 0, output_tokens: 0 };
       const plan = planModelExtractionV2(raw);
       if (plan.status === "rejected") return { status: "rejected", reason: "budget_exhausted", usage, diagnostic: plan.diagnostic };
+      if (systemone !== undefined && systemone.model_ref === null) return { status: "unavailable", reason: "unavailable", usage };
       const outcome = await callModel(llm as LlmPort, plan.messages, plan.max_output_tokens, config.deadline_ms ?? DEFAULT_PRODUCER_DEADLINE_MS);
       usage.calls = 1;
       if (outcome.kind === "unavailable") return { status: "unavailable", reason: outcome.diagnostic.rule === "timeout" ? "timeout" : outcome.diagnostic.rule === "network" ? "network" : outcome.diagnostic.rule === "credentials" ? "credentials" : outcome.diagnostic.rule === "http" ? "http" : "unavailable", usage, diagnostic: outcome.diagnostic };
@@ -118,7 +126,11 @@ export function createModelProducerV2Port(ctx: PortContext, options: ModelProduc
       const parserInput = { events: plan.input.events, supplied_refs: plan.input.supplied_refs, vocabulary_refs: plan.input.vocabulary_refs, predicates: plan.input.predicates };
       const parsed = parseExtractResponseV2(outcome.response.text, parserInput);
       if (!parsed.ok) return { status: "rejected", reason: "schema_invalid", usage, diagnostic: { stage: "response", rule: "bad_response" } };
-      const wire = parsed.dropped.length === 0 ? { status: "ok" as const, response: parsed.response, usage } : { status: "ok" as const, response: parsed.response, usage, dropped: parsed.dropped };
+      const admitted = await admitExtractedClaimsV2(parsed.response, parserInput, systemone, config.deadline_ms);
+      if (admitted.status === "unavailable") return { status: "unavailable", reason: "unavailable", usage };
+      if (admitted.status === "rejected") return { status: "rejected", reason: "schema_invalid", usage };
+      const dropped = [...parsed.dropped, ...admitted.dropped];
+      const wire = { status: "ok" as const, response: admitted.response, usage, ...(dropped.length === 0 ? {} : { dropped }) };
       return validateProduceResult(wire, PRODUCER_V2_CONTRACT, parserInput).result;
     },
     async close() { closed = true; },
