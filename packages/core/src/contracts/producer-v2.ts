@@ -4,6 +4,8 @@ import { isUlid } from "../util/ulid";
 import { cloneExactJson, isPlainObject, utf8ByteLength } from "../util/validate";
 import type { Sensitivity } from "../agents/types";
 import type { ModelUsage, ProduceResult, ProducerDiagnostic } from "./producer";
+import type { LlmPort } from "./llm";
+import type { Port, PortDescriptor, PortHealth } from "./ports";
 /** Closed provider contract. Durable claim/v2 is deliberately separate. */
 
 export const PRODUCER_V2_CONTRACT = "kizuki.producer/v2" as const;
@@ -123,6 +125,20 @@ export interface ProducerV2ParseInput {
   readonly vocabulary_refs: readonly string[];
   readonly predicates: readonly ProducerV2PredicateSpec[];
 }
+
+/** Closed local planning input. Handles are capability-local, never durable ids. */
+export interface ProduceInputV2 extends ProducerV2ParseInput {
+  readonly budget: { readonly max_calls: number; readonly max_input_tokens: number; readonly max_output_tokens: number };
+}
+
+export interface ProducerV2Port extends Port {
+  readonly descriptor: PortDescriptor;
+  readonly model_ref: string | null;
+  health(): Promise<PortHealth>;
+  produce(input: ProduceInputV2): Promise<ProduceResultV2>;
+}
+
+export interface ModelProducerV2Options { readonly llm: LlmPort; }
 
 export type DroppedDraftV2 = {
   readonly reason: "unknown_predicate";

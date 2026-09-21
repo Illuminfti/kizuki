@@ -373,12 +373,12 @@ export function planModelExtraction(rawInput: ProduceInput): ModelExtractionPlan
   return { status: "ready", input, calls };
 }
 
-type CallOutcome =
+export type CallOutcome =
   | { kind: "ok"; response: LlmResponse }
   | { kind: "rejected"; reason: RejectReason; diagnostic: ProducerDiagnostic }
   | { kind: "unavailable"; reason: string; diagnostic: ProducerDiagnostic };
 
-function classifyLlmError(error: unknown): Exclude<CallOutcome, { kind: "ok" }> {
+export function classifyLlmError(error: unknown): Exclude<CallOutcome, { kind: "ok" }> {
   if (!(error instanceof PortError)) return { kind: "unavailable", reason: "llm error", diagnostic: { stage: "transport", rule: "unavailable" } };
   if (error.code === "not_supported" && error.message === "rejected: tool_call_in_response") {
     return { kind: "rejected", reason: "tool_call_in_response", diagnostic: { stage: "response", rule: "tool_call" } };
@@ -395,7 +395,7 @@ function classifyLlmError(error: unknown): Exclude<CallOutcome, { kind: "ok" }> 
   return { kind: "unavailable", reason: `llm ${isPortErrorCode(error.code) ? error.code : "unavailable"}`, diagnostic };
 }
 
-async function callModel(
+export async function callModel(
   llm: LlmPort,
   messages: ReturnType<typeof buildExtractionMessages>,
   maxOutputTokens: number,
