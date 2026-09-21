@@ -5,7 +5,7 @@ import { canonFixture,budget } from "./helpers";
 import { worldFixture } from "../serving/world-fixture";
 import { getClaim } from "../../src/claims/store";
 import { applyCanonWrite } from "../../src/canon/apply";
-import { worldClaimHandle,worldCanonPath } from "../../src/canon/world-materialization";
+import { worldClaimHandle,worldCanonPath,assertWorldReceiptBasis,assertWorldCanonPage } from "../../src/canon/world-materialization";
 import { isWorldCanonReceipt } from "../../src/canon/world-receipt";
 
 test("real admitted typed claims render through the same canon writer while their legacy parents stay neutral",async()=>{
@@ -15,6 +15,12 @@ test("real admitted typed claims render through the same canon writer while thei
   expect(claim.body).toBe("");expect(claim.subject).toBeNull();
   const receipt=applyCanonWrite(f.io,claim,{action:"create",rel_path:path},{writer:"loop",budget:budget()});
   expect(isWorldCanonReceipt(receipt)).toBe(true);
+  if(!isWorldCanonReceipt(receipt))throw new Error("typed receipt expected");
+  assertWorldReceiptBasis(f.db,receipt,{historical:true});
+  const bytes=readFileSync(join(f.vault,path));
+  assertWorldCanonPage(f.db,receipt,bytes,"after");
+  const tampered=Buffer.from(bytes.toString("utf8").replace("Bayesian updating","Unadmitted replacement"));
+  expect(()=>assertWorldCanonPage(f.db,{...receipt,after_hash:new Bun.CryptoHasher("sha256").update(tampered).digest("hex")},tampered,"after")).toThrow("admitted rendering");
   expect(readFileSync(join(f.vault,path),"utf8")).toContain("Bayesian updating");
   expect(getClaim(f.db,claim.claim_id)!.body).toBe("");
   expect(f.db.query("SELECT COUNT(*) AS n FROM canon_write_intents").get()).toEqual({n:0});
