@@ -106,8 +106,12 @@ export function createModelProducerV2Port(ctx: PortContext, options: ModelProduc
       if (closed) return { status: "unavailable", reason: "producer port is closed" };
       const model = await llm.health();
       if (model.status !== "ready" || systemone === undefined) return model;
-      if (systemone.model_ref === null) return { status: "unavailable", reason: "configured systemone is unavailable" };
-      return await systemone.health();
+      if (systemone.model_ref !== null) {
+        try {
+          if ((await systemone.health()).status === "ready") return { status: "ready", detail: {} };
+        } catch { /* A configured judge's diagnostics cannot cross this boundary. */ }
+      }
+      return { status: "unavailable", reason: "configured systemone is unavailable" };
     },
     async produce(raw: ProduceInputV2): Promise<ProduceResultV2> {
       if (closed) throw new PortError("unavailable", "producer port is closed", false);

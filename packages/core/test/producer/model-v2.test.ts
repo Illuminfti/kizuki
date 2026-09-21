@@ -5,7 +5,7 @@ import { validateProduceResult } from "../../src/producer/result";
 import { temporaryProducerContext, scriptedLlm } from "./helpers";
 import { WORLD_VOCABULARY } from "../../src/contracts/world-vocabulary";
 import type { SystemOnePort, SystemOneRequest, SystemOneResponse } from "../../src/contracts/systemone";
-import { PortError, validatePortDescriptor } from "../../src/contracts/ports";
+import { PortError, validatePortDescriptor, type PortHealth } from "../../src/contracts/ports";
 
 const input: ProduceInputV2 = {
   events: [{ event_id: "00000000000000000000000001", text: "Mira joined Northwind." }],
@@ -17,12 +17,12 @@ const response = { schema: EXTRACT_RESPONSE_V2_SCHEMA, mentions: [{ id: "m0", la
 const cleanups: (() => void)[] = []; afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
 function producer(script: Parameters<typeof scriptedLlm>[0]) { const temp = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR); cleanups.push(temp.cleanup); const llm = scriptedLlm(script); return { port: createModelProducerV2Port(temp.ctx, { llm }), llm }; }
 
-function judgedProducer(evaluate: (request: SystemOneRequest) => Promise<SystemOneResponse>, model_ref: string | null = "test-judge") {
+function judgedProducer(evaluate: (request: SystemOneRequest) => Promise<SystemOneResponse>, model_ref: string | null = "test-judge", health: () => Promise<PortHealth> = async () => ({ status: "ready", detail: {} })) {
   const temp = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR);
   cleanups.push(temp.cleanup);
   const judge: SystemOnePort = {
     descriptor: validatePortDescriptor({ id: "test.systemone.v2", kind: "systemone", contract: "kizuki.systemone/v1", contract_minor: 0, supports: ["evaluate"], requires_lease: false, optional_package: null }),
-    model_ref, evaluate, async health() { return { status: "ready", detail: {} }; }, async close() {},
+    model_ref, evaluate, health, async close() {},
   };
   const llm = scriptedLlm(() => JSON.stringify(response));
   return createModelProducerV2Port(temp.ctx, { llm, systemone: judge });
@@ -40,6 +40,19 @@ test("v2 honors configured typed admission before returning extracted claims", a
   expect(calls).toBe(1);
   const accepted = judgedProducer(async () => ({ model: "test-judge", answers: { admit_0: { type: "noul", noul: 0.94 } }, usage: { input_tokens: 1, output_tokens: 1 } }));
   expect(await accepted.produce(input)).toMatchObject({ status: "ok", response: { claims: response.claims } });
+});
+
+test("v2 judge health never relays provider diagnostics or thrown details", async () => {
+  for (const health of [
+    async (): Promise<PortHealth> => ({ status: "unavailable", reason: "private provider details" }),
+    async (): Promise<PortHealth> => ({ status: "degraded", degraded: ["private provider details"], detail: { secret: "private" } }),
+    async (): Promise<PortHealth> => { throw new Error("private provider details"); },
+  ]) {
+    const port = judgedProducer(async () => { throw new Error("must not evaluate"); }, "test-judge", health);
+    expect(await port.health()).toEqual({ status: "unavailable", reason: "configured systemone is unavailable" });
+  }
+  const port = judgedProducer(async () => { throw new Error("must not evaluate"); }, "test-judge", async () => ({ status: "ready", detail: { secret: "private" } }));
+  expect(await port.health()).toEqual({ status: "ready", detail: {} });
 });
 
 test("v2 fails closed for an unavailable or malformed configured judge", async () => {
