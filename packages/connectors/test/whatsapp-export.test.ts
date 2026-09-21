@@ -150,6 +150,36 @@ test("large messages drain before the serialized-byte limit", async () => {
   });
 });
 
+test("an out-of-range checkpoint cannot silently drain an unchanged export", async () => {
+  await withTempRoot(async (root) => {
+    const source = path.join(root, CHAT_FILE);
+    const text = Array.from({ length: 1001 }, (_, index) =>
+      `1/13/26, 9:15 AM - Ada: message ${index}`,
+    ).join("\n");
+    await writeFile(source, text);
+    const connector = createWhatsAppImportConnector({
+      path: source,
+      timezone: WHATSAPP_FIXTURE_TIMEZONE,
+      date_order: "mdy",
+    });
+    const first = await connector.backfill(null);
+    expect(first.cursor).not.toBeNull();
+    const checkpoint = JSON.parse(first.cursor!);
+    for (const after of [1001, 1002, Number.MAX_SAFE_INTEGER]) {
+      const cursor = JSON.stringify({ ...checkpoint, after });
+      expect((await rejected(() => connector.backfill(cursor))).code).toBe("parse_error");
+      expect((await rejected(() => connector.sync(cursor))).code).toBe("parse_error");
+    }
+    expect((await connector.backfill(first.cursor)).events).toHaveLength(1);
+
+    // A genuinely changed snapshot restarts, even when its old index is larger.
+    await writeFile(source, "1/13/26, 9:15 AM - Ada: replacement export");
+    const restarted = await connector.sync(first.cursor);
+    expect(restarted.events.map(event => event.text)).toEqual(["replacement export"]);
+    expect(restarted.cursor).toBeNull();
+  });
+});
+
 test("a directory with no chat file or several is refused", async () => {
   await withTempRoot(async (root) => {
     const empty = path.join(root, "empty");
