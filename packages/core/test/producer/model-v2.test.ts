@@ -33,3 +33,45 @@ test("v2 reserves one call and refuses an exhausted input budget before contacti
   expect(await port.produce({ ...input, budget: { ...input.budget, max_input_tokens: 1 } })).toMatchObject({ status: "rejected", reason: "budget_exhausted", usage: { calls: 0 } });
   expect(llm.requests).toHaveLength(0);
 });
+
+test("v2 rejects unknown keys, malformed budgets, and invalid trusted anchors before a prompt or call", async () => {
+  const cases: unknown[] = [
+    { ...input, extra: true },
+    { ...input, budget: { ...input.budget, max_calls: 2 } },
+    { ...input, events: [{ ...input.events[0]!, text: "x".repeat(24_001) }] },
+    { ...input, supplied_refs: [{ ...input.supplied_refs[0]!, anchors: [{ ...input.supplied_refs[0]!.anchors[0]!, end_utf16: 99 }] }] },
+    { ...input, predicates: [{ ...input.predicates[0]!, object_kinds: ["vocabulary", "vocabulary"] }] },
+  ];
+  for (const invalid of cases) {
+    const { port, llm } = producer(() => JSON.stringify(response));
+    await expect(port.produce(invalid as ProduceInputV2)).rejects.toThrow("produce input");
+    expect(llm.requests).toHaveLength(0);
+  }
+});
+
+test("v2 uses the planned fenced prompt and rejects an oversize prompt with zero calls", async () => {
+  const { port, llm } = producer(request => {
+    expect(request.messages[0]!.content).toContain("A mention has exactly");
+    expect(request.messages[0]!.content).toContain("valid_from");
+    expect(request.messages[1]!.content).toContain("<<<KZ-QUOTE");
+    return JSON.stringify(response);
+  });
+  expect((await port.produce(input)).status).toBe("ok");
+  expect(llm.requests).toHaveLength(1);
+  for (const budget of [{ ...input.budget, max_input_tokens: 1 }, { ...input.budget, max_calls: 0 }, { ...input.budget, max_output_tokens: 0 }]) {
+    const rejected = await port.produce({ ...input, budget });
+    expect(rejected).toMatchObject({ status: "rejected", reason: "budget_exhausted", usage: { calls: 0 } });
+  }
+  expect(llm.requests).toHaveLength(1);
+});
+
+test("v2 rejects provider fence and response-schema attacks after one accountable call", async () => {
+  for (const wire of [
+    `{"schema":"${EXTRACT_RESPONSE_V2_SCHEMA}","mentions":[],"claims":[],"leak":"<<<KZ-QUOTE"}`,
+    JSON.stringify({ ...response, extra: true }),
+  ]) {
+    const { port, llm } = producer(() => wire);
+    expect((await port.produce(input)).status).toBe("rejected");
+    expect(llm.requests).toHaveLength(1);
+  }
+});
