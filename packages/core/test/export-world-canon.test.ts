@@ -274,3 +274,18 @@ test("a rehashed backup cannot detach a surviving page from its erased ancestry"
   expect(() => restoreVault(f.backup, f.restored)).toThrow("lineage invalid");
   expect(existsSync(f.restored)).toBe(false);
 });
+
+
+test("a rehashed correction receipt cannot acquire earlier assertions as undo ownership", async () => {
+  const f = await fixture();
+  const correction = await correct(f.io, { statement: "Use prior odds and the likelihood ratio.", target: { claim_id: f.world.claims[2]! } });
+  exportVault(f.db, f.vault, f.backup);
+  changeBackup(f.backup, row => {
+    if (row.receipt_id !== correction.receipt_id) return row;
+    const basis = row.basis as { before: { claim_id: string }[]; after: { claim_id: string }[] };
+    return { ...row, claim_ids: [...new Set([...basis.before, ...basis.after].map(item => item.claim_id))] };
+  });
+  expect(verifyBackup(f.backup).schema_versions.canon).toBe(5);
+  expect(() => restoreVault(f.backup, f.restored)).toThrow("ownership differs");
+  expect(existsSync(f.restored)).toBe(false);
+});
