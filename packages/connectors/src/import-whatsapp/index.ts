@@ -306,12 +306,14 @@ function pageWhatsAppEvents(
 ): SyncBatch {
   const identity = whatsappIdentity(events);
   const previous = cursor === null ? null : decodeWhatsAppCursor(cursor);
-  const start =
+  const sameSnapshot =
     previous !== null &&
     previous.export.sha256 === identity.sha256 &&
-    previous.export.size === identity.size
-      ? previous.after
-      : 0;
+    previous.export.size === identity.size;
+  // Only an unfinished page mints a cursor, so a matching terminal or larger
+  // offset is corrupt, not evidence that the source has been fully imported.
+  if (sameSnapshot && previous.after >= events.length) malformedCursor();
+  const start = sameSnapshot ? previous.after : 0;
   if (start >= events.length) return { events: [], cursor: null };
 
   const utf8 = new TextEncoder();
