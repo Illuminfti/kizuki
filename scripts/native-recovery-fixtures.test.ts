@@ -29,6 +29,55 @@ for(const id of ["ledger15","ledger16"]) test(`managed ${id} observation is nonm
  const db=openLedger(path);db.close();const after=inspectRecoveryFixture(vault);expect(after.summary.schema_version).toBe(LEDGER_SCHEMA_VERSION);
  for(const table of ["events","claims"]){const prior=before.tables[table]??[];expect(after.tables[table]).toHaveLength(prior.length);for(const row of prior){const key=table==="events"?"event_id":"claim_id";const next=after.tables[table]!.find(value=>value[key]===row[key]);for(const field of Object.keys(row))expect(next?.[field]).toEqual(row[field]);}}
 });
+test("historical World migration preserves native uniqueness before and after opt-in staging repair", () => {
+ const {path} = fixture("ledger16");
+ const assertUniqueness = (db: Database): void => {
+  const columns = db.query<{name: string}, []>("PRAGMA table_info(claims)").all().map(row => row.name);
+  const quote = (column: string): string => `"${column.replaceAll('"', '""')}"`;
+  const original = db.query<{claim_id: string}, []>("SELECT claim_id FROM claims WHERE status='live' AND is_world_typed=0 LIMIT 1").get()!;
+  expect(original).not.toBeNull();
+  const clone = db.query(`INSERT INTO claims (${columns.map(quote).join(',')}) SELECT ${columns.map(column => column === "claim_id" || column === "is_world_typed" ? "?" : quote(column)).join(',')} FROM claims WHERE claim_id=?`);
+  db.exec("SAVEPOINT uniqueness_probe");
+  try {
+   expect(() => clone.run("legacy-duplicate", 0, original.claim_id)).toThrow("UNIQUE constraint failed");
+   expect(clone.run("typed-parent-one", 1, original.claim_id).changes).toBe(1);
+   expect(clone.run("typed-parent-two", 1, original.claim_id).changes).toBe(1);
+  } finally {
+   db.exec("ROLLBACK TO uniqueness_probe; RELEASE uniqueness_probe");
+   clone.finalize();
+  }
+ };
+ const initial = openLedger(path);
+ try {
+  expect(initial.query<{name: string}, []>("PRAGMA table_info(claims)").all().some(row => row.name === "content_hash")).toBe(false);
+  assertUniqueness(initial);
+ } finally { initial.close(); }
+ for (let attempt = 0; attempt < 2; attempt++) {
+  const staged = openLedger(path, {includeStaging: true});
+  try {
+   expect(staged.query<{name: string}, []>("PRAGMA table_info(claims)").all().some(row => row.name === "content_hash")).toBe(true);
+   assertUniqueness(staged);
+  } finally { staged.close(); }
+ }
+});
+test("v33 receipt rebuild failure rolls back the historical World migration and original database", () => {
+ const {vault, path} = fixture("ledger16");
+ change(path, "CREATE TABLE canon_receipts_v5 (synthetic_collision TEXT NOT NULL); INSERT INTO canon_receipts_v5 VALUES ('fixture')");
+ const before = inspectRecoveryFixture(vault);
+ const original = Database.prototype.exec;
+ const observed: {version: number; world: boolean; staging: boolean}[] = [];
+ Database.prototype.exec = function(sql: string) {
+  if (/^\s*CREATE TABLE canon_receipts_v5\b/.test(sql)) {
+   const columns = this.query<{name: string}, []>("PRAGMA table_info(claims)").all().map(row => row.name);
+   observed.push({version: (this.query("SELECT version FROM schema_version").get() as {version: number}).version, world: columns.includes("is_world_typed"), staging: columns.includes("content_hash")});
+  }
+  return original.call(this, sql);
+ };
+ try { expect(() => openLedger(path)).toThrow("canon_receipts_v5"); }
+ finally { Database.prototype.exec = original; }
+ expect(observed).toEqual([{version: 32, world: true, staging: false}]);
+ expect(inspectRecoveryFixture(vault)).toEqual(before);
+});
 test("invalid historical text is rejected before completion and leaves every original row and schema object unchanged",()=>{
  const {vault,path}=fixture();change(path,"UPDATE events SET text='Synthetic invalid old event text.'");const before=inspectRecoveryFixture(vault);
  expect(()=>openLedger(path)).toThrow();expect(inspectRecoveryFixture(vault)).toEqual(before);expect(before.summary.schema_version).toBe(15);
