@@ -4,10 +4,15 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
-  EXTRACTION_SYSTEM_PROMPT, addAgent, authenticate, authorize, toolAllowed,
+  OWNER, inspectOwnerPageCorrectionTargets, addAgent, authenticate, authorize, toolAllowed,
   initAgents, listClaims, listConnections, readSince, receiptsForClaim, setSourceGrant,
 } from "../packages/core/src/index";
 import type { CaptureEvent, Claim, Envelope, RunReceipt, SearchHit } from "../packages/core/src/index";
+import { EXTRACTION_V2_SYSTEM_PROMPT } from "../packages/core/src/producer/prompt-v2";
+import type { ExtractResponseV2, RichClaimDraft } from "../packages/core/src/contracts/producer-v2";
+import type { ClaimDraft } from "../packages/core/src/contracts/producer";
+import { eligibleWorldClaim } from "../packages/core/src/world/projection";
+import witnesses from "./fixtures/extraction-quality-native-witnesses-v2.json";
 import { openLedger } from "../packages/core/src/ledger/db";
 import { verifyPackageDirectory } from "./release-artifacts";
 import { releaseTarget, requireNativeHost } from "./release-targets";
@@ -93,7 +98,7 @@ interface ConsumerObservation {
   canon: { doc_id: string; authority: string; snippet: string }[];
   failures: string[];
 }
-interface Replay {
+export interface Replay {
   item: QualityCase;
   response: QualityResponse;
   ids: Record<string, string>;
@@ -109,11 +114,11 @@ function scopedFence(prompt: string, label: string): string | null {
   return match?.[2] ?? null;
 }
 
-function inspectRequest(replay: Replay, raw: string): { eventIds: string[]; response: string } {
+export function inspectRequest(replay: Replay, raw: string): { eventIds: string[]; response: string } {
   assert(raw.length <= 100_000, "fixture request exceeds bound");
   const body = JSON.parse(raw) as { model?: unknown; messages?: { role?: unknown; content?: unknown }[]; tools?: unknown };
   assert(body.model === MODEL && body.tools === undefined && Array.isArray(body.messages) && body.messages.length === 2, "unexpected fixture model request");
-  assert(body.messages[0]?.role === "system" && body.messages[0].content === EXTRACTION_SYSTEM_PROMPT && body.messages[1]?.role === "user" && typeof body.messages[1].content === "string", "native extraction prompt contract changed");
+  assert(body.messages[0]?.role === "system" && body.messages[0].content === EXTRACTION_V2_SYSTEM_PROMPT && body.messages[1]?.role === "user" && typeof body.messages[1].content === "string", "native extraction prompt contract changed");
   const prompt = body.messages[1].content;
   const sentIds = [...prompt.matchAll(/<<<KZ-QUOTE [0-9a-f]{32} event:([A-Za-z0-9:_.-]+)>>>/g)].map((match) => match[1]!);
   const expectedIds = Object.values(replay.ids).sort();
@@ -129,14 +134,63 @@ function inspectRequest(replay: Replay, raw: string): { eventIds: string[]; resp
     const actual = subjects.map((subject) => `${subject.subject}:${subject.role}`).sort();
     if (canonicalJson(actual) !== canonicalJson(expected)) replay.event_roles_present = false;
   }
-  const candidate = structuredClone(replay.response.response) as { claims: { event_ids: string[] }[] };
+  return { eventIds: sentIds, response: JSON.stringify(scriptedV2Response(replay.item, replay.response, replay.ids)) };
+}
+
+/** Wire adaptation of frozen candidates, never generated from expected answers. */
+export function scriptedV2Response(item: QualityCase, response: QualityResponse, ids: Record<string, string>): ExtractResponseV2 {
+  const candidate = structuredClone(response.response) as { claims: ClaimDraft[] };
   assert(Array.isArray(candidate.claims), "scripted response fixture is malformed");
-  // Only the ledger-generated event IDs change. No candidate prose or answer
-  // field is derived from the answer key or from native returned claims.
-  for (const draft of candidate.claims) draft.event_ids = draft.event_ids.map((id) => {
-    const mapped = replay.ids[id]; assert(mapped !== undefined, "scripted response cites unknown evidence"); return mapped;
+  const mentions: ExtractResponseV2["mentions"][number][] = [];
+  const claims: RichClaimDraft[] = candidate.claims.map((draft, index) => {
+    const witness = witnesses.witnesses.find(row => row.record_id === draft.event_ids[0]);
+    const record = item.records.find(row => row.id === witness?.record_id);
+    assert(witness !== undefined && record !== undefined &&
+      record.text.slice(witness.start_utf16, witness.end_utf16) === witness.text, "scripted subject witness differs from frozen evidence");
+    const anchor = { event_id: ids[record.id]!, start_utf16: witness.start_utf16, end_utf16: witness.end_utf16 };
+    assert(anchor.event_id !== undefined, "scripted response cites unknown evidence");
+    const id = `m${index}`;
+    mentions.push({ id, label: witness.text, anchor, candidate_refs: [] });
+    const anchors = draft.event_ids.map(local => {
+      const source = item.records.find(row => row.id === local);
+      assert(source !== undefined && ids[local] !== undefined, "scripted response cites unknown evidence");
+      return { event_id: ids[local]!, start_utf16: 0, end_utf16: source.text.length };
+    });
+    if (!anchors.some(row => canonicalJson(row) === canonicalJson(anchor))) anchors.push(anchor);
+    return { id: `c${index}`, subject: { kind: "mention", id }, predicate: draft.predicate,
+      object: { kind: "literal", value: draft.object },
+      perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] }, context: [],
+      polarity: draft.polarity, body: draft.body, valid_from: draft.valid_from, valid_to: draft.valid_to,
+      temporal_basis: draft.valid_from === null ? "unknown" : "explicit", confidence: draft.confidence,
+      sensitivity: draft.sensitivity, anchors };
   });
-  return { eventIds: sentIds, response: JSON.stringify(candidate) };
+  return { schema: "kizuki.producer-response/v2", mentions, claims };
+}
+
+/** Evaluation labels identify exact authored spans, not durable people or aliases. */
+export function referenceSubject(recordId: string, start: number, end: number): string {
+  return witnesses.witnesses.find(row => row.record_id === recordId && row.start_utf16 === start && row.end_utf16 === end)?.reference_subject ?? "quality:unresolved";
+}
+
+type PersistedQualityClaim = Omit<Claim, "valid_from"> & { valid_from: string | null };
+
+function persistedClaims(db: ReturnType<typeof openLedger>, vault: string, ids: Record<string, string>): PersistedQualityClaim[] {
+  const inverse = new Map(Object.entries(ids).map(([local, actual]) => [actual, local]));
+  return listClaims(db, { limit: 64 }).filter(claim => claim.producer === "model").map(parent => {
+    assert(parent.body === "" && parent.subject === null && parent.predicate === null && parent.object === null,
+      "typed claim leaked rendering into legacy parent fields");
+    const eligible = eligibleWorldClaim({ db, vaultPath: vault, principal: OWNER }, parent.claim_id, { kind: "all" }, { bytes: 0 });
+    assert(eligible !== null && !eligible.overflow && eligible.supports.length === 1, "persisted typed claim has no complete authorized support");
+    const { semantic } = eligible, support = eligible.supports[0]!;
+    assert(semantic.object.kind === "literal" && semantic.subject.kind === "occurrence", "native scripted assertion changed shape");
+    const occurrence = db.query<{ event_id: string; start_utf16: number; end_utf16: number }, [string]>(
+      "SELECT event_id,start_utf16,end_utf16 FROM claim_occurrences WHERE occurrence_id=?").get(semantic.subject.id);
+    assert(occurrence !== null, "persisted subject occurrence is absent");
+    return { ...parent, subject: referenceSubject(inverse.get(occurrence.event_id) ?? "", occurrence.start_utf16, occurrence.end_utf16),
+      predicate: semantic.predicate, object: String(semantic.object.value), polarity: semantic.polarity,
+      body: support.admission.rendering.body, confidence: support.admission.confidence, authority: support.admission.authority,
+      provenance: support.events.map(event => event.event_id), valid_from: semantic.valid_from, valid_to: semantic.valid_to };
+  });
 }
 
 function modelStatus(receipt: RunReceipt): QualityResponse["status"] {
@@ -152,7 +206,8 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
   assert(git("status", "--porcelain", "--", "packages").length === 0, "native evaluation requires unchanged product source");
   const corpus = loadCorpus(join(import.meta.dir, "fixtures/extraction-quality-v1.json"));
   const scripted = loadResponseSet(join(import.meta.dir, "fixtures/extraction-quality-scripted-v1.json"), corpus);
-  const persisted = persistedReference(corpus);
+  // V2 preserves unknown time; the v1 observed-at normalization does not apply.
+  const persisted = corpus;
   const root = mkdtempSync(join(tmpdir(), "kizuki-quality-native-"));
   const commands: CommandRecord[] = [];
   let executable = [process.execPath, join(SOURCE_ROOT, "packages/cli/src/main.ts")];
@@ -356,7 +411,7 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
   const persistedResponses: QualityResponse[] = [];
   const cases: { case_id: string; status: QualityResponse["status"]; model_requests: number; raw_response_observed: boolean; native_import: boolean;
     event_roles_present: boolean; ids: Record<string, string>; requests: Replay["requests"]; receipt: RunReceipt;
-    claims: Claim[]; consumers: { before: ConsumerObservation; after: ConsumerObservation }; failures: string[] }[] = [];
+    claims: PersistedQualityClaim[]; consumers: { before: ConsumerObservation; after: ConsumerObservation }; failures: string[] }[] = [];
   let recovery: { no_extra_model_calls: boolean; undo_restored_bytes: boolean; restored_recall: boolean } | null = null;
   try {
     if (options.artifact !== undefined) {
@@ -372,7 +427,7 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
       const receipt = await cli<RunReceipt>(fixture.vault, ["serve", "run", "sync", "--json"]);
       assert(replay.errors.length === 0, replay.errors.join("; "));
       assert(replay.requests.length === 1, "native model did not consume the complete fixture case");
-      const claims = withLedger(fixture.vault, (db) => listClaims(db, { limit: 64 }).filter((claim) => claim.producer === "model"));
+      const claims = withLedger(fixture.vault, (db) => persistedClaims(db, fixture.vault, fixture.ids));
       const status = modelStatus(receipt);
       const inverse = new Map(Object.entries(fixture.ids).map(([local, actual]) => [actual, local]));
       const response = { claims: claims.map((claim) => ({ kind: claim.kind, subject: claim.subject, predicate: claim.predicate, object: claim.object,
@@ -399,10 +454,13 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
         const page = join(fixture.vault, initialReceipt.page_path), initialBytes = sha256(readFileSync(page));
         // Remove the model before exercising the deterministic consumers.
         writeFileSync(join(fixture.vault, ".kizuki/serve.toml"), "", { mode: 0o600 });
-        const correction = await cli<{ receipt_id: string }>(fixture.vault, ["tell", "Ada now coordinates the Juniper archive.", "--claim", claims[0]!.claim_id, "--json"]);
+        const targets = withLedger(fixture.vault, db => inspectOwnerPageCorrectionTargets({ db, vaultPath: fixture.vault }, before.canon[0]!.doc_id));
+        const target = targets.claims.find(claim => "kind" in claim && claim.kind === "world");
+        assert(target !== undefined && "target" in target && target.target !== null, "owner page did not expose a supported opaque correction target");
+        const correction = await cli<Envelope<{ receipt_id: string }>>(fixture.vault, ["tell", "Ada now coordinates the Juniper archive.", "--world-claim", target.target.world_claim.token, "--json"]);
         const corrected = await cli<QueryData>(fixture.vault, ["query", "Juniper", "--scope", "canon", "--json", "--degraded"]);
         assert(corrected.hits.length > 0 && corrected.hits.every((hit) => hit.authority === "owner_correction"), "native correction did not establish owner authority");
-        await cli(fixture.vault, ["undo", correction.receipt_id]);
+        await cli(fixture.vault, ["undo", correction.data!.receipt_id]);
         const undoRestored = sha256(readFileSync(page)) === initialBytes;
         const backup = join(fixture.directory, "backup"), restored = join(fixture.directory, "restored");
         await cli(fixture.vault, ["export", "--out", backup]);
@@ -436,7 +494,10 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
       runner_sha256: sha256(readFileSync(import.meta.filename)), source_changes: git("status", "--porcelain").split("\n").filter(Boolean),
       fixture_setup: "native CLI enrollment/import; exact source grant and synthetic public-agent enrollment use public Core; no policy-file custody claim",
       mode: "scripted_contract", model_quality_claim: false, usage_evidence: "fixture omitted provider usage; native zero values do not establish measured zero",
-      persisted_time_contract: "RFC0002 section4.2: raw null becomes cited observed_at; no insertion-time normalization",
+      producer_contract: "kizuki.producer/v2", persisted_claim_contract: "qualified claim/v2 with complete authorized support; neutral legacy parent",
+      subject_scoring_contract: witnesses.identity_scope,
+      subject_witnesses_sha256: sha256(canonicalJson(witnesses)),
+      persisted_time_contract: "producer/v2 unknown time stays null; explicit source intervals are unchanged",
       raw_score: rawScore, persisted_score: persistedScore, controls_passed: controlsPassed,
       passed: rawScore.passed && persistedScore.passed && controlsPassed && cases.every((row) => row.failures.length === 0),
       cases, controls, commands };

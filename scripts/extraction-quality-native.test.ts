@@ -2,13 +2,18 @@ import { afterEach, expect, test } from "bun:test";
 import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadCorpus, sha256 } from "./evaluate-extraction";
+import { loadCorpus, loadResponseSet, sha256 } from "./evaluate-extraction";
 import { writePackageFixture } from "./release-package-fixture";
 import { checksumManifest } from "./release-artifacts";
 import { nativeReleaseTarget } from "./release-targets";
 import {
   mapImportedEvidence, persistedReference, runNativeQuality, verifyNativeArtifact,
+  inspectRequest, referenceSubject, scriptedV2Response, type Replay,
 } from "./extraction-quality-native";
+
+import { buildExtractionV2Messages } from "../packages/core/src/producer/prompt-v2";
+import { parseExtractResponseV2 } from "../packages/core/src/contracts/producer-v2";
+import { worldProduceInput } from "../packages/core/src/serve/extract-v2";
 
 const corpus = loadCorpus(join(import.meta.dir, "fixtures/extraction-quality-v1.json"));
 const directories: string[] = [];
@@ -30,6 +35,34 @@ test("evidence binding refuses fabricated records, missing roles and omitted rec
   expect(() => mapImportedEvidence(item, events.map((event) => ({ ...event, text: "fabricated evidence" })))).toThrow();
   expect(() => mapImportedEvidence(item, events.map((event) => ({ ...event, subjects: [] })))).toThrow();
   expect(() => mapImportedEvidence(item, [events[0]!, events[0]!])).toThrow();
+});
+
+test("v2 wire adaptation preserves candidates, exact witnesses and unknown time without inventing identity", () => {
+  const scripted = loadResponseSet(join(import.meta.dir, "fixtures/extraction-quality-scripted-v1.json"), corpus);
+  for (const item of corpus.cases) {
+    const ids = Object.fromEntries(item.records.map((record, index) => [record.id, `0000000000000000000000000${index + 1}`]));
+    const response = scripted.responses.find(row => row.case_id === item.id)!;
+    const input = worldProduceInput(item.records.map(record => ({ event_id: ids[record.id]!, text: record.text })) as Parameters<typeof worldProduceInput>[0]);
+    const wire = scriptedV2Response(item, response, ids);
+    const { budget: _budget, ...parserInput } = input;
+    const parsed = parseExtractResponseV2(JSON.stringify(wire), parserInput);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.dropped).toEqual([]);
+    const original = response.response as { claims: { body: string; object: string; valid_from: string | null; valid_to: string | null }[] };
+    expect(wire.claims.map(claim => ({ body: claim.body, object: claim.object.kind === "literal" ? claim.object.value : null,
+      valid_from: claim.valid_from, valid_to: claim.valid_to }))).toEqual(original.claims.map(claim => ({ body: claim.body,
+      object: claim.object, valid_from: claim.valid_from, valid_to: claim.valid_to })));
+    const replay: Replay = { item, response, ids, behavior: "normal", requests: [], event_roles_present: true, errors: [] };
+    const request = { model: "quality-scripted", messages: buildExtractionV2Messages(input, "a".repeat(32)) };
+    expect(JSON.parse(inspectRequest(replay, JSON.stringify(request)).response)).toEqual(wire);
+    expect(replay.event_roles_present).toBe(false);
+    expect(() => inspectRequest(replay, JSON.stringify({ ...request, messages: [{ role: "system", content: "v1 or wrong prompt" }, request.messages[1]] }))).toThrow("prompt contract changed");
+    expect(() => inspectRequest(replay, JSON.stringify(request).replace(item.records[0]!.text, "fabricated text"))).toThrow("altered fixture evidence");
+  }
+  expect(referenceSubject("q01-a", 0, 3)).toBe("quality:ada");
+  expect(referenceSubject("q01-a", 1, 3)).toBe("quality:unresolved");
+  expect(referenceSubject("q10-a", 0, 1)).toBe("quality:unresolved");
+  expect(referenceSubject("q10-b", 0, 1)).toBe("quality:unresolved");
 });
 
 test("a matching-looking source SHA without a valid checksummed artifact is refused", () => {
@@ -109,6 +142,10 @@ test("the complete offline corpus uses native import, model filing, CLI and MCP 
   expect(result.execution_mode).toBe("source_cli");
   expect(result.model_quality_claim).toBe(false);
   expect(result.raw_score.passed).toBe(true);
+  expect(result.producer_contract).toBe("kizuki.producer/v2");
+  expect(result.persisted_time_contract).toContain("unknown time stays null");
+  expect(result.persisted_score.passed).toBe(false);
+  expect(result.passed).toBe(false);
   expect(result.cases).toHaveLength(12);
   expect(result.cases.map((row) => row.case_id)).toEqual(corpus.cases.map((row) => row.id));
   const direct = result.cases[0]!;
