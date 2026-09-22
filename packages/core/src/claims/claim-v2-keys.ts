@@ -1,5 +1,7 @@
+import { rawSubjectNamespace,rawSubjectRefKey } from "../contracts/claim-v2";
 import type {
   ClaimV2Object,
+  ClaimMeaning,
   ClaimV2Perspective,
   ClaimV2Semantic,
   RawSubjectRef,
@@ -35,21 +37,21 @@ function optional(value: string | null): readonly string[] {
 }
 
 function refParts(value: RawSubjectRef): readonly string[] {
-  return [value.kind, value.id];
+  return value.kind==="supplied" && "namespace" in value ? ["supplied/namespaced",value.namespace.connector_id,value.namespace.source_key,value.id] : [value.kind, value.id];
 }
 
 function optionalRefParts(value: RawSubjectRef | null): readonly string[] {
-  return value === null ? ["0", "", ""] : ["1", value.kind, value.id];
+  return value === null ? ["0", "", ""] : ["1", ...refParts(value)];
 }
 
 function refKey(value: RawSubjectRef): string {
-  return `${value.kind}\u0000${value.id}`;
+  return rawSubjectRefKey(value);
 }
 
 function objectParts(value: ClaimV2Object): readonly string[] {
   if (value.kind === "literal") return ["literal", value.value, ""];
   if (value.kind === "subject")
-    return ["subject", value.ref.kind, value.ref.id];
+    return ["subject", ...refParts(value.ref)];
   return ["vocabulary", value.ref.kind, value.ref.id];
 }
 
@@ -58,7 +60,7 @@ function objectParts(value: ClaimV2Object): readonly string[] {
  * Its anchors are evidence, not identity: they belong to the support key, so
  * the same claim seen at a different offset corroborates instead of forking.
  */
-function perspectiveParts(value: ClaimV2Perspective): readonly string[] {
+function perspectiveParts(value: Omit<ClaimV2Perspective, "anchors">): readonly string[] {
   return [
     ...optionalRefParts(value.holder),
     ...optionalRefParts(value.speaker),
@@ -86,7 +88,7 @@ function contextParts(context: readonly RawSubjectRef[]): readonly string[] {
  * quality or a caller assertion, never what the claim means. Only the named
  * fields are read, so an extra property on the input cannot perturb the key.
  */
-export function semanticKey(semantic: ClaimV2Semantic): string {
+export function semanticKey(semantic: ClaimV2Semantic | ClaimMeaning): string {
   if (semantic.discriminator === "identity_control") {
     return tuple(SEMANTIC_DOMAIN, [
       semantic.schema,
@@ -97,7 +99,7 @@ export function semanticKey(semantic: ClaimV2Semantic): string {
     ]);
   }
   return tuple(SEMANTIC_DOMAIN, [
-    semantic.schema,
+    "kizuki.claim/v2",
     "assertion",
     ...refParts(semantic.subject),
     semantic.predicate,
@@ -117,6 +119,7 @@ export interface ClaimV2SupportEventRef {
 }
 
 export interface ClaimV2SupportKeyInput {
+  readonly support_origin?: "source" | "native_owner";
   readonly semantic_key: string;
   readonly source_key: string;
   readonly grant_revision: number;
@@ -146,7 +149,7 @@ export function supportKey(input: ClaimV2SupportKeyInput): string {
         : 0,
   );
   const anchors = [...input.anchors].sort(anchorOrder);
-  return tuple(SUPPORT_DOMAIN, [
+  return tuple(input.support_origin === "native_owner" ? "kizuki.claim/v2#native-support" : SUPPORT_DOMAIN, [
     input.semantic_key,
     input.source_key,
     String(input.grant_revision),
