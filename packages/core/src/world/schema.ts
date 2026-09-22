@@ -72,11 +72,16 @@ export function applyWorldTables(db: Database): void {
     assertWorldSchema(db);
     return;
   }
+  // Genuine historical writers may omit the opt-in staging signature column.
+  // Preserve their native uniqueness rule without enabling staging migration.
+  const stagingSignatureFilter = tableColumns(db, "claims").includes("content_hash")
+    ? "AND (content_hash IS NULL OR content_hash='')"
+    : "";
   db.exec(`
     ALTER TABLE claims ADD COLUMN is_world_typed INTEGER NOT NULL DEFAULT 0 CHECK(is_world_typed IN (0,1));
     DROP INDEX claims_idempotency;
     CREATE UNIQUE INDEX claims_idempotency ON claims(kind,coalesce(target,''),body_hash)
-      WHERE status='live' AND kind<>'purge_review' AND (content_hash IS NULL OR content_hash='') AND is_world_typed=0;
+      WHERE status='live' AND kind<>'purge_review' ${stagingSignatureFilter} AND is_world_typed=0;
     CREATE TABLE claim_occurrences (
       occurrence_id TEXT PRIMARY KEY CHECK(length(occurrence_id)=64 AND occurrence_id NOT GLOB '*[^0-9a-f]*'),
       event_id TEXT NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,
