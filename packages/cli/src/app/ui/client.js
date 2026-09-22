@@ -824,8 +824,18 @@ function renderWorld() {
         section.append(matches.length ? el('div', { class: 'result-list' }, ...matches.map(item => el('article', { class: 'result-item' }, el('h3', {}, Array.isArray(item.labels) && item.labels[0] ? item.labels[0] : 'Untitled'), button('View details', () => loadWorld(item.ref), 'quiet')))) : noMatches());
         const coverage = worldCoverage(data.coverage); if (coverage) section.append(coverage);
       } else {
-        const node = data.concept || data.situation, relations = data.concept ? [...(data.definitions || []), ...(data.relations || [])] : [data.objective, ...(data.commitments || []), data.blocker, data.recentChange, ...(data.uncertainty || [])].filter(Boolean);
-        section.append(el('article', { class: 'result-item' }, el('h2', {}, worldTitle(node)), el('p', { class: 'result-text' }, data.summary?.text || 'No summary is available.'), worldCoverage(data.coverage), el('details', { class: 'result-details' }, el('summary', {}, 'Supporting statements and confidence'), el('p', {}, 'These statements explain the current view. Confidence reflects the assessment of each statement. Original source text is not included here.'), ...(relations.length ? relations.map(worldRelation) : [el('p', {}, 'No supporting statements are available in this view.')]))));
+        const node = data.concept || data.situation;
+        const primary = data.concept ? (data.definitions || []) : [data.objective, ...(data.commitments || []), data.blocker, data.recentChange, ...(data.uncertainty || [])].filter(Boolean);
+        const related = data.concept ? (data.relations || []) : [];
+        section.append(el('article', { class: 'result-item' },
+          el('h2', {}, worldTitle(node)),
+          data.summary?.text ? el('p', { class: 'result-text' }, data.summary.text) : null,
+          worldCoverage(data.coverage),
+          ...primary.map(worldRelation),
+          !primary.length && !related.length ? el('p', {}, 'No supporting statements are available in this view.') : null,
+          related.length ? el('details', { class: 'result-details' }, el('summary', {}, 'Related statements'),
+            el('p', {}, 'These statements explain the current view. Confidence reflects the assessment of each statement. Original source text is not included here.'),
+            ...related.map(worldRelation)) : null));
       }
     }
   }
