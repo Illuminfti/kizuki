@@ -261,9 +261,10 @@ async function stdioClient(vault: string, token: string): Promise<ContinuityClie
     expect(reply.result).toBeDefined();
     child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
     const listed = await request("tools/list", {});
-    const tools = (listed.result as { tools?: { outputSchema?: { properties?: object; required?: string[] } }[] } | undefined)?.tools;
+    const tools = (listed.result as { tools?: { name: string; outputSchema?: { properties?: object; required?: string[] } }[] } | undefined)?.tools;
     expect(tools?.length).toBeGreaterThan(0);
-    for (const tool of tools ?? []) {
+    // world_view uses the envelope/v2 field set, which never reports withheld counts.
+    for (const tool of (tools ?? []).filter(item => item.name !== "world_view")) {
       expect(tool.outputSchema?.properties).toHaveProperty("has_withheld");
       expect(tool.outputSchema?.properties).toHaveProperty("source_policy");
       expect(tool.outputSchema?.required ?? []).not.toContain("has_withheld");
