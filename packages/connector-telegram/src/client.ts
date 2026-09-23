@@ -22,6 +22,40 @@ import { describeMedia } from "./media";
 /** Telegram's own ceiling for one history page. */
 const MAX_PAGE = 500;
 
+/**
+ * Longer than the library's three 10 s connection attempts, shorter than the
+ * host's 60 s batch deadline, so the connector reports first.
+ */
+export const ANSWER_DEADLINE_MS = 45_000;
+
+/**
+ * The library puts no deadline on a request. A server that stays silent, as
+ * Telegram does for a session key it no longer knows, is waited on forever,
+ * so every single-shot call races this. On expiry the client is abandoned
+ * through `abandon`, because the request it is stuck in never settles.
+ */
+export async function answeredWithin<T>(
+  work: Promise<T>,
+  ms: number,
+  abandon: () => void,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      abandon();
+      reject(new TelegramConnectorError(
+        "unreachable",
+        `kizuki.telegram: telegram did not answer within ${Math.ceil(ms / 1000)}s`,
+      ));
+    }, ms);
+  });
+  try {
+    return await Promise.race([work, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 interface Runtime extends ProviderErrors {
   client: TelegramClient;
   session: StringSession;
@@ -49,7 +83,7 @@ class RealTelegramApi implements TelegramApi {
 
   async connect(): Promise<void> {
     const runtime = await this.#load();
-    const opened = await this.#guard(() => runtime.client.connect(), runtime);
+    const opened = await this.#guard(() => this.#answered(runtime.client.connect(), runtime), runtime);
     // The library answers a transport it could not open with `false`, not a
     // throw. Going on would queue every later request behind a socket that
     // never comes, so a sign-in or a sync would wait forever in silence.
@@ -74,7 +108,7 @@ class RealTelegramApi implements TelegramApi {
   async isAuthorized(): Promise<boolean> {
     const runtime = await this.#load();
     try {
-      await runtime.client.invoke(runtime.stateRequest());
+      await this.#answered(runtime.client.invoke(runtime.stateRequest()), runtime);
       return true;
     } catch (error) {
       const classified = classify(error, runtime);
@@ -119,7 +153,7 @@ class RealTelegramApi implements TelegramApi {
 
   async me(): Promise<TelegramUser> {
     const runtime = await this.#load();
-    const me = await this.#guard(() => runtime.client.getMe(false), runtime);
+    const me = await this.#guard(() => this.#answered(runtime.client.getMe(false), runtime), runtime);
     return {
       id: me.id.toString(),
       ...(me.username === undefined ? {} : { username: me.username }),
@@ -172,7 +206,7 @@ class RealTelegramApi implements TelegramApi {
   async logOut(): Promise<void> {
     const runtime = await this.#load();
     await this.#guard(
-      () => runtime.client.invoke(runtime.logOutRequest()),
+      () => this.#answered(runtime.client.invoke(runtime.logOutRequest()), runtime),
       runtime,
     );
   }
@@ -234,6 +268,12 @@ class RealTelegramApi implements TelegramApi {
       logOutRequest: () => new library.Api.auth.LogOut(),
       stateRequest: () => new library.Api.updates.GetState(),
     };
+  }
+
+  #answered<T>(work: Promise<T>, runtime: Runtime): Promise<T> {
+    return answeredWithin(work, ANSWER_DEADLINE_MS, () => {
+      runtime.client.destroy().catch(() => undefined);
+    });
   }
 
   async #guard<T>(operation: () => Promise<T>, runtime: Runtime): Promise<T> {
