@@ -202,6 +202,10 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
   let systemone: SystemOnePort | undefined;
   try {
     if (llm.model_ref !== null) {
+      const configured = selected.id === MODEL_LLM_ID ? parseOpenAiCompatibleConfig(selected.config) : null;
+      // The owner's configured model timeout is the extraction deadline; the
+      // producer's own default must not silently cap a slower endpoint.
+      const producerConfig = configured === null ? {} : { deadline_ms: configured.timeout_ms };
       const binding = loadSystemOneBinding(options.vaultPath);
       if (binding !== null && binding.id === SYSTEMONE_JEV_ID) {
         const config: Record<string, unknown> = { ...binding.config };
@@ -232,7 +236,7 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
         producer = bindEpochZeroProducerPort((await registry.bindFromConfig<ProducerPort>(
           "producer",
           { producer: MODEL_PRODUCER_ID },
-          portContext(options.vaultPath, "producer", MODEL_PRODUCER_ID, {}, null, null, options.err),
+          portContext(options.vaultPath, "producer", MODEL_PRODUCER_ID, producerConfig, null, null, options.err),
           PRODUCER_CONTRACT,
         )).port);
       } else {
@@ -240,12 +244,11 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
         producer = (await registry.bindFromConfig<ProducerV2Port>(
           "producer",
           { producer: MODEL_PRODUCER_V2_ID },
-          portContext(options.vaultPath, "producer", MODEL_PRODUCER_V2_ID, {}, null, null, options.err),
+          portContext(options.vaultPath, "producer", MODEL_PRODUCER_V2_ID, producerConfig, null, null, options.err),
           PRODUCER_V2_CONTRACT,
         )).port;
       }
-      if (selected.id === MODEL_LLM_ID) {
-        const configured = parseOpenAiCompatibleConfig(selected.config);
+      if (configured !== null) {
         bindSourceModelPort(producer, {
           model_endpoint: chatCompletionsUrl(configured.base_url),
           model: configured.model,
