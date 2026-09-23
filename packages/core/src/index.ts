@@ -576,6 +576,7 @@ export {
   chooseCandidate,
   createBudgetTracker,
   getCanonReceipt,
+  getCanonReceiptRecord,
   countCanonReceipts,
   initCanon,
   inspectPageIndex,

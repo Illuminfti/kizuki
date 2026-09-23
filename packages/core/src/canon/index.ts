@@ -28,6 +28,7 @@ export {
   RECEIPT_KINDS,
   countCanonReceipts,
   getCanonReceipt,
+  getCanonReceiptRecord,
   laterReceiptsForPage,
   latestReceiptForPage,
   listCanonReceipts,
