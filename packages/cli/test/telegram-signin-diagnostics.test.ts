@@ -108,3 +108,11 @@ test("ordinary unreachable errors keep the generic connectivity diagnostic", () 
   expect(error.message).not.toBe(WAIT_UNSPECIFIED);
   expect(error.message).not.toBe(CANCELLED);
 });
+
+test("a phone number Telegram refuses asks for international format without repeating it", () => {
+  for (const message of ["kizuki.telegram: phone number must be in international format", "kizuki.telegram: telegram rejected the phone number"]) {
+    const error = telegramFailure(new TelegramConnectorError("invalid_phone", message));
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error.message).toBe("Telegram did not accept that phone number. Enter it in international format, for example +15551234567.");
+  }
+});

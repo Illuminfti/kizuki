@@ -4,6 +4,7 @@ import type { StringSession } from "telegram/sessions/index.js";
 import { TelegramConnectorError, redactedCause } from "./api";
 import type {
   AppCredentials,
+  DataCenter,
   MessagesQuery,
   PeerType,
   SignInFlow,
@@ -37,11 +38,13 @@ interface Runtime extends ProviderErrors {
 class RealTelegramApi implements TelegramApi {
   readonly #session: string;
   readonly #credentials: AppCredentials;
+  readonly #dataCenter: DataCenter | undefined;
   #runtime: Runtime | null = null;
 
-  constructor(session: string, credentials: AppCredentials) {
+  constructor(session: string, credentials: AppCredentials, dataCenter?: DataCenter) {
     this.#session = session;
     this.#credentials = credentials;
+    this.#dataCenter = dataCenter;
   }
 
   async connect(): Promise<void> {
@@ -184,6 +187,11 @@ class RealTelegramApi implements TelegramApi {
     const logging = await import("telegram/extensions/Logger.js");
     const failures = await import("telegram/errors/index.js");
     const session = new sessions.StringSession(this.#session);
+    // A stored session carries its own data center; only a fresh one is pointed.
+    const dataCenter = this.#dataCenter;
+    if (this.#session === "" && dataCenter !== undefined) {
+      session.setDC(dataCenter.id, dataCenter.address, dataCenter.port);
+    }
     const client = new library.TelegramClient(
       session,
       this.#credentials.api_id,
@@ -225,8 +233,8 @@ class RealTelegramApi implements TelegramApi {
   }
 }
 
-export const createRealApi: TelegramApiFactory = (session, credentials) =>
-  new RealTelegramApi(session, credentials);
+export const createRealApi: TelegramApiFactory = (session, credentials, dataCenter) =>
+  new RealTelegramApi(session, credentials, dataCenter);
 
 /**
  * The library hands every failure inside its sign-in loops to `onError` and

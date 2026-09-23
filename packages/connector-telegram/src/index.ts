@@ -1,5 +1,6 @@
 export type {
   AppCredentials,
+  DataCenter,
   MessagesQuery,
   PeerType,
   SignInFlow,
@@ -17,6 +18,7 @@ export {
   appCredentials,
 } from "./app-credentials";
 export { createRealApi } from "./client";
+export { TEST_DC_VARIABLE, testDataCenter } from "./test-dc";
 export {
   TelegramConnector,
   createTelegramConnector,

@@ -18,7 +18,7 @@ import type {
   StatePersister,
 } from "@kizuki/core";
 import { TelegramConnectorError } from "./api";
-import type { TelegramApi, TelegramUser } from "./api";
+import type { DataCenter, TelegramApi, TelegramUser } from "./api";
 import { appCredentials } from "./app-credentials";
 import { createRealApi } from "./client";
 import {
@@ -35,6 +35,7 @@ import type { SessionDeps } from "./session";
 import { enroll, waitSeconds } from "./sign-in";
 import { encodeState, type TelegramState } from "./state";
 import { TELEGRAM_CURSOR_SCHEMA, parseCursor } from "./cursor";
+import { testDataCenter } from "./test-dc";
 import { walk } from "./walk";
 import type { DialogListing } from "./walk";
 
@@ -52,6 +53,8 @@ export interface TelegramDeps extends SessionDeps {
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   persist: StatePersister;
+  /** Sign-in only; defaults to the unset-by-default test override. */
+  dataCenter: () => DataCenter | null;
 }
 
 const TELEGRAM_MANIFEST = {
@@ -111,6 +114,7 @@ export class TelegramConnector implements Connector {
       now: deps.now ?? Date.now,
       sleep: deps.sleep ?? Bun.sleep,
       persist: deps.persist ?? (async () => { throw new Error("state persister unavailable"); }),
+      dataCenter: deps.dataCenter ?? (() => testDataCenter()),
     };
   }
 

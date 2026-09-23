@@ -195,6 +195,30 @@ It signs in interactively and lists one dialog. The library stand-in is a
 process-wide module mock, so enabling the smoke test skips the offline
 client-layer tests in that same process; run the two separately.
 
+### Telegram's test environment
+
+`KIZUKI_TELEGRAM_TEST_DC` points a fresh sign-in at one of Telegram's test data
+centers instead of production. It is for exercising the sign-in flow against
+real Telegram servers without a real account, and it is off unless set:
+
+```sh
+KIZUKI_TELEGRAM_TEST_DC=2 kizuki connect telegram --vault /absolute/test-vault
+```
+
+Only `1`, `2` or `3` is accepted. Any other value refuses sign-in before the
+first prompt. The CLI prints a line saying the test environment is in use.
+Nothing else reads the variable: a stored session keeps the data center it was
+created on, so backfill, sync and doctor for a test enrollment reach the test
+environment without it, and setting it never moves an existing source. A test
+account has a different account id from a real one, so re-signing a real
+source with the variable set is refused as an identity change.
+
+Telegram documents test numbers as `99966XYYYY` (X is the data center) with the
+data center id repeated five times as the login code. On 2026-09-23 the test
+data centers answered that code with `PHONE_CODE_INVALID` for fresh and
+existing test numbers on all three data centers, from this client and from
+Telethon alike, so a full test-environment sign-in could not be completed then.
+
 ## Provider facts
 
 Checked 2026-09-05 against [user authorization](https://core.telegram.org/api/auth)
@@ -204,7 +228,6 @@ when two-step verification returns `SESSION_PASSWORD_NEEDED`. The app id and
 hash are registered once per application and belong to whoever ships the
 build. Authentication rules and quotas change; re-check before relying on any
 of this.
-
 
 ## Native host lifecycle and qualification boundary
 

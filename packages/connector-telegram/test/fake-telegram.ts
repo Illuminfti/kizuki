@@ -38,6 +38,8 @@ export const pages: {
   me: unknown;
   /** Raised by the transport rather than by a request, when set. */
   transport: { connect: unknown; disconnect: unknown };
+  /** Every data center a session was pointed at before connecting. */
+  pointed: [number, string, number][];
 } = {
   dialogs: async function* () {},
   messages: async function* () {},
@@ -48,6 +50,7 @@ export const pages: {
   signInErrors: [],
   me: { id: { toString: () => "1001" } },
   transport: { connect: null, disconnect: null },
+  pointed: [],
 };
 
 /** Puts every armed answer back, so one test cannot set up the next one. */
@@ -61,6 +64,7 @@ export function reset(): void {
   pages.signInErrors = [];
   pages.me = { id: { toString: () => "1001" } };
   pages.transport = { connect: null, disconnect: null };
+  pages.pointed = [];
 }
 
 interface StartParams {
@@ -161,6 +165,9 @@ if (OFFLINE) {
   mock.module("telegram/sessions/index.js", () => ({
     StringSession: class {
       constructor(readonly text: string = "") {}
+      setDC(id: number, address: string, port: number): void {
+        pages.pointed.push([id, address, port]);
+      }
       save(): string {
         return this.text;
       }
