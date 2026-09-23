@@ -33,6 +33,7 @@ These ids match `defaultConnectorRegistry.ids()` on this revision.
 | `kizuki.google-calendar` | Explicitly selected read-only Google calendar revisions; native CLI, explicit source consent | Bounded live source |
 | `kizuki.ics`             | A local iCalendar file. CLI enrolls the file path; URL sign-in is library surface, not a connect verb | Live local source |
 | `kizuki.imap`            | Read-only IMAP mailbox via interactive app-password sign-in                                           | Bounded live source |
+| `kizuki.import-beacon`   | One selected Beacon agent-run `runtime.jsonl` snapshot; local and read-only                           | Snapshot importer |
 | `kizuki.import-chatgpt`  | The `conversations.json` of a ChatGPT data export                                                     | Snapshot importer |
 | `kizuki.import-claude`   | The `conversations.json` of a Claude data export                                                      | Snapshot importer |
 | `kizuki.import-legacy-events` | Owner-mapped event table or JSONL export; not live sync                                          | Snapshot importer |
@@ -119,6 +120,20 @@ Known limits:
   than replayed.
 - A note whose exact bytes match text Kizuki itself wrote is kept but marked
   machine origin by Core, so the loop cannot learn from its own output.
+
+## Beacon agent-run snapshot
+
+Point the importer at one local Beacon `runtime.jsonl` file you selected.
+
+```
+kizuki import import-beacon --vault VAULT --source runtime.jsonl
+```
+
+`beacon` is accepted as an alias. Each supported `claude_code` or `codex`
+agent-run record becomes one `agent_runtime` event, labeled `private`. Only the
+selected file is read; rotated files are never followed, and nothing in a
+record is run or opened. See [Beacon import](../../docs/beacon-import.md) for
+the accepted envelope, actions, bounds and source consent.
 
 ## ChatGPT export
 
