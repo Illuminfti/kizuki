@@ -20,6 +20,7 @@ import { sha256Hex } from "../util/hash";
 import { listSchedules } from "./schema";
 import type { SupervisorHost } from "./supervisor";
 import { queryServeService } from "./supervisor";
+import { ensureVaultId } from "./vault-id";
 import {
   CALIBRATION_BAND,
   CONFIDENCE_SPREAD_MIN,
@@ -36,6 +37,7 @@ import {
   type ServeDoctorReport,
   type ServeIntent,
   type StoreDoctor,
+  type SupervisorLastExit,
   type SupervisorStatus,
 } from "./types";
 
@@ -534,8 +536,13 @@ export function inspectServeDoctor(
   try {
     if (serviceFile(join(vaultPath, ".kizuki", "service-change.json")) !== null) failures.push("service change recovery pending");
   } catch { failures.push("service recovery state unavailable"); }
+  let supervisorExit: SupervisorLastExit | null = null;
   if (intent === "installed" && (supervisor.state !== "active" || !supervisor.enabled)) {
     failures.push(`supervisor ${supervisor.state}${supervisor.state === "active" ? " but not enabled" : ""}`);
+    // The unit's own last exit decides the command that restarts it.
+    if (supervisor.state !== "active" && options.supervisor?.lastExit !== undefined) {
+      try { supervisorExit = options.supervisor.lastExit(ensureVaultId(vaultPath)); } catch { supervisorExit = null; }
+    }
   }
   for (const rail of rails) {
     if (rail.status === "down" && rail.reason !== null) {
@@ -574,6 +581,7 @@ export function inspectServeDoctor(
 
   return {
     supervisor,
+    supervisor_exit: supervisorExit,
     intent,
     rails,
     model,

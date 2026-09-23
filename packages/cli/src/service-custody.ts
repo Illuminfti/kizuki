@@ -1,8 +1,8 @@
-import { SERVICE_BROKER_REAP_SECONDS, SERVICE_READY_SECONDS, ServiceCustodyError, validateServiceCustodyLaunch } from "@kizuki/core/internal";
+import { SERVICE_BROKER_REAP_SECONDS, SERVICE_READY_SECONDS, SERVICE_REFUSAL_EXIT, ServiceCustodyError, validateServiceCustodyLaunch } from "@kizuki/core/internal";
 import type { ServiceCustodyFailure } from "@kizuki/core/internal";
 import { serveExecHint } from "@kizuki/core";
-import type { SupervisorStatus } from "@kizuki/core";
-import { INVOCATION, serveArgs } from "./runtime";
+import type { SupervisorLastExit, SupervisorStatus } from "@kizuki/core";
+import { INVOCATION, serveArgs, shellQuote } from "./runtime";
 
 /** ExecStartPost must exit after readiness while its broker remains in the
  * same unit cgroup. Only the exact subprocess created here is ever signalled. */
@@ -55,6 +55,15 @@ export async function launchServiceCustodyBroker(
  * startup refusal and never shares its copy. */
 export type CustodyFailureReason = ServiceCustodyFailure | "custody_lost";
 
+/** Refusals that repeat identically on every start. Only these exit with
+ * SERVICE_REFUSAL_EXIT, which the unit never restarts. An unproven or lost
+ * custody may be transient (a slow broker under the CPU quota), so it exits 1
+ * and the unit's start limit bounds a real loop. */
+const DETERMINISTIC_REFUSALS: ReadonlySet<string> = new Set(["unsupported_platform", "not_supervised", "root_user", "vault_mismatch", "migration_required"]);
+export function serviceStartupExit(reason: CustodyFailureReason | "migration_required"): number {
+  return DETERMINISTIC_REFUSALS.has(reason) ? SERVICE_REFUSAL_EXIT : 1;
+}
+
 function inspectUnitLines(unit: string | null): string[] {
   return unit === null ? [] : [`see: journalctl --user -u ${unit} -n 50`];
 }
@@ -93,6 +102,13 @@ export function custodyUnavailableMessage(
       ...inspectUnitLines(unit),
     ].join("\n");
   }
+  if (reason === "vault_mismatch") {
+    return [
+      `${head} the installed unit names a vault id or path that does not match ${vaultPath} (its .kizuki/vault-id changed, or the vault was moved, replaced or restored).`,
+      "The unit will not start again until it is rebound; nothing was written.",
+      `reinstall it for this vault: ${INVOCATION} serve --install --vault ${shellQuote(vaultPath)}`,
+    ].join("\n");
+  }
   if (reason === "custody_lost") {
     return [
       `${head} the service lost its proof of custody of ${vaultPath} while running and stopped rather than keep writing with authority it can no longer prove.`,
@@ -105,6 +121,8 @@ export function custodyUnavailableMessage(
     "possible causes: the vault or its .kizuki directory is writable by anyone but you; a directory above the vault changed while the service started, which a shared directory such as /tmp does; or something other than the installed unit tried to start the service.",
     ...inspectUnitLines(unit),
     `then confirm the vault: ${INVOCATION} doctor --vault ${vaultPath}`,
+    // A transient refusal is retried within the unit's start limit; name the restart for when it is not.
+    ...(unit === null ? [] : [`systemd retries this start within its start limit; if the unit stays failed, restart it: systemctl --user reset-failed ${unit} && systemctl --user start ${unit}`]),
   ].join("\n");
 }
 
@@ -173,12 +191,27 @@ export function serviceNotRunningLines(status: SupervisorStatus, vaultPath: stri
   ];
 }
 
+/** The command that follows from how an installed systemd unit last ended,
+ * so doctor never answers a failed unit with only a pointer to its log. */
+function restartStep(status: SupervisorStatus, exit: SupervisorLastExit | null, vaultPath: string | null): string | null {
+  if (status.kind !== "systemd" || status.unit === null || exit === null || status.state === "active") return null;
+  const unit = status.unit, restart = `systemctl --user reset-failed ${unit} && systemctl --user start ${unit}`;
+  if (exit.exit_status === SERVICE_REFUSAL_EXIT) {
+    return `last exit ${SERVICE_REFUSAL_EXIT} is a startup refusal systemd does not restart; fix the refusal journalctl --user -u ${unit} -n 50 names, then reinstall: ${INVOCATION} serve --install --vault ${vaultPath === null ? "<vault>" : shellQuote(vaultPath)}`;
+  }
+  if (exit.result === "start-limit-hit") return `systemd stopped restarting it after repeated failed starts; restart it: ${restart}`;
+  if (exit.result !== "success") {
+    return `last run ended with ${exit.result}${exit.exit_status === null ? "" : ` (exit status ${exit.exit_status})`}; restart it: ${restart}`;
+  }
+  return status.enabled ? `start it: systemctl --user start ${unit}` : null;
+}
+
 /** Doctor's supervisor failure, re-rendered from the status it was derived
  * from. Unrelated failures are returned untouched. */
-export function supervisorFailureLine(failure: string, status: SupervisorStatus): string {
+export function supervisorFailureLine(failure: string, status: SupervisorStatus, exit: SupervisorLastExit | null = null, vaultPath: string | null = null): string {
   if (!/^supervisor (unknown|active|disabled|masked|absent|none)( but not enabled)?$/.test(failure)) return failure;
-  const inspect = inspectCommand(status), observed = observedSupervisorState(status);
+  const inspect = inspectCommand(status), observed = observedSupervisorState(status), step = restartStep(status, exit, vaultPath);
   return `supervisor ${status.unit ?? status.kind} state=${observed}`
     + ` enabled=${status.enabled ? "yes" : "no"}${status.detail === observed ? "" : ` (${status.detail})`}`
-    + `${inspect === null ? "" : `; see: ${inspect}`}`;
+    + (step !== null ? `; ${step}` : inspect === null ? "" : `; see: ${inspect}`);
 }

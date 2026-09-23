@@ -2,12 +2,15 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SupervisorStatus } from "@kizuki/core";
+import { SERVICE_REFUSAL_EXIT } from "@kizuki/core/internal";
 import {
   custodyUnavailableMessage,
   observeInstalledService,
   serviceNotRunningLines,
+  serviceStartupExit,
   supervisorFailureLine,
 } from "../src/service-custody";
+import { INVOCATION } from "../src/runtime";
 import { createHelpers } from "./helpers";
 import { fakeSystemd } from "./serve/supervisor-fixture";
 
@@ -100,6 +103,14 @@ describe("custody refusal copy", () => {
     expect(new Set([outside, root, lost]).size).toBe(3);
   });
 
+  test("a vault binding the unit no longer matches names the reinstall, not the log", () => {
+    const message = custodyUnavailableMessage("/home/stranger/kizuki vault", unit, "vault_mismatch");
+    expect(message).toContain("service_custody_unavailable");
+    expect(message).toContain(`${INVOCATION} serve --install --vault '/home/stranger/kizuki vault'`);
+    expect(message).not.toContain("possible causes");
+    expect(message).not.toContain("doctor");
+  });
+
   test("a refusal with no unit to name omits the inspection line rather than invent one", () => {
     const message = custodyUnavailableMessage("/home/stranger/kizuki", null, "custody_lost");
     expect(message).not.toContain("journalctl");
@@ -115,7 +126,36 @@ describe("custody refusal copy", () => {
   });
 });
 
+describe("installed service startup exit status", () => {
+  test("only refusals that repeat on every start exit 78; transient custody failures exit 1", () => {
+    for (const reason of ["unsupported_platform", "not_supervised", "root_user", "vault_mismatch", "migration_required"] as const) {
+      expect({ reason, code: serviceStartupExit(reason) }).toEqual({ reason, code: SERVICE_REFUSAL_EXIT });
+    }
+    for (const reason of ["custody_unproven", "custody_lost"] as const) {
+      expect({ reason, code: serviceStartupExit(reason) }).toEqual({ reason, code: 1 });
+    }
+  });
+});
+
 describe("supervisor failure rendering", () => {
+  const vault = "/home/stranger/o'neil vault", quoted = `'/home/stranger/o'\\''neil vault'`;
+  test("a failed unit names the command that follows from its own exit, never only the log", () => {
+    const failed = status({ state: "disabled", detail: "failed" });
+    const refused = supervisorFailureLine("supervisor disabled", failed, { result: "exit-code", exit_status: 78 }, vault);
+    expect(refused).toContain("state=failed");
+    expect(refused).toContain(`reinstall: ${INVOCATION} serve --install --vault ${quoted}`);
+    const limited = supervisorFailureLine("supervisor disabled", failed, { result: "start-limit-hit", exit_status: 1 }, vault);
+    expect(limited).toContain("stopped restarting it after repeated failed starts");
+    expect(limited).toContain("restart it: systemctl --user reset-failed kizuki@synthetic.service && systemctl --user start kizuki@synthetic.service");
+    expect(limited).not.toContain("see: journalctl");
+    const crashed = supervisorFailureLine("supervisor disabled", failed, { result: "oom-kill", exit_status: 137 }, vault);
+    expect(crashed).toContain("last run ended with oom-kill (exit status 137)");
+    expect(crashed).toContain("restart it: systemctl --user reset-failed kizuki@synthetic.service && systemctl --user start kizuki@synthetic.service");
+    const stopped = supervisorFailureLine("supervisor disabled", status({ state: "disabled", detail: "inactive (enabled)" }), { result: "success", exit_status: 0 }, vault);
+    expect(stopped).toContain("start it: systemctl --user start kizuki@synthetic.service");
+    expect(new Set([refused, limited, crashed, stopped]).size).toBe(4);
+  });
+
   test("replaces the coarse state with the observed one and leaves other failures alone", () => {
     expect(supervisorFailureLine("supervisor unknown", status({ state: "unknown", detail: "activating" })))
       .toBe("supervisor kizuki@synthetic.service state=activating enabled=yes"
@@ -158,5 +198,22 @@ describe("doctor reports the observed supervisor state", () => {
       expect(doctor.stdout).toContain(
         `serve-failure supervisor kizuki@${id}.service state=${activity} enabled=yes`);
     }
+  }, 30_000);
+
+  test("doctor reads the unit's exit status and prints the command that restarts it", () => {
+    const root = tempDir();
+    const env = { ...fakeSystemd(root, isolatedEnv()), KIZUKI_SUPERVISOR: "systemd" };
+    const vault = join(root, "vault");
+    expect(runCli(env, "init", vault, "--no-default", "--no-service").exitCode).toBe(0);
+    expect(runCli({ ...env, KIZUKI_VAULT: vault }, "serve", "--install").exitCode).toBe(0);
+    const unit = `kizuki@${readFileSync(join(vault, ".kizuki", "vault-id"), "utf8").trim()}.service`;
+    const failed = { ...env, KIZUKI_VAULT: vault, TEST_SUPERVISOR_ACTIVITY: "failed", TEST_SUPERVISOR_RESULT: "exit-code", TEST_SUPERVISOR_EXEC_STATUS: "78" };
+    const refused = runCli(failed, "doctor");
+    expect(refused.stdout).toContain(`reinstall: ${INVOCATION} serve --install --vault ${vault}`);
+    expect(JSON.parse(runCli(failed, "doctor", "--json").stdout).data.serve.supervisor_exit).toEqual({ result: "exit-code", exit_status: 78 });
+    const limited = runCli({ ...failed, TEST_SUPERVISOR_RESULT: "start-limit-hit", TEST_SUPERVISOR_EXEC_STATUS: "1" }, "doctor");
+    expect(limited.stdout).toContain(`restart it: systemctl --user reset-failed ${unit} && systemctl --user start ${unit}`);
+    // A running unit is not asked about its last exit.
+    expect(JSON.parse(runCli({ ...env, KIZUKI_VAULT: vault }, "doctor", "--json").stdout).data.serve.supervisor_exit).toBeNull();
   }, 30_000);
 });

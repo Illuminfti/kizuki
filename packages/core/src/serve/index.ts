@@ -42,6 +42,7 @@ export type {
   ServeIntent,
   StoreDoctor,
   SupervisorKind,
+  SupervisorLastExit,
   SupervisorState,
   SupervisorStatus,
 } from "./types";

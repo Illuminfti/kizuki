@@ -534,7 +534,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     io.out(`rail ${rail.rail} status=${rail.status}${extra}`);
   }
   for (const failure of report.serve.failures) {
-    io.out(`serve-failure ${supervisorFailureLine(failure, report.serve.supervisor)}`);
+    io.out(`serve-failure ${supervisorFailureLine(failure, report.serve.supervisor, report.serve.supervisor_exit, report.vault)}`);
   }
   io.out(`status=${report.ok ? "ok" : "failed"}`);
   const firstLive = report.live_claims[0];

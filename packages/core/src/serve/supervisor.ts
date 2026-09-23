@@ -20,6 +20,7 @@ import {
 import { ensureVaultId } from "./vault-id";
 import type {
   SupervisorKind,
+  SupervisorLastExit,
   SupervisorState,
   SupervisorStatus,
 } from "./types";
@@ -39,6 +40,8 @@ export interface SupervisorHost {
   resetFailure?(unitName: string): { ok: boolean; detail: string };
   /** Restore unit enablement without starting or restarting it. */
   enableWithoutStart?(unitName: string): { ok: boolean; detail: string };
+  /** How the unit's last run ended, when the supervisor records it. */
+  lastExit?(vaultId: string): SupervisorLastExit | null;
 }
 
 export function detectSupervisorKind(
@@ -311,6 +314,11 @@ export function realSupervisorHost(
           if (stopped.timedOut || afterStop.state === "unknown") return { ok: false, detail: "service stop timed out" };
           return { ok: false, detail: "service replacement stop failed" };
         }
+        // A failed unit keeps its start-limit count through a stop; without a
+        // reset the start below can refuse with "start request repeated too quickly".
+        if (afterStop.detail === "failed" && !runSystemctl("reset-failed", unitName).ok) {
+          return { ok: false, detail: "service failure reset failed" };
+        }
         const started = runSystemctl("start", unitName);
         return concludeSystemd(unitName, started, "activated current definition",
           "service start timed out", "service start failed", confirmedActive);
@@ -352,6 +360,17 @@ export function realSupervisorHost(
           enableWithoutStart(unitName: string) {
             const result = runSystemctl("enable", unitName);
             return { ok: result.ok, detail: result.ok ? "enabled without start" : "service enable failed" };
+          },
+          lastExit(vaultId: string): SupervisorLastExit | null {
+            const result = runSystemctl("show", systemdUnitName(vaultId), "--property=Result", "--property=ExecMainStatus");
+            if (!result.ok || result.timedOut) return null;
+            const fields = new Map(result.stdout.split("\n").map(line => {
+              const at = line.indexOf("=");
+              return [line.slice(0, at), line.slice(at + 1)] as const;
+            }));
+            const outcome = fields.get("Result"), status = fields.get("ExecMainStatus");
+            if (outcome === undefined || !/^[a-z][a-z-]{0,63}$/.test(outcome) || status === undefined || !/^(0|[1-9][0-9]{0,2})$/.test(status)) return null;
+            return { result: outcome, exit_status: Number(status) };
           },
         }
       : {}),

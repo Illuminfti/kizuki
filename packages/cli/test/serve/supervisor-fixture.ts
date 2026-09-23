@@ -40,6 +40,12 @@ case "$2" in
     printf 'disabled\\n' > "$TEST_SUPERVISOR_FILE"
     if [ "$TEST_SUPERVISOR_SLEEP" = disable ]; then sleep 6; fi
     exit 0 ;;
+  reset-failed)
+    if [ "$state" = failed ]; then printf 'enabled\\n' > "$TEST_SUPERVISOR_FILE"; fi
+    exit 0 ;;
+  show)
+    printf 'Result=%s\\nExecMainStatus=%s\\n' "\${TEST_SUPERVISOR_RESULT:-success}" "\${TEST_SUPERVISOR_EXEC_STATUS:-0}"
+    exit 0 ;;
   is-enabled)
     case "$state" in
       active|enabled|failed) printf 'enabled\\n'; exit 0 ;;
