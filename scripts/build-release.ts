@@ -40,6 +40,19 @@ export const COMPILED_CREDENTIAL_GROUPS = [
   },
 ] as const;
 
+/**
+ * gramjs imports `@cryptography/aes` (GPL-3.0-or-later). The MIT package
+ * compiles the byte-compatible node:crypto replacement instead.
+ */
+export const MIT_AES: import("bun").BunPlugin = {
+  name: "kizuki-mit-aes",
+  setup(build) {
+    build.onResolve({ filter: /^@cryptography\/aes$/ }, () => ({
+      path: resolve(import.meta.dir, "../packages/connector-telegram/src/aes-compat.ts"),
+    }));
+  },
+};
+
 /** One provider's app credentials: every name is required, or none of them. */
 export interface CredentialGroup {
   readonly source: string;
@@ -250,6 +263,7 @@ if (import.meta.main) {
         },
         define: { KIZUKI_COMPILED: "true", ...credentials.define },
         metafile: true,
+        plugins: [MIT_AES],
       });
       if (!result.success || !result.metafile) {
         throw new Error(`could not compile ${binary.name}: ${result.logs.join("\n")}`);
