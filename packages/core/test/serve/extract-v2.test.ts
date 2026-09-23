@@ -222,3 +222,23 @@ test("purging the sole v2 input removes its unfiled decision without remine", as
     f.close();
   }
 });
+
+test("v2 extraction sends at most four records per call and keeps the rest beyond the cursor", async () => {
+  const f = fixture();
+  try {
+    for (let index = 0; index < 5; index += 1) {
+      const stored = accept(f.db, { ...validEvent(), connector_id: "kizuki.fixture", source_record_id: `world-extra-${index}`, text: `Synthetic record ${index}.`, subjects: [] });
+      if (stored.status !== "stored") throw new Error("fixture event was not stored");
+    }
+    const seen: number[] = [];
+    const producer: ProducerV2Port = { ...f.producer, produce: async input => {
+      seen.push(input.events.length);
+      return { status: "ok", response: { schema: EXTRACT_RESPONSE_V2_SCHEMA, mentions: [], claims: [] }, usage: { calls: 1, input_tokens: 1, output_tokens: 1 } };
+    } };
+    const mined = await mineLiveDrafts(f.db, producer);
+    expect(seen).toEqual([4]);
+    expect(mined.input_ids).toHaveLength(4);
+  } finally {
+    f.close();
+  }
+});

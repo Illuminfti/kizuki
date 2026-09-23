@@ -112,7 +112,7 @@ function persistSync(
   vault: string,
   runId: string,
   at: string,
-  overrides: Partial<ReturnType<typeof emptyRunTotals>> & { status?: "ok" | "degraded" } = {},
+  overrides: Partial<ReturnType<typeof emptyRunTotals>> & { status?: "ok" | "degraded"; claims_written_extracted?: number } = {},
 ): void {
   persistRunReceipt(db, vault, {
     ...emptyRunTotals(),
