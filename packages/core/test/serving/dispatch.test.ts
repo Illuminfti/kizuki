@@ -61,7 +61,8 @@ describe("dispatchServeTool", () => {
     for (const tool of TOOLS) {
       const envelope = await dispatchServeTool(ctx, tool, args[tool]);
       expect(envelope.tool).toBe(tool);
-      expect(envelope.schema).toBe("kizuki.envelope/v1");
+      // world_view alone speaks the RFC 0004 envelope; the other tools keep v1.
+      expect(envelope.schema).toBe(tool === "world_view" ? "kizuki.envelope/v2" : "kizuki.envelope/v1");
     }
   });
 
