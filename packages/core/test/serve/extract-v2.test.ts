@@ -223,7 +223,7 @@ test("purging the sole v2 input removes its unfiled decision without remine", as
   }
 });
 
-test("v2 extraction sends at most four records per call and keeps the rest beyond the cursor", async () => {
+test("v2 extraction sends at most two records per call and keeps the rest beyond the cursor", async () => {
   const f = fixture();
   try {
     for (let index = 0; index < 5; index += 1) {
@@ -236,8 +236,8 @@ test("v2 extraction sends at most four records per call and keeps the rest beyon
       return { status: "ok", response: { schema: EXTRACT_RESPONSE_V2_SCHEMA, mentions: [], claims: [] }, usage: { calls: 1, input_tokens: 1, output_tokens: 1 } };
     } };
     const mined = await mineLiveDrafts(f.db, producer);
-    expect(seen).toEqual([4]);
-    expect(mined.input_ids).toHaveLength(4);
+    expect(seen).toEqual([2]);
+    expect(mined.input_ids).toHaveLength(2);
   } finally {
     f.close();
   }

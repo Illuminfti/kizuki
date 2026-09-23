@@ -102,9 +102,10 @@ label, 400 UTF-16 code units per literal, 1,200 per body, and 256 KiB of respons
 JSON before parsing. Input catalogs and aggregate refs are separately bounded.
 Offsets select exact supplied text without Unicode or newline normalization.
 Non-JSON output, extra or missing keys, duplicate IDs, exceeded caps and
-malformed mentions (including surrogate-pair splits and absent events in a
-mention anchor) reject the response before any durable effect. One Markdown
-code fence around the JSON object is formatting.
+structurally malformed mentions reject the response before any durable effect.
+One Markdown code fence around the JSON object is formatting. A mention whose
+anchor does not select quoted text (a surrogate-pair split, an absent event or
+an out-of-range offset) is discarded, and every claim naming it is dropped.
 
 Amended 2026-09-23 after hands-on runs against real providers: a well-formed
 claim that fails its own rules (an unknown or ungrounded reference, an anchor

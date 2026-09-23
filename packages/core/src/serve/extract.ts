@@ -244,11 +244,11 @@ function interval(db: Database, previous: string | null, boundary: LedgerCursor)
   return events.slice(0, index + 1);
 }
 /**
- * A typed response anchors every claim and runs to about a thousand output
- * tokens per ordinary record, so eight records can exhaust the producer's
- * output ceiling and be rejected whole. Typed extraction takes at most four.
+ * A typed response anchors every claim and runs to one to three thousand
+ * output tokens per ordinary record, more when a model indents its JSON, so a
+ * larger batch can exhaust the producer's output ceiling and be rejected whole.
  */
-const WORLD_RECORDS_PER_CALL = 4;
+const WORLD_RECORDS_PER_CALL = 2;
 function sourceInput(db: Database, event: CaptureEvent, producer: ExtractionProducerPort | undefined): DeferredInput {
   const binding = db.query<{ source_key: string }, [string]>(
     "SELECT source_key FROM source_event_bindings WHERE event_id=?",

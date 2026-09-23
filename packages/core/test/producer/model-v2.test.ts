@@ -90,10 +90,11 @@ test("typed producer binds through the public registry and releases its own capa
   expect((await llm.health()).status).toBe("ready");
 });
 
-test("v2 rejects injected fence leaks and malformed mention anchors, and never admits an invalid reference", async () => {
-  for (const value of [JSON.stringify({ ...response, mentions: [{ ...response.mentions[0], anchor: { event_id: "00000000000000000000000001", start_utf16: 0, end_utf16: 99 } }], claims: [] }), `{"schema":"${EXTRACT_RESPONSE_V2_SCHEMA}","mentions":[],"claims":[],"x":"<<<KZ-QUOTE"}`]) {
-    const { port } = producer(() => value); expect((await port.produce(input)).status).toBe("rejected");
-  }
+test("v2 rejects injected fence leaks, discards unanchored mentions, and never admits an invalid reference", async () => {
+  const { port } = producer(() => `{"schema":"${EXTRACT_RESPONSE_V2_SCHEMA}","mentions":[],"claims":[],"x":"<<<KZ-QUOTE"}`);
+  expect((await port.produce(input)).status).toBe("rejected");
+  const unanchored = JSON.stringify({ ...response, mentions: [{ ...response.mentions[0], anchor: { event_id: "00000000000000000000000001", start_utf16: 0, end_utf16: 99 } }] });
+  expect(await producer(() => unanchored).port.produce(input)).toMatchObject({ status: "ok", response: { mentions: [], claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
   const forged = JSON.stringify({ ...response, claims: [{ ...response.claims[0], subject: { kind: "supplied", id: "durable-id" } }] });
   const result = await producer(() => forged).port.produce(input);
   expect(result).toMatchObject({ status: "ok", response: { claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });

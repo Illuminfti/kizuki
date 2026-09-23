@@ -410,11 +410,12 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
   }[] = [];
   let anchorsUsed = 0;
   let referencesUsed = 0;
+  const mentionIds = new Set<string>();
   for (const [index, raw] of parsed.mentions.entries()) {
     if (!isPlainObject(raw) ||
       !exactKeys(raw, MENTION_KEYS) ||
       !isToken(raw.id) ||
-      mentions.has(raw.id) ||
+      mentionIds.has(raw.id) ||
       typeof raw.label !== "string" ||
       raw.label.length === 0 ||
       utf8ByteLength(raw.label) > MAX_V2_LABEL_BYTES ||
@@ -422,10 +423,11 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
       raw.candidate_refs.length > 4) {
       return fail(`mentions[${index}] is invalid`);
     }
+    mentionIds.add(raw.id);
     const anchor = readAnchor(raw.anchor, events, `mentions[${index}].anchor`);
-    if (typeof anchor === "string") {
-      return fail(anchor);
-    }
+    // A mention whose anchor does not select quoted text is discarded; any
+    // claim or nomination naming it then fails as an unknown reference.
+    if (typeof anchor === "string") continue;
     mentions.set(raw.id, {
       id: raw.id, label: raw.label, anchor, candidate_refs: []
     });

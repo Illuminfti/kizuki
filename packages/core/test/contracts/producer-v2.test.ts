@@ -96,12 +96,12 @@ describe("producer v2 response parser", () => {
     expect(parse(unknown)).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
   });
 
-  test("rejects a malformed mention anchor and drops a claim citing an absent event", () => {
+  test("discards a mention whose anchor splits a surrogate and drops the claims that name it or cite an absent event", () => {
     const surrogateContext = { ...input, events: [{ event_id: "00000000000000000000000001", text: "A😀B" }] };
     const surrogate = structuredClone(response) as any;
     surrogate.mentions[0]!.anchor = { event_id: "00000000000000000000000001", start_utf16: 1, end_utf16: 2 };
     surrogate.claims[0]!.anchors = [{ event_id: "00000000000000000000000001", start_utf16: 0, end_utf16: 1 }];
-    expect(parse(surrogate, surrogateContext)).toMatchObject({ ok: false, detail: expect.stringContaining("anchor") });
+    expect(parse(surrogate, surrogateContext)).toEqual({ ok: true, response: { ...response, mentions: [], claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
 
     const absent = structuredClone(response) as any;
     absent.claims[0]!.anchors = [{ event_id: "00000000000000000000000002", start_utf16: 0, end_utf16: 4 }];

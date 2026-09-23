@@ -16,8 +16,8 @@ truncated`; choose a non-reasoning model or disable reasoning at the provider.
 The serving host selects the largest authorized event prefix that fits one
 request. It checks at most eight candidate prefixes. Each request stays within
 eight events and 24,000 escaped characters of quoted record text. Typed world
-extraction takes at most four records per request, because its anchored
-response runs to about a thousand output tokens per ordinary record. Input
+extraction takes at most two records per request, because its anchored
+response runs to one to three thousand output tokens per ordinary record. Input
 estimation includes the complete system and user messages: event headers,
 per-event subject roles, subject keys, authorized known claims, predicates,
 fences and record text. Context is selected for each prefix before its
