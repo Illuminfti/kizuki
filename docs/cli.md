@@ -369,6 +369,10 @@ coverage. Unknown, foreign, erased or inaccessible tokens return `not_found`.
 References are bound to the current principal and grant; changing the grant
 invalidates that principal's old tokens.
 
+An empty discovery prints `No admitted matches in your current scope.` and a
+next step on stderr: Concepts and Situations appear only after the model loop
+admits typed claims, so a vault without a model has none.
+
 `--json` prints `kizuki.cli.world/v1` containing the world tool's
 `kizuki.envelope/v2`. It omits global policy epochs and denied counts. Fresh cards
 have a `not_issued` view marker: revision resume is unavailable. MCP/HTTP historical

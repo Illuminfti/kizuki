@@ -46,6 +46,11 @@ search results concerning the known subject `person:ada`:
 ```
 
 All eight fields are required. Unknown fields and owner presets are refused.
+`relay_owner_corrections` also decides whether the agent's `world_view` reads
+include the owner's own corrections. Without it, a corrected world claim is
+absent from that agent's cards: the superseded value is withdrawn and the
+owner's replacement is not shown. Enable it for an assistant that should read
+the corrected world state.
 `null` for types or subjects means unrestricted along that dimension; `[]`
 allows none. The grant still applies the tool list, sensitivity ceiling, source
 consent and other Core policy. `since` and `until` filter evidence time; they do
