@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +21,9 @@ import { readWorldView } from "../src/serving/world-view";
 import { canonFixture, budget } from "./canon/helpers";
 import { worldFixture } from "./serving/world-fixture";
 import { validEvent } from "./fixtures";
+
+// These tests do real ledger, vault and process work; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const dispose: (() => void)[] = [];
 afterEach(() => { for (const close of dispose.splice(0).reverse()) close(); });

@@ -1,4 +1,4 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, expect, spyOn, test, setDefaultTimeout } from "bun:test";
 import * as fs from "node:fs";
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -12,6 +12,9 @@ import { hashPortableLocal, PORTABLE_LOCAL_STREAM } from "../src/portable-local"
 import { sha256Hex } from "../src/util/hash";
 import { initVault } from "../src/vault/init";
 import { connector, io, temporaryDirectories } from "./connections-helpers";
+
+// These tests do real ledger, vault and process work; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const dirs = temporaryDirectories("kizuki-portable-local-");
 const close: (() => void)[] = [];

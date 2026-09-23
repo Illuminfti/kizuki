@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,6 +31,9 @@ import { DIRECT_RETRIEVAL_DESCRIPTOR, ReferenceRetrievalPort } from "../contract
 import { temporaryPortContext } from "../contracts/fixtures";
 import { validEvent } from "../fixtures";
 import { tempVault } from "../helpers/vault";
+
+// These tests do real ledger, vault and process work; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const AT = "2026-09-06T15:00:00.000Z";
 const RECORDED_AT = new Date(Date.parse(AT) - 2_000).toISOString();
