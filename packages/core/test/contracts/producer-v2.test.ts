@@ -48,7 +48,7 @@ describe("producer v2 response parser", () => {
     expect(parse(response)).toEqual({ ok: true, response, dropped: [] });
   });
 
-  test("rejects a reversed interval ending at a leap second", () => {
+  test("drops a claim whose interval ends before it starts at a leap second", () => {
     expect(parse({
       ...response,
       claims: [{
@@ -57,7 +57,7 @@ describe("producer v2 response parser", () => {
         valid_from: "2017-01-01T00:00:00Z",
         valid_to: "2016-12-31T23:59:60Z",
       }],
-    })).toMatchObject({ ok: false });
+    })).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "schema_invalid", id: "c0" }] });
   });
 
   test("accepts an increasing interval within one millisecond", () => {
@@ -72,7 +72,7 @@ describe("producer v2 response parser", () => {
     })).toMatchObject({ ok: true });
   });
 
-  test("rejects equal interval endpoints with different UTC offsets", () => {
+  test("drops a claim with equal interval endpoints written in different UTC offsets", () => {
     expect(parse({
       ...response,
       claims: [{
@@ -81,20 +81,22 @@ describe("producer v2 response parser", () => {
         valid_from: "2026-01-01T00:00:00Z",
         valid_to: "2026-01-01T01:00:00+01:00",
       }],
-    })).toMatchObject({ ok: false });
+    })).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "schema_invalid", id: "c0" }] });
   });
 
-  test("rejects an arbitrary durable reference and an unknown local reference", () => {
+  test("never resolves an arbitrary durable reference or an unknown local reference", () => {
     const arbitrary = structuredClone(response) as any;
-    arbitrary.mentions[0]!.candidate_refs = [{ kind: "supplied", id: "durable-secret-id" }];
-    expect(parse(arbitrary)).toMatchObject({ ok: false, detail: expect.stringContaining("candidate_refs") });
+    arbitrary.mentions[0]!.candidate_refs = [{ kind: "supplied", id: "durable-secret-id" }, "m0", { kind: "predicate", id: "s0" }, { kind: "supplied", id: "s0" }];
+    const nominated = parse(arbitrary);
+    expect(nominated).toEqual({ ok: true, response, dropped: [] });
+    expect(JSON.stringify(nominated)).not.toContain("durable-secret-id");
 
     const unknown = structuredClone(response) as any;
     unknown.claims[0]!.subject = { kind: "mention", id: "m404" };
-    expect(parse(unknown)).toMatchObject({ ok: false, detail: expect.stringContaining("subject") });
+    expect(parse(unknown)).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "schema_invalid", id: "c0" }] });
   });
 
-  test("rejects malformed anchors, including surrogate splitting and absent events", () => {
+  test("rejects a malformed mention anchor and drops a claim citing an absent event", () => {
     const surrogateContext = { ...input, events: [{ event_id: "00000000000000000000000001", text: "A😀B" }] };
     const surrogate = structuredClone(response) as any;
     surrogate.mentions[0]!.anchor = { event_id: "00000000000000000000000001", start_utf16: 1, end_utf16: 2 };
@@ -103,7 +105,7 @@ describe("producer v2 response parser", () => {
 
     const absent = structuredClone(response) as any;
     absent.claims[0]!.anchors = [{ event_id: "00000000000000000000000002", start_utf16: 0, end_utf16: 4 }];
-    expect(parse(absent)).toMatchObject({ ok: false, detail: expect.stringContaining("anchors") });
+    expect(parse(absent)).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "schema_invalid", id: "c0" }] });
   });
 
   test("rejects extra keys and duplicate local ids", () => {
@@ -133,13 +135,35 @@ describe("producer v2 response parser", () => {
     const illegal = structuredClone(response) as any;
     illegal.claims[0]!.predicate = "classification.instance_of";
     illegal.claims[0]!.object = { kind: "literal", value: "person" };
-    expect(parse(illegal)).toMatchObject({ ok: false, detail: expect.stringContaining("object") });
+    expect(parse(illegal)).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "schema_invalid", id: "c0" }] });
   });
 
   test("requires attribution evidence whenever a perspective endpoint is named", () => {
     const attributed = structuredClone(response) as any;
     attributed.claims[0]!.perspective.speaker = { kind: "mention", id: "m0" };
-    expect(parse(attributed)).toMatchObject({ ok: false, detail: expect.stringContaining("perspective.anchors") });
+    expect(parse(attributed)).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "schema_invalid", id: "c0" }] });
+  });
+
+  test("cites each endpoint mention's own anchor and still requires a cited supplied handle", () => {
+    const mixed = structuredClone(response) as any;
+    const northwind = { event_id: "00000000000000000000000001", start_utf16: 12, end_utf16: 21 };
+    mixed.mentions.push({ id: "m1", label: "Northwind", anchor: northwind, candidate_refs: [] });
+    mixed.claims.push({ ...mixed.claims[0]!, id: "c1", subject: { kind: "mention", id: "m1" } });
+    mixed.claims.push({ ...mixed.claims[0]!, id: "c2", subject: { kind: "supplied", id: "s0" }, anchors: [northwind] });
+    const parsed = parse(mixed);
+    expect(parsed).toMatchObject({ ok: true, dropped: [{ reason: "schema_invalid", id: "c2" }] });
+    if (!parsed.ok) throw new Error("unreachable");
+    expect(parsed.response.claims.map(claim => [claim.id, claim.anchors])).toEqual([
+      ["c0", response.claims[0]!.anchors],
+      ["c1", [...response.claims[0]!.anchors, northwind]],
+    ]);
+    expect(parse(parsed.response)).toEqual({ ...parsed, dropped: [] });
+  });
+
+  test("reads one Markdown code fence as formatting and still rejects surrounding prose", () => {
+    const text = JSON.stringify(response);
+    expect(parseExtractResponseV2("```json\n" + text + "\n```", input)).toEqual({ ok: true, response, dropped: [] });
+    expect(parseExtractResponseV2("Here it is:\n```json\n" + text + "\n```", input)).toEqual({ ok: false, detail: "response is not JSON" });
   });
 
   test("rejects trusted input that exceeds the bounded event context", () => {
