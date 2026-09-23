@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, spyOn, test } from "bun:test";
 import * as vaultIdentity from "../src/serve/vault-id";
 import {
   chmodSync,
@@ -43,6 +43,17 @@ function temporary(prefix: string): string {
   directories.push(path);
   return path;
 }
+
+// Restore spools live under the process temp directory. Give this file its own
+// so a concurrent run on the same host cannot add or remove spools mid-check.
+const sharedTmpdir = process.env["TMPDIR"];
+const privateTmpdir = mkdtempSync(join(tmpdir(), "kizuki-export-test-"));
+process.env["TMPDIR"] = privateTmpdir;
+afterAll(() => {
+  if (sharedTmpdir === undefined) delete process.env["TMPDIR"];
+  else process.env["TMPDIR"] = sharedTmpdir;
+  rmSync(privateTmpdir, { recursive: true, force: true });
+});
 
 function jsonlRestoreSpools(): string[] {
   return readdirSync(tmpdir())
