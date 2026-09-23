@@ -1,4 +1,4 @@
-import { closeSync, lstatSync, type BigIntStats } from "node:fs";
+import { closeSync, fsyncSync, lstatSync, readdirSync, unlinkSync, type BigIntStats } from "node:fs";
 import { custodyNative } from "../util/custody-native";
 
 export function custodyEndpointStat(control: number, name: string): BigIntStats {
@@ -45,4 +45,26 @@ export async function connectServiceCustody(
     catch (error) { closeSync(socket); throw error; }
   }
   throw new Error("service_custody_unavailable");
+}
+
+const ENDPOINT = /^custody-[0-9a-f]{32}\.sock$/;
+/** A killed invocation never runs its broker's cleanup, and every invocation
+ * names a new endpoint. One unit serves one vault, so before listening the
+ * broker unlinks each other owner-only socket nothing listens on any more.
+ * Live, unexpected or non-socket entries are left alone and reported. */
+export function sweepStaleCustodyEndpoints(control: number, own: string): { removed: string[]; kept: string[] } {
+  const removed: string[] = [], kept: string[] = [];
+  for (const name of readdirSync(`/proc/self/fd/${control}`).sort()) {
+    if (!ENDPOINT.test(name) || name === own) continue;
+    let before: BigIntStats;
+    try { before = custodyEndpointStat(control, name); } catch { kept.push(name); continue; }
+    if (custodyNative().probe(control, name) !== "refused") { kept.push(name); continue; }
+    let after: BigIntStats;
+    try { after = custodyEndpointStat(control, name); } catch { kept.push(name); continue; }
+    if (after.dev !== before.dev || after.ino !== before.ino || after.ctimeNs !== before.ctimeNs) { kept.push(name); continue; }
+    unlinkSync(`/proc/self/fd/${control}/${name}`);
+    removed.push(name);
+  }
+  if (removed.length > 0) fsyncSync(control);
+  return { removed, kept };
 }
