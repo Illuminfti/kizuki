@@ -181,17 +181,21 @@ operational cutover of existing services.
 
 - Canon-write recovery is bound to the write intent. Each staged file is
   classified against the intent's images: an exact or prefix stage is
-  removed, a foreign stage is moved to `.kizuki/quarantine/canon-stage/`
-  and never deleted, and an unsafe stage is left untouched and holds
-  recovery. Every action is journaled before it happens.
+  removed, a foreign stage of an ordinary write is moved to
+  `.kizuki/quarantine/canon-stage/` rather than deleted (withdrawal, purge
+  and erasure remove it, since they exist to erase), and an unsafe stage is
+  left untouched and holds recovery. Every action is recorded as planned
+  before it happens; records name no page path or content hash.
 - A held recovery no longer stops the daemon. `kizuki serve` logs the hold,
   keeps the other rails running, stops only the write pass, and records the
   last attempt in `.kizuki/canon-recovery-hold.json`. `doctor` and `recover`
   name the typed reason and the next step.
-- A startup refusal that a restart cannot fix (unproven custody, or a ledger
-  that needs `kizuki init <vault> --no-default` to migrate) exits 78, and the
-  user unit no longer restarts on that status. The unit also carries a start
-  limit and `MemorySwapMax=0`.
+- A startup refusal that repeats on every start (unsupported platform, not
+  supervised, root user, vault mismatch, or a ledger that needs
+  `kizuki init` to migrate) exits 78, and the user unit does not restart on
+  that status. A custody check that can be transient exits 1 instead. The
+  unit carries a start limit and `MemorySwapMax=0`, and doctor names the
+  command that follows from the unit's last result.
 - A pending canon write made before ledger migration 32 still completes after
   it: the claim guard accepts the same row when only the new
   `is_world_typed` column differs and holds its default.

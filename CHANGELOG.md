@@ -36,13 +36,16 @@ version ships and its known limits.
 ### Daemon and recovery
 
 - Canon-write recovery classifies each staged file against the write intent.
-  Exact stages are removed, foreign stages are quarantined and never deleted,
-  and unsafe stages hold recovery.
+  Exact stages are removed, foreign stages of an ordinary write are
+  quarantined rather than deleted, and unsafe stages hold recovery.
+  Withdrawal, purge and erasure also remove the stage traces of the receipts
+  they erase.
 - A held recovery no longer stops `kizuki serve`: the other rails keep
   running, and `doctor` and `recover` report the reason and the next step.
-- Startup refusals that a restart cannot fix exit 78, and the user unit does
-  not restart on that status. The unit also gains a start limit and
-  `MemorySwapMax=0`.
+- Startup refusals that repeat on every start exit 78, and the user unit does
+  not restart on that status; a possibly transient custody failure exits 1.
+  The unit gains a start limit and `MemorySwapMax=0`, and doctor names the
+  command that follows from the unit's last result.
 - The broker removes stale custody sockets before it listens, and the native
   helper is compiled once per process instead of on every call.
 
