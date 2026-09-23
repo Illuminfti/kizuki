@@ -56,6 +56,7 @@ export interface WritePassResult {
   readonly revived: number;
   readonly claims_extracted: number;
   readonly claims_written: number;
+  readonly claims_written_extracted: number;
   readonly claims_deduped: number;
   readonly claims_superseded: number;
   readonly canon_writes: number;
@@ -266,6 +267,7 @@ export async function runWritePass(
       revived: 0,
       claims_extracted: 0,
       claims_written: 0,
+      claims_written_extracted: 0,
       claims_deduped: 0,
       claims_superseded: 0,
       canon_writes: 0,
@@ -286,6 +288,7 @@ async function runWritePassOwned(
   const revived = reviveUncontestedSkipped(db);
   let extracted = 0;
   let written = 0;
+  let writtenExtracted = 0;
   let deduped = 0;
   let superseded = 0;
   let canonWrites = 0;
@@ -382,6 +385,7 @@ async function runWritePassOwned(
       revived,
       claims_extracted: extracted,
       claims_written: written,
+      claims_written_extracted: writtenExtracted,
       claims_deduped: deduped,
       claims_superseded: superseded,
       canon_writes: 0,
@@ -399,6 +403,7 @@ async function runWritePassOwned(
     try {
       const receipt=applyCanonWriteOwned(scope,io,typedClaims,decision,{writer:"loop",budget:options.budget});
       canonWrites+=1;written+=receipt.claim_ids.length;
+      writtenExtracted+=typedClaims.filter(claim=>claim.producer==="model"&&receipt.claim_ids.includes(claim.claim_id)).length;
     } catch(error) {
       if(!(error instanceof BudgetExhausted))canonWrites+=newOccupyingWrites(before,occupyingWriteIds(db));
       if(error instanceof BudgetExhausted){stopped=error.stopped;break;}
@@ -422,6 +427,7 @@ async function runWritePassOwned(
         });
         canonWrites += 1;
         written += 1;
+        if (claim.producer === "model") writtenExtracted += 1;
       } catch (error) {
         // File/JSONL can land before the receipt row; count the SQLite slot.
         if (!(error instanceof BudgetExhausted)) {
@@ -445,6 +451,7 @@ async function runWritePassOwned(
     revived,
     claims_extracted: extracted,
     claims_written: written,
+    claims_written_extracted: writtenExtracted,
     claims_deduped: deduped,
     claims_superseded: superseded,
     canon_writes: canonWrites,

@@ -161,6 +161,12 @@ export interface RunReceipt {
   readonly events_self_skipped: number;
   readonly claims_extracted: number;
   readonly claims_written: number;
+  /**
+   * Model-produced claims among `claims_written`. Imported and owner claims
+   * are written by the same pass but are not extraction output, so the
+   * calibration write rate uses this count. Absent on older receipts.
+   */
+  readonly claims_written_extracted?: number;
   readonly claims_deduped: number;
   readonly claims_superseded: number;
   readonly claims_rejected: Readonly<Record<string, number>>;

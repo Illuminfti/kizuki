@@ -181,6 +181,7 @@ async function runSyncRail(
     events_self_skipped: synced.events_self_skipped,
     claims_extracted: written.claims_extracted,
     claims_written: written.claims_written,
+    claims_written_extracted: written.claims_written_extracted,
     claims_deduped: written.claims_deduped,
     claims_superseded: written.claims_superseded,
     claims_rejected: written.claims_rejected,
