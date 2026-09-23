@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { UsageError, extractVault } from "./args";
 import { COMMANDS } from "./commands/index";
-import type { CliIo } from "./commands/index";
+import type { CliIo, Command } from "./commands/index";
 import { printCommandHelp, printRootHelp, usageLines } from "./help";
 import { lookupCommandHelp } from "./option-schema";
 import { errorText } from "./output";
@@ -240,13 +240,24 @@ async function dispatch(argv: string[]): Promise<number> {
   try {
     return await command.run(io, args);
   } catch (error) {
-    if (error instanceof UsageError) {
-      for (const line of usageLines(command, error)) io.err(line);
-      return 2;
-    }
-    io.err(`error: ${errorText(error)}`);
-    return 1;
+    return reportCommandFailure(io, command, error);
   }
+}
+
+const SIGN_IN_CANCELLED = "interactive sign-in cancelled";
+
+/** A deliberate Ctrl-C is not a malformed command, so it gets no usage block. */
+export function reportCommandFailure(io: Pick<CliIo, "err">, command: Command, error: unknown): number {
+  if (error instanceof UsageError && error.message === SIGN_IN_CANCELLED) {
+    io.err(`error: ${SIGN_IN_CANCELLED}`);
+    return 2;
+  }
+  if (error instanceof UsageError) {
+    for (const line of usageLines(command, error)) io.err(line);
+    return 2;
+  }
+  io.err(`error: ${errorText(error)}`);
+  return 1;
 }
 
 if (import.meta.main) {

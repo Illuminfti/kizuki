@@ -3,7 +3,8 @@ import { TelegramConnectorError } from "@kizuki/connector-telegram";
 import { UsageError } from "../src/args";
 import { ConnectionError } from "../src/connections";
 import { telegramFailure, telegramSignInIo } from "../src/commands/connect-telegram";
-import type { CliIo } from "../src/commands";
+import { COMMANDS, type CliIo } from "../src/commands";
+import { reportCommandFailure } from "../src/main";
 
 const CANCELLED = "interactive sign-in cancelled";
 const WAIT_120 = "Telegram asked you to wait 120s before retrying.";
@@ -107,4 +108,22 @@ test("ordinary unreachable errors keep the generic connectivity diagnostic", () 
   expect(error.message).toBe(CONNECTIVITY);
   expect(error.message).not.toBe(WAIT_UNSPECIFIED);
   expect(error.message).not.toBe(CANCELLED);
+});
+
+test("a phone number Telegram refuses asks for international format without repeating it", () => {
+  for (const message of ["kizuki.telegram: phone number must be in international format", "kizuki.telegram: telegram rejected the phone number"]) {
+    const error = telegramFailure(new TelegramConnectorError("invalid_phone", message));
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error.message).toBe("Telegram did not accept that phone number. Enter it in international format, for example +15551234567.");
+  }
+});
+
+test("a cancelled sign-in reports the cancellation without a usage block", () => {
+  const connect = COMMANDS.find(command => command.name === "connect")!;
+  const cancelled: string[] = [];
+  expect(reportCommandFailure({ err: line => cancelled.push(line) }, connect, new UsageError(CANCELLED))).toBe(2);
+  expect(cancelled).toEqual([`error: ${CANCELLED}`]);
+  const misused: string[] = [];
+  expect(reportCommandFailure({ err: line => misused.push(line) }, connect, new UsageError("connect telegram [--source KEY] [--json]"))).toBe(2);
+  expect(misused[1]).toStartWith("usage: kizuki connect");
 });

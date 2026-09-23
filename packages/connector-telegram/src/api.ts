@@ -79,15 +79,24 @@ export interface TelegramApi {
   logOut(): Promise<void>;
 }
 
+/** Where a fresh sign-in dials instead of the library's production default. */
+export interface DataCenter {
+  id: 1 | 2 | 3;
+  address: string;
+  port: number;
+}
+
 export type TelegramApiFactory = (
   session: string,
   credentials: AppCredentials,
+  dataCenter?: DataCenter,
 ) => TelegramApi;
 
 export type TelegramErrorCode =
   | "closed"
   | "state_persistence_failed"
   | "placeholder_credentials"
+  | "invalid_test_dc"
   | "missing_session"
   | "corrupt_state"
   | "invalid_phone"
