@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { EXTRACT_RESPONSE_V2_SCHEMA, type ProduceInputV2 } from "../../src/contracts/producer-v2";
+import { EXTRACTION_V2_SYSTEM_PROMPT } from "../../src/producer/prompt-v2";
 import { createModelProducerV2Port, MODEL_PRODUCER_V2_DESCRIPTOR } from "../../src/producer/model-v2";
 import { validateProduceResult } from "../../src/producer/result";
 import { temporaryProducerContext, scriptedLlm } from "./helpers";
@@ -174,4 +175,11 @@ test("the real registered world vocabulary passes both model input and response 
   const unknown = { ...response, mentions: [{ ...response.mentions[0]!, candidate_refs: [] }],
     claims: [{ ...response.claims[0]!, predicate: "world.kind", object: { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/unregistered" } } }] };
   expect(await producer(() => JSON.stringify(unknown)).port.produce(worldInput)).toMatchObject({ status: "ok", response: { claims: [] }, dropped: [{ reason: "schema_invalid", id: "c0" }] });
+});
+
+test("the extraction prompt teaches how admitted claims become discoverable Concepts and Situations", () => {
+  for (const term of ["world.kind", "world/concept", "world/situation", "concept.label", "situation.label", "concept.definition", "situation.objective"]) {
+    expect(EXTRACTION_V2_SYSTEM_PROMPT).toContain(term);
+  }
+  expect(EXTRACTION_V2_SYSTEM_PROMPT).not.toContain('"id":"handle"');
 });
