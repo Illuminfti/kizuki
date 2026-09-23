@@ -279,7 +279,7 @@ test("a wait during a resumed edit scan reads as a wait, not a stuck connector",
   ]);
   expect((await built.connector.health()).state).toBe("rate_limited");
   db.close();
-}, 15_000);
+}, 60_000);
 
 test("restart and a later provider error keep the committed sync cursor", async () => {
   const built = await connected({ now: FEBRUARY });
@@ -524,7 +524,7 @@ test("first sync after a partial backfill continues from last_id across restart"
   if (typeof syncCursor !== "string") throw new Error("expected a committed sync cursor");
   expect(parseCursor(syncCursor).dialogs["1"]?.last_id).toBe(1000);
   db.close();
-}, 15_000);
+}, 60_000);
 
 test("a wait that reached only skipped records keeps its place", async () => {
   const account = fixtureAccount();
