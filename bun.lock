@@ -11,7 +11,7 @@
     },
     "packages/cli": {
       "name": "@kizuki/cli",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "bin": {
         "kizuki": "src/main.ts",
       },
@@ -42,7 +42,7 @@
     },
     "packages/connector-google-calendar": {
       "name": "@kizuki/connector-google-calendar",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "dependencies": {
         "@kizuki/core": "workspace:*",
       },
@@ -118,7 +118,7 @@
     },
     "packages/mcp": {
       "name": "@kizuki/mcp",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "dependencies": {
         "@kizuki/core": "workspace:*",
         "@kizuki/retrieval-pg": "workspace:*",

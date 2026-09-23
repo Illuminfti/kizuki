@@ -155,7 +155,7 @@ describe("help", () => {
   test("version prints the package version field", () => {
     const result = runCli(isolatedEnv(), "version");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe("0.1.0\n");
+    expect(result.stdout).toBe("1.0.0\n");
   });
 
   test("query --help names defaults, bounds, flags, and exit codes", () => {

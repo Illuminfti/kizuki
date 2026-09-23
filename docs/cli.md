@@ -612,7 +612,7 @@ and are not reached by purge.
 usage: kizuki version
 ```
 
-Prints the `@kizuki/cli` package version (`0.1.0` on this revision).
+Prints the `@kizuki/cli` package version (`1.0.0` on this revision).
 
 ## MCP (not a CLI verb)
 
