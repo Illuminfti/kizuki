@@ -300,3 +300,12 @@ function charge(
     errors.push(`${path}: exceeds ${limits.maxTotalBytes} UTF-8 bytes`);
   }
 }
+
+/** One optional Markdown code fence around a JSON reply is formatting, not schema. */
+const JSON_CODE_FENCE = /^```(?:json)?\s*\n([\s\S]*?)\n```\s*$/;
+
+export function unwrapJsonCodeFence(text: string): string {
+  const source = text.trim();
+  const fenced = JSON_CODE_FENCE.exec(source);
+  return fenced?.[1] === undefined ? source : fenced[1].trim();
+}

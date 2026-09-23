@@ -2,7 +2,7 @@ import type { LlmPort } from "../contracts/llm";
 import { PortError, validatePortDescriptor } from "../contracts/ports";
 import type { PortContext, PortDescriptor, PortHealth } from "../contracts/ports";
 import { isUlid } from "../util/ulid";
-import { isPlainObject, utf8ByteLength } from "../util/validate";
+import { isPlainObject, unwrapJsonCodeFence, utf8ByteLength } from "../util/validate";
 import {
   MAX_V2_ANCHORS_PER_ITEM,
   MAX_V2_EVENTS,
@@ -127,7 +127,7 @@ export function createModelProducerV2Port(ctx: PortContext, options: ModelProduc
       if (outcome.kind === "rejected") return { status: "rejected", reason: outcome.reason, usage, diagnostic: outcome.diagnostic };
       usage.input_tokens = outcome.response.usage.input_tokens; usage.output_tokens = outcome.response.usage.output_tokens;
       if (hasFenceLeak(outcome.response.text, plan.nonce)) return { status: "rejected", reason: "fence_leak", usage };
-      let decoded: unknown; try { decoded = JSON.parse(outcome.response.text); } catch { decoded = null; }
+      let decoded: unknown; try { decoded = JSON.parse(unwrapJsonCodeFence(outcome.response.text)); } catch { decoded = null; }
       if (decoded !== null && hasParsedFenceLeak(decoded, plan.nonce)) return { status: "rejected", reason: "fence_leak", usage };
       const parserInput = { events: plan.input.events, supplied_refs: plan.input.supplied_refs, vocabulary_refs: plan.input.vocabulary_refs, predicates: plan.input.predicates };
       const parsed = parseExtractResponseV2(outcome.response.text, parserInput);

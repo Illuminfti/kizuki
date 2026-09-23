@@ -26,6 +26,13 @@ export const WORLD_SCHEMA = {
   },
 } as const satisfies CommandHelpSchema;
 
+const SITUATION_LABELS: Readonly<Record<string, string>> = {
+  "situation.objective": "Objective",
+  "situation.blocker": "Blocker",
+  "situation.change": "Recent change",
+  "situation.commitment": "Commitment",
+};
+
 function render(result: WorldReadResult): string[] {
   if ("status" in result) return ["not found"];
   if (result.result.status === "unavailable")
@@ -60,7 +67,7 @@ function render(result: WorldReadResult): string[] {
       ...data.commitments,
     ].flatMap((item) =>
       item?.object.kind === "literal"
-        ? [`${item.predicate}: ${clean(item.object.value)}`]
+        ? [`${SITUATION_LABELS[item.predicate] ?? item.predicate}: ${clean(item.object.value)}`]
         : [],
     ),
     `Coverage: ${data.coverage.status}; history: ${data.coverage.history}.`,
@@ -116,6 +123,9 @@ export const worldCommand: Command = {
           if (parsed.flags.has("--json"))
             io.out(jsonEnvelope("world", "ok", envelope));
           else for (const line of render(envelope.data)) io.out(line);
+          const data = envelope.data;
+          if (!("status" in data) && data.result.status !== "unavailable" && "matches" in data.result.data && data.result.data.matches.length === 0)
+            io.err("next: Concepts and Situations appear once the model loop admits them; kizuki doctor shows whether canon writing is on");
         } catch (error) {
           if (error instanceof WorldViewError) throw new UsageError(this.usage);
           throw error;

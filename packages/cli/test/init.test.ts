@@ -122,6 +122,15 @@ describe("init", () => {
     expect(existsSync(join(control, "write-pass.lock"))).toBe(false);
   });
 
+  test("a group-writable parent refuses init with an actionable permission message", () => {
+    const parent = join(tempDir(), "shared");
+    mkdirSync(parent); chmodSync(parent, 0o775);
+    const result = runCli(isolatedEnv(), "init", join(parent, "vault"), "--no-default", "--no-service");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("error: canon_files_unsafe: the workspace or a folder above it");
+    expect(result.stderr).toContain("chmod go-w");
+  });
+
   test("writes owner-only control files and a ready journal", () => {
     const env = isolatedEnv();
     const vault = join(tempDir(), "vault");

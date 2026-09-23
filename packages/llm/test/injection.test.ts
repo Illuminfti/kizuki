@@ -166,12 +166,13 @@ describe("llm port injection posture", () => {
     expect(response.text).toBe("Grace runs partnerships.");
   });
 
-  test("an empty tool_calls array is still a rejection", () => {
+  test("an echoed empty tool_calls list is absence, and one call is a rejection", () => {
+    const reply = (tool_calls: unknown) =>
+      completionBody("ok", { message: { role: "assistant", content: "ok", tool_calls, function_call: null, audio: null } });
+    expect(parseChatCompletion(reply([]), "synthetic").text).toBe("ok");
     expect(() =>
       parseChatCompletion(
-        completionBody("ok", {
-          message: { role: "assistant", content: "ok", tool_calls: [] },
-        }),
+        reply([{ id: "call-1", type: "function", function: { name: "write_page", arguments: "{}" } }]),
         "synthetic",
       ),
     ).toThrow("rejected: tool_call_in_response");

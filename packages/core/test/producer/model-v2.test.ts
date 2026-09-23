@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { EXTRACT_RESPONSE_V2_SCHEMA, type ProduceInputV2 } from "../../src/contracts/producer-v2";
+import { EXTRACTION_V2_SYSTEM_PROMPT } from "../../src/producer/prompt-v2";
 import { createModelProducerV2Port, MODEL_PRODUCER_V2_DESCRIPTOR } from "../../src/producer/model-v2";
 import { validateProduceResult } from "../../src/producer/result";
 import { temporaryProducerContext, scriptedLlm } from "./helpers";
@@ -89,10 +90,15 @@ test("typed producer binds through the public registry and releases its own capa
   expect((await llm.health()).status).toBe("ready");
 });
 
-test("v2 rejects injected fence leaks, invalid references and malformed anchors", async () => {
-  for (const value of [JSON.stringify({ ...response, claims: [{ ...response.claims[0], subject: { kind: "supplied", id: "durable-id" } }] }), JSON.stringify({ ...response, mentions: [{ ...response.mentions[0], anchor: { event_id: "00000000000000000000000001", start_utf16: 0, end_utf16: 99 } }], claims: [] }), `{"schema":"${EXTRACT_RESPONSE_V2_SCHEMA}","mentions":[],"claims":[],"x":"<<<KZ-QUOTE"}`]) {
-    const { port } = producer(() => value); expect((await port.produce(input)).status).toBe("rejected");
-  }
+test("v2 rejects injected fence leaks, discards unanchored mentions, and never admits an invalid reference", async () => {
+  const { port } = producer(() => `{"schema":"${EXTRACT_RESPONSE_V2_SCHEMA}","mentions":[],"claims":[],"x":"<<<KZ-QUOTE"}`);
+  expect((await port.produce(input)).status).toBe("rejected");
+  const unanchored = JSON.stringify({ ...response, mentions: [{ ...response.mentions[0], anchor: { event_id: "00000000000000000000000001", start_utf16: 0, end_utf16: 99 } }] });
+  expect(await producer(() => unanchored).port.produce(input)).toMatchObject({ status: "ok", response: { mentions: [], claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
+  const forged = JSON.stringify({ ...response, claims: [{ ...response.claims[0], subject: { kind: "supplied", id: "durable-id" } }] });
+  const result = await producer(() => forged).port.produce(input);
+  expect(result).toMatchObject({ status: "ok", response: { claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
+  expect(JSON.stringify(result)).not.toContain("durable-id");
 });
 
 test("v2 reserves one call and refuses an exhausted input budget before contacting a model", async () => {
@@ -169,5 +175,12 @@ test("the real registered world vocabulary passes both model input and response 
   }
   const unknown = { ...response, mentions: [{ ...response.mentions[0]!, candidate_refs: [] }],
     claims: [{ ...response.claims[0]!, predicate: "world.kind", object: { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/unregistered" } } }] };
-  expect((await producer(() => JSON.stringify(unknown)).port.produce(worldInput)).status).toBe("rejected");
+  expect(await producer(() => JSON.stringify(unknown)).port.produce(worldInput)).toMatchObject({ status: "ok", response: { claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
+});
+
+test("the extraction prompt teaches how admitted claims become discoverable Concepts and Situations", () => {
+  for (const term of ["world.kind", "world/concept", "world/situation", "concept.label", "situation.label", "concept.definition", "situation.objective"]) {
+    expect(EXTRACTION_V2_SYSTEM_PROMPT).toContain(term);
+  }
+  expect(EXTRACTION_V2_SYSTEM_PROMPT).not.toContain('"id":"handle"');
 });

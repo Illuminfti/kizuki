@@ -281,7 +281,7 @@ function reconstruct(
       {
         claim_id: claim.claim_id,
         claim_key: claim.claim_key,
-        was: claim.object ?? claim.body,
+        was: answerTerms(io.db, claim).value,
         page_path: pagePathForClaim(io.db, claim),
       },
     ];
@@ -313,7 +313,7 @@ function reconstruct(
     superseded,
     rewritten,
     ambiguous: [],
-    answer: formatAnswer(winner, superseded, rewritten, rewritten.length === 0 ? null : winner.receipt_id, 0, pending.length === 0 ? undefined : pending),
+    answer: formatAnswer({ label: answerTerms(io.db, winner).label, now: answerTerms(io.db, winner).value }, superseded, rewritten, rewritten.length === 0 ? null : winner.receipt_id, 0, pending.length === 0 ? undefined : pending),
   };
 }
 
@@ -342,22 +342,26 @@ function replayRecordedCorrection(io: CorrectIo, input: CorrectInput): CorrectRe
   return replay;
 }
 
+/** A typed claim keeps its meaning in its semantic payload; its legacy columns are empty. */
+function answerTerms(db: Database, claim: Claim): { readonly label: string; readonly value: string } {
+  const semantic = readClaimV2Semantic(db, claim.claim_id);
+  if (semantic !== null && semantic.discriminator === "assertion" && semantic.object.kind === "literal") {
+    return { label: semantic.predicate, value: semantic.object.value };
+  }
+  return { label: `${claim.subject ?? "subject"} ${claim.predicate ?? "claim"}`, value: claim.object ?? claim.body };
+}
+
 function formatAnswer(
-  winner: Claim,
+  terms: { readonly label: string; readonly now: string },
   superseded: CorrectResult["superseded"],
   rewritten: CorrectResult["rewritten"],
   receiptId: string | null,
   remainder: number,
   pending?: CorrectResult['recovery_pending'],
+  preview = false,
 ): string {
   const was = superseded[0]?.was;
-  const now = winner.object ?? winner.body;
-  const subject = winner.subject ?? "subject";
-  const predicate = winner.predicate ?? "claim";
-  const head =
-    was === undefined
-      ? `Corrected: ${subject} ${predicate} is ${now}.`
-      : `Corrected: ${subject} ${predicate} is ${now} (was: ${was}).`;
+  const head = `${preview ? "Would correct" : "Corrected"}: ${terms.label} is ${terms.now}${was === undefined ? "" : ` (was: ${was})`}.`;
   const pages = rewritten.map((row) => row.page_path).join(", ");
   const undoIds = [
     ...new Set(
@@ -374,10 +378,11 @@ function formatAnswer(
     remainder > 0
       ? `\n${remainder} more page(s) not rewritten in this pass.`
       : "";
+  const claims = `${superseded.length} claim${superseded.length === 1 ? "" : "s"}`;
   return [
     head,
-    `Superseded ${superseded.length} claim${superseded.length === 1 ? "" : "s"}.`,
-    pages.length > 0 ? `Rewrote ${pages}.` : pending !== undefined ? "Canon completion is unconfirmed." : "No canon pages rewritten.",
+    preview ? `Would supersede ${claims}.` : `Superseded ${claims}.`,
+    pages.length > 0 ? `${preview ? "Would rewrite" : "Rewrote"} ${pages}.` : pending !== undefined ? "Canon completion is unconfirmed." : preview ? "No canon pages would be rewritten." : "No canon pages rewritten.",
   ]
     .join("\n")
     .concat(extra, pending !== undefined ? "\nCanon recovery is pending. Run kizuki recover --json; unknown external operations require inspection before another change." : "", undo);
@@ -669,7 +674,7 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
     const superseded = group.map((claim) => ({
       claim_id: claim.claim_id,
       claim_key: claim.claim_key ?? "",
-      was: claim.object ?? claim.body,
+      was: answerTerms(io.db, claim).value,
       page_path: pagePathForClaim(io.db, claim),
     }));
     const previewPages = affectedPages(io, group, seed).slice(0, CORRECTION_MAX_PAGES);
@@ -695,11 +700,14 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
       rewritten,
       ambiguous: [],
       answer: formatAnswer(
-        { ...seed, object: parsed.object, body: input.statement },
+        // A typed correction records the owner's literal statement; a legacy one its parsed object.
+        { label: answerTerms(io.db, seed).label, now: readClaimV2Semantic(io.db, seed.claim_id) === null ? parsed.object ?? input.statement : input.statement },
         superseded,
         rewritten,
         null,
         Math.max(0, affectedPages(io, group, seed).length - CORRECTION_MAX_PAGES),
+        undefined,
+        true,
       ),
     };
   }
@@ -718,7 +726,7 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
         {
           claim_id: claim.claim_id,
           claim_key: claim.claim_key ?? winner.claim_key ?? "",
-          was: claim.object ?? claim.body,
+          was: answerTerms(io.db, claim).value,
           page_path: pagePathForClaim(io.db, claim),
         },
       ];
@@ -836,6 +844,6 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
     rewritten,
     ambiguous: [],
     ...(recoveryPending === undefined ? {} : { recovery_pending: recoveryPending }),
-    answer: formatAnswer(winner, superseded, rewritten, receiptId, remainder, recoveryPending),
+    answer: formatAnswer({ label: answerTerms(io.db, winner).label, now: answerTerms(io.db, winner).value }, superseded, rewritten, receiptId, remainder, recoveryPending),
   };
 }

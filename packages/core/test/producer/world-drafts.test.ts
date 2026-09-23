@@ -52,3 +52,14 @@ test("resolved context uses canonical reference order rather than locale collati
 test("rejects a semantic endpoint whose supplied handle lacks cited support", () => {
   expect(() => prepareWorldDrafts({ ...response, claims: [{ ...response.claims[0]!, subject: { kind: "supplied", id: "s0" }, anchors: [{ ...anchor, start_utf16: 5, end_utf16: 10 }] }] }, input, context)).toThrow("unsupported by claim evidence");
 });
+
+test("omits a claim whose evidence spans two sources and keeps its single-source siblings", () => {
+  const otherId = "00000000000000000000000003", other = { event_id: otherId, start_utf16: 0, end_utf16: 4 } as const;
+  const twoRecords: ProduceInputV2 = { ...input, events: [...input.events, { event_id: otherId, text: "Mira left Northwind." }] };
+  const twoSources: WorldDraftContext = { ...context, events: [...context.events,
+    { ...event, source_record_id: "r2", event_id: otherId, source_key: "00000000000000000000000004", text: "Mira left Northwind.", subjects: [] }] };
+  const wire: ExtractResponseV2 = { ...response, claims: [...response.claims, { ...response.claims[0]!, id: "c1", anchors: [anchor, other] }] };
+  const drafts = prepareWorldDrafts(wire, twoRecords, twoSources);
+  expect(drafts).toHaveLength(1);
+  expect(drafts[0]!.provenance).toEqual([eventId]);
+});

@@ -115,7 +115,7 @@ function persistSync(
   vault: string,
   runId: string,
   at: string,
-  overrides: Partial<ReturnType<typeof emptyRunTotals>> & { status?: "ok" | "degraded" } = {},
+  overrides: Partial<ReturnType<typeof emptyRunTotals>> & { status?: "ok" | "degraded"; claims_written_extracted?: number } = {},
 ): void {
   persistRunReceipt(db, vault, {
     ...emptyRunTotals(),
@@ -252,6 +252,31 @@ describe("doctor calibration", () => {
     expect(report.serve.calibration.write_rate).toBeCloseTo(1);
     expect(report.serve.failures.some((item) => item.startsWith("write_rate "))).toBe(true);
     expect(report.serve.failures).not.toContain("confidence_not_produced");
+  });
+
+  test("imported claims written beside extraction do not count toward the model write rate", async () => {
+    const setup = tempVault();
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    const current = new Date().toISOString();
+    const prior = new Date(Date.now() - 8 * 86_400_000).toISOString();
+    try {
+      for (let index = 0; index < 8; index += 1) {
+        const text = `synthetic imported person ${index} works at org-${index}.`;
+        const first = putEvent(db, `import-a-${index}`, text, "fixture-a");
+        const second = putEvent(db, `import-b-${index}`, text, "fixture-b");
+        await storeClaim(db, [first, second], index, prior, 0.3 + index * 0.08);
+      }
+      persistSync(db, setup.vault, "import-and-extract", current, {
+        claims_extracted: 10,
+        claims_written: 30,
+        claims_written_extracted: 5,
+      });
+    } finally {
+      db.close();
+    }
+    const report = doctorData(runCli(setup.env, "doctor", "--json").stdout);
+    expect(report.serve.calibration.write_rate).toBeCloseTo(0.5);
+    expect(report.serve.failures.some((item) => item.startsWith("write_rate "))).toBe(false);
   });
 
   test("model unavailability is reported without a calibration failure", async () => {

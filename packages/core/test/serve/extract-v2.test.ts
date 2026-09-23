@@ -22,6 +22,7 @@ import {
   readExtractCursor,
 } from "../../src/serve/extract";
 import { canonicalJson } from "../../src/util/hash";
+import { EXTRACT_MAX_OUTPUT_TOKENS } from "../../src/producer/model";
 
 const roots: string[] = [];
 
@@ -137,6 +138,18 @@ test("v2 extraction journals normalized world drafts and reopens without another
   }
 });
 
+test("v2 extraction reserves the producer output ceiling for a complete typed response", async () => {
+  const f = fixture();
+  try {
+    const budgets: ProduceInputV2["budget"][] = [];
+    const producer: ProducerV2Port = { ...f.producer, produce: input => { budgets.push(input.budget); return f.producer.produce(input); } };
+    expect((await mineLiveDrafts(f.db, producer)).mined).toEqual({ status: "ok", count: 1 });
+    expect(budgets).toEqual([{ max_calls: 1, max_input_tokens: 8_000, max_output_tokens: EXTRACT_MAX_OUTPUT_TOKENS }]);
+  } finally {
+    f.close();
+  }
+});
+
 test("v2 durable parsing rejects a re-signed semantic and rendering disagreement", async () => {
   const f = fixture();
   try {
@@ -205,6 +218,26 @@ test("purging the sole v2 input removes its unfiled decision without remine", as
     expect(f.db.query("SELECT * FROM extract_batches").all()).toEqual([]);
     expect(f.calls.count).toBe(1);
     expect(readExtractCursor(f.db)).toBeNull();
+  } finally {
+    f.close();
+  }
+});
+
+test("v2 extraction sends at most two records per call and keeps the rest beyond the cursor", async () => {
+  const f = fixture();
+  try {
+    for (let index = 0; index < 5; index += 1) {
+      const stored = accept(f.db, { ...validEvent(), connector_id: "kizuki.fixture", source_record_id: `world-extra-${index}`, text: `Synthetic record ${index}.`, subjects: [] });
+      if (stored.status !== "stored") throw new Error("fixture event was not stored");
+    }
+    const seen: number[] = [];
+    const producer: ProducerV2Port = { ...f.producer, produce: async input => {
+      seen.push(input.events.length);
+      return { status: "ok", response: { schema: EXTRACT_RESPONSE_V2_SCHEMA, mentions: [], claims: [] }, usage: { calls: 1, input_tokens: 1, output_tokens: 1 } };
+    } };
+    const mined = await mineLiveDrafts(f.db, producer);
+    expect(seen).toEqual([2]);
+    expect(mined.input_ids).toHaveLength(2);
   } finally {
     f.close();
   }

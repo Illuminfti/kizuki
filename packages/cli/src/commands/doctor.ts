@@ -9,7 +9,7 @@ import {
   countUnwrittenLiveClaims,
   countWrittenLiveClaims,
   doctorVault,
-  getCanonReceipt,
+  getCanonReceiptRecord,
   getCheckpoint,
   inspectLedgerHealth,
   inspectCanonRecovery,
@@ -196,7 +196,8 @@ function reconcileReceipts(vaultPath: string, ctx: ReadVaultContext): string[] {
         continue;
       }
       seen.add(receiptId);
-      if (getCanonReceipt(ctx.db, receiptId) === null) {
+      // A purge leaves an erased record for each typed receipt it removes; the row still exists.
+      if (getCanonReceiptRecord(ctx.db, receiptId) === null) {
         orphans.push(`orphan receipt ${receiptId} (no canon_receipts row)`);
       }
     }

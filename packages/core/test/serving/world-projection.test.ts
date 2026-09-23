@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { openLedger } from "../../src/ledger/db";
+import { LEDGER_SCHEMA_VERSION, openLedger } from "../../src/ledger/db";
 import { WORLD_TABLES } from "../../src/world/schema";
 
 test("fresh ledger installs the persistent world identity and typed ref lifecycle", () => {
@@ -148,7 +148,8 @@ test("issued references survive reopen, rebuild and mandatory ledger32 backup/re
     ).toEqual(before);
     const backup = join(out.path, "world-backup");
     const manifest = exportVault(db, vault.path, backup);
-    expect(manifest.schema_versions.ledger).toBeGreaterThanOrEqual(32);
+    // World streams are mandatory from ledger32 on; the export carries the current ledger.
+    expect(manifest.schema_versions.ledger).toBe(LEDGER_SCHEMA_VERSION);
     for (const table of WORLD_TABLES)
       expect(manifest.files[`world/${table}.jsonl`]).toBeDefined();
     const destination = join(target.path, "restored");

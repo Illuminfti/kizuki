@@ -243,6 +243,12 @@ function interval(db: Database, previous: string | null, boundary: LedgerCursor)
   if (index < 0 || row?.accepted_at !== boundary.accepted_at) throw new Error("durable extraction boundary is invalid");
   return events.slice(0, index + 1);
 }
+/**
+ * A typed response anchors every claim and runs to one to three thousand
+ * output tokens per ordinary record, more when a model indents its JSON, so a
+ * larger batch can exhaust the producer's output ceiling and be rejected whole.
+ */
+const WORLD_RECORDS_PER_CALL = 2;
 function sourceInput(db: Database, event: CaptureEvent, producer: ExtractionProducerPort | undefined): DeferredInput {
   const binding = db.query<{ source_key: string }, [string]>(
     "SELECT source_key FROM source_event_bindings WHERE event_id=?",
@@ -946,7 +952,7 @@ export async function mineLiveDrafts(
     ? worldInput(db, usable.slice(0, 1))
     : inputFor(usable.slice(0, 1));
   if (v2) {
-    for (let count = 1; count <= usable.length; count++) {
+    for (let count = 1; count <= Math.min(usable.length, WORLD_RECORDS_PER_CALL); count++) {
       const candidate = worldInput(db, usable.slice(0, count));
       try {
         const plan = planModelExtractionV2(candidate);

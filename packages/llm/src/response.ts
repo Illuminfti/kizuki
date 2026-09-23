@@ -51,9 +51,15 @@ function validateMetadata(message: Record<string, unknown>): void {
   }
 }
 
+/**
+ * Many compatible servers echo every optional field, as `"function_call": null`
+ * or `"tool_calls": []`. Null and an empty list carry no call or payload; any
+ * other value, including an empty object, is refused.
+ */
 function rejectEffectFields(value: Record<string, unknown>): void {
-  for (const key of Object.keys(value)) {
-    if (FORBIDDEN_MESSAGE_KEYS.has(key) || DATA_KEYS.has(key)) rejectToolCall();
+  for (const [key, field] of Object.entries(value)) {
+    if (!FORBIDDEN_MESSAGE_KEYS.has(key) && !DATA_KEYS.has(key)) continue;
+    if (field !== null && !(Array.isArray(field) && field.length === 0)) rejectToolCall();
   }
 }
 

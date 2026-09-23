@@ -213,7 +213,7 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
     };
   }
   const extracted = receipts.reduce((sum, receipt) => sum + receipt.claims_extracted, 0);
-  const written = receipts.reduce((sum, receipt) => sum + receipt.claims_written, 0);
+  const written = receipts.reduce((sum, receipt) => sum + (receipt.claims_written_extracted ?? receipt.claims_written), 0);
   const deduped = receipts.reduce((sum, receipt) => sum + receipt.claims_deduped, 0);
   const writeRate = written / Math.max(1, extracted);
   const dedupRate = deduped / Math.max(1, extracted);
