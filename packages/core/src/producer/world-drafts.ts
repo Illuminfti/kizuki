@@ -120,10 +120,13 @@ export function prepareWorldDrafts(
     return { kind: "occurrence", id: mintOccurrenceId(event, event.source_key, mention.anchor) };
   };
 
-  return response.claims.map(claim => {
+  return response.claims.flatMap(claim => {
     const anchors = completeAnchors(claim);
     const anchorKeys = new Set(anchors.map(anchorKey));
     if (anchors.length === 0 || !anchors.every(anchor => eventById.has(anchor.event_id))) fail("claim has an out-of-source anchor");
+    // World support comes from one source. A claim citing records of two
+    // sources can never be admitted; journaling it would wedge the batch.
+    if (new Set(anchors.map(anchor => eventById.get(anchor.event_id)!.source_key)).size !== 1) return [];
     const semantic: ClaimV2Assertion = {
       schema: CLAIM_V2_SCHEMA,
       discriminator: "assertion",
@@ -158,8 +161,8 @@ export function prepareWorldDrafts(
       confidence: claim.confidence,
       epistemicKind: "model_inference" as const,
     };
-    return { kind: "claim", body: claim.body, frontmatter: {}, provenance, producer: "model", model_ref: context.model_ref,
-      confidence: claim.confidence, sensitivity: claim.sensitivity, semantic, world_admission: admission };
+    return [{ kind: "claim" as const, body: claim.body, frontmatter: {}, provenance, producer: "model" as const, model_ref: context.model_ref,
+      confidence: claim.confidence, sensitivity: claim.sensitivity, semantic, world_admission: admission }];
   });
 }
 

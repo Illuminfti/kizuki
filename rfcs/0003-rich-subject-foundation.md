@@ -112,11 +112,11 @@ outside the quoted records, a malformed interval or value, or an object kind
 its predicate does not permit) is a counted `schema_invalid` per-draft
 abstention rather than a whole-response rejection. Nothing such a claim names
 is resolved or kept. A candidate ref that does not name a request handle or a
-response mention is discarded, never resolved. A claim's cited evidence always
-includes the anchor of each response mention it uses as subject, object or
-context, so its provenance and purge reach every record it rests on; a
-supplied endpoint must still be cited by the model, and perspective roles still
-need their own attribution anchors.
+response mention is discarded, never resolved. When a response mention used as
+subject, object or context is anchored in a record the claim already cites, the
+claim's evidence includes that anchor even if the model did not repeat it. A
+mention from another record, a supplied endpoint and every perspective role
+still need their own cited anchors.
 
 Unknown predicates remain counted per-draft abstentions after reference and
 authority checks. Predicate specs declare permitted object kinds; B2 adds the

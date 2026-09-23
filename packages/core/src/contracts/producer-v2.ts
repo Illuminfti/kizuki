@@ -281,18 +281,20 @@ function hasGrounding(refs: readonly DraftRef[], anchors: readonly TextAnchor[],
 }
 
 /**
- * A claim about a response mention depends on the record that mention was
- * anchored in. Its evidence therefore always cites each endpoint mention's own
- * anchor, whether or not the model repeated it, so purge and provenance follow
- * every record the claim rests on. Supplied handles must still be cited.
+ * An endpoint mention anchored in a record the claim already cites is part of
+ * that evidence, so the claim cites its anchor even when the model did not
+ * repeat it. A mention from any other record stays uncited: the claim must
+ * rest on the records it names, and its support must stay within one source.
+ * Supplied handles must still be cited.
  */
 function withMentionAnchors(anchors: readonly TextAnchor[], refs: readonly DraftRef[], mentions: ReadonlyMap<string, MentionDraft>): readonly TextAnchor[] {
   const cited = [...anchors];
   const keys = new Set(anchors.map(anchorKey));
+  const records = new Set(anchors.map(anchor => anchor.event_id));
   for (const ref of refs) {
     if (ref.kind !== "mention") continue;
     const anchor = mentions.get(ref.id)!.anchor;
-    if (!keys.has(anchorKey(anchor))) {
+    if (records.has(anchor.event_id) && !keys.has(anchorKey(anchor))) {
       keys.add(anchorKey(anchor));
       cited.push(anchor);
     }
