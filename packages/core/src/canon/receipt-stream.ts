@@ -20,10 +20,10 @@ const SOURCE_STREAM_LIMIT = 32n * 1024n * 1024n;
 const [CONTROL, DIRECTORY, FILE] = RECEIPTS_PATH.split("/") as [string, string, string];
 type Failure = "unsupported" | "native_unavailable" | "unsafe" | "missing" | "conflict" | "changed" | "bounds" | "closed" | "failed" | "io" | "durability" | "checkpoint_invalid" | "receipt_invalid" | "receipt_tail_pending";
 export class ReceiptStreamError extends Error {
-  constructor(readonly reason: Failure) { super(`canon_receipt_stream_${reason}`); this.name = "ReceiptStreamError"; }
+  constructor(readonly reason: Failure, options?: { cause?: unknown }) { super(`canon_receipt_stream_${reason}`, options); this.name = "ReceiptStreamError"; }
 }
 function fail(reason: Failure): never { throw new ReceiptStreamError(reason); }
-function mapped(error: unknown): ReceiptStreamError { return error instanceof ReceiptStreamError ? error : new ReceiptStreamError("io"); }
+function mapped(error: unknown): ReceiptStreamError { return error instanceof ReceiptStreamError ? error : new ReceiptStreamError("io", { cause: error }); }
 
 type ReceiptIdentity = Readonly<{ dev: string; ino: string; birthtime_ns: string }>;
 export interface OrdinaryReceiptCheckpoint {
@@ -173,7 +173,7 @@ function fileStat(fd: number, readable: boolean): BigIntStats {
   if (readable && stat.size > SOURCE_STREAM_LIMIT) fail("bounds");
   return stat;
 }
-function sync(fd: number): void { try { fsyncSync(fd); } catch { fail("durability"); } }
+function sync(fd: number): void { try { fsyncSync(fd); } catch (error) { throw new ReceiptStreamError("durability", { cause: error }); } }
 function closeAll(fds: readonly number[]): void {
   let failed = false;
   for (const fd of [...fds].reverse()) { try { closeSync(fd); } catch { failed = true; } }

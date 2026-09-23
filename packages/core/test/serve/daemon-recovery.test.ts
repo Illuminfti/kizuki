@@ -11,6 +11,7 @@ import { hashBytes } from "../../src/vault/write";
 import { putEvent, storeClaim, write } from "../canon/helpers";
 import { tempVault } from "../helpers/vault";
 import { killAfterStage } from "../canon/stage-kill";
+import { SERVE_TOKEN_PATH } from "../../src/serve/types";
 
 const cleanup: (() => void)[] = [];
 afterEach(() => { for (const dispose of cleanup.splice(0).reverse()) dispose(); });
@@ -90,3 +91,28 @@ test("a real kill right after the canon stage fsync converges on the next daemon
   expect(readReceiptsLog(vault.path).map(item => item.receipt_id)).toEqual([intent.receipt.receipt_id]);
   expect(existsSync(join(vault.path, intent.stages.live_stage))).toBe(false);
 }, 60_000);
+
+test("HTTP reads keep serving while the writer is held", async () => {
+  const f = await killedBetweenStageAndPublish(), lines: string[] = [];
+  const stage = join(f.vault, f.intent.stages.live_stage), outside = join(f.vault, "synthetic-outside");
+  renameSync(stage, outside); symlinkSync(outside, stage);
+  const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(null) });
+  const port = probe.port!; probe.stop(true);
+  const served: { health?: number; page?: number; body?: string } = {};
+  // The sync rail runs its ingest while the daemon's HTTP endpoint is up and the write is held.
+  const readWhileHeld = async () => {
+    const origin = `http://127.0.0.1:${port}`, token = readFileSync(join(f.vault, SERVE_TOKEN_PATH), "utf8").trim();
+    served.health = (await fetch(`${origin}/health`)).status;
+    const page = await fetch(`${origin}/v1/get_page`, { method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ path: f.prior.page_path }) });
+    served.page = page.status; served.body = await page.text();
+    return idleSync();
+  };
+  const result = await runServeDaemon(f.db, f.vault, { once: true, http: true, port, rails: ["sync"], hooks: { sync: readWhileHeld }, log: line => lines.push(line) });
+  expect(result.receipts).toBe(1);
+  expect(lines.map(line => JSON.parse(line).reason)).toEqual(["stage_custody_unknown"]);
+  expect(served).toMatchObject({ health: 200, page: 200 });
+  expect(served.body).toContain("Ada keeps the lighthouse.");
+  expect(listRunReceipts(f.db).map(item => [item.rail, item.stopped])).toEqual([["sync", "recovery:held"]]);
+  expect(inspectCanonRecovery(f.db).pending).toBe(true);
+});

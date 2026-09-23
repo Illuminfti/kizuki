@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createHelpers } from "../helpers";
 import { LEDGER_SCHEMA_VERSION } from "../../../core/src/ledger/db";
 import { parseSqliteRuntime } from "@kizuki/core/internal";
+import { writeServeIntent } from "@kizuki/core";
 
 // These tests spawn real CLI processes; bound them for a loaded host.
 setDefaultTimeout(30_000);
@@ -29,8 +30,10 @@ test("doctor JSON accepts a genuine migrated v1 event without hiding unrelated h
   const refused = runCli(setup.env, "doctor", "--json", "--integrity");
   expect(refused.exitCode).toBe(1); expect(refused.stdout).toBe("");
   expect(refused.stderr).toContain("migration_required");
-  // doctor, recover and serve all name the one explicit migration command.
-  const command = `init ${setup.vault} --no-default (keeps the installed service)`;
+  // doctor, recover and serve all name the one explicit migration command. This
+  // vault opted out of the service, so the command must not install one.
+  const command = `init ${setup.vault} --no-default --no-service`;
+  expect(refused.stderr).not.toContain("keeps the installed service");
   expect(refused.stderr).toContain(`ledger v15 needs migration to v${LEDGER_SCHEMA_VERSION}; run: `);
   expect(refused.stderr).toContain(command);
   for (const verb of [["recover", "--json"], ["serve", "--once", "--no-http"]]) {
@@ -88,3 +91,29 @@ test("init migrates a sealed historical event and purge when its acceptance floo
     expect(migrated.query("SELECT COUNT(*) AS count FROM event_purges").get()).toEqual({ count: 1 });
   } finally { migrated.close(true); }
 });
+
+test("the migration command follows the recorded service intent and quotes the vault path", () => {
+  const setup = tempVault(), vault = join(setup.root, "o'neil vault");
+  expect(runCli(setup.env, "init", vault, "--no-default", "--no-service").exitCode).toBe(0);
+  const ledgerPath = join(vault, ".kizuki/kizuki.db"), oldPath = join(setup.root, "legacy-quoted.sqlite"), old = new Database(oldPath);
+  try { old.exec(readFileSync(join(import.meta.dir, "../../../core/test/fixtures/doctor-ledger15-legacy.sql"), "utf8")); }
+  finally { old.close(true); }
+  renameSync(oldPath, ledgerPath); chmodSync(ledgerPath, 0o600);
+  writeFileSync(join(vault, ".kizuki", "ledger-mark"), "1\n", { mode: 0o600 });
+  const env = { ...setup.env, KIZUKI_VAULT: vault }, quoted = `'${vault.replaceAll("'", "'\\''")}'`;
+  const migration = (): string => {
+    const result = runCli(env, "recover", "--json");
+    expect(result.exitCode).toBe(1);
+    return result.stderr;
+  };
+  for (const intent of ["opted-out", "none"] as const) {
+    writeServeIntent(vault, intent);
+    const text = migration();
+    expect(text).toContain(`init ${quoted} --no-default --no-service`);
+    expect(text).not.toContain("keeps the installed service");
+  }
+  writeServeIntent(vault, "installed");
+  const installed = migration();
+  expect(installed).toContain(`init ${quoted} --no-default (keeps the installed service)`);
+  expect(installed).not.toContain("--no-service");
+}, 60_000);

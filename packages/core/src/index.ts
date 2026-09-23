@@ -1102,6 +1102,7 @@ export type {
   StoreDoctor,
   SupervisorHost,
   SupervisorKind,
+  SupervisorLastExit,
   SupervisorState,
   SupervisorStatus,
   UnitSpec,

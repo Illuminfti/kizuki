@@ -22,7 +22,9 @@ import { validateOrdinaryReceiptCheckpoint, type OrdinaryReceiptCheckpoint } fro
 export type CanonRecoveryReason = "intent_invalid" | "recovery_pending" | "nested_transaction" |
   "authority_changed" | "predecessor_changed" | "page_changed" | "archive_changed" |
   "historical_orphan" | "receipt_changed" | "stage_custody_unknown" | "projection_pending" |
-  "write_refused" | "receipt_stream_changed" | "receipt_stream_refused";
+  "write_refused" | "receipt_stream_changed" | "receipt_stream_refused" |
+  "quarantine_conflict" | "quarantine_unsafe" | "storage_full" | "storage_refused" |
+  "writer_busy" | "inspection_unavailable";
 export class CanonRecoveryError extends Error {
   readonly code = "canon_recovery_needed";
   constructor(readonly reason: CanonRecoveryReason, readonly receipt_id: string | null = null, options?: { cause?: unknown }) {

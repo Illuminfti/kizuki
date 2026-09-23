@@ -42,7 +42,9 @@ export const recoverCommand: Command = {
       if (parsed.flags.has("--json")) io.out(jsonEnvelope("recover", ok ? "ok" : "error", result));
       else {
         io.out(`Memory writes recovered: ${completed.length}. Retrieval updates completed: ${projections.length}.`);
-        for (const item of result.stage_recoveries) io.out(`stage ${item.stage} ${item.classification}: ${item.action}${item.quarantine_path === null ? "" : ` to ${item.quarantine_path}`}`);
+        for (const item of result.stage_recoveries) {
+          io.out(`stage ${item.stage} ${item.classification}: ${item.action}${item.quarantine_path === null ? "" : ` to ${item.quarantine_path}`}${item.outcome === "done" ? "" : " (planned, not yet done)"}`);
+        }
         if (!ok) {
           const next = recovery.next ?? "run: kizuki recover --json once the retrieval engine is available";
           io.err(`Recovery remains held${result.reason === null ? "" : `: ${result.reason}`}. next: ${next}`);

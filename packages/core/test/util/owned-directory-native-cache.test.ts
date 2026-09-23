@@ -88,3 +88,14 @@ test("no source module compiles owned-directory natives outside the cached loade
   expect(loader).toMatch(/export function loadOwnedDirectoryNative\(\)[^{]*\{\s*return cached \?\?= compileOwnedDirectoryNative\(\);\s*\}/);
   expect(loader).not.toMatch(/export function (?:loadLinux|loadDarwin|compile)OwnedDirectoryNative/);
 });
+
+test.skipIf(!supported)("the shared native exposes frozen symbols and no close that could break other callers", () => {
+  const api = loadOwnedDirectoryNative() as unknown as Record<string, unknown> & { symbols: Record<string, unknown> };
+  expect(Object.keys(api)).toEqual(["symbols"]);
+  expect(Object.isFrozen(api)).toBe(true);
+  expect(Object.isFrozen(api.symbols)).toBe(true);
+  expect("close" in api || "libc" in api || "compiled" in api).toBe(false);
+  expect(() => { api["symbols"] = {}; }).toThrow(TypeError);
+  expect(() => { api.symbols["openChild"] = () => 0; }).toThrow(TypeError);
+  expect(loadOwnedDirectoryNative()).toBe(api as unknown as ReturnType<typeof loadOwnedDirectoryNative>);
+});

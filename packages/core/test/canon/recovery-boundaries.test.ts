@@ -194,7 +194,7 @@ test("withdrawal preserves a changed page and reports the pending intent", async
   expect(readCanonWriteIntent(f.db)?.receipt.receipt_id).toBe(pending.receipt.receipt_id);
 });
 
-test("withdrawal quarantines foreign stage bytes, never deleting them, and completes", async () => {
+test("withdrawal erases foreign stage bytes rather than keeping them, and completes", async () => {
   const f = await fixture(true); breakRows(f.db);
   expect(() => write(f.io, f.claim)).toThrow(); const pending = readCanonWriteIntent(f.db)!; allowRows(f.db);
   writeFileSync(join(f.vault, pending.stages.live_stage), "independent owner content", { mode: 0o600 });
@@ -202,9 +202,9 @@ test("withdrawal quarantines foreign stage bytes, never deleting them, and compl
   const grant = await resumeSourceRevocation(f.db, f.vault, "withdraw-boundary");
   expect(grant.purge_blockers).not.toContain("canon_recovery_pending");
   expect(readCanonWriteIntent(f.db)).toBeNull();
-  const [record] = readCanonStageRecoveries(f.vault, pending.receipt.receipt_id);
-  expect(record).toMatchObject({ stage: "live", classification: "foreign", action: "quarantined" });
-  expect(readFileSync(join(f.vault, record!.quarantine_path!), "utf8")).toBe("independent owner content");
+  // Withdrawal exists to erase: no quarantined copy and no record of the withdrawn receipt remain.
+  expect(readCanonStageRecoveries(f.vault, pending.receipt.receipt_id)).toEqual([]);
+  expect(existsSync(join(f.vault, ".kizuki/quarantine"))).toBe(false);
   expect(existsSync(join(f.vault, pending.stages.live_stage))).toBe(false);
 });
 

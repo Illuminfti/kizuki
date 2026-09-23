@@ -110,9 +110,8 @@ try {
   assert.equal(symbols.unlinkChild(parentFd, ptr(credential)), 0);
   assert.equal(symbols.unlinkChild(parentFd, ptr(receipt)), 0);
 } finally {
+  // The shared native stays loaded for the life of the process.
   closeSync(parentFd);
-  api.compiled.close();
-  api.libc.close();
 }
 
 process.stdout.write("darwin-native-canary: passed\n");

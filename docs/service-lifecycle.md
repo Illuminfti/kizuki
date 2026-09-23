@@ -19,6 +19,38 @@ reload keeps recovery pending until a later invocation can prove restoration.
 When uninstalling a stopped systemd service that retains a failure record,
 Kizuki resets that unit's failure record before removing the definition. It
 checks the stopped state again; it does not reset failures for other units.
+Installing over a failed systemd unit likewise resets that unit's failure
+record, and with it the start-limit count, after the stop and before the start,
+so a repeated install never fails with "start request repeated too quickly".
+
+## Restart limits and startup refusals
+
+The systemd unit restarts on failure, at most `StartLimitBurst=5` starts per
+`StartLimitIntervalSec=900`; past that, systemd leaves the unit failed with
+result `start-limit-hit` instead of looping. A startup refusal that repeats on
+every start exits 78, and `RestartPreventExitStatus=78` means systemd does not
+restart it at all. Only these refusals exit 78:
+
+| Refusal | Cause | Fix |
+| --- | --- | --- |
+| `unsupported_platform` | Service custody needs Linux x64 | `kizuki serve --uninstall`, then run the loop yourself |
+| `not_supervised` | The launch carries no proof the unit started it | Start it through systemd, or run the loop yourself |
+| `root_user` | The unit runs as root | Reinstall it as the vault's owner |
+| `vault_mismatch` | The unit's vault path or id no longer binds this vault | `kizuki serve --install --vault <vault>` |
+| `migration_required` | The ledger is from an older release | The `kizuki init` command the message names |
+
+An unproven custody check and a custody broker that is not ready in time exit
+1: under the unit's CPU quota a slow start can recover on the next attempt, and
+the start limit bounds the loop when it does not. The main process waits for
+the broker for the whole READY window the launcher allows.
+
+When an installed unit is not running, doctor reads the unit's own `Result` and
+`ExecMainStatus` from `systemctl --user show` and prints the command that
+follows from them: the reinstall command after an exit 78, `systemctl --user
+reset-failed <unit> && systemctl --user start <unit>` after `start-limit-hit`
+or any other failed result, and `systemctl --user start <unit>` for an enabled
+unit that stopped cleanly. `doctor --json` reports the same values as
+`serve.supervisor_exit`.
 
 ## The daemon and owner commands share one ledger
 

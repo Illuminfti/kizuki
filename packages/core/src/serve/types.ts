@@ -212,6 +212,14 @@ export interface SupervisorStatus {
   readonly detail: string;
 }
 
+/** How the supervisor says the unit's last run ended, in its own words:
+ * systemd's Result (exit-code, start-limit-hit, oom-kill, ...) and the main
+ * process's exit status. */
+export interface SupervisorLastExit {
+  readonly result: string;
+  readonly exit_status: number | null;
+}
+
 export interface RailDoctor {
   readonly rail: RailId;
   readonly last_receipt_at: string | null;
@@ -291,6 +299,8 @@ export interface CalibrationDoctor {
 
 export interface ServeDoctorReport {
   readonly supervisor: SupervisorStatus;
+  /** Read only for an installed unit that is not running; null otherwise. */
+  readonly supervisor_exit: SupervisorLastExit | null;
   readonly intent: ServeIntent | "unknown";
   readonly rails: RailDoctor[];
   readonly model: ModelDoctor;

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { Database } from "bun:sqlite";
+import { chmodSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { createHelpers } from "../helpers";
 
 // These tests spawn real CLI processes; bound them for a loaded host.
@@ -44,4 +45,53 @@ describe("installed service custody boundary", () => {
     expect(json.exitCode).toBe(0);
     expect(json.stdout).not.toContain("custody");
   });
+});
+
+/** Runs the unit's main-process mode in a child whose custody start is a
+ * stand-in, so no supervisor, broker or real unit is involved. */
+function serviceCustodyMode(vault: string, env: Record<string, string | undefined>, outcome: string): { code: number; text: string } {
+  const script = `
+    import { mock } from "bun:test";
+    import * as internal from "@kizuki/core/internal";
+    const outcome = ${JSON.stringify(outcome)};
+    mock.module("@kizuki/core/internal", () => ({ ...internal, async startServiceCustody() {
+      if (outcome === "held") return Object.freeze({ close() {} });
+      throw new internal.ServiceCustodyError(outcome);
+    } }));
+    const { serveCommand } = await import(${JSON.stringify(resolve(import.meta.dir, "../../src/commands/serve.ts"))});
+    const lines = [];
+    const io = { env: ${JSON.stringify(env)}, vaultOverride: ${JSON.stringify(vault)}, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false,
+      out: line => lines.push(line), err: line => lines.push(line), prompt: async () => "" };
+    const code = await serveCommand.run(io, ["--service-custody", "synthetic-vault"]);
+    process.stdout.write(JSON.stringify({ code, text: lines.join("\\n") }));
+  `;
+  const childEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries({ ...process.env, ...env })) if (value !== undefined) childEnv[key] = value;
+  const result = Bun.spawnSync([process.execPath, "-e", script], { cwd: resolve(import.meta.dir, "../.."), env: childEnv, stdout: "pipe", stderr: "pipe", timeout: 60_000 });
+  expect({ exitCode: result.exitCode, stderr: result.stderr.toString() }).toEqual({ exitCode: 0, stderr: "" });
+  return JSON.parse(result.stdout.toString());
+}
+
+describe("installed service startup exit status (sandboxed custody stand-in)", () => {
+  test("a transient custody failure exits 1; a deterministic refusal exits 78", () => {
+    const setup = tempVault();
+    expect(serviceCustodyMode(setup.vault, setup.env, "custody_unproven").code).toBe(1);
+    const mismatch = serviceCustodyMode(setup.vault, setup.env, "vault_mismatch");
+    expect(mismatch.code).toBe(78);
+    expect(mismatch.text).toContain(`serve --install --vault ${setup.vault}`);
+    expect(serviceCustodyMode(setup.vault, setup.env, "root_user").code).toBe(78);
+  }, 60_000);
+
+  test("an older sealed ledger exits 78 in service-custody mode and names the migration", () => {
+    const setup = tempVault(), ledgerPath = join(setup.vault, ".kizuki/kizuki.db");
+    const oldPath = join(setup.root, "legacy.sqlite"), old = new Database(oldPath);
+    try { old.exec(readFileSync(join(import.meta.dir, "../../../core/test/fixtures/doctor-ledger15-legacy.sql"), "utf8")); }
+    finally { old.close(true); }
+    renameSync(oldPath, ledgerPath); chmodSync(ledgerPath, 0o600);
+    writeFileSync(join(setup.vault, ".kizuki", "ledger-mark"), "1\n", { mode: 0o600 });
+    const result = serviceCustodyMode(setup.vault, setup.env, "held");
+    expect(result.code).toBe(78);
+    expect(result.text).toContain("migration_required");
+    expect(result.text).toContain(`init ${setup.vault} --no-default --no-service`);
+  }, 60_000);
 });

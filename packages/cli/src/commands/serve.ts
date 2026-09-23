@@ -21,8 +21,8 @@ import { jsonEnvelope } from "../output";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 import { serveSupervisorHost } from "../service-host";
 import { createServeRuntime } from "../serve-runtime";
-import { runServiceCustodyBroker, SERVICE_REFUSAL_EXIT, startServiceCustody, ServiceCustodyError, type ServiceCustodyHandle } from "@kizuki/core/internal";
-import { custodyUnavailableMessage, launchServiceCustodyBroker } from "../service-custody";
+import { runServiceCustodyBroker, startServiceCustody, ServiceCustodyError, type ServiceCustodyHandle } from "@kizuki/core/internal";
+import { custodyUnavailableMessage, launchServiceCustodyBroker, serviceStartupExit } from "../service-custody";
 import { isAbsolute, resolve } from "node:path";
 
 /** Supervisor-only launch modes. Parsed so installed units can start; omitted from public help. */
@@ -87,9 +87,10 @@ export const serveCommand: Command = {
       } catch (error) {
         if (!(error instanceof ServiceCustodyError)) throw error;
         io.err(custodyUnavailableMessage(vault, unit, error.reason));
-        // A startup refusal repeats on every restart; the unit's
-        // RestartPreventExitStatus keeps the supervisor from looping on it.
-        return mode === "--service-custody" ? SERVICE_REFUSAL_EXIT : 1;
+        // Only a refusal that repeats on every start exits 78, which the
+        // unit's RestartPreventExitStatus never restarts; a transient custody
+        // failure exits 1 and the start limit bounds any real loop.
+        return mode === "--service-custody" ? serviceStartupExit(error.reason) : 1;
       }
     }
     try { return await withVault(io, async (ctx) => {
@@ -209,7 +210,7 @@ export const serveCommand: Command = {
       // the installed unit cannot change that, so it exits as a refusal.
       if (!(error instanceof LedgerMigrationRequiredError) || custody === undefined) throw error;
       io.err(`error: ${error.message}`);
-      return SERVICE_REFUSAL_EXIT;
+      return serviceStartupExit("migration_required");
     } finally { custody?.close(); }
   },
 };

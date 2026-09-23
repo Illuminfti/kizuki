@@ -10,11 +10,13 @@ import { connectServiceCustody, custodyEndpointStat, sweepStaleCustodyEndpoints 
 
 /** The condition a refusal actually observed. Only environment facts the
  * daemon can state without inference are named; every guard that could also be
- * a hijack signal stays `custody_unproven` so no surface invents a cause. */
+ * a hijack signal stays `custody_unproven` so no surface invents a cause.
+ * `vault_mismatch`: the unit's vault path or id cannot bind this vault. */
 export type ServiceCustodyFailure =
   | "unsupported_platform"
   | "not_supervised"
   | "root_user"
+  | "vault_mismatch"
   | "custody_unproven";
 
 /** This channel reports current metadata for held directories. It grants no
@@ -66,7 +68,7 @@ interface Binding { path: string; id: string; invocation: string; bytes: Buffer;
 function binding(vaultPath: string, vaultId: string, env: Readonly<Record<string, string | undefined>>): Binding {
   if (process.platform !== "linux" || process.arch !== "x64" || !process.geteuid) fail("unsupported_platform");
   if (!isAbsolute(vaultPath) || vaultPath !== resolve(vaultPath) || vaultPath === "/" ||
-      !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(vaultId)) fail();
+      !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(vaultId)) fail("vault_mismatch");
   const invocation = env.INVOCATION_ID;
   if (invocation === undefined || !/^[0-9a-f]{32}$/.test(invocation)) fail("not_supervised");
   const uid = process.geteuid();
@@ -191,8 +193,8 @@ export async function startServiceCustody(
     try {
       files.assertPrivateDirectory(".kizuki");
       const id = files.readPrivate(".kizuki/vault-id");
-      if (id === null) fail();
-      try { if (Buffer.from(id.bytes).toString("utf8").trim() !== value.id) fail(); }
+      if (id === null) fail("vault_mismatch");
+      try { if (Buffer.from(id.bytes).toString("utf8").trim() !== value.id) fail("vault_mismatch"); }
       finally { id.close(); }
     } finally { files.close(); }
     capability.assertCurrent();
@@ -220,12 +222,13 @@ export function runServiceCustodyBroker(
     try {
       files.assertPrivateDirectory(".kizuki");
       const id = files.readPrivate(".kizuki/vault-id");
-      if (id === null) fail();
-      try { if (Buffer.from(id.bytes).toString("utf8").trim() !== value.id) fail(); }
+      if (id === null) fail("vault_mismatch");
+      try { if (Buffer.from(id.bytes).toString("utf8").trim() !== value.id) fail("vault_mismatch"); }
       finally { id.close(); }
     } finally { files.close(); }
     descriptors = controlDescriptors(value.path);
-    sweepStaleCustodyEndpoints(descriptors.control, name);
+    // Housekeeping only: a sweep failure never costs the broker its start.
+    try { sweepStaleCustodyEndpoints(descriptors.control, name); } catch { /* Leftover endpoints stay for the next start. */ }
     listener = api.listen(descriptors.control, name);
     endpoint = custodyEndpointStat(descriptors.control, name);
     checkControl(value, descriptors);
