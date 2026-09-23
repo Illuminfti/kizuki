@@ -1,10 +1,13 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { openLedgerRead } from "@kizuki/core/internal";
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { registerConnection, setSourceGrant, ulid } from "@kizuki/core";
 import { openLedger } from "../../core/src/ledger/db";
 import { createHelpers, fixtureConsent } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const h = createHelpers();
 afterEach(h.cleanup);

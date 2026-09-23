@@ -1,4 +1,4 @@
-import { expect, spyOn, test } from "bun:test";
+import { expect, spyOn, test , setDefaultTimeout } from "bun:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -6,6 +6,9 @@ import { OwnedDirectory } from "../../core/src/util/owned-directory";
 import { createFts5RetrievalPort, eraseOwnedFts5Generation, FTS5_RETRIEVAL_ID } from "@kizuki/core";
 import type { PortContext } from "@kizuki/core";
 import { openEmbeddedRetrievalPort, eraseOwnedEmbeddedGeneration, EMBEDDED_RETRIEVAL_ID } from "@kizuki/retrieval-pg";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 for (const engine of ["fts", "pg"] as const) for (const mode of ["active", "restart"] as const) for (const replacement of ["root", "intermediate"] as const) {
   test(`${engine} ${mode}: ${replacement} substitution after final check cannot redirect deletion`, async () => {

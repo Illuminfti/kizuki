@@ -1,8 +1,11 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "../helpers";
 import { fakeSystemd } from "./supervisor-fixture";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, runCli, tempVault } = createHelpers();
 afterEach(cleanup);

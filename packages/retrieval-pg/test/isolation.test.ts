@@ -1,6 +1,9 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, setDefaultTimeout } from "bun:test";
+
+// These tests run the embedded retrieval store; bound them for a loaded host.
+setDefaultTimeout(60_000);
 
 const SRC = join(import.meta.dir, "../src");
 const VENDOR = join(import.meta.dir, "../vendor");

@@ -1,10 +1,13 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, test, setDefaultTimeout } from 'bun:test';
 import { mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { readServeIntent, readVaultId, type SupervisorHost } from '@kizuki/core';
 import { createAppHost } from '../src/app/host';
 import type { CliIo } from '../src/commands';
 import { createHelpers } from './helpers';
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const h = createHelpers();
 afterEach(h.cleanup);

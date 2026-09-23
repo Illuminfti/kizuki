@@ -1,7 +1,10 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 const { cleanup, tempDir, isolatedEnv, runCli } = createHelpers();
 afterEach(cleanup);
 const hash = (s: string) => new Bun.CryptoHasher("sha256").update(s).digest("hex");

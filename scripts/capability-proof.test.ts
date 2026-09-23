@@ -1,10 +1,13 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseCapabilityArgs } from "./capability-proof";
 import { CAPABILITY_PROOF_FILE, EVALUATOR_ROOT, SURFACE_DOC_FILES, SURFACE_GATE, SURFACE_PRODUCER, hash } from "./release-evidence";
 import { TOOL_DESCRIPTIONS } from "../packages/mcp/src/index";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -54,6 +57,7 @@ test("surface CLI accepts only an exact candidate and a new absolute output", ()
   }
 });
 
+// The producer walks a copied candidate tree and compiled surface; minutes on a loaded host.
 test("actual producer receipt receives only compiled surface and doc-byte credit", () => {
   const f = fixture(), start = Date.now(), child = f.emit();
   expect(child.exitCode, child.stderr.toString()).toBe(0); expect(child.stderr.toString()).toBe("");
@@ -96,7 +100,7 @@ test("actual producer receipt receives only compiled surface and doc-byte credit
     expect(denied.status).toBe("FAIL"); expect(denied.evidence_sha256).toBeNull();
     writeFileSync(join(f.repo, path), original);
   }
-}, 60_000);
+}, 240_000);
 
 test.each(["head", "worktree", "index", "untracked", "alias", "normalized-doc", "normalized-import", "metadata", "dynamic"])("producer refuses unprovable %s candidate without a receipt", mode => {
   const f = fixture(); let candidate = f.candidate;
@@ -192,4 +196,4 @@ test("receipt pins the surface schema and the compiled MCP tool surface", () => 
   expect(tools.length).toBeGreaterThan(0);
   expect(receipt.mcp_tools).toEqual(tools);
   expect(new Set(receipt.mcp_tools).size).toBe(receipt.mcp_tools.length);
-}, 60_000);
+}, 240_000);

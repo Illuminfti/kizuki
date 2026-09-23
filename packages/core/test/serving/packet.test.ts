@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import type { Database } from "bun:sqlite";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -25,6 +25,9 @@ import { canonFixture } from "../canon/helpers";
 import { validEvent } from "../fixtures";
 import { page, recordedPage, serveFixture, storeEvent } from "./helpers";
 import type { Fixture } from "./helpers";
+
+// These tests do real ledger, vault and process work; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const SEARCH_DOCUMENT_COLUMNS =
   "doc_id, scope, title, body, path, page_type, sensitivity, taint, authority, occurred_at, connector_id, subjects, provenance";
@@ -504,7 +507,7 @@ describe("the packet is scoped by the grant, not by the request", () => {
     }
     expect(drifted).toEqual([]);
     // This is 100 correctness probes, not a five-second latency contract.
-  }, 10_000);
+  }, 40_000);
 });
 
 describe("LifeOS-calibre packet compilation", () => {

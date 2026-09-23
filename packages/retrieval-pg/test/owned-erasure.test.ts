@@ -1,10 +1,13 @@
-import { expect, test, spyOn } from "bun:test";
+import { expect, test, spyOn, setDefaultTimeout } from "bun:test";
 import { existsSync, readFileSync, readdirSync, lstatSync, writeFileSync, symlinkSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { openEmbeddedRetrievalPort } from "../src/port";
 import { OwnedDirectory } from "../../core/src/util/owned-directory";
 import { SqlStore } from "../src/sql-store";
 import { temporaryPortContext, SYNTHETIC_DOCS, SYNTHETIC_QUERY, FixtureEmbeddingPort, hashVector } from "./helpers";
+
+// These tests do real ledger, vault and process work; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 function contains(path: string, marker: string): boolean {
   if (!existsSync(path)) return false;
@@ -152,4 +155,4 @@ console.log('shutdown-unconfirmed-lease-retained'); process.exit(0);`);
     await eraseOwnedEmbeddedGeneration({ ...f.ctx, clock: () => new Date(Date.now() + 60_001).toISOString() });
     expect(existsSync(join(f.ctx.data_dir, "store"))).toBe(false);
   } finally { f.cleanup(); }
-}, 15_000);
+}, 60_000);

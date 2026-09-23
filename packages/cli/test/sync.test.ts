@@ -1,11 +1,14 @@
 import { fixtureConsent } from "./helpers";
 import { Database } from "bun:sqlite";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { join } from "node:path";
 import { unlinkSync } from "node:fs";
 import { applyCanonWrite, createBudgetTracker, listClaims, listConnections, resolveTarget, setSourceGrant } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, runCli, tempVault, writeNotes } = createHelpers();
 afterEach(cleanup);

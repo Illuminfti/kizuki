@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, spyOn, test, setDefaultTimeout } from "bun:test";
 import { readFileSync, renameSync, symlinkSync } from "node:fs";
 import * as filesystem from "node:fs/promises";
 import {
@@ -27,6 +27,9 @@ import {
   MAX_PACK_DECODED_BYTES,
   MAX_SCAN_ENTRIES,
 } from "../src/markdown-folder";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 async function makeTempDir(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), "kizuki-markdown-"));

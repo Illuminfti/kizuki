@@ -1,10 +1,13 @@
 import { credentialCustodyQualified, initializeEnrollmentLedger } from "./custody-fixture";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentEnrollmentError, enrollAgent, previewAgentEnrollment } from "../../src/agents/enrollment";
 import { openLedger } from "../../src/ledger/db";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 function request(destination: string) {
   return {

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import {
   ConnectionStateStore,
   disconnect,
@@ -33,6 +33,9 @@ import {
 } from "../src/commands/connect";
 import type { CliIo } from "../src/commands";
 import { createHelpers } from "./helpers";
+
+// These tests drive real IMAP enrollment against a local server; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, tempVault } = createHelpers();
 afterEach(cleanup);

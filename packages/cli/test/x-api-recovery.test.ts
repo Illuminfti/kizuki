@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, test , setDefaultTimeout } from 'bun:test';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ConnectionStateStore, createStatePersister, inspectSourceGrant, listConnections, revokeSourceGrant, setSourceGrant } from '@kizuki/core';
@@ -11,6 +11,9 @@ import { runXApiConnect, runXApiRecovery } from '../src/commands/connect-x-api';
 import { withVault } from '../src/context';
 import { createHelpers } from './helpers';
 import type { CliIo } from '../src/commands';
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 const h = createHelpers(); afterEach(h.cleanup);
 const ID = 'kizuki.x';
 function v2(bytes: Uint8Array): XApiStateV2 { const state = parseState(bytes); if (state.schema !== X_API_STATE_SCHEMA) throw Error('expected v2'); return state; }

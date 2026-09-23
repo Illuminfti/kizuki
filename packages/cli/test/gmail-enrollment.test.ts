@@ -1,4 +1,4 @@
-import { afterEach, expect, spyOn, test } from 'bun:test';
+import { afterEach, expect, spyOn, test, setDefaultTimeout } from 'bun:test';
 import { createHelpers } from './helpers';
 const h = createHelpers();
 afterEach(h.cleanup);
@@ -17,6 +17,9 @@ import { GmailFixture } from '../../connector-gmail/src/testing';
 import { runGmailConnect } from '../src/commands/connect-gmail';
 import { listHostConnections, loadConnector, selectConnection } from '../src/connections';
 import type { CliIo } from '../src/commands';
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 function ownerIo(setup: ReturnType<typeof h.tempVault>) { const output: string[] = []; let prompts = 0; const io: CliIo = { env: { ...setup.env, KIZUKI_GMAIL_CLIENT_ID: 'synthetic-client', KIZUKI_GMAIL_CLIENT_SECRET_REF: 'env:SYNTHETIC_APP_SECRET', SYNTHETIC_APP_SECRET: 'synthetic-app-secret' }, vaultOverride: setup.vault, stdinIsTTY: true, stdoutIsTTY: true, stderrIsTTY: true, out: line => output.push(line), err: line => output.push(line), prompt: async () => { prompts++; throw Error('no prompts'); } }; return { io, output, prompts: () => prompts }; }
 function oauth(f: GmailFixture) { let reply!: (url: URL) => void, opens = 0, posts = 0; const callback = new Promise<URL>(resolve => { reply = resolve; }); const transport: OAuthTransport = { listen: async () => ({ redirect_uri: 'http://127.0.0.1:39123/callback', callback: () => callback, close: async () => { } }), postForm: async () => { posts++; return { status: 200, body: { access_token: 'synthetic-oauth-access', refresh_token: 'synthetic-oauth-refresh', expires_in: 3600, scope: GMAIL_SCOPES.join(' '), token_type: 'Bearer' } }; } }; return { create: (config: GmailConnectorConfig, deps: GmailConnectorDeps) => createGmailConnector(config, { ...deps, oauth: transport, fetch: f.fetch, now: f.now }), open: async (raw: string) => { opens++; const url = new URL(raw); expect(url.origin).toBe('https://accounts.google.com'); expect(url.searchParams.get('code_challenge_method')).toBe('S256'); expect(url.searchParams.get('scope')).toBe(GMAIL_SCOPES.join(' ')); const result = new URL('http://127.0.0.1:39123/callback'); result.searchParams.set('state', url.searchParams.get('state')!); result.searchParams.set('code', 'synthetic-code'); reply(result); }, counts: () => ({ opens, posts }) }; }
 const fields = 'text,subjects,headers,labels,attachments';

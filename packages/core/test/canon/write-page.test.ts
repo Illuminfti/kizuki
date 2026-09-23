@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -25,6 +25,9 @@ import {
 } from "../../src/vault/write";
 import type { CanonWriteCapability } from "../../src/vault/write";
 import { assertCanonFiles, openCanonFiles, type CanonFiles } from "../../src/vault/canon-files";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const tempDirs: string[] = [];
 

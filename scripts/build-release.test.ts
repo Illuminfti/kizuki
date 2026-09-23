@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,9 @@ import { checksumManifest, parseBuildInfoValue } from "./release-artifacts";
 import { distributionFixture } from "./release-package-fixture";
 import { BUN_DISTRIBUTION_PIN } from "./release-notices";
 import { selectedReleaseTarget } from "./release-targets";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 /** Synthetic, low-entropy, and never written to a tracked file as one literal. */
 const SYNTHETIC = { KIZUKI_TELEGRAM_API_ID: "1200003", KIZUKI_TELEGRAM_API_HASH: "ab".repeat(16) } as const;

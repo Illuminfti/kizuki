@@ -1,10 +1,13 @@
 import { credentialCustodyQualified, initializeEnrollmentLedger } from "./custody-fixture";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AgentEnrollmentError, authenticateAgentCredential, enrollAgent, previewAgentEnrollment, revokeAgentEnrollment } from "../../src/agents/enrollment";
 import { openLedger } from "../../src/ledger/db";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 // Metadata only: a failed immutable preview must distinguish retained journals
 // from a directory/main-file change without printing requests or credentials.

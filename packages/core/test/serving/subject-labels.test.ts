@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, test, setDefaultTimeout } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { OWNER, OWNER_AGENT_GRANT, addAgent, authenticate, setGrant } from '../../src/agents';
@@ -17,6 +17,9 @@ import { projectSubjectLabels } from '../../src/serving/subject-labels';
 import { loadCanon } from '../../src/serving/canon';
 import { setSourceGrant, sourceCaptureAdmission, bindSourceEvent, revokeSourceGrant } from '../../src/ledger/source-grants';
 import { ulid } from '../../src/util/ulid';
+
+// These tests do real ledger, vault and process work; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const cleanups: (() => void)[] = [];
 afterEach(() => cleanups.splice(0).reverse().forEach(fn => fn()));

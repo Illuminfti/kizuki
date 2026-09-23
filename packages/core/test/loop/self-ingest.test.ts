@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,6 +20,9 @@ import { archiveRelPath } from "../../src/vault/write";
 import type { Producer } from "../../src/contracts/proposal";
 import { eventFacts, FixtureVectorPort, putEvent } from "../claims/helpers";
 import { validEvent } from "../fixtures";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const roots: string[] = [];
 

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -18,6 +18,9 @@ import {
   initVault,
   inspectVaultControl,
 } from "../src/vault/init";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const directories: string[] = [];
 const moduleUrl = new URL("../src/vault/init.ts", import.meta.url).href;

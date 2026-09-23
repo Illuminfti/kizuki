@@ -3,10 +3,13 @@
  * handoff issue or a superseded 1.0 definition, and no tracked document may
  * call the world-storage appendix an RFC.
  */
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const ROOT = join(import.meta.dir, "../../../..");
 

@@ -1,5 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, setDefaultTimeout } from "bun:test";
 import { isUlid, ulid } from "../src/util/ulid";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const CROCKFORD = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 

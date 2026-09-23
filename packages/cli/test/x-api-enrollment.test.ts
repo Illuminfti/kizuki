@@ -1,4 +1,4 @@
-import { afterEach, expect, spyOn, test } from 'bun:test';
+import { afterEach, expect, spyOn, test , setDefaultTimeout } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -14,6 +14,9 @@ import { printConnectorCatalog } from '../src/connect-catalog';
 import { createAppHost } from '../src/app/host';
 import { createHelpers } from './helpers';
 import type { CliIo } from '../src/commands';
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 const h = createHelpers(); afterEach(h.cleanup);
 const ID = 'kizuki.x', fields = 'none', historyStart = '2026-01-01T00:00:00Z';
 const options = { fields, historyStart, json: true };

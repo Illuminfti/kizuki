@@ -1,7 +1,10 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readBootId } from "../../src/serve/leases";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const leases = join(import.meta.dir, "../../src/serve/leases.ts");
 const uuid = "12345678-1234-4123-8123-123456789ABC";

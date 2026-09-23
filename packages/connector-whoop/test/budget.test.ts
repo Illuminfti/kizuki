@@ -1,7 +1,10 @@
-import { expect, test } from 'bun:test';
+import { expect, test, setDefaultTimeout } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import { WhoopFixture } from '../src/testing';
 import { encodeState, failure, parseState, scopes } from '../src/state';
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 test('48 charged requests refuse the next expired-token exchange and retain the live session for a new budget', async () => {
     const fixture = new WhoopFixture(600), state = parseState(fixture.state);

@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { initServe } from "../../src/serve/schema";
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,9 @@ import { listClaims } from "../../src/claims/store";
 import { listRunReceipts } from "../../src/serve/receipts";
 import type { ClaimDraft, ProducerPort } from "../../src/contracts/producer";
 import { putEvent } from "../claims/helpers";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });

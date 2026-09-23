@@ -1,10 +1,13 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { ptr } from "bun:ffi";
 import { chmodSync, closeSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { openOwnedDirectory, OwnedDirectoryPublicationError, type OwnedDirectoryIdentity } from "../../src/util/owned-directory";
 import { loadOwnedDirectoryNative } from "../../src/util/owned-directory-native";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 // Fixed private fixtures only: no concurrent pathname replacement or live vaults.
 const roots: string[] = [];

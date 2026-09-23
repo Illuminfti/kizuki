@@ -2,12 +2,15 @@ import { fixtureConsent } from "./helpers";
 import { loadConfiguredRetrieval, readRetrievalPortState } from "@kizuki/core";
 import { openLedgerRead } from "@kizuki/core/internal";
 import { fixtureSpaceId, writeFixtureGguf } from "@kizuki/embed-gguf";
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHelpers } from "./helpers";
 import { openConfiguredEmbedding, openConfiguredRetrieval } from "../src/retrieval-runtime";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 const helpers = createHelpers();
 afterEach(helpers.cleanup);
 

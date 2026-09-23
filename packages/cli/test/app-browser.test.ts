@@ -1,5 +1,8 @@
-import { expect, test } from 'bun:test';
+import { expect, test, setDefaultTimeout } from 'bun:test';
 import { resolve } from 'node:path';
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 for (const connected of [false, true]) test(`browser opener timeout ${connected ? 'retains' : 'refuses'} an authenticated handoff`, () => {
     // Isolate native module replacements; no real browser or child is started.

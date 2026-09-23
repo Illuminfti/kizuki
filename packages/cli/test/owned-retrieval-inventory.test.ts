@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createFts5RetrievalPort, FTS5_RETRIEVAL_ID, setSourceGrant, tryAdvisoryFileLock } from "@kizuki/core";
@@ -8,6 +8,9 @@ import { openEmbeddedRetrievalPort, EMBEDDED_RETRIEVAL_ID } from "@kizuki/retrie
 import { createOwnedRetrievalInventory, pruneOldOwnedRetrieval } from "../src/owned-retrieval-inventory";
 import { createHelpers } from "./helpers";
 import { SYNTHETIC_DOCS } from "../../core/test/contracts/fixtures";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 const h = createHelpers(); afterEach(h.cleanup);
 function ctx(vault: string, id: string): PortContext { return { vault_path: vault, data_dir: join(vault, ".kizuki/retrieval", id), config: {}, clock: () => new Date().toISOString(), secrets: async () => "", logger: () => {} }; }
 

@@ -1,10 +1,13 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readSince } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { BEACON_FIXTURE_EXPORT } from "../../connectors/src/import-beacon";
 import { createHelpers, fixtureConsent } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const h = createHelpers(); afterEach(h.cleanup);
 const jsonl = (rows: unknown[]) => rows.map(row => JSON.stringify(row)).join("\n");

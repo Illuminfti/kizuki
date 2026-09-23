@@ -13,7 +13,7 @@ import type {
   CanonicalProducer,
   ClaimTaint,
 } from "../contracts/proposal";
-import { tableExists, tableColumns } from "../ledger/schema";
+import { oneShotGet, tableExists } from "../ledger/schema";
 import type { Writer } from "../vault/write";
 
 /** Shared with the pre-RFC promotion log so a vault keeps one receipt file. */
@@ -243,7 +243,19 @@ export function getCanonReceipt(db: Database, receiptId: string): CanonReceipt |
  * retained records; entirely erased histories with no retained page detach.
  */
 export function worldReceiptChain(db: Database, pagePath: string): WorldCanonReceiptRecord[] {
-  if (!tableExists(db, "canon_receipts") || !tableColumns(db, "canon_receipts").includes("prior_receipt_id")) return [];
+  return receiptJournalShape(db).typed ? typedReceiptChain(db, pagePath) : [];
+}
+
+/** One bounded schema probe; per-row readers call it once per receipt. */
+function receiptJournalShape(db: Database): { exists: boolean; typed: boolean } {
+  const shape = oneShotGet<{ columns: number; typed: number | null }>(
+    db,
+    "SELECT count(*) AS columns, max(name = 'prior_receipt_id') AS typed FROM pragma_table_info('canon_receipts')",
+  );
+  return { exists: (shape?.columns ?? 0) > 0, typed: shape?.typed === 1 };
+}
+
+function typedReceiptChain(db: Database, pagePath: string): WorldCanonReceiptRecord[] {
   const anchors = db.query<{ receipt_id: string }, [string]>(
     "SELECT receipt_id FROM canon_receipts WHERE page_path=? AND record_codec='kizuki.canon-receipt/v2' LIMIT 4097",
   ).all(pagePath);
@@ -416,8 +428,9 @@ export function nextReceiptForPage(
   pagePath: string,
   after: { at: string; receipt_id: string },
 ): CanonReceipt | null {
-  if (!tableExists(db, "canon_receipts")) return null;
-  const chain = worldReceiptChain(db, pagePath);
+  const shape = receiptJournalShape(db);
+  if (!shape.exists) return null;
+  const chain = shape.typed ? typedReceiptChain(db, pagePath) : [];
   if (chain.length > 0) {
     const index = chain.findIndex(record => record.receipt_id === after.receipt_id);
     if (index < 0) throw new Error("typed canon receipt lineage invalid");

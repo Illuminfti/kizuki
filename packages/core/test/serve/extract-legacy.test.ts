@@ -1,5 +1,5 @@
 import { statSync } from "node:fs";
-import { expect, spyOn, test } from "bun:test";
+import { expect, spyOn, test, setDefaultTimeout } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,6 +25,9 @@ import { claimInput, FixtureVectorPort, putEvent } from "../claims/helpers";
 import { commitMachineByteIntent } from "../../src/ledger/event-origin";
 import { sha256Hex } from "../../src/util/hash";
 import { ulid } from "../../src/util/ulid";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "kizuki-legacy-extract-"));

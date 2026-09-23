@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -12,6 +12,9 @@ import type { CaptureEventInput, InsertClaimInput } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "../helpers";
 import { refreshDerived } from "../../src/derived";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, runCli, tempVault } = createHelpers();
 const MODEL = "kizuki.llm.openai-compatible:synthetic@local";

@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ConnectionStateStore, PRODUCER_V2_CONTRACT, type ProducerV2Port } from "@kizuki/core";
+import { ConnectionStateStore, PRODUCER_CONTRACT, PRODUCER_V2_CONTRACT, registerConnection, setSourceGrant, ulid, type ProducerV2Port } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { createServeRuntime } from "../../src/serve-runtime";
 import { startFakeEndpoint } from "../../../llm/test/fake-endpoint";
@@ -25,6 +25,15 @@ test("production composition explicitly binds typed extraction and retains model
   const options = { db, vaultPath: setup.vault, store: new ConnectionStateStore(join(setup.vault, ".kizuki")), env: setup.env, err: () => {} };
   try {
     writeConfig(`[ports.llm]\nid="kizuki.llm.openai-compatible"\nbase_url=${JSON.stringify(endpoint.base_url)}\nmodel="fixture"\ntimeout_ms=1000\nmax_retries=0\n`);
+    // An epoch-zero journal keeps the v1 codec; typed extraction starts with source policy.
+    const legacy = await createServeRuntime(options);
+    try { expect(legacy.hooks.producer?.descriptor.contract).toBe(PRODUCER_CONTRACT); }
+    finally { await legacy.close(); }
+    const source_key = ulid();
+    registerConnection(db, "fixture", source_key);
+    setSourceGrant(db, { source_key, expected_revision: 0, operation_id: "world-runtime-grant", policy: {
+      purposes: ["capture", "derive", "extract"], allowed_fields: ["text"], retention: "persistent_owned_until_revoked",
+      sensitivity_floor: "private", egress: "local_only" } });
     const runtime = await createServeRuntime(options);
     try {
       expect(runtime.hooks.producer?.descriptor.contract).toBe(PRODUCER_V2_CONTRACT);

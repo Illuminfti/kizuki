@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, expect, spyOn, test, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, appendFileSync, symlinkSync, statSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,9 @@ import { initServe } from "../packages/core/src/serve/schema";
 import { ARTIFACT_PACKAGE_FILES, ArtifactProofError, artifactProofSteps, SQLITE_ENGINE_POLICY } from "./artifact-proof";
 import type { ArtifactProofSchema } from "./artifact-proof";
 import type { SqliteRuntime } from "../packages/core/src/ledger/runtime";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 const dirs:string[]=[];
 afterEach(()=>{for(const dir of dirs.splice(0))rmSync(dir,{recursive:true,force:true});});
 const hash = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test, setDefaultTimeout } from "bun:test";
 import { symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ensureVaultId, hardenLedgerFile, setSourceGrant } from "@kizuki/core";
@@ -9,6 +9,9 @@ import { serveFixture } from "../../core/test/serving/helpers";
 import type { Fixture } from "../../core/test/serving/helpers";
 import { reflexCommand, readReflexRequestFile } from "../src/commands/reflex";
 import type { CliIo } from "../src/commands/index";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 let f: Fixture;
 let server: ReturnType<typeof Bun.serve> | undefined;

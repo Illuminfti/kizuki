@@ -1,9 +1,12 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { Database, constants } from "bun:sqlite";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openLedger } from "../src/ledger/db";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 test("the last writable ledger connection closes WAL sidecars and preserves committed data", () => {
   const root = mkdtempSync(join(tmpdir(), "kizuki-ledger-wal-")), path = join(root, "ledger.sqlite");

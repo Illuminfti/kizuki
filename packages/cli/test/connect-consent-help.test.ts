@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fixtureConsent, createHelpers } from "./helpers";
@@ -7,6 +7,9 @@ import {
   CONNECT_RESUME_SCHEMA,
   CONNECT_REVOKE_SCHEMA,
 } from "../src/option-schema";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, isolatedEnv, runCli, tempVault } = createHelpers();
 afterEach(cleanup);

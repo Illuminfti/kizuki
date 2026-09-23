@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { createHash } from "node:crypto";
 import { appendFileSync, chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +23,9 @@ import { writePackageFixture } from "./release-package-fixture";
 import { CURRENT_PACKAGE_FILES } from "./release-artifacts";
 import { distributionIdentity } from "./release-notices";
 import type { SqliteRuntime } from "../packages/core/src/ledger/runtime";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });

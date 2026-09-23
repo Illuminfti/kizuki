@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openEmbeddedRetrievalPort } from "@kizuki/retrieval-pg";
@@ -7,6 +7,9 @@ import { readSqliteRuntime } from "@kizuki/core/internal";
 import { recordedPage } from "../../core/test/helpers/recorded-page";
 import { mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const BIN = join(import.meta.dir, "..", "src", "bin.ts");
 

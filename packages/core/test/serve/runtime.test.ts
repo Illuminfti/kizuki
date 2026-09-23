@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,9 @@ import { InjectedCrash } from "../../src/serve/types";
 import type { Database } from "bun:sqlite";
 import { ReferenceRetrievalPort, DIRECT_RETRIEVAL_DESCRIPTOR } from "../contracts/reference-retrieval";
 import { temporaryPortContext } from "../contracts/fixtures";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const fixtures: { vault: string; db: Database }[] = [];
 function fixture() {

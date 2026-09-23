@@ -27,6 +27,7 @@ that a provider application or account does not exist.
 | `kizuki.import-pocket` | export import | `connect import-pocket --source PATH` |
 | `kizuki.import-omnivore` | export import | `connect import-omnivore --source PATH` |
 | `kizuki.import-x-archive` | export import | `connect import-x-archive --source PATH` |
+| `kizuki.import-beacon` | agent-run snapshot | [Beacon import](beacon-import.md) |
 | `kizuki.import-legacy-wiki` | estate import | [legacy import](legacy-import.md) |
 | `kizuki.import-legacy-events` | estate import | [legacy import](legacy-import.md) |
 | `kizuki.screenpipe` | offline SQLite | [Screenpipe](#screenpipe) |

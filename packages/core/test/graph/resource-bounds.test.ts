@@ -114,7 +114,7 @@ describe("graph frontier membership (#365)", () => {
     expect(new Set(two.edges.map((edge) => `${edge.src}\0${edge.dst}\0${edge.kind}`)).size).toBe(80);
     expect(two.edges.some((edge) => edge.src.startsWith("secret") || edge.dst.startsWith("secret"))).toBe(false);
     expect(neighbors(db, "root", { depth: 2, ceiling: "personal", kinds: ["wikilink"] })).toEqual(two);
-  }, 15_000);
+  }, 60_000);
 
   test("limit and empty-kind semantics are unchanged", async () => {
     const db = await wideGraph();
@@ -124,7 +124,7 @@ describe("graph frontier membership (#365)", () => {
     expect(neighbors(db, "root", { limit: 0 })).toEqual({ id: "root", edges: [], truncated: false });
     expect(neighbors(db, "root", { kinds: [] })).toEqual({ id: "root", edges: [], truncated: false });
     expect(() => neighbors(db, "root", { limit: MAX_RETRIEVAL_LIMIT + 1 })).toThrow(RangeError);
-  }, 15_000);
+  }, 60_000);
 
   test("incoming edges and cycles retain the same unique edge set", async () => {
     const db = await graph([

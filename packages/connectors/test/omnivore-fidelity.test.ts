@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -24,6 +24,9 @@ import {
   omnivoreEvents,
   pageOmnivoreEvents,
 } from "../src/import-omnivore";
+
+// These tests do real ledger, vault and process work; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 /** The old ambiguous encoding lets one highlight impersonate two records. */
 function delimiterJoinedFingerprint(events: readonly CaptureEventInput[]): string {

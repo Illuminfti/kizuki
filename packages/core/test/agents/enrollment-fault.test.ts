@@ -1,11 +1,14 @@
 import { credentialCustodyQualified as qualified, initializeEnrollmentLedger } from "./custody-fixture";
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { authenticateAgentCredential, enrollAgent, revokeAgentEnrollment } from "../../src/agents/enrollment";
 import { addAgent, authenticate } from "../../src/agents/identity";
 import { openLedger } from "../../src/ledger/db";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });

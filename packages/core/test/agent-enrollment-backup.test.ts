@@ -238,7 +238,7 @@ for (const schema of ["kizuki.backup/v2", "kizuki.backup/v3"] as const) {
       expect(existsSync(target)).toBe(false);
     });
   }
-  for (const ledger of [0, 15, ...(schema === "kizuki.backup/v2" ? [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31] : [32]), 99, 16.5, "16"]) {
+  for (const ledger of [0, 15, ...(schema === "kizuki.backup/v2" ? [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31] : [LEDGER_SCHEMA_VERSION + 1]), 99, 16.5, "16"]) {
     test(`${schema} refuses unsupported ledger version ${JSON.stringify(ledger)} before target publication`, () => {
       const { root, backup, manifest } = materialize();
       resign(backup, { ...manifest, schema, schema_versions: { ...manifest.schema_versions, ledger: ledger as number } });

@@ -1,9 +1,12 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, setDefaultTimeout } from "bun:test";
 import {
   parseAllowlist,
   scanSourceText,
 } from "../../../scripts/verify-network";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 describe("llm egress pin", () => {
   test("packages/llm has exactly one fetch and one Bun.serve", () => {

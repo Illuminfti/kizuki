@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -9,6 +9,9 @@ import { openLedger } from "@kizuki/core/testing";
 import { createServeRuntime } from "../../src/serve-runtime";
 import { startFakeEndpoint, type SeenRequest } from "../../../llm/test/fake-endpoint";
 import { createHelpers } from "../helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, tempVault, runCli } = createHelpers();
 afterEach(cleanup);

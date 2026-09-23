@@ -22,11 +22,10 @@ import { isPlainObject } from "../util/validate";
 import { markDerivedHeld, readDerivedHolds } from "../derived-holds";
 import { removeHeldPageEdges } from "../graph/graph";
 import { removeSearchForPurge } from "../search/indexer";
-import {
-  FTS5_RETRIEVAL_ID,
-  FTS5_RETRIEVAL_STORE_REL,
-  createFts5RetrievalPort,
-} from "../retrieval";
+// Import the modules, not the retrieval index: the index registers the FTS5
+// port on load and would run inside the fts5 -> purge import cycle.
+import { FTS5_RETRIEVAL_ID, createFts5RetrievalPort } from "../retrieval/fts5";
+import { FTS5_RETRIEVAL_STORE_REL } from "../retrieval/schema";
 import { eventIdFromReference } from "../retrieval/ids";
 import { withdrawForTombstone } from "../staging/producers";
 import { sha256Hex } from "../util/hash";

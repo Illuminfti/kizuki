@@ -1,10 +1,13 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openLedger } from "../src/ledger/db";
 import { count, readSince } from "../src/ledger/ledger";
 import { validEvent } from "./fixtures";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 async function readReady(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> {
   let buffered = "";

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SupervisorStatus } from "@kizuki/core";
@@ -10,6 +10,9 @@ import {
 } from "../src/service-custody";
 import { createHelpers } from "./helpers";
 import { fakeSystemd } from "./serve/supervisor-fixture";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, isolatedEnv, runCli, tempDir } = createHelpers();
 afterEach(cleanup);

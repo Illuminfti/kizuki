@@ -135,6 +135,8 @@ test("artifact root must be a real directory even when the linked contents have 
   expect(() => verifyNativeArtifact(join(path, "BUILD.json"), sourceSha)).toThrow("artifact must be a regular directory");
 });
 
+// Twelve cases and three controls each drive real CLI and MCP processes, so the
+// whole corpus needs minutes of wall time on a shared host.
 test("the complete offline corpus uses native import, model filing, CLI and MCP consumers", async () => {
   const result = await runNativeQuality();
   expect(result.schema).toBe("kizuki.native-extraction-quality/v2");
@@ -184,7 +186,7 @@ test("the complete offline corpus uses native import, model filing, CLI and MCP 
     expect(result.cases[9]!.failures).toContain("per_event_subject_roles_missing");
     expect(result.passed).toBe(false);
   }
-}, 180_000);
+}, 480_000);
 
 
 test("native extraction verifies seven-file provenance without executing synthetic package bytes", () => {
