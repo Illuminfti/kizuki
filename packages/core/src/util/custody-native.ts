@@ -135,6 +135,17 @@ int custody_connect(int dir,const char *name) {
   if(call(42,fd,(long)&a,len,0,0,0)<0) { closefd(fd); return -1; }
   return fd;
 }
+// Staleness probe for a leftover endpoint: 0 when nothing listens (the
+// kernel refuses the connection), 1 when a listener exists, -1 otherwise.
+int custody_probe(int dir,const char *name) {
+  struct address a; int len=address(dir,name,&a); if(len<0) return -1;
+  int fd=(int)call(41,1,5|0x80000|0x800,0,0,0,0); if(fd<0) return -1;
+  long connected=call(42,fd,(long)&a,len,0,0,0);
+  closefd(fd);
+  if(connected==-111) return 0;
+  if(connected>=0 || connected==-11) return 1;
+  return -1;
+}
 struct header { u32 magic,version,kind,reserved; unsigned char binding[16]; };
 struct reply { struct header header; struct metadata metadata; };
 struct iovec { void *base; u64 len; };
@@ -309,6 +320,7 @@ function load() {
       custody_watch_pid: { args: [FFIType.i32], returns: FFIType.i32 },
       custody_listen: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i32 },
       custody_connect: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i32 },
+      custody_probe: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i32 },
       custody_peer: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i32 },
       custody_restrict: { args: [], returns: FFIType.i32 },
       custody_serve: { args: [FFIType.i32, FFIType.i32, FFIType.u32, FFIType.ptr, FFIType.i32, FFIType.i32], returns: FFIType.i32 },
@@ -332,6 +344,11 @@ function load() {
       connect(controlFd: number, name: string): number {
         const bytes = basename(name); const result = native.custody_connect(descriptor(controlFd), ptr(bytes));
         return result < 0 ? fail() : result;
+      },
+      /** "refused" proves no process listens on the endpoint any more. */
+      probe(controlFd: number, name: string): "refused" | "listening" | "unknown" {
+        const bytes = basename(name); const result = native.custody_probe(descriptor(controlFd), ptr(bytes));
+        return result === 0 ? "refused" : result === 1 ? "listening" : "unknown";
       },
       peer(socketFd: number): { pid: number; uid: number; gid: number } {
         const out = Buffer.alloc(12);

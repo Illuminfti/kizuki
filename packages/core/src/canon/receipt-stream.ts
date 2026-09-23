@@ -310,6 +310,16 @@ class ReceiptStream {
     if (tail.length > line.length || !tail.equals(line.subarray(0, tail.length))) fail("receipt_tail_pending");
     return { prefix, line, tail };
   }
+  /** Recovery refuses a relocated or restored stream before any page action.
+   * A completed redaction legitimately replaces the file, so it pins directories only. */
+  assertCheckpointCustody(input: OrdinaryReceiptCheckpoint, file: boolean): void {
+    this.#guard(() => {
+      const checkpoint = validateOrdinaryReceiptCheckpoint(input);
+      this.#verify();
+      if (![checkpoint.vault, checkpoint.control, checkpoint.directory].every((value, index) => matchesIdentity(value, this.#directories[index]!)) ||
+          (file && !matchesIdentity(checkpoint.file, this.#stat))) fail("changed");
+    });
+  }
   reconcile(input: OrdinaryReceiptCheckpoint, exactReceiptLine: Uint8Array): void {
     this.#guard(() => {
       const { prefix, line, tail } = this.#admittedTail(input, exactReceiptLine);
@@ -406,8 +416,8 @@ class ReceiptStream {
 
 export type ReceiptAppendStream = Pick<ReceiptStream, "append" | "sync" | "verifyBinding" | "close">;
 export type SourceErasureReceiptFile = ReceiptAppendStream & Pick<ReceiptStream, "readUtf8">;
-export type WorldErasureReceiptStream = Pick<ReceiptStream, "planRedaction" | "reconcileRedaction" | "sync" | "verifyBinding" | "close">;
-export type OrdinaryRecoveryReceiptStream = Pick<ReceiptStream, "checkpoint" | "reconcile" | "withdrawExact" | "sync" | "verifyBinding" | "close">;
+export type WorldErasureReceiptStream = Pick<ReceiptStream, "planRedaction" | "reconcileRedaction" | "assertCheckpointCustody" | "sync" | "verifyBinding" | "close">;
+export type OrdinaryRecoveryReceiptStream = Pick<ReceiptStream, "checkpoint" | "reconcile" | "withdrawExact" | "assertCheckpointCustody" | "sync" | "verifyBinding" | "close">;
 
 function openStream(scope: VaultMutationScope, io: CanonIo, readable: boolean, ordinaryRecovery = false): ReceiptStream {
   const files = requireCanonFiles(scope, io);
@@ -464,6 +474,7 @@ export function openOrdinaryRecoveryReceiptStream(scope: VaultMutationScope, io:
   // No generic append/read surface escapes this purpose-bound capability.
   return Object.freeze({ checkpoint: () => stream.checkpoint(), reconcile: (checkpoint: OrdinaryReceiptCheckpoint, line: Uint8Array) => stream.reconcile(checkpoint, line),
     withdrawExact: (checkpoint: OrdinaryReceiptCheckpoint, line: Uint8Array) => stream.withdrawExact(checkpoint, line),
+    assertCheckpointCustody: (checkpoint: OrdinaryReceiptCheckpoint, file: boolean) => stream.assertCheckpointCustody(checkpoint, file),
     sync: () => stream.sync(), verifyBinding: () => stream.verifyBinding(), close: () => stream.close() });
 }
 
@@ -473,6 +484,7 @@ export function openWorldErasureReceiptStream(scope:VaultMutationScope,io:CanonI
   return Object.freeze({
     planRedaction:(erased:readonly ErasedWorldCanonReceipt[],final:WorldCanonReceiptRecord)=>stream.planRedaction(erased,final),
     reconcileRedaction:(plan:ReceiptRedactionPlan,erased:readonly ErasedWorldCanonReceipt[],final:WorldCanonReceiptRecord)=>stream.reconcileRedaction(plan,erased,final),
+    assertCheckpointCustody:(checkpoint:OrdinaryReceiptCheckpoint,file:boolean)=>stream.assertCheckpointCustody(checkpoint,file),
     sync:()=>stream.sync(),verifyBinding:()=>stream.verifyBinding(),close:()=>stream.close(),
   });
 }

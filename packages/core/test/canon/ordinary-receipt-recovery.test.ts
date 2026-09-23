@@ -41,7 +41,7 @@ test("admission creates and syncs private storage and an immutable closed checkp
   withCanonMutationSync(f.io, (scope, io) => {
     const stream = openOrdinaryRecoveryReceiptStream(scope, io);
     try {
-      expect(Object.keys(stream).sort()).toEqual(["checkpoint", "close", "reconcile", "sync", "verifyBinding", "withdrawExact"]);
+      expect(Object.keys(stream).sort()).toEqual(["assertCheckpointCustody", "checkpoint", "close", "reconcile", "sync", "verifyBinding", "withdrawExact"]);
       const before = stream.checkpoint();
       expect(Object.isFrozen(before)).toBe(true); expect(Object.isFrozen(before.file)).toBe(true);
       expect(before.byte_length).toBe(0); expect(before.prefix_sha256).toBe(hashBytes(Buffer.alloc(0)));

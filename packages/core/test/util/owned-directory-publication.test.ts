@@ -32,7 +32,7 @@ test("fixed native flags return signed collision and nonempty errors while prese
     expect(native.symbols.renameChildNoReplace(-1, ptr(from), -1, ptr(to))).toBe(-9);
     expect(id(join(path, "stage"))).toEqual(stage); expect(id(join(path, "destination"))).toEqual(destination);
     expect(readFileSync(join(path, "destination", "kept"), "utf8")).toBe("original");
-  } finally { closeSync(fd); native.compiled.close(); native.libc.close(); }
+  } finally { closeSync(fd); }
 });
 
 test("exclusive staging returns its private inode and preserves an occupied name", () => {

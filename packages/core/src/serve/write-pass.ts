@@ -4,7 +4,7 @@ import { inheritSourcePortBindings } from "../ledger/source-grants";
 import { SelfOriginError, requireExternalEvents } from "../ledger/event-origin";
 import { settleWriteReservations } from "./budget-ledger";
 import { recoverCanonWritesOwned } from "../canon/recovery";
-import { inspectCanonRecovery } from "../canon/write-intent";
+import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent";
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import type { Database } from "bun:sqlite";
@@ -253,7 +253,12 @@ export async function runWritePass(
   });
   try {
     return await withCanonMutationAsync(io, async (scope, owned) => {
-      if (inspectCanonRecovery(owned.db).pending) recoverCanonWritesOwned(scope, owned);
+      if (inspectCanonRecovery(owned.db).pending) {
+        // A held write keeps its durable intent and blocks only new canon
+        // writes. Ingest already ran; stop cleanly instead of failing each run.
+        try { recoverCanonWritesOwned(scope, owned); }
+        catch (error) { if (error instanceof CanonRecoveryError) return stoppedWritePass("recovery:held"); throw error; }
+      }
       try {
         settleWriteReservations(owned.db, owned.vault_path);
         return await runWritePassOwned(scope, owned, options);
@@ -263,19 +268,23 @@ export async function runWritePass(
     });
   } catch (error) {
     if (!(error instanceof VaultMutationError) || error.code !== "writer_busy") throw error;
-    return {
-      revived: 0,
-      claims_extracted: 0,
-      claims_written: 0,
-      claims_written_extracted: 0,
-      claims_deduped: 0,
-      claims_superseded: 0,
-      canon_writes: 0,
-      ...metricResult(emptyMetrics()),
-      stopped: "lock:busy",
-      errors: [],
-    };
+    return stoppedWritePass("lock:busy");
   }
+}
+
+function stoppedWritePass(stopped: string): WritePassResult {
+  return {
+    revived: 0,
+    claims_extracted: 0,
+    claims_written: 0,
+    claims_written_extracted: 0,
+    claims_deduped: 0,
+    claims_superseded: 0,
+    canon_writes: 0,
+    ...metricResult(emptyMetrics()),
+    stopped,
+    errors: [],
+  };
 }
 
 async function runWritePassOwned(

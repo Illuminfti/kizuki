@@ -16,12 +16,12 @@ import {
   uninstallServeService,
 } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
-import { withVault } from "../context";
+import { LedgerMigrationRequiredError, withVault } from "../context";
 import { jsonEnvelope } from "../output";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 import { serveSupervisorHost } from "../service-host";
 import { createServeRuntime } from "../serve-runtime";
-import { runServiceCustodyBroker, startServiceCustody, ServiceCustodyError, type ServiceCustodyHandle } from "@kizuki/core/internal";
+import { runServiceCustodyBroker, SERVICE_REFUSAL_EXIT, startServiceCustody, ServiceCustodyError, type ServiceCustodyHandle } from "@kizuki/core/internal";
 import { custodyUnavailableMessage, launchServiceCustodyBroker } from "../service-custody";
 import { isAbsolute, resolve } from "node:path";
 
@@ -87,7 +87,9 @@ export const serveCommand: Command = {
       } catch (error) {
         if (!(error instanceof ServiceCustodyError)) throw error;
         io.err(custodyUnavailableMessage(vault, unit, error.reason));
-        return 1;
+        // A startup refusal repeats on every restart; the unit's
+        // RestartPreventExitStatus keeps the supervisor from looping on it.
+        return mode === "--service-custody" ? SERVICE_REFUSAL_EXIT : 1;
       }
     }
     try { return await withVault(io, async (ctx) => {
@@ -178,6 +180,7 @@ export const serveCommand: Command = {
           ? { crashAfter }
           : {}),
         process: thisProcess(),
+        log: line => io.err(line),
         acquireRuntime: () => createServeRuntime({ ...ctx, env: io.env, err: io.err, configurationErrorMode: "disable-model" }),
         ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
       });
@@ -201,6 +204,12 @@ export const serveCommand: Command = {
       if (result.http !== null) await result.http.stop();
       return 0;
     }, { retrieval: verb === "status" || verb === "stop" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required" });
+    } catch (error) {
+      // An older sealed ledger needs the explicit init migration. Restarting
+      // the installed unit cannot change that, so it exits as a refusal.
+      if (!(error instanceof LedgerMigrationRequiredError) || custody === undefined) throw error;
+      io.err(`error: ${error.message}`);
+      return SERVICE_REFUSAL_EXIT;
     } finally { custody?.close(); }
   },
 };

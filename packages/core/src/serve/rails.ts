@@ -1,6 +1,6 @@
 import { VaultMutationError, withVaultMutationSync } from "../vault/mutation-scope";
 import { recoverCanonWrites } from "../canon/recovery";
-import { inspectCanonRecovery } from "../canon/write-intent";
+import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent";
 import { retryCanonProjectionObligations } from "../canon/projection-obligations";
 import { pidAlive, readBootId } from "./leases";
 import type { Database } from "bun:sqlite";
@@ -403,7 +403,10 @@ async function runRailImpl(
       if (rail === "sync") requireAtomicExtractReplay(db);
       initServe(db);
       if (rail !== "purge-sweep" && rail !== "doctor-sweep" && inspectCanonRecovery(db).pending) {
-        recoverCanonWrites({ db, vault_path: vaultPath });
+        // Writer-held mode: a held write blocks only new canon writes, so the
+        // rails that ingest, index or prune keep running around it.
+        try { recoverCanonWrites({ db, vault_path: vaultPath }); }
+        catch (error) { if (!(error instanceof CanonRecoveryError)) throw error; }
       }
       recoverRunJournal(db, vaultPath);
       try {

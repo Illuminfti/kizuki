@@ -34,18 +34,59 @@ changed predecessor or changed archive. Such cases preserve the pending intent
 and return `canon_recovery_needed`. The monotonic canon read generation advances
 when an intent is admitted and when its hold is durably cleared.
 
-## Custody and manual cases
+## Custody and stage reconciliation
 
 A checkpoint permits only the unchanged receipt prefix and an absent, complete
 or exact partial tail of the saved receipt. Recovery may append its missing
 suffix. Extra lines, conflicting bytes or changed file or directory custody are
 preserved and refused.
 
-A staging name alone does not prove that recovery created its inode. Any
-pre-existing ordinary stage, including a complete stage from a dead process,
-remains an explicit `stage_custody_unknown` manual case. Recovery can inspect an
-exact existing archive as input; it cannot adopt or overwrite that archive.
-Historical unrecorded pages cannot acquire a synthetic recovery receipt.
+A staging name alone does not prove that recovery created its inode, so
+recovery never adopts a stage. It reconciles each stage the durable intent
+names against the images that digest-checked intent holds, then republishes
+from the intent's own bytes:
+
+| Stage contents | Classification | Action |
+| --- | --- | --- |
+| Byte-identical to an intent image | `exact` | Removed; the intent holds the bytes |
+| A strict prefix of an intent image, including empty (a torn write) | `prefix` | Removed; the intent holds the bytes |
+| Any other bytes | `foreign` | Moved without replacing to `.kizuki/quarantine/canon-stage/<receipt_id>/` (directory 0700, file 0600); never deleted |
+| Symlink, directory, hardlink, foreign owner, writable or oversize entry | `unsafe` | Left untouched; the write holds with `stage_custody_unknown` |
+
+The live stage is compared with the after-image and, for a withdrawal
+rollback, the before-image; the archive stage with the before-image. Each
+removal or move is appended and fsynced to the versioned
+`kizuki.canon-stage-recovery/v1` log at `.kizuki/receipts/stage-recoveries.jsonl`
+before it happens. `recover --json` returns the records of the run, and
+`doctor --json` shows each stage's classification and next-start action
+without touching it. Source withdrawal runs the same reconciliation.
+
+Recovery also checks the saved receipt checkpoint's custody before any stage
+or page action. A vault copied or restored at file level while a write was
+pending refuses with `receipt_stream_changed` and changes nothing; recover at
+the original location, or restore from `kizuki export`, which refuses while
+recovery is pending.
+
+Recovery can inspect an exact existing archive as input; it cannot adopt or
+overwrite that archive. Historical unrecorded pages cannot acquire a synthetic
+recovery receipt.
+
+## Held writes and the service
+
+Every refusal at the recovery boundary is a typed `CanonRecoveryError`:
+writer refusals map to `stage_custody_unknown`, `page_changed`,
+`archive_changed` or `write_refused`, and receipt-stream refusals to
+`receipt_stream_changed` or `receipt_stream_refused`. A held write blocks only
+new canon writes. The daemon logs one `canon_recovery_held` JSON line per
+attempt and keeps serving reads, HTTP, connector ingest and the rails that do
+not write canon; the sync rail stops with `recovery:held`. The last attempt's
+reason and count are kept in `.kizuki/canon-recovery-hold.json` for doctor,
+which names one next step derived from the reason and stage classification.
+
+The systemd unit bounds restarts with `StartLimitIntervalSec=900` and
+`StartLimitBurst=5`. Deliberate startup refusals, custody and an older sealed
+ledger that needs `kizuki init <vault> --no-default`, exit 78, and
+`RestartPreventExitStatus=78` keeps the supervisor from restarting them.
 
 ## Projection completion
 

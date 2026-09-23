@@ -383,8 +383,16 @@ function loadDarwinOwnedDirectoryNative() {
   }
 }
 
-export function loadOwnedDirectoryNative() {
+function compileOwnedDirectoryNative() {
   if (process.platform === "linux" && process.arch === "x64") return loadLinuxOwnedDirectoryNative();
   if (process.platform === "darwin" && process.arch === "arm64") return loadDarwinOwnedDirectoryNative();
   throw new Error("owned_directory_unsupported");
+}
+
+// Each compile maps a fresh TinyCC image that is never reclaimed. The sealed
+// source is fixed, so one successful compile serves every caller for the
+// lifetime of the process; a failed attempt is not cached and may be retried.
+let cached: ReturnType<typeof compileOwnedDirectoryNative> | undefined;
+export function loadOwnedDirectoryNative(): ReturnType<typeof compileOwnedDirectoryNative> {
+  return cached ??= compileOwnedDirectoryNative();
 }

@@ -1,6 +1,6 @@
 import { ptr } from "bun:ffi";
 import type { BigIntStats } from "node:fs";
-import { closeSync, constants, fstatSync, fsyncSync, openSync, readSync, writeSync } from "node:fs";
+import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, openSync, readSync, writeSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { loadOwnedDirectoryNative } from "../util/owned-directory-native";
 import { serviceAncestorOwner } from "../serve/custody";
@@ -127,6 +127,9 @@ export interface CanonFiles {
   /** Atomically publish this scope's complete creation into an absent entry. */
   publish(created: CanonFileSnapshot, path: string): CanonFileSnapshot;
   replace(created: CanonFileSnapshot, expected: CanonFileSnapshot): CanonFileSnapshot;
+  /** Move an existing verified entry, never replacing, into an owner-only
+   * directory; the moved file becomes 0600. Grants no creation authority. */
+  relocate(existing: CanonFileSnapshot, path: string): CanonFileSnapshot;
   remove(expected: CanonFileSnapshot): void;
   close(): void;
 }
@@ -373,6 +376,32 @@ class NativeCanonFiles implements CanonFiles {
         if (!sameIdentity(observed.stat, source.stat) || !observed.bytes.equals(source.bytes)) { published.close(); fail("changed"); }
         return published;
       } finally { try { this.#release(created); } finally { this.#release(expected); } }
+    });
+  }
+  relocate(existing: CanonFileSnapshot, path: string): CanonFileSnapshot {
+    return guarded(() => {
+      const source = this.#record(existing);
+      if (source.resumeTarget !== undefined || source.path === path) fail("handle");
+      const components = parts(path), name = components.pop()!;
+      this.#verify(source);
+      const parent = this.#directory(components); if (parent === null) fail("changed");
+      try {
+        if ((directoryStat(parent).mode & 0o777n) !== 0o700n) fail("unsafe");
+        const from = nameBytes(parts(source.path).at(-1)!), to = nameBytes(name);
+        const renamed = result(api().symbols.renameChildNoReplace(source.parent, ptr(from), parent, ptr(to)));
+        if (renamed === -17) fail("conflict");
+        if (renamed !== 0) fail("io");
+        try {
+          fchmodSync(source.fd, 0o600);
+          fsyncSync(source.fd); fsyncSync(source.parent); fsyncSync(parent);
+          const moved = this.read(path); if (!moved) fail("changed");
+          const observed = this.#record(moved);
+          if (!sameIdentity(observed.stat, source.stat) || !observed.bytes.equals(source.bytes) || (observed.stat.mode & 0o777n) !== 0o600n) {
+            moved.close(); fail("changed");
+          }
+          return moved;
+        } finally { this.#release(existing); }
+      } finally { closeSync(parent); }
     });
   }
   remove(expected: CanonFileSnapshot): void {

@@ -6,7 +6,7 @@ import { custodyNative } from "../util/custody-native";
 import { loadOwnedDirectoryNative } from "../util/owned-directory-native";
 import { openCanonFiles } from "../vault/canon-files";
 import { observeAncestorOwner } from "./custody-observation";
-import { connectServiceCustody, custodyEndpointStat } from "./custody-startup";
+import { connectServiceCustody, custodyEndpointStat, sweepStaleCustodyEndpoints } from "./custody-startup";
 
 /** The condition a refusal actually observed. Only environment facts the
  * daemon can state without inference are named; every guard that could also be
@@ -225,6 +225,7 @@ export function runServiceCustodyBroker(
       finally { id.close(); }
     } finally { files.close(); }
     descriptors = controlDescriptors(value.path);
+    sweepStaleCustodyEndpoints(descriptors.control, name);
     listener = api.listen(descriptors.control, name);
     endpoint = custodyEndpointStat(descriptors.control, name);
     checkControl(value, descriptors);

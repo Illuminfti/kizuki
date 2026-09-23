@@ -12,7 +12,7 @@ import {
   getCanonReceiptRecord,
   getCheckpoint,
   inspectLedgerHealth,
-  inspectCanonRecovery,
+  inspectCanonRecoveryDetail,
   inspectPurgeHealth,
   inspectServeDoctor,
   latestReceiptForPage,
@@ -93,7 +93,7 @@ interface DoctorReport {
   doctrine: { file: string; state: string }[];
   ledger: ReturnType<typeof inspectLedgerHealth>;
   runtime: SqliteRuntime;
-  canon_recovery: ReturnType<typeof inspectCanonRecovery>;
+  canon_recovery: ReturnType<typeof inspectCanonRecoveryDetail>;
   ok: boolean;
 }
 
@@ -343,9 +343,15 @@ async function collect(
   const problems = vault.pages.flatMap((page) =>
     page.errors.map((error) => ({ page: page.page, error })),
   );
-  const canonRecovery = inspectCanonRecovery(ctx.db);
-  if (canonRecovery.pending || canonRecovery.projection_pending > 0) {
-    problems.push({ page: canonRecovery.page_path ?? "-", error: "canon recovery pending; run: kizuki recover --json" });
+  const canonRecovery = inspectCanonRecoveryDetail(ctx.db, vaultPath);
+  if (canonRecovery.pending) {
+    problems.push({ page: canonRecovery.page_path ?? "-",
+      error: `canon recovery held${canonRecovery.reason === null ? "" : `: ${canonRecovery.reason}`}; next: ${canonRecovery.next}` });
+  } else if (canonRecovery.projection_pending > 0) {
+    problems.push({ page: "-", error: "canon recovery pending; run: kizuki recover --json" });
+  }
+  if (canonRecovery.quarantined > 0) {
+    problems.push({ page: ".kizuki/quarantine/canon-stage", error: `${canonRecovery.quarantined} foreign canon stage file(s) kept in quarantine for inspection` });
   }
   for (const item of vault.doctrine) {
     if (item.state === "current" || item.state === "owner-edited") continue;
@@ -513,6 +519,9 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   }
   for (const item of report.doctrine) {
     if (item.state === "owner-edited") io.out(`doctrine ${item.file}: owner-edited`);
+  }
+  for (const stage of report.canon_recovery.stages) {
+    if (stage.present) io.out(`canon-stage ${stage.stage} ${stage.path} classification=${stage.classification} next_start=${stage.action_on_next_start}`);
   }
   for (const problem of report.problems) {
     io.out(`problem ${problem.page}: ${problem.error}`);

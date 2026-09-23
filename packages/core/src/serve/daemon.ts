@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { recoverCanonWrites } from "../canon/recovery";
 import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent";
+import { canonRecoveryNextStep, readCanonRecoveryHold } from "../canon/stage-recovery";
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import nodeProcess from "node:process";
@@ -35,6 +36,8 @@ interface ServeDaemonOptionsBase {
   readonly process?: LeaseProcess;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly shouldContinue?: () => boolean;
+  /** One structured line per held recovery attempt; defaults to stderr. */
+  readonly log?: (line: string) => void;
 }
 
 export interface ServeDaemonOptions extends ServeDaemonOptionsBase {
@@ -151,9 +154,11 @@ export async function runServeDaemon(
   if (inspectCanonRecovery(db).pending) {
     try { recoverCanonWrites({ db, vault_path: vaultPath }); }
     catch (error) {
-      // The durable hold remains visible to doctor and the serving boundary.
-      // A manual recovery case does not remove access to unaffected memory.
+      // Writer-held mode: the durable hold stays visible to doctor and the
+      // serving boundary, reads and ingest keep running, and the supervisor
+      // is never asked to restart into the same refusal.
       if (!(error instanceof CanonRecoveryError)) throw error;
+      (options.log ?? ((line: string) => { nodeProcess.stderr.write(`${line}\n`); }))(canonRecoveryHeldLine(vaultPath, error));
     }
   }
   const config = loadServeConfig(vaultPath);
@@ -225,6 +230,15 @@ export async function runServeDaemon(
       finally { releaseLease(db, process); }
     }
   }
+}
+
+function canonRecoveryHeldLine(vaultPath: string, error: CanonRecoveryError): string {
+  const hold = readCanonRecoveryHold(vaultPath);
+  return JSON.stringify({
+    event: "canon_recovery_held", mode: "writer-held", reason: error.reason, receipt_id: error.receipt_id,
+    attempts: hold !== null && hold.receipt_id === error.receipt_id ? hold.attempts : 1,
+    next: canonRecoveryNextStep(error.reason, []),
+  });
 }
 
 export function serveStatus(
