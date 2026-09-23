@@ -329,11 +329,12 @@ describe("network source verification", () => {
     expect(scanShellText("scripts/tool.sh", "bun run scripts/encode.ts\n")).toEqual([]);
   });
 
+  // The whole tracked tree is parsed; that takes seconds even on an idle host.
   test("the tracked tree has no unallowlisted network calls or stale entries", async () => {
     const scan = await scanTrackedSources();
     expect(scan.findings).toEqual([]);
     expect(scan.stale).toEqual([]);
-  });
+  }, 60_000);
 
   test("tracked JS/TS outside packages is scanned; untracked noise is ignored", async () => {
     const root = mkdtempSync(join(tmpdir(), "kizuki-network-scan-"));
