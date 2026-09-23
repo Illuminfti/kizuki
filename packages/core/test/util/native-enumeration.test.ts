@@ -213,7 +213,7 @@ for (const mode of ["valid", "valid-padded", "eof", "zero-inode", "short-header"
         } else if (mode === "eof") assert.equal(status, 0);
         else assert.equal(status, -22);
         process.stdout.write("passed");
-      } finally { api.compiled.close(); api.libc.close(); callback.close(); }
+      } finally { callback.close(); }
     `;
     const result = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
     expect(result.exitCode, result.stderr.toString()).toBe(0);

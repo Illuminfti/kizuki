@@ -383,10 +383,16 @@ function loadDarwinOwnedDirectoryNative() {
   }
 }
 
+// The loaded libraries stay rooted for the lifetime of the process. Callers
+// receive only frozen symbols, with no close, so no caller can unload or
+// replace what every other caller shares.
+const rooted: unknown[] = [];
 function compileOwnedDirectoryNative() {
-  if (process.platform === "linux" && process.arch === "x64") return loadLinuxOwnedDirectoryNative();
-  if (process.platform === "darwin" && process.arch === "arm64") return loadDarwinOwnedDirectoryNative();
-  throw new Error("owned_directory_unsupported");
+  const loaded = process.platform === "linux" && process.arch === "x64" ? loadLinuxOwnedDirectoryNative() :
+    process.platform === "darwin" && process.arch === "arm64" ? loadDarwinOwnedDirectoryNative() : null;
+  if (loaded === null) throw new Error("owned_directory_unsupported");
+  rooted.push(loaded);
+  return Object.freeze({ symbols: Object.freeze({ ...loaded.symbols }) });
 }
 
 // Each compile maps a fresh TinyCC image that is never reclaimed. The sealed

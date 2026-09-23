@@ -121,7 +121,6 @@ for (const mode of ["memfd", "write", "add-seals", "read-seals", "compile", "suc
         assert.equal(closes, 0); assert.ok(compiled);
         const name = Buffer.from('synthetic-missing\\0');
         assert.equal(api.symbols.openChild(-1, ffi.ptr(name), 0), -9);
-        api.compiled.close(); api.libc.close();
       } else {
         assert.throws(() => loadOwnedDirectoryNative(), { message: 'owned_directory_native_unavailable' });
         assert.equal(closes, 1);
@@ -201,7 +200,6 @@ for (const mode of ["pipe", "close-on-exec", "verify-close-on-exec", "nonblock",
         assert.equal(libraryCloses, 0); assert.ok(compiled);
         const name = Buffer.from("synthetic-missing\\0");
         assert.equal(api.symbols.openChild(-1, ffi.ptr(name), 0), -9);
-        api.compiled.close(); api.libc.close();
       } else {
         assert.throws(() => loadOwnedDirectoryNative(), { message: "owned_directory_native_unavailable" });
         assert.equal(libraryCloses, 1);
