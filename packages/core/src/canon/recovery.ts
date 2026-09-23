@@ -35,7 +35,7 @@ export interface CanonRecoveryReport {
 
 /** The recovery boundary speaks only CanonRecoveryError, so every caller,
  * including the daemon, can hold a write instead of failing on it. */
-export function canonRecoveryFailure(error: unknown, receiptId: string | null): CanonRecoveryError | null {
+function canonRecoveryFailure(error: unknown, receiptId: string | null): CanonRecoveryError | null {
   if (error instanceof CanonRecoveryError) return error;
   if (error instanceof CanonWriteRefused) {
     const reason = error.reason === "stage_custody_unknown" ? "stage_custody_unknown" :
@@ -246,12 +246,10 @@ export function commitWorldCanonErasure(scope:VaultMutationScope,io:CanonIo,prep
 export function recoverCanonWritesOwned(scope: VaultMutationScope, io: CanonIo): CanonRecoveryReport {
   ensureTopLevel(io); requireCanonFiles(scope, io);
   const completed: string[] = [], stageRecoveries: CanonStageRecoveryRecord[] = [];
-  let receiptId: string | null = io.db.query<{ receipt_id: string }, []>("SELECT receipt_id FROM canon_write_intents LIMIT 1").get()?.receipt_id ?? null;
-  let held = false;
+  let intent: CanonWriteIntent | null = null, held = false;
   try {
-    const intent = readCanonWriteIntent(io.db);
+    intent = readCanonWriteIntent(io.db);
     if (intent !== null) {
-      receiptId = intent.receipt.receipt_id;
       const stream = intent.version===3?openWorldErasureReceiptStream(scope,io):openOrdinaryRecoveryReceiptStream(scope, io);
       try {
         try { finish(scope, io, intent, stream, stageRecoveries); completed.push(intent.receipt.receipt_id); }
@@ -268,14 +266,14 @@ export function recoverCanonWritesOwned(scope: VaultMutationScope, io: CanonIo):
       finally { stream.close(); }
     }
   } catch (error) {
-    const typed = canonRecoveryFailure(error, receiptId);
+    const typed = canonRecoveryFailure(error, intent?.receipt.receipt_id ?? null);
     if (typed === null) throw error;
-    recordCanonRecoveryHold(io.vault_path, typed.reason, typed.receipt_id ?? receiptId, io.now?.());
+    recordCanonRecoveryHold(io.vault_path, typed.reason, typed.receipt_id ?? inspectCanonRecovery(io.db).receipt_id, io.now?.());
     throw typed;
   }
   const summary = inspectCanonRecovery(io.db);
   if (!summary.pending) clearCanonRecoveryHold(io.vault_path);
-  else if (held) recordCanonRecoveryHold(io.vault_path, "authority_changed", receiptId, io.now?.());
+  else if (held) recordCanonRecoveryHold(io.vault_path, "authority_changed", summary.receipt_id, io.now?.());
   return { completed, pending: summary.pending, projection_pending: summary.projection_pending, stage_recoveries: stageRecoveries };
 }
 export function recoverCanonWrites(input: CanonIo): CanonRecoveryReport {

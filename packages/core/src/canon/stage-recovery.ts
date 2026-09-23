@@ -221,7 +221,7 @@ export function readCanonRecoveryHold(vaultPath: string): CanonRecoveryHold | nu
   } catch { return null; }
 }
 /** Best effort: the hold record only informs doctor and never gates recovery. */
-export function recordCanonRecoveryHold(vaultPath: string, reason: CanonRecoveryReason, receiptId: string | null, at: string = new Date().toISOString()): CanonRecoveryHold {
+export function recordCanonRecoveryHold(vaultPath: string, reason: CanonRecoveryReason, receiptId: string | null, at: string = new Date().toISOString()): void {
   const prior = readCanonRecoveryHold(vaultPath);
   const hold: CanonRecoveryHold = { schema: HOLD_SCHEMA, receipt_id: receiptId, reason, at,
     attempts: prior !== null && prior.receipt_id === receiptId && prior.reason === reason ? prior.attempts + 1 : 1 };
@@ -231,7 +231,6 @@ export function recordCanonRecoveryHold(vaultPath: string, reason: CanonRecovery
     try { writeSync(fd, `${JSON.stringify(hold)}\n`); fsyncSync(fd); } finally { closeSync(fd); }
     renameSync(temporary, path);
   } catch { try { if (existsSync(temporary)) unlinkSync(temporary); } catch { /* Best effort. */ } }
-  return hold;
 }
 export function clearCanonRecoveryHold(vaultPath: string): void {
   try { unlinkSync(join(vaultPath, CANON_RECOVERY_HOLD_PATH)); } catch { /* Absent or unwritable; doctor ignores a stale receipt id. */ }
