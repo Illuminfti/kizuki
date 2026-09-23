@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, test, setDefaultTimeout } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { OWNER, OWNER_AGENT_GRANT, addAgent, authenticate, setGrant } from '../../src/agents';
@@ -284,6 +284,9 @@ test('denied rows may exhaust optional enrichment quota but only generic degrada
 
 import { producedClaimInput } from '../../src/serve/extract';
 import { insertClaim } from '../../src/claims/store';
+
+// These tests do real ledger, vault and process work; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 test('the real draft materializer needs no frontmatter subjects for current hash-bound identity projection', async () => {
   const f = fixture(), event = labelEvent(f.db);

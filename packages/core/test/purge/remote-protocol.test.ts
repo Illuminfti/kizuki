@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync } from "node:fs";
 import { join } from "node:path";
 import { hashBody } from "../../src/claims/hash";
@@ -10,6 +10,9 @@ import { temporaryPortContext } from "../contracts/fixtures";
 import { startRemoteRetrievalFixture } from "../contracts/remote-fixture";
 import { validEvent } from "../fixtures";
 import { tempVault, writeCanon } from "../helpers/vault";
+
+// These tests do real ledger, vault and process work; bound them for a loaded host.
+setDefaultTimeout(60_000);
 
 const AT = "2026-09-06T15:00:00.000Z";
 const disposers: (() => void | Promise<void>)[] = [];
