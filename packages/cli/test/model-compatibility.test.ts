@@ -80,7 +80,12 @@ test("native source consent, model canon, rejected responses and doctor compose"
     writeFileSync(join(notes, "new.md"), "Ada coordinates the orchard library reading group.");
     expect(runCli(setup.env, "import", "markdown-folder", "--source", notes).exitCode).toBe(0);
     for (const failureMode of ["metadata", "claims", "network"] as const) {
-      if (failureMode === "network") endpoint.stop(); else mode = failureMode;
+      if (failureMode === "network") {
+        // The dropped claim consumed its record, so the transport failure needs fresh pending work.
+        endpoint.stop();
+        writeFileSync(join(notes, "later.md"), "Ada hosts the orchard library open day.");
+        expect(runCli(setup.env, "import", "markdown-folder", "--source", notes).exitCode).toBe(0);
+      } else mode = failureMode;
       const failedRun = await cli(setup.env, "serve", "run", "sync", "--json");
       expect(failedRun.exitCode).toBe(0);
       const failedRunId = JSON.parse(failedRun.stdout).data.run_id;
@@ -89,8 +94,11 @@ test("native source consent, model canon, rejected responses and doctor compose"
         const receipt = listRunReceipts(db).find(item => item.run_id === failedRunId)!;
         expect(receipt.claims_extracted).toBe(0);
         expect(listClaims(db, { status: "live", limit: 20 }).filter(claim => claim.producer === "model").map(claim => claim.claim_id).sort()).toEqual(modelClaimIds);
-        // producer/v2 rejects a response whose claims fail its schema as a whole response.
-        expect(receipt.model.diagnostic?.stage).toBe(failureMode === "network" ? "transport" : "response");
+        // producer/v2 rejects a malformed response whole; a well-formed claim that breaks its own rules is dropped and counted.
+        if (failureMode === "claims") {
+          expect(receipt.model.diagnostic).toBeUndefined();
+          expect(receipt.claims_rejected).toEqual({ invalid_claim: 1 });
+        } else expect(receipt.model.diagnostic?.stage).toBe(failureMode === "network" ? "transport" : "response");
         expect(receipt.model.unavailable).toBe(failureMode === "network" ? 1 : 0);
         expect(db.query<{ cursor: string }, []>("SELECT cursor FROM checkpoints WHERE connector_id='kizuki.producer.model' AND source_key='extract'").get()?.cursor ?? null).toBe(firstCursor);
       } finally { db.close(); }
