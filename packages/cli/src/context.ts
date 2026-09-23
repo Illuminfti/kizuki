@@ -7,13 +7,14 @@ import {
   assertVaultControl,
   ensureVaultId,
   PortError,
+  readServeIntent,
   readVaultId,
   withLeaseHeldRefusal,
 } from "@kizuki/core";
 import type { ConnectionStateReader, RetrievalPort } from "@kizuki/core";
 import { assertBoundVaultId, inspectLedgerIdentity, LedgerIdentityError, LedgerReadError, LEDGER_SCHEMA_VERSION, ledgerNotReadyError, openLedgerRead, openReadyLedgerRead, openLedger, ledgerAccepted, readLedgerMark, sealLedger, initSearch } from "@kizuki/core/internal";
 import type { LedgerReadContext } from "@kizuki/core/internal";
-import { INVOCATION } from "./runtime";
+import { INVOCATION, shellQuote } from "./runtime";
 import { inspectConfiguredRetrieval, openConfiguredRetrieval } from "./retrieval-runtime";
 import type { CliIo } from "./commands/index";
 import {
@@ -68,12 +69,22 @@ function peekLedgerIdentity(vaultPath: string, dbPath: string): void {
   }
 }
 
+/** The one init invocation that migrates without changing the service choice:
+ * init installs and starts a service unless told not to, so only a vault whose
+ * recorded intent is an installed service may omit --no-service. */
+function migrationCommand(vaultPath: string): string {
+  let installed = false;
+  try { installed = readServeIntent(vaultPath) === "installed"; } catch { /* An unreadable intent never installs a service. */ }
+  const command = `${INVOCATION} init ${shellQuote(vaultPath)} --no-default`;
+  return installed ? `${command} (keeps the installed service)` : `${command} --no-service`;
+}
+
 /** A sealed ledger from an older release. Only the explicit init writer
  * migrates it, so every other verb names that one command. */
 export class LedgerMigrationRequiredError extends Error {
   readonly code = "migration_required";
   constructor(readonly vaultPath: string, readonly from: number, readonly to: number) {
-    super(`migration_required: ledger v${from} needs migration to v${to}; run: ${INVOCATION} init ${vaultPath} --no-default (keeps the installed service)`);
+    super(`migration_required: ledger v${from} needs migration to v${to}; run: ${migrationCommand(vaultPath)}`);
     this.name = "LedgerMigrationRequiredError";
   }
 }
