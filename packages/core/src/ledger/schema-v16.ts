@@ -117,6 +117,10 @@ function rebuildEvents(db: Database): void {
       origin_binding_version, origin_binding_kind, origin_binding
     FROM events
   `);
+  // Dropping events cascades to these rows only while FK enforcement is on;
+  // a chain that ends in a table rebuild migrates with it off. Clear them
+  // explicitly so the snapshot is restored exactly once in either mode.
+  if (tableExists(db, "extract_deferred_inputs")) db.exec("DELETE FROM extract_deferred_inputs");
   db.exec("DROP TABLE events");
   db.exec("ALTER TABLE events_v16 RENAME TO events");
   db.exec(`
