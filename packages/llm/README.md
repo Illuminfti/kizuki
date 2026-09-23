@@ -43,9 +43,11 @@ is unavailable, not an empty keep.
 ## Fail-closed rules
 
 - No tools or function schema are sent.
-- A response with `tool_calls`, `function_call`, `function_calls`,
-  `tool_call_id`, audio, image, file, attachment or data fields, or a
-  non-text content part is discarded as `rejected: tool_call_in_response`.
+- A response whose `tool_calls`, `function_call`, `function_calls`,
+  `tool_call_id`, audio, image, file, attachment or data field carries any
+  value, or with a non-text content part, is discarded as
+  `rejected: tool_call_in_response`. A null field or an empty list, which many
+  compatible servers echo, is absence.
 - Network, timeout, and schema failures throw `PortError`. They are not an
   empty completion.
 - Provider bodies and secret values never appear in errors.

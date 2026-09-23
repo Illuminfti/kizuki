@@ -71,15 +71,17 @@ describe("documented response metadata", () => {
     "tool_calls", "function_call", "function_calls", "tool_call_id",
     "audio", "image", "images", "file", "files", "attachments", "data",
   ]) {
-    test(`${key} refuses null and empty values at body, choice and message`, () => {
-      for (const value of [null, [], {}]) {
+    test(`${key} is absent when null or an empty list and refused when it carries any value`, () => {
+      const at = (value: unknown) => {
         const choice = completionBody("ok");
         (choice.choices as Record<string, unknown>[])[0]![key] = value;
-        for (const body of [
-          { ...completionBody("ok"), [key]: value },
-          choice,
-          message({ [key]: value }),
-        ]) {
+        return [{ ...completionBody("ok"), [key]: value }, choice, message({ [key]: value })];
+      };
+      for (const value of [null, []]) {
+        for (const body of at(value)) expect(parseChatCompletion(body, "synthetic").text).not.toContain(CANARY);
+      }
+      for (const value of [{}, [CANARY], { name: CANARY }, CANARY, 0, false]) {
+        for (const body of at(value)) {
           expect(() => parseChatCompletion(body, "synthetic")).toThrow("rejected: tool_call_in_response");
         }
       }
@@ -93,7 +95,7 @@ describe("documented response metadata", () => {
   });
 
   test("a later choice cannot conceal a tool or non-text response", () => {
-    for (const extra of [{ tool_calls: [] }, { content: [{ type: "image_url", image_url: { url: CANARY } }] }]) {
+    for (const extra of [{ tool_calls: [{ id: "call-1", type: "function", function: { name: CANARY, arguments: "{}" } }] }, { content: [{ type: "image_url", image_url: { url: CANARY } }] }]) {
       const body = completionBody("first answer");
       (body.choices as Record<string, unknown>[]).push({ message: { role: "assistant", content: "second answer", ...extra } });
       expect(() => parseChatCompletion(body, "synthetic")).toThrow("rejected: tool_call_in_response");
@@ -134,7 +136,7 @@ describe("documented response metadata", () => {
   });
 
   test("a real fake endpoint refuses deterministic response failures once", async () => {
-    const responses = [message({ annotations: [{ text: CANARY }] }), message({ refusal: CANARY }), message({ tool_calls: [] }),
+    const responses = [message({ annotations: [{ text: CANARY }] }), message({ refusal: CANARY }), message({ tool_calls: [{ id: "call-1", type: "function", function: { name: CANARY, arguments: "{}" } }] }),
       completionBody("{}", { finish_reason: "length" }), { ...completionBody("{}"), usage: { prompt_tokens: CANARY, completion_tokens: 1 } }]
       .map(body => () => Response.json(body));
     responses.push(() => new Response("{invalid JSON"), () => new Response("x".repeat(2_097_153)));
