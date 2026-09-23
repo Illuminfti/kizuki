@@ -124,9 +124,11 @@ native("Linux custody descriptor transport", () => {
     finally { await f.cleanup(); }
   });
 
+  // The second request is answered only by an established loop; SIGTERM while
+  // READY is still being published is a bootstrap failure by design.
   test("SIGTERM drains an established idle loop until the main closes", async () => {
     const f = await setup();
-    try { f.api.stat(f.socket, f.control, binding); await f.ready(); f.child.kill("SIGTERM"); await Bun.sleep(600);
+    try { f.api.stat(f.socket, f.control, binding); await f.ready(); f.api.stat(f.socket, f.control, binding); f.child.kill("SIGTERM"); await Bun.sleep(600);
       expect(f.api.healthy(f.socket)).toBe(true); f.api.stat(f.socket, f.control, binding); f.closeSocket();
       expect(await f.finish()).toMatchObject({ result: 0, ready: true }); }
     finally { await f.cleanup(); }
@@ -189,14 +191,14 @@ native("Linux custody descriptor transport", () => {
 
   test("draining does not turn a malformed request into clean shutdown", async () => {
     const f = await setup();
-    try { f.api.stat(f.socket, f.control, binding); await f.ready(); f.child.kill("SIGTERM"); await Bun.sleep(600);
+    try { f.api.stat(f.socket, f.control, binding); await f.ready(); f.api.stat(f.socket, f.control, binding); f.child.kill("SIGTERM"); await Bun.sleep(600);
       raw(f.socket, [f.control], "kind"); expect(await f.finish()).toMatchObject({ result: -1, ready: true }); }
     finally { await f.cleanup(); }
   });
 
   test("draining refuses an invalidated pidfd as an error rather than main exit", async () => {
     const f = await setup("closed-watch");
-    try { f.api.stat(f.socket, f.control, binding); await f.ready(); f.child.kill("SIGTERM"); await Bun.sleep(600);
+    try { f.api.stat(f.socket, f.control, binding); await f.ready(); f.api.stat(f.socket, f.control, binding); f.child.kill("SIGTERM"); await Bun.sleep(600);
       writeFileSync(join(f.directory, "close-watch"), "synthetic");
       expect(await f.finish()).toMatchObject({ result: -1, ready: true }); }
     finally { await f.cleanup(); }
