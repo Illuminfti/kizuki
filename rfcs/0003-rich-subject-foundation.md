@@ -109,7 +109,7 @@ code fence around the JSON object is formatting.
 Amended 2026-09-23 after hands-on runs against real providers: a well-formed
 claim that fails its own rules (an unknown or ungrounded reference, an anchor
 outside the quoted records, a malformed interval or value, or an object kind
-its predicate does not permit) is a counted `schema_invalid` per-draft
+its predicate does not permit) is a counted `invalid_claim` per-draft
 abstention rather than a whole-response rejection. Nothing such a claim names
 is resolved or kept. A candidate ref that does not name a request handle or a
 response mention is discarded, never resolved. When a response mention used as

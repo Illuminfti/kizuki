@@ -177,7 +177,7 @@ export function validateProduceResult(raw: unknown, contract: string = PRODUCER_
         return invalidResult();
       }
       for (const item of value.dropped) {
-        if (!isPlainObject(item) || !exact(item, ["reason", "id"]) || (item.reason !== "unknown_predicate" && item.reason !== "schema_invalid" && item.reason !== "systemone_rejected") ||
+        if (!isPlainObject(item) || !exact(item, ["reason", "id"]) || (item.reason !== "unknown_predicate" && item.reason !== "invalid_claim" && item.reason !== "systemone_rejected") ||
           typeof item.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(item.id)) {
           return invalidResult();
         }

@@ -141,9 +141,13 @@ export interface ProducerV2Port extends Port {
 
 export interface ModelProducerV2Options { readonly llm: LlmPort; readonly systemone?: SystemOnePort; }
 
-/** A claim declined without failing the call. `schema_invalid` names a well-formed claim that failed its own rules. */
+/**
+ * A claim declined without failing the call. `invalid_claim` names a
+ * well-formed claim that failed its own rules; it is distinct from the
+ * whole-response `schema_invalid` rejection.
+ */
 export type DroppedDraftV2 = {
-  readonly reason: "unknown_predicate" | "schema_invalid" | "systemone_rejected";
+  readonly reason: "unknown_predicate" | "invalid_claim" | "systemone_rejected";
   readonly id: string;
 };
 
@@ -448,7 +452,7 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
   const ids = new Set<string>();
   // Structural faults and caps reject the response. A well-formed claim that
   // fails its own evidence, reference or value rules is dropped as
-  // schema_invalid; nothing it names is resolved or kept.
+  // invalid_claim; nothing it names is resolved or kept.
   claims: for (const [index, raw] of parsed.claims.entries()) {
     if (!isPlainObject(raw) || !exactKeys(raw, CLAIM_KEYS) || !isToken(raw.id)) {
       return fail(`claims[${index}] is invalid`);
@@ -457,7 +461,7 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
       return fail(`claims[${index}] has a duplicate local id`);
     }
     ids.add(raw.id);
-    const invalid = () => { dropped.push({ reason: "schema_invalid", id: raw.id as string }); };
+    const invalid = () => { dropped.push({ reason: "invalid_claim", id: raw.id as string }); };
     const subject = readRef(raw.subject, supplied, mentions, `claims[${index}].subject`);
     if (typeof subject === "string") {
       invalid();

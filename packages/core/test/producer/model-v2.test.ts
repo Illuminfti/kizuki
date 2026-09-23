@@ -96,7 +96,7 @@ test("v2 rejects injected fence leaks and malformed mention anchors, and never a
   }
   const forged = JSON.stringify({ ...response, claims: [{ ...response.claims[0], subject: { kind: "supplied", id: "durable-id" } }] });
   const result = await producer(() => forged).port.produce(input);
-  expect(result).toMatchObject({ status: "ok", response: { claims: [] }, dropped: [{ reason: "schema_invalid", id: "c0" }] });
+  expect(result).toMatchObject({ status: "ok", response: { claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
   expect(JSON.stringify(result)).not.toContain("durable-id");
 });
 
@@ -174,7 +174,7 @@ test("the real registered world vocabulary passes both model input and response 
   }
   const unknown = { ...response, mentions: [{ ...response.mentions[0]!, candidate_refs: [] }],
     claims: [{ ...response.claims[0]!, predicate: "world.kind", object: { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/unregistered" } } }] };
-  expect(await producer(() => JSON.stringify(unknown)).port.produce(worldInput)).toMatchObject({ status: "ok", response: { claims: [] }, dropped: [{ reason: "schema_invalid", id: "c0" }] });
+  expect(await producer(() => JSON.stringify(unknown)).port.produce(worldInput)).toMatchObject({ status: "ok", response: { claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
 });
 
 test("the extraction prompt teaches how admitted claims become discoverable Concepts and Situations", () => {

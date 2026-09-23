@@ -223,3 +223,14 @@ for (const tied of [false, true]) test(`newer ambiguous model history remains un
     expect(recovered.model.detail).toContain("unattributed");
   } finally { db.close(); }
 });
+
+test("a pass that drops individual invalid typed claims is a model success, not a failure", () => {
+  const { path, db } = fixture();
+  try {
+    persistRunReceipt(db, path, { ...emptyRunTotals(), run_id: "typed-drops", rail: "sync", started_at: "2026-09-05T00:00:01Z", finished_at: "2026-09-05T00:00:01Z", status: "ok", stopped: null,
+      claims_extracted: 12, claims_rejected: { invalid_claim: 3, unknown_predicate: 1 }, model: { ...emptyRunTotals().model, model_ref: MODEL, calls: 1 } });
+    const report = inspectServeDoctor(db, path, { model_ref: MODEL, now: "2026-09-05T00:00:02Z" });
+    expect(report.model.last_success_at).toBe("2026-09-05T00:00:01Z");
+    expect(report.model.last_failure).toBeNull();
+  } finally { db.close(); }
+});

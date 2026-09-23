@@ -57,7 +57,7 @@ describe("producer v2 response parser", () => {
         valid_from: "2017-01-01T00:00:00Z",
         valid_to: "2016-12-31T23:59:60Z",
       }],
-    })).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "schema_invalid", id: "c0" }] });
+    })).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
   });
 
   test("accepts an increasing interval within one millisecond", () => {
@@ -81,7 +81,7 @@ describe("producer v2 response parser", () => {
         valid_from: "2026-01-01T00:00:00Z",
         valid_to: "2026-01-01T01:00:00+01:00",
       }],
-    })).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "schema_invalid", id: "c0" }] });
+    })).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
   });
 
   test("never resolves an arbitrary durable reference or an unknown local reference", () => {
@@ -93,7 +93,7 @@ describe("producer v2 response parser", () => {
 
     const unknown = structuredClone(response) as any;
     unknown.claims[0]!.subject = { kind: "mention", id: "m404" };
-    expect(parse(unknown)).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "schema_invalid", id: "c0" }] });
+    expect(parse(unknown)).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
   });
 
   test("rejects a malformed mention anchor and drops a claim citing an absent event", () => {
@@ -105,7 +105,7 @@ describe("producer v2 response parser", () => {
 
     const absent = structuredClone(response) as any;
     absent.claims[0]!.anchors = [{ event_id: "00000000000000000000000002", start_utf16: 0, end_utf16: 4 }];
-    expect(parse(absent)).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "schema_invalid", id: "c0" }] });
+    expect(parse(absent)).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
   });
 
   test("rejects extra keys and duplicate local ids", () => {
@@ -135,13 +135,13 @@ describe("producer v2 response parser", () => {
     const illegal = structuredClone(response) as any;
     illegal.claims[0]!.predicate = "classification.instance_of";
     illegal.claims[0]!.object = { kind: "literal", value: "person" };
-    expect(parse(illegal)).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "schema_invalid", id: "c0" }] });
+    expect(parse(illegal)).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
   });
 
   test("requires attribution evidence whenever a perspective endpoint is named", () => {
     const attributed = structuredClone(response) as any;
     attributed.claims[0]!.perspective.speaker = { kind: "mention", id: "m0" };
-    expect(parse(attributed)).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "schema_invalid", id: "c0" }] });
+    expect(parse(attributed)).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
   });
 
   test("cites an endpoint mention's anchor from an already cited record and nothing else", () => {
@@ -151,7 +151,7 @@ describe("producer v2 response parser", () => {
     mixed.claims.push({ ...mixed.claims[0]!, id: "c1", subject: { kind: "mention", id: "m1" } });
     mixed.claims.push({ ...mixed.claims[0]!, id: "c2", subject: { kind: "supplied", id: "s0" }, anchors: [northwind] });
     const parsed = parse(mixed);
-    expect(parsed).toMatchObject({ ok: true, dropped: [{ reason: "schema_invalid", id: "c2" }] });
+    expect(parsed).toMatchObject({ ok: true, dropped: [{ reason: "invalid_claim", id: "c2" }] });
     if (!parsed.ok) throw new Error("unreachable");
     expect(parsed.response.claims.map(claim => [claim.id, claim.anchors])).toEqual([
       ["c0", response.claims[0]!.anchors],
@@ -163,7 +163,7 @@ describe("producer v2 response parser", () => {
     const elsewhere = structuredClone(response) as any;
     elsewhere.mentions.push({ id: "m1", label: "Northwind", anchor: { event_id: "00000000000000000000000002", start_utf16: 0, end_utf16: 9 }, candidate_refs: [] });
     elsewhere.claims.push({ ...elsewhere.claims[0]!, id: "c1", subject: { kind: "mention", id: "m1" } });
-    expect(parse(elsewhere, records)).toMatchObject({ ok: true, response: { claims: [{ id: "c0" }] }, dropped: [{ reason: "schema_invalid", id: "c1" }] });
+    expect(parse(elsewhere, records)).toMatchObject({ ok: true, response: { claims: [{ id: "c0" }] }, dropped: [{ reason: "invalid_claim", id: "c1" }] });
   });
 
   test("reads one Markdown code fence as formatting and still rejects surrounding prose", () => {
