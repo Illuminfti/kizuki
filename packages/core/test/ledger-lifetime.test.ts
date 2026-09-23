@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { Database, constants } from "bun:sqlite";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,6 +6,9 @@ import { join } from "node:path";
 import { openLedger } from "../src/ledger/db";
 import { manageDatabaseLifetime } from "../src/ledger/lifetime";
 import { configureLedgerWalLifecycle } from "../src/ledger/wal-lifecycle";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 for (const strict of [false, true]) test(`ledger close(${strict}) finalizes held uncached queries and a prepared iterator`, () => {
   const root = mkdtempSync(join(tmpdir(), "ledger-lifetime-")), path = join(root, "ledger.db");

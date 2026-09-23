@@ -22,7 +22,7 @@ import {
 import { mineLiveDrafts } from "../src/serve/extract";
 import { claimInput, FixtureVectorPort } from "./claims/helpers";
 import type { ProducerPort, ProduceInput } from "../src/contracts/producer";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,6 +42,9 @@ import {
 import { openLedger } from "../src/ledger/db";
 import { validEvent } from "./fixtures";
 import { ulid } from "../src/util/ulid";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0))

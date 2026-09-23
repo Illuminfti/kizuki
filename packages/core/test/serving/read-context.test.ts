@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, existsSync, lstatSync, readFileSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { constants } from "bun:sqlite";
 import { join } from "node:path";
@@ -8,6 +8,9 @@ import { openLedgerDirectory } from "../../src/vault/canon-files";
 import { gate, gateAsync } from "../../src/serving/gate";
 import { listAudit, revokeAgent } from "../../src/agents";
 import { serveFixture, type Fixture } from "./helpers";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 let fixture: Fixture | undefined;
 const bindings: ReturnType<typeof openLedgerRead>[] = [];

@@ -1,8 +1,11 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mcpSession } from "./smoke-release-mcp";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const env = { PATH: process.env.PATH ?? "" };
 

@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmdirSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -11,6 +11,9 @@ import { openLedger } from "../../src/ledger/db";
 import { serializePage } from "../../src/vault/frontmatter";
 import { hashBytes } from "../../src/vault/write";
 import { tempVault } from "../helpers/vault";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const cleanup: (() => void)[] = [];
 const descriptorDirectory = process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd";

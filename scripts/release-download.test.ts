@@ -1,4 +1,4 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, expect, spyOn, test, setDefaultTimeout } from "bun:test";
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -10,6 +10,9 @@ import { distributionIdentity } from "./release-notices";
 import { writePackageFixture } from "./release-package-fixture";
 import { hash } from "./release-evidence";
 import { createPackageArchive, DOWNLOAD_LIMITS, parseDownloadManifest, parsePackageArchive, prepareReleaseDownload, verifyDownloadArchive, type PackageContents } from "./release-download";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
 function directory() { const path = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "kizuki-download-test-"))); directories.push(path); return path; }

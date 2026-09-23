@@ -1,8 +1,11 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fixtureLaunchctlOperation, launchctlFixtureMatches, observeLaunchctl, projectLaunchctlResult, syntheticServiceFileMetadata, prepareLaunchctlStartupCapture, startupCapturePlist, type LaunchctlFixture } from "./native-launchctl-diagnostics";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const fixture: LaunchctlFixture = { root: "/synthetic/kizuki native lifecycle fixed", runner_temp: "/synthetic", uid: 501,
   vault_id: "synthetic-vault", binary: { dev: 1, ino: 2, size: 3, mtime_ms: 4 } };

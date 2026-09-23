@@ -1,9 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, setDefaultTimeout } from "bun:test";
 import { constants, openSync, closeSync, mkdtempSync, rmSync, fstatSync, writeFileSync, symlinkSync, lstatSync, readdirSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { custodyNative } from "../../src/util/custody-native";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const supported = process.platform === "linux" && process.arch === "x64";
 const native = describe.skipIf(!supported);

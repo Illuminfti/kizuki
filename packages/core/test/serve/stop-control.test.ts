@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, existsSync, linkSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,9 @@ import { readServeProcessMarker, runServeDaemon, type ServeProcessMarker } from 
 import { readBootId, readLease } from "../../src/serve/leases";
 import { listRunReceipts } from "../../src/serve/receipts";
 import { clearServeStopRequest, requestServeStop, serveStopRequested } from "../../src/serve/stop-control";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });

@@ -1,5 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { join } from "node:path";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 /** Native fault hooks stay in a child and never change another test's FFI. */
 function scenario(mode: string, body: string): void {

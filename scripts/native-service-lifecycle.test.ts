@@ -1,5 +1,5 @@
 import { LEDGER_SCHEMA_VERSION } from "../packages/core/src/ledger/db";
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -318,6 +318,9 @@ test("actual multi-unit cleanup continues after a manager exception and retains 
 });
 
 import { BASELINE_SOURCE_SHA, NATIVE_LIFECYCLE_PHASE_IDS, NATIVE_LIFECYCLE_REGISTRY_SHA256, parseLifecycleArgs, statePhasePassed, upgradePhasePassed, type NativeStateEvidence, type NativeUpgradeEvidence } from "./native-service-lifecycle";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 test("lifecycle baseline argument is explicit, unique and isolated from artifact proof arguments", () => {
   expect(parseLifecycleArgs(["--artifact", "/candidate", "--baseline-artifact", "/baseline", "--report", "/report"])).toEqual({ artifact: "/candidate", baseline_artifact: "/baseline", report: "/report" });

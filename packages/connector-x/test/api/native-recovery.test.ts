@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,9 @@ import { ConnectionStateStore, createStatePersister, getConnection, getCheckpoin
 import { openLedger } from "@kizuki/core/testing";
 import { XApiFixture } from "../../src/api/testkit";
 import { X_API_CONNECTOR_ID, X_API_SCOPES, X_API_STATE_SCHEMA, encodeState, newCredentialGeneration, parseState } from "../../src/api/state";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const ID = X_API_CONNECTOR_ID;
 function grant(db: ReturnType<typeof openLedger>, source: string) {

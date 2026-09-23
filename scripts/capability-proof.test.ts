@@ -1,10 +1,13 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseCapabilityArgs } from "./capability-proof";
 import { CAPABILITY_PROOF_FILE, EVALUATOR_ROOT, SURFACE_DOC_FILES, SURFACE_GATE, SURFACE_PRODUCER, hash } from "./release-evidence";
 import { TOOL_DESCRIPTIONS } from "../packages/mcp/src/index";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });

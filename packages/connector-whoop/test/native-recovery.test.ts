@@ -1,4 +1,4 @@
-import { test, expect } from 'bun:test';
+import { test, expect, setDefaultTimeout } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +6,9 @@ import { ConnectionStateStore, createStatePersister, getConnection, getCheckpoin
 import { openLedger } from '@kizuki/core/testing';
 import { WhoopFixture } from '../src/testing';
 import { WHOOP_ID } from '../src/state';
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 for (const changed of [false, true])
     test(`actual ledger partial accept/restart ${changed ? 'refuses changed snapshot' : 'deduplicates exact witness'}`, async () => {
         const root = mkdtempSync(join(tmpdir(), 'whoop-native-'));

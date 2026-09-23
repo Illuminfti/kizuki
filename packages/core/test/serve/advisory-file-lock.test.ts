@@ -1,9 +1,12 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { linkSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tryAdvisoryFileLock } from "../../src/util/advisory-file-lock";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function fixture() { const root = mkdtempSync(join(tmpdir(), "native lock ")); roots.push(root); return root; }

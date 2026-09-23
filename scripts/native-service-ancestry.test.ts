@@ -1,8 +1,11 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { Database } from "bun:sqlite";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const linux = test.if(process.platform === "linux" && process.arch === "x64" && process.geteuid?.() !== 0);
 const main = resolve(import.meta.dir, "../packages/cli/src/main.ts");

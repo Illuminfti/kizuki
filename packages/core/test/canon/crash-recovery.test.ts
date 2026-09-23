@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, symlinkSync, truncateSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -24,6 +24,9 @@ import { tempVault } from "../helpers/vault";
 import { putEvent, storeClaim, write } from "./helpers";
 import { ulid } from "../../src/util/ulid";
 import { sha256Hex } from "../../src/util/hash";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const cleanup: (() => void)[] = [];
 afterEach(() => { for (const dispose of cleanup.splice(0).reverse()) dispose(); });

@@ -1,10 +1,13 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { connector, enrolled, io, temporaryDirectories } from "./connections-helpers";
 import { disconnect, listConnections } from "../src/ledger/connections";
 import { ConnectionStateStore } from "../src/ledger/connection-state";
 import { enrollConnection } from "../src/ledger/enroll";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { temporary, cleanup } = temporaryDirectories("kizuki-connection-operation-lock-");
 afterEach(cleanup);

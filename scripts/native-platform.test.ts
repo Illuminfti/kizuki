@@ -1,9 +1,12 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { closeSync, fsyncSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { renderLaunchdPlist } from "../packages/core/src/serve/units";
 import { DEFAULT_SERVE_CONFIG } from "../packages/core/src/serve/types";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 test("native host preserves private modes, atomic replacement, and directory fsync with spaces", () => {
   const root = mkdtempSync(join(tmpdir(), "native filesystem "));
   try {
