@@ -26,6 +26,14 @@ test("doctor JSON accepts a genuine migrated v1 event without hiding unrelated h
   const refused = runCli(setup.env, "doctor", "--json", "--integrity");
   expect(refused.exitCode).toBe(1); expect(refused.stdout).toBe("");
   expect(refused.stderr).toContain("migration_required");
+  // doctor, recover and serve all name the one explicit migration command.
+  const command = `init ${setup.vault} --no-default (keeps the installed service)`;
+  expect(refused.stderr).toContain(`ledger v15 needs migration to v${LEDGER_SCHEMA_VERSION}; run: `);
+  expect(refused.stderr).toContain(command);
+  for (const verb of [["recover", "--json"], ["serve", "--once", "--no-http"]]) {
+    const named = runCli(setup.env, ...verb);
+    expect(named.exitCode).toBe(1); expect(named.stderr).toContain(command);
+  }
   // Migration is an explicit initialization effect, never doctor startup.
   const beforeRejectedLedger = readFileSync(ledgerPath);
   writeFileSync(join(setup.vault, ".kizuki", "ledger-mark"), "2\n", { mode: 0o600 });
