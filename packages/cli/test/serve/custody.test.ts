@@ -18,7 +18,9 @@ describe("installed service custody boundary", () => {
       const before = inventory();
       const result = runCli({ ...setup.env, INVOCATION_ID: "1".repeat(32), MAINPID: String(process.pid) },
         "serve", "--vault", setup.vault, mode, "synthetic-vault");
-      expect(result.exitCode).toBe(1);
+      // The unit's main process exits 78 on a startup refusal, which its
+      // RestartPreventExitStatus never restarts; helper modes keep status 1.
+      expect(result.exitCode).toBe(mode === "--service-custody" ? 78 : 1);
       expect(result.stderr).toContain("service_custody_unavailable");
       expect(result.stdout).toBe("");
       expect(inventory()).toEqual(before);

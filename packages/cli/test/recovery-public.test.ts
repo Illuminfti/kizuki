@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { openLedger } from '@kizuki/core/testing';
 import { inspectCanonRecovery, retryCanonProjectionObligations } from '@kizuki/core';
@@ -246,4 +246,58 @@ test('actual app undo completes against its configured retrieval engine and rele
       expect((await reopened!.search({ text: 'partnerships', mode: 'lexical', scope: {}, ceiling: 'private', limit: 10, deadline_ms: 5000 })).hits).toHaveLength(1);
     } finally { await reopened?.close(); }
   } finally { await app.close(); }
+}, 60_000);
+
+async function heldStage() {
+  const f = await fixture(), edit = await storeClaim(f.db, f.event, { kind: 'edit', predicate: null, object: null, body: 'Grace studies astronomy.', frontmatter: {} });
+  failReceipt(f.db); expect(() => write(f.io, edit)).toThrow();
+  f.db.exec('DROP TRIGGER synthetic_public_receipt_failure');
+  const pending = readCanonWriteIntent(f.db)!;
+  // The kill point: the revision stage holds the after-image and the page still holds the before-image.
+  const page = join(f.vault, pending.receipt.page_path), stage = join(f.vault, pending.stages.live_stage);
+  renameSync(page, stage);
+  writeFileSync(page, Buffer.from(pending.before_base64!, 'base64'), { mode: 0o600 });
+  return { ...f, pending, stage };
+}
+
+test('recover names the typed stage reason and doctor classifies the stage, never completion_failed', async () => {
+  const f = await heldStage(), outside = join(f.vault, 'synthetic-outside');
+  renameSync(f.stage, outside); symlinkSync(outside, f.stage);
+  const held = h.runCli(f.env, 'recover', '--json');
+  expect(held.exitCode).toBe(1);
+  const result = JSON.parse(held.stdout).data;
+  expect(result).toMatchObject({ pending: true, receipt_id: f.pending.receipt.receipt_id, reason: 'stage_custody_unknown' });
+  expect(result.stages.map((item: { stage: string; classification: string | null; action_on_next_start: string }) => [item.stage, item.classification, item.action_on_next_start]))
+    .toEqual([['live', 'unsafe', 'hold'], ['archive', null, 'none']]);
+  expect(result.next).toContain('move it out of the vault');
+  const text = h.runCli(f.env, 'recover');
+  expect(text.stderr).toContain('Recovery remains held: stage_custody_unknown. next: ');
+  expect(text.stderr).not.toContain('kizuki doctor --json for the affected receipt');
+  const doctor = JSON.parse(h.runCli(f.env, 'doctor', '--json').stdout).data;
+  expect(doctor.canon_recovery).toMatchObject({ reason: 'stage_custody_unknown', last_attempt: { reason: 'stage_custody_unknown', attempts: 2 } });
+  expect(doctor.problems.map((item: { error: string }) => item.error).join('\n')).toContain('canon recovery held: stage_custody_unknown; next: ');
+  expect(readFileSync(f.stage)).toEqual(readFileSync(outside));
+}, 60_000);
+
+test('serve --once on a held vault exits 0 and names the hold; an exact stage completes on the next start', async () => {
+  const f = await heldStage(), outside = join(f.vault, 'synthetic-outside');
+  const doctor = JSON.parse(h.runCli(f.env, 'doctor', '--json').stdout).data;
+  expect(doctor.canon_recovery.stages).toEqual([{ stage: 'live', path: f.pending.stages.live_stage, present: true, classification: 'exact',
+    bytes: expect.any(Number), sha256: f.pending.receipt.after_hash, expected_sha256: f.pending.receipt.after_hash, action_on_next_start: 'remove' },
+  { stage: 'archive', path: f.pending.stages.archive_stage, present: false, classification: null, bytes: null, sha256: null, expected_sha256: null, action_on_next_start: 'none' }]);
+  expect(doctor.canon_recovery.next).toContain('completes automatically on the next service start');
+  renameSync(f.stage, outside); symlinkSync(outside, f.stage);
+  const held = h.runCli(f.env, 'serve', '--once', '--no-http');
+  expect(held.exitCode).toBe(0);
+  const line = held.stderr.split('\n').find(item => item.includes('canon_recovery_held'));
+  expect(JSON.parse(line!)).toMatchObject({ mode: 'writer-held', reason: 'stage_custody_unknown', receipt_id: f.pending.receipt.receipt_id });
+  expect(inspectCanonRecovery(f.db).pending).toBe(true);
+  // Restore the exact stage bytes, as the killed writer left them.
+  renameSync(f.stage, `${f.stage}.link`); renameSync(outside, f.stage);
+  const next = h.runCli(f.env, 'serve', '--once', '--no-http');
+  expect(next.exitCode).toBe(0); expect(next.stderr).not.toContain('canon_recovery_held');
+  expect(inspectCanonRecovery(f.db).pending).toBe(false);
+  expect(listCanonReceipts(f.db).map(item => item.receipt_id)).toContain(f.pending.receipt.receipt_id);
+  const recovered = JSON.parse(h.runCli(f.env, 'doctor', '--json').stdout).data.canon_recovery;
+  expect(recovered).toMatchObject({ pending: false, reason: null, stages: [], next: null });
 }, 60_000);

@@ -16,7 +16,7 @@ export { inspectLedgerIdentity, LedgerIdentityError } from "./ledger/identity";
 export { parseSqliteRuntime, readSqliteRuntime } from "./ledger/runtime";
 export type { SqliteRuntime } from "./ledger/runtime";
 export { assertBoundVaultId } from "./serve/vault-id";
-export { SERVICE_BROKER_REAP_SECONDS, SERVICE_READY_SECONDS } from "./serve/units";
+export { SERVICE_BROKER_REAP_SECONDS, SERVICE_READY_SECONDS, SERVICE_REFUSAL_EXIT } from "./serve/units";
 export { startServiceCustody, runServiceCustodyBroker, validateServiceCustodyLaunch, ServiceCustodyError } from "./serve/custody";
 export type { ServiceCustodyFailure, ServiceCustodyHandle } from "./serve/custody";
 export { indexEvent, indexEvents, indexPage, initSearch, removeCanonPath, removeDoc } from "./search";
