@@ -49,14 +49,26 @@ class RealTelegramApi implements TelegramApi {
 
   async connect(): Promise<void> {
     const runtime = await this.#load();
-    await this.#guard(() => runtime.client.connect(), runtime);
+    const opened = await this.#guard(() => runtime.client.connect(), runtime);
+    // The library answers a transport it could not open with `false`, not a
+    // throw. Going on would queue every later request behind a socket that
+    // never comes, so a sign-in or a sync would wait forever in silence.
+    if (opened === false) {
+      throw new TelegramConnectorError(
+        "unreachable",
+        "kizuki.telegram: telegram is unreachable",
+      );
+    }
   }
 
   async disconnect(): Promise<void> {
     const runtime = this.#runtime;
     // Nothing was ever started, so there is nothing to close.
     if (runtime === null) return;
-    await this.#guard(() => runtime.client.disconnect(), runtime);
+    // `destroy` closes the socket and also ends the library's keep-alive loop,
+    // which `disconnect` alone leaves pinging for the life of the process.
+    // No client is reused after this, so nothing needs it kept.
+    await this.#guard(() => runtime.client.destroy(), runtime);
   }
 
   async isAuthorized(): Promise<boolean> {

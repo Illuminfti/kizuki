@@ -36,8 +36,8 @@ export const pages: {
   signInErrors: unknown[];
   /** What the provider answers `getMe` with. */
   me: unknown;
-  /** Raised by the transport rather than by a request, when set. */
-  transport: { connect: unknown; disconnect: unknown };
+  /** Raised by the transport rather than by a request, when set; `opened` is what `connect` answers. */
+  transport: { connect: unknown; disconnect: unknown; opened: boolean };
   /** Every data center a session was pointed at before connecting. */
   pointed: [number, string, number][];
 } = {
@@ -49,7 +49,7 @@ export const pages: {
   signUpRequired: false,
   signInErrors: [],
   me: { id: { toString: () => "1001" } },
-  transport: { connect: null, disconnect: null },
+  transport: { connect: null, disconnect: null, opened: true },
   pointed: [],
 };
 
@@ -63,7 +63,7 @@ export function reset(): void {
   pages.signUpRequired = false;
   pages.signInErrors = [];
   pages.me = { id: { toString: () => "1001" } };
-  pages.transport = { connect: null, disconnect: null };
+  pages.transport = { connect: null, disconnect: null, opened: true };
   pages.pointed = [];
 }
 
@@ -76,14 +76,22 @@ interface StartParams {
 }
 
 class FakeClient {
-  async connect(): Promise<void> {
+  /** The library resolves `false`, rather than throwing, when every retry failed. */
+  async connect(): Promise<boolean> {
     if (pages.transport.connect !== null) throw pages.transport.connect;
     pages.invoked.push("connect");
+    return pages.transport.opened;
   }
 
   async disconnect(): Promise<void> {
     if (pages.transport.disconnect !== null) throw pages.transport.disconnect;
     pages.invoked.push("disconnect");
+  }
+
+  /** Transcribed from the library: marks the client finished, then disconnects. */
+  async destroy(): Promise<void> {
+    await this.disconnect();
+    pages.invoked.push("destroy");
   }
 
   /**

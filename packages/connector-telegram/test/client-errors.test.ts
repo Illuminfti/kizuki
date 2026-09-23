@@ -194,6 +194,21 @@ test.skipIf(!OFFLINE)("a transport fault while connecting is reported as unreach
   expect((caught as TelegramConnectorError).code).toBe("unreachable");
 });
 
+test.skipIf(!OFFLINE)("a transport the library could not open is unreachable, not a request left waiting", async () => {
+  pages.transport.opened = false;
+  const caught = await thrown(() => api().connect());
+  expect(caught).toBeInstanceOf(TelegramConnectorError);
+  expect((caught as TelegramConnectorError).code).toBe("unreachable");
+  expect(pages.invoked).toEqual(["connect"]);
+});
+
+test.skipIf(!OFFLINE)("closing a client ends the library's keep-alive along with the socket", async () => {
+  const live = api();
+  await live.connect();
+  await live.disconnect();
+  expect(pages.invoked).toEqual(["connect", "disconnect", "destroy"]);
+});
+
 test.skipIf(!OFFLINE)("closing a client that was never started asks nothing of the library", async () => {
   // Armed so that reaching the library at all would be visible as a throw.
   pages.transport.disconnect = new Error("nothing was ever opened");
