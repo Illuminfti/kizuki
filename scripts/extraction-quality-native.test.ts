@@ -42,7 +42,7 @@ test("v2 wire adaptation preserves candidates, exact witnesses and unknown time 
   for (const item of corpus.cases) {
     const ids = Object.fromEntries(item.records.map((record, index) => [record.id, `0000000000000000000000000${index + 1}`]));
     const response = scripted.responses.find(row => row.case_id === item.id)!;
-    const input = worldProduceInput(item.records.map(record => ({ event_id: ids[record.id]!, text: record.text })) as Parameters<typeof worldProduceInput>[0]);
+    const input = worldProduceInput(item.records.map(record => ({ event_id: ids[record.id]!, text: record.text })) as unknown as Parameters<typeof worldProduceInput>[0]);
     const wire = scriptedV2Response(item, response, ids);
     const { budget: _budget, ...parserInput } = input;
     const parsed = parseExtractResponseV2(JSON.stringify(wire), parserInput);
