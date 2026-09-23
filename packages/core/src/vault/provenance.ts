@@ -33,9 +33,10 @@ export function assessLivePageEvidence(
   const sourceIds = [...new Set(sources.value.map(eventIdFromReference))];
   try {
     const revision = (resolver ?? new CanonAuthorityResolver(db, [page.relPath])).basis(page.relPath, page.contentHash);
-    if (revision === null) return { admitted: false, reason: "revision_unrecorded" };
-    const receipt = getCanonReceipt(db,revision.receipt_id);
-    if (receipt !== null && isWorldCanonReceipt(receipt)) {
+    // An unrecorded revision still reports unavailable sources first, as it did
+    // before typed receipts; only a recorded typed revision skips that check.
+    const receipt = revision === null ? null : getCanonReceipt(db,revision.receipt_id);
+    if (revision !== null && receipt !== null && isWorldCanonReceipt(receipt)) {
       if (receipt.basis.after === null || !worldBasisAllowed(context ?? {db,vaultPath:"",principal:OWNER,sourcePurpose:"derive"},receipt.basis.after)) return {admitted:false,reason:"sources_unavailable"};
       return {admitted:true,sourceIds,revision};
     }
