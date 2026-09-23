@@ -28,11 +28,13 @@ settled 2026-09-02.
 | D20 | 2026-09-17 | Optional System One admission | TypeSafe Jev is an optional `kizuki.systemone/v1` port, not an LLM. Unconfigured vaults keep ordinary OpenAI-compatible extraction. When `[ports.systemone]` selects `kizuki.systemone.jev`, extracted drafts are admitted by typed noul questions before claims become live. Jev never writes canon, never replaces extraction, and never generates claims JSON. A configured but dead judge is unavailable, not an empty keep. |
 | D21 | 2026-09-17 | World model is the launch product | Owner amendment: 1.0 is the world model, not capture-to-context. Same-day follow-up: the entire #497 execution map is day-one 1.0. D19 still applies (stranger install, executable stranger proof, zero live P0s, honest install path). Ready requires the public seams named by #497: foundation and first Concept (#481 to #484, #503), domain expansion (#485 to #488, #494), two-client continuity and World Slice/Diff (#502, #489, #490), outcomes and attention (#491, #492), Atlas (#495), forecasts (#493), and continuous verification (#496), with #458 onboarding. The golden acceptance journey in #497 is the day-one proof. RFC 0003 and RFC 0004 remain proposed until those public seams exist. Closed GitHub packets, RFC fixtures, and planning documents are not shipped surfaces. A closed packet without a public CLI, MCP, or local-app seam does not satisfy this decision. Atlas, forecasts, ontology, and later packets in that map are not deferred past 1.0. |
 | D22 | 2026-09-18 | World model built and landed on main now | Owner instruction: "get the world model stuff working on the main branch". Resolves the open calls that gated implementation: (a) RFC 0003 is **Accepted** for the B1b–B1d scope (claim-v2 semantics and support tables with migration, one shared prepare/commit writer, discriminated v1/v2 reader, backup/restore/rebuild coverage); (b) RFC 0004 is **Accepted as a minimal slice**: `DurableObservation`, the world-vocabulary registry, `ConceptCard`, a minimal `SituationCard`, and `readWorldView` with the `concept` and `situation` operations; the rest of RFC 0004 stays Proposed; (c) the D21 bar is met in order: the golden journey first (consented source → Concept or Situation context → a second authorized client resumes it → one owner correction visible to both), landed on main, then the remaining #497 packets continue on the same contracts, with recorded reasons for anything not yet shipped; (d) the public seam is a new `world_view` read tool on MCP and loopback HTTP plus `kizuki world`, taking the tool surface from nine to ten, with a revision-pinned, non-authority-carrying resume handle that clips to the resuming principal's grant and reports the clipping in coverage; (e) `OWNER_AGENT_GRANT` gains `correct`; (f) the second client learns of corrections by polling (pull-only lifecycle) in 1.0; (g) the storage ports in `contracts/storage.ts` stay out of 1.0 scope; (h) `rfcs/0004-world-storage.md` is Appendix A to RFC 0004, not a second RFC 0004. Fable merges each lane PR after two-axis review evidence and green required checks. |
+| D23 | 2026-09-23 | Public 1.0.0 release today | Owner steer: release 1.0.0 publicly today. The launch bar is the world model as built on the 2026-09-21 launch stack (typed extraction, Concepts and Situations, `kizuki world`, MCP and loopback HTTP `world_view`, the app World views and world-claim correction) and Telegram native sign-in. Evidence gates are no longer release prerequisites: stranger proof, live-account qualification, independent-review receipts, seven- and fourteen-day observation, and go/no-go or release-acceptance reports. The remaining release gates are a clean typecheck, a green test suite, the release build and release smoke, and a hands-on run of the world model and Telegram from the built package. D19 and D21 readiness text is superseded where it conflicts. |
 
 D9–D16 supersede any earlier Gate 0 answer that made the owner the only
 consumer of a review queue, or that forbade scheduled canon writes.
 D17 amends the D13 implementation-facts paragraph below; it does not
-rewrite the 2026-09-02 D13 row.
+rewrite the 2026-09-02 D13 row. D23 supersedes the D19 and D21 readiness
+bars where they conflict; it does not rewrite those rows.
 
 ## Rules for agents (binding)
 
@@ -159,6 +161,43 @@ satisfy this decision.
 This amendment does not create a second canon writer, an owner review queue,
 or a fake public surface. It does not relax D19, connector honesty, security,
 recovery, platform, review, or verification requirements.
+
+## Owner amendment: public 1.0.0 release (2026-09-23)
+
+D23 records the owner's steer to publish 1.0.0 the same day. Telegram has to
+work and the world model has to work; the other evidence is not a release
+prerequisite. Where D19 or D21 names stranger proof, zero-P0 evidence on the
+exact candidate, the full #497 map, live-account qualification, review
+receipts or observation windows as conditions for a 1.0 tag, D23 replaces
+those conditions with the gates listed in its row. The #497 packets that are
+not in 1.0.0 remain the roadmap; they are not claimed as shipped.
+
+D23 relaxes release evidence only. It does not relax frozen ingress, canon
+authority, grants, sensitivity, provenance, correction, recovery, zero
+phone-home or the no-fake-surface rule, and it does not authorize any
+operational cutover of existing services.
+
+## Implementation facts recorded against D23 (2026-09-23)
+
+- Canon-write recovery is bound to the write intent. Each staged file is
+  classified against the intent's images: an exact or prefix stage is
+  removed, a foreign stage is moved to `.kizuki/quarantine/canon-stage/`
+  and never deleted, and an unsafe stage is left untouched and holds
+  recovery. Every action is journaled before it happens.
+- A held recovery no longer stops the daemon. `kizuki serve` logs the hold,
+  keeps the other rails running, stops only the write pass, and records the
+  last attempt in `.kizuki/canon-recovery-hold.json`. `doctor` and `recover`
+  name the typed reason and the next step.
+- A startup refusal that a restart cannot fix (unproven custody, or a ledger
+  that needs `kizuki init <vault> --no-default` to migrate) exits 78, and the
+  user unit no longer restarts on that status. The unit also carries a start
+  limit and `MemorySwapMax=0`.
+- A pending canon write made before ledger migration 32 still completes after
+  it: the claim guard accepts the same row when only the new
+  `is_world_typed` column differs and holds its default.
+- A file-level copy or restore of a vault with a pending write refuses with
+  `receipt_stream_changed` and changes nothing. Rebinding a relocated vault
+  is not implemented.
 
 ## Text that still carries the old policy (to annotate, never to follow)
 
