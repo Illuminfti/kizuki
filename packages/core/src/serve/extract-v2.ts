@@ -15,6 +15,7 @@ import {
 } from "../contracts/claim-v2";
 import type { ProducerPort } from "../contracts/producer";
 import type { WorldDraftInsert } from "../producer/world-drafts";
+import { EXTRACT_MAX_OUTPUT_TOKENS } from "../producer/model";
 import { canonicalJson } from "../util/hash";
 import { isPlainObject } from "../util/validate";
 import { isUlid } from "../util/ulid";
@@ -46,7 +47,10 @@ export function worldProduceInput(events: readonly CaptureEvent[], suppliedRefs:
     supplied_refs: suppliedRefs,
     vocabulary_refs: WORLD_VOCABULARY_REFS,
     predicates: WORLD_PREDICATES,
-    budget: { max_calls: 1, max_input_tokens: 8_000, max_output_tokens: 2_000 },
+    // A typed response spends roughly 200 tokens per anchored claim. Eight
+    // quoted records routinely need more than 2,000, and a truncated response
+    // is rejected whole, so reserve the producer's full output ceiling.
+    budget: { max_calls: 1, max_input_tokens: 8_000, max_output_tokens: EXTRACT_MAX_OUTPUT_TOKENS },
   };
 }
 

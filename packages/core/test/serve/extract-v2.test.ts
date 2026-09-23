@@ -22,6 +22,7 @@ import {
   readExtractCursor,
 } from "../../src/serve/extract";
 import { canonicalJson } from "../../src/util/hash";
+import { EXTRACT_MAX_OUTPUT_TOKENS } from "../../src/producer/model";
 
 const roots: string[] = [];
 
@@ -132,6 +133,18 @@ test("v2 extraction journals normalized world drafts and reopens without another
     expect(durable?.filing_version).toBe(2);
     expect(durable?.filing_drafts).toHaveLength(1);
     expect(f.calls.count).toBe(1);
+  } finally {
+    f.close();
+  }
+});
+
+test("v2 extraction reserves the producer output ceiling for a complete typed response", async () => {
+  const f = fixture();
+  try {
+    const budgets: ProduceInputV2["budget"][] = [];
+    const producer: ProducerV2Port = { ...f.producer, produce: input => { budgets.push(input.budget); return f.producer.produce(input); } };
+    expect((await mineLiveDrafts(f.db, producer)).mined).toEqual({ status: "ok", count: 1 });
+    expect(budgets).toEqual([{ max_calls: 1, max_input_tokens: 8_000, max_output_tokens: EXTRACT_MAX_OUTPUT_TOKENS }]);
   } finally {
     f.close();
   }

@@ -1,8 +1,18 @@
 # Extraction budgets and durable progress
 
-Model extraction uses budgets separate from canon writing. Each serving pass
-allows at most two model calls, 8,000 estimated input tokens and 2,000 reserved
+Model extraction uses budgets separate from canon writing. Typed world
+extraction (producer v2, every consented source) allows one model call per
+serving pass, 8,000 estimated input tokens and 8,192 reserved output tokens:
+a typed response carries anchors and perspective for every claim, and a
+truncated response is rejected whole. The epoch-zero legacy producer keeps
+at most two model calls, 8,000 estimated input tokens and 2,000 reserved
 output tokens. Canon write limits do not increase these model allowances.
+
+Reasoning models count their hidden reasoning against the same output
+reservation. A model that spends it all before answering returns a truncated
+response, which doctor reports as `model response rejected: response
+truncated`; choose a
+non-reasoning model or disable reasoning at the provider.
 
 The serving host selects the largest authorized event prefix that fits one
 request. It checks at most eight candidate prefixes. Each request stays within
