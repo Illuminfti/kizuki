@@ -105,4 +105,3 @@ export class IGE {
     return words(out);
   }
 }
-

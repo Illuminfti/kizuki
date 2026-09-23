@@ -41,4 +41,3 @@ export function validateRetainedReceipt(value: unknown, allowReverted = false): 
   nullableText(value.reverts); if ((value.reverted_by !== null && (!allowReverted || !isUlid(value.reverted_by))) || !isRfc3339(value.at)) invalid();
   assertReceiptPaths(value as unknown as CanonReceipt);
 }
-
