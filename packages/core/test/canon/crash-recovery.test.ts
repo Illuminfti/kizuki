@@ -205,14 +205,12 @@ for (const phase of ["before_stage", "complete_stage", "published", "receipt_row
     const child = spawnSync(process.execPath, ["--eval", script], { encoding: "utf8", timeout: 15000 });
     expect({ code: child.status, stderr: child.stderr }).toEqual({ code: 73, stderr: "" });
     f.reopen(); const pending = readCanonWriteIntent(f.db)!; expect(pending).not.toBeNull();
-    if (phase === "complete_stage") {
-      const stage = join(f.vault, pending.stages.live_stage), bytes = readFileSync(stage);
-      expect(() => recoverCanonWrites(f.io)).toThrow("creation custody");
-      expect(readFileSync(stage)).toEqual(bytes); expect(inspectCanonRecovery(f.db).pending).toBe(true);
-    } else {
-      expect(recoverCanonWrites(f.io).completed).toEqual([pending.receipt.receipt_id]);
-      expect(listCanonReceipts(f.db)).toEqual([...priorReceipts, pending.receipt]); expect(readReceiptsLog(f.vault)).toEqual([...priorReceipts, pending.receipt]);
-    }
+    const report = recoverCanonWrites(f.io);
+    expect(report.completed).toEqual([pending.receipt.receipt_id]);
+    expect(listCanonReceipts(f.db)).toEqual([...priorReceipts, pending.receipt]); expect(readReceiptsLog(f.vault)).toEqual([...priorReceipts, pending.receipt]);
+    // The intent held the full after-image, so the byte-identical stage is removed, recorded once.
+    expect(report.stage_recoveries.map(item => [item.stage, item.classification, item.action])).toEqual(phase === "complete_stage" ? [["live", "exact", "removed"]] : []);
+    expect(existsSync(join(f.vault, pending.stages.live_stage))).toBe(false);
   });
 }
 

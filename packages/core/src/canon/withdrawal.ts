@@ -6,6 +6,7 @@ import { oneShotGet } from "../ledger/schema";
 import { requireCanonFiles } from "./io";
 import { openOrdinaryRecoveryReceiptStream } from "./receipt-stream";
 import { readCanonProjectionObligation } from "./projection-obligations";
+import { reconcileCanonStages } from "./stage-recovery";
 import type { CanonIo } from "./store";
 import { canonPredecessorDigest, advanceCanonReadGeneration, assertIndependentSurvivorAdmission, decodeCanonImage, readCanonWriteIntent, recoveryFailure, type CanonWriteIntent } from "./write-intent";
 
@@ -96,13 +97,9 @@ export function withdrawPendingCanonWrite(scope: VaultMutationScope, io: CanonIo
           canonPredecessorDigest(db, receipt) !== intent.admission.predecessor_digest) {
         recoveryFailure("authority_changed", receipt.receipt_id);
       }
-      // An expected name or prefix is not durable creation custody. These
-      // explicit manual cases survive source withdrawal as visible blockers.
-      for (const path of [intent.stages.live_stage, intent.stages.archive_stage]) {
-        if (path === null) continue;
-        const stage = files.read(path);
-        if (stage !== null) { stage.close(); recoveryFailure("stage_custody_unknown", receipt.receipt_id); }
-      }
+      // Intent-bound: exact or torn copies of an intent image are removed, other
+      // bytes are quarantined, and an unsafe entry still holds the withdrawal.
+      reconcileCanonStages(files, io.vault_path, intent, io.now?.());
       const before = decodeCanonImage(intent.before_base64), after = decodeCanonImage(intent.after_base64);
       if ((intent.receipt.kind === "revert" || intent.completion.mode === "revert") && independentOf(after, deniedEvents, receipt.receipt_id)) {
         holdIndependentRevert(files, db, intent, before, after, held);

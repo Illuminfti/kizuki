@@ -15,6 +15,7 @@ import { readDerivedHolds } from "../../src/derived-holds";
 import { assessLivePageEvidence } from "../../src/vault/provenance";
 import { recoverCanonWrites } from "../../src/canon/recovery";
 import { advanceCanonReadGeneration, inspectCanonRecovery, readCanonWriteIntent } from "../../src/canon/write-intent";
+import { readCanonStageRecoveries } from "../../src/canon/stage-recovery";
 import { getCanonReceipt, readReceiptsLog } from "../../src/canon/receipts";
 import { readCanonProjectionObligation, retryCanonProjectionObligations } from "../../src/canon/projection-obligations";
 import { createFts5RetrievalPort, FTS5_RETRIEVAL_DESCRIPTOR } from "../../src/retrieval/fts5";
@@ -178,16 +179,30 @@ test("source withdrawal erases its published uncommitted page and exact tail wit
   expect((await resumeSourceRevocation(f.db, f.vault, "withdraw-boundary")).status).toBe("purged");
 });
 
-for (const changed of ["page", "stage"] as const) test(`withdrawal preserves changed ${changed} and reports the pending intent`, async () => {
+test("withdrawal preserves a changed page and reports the pending intent", async () => {
   const f = await fixture(true); breakRows(f.db);
   expect(() => write(f.io, f.claim)).toThrow(); const pending = readCanonWriteIntent(f.db)!; allowRows(f.db);
-  const path = join(f.vault, changed === "page" ? pending.receipt.page_path : pending.stages.live_stage);
+  const path = join(f.vault, pending.receipt.page_path);
   writeFileSync(path, "independent owner content", { mode: 0o600 });
   revokeSourceGrant(f.db, { source_key: f.source, expected_revision: 1, operation_id: "withdraw-boundary" });
   const grant = await resumeSourceRevocation(f.db, f.vault, "withdraw-boundary");
   expect(grant.status).toBe("denied"); expect(grant.purge_blockers).toContain("canon_recovery_pending");
   expect(readFileSync(path, "utf8")).toBe("independent owner content");
   expect(readCanonWriteIntent(f.db)?.receipt.receipt_id).toBe(pending.receipt.receipt_id);
+});
+
+test("withdrawal quarantines foreign stage bytes, never deleting them, and completes", async () => {
+  const f = await fixture(true); breakRows(f.db);
+  expect(() => write(f.io, f.claim)).toThrow(); const pending = readCanonWriteIntent(f.db)!; allowRows(f.db);
+  writeFileSync(join(f.vault, pending.stages.live_stage), "independent owner content", { mode: 0o600 });
+  revokeSourceGrant(f.db, { source_key: f.source, expected_revision: 1, operation_id: "withdraw-boundary" });
+  const grant = await resumeSourceRevocation(f.db, f.vault, "withdraw-boundary");
+  expect(grant.purge_blockers).not.toContain("canon_recovery_pending");
+  expect(readCanonWriteIntent(f.db)).toBeNull();
+  const [record] = readCanonStageRecoveries(f.vault, pending.receipt.receipt_id);
+  expect(record).toMatchObject({ stage: "live", classification: "foreign", action: "quarantined" });
+  expect(readFileSync(join(f.vault, record!.quarantine_path!), "utf8")).toBe("independent owner content");
+  expect(existsSync(join(f.vault, pending.stages.live_stage))).toBe(false);
 });
 
 test("withdrawing a failed joint write preserves the previously committed independent live page", async () => {
