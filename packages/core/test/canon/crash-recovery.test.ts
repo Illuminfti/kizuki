@@ -440,3 +440,35 @@ test("pending revert after admit-before-stage crash restores independent B survi
   expect(readFileSync(join(vault.path, original.page_path), "utf8")).not.toContain("A overwrites music.");
   expect(getCanonReceipt(db, original.receipt_id)?.page_path).toBe(original.page_path);
 });
+
+/** Rewrites a pending intent's claim guards as a pre-v32 ledger captured them:
+ * the same rows before migration 32 appended claims.is_world_typed. */
+function asPreWorldTypedIntent(db: ReturnType<typeof openLedger>): void {
+  const row = db.query<{ receipt_id: string; intent: string }, []>("SELECT receipt_id, CAST(intent AS TEXT) AS intent FROM canon_write_intents").get()!;
+  const intent = JSON.parse(row.intent);
+  intent.admission.claims = intent.admission.claims.map((guard: { id: string }) => {
+    const { is_world_typed: _dropped, ...legacy } = db.query<Record<string, unknown>, [string]>("SELECT * FROM claims WHERE claim_id=?").get(guard.id)!;
+    return { id: guard.id, digest: sha256Hex(JSON.stringify(legacy)) };
+  });
+  const json = JSON.stringify(intent);
+  db.query("UPDATE canon_write_intents SET intent=?, digest=? WHERE receipt_id=?").run(json, sha256Hex(json), row.receipt_id);
+}
+
+test("a write admitted before the world-typed claims migration still completes after it", async () => {
+  const f = await fixture(); failRow(f.db); expect(() => write(f.io, f.claim)).toThrow();
+  asPreWorldTypedIntent(f.db);
+  const pending = readCanonWriteIntent(f.db)!;
+  f.reopen(); allowRow(f.db);
+  expect(recoverCanonWrites(f.io).completed).toEqual([pending.receipt.receipt_id]);
+  expect(listCanonReceipts(f.db)).toEqual([pending.receipt]);
+});
+
+for (const change of ["claim", "world_typed"] as const) test(`a pre-migration claim guard still refuses a changed ${change}`, async () => {
+  const f = await fixture(); failRow(f.db); expect(() => write(f.io, f.claim)).toThrow();
+  asPreWorldTypedIntent(f.db);
+  if (change === "claim") f.db.query("UPDATE claims SET confidence=0.25 WHERE claim_id=?").run(f.claim.claim_id);
+  else f.db.query("UPDATE claims SET is_world_typed=1 WHERE claim_id=?").run(f.claim.claim_id);
+  f.reopen(); allowRow(f.db);
+  expect(() => recoverCanonWrites(f.io)).toThrow("authority_changed");
+  expect(listCanonReceipts(f.db)).toEqual([]);
+});

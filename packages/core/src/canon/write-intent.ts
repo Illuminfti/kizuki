@@ -254,6 +254,27 @@ export function captureCanonAdmission(db: Database, receipt: CanonReceipt, compl
     claim_bindings_digest: digest(boundedRows(db, "SELECT * FROM claim_bindings WHERE page_id=? ORDER BY claim_key,page_id", completion.page_id)),
   };
 }
+/** Columns a later ledger migration appended to claims with a fixed default.
+ * A guard captured before that migration digested the row without them. */
+const MIGRATED_CLAIM_COLUMNS: readonly (readonly [string, unknown])[] = [["is_world_typed", 0]];
+/** A claim guard admitted under an older ledger still binds the same row when
+ * the only difference is a migration-appended column at its default value. A
+ * row changed in any other way, or captured after the migration, never matches. */
+function currentClaimGuards(db: Database, current: Guard[], admitted: readonly Guard[]): Guard[] {
+  const saved = new Map(admitted.map(guard => [guard.id, guard.digest]));
+  return current.map(guard => {
+    const expected = saved.get(guard.id);
+    if (expected === undefined || expected === guard.digest) return guard;
+    const row = db.query<Record<string, unknown>, [string]>("SELECT * FROM claims WHERE claim_id=?").get(guard.id);
+    if (row === null) return guard;
+    const legacy: Record<string, unknown> = { ...row };
+    for (const [column, value] of MIGRATED_CLAIM_COLUMNS) {
+      if (!(column in legacy) || legacy[column] !== value) return guard;
+      delete legacy[column];
+    }
+    return digest(legacy) === expected ? { id: guard.id, digest: expected } : guard;
+  });
+}
 export function assertCanonAdmission(db: Database, intent: CanonWriteIntent): void {
   if (isWorldCanonReceipt(intent.receipt)) {
     if ((latestWorldReceiptRecord(db,intent.receipt.page_path)?.receipt_id??null)!==intent.receipt.prior_receipt_id) recoveryFailure("predecessor_changed",intent.receipt.receipt_id);
@@ -286,7 +307,8 @@ export function assertCanonAdmission(db: Database, intent: CanonWriteIntent): vo
     if(!isErasedReceipt(final)){try{assertWorldCanonPage(db,final,after,"after");}catch{recoveryFailure("authority_changed",intent.receipt.receipt_id);}}
 
   }
-  const current = captureCanonAdmission(db, intent.receipt, intent.completion, decodeCanonImage(intent.before_base64), decodeCanonImage(intent.after_base64), intent.admission.claims.map(claim => claim.id));
+  const captured = captureCanonAdmission(db, intent.receipt, intent.completion, decodeCanonImage(intent.before_base64), decodeCanonImage(intent.after_base64), intent.admission.claims.map(claim => claim.id));
+  const current = { ...captured, claims: currentClaimGuards(db, captured.claims, intent.admission.claims) };
   if (current.source_epoch !== intent.admission.source_epoch || digest(current.events) !== digest(intent.admission.events) || digest(current.claims) !== digest(intent.admission.claims) || digest(current.sources) !== digest(intent.admission.sources)) recoveryFailure("authority_changed", intent.receipt.receipt_id);
   if (digest(current) !== digest(intent.admission)) recoveryFailure("predecessor_changed", intent.receipt.receipt_id);
   requireSourceEvents(db, intent.admission.derive_ids, { owner: true, purpose: "derive" });
@@ -294,7 +316,8 @@ export function assertCanonAdmission(db: Database, intent: CanonWriteIntent): vo
 
 /** Restoring a committed independent page does not complete the pending intent. */
 export function assertIndependentSurvivorAdmission(db: Database, intent: CanonWriteIntent, survivor: Buffer): void {
-  const current = captureCanonAdmission(db, intent.receipt, intent.completion, survivor, decodeCanonImage(intent.after_base64), intent.admission.claims.map(claim => claim.id));
+  const captured = captureCanonAdmission(db, intent.receipt, intent.completion, survivor, decodeCanonImage(intent.after_base64), intent.admission.claims.map(claim => claim.id));
+  const current = { ...captured, claims: currentClaimGuards(db, captured.claims, intent.admission.claims) };
   for (const key of ["claims", "predecessor_digest", "original_digest", "page_index_digest", "supersessions_digest", "claim_bindings_digest"] as const) {
     if (JSON.stringify(current[key]) !== JSON.stringify(intent.admission[key])) recoveryFailure("authority_changed", intent.receipt.receipt_id);
   }
