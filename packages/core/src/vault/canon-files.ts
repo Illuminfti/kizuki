@@ -12,11 +12,14 @@ const MAX_DEPTH = 64;
 export type CanonFilesFailure = "unsupported" | "native_unavailable" | "invalid_path" | "bounds" |
   "unsafe" | "changed" | "conflict" | "closed" | "handle" | "io";
 export class CanonFilesError extends Error {
-  constructor(readonly reason: CanonFilesFailure, readonly code?: "EISDIR") { super(`canon_files_${reason}`); this.name = "CanonFilesError"; }
+  constructor(readonly reason: CanonFilesFailure, readonly code?: "EISDIR", options?: { cause?: unknown }) {
+    super(`canon_files_${reason}`, options); this.name = "CanonFilesError";
+  }
 }
 function fail(reason: CanonFilesFailure): never { throw new CanonFilesError(reason); }
 function guarded<T>(work: () => T): T {
-  try { return work(); } catch (error) { if (error instanceof CanonFilesError) throw error; fail("io"); }
+  // The cause keeps an errno such as ENOSPC readable for a typed recovery hold.
+  try { return work(); } catch (error) { if (error instanceof CanonFilesError) throw error; throw new CanonFilesError("io", undefined, { cause: error }); }
 }
 let native: ReturnType<typeof loadOwnedDirectoryNative> | undefined;
 function api() {
@@ -131,6 +134,8 @@ export interface CanonFiles {
    * directory; the moved file becomes 0600. Grants no creation authority. */
   relocate(existing: CanonFileSnapshot, path: string): CanonFileSnapshot;
   remove(expected: CanonFileSnapshot): void;
+  /** Remove an owned, empty directory. False when it is absent or not empty. */
+  removeEmptyDirectory(path: string): boolean;
   close(): void;
 }
 interface FileRecord {
@@ -417,6 +422,22 @@ class NativeCanonFiles implements CanonFiles {
         fsyncSync(state.parent); this.#assertCurrent();
       }
       finally { this.#release(expected); }
+    });
+  }
+  removeEmptyDirectory(path: string): boolean {
+    return guarded(() => {
+      const components = parts(path), name = components.pop()!;
+      const parent = this.#directory(components); if (parent === null) return false;
+      try {
+        const child = openChild(parent, name, true); if (child === null) return false;
+        try { directoryStat(child); } finally { closeSync(child); }
+        // rmdir never follows a final symlink and refuses a non-empty directory.
+        const removed = result(api().symbols.removeEmptyChild(parent, ptr(nameBytes(name))));
+        if (removed === -2 || removed === -39) return false;
+        if (removed !== 0) fail("io");
+        fsyncSync(parent); this.#assertCurrent();
+        return true;
+      } finally { closeSync(parent); }
     });
   }
   close(): void {

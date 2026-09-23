@@ -9,6 +9,7 @@ import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { applyPurgeRewrite } from "../canon/apply";
+import { eraseCanonStageTraces } from "../canon/stage-recovery";
 import { CanonPageUnreadable, type CanonIo } from "../canon";
 import { CanonWriteError } from "../canon/errors";
 import { getClaim, listClaims, markClaimsAfterPurge } from "../claims/store";
@@ -1641,6 +1642,7 @@ export async function runPurge(
     phase1.purge_ops = await reconcileOps(db, receiptId, binding, clock);
   }
   phase1.rewritten = rewriteHolds(scope, io, options);
+  eraseCanonStageTraces(requireCanonFiles(scope, io), db, vaultPath);
   return phase1;
   } finally { if (binding.owned) await binding.port?.close(); }
   }, filter);
@@ -1781,6 +1783,8 @@ export async function resumePurge(db: Database, vaultPath: string, receiptId: st
     // Revalidate old done rows before a resumed rewrite can lift their holds.
     await verifyPurgeOwned(scope, io, receiptId, {...options,...(binding.port === null ? {} : {retrieval:binding.port})});
     rewriteHolds(scope, io, options);
+    // Recovery records and quarantined stage bytes follow their purged receipts.
+    eraseCanonStageTraces(requireCanonFiles(scope, io), db, vaultPath);
     return await verifyPurgeOwned(scope, io, receiptId, {...options,...(binding.port === null ? {} : {retrieval:binding.port})});
   } finally { if (binding.owned) await binding.port?.close(); }
   });

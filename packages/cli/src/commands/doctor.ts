@@ -349,7 +349,9 @@ async function collect(
   } else if (canonRecovery.projection_pending > 0) {
     problems.push({ page: "-", error: "canon recovery pending; run: kizuki recover --json" });
   }
-  if (canonRecovery.quarantined > 0) {
+  if (canonRecovery.quarantine.state === "unsafe") {
+    problems.push({ page: ".kizuki/quarantine", error: "quarantine is not a private directory tree (each level must be a directory you own with mode 0700); inside the vault run: chmod 700 .kizuki/quarantine .kizuki/quarantine/canon-stage" });
+  } else if (canonRecovery.quarantined > 0) {
     problems.push({ page: ".kizuki/quarantine/canon-stage", error: `${canonRecovery.quarantined} foreign canon stage file(s) kept in quarantine for inspection` });
   }
   for (const item of vault.doctrine) {

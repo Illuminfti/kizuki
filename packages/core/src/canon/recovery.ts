@@ -5,7 +5,7 @@ import { parseFrontmatter } from "../vault/frontmatter";
 import { join } from "node:path";
 import { hashBytes, ABSENT_PAGE_HASH } from "../vault/write";
 import { isWorldCanonReceipt, type RetainedWorldCanonReceipt } from "./world-receipt";
-import type { VaultMutationScope } from "../vault/mutation-scope";
+import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationSync } from "./io";
 import { openWorldErasureReceiptStream, openOrdinaryRecoveryReceiptStream, type WorldErasureReceiptStream, type OrdinaryRecoveryReceiptStream } from "./receipt-stream";
 import { commitMachineByteIntent } from "../ledger/event-origin";
@@ -21,33 +21,14 @@ import {
   type CanonCompletion, type CanonWriteIntent, type WorldCanonErasureIntent, type WorldCanonErasure,
 } from "./write-intent";
 import { enqueueCanonProjection, refreshCanonProjectionFloor } from "./projection-obligations";
-import { clearCanonRecoveryHold, reconcileCanonStages, recordCanonRecoveryHold, type CanonStageRecoveryRecord } from "./stage-recovery";
-import { CanonWriteRefused } from "../vault/write";
-import { CanonFilesError } from "../vault/canon-files";
-import { ReceiptStreamError } from "./receipt-stream";
+import { clearCanonRecoveryHold, eraseCanonStageTraces, reconcileCanonStages, recordCanonRecoveryHold, type CanonStageRecoveryRecord } from "./stage-recovery";
+import { asCanonRecoveryError } from "./recovery-failure";
 
 export interface CanonRecoveryReport {
   completed: string[];
   pending: boolean;
   projection_pending: number;
   stage_recoveries: CanonStageRecoveryRecord[];
-}
-
-/** The recovery boundary speaks only CanonRecoveryError, so every caller,
- * including the daemon, can hold a write instead of failing on it. */
-function canonRecoveryFailure(error: unknown, receiptId: string | null): CanonRecoveryError | null {
-  if (error instanceof CanonRecoveryError) return error;
-  if (error instanceof CanonWriteRefused) {
-    const reason = error.reason === "stage_custody_unknown" ? "stage_custody_unknown" :
-      error.reason === "archive_exists" ? "archive_changed" :
-      ["page_changed", "page_exists", "page_missing"].includes(error.reason) ? "page_changed" : "write_refused";
-    return new CanonRecoveryError(reason, receiptId, { cause: error });
-  }
-  if (error instanceof ReceiptStreamError) {
-    return new CanonRecoveryError(error.reason === "changed" ? "receipt_stream_changed" : "receipt_stream_refused", receiptId, { cause: error });
-  }
-  if (error instanceof CanonFilesError) return new CanonRecoveryError("write_refused", receiptId, { cause: error });
-  return null;
 }
 export interface PreparedCanonCommit {
   receipt: CanonReceipt;
@@ -176,7 +157,7 @@ function finish(scope: VaultMutationScope, io: CanonIo, intent: CanonWriteIntent
     if (recovered !== undefined) {
       // A relocated stream can never complete; refuse before any file action.
       stream.assertCheckpointCustody(intent.checkpoint, intent.version !== 3);
-      recovered.push(...reconcileCanonStages(requireCanonFiles(scope, io), io.vault_path, intent, io.now?.()));
+      recovered.push(...reconcileCanonStages(requireCanonFiles(scope, io), intent, { at: io.now?.() }));
     }
     if (intent.version===3 || currentState(scope, io, intent) === "before") publishOrdinaryCanonIntent(scope, io, intent);
     if (currentState(scope, io, intent) !== "after") recoveryFailure("page_changed", intent.receipt.receipt_id);
@@ -266,17 +247,27 @@ export function recoverCanonWritesOwned(scope: VaultMutationScope, io: CanonIo):
       finally { stream.close(); }
     }
   } catch (error) {
-    const typed = canonRecoveryFailure(error, intent?.receipt.receipt_id ?? null);
+    const typed = asCanonRecoveryError(error, intent?.receipt.receipt_id ?? null);
     if (typed === null) throw error;
-    recordCanonRecoveryHold(io.vault_path, typed.reason, typed.receipt_id ?? inspectCanonRecovery(io.db).receipt_id, io.now?.());
+    recordCanonRecoveryHold(requireCanonFiles(scope, io), typed.reason, typed.receipt_id ?? inspectCanonRecovery(io.db).receipt_id, io.now?.());
     throw typed;
   }
-  const summary = inspectCanonRecovery(io.db);
-  if (!summary.pending) clearCanonRecoveryHold(io.vault_path);
-  else if (held) recordCanonRecoveryHold(io.vault_path, "authority_changed", summary.receipt_id, io.now?.());
+  const summary = inspectCanonRecovery(io.db), files = requireCanonFiles(scope, io);
+  // A completed erasure removes the traces of every receipt it erased. The
+  // write itself is complete, and every purge and resumed purge sweeps again.
+  if (intent !== null && completed.length > 0 && (intent.version === 3 || intent.completion.mode === "purge")) {
+    try { eraseCanonStageTraces(files, io.db, io.vault_path); } catch { /* Doctor still reports the quarantine; a later purge pass retries. */ }
+  }
+  if (!summary.pending) clearCanonRecoveryHold(files);
+  else if (held) recordCanonRecoveryHold(files, "authority_changed", summary.receipt_id, io.now?.());
   return { completed, pending: summary.pending, projection_pending: summary.projection_pending, stage_recoveries: stageRecoveries };
 }
 export function recoverCanonWrites(input: CanonIo): CanonRecoveryReport {
   const io = snapshotCanonIo(input);
-  return withCanonMutationSync(io, (scope, owned) => recoverCanonWritesOwned(scope, owned));
+  // Another writer holding the vault is a typed, transient hold, not a crash.
+  try { return withCanonMutationSync(io, (scope, owned) => recoverCanonWritesOwned(scope, owned)); }
+  catch (error) {
+    if (error instanceof VaultMutationError && error.code === "writer_busy") throw asCanonRecoveryError(error, inspectCanonRecovery(io.db).receipt_id)!;
+    throw error;
+  }
 }

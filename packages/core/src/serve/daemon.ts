@@ -237,7 +237,7 @@ function canonRecoveryHeldLine(vaultPath: string, error: CanonRecoveryError): st
   return JSON.stringify({
     event: "canon_recovery_held", mode: "writer-held", reason: error.reason, receipt_id: error.receipt_id,
     attempts: hold !== null && hold.receipt_id === error.receipt_id ? hold.attempts : 1,
-    next: canonRecoveryNextStep(error.reason, []),
+    next: canonRecoveryNextStep(error.reason, [], error.receipt_id),
   });
 }
 
