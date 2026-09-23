@@ -202,16 +202,16 @@ test('Activity distinguishes loading and unavailable from an empty receipt histo
     const f = fixture();
     f.evaluate(`navigate('activity')`);
     expect(f.main.textContent).toContain('Loading activity');
-    expect(f.main.textContent).not.toContain('No receipted changes yet');
+    expect(f.main.textContent).not.toContain('No receipted memory changes yet');
     const pending = f.requests.splice(f.requests.findIndex(row => row.route === 'activity'), 1)[0]!;
     pending.result.resolve({ status: 503, json: async () => ({ ok: false, error: { code: 'unavailable' } }) });
     await tick();
     expect(f.main.textContent).toContain('Activity is unavailable');
-    expect(f.main.textContent).not.toContain('No receipted changes yet');
+    expect(f.main.textContent).not.toContain('No receipted memory changes yet');
     const retry = findAction(f.main, 'Retry activity').fire('click');
     expect(f.main.textContent).toContain('Loading activity');
     f.reply('activity', { receipts: [] }); await retry;
-    expect(f.main.textContent).toContain('No receipted changes yet');
+    expect(f.main.textContent).toContain('No receipted memory changes yet');
     expect(f.main.textContent).not.toContain('Activity is unavailable');
 });
 
@@ -435,14 +435,14 @@ test('sources distinguish incomplete history from a finished backfill without pr
     const f = fixture();
     f.evaluate(`state.view='sources'; Object.assign(state.sources[0], {last_run:'2026-09-07T00:00:00Z', stored:3, backfill_complete:false}); render();`);
     expect(f.main.textContent).toContain('History import is incomplete');
-    expect(f.main.textContent).toContain('3 saved in the last check');
+    expect(f.main.textContent).toContain('Last check: 3 new items');
     f.evaluate(`state.sources[0].backfill_complete=true; render();`);
     expect(f.main.textContent).toContain('History import reached the end reported by this source');
     expect(f.main.textContent).not.toContain('History import is incomplete');
     expect(f.main.textContent).toContain('This does not confirm complete date coverage');
     f.evaluate(`state.sources[0].last_run=null; state.sources[0].backfill_complete=null; render();`);
     expect(f.main.textContent).toContain('No capture checkpoint yet');
-    expect(f.main.textContent).not.toContain('3 saved in the last check');
+    expect(f.main.textContent).not.toContain('Last check: 3 new items');
 });
 
 test('source enrollment focuses the labeled folder field instead of the close control', () => {
@@ -590,11 +590,11 @@ test('partial initialization refreshes the saved vault and opens background reco
     f.reply('operation', job); await tick();
     f.reply('status', status([job], 'ready')); await tick();
     f.reply('catalog', { sources: [] }); f.reply('sources', { sources: [] }); await tick();
-    if (f.requests.some(request => request.route === 'service_status')) f.reply('service_status', {state:'absent',kind:'systemd',intent:'unknown',detail:'Enable background activity to retry.',checked_at:'2026-09-05T00:00:00Z'});
     await work; await tick();
+    if (f.requests.some(request => request.route === 'service_status')) { f.reply('service_status', {state:'absent',kind:'systemd',intent:'unknown',detail:'Enable background activity to retry.',checked_at:'2026-09-05T00:00:00Z'}); await tick(); }
     expect(f.evaluate<boolean>('state.status.vault.ready')).toBe(true);
     expect(f.evaluate<string>('state.view')).toBe('settings');
-    expect(f.main.textContent).toContain('Enable background activity');
+    expect(f.main.textContent).toContain('Workspace and service');
     expect(f.notice.textContent).toContain('workspace is saved');
 });
 
@@ -809,6 +809,28 @@ test('processing reports real run receipt counts and does not equate capture wit
     expect(f.main.textContent).not.toContain('9 memory writes');
 });
 
+test('Agents is a first-class destination with separate human-readable permissions', () => {
+    const f = fixture();
+    f.evaluate(`state.view='agents'; state.agents=[{name:'client-a',revoked_at:null,grant:{ceiling:'private',types:null,subjects:null,since:null,until:null,tools:['search','get_page'],rate_limit_per_minute:60,relay_owner_corrections:false}},{name:'client-b',revoked_at:'2026-09-07T00:00:00Z',grant:{ceiling:'public',types:null,subjects:null,since:null,until:null,tools:['search'],rate_limit_per_minute:60,relay_owner_corrections:false}}]; render();`);
+    expect(f.main.textContent).toContain('Give each assistant its own access to your memory.'); expect(f.main.textContent).toContain('Access enabled'); expect(f.main.textContent).toContain('Access revoked');
+    expect(f.main.textContent).toContain('Private memory · Search memory, Read memory pages'); expect(f.main.textContent).toContain('Each assistant gets separate permissions.');
+    expect(findAction(f.main, 'Revoke access')).toBeTruthy();
+});
+
+test('completed capture receipt is dismissed after navigation while failed capture remains recoverable', () => {
+    const f = fixture();
+    f.evaluate(`state.operation={id:'capture-complete',kind:'capture',state:'succeeded',counts:{stored:1}}; navigate('activity');`);
+    expect(f.main.textContent).not.toContain('Import progress saved');
+    f.evaluate(`state.operation={id:'capture-failed',kind:'capture',state:'failed',error:{code:'unavailable'}}; navigate('sources');`);
+    expect(f.main.textContent).toContain('This step needs attention');
+});
+
+test('empty Activity explains model-free evidence and links to real next actions', () => {
+    const f = fixture(); f.evaluate(`state.view='activity'; state.activityStatus='loaded'; state.receipts=[]; render();`);
+    expect(f.main.textContent).toContain('Import creates searchable source evidence');
+    expect(findAction(f.main, 'Search evidence')).toBeTruthy(); expect(findAction(f.main, 'Model settings')).toBeTruthy();
+});
+
 test('late model status and save cannot reopen private panels after disconnect', async () => {
     const f = fixture(); const work = f.evaluate<Promise<void>>('modelSettings()');
     f.evaluate('disconnect()'); f.reply('model_status', modelStatus()); await work;
@@ -880,6 +902,73 @@ test('unreadable existing model settings do not expose a replacement form', asyn
 });
 
 const readGrant = { ceiling: 'public', types: null, subjects: null, since: null, until: null, tools: ['search', 'get_page'], rate_limit_per_minute: 60, relay_owner_corrections: false };
+test('World renders shared-reader statements with honest confidence and unavailable state', () => {
+    const f = fixture();
+    f.evaluate(`state.view='world'; state.worldKind='concepts'; state.world={schema:'kizuki.world-view/v1',operation:'find_concepts',result:{status:'current',view:{status:'not_issued'},data:{schema:'kizuki.concept-matches/v1',matches:[{ref:{kind:'object',token:'A'.repeat(43)},labels:['Bayesian reasoning']}],coverage:{status:'partial',gaps:['traversal_limit']}}}}; render();`);
+    expect(f.main.textContent).toContain('Bayesian reasoning'); expect(f.main.textContent).toContain('Some results may be missing');
+    f.evaluate(`state.world={schema:'kizuki.world-view/v1',operation:'concept',result:{status:'current',view:{status:'not_issued'},data:{schema:'kizuki.concept-card/v1',concept:{labels:[{text:'Bayesian reasoning'}]},summary:{text:'Update beliefs with evidence.',admissions:[]},definitions:[{predicate:'concept.definition',polarity:'negative',perspective:{mode:'hypothetical'},object:{kind:'literal',value:'Revise beliefs using evidence'},assessments:[{epistemicKind:'model_inference',authority:'model_inference',confidence:{kind:'known',value:.8},evidence:[{}]}]}],relations:[{predicate:'concept.requires',polarity:'positive',perspective:{mode:'asserted'},object:{kind:'literal',value:'Probability'},assessments:[]}],coverage:{status:'complete_for_query'}}}}; render();`);
+    expect(f.main.textContent).toContain('Update beliefs with evidence.'); expect(f.main.textContent).toContain('Related statements'); expect(f.main.textContent).toContain('Builds on'); expect(f.main.textContent).toContain('80% confidence'); expect(f.main.textContent).toContain('1 supporting passage');
+    for (const text of ['Definition', 'Model interpretation', 'Negated statement', 'Hypothetical statement', 'Original source text is not included here.']) expect(f.main.textContent).toContain(text);
+    for (const jargon of ['concept.definition', 'model_inference', 'admitted', 'opaque']) expect(f.main.textContent).not.toContain(jargon);
+    f.evaluate(`state.world={schema:'kizuki.world-view/v1',operation:'concept',result:{status:'unavailable',reason:'storage'}}; render();`);
+    expect(f.main.textContent).toContain('World view is not available here.');
+});
+test('World ignores stale responses and clears its private projection on privacy invalidation', async () => {
+    const f = fixture();
+    f.evaluate(`state.view='world'; loadWorld(); loadWorld();`);
+    expect(f.requests.filter(request => request.route === 'world_view')).toHaveLength(2);
+    f.reply('world_view', { status: 'not_found' }); await tick();
+    expect(f.main.textContent).not.toContain('No concepts found.');
+    f.reply('world_view', { status: 'not_found' }); await tick();
+    expect(f.main.textContent).toContain('No concepts found.');
+    f.evaluate(`state.world={status:'not_found'}; invalidatePrivateView();`);
+    expect(f.evaluate('state.world')).toBeNull();
+});
+const worldMatches = (label: string) => ({ schema: 'kizuki.world-view/v1', operation: 'find_concepts', result: { status: 'current', view: { status: 'not_issued' }, data: { schema: 'kizuki.concept-matches/v1', matches: [{ ref: { kind: 'object', token: 'A'.repeat(43) }, labels: [label] }], coverage: { status: 'complete_for_query' } } } });
+test('World navigation shows loading until the real result arrives', async () => {
+    const f = fixture(); f.evaluate(`navigate('world')`);
+    expect(f.main.textContent).toContain('Loading concepts');
+    expect(f.main.textContent).not.toContain('No world view yet');
+    expect(f.main.querySelector('section')?.getAttribute('aria-busy')).toBe('true');
+    f.reply('world_view', worldMatches('Current concept')); await tick();
+    expect(f.main.textContent).toContain('Current concept');
+    expect(f.main.textContent).not.toContain('Loading concepts');
+});
+test('World refresh rechecks the selected detail and permission changes clear query and selection', async () => {
+    const f = fixture();
+    f.evaluate(`state.view='world'; state.worldQuery='PRIVATE_QUERY'; loadWorld({kind:'object',token:'A'.repeat(43)});`);
+    f.reply('world_view', worldMatches('Previous result')); await tick();
+    const work = f.evaluate<Promise<void>>('refresh()');
+    f.reply('status', status()); await tick(); f.reply('catalog', { sources: [] }); f.reply('sources', { sources: [] }); await work;
+    expect(f.requests.find(x => x.route === 'world_view')?.payload).toMatchObject({ operation: 'concept', concept: { kind: 'object', token: 'A'.repeat(43) } });
+    expect(f.main.textContent).toContain('Loading concept');
+    const pulse = f.evaluate<Promise<void>>('checkVisibility()');
+    f.reply('status', status([], '2')); await tick();
+    f.reply('status', status([], '2')); await tick();
+    f.reply('catalog', { sources: [] }); f.reply('sources', { sources: [] }); await pulse;
+    expect(f.evaluate<string>('state.worldQuery')).toBe(''); expect(f.evaluate('state.worldRef')).toBeNull();
+    expect(f.requests.filter(x => x.route === 'world_view').at(-1)?.payload).toMatchObject({ operation: 'find_concepts', label: '' });
+    f.reply('world_view', worldMatches('STALE_PRIVATE_RESULT')); await tick();
+    expect(f.main.textContent).not.toContain('STALE_PRIVATE_RESULT');
+    f.reply('world_view', worldMatches('Current allowed result')); await tick();
+    expect(f.main.textContent).toContain('Current allowed result');
+});
+test('World failed detail retry keeps the selected item and stale replies cannot end its loading state', async () => {
+    const f = fixture();
+    f.evaluate(`state.view='world'; loadWorld({kind:'object',token:'A'.repeat(43)});`);
+    f.requests.shift()!.result.resolve({ status: 503, json: async () => ({ ok: false, error: { code: 'unavailable' } }) }); await tick();
+    const retry = findAction(f.main, 'Try again').fire('click'); await tick();
+    expect(f.requests[0]!.payload).toMatchObject({ operation: 'concept', concept: { kind: 'object', token: 'A'.repeat(43) } });
+    f.evaluate('loadWorld(null)');
+    f.reply('world_view', worldMatches('STALE_DETAIL')); await retry;
+    expect(f.main.textContent).toContain('Loading concepts'); expect(f.main.textContent).not.toContain('STALE_DETAIL');
+    f.reply('world_view', worldMatches('Fresh search')); await tick();
+    expect(f.main.textContent).toContain('Fresh search');
+    f.evaluate(`state.worldQuery='PRIVATE_QUERY'; loadWorld(); disconnect();`);
+    f.reply('world_view', worldMatches('AFTER_LOGOUT')); await tick();
+    expect(f.evaluate<string>('state.worldQuery')).toBe(''); expect(f.evaluate('state.worldRef')).toBeNull();
+    expect(f.main.textContent).not.toContain('AFTER_LOGOUT');
+});
 test('agent enrollment reviews all eight grant fields before submitting a read-only identity', async () => {
     const f = fixture(); f.evaluate('agentEnrollment()');
     f.dialog.querySelector('#agent-name')!.value = 'research-helper';
@@ -940,6 +1029,15 @@ test('agent records and deferred enrollment results cannot return after privacy 
     expect(f.evaluate('state.agents')).toBeNull(); expect(f.main.textContent + f.dialog.textContent).not.toContain('PRIVATE_AGENT');
 });
 
+test('agent route rerenders a stored authorization after the agents response arrives', async () => {
+    const f = fixture(); f.evaluate(`state.view='agents'; render();`);
+    const work = f.evaluate<Promise<void>>('loadAgents()');
+    f.reply('agents', { agents: [{ name: 'reader-client', revoked_at: null, grant: readGrant }] }); await work;
+    expect(f.main.textContent).toContain('reader-client');
+    expect(f.main.textContent).toContain('Access enabled');
+    expect(f.main.textContent).toContain('Public memory · Search memory, Read memory pages');
+});
+
 test('agent setup refuses invalid names and reversed time windows before enrollment', async () => {
     const f = fixture(); f.evaluate('agentEnrollment()');
     f.dialog.querySelector('#agent-name')!.value = 'Assistant Name';
@@ -953,11 +1051,61 @@ test('agent setup refuses invalid names and reversed time windows before enrollm
 });
 
 const belief = { claim_id: 'claim-a', subject: 'person:ada', predicate: 'works_at', object: 'Old company', body: 'Ada works at Old company.', authority: 'owner_authored', sensitivity: 'private' };
-async function openCorrection(f: ReturnType<typeof fixture>, claims = [belief], truncated = false) {
+async function openCorrection(f: ReturnType<typeof fixture>, claims: unknown[] = [belief], truncated = false) {
     const work = f.evaluate<Promise<void>>(`correction({id:'page-a',scope:'canon',title:'People'})`);
     expect(f.requests[0]!.payload).toEqual({ page_id: 'page-a' });
     f.reply('correction_targets', { claims, truncated }); await work;
 }
+
+const worldBelief = { kind: 'world', target: { world_claim: { kind: 'claim', token: 'a'.repeat(43) } },
+    unsupported_reason: null, subject: null, predicate: 'concept.definition', object: 'Old definition',
+    body: 'An admitted definition.', authority: 'model_inference', sensitivity: 'private' };
+test('typed correction shows the admitted value and submits its opaque target with the exact replacement', async () => {
+    const f = fixture();
+    await openCorrection(f, [worldBelief, { ...worldBelief, target: null, unsupported_reason: 'unsupported_assertion', body: 'A contextual assertion.' }]);
+    expect(f.dialog.textContent).toContain('A contextual assertion.');
+    expect(f.dialog.textContent).toContain('unavailable for correction');
+    expect(f.dialog.querySelector('#correction-claim')!.children).toHaveLength(1);
+    expect(f.dialog.querySelector('#correction-mode')!.parent!.hidden).toBe(true);
+    expect(f.dialog.querySelector('#correction-statement')!.parent!.hidden).toBe(true);
+    const value = f.dialog.querySelector('#correction-value')!;
+    expect(value.parent!.hidden).toBe(false);
+    value.value = 'Use prior odds and the likelihood ratio.';
+    const work = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} }); await tick();
+    const payload = { target: worldBelief.target, statement: value.value };
+    expect(f.requests[0]!.payload).toEqual(payload);
+    f.reply('correction_preview', { answer: 'One current page will be rewritten.', affected_pages: 1 }); await work;
+    expect(f.dialog.querySelector('.correction-preview')!.textContent).toContain('Replace the selected belief’s value with:');
+    expect(f.dialog.querySelector('.correction-preview')!.textContent).not.toContain('Deny the selected belief');
+    void findAction(f.dialog, 'Apply correction').fire('click'); await tick();
+    expect(f.requests[0]!.route).toBe('correct'); expect(f.requests[0]!.payload).toEqual(payload);
+    expect(f.storageWrites).toHaveLength(0);
+});
+
+test('unsupported typed assertions expose no write controls and typed replacement budgets fail before requests', async () => {
+    const unsupported = fixture();
+    await openCorrection(unsupported, [{ ...worldBelief, target: null, unsupported_reason: 'unsupported_assertion' }]);
+    expect(unsupported.dialog.querySelector('form')).toBeNull();
+    expect(unsupported.requests).toHaveLength(0);
+    const f = fixture(); await openCorrection(f, [worldBelief]);
+    for (const value of ['', 'x'.repeat(401), '😀'.repeat(201)]) {
+        f.dialog.querySelector('#correction-value')!.value = value;
+        await f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+        expect(f.requests).toHaveLength(0);
+        expect(f.dialog.textContent).toContain('Enter an exact replacement');
+    }
+});
+
+test('typed correction drafts and opaque targets disappear when source visibility changes', async () => {
+    const f = fixture(); await openCorrection(f, [worldBelief]);
+    f.dialog.querySelector('#correction-value')!.value = 'Private replacement';
+    const work = f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} }); await tick();
+    f.evaluate('invalidatePrivateView()');
+    f.reply('correction_preview', { answer: 'LATE_PRIVATE_PREVIEW', affected_pages: 1 }); await work;
+    expect(f.dialog.textContent).not.toContain('Private replacement');
+    expect(f.dialog.textContent).not.toContain(worldBelief.target.world_claim.token);
+    expect(f.dialog.textContent).not.toContain('LATE_PRIVATE_PREVIEW');
+});
 
 test('correction action belongs only to canon search results and reads exact admitted page targets', async () => {
     const f = fixture(); f.evaluate(`state.hits=[{id:'page-a',scope:'canon',title:'People',text:'Memory page'},{id:'event-a',scope:'ledger',title:'Source',text:'Source quote'}]; render();`);

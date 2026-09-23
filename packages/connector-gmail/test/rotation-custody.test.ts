@@ -1,8 +1,11 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { createGmailConnector } from "../src/connector";
 import { GmailFixture } from "../src/testing";
 import { encodeState, parseState, FIELDS, GMAIL_SCOPES } from "../src/state";
 import { fileURLToPath } from "node:url";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 test("an expired request budget never starts unhandled token work", () => {
   // Isolate the synthetic wall clock and unhandled-rejection listener from the

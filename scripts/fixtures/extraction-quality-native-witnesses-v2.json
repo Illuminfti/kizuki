@@ -1,0 +1,83 @@
+{
+  "schema": "kizuki.native-quality-witnesses/v1",
+  "identity_scope": "evaluation-only exact source span; never a durable identity merge",
+  "witnesses": [
+    {
+      "record_id": "q01-a",
+      "start_utf16": 0,
+      "end_utf16": 3,
+      "text": "Ada",
+      "reference_subject": "quality:ada"
+    },
+    {
+      "record_id": "q02-a",
+      "start_utf16": 0,
+      "end_utf16": 4,
+      "text": "Noor",
+      "reference_subject": "quality:noor"
+    },
+    {
+      "record_id": "q02-b",
+      "start_utf16": 21,
+      "end_utf16": 25,
+      "text": "Noor",
+      "reference_subject": "quality:noor"
+    },
+    {
+      "record_id": "q03-a",
+      "start_utf16": 0,
+      "end_utf16": 4,
+      "text": "Niko",
+      "reference_subject": "quality:niko"
+    },
+    {
+      "record_id": "q03-b",
+      "start_utf16": 0,
+      "end_utf16": 4,
+      "text": "Oren",
+      "reference_subject": "quality:oren"
+    },
+    {
+      "record_id": "q04-a",
+      "start_utf16": 0,
+      "end_utf16": 4,
+      "text": "Iris",
+      "reference_subject": "quality:iris"
+    },
+    {
+      "record_id": "q04-b",
+      "start_utf16": 0,
+      "end_utf16": 4,
+      "text": "Iris",
+      "reference_subject": "quality:iris"
+    },
+    {
+      "record_id": "q10-a",
+      "start_utf16": 0,
+      "end_utf16": 1,
+      "text": "I",
+      "reference_subject": null
+    },
+    {
+      "record_id": "q10-b",
+      "start_utf16": 0,
+      "end_utf16": 1,
+      "text": "I",
+      "reference_subject": null
+    },
+    {
+      "record_id": "q11-a",
+      "start_utf16": 0,
+      "end_utf16": 4,
+      "text": "Mira",
+      "reference_subject": "quality:mira"
+    },
+    {
+      "record_id": "q12-a",
+      "start_utf16": 0,
+      "end_utf16": 4,
+      "text": "Tess",
+      "reference_subject": "quality:tess"
+    }
+  ]
+}

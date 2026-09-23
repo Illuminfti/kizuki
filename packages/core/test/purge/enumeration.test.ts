@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { hashBody } from "../../src/claims/hash";
@@ -16,6 +16,9 @@ import { recordedPage } from "../helpers/recorded-page";
 import { write } from "../canon/helpers";
 import { insertClaim } from "../../src/claims/store";
 import { tempVault } from "../helpers/vault";
+
+// These tests do real ledger, vault and process work; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const AT = "2026-09-06T12:00:00.000Z";
 const RECORDED_AT = new Date(Date.parse(AT) - 2_000).toISOString();

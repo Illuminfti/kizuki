@@ -38,6 +38,15 @@ describe("dispatchServeTool", () => {
       context_packet: { query: "ada" },
       graph_neighbors: { id: "person:ada" },
       system_health: {},
+      world_view: {
+        operation: "situation",
+        situation: {
+          kind: "object",
+          token: Buffer.from(Uint8Array.from({ length: 32 }, () => 1)).toString("base64url"),
+        },
+        valid: { kind: "all" },
+        knownAt: { kind: "current" },
+      },
       propose: {
         kind: "claim",
         body: "dispatch fixture claim",
@@ -52,7 +61,8 @@ describe("dispatchServeTool", () => {
     for (const tool of TOOLS) {
       const envelope = await dispatchServeTool(ctx, tool, args[tool]);
       expect(envelope.tool).toBe(tool);
-      expect(envelope.schema).toBe("kizuki.envelope/v1");
+      // world_view answers in its closed v2 envelope; every other tool keeps v1.
+      expect(envelope.schema).toBe(tool === "world_view" ? "kizuki.envelope/v2" : "kizuki.envelope/v1");
     }
   });
 

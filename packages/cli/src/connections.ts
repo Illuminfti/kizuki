@@ -290,6 +290,7 @@ export function connectorAuthModes(id: string): readonly string[] | null {
 /** Only these host codecs are path-only. Auth-none alone is not sufficient. */
 const PORTABLE_PATH_IDS = Object.freeze([
   "kizuki.markdown-folder", "kizuki.import-chatgpt", "kizuki.import-claude",
+  "kizuki.import-beacon",
   "kizuki.import-whatsapp", "kizuki.import-pocket", "kizuki.import-omnivore",
   "kizuki.import-x-archive", "kizuki.screenpipe",
 ]);
@@ -323,6 +324,7 @@ export function listEnrollableConnectorIds(): string[] {
 
 function resolveRegisteredId(input: string): string | null {
   if (input === "x-api") return "kizuki.x";
+  if (input === "beacon") return "kizuki.import-beacon";
   if (input in REGISTRY) return input;
   const prefixed = `kizuki.${input}`;
   if (prefixed in REGISTRY) return prefixed;

@@ -1,4 +1,5 @@
-import { CanonRecoveryError, inspectCanonRecovery, recoverCanonWrites, retryCanonProjectionObligations } from "@kizuki/core";
+import { CanonRecoveryError, inspectCanonRecoveryDetail, recoverCanonWrites, retryCanonProjectionObligations } from "@kizuki/core";
+import type { CanonStageRecoveryRecord } from "@kizuki/core";
 import { parseArguments, UsageError } from "../args";
 import { withVault } from "../context";
 import { jsonEnvelope } from "../output";
@@ -25,19 +26,29 @@ export const recoverCommand: Command = {
         ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
       };
       let completed: string[] = [], projections: string[] = [], reason: string | null = null;
+      let stageRecoveries: CanonStageRecoveryRecord[] = [];
       try {
-        completed = recoverCanonWrites(target).completed;
+        const report = recoverCanonWrites(target);
+        completed = report.completed; stageRecoveries = report.stage_recoveries;
         projections = (await retryCanonProjectionObligations(target)).completed;
       } catch (error) {
+        // The recovery boundary types every refusal it can explain.
         reason = error instanceof CanonRecoveryError ? error.reason : "completion_failed";
       }
-      const recovery = inspectCanonRecovery(ctx.db);
+      const { stage_recoveries: pendingStageRecoveries, ...recovery } = inspectCanonRecoveryDetail(ctx.db, ctx.vaultPath);
       const ok = reason === null && !recovery.pending && recovery.projection_pending === 0;
-      const result = { completed, projections_completed: projections, ...recovery, reason };
+      const result = { completed, projections_completed: projections, ...recovery, reason: reason ?? recovery.reason,
+        stage_recoveries: recovery.pending ? pendingStageRecoveries : stageRecoveries };
       if (parsed.flags.has("--json")) io.out(jsonEnvelope("recover", ok ? "ok" : "error", result));
       else {
         io.out(`Memory writes recovered: ${completed.length}. Retrieval updates completed: ${projections.length}.`);
-        if (!ok) io.err(`Recovery remains pending${reason === null ? "" : `: ${reason}`}. Run kizuki doctor --json for the affected receipt. Existing holds remain in place.`);
+        for (const item of result.stage_recoveries) {
+          io.out(`stage ${item.stage} ${item.classification}: ${item.action}${item.quarantine_path === null ? "" : ` to ${item.quarantine_path}`}${item.outcome === "done" ? "" : " (planned, not yet done)"}`);
+        }
+        if (!ok) {
+          const next = recovery.next ?? "run: kizuki recover --json once the retrieval engine is available";
+          io.err(`Recovery remains held${result.reason === null ? "" : `: ${result.reason}`}. next: ${next}`);
+        }
       }
       return ok ? 0 : 1;
     }, { retrieval: "optional" });

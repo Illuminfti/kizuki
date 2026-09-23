@@ -9,7 +9,7 @@ import {
 } from "@kizuki/core";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { recordedPage } from "../../core/test/helpers/recorded-page";
-import { ENVELOPE_SHAPE, PACKET_INPUT } from "../src/schemas";
+import { CORRECT_INPUT, ENVELOPE_SHAPE, PACKET_INPUT } from "../src/schemas";
 import { call, connectClient, envelopeOf } from "./client";
 import { mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
@@ -27,6 +27,25 @@ function live(): McpFixture {
   fixture = mcpFixture();
   return fixture;
 }
+
+test("correct input accepts an exact opaque world claim selector", () => {
+  const token = "A".repeat(42) + "A";
+  expect(
+    CORRECT_INPUT.parse({
+      statement: "Use the updated literal.",
+      target: { world_claim: { kind: "claim", token } },
+    }),
+  ).toEqual({
+    statement: "Use the updated literal.",
+    target: { world_claim: { kind: "claim", token } },
+  });
+  expect(() =>
+    CORRECT_INPUT.parse({
+      statement: "Use the updated literal.",
+      target: { world_claim: { kind: "claim", token }, claim_id: "01J8T0Y8YAZP3GW8P6GQJ1A4KE" },
+    }),
+  ).toThrow();
+});
 
 /**
  * The SDK client builds an output validator from `tools/list` and applies it
@@ -53,6 +72,18 @@ describe("the advertised output schema describes what the server sends", () => {
       ["timeline", { day: "2026-02-28" }],
       ["graph_neighbors", { id: "person:ada" }],
       ["system_health", {}],
+      [
+        "world_view",
+        {
+          operation: "situation",
+          situation: {
+            kind: "object",
+            token: Buffer.from(Uint8Array.from({ length: 32 }, () => 1)).toString("base64url"),
+          },
+          valid: { kind: "all" },
+          knownAt: { kind: "current" },
+        },
+      ],
     ] as const) {
       const result = await call(client, name, args);
       expect(result.isError ?? false).toBe(false);
@@ -172,7 +203,7 @@ describe("the advertised output schema describes what the server sends", () => {
     expect(text).toEqual(structured);
   });
 
-  test("every tool advertises optional source_policy with the exact three members", async () => {
+  test("legacy tools retain source_policy while world advertises its closed v2 envelope", async () => {
     const client = await connectClient(live().owner(), open);
     const tools = (await client.listTools()).tools;
     expect(tools.map((tool) => tool.name)).toEqual([...TOOLS]);
@@ -181,6 +212,11 @@ describe("the advertised output schema describes what the server sends", () => {
         required?: string[];
         properties?: { source_policy?: { required?: string[] } };
       };
+      if(tool.name==="world_view") {
+        expect(advertised.required?.slice().sort()).toEqual(["at","canon","data","principal","quoted","schema","tool"]);
+        expect(Object.keys(advertised.properties??{}).sort()).toEqual(["at","canon","data","principal","quoted","schema","tool"]);
+        continue;
+      }
       expect(advertised.required?.slice().sort()).toEqual(
         ["at", "canon", "denied", "principal", "quoted", "schema", "tool"],
       );

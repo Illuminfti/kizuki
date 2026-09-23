@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -10,21 +10,33 @@ import { createServeRuntime } from "../../src/serve-runtime";
 import { startFakeEndpoint, type SeenRequest } from "../../../llm/test/fake-endpoint";
 import { createHelpers } from "../helpers";
 
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
+
 const { cleanup, tempVault, runCli } = createHelpers();
 afterEach(cleanup);
 
-function completion(request: SeenRequest, label: string): Response {
+function completion(request: SeenRequest): Response {
   const body = request.body as { model: string; messages: { content: string }[] };
   const prompt = body.messages[1]!.content;
-  const eventId = /record ([A-Za-z0-9:_.-]+) from/.exec(prompt)?.[1];
-  const subject = /"subject":"((?:\\.|[^"])*)"/.exec(prompt)?.[1];
-  if (!eventId || !subject) throw new Error("synthetic extraction fixture mismatch");
+  const record = /event:([A-Za-z0-9:_.-]+)>>>\n([^\n]+)/.exec(prompt);
+  if (!record) throw new Error("synthetic extraction fixture mismatch");
+  const label = "orchard library project", start = record[2]!.indexOf(label);
+  if (start < 0) throw new Error("synthetic source label missing");
+  const anchor = { event_id: record[1]!, start_utf16: start, end_utf16: start + label.length };
+  const common = { subject: { kind: "mention", id: "project" },
+    perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] },
+    context: [], polarity: "positive", valid_from: null, valid_to: null, temporal_basis: "unknown",
+    confidence: 0.7, sensitivity: "personal", anchors: [anchor] };
   return Response.json({ id: "synthetic", object: "chat.completion", created: 1, model: body.model,
-    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ claims: [{
-      kind: "claim", subject: JSON.parse(`"${subject}"`), predicate: "employment.role", object: `${label} library collaborator`,
-      polarity: "positive", body: `Ada coordinates the ${label} library group.`, valid_from: null, valid_to: null,
-      confidence: 0.7, sensitivity: "personal", event_ids: [eventId],
-    }] }) } }], usage: { prompt_tokens: 10, completion_tokens: 10 } });
+    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({
+      schema: "kizuki.producer-response/v2",
+      mentions: [{ id: "project", label, anchor, candidate_refs: [] }],
+      claims: [
+        { ...common, id: "kind", predicate: "world.kind", object: { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/situation" } }, body: "The orchard library project is a situation." },
+        { ...common, id: "label", predicate: "situation.label", object: { kind: "literal", value: label }, body: "The project is called orchard library project." },
+      ],
+    }) } }], usage: { prompt_tokens: 10, completion_tokens: 10 } });
 }
 
 test("scheduled attempts adopt settings without restart, pin credentials in flight, and recover after off and invalid settings", async () => {
@@ -36,8 +48,8 @@ test("scheduled attempts adopt settings without restart, pin credentials in flig
   const db = openLedger(join(setup.vault, ".kizuki/kizuki.db"));
   const store = new ConnectionStateStore(join(setup.vault, ".kizuki"));
   const source = listConnections(db).find(row => row.connector_id === "kizuki.markdown-folder")!;
-  const first = startFakeEndpoint(request => completion(request, "alpha"));
-  const second = startFakeEndpoint(request => completion(request, "beta"));
+  const first = startFakeEndpoint(completion);
+  const second = startFakeEndpoint(completion);
   const secretPath = join(setup.vault, ".kizuki/model-fixture.key");
   const firstKey = "synthetic-key-alpha", secondKey = "synthetic-key-beta";
   writeFileSync(secretPath, firstKey, { mode: 0o600 });

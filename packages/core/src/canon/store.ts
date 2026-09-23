@@ -1,3 +1,4 @@
+import { isWorldCanonReceipt, parseWorldCanonReceipt } from "./world-receipt";
 import type { Database } from "bun:sqlite";
 import { lstatSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -173,6 +174,9 @@ export function insertReceiptRow(
       receipt.reverts,
       receipt.reverted_by,
     );
+    if (isWorldCanonReceipt(receipt)) {
+      db.query("UPDATE canon_receipts SET record_codec=?,receipt_state='retained',world_basis=?,own_id_origin='core',prior_receipt_id=? WHERE receipt_id=?").run(receipt.schema, JSON.stringify(receipt.basis), receipt.prior_receipt_id, receipt.receipt_id);
+    }
     if (intent !== null) {
       using remove = db.prepare("DELETE FROM canon_machine_byte_intents WHERE receipt_id=?");
       remove.run(receipt.receipt_id);
@@ -332,4 +336,24 @@ export function rebuildPageIndex(io: CanonIo): { pages: number; skipped: number 
     return count;
   });
   return { pages: rebuild(), skipped: report.skipped.length };
+}
+
+/** Typed erasure keeps only opaque operation identity in the existing receipt table. */
+export function insertErasedReceiptRow(db:Database, input:import("./world-receipt").ErasedWorldCanonReceipt):void {
+  const record=checkedErasedReceipt(input);
+  db.query(`INSERT INTO canon_receipts(receipt_id,sensitivity,record_codec,receipt_state,own_id_origin,purge_receipt_id,erased_at,erasure_integrity,prior_receipt_id,
+    claim_ids,provenance,page_path,kind,before_hash,after_hash,at,receipt_kind,page_action,archive_path,writer,producer,model_ref,authority,confidence,taint,candidates,superseded,retrieval_ops,reverts,reverted_by)
+    VALUES (?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)`).run(record.receipt_id,record.sensitivity,record.schema,record.state,record.own_id_origin,record.purge_receipt_id,record.erased_at,record.integrity,record.prior_receipt_id);
+}
+export function eraseReceiptRow(db:Database,input:import("./world-receipt").ErasedWorldCanonReceipt):void {
+  const record=checkedErasedReceipt(input);
+  const result=db.query(`UPDATE canon_receipts SET sensitivity='private',receipt_state='erased',world_basis=NULL,own_id_origin='core',purge_receipt_id=?,erased_at=?,erasure_integrity=?,
+    claim_ids=NULL,provenance=NULL,page_path=NULL,kind=NULL,before_hash=NULL,after_hash=NULL,at=NULL,receipt_kind=NULL,page_action=NULL,archive_path=NULL,writer=NULL,producer=NULL,model_ref=NULL,authority=NULL,confidence=NULL,taint=NULL,candidates=NULL,superseded=NULL,retrieval_ops=NULL,reverts=NULL,reverted_by=NULL
+    WHERE receipt_id=? AND record_codec='kizuki.canon-receipt/v2' AND prior_receipt_id IS ?`).run(record.purge_receipt_id,record.erased_at,record.integrity,record.receipt_id,record.prior_receipt_id);
+  if(result.changes!==1)throw new Error("typed canon receipt unavailable for erasure");
+}
+function checkedErasedReceipt(input:import("./world-receipt").ErasedWorldCanonReceipt):import("./world-receipt").ErasedWorldCanonReceipt {
+  const record=parseWorldCanonReceipt(input);
+  if(record===null||record.state!=="erased")throw new Error("canon_receipt_invalid");
+  return record;
 }

@@ -18,6 +18,17 @@ export function bindCanonFiles<T extends CanonIo>(scope: VaultMutationScope, io:
   return io;
 }
 
+/** Adds operation-local settings without losing the already-held mutation capability. */
+export function extendOwnedCanonIo<T extends CanonIo, U extends object>(
+  scope: VaultMutationScope,
+  io: T,
+  fields: U,
+): T & U {
+  const files = requireCanonFiles(scope, io);
+  const extended = Object.freeze({ ...io, ...fields }) as T & U;
+  return bindCanonFiles(scope, extended as CanonIo, files) as T & U;
+}
+
 /** Read helpers retain their standalone behavior; owned calls use their captured descriptors. */
 export function canonFilesFor(io: CanonIo): CanonFiles | undefined {
   const owner = owners.get(io);

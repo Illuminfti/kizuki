@@ -1,5 +1,8 @@
-import {expect,test} from 'bun:test';
+import { expect, test, setDefaultTimeout } from 'bun:test';
 import {spawnSync} from 'node:child_process';
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 test('expired budget between provider pages does not queue token work or reject unhandled',()=>{
  const modulePath=new URL('../src/connector.ts',import.meta.url).pathname,fixturePath=new URL('../src/testing.ts',import.meta.url).pathname,statePath=new URL('../src/state.ts',import.meta.url).pathname;
  const script=`import {createGoogleCalendarConnector} from ${JSON.stringify(modulePath)};

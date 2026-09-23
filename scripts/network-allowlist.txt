@@ -42,6 +42,13 @@ packages/core/test/serve/http.test.ts:(toplevel).fetch#1:loopback fetch against 
 packages/core/test/serve/http.test.ts:(toplevel).fetch#2:loopback fetch against the standing serve endpoint
 packages/core/test/serve/http.test.ts:(toplevel).fetch#3:loopback fetch against the standing serve endpoint
 packages/core/test/serve/http.test.ts:(toplevel).fetch#4:loopback fetch against the standing serve endpoint
+packages/core/test/serve/http.test.ts:(toplevel).fetch#5:authenticated synthetic world-view read against the loopback serve endpoint
+packages/core/test/serve/http.test.ts:(toplevel).fetch#6:authenticated synthetic world-view alias read against the loopback serve endpoint
+packages/core/test/serve/http.test.ts:(toplevel).fetch#7:authenticated synthetic Concept discovery against the loopback serve endpoint
+packages/core/test/serve/http.test.ts:(toplevel).fetch#8:authenticated synthetic Concept detail against the loopback serve endpoint
+packages/core/test/serve/daemon-recovery.test.ts:(toplevel).Bun.serve#1:throwaway 127.0.0.1 probe that reserves a free loopback port for the held-writer daemon test
+packages/core/test/serve/daemon-recovery.test.ts:readWhileHeld.fetch#1:loopback health read against the daemon endpoint while its canon writer is held
+packages/core/test/serve/daemon-recovery.test.ts:readWhileHeld.fetch#2:authenticated synthetic page read against the daemon endpoint while its canon writer is held
 packages/core/test/serve/http-retrieval.test.ts:(toplevel).fetch#1:synthetic loopback HTTP reads against the host-bound retrieval surface
 packages/connector-gmail/src/api.ts:getJson.fetch#1:explicitly enrolled Gmail read-only capture and OIDC identity; fixed Google HTTPS endpoints, no redirects, bounded GET requests
 packages/connector-google-calendar/src/api.ts:getJson.fetch#1:explicitly configured read-only Google Calendar fixed-host GET transport
@@ -60,6 +67,7 @@ packages/cli/test/app-host.test.ts:(toplevel).fetch#4:synthetic loopback asset a
 packages/cli/test/app-host.test.ts:(toplevel).fetch#5:synthetic loopback asset and authenticated local app host tests
 packages/cli/test/app-host.test.ts:(toplevel).fetch#6:synthetic loopback asset and authenticated local app host tests
 packages/cli/test/app-client.test.ts:(toplevel).fetch#1:authenticated requests to the actual ephemeral loopback app for written identity labels and shipped client rendering
+packages/cli/test/app-world-correction.test.ts:request.fetch#1:authenticated ephemeral loopback App correction preview, write, undo and policy refusal against a synthetic typed writer page
 packages/connector-x/src/api/client.ts:request.fetch#1:explicitly configured X own-post API fixed-origin GET transport; bounded requests and response body, no redirects or media downloads
 packages/cli/test/app-model-journey.test.ts:call.fetch#1:authenticated actual app requests restricted to its ephemeral loopback host with synthetic model evidence
 packages/cli/test/app-model-settings.test.ts:endpoint.Bun.serve#1:synthetic model endpoint bound to 127.0.0.1 for settings and fixed-prompt connection tests

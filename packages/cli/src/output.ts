@@ -84,5 +84,8 @@ export function errorText(error: unknown): string {
         : "The local app requires a supported Linux desktop or macOS with a default web browser.";
     return `${message}: ${desktop} Check the default browser, then retry the app command. --no-open is diagnostic; its printed address does not sign you in.`;
   }
+  if (message === "canon_files_unsafe") {
+    return `${message}: the workspace or a folder above it is a symlink, is not owned by you, or is writable by another user or group. Make each folder yours and not group- or world-writable (for example chmod go-w FOLDER), then run the same command again.`;
+  }
   return message;
 }

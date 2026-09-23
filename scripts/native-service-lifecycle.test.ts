@@ -1,5 +1,5 @@
 import { LEDGER_SCHEMA_VERSION } from "../packages/core/src/ledger/db";
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,9 @@ import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS } from "../packages/core/sr
 import { RAIL_IDS, emptyRunTotals } from "../packages/core/src/serve/types";
 import { installedRailsHealth, readNativeRailDiagnostics, recordInstalledHealth, waitForFreshRails } from "./native-service-health";
 import { Database } from "bun:sqlite";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const healthAt = "2026-09-07T00:00:00.000Z";
 function healthyStatus() {

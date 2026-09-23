@@ -40,12 +40,13 @@ export type { ProposeArgs, ProposeData } from "./propose";
 export { serveCorrect } from "./correct";
 export type { CorrectArgs, CorrectData, CorrectTarget } from "./correct";
 export type { RewrittenPage } from "./rewrite";
-export { WorldViewError, isWorldWireToken, readWorldView } from "./world-view";
+export { WorldViewError, isWorldWireToken, readWorldView, serveWorldView } from "./world-view";
 export type {
   WorldKnownAt,
   WorldObjectRef,
   WorldReadInput,
   WorldReadResult,
+  WorldViewEnvelope,
   WorldSnapshotRef,
   WorldValidQuery,
 } from "./world-view";

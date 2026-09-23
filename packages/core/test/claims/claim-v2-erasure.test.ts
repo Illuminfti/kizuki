@@ -272,8 +272,12 @@ test("a surviving v2 semantic or support row blocks a completed purge", async ()
       "claim_payload_retained",
     );
 
-    // The semantic row is reachable through that same support row, and holds
-    // the subject, predicate and canonical object.
+    db.query("DELETE FROM claim_v2_support WHERE support_key=?").run(
+      "residual-support",
+    );
+    // Ledger32 removes the semantic when its final support is deleted. Inject
+    // residual corruption afterwards so this check still proves a surviving
+    // semantic payload blocks purge completion independently of support.
     db.query(
       `INSERT INTO claim_v2_semantics
          (claim_id, semantic_key, schema, discriminator, subject_kind, subject_id,
@@ -293,9 +297,6 @@ test("a surviving v2 semantic or support row blocks a completed purge", async ()
       "2026-01-01T00:00:00.000Z",
       null,
       "{}",
-    );
-    db.query("DELETE FROM claim_v2_support WHERE support_key=?").run(
-      "residual-support",
     );
     expect(inspectSourceGrant(db, sourceKey)?.purge_blockers).toContain(
       "claim_payload_retained",

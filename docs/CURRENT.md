@@ -1,4 +1,4 @@
-# Current direction (2026-09-17)
+# Current direction (2026-09-23)
 
 Binding intent is RFC 0002 — Autonomous canon (`rfcs/0002-autonomous-canon.md`).
 It is BINDING. It amends `docs/architecture.md` invariants 3, 5, 9, RFC 0000,
@@ -9,27 +9,21 @@ Read [README.md](../README.md) for what this revision actually runs, then
 
 ## Readiness
 
-The owner's 2026-09-05 amendment, recorded in
-[D19](decision-log.md#owner-amendment-to-readiness-2026-09-05), supersedes
-calendar and estate-cutover release gates. The owner's 2026-09-17 amendment,
-[D21](decision-log.md), sets the product that must be ready: the world model,
-not capture-to-context.
+The owner's 2026-09-23 steer, recorded in [D23](decision-log.md), makes
+1.0.0 a public release today. The launch bar is the world model as built on
+the 2026-09-21 launch stack and Telegram native sign-in. Stranger proof,
+live-account qualification, independent-review receipts, seven- and
+fourteen-day observation, and go/no-go or release-acceptance reports are no
+longer release prerequisites. D23 supersedes the
+[D19](decision-log.md#owner-amendment-to-readiness-2026-09-05) and
+[D21](decision-log.md) readiness text where they conflict.
 
-Ready still means a stranger can install Kizuki: executable stranger proof,
-zero live P0s on the exact candidate, and an honest install path. Ready also
-requires the entire #497 execution map as public seams on day one: foundation
-and first Concept, domain expansion, two-client continuity, World Slice and
-Diff, outcomes, attention, Atlas, forecasts, continuous verification, and
-#458 onboarding. The golden acceptance journey in #497 is the day-one proof.
-RFC 0003 and RFC 0004 remain proposed until those public seams exist. Closed
-GitHub packets, RFC fixtures, and planning documents are not shipped
-surfaces. The remaining product, security, connector, recovery, platform,
-review and verification requirements still apply.
-
-Seven-day rail observation and fourteen-day estate comparison are optional
-post-ready diagnostics. Operational cutover requires separate authorization;
-it is not a readiness or 1.0 tag prerequisite. Historical observations and
-their limitations remain evidence of only what actually ran.
+The release gates are a clean `bunx tsc --noEmit`, a green `bun test`,
+`bun run build:release` with the project app credentials compiled in,
+`bun run smoke:release`, and a hands-on run of the world model and Telegram
+from the built package. The #497 packets that 1.0.0 does not ship stay on the
+roadmap and are not claimed. Operational cutover of existing services still
+requires separate authorization.
 
 ## What the product is
 
@@ -44,14 +38,31 @@ MCP `correct`) is the update path a person actually uses.
 
 ## What this revision ships
 
+Version 1.0.0.
+
+World model: when a configured model and a source grant that permits
+extraction are present, the sync rail runs typed extraction
+(`kizuki.producer-response/v2`) and admits source-anchored claims about
+Concepts and Situations. `kizuki world` discovers them
+(`find_concepts`, `find_situations`) and reads one card (`concept`,
+`situation`) with evidence, confidence, uncertainty and coverage. The same
+Core projection is served as the MCP `world_view` tool, loopback HTTP
+`/v1/world_view`, and the World views in `kizuki app`. `kizuki tell
+--world-claim` and MCP `correct` correct a world claim; the correction is
+receipted and reversible, and a second authorized client sees it on its next
+read. Without a model there are no Concepts or Situations; an empty
+discovery says so and points at `kizuki doctor`.
+
 The public CLI including `app`, a Linux x64 baseline local native package, file ingest, FTS
 query, doctor, tell/undo/audit, serve loopback, context packets, and MCP stdio
 adapter. Capture never writes canon. Local files and exports are enrollable;
 an opt-in Beeper Desktop connection reads local history through an approved
 token reference. IMAP supports local sign-in and re-enrollment that preserves
 the existing mailbox identity and checkpoint. Telegram supports native CLI
-sign-in with project app credentials and preserves its account identity and
-checkpoint; actual account qualification remains unrun. Native Gmail and Google Calendar
+sign-in with the project app credentials compiled into the release package and
+preserves its account identity and checkpoint. Connect, the first state probe,
+`getMe` and sign-out each have a 45-second deadline, and an unreachable network
+fails in seconds instead of hanging. Native Gmail and Google Calendar
 browser sign-in use operator-configured desktop clients and separate source consent;
 Calendar requires one canonical calendar and explicit fields. Their account and artifact
 qualification remain separate. ICS enrolls as a local file path; interactive
@@ -79,21 +90,26 @@ Owner-only promote, `kizuki review` as the 1.0 daily surface, and
 `docs/wave1/specs/stranger-proof.md`, and
 `docs/wave1/specs/security-docs.md` are VOID as written.
 
-## What this does not prove
+## Known limits
 
-The native package is a local Linux x64 baseline build, not a signed or
-published installer. The Beeper connector has synthetic coverage only; this
-tree makes no claim that a live account was tested. These implementation
-facts do not establish stranger installation/use, zero live P0s, or 1.0
-readiness.
+The release package is a Linux x64 baseline build. It is not signed, and
+nothing is published to npm or another package registry. macOS and other
+platforms run from a source checkout. Telegram, Gmail, Google Calendar, IMAP,
+X and Beeper have no recorded live-account qualification on this revision;
+the Beeper connector has synthetic coverage only. Revision resume for world
+views is not issued yet (fresh cards carry a `not_issued` view marker), and
+Atlas, forecasts, World Slice and Diff, outcomes and attention remain on the
+roadmap. A vault copied at file level while a canon write is pending refuses
+recovery with `receipt_stream_changed` instead of completing it.
 
 ## What still holds
 
 Frozen ingress `kizuki.event/v1`. Zero phone-home. Fail closed. No fake
-surface. MIT. TypeScript on Bun. Readiness follows D19 and D21 above.
+surface. MIT. TypeScript on Bun. Release readiness follows D23 above.
 
 ## Decision log
 
 See `docs/decision-log.md`. D1-D8 Gate 0 (2026-09-01). D9-D16 autonomy
 (2026-09-02). RFC 0002 is the implementation brief for D9-D16. D21
-(2026-09-17) makes the world model the 1.0 launch product.
+(2026-09-17) makes the world model the 1.0 launch product. D23 (2026-09-23)
+releases 1.0.0 with the world model and Telegram as the launch bar.

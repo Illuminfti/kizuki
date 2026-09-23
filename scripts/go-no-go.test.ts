@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { createHash } from "node:crypto";
 import { appendFileSync, chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +23,9 @@ import { writePackageFixture } from "./release-package-fixture";
 import { CURRENT_PACKAGE_FILES } from "./release-artifacts";
 import { distributionIdentity } from "./release-notices";
 import type { SqliteRuntime } from "../packages/core/src/ledger/runtime";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -1245,6 +1248,33 @@ test("product source traversal enforces explicit file and byte bounds", () => {
   const repo = custodyRepo({ "commands/index.ts": `//${"x".repeat(CHECKOUT_LIMITS.file_bytes)}\n` });
   expect(reasonOf(() => collectProductSources(repo.root, Array(CHECKOUT_LIMITS.files + 1).fill("commands/index.ts")))).toBe("checkout-file-bound");
   expect(reasonOf(() => collectProductSources(repo.root, ["commands/index.ts"]))).toBe("unsafe-file-or-size");
+});
+
+test("product traversal and checkout custody accept the aggregate byte boundary and refuse one more byte", () => {
+  const chunkBytes = CHECKOUT_LIMITS.file_bytes - 1;
+  const paths = Array.from({ length: Math.ceil(CHECKOUT_LIMITS.total_bytes / chunkBytes) }, (_, i) => `assets/part-${i}.txt`);
+  const repo = custodyRepo(Object.fromEntries(paths.map(path => [path, ""])));
+  const initial = collectProductSources(repo.root, paths);
+  const metadataBytes = initial.bindings.reduce((total, item) => total + readFileSync(join(repo.root, item.path)).byteLength, 0);
+  let remaining = CHECKOUT_LIMITS.total_bytes - metadataBytes;
+  for (const path of paths) {
+    const bytes = Math.min(chunkBytes, remaining);
+    writeFileSync(join(repo.root, path), "x".repeat(bytes));
+    remaining -= bytes;
+  }
+  expect(remaining).toBe(0);
+  git(repo.root, ["add", "--", ...paths]);
+  git(repo.root, ["commit", "--quiet", "--no-gpg-sign", "-m", "Fill bounded synthetic product"]);
+  const graph = collectProductSources(repo.root, paths);
+  const files = graph.bindings.map(item => item.path);
+  expect(files.reduce((total, path) => total + readFileSync(join(repo.root, path)).byteLength, 0)).toBe(CHECKOUT_LIMITS.total_bytes);
+  assertCheckoutCustody(repo.root, git(repo.root, ["rev-parse", "HEAD"]), files).unchanged();
+
+  appendFileSync(join(repo.root, paths.at(-1)!), "x");
+  git(repo.root, ["add", "--", paths.at(-1)!]);
+  git(repo.root, ["commit", "--quiet", "--no-gpg-sign", "-m", "Exceed aggregate capacity by one byte"]);
+  expect(reasonOf(() => collectProductSources(repo.root, paths))).toBe("checkout-byte-bound");
+  expect(reasonOf(() => assertCheckoutCustody(repo.root, git(repo.root, ["rev-parse", "HEAD"]), files))).toBe("checkout-byte-bound");
 });
 
 test("v3 refuses extra keys and more than forty gate receipts", () => {

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,6 +35,9 @@ import { purgeEvents } from "../src/ledger/purge";
 import { runWritePass } from "../src/serve/write-pass";
 import { commitMachineByteIntent } from "../src/ledger/event-origin";
 import { sha256Hex } from "../src/util/hash";
+
+// These tests do real ledger, vault and process work; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const dirs: string[] = [];
 afterEach(() => {

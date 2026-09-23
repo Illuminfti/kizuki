@@ -3,7 +3,7 @@ import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { ConnectionStateStore, setSourceGrant, revokeSourceGrant, getCheckpoint, listConnections, runToCompletion } from "@kizuki/core";
 import { openLedger, timeline } from "@kizuki/core/testing";
-import { TelegramConnector, TelegramConnectorError, ScriptedTelegramApi, fixtureAccount, FIXTURE_CREDENTIALS, FIXTURE_SESSION, parseState, type SignInFlow } from "@kizuki/connector-telegram";
+import { TelegramConnector, TelegramConnectorError, ScriptedTelegramApi, fixtureAccount, FIXTURE_CREDENTIALS, FIXTURE_SESSION, parseState, testDataCenter, type DataCenter, type SignInFlow } from "@kizuki/connector-telegram";
 import { UsageError } from "../src/args";
 import { runTelegramConnect } from "../src/commands/connect-telegram";
 import { closeHostConnector, ConnectionError, loadConnector, selectConnection } from "../src/connections";
@@ -246,4 +246,20 @@ test("an oversized two-step hint reaches the terminal cut to 512 printable chara
   expect(question.length).toBeLessThanOrEqual(512);
   expect(question).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
   const db = openLedger(join(setup.vault, ".kizuki/kizuki.db")); try { expect(listConnections(db)).toHaveLength(1); } finally { db.close(); }
+});
+
+test("a chosen Telegram test data center is announced and a malformed one refuses before any prompt", async () => {
+  const setup = h.tempVault(), owner = ownerIo(setup), account = fixtureAccount(), chosen: (DataCenter | undefined)[] = [];
+  owner.io.env = { ...setup.env, KIZUKI_TELEGRAM_TEST_DC: "2" };
+  const create = () => new TelegramConnector({}, { api: (_session, _credentials, dataCenter) => { chosen.push(dataCenter); return new ScriptedTelegramApi(account); },
+    credentials: () => FIXTURE_CREDENTIALS, sleep: async () => {}, dataCenter: () => testDataCenter(owner.io.env) });
+  expect(await runTelegramConnect(owner.io, { json: true }, () => {}, create)).toBe(0);
+  expect(owner.output.join("\n")).toContain("KIZUKI_TELEGRAM_TEST_DC is set: signing in to Telegram's test environment (data center 2), which holds no real account.");
+  expect(chosen).toEqual([{ id: 2, address: "149.154.167.40", port: 80 }]);
+
+  const other = h.tempVault(), refused = ownerIo(other); let calls = 0;
+  refused.io.env = { ...other.env, KIZUKI_TELEGRAM_TEST_DC: "prod" };
+  await expect(runTelegramConnect(refused.io, { json: true }, () => {}, () => new TelegramConnector({}, { api: () => { calls++; throw Error("unexpected network"); }, credentials: () => FIXTURE_CREDENTIALS }))).rejects.toThrow("KIZUKI_TELEGRAM_TEST_DC must be 1, 2 or 3 when set. Unset it to sign in to Telegram itself.");
+  expect(calls).toBe(0); expect(refused.prompts).toEqual([]);
+  const db = openLedger(join(other.vault, ".kizuki/kizuki.db")); try { expect(listConnections(db)).toEqual([]); } finally { db.close(); }
 });

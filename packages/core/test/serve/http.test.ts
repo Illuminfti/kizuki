@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { openLedger } from "../../src/ledger/db";
 import { initVault } from "../../src/vault/init";
 import { startServeHttp } from "../../src/serve/http";
+import { worldFixture } from "../serving/world-fixture";
 import { ServeDaemonError } from "../../src/serve/types";
 
 const dirs: string[] = [];
@@ -77,6 +78,44 @@ describe("serve http", () => {
     expect(refusal.ok).toBe(false);
     expect(refusal.error.code).toBe("invalid_arguments");
     expect(refusal.error.message).toContain("query");
+
+    const token = Buffer.from(Uint8Array.from({ length: 32 }, () => 1)).toString("base64url");
+    const worldBody = JSON.stringify({
+      operation: "situation",
+      situation: { kind: "object", token },
+      valid: { kind: "all" },
+      knownAt: { kind: "current" },
+    });
+    const worldHeaders = {
+      authorization: "Bearer test-token-not-a-secret-fixture",
+      "content-type": "application/json",
+    };
+    const world = await fetch(`${handle.url}/v1/world_view`, {
+      method: "POST",
+      headers: worldHeaders,
+      body: worldBody,
+    });
+    expect(world.status).toBe(200);
+    const worldJson = (await world.json()) as {
+      ok: boolean;
+      value: { tool: string; data: { status: string } };
+    };
+    expect(worldJson.ok).toBe(true);
+    expect(worldJson.value.tool).toBe("world_view");
+    expect(worldJson.value.data.status).toBe("not_found");
+    const worldAlias = await fetch(`${handle.url}/v1/mcp/world_view`, {
+      method: "POST",
+      headers: worldHeaders,
+      body: worldBody,
+    });
+    expect(worldAlias.status).toBe(200);
+
+    await worldFixture(db);
+    const found=await fetch(`${handle.url}/v1/world_view`,{method:"POST",headers:worldHeaders,body:JSON.stringify({operation:"find_concepts",label:"Bayesian",valid:{kind:"all"},knownAt:{kind:"current"}})});
+    const discovery=await found.json() as {value:{schema:string;data:{result:{data:{matches:{ref:{kind:"object";token:string}}[]}}}}};
+    expect(discovery.value.schema).toBe("kizuki.envelope/v2");
+    const read=await fetch(`${handle.url}/v1/mcp/world_view`,{method:"POST",headers:worldHeaders,body:JSON.stringify({operation:"concept",concept:discovery.value.data.result.data.matches[0]!.ref,valid:{kind:"all"},knownAt:{kind:"current"}})});
+    expect(read.status).toBe(200);expect(await read.text()).toContain("Revise beliefs using evidence");
 
     await handle.stop();
     db.close();

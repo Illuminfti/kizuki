@@ -1,7 +1,13 @@
 import { lstat } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { freezeManifest, HealthReport } from "@kizuki/core";
+import {
+  freezeManifest,
+  HealthReport,
+  isPlainObject,
+  MAX_SYNC_BATCH_BYTES,
+  MAX_SYNC_BATCH_EVENTS,
+} from "@kizuki/core";
 import type {
   CaptureEventInput,
   Connector,
@@ -15,6 +21,7 @@ import { KizukiError } from "../errors";
 import { folderEntries, readFolderFile } from "../folder";
 import type { ExportFolder } from "../folder";
 import { readBoundedUtf8 } from "../read";
+import { sha256Hex } from "../source-id";
 import {
   FIXTURE_OBSERVED_AT,
   MAX_EXPORT_BYTES,
@@ -59,6 +66,8 @@ export interface WhatsAppImportConfig {
 const CONFIG_KEYS = ["path", "date_order", "timezone", "self", "chat"];
 
 export const WHATSAPP_FIXTURE_TIMEZONE = "+00:00";
+export const WHATSAPP_CURSOR_SCHEMA =
+  "kizuki.import-whatsapp.cursor/v1" as const;
 
 const FIXTURE_CHAT_FILE = "WhatsApp Chat with Acme Planning.txt";
 
@@ -89,7 +98,7 @@ const MANIFEST: Manifest = freezeManifest({
   contract_minor: 1,
   implementation: "@kizuki/connectors",
   allowed_egress: [],
-  cursor_schema: null,
+  cursor_schema: WHATSAPP_CURSOR_SCHEMA,
   kinds: ["message"],
   capabilities: {
     backfill: true,
@@ -209,6 +218,133 @@ export function chatNameFromFile(txtPath: string): string {
   return stem;
 }
 
+interface WhatsAppExportIdentity {
+  sha256: string;
+  size: number;
+}
+
+interface WhatsAppCursor {
+  schema: typeof WHATSAPP_CURSOR_SCHEMA;
+  connector_id: typeof WHATSAPP_IMPORT_CONNECTOR_ID;
+  export: WhatsAppExportIdentity;
+  /** Next event index to emit from this snapshot. */
+  after: number;
+}
+
+function malformedCursor(cause?: unknown): never {
+  throw new KizukiError(
+    "parse_error",
+    `${WHATSAPP_IMPORT_CONNECTOR_ID}: malformed cursor`,
+    cause === undefined ? undefined : { cause },
+  );
+}
+
+function whatsappIdentity(
+  events: readonly CaptureEventInput[],
+): WhatsAppExportIdentity {
+  // observed_at is capture time, not source identity. Everything else affects
+  // what this snapshot would ingest, including media references and chat name.
+  const canonical = JSON.stringify(
+    events.map(({ observed_at: _observedAt, ...event }) => event),
+  );
+  return {
+    sha256: sha256Hex(canonical),
+    size: new TextEncoder().encode(canonical).byteLength,
+  };
+}
+
+function decodeWhatsAppCursor(cursor: Cursor): WhatsAppCursor {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cursor) as unknown;
+  } catch (error) {
+    malformedCursor(error);
+  }
+  if (!isPlainObject(parsed)) malformedCursor();
+  const exported = parsed["export"];
+  if (!isPlainObject(exported)) malformedCursor();
+  const after = parsed["after"];
+  const size = exported["size"];
+  const sha256 = exported["sha256"];
+  if (
+    parsed["schema"] !== WHATSAPP_CURSOR_SCHEMA ||
+    parsed["connector_id"] !== WHATSAPP_IMPORT_CONNECTOR_ID ||
+    typeof sha256 !== "string" ||
+    typeof size !== "number" ||
+    !Number.isSafeInteger(size) ||
+    size < 0 ||
+    typeof after !== "number" ||
+    !Number.isSafeInteger(after) ||
+    after < 0
+  ) {
+    malformedCursor();
+  }
+  return {
+    schema: WHATSAPP_CURSOR_SCHEMA,
+    connector_id: WHATSAPP_IMPORT_CONNECTOR_ID,
+    export: { sha256, size },
+    after,
+  };
+}
+
+function encodeWhatsAppCursor(
+  identity: WhatsAppExportIdentity,
+  after: number,
+): Cursor {
+  const next: WhatsAppCursor = {
+    schema: WHATSAPP_CURSOR_SCHEMA,
+    connector_id: WHATSAPP_IMPORT_CONNECTOR_ID,
+    export: identity,
+    after,
+  };
+  return JSON.stringify(next);
+}
+
+function pageWhatsAppEvents(
+  events: readonly CaptureEventInput[],
+  cursor: Cursor | null,
+): SyncBatch {
+  const identity = whatsappIdentity(events);
+  const previous = cursor === null ? null : decodeWhatsAppCursor(cursor);
+  const sameSnapshot =
+    previous !== null &&
+    previous.export.sha256 === identity.sha256 &&
+    previous.export.size === identity.size;
+  // Only an unfinished page mints a cursor, so a matching terminal or larger
+  // offset is corrupt, not evidence that the source has been fully imported.
+  if (sameSnapshot && previous.after >= events.length) malformedCursor();
+  const start = sameSnapshot ? previous.after : 0;
+  if (start >= events.length) return { events: [], cursor: null };
+
+  const utf8 = new TextEncoder();
+  const page: CaptureEventInput[] = [];
+  let bytes = 2;
+  for (let index = start; index < events.length; index += 1) {
+    const event = events[index]!;
+    const piece = utf8.encode(JSON.stringify(event)).byteLength;
+    const nextBytes = bytes + piece + (page.length === 0 ? 0 : 1);
+    if (page.length === 0 && nextBytes > MAX_SYNC_BATCH_BYTES) {
+      throw new KizukiError(
+        "parse_error",
+        `${WHATSAPP_IMPORT_CONNECTOR_ID}: event exceeds the capture page bound`,
+      );
+    }
+    if (
+      page.length > 0 &&
+      (page.length >= MAX_SYNC_BATCH_EVENTS ||
+        nextBytes > MAX_SYNC_BATCH_BYTES)
+    ) {
+      return {
+        events: page,
+        cursor: encodeWhatsAppCursor(identity, index),
+      };
+    }
+    page.push(event);
+    bytes = nextBytes;
+  }
+  return { events: page, cursor: null };
+}
+
 export class WhatsAppImportConnector implements Connector {
   readonly path: string;
   private readonly dateOrder: DateOrder | undefined;
@@ -261,11 +397,11 @@ export class WhatsAppImportConnector implements Connector {
 
   async connect(_resolve: SecretResolver): Promise<void> {}
 
-  async backfill(_cursor: Cursor | null): Promise<SyncBatch> {
-    return { events: await this.read(), cursor: null };
+  async backfill(cursor: Cursor | null): Promise<SyncBatch> {
+    return pageWhatsAppEvents(await this.read(), cursor);
   }
 
-  /** An export is exhausted in one batch, so sync is backfill. */
+  /** Snapshot imports resume from the same opaque cursor contract as backfill. */
   sync(cursor: Cursor | null): Promise<SyncBatch> {
     return this.backfill(cursor);
   }

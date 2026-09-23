@@ -1,6 +1,6 @@
 import type { ModelUsage, ProduceInput, ProduceResult, ProducerDiagnostic, ProducerPort, DroppedDraft } from "../contracts/producer";
 import { PRODUCER_CONTRACT, PRODUCER_REJECT_REASONS } from "../contracts/producer";
-import { parseExtractResponseV2, PRODUCER_V2_CONTRACT, type ProducerV2ParseInput, type DroppedDraftV2, PRODUCER_V2_UNAVAILABLE_REASONS, type ProduceResultV2 } from "../contracts/producer-v2";
+import { parseExtractResponseV2, PRODUCER_V2_CONTRACT, type ProducerV2ParseInput, type DroppedDraftV2, type ProduceInputV2, type ProducerV2Port, PRODUCER_V2_UNAVAILABLE_REASONS, type ProduceResultV2 } from "../contracts/producer-v2";
 import { assertPortContract } from "../contracts/ports";
 import { cloneExactJson, isPlainObject } from "../util/validate";
 import { readProducerDiagnostic } from "./diagnostics";
@@ -177,11 +177,11 @@ export function validateProduceResult(raw: unknown, contract: string = PRODUCER_
         return invalidResult();
       }
       for (const item of value.dropped) {
-        if (!isPlainObject(item) || !exact(item, ["reason", "id"]) || item.reason !== "unknown_predicate" ||
-          typeof item.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(item.id)) {
+        if (!isPlainObject(item) || !exact(item, ["reason", "id"]) || (item.reason !== "unknown_predicate" && item.reason !== "invalid_claim" && item.reason !== "systemone_rejected") ||
+          typeof item.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(item.id)) {
           return invalidResult();
         }
-        dropped.push({ reason: "unknown_predicate", id: item.id });
+        dropped.push({ reason: item.reason, id: item.id });
       }
     }
     if (dropped.length > 128 || new Set(dropped.map(item => item.id)).size !== dropped.length ||
@@ -208,5 +208,16 @@ export async function invokeProducer(producer: Pick<ProducerPort, "descriptor" |
         status: "unavailable", reason: "unavailable",
         usage: { calls: 1, input_tokens: 0, output_tokens: 0 }, diagnostic: { stage: "transport", rule: "unavailable" }
       } };
+  }
+}
+
+/** Runtime v2 call boundary. It validates the v2 descriptor and complete returned result. */
+export async function invokeProducerV2(producer: Pick<ProducerV2Port, "descriptor" | "produce">, input: ProduceInputV2): Promise<ValidatedProduceResult<ProduceResultV2>> {
+  try {
+    assertPortContract(producer.descriptor, "producer", PRODUCER_V2_CONTRACT);
+    const parserInput: ProducerV2ParseInput = { events: input.events, supplied_refs: input.supplied_refs, vocabulary_refs: input.vocabulary_refs, predicates: input.predicates };
+    return validateProduceResult(await producer.produce(input), PRODUCER_V2_CONTRACT, parserInput);
+  } catch {
+    return { usage_known: false, result: { status: "unavailable", reason: "unavailable", usage: { calls: 1, input_tokens: 0, output_tokens: 0 }, diagnostic: { stage: "transport", rule: "unavailable" } } };
   }
 }

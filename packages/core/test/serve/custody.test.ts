@@ -10,7 +10,8 @@ import { openCanonFiles } from "../../src/vault/canon-files";
 import { initVault } from "../../src/vault/init";
 import { doctorVault } from "../../src/vault/doctor";
 import { ServiceCustodyError, serviceAncestorOwner, startServiceCustody } from "../../src/serve/custody";
-import { connectServiceCustody } from "../../src/serve/custody-startup";
+import { CUSTODY_CONNECT_TIMEOUT_MS, connectServiceCustody } from "../../src/serve/custody-startup";
+import { SERVICE_READY_SECONDS } from "../../src/serve/units";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -44,6 +45,15 @@ describe("service metadata custody composition", () => {
     await expect(startServiceCustody(vault, "synthetic-vault", {}, () => {}))
       .rejects.toMatchObject({ reason: supported ? "not_supervised" : "unsupported_platform" });
     expect(new ServiceCustodyError().reason).toBe("custody_unproven");
+  });
+
+  test("a unit whose vault binding cannot hold refuses as vault_mismatch, a deterministic reason", async () => {
+    const { vault } = fixture();
+    const supported = process.platform === "linux" && process.arch === "x64";
+    for (const [path, id] of [[vault, "not a vault id"], [`${vault}/../vault`, "synthetic-vault"], ["relative/vault", "synthetic-vault"]] as const) {
+      await expect(startServiceCustody(path, id, { INVOCATION_ID: "1".repeat(32) }, () => {}))
+        .rejects.toMatchObject({ reason: supported ? "vault_mismatch" : "unsupported_platform" });
+    }
   });
 
   test.skipIf(process.platform !== "linux" || process.arch !== "x64")(
@@ -118,6 +128,19 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")("service
       }, 1000)).rejects.toThrow();
       expect(mutated).toBe(true);
     } finally { clearTimeout(timer); if (replacement >= 0) closeSync(replacement); f.close(); }
+  });
+
+  test("the main process waits for the broker at least as long as the READY window", async () => {
+    expect(CUSTODY_CONNECT_TIMEOUT_MS).toBeGreaterThanOrEqual(SERVICE_READY_SECONDS * 1_000);
+    const f = boundSocket();
+    let checks = 0;
+    try {
+      // The full READY window is an accepted deadline; the authority check ends the wait early.
+      await expect(connectServiceCustody(f.control, "absent.sock", () => {
+        if (++checks > 2) throw new Error("synthetic authority stop");
+      }, SERVICE_READY_SECONDS * 1_000)).rejects.toThrow("synthetic authority stop");
+      await expect(connectServiceCustody(f.control, "absent.sock", () => {}, CUSTODY_CONNECT_TIMEOUT_MS + 1)).rejects.toThrow("service_custody_unavailable");
+    } finally { f.close(); }
   });
 
   test("a stable endpoint that never listens has a bounded deadline", async () => {

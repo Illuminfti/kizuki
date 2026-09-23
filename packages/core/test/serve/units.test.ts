@@ -8,6 +8,7 @@ import {
   renderSystemdUnit,
   SERVICE_BROKER_REAP_SECONDS,
   SERVICE_READY_SECONDS,
+  SERVICE_REFUSAL_EXIT,
   SERVICE_START_SECONDS,
   SERVICE_STOP_SECONDS,
   systemdUnitName,
@@ -47,6 +48,21 @@ describe("serve units", () => {
     expect(unit).not.toMatch(/Environment=.*KEY/);
     expect(unit).not.toContain("secret");
     expect(systemdUnitName(spec.vaultId)).toBe("kizuki@01jbvault0000000000000001.service");
+  });
+
+  test("systemd bounds restarts and never restarts a deliberate refusal", () => {
+    const unit = renderSystemdUnit(spec);
+    const [unitSection, serviceSection] = unit.split("[Service]");
+    // Start limits are [Unit] settings; systemd ignores them under [Service].
+    expect(unitSection).toContain("StartLimitIntervalSec=900\n");
+    expect(unitSection).toContain("StartLimitBurst=5\n");
+    expect(SERVICE_REFUSAL_EXIT).toBe(78);
+    expect(serviceSection).toContain("Restart=on-failure\n");
+    expect(serviceSection).toContain("RestartPreventExitStatus=78\n");
+    expect(serviceSection).toContain("MemorySwapMax=0\n");
+    // Thirty-one-second restarts alone can never trip the default 5-per-10s limit.
+    const restart = Number(/^RestartSec=(\d+)s$/m.exec(unit)?.[1]);
+    expect(restart * 5).toBeLessThan(900);
   });
 
   test("launchd plist runs at load and keeps alive", () => {

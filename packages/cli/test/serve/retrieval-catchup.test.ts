@@ -1,6 +1,9 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { emptyIndexCursor, writeIndexCursor } from "../../src/derived";
 import { createHelpers, fixtureConsent } from "../helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const helpers = createHelpers();
 afterEach(helpers.cleanup);

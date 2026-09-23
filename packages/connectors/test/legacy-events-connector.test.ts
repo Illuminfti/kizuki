@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initVault, listClaims, setSourceGrant, registerConnection, runBackfill, runSync } from "@kizuki/core";
+import { initVault, listClaims, setSourceGrant, registerConnection, runBackfill, runSync, runBatch, MAX_SYNC_BATCH_BYTES } from "@kizuki/core";
 import { getCheckpoint } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { KizukiError } from "../src/errors";
@@ -61,6 +61,37 @@ async function drain(connector: LegacyEventsConnector): Promise<number> {
     if (connector.lastReport()?.run.done === true) break;
   }
   return events;
+}
+
+type PageRow = { id: string; ts: number; body: string; extra: string };
+
+function writePageRows(format: "jsonl" | "sqlite", rows: PageRow[]): string {
+  const target = format === "jsonl" ? jsonlPath : dbPath;
+  if (format === "jsonl") {
+    writeFileSync(target, `${rows.map(row => JSON.stringify(row)).join("\n")}\n`);
+  } else {
+    const db = new Database(target);
+    try {
+      db.exec("CREATE TABLE IF NOT EXISTS events (id TEXT, ts INTEGER, body TEXT, extra TEXT)");
+      db.exec("DELETE FROM events");
+      const insert = db.query("INSERT INTO events VALUES (?, ?, ?, ?)");
+      db.transaction(() => {
+        for (const row of rows) insert.run(row.id, row.ts, row.body, row.extra);
+      })();
+    } finally {
+      db.close();
+    }
+  }
+  writeFileSync(`${target}.kizuki-mapping.json`, JSON.stringify({
+    schema: "kizuki.legacy-events-mapping/v1",
+    table: format === "sqlite" ? "events" : null,
+    source_record_id: { column: "id" },
+    kind: { const: "note" },
+    occurred_at: { column: "ts", format: "unix_seconds" },
+    text: { column: "body" },
+    metadata: { columns: ["extra"] },
+  }));
+  return target;
 }
 
 beforeEach(() => {
@@ -148,6 +179,133 @@ describe("paging and resume", () => {
     const connector = createLegacyEventsConnector({ path: dbPath });
     expect(await drain(connector)).toBe(2200);
     expect(connector.lastReport()?.run.done).toBe(true);
+  });
+
+  test("a dense page stops before the serialized-byte envelope", async () => {
+    const body = "x".repeat(5000);
+    const lines = Array.from({ length: 1000 }, (_, index) =>
+      JSON.stringify({
+        id: `dense-${index}`,
+        type: "note",
+        ts: 1_767_225_600 + index,
+        subject: `N${index}`,
+        body,
+      }),
+    );
+    writeFileSync(jsonlPath, `${lines.join("\n")}\n`);
+    writeMapping(jsonlPath, { table: null });
+    const connector = createLegacyEventsConnector({ path: jsonlPath });
+    const first = await connector.backfill(null);
+    expect(first.events.length).toBeGreaterThan(0);
+    expect(first.events.length).toBeLessThan(1000);
+    expect(
+      Buffer.byteLength(JSON.stringify(first.events), "utf8"),
+    ).toBeLessThanOrEqual(MAX_SYNC_BATCH_BYTES);
+    expect(connector.lastReport()?.run.done).toBe(false);
+    const db = openLedger(":memory:");
+    expect(runBatch(db, first, { page_candidates: false }).stored).toBe(first.events.length);
+    const second = await connector.backfill(first.cursor);
+    expect(second.events.length).toBeGreaterThan(0);
+    expect(
+      second.events.map((event) => event.source_record_id),
+    ).not.toEqual(first.events.map((event) => event.source_record_id));
+    expect(runBatch(db, second, { page_candidates: false }).stored).toBe(second.events.length);
+    db.close();
+  });
+
+  for (const format of ["jsonl", "sqlite"] as const) {
+    test(`${format} drains multibyte text and metadata across a skipped boundary row`, async () => {
+      const rows = Array.from({ length: 11 }, (_, index) => ({
+        id: `unicode-${index}`, ts: 1_767_225_600 + index,
+        body: "界".repeat(200_000), extra: "🧭".repeat(8000),
+      }));
+      // Six events fit, then this skip is consumed before the next full event.
+      rows.splice(6, 0, { id: "", ts: 1_767_225_600, body: "skip", extra: "" });
+      const target = writePageRows(format, rows);
+      const ledger = openLedger(":memory:");
+      try {
+        let cursor: string | null = null;
+        let done = false;
+        const ids: string[] = [];
+        for (let page = 0; page < 4 && !done; page += 1) {
+          // Restart the connector between pages to exercise durable checkpoints.
+          const connector = createLegacyEventsConnector({ path: target });
+          const batch = await connector.backfill(cursor);
+          expect(Buffer.byteLength(JSON.stringify(batch.events))).toBeLessThanOrEqual(MAX_SYNC_BATCH_BYTES);
+          expect(runBatch(ledger, batch, { page_candidates: false }).stored).toBe(batch.events.length);
+          ids.push(...batch.events.map(event => event.source_record_id));
+          cursor = batch.cursor;
+          done = connector.lastReport()?.run.done === true;
+          if (page === 0) {
+            expect(batch.events).toHaveLength(6);
+            expect(connector.lastReport()?.counts).toMatchObject({ rows: 7, events: 6, skipped: 1 });
+          }
+          if (done) expect(connector.lastReport()?.counts).toMatchObject({ rows: 12, events: 11, skipped: 1 });
+        }
+        expect(done).toBe(true);
+        expect(ids).toEqual(rows.filter(row => row.id !== "").map(row => row.id));
+        expect(new Set(ids).size).toBe(11);
+        const replay = await createLegacyEventsConnector({ path: target }).backfill(null);
+        expect(runBatch(ledger, replay, { page_candidates: false }).stored).toBe(0);
+      } finally {
+        ledger.close();
+      }
+    });
+
+    test(`${format} admits the exact byte limit and preserves the row one byte beyond it`, async () => {
+      const rows = Array.from({ length: 18 }, (_, index) => ({
+        id: `boundary-${index}`, ts: 1_767_225_600 + index,
+        body: index < 17 ? "x".repeat(240_000) : "", extra: "",
+      }));
+      const target = writePageRows(format, rows);
+      const probe = await createLegacyEventsConnector({ path: target }).backfill(null);
+      expect(probe.events).toHaveLength(18);
+      const remaining = MAX_SYNC_BATCH_BYTES - Buffer.byteLength(JSON.stringify(probe.events));
+      expect(remaining).toBeGreaterThan(0);
+      expect(remaining).toBeLessThan(262_144);
+      rows[17]!.body = "x".repeat(remaining);
+      writePageRows(format, rows);
+      const exact = await createLegacyEventsConnector({ path: target }).backfill(null);
+      expect(exact.events).toHaveLength(18);
+      expect(Buffer.byteLength(JSON.stringify(exact.events))).toBe(MAX_SYNC_BATCH_BYTES);
+
+      rows[17]!.body += "x";
+      writePageRows(format, rows);
+      const connector = createLegacyEventsConnector({ path: target });
+      const first = await connector.backfill(null);
+      expect(first.events).toHaveLength(17);
+      expect(connector.lastReport()?.run.done).toBe(false);
+      const second = await createLegacyEventsConnector({ path: target }).sync(first.cursor);
+      expect(second.events).toHaveLength(1);
+      expect([...first.events, ...second.events].map(event => event.source_record_id)).toEqual(rows.map(row => row.id));
+      const ledger = openLedger(":memory:");
+      try {
+        expect(runBatch(ledger, exact, { page_candidates: false }).stored).toBe(18);
+      } finally {
+        ledger.close();
+      }
+    });
+  }
+
+  test("a single oversized SQLite event fails closed without publishing a checkpoint", async () => {
+    const db = new Database(dbPath);
+    const columns = Array.from({ length: 260 }, (_, index) => `extra${index}`);
+    try {
+      db.exec(`CREATE TABLE events (id TEXT, ts INTEGER, body TEXT, ${columns.map(name => `${name} TEXT`).join(",")})`);
+      db.query(`INSERT INTO events VALUES (${Array.from({ length: 263 }, () => "?").join(",")})`)
+        .run("oversized", 1_767_225_600, "body", ...columns.map(() => "x".repeat(16_384)));
+    } finally {
+      db.close();
+    }
+    writeFileSync(`${dbPath}.kizuki-mapping.json`, JSON.stringify({
+      schema: "kizuki.legacy-events-mapping/v1", table: "events",
+      source_record_id: { column: "id" }, kind: { const: "note" },
+      occurred_at: { column: "ts", format: "unix_seconds" }, text: { column: "body" },
+      metadata: { columns: "rest" },
+    }));
+    const connector = createLegacyEventsConnector({ path: dbPath });
+    await expect(connector.backfill(null)).rejects.toMatchObject({ code: "parse_error" });
+    expect(connector.lastReport()).toBeNull();
   });
 
   test("backfill(null) twice yields the same first page", async () => {

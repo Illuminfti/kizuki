@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, spyOn, test } from "bun:test";
 import * as vaultIdentity from "../src/serve/vault-id";
 import {
   chmodSync,
@@ -43,6 +43,17 @@ function temporary(prefix: string): string {
   directories.push(path);
   return path;
 }
+
+// Restore spools live under the process temp directory. Give this file its own
+// so a concurrent run on the same host cannot add or remove spools mid-check.
+const sharedTmpdir = process.env["TMPDIR"];
+const privateTmpdir = mkdtempSync(join(tmpdir(), "kizuki-export-test-"));
+process.env["TMPDIR"] = privateTmpdir;
+afterAll(() => {
+  if (sharedTmpdir === undefined) delete process.env["TMPDIR"];
+  else process.env["TMPDIR"] = sharedTmpdir;
+  rmSync(privateTmpdir, { recursive: true, force: true });
+});
 
 function jsonlRestoreSpools(): string[] {
   return readdirSync(tmpdir())
@@ -988,7 +999,7 @@ describe("restoreVault", () => {
       count: 1, size: payload.byteLength, mode: 0o600,
       sha256: new Bun.CryptoHasher("sha256").update(payload).digest("hex"),
     } };
-    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", schema_versions: { ...manifest.schema_versions, ledger: 20 }, files: legacyFiles(backup, files) });
+    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", schema_versions: { ...manifest.schema_versions, ledger: 20, canon: 4 }, files: legacyFiles(backup, files) });
     const target = join(temporary("kizuki-restore-parent-"), "vault");
     expect(restoreVault(backup, target).recovery_warnings.join(" ")).toContain("historical purge");
     const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
@@ -1184,7 +1195,7 @@ describe("restoreVault", () => {
     writeSignedManifest(backup, {
       ...manifest,
       schema: "kizuki.backup/v2",
-      schema_versions: { ...manifest.schema_versions, ledger: 20 },
+      schema_versions: { ...manifest.schema_versions, ledger: 20, canon: 4 },
       files: legacyFiles(backup, {
         ...manifest.files,
         ["ledger/source_store_inventory.jsonl"]: {
@@ -1214,7 +1225,7 @@ describe("restoreVault", () => {
     const files = { ...manifest.files };
     delete files["claims/identity_links.jsonl"];
     delete files["ledger/connector_sensitivity.jsonl"];
-    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", schema_versions: { ...manifest.schema_versions, ledger: 20 }, files: legacyFiles(backup, files) });
+    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", schema_versions: { ...manifest.schema_versions, ledger: 20, canon: 4 }, files: legacyFiles(backup, files) });
     const target = join(temporary("kizuki-restore-parent-"), "vault");
     const report = restoreVault(backup, target);
     expect(report.events).toBe(1);

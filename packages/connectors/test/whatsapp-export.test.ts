@@ -9,6 +9,10 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  MAX_SYNC_BATCH_BYTES,
+  MAX_SYNC_BATCH_EVENTS,
+} from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import { KizukiError } from "../src/errors";
 import { FIXTURE_OBSERVED_AT, MAX_RECORD_BYTES } from "../src/util";
@@ -68,6 +72,129 @@ test("an export directory resolves to its single chat file", async () => {
     expect(batch.cursor).toBeNull();
     expect(batch.events.length).toBe(8);
     expect((await connector.health()).state).toBe("ok");
+  });
+});
+
+test("large exports drain in resumable event-bounded pages", async () => {
+  await withTempRoot(async (root) => {
+    const source = path.join(root, CHAT_FILE);
+    await writeFile(
+      source,
+      Array.from(
+        { length: 2501 },
+        (_, index) => `1/13/26, 9:15 AM - Ada: message ${index}`,
+      ).join("\n"),
+    );
+    const connector = createWhatsAppImportConnector({
+      path: source,
+      timezone: WHATSAPP_FIXTURE_TIMEZONE,
+      date_order: "mdy",
+    });
+
+    const ids: string[] = [];
+    let cursor: string | null = null;
+    let firstCursor: string | null = null;
+    do {
+      const batch = await connector.backfill(cursor);
+      expect(batch.events.length).toBeLessThanOrEqual(MAX_SYNC_BATCH_EVENTS);
+      expect(Buffer.byteLength(JSON.stringify(batch.events))).toBeLessThanOrEqual(
+        MAX_SYNC_BATCH_BYTES,
+      );
+      for (const event of batch.events) ids.push(event.source_record_id);
+      cursor = batch.cursor;
+      firstCursor ??= cursor;
+    } while (cursor !== null);
+
+    expect(ids.length).toBe(2501);
+    expect(new Set(ids).size).toBe(2501);
+    expect(firstCursor).not.toBeNull();
+
+    const replay = await connector.backfill(firstCursor);
+    expect(replay.events.map((event) => event.source_record_id)).toEqual(
+      ids.slice(1000, 2000),
+    );
+  });
+});
+
+test("large messages drain before the serialized-byte limit", async () => {
+  await withTempRoot(async (root) => {
+    const source = path.join(root, CHAT_FILE);
+    const body = "x".repeat(900_000);
+    await writeFile(
+      source,
+      Array.from(
+        { length: 6 },
+        (_, index) => `1/13/26, 9:1${index} AM - Ada: ${body}`,
+      ).join("\n"),
+    );
+    const connector = createWhatsAppImportConnector({
+      path: source,
+      timezone: WHATSAPP_FIXTURE_TIMEZONE,
+      date_order: "mdy",
+    });
+
+    const first = await connector.backfill(null);
+    expect(first.events.length).toBeGreaterThan(0);
+    expect(first.events.length).toBeLessThan(6);
+    expect(Buffer.byteLength(JSON.stringify(first.events))).toBeLessThanOrEqual(
+      MAX_SYNC_BATCH_BYTES,
+    );
+    expect(first.cursor).not.toBeNull();
+
+    const second = await connector.backfill(first.cursor);
+    expect(Buffer.byteLength(JSON.stringify(second.events))).toBeLessThanOrEqual(
+      MAX_SYNC_BATCH_BYTES,
+    );
+    expect(first.events.length + second.events.length).toBe(6);
+    expect(second.cursor).toBeNull();
+  });
+});
+
+test("an out-of-range checkpoint cannot silently drain an unchanged export", async () => {
+  await withTempRoot(async (root) => {
+    const source = path.join(root, CHAT_FILE);
+    const text = Array.from({ length: 1001 }, (_, index) =>
+      `1/13/26, 9:15 AM - Ada: message ${index}`,
+    ).join("\n");
+    await writeFile(source, text);
+    const connector = createWhatsAppImportConnector({
+      path: source,
+      timezone: WHATSAPP_FIXTURE_TIMEZONE,
+      date_order: "mdy",
+    });
+    const first = await connector.backfill(null);
+    expect(first.cursor).not.toBeNull();
+    const checkpoint = JSON.parse(first.cursor!);
+    for (const after of [1001, 1002, Number.MAX_SAFE_INTEGER]) {
+      const cursor = JSON.stringify({ ...checkpoint, after });
+      expect((await rejected(() => connector.backfill(cursor))).code).toBe("parse_error");
+      expect((await rejected(() => connector.sync(cursor))).code).toBe("parse_error");
+    }
+    expect((await connector.backfill(first.cursor)).events).toHaveLength(1);
+
+    // A genuinely changed snapshot restarts, even when its old index is larger.
+    await writeFile(source, "1/13/26, 9:15 AM - Ada: replacement export");
+    const restarted = await connector.sync(first.cursor);
+    expect(restarted.events.map(event => event.text)).toEqual(["replacement export"]);
+    expect(restarted.cursor).toBeNull();
+  });
+});
+
+test("oversized chat metadata cannot escape the first page byte bound", async () => {
+  await withTempRoot(async (root) => {
+    const source = path.join(root, CHAT_FILE);
+    await writeFile(source, "1/13/26, 9:15 AM - Ada: hi");
+    const connector = createWhatsAppImportConnector({
+      path: source,
+      timezone: WHATSAPP_FIXTURE_TIMEZONE,
+      date_order: "mdy",
+      chat: "界".repeat(800_000),
+    });
+    for (const run of [() => connector.backfill(null), () => connector.sync(null)]) {
+      const error = await rejected(run);
+      expect(error.code).toBe("parse_error");
+      expect(error.message).toBe("kizuki.import-whatsapp: event exceeds the capture page bound");
+    }
   });
 });
 

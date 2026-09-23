@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import type { ClaimV2Assertion } from "../../src/contracts/claim-v2";
@@ -26,6 +26,9 @@ import { ulid } from "../../src/util/ulid";
 import { validEvent } from "../fixtures";
 import { tempVault } from "../helpers/vault";
 import { claimInput, claimsDb } from "./helpers";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 /** The writer admits evidence on behalf of a reader with an ordinary derive scope. */
 const SCOPE: SourceReadScope = { owner: true, purpose: "derive" };

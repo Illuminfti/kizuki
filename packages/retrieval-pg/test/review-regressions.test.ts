@@ -1,8 +1,11 @@
-import { expect, spyOn, test } from "bun:test";
+import { expect, spyOn, test, setDefaultTimeout } from "bun:test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { WriterLease, openEmbeddedRetrievalPort, McpEngineSurface } from "../src/index";
 import { temporaryPortContext, FixtureEmbeddingPort, SYNTHETIC_DOCS, SYNTHETIC_QUERY } from "./helpers";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 test("ownerless acquisition crash is reclaimable with a receipt", () => {
   const fixture = temporaryPortContext();

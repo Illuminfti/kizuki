@@ -161,6 +161,12 @@ export interface RunReceipt {
   readonly events_self_skipped: number;
   readonly claims_extracted: number;
   readonly claims_written: number;
+  /**
+   * Model-produced claims among `claims_written`. Imported and owner claims
+   * are written by the same pass but are not extraction output, so the
+   * calibration write rate uses this count. Absent on older receipts.
+   */
+  readonly claims_written_extracted?: number;
   readonly claims_deduped: number;
   readonly claims_superseded: number;
   readonly claims_rejected: Readonly<Record<string, number>>;
@@ -204,6 +210,14 @@ export interface SupervisorStatus {
   readonly unit: string | null;
   readonly enabled: boolean;
   readonly detail: string;
+}
+
+/** How the supervisor says the unit's last run ended, in its own words:
+ * systemd's Result (exit-code, start-limit-hit, oom-kill, ...) and the main
+ * process's exit status. */
+export interface SupervisorLastExit {
+  readonly result: string;
+  readonly exit_status: number | null;
 }
 
 export interface RailDoctor {
@@ -285,6 +299,8 @@ export interface CalibrationDoctor {
 
 export interface ServeDoctorReport {
   readonly supervisor: SupervisorStatus;
+  /** Read only for an installed unit that is not running; null otherwise. */
+  readonly supervisor_exit: SupervisorLastExit | null;
   readonly intent: ServeIntent | "unknown";
   readonly rails: RailDoctor[];
   readonly model: ModelDoctor;

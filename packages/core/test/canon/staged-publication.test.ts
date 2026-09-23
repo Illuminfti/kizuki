@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -6,6 +6,9 @@ import { openCanonFiles } from "../../src/vault/canon-files";
 import { serializePage } from "../../src/vault/frontmatter";
 import { archiveRelPath, canonStageRelPath, grantCanonWrite, hashBytes, writePage } from "../../src/vault/write";
 import { tempVault } from "../helpers/vault";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const cleanup: (() => void)[] = [];
 afterEach(() => { for (const dispose of cleanup.splice(0)) dispose(); });

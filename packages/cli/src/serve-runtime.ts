@@ -3,12 +3,18 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   MODEL_PRODUCER_ID,
+  MODEL_PRODUCER_V2_ID,
+  PRODUCER_CONTRACT,
+  PRODUCER_V2_CONTRACT,
   PortError,
   PortRegistry,
   SourceGrantError,
   bindSourceModelPort,
+  bindEpochZeroProducerPort,
+  sourcePolicyEpoch,
   isPlainObject,
   registerModelProducerPort,
+  registerModelProducerV2Port,
   runToCompletion,
   readRetrievalDocuments,
   readAppModelConfiguration,
@@ -18,7 +24,8 @@ import {
   type LlmPort,
   type PortContext,
   type ProducerPort,
-  type RailRuntime,
+  type ProducerV2Port,
+  type RailRuntimeV2,
   type RailSyncResult,
   type RetrievalPort,
   type SystemOnePort,
@@ -44,7 +51,7 @@ interface LlmSelection {
   readonly secret_ref: string | null;
 }
 
-export type ServeRuntime = RailRuntime;
+export type ServeRuntime = RailRuntimeV2;
 
 function runtimeError(message: string): never {
   throw new ServeRuntimeError(`serve model configuration: ${message}`);
@@ -168,7 +175,7 @@ export async function inspectModelBinding(vaultPath: string, env: Record<string,
   return modelRef(selected.id, configured.model, endpointHost(configured.base_url));
 }
 
-async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; producer?: ProducerPort; systemone?: SystemOnePort }> {
+async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; producer?: ProducerPort | ProducerV2Port; systemone?: SystemOnePort }> {
   let document: ReturnType<typeof readAppModelConfiguration>;
   try {
     document = readAppModelConfiguration(options.vaultPath, value => { parseLlmSelection(value); });
@@ -191,10 +198,14 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
     { llm: selected.id },
     portContext(options.vaultPath, "llm", selected.id, selected.config, selected.secret_ref, secret, options.err),
   )).port;
-  let producer: ProducerPort | undefined;
+  let producer: ProducerPort | ProducerV2Port | undefined;
   let systemone: SystemOnePort | undefined;
   try {
     if (llm.model_ref !== null) {
+      const configured = selected.id === MODEL_LLM_ID ? parseOpenAiCompatibleConfig(selected.config) : null;
+      // The owner's configured model timeout is the extraction deadline; the
+      // producer's own default must not silently cap a slower endpoint.
+      const producerConfig = configured === null ? {} : { deadline_ms: configured.timeout_ms };
       const binding = loadSystemOneBinding(options.vaultPath);
       if (binding !== null && binding.id === SYSTEMONE_JEV_ID) {
         const config: Record<string, unknown> = { ...binding.config };
@@ -217,14 +228,27 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
           portContext(options.vaultPath, "systemone", SYSTEMONE_JEV_ID, config, secretRef, systemoneSecret, options.err),
         )).port;
       }
-      registerModelProducerPort(() => llm, registry, () => systemone);
-      producer = (await registry.bindFromConfig<ProducerPort>(
-        "producer",
-        { producer: MODEL_PRODUCER_ID },
-        portContext(options.vaultPath, "producer", MODEL_PRODUCER_ID, {}, null, null, options.err),
-      )).port;
-      if (selected.id === MODEL_LLM_ID) {
-        const configured = parseOpenAiCompatibleConfig(selected.config);
+      // Epoch-zero journals predate typed source support. Keep their declared
+      // v1 producer/draft codec end-to-end; the modern, source-bound route is
+      // the only route that invokes and persists producer/v2.
+      if (sourcePolicyEpoch(options.db) === 0) {
+        registerModelProducerPort(() => llm, registry, () => systemone);
+        producer = bindEpochZeroProducerPort((await registry.bindFromConfig<ProducerPort>(
+          "producer",
+          { producer: MODEL_PRODUCER_ID },
+          portContext(options.vaultPath, "producer", MODEL_PRODUCER_ID, producerConfig, null, null, options.err),
+          PRODUCER_CONTRACT,
+        )).port);
+      } else {
+        registerModelProducerV2Port(() => llm, registry, () => systemone);
+        producer = (await registry.bindFromConfig<ProducerV2Port>(
+          "producer",
+          { producer: MODEL_PRODUCER_V2_ID },
+          portContext(options.vaultPath, "producer", MODEL_PRODUCER_V2_ID, producerConfig, null, null, options.err),
+          PRODUCER_V2_CONTRACT,
+        )).port;
+      }
+      if (configured !== null) {
         bindSourceModelPort(producer, {
           model_endpoint: chatCompletionsUrl(configured.base_url),
           model: configured.model,

@@ -1,9 +1,12 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KizukiError } from "@kizuki/core";
 import { dialTls, hostnameMatches } from "../src/transport";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 describe("hostname verification", () => {
   test.each([

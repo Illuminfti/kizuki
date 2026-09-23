@@ -69,6 +69,114 @@ function jobHasFullHistoryCheckout(job: Record<string, unknown>): boolean {
   });
 }
 
+// A file a job asserts into existence under the runner temporary directory is
+// evidence produced by that run. Unless an upload-artifact step retains it the
+// runner is torn down with the file still on it, so no downstream gate can ever
+// be handed the receipt. The rule is structural rather than a match on one
+// filename, so the next receipt added here cannot regress the same way.
+const REQUIRED_FILE = /\btest\s+-f\s+(?:"([^"\n]*)"|'([^'\n]*)'|([^\s;&|]+))/g;
+const RUNNER_TEMP = "$RUNNER_TEMP";
+const RUNNER_TEMP_PREFIX =
+  /^(?:\$\{\{\s*runner\.temp\s*\}\}|\$\{RUNNER_TEMP\}|\$RUNNER_TEMP)(?=\/)/;
+const UPLOAD_TEMP_PREFIX = /^\$\{\{\s*runner\.temp\s*\}\}(?=\/)/;
+
+function runnerTempPath(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  const prefix = RUNNER_TEMP_PREFIX.exec(trimmed);
+  return prefix === null ? undefined : RUNNER_TEMP + trimmed.slice(prefix[0].length);
+}
+
+function literalReceiptSuffix(suffix: string): boolean {
+  return /^\/[A-Za-z0-9._/-]+$/.test(suffix) &&
+    !suffix.split("/").some(segment => segment === "." || segment === "..");
+}
+
+function uploadedRunnerTempPath(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  const prefix = UPLOAD_TEMP_PREFIX.exec(trimmed);
+  if (prefix === null) return undefined;
+  const suffix = trimmed.slice(prefix[0].length);
+  // An action input has no shell expansion. Retention credit also requires a
+  // literal path: a glob or parent traversal cannot prove directory coverage.
+  if (!literalReceiptSuffix(suffix)) return undefined;
+  return RUNNER_TEMP + suffix;
+}
+
+type RunnerTempRequirement = { file: string; condition: unknown; step: number };
+type RetainedRunnerTempPath = { path: string; condition: unknown; step: number };
+
+function requiredRunnerTempFiles(job: Record<string, unknown>): RunnerTempRequirement[] {
+  const steps = job["steps"];
+  if (!Array.isArray(steps)) return [];
+  const required: RunnerTempRequirement[] = [];
+  for (const [index, step] of steps.entries()) {
+    if (!isRecord(step)) continue;
+    const run = step["run"];
+    if (typeof run !== "string") continue;
+    for (const match of run.matchAll(REQUIRED_FILE)) {
+      const file = runnerTempPath(match[1] ?? match[2] ?? match[3] ?? "");
+      if (file !== undefined) {
+        required.push({ file, condition: step["if"], step: index });
+      }
+    }
+  }
+  return [...required];
+}
+
+function retainedRunnerTempPaths(job: Record<string, unknown>): RetainedRunnerTempPath[] {
+  const steps = job["steps"];
+  if (!Array.isArray(steps)) return [];
+  const retained: RetainedRunnerTempPath[] = [];
+  for (const [index, step] of steps.entries()) {
+    if (!isRecord(step) || !isUploadArtifactStep(step) || !hasExecutableRetentionCondition(step)) continue;
+    const settings = step["with"];
+    const listed = isRecord(settings) ? settings["path"] : undefined;
+    if (typeof listed !== "string") continue;
+    // Artifact glob exclusions can remove a receipt from an otherwise retained
+    // directory. Credit only an upload with an unambiguous inclusion list.
+    const lines = listed.split("\n");
+    // Expressions can expand into extra lines or exclusions. Only the literal
+    // runner.temp prefix has a known path meaning; all other expressions make
+    // this upload unsuitable as structural evidence of receipt retention.
+    if (lines.some(line => line.trim().startsWith("!") ||
+      line.trim().replace(UPLOAD_TEMP_PREFIX, RUNNER_TEMP).includes("${{"))) continue;
+    for (const line of lines) {
+      const entry = uploadedRunnerTempPath(line);
+      if (entry !== undefined) retained.push({ path: entry, condition: step["if"], step: index });
+    }
+  }
+  return retained;
+}
+
+function hasExecutableRetentionCondition(step: Record<string, unknown>): boolean {
+  const condition = step["if"];
+  return condition !== false && condition !== "false" && condition !== "${{ false }}";
+}
+
+function conditionCanRetain(required: unknown, retention: unknown): boolean {
+  const expression = (value: unknown): string | undefined =>
+    value === undefined || value === true ? "success()" :
+      typeof value === "string" ? value.replace(/^\$\{\{\s*|\s*\}\}$/g, "").trim() : undefined;
+  const requiredExpression = expression(required), retainedExpression = expression(retention);
+  if (requiredExpression === undefined || retainedExpression === undefined || requiredExpression.length === 0) return false;
+  if (retainedExpression === "always()" || retainedExpression === requiredExpression) return true;
+  // GitHub adds success() implicitly only when an expression has no status
+  // function. A check using !cancelled()/always() can still run after failure;
+  // a success-only upload cannot retain that check's diagnostic receipt.
+  const hasStatus = /\b(?:success|failure|cancelled|always)\s*\(/.test(requiredExpression);
+  if (hasStatus) return false;
+  return retainedExpression === "success()" ||
+    retainedExpression === `success() && ${requiredExpression}`;
+}
+
+function isRetained(required: RunnerTempRequirement, retained: readonly RetainedRunnerTempPath[]): boolean {
+  if (!literalReceiptSuffix(required.file.slice(RUNNER_TEMP.length))) return false;
+  return retained.some((entry) =>
+    entry.step > required.step &&
+    (entry.path === required.file || required.file.startsWith(entry.path.endsWith("/") ? entry.path : entry.path + "/")) &&
+    conditionCanRetain(required.condition, entry.condition));
+}
+
 function validateJobs(
   path: string,
   jobs: Record<string, unknown>,
@@ -98,6 +206,15 @@ function validateJobs(
     const steps = rawJob["steps"];
     if (rawJob["uses"] === undefined && (!Array.isArray(steps) || steps.length === 0)) {
       failures.push({ path, reason: `job "${name}" has no steps` });
+    }
+    const retained = retainedRunnerTempPaths(rawJob);
+    for (const required of requiredRunnerTempFiles(rawJob)) {
+      if (!isRetained(required, retained)) {
+        failures.push({
+          path,
+          reason: `job "${name}" requires ${required.file} to exist but no upload-artifact step retains it`,
+        });
+      }
     }
     if (jobRunsHistoryScan(rawJob) && !jobHasFullHistoryCheckout(rawJob)) {
       failures.push({
@@ -162,7 +279,8 @@ const SURFACE_PROOF_COMMAND =
 const SURFACE_RECEIPT_CHECK = 'test -f "$RUNNER_TEMP/kizuki-surface/receipt.json"';
 const LINUX_ARTIFACT_NAME = "linux-x64-${{ github.event.pull_request.head.sha || github.sha }}";
 const LINUX_ARTIFACT_PATH =
-  "dist/kizuki-*/bun-linux-x64-baseline/\n${{ runner.temp }}/kizuki-artifact-proof/receipt.json";
+  "dist/kizuki-*/bun-linux-x64-baseline/\n${{ runner.temp }}/kizuki-artifact-proof/receipt.json\n" +
+  "${{ runner.temp }}/kizuki-surface/receipt.json";
 const MACOS_PROOF_COMMAND =
   'bun run build:release\nbun run smoke:release\nbun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-macos-artifact-proof"';
 const MACOS_RECEIPT_CHECK = 'test -f "$RUNNER_TEMP/kizuki-macos-artifact-proof/receipt.json"';

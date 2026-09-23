@@ -2,6 +2,7 @@ export const WORLD_VOCABULARY_SCHEMA = "kizuki.world-vocabulary/v1" as const;
 
 export const WORLD_VOCABULARY_PREDICATES = [
   "world.kind",
+  "situation.label", "situation.objective", "situation.commitment", "situation.blocker", "situation.change", "situation.participant",
   "concept.label",
   "concept.definition",
   "concept.requires",
@@ -21,6 +22,7 @@ export type WorldVocabularyPredicate =
 export type WorldEndpointKind =
   | "raw"
   | "concept"
+  | "situation"
   | "person"
   | "task_context";
 
@@ -51,8 +53,14 @@ export const WORLD_VOCABULARY: readonly WorldVocabularySpec[] = Object.freeze([
     cardinality: "multi",
     polarity: BOTH_POLARITIES,
     max_literal_chars: null,
-    vocabulary_values: Object.freeze(["world/concept"] as const),
+    vocabulary_values: Object.freeze(["world/concept", "world/situation"] as const),
   },
+  ...(["situation.label", "situation.objective", "situation.commitment", "situation.blocker", "situation.change"] as const).map(predicate => ({
+    predicate, subject: "situation" as const, objects: Object.freeze(["literal"] as const), cardinality: "multi" as const,
+    polarity: BOTH_POLARITIES, max_literal_chars: LITERAL_MAX_CHARS, vocabulary_values: null,
+  })),
+  { predicate: "situation.participant", subject: "situation", objects: Object.freeze(["raw_subject"] as const), cardinality: "multi",
+    polarity: BOTH_POLARITIES, max_literal_chars: null, vocabulary_values: null },
   {
     predicate: "concept.label",
     subject: "concept",

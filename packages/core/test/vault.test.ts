@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -31,6 +31,9 @@ import {
 } from "../src/index";
 import type { VaultPage } from "../src/index";
 import { findPageById } from "../src/vault/pages";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const tempDirs: string[] = [];
 

@@ -1,8 +1,11 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHelpers } from "./helpers";
 import { fakeSystemd } from "./serve/supervisor-fixture";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, isolatedEnv, runCli, tempDir } = createHelpers();
 afterEach(cleanup);
@@ -117,6 +120,15 @@ describe("init", () => {
     expect(identity(note)).toEqual(originalNote);
     expect(readFileSync(note, "utf8")).toBe("synthetic owner note\n");
     expect(existsSync(join(control, "write-pass.lock"))).toBe(false);
+  });
+
+  test("a group-writable parent refuses init with an actionable permission message", () => {
+    const parent = join(tempDir(), "shared");
+    mkdirSync(parent); chmodSync(parent, 0o775);
+    const result = runCli(isolatedEnv(), "init", join(parent, "vault"), "--no-default", "--no-service");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("error: canon_files_unsafe: the workspace or a folder above it");
+    expect(result.stderr).toContain("chmod go-w");
   });
 
   test("writes owner-only control files and a ready journal", () => {

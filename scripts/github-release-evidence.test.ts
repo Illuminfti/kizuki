@@ -1,6 +1,6 @@
 import { lifecycleFixture } from "./native-lifecycle-proof-fixture";
 import { LIFECYCLE_PRODUCER_ENTRYPOINTS, LIFECYCLE_PRODUCER_DATA } from "./native-lifecycle-proof";
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -19,6 +19,9 @@ import type { GithubP0Observation } from "./github-release-evidence";
 import { EVALUATOR_ROOT, consumeP0DispositionReceipt, consumeRequiredChecksReceipt } from "./release-evidence";
 import { candidateCommittedAt, p0DispositionReceipt } from "./p0-disposition";
 import { requiredChecksContexts, requiredChecksReceipt } from "./required-checks";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const SHA = "a".repeat(40);
 const REPO = { id: GITHUB_REPOSITORY_ID, full_name: "fixture-owner/fixture-repo", private: false };

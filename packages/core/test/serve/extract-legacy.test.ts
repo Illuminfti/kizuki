@@ -1,5 +1,5 @@
 import { statSync } from "node:fs";
-import { expect, spyOn, test } from "bun:test";
+import { expect, spyOn, test, setDefaultTimeout } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +9,8 @@ import { createBudgetTracker } from "../../src/canon/budget";
 import { getClaim, insertClaim } from "../../src/claims/store";
 import type { ClaimDraft, ProducerPort } from "../../src/contracts/producer";
 import { openLedger } from "../../src/ledger/db";
+import { registerConnection } from "../../src/ledger/connections";
+import { bindEpochZeroProducerPort, setSourceGrant } from "../../src/ledger/source-grants";
 import { purgeEvents } from "../../src/ledger/purge";
 import { exportVault, restoreVault } from "../../src/export";
 import { commitExtractCursor, completeDurableExtractBatch, fileAndCompleteDurableExtractBatch,
@@ -23,6 +25,9 @@ import { claimInput, FixtureVectorPort, putEvent } from "../claims/helpers";
 import { commitMachineByteIntent } from "../../src/ledger/event-origin";
 import { sha256Hex } from "../../src/util/hash";
 import { ulid } from "../../src/util/ulid";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "kizuki-legacy-extract-"));
@@ -47,6 +52,36 @@ function fixture() {
     reopen: () => { db.close(); db = openLedger(ledger); },
     close: () => { db.close(); rmSync(root, { recursive: true, force: true }); } };
 }
+
+test("a stale v1 runtime refuses an unbound event once source policy exists before model or canon", async () => {
+  const f = fixture();
+  try {
+    const source = ulid();
+    registerConnection(f.db, "kizuki.fixture", source);
+    setSourceGrant(f.db, {
+      source_key: source,
+      expected_revision: 0,
+      operation_id: `fixture-grant-${source}`,
+      policy: {
+        purposes: ["capture", "recall", "derive", "extract"],
+        allowed_fields: ["text", "subjects", "attachments", "metadata"],
+        retention: "persistent_owned_until_revoked",
+        egress: "local_only",
+        sensitivity_floor: "public",
+      },
+    });
+    const result = await runWritePass(f.db, f.vault, {
+      budget: createBudgetTracker({ canon_writes_per_run: 1 }),
+      model_ref: "fixture:stale-v1",
+      producer: bindEpochZeroProducerPort(f.model),
+      claims: { db: f.db },
+    });
+    expect(f.calls.count).toBe(0);
+    expect(result.canon_writes).toBe(0);
+    expect(result.stopped).toBe("model:source authorization unavailable");
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims").get()!.n).toBe(0);
+  } finally { f.close(); }
+});
 
 /** Exact pre-atomic on-disk digest; do not use the current production encoder. */
 function makePreAtomic(db: Database): void {

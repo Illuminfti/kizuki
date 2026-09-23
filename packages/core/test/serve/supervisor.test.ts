@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +16,9 @@ import {
 } from "../../src/serve/units";
 import { ensureVaultId } from "../../src/serve/vault-id";
 import type { SupervisorKind, SupervisorState, SupervisorStatus } from "../../src/serve/types";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -1474,4 +1477,74 @@ test("enable re-queries after an ok stop and starts only from stopped or inactiv
   const started = realSupervisorHost("systemd", f.root, f.host.execStart, { adapter }).enable("/synthetic/unit", unit);
   expect(started).toEqual({ ok: true, detail: "activated current definition" });
   expect(calls.indexOf("start")).toBeGreaterThan(calls.indexOf("stop"));
+});
+
+function failedUnitAdapter(reset: "ok" | "fails", initial: "failed" | "inactive" = "failed") {
+  const calls: string[] = [];
+  let enabled = false, activity: string = initial, limited = initial === "failed";
+  const { adapter } = systemdAdapter((command) => {
+    calls.push(command);
+    if (command === "daemon-reload") return okResult();
+    if (command === "enable") { enabled = true; return okResult(); }
+    // Stopping a failed unit leaves it failed, with its start limit still counted.
+    if (command === "stop") return okResult();
+    if (command === "reset-failed") {
+      if (reset === "fails") return failResult();
+      activity = "inactive"; limited = false; return okResult();
+    }
+    if (command === "start") {
+      if (limited) return failResult("", 1);
+      activity = "active"; return okResult();
+    }
+    if (command === "is-enabled") return enabled ? okResult("enabled") : failResult("not-found", 4);
+    if (command === "is-active") return activity === "active" ? okResult("active") : failResult(activity, 3);
+    return failResult();
+  });
+  return { adapter, calls };
+}
+
+test("enable clears a failed unit's start limit before starting the current definition", () => {
+  const f = fixture();
+  const unit = systemdUnitName(ensureVaultId(f.vault));
+  const { adapter, calls } = failedUnitAdapter("ok");
+  expect(realSupervisorHost("systemd", f.root, f.host.execStart, { adapter }).enable("/synthetic/unit", unit))
+    .toEqual({ ok: true, detail: "activated current definition" });
+  expect(calls.indexOf("reset-failed")).toBeGreaterThan(calls.indexOf("stop"));
+  expect(calls.indexOf("start")).toBeGreaterThan(calls.indexOf("reset-failed"));
+});
+
+test("enable resets only a failed unit and never starts after a failed reset", () => {
+  const f = fixture();
+  const unit = systemdUnitName(ensureVaultId(f.vault));
+  const inactive = failedUnitAdapter("ok", "inactive");
+  expect(realSupervisorHost("systemd", f.root, f.host.execStart, { adapter: inactive.adapter }).enable("/synthetic/unit", unit).ok).toBe(true);
+  expect(inactive.calls.includes("reset-failed")).toBe(false);
+  const refused = failedUnitAdapter("fails");
+  expect(realSupervisorHost("systemd", f.root, f.host.execStart, { adapter: refused.adapter }).enable("/synthetic/unit", unit))
+    .toEqual({ ok: false, detail: "service failure reset failed" });
+  expect(refused.calls.includes("start")).toBe(false);
+});
+
+test("systemd last exit reads the unit's own result and main exit status", () => {
+  const f = fixture();
+  const vaultId = ensureVaultId(f.vault), unit = systemdUnitName(vaultId);
+  let output = "ExecMainStatus=78\nResult=exit-code\n", ok = true, timedOut = false, argv: readonly string[] = [];
+  const { adapter } = systemdAdapter((command, _timeout, args) => {
+    if (command !== "show") return failResult();
+    argv = args;
+    return { ok, exitCode: ok ? 0 : 1, stdout: output.trim(), stderr: "", timedOut };
+  });
+  const host = realSupervisorHost("systemd", f.root, f.host.execStart, { adapter });
+  expect(host.lastExit!(vaultId)).toEqual({ result: "exit-code", exit_status: 78 });
+  expect(argv).toEqual(["systemctl", "--user", "show", unit, "--property=Result", "--property=ExecMainStatus"]);
+  output = "Result=start-limit-hit\nExecMainStatus=1";
+  expect(host.lastExit!(vaultId)).toEqual({ result: "start-limit-hit", exit_status: 1 });
+  output = "Result=success\nExecMainStatus=0";
+  expect(host.lastExit!(vaultId)).toEqual({ result: "success", exit_status: 0 });
+  for (const [text, success, late] of [["Result=exit-code\nExecMainStatus=78", false, false], ["Result=exit-code\nExecMainStatus=78", true, true],
+    ["ExecMainStatus=78", true, false], ["Result=exit code\nExecMainStatus=78", true, false], ["Result=exit-code\nExecMainStatus=-1", true, false]] as const) {
+    output = text; ok = success; timedOut = late;
+    expect(host.lastExit!(vaultId)).toBeNull();
+  }
+  expect(realSupervisorHost("launchd", f.root, f.host.execStart).lastExit).toBeUndefined();
 });

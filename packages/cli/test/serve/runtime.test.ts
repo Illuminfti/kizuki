@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { listCanonReceipts, listClaims, listRunReceipts, setSourceGrant, sourcePolicyEpoch, ConnectionStateStore } from "@kizuki/core";
@@ -7,6 +7,9 @@ import { createServeRuntime } from "../../src/serve-runtime";
 import { DIRECT_RETRIEVAL_DESCRIPTOR, ReferenceRetrievalPort } from "../../../core/test/contracts/reference-retrieval";
 import { temporaryPortContext } from "../../../core/test/contracts/fixtures";
 import { createHelpers } from "../helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, runCli, tempVault } = createHelpers();
 const main = resolve(import.meta.dir, "../../src/main.ts");
@@ -28,6 +31,10 @@ async function cli(env: Record<string, string | undefined>, ...args: string[]) {
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
   ]);
   return { stdout, stderr, exitCode };
+}
+
+function hasOrchardRole(db: ReturnType<typeof openLedger>): boolean {
+  return db.query<{ n: number }, []>("SELECT count(*) AS n FROM claim_v2_semantics WHERE predicate='employment.role' AND json_extract(payload,'$.object.kind')='literal' AND json_extract(payload,'$.object.value')='orchard library collaborator'").get()!.n > 0;
 }
 
 async function exerciseModelJourney(mode: "legacy" | "local_only" | "model") {
@@ -63,17 +70,36 @@ async function exerciseModelJourney(mode: "legacy" | "local_only" | "model") {
         if (modelUnavailable) return new Response("fixture unavailable", { status: 503 });
         const body = await request.json() as { messages: { content: string }[] };
         const prompt = body.messages[1]?.content ?? "";
-        const eventId = /record ([A-Za-z0-9:_.-]+) from/.exec(prompt)?.[1];
-        const subjectJson = /"subject":"((?:\\.|[^"])*)"/.exec(prompt)?.[1];
-        if (eventId === undefined || subjectJson === undefined) return new Response("invalid fixture prompt", { status: 400 });
-        const subject = JSON.parse(`"${subjectJson}"`) as string;
+        const v2EventId = /event:([0-9A-HJKMNP-TV-Z]{26})/.exec(prompt)?.[1];
+        const v1EventId = /record ([A-Za-z0-9:_.-]+) from/.exec(prompt)?.[1];
+        if (v2EventId === undefined && v1EventId === undefined) return new Response("invalid fixture prompt", { status: 400 });
+        if (v1EventId !== undefined) {
+          const subjectJson = /"subject":"((?:\\.|[^"])*)"/.exec(prompt)?.[1];
+          if (subjectJson === undefined) return new Response("invalid fixture prompt", { status: 400 });
+          const subject = JSON.parse(`"${subjectJson}"`) as string;
+          return Response.json({
+            id: "synthetic", object: "chat.completion", created: 1, model: "loopback",
+            choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ claims: [{
+              kind: "claim", subject, predicate: "employment.role", object: "orchard library collaborator",
+              polarity: "positive", body: "Ada is an orchard library collaborator.", valid_from: null, valid_to: null,
+              confidence: 0.7, sensitivity: "personal", event_ids: [v1EventId],
+            }] }) } }],
+            usage: { prompt_tokens: 10, completion_tokens: 10 },
+          });
+        }
+        const eventId = v2EventId;
+        const anchor = { event_id: eventId, start_utf16: 0, end_utf16: 3 };
         return Response.json({
           id: "synthetic", object: "chat.completion", created: 1, model: "loopback",
-          choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ claims: [{
-            kind: "claim", subject, predicate: "employment.role", object: "orchard library collaborator",
-            polarity: "positive", body: "Ada is an orchard library collaborator.", valid_from: null, valid_to: null,
-            confidence: 0.7, sensitivity: "personal", event_ids: [eventId],
-          }] }) } }],
+          choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({
+            schema: "kizuki.producer-response/v2", mentions: [{ id: "m0", label: "Ada", anchor, candidate_refs: [] }], claims: [{
+              id: "c0", subject: { kind: "mention", id: "m0" }, predicate: "employment.role",
+              object: { kind: "literal", value: "orchard library collaborator" },
+              perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] },
+              context: [], polarity: "positive", body: "Ada is an orchard library collaborator.", valid_from: null, valid_to: null,
+              temporal_basis: "unknown", confidence: 0.7, sensitivity: "personal", anchors: [anchor],
+            }],
+          }) } }],
           usage: { prompt_tokens: 10, completion_tokens: 10 },
         });
       }
@@ -131,7 +157,7 @@ async function exerciseModelJourney(mode: "legacy" | "local_only" | "model") {
         expect(receipt?.model.calls).toBe(0);
         expect(modelRequests).toBe(0);
         expect(modelPaths).toEqual([]);
-        expect(listClaims(db, { status: "live", limit: 20 }).some((claim) => claim.object === "orchard library collaborator")).toBe(false);
+        expect(hasOrchardRole(db)).toBe(false);
       } else {
       expect(receipt?.claims_extracted).toBe(1);
       expect(receipt?.canon_writes).toBeGreaterThan(0);
@@ -140,7 +166,14 @@ async function exerciseModelJourney(mode: "legacy" | "local_only" | "model") {
       expect(receipt?.model.input_tokens).toBe(10);
       expect(receipt?.model.output_tokens).toBe(10);
       expect(receipt?.claims_rejected).toEqual({});
-      expect(listClaims(db, { status: "live", limit: 20 }).some((claim) => claim.object === "orchard library collaborator")).toBe(true);
+      if (mode === "legacy") {
+        expect(listClaims(db, { status: "live", limit: 20 }).some((claim) => claim.object === "orchard library collaborator")).toBe(true);
+        expect(hasOrchardRole(db)).toBe(false);
+        expect(db.query<{ n: number }, []>("SELECT count(*) AS n FROM claim_v2_support").get()!.n).toBe(0);
+        expect(db.query<{ n: number }, []>("SELECT count(*) AS n FROM semantic_allocations").get()!.n).toBe(0);
+        expect(db.query<{ n: number }, []>("SELECT count(*) AS n FROM source_grants").get()!.n).toBe(0);
+        expect(db.query<{ n: number }, []>("SELECT count(*) AS n FROM source_event_bindings").get()!.n).toBe(0);
+      } else expect(hasOrchardRole(db)).toBe(true);
       expect(listCanonReceipts(db, { limit: 20 }).some((item) => item.writer === "loop")).toBe(true);
       expect(modelPaths).toEqual(["/v1/chat/completions"]);
       }

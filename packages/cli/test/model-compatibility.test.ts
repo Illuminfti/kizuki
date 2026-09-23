@@ -1,10 +1,13 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { listCanonReceipts, listClaims, listConnections, listRunReceipts, setSourceGrant } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { startFakeEndpoint } from "../../llm/test/fake-endpoint";
 import { createHelpers } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, runCli, tempVault } = createHelpers();
 afterEach(cleanup);
@@ -24,15 +27,19 @@ test("native source consent, model canon, rejected responses and doctor compose"
   writeFileSync(join(notes, "ada.md"), "Ada joined the orchard library project.");
   let mode: "ok" | "metadata" | "claims" = "ok";
   const endpoint = startFakeEndpoint(request => {
-    const prompt = (request.body as { messages: { content: string }[] }).messages[1]!.content;
-    const eventId = /record ([A-Za-z0-9:_.-]+) from/.exec(prompt)?.[1];
-    const subjectJson = /"subject":"((?:\\.|[^"])*)"/.exec(prompt)?.[1];
-    if (eventId === undefined || subjectJson === undefined) throw new Error("synthetic prompt fixture mismatch");
-    const claim = { kind: "claim", subject: JSON.parse(`"${subjectJson}"`), predicate: "employment.role", object: "orchard library collaborator",
-      polarity: "positive", body: "Ada contributes to the orchard library.", valid_from: null, valid_to: null, confidence: 0.7, sensitivity: "personal", event_ids: [eventId] };
+    const prompt = (request.body as { messages: { content: string }[] }).messages.map(message => message.content).join("\n");
+    const eventId = /event:([0-9A-HJKMNP-TV-Z]{26})/.exec(prompt)?.[1];
+    if (eventId === undefined) throw new Error("synthetic prompt fixture mismatch");
+    const anchor = { event_id: eventId, start_utf16: 0, end_utf16: 3 };
+    const claim = { id: "c0", subject: { kind: "mention", id: "m0" }, predicate: "employment.role",
+      object: { kind: "literal", value: "orchard library collaborator" }, body: "Ada contributes to the orchard library.", polarity: "positive",
+      perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] },
+      context: [], valid_from: null, valid_to: null, temporal_basis: "unknown", confidence: 0.7, sensitivity: "personal", anchors: [anchor] };
+    const content = { schema: "kizuki.producer-response/v2", mentions: [{ id: "m0", label: "Ada", anchor, candidate_refs: [] }],
+      claims: [mode === "claims" ? { ...claim, predicate: { [CANARY]: CANARY } } : claim] };
     return Response.json({ id: "synthetic", model: MODEL, provider: CANARY,
       choices: [{ index: 0, finish_reason: "stop", native_finish_reason: "stop", logprobs: null,
-        message: { role: "assistant", content: JSON.stringify({ claims: [mode === "claims" ? { ...claim, predicate: { [CANARY]: CANARY } } : claim] }), refusal: null,
+        message: { role: "assistant", content: JSON.stringify(content), refusal: null,
           reasoning: CANARY, name: CANARY, [CANARY]: { data: CANARY }, ...(mode === "metadata" ? { annotations: [{ text: CANARY }] } : {}) } }],
       usage: { prompt_tokens: 12, completion_tokens: 8 } });
   });
@@ -73,7 +80,12 @@ test("native source consent, model canon, rejected responses and doctor compose"
     writeFileSync(join(notes, "new.md"), "Ada coordinates the orchard library reading group.");
     expect(runCli(setup.env, "import", "markdown-folder", "--source", notes).exitCode).toBe(0);
     for (const failureMode of ["metadata", "claims", "network"] as const) {
-      if (failureMode === "network") endpoint.stop(); else mode = failureMode;
+      if (failureMode === "network") {
+        // The dropped claim consumed its record, so the transport failure needs fresh pending work.
+        endpoint.stop();
+        writeFileSync(join(notes, "later.md"), "Ada hosts the orchard library open day.");
+        expect(runCli(setup.env, "import", "markdown-folder", "--source", notes).exitCode).toBe(0);
+      } else mode = failureMode;
       const failedRun = await cli(setup.env, "serve", "run", "sync", "--json");
       expect(failedRun.exitCode).toBe(0);
       const failedRunId = JSON.parse(failedRun.stdout).data.run_id;
@@ -82,7 +94,11 @@ test("native source consent, model canon, rejected responses and doctor compose"
         const receipt = listRunReceipts(db).find(item => item.run_id === failedRunId)!;
         expect(receipt.claims_extracted).toBe(0);
         expect(listClaims(db, { status: "live", limit: 20 }).filter(claim => claim.producer === "model").map(claim => claim.claim_id).sort()).toEqual(modelClaimIds);
-        expect(receipt.model.diagnostic?.stage).toBe(failureMode === "metadata" ? "response" : failureMode === "claims" ? "claims" : "transport");
+        // producer/v2 rejects a malformed response whole; a well-formed claim that breaks its own rules is dropped and counted.
+        if (failureMode === "claims") {
+          expect(receipt.model.diagnostic).toBeUndefined();
+          expect(receipt.claims_rejected).toEqual({ invalid_claim: 1 });
+        } else expect(receipt.model.diagnostic?.stage).toBe(failureMode === "network" ? "transport" : "response");
         expect(receipt.model.unavailable).toBe(failureMode === "network" ? 1 : 0);
         expect(db.query<{ cursor: string }, []>("SELECT cursor FROM checkpoints WHERE connector_id='kizuki.producer.model' AND source_key='extract'").get()?.cursor ?? null).toBe(firstCursor);
       } finally { db.close(); }

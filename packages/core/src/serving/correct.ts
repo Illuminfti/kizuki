@@ -1,5 +1,5 @@
 import { sha256Hex } from "../util/hash";
-import { snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
+import { extendOwnedCanonIo, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
 import { VaultMutationError } from "../vault/mutation-scope";
 import {
   sourcePolicyEpoch,
@@ -25,6 +25,14 @@ import { groupByKey, readable, resolve } from "./target";
 import type { CorrectTarget } from "./target";
 import { ServeError } from "./types";
 import type { Envelope, ServeContext } from "./types";
+import { resolveWorldClaim, worldNamespace } from "../world/references";
+import { isWorldWireToken } from "./world-view";
+import { correctWithinMutation } from "../correction/correct";
+import { readClaimV2Semantic } from "../claims/claim-v2-commit";
+import { getCanonReceipt } from "../canon/receipts";
+import { resolvePrincipal } from "../agents";
+import type { VaultMutationScope } from "../vault/mutation-scope";
+import type { CorrectIo } from "../correction/types";
 
 const MAX_STATEMENT_CHARS = 2_000;
 const MAX_OBJECT_CHARS = 1_024;
@@ -98,6 +106,154 @@ function recordId(statement: string, target: CorrectTarget): string {
     .update("\0")
     .update(canonical)
     .digest("hex");
+}
+
+function exactWorldClaimTarget(target: CorrectTarget): { readonly kind: "claim"; readonly token: string } {
+  const world = Object.getOwnPropertyDescriptor(target, "world_claim")?.value;
+  const kind =
+    typeof world === "object" && world !== null
+      ? Object.getOwnPropertyDescriptor(world, "kind")?.value
+      : undefined;
+  const token =
+    typeof world === "object" && world !== null
+      ? Object.getOwnPropertyDescriptor(world, "token")?.value
+      : undefined;
+  if (
+    Object.getPrototypeOf(target) !== Object.prototype ||
+    Object.keys(target).length !== 1 ||
+    !Object.hasOwn(target, "world_claim") ||
+    typeof world !== "object" ||
+    world === null ||
+    Array.isArray(world) ||
+    Object.getPrototypeOf(world) !== Object.prototype ||
+    Object.keys(world).length !== 2 ||
+    !Object.hasOwn(world, "kind") ||
+    !Object.hasOwn(world, "token") ||
+    kind !== "claim" ||
+    typeof token !== "string" ||
+    !isWorldWireToken(token)
+  ) {
+    throw refuse("target", "names no live claim");
+  }
+  return Object.freeze({ kind: "claim" as const, token });
+}
+
+function resolvedWorldTarget(
+  ctx: ServeContext,
+  token: string,
+): { ctx: ServeContext; target: CorrectTarget & { claim_id: string } } {
+  const principal = resolvePrincipal(ctx.db, ctx.principal);
+  if (principal === null) throw new ServeError("unknown_agent", "unknown agent");
+  const current = Object.freeze({ ...ctx, principal });
+  const claimId = resolveWorldClaim(
+    current.db,
+    worldNamespace(current.db, current.principal),
+    token,
+  );
+  if (claimId === null) throw refuse("target", "names no live claim");
+  return { ctx: current, target: { claim_id: claimId } };
+}
+
+/**
+ * World cards name neutral typed parents.  Their correction must therefore
+ * enter the typed correction writer, which creates the native owner evidence
+ * and preserves the support journal; the legacy writer cannot infer a
+ * predicate from the intentionally blank parent row.
+ */
+function isWorldClaimTarget(
+  ctx: ServeContext,
+  target: CorrectTarget | undefined,
+): target is CorrectTarget & { claim_id: string } {
+  return target?.claim_id !== undefined && readClaimV2Semantic(ctx.db, target.claim_id) !== null;
+}
+
+async function correctWorldClaim(
+  scope: VaultMutationScope,
+  io: CorrectIo,
+  ctx: ServeContext,
+  args: CorrectArgs,
+  token: string,
+): Promise<Served<CorrectData>> {
+  const resolved = ctx.db
+    .transaction(() => resolvedWorldTarget(ctx, token))
+    .immediate();
+  ctx = resolved.ctx;
+  const target = resolved.target;
+  if (!isWorldClaimTarget(ctx, target))
+    throw refuse("target", "names no live claim");
+  if (args.object !== undefined && args.object !== args.statement)
+    throw refuse("object", "must equal statement for a typed world correction");
+  const claim = getClaim(ctx.db, target.claim_id);
+  if (claim === null || claim.status !== "live")
+    throw refuse("target", "names no live claim");
+  const reader = claimReader(ctx.db, ctx.principal.grant, {
+    owner: ctx.principal.kind === "owner",
+    purpose: "correction",
+  });
+  if (!reader.canRead(claim))
+    throw new ServeError("held", "source authorization does not permit this correction");
+  const owned = extendOwnedCanonIo(scope, io, {
+      producer:
+        ctx.principal.kind === "owner"
+          ? "owner"
+          : `agent:${ctx.principal.agent.name}`,
+      relay_owner_corrections:
+        ctx.principal.kind === "owner" || ctx.principal.grant.relay_owner_corrections,
+      grant: ctx.principal.grant,
+    });
+  const result = await correctWithinMutation(
+    scope,
+    owned,
+    {
+      statement: args.statement,
+      target,
+      ...(args.dry_run === true ? { dry_run: true } : {}),
+    },
+  );
+  return {
+    canon: [],
+    quoted: [],
+    withheld:
+      result.recovery_pending === undefined
+        ? []
+        : [{ id: "tool:correct", reason: "error" as const }],
+    data: {
+      ...(result.recovery_pending === undefined
+        ? {}
+        : { recovery_pending: result.recovery_pending }),
+      receipt_id: result.receipt_id,
+      event_id: result.event_id,
+      claim_id: result.claim_ids[0] ?? null,
+      superseded: result.superseded.map(({ claim_id, claim_key }) => ({
+        claim_id,
+        claim_key,
+      })),
+      rewritten: result.rewritten.flatMap((rewrite) => {
+        if (rewrite.receipt_id === null) return [];
+        const receipt = getCanonReceipt(ctx.db, rewrite.receipt_id);
+        if (receipt === null) return [];
+        return [{
+          page_path: rewrite.page_path,
+          page_action: receipt.page_action,
+          before_hash: rewrite.before_hash,
+          after_hash: rewrite.after_hash,
+          receipt_id: rewrite.receipt_id,
+          diff: rewrite.diff,
+        }];
+      }),
+      ambiguous: result.ambiguous.map(({ claim_key, claim_ids }) => ({
+        claim_key,
+        claim_ids,
+      })),
+      answer: result.answer,
+    },
+    audit_ids: {
+      claim_ids: [
+        ...result.claim_ids,
+        ...result.superseded.map(({ claim_id }) => claim_id),
+      ],
+    },
+  };
 }
 
 function recordStatement(
@@ -212,8 +368,20 @@ export async function serveCorrect(
   args: CorrectArgs,
 ): Promise<Envelope<CorrectData>> {
   const { statement, target, object, dry_run } = args;
+  const worldClaim =
+    target !== undefined &&
+    typeof target === "object" &&
+    target !== null &&
+    Object.hasOwn(target, "world_claim")
+      ? exactWorldClaimTarget(target)
+      : undefined;
   args = Object.freeze({ statement,
-    ...(target === undefined ? {} : { target: Object.freeze({ ...target }) }),
+    ...(target === undefined
+      ? {}
+      : { target: Object.freeze({
+        ...target,
+        ...(worldClaim === undefined ? {} : { world_claim: worldClaim }),
+      }) }),
     ...(object === undefined ? {} : { object }),
     ...(dry_run === undefined ? {} : { dry_run }),
   });
@@ -222,9 +390,17 @@ export async function serveCorrect(
     "correct",
     auditArguments(args),
     async ({ ctx, at }): Promise<Served<CorrectData>> => {
-      const io = snapshotCanonIo({ db: ctx.db, vault_path: ctx.vaultPath });
+      const io = snapshotCanonIo({
+        db: ctx.db,
+        vault_path: ctx.vaultPath,
+        ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
+      });
       ctx = Object.freeze({ ...ctx, db: io.db, vaultPath: io.vault_path });
       try {
+        if (worldClaim !== undefined)
+          return await withCanonMutationAsync(io, (scope, owned) =>
+            correctWorldClaim(scope, owned, ctx, args, worldClaim.token),
+          );
         return await withCanonMutationAsync(io, async (scope, canon) => {
       const grant = ctx.principal.grant;
       const statement = text("statement", args.statement, MAX_STATEMENT_CHARS);

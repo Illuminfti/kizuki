@@ -3,13 +3,16 @@ import { withReadVault, withVault } from "../src/context";
 import type { CliIo } from "../src/commands";
 import type { Key } from "../../tui/src/keys";
 import type { Terminal } from "../../tui/src/terminal";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { accept, undoReceipt, applyCanonWrite, createBudgetTracker, insertClaim, resolveTarget } from "@kizuki/core";
 import type { CaptureEventInput, Claim, InsertClaimInput } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, isolatedEnv, runCli, tempVault } = createHelpers();
 afterEach(cleanup);

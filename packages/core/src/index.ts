@@ -327,15 +327,21 @@ export {
   EXTRACT_INPUT_CHARS,
   MODEL_PRODUCER_DESCRIPTOR,
   MODEL_PRODUCER_ID,
+  MODEL_PRODUCER_V2_DESCRIPTOR,
+  MODEL_PRODUCER_V2_ID,
   admitExtractedClaims,
   buildExtractionMessages,
   createModelProducerPort,
+  createModelProducerV2Port,
   escapeFenceText,
   hasFenceLeak,
   newFenceNonce,
   parseExtractResponse,
   registerModelProducerPort,
+  registerModelProducerV2Port,
 } from "./producer";
+export type { ProducerV2Port, ProduceInputV2, ProduceResultV2 } from "./contracts/producer-v2";
+export { PRODUCER_V2_CONTRACT } from "./contracts/producer-v2";
 export type {
   ExtractionBatch,
   ModelProducerConfig,
@@ -570,10 +576,14 @@ export {
   chooseCandidate,
   createBudgetTracker,
   getCanonReceipt,
+  getCanonReceiptRecord,
   countCanonReceipts,
   initCanon,
   inspectPageIndex,
   inspectCanonRecovery,
+  inspectCanonRecoveryDetail,
+  canonRecoveryNextStep,
+  readCanonRecoveryHold,
   latestReceiptForPage,
   laterReceiptsForPage,
   listAuditReceipts,
@@ -599,8 +609,12 @@ export type {
   BudgetUsage,
   CanonIo,
   CanonReceipt,
+  CanonRecoveryDetail,
+  CanonRecoveryHold,
   CanonRecoveryReport,
   CanonRecoverySummary,
+  CanonStageInspection,
+  CanonStageRecoveryRecord,
   CanonWriteBudget,
   CanonWriteErrorCode,
   EditReason,
@@ -921,6 +935,7 @@ export {
   servePropose,
   serveSearch,
   serveTimeline,
+  serveWorldView,
   WorldViewError,
   isWorldWireToken,
   readWorldView,
@@ -957,6 +972,7 @@ export type {
   WorldObjectRef,
   WorldReadInput,
   WorldReadResult,
+  WorldViewEnvelope,
   WorldSnapshotRef,
   WorldValidQuery,
 } from "./serving";
@@ -1052,6 +1068,7 @@ export {
 export type {
   CalibrationDoctor,
   CrashPoint,
+  ExtractionProducerPort,
   LeaseAcquireResult,
   LeaseProcess,
   LeaseRow,
@@ -1059,18 +1076,22 @@ export type {
   ModelDoctor,
   RailDoctor,
   RailHooks,
+  RailHooksV2,
   RailRefreshReport,
   RailRuntime,
+  RailRuntimeV2,
   RailId,
   RailSpec,
   RailSyncResult,
   RunRailOptions,
+  RunRailOptionsV2,
   RunReceipt,
   RunExecution,
   RunStatus,
   ScheduleRow,
   ServeConfig,
   ServeDaemonOptions,
+  ServeDaemonOptionsV2,
   ServeDoctorOptions,
   ServeDoctorReport,
   ServeHttpHandle,
@@ -1081,6 +1102,7 @@ export type {
   StoreDoctor,
   SupervisorHost,
   SupervisorKind,
+  SupervisorLastExit,
   SupervisorState,
   SupervisorStatus,
   UnitSpec,
@@ -1120,7 +1142,7 @@ export { isLedgerBusy } from "./ledger/busy";
 export { evaluateQualification, QUALIFICATION_WINDOW_MS } from "./serve/qualification";
 export type { QualificationProfile, QualificationRail, QualificationReceipt, QualificationProcess, QualificationSample } from "./serve/qualification";
 
-export { SOURCE_PURPOSES, SOURCE_FIELDS, SourceGrantError, sourcePolicyEpoch, sourceCaptureAdmission, inspectSourceGrant, setSourceGrant, revokeSourceGrant, resumeSourceRevocation, bindLocalSourcePort, bindSourceModelPort } from "./ledger/source-grants";
+export { SOURCE_PURPOSES, SOURCE_FIELDS, SourceGrantError, sourcePolicyEpoch, sourceCaptureAdmission, inspectSourceGrant, setSourceGrant, revokeSourceGrant, resumeSourceRevocation, bindLocalSourcePort, bindSourceModelPort, bindEpochZeroProducerPort } from "./ledger/source-grants";
 export type { SourcePurpose, SourceModelEgress, SourceGrantPolicy, SourceGrant, SourceGrantRequest, SourceGrantReceipt, SourceAdmission } from "./ledger/source-grants";
 
 export type { OwnedSourceRetrievalInventory, OwnedSourceRetrievalStore, SourceStoreStatus } from "./ledger/source-stores";

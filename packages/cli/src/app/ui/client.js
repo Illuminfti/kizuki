@@ -5,7 +5,7 @@ const SESSION_KEY = 'kizuki.app.session';
 const main = document.getElementById('main');
 const dialog = document.getElementById('dialog');
 const notice = document.getElementById('notification');
-const state = { view: 'memory', status: null, service: null, model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], activityStatus: 'idle', hits: null, query: '', degraded: [], busy: false, operation: null, setupError: null };
+const state = { view: 'memory', status: null, service: null, model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], activityStatus: 'idle', hits: null, query: '', degraded: [], busy: false, operation: null, dismissedCaptureId: null, setupError: null, world: null, worldError: false, worldKind: 'concepts', worldQuery: '', worldRef: null, worldLoading: false };
 let bearer = null;
 let noticeTimer;
 let dialogCleanup = null;
@@ -20,12 +20,15 @@ let activitySequence = 0;
 let serviceSequence = 0;
 let modelSequence = 0;
 let agentsSequence = 0;
+let worldSequence = 0;
 let privateViewValid = true;
 const icons = {
   memory: ['M7 3.5h10a2 2 0 0 1 2 2v15l-7-3-7 3v-15a2 2 0 0 1 2-2Z', 'M9 8h6M9 11.5h4'],
   sources: ['M5 4h4v4H5zM15 16h4v4h-4zM4 16h5v4H4z', 'M7 8v3a3 3 0 0 0 3 3h4a3 3 0 0 1 3 3M7 14v2M15 4h5v5h-5zM15 7h-3a5 5 0 0 0-5 5'],
   activity: ['M3 12h4l3-8 4 16 3-8h4'],
+  agents: ['M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM16 10a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM3.5 20a4.5 4.5 0 0 1 9 0M13 20a3.5 3.5 0 0 1 7 0'],
   settings: ['M5 4v16M12 4v16M19 4v16', 'M3 8h4M10 16h4M17 9h4'],
+  world: ['M4 12a8 8 0 1 0 16 0A8 8 0 0 0 4 12Z', 'M4 12h16M12 4c2 2 3 5 3 8s-1 6-3 8M12 4C10 6 9 9 9 12s1 6 3 8'],
   folder: ['M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z'],
   mail: ['M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z', 'm3 6 9 7 9-7'],
   calendar: ['M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2ZM3 10h18M8 3v4M16 3v4', 'M8 14h2M14 14h2M8 17h2'],
@@ -110,9 +113,9 @@ function sourceLabel(source) {
 }
 function staleResponse() { return Object.assign(new Error('Response superseded.'), { code: 'stale_response' }); }
 function invalidatePrivateView() {
-  privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++; serviceSequence++; modelSequence++; agentsSequence++;
+  privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++; serviceSequence++; modelSequence++; agentsSequence++; worldSequence++;
   privateViewValid = false;
-  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.activityStatus = 'idle'; state.service = null; state.model = null; state.modelError = false; state.agents = null; state.agentsError = false; state.operation = null;
+  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.activityStatus = 'idle'; state.service = null; state.model = null; state.modelError = false; state.agents = null; state.agentsError = false; state.operation = null; state.world = null; state.worldError = false; state.worldRef = null; state.worldQuery = ''; state.worldLoading = false;
   clearDialogTransient();
   if (dialog.open) closeDialog();
   dialog.replaceChildren();
@@ -163,17 +166,20 @@ function renderDisconnected() {
   main.replaceChildren(el('section', { class: 'empty-state' }, icon('lock'), el('h2', {}, 'Open Kizuki to continue'), el('p', {}, 'This private workspace opens from the Kizuki app on your device. Close this tab and open the app again to reconnect.')));
 }
 function navigate(view, focus = true) {
-  if (!['memory', 'sources', 'activity', 'settings'].includes(view)) return;
+  if (!['memory', 'sources', 'activity', 'agents', 'world', 'settings'].includes(view)) return;
+  if (state.operation?.kind === 'capture' && state.operation.state === 'succeeded') state.dismissedCaptureId = state.operation.id ?? 'completed-capture';
   if (dialog.open) closeDialog();
   state.view = view;
   render();
   if (focus) main.focus({ preventScroll: true });
   if (view === 'activity' && state.status?.vault.ready) loadActivity();
-  if (view === 'settings' && state.status?.vault.ready) { loadService(); loadAgents(); }
+  if (view === 'settings' && state.status?.vault.ready) loadService();
+  if (view === 'agents' && state.status?.vault.ready) loadAgents();
+  if (view === 'world' && state.status?.vault.ready) loadWorld();
   if (['settings', 'sources'].includes(view) && state.status?.vault.ready) loadModel();
 }
 function renderNavigation() {
-  document.getElementById('navigation').replaceChildren(...[['memory', 'Memory'], ['sources', 'Sources'], ['activity', 'Activity'], ['settings', 'Settings']].map(([id, title]) => el('a', { class: 'nav-link', href: `#${id}`, 'aria-current': state.view === id ? 'page' : undefined, onclick: event => { event.preventDefault(); navigate(id); } }, icon(id), title)));
+  document.getElementById('navigation').replaceChildren(...[['memory', 'Memory'], ['sources', 'Sources'], ['activity', 'Activity'], ['agents', 'Agents'], ['world', 'World'], ['settings', 'Settings']].map(([id, title]) => el('a', { class: 'nav-link', href: `#${id}`, 'aria-current': state.view === id ? 'page' : undefined, onclick: event => { event.preventDefault(); navigate(id); } }, icon(id), title)));
   document.getElementById('view-label').textContent = state.view.charAt(0).toUpperCase() + state.view.slice(1);
 }
 function heading(title, description, action) { return el('div', { class: 'page-heading' }, el('div', {}, el('h1', {}, title), description && el('p', {}, description)), action); }
@@ -258,34 +264,52 @@ async function correction(hit) {
   try {
     const targets = await api('correction_targets', { page_id: hit.id });
     if (!current()) return;
-    claims = targets.claims;
+    const unsupported = targets.claims.filter(claim => claim.kind === 'world' && claim.target === null);
+    claims = targets.claims.filter(claim => claim.kind !== 'world' || claim.target !== null);
     content.querySelector('.dialog-description').textContent = 'Choose one recorded belief. Corrections change your memory pages; quoted source information stays unchanged.';
+    if (unsupported.length) content.append(el('details', { class: 'result-details' }, el('summary', {}, `${unsupported.length} recorded ${unsupported.length === 1 ? 'belief is' : 'beliefs are'} unavailable for correction`), el('p', {}, 'These assertions cannot be edited in this form yet. Nothing will be changed for them.'), ...unsupported.map(claim => el('blockquote', {}, claim.body))));
     if (!claims.length) { content.append(el('p', { class: 'status-note' }, 'No correctable beliefs are available for this page under your current permissions.')); focusDialog(content); return; }
     if (targets.truncated) content.append(el('p', { class: 'status-note' }, 'This list is limited. Additional beliefs may exist for this page.'));
     const form = el('form'); content.append(form);
-    choice = el('select', { id: 'correction-claim' }, ...claims.map(claim => el('option', { value: claim.claim_id }, claim.body.slice(0, 120)))); choice.value = claims[0].claim_id;
+    const reference = claim => claim.kind === 'world' ? claim.target.world_claim.token : claim.claim_id;
+    choice = el('select', { id: 'correction-claim' }, ...claims.map(claim => el('option', { value: reference(claim) }, claim.body.slice(0, 120)))); choice.value = reference(claims[0]);
     form.append(el('div', { class: 'form-field' }, el('label', { for: 'correction-claim' }, 'Recorded belief'), choice));
     beliefDetails = el('div', { class: 'belief-details' }); form.append(beliefDetails);
-    const selected = () => claims.find(claim => claim.claim_id === choice.value);
+    const selected = () => claims.find(claim => reference(claim) === choice.value);
     const showBelief = () => {
       const claim = selected(); beliefDetails.replaceChildren(); if (!claim) return;
-      beliefDetails.append(el('blockquote', {}, claim.body), el('dl', { class: 'grant-summary' }, el('div', {}, el('dt', {}, 'Current value'), el('dd', {}, claim.object))), el('details', { class: 'result-details' }, el('summary', {}, 'Belief details'), el('dl', { class: 'grant-summary' }, ...[['Subject', claim.subject], ['Relationship', claim.predicate], ['Belief reference', claim.claim_id]].map(([label, item]) => el('div', {}, el('dt', {}, label), el('dd', {}, el('code', {}, item))))), el('p', {}, `Recorded authority: ${claim.authority} · Privacy: ${claim.sensitivity}`)));
+      beliefDetails.append(el('blockquote', {}, claim.body), el('dl', { class: 'grant-summary' }, el('div', {}, el('dt', {}, 'Current value'), el('dd', {}, claim.object))), el('details', { class: 'result-details' }, el('summary', {}, 'Belief details'), el('dl', { class: 'grant-summary' }, ...[['Subject', claim.subject], ['Relationship', claim.predicate], ['Belief reference', reference(claim)]].filter(([, item]) => item !== null).map(([label, item]) => el('div', {}, el('dt', {}, label), el('dd', {}, el('code', {}, item))))), el('p', {}, `Recorded authority: ${claim.authority} · Privacy: ${claim.sensitivity}`)));
     }; showBelief();
     const mode = el('select', { id: 'correction-mode' }, el('option', { value: 'deny' }, 'Deny this belief'), el('option', { value: 'replace' }, 'Replace its value')); mode.value = 'deny';
-    form.append(el('div', { class: 'form-field' }, el('label', { for: 'correction-mode' }, 'What should change?'), mode), el('p', { class: 'model-note' }, 'Deny marks this belief as wrong without asserting a replacement. Replace uses the exact new value you enter below.'));
+    const modeField = el('div', { class: 'form-field' }, el('label', { for: 'correction-mode' }, 'What should change?'), mode);
+    const modeNote = el('p', { class: 'model-note' }, 'Deny marks this belief as wrong without asserting a replacement. Replace uses the exact new value you enter below.');
+    const worldNote = el('p', { class: 'model-note' }, 'Enter the exact replacement for this value. It will be recorded as your correction, with its own receipt and undo.');
+    form.append(modeField, modeNote, worldNote);
     const replacement = el('div'); value = field(replacement, 'New value', 'correction-value', 'The exact replacement value'); value.setAttribute('maxlength', '1024'); replacement.hidden = true; form.append(replacement);
     statement = el('textarea', { id: 'correction-statement', rows: '3', maxlength: '2000', placeholder: 'Explain the correction in your own words.', autocomplete: 'off' });
-    form.append(el('div', { class: 'form-field' }, el('label', { for: 'correction-statement' }, 'Your correction'), statement));
+    const statementField = el('div', { class: 'form-field' }, el('label', { for: 'correction-statement' }, 'Your correction'), statement);
+    form.append(statementField);
+    const showMode = () => {
+      const typed = selected()?.kind === 'world';
+      modeField.hidden = typed; modeNote.hidden = typed; worldNote.hidden = !typed; statementField.hidden = typed;
+      if (typed) mode.value = 'replace';
+      replacement.hidden = mode.value !== 'replace';
+      value.setAttribute('maxlength', typed ? '400' : '1024');
+    }; showMode();
     const errorLine = el('p', { class: 'form-error', role: 'alert' });
     const previewButton = el('button', { type: 'submit', class: 'button button-secondary' }, 'Preview correction');
     previewPanel = el('div', { class: 'correction-preview', 'aria-live': 'polite', tabindex: '-1' });
     const invalidatePreview = () => { previewSequence++; preview = null; previewPanel.replaceChildren(); previewButton.disabled = false; if (apply) apply.disabled = true; errorLine.textContent = ''; };
     for (const input of [choice, mode, statement, value]) { input.addEventListener('input', invalidatePreview); input.addEventListener('change', invalidatePreview); }
-    choice.addEventListener('change', showBelief);
+    choice.addEventListener('change', () => { showBelief(); showMode(); });
     mode.addEventListener('change', () => { replacement.hidden = mode.value !== 'replace'; if (replacement.hidden) value.value = ''; });
     const request = () => {
       const claim = selected();
       if (!claim) throw new Error('Choose a recorded belief before previewing.');
+      if (claim.kind === 'world') {
+        if (!value.value.trim() || value.value.length > 400 || new TextEncoder().encode(value.value).length > 1200) throw new Error('Enter an exact replacement, using up to 400 characters and 1,200 UTF-8 bytes.');
+        return { target: claim.target, statement: value.value };
+      }
       if (!['deny', 'replace'].includes(mode.value)) throw new Error('Choose whether to deny this belief or replace its value.');
       if (!statement.value.trim() || statement.value.length > 2000) throw new Error('Explain the correction in your own words, using up to 2,000 characters.');
       if (mode.value === 'replace' && (!value.value.trim() || value.value.length > 1024)) throw new Error('Enter an explicit new value, using up to 1,024 characters.');
@@ -312,7 +336,7 @@ async function correction(hit) {
         if (!current() || sequence !== previewSequence) return;
         preview = { request: payload };
         const count = result.affected_pages;
-        previewPanel.replaceChildren(el('h3', {}, 'Preview'), el('p', {}, 'Nothing has changed yet.'), el('p', {}, Object.hasOwn(payload, 'object') ? 'Replace the selected belief’s value with:' : 'Deny the selected belief without adding a replacement.'), ...(Object.hasOwn(payload, 'object') ? [el('blockquote', { class: 'result-text' }, payload.object)] : []), el('p', {}, 'Your correction:'), el('blockquote', { class: 'result-text' }, payload.statement), el('p', {}, Number.isSafeInteger(count) && count >= 0 ? `${safeCount(count)} memory ${count === 1 ? 'page' : 'pages'} currently affected.` : 'Current affected-page count unavailable.'), el('details', { class: 'result-details' }, el('summary', {}, 'Technical preview details'), el('p', { class: 'result-text' }, result.answer)), el('p', { class: 'model-note' }, 'Applying checks your current permissions again. The result may differ if the memory or source permissions change.'));
+        previewPanel.replaceChildren(el('h3', {}, 'Preview'), el('p', {}, 'Nothing has changed yet.'), el('p', {}, payload.target || Object.hasOwn(payload, 'object') ? 'Replace the selected belief’s value with:' : 'Deny the selected belief without adding a replacement.'), ...(Object.hasOwn(payload, 'object') ? [el('blockquote', { class: 'result-text' }, payload.object)] : []), ...(!payload.target ? [el('p', {}, 'Your correction:')] : []), el('blockquote', { class: 'result-text' }, payload.statement), el('p', {}, Number.isSafeInteger(count) && count >= 0 ? `${safeCount(count)} memory ${count === 1 ? 'page' : 'pages'} currently affected.` : 'Current affected-page count unavailable.'), el('details', { class: 'result-details' }, el('summary', {}, 'Technical preview details'), el('p', { class: 'result-text' }, result.answer)), el('p', { class: 'model-note' }, 'Applying checks your current permissions again. The result may differ if the memory or source permissions change.'));
         apply.disabled = false;
         previewPanel.focus({ preventScroll: true }); apply.scrollIntoView({ block: 'nearest' });
       } catch (error) { if (current() && sequence === previewSequence && error.code !== 'stale_response') errorLine.textContent = error.message; }
@@ -338,7 +362,7 @@ function renderSources() {
       const active = source.consent === 'active';
       const removing = source.consent === 'denied';
       const status = active ? 'Permission granted' : source.consent === 'purged' ? 'Removed' : removing ? 'Removal pending' : 'Needs permission';
-      const row = el('div', { class: 'source-row' }, el('div', { class: 'source-icon' }, icon(providerIcon(source.connector_id))), el('div', { class: 'source-info' }, el('h3', {}, sourceLabel(source)), el('p', {}, el('span', { class: `badge${active ? ' badge-active' : ''}` }, status)), el('p', {}, source.last_run ? `${safeCount(source.stored)} saved in the last check · ${dateText(source.last_run)}` : 'No capture checkpoint yet.'), el('p', {}, source.backfill_complete === true ? 'History import reached the end reported by this source. This does not confirm complete date coverage.' : source.backfill_complete === false ? 'History import is incomplete. Use Import history to continue from the saved checkpoint when permitted.' : 'History import coverage has not been confirmed.'), source.errors > 0 && el('p', {}, 'The last capture reported a problem. Check before relying on complete coverage.')));
+      const row = el('div', { class: 'source-row' }, el('div', { class: 'source-icon' }, icon(providerIcon(source.connector_id))), el('div', { class: 'source-info' }, el('h3', {}, sourceLabel(source)), el('p', {}, el('span', { class: `badge${active ? ' badge-active' : ''}` }, status)), el('p', {}, source.last_run ? `Last check: ${safeCount(source.stored)} new item${source.stored === 1 ? '' : 's'} · ${dateText(source.last_run)}` : 'No capture checkpoint yet.'), source.last_run && el('p', {}, 'This is the most recent check, not a lifetime capture total.'), el('p', {}, source.backfill_complete === true ? 'History import reached the end reported by this source. This does not confirm complete date coverage.' : source.backfill_complete === false ? 'History import is incomplete. Use Import history to continue from the saved checkpoint when permitted.' : 'History import coverage has not been confirmed.'), source.errors > 0 && el('p', {}, 'The last capture reported a problem. Check before relying on complete coverage.')));
       const actions = el('div', { class: 'source-actions' });
       if (active) actions.append(button('Import history', () => capture(source)), button('Privacy', () => privacy(source)));
       else if (removing) actions.append(button('Check removal', () => resumeRemoval(source)));
@@ -440,7 +464,7 @@ function consent(source) {
   });
   focusDialog(content);
 }
-async function capture(source) { await launchOperation('capture', { source_key: source.source_key, mode: 'backfill' }, 'Importing your history', async (operation, present) => { await refresh(); if (!present()) return; navigate('memory'); message(operation.counts ? `${safeCount(operation.counts.stored)} saved · ${safeCount(operation.counts.duplicates)} already present${operation.counts.errors ? ` · ${safeCount(operation.counts.errors)} problems reported` : ''}` : 'Capture completed. Check Sources for its latest coverage.'); }); }
+async function capture(source) { await launchOperation('capture', { source_key: source.source_key, mode: 'backfill' }, 'Importing your history', async (operation, present) => { await refresh(); if (!present()) return; state.dismissedCaptureId = operation.id; navigate('memory'); message(operation.counts ? `${safeCount(operation.counts.stored)} saved · ${safeCount(operation.counts.duplicates)} already present${operation.counts.errors ? ` · ${safeCount(operation.counts.errors)} problems reported` : ''}` : 'Capture completed. Check Sources for its latest coverage.'); }); }
 function privacy(source) {
   const content = openDialog('This source stays under your control.', sourceLabel(source), 'lock');
   content.append(el('div', { class: 'consent-summary' }, ...[['Current permission', source.consent], ['Fields needed by this connection', source.required_fields.join(', ')], ['Last capture', dateText(source.last_run)]].map(([label,value]) => el('div', {}, el('span', {}, label), el('strong', {}, value)))), el('p', { class: 'dialog-description' }, 'Remove this source to stop capture and start deleting its information from Kizuki. Removal may wait for another operation to release a store. The source stops being used immediately; original files and the provider account are unaffected.'), el('div', { class: 'form-actions' }, button('Keep source', () => closeDialog()), button('Remove source', async () => {
@@ -467,7 +491,7 @@ function renderActivity() {
   if (state.activityStatus === 'loading') { section.append(el('p', { role: 'status', 'aria-busy': 'true' }, 'Loading activity…')); return section; }
   if (state.activityStatus === 'unavailable') { section.append(empty('Activity is unavailable.', 'The latest receipt history could not be checked. Retry before relying on this view.', button('Retry activity', loadActivity, 'primary'))); return section; }
   if (state.activityStatus === 'idle' && !state.receipts.length) { section.append(empty('Check your activity.', 'Load the latest receipt history from this device.', button('Load activity', loadActivity, 'primary'))); return section; }
-  if (!state.receipts.length) { section.append(empty('No receipted changes yet.', 'Imported sources are searchable right away. Changes to your memory pages appear here when they happen.')); return section; }
+  if (!state.receipts.length) { section.append(empty('No receipted memory changes yet.', 'Import creates searchable source evidence. Activity records receipted memory-page writes, such as model processing or corrections; it does not treat capture as a canon change.', el('div', { class: 'empty-actions' }, button('Search evidence', () => navigate('memory'), 'primary'), button('Model settings', () => navigate('settings'))))); return section; }
   const list = el('ol', { class: 'activity-list' });
   for (const receipt of state.receipts) list.append(el('li', { class: 'activity-item' }, el('div', { class: 'activity-top' }, el('div', {}, el('h3', {}, activityTitle(receipt.action)), el('p', {}, `${dateText(receipt.at)}${receipt.reverted ? ' · Undone' : ''}`)), !receipt.reverted && button('Undo', () => undo(receipt))), el('details', { class: 'result-details' }, el('summary', {}, 'Change details'), el('p', {}, 'Page: ', el('code', {}, receipt.page)), el('p', {}, 'Receipt: ', el('code', {}, receipt.id)))));
   section.append(list); return section;
@@ -638,11 +662,11 @@ async function loadAgents() {
     const result = await api('agents');
     if (sequence !== agentsSequence || !privateViewValid || !bearer) return;
     state.agents = result.agents; state.agentsError = false;
-    if (state.view === 'settings') render();
+    if (state.view === 'agents') render();
   } catch (error) {
     if (sequence === agentsSequence && privateViewValid && bearer && error.code !== 'stale_response') {
       state.agents = null; state.agentsError = true;
-      if (state.view === 'settings') render();
+      if (state.view === 'agents') render();
       message(error.message);
     }
   }
@@ -653,11 +677,28 @@ function grantSummary(grant) {
   const rows = [['Sensitivity ceiling', grant.ceiling], ['Record types', scope(grant.types, 'All record types')], ['Subjects', scope(grant.subjects, 'All subjects')], ['From', grant.since || 'No start limit'], ['Until', grant.until || 'No end limit'], ['Tools', grant.tools.length ? grant.tools.map(tool => agentReadTools.find(([id]) => id === tool)?.[1] || tool).join(', ') : 'None'], ['Requests per minute', grant.rate_limit_per_minute], ['Owner correction relay', grant.relay_owner_corrections ? 'On' : 'Off']];
   return el('dl', { class: 'grant-summary' }, ...rows.map(([label, value]) => el('div', {}, el('dt', {}, label), el('dd', {}, value))));
 }
+function agentToolSummary(grant) {
+  if (!grant?.tools?.length) return 'No read tools';
+  return grant.tools.map(tool => agentReadTools.find(([id]) => id === tool)?.[1] || tool).join(', ');
+}
+function agentMemorySummary(grant) {
+  const labels = { public: 'Public memory', personal: 'Public and personal memory', private: 'Private memory' };
+  return labels[grant?.ceiling] || `${grant?.ceiling || 'Unknown'} memory`;
+}
 function renderAgents() {
-  const section = el('section', { class: 'agent-settings', 'aria-labelledby': 'agent-settings-title' }, el('div', { class: 'section-header' }, el('h2', { id: 'agent-settings-title' }, 'Let an agent read your memory'), button('Set up an agent', agentEnrollment)), el('p', {}, 'Give each assistant its own limited access. Review what it may read, then add its launch configuration to that assistant on this device.'));
-  if (!state.agents) section.append(el('p', { class: 'model-note' }, state.agentsError ? 'Agent access could not be checked. Refresh before relying on its status.' : 'Checking existing agents…'), button('Refresh agents', loadAgents));
-  else if (!state.agents.length) section.append(el('p', { class: 'model-note' }, 'No agents are connected yet. The setup starts with read-only access to public information.'));
-  else for (const agent of state.agents) section.append(el('article', { class: 'agent-row' }, el('div', { class: 'section-header' }, el('h3', {}, agent.name), el('span', { class: 'badge' }, agent.revoked_at ? 'Revoked' : 'Enrolled')), el('details', { class: 'result-details' }, el('summary', {}, 'View all permissions'), grantSummary(agent.grant)), !agent.revoked_at && button('Revoke access', () => agentRevoke(agent))));
+  const section = el('section', { class: 'agents-page', 'aria-labelledby': 'agents-title' }, heading('Agent access.', 'Give each assistant its own access to your memory.', button('Set up an agent', agentEnrollment, 'primary')));
+  section.append(el('div', { class: 'status-note' }, icon('lock'), el('p', {}, 'Each assistant gets separate permissions. You can revoke access at any time. Create access, copy its configuration to the assistant, then ask it to search an allowed source.')));
+  if (!state.agents) section.append(empty(state.agentsError ? 'Agent access could not be checked.' : 'Checking agent access.', state.agentsError ? 'Refresh before relying on enrolled or revoked state.' : 'This local workspace is reading its enrolled access records.', button('Refresh agents', loadAgents, 'primary')));
+  else if (!state.agents.length) section.append(empty('No agent access enrolled.', 'Set up a distinct read-only identity for an assistant. Its grant is separate from owner access and it can be revoked later.', button('Set up an agent', agentEnrollment, 'primary')));
+  else {
+    const list = el('div', { class: 'agent-list' });
+    for (const agent of state.agents) {
+      const revoked = agent.revoked_at !== null;
+      const summary = agent.grant ? `${agentMemorySummary(agent.grant)} · ${agentToolSummary(agent.grant)}` : 'Current grant details are unavailable.';
+      list.append(el('article', { class: 'agent-card' }, el('div', { class: 'agent-card-top' }, el('div', {}, el('h2', {}, agent.name), el('p', {}, summary)), el('span', { class: `badge${revoked ? '' : ' badge-active'}` }, revoked ? 'Access revoked' : 'Access enabled')), el('details', { class: 'result-details' }, el('summary', {}, 'View exact grant'), grantSummary(agent.grant)), !revoked && button('Revoke access', () => agentRevoke(agent), 'danger')));
+    }
+    section.append(list);
+  }
   return section;
 }
 function agentEnrollment() {
@@ -725,16 +766,96 @@ function agentRevoke(agent) {
   focusDialog(content);
 }
 function renderSettings() {
-  return el('section', {}, heading('Simply yours.', 'A local workspace, clear permissions, and room to grow when you need it.'), renderModelSettings(), renderAgents(), el('div', { class: 'settings-list' },
+  return el('section', {}, heading('Workspace settings.', 'Model setup, local custody and background activity for this device.'), renderModelSettings(), el('section', { class: 'settings-group', 'aria-labelledby': 'workspace-settings-title' }, el('h2', { id: 'workspace-settings-title' }, 'Workspace and service'), el('div', { class: 'settings-list' },
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Workspace'), el('p', {}, 'Your memory stays in a local folder you control.')), el('span', { class: 'settings-value' }, state.status?.vault.name || 'Not created')),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Background activity'), el('p', {}, state.service?.detail || 'Refresh to check background activity.'), state.service && el('small', {}, `Checked ${dateText(state.service.checked_at)}`)), el('div', { class: 'form-actions' }, button('Refresh', loadService), state.service && state.service.state !== 'active' && state.service.kind !== 'none' && button('Enable background activity', () => launchOperation('install_service', {}, 'Setting up background activity', async (_operation, present) => { await refresh(); if (present()) await loadService(); }), 'primary'))),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Source privacy'), el('p', {}, 'Each source has its own permission. Imported content stays on this device unless you separately allow a model to use it.')), button('Manage sources', () => navigate('sources'))),
-    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'App session'), el('p', {}, 'This tab remembers only its local app capability. Search results and source content are not stored in browser storage.')), button('Disconnect tab', disconnect))),
-    el('div', { class: 'status-note' }, icon('info'), el('p', {}, 'Search works without a model. Automatic organisation needs a working model and your permission to use each source.')));
+    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Agent access'), el('p', {}, 'Set up, inspect or revoke separate assistant permissions.')), button('Manage agents', () => navigate('agents'))),
+    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'App session'), el('p', {}, 'This tab remembers only its local app capability. Search results and source content are not stored in browser storage.')), button('Disconnect tab', disconnect)),
+    )), el('div', { class: 'status-note' }, icon('info'), el('p', {}, 'Search works without a model. Automatic organisation needs a working model and your permission to use each source.')));
+}
+function worldCoverage(coverage) {
+  if (!coverage || coverage.status !== 'partial') return null;
+  return el('p', { class: 'search-hint' }, 'Some results may be missing. This view covers only the information Kizuki could read for this request.');
+}
+function worldTitle(node) { return Array.isArray(node?.labels) && node.labels[0]?.text ? node.labels[0].text : 'Untitled'; }
+function worldObjectText(relation) {
+  if (relation?.object?.kind === 'literal') return relation.object.value;
+  if (relation?.object?.kind === 'vocabulary') return ({ 'world/concept': 'Concept', 'world/situation': 'Situation', 'learning/assisted': 'With assistance', 'learning/unassisted': 'Without assistance' })[relation.object.id] || 'Unrecognised category';
+  return 'Linked item (name unavailable in this view)';
+}
+function worldAssessmentText(relation) {
+  const assessments = Array.isArray(relation?.assessments) ? relation.assessments : [];
+  if (!assessments.length) return 'Confidence and supporting passages are unavailable.';
+  const kinds = { observed: 'Observation', reported: 'Reported information', owner_assertion: 'Your statement', model_inference: 'Model interpretation', hypothesis: 'Hypothesis', recommendation: 'Recommendation', scenario: 'Scenario' };
+  const authorities = { owner_correction: 'Your correction', owner_authored: 'Written by you', connector_evidence: 'Connected source', model_inference: 'Model interpretation' };
+  return assessments.map(assessment => {
+    const confidence = assessment.confidence?.kind === 'known' ? `${Math.round(assessment.confidence.value * 100)}% confidence` : 'Confidence unknown';
+    const count = Array.isArray(assessment.evidence) ? assessment.evidence.length : 0;
+    const evidence = count ? `${count} supporting passage${count === 1 ? '' : 's'}` : 'No supporting passage';
+    return [...new Set([kinds[assessment.epistemicKind] || 'Statement', authorities[assessment.authority]].filter(Boolean)), confidence, evidence].join(' · ');
+  }).join('; ');
+}
+function worldRelation(relation) {
+  if (!relation) return null;
+  const labels = { 'concept.definition': 'Definition', 'concept.requires': 'Builds on', 'concept.example': 'Example', 'concept.counterexample': 'Counterexample', 'concept.distinguished_from': 'Different from', 'situation.objective': 'Objective', 'situation.commitment': 'Commitment', 'situation.blocker': 'Blocker', 'situation.change': 'Recent change', 'situation.participant': 'Participant' };
+  const modes = { quoted: 'Quoted statement', reported: 'Reported statement', hypothetical: 'Hypothetical statement', suggested: 'Suggestion', questioned: 'Question', uncertain: 'Uncertain statement' };
+  const qualifiers = [relation.polarity === 'negative' ? 'Negated statement' : null, modes[relation.perspective?.mode]].filter(Boolean);
+  return el('div', { class: 'belief-details' }, el('h3', {}, labels[relation.predicate] || 'Supporting statement'), qualifiers.length ? el('p', {}, qualifiers.join(' · ')) : null, el('p', { class: 'result-text' }, worldObjectText(relation)), el('p', {}, worldAssessmentText(relation)));
+}
+function renderWorld() {
+  const kind = state.worldKind, field = el('input', { id: 'world-query', type: 'search', placeholder: `Find ${kind}…`, 'aria-label': `Find ${kind}`, autocomplete: 'off' }); field.value = state.worldQuery;
+  const choose = value => { state.worldKind = value; loadWorld(null); };
+  const form = el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); state.worldQuery = field.value; loadWorld(null); } }, icon('search'), field, el('button', { class: 'button button-primary', type: 'submit' }, 'Find'));
+  const section = el('section', { 'aria-busy': state.worldLoading ? 'true' : 'false' }, heading('Your world.', 'Ideas and ongoing situations, connected to the information you save.'), el('div', { class: 'world-tabs', role: 'group', 'aria-label': 'World type' }, button('Concepts', () => choose('concepts'), state.worldKind === 'concepts' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'concepts' }), button('Situations', () => choose('situations'), state.worldKind === 'situations' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'situations' })), form, el('p', { class: 'search-hint' }, 'Kizuki uses your configured model to organise sources you allow it to read. You can always search saved sources without a model.'));
+  const retry = () => loadWorld();
+  const noMatches = () => empty(`No ${kind} found.`, state.worldQuery ? 'Try another name, or search your saved sources.' : 'Connect a source and set up a model to start building your world. If you have already done this, check processing in Activity.', button('Search memory', () => navigate('memory'), 'primary'));
+  if (state.worldRef) section.append(button(`Back to ${kind}`, () => loadWorld(null), 'quiet'));
+  if (state.worldLoading) section.append(el('p', { class: 'search-hint', role: 'status', 'aria-live': 'polite' }, `Loading ${state.worldRef ? kind.slice(0, -1) : kind}…`));
+  else if (state.worldError) section.append(empty('World view is unavailable.', 'Kizuki could not load the latest information. Try again to check it.', button('Try again', retry, 'primary')));
+  else if (state.world === null) section.append(empty('Explore your world.', 'Find an idea or situation in your saved information.', button('Load world', retry, 'primary')));
+  else if (state.world.status === 'not_found') section.append(state.worldRef ? empty('This item is no longer available.', 'Its information or your access may have changed.', button(`Browse ${kind}`, () => loadWorld(null), 'primary')) : noMatches());
+  else {
+    const result = state.world.result || state.world;
+    if (result.status === 'unavailable') section.append(empty('World view is not available here.', result.reason === 'history' ? 'Historical world snapshots are not available yet.' : 'Kizuki cannot read this world view right now.', button('Try again', retry, 'primary')));
+    else {
+      const data = result.data, matches = Array.isArray(data?.matches) ? data.matches : null;
+      if (matches !== null) {
+        section.append(matches.length ? el('div', { class: 'result-list' }, ...matches.map(item => el('article', { class: 'result-item' }, el('h3', {}, Array.isArray(item.labels) && item.labels[0] ? item.labels[0] : 'Untitled'), button('View details', () => loadWorld(item.ref), 'quiet')))) : noMatches());
+        const coverage = worldCoverage(data.coverage); if (coverage) section.append(coverage);
+      } else {
+        const node = data.concept || data.situation;
+        const primary = data.concept ? (data.definitions || []) : [data.objective, ...(data.commitments || []), data.blocker, data.recentChange, ...(data.uncertainty || [])].filter(Boolean);
+        const related = data.concept ? (data.relations || []) : [];
+        section.append(el('article', { class: 'result-item' },
+          el('h2', {}, worldTitle(node)),
+          data.summary?.text ? el('p', { class: 'result-text' }, data.summary.text) : null,
+          worldCoverage(data.coverage),
+          ...primary.map(worldRelation),
+          !primary.length && !related.length ? el('p', {}, 'No supporting statements are available in this view.') : null,
+          related.length ? el('details', { class: 'result-details' }, el('summary', {}, 'Related statements'),
+            el('p', {}, 'These statements explain the current view. Confidence reflects the assessment of each statement. Original source text is not included here.'),
+            ...related.map(worldRelation)) : null));
+      }
+    }
+  }
+  return section;
+}
+async function loadWorld(ref = state.worldRef) {
+  const sequence = ++worldSequence, session = bearer, generation = privacyGeneration, epoch = state.status?.visibility_epoch;
+  const current = () => sequence === worldSequence && session === bearer && generation === privacyGeneration && epoch === state.status?.visibility_epoch && privateViewValid;
+  const operation = ref ? (state.worldKind === 'concepts' ? 'concept' : 'situation') : (state.worldKind === 'concepts' ? 'find_concepts' : 'find_situations');
+  const payload = { operation, ...(ref ? { [operation]: ref } : { label: state.worldQuery }), valid: { kind: 'all' }, knownAt: { kind: 'current' } };
+  state.worldRef = ref; state.world = null; state.worldError = false; state.worldLoading = true;
+  if (state.view === 'world') render();
+  try { const world = await api('world_view', payload); if (!current()) return; state.world = world; }
+  catch (error) { if (!current() || error?.code === 'stale_response') return; state.worldError = true; }
+  finally { if (current()) { state.worldLoading = false; if (state.view === 'world') render(); } }
 }
 function renderOperation() {
   const operation = state.operation;
   if (!operation) return null;
+  if (operation.kind === 'capture' && operation.state === 'succeeded' && state.dismissedCaptureId === (operation.id ?? 'completed-capture')) return null;
   if ((operation.kind === 'initialize' || operation.kind === 'enroll') && operation.state !== 'running') return null;
   const running = operation.state === 'running';
   const title = operation.kind === 'correct' ? (running ? 'Applying your correction' : 'Correction result') : operation.kind === 'agent_enroll' || operation.kind === 'agent_revoke' ? (running ? 'Updating agent access' : 'Agent access result') : operation.kind === 'model_test' ? (running ? 'Testing your model connection' : operation.state === 'succeeded' ? 'Connection test completed' : 'Connection test needs attention') : operation.kind === 'run_pass' ? (running ? 'Organising your memory' : operation.state === 'succeeded' ? 'Processing run completed' : 'Processing needs attention') : running ? 'Working on your source' : operation.state === 'failed' ? 'This step needs attention' : operation.state === 'unknown' ? 'Completion is not yet confirmed' : operation.kind === 'capture' ? 'Import progress saved' : 'Completed';
@@ -746,7 +867,7 @@ function render() {
   if (!bearer) { renderDisconnected(); return; }
   if (!privateViewValid) { main.replaceChildren(empty('Refreshing your workspace.', 'Checking current permissions before showing saved information.')); return; }
   if (!state.status) return;
-  const content = !state.status.vault.ready ? renderWelcome() : state.view === 'memory' ? renderMemory() : state.view === 'sources' ? renderSources() : state.view === 'activity' ? renderActivity() : renderSettings();
+  const content = !state.status.vault.ready ? renderWelcome() : state.view === 'memory' ? renderMemory() : state.view === 'sources' ? renderSources() : state.view === 'activity' ? renderActivity() : state.view === 'agents' ? renderAgents() : state.view === 'world' ? renderWorld() : renderSettings();
   const operation = renderOperation(); if (operation) content.prepend(operation);
   main.replaceChildren(content);
 }
@@ -764,6 +885,7 @@ function updateOperationBanner() {
   else if (next) main.querySelector('section')?.prepend(next);
 }
 async function refresh() {
+  if (state.view === 'world') { worldSequence++; state.world = null; state.worldLoading = true; render(); }
   let sequence = ++refreshSequence;
   try {
     const status = await api('status');
@@ -776,7 +898,8 @@ async function refresh() {
     reconcileOperation(status.operations);
     render();
     if (status.vault.ready && ['settings', 'sources'].includes(state.view)) void loadModel();
-    if (status.vault.ready && state.view === 'settings') void loadAgents();
+    if (status.vault.ready && state.view === 'agents') void loadAgents();
+    if (status.vault.ready && state.view === 'world') void loadWorld();
   } catch (error) { if (bearer && sequence === refreshSequence && error.code !== 'stale_response') { invalidatePrivateView(); main.replaceChildren(empty('Let’s reconnect.', error.message, button('Try again', refresh, 'primary'))); } }
 }
 function initializeFailureMessage(code) {

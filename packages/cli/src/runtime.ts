@@ -18,3 +18,8 @@ export function serveArgs(vaultPath: string): string[] {
   const entry = fileURLToPath(new URL("./main.ts", import.meta.url));
   return [process.execPath, entry, "serve", "--vault", vaultPath];
 }
+
+/** One POSIX shell word: a plain path prints as it is, anything else is single-quoted. */
+export function shellQuote(value: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+}

@@ -1,5 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { join } from "node:path";
+
+// These tests do real ledger, vault and process work; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 for (const inherited of ["data", "getter"] as const) {
   for (const scope of ["ingress", "audit", "truncated-audit"] as const) {

@@ -113,6 +113,9 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
     ),
     claims_extracted: numberOr(value["claims_extracted"], totals.claims_extracted),
     claims_written: numberOr(value["claims_written"], totals.claims_written),
+    ...(typeof value["claims_written_extracted"] === "number" && Number.isFinite(value["claims_written_extracted"])
+      ? { claims_written_extracted: value["claims_written_extracted"] }
+      : {}),
     claims_deduped: numberOr(value["claims_deduped"], totals.claims_deduped),
     claims_superseded: numberOr(
       value["claims_superseded"],

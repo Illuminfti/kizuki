@@ -1,7 +1,7 @@
 import { applyConnectionSensitivity, inspectSourceGrant } from "@kizuki/core";
 import type { Connection, Manifest, Sensitivity } from "@kizuki/core";
 import type { Database } from "bun:sqlite";
-import { TelegramConnector, TelegramConnectorError, assertSameTelegramIdentity, assertTelegramRetryAllowed, PLACEHOLDER_CREDENTIALS_MESSAGE } from "@kizuki/connector-telegram";
+import { TelegramConnector, TelegramConnectorError, assertSameTelegramIdentity, assertTelegramRetryAllowed, PLACEHOLDER_CREDENTIALS_MESSAGE, TEST_DC_VARIABLE, testDataCenter } from "@kizuki/connector-telegram";
 import { UsageError } from "../args";
 import { ConnectionError, enrollSignedInConnection, listHostConnections } from "../connections";
 import { consentHint } from "../source-consent";
@@ -45,7 +45,8 @@ export function telegramFailure(error: unknown, cancelled = false): Error {
     if (error.code === "placeholder_credentials") return new ConnectionError(PLACEHOLDER_CREDENTIALS_MESSAGE);
     if (error.code === "flood_wait" && Number.isSafeInteger(error.retry_after) && error.retry_after! > 0) return new ConnectionError(`Telegram asked you to wait ${error.retry_after}s before retrying.`);
     const notices: Partial<Record<typeof error.code, string>> = {
-      invalid_phone: "Telegram needs an international-format phone number.",
+      invalid_phone: "Telegram did not accept that phone number. Enter it in international format, for example +15551234567.",
+      invalid_test_dc: `${TEST_DC_VARIABLE} must be 1, 2 or 3 when set. Unset it to sign in to Telegram itself.`,
       sign_in_aborted: "Telegram sign-in was cancelled or repeatedly refused; no session was enrolled.",
       identity_mismatch: "Telegram account identity differs from this source; its history and session were preserved.",
       corrupt_state: "Telegram connection state is unreadable. Restore its protected state before re-signing in.",
@@ -62,7 +63,7 @@ export async function runTelegramConnect(
   io: CliIo,
   options: TelegramEnrollmentOptions,
   checkSensitivity: (db: Database, manifest: Manifest, requested: Sensitivity | undefined, connection?: Connection) => void,
-  create: () => TelegramConnector = () => new TelegramConnector({}),
+  create: () => TelegramConnector = () => new TelegramConnector({}, { dataCenter: () => testDataCenter(io.env) }),
 ): Promise<number> {
   if (!io.stdinIsTTY || !io.stderrIsTTY) throw new UsageError("connect telegram [--source KEY] [--json] (interactive terminal required)");
   const connector = create();
@@ -81,6 +82,8 @@ export async function runTelegramConnect(
         if (state === null) throw new ConnectionError("Telegram state is missing");
         assertTelegramRetryAllowed(state);
       }
+      const testDc = testDataCenter(io.env);
+      if (testDc !== null) io.err(`${TEST_DC_VARIABLE} is set: signing in to Telegram's test environment (data center ${testDc.id}), which holds no real account.`);
       io.err(`Telegram will sign in to read your accessible chats and history. Protected session state is stored under ${clean(ctx.vaultPath)}. Kizuki does not send messages or delete Telegram copies. Press Ctrl-C to cancel.`);
       connection = await enrollSignedInConnection(ctx.db, ctx.store, connector, signIn, options.source, assertSameTelegramIdentity);
     } catch (error) { throw telegramFailure(error, signIn.cancelled()); }

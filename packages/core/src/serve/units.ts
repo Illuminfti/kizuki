@@ -10,6 +10,11 @@ export const SERVICE_BROKER_REAP_SECONDS = 2;
 export const SERVICE_START_SECONDS = SERVICE_READY_SECONDS + SERVICE_BROKER_REAP_SECONDS + 1;
 /** Rendered TimeoutStopSec. */
 export const SERVICE_STOP_SECONDS = 90;
+/** Deliberate refusals (custody, migration) exit with EX_CONFIG; systemd never restarts them. */
+export const SERVICE_REFUSAL_EXIT = 78;
+/** At most this many starts per interval before systemd stops restarting a failing unit. */
+export const SERVICE_START_LIMIT_BURST = 5;
+export const SERVICE_START_LIMIT_INTERVAL_SECONDS = 900;
 
 export interface UnitSpec {
   readonly vaultPath: string;
@@ -46,6 +51,10 @@ export function renderSystemdUnit(spec: UnitSpec): string {
   return [
     "[Unit]",
     `Description=kizuki serve (${spec.vaultId})`,
+    // RestartSec alone never trips the default start limit, so a unit that
+    // fails on every start would otherwise restart forever.
+    `StartLimitIntervalSec=${SERVICE_START_LIMIT_INTERVAL_SECONDS}`,
+    `StartLimitBurst=${SERVICE_START_LIMIT_BURST}`,
     "# Egress is bounded in-process by the CI network allowlist and by connector manifests.",
     "# Network address filtering is deliberately not applied because connectors need egress.",
     "",
@@ -66,6 +75,7 @@ export function renderSystemdUnit(spec: UnitSpec): string {
     `WorkingDirectory=${spec.vaultPath.replaceAll("%", "%%")}/.`,
     "Restart=on-failure",
     `RestartSec=${SERVICE_RESTART_SECONDS}s`,
+    `RestartPreventExitStatus=${SERVICE_REFUSAL_EXIT}`,
     "NoNewPrivileges=true",
     "PrivateTmp=true",
     "ProtectSystem=strict",
@@ -74,6 +84,7 @@ export function renderSystemdUnit(spec: UnitSpec): string {
     "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
     "UMask=0077",
     `MemoryMax=${spec.config.memory_max}`,
+    "MemorySwapMax=0",
     `CPUQuota=${spec.config.cpu_quota}`,
     `Nice=${spec.config.nice}`,
     "",

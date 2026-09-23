@@ -7,11 +7,14 @@ import {
   assertVaultControl,
   ensureVaultId,
   PortError,
+  readServeIntent,
   readVaultId,
   withLeaseHeldRefusal,
 } from "@kizuki/core";
 import type { ConnectionStateReader, RetrievalPort } from "@kizuki/core";
-import { assertBoundVaultId, inspectLedgerIdentity, LedgerIdentityError, LEDGER_SCHEMA_VERSION, ledgerNotReadyError, openLedgerRead, openReadyLedgerRead, openLedger, ledgerAccepted, readLedgerMark, sealLedger, initSearch } from "@kizuki/core/internal";
+import { assertBoundVaultId, inspectLedgerIdentity, LedgerIdentityError, LedgerReadError, LEDGER_SCHEMA_VERSION, ledgerNotReadyError, openLedgerRead, openReadyLedgerRead, openLedger, ledgerAccepted, readLedgerMark, sealLedger, initSearch } from "@kizuki/core/internal";
+import type { LedgerReadContext } from "@kizuki/core/internal";
+import { INVOCATION, shellQuote } from "./runtime";
 import { inspectConfiguredRetrieval, openConfiguredRetrieval } from "./retrieval-runtime";
 import type { CliIo } from "./commands/index";
 import {
@@ -66,6 +69,37 @@ function peekLedgerIdentity(vaultPath: string, dbPath: string): void {
   }
 }
 
+/** The one init invocation that migrates without changing the service choice:
+ * init installs and starts a service unless told not to, so only a vault whose
+ * recorded intent is an installed service may omit --no-service. */
+function migrationCommand(vaultPath: string): string {
+  let installed = false;
+  try { installed = readServeIntent(vaultPath) === "installed"; } catch { /* An unreadable intent never installs a service. */ }
+  const command = `${INVOCATION} init ${shellQuote(vaultPath)} --no-default`;
+  return installed ? `${command} (keeps the installed service)` : `${command} --no-service`;
+}
+
+/** A sealed ledger from an older release. Only the explicit init writer
+ * migrates it, so every other verb names that one command. */
+export class LedgerMigrationRequiredError extends Error {
+  readonly code = "migration_required";
+  constructor(readonly vaultPath: string, readonly from: number, readonly to: number) {
+    super(`migration_required: ledger v${from} needs migration to v${to}; run: ${migrationCommand(vaultPath)}`);
+    this.name = "LedgerMigrationRequiredError";
+  }
+}
+
+function openReadyOrMigration(vaultPath: string, options: { audit?: boolean } = {}): LedgerReadContext {
+  try { return openReadyLedgerRead(vaultPath, options); }
+  catch (error) {
+    if (!(error instanceof LedgerReadError) || error.code !== "migration_required") throw error;
+    let version: number;
+    try { version = inspectLedgerIdentity(vaultPath).schemaVersion; } catch { throw error; }
+    if (version >= LEDGER_SCHEMA_VERSION) throw error;
+    throw new LedgerMigrationRequiredError(vaultPath, version, LEDGER_SCHEMA_VERSION);
+  }
+}
+
 /** Existing positive floors gate explicit writers before they repair or migrate.
  * Missing/legacy unsealed ledgers retain the explicit init migration path. */
 export function assertSealedLedgerReady(vaultPath: string, options: { allowMigration?: boolean } = {}): void {
@@ -86,7 +120,7 @@ export function assertSealedLedgerReady(vaultPath: string, options: { allowMigra
     if (identity.accepted < floor) throw ledgerNotReadyError(vaultPath, identity.accepted, floor);
     return;
   }
-  const binding = openReadyLedgerRead(vaultPath);
+  const binding = openReadyOrMigration(vaultPath);
   binding.close();
 }
 
@@ -224,7 +258,7 @@ async function withOpenReadVault<T>(
   const vaultPath = assertVaultLayout(resolved);
   assertVaultControl(vaultPath, { repairPermissions: false });
   assertBoundVaultId(vaultPath);
-  let binding = openReadyLedgerRead(vaultPath, { audit: options.audit ?? false });
+  let binding = openReadyOrMigration(vaultPath, { audit: options.audit ?? false });
   let paused = false;
   try {
     const retrievalUnavailable = options.retrieval === "optional" && inspectConfiguredRetrieval(vaultPath);

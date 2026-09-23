@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { mkdirSync, readFileSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MAX_CURSOR_BYTES, getCheckpoint, inspectSourceGrant, registerConnection, setSourceGrant } from "@kizuki/core";
@@ -6,6 +6,9 @@ import { openLedger } from "@kizuki/core/testing";
 import { MARKDOWN_FOLDER_CONNECTOR_ID, MAX_FILES } from "@kizuki/connectors";
 import { markdownCommittedIdentities } from "../src/connections";
 import { createHelpers } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const h = createHelpers(); afterEach(h.cleanup);
 const BODY = "SYNTHETIC_PRIVATE_MARKDOWN_BODY\n";

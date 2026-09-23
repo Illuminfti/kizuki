@@ -1,3 +1,4 @@
+import { eraseWorldEventSupports } from "../world/erasure";
 import { invalidateLocalSourcePort } from "./source-grants";
 import { claimV2TablesPresent } from "./source-erasure";
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
@@ -8,6 +9,7 @@ import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { applyPurgeRewrite } from "../canon/apply";
+import { eraseCanonStageTraces } from "../canon/stage-recovery";
 import { CanonPageUnreadable, type CanonIo } from "../canon";
 import { CanonWriteError } from "../canon/errors";
 import { getClaim, listClaims, markClaimsAfterPurge } from "../claims/store";
@@ -21,11 +23,10 @@ import { isPlainObject } from "../util/validate";
 import { markDerivedHeld, readDerivedHolds } from "../derived-holds";
 import { removeHeldPageEdges } from "../graph/graph";
 import { removeSearchForPurge } from "../search/indexer";
-import {
-  FTS5_RETRIEVAL_ID,
-  FTS5_RETRIEVAL_STORE_REL,
-  createFts5RetrievalPort,
-} from "../retrieval";
+// Import the modules, not the retrieval index: the index registers the FTS5
+// port on load and would run inside the fts5 -> purge import cycle.
+import { FTS5_RETRIEVAL_ID, createFts5RetrievalPort } from "../retrieval/fts5";
+import { FTS5_RETRIEVAL_STORE_REL } from "../retrieval/schema";
 import { eventIdFromReference } from "../retrieval/ids";
 import { withdrawForTombstone } from "../staging/producers";
 import { sha256Hex } from "../util/hash";
@@ -1069,6 +1070,44 @@ function eventPurgeIntegrityOk(db: Database, batchId: string): boolean {
   ).get(batchId) === null;
 }
 
+/** Retained typed history remains purge-owned even when undo removed the live page. */
+function typedHistoryPaths(db:Database,eventIds:ReadonlySet<string>):string[] {
+  if(!tableExists(db,"canon_receipts")||!tableColumns(db,"canon_receipts").includes("record_codec"))return [];
+  const rows=db.query<{page_path:string},[string]>("SELECT DISTINCT c.page_path FROM canon_receipts c JOIN json_each(c.provenance) p WHERE c.record_codec='kizuki.canon-receipt/v2' AND c.receipt_state='retained' AND p.value IN (SELECT value FROM json_each(?)) ORDER BY c.page_path LIMIT 8193").all(JSON.stringify([...eventIds]));
+  if(rows.length>8192)throw new PurgeError("absence_failed","typed canon history exceeds purge bound");
+  return rows.map(row=>row.page_path);
+}
+function typedHistorySources(db:Database,pagePath:string):string[] {
+  if(!tableExists(db,"canon_receipts")||!tableColumns(db,"canon_receipts").includes("record_codec"))return [];
+  return db.query<{event_id:string},[string]>("SELECT DISTINCT p.value AS event_id FROM canon_receipts c JOIN json_each(c.provenance) p WHERE c.page_path=? AND c.record_codec='kizuki.canon-receipt/v2' AND c.receipt_state='retained' ORDER BY p.value LIMIT 32769").all(pagePath).map(row=>row.event_id);
+}
+
+export interface CompletedEventPurgeProof {
+  readonly event_id:string;
+  readonly purge_receipt_id:string;
+  readonly batch_id:string;
+  readonly proof_digest:string;
+}
+/** Exact recorded absence authority reused by typed canon erasure and its recovery. */
+export function completedEventPurgeProofs(db:Database,eventIds:readonly string[]):CompletedEventPurgeProof[]|null {
+  const ids=[...new Set(eventIds)].sort();
+  if(ids.length===0||ids.length>32768||anyPurgedEventPresent(db,ids))return null;
+  const result:CompletedEventPurgeProof[]=[],checked=new Set<string>();
+  for(const eventId of ids) {
+    const rows=db.query<CompletedEventPurgeProof,[string]>(`SELECT e.event_id,e.receipt_id AS purge_receipt_id,m.batch_id,e.proof_digest FROM event_purges e JOIN purge_batch_receipts m USING(receipt_id) WHERE e.event_id=? ORDER BY e.receipt_id LIMIT 2`).all(eventId);
+    const row=rows[0];if(rows.length!==1||row===undefined||typeof row.proof_digest!=="string")return null;
+    if(!checked.has(row.batch_id)) {
+      if(readBatch(db,row.batch_id)?.state!=="ready"||eventPurgeProofsCorrupt(db,row.batch_id))return null;
+      for(const op of listOps(db,row.batch_id)) {
+        try {if(op.state!=="done"||!proofIsEmpty(checkedPurgeProof(op.proof,op,batchEventIds(db,row.batch_id))))return null;}catch{return null;}
+      }
+      checked.add(row.batch_id);
+    }
+    result.push(row);
+  }
+  return result;
+}
+
 /**
  * Phase 1 — short SQLite transaction (RFC 0002 §13.1). Canon is scanned
  * before the write lock. Holds land before derived stores are touched.
@@ -1145,6 +1184,7 @@ function purgeEventsOwned(
     purgeExtractInputs(db, purgedIds, { receipt_id: batchReceipt, created_at: purgedAt });
     const { matched, holdPaths } = holdPathsFor(snapshot, purgedIds);
     assertSnapshotStillHolds(vaultPath, snapshot, holdPaths);
+    for(const path of typedHistoryPaths(db,purgedIds))holdPaths.add(path);
 
     const receipts: PurgeReceipt[] = [];
     const insertReceipt = db.query<
@@ -1159,15 +1199,11 @@ function purgeEventsOwned(
       `INSERT INTO event_purge_proofs (receipt_id, content_hash, source_record_id, selector_kind)
        VALUES (?, ?, ?, ?)`,
     );
-    const deleteEvent = db.query<never, [string]>(
-      "DELETE FROM events WHERE event_id = ?",
+    const deleteEvent = db.query<{ event_id: string }, [string]>(
+      "DELETE FROM events WHERE event_id = ? RETURNING event_id",
     );
-    // `claim_v2_support_events.event_id` carries ON DELETE CASCADE, and the
-    // cascaded row lands in the same change count as the event itself, which
-    // the one-row assertion below reads as a purge that hit the wrong number
-    // of events. Drop the evidence link first so the event delete stays the
-    // single row it certifies. The surviving support row is a derived
-    // provenance union and is rebuildable (RFC 0002 invariant 4).
+    // Remove legacy support-event links as part of the same purge transaction.
+    // The surviving support row is derived and rebuildable (RFC 0002 invariant 4).
     const deleteSupportEvents = claimV2TablesPresent(db)
       ? db.query<never, [string]>(
           "DELETE FROM claim_v2_support_events WHERE event_id = ?",
@@ -1204,9 +1240,12 @@ function purgeEventsOwned(
       );
       insertProof.run(receipt.receipt_id, candidate.content_hash, candidate.source_record_id, selectorKind);
       db.query("INSERT INTO purge_batch_receipts VALUES(?,?)").run(receipt.receipt_id, batchReceipt);
+      eraseWorldEventSupports(db,candidate.event_id);
       deleteSupportEvents?.run(candidate.event_id);
-      const deleted = deleteEvent.run(candidate.event_id);
-      assertDeleted(deleted.changes, candidate.event_id);
+      // Bun's run().changes includes FK cascades such as occurrence snapshots.
+      // RETURNING counts only the exact event rows this receipt certifies.
+      const deleted = deleteEvent.all(candidate.event_id);
+      assertDeleted(deleted.length, candidate.event_id);
       receipts.push(receipt);
     }
 
@@ -1466,6 +1505,7 @@ function catchUpHolds(db: Database, vaultPath: string, batchId: string): {
   const { matched, holdPaths } = holdPathsFor(snapshot, new Set(eventIds));
   return db.transaction(() => {
     assertSnapshotStillHolds(vaultPath, snapshot, holdPaths);
+    for(const path of typedHistoryPaths(db,new Set(eventIds)))holdPaths.add(path);
     const priorHolds = new Set(readHolds(db).filter(hold => hold.proposal_id === batchId).map(hold => hold.page_path));
     let expanded = false;
     for (const relPath of holdPaths) {
@@ -1525,8 +1565,11 @@ function rewriteHolds(
     // A held page cannot be republished until the complete store closure has
     // an exact, validated absence proof. Legacy malformed receipts stay held.
     if (unprovedPages.has(hold.page_path)) continue;
-    const sources = readHoldSources(vaultPath, hold.page_path);
-    if (sources === null) continue;
+    const pageSources = readHoldSources(vaultPath, hold.page_path);
+    const historySources=typedHistorySources(db,hold.page_path);
+    if(historySources.length>32768)continue;
+    const sources=[...new Set([...(pageSources??[]),...historySources])];
+    if(pageSources===null&&historySources.length===0)continue;
     const toRemove = purgedCitations(db, sources);
     if (toRemove.length === 0) {
       if (matchable.has(hold.page_path)) liftHold(db, hold.page_path);
@@ -1598,6 +1641,7 @@ export async function runPurge(
     phase1.purge_ops = await reconcileOps(db, receiptId, binding, clock);
   }
   phase1.rewritten = rewriteHolds(scope, io, options);
+  eraseCanonStageTraces(requireCanonFiles(scope, io), db, vaultPath);
   return phase1;
   } finally { if (binding.owned) await binding.port?.close(); }
   }, filter);
@@ -1738,6 +1782,8 @@ export async function resumePurge(db: Database, vaultPath: string, receiptId: st
     // Revalidate old done rows before a resumed rewrite can lift their holds.
     await verifyPurgeOwned(scope, io, receiptId, {...options,...(binding.port === null ? {} : {retrieval:binding.port})});
     rewriteHolds(scope, io, options);
+    // Recovery records and quarantined stage bytes follow their purged receipts.
+    eraseCanonStageTraces(requireCanonFiles(scope, io), db, vaultPath);
     return await verifyPurgeOwned(scope, io, receiptId, {...options,...(binding.port === null ? {} : {retrieval:binding.port})});
   } finally { if (binding.owned) await binding.port?.close(); }
   });

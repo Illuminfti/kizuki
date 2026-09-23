@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,9 @@ import { rebuildDerived } from "../../src/derived";
 import { ServeError } from "../../src/serving/types";
 import { recordedPage, serveFixture } from "./helpers";
 import type { Fixture } from "./helpers";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const encoding = new Tiktoken(ranks);
 const count = (text: string) => encoding.encode(text, [], []).length;

@@ -1,7 +1,10 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 test("claim release CLI refuses malformed UTF-8 without altering task history", () => {
   const dir = mkdtempSync(join(tmpdir(), "task-claims-encoding-"));

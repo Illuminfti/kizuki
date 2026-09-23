@@ -1,6 +1,6 @@
 import { ptr } from "bun:ffi";
 import type { BigIntStats } from "node:fs";
-import { closeSync, constants, fstatSync, fsyncSync, openSync, readSync, writeSync } from "node:fs";
+import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, openSync, readSync, writeSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { loadOwnedDirectoryNative } from "../util/owned-directory-native";
 import { serviceAncestorOwner } from "../serve/custody";
@@ -12,11 +12,14 @@ const MAX_DEPTH = 64;
 export type CanonFilesFailure = "unsupported" | "native_unavailable" | "invalid_path" | "bounds" |
   "unsafe" | "changed" | "conflict" | "closed" | "handle" | "io";
 export class CanonFilesError extends Error {
-  constructor(readonly reason: CanonFilesFailure, readonly code?: "EISDIR") { super(`canon_files_${reason}`); this.name = "CanonFilesError"; }
+  constructor(readonly reason: CanonFilesFailure, readonly code?: "EISDIR", options?: { cause?: unknown }) {
+    super(`canon_files_${reason}`, options); this.name = "CanonFilesError";
+  }
 }
 function fail(reason: CanonFilesFailure): never { throw new CanonFilesError(reason); }
 function guarded<T>(work: () => T): T {
-  try { return work(); } catch (error) { if (error instanceof CanonFilesError) throw error; fail("io"); }
+  // The cause keeps an errno such as ENOSPC readable for a typed recovery hold.
+  try { return work(); } catch (error) { if (error instanceof CanonFilesError) throw error; throw new CanonFilesError("io", undefined, { cause: error }); }
 }
 let native: ReturnType<typeof loadOwnedDirectoryNative> | undefined;
 function api() {
@@ -127,7 +130,12 @@ export interface CanonFiles {
   /** Atomically publish this scope's complete creation into an absent entry. */
   publish(created: CanonFileSnapshot, path: string): CanonFileSnapshot;
   replace(created: CanonFileSnapshot, expected: CanonFileSnapshot): CanonFileSnapshot;
+  /** Move an existing verified entry, never replacing, into an owner-only
+   * directory; the moved file becomes 0600. Grants no creation authority. */
+  relocate(existing: CanonFileSnapshot, path: string): CanonFileSnapshot;
   remove(expected: CanonFileSnapshot): void;
+  /** Remove an owned, empty directory. False when it is absent or not empty. */
+  removeEmptyDirectory(path: string): boolean;
   close(): void;
 }
 interface FileRecord {
@@ -375,6 +383,32 @@ class NativeCanonFiles implements CanonFiles {
       } finally { try { this.#release(created); } finally { this.#release(expected); } }
     });
   }
+  relocate(existing: CanonFileSnapshot, path: string): CanonFileSnapshot {
+    return guarded(() => {
+      const source = this.#record(existing);
+      if (source.resumeTarget !== undefined || source.path === path) fail("handle");
+      const components = parts(path), name = components.pop()!;
+      this.#verify(source);
+      const parent = this.#directory(components); if (parent === null) fail("changed");
+      try {
+        if ((directoryStat(parent).mode & 0o777n) !== 0o700n) fail("unsafe");
+        const from = nameBytes(parts(source.path).at(-1)!), to = nameBytes(name);
+        const renamed = result(api().symbols.renameChildNoReplace(source.parent, ptr(from), parent, ptr(to)));
+        if (renamed === -17) fail("conflict");
+        if (renamed !== 0) fail("io");
+        try {
+          fchmodSync(source.fd, 0o600);
+          fsyncSync(source.fd); fsyncSync(source.parent); fsyncSync(parent);
+          const moved = this.read(path); if (!moved) fail("changed");
+          const observed = this.#record(moved);
+          if (!sameIdentity(observed.stat, source.stat) || !observed.bytes.equals(source.bytes) || (observed.stat.mode & 0o777n) !== 0o600n) {
+            moved.close(); fail("changed");
+          }
+          return moved;
+        } finally { this.#release(existing); }
+      } finally { closeSync(parent); }
+    });
+  }
   remove(expected: CanonFileSnapshot): void {
     guarded(() => {
       const state = this.#record(expected);
@@ -388,6 +422,22 @@ class NativeCanonFiles implements CanonFiles {
         fsyncSync(state.parent); this.#assertCurrent();
       }
       finally { this.#release(expected); }
+    });
+  }
+  removeEmptyDirectory(path: string): boolean {
+    return guarded(() => {
+      const components = parts(path), name = components.pop()!;
+      const parent = this.#directory(components); if (parent === null) return false;
+      try {
+        const child = openChild(parent, name, true); if (child === null) return false;
+        try { directoryStat(child); } finally { closeSync(child); }
+        // rmdir never follows a final symlink and refuses a non-empty directory.
+        const removed = result(api().symbols.removeEmptyChild(parent, ptr(nameBytes(name))));
+        if (removed === -2 || removed === -39) return false;
+        if (removed !== 0) fail("io");
+        fsyncSync(parent); this.#assertCurrent();
+        return true;
+      } finally { closeSync(parent); }
     });
   }
   close(): void {

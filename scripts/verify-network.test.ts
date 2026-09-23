@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, setDefaultTimeout } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,9 @@ import {
   scanSourceText,
   scanTrackedSources,
 } from "./verify-network";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 describe("network source verification", () => {
   test.each([
@@ -329,11 +332,12 @@ describe("network source verification", () => {
     expect(scanShellText("scripts/tool.sh", "bun run scripts/encode.ts\n")).toEqual([]);
   });
 
+  // The whole tracked tree is parsed; that takes seconds even on an idle host.
   test("the tracked tree has no unallowlisted network calls or stale entries", async () => {
     const scan = await scanTrackedSources();
     expect(scan.findings).toEqual([]);
     expect(scan.stale).toEqual([]);
-  });
+  }, 60_000);
 
   test("tracked JS/TS outside packages is scanned; untracked noise is ignored", async () => {
     const root = mkdtempSync(join(tmpdir(), "kizuki-network-scan-"));

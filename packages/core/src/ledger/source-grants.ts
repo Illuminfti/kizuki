@@ -714,6 +714,8 @@ export function bindSourceEvent(
 
 const localPorts = new WeakSet<object>();
 const modelPorts = new WeakMap<object, Readonly<Pick<SourceModelEgress, "model_endpoint" | "model">>>();
+/** A runtime that was selected only because the ledger was still epoch zero. */
+const epochZeroProducerPorts = new WeakSet<object>();
 /** Trusted host composition capability, not an event/config assertion or agent API. */
 export function bindLocalSourcePort<T extends object>(
   port: T,
@@ -750,9 +752,18 @@ export function bindSourceModelPort<T extends object>(
   modelPorts.set(port, prior ?? normalized);
   return port;
 }
+/** Prevent a CLI runtime selected for a historical journal from crossing into a managed epoch. */
+export function bindEpochZeroProducerPort<T extends object>(port: T): T {
+  epochZeroProducerPorts.add(port);
+  return port;
+}
+export function isEpochZeroProducerPort(port: object | undefined): boolean {
+  return port !== undefined && epochZeroProducerPorts.has(port);
+}
 /** Preserve host-minted trust when metrics wrap a producer for one write pass. */
 export function inheritSourcePortBindings<T extends object>(source: object, target: T): T {
   if (localPorts.has(source)) localPorts.add(target);
+  if (epochZeroProducerPorts.has(source)) epochZeroProducerPorts.add(target);
   const model = modelPorts.get(source);
   if (model !== undefined) modelPorts.set(target, model);
   return target;
@@ -796,7 +807,11 @@ export function sourceEventsAllowed(
           "SELECT 1 FROM native_owner_evidence WHERE event_id=? AND origin='correction'",
         )
         .get(id);
-      if (native !== null && !scope.model && scope.port === undefined) continue;
+      if (
+        native !== null &&
+        !scope.model &&
+        (scope.port === undefined || local)
+      ) continue;
       if (!scope.owner || scope.model || scope.port !== undefined) return false;
       continue;
     }

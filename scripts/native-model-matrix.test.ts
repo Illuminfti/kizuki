@@ -1,9 +1,12 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MODEL_PHASE_IDS, modelPhasePassed, modelFailureDiagnostic, readStrictNativeQuery, runNativeModelMatrix, startNativeModelEndpoint, type NativeModelEvidence, type NativeModelPhase } from "./native-model-matrix";
 import { syntheticModelReply } from "./native-model-endpoint";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const base: NativeModelEvidence = { unit: "kizuki@synthetic.service", instance_id: "synthetic-instance", pid: 123, started_at: "2026-09-07T00:00:00.000Z", receipt_run_id: "synthetic-run", receipt_status: "ok", model_calls: 1, model_unavailable: 0,
   claims_extracted: 1, canon_writes: 1, endpoint_requests: 1, unexpected_requests: 0, credential_present: true, model_configured: true,
@@ -66,9 +69,14 @@ test("strict native query refuses exit-zero degradation, warnings, stderr and ma
   expect(() => readStrictNativeQuery({ ...result, stderr: "degraded=provider-unavailable" })).toThrow();
   expect(() => readStrictNativeQuery({ ...result, exit_code: 1 })).toThrow();
 });
-test("scripted model response preserves request record binding and refuses another model", () => {
-  const request = { model: "native-lifecycle-synthetic", messages: [{ content: "system" }, { content: 'record event-1 from source\n{"subject":"person:ada"}' }] };
-  expect(JSON.stringify(syntheticModelReply(request))).toContain('event-1');
+test("scripted model response preserves the v2 request fence and refuses another model", () => {
+  const event = "01K5KM2BGNWBTY6K8R0W9TZAQX", request = { model: "native-lifecycle-synthetic", messages: [{ content: "system" }, { content: `event:${event}\nsource evidence` }] };
+  const completion = syntheticModelReply(request) as { choices: { message: { content: string } }[] };
+  const response = JSON.parse(completion.choices[0]!.message.content);
+  expect(response.schema).toBe("kizuki.producer-response/v2");
+  expect(response.mentions[0]!.anchor.event_id).toBe(event);
+  expect(response.claims[0]!.anchors[0]!.event_id).toBe(event);
+  expect(response.claims[0]).not.toHaveProperty("event_ids");
   expect(() => syntheticModelReply({ ...request, model: "foreign-model" })).toThrow("request_shape");
   expect(() => syntheticModelReply({ ...request, tools: [] })).toThrow("request_shape");
   expect(() => syntheticModelReply({ ...request, messages: [{}, { content: "unbound" }] })).toThrow("request_binding");

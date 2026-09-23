@@ -40,6 +40,7 @@ const pinnedUpload = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f436
 const successIf = '${{ success() }}';
 const linuxArtifactName = 'linux-x64-${{ github.event.pull_request.head.sha || github.sha }}';
 const linuxReceiptPath = '${{ runner.temp }}/kizuki-artifact-proof/receipt.json';
+const surfaceReceiptPath = '${{ runner.temp }}/kizuki-surface/receipt.json';
 
 const pinnedSecretsJob = `
   secrets:
@@ -92,6 +93,7 @@ ${testSteps}
           path: |
             dist/kizuki-*/bun-linux-x64-baseline/
             ${linuxReceiptPath}
+            ${surfaceReceiptPath}
           retention-days: 7
           if-no-files-found: error
 ${overrides?.extraJob ?? ""}${pinnedSecretsJob}`;
@@ -599,4 +601,148 @@ test("ci test must keep producing the surface inventory receipt on the event hea
     const doc = Bun.YAML.parse(text); mutate(doc);
     expect(validateWorkflowText(path, JSON.stringify(doc)).some(failure => failure.reason.includes("surface inventory")), name).toBe(true);
   }
+});
+
+function receiptWorkflow(upload: string): string {
+  return `name: other
+on: [push]
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: bun scripts/capability-proof.ts --out "$RUNNER_TEMP/kizuki-other/receipt.json"
+      - run: test -f "$RUNNER_TEMP/kizuki-other/receipt.json"${upload}
+`;
+}
+
+function receiptUpload(path: string): string {
+  return `
+      - if: ${successIf}
+        uses: ${pinnedUpload}
+        with:
+          name: other-\${{ github.sha }}
+          path: ${path}
+          retention-days: 7
+          if-no-files-found: error`;
+}
+
+const discardedReceipt = /requires \$RUNNER_TEMP\/\S+ to exist but no upload-artifact step retains it/;
+
+test("a receipt a job requires to exist must be retained by an upload-artifact path", () => {
+  const path = ".github/workflows/ci.yml";
+  const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  expect(validateWorkflowText(path, text)).toEqual([]);
+  expect(validateWorkflowText(path, ciWorkflow())).toEqual([]);
+  expect(text).toContain('test -f "$RUNNER_TEMP/kizuki-surface/receipt.json"');
+  expect(text).toContain(surfaceReceiptPath);
+
+  for (const [name, mutate] of [
+    ["surface receipt dropped from the retained paths", (d: any) => {
+      d.jobs.test.steps[10].with.path = d.jobs.test.steps[10].with.path.replace("\n" + surfaceReceiptPath, "");
+    }],
+    ["artifact proof receipt dropped from the retained paths", (d: any) => {
+      d.jobs.test.steps[10].with.path = d.jobs.test.steps[10].with.path.replace("\n" + linuxReceiptPath, "");
+    }],
+    ["a further receipt required but never retained", (d: any) => {
+      d.jobs.test.steps.splice(7, 0, { run: 'test -f "$RUNNER_TEMP/kizuki-next-proof/receipt.json"' });
+    }],
+  ] as [string, (doc: any) => void][]) {
+    const doc = Bun.YAML.parse(text); mutate(doc);
+    expect(validateWorkflowText(path, JSON.stringify(doc)).some(failure =>
+      discardedReceipt.test(failure.reason)), name).toBe(true);
+  }
+
+  // The rule reads the workflow structurally, so it holds for any job that
+  // requires a produced file, not only the receipts ci.yml names today.
+  const other = ".github/workflows/other.yml";
+  expect(validateWorkflowText(other, receiptWorkflow(""))).toEqual([
+    expect.objectContaining({
+      reason: 'job "proof" requires $RUNNER_TEMP/kizuki-other/receipt.json to exist but no upload-artifact step retains it',
+    }),
+  ]);
+  expect(validateWorkflowText(other, receiptWorkflow(receiptUpload("${{ runner.temp }}/kizuki-elsewhere/receipt.json")))).toEqual([
+    expect.objectContaining({ reason: expect.stringMatching(discardedReceipt) }),
+  ]);
+  for (const retained of [
+    "${{ runner.temp }}/kizuki-other/receipt.json",
+    "${{ runner.temp }}/kizuki-other/",
+    "|\n            dist/kizuki-*/bun-linux-x64-baseline/\n            ${{ runner.temp }}/kizuki-other/receipt.json",
+  ]) {
+    expect(validateWorkflowText(other, receiptWorkflow(receiptUpload(retained))), retained).toEqual([]);
+  }
+
+  for (const condition of ["false", "${{ false }}", "${{ github.event_name == 'push' }}"]) {
+    expect(validateWorkflowText(other, receiptWorkflow(receiptUpload("${{ runner.temp }}/kizuki-other/receipt.json").replace(successIf, condition))), condition).toContainEqual(
+      expect.objectContaining({ reason: expect.stringMatching(discardedReceipt) }),
+    );
+  }
+});
+
+test("receipt retention must cover its execution condition, not merely mention it", () => {
+  const guarded = "inputs.native_adapter_only != true";
+  for (const [required, retained, accepted] of [
+    [`${guarded}`, `${guarded}`, true],
+    [`${guarded}`, `success() && ${guarded}`, true],
+    [`${guarded}`, `!(${guarded})`, false],
+    [`${guarded}`, `false && ${guarded}`, false],
+    [`${guarded}`, `${guarded} && false`, false],
+    ["!cancelled()", "success()", false],
+    ["!cancelled()", "always()", true],
+    ["!cancelled()", "!cancelled()", true],
+  ] as const) {
+    const doc = Bun.YAML.parse(receiptWorkflow(receiptUpload("${{ runner.temp }}/kizuki-other/receipt.json"))) as any;
+    const requiredStep = doc.jobs.proof.steps.find((step: any) => typeof step.run === "string" && step.run.includes("test -f"));
+    const upload = doc.jobs.proof.steps.find((step: any) => typeof step.uses === "string" && step.uses.startsWith("actions/upload-artifact@"));
+    requiredStep.if = "${{ " + required + " }}";
+    upload.if = "${{ " + retained + " }}";
+    const failures = validateWorkflowText(".github/workflows/other.yml", JSON.stringify(doc));
+    expect(failures.some(failure => discardedReceipt.test(failure.reason)), `${required} -> ${retained}`).toBe(!accepted);
+  }
+});
+
+test("an upload before the required receipt check cannot prove retention", () => {
+  const doc = Bun.YAML.parse(receiptWorkflow(receiptUpload("${{ runner.temp }}/kizuki-other/receipt.json"))) as any;
+  const steps = doc.jobs.proof.steps;
+  const uploadIndex = steps.findIndex((step: any) => typeof step.uses === "string" && step.uses.startsWith("actions/upload-artifact@"));
+  steps.unshift(...steps.splice(uploadIndex, 1));
+  expect(validateWorkflowText(".github/workflows/other.yml", JSON.stringify(doc))).toContainEqual(
+    expect.objectContaining({ reason: expect.stringMatching(discardedReceipt) }),
+  );
+});
+
+test("an excluded receipt is not retained by its uploaded parent directory", () => {
+  for (const exclusion of [
+    "!${{ runner.temp }}/kizuki-other/receipt.json",
+    "!${{ runner.temp }}/kizuki-other/**",
+    "!**/receipt.json",
+    "${{ format('!{0}/kizuki-other/receipt.json', runner.temp) }}",
+    "${{ runner.temp }}/${{ inputs.additional_paths }}",
+  ]) {
+    const upload = receiptUpload("|\n            ${{ runner.temp }}/kizuki-other/\n            " + exclusion);
+    expect(validateWorkflowText(".github/workflows/other.yml", receiptWorkflow(upload))).toContainEqual(
+      expect.objectContaining({ reason: expect.stringMatching(discardedReceipt) }),
+    );
+  }
+});
+
+test("upload action paths do not expand shell variables", () => {
+  for (const path of [
+    "$RUNNER_TEMP/kizuki-other/receipt.json",
+    "${RUNNER_TEMP}/kizuki-other/receipt.json",
+    "${{ runner.temp }}/kizuki-other/../elsewhere/",
+    "${{ runner.temp }}/kizuki-other/[ab]*",
+  ]) {
+    expect(validateWorkflowText(".github/workflows/other.yml", receiptWorkflow(receiptUpload(path)))).toContainEqual(
+      expect.objectContaining({ reason: expect.stringMatching(discardedReceipt) }),
+    );
+  }
+});
+
+test("a receipt requirement cannot escape its retained parent", () => {
+  const workflow = receiptWorkflow(receiptUpload("${{ runner.temp }}/kizuki-other/"))
+    .replaceAll('$RUNNER_TEMP/kizuki-other/receipt.json', '$RUNNER_TEMP/kizuki-other/../elsewhere/receipt.json');
+  expect(validateWorkflowText(".github/workflows/other.yml", workflow)).toContainEqual(
+    expect.objectContaining({ reason: expect.stringMatching(discardedReceipt) }),
+  );
 });

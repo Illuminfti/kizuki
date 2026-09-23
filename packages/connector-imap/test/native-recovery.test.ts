@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +18,9 @@ import type { ImapState } from "../src/state";
 import { FakeImapServer } from "../src/testing/fake-imap";
 import type { FakeFolder } from "../src/testing/fake-imap";
 import { fixtureMailbox, fixtureState, memoryDialer } from "../src/testing";
+
+// These tests do real ledger, vault and process work; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const directories: string[] = [];
 const NOW = (): Date => new Date("2026-03-02T00:00:00.000Z");

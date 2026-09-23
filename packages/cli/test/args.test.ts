@@ -1,7 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { extractVault, parseArguments } from "../src/args";
 import { createHelpers } from "./helpers";
 import pkg from "../package.json" with { type: "json" };
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, isolatedEnv, runCli } = createHelpers();
 afterEach(cleanup);

@@ -1,15 +1,15 @@
 import type { VaultMutationScope } from "../vault/mutation-scope";
 import type { CanonFileSnapshot, CanonFiles } from "../vault/canon-files";
-import { sha256Hex } from "../util/hash";
 import { parseFrontmatter } from "../vault/frontmatter";
 import { eventIdFromReference } from "../retrieval/ids";
-import { oneShotGet } from "../ledger/schema";
+import { oneShotGet, tableExists } from "../ledger/schema";
 import { requireCanonFiles } from "./io";
-import { latestReceiptForPage } from "./receipts";
 import { openOrdinaryRecoveryReceiptStream } from "./receipt-stream";
 import { readCanonProjectionObligation } from "./projection-obligations";
+import { eraseCanonStageTraces, reconcileCanonStages } from "./stage-recovery";
+import { asCanonRecoveryError } from "./recovery-failure";
 import type { CanonIo } from "./store";
-import { advanceCanonReadGeneration, assertIndependentSurvivorAdmission, decodeCanonImage, readCanonWriteIntent, recoveryFailure, type CanonWriteIntent } from "./write-intent";
+import { canonPredecessorDigest, advanceCanonReadGeneration, assertIndependentSurvivorAdmission, decodeCanonImage, readCanonWriteIntent, recoveryFailure, type CanonWriteIntent } from "./write-intent";
 
 function pageEventIds(bytes: Buffer, receiptId: string): string[] {
   const sources = parseFrontmatter(bytes.toString("utf8")).data["sources"];
@@ -95,16 +95,14 @@ export function withdrawPendingCanonWrite(scope: VaultMutationScope, io: CanonIo
       if (JSON.stringify(current) !== JSON.stringify(denied) ||
           db.query<{ digest: string }, [string]>("SELECT digest FROM canon_write_intents WHERE receipt_id=?").get(receipt.receipt_id)?.digest !== binding.digest ||
           db.query("SELECT 1 FROM canon_receipts WHERE receipt_id=?").get(receipt.receipt_id) !== null ||
-          sha256Hex(JSON.stringify(latestReceiptForPage(db, receipt.page_path))) !== intent.admission.predecessor_digest) {
+          canonPredecessorDigest(db, receipt) !== intent.admission.predecessor_digest) {
         recoveryFailure("authority_changed", receipt.receipt_id);
       }
-      // An expected name or prefix is not durable creation custody. These
-      // explicit manual cases survive source withdrawal as visible blockers.
-      for (const path of [intent.stages.live_stage, intent.stages.archive_stage]) {
-        if (path === null) continue;
-        const stage = files.read(path);
-        if (stage !== null) { stage.close(); recoveryFailure("stage_custody_unknown", receipt.receipt_id); }
-      }
+      // A relocated or restored receipt stream refuses before any stage action.
+      stream.assertCheckpointCustody(intent.checkpoint, intent.version !== 3);
+      // Intent-bound: exact, torn and foreign stage bytes are all removed, since
+      // withdrawal erases; an unsafe entry still holds the withdrawal.
+      reconcileCanonStages(files, intent, { at: io.now?.(), erase: true });
       const before = decodeCanonImage(intent.before_base64), after = decodeCanonImage(intent.after_base64);
       if ((intent.receipt.kind === "revert" || intent.completion.mode === "revert") && independentOf(after, deniedEvents, receipt.receipt_id)) {
         holdIndependentRevert(files, db, intent, before, after, held);
@@ -156,8 +154,14 @@ export function withdrawPendingCanonWrite(scope: VaultMutationScope, io: CanonIo
       stream.verifyBinding();
       const removed = oneShotGet<{ receipt_id: string }>(db, "DELETE FROM canon_write_intents WHERE receipt_id=? AND digest=? RETURNING receipt_id", receipt.receipt_id, binding.digest);
       if (removed?.receipt_id !== receipt.receipt_id) recoveryFailure("intent_invalid", receipt.receipt_id);
+      // The withdrawn bytes never became a receipt; their hash leaves with the intent.
+      if (tableExists(db, "canon_machine_byte_intents")) db.query("DELETE FROM canon_machine_byte_intents WHERE receipt_id=?").run(receipt.receipt_id);
       advanceCanonReadGeneration(db);
     }).immediate();
+    eraseCanonStageTraces(files, db, io.vault_path);
+  } catch (error) {
+    // Typed, so source revocation reports a held withdrawal instead of failing.
+    throw asCanonRecoveryError(error, receipt.receipt_id) ?? error;
   } finally {
     try { for (const snapshot of held) snapshot.close(); }
     finally { stream.close(); }

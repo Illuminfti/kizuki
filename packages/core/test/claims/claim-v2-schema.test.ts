@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { removeWorldSchema } from "../helpers/world-schema";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -79,7 +80,7 @@ function schemaVersion(db: Database): number {
 function claimsDigest(db: Database): string {
   const rows = db
     .query<Record<string, unknown>, []>(
-      "SELECT * FROM claims ORDER BY claim_id",
+      "SELECT claim_id,kind,target,body,frontmatter,provenance,subjects,producer,confidence,status,body_hash,content_hash FROM claims ORDER BY claim_id",
     )
     .all();
   return canonicalJson(rows);
@@ -89,6 +90,7 @@ function claimsDigest(db: Database): string {
 function ledgerAtV30(path: string): void {
   const db = openLedger(path);
   try {
+    removeWorldSchema(db);
     db.exec("DROP TABLE IF EXISTS claim_v2_support_events");
     db.exec("DROP TABLE IF EXISTS claim_v2_support");
     db.exec("DROP TABLE IF EXISTS claim_v2_semantics");
@@ -115,8 +117,8 @@ function ledgerAtV30(path: string): void {
 test("claim/v2 tables, indexes and schema version land at ledger 31", () => {
   const db = claimsDb();
   try {
-    expect(LEDGER_SCHEMA_VERSION).toBe(31);
-    expect(schemaVersion(db)).toBe(31);
+    expect(LEDGER_SCHEMA_VERSION).toBe(33);
+    expect(schemaVersion(db)).toBe(LEDGER_SCHEMA_VERSION);
 
     for (const table of [
       "claim_v2_semantics",
@@ -189,7 +191,7 @@ test("migration 31 preserves every pre-existing claims row and re-runs as a no-o
 
     const migrated = openLedger(path);
     try {
-      expect(schemaVersion(migrated)).toBe(31);
+      expect(schemaVersion(migrated)).toBe(LEDGER_SCHEMA_VERSION);
       expect(claimsDigest(migrated)).toBe(digestBefore);
     } finally {
       migrated.close();
@@ -197,7 +199,7 @@ test("migration 31 preserves every pre-existing claims row and re-runs as a no-o
 
     const reopened = openLedger(path);
     try {
-      expect(schemaVersion(reopened)).toBe(31);
+      expect(schemaVersion(reopened)).toBe(LEDGER_SCHEMA_VERSION);
       expect(claimsDigest(reopened)).toBe(digestBefore);
       expect(() => applyClaimV2Tables(reopened)).not.toThrow();
       expect(claimsDigest(reopened)).toBe(digestBefore);
@@ -243,7 +245,7 @@ test("a migration that throws mid-apply leaves the ledger at 30 and a retry succ
 
     const retried = openLedger(path);
     try {
-      expect(schemaVersion(retried)).toBe(31);
+      expect(schemaVersion(retried)).toBe(LEDGER_SCHEMA_VERSION);
     } finally {
       retried.close();
     }
@@ -408,14 +410,14 @@ test("a vault at ledger 31 backs up and restores with empty claim/v2 tables", ()
 
     const backup = join(parent, "dump");
     const manifest = exportVault(db, vault.path, backup);
-    expect(manifest.schema_versions.ledger).toBe(31);
+    expect(manifest.schema_versions.ledger).toBe(LEDGER_SCHEMA_VERSION);
     expect(() => verifyBackup(backup)).not.toThrow();
 
     const target = join(parent, "restored");
     restoreVault(backup, target);
     const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
     try {
-      expect(schemaVersion(restored)).toBe(31);
+      expect(schemaVersion(restored)).toBe(LEDGER_SCHEMA_VERSION);
       for (const table of ["claim_v2_semantics", "claim_v2_support", "claim_v2_support_events"]) {
         expect(
           restored.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM ${table}`).get(),

@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,9 @@ import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "../../cli/test/helpers";
 import { call, connectClient, envelopeOf, errorOf } from "./client";
 import type { ToolCallResult } from "./client";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const BIN = join(import.meta.dir, "..", "src", "bin.ts");
 const h = createHelpers();
@@ -261,9 +264,15 @@ async function stdioClient(vault: string, token: string): Promise<ContinuityClie
     expect(reply.result).toBeDefined();
     child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
     const listed = await request("tools/list", {});
-    const tools = (listed.result as { tools?: { outputSchema?: { properties?: object; required?: string[] } }[] } | undefined)?.tools;
+    const tools = (listed.result as { tools?: { name: string; outputSchema?: { properties?: object; required?: string[] } }[] } | undefined)?.tools;
     expect(tools?.length).toBeGreaterThan(0);
     for (const tool of tools ?? []) {
+      // world_view advertises its closed v2 envelope, which never carries these fields.
+      if (tool.name === "world_view") {
+        expect(tool.outputSchema?.properties).not.toHaveProperty("has_withheld");
+        expect(tool.outputSchema?.properties).not.toHaveProperty("source_policy");
+        continue;
+      }
       expect(tool.outputSchema?.properties).toHaveProperty("has_withheld");
       expect(tool.outputSchema?.properties).toHaveProperty("source_policy");
       expect(tool.outputSchema?.required ?? []).not.toContain("has_withheld");

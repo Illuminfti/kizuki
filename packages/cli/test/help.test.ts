@@ -1,8 +1,11 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { COMMANDS } from "../src/commands/index";
 import { createHelpers } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, isolatedEnv, runCli } = createHelpers();
 afterEach(cleanup);
@@ -96,7 +99,7 @@ describe("help", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("tell");
     expect(runCli(env, "help", "tell").stdout).toContain(
-      'usage: kizuki tell "<statement>" [--claim CLAIM_ID]',
+      'usage: kizuki tell "<statement>" [--claim CLAIM_ID|--world-claim TOKEN]',
     );
   });
 
@@ -152,7 +155,7 @@ describe("help", () => {
   test("version prints the package version field", () => {
     const result = runCli(isolatedEnv(), "version");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe("0.1.0\n");
+    expect(result.stdout).toBe("1.0.0\n");
   });
 
   test("query --help names defaults, bounds, flags, and exit codes", () => {
@@ -244,13 +247,14 @@ describe("help", () => {
         };
       };
       expect(body.data.name).toBe("tell");
-      expect(body.data.options).toEqual(["--claim", "--since", "--until"]);
+      expect(body.data.options).toEqual(["--claim", "--world-claim", "--since", "--until"]);
       expect(body.data.flags).toEqual(["--dry-run", "--json", "--verbose"]);
       expect(body.data.bounds).toEqual({ "--since": "TIME", "--until": "TIME" });
       expect(body.data.irreversible).toBe(false);
     }
     const text = runCli(env, "tell", "--help");
     expect(text.stdout).toContain("--claim");
+    expect(text.stdout).toContain("--world-claim");
     expect(text.stdout).toContain("--since");
     expect(text.stdout).toContain("--until");
     expect(text.stdout).toContain("--dry-run");

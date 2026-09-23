@@ -13,7 +13,7 @@ runtime. CI builds and smoke-tests the native package after the repository gate.
 ```bash
 bun install --frozen-lockfile
 bun run build:release
-cd dist/kizuki-0.1.0/bun-linux-x64-baseline
+cd dist/kizuki-1.0.0/bun-linux-x64-baseline
 sha256sum -c SHA256SUMS
 ./kizuki --help
 ./kizuki init ./vault --no-service

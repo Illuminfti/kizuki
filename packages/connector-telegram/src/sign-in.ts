@@ -4,7 +4,7 @@ import type {
   SignInIo,
 } from "@kizuki/core";
 import { TelegramConnectorError, safeCause } from "./api";
-import type { SignInFlow, TelegramApi, TelegramUser } from "./api";
+import type { DataCenter, SignInFlow, TelegramApi, TelegramUser } from "./api";
 import { requireAppCredentials } from "./app-credentials";
 import { userDisplay } from "./map";
 import { disconnectQuietly } from "./session";
@@ -147,6 +147,8 @@ function rejectionNotice(name: string): string {
 /** What enrolling needs on top of opening a session: a wait it can sit out. */
 export interface EnrollDeps extends SessionDeps {
   sleep: (ms: number) => Promise<void>;
+  /** A test data center, or null for Telegram's own choice. */
+  dataCenter: () => DataCenter | null;
 }
 
 /**
@@ -160,6 +162,9 @@ export async function enroll(
   state: ConnectionStateWriter,
 ): Promise<SignInDisplay> {
   const credentials = requireAppCredentials(deps.credentials);
+  // Read before the first prompt, so a malformed override is refused before
+  // the owner types anything.
+  const dataCenter = deps.dataCenter();
   const phone = (
     await io.prompt(
       "Telegram phone number (international format, e.g. +15551234567): ",
@@ -172,7 +177,7 @@ export async function enroll(
       "kizuki.telegram: phone number must be in international format",
     );
   }
-  const api = deps.api("", credentials);
+  const api = deps.api("", credentials, dataCenter ?? undefined);
   let me: TelegramUser;
   try {
     await api.connect();

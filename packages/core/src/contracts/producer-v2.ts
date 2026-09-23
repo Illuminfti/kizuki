@@ -1,9 +1,12 @@
 import { isRfc3339 } from "../util/time";
 import { compareRfc3339 } from "../agents/time";
 import { isUlid } from "../util/ulid";
-import { cloneExactJson, isPlainObject, utf8ByteLength } from "../util/validate";
+import { cloneExactJson, isPlainObject, unwrapJsonCodeFence, utf8ByteLength } from "../util/validate";
 import type { Sensitivity } from "../agents/types";
 import type { ModelUsage, ProduceResult, ProducerDiagnostic } from "./producer";
+import type { LlmPort } from "./llm";
+import type { SystemOnePort } from "./systemone";
+import type { Port, PortDescriptor, PortHealth } from "./ports";
 /** Closed provider contract. Durable claim/v2 is deliberately separate. */
 
 export const PRODUCER_V2_CONTRACT = "kizuki.producer/v2" as const;
@@ -124,8 +127,27 @@ export interface ProducerV2ParseInput {
   readonly predicates: readonly ProducerV2PredicateSpec[];
 }
 
+/** Closed local planning input. Handles are capability-local, never durable ids. */
+export interface ProduceInputV2 extends ProducerV2ParseInput {
+  readonly budget: { readonly max_calls: number; readonly max_input_tokens: number; readonly max_output_tokens: number };
+}
+
+export interface ProducerV2Port extends Port {
+  readonly descriptor: PortDescriptor;
+  readonly model_ref: string | null;
+  health(): Promise<PortHealth>;
+  produce(input: ProduceInputV2): Promise<ProduceResultV2>;
+}
+
+export interface ModelProducerV2Options { readonly llm: LlmPort; readonly systemone?: SystemOnePort; }
+
+/**
+ * A claim declined without failing the call. `invalid_claim` names a
+ * well-formed claim that failed its own rules; it is distinct from the
+ * whole-response `schema_invalid` rejection.
+ */
 export type DroppedDraftV2 = {
-  readonly reason: "unknown_predicate";
+  readonly reason: "unknown_predicate" | "invalid_claim" | "systemone_rejected";
   readonly id: string;
 };
 
@@ -157,7 +179,7 @@ export type ProduceResultV2 = {
 } | Extract<ProduceResult, {
   status: "rejected";
 }>;
-const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 const RESPONSE_KEYS = ["schema", "mentions", "claims"] as const;
 const MENTION_KEYS = ["id", "label", "anchor", "candidate_refs"] as const;
 const CLAIM_KEYS = [
@@ -193,8 +215,9 @@ function anchorKey(anchor: TextAnchor): string {
   return `${anchor.event_id}\u0000${anchor.start_utf16}\u0000${anchor.end_utf16}`;
 }
 
-function isBoundary(text: string, offset: number): boolean {
-  if (offset <= 0 || offset >= text.length) {
+export function isUtf16TextBoundary(text: string, offset: number): boolean {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > text.length) return false;
+  if (offset === 0 || offset === text.length) {
     return true;
   }
   const before = text.charCodeAt(offset - 1);
@@ -215,7 +238,7 @@ function readAnchor(value: unknown, events: ReadonlyMap<string, string>, path: s
     return `${path} is invalid`;
   }
   const text = events.get(eventId);
-  if (text === undefined || start < 0 || end <= start || end > text.length || !isBoundary(text, start) || !isBoundary(text, end)) {
+  if (text === undefined || start < 0 || end <= start || end > text.length || !isUtf16TextBoundary(text, start) || !isUtf16TextBoundary(text, end)) {
     return `${path} is outside quoted text`;
   }
   return { event_id: eventId, start_utf16: start, end_utf16: end };
@@ -259,6 +282,28 @@ function refAnchors(ref: DraftRef, supplied: ReadonlyMap<string, readonly TextAn
 function hasGrounding(refs: readonly DraftRef[], anchors: readonly TextAnchor[], supplied: ReadonlyMap<string, readonly TextAnchor[]>, mentions: ReadonlyMap<string, MentionDraft>): boolean {
   const cited = new Set(anchors.map(anchorKey));
   return refs.every(ref => refAnchors(ref, supplied, mentions).some(anchor => cited.has(anchorKey(anchor))));
+}
+
+/**
+ * An endpoint mention anchored in a record the claim already cites is part of
+ * that evidence, so the claim cites its anchor even when the model did not
+ * repeat it. A mention from any other record stays uncited: the claim must
+ * rest on the records it names, and its support must stay within one source.
+ * Supplied handles must still be cited.
+ */
+function withMentionAnchors(anchors: readonly TextAnchor[], refs: readonly DraftRef[], mentions: ReadonlyMap<string, MentionDraft>): readonly TextAnchor[] {
+  const cited = [...anchors];
+  const keys = new Set(anchors.map(anchorKey));
+  const records = new Set(anchors.map(anchor => anchor.event_id));
+  for (const ref of refs) {
+    if (ref.kind !== "mention") continue;
+    const anchor = mentions.get(ref.id)!.anchor;
+    if (records.has(anchor.event_id) && !keys.has(anchorKey(anchor))) {
+      keys.add(anchorKey(anchor));
+      cited.push(anchor);
+    }
+  }
+  return cited;
 }
 /** Parses provider JSON before any identity, storage, metrics, or error write. */
 export function parseExtractResponseV2(text: string, input: ProducerV2ParseInput): ParseExtractResponseV2Result {
@@ -343,7 +388,7 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
     }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(unwrapJsonCodeFence(text));
   }
   catch {
     return fail("response is not JSON");
@@ -365,11 +410,12 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
   }[] = [];
   let anchorsUsed = 0;
   let referencesUsed = 0;
+  const mentionIds = new Set<string>();
   for (const [index, raw] of parsed.mentions.entries()) {
     if (!isPlainObject(raw) ||
       !exactKeys(raw, MENTION_KEYS) ||
       !isToken(raw.id) ||
-      mentions.has(raw.id) ||
+      mentionIds.has(raw.id) ||
       typeof raw.label !== "string" ||
       raw.label.length === 0 ||
       utf8ByteLength(raw.label) > MAX_V2_LABEL_BYTES ||
@@ -377,27 +423,26 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
       raw.candidate_refs.length > 4) {
       return fail(`mentions[${index}] is invalid`);
     }
+    mentionIds.add(raw.id);
     const anchor = readAnchor(raw.anchor, events, `mentions[${index}].anchor`);
-    if (typeof anchor === "string") {
-      return fail(anchor);
-    }
+    // A mention whose anchor does not select quoted text is discarded; any
+    // claim or nomination naming it then fails as an unknown reference.
+    if (typeof anchor === "string") continue;
     mentions.set(raw.id, {
       id: raw.id, label: raw.label, anchor, candidate_refs: []
     });
     mentionInputs.push({ raw, anchor });
     anchorsUsed += 1;
   }
-  for (const [index, entry] of mentionInputs.entries()) {
+  for (const entry of mentionInputs) {
+    // Candidate refs only nominate identity. A nomination that does not name a
+    // request handle or a response mention is discarded, never resolved.
     const candidates: DraftRef[] = [];
     for (const candidate of entry.raw.candidate_refs as unknown[]) {
-      const ref = readRef(candidate, supplied, mentions, `mentions[${index}].candidate_refs`);
-      if (typeof ref === "string") {
-        return fail(`mentions[${index}].candidate_refs is invalid`);
+      const ref = readRef(candidate, supplied, mentions, "candidate");
+      if (typeof ref !== "string" && !candidates.some(known => known.kind === ref.kind && known.id === ref.id)) {
+        candidates.push(ref);
       }
-      candidates.push(ref);
-    }
-    if (new Set(candidates.map(ref => `${ref.kind}:${ref.id}`)).size !== candidates.length) {
-      return fail(`mentions[${index}].candidate_refs has duplicates`);
     }
     referencesUsed += candidates.length;
     mentions.set(entry.raw.id as string, {
@@ -407,7 +452,10 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
   const claims: RichClaimDraft[] = [];
   const dropped: DroppedDraftV2[] = [];
   const ids = new Set<string>();
-  for (const [index, raw] of parsed.claims.entries()) {
+  // Structural faults and caps reject the response. A well-formed claim that
+  // fails its own evidence, reference or value rules is dropped as
+  // invalid_claim; nothing it names is resolved or kept.
+  claims: for (const [index, raw] of parsed.claims.entries()) {
     if (!isPlainObject(raw) || !exactKeys(raw, CLAIM_KEYS) || !isToken(raw.id)) {
       return fail(`claims[${index}] is invalid`);
     }
@@ -415,9 +463,11 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
       return fail(`claims[${index}] has a duplicate local id`);
     }
     ids.add(raw.id);
+    const invalid = () => { dropped.push({ reason: "invalid_claim", id: raw.id as string }); };
     const subject = readRef(raw.subject, supplied, mentions, `claims[${index}].subject`);
     if (typeof subject === "string") {
-      return fail(subject);
+      invalid();
+      continue;
     }
     const confidence = raw.confidence;
     if (!isToken(raw.predicate) ||
@@ -439,7 +489,8 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
       !isRfc3339(raw.valid_from)) ||
       (raw.valid_to !== null &&
       !isRfc3339(raw.valid_to))) {
-      return fail(`claims[${index}] is invalid`);
+      invalid();
+      continue;
     }
     if ((raw.temporal_basis === "explicit" &&
       raw.valid_from === null) ||
@@ -449,15 +500,13 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
       (raw.valid_from !== null &&
       raw.valid_to !== null &&
       compareRfc3339(raw.valid_to, "valid_to", raw.valid_from, "valid_from") <= 0)) {
-      return fail(`claims[${index}] has an invalid interval`);
+      invalid();
+      continue;
     }
-    const anchors = readAnchors(raw.anchors, events, `claims[${index}].anchors`, 1);
-    if (typeof anchors === "string") {
-      return fail(anchors);
-    }
-    anchorsUsed += anchors.length;
-    if (anchorsUsed > MAX_V2_ANCHORS || !hasGrounding([subject], anchors, supplied, mentions)) {
-      return fail(`claims[${index}] has ungrounded endpoints`);
+    const evidence = readAnchors(raw.anchors, events, `claims[${index}].anchors`, 1);
+    if (typeof evidence === "string") {
+      invalid();
+      continue;
     }
     let object: ClaimObjectDraft;
     if (raw.object.kind === "literal" &&
@@ -469,8 +518,9 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
     }
     else if (raw.object.kind === "subject" && exactKeys(raw.object, OBJECT_KEYS.subject)) {
       const ref = readRef(raw.object.ref, supplied, mentions, `claims[${index}].object`);
-      if (typeof ref === "string" || !hasGrounding([ref], anchors, supplied, mentions)) {
-        return fail(`claims[${index}].object is invalid`);
+      if (typeof ref === "string") {
+        invalid();
+        continue;
       }
       object = { kind: "subject", ref };
     }
@@ -484,18 +534,48 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
       object = { kind: "vocabulary", ref: { kind: "vocabulary", id: raw.object.ref.id } };
     }
     else {
-      return fail(`claims[${index}].object is invalid`);
+      invalid();
+      continue;
+    }
+    if (!Array.isArray(raw.context) || raw.context.length > 8) {
+      invalid();
+      continue;
+    }
+    const context: DraftRef[] = [];
+    for (const value of raw.context) {
+      const ref = readRef(value, supplied, mentions, `claims[${index}].context`);
+      if (typeof ref === "string") {
+        invalid();
+        continue claims;
+      }
+      context.push(ref);
+    }
+    if (new Set(context.map(ref => `${ref.kind}:${ref.id}`)).size !== context.length) {
+      invalid();
+      continue;
+    }
+    const endpoints = [subject, ...(object.kind === "subject" ? [object.ref] : []), ...context];
+    const anchors = withMentionAnchors(evidence, endpoints, mentions);
+    if (anchors.length > MAX_V2_ANCHORS_PER_ITEM || !hasGrounding(endpoints, anchors, supplied, mentions)) {
+      invalid();
+      continue;
+    }
+    anchorsUsed += anchors.length;
+    if (anchorsUsed > MAX_V2_ANCHORS) {
+      return fail("response exceeds anchor cap");
     }
     if (!isPlainObject(raw.perspective) ||
       !exactKeys(raw.perspective, PERSPECTIVE_KEYS) ||
       !MODES.has(raw.perspective.mode as AttributedPerspectiveDraft["mode"]) ||
       (raw.perspective.interpretation !== "explicit" &&
       raw.perspective.interpretation !== "inferred")) {
-      return fail(`claims[${index}].perspective is invalid`);
+      invalid();
+      continue;
     }
     const perspectiveAnchors = readAnchors(raw.perspective.anchors, events, `claims[${index}].perspective.anchors`, 0);
     if (typeof perspectiveAnchors === "string") {
-      return fail(perspectiveAnchors);
+      invalid();
+      continue;
     }
     anchorsUsed += perspectiveAnchors.length;
     if (anchorsUsed > MAX_V2_ANCHORS) {
@@ -509,23 +589,10 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
       }
       const ref = readRef(role, supplied, mentions, `claims[${index}].perspective`);
       if (typeof ref === "string" || perspectiveAnchors.length === 0 || !hasGrounding([ref], perspectiveAnchors, supplied, mentions)) {
-        return fail(`claims[${index}].perspective.anchors is insufficient`);
+        invalid();
+        continue claims;
       }
       roles.push(ref);
-    }
-    if (!Array.isArray(raw.context) || raw.context.length > 8) {
-      return fail(`claims[${index}].context is invalid`);
-    }
-    const context: DraftRef[] = [];
-    for (const value of raw.context) {
-      const ref = readRef(value, supplied, mentions, `claims[${index}].context`);
-      if (typeof ref === "string" || !hasGrounding([ref], anchors, supplied, mentions)) {
-        return fail(`claims[${index}].context is ungrounded`);
-      }
-      context.push(ref);
-    }
-    if (new Set(context.map(ref => `${ref.kind}:${ref.id}`)).size !== context.length) {
-      return fail(`claims[${index}].context has duplicates`);
     }
     referencesUsed += 1 + (object.kind === "literal" ? 0 : 1) +
       roles.filter(role => role !== null).length + context.length;
@@ -538,7 +605,8 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
       continue;
     }
     if (!spec.object_kinds.includes(object.kind)) {
-      return fail(`claims[${index}].object is not permitted by its predicate`);
+      invalid();
+      continue;
     }
     claims.push({
       id: raw.id, subject, predicate: raw.predicate, object, perspective: {

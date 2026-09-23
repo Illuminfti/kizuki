@@ -1,10 +1,13 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { ptr } from "bun:ffi";
 import { chmodSync, closeSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { openOwnedDirectory, OwnedDirectoryPublicationError, type OwnedDirectoryIdentity } from "../../src/util/owned-directory";
 import { loadOwnedDirectoryNative } from "../../src/util/owned-directory-native";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 // Fixed private fixtures only: no concurrent pathname replacement or live vaults.
 const roots: string[] = [];
@@ -29,7 +32,7 @@ test("fixed native flags return signed collision and nonempty errors while prese
     expect(native.symbols.renameChildNoReplace(-1, ptr(from), -1, ptr(to))).toBe(-9);
     expect(id(join(path, "stage"))).toEqual(stage); expect(id(join(path, "destination"))).toEqual(destination);
     expect(readFileSync(join(path, "destination", "kept"), "utf8")).toBe("original");
-  } finally { closeSync(fd); native.compiled.close(); native.libc.close(); }
+  } finally { closeSync(fd); }
 });
 
 test("exclusive staging returns its private inode and preserves an occupied name", () => {

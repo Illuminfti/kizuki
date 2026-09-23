@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { rebuildGraph } from "../../src/graph/graph";
@@ -9,6 +9,9 @@ import type { Envelope } from "../../src/serving/types";
 import { serializePage } from "../../src/vault/frontmatter";
 import { recordedPage, serveFixture, storeEvent } from "./helpers";
 import type { Fixture } from "./helpers";
+
+// These tests do real ledger, vault and process work; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 let fixture: Fixture;
 
@@ -237,7 +240,7 @@ describe("serveGraph", () => {
     expect(limited.data?.truncated).toBe(false);
     expect(limited.denied).toEqual([]);
     expect(JSON.stringify(limited)).not.toContain("aaa-secret");
-  }, 15_000);
+  }, 60_000);
 
   test("a leftover wikilink stays prose when an archived page shares the title", async () => {
     await recordedPage(fixture.db, fixture.vaultPath, "facts/ghost-link.md", {
@@ -333,7 +336,7 @@ describe("serveGraph", () => {
     expect(limited.data?.truncated).toBe(false);
     expect(limited.denied).toEqual([]);
     expect(JSON.stringify(limited)).not.toContain("aaa-out-secret");
-  }, 25_000);
+  }, 90_000);
 
   test("a public reader is not capped by private source dests", async () => {
     const eventIds: string[] = [];

@@ -1,4 +1,6 @@
+import { assertWorldCanonSchema } from "../canon/world-schema";
 import type { Database } from "bun:sqlite";
+import { assertWorldSchema } from "../world/schema";
 import { assertAgentEnrollmentSchema } from "../agents/enrollment-schema";
 import { assertSourceSurvivorLineageSchema } from "./canon-source-survivor-lineage";
 import { assertCanonRecoverySchema } from "./canon-recovery-schema";
@@ -138,6 +140,8 @@ export function assertLedgerSchema(db: Database, expectedVersion: number): void 
       `ledger schema version ${version} does not match ${expectedVersion}`,
     );
   }
+  if(expectedVersion>=32) assertWorldSchema(db);
+  if(expectedVersion>=33) assertWorldCanonSchema(db);
   const missing = REQUIRED_TABLES.filter((name) => !tableExists(db, name));
   if (missing.length > 0) {
     throw new LedgerStoreError("corrupt", `ledger schema missing tables: ${missing.join(",")}`);

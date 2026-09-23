@@ -42,6 +42,7 @@ export type {
   ServeIntent,
   StoreDoctor,
   SupervisorKind,
+  SupervisorLastExit,
   SupervisorState,
   SupervisorStatus,
 } from "./types";
@@ -101,7 +102,17 @@ export {
 export type { SupervisorCommandResult, SupervisorHost, SupervisorTimeoutAdapter } from "./supervisor";
 export { FILE_NOTIFIER_ID, briefPath, createFileNotifier } from "./notifier-file";
 export { dueRails, runRail, runServeOnce } from "./rails";
-export type { RailHooks, RailRefreshReport, RailRuntime, RailSyncResult, RunRailOptions } from "./rails";
+export type {
+  RailHooks,
+  RailHooksV2,
+  RailRefreshReport,
+  RailRuntime,
+  RailRuntimeV2,
+  RailSyncResult,
+  RunRailOptions,
+  RunRailOptionsV2,
+} from "./rails";
+export type { ExtractionProducerPort } from "./extract-v2";
 export { runWritePass } from "./write-pass";
 export type { WritePassOptions, WritePassResult } from "./write-pass";
 export {
@@ -121,7 +132,7 @@ export {
   LedgerLeaseHeldError,
   withLeaseHeldRefusal,
 } from "./lease-held";
-export type { ServeDaemonOptions, ServeStatus } from "./daemon";
+export type { ServeDaemonOptions, ServeDaemonOptionsV2, ServeStatus } from "./daemon";
 export { SERVE_SURFACE_ID, createServeSurfacePort } from "./surface";
 export type { ServeSurfaceOptions } from "./surface";
 export { evaluateQualification, QUALIFICATION_WINDOW_MS } from "./qualification";

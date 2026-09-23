@@ -3,8 +3,13 @@
 This synthetic fixture harness exercises the compiled CLI for eight local export
 formats: ICS, Markdown folders, ChatGPT, Claude, X archives, WhatsApp, Pocket and
 Omnivore. It uses serialized files, explicit source consent and separate temporary
-vaults. It neither accesses accounts nor supplies live connector, C3, unfamiliar
-user or release acceptance credit.
+vaults. It accesses no account and supplies no live-account, unfamiliar-user or
+overall release credit. It writes the acceptance receipts for the eight
+`connector.<id>` gates whose C3 evidence class is `file-import`; those gates stay
+`UNVERIFIABLE` until the evaluator can distinguish an executed receipt from an
+authored one (see [release-acceptance.md](release-acceptance.md)). The ninth
+witnessable connector, `kizuki.screenpipe`, has its own
+[local-source proof](screenpipe-proof.md).
 
 Build and prove one package, then run the file-format proof against those bytes:
 
@@ -60,6 +65,25 @@ failure, the private `synthetic-diagnostics.json` contains bounded stdout/stderr
 from these generated inputs only. Temporary vaults and source files are removed.
 The report directory must be new and is never overwritten.
 
-Verification: `bun test scripts/file-import-proof.test.ts` checks the fixture
-inventory and refusal oracles. Actual usability requires running the harness
-against the compiled package; parser tests alone do not establish that result.
+Beside that diagnostic receipt the run writes `connector-evidence/`: one
+`kizuki.connector-evidence/v1` receipt per format, named by the connector id the
+frozen C3 catalogue uses, plus `index.json`. Each receipt declares
+`evidence_class: "file-import"`, names the producer files the evaluator pins, and
+lists the executed steps — capture, idempotent repeat, revoke, the refusal that
+follows it, and physical purge with its receipted status. A format whose cases
+did not all pass keeps its receipt with `acceptance_credit: false`, which the
+evaluator refuses outright rather than skipping. A run-level integrity failure —
+the artifact package or its proof changing under the observation, the checkout
+going dirty, a fixture source rewritten mid-run — withholds credit from every
+format and names itself per format in `unresolved`, so the acceptance surface
+cannot be more optimistic than `receipt.json`'s own verdict. A format the harness
+never reached emits no receipt and names its blocker in `index.json`'s `unresolved`.
+The evaluator's receipt schema is closed, so the observed row counts and the
+honest limits each importer's own behaviour showed are recorded in `index.json`
+beside the receipts rather than in them. A live-account connector id is refused
+by the producer: a file import cannot stand in for an account.
+
+Verification: `bun test scripts/file-import-proof.test.ts scripts/connector-evidence.test.ts`
+checks the fixture inventory, the refusal oracles and the promotion path. Actual
+usability requires running the harness against the compiled package; parser tests
+alone do not establish that result.

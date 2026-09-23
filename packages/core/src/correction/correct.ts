@@ -1,3 +1,5 @@
+import { worldClaimHandle, worldCanonPath } from "../canon/world-materialization";
+import { semanticKey } from "../claims/claim-v2-keys";
 import type { Database } from "bun:sqlite";
 import { assertStoredPageRelPath } from "../canon/paths";
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
@@ -11,7 +13,9 @@ import { BudgetExhausted, createBudgetTracker } from "../canon/budget";
 import { CanonWriteError } from "../canon/errors";
 import type { CanonIo } from "../canon";
 import { getCanonReceipt } from "../canon/receipts";
-import { getClaim, insertClaim, listClaims, supersedeLiveGroup } from "../claims/store";
+import { getClaim, insertClaim, prepareClaimInsert, retryRetrievalOps, listClaims, supersedeLiveGroup, supersedeExactWorldClaim } from "../claims/store";
+import { readClaimV2Semantic } from "../claims/claim-v2-commit";
+import { CLAIM_V2_SCHEMA } from "../contracts/claim-v2";
 import type { Claim, FrontmatterValue, Producer } from "../contracts/proposal";
 import { recordNativeCorrection } from "./evidence";
 import { requireSourceEvents } from "../ledger/source-grants";
@@ -154,6 +158,12 @@ function portableFrontmatter(live: Claim): Record<string, FrontmatterValue> {
 }
 
 function pagePathForClaim(db: Database, claim: Claim): string | null {
+  if (db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1").get(claim.claim_id) !== null) {
+    const handle=worldClaimHandle(db,claim.claim_id);
+    if(handle===null)return null;
+    const path=worldCanonPath(handle);
+    return db.query("SELECT 1 FROM page_index WHERE rel_path=?").get(path)===null?null:path;
+  }
   if (claim.receipt_id === null) return null;
   if (!tableExists(db, "canon_receipts")) return null;
   const path = (
@@ -271,7 +281,7 @@ function reconstruct(
       {
         claim_id: claim.claim_id,
         claim_key: claim.claim_key,
-        was: claim.object ?? claim.body,
+        was: answerTerms(io.db, claim).value,
         page_path: pagePathForClaim(io.db, claim),
       },
     ];
@@ -303,7 +313,7 @@ function reconstruct(
     superseded,
     rewritten,
     ambiguous: [],
-    answer: formatAnswer(winner, superseded, rewritten, rewritten.length === 0 ? null : winner.receipt_id, 0, pending.length === 0 ? undefined : pending),
+    answer: formatAnswer({ label: answerTerms(io.db, winner).label, now: answerTerms(io.db, winner).value }, superseded, rewritten, rewritten.length === 0 ? null : winner.receipt_id, 0, pending.length === 0 ? undefined : pending),
   };
 }
 
@@ -332,22 +342,26 @@ function replayRecordedCorrection(io: CorrectIo, input: CorrectInput): CorrectRe
   return replay;
 }
 
+/** A typed claim keeps its meaning in its semantic payload; its legacy columns are empty. */
+function answerTerms(db: Database, claim: Claim): { readonly label: string; readonly value: string } {
+  const semantic = readClaimV2Semantic(db, claim.claim_id);
+  if (semantic !== null && semantic.discriminator === "assertion" && semantic.object.kind === "literal") {
+    return { label: semantic.predicate, value: semantic.object.value };
+  }
+  return { label: `${claim.subject ?? "subject"} ${claim.predicate ?? "claim"}`, value: claim.object ?? claim.body };
+}
+
 function formatAnswer(
-  winner: Claim,
+  terms: { readonly label: string; readonly now: string },
   superseded: CorrectResult["superseded"],
   rewritten: CorrectResult["rewritten"],
   receiptId: string | null,
   remainder: number,
   pending?: CorrectResult['recovery_pending'],
+  preview = false,
 ): string {
   const was = superseded[0]?.was;
-  const now = winner.object ?? winner.body;
-  const subject = winner.subject ?? "subject";
-  const predicate = winner.predicate ?? "claim";
-  const head =
-    was === undefined
-      ? `Corrected: ${subject} ${predicate} is ${now}.`
-      : `Corrected: ${subject} ${predicate} is ${now} (was: ${was}).`;
+  const head = `${preview ? "Would correct" : "Corrected"}: ${terms.label} is ${terms.now}${was === undefined ? "" : ` (was: ${was})`}.`;
   const pages = rewritten.map((row) => row.page_path).join(", ");
   const undoIds = [
     ...new Set(
@@ -364,13 +378,25 @@ function formatAnswer(
     remainder > 0
       ? `\n${remainder} more page(s) not rewritten in this pass.`
       : "";
+  const claims = `${superseded.length} claim${superseded.length === 1 ? "" : "s"}`;
   return [
     head,
-    `Superseded ${superseded.length} claim${superseded.length === 1 ? "" : "s"}.`,
-    pages.length > 0 ? `Rewrote ${pages}.` : pending !== undefined ? "Canon completion is unconfirmed." : "No canon pages rewritten.",
+    preview ? `Would supersede ${claims}.` : `Superseded ${claims}.`,
+    pages.length > 0 ? `${preview ? "Would rewrite" : "Rewrote"} ${pages}.` : pending !== undefined ? "Canon completion is unconfirmed." : preview ? "No canon pages would be rewritten." : "No canon pages rewritten.",
   ]
     .join("\n")
     .concat(extra, pending !== undefined ? "\nCanon recovery is pending. Run kizuki recover --json; unknown external operations require inspection before another change." : "", undo);
+}
+
+function correctionMeaning(io:CorrectIo,live:Claim) {
+  const prior=readClaimV2Semantic(io.db,live.claim_id);
+  if(prior===null) return null;
+  if(prior.schema!=="kizuki.claim-meaning/v1" || prior.discriminator!=="assertion" || prior.object.kind!=="literal" ||
+    (prior.subject.kind!=="occurrence" && !("namespace" in prior.subject)) || prior.context.length!==0 || prior.polarity!=="positive" ||
+    prior.perspective.holder!==null || prior.perspective.speaker!==null || prior.perspective.addressee!==null ||
+    prior.perspective.mode!=="asserted" || prior.perspective.interpretation!=="explicit" || io.relay_owner_corrections===false)
+    throw new CorrectError("ledger_rejected","typed correction requires a plain qualified-subject literal assertion");
+  return prior;
 }
 
 function acceptOwnerEvent(
@@ -379,6 +405,8 @@ function acceptOwnerEvent(
   live: Claim,
   at: string,
 ): { event_id: string; duplicate: boolean } {
+  const prior=correctionMeaning(io,live);
+  if(prior!==null && (input.statement.length>400 || Buffer.byteLength(input.statement,"utf8")>1200)) throw new CorrectError("ledger_rejected","typed literal correction must fit 400 characters and 1200 UTF-8 bytes");
   const sourceId = sourceRecordId(input.statement, input.target);
   const existing = findOwnerEvent(io.db, sourceId);
   const event: CaptureEventInput = {
@@ -389,7 +417,7 @@ function acceptOwnerEvent(
     occurred_at: at,
     observed_at: at,
     text: input.statement,
-    subjects: ownerSubjects(input.target, live),
+    subjects: prior===null ? ownerSubjects(input.target, live) : [{subject_id:prior.subject.id,role:"about"}],
     sensitivity_hint: "private",
     deleted: false,
     attachments: [],
@@ -397,6 +425,7 @@ function acceptOwnerEvent(
       taint: "owner",
       origin: "external",
       target: input.target ?? {},
+      ...(prior===null ? {} : {world_target:{claim_id:live.claim_id,semantic_key:semanticKey(prior),subject:prior.subject,predicate:prior.predicate}}),
     },
   };
   if (input.dry_run === true) {
@@ -418,7 +447,18 @@ async function insertCorrection(
   const producer: Producer = io.producer ?? "owner";
   const relay = io.relay_owner_corrections !== false;
   const intent = relay ? ("correct" as const) : ("propose" as const);
-  const result = await insertClaim(
+  const priorSemantic = correctionMeaning(io,live);
+  const typedSemantic = priorSemantic === null ? undefined : {
+    ...priorSemantic,
+    schema: CLAIM_V2_SCHEMA,
+    object: { kind: "literal" as const, value: input.statement },
+    perspective: { ...priorSemantic.perspective, anchors: [] },
+    valid_from: at,
+    valid_to: null,
+    temporal_basis: "observed" as const,
+    anchors: [{ event_id: eventId, start_utf16: 0, end_utf16: input.statement.length }],
+  };
+  const prepared = await prepareClaimInsert(
     { db: io.db, now: () => at, ...(io.retrieval === undefined ? {} : { retrieval: io.retrieval }) },
     {
       kind: live.kind === "entity" ? "entity" : "claim",
@@ -429,8 +469,8 @@ async function insertCorrection(
       polarity: parsed.polarity,
       body: input.statement,
       frontmatter: portableFrontmatter(live),
-      provenance: [...new Set([eventId, ...provenance])],
-      subjects: live.subject !== null ? [live.subject] : [],
+      provenance: typedSemantic === undefined ? [...new Set([eventId, ...provenance])] : [eventId],
+      subjects: typedSemantic === undefined && live.subject !== null ? [live.subject] : [],
       producer,
       confidence: 1,
       sensitivity: live.sensitivity,
@@ -446,8 +486,27 @@ async function insertCorrection(
           text: input.statement,
         },
       ],
+      ...(typedSemantic === undefined ? {} : {
+        semantic: typedSemantic,
+        world_admission: {
+          schema: "kizuki.world-admission/v1" as const,
+          semantic: typedSemantic,
+          rendering: { body: input.statement, frontmatter: portableFrontmatter(live) },
+          authority: "owner_correction" as const,
+          confidence: 1,
+          epistemicKind: "owner_assertion" as const,
+        },
+      }),
     },
   );
+  const result=io.db.transaction(()=>{
+    const inserted=prepared.apply();
+    if(typedSemantic!==undefined && (inserted.outcome==="stored" || inserted.outcome==="duplicate")) {
+      supersedeExactWorldClaim(io, inserted.claim, live.claim_id, at);
+    }
+    return inserted;
+  }).immediate();
+  await retryRetrievalOps({db:io.db,...(io.retrieval===undefined?{}:{retrieval:io.retrieval})});
   if (
     result.outcome === "skipped" ||
     (result.outcome === "duplicate" && result.claim.status === "skipped")
@@ -466,6 +525,11 @@ interface AffectedPage {
 }
 
 function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPage[] {
+  if(io.db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1").get(winner.claim_id)!==null) {
+    const path=pagePathForClaim(io.db,winner);if(path===null)return [];
+    const page=readVaultPage(io,path),id=page?.data["id"];
+    return typeof id==="string"?[{page_id:id,rel_path:path,relevance:1}]:[];
+  }
   const seen = new Map<string, AffectedPage>();
   const add = (pageId: string, relPath: string, relevance: number): void => {
     if (activePagePath(relPath) === null) return;
@@ -550,12 +614,7 @@ function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPa
  */
 export async function correct(io: CorrectIo, input: CorrectInput): Promise<CorrectResult> {
   io = snapshotCorrectIo(io);
-  const { statement, target, scope, dry_run } = input;
-  input = Object.freeze({ statement,
-    ...(target === undefined ? {} : { target: Object.freeze({ ...target }) }),
-    ...(scope === undefined ? {} : { scope: Object.freeze({ ...scope }) }),
-    ...(dry_run === undefined ? {} : { dry_run }),
-  });
+  input = captureCorrectInput(input);
   try {
     return await withCanonMutationAsync(io, (owner, owned) => correctOwned(owner, owned, input));
   } catch (error) {
@@ -564,6 +623,24 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
     }
     throw error;
   }
+}
+
+/** Runs the same correction writer under an already-held canon mutation. */
+export async function correctWithinMutation(
+  scope: VaultMutationScope,
+  io: CorrectIo,
+  input: CorrectInput,
+): Promise<CorrectResult> {
+  return correctOwned(scope, io, captureCorrectInput(input));
+}
+
+function captureCorrectInput(input: CorrectInput): CorrectInput {
+  const { statement, target, scope, dry_run } = input;
+  return Object.freeze({ statement,
+    ...(target === undefined ? {} : { target: Object.freeze({ ...target }) }),
+    ...(scope === undefined ? {} : { scope: Object.freeze({ ...scope }) }),
+    ...(dry_run === undefined ? {} : { dry_run }),
+  });
 }
 
 async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: CorrectInput): Promise<CorrectResult> {
@@ -597,7 +674,7 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
     const superseded = group.map((claim) => ({
       claim_id: claim.claim_id,
       claim_key: claim.claim_key ?? "",
-      was: claim.object ?? claim.body,
+      was: answerTerms(io.db, claim).value,
       page_path: pagePathForClaim(io.db, claim),
     }));
     const previewPages = affectedPages(io, group, seed).slice(0, CORRECTION_MAX_PAGES);
@@ -623,11 +700,14 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
       rewritten,
       ambiguous: [],
       answer: formatAnswer(
-        { ...seed, object: parsed.object, body: input.statement },
+        // A typed correction records the owner's literal statement; a legacy one its parsed object.
+        { label: answerTerms(io.db, seed).label, now: readClaimV2Semantic(io.db, seed.claim_id) === null ? parsed.object ?? input.statement : input.statement },
         superseded,
         rewritten,
         null,
         Math.max(0, affectedPages(io, group, seed).length - CORRECTION_MAX_PAGES),
+        undefined,
+        true,
       ),
     };
   }
@@ -646,7 +726,7 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
         {
           claim_id: claim.claim_id,
           claim_key: claim.claim_key ?? winner.claim_key ?? "",
-          was: claim.object ?? claim.body,
+          was: answerTerms(io.db, claim).value,
           page_path: pagePathForClaim(io.db, claim),
         },
       ];
@@ -710,10 +790,11 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
     }
     const stored = getClaim(io.db, claim.claim_id);
     if (stored === null || stored.receipt_id !== null) continue;
-    const decision = resolveTarget(canon, stored);
+    const typed = io.db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1").get(stored.claim_id)!==null;
+    const decision = typed ? {action:"edit" as const,page_id:page.page_id,rel_path:page.rel_path,reason:"explicit" as const} : resolveTarget(canon, stored);
     if (decision.action === "skip") continue;
     const writeDecision =
-      decision.action === "create"
+      typed || decision.action === "create"
         ? decision
         : {
             action: "supersede" as const,
@@ -763,6 +844,6 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
     rewritten,
     ambiguous: [],
     ...(recoveryPending === undefined ? {} : { recovery_pending: recoveryPending }),
-    answer: formatAnswer(winner, superseded, rewritten, receiptId, remainder, recoveryPending),
+    answer: formatAnswer({ label: answerTerms(io.db, winner).label, now: answerTerms(io.db, winner).value }, superseded, rewritten, receiptId, remainder, recoveryPending),
   };
 }

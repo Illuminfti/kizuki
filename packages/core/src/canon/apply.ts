@@ -1,11 +1,16 @@
+import { completedEventPurgeProofs } from "../ledger/purge";
+import { canonicalJson, sha256Hex } from "../util/hash";
+import { worldBasisMetadata, selectWorldMaterialization, worldClaimHandle, worldCanonPath, assertWorldBasis } from "./world-materialization";
+import { eraseWorldReceipt, isWorldCanonReceipt, type RetainedWorldCanonReceipt, type WorldCanonBasis } from "./world-receipt";
+import { isErasedReceipt, rowToReceiptRecord, type CanonReceiptRow, latestWorldReceiptRecord } from "./receipts";
 import { stageSourceErasureIntent, readSourceErasureIntent, appendSourceErasureReceipt, isLiveSourceSurvivorPath, isLiveSourceSurvivorReceipt, type SourceErasureIntent } from "./source-erasure-intent";
 import {
   getSourceSurvivorLineage,
   insertSourceSurvivorLineage,
 } from "../ledger/canon-source-survivor-lineage";
 import { parseFrontmatter, serializePage } from "../vault/frontmatter";
-import { commitCanonWrite } from "./recovery";
-import { assertCanonAdmission, canonPageRecoveryPending, decodeCanonImage, readCanonWriteIntent, recoveryFailure, type CanonWriteIntent } from "./write-intent";
+import { commitWorldCanonErasure, commitCanonWrite } from "./recovery";
+import { worldErasureFinalReceipt, assertCanonAdmission, canonPageRecoveryPending, decodeCanonImage, readCanonWriteIntent, recoveryFailure, type WorldCanonErasureIntent, type CanonWriteIntent } from "./write-intent";
 import { archiveRelPath, hashBytes, ABSENT_PAGE_HASH } from "../vault/write";
 import { requireSourceEvents, sourceSensitivity } from "../ledger/source-grants";
 import { commitMachineByteIntent, requireExternalEvents } from "../ledger/event-origin";
@@ -116,7 +121,7 @@ function composeBody(claims: readonly Claim[]): string {
   return `${bodies.join(separator)}\n`;
 }
 
-function assertBatch(claims: readonly Claim[]): Claim {
+function assertBatch(claims: readonly Claim[], typed = false): Claim {
   const primary = claims[0];
   if (primary === undefined) {
     throw new CanonWriteError("nothing_to_write", "a canon write needs at least one claim");
@@ -128,13 +133,13 @@ function assertBatch(claims: readonly Claim[]): Claim {
     );
   }
   for (const claim of claims) {
-    if (claim.producer !== primary.producer || claim.model_ref !== primary.model_ref) {
+    if (!typed && (claim.producer !== primary.producer || claim.model_ref !== primary.model_ref)) {
       throw new CanonWriteError("batch_mismatch", "one write, one producer and model reference");
     }
-    if (claim.target !== primary.target && (claim.subject === null || claim.subject !== primary.subject)) {
+    if (!typed && claim.target !== primary.target && (claim.subject === null || claim.subject !== primary.subject)) {
       throw new CanonWriteError("batch_mismatch", "every claim in a write shares the target or the subject");
     }
-    if (claim.kind !== primary.kind) {
+    if (!typed && claim.kind !== primary.kind) {
       throw new CanonWriteError("batch_mismatch", "every claim in a write shares one kind");
     }
     for (const reserved of RESERVED_KEYS) {
@@ -191,7 +196,7 @@ function claimContent(claim: Claim): Omit<Claim,
   return content;
 }
 
-function persistedClaims(io: CanonIo, claims: readonly Claim[]): Claim[] {
+function persistedClaims(io: CanonIo, claims: readonly Claim[], allowWritten = false): Claim[] {
   return claims.map((claim) => {
     const stored = getClaim(io.db, claim.claim_id);
     if (stored === null) {
@@ -203,7 +208,7 @@ function persistedClaims(io: CanonIo, claims: readonly Claim[]): Claim[] {
     if (stored.status !== "live") {
       throw new CanonWriteError("claim_not_live", `claim ${claim.claim_id} is ${stored.status}`);
     }
-    if (stored.receipt_id !== null) {
+    if (!allowWritten && stored.receipt_id !== null) {
       throw new CanonWriteError("decision_stale", `claim ${claim.claim_id} was already written`);
     }
     return stored;
@@ -419,11 +424,21 @@ export function applyCanonWriteOwned(
   }
   if (readCanonWriteIntent(io.db) !== null) recoveryFailure("recovery_pending");
   const supplied: Claim[] = Array.isArray(claim) ? [...(claim as readonly Claim[])] : [claim as Claim];
-  assertBatch(supplied);
   const target = targetOf(decision);
   if (canonPageRecoveryPending(io.db, target.rel_path)) recoveryFailure("projection_pending");
-  const claims = persistedClaims(io, supplied);
-  const primary = assertBatch(claims);
+  const typedFlags = supplied.map(item => io.db.query<{is_world_typed:number},[string]>("SELECT is_world_typed FROM claims WHERE claim_id=?").get(item.claim_id)?.is_world_typed === 1);
+  const typed = typedFlags.some(Boolean);
+  if (typed && !typedFlags.every(Boolean)) throw new CanonWriteError("batch_mismatch", "typed and legacy claims require separate writes");
+  assertBatch(supplied, typed);
+  const persisted = persistedClaims(io, supplied, typed);
+  const primary = assertBatch(persisted, typed);
+  let claims: readonly Claim[] = persisted;
+  const handle = typed ? worldClaimHandle(io.db, primary.claim_id) : null;
+  const materialization = handle === null ? null : selectWorldMaterialization(io.db, handle);
+  if (typed) {
+    if (handle === null || materialization === null || target.rel_path !== worldCanonPath(handle) || persisted.some(item => worldClaimHandle(io.db,item.claim_id) !== handle || !materialization.basis.some(basis => basis.claim_id === item.claim_id))) throw new CanonWriteError("decision_stale", "typed canon requires its exact admitted world handle");
+    claims = materialization.claims;
+  }
   // Historical rows remain readable, but only the dedicated purge pipeline can rewrite holds.
   if (primary.kind === "purge_review") {
     throw new CanonWriteError("claim_kind_retired", "purge_review cannot authorize an ordinary canon write");
@@ -433,7 +448,18 @@ export function applyCanonWriteOwned(
   const pageId = target.page_id ?? mintId(io);
   const receiptId = mintId(io);
   initCanon(io.db);
-  const provenance = union(claims.map((item) => item.provenance));
+  const ownedClaims=typed?claims.filter(item=>item.receipt_id===null):persisted;
+  const outputProvenance = union(claims.map((item) => item.provenance));
+  const provenance = typed ? union([outputProvenance, ...(existing === null ? [] : [existingSources(existing.page)])]) : outputProvenance;
+  let worldBasis: WorldCanonBasis | null = null;
+  let worldPriorId: string | null = null;
+  if (typed && materialization !== null) {
+    const previous = latestWorldReceiptRecord(io.db,target.rel_path);
+    worldPriorId = previous?.receipt_id ?? null;
+    if (existing !== null && (previous === null || isErasedReceipt(previous) || !isWorldCanonReceipt(previous) || previous.after_hash !== existing.hash)) throw new CanonWriteError("decision_stale", "typed canon predecessor is not recorded");
+    worldBasis = {schema:"kizuki.world-canon-basis/v1",before:previous !== null && !isErasedReceipt(previous) && isWorldCanonReceipt(previous) ? previous.basis.after : null,after:materialization.basis};
+    assertWorldBasis(io.db,worldBasis.before,true);assertWorldBasis(io.db,worldBasis.after);
+  }
   assertProvenance(io, provenance);
 
   if (decision.action === "create" && existing !== null) {
@@ -449,7 +475,9 @@ export function applyCanonWriteOwned(
   }
 
   const prepared =
-    existing === null
+    typed && materialization !== null
+      ? {...prepareCreate(materialization.claims.map(item => ({...item,frontmatter:{type:materialization.pageType,title:materialization.title}})), pageId, outputProvenance, false), action: existing === null ? "create" as const : "edit" as const}
+      : existing === null
       ? prepareCreate(claims, pageId, provenance, decision.action === "conflict")
       : prepareRevision(io, claims, primary, existing, decision, provenance);
   const invalid = validatePage(prepared.page.data);
@@ -457,8 +485,9 @@ export function applyCanonWriteOwned(
     throw new CanonWriteError("frontmatter_invalid", invalid[0] ?? "invalid page");
   }
   requireSourceEvents(io.db, Array.isArray(prepared.page.data["sources"]) ? prepared.page.data["sources"].filter((id): id is string => typeof id === "string") : [], { owner: true, purpose: "derive" });
-  if (prepared.page.data["sensitivity"] === "public" || prepared.page.data["sensitivity"] === "personal" || prepared.page.data["sensitivity"] === "private") prepared.page.data["sensitivity"] = sourceSensitivity(io.db, provenance, prepared.page.data["sensitivity"]);
-  const superseded = supersededRefs(io, decision);
+  prepared.sensitivity = sourceSensitivity(io.db, provenance, prepared.sensitivity);
+  prepared.page.data["sensitivity"] = prepared.sensitivity;
+  const superseded = typed ? io.db.query<{claim_id:string;claim_key:string},[string]>("SELECT s.loser AS claim_id,m.semantic_key AS claim_key FROM claim_supersessions s JOIN claim_v2_semantics m ON m.claim_id=s.loser WHERE s.winner IN (SELECT value FROM json_each(?)) ORDER BY s.loser").all(JSON.stringify(ownedClaims.map(item=>item.claim_id))) : supersededRefs(io, decision);
   const retrievalOps: RetrievalOpRef[] =
     io.retrieval_store === undefined
       ? []
@@ -466,7 +495,17 @@ export function applyCanonWriteOwned(
 
   const expectedAfter = hashBytes(Buffer.from(serializePage(prepared.page)));
   const admit = (): void => {
-    persistedClaims(io, claims);
+    persistedClaims(io, persisted, typed);
+    if (worldBasis !== null) {
+      const current = latestWorldReceiptRecord(io.db, target.rel_path);
+      if ((current?.receipt_id ?? null) !== worldPriorId ||
+        (current === null || isErasedReceipt(current)
+          ? existing !== null || worldBasis.before !== null
+          : !isWorldCanonReceipt(current) || current.after_hash !== (existing?.hash ?? ABSENT_PAGE_HASH) || canonicalJson(current.basis.after) !== canonicalJson(worldBasis.before))) {
+        throw new CanonWriteError("decision_stale", "typed canon predecessor changed before byte admission");
+      }
+      assertWorldBasis(io.db,worldBasis.before,true);assertWorldBasis(io.db,worldBasis.after);
+    }
     assertProvenance(io, provenance);
     requireSourceEvents(io.db, existingSources(prepared.page), { owner: true, purpose: "derive" });
     if (sourceSensitivity(io.db, provenance, prepared.sensitivity) !== prepared.page.data["sensitivity"]) {
@@ -482,23 +521,24 @@ export function applyCanonWriteOwned(
         throw new SourceTombstoneError("source_tombstone_stale");
       }
     }
-    if (!sourceDeletion) requireExternalEvents(io.db, union([provenance, existingSources(prepared.page)]));
+    if (!sourceDeletion && !typed) requireExternalEvents(io.db, union([provenance, existingSources(prepared.page)]));
     if (existing !== null && new CanonAuthorityResolver(io.db, [target.rel_path]).basis(target.rel_path, existing.hash) === null) recoveryFailure("historical_orphan");
   };
+  const typedMetadata=worldBasis===null?null:worldBasisMetadata(io.db,worldBasis.after);
   const receipt: CanonReceipt = {
     receipt_id: receiptId,
     kind: "write",
-    claim_ids: claims.map((item) => item.claim_id),
+    claim_ids: ownedClaims.map((item) => item.claim_id),
     page_path: target.rel_path,
     page_action: prepared.action,
     before_hash: existing?.hash ?? null,
     after_hash: expectedAfter,
     archive_path: existing === null ? null : archiveRelPath(target.rel_path, receiptId),
     writer: opts.writer,
-    producer: primary.producer,
-    model_ref: primary.model_ref,
-    authority: lowestAuthority(claims),
-    confidence: meanConfidence(claims),
+    producer: typed ? "deterministic" : primary.producer,
+    model_ref: typed ? null : primary.model_ref,
+    authority: typedMetadata?.authority??lowestAuthority(claims),
+    confidence: typedMetadata?.confidence??meanConfidence(claims),
     sensitivity: prepared.sensitivity,
     taint: prepared.taint,
     provenance,
@@ -508,6 +548,7 @@ export function applyCanonWriteOwned(
     reverts: null,
     reverted_by: null,
     at: nowOf(io),
+    ...(worldBasis === null ? {} : {schema:"kizuki.canon-receipt/v2",state:"retained",own_id_origin:"core",prior_receipt_id:worldPriorId,basis:worldBasis}),
   };
 
   const priorSubject = existing?.page.data["x-subject-id"];
@@ -601,6 +642,8 @@ export function applyPurgeRewrite(
     }
     throw error;
   }
+  const typedErasure=applyWorldPurgeRewrite(scope,io,input,existing);
+  if(typedErasure!==null)return typedErasure;
   if (existing === null) {
     throw new CanonWriteError("page_missing", `page ${input.rel_path} is gone`);
   }
@@ -752,6 +795,57 @@ export function applyPurgeRewrite(
   }, () => requireSourceEvents(io.db, existingSources(next).map(eventIdFromReference), { owner: true, purpose: "derive" }));
 }
 
+/** Rebuild typed pages from independent admitted support; erase both receipt images on source loss. */
+function applyWorldPurgeRewrite(scope:VaultMutationScope,io:CanonIo,input:PurgeRewriteInput,existing:ExistingPage|null):CanonReceipt|null {
+  const rows=io.db.query<CanonReceiptRow,[string]>("SELECT * FROM canon_receipts WHERE page_path=? AND record_codec='kizuki.canon-receipt/v2' ORDER BY receipt_id LIMIT 8193").all(input.rel_path);
+  if(rows.length===0)return null;
+  if(rows.length>8192)throw new CanonWriteError("batch_too_large","typed canon history exceeds erasure bound");
+  const records=rows.map(rowToReceiptRecord);
+  if(records.some(record=>isErasedReceipt(record)||!isWorldCanonReceipt(record)))throw new CanonWriteError("decision_stale","typed canon history is not retained");
+  const retained=records as RetainedWorldCanonReceipt[];
+  const latest=latestWorldReceiptRecord(io.db,input.rel_path);
+  if(latest===null||(isErasedReceipt(latest)?existing!==null:latest.after_hash!==(existing?.hash??ABSENT_PAGE_HASH)))throw new CanonWriteError("decision_stale","typed canon preimage has no current receipt");
+  const match=/^auto\/world\/([0-9a-f]{32})\.md$/.exec(input.rel_path);
+  const proof=completedEventPurgeProofs(io.db,input.purged_event_ids.map(eventIdFromReference));
+  if(match===null||proof===null||proof.length===0)throw new CanonWriteError("decision_stale","typed erasure requires completed event purge proofs");
+  const purged=new Set(proof.map(item=>item.event_id));
+  const affected=retained.filter(record=>record.provenance.some(id=>purged.has(eventIdFromReference(id))));
+  if(affected.length===0)throw new CanonWriteError("decision_stale","typed erasure lacks attributed receipts");
+  const materialization=existing===null?null:selectWorldMaterialization(io.db,match[1]!);
+  const claims=materialization?.claims??[],sources=union(claims.map(claim=>claim.provenance));
+  const pageId=existing?.page.data["id"]??null;
+  if(existing!==null&&(typeof pageId!=="string"||pageId.length===0))throw new CanonWriteError("decision_stale","typed canon identity missing");
+  const prepared=materialization===null?null:prepareCreate(claims.map(claim=>({...claim,frontmatter:{type:materialization.pageType,title:materialization.title}})),pageId as string,sources,false);
+  if(prepared!==null) {
+    prepared.sensitivity=sourceSensitivity(io.db,sources,prepared.sensitivity);
+    prepared.page.data["sensitivity"]=prepared.sensitivity;
+    requireSourceEvents(io.db,sources,{owner:true,purpose:"derive"});
+  }
+  const after=prepared===null?null:Buffer.from(serializePage(prepared.page));
+  const at=nowOf(io),purgeReceiptId=proof[0]!.purge_receipt_id;
+  const typedMetadata=worldBasisMetadata(io.db,materialization?.basis??null);
+  const receipt:RetainedWorldCanonReceipt={
+    schema:"kizuki.canon-receipt/v2",state:"retained",own_id_origin:"core",prior_receipt_id:latest.receipt_id,
+    basis:{schema:"kizuki.world-canon-basis/v1",before:isErasedReceipt(latest)?null:latest.basis.after,after:materialization?.basis??null},
+    receipt_id:mintId(io),kind:"purge_rewrite",claim_ids:claims.map(claim=>claim.claim_id),page_path:input.rel_path,page_action:after===null?"archive":"edit",
+    before_hash:existing?.hash??ABSENT_PAGE_HASH,after_hash:after===null?ABSENT_PAGE_HASH:hashBytes(after),archive_path:null,writer:"loop",producer:"deterministic",model_ref:null,
+    authority:typedMetadata?.authority??"owner_correction",
+    confidence:typedMetadata?.confidence??1,sensitivity:prepared?.sensitivity??"private",taint:prepared?.taint??"clean",provenance:sources,
+    superseded:[],candidates:[],retrieval_ops:[],reverts:null,reverted_by:null,at,
+  };
+  const archives=new Map<string,string>();
+  for(const record of affected)if(record.archive_path!==null&&record.before_hash!==null) {
+    const prior=archives.get(record.archive_path);if(prior!==undefined&&prior!==record.before_hash)throw new CanonWriteError("decision_stale","typed archive has conflicting receipts");
+    archives.set(record.archive_path,record.before_hash);
+  }
+  return commitWorldCanonErasure(scope,io,{receipt,after,
+    completion:{mode:"purge",claim_kind:"purge_review",page_id:typeof pageId==="string"?pageId:null,subject_key:null,original_receipt_id:null},
+    erasure:{proofs:proof,redactions:affected.map(record=>eraseWorldReceipt(record.receipt_id,purgeReceiptId,at,record.prior_receipt_id)),
+      receipt_guards:affected.map(record=>({receipt_id:record.receipt_id,digest:sha256Hex(JSON.stringify(record))})),
+      archives:[...archives].map(([path,hash])=>({path,hash})),final_receipt:worldErasureFinalReceipt(receipt,purgeReceiptId)},
+  });
+}
+
 function finishSourceErasure(scope: VaultMutationScope, io: CanonIo, intent: SourceErasureIntent, page: VaultPage | null): void {
     assertVaultMutationScope(scope, io);
     const receipt = intent.receipt;
@@ -890,6 +984,11 @@ export function publishOrdinaryCanonIntent(scope: VaultMutationScope, io: CanonI
   if (!io.db.inTransaction || JSON.stringify(readCanonWriteIntent(io.db)) !== JSON.stringify(intent)) recoveryFailure("intent_invalid");
   assertCanonAdmission(io.db, intent);
   const before = decodeCanonImage(intent.before_base64), after = decodeCanonImage(intent.after_base64);
+  if(intent.version===3) {
+    publishWorldErasureImage(scope,io,intent,intent.receipt.page_path,intent.receipt.before_hash!,after);
+    for(const archive of intent.erasure.archives)publishWorldErasureImage(scope,io,intent,archive.path,archive.hash,null);
+    return;
+  }
   const cap = grantCanonWrite(intent.receipt.writer, intent.receipt.receipt_id, io.vault_path, files);
   const path = join(io.vault_path, intent.receipt.page_path);
   const page = after === null ? { data: {}, body: "" } : parseFrontmatter(after.toString("utf8"));
@@ -899,4 +998,17 @@ export function publishOrdinaryCanonIntent(scope: VaultMutationScope, io: CanonI
       ? writePage(cap, path, page, { recovery: true })
       : writePage(cap, path, page, { revision: true, expected_hash: hashBytes(before), recovery: true });
   if (outcome.after_hash !== intent.receipt.after_hash || outcome.archive_path !== intent.receipt.archive_path) recoveryFailure("page_changed", intent.receipt.receipt_id);
+}
+
+function publishWorldErasureImage(scope:VaultMutationScope,io:CanonIo,intent:WorldCanonErasureIntent,path:string,beforeHash:string,after:Buffer|null):void {
+  const files=requireCanonFiles(scope,io),current=files.read(path);
+  let actualHash=ABSENT_PAGE_HASH;
+  try{if(current!==null)actualHash=hashBytes(current.bytes);}finally{current?.close();}
+  const afterHash=after===null?ABSENT_PAGE_HASH:hashBytes(after);
+  if(actualHash===afterHash)return;
+  if(actualHash!==beforeHash)recoveryFailure(path===intent.receipt.page_path?"page_changed":"archive_changed",intent.receipt.receipt_id);
+  const cap=grantCanonWrite("loop",intent.receipt.receipt_id,io.vault_path,files);
+  const page=after===null?{data:{},body:""}:parseFrontmatter(after.toString("utf8"));
+  const outcome=writePage(cap,join(io.vault_path,path),page,{revision:true,expected_hash:actualHash,erase_prior:true,delete:after===null,recovery:true});
+  if(outcome.after_hash!==afterHash||outcome.archive_path!==null)recoveryFailure("page_changed",intent.receipt.receipt_id);
 }

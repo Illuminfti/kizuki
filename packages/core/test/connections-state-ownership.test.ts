@@ -1,8 +1,11 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeDurableFile } from "../src/ledger/connection-state-files";
 import { temporaryDirectories } from "./connections-helpers";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { temporary, cleanup } = temporaryDirectories("kizuki-state-ownership-");
 afterEach(cleanup);

@@ -12,7 +12,7 @@ Your context should outlive the tool that learned it.
 [Vision](#the-vision) · [Quick start](#quick-start) · [Architecture](#architecture) · [Agents](#bring-your-agents) · [Roadmap](#roadmap) · [Status](#status)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-2563eb)](LICENSE)
-[![Stage: pre-alpha](https://img.shields.io/badge/stage-pre--alpha-64748b)](#status)
+[![Release: 1.0.0](https://img.shields.io/badge/release-1.0.0-64748b)](#status)
 [![Bun: 1.3.14](https://img.shields.io/badge/Bun-1.3.14-fbf0df?logo=bun)](https://bun.sh)
 
 </div>
@@ -153,11 +153,13 @@ That is how one successful task can improve the next agent's starting point with
 
 ## What runs today
 
-Kizuki is already a local-first capture-to-context substrate. The current revision can bring selected sources into an append-only ledger, extract source-linked claims, search them, compile bounded context packets, write model-produced canon through one receipted autonomous writer, correct live claims, audit writes and undo them.
+Kizuki 1.0.0 brings selected sources into an append-only ledger, extracts source-linked claims, searches them, compiles bounded context packets, writes model-produced canon through one receipted autonomous writer, corrects live claims, audits writes and undoes them.
 
-The richer world-model architecture above is the direction being built on top of those foundations. **No roadmap concept becomes a public feature until its implementation and acceptance proof exist.** Owner decision D21 (2026-09-17): 1.0 is the entire #497 world-model map on day one, not capture-to-context and not a later programme. Closed GitHub packets and RFC fixtures are not shipped surfaces.
+On top of that substrate, 1.0.0 ships the first world-model layer. With a configured model and a source grant that permits extraction, the sync rail runs typed extraction and admits source-anchored claims about **Concepts** and **Situations**. `kizuki world`, the MCP `world_view` tool, loopback HTTP `/v1/world_view` and the World views in `kizuki app` read the same cards, each with evidence, confidence, uncertainty and coverage. `kizuki tell --world-claim` and MCP `correct` correct a world claim with a receipt that undo reverses, and a second authorized client sees the correction on its next read.
 
-> **Pre-alpha · v0.1.0.** The local capture-to-context loop is runnable from a checkout. Autonomous canon writing requires a usable model bound by the running host. Capture, search, context, audit and undo remain useful without one. This is not a 1.0 release or a published installer.
+The rest of the architecture above is still direction. **No roadmap concept becomes a public feature until its implementation exists.** Owner decision D23 (2026-09-23) set the 1.0.0 launch bar at the world model as built and Telegram native sign-in.
+
+> **1.0.0.** Autonomous canon writing and the world model require a usable model bound by the running host. Capture, search, context, audit and undo remain useful without one. The release package is an unsigned Linux x64 build; nothing is published to npm.
 
 ## Quick start
 
@@ -203,7 +205,7 @@ Importing does **not** itself write canon. Without a model, expect `canon writin
 
 Start with `kizuki connect` to see the catalog and `kizuki connect status` to inspect enrolled sources and their last run. New enrollment requires an explicit [source consent policy](docs/cli.md#source-consent) before capture.
 
-Current entry points include local Markdown, ChatGPT/Claude exports, WhatsApp/Pocket/Omnivore exports, Beeper Desktop, read-only IMAP, native Telegram sign-in, Gmail, Google Calendar and X own-post browser sign-in, ICS files, offline Screenpipe ingestion, and one-shot [estate importers](docs/legacy-import.md) with owner-written mapping files. Telegram, Gmail and Google Calendar require operator-supplied app configuration. X requires a public Native App client ID, an exact registered loopback callback and eligible API access with usage credits. None of those account paths are live-account qualified on this revision. WHOOP remains a component without CLI enrollment. The connection guide lists provider setup and coverage limits.
+Current entry points include local Markdown, ChatGPT/Claude exports, WhatsApp/Pocket/Omnivore exports, Beeper Desktop, read-only IMAP, native Telegram sign-in, Gmail, Google Calendar and X own-post browser sign-in, ICS files, offline Screenpipe ingestion, and one-shot [estate importers](docs/legacy-import.md) with owner-written mapping files. Telegram, Gmail and Google Calendar require operator-supplied app configuration. X requires a public Native App client ID, an exact registered loopback callback and eligible API access with usage credits. The 1.0.0 release package compiles in the project's Telegram app credentials; a source checkout reads them from the environment. None of those account paths are live-account qualified on this revision. WHOOP remains a component without CLI enrollment. The connection guide lists provider setup and coverage limits.
 
 [Connection setup and limits →](docs/connect.md)
 
@@ -266,11 +268,11 @@ The current stdio MCP adapter exposes:
 
 | Read tools | Write tools |
 | --- | --- |
-| `search`, `get_page`, `query_entities`, `timeline`, `context_packet`, `graph_neighbors`, `system_health` | `propose`, `correct` |
+| `search`, `get_page`, `query_entities`, `timeline`, `context_packet`, `graph_neighbors`, `system_health`, `world_view` | `propose`, `correct` |
 
 `propose` files a claim. `correct` relays an authorized correction. There is no unrestricted `put_page` tool. Permission is enforced below the prompt layer through identity, grants, sensitivity ceilings, scopes, allowlists, rate limits and audit.
 
-The roadmap adds world-model projections to this same authorization boundary rather than creating an agent-only backdoor.
+`world_view` reads Concept and Situation cards through this same authorization boundary. References it returns are bound to the calling principal and grant; later world-model projections follow the same rule rather than creating an agent-only backdoor.
 
 ## Product law: UX + DX + AX together
 
@@ -306,7 +308,7 @@ Prove a small Concept with useful human and agent views, then expand through sha
 
 ## Status
 
-**Pre-alpha, version 0.1.0.** The distinction between working capability and the complete world-model product matters.
+**Version 1.0.0.** The distinction between working capability and the complete world-model product matters.
 
 | Layer | What this revision supports |
 | --- | --- |
@@ -315,8 +317,8 @@ Prove a small Concept with useful human and agent views, then expand through sha
 | Claims | Source-linked working claims with authority, confidence, validity, sensitivity and supersession. |
 | Canon | Model-configured autonomous writer; correction, receipts, audit and undo. |
 | Operations | Local serve loop, doctor reporting and rebuildable retrieval. |
-| Packaging | Source execution and locally built Linux x64 package. No published or signed installer. |
-| World model | **Roadmap in progress.** Observation, semantic-state, perspective, learning-state, Situation, World Slice, World Diff, dynamics and Atlas layers described above are not all shipped public surfaces yet. |
+| Packaging | Source execution and an unsigned Linux x64 release package. No npm package and no signed installer. |
+| World model | Typed extraction, Concept and Situation cards, `kizuki world`, MCP and HTTP `world_view`, the app World views, and world-claim correction. World Slice, World Diff, revision resume, outcomes, attention, forecasts and Atlas are still roadmap. |
 
 ## What Kizuki is not
 
@@ -343,6 +345,10 @@ bun run verify
 [Contributing](CONTRIBUTING.md) · [Agent instructions](AGENTS.md) · [Architecture](docs/architecture.md) · [Binding decisions](docs/decision-log.md)
 
 ## Retrieval credit
+
+[Beacon](https://github.com/Asymptote-Labs/agent-beacon) informed the agent-run
+evidence capture seam. Kizuki's [local Beacon importer](docs/beacon-import.md)
+reads selected snapshots; Beacon is not installed or bundled.
 
 The hybrid retrieval recipe and entity-graph walk are a permitted fork of
 [GBrain](https://github.com/garrytan/gbrain) at public commit

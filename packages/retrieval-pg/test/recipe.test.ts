@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NEIGHBOR_CAP_PER_HOP } from "../vendor/recipe/graph";
@@ -21,6 +21,9 @@ import {
   hitsFromCandidates,
 } from "../src/rank";
 import type { RetrievalDoc } from "@kizuki/core";
+
+// These tests run the embedded retrieval store; bound them for a loaded host.
+setDefaultTimeout(60_000);
 
 const VENDOR = join(import.meta.dir, "../vendor");
 

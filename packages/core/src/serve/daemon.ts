@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { recoverCanonWrites } from "../canon/recovery";
 import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent";
+import { canonRecoveryNextStep, readCanonRecoveryHold } from "../canon/stage-recovery";
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import nodeProcess from "node:process";
@@ -17,16 +18,14 @@ import {
   type LeaseState,
 } from "./leases";
 import { recoverRunJournal } from "./receipts";
-import { dueRails, runRail, type RailHooks, type RailRuntime } from "./rails";
+import { dueRails, runRail, type RailHooks, type RailHooksV2, type RailRuntime, type RailRuntimeV2 } from "./rails";
 import type { RetrievalPort } from "../contracts/retrieval";
 import { initServe, listSchedules } from "./schema";
 import { SERVE_PID_PATH, ServeDaemonError, isRailId, type CrashPoint, type RailId } from "./types";
 import { clearServeStopRequest, serveStopRequested } from "./stop-control";
 
-export interface ServeDaemonOptions {
+interface ServeDaemonOptionsBase {
   readonly now?: () => string;
-  readonly hooks?: RailHooks;
-  readonly acquireRuntime?: () => Promise<RailRuntime>;
   /** HTTP owns no per-rail runtime; this port belongs to the daemon's caller. */
   readonly retrieval?: RetrievalPort;
   readonly crashAfter?: CrashPoint;
@@ -37,7 +36,21 @@ export interface ServeDaemonOptions {
   readonly process?: LeaseProcess;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly shouldContinue?: () => boolean;
+  /** One structured line per held recovery attempt; defaults to stderr. */
+  readonly log?: (line: string) => void;
 }
+
+export interface ServeDaemonOptions extends ServeDaemonOptionsBase {
+  readonly hooks?: RailHooks;
+  readonly acquireRuntime?: () => Promise<RailRuntime>;
+}
+
+export interface ServeDaemonOptionsV2 extends ServeDaemonOptionsBase {
+  readonly hooks?: RailHooksV2;
+  readonly acquireRuntime?: () => Promise<RailRuntimeV2>;
+}
+
+type AnyServeDaemonOptions = ServeDaemonOptions | ServeDaemonOptionsV2;
 
 export interface ServeStatus {
   readonly pid: number | null;
@@ -100,10 +113,20 @@ function clearPid(vaultPath: string, instanceId: string): void {
   unlinkSync(path); syncPidDirectory(path);
 }
 
+export function runServeDaemon(
+  db: Database,
+  vaultPath: string,
+  options?: ServeDaemonOptions,
+): Promise<{ receipts: number; http: ServeHttpHandle | null }>;
+export function runServeDaemon(
+  db: Database,
+  vaultPath: string,
+  options: ServeDaemonOptionsV2,
+): Promise<{ receipts: number; http: ServeHttpHandle | null }>;
 export async function runServeDaemon(
   db: Database,
   vaultPath: string,
-  options: ServeDaemonOptions = {},
+  options: AnyServeDaemonOptions = {},
 ): Promise<{ receipts: number; http: ServeHttpHandle | null }> {
   if (options.hooks !== undefined && options.acquireRuntime !== undefined) {
     throw new ServeDaemonError("runtime_options_conflict", "rail hooks and acquireRuntime are mutually exclusive");
@@ -131,9 +154,11 @@ export async function runServeDaemon(
   if (inspectCanonRecovery(db).pending) {
     try { recoverCanonWrites({ db, vault_path: vaultPath }); }
     catch (error) {
-      // The durable hold remains visible to doctor and the serving boundary.
-      // A manual recovery case does not remove access to unaffected memory.
+      // Writer-held mode: the durable hold stays visible to doctor and the
+      // serving boundary, reads and ingest keep running, and the supervisor
+      // is never asked to restart into the same refusal.
       if (!(error instanceof CanonRecoveryError)) throw error;
+      (options.log ?? ((line: string) => { nodeProcess.stderr.write(`${line}\n`); }))(canonRecoveryHeldLine(vaultPath, error));
     }
   }
   const config = loadServeConfig(vaultPath);
@@ -169,11 +194,9 @@ export async function runServeDaemon(
         if (stopping || serveStopRequested(vaultPath, ownMarker)) break;
         if (!isRailId(rail)) continue;
         await runRail(db, vaultPath, rail, {
+          ...options,
           now: process.now,
           execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "once", due_at: null },
-          ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
-          ...(options.acquireRuntime === undefined ? {} : { acquireRuntime: options.acquireRuntime }),
-          ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
         });
         receipts += 1;
       }
@@ -186,11 +209,10 @@ export async function runServeDaemon(
       const rail = due[0];
       if (rail !== undefined) {
         await runRail(db, vaultPath, rail, {
+          ...options,
           now: process.now,
           execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "scheduled",
             due_at: listSchedules(db).find(row => row.rail === rail)?.next_run_at ?? process.now() },
-          ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
-          ...(options.acquireRuntime === undefined ? {} : { acquireRuntime: options.acquireRuntime }),
         });
         receipts += 1;
         continue;
@@ -208,6 +230,15 @@ export async function runServeDaemon(
       finally { releaseLease(db, process); }
     }
   }
+}
+
+function canonRecoveryHeldLine(vaultPath: string, error: CanonRecoveryError): string {
+  const hold = readCanonRecoveryHold(vaultPath);
+  return JSON.stringify({
+    event: "canon_recovery_held", mode: "writer-held", reason: error.reason, receipt_id: error.receipt_id,
+    attempts: hold !== null && hold.receipt_id === error.receipt_id ? hold.attempts : 1,
+    next: canonRecoveryNextStep(error.reason, [], error.receipt_id),
+  });
 }
 
 export function serveStatus(

@@ -1,10 +1,11 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { applyCanonWrite } from "../../src/canon/apply";
 import { recoverCanonWrites } from "../../src/canon/recovery";
+import { CanonRecoveryError } from "../../src/canon/write-intent";
 import { createBudgetTracker } from "../../src/canon/budget";
 import { resolveTarget, type TargetDecision } from "../../src/canon/arbiter";
 import { CanonPageUnreadable } from "../../src/canon/store";
@@ -20,6 +21,9 @@ import { archiveRelPath } from "../../src/vault/write";
 import type { Producer } from "../../src/contracts/proposal";
 import { eventFacts, FixtureVectorPort, putEvent } from "../claims/helpers";
 import { validEvent } from "../fixtures";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const roots: string[] = [];
 
@@ -216,7 +220,11 @@ test.each(["before publication", "after publication"] as const)("a second proces
     // writer must wait for completion or process death.
     const parent = new Database(join(vault, ".kizuki", "kizuki.db"), { readonly: true });
     try {
-      expect(() => recoverCanonWrites({ db: parent, vault_path: vault })).toThrow("canon writer is busy");
+      // A busy writer is a typed, transient recovery hold rather than an untyped crash.
+      let busy: unknown;
+      try { recoverCanonWrites({ db: parent, vault_path: vault }); } catch (error) { busy = error; }
+      expect(busy).toBeInstanceOf(CanonRecoveryError);
+      expect(busy).toMatchObject({ reason: "writer_busy", cause: expect.objectContaining({ message: expect.stringContaining("canon writer is busy") }) });
       expect(existsSync(join(vault, "people/grace.md"))).toBe(phase === "after publication");
       expect(parent.query("SELECT 1 FROM canon_receipts").get()).toBeNull();
       expect(parent.query("SELECT 1 FROM canon_machine_byte_intents").get()).not.toBeNull();

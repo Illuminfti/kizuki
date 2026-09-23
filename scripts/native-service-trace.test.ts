@@ -1,8 +1,11 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { captureSyntheticServiceIdentity, projectNativeIdMap, projectNativeSyscallTrace, syntheticTraceTargetMatches } from "./native-service-trace";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 test("native syscall diagnostics retain operation and errno without buffers or private paths", () => {
   const root = "/tmp/synthetic-fixture";

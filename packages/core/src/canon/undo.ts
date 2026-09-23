@@ -1,3 +1,8 @@
+import { isSensitivity } from "../agents/types";
+import { isWorldCanonReceipt } from "./world-receipt";
+import { assertWorldReceiptBasis, worldBasisMetadata } from "./world-materialization";
+import { canonicalJson } from "../util/hash";
+import { getCanonReceiptRecord, isErasedReceipt, latestWorldReceiptRecord } from "./receipts";
 import { requireSourceEvents } from "../ledger/source-grants";
 import { stringArray } from "../vault/pages";
 import { CanonAuthorityResolver } from "./authority";
@@ -49,6 +54,14 @@ function laterIds(io: CanonIo, receipt: CanonReceipt): string[] {
     at: receipt.at,
     receipt_id: receipt.receipt_id,
   }).map((row) => row.receipt_id);
+}
+
+function hasCurrentTypedBasis(io: CanonIo, receipt: CanonReceipt): boolean {
+  if (!isWorldCanonReceipt(receipt)) return true;
+  const current = latestWorldReceiptRecord(io.db, receipt.page_path);
+  return current !== null && !isErasedReceipt(current) && isWorldCanonReceipt(current) &&
+    current.after_hash === receipt.after_hash &&
+    canonicalJson(current.basis.after) === canonicalJson(receipt.basis.after);
 }
 
 function loadArchivePage(io: CanonIo, archivePath: string): VaultPage {
@@ -114,10 +127,13 @@ export async function undoReceiptOwned(
     if (readCanonWriteIntent(io.db) !== null) recoveryFailure("authority_changed", pending.receipt.receipt_id);
     return finishUndoProjection(scope, io, pending.receipt);
   }
+  const record = getCanonReceiptRecord(io.db, receiptId);
+  if (record !== null && isErasedReceipt(record)) throw new UndoError("erased", "undo: receipt was erased with its source evidence");
   const original = getCanonReceipt(io.db, receiptId);
   if (original === null) {
     throw new UndoError("receipt_unknown", `undo: receipt ${receiptId} is unknown`);
   }
+  if (isWorldCanonReceipt(original)) assertWorldReceiptBasis(io.db,original,{historical:true});
   assertReceiptPaths(original);
   assertPageRelPath(original.page_path);
   // Settle an older acknowledged/scheduled projection before admitting a successor.
@@ -134,7 +150,7 @@ export async function undoReceiptOwned(
 
   const current = currentHash(io, original.page_path);
   const later = laterIds(io, original);
-  if (current !== original.after_hash) {
+  if (current !== original.after_hash || !hasCurrentTypedBasis(io, original)) {
     if (opts.cascade === true && later.length > 0) {
       for (const id of later) {
         await undoReceiptOwned(scope, io, id, { cascade: false });
@@ -171,8 +187,11 @@ async function finishUndoProjection(scope: VaultMutationScope, io: CanonIo, rece
 
 async function applyUndo(scope: VaultMutationScope, io: CanonIo, original: CanonReceipt, current: string): Promise<UndoReceiptResult> {
   const revertId = mintId(io), at = nowOf(io);
-  const authority = new CanonAuthorityResolver(io.db, [original.page_path]).before(original.receipt_id);
-  const deleting = original.page_action === "create" && original.kind !== "revert";
+  const typedMetadata=isWorldCanonReceipt(original)?worldBasisMetadata(io.db,original.basis.before??original.basis.after,true):null;
+  const authority = typedMetadata?.authority??new CanonAuthorityResolver(io.db, [original.page_path]).before(original.receipt_id);
+  const deleting = (original.page_action === "create" && original.kind !== "revert") ||
+    (isWorldCanonReceipt(original) && original.kind === "revert" && original.page_action === "create" &&
+      original.before_hash === ABSENT_PAGE_HASH && original.basis.before === null);
   if (!deleting && original.archive_path === null) throw new UndoError("not_undoable", "undo: no archive copy exists; this write is not undoable");
   const page = deleting ? null : loadArchivePage(io, original.archive_path!);
   const files = requireCanonFiles(scope, io), snapshot = files.read(original.page_path);
@@ -184,15 +203,18 @@ async function applyUndo(scope: VaultMutationScope, io: CanonIo, original: Canon
   const fallback = pageIndexByPath(io.db, original.page_path)?.page_id ?? null;
   const pageId = pageIdOf(page, fallback);
   const ops: RetrievalOpRef[] = original.retrieval_ops.map(op => ({ store: op.store, op: page === null ? "remove" : "upsert", doc: op.doc }));
+  const typedImage=isWorldCanonReceipt(original)&&page!==null;
+  if(typedImage&&(!isSensitivity(page.data["sensitivity"])||!["clean","quoted"].includes(String(page.data["taint"]))))throw new UndoError("archive_missing","undo: typed archive classification is invalid");
   const revert: CanonReceipt = {
     receipt_id: revertId, kind: "revert", claim_ids: [...original.claim_ids], page_path: original.page_path,
     page_action: page === null ? "archive" : before === null ? "create" : "edit",
     before_hash: original.after_hash, after_hash: after === null ? ABSENT_PAGE_HASH : hashBytes(after),
     archive_path: before === null ? null : archiveRelPath(original.page_path, revertId), writer: "revert",
-    producer: original.producer, model_ref: original.model_ref, authority, confidence: original.confidence,
-    sensitivity: original.sensitivity, taint: original.taint, provenance: [...original.provenance],
+    producer: original.producer, model_ref: original.model_ref, authority, confidence: typedMetadata?.confidence??original.confidence,
+    sensitivity: typedImage?page.data["sensitivity"] as CanonReceipt["sensitivity"]:original.sensitivity, taint: typedImage?page.data["taint"] as CanonReceipt["taint"]:original.taint, provenance: [...original.provenance],
     superseded: [...original.superseded], candidates: [], retrieval_ops: ops,
     reverts: original.receipt_id, reverted_by: null, at,
+    ...(isWorldCanonReceipt(original) ? {schema:original.schema,state:original.state,own_id_origin:original.own_id_origin,prior_receipt_id:latestWorldReceiptRecord(io.db,original.page_path)?.receipt_id??null,basis:{schema:original.basis.schema,before:original.basis.after,after:original.basis.before}} : {}),
   };
   commitCanonWrite(scope, io, { receipt: revert, before, after,
     completion: { mode: "revert", claim_kind: "revert", page_id: pageId, subject_key: subjectOf(page), original_receipt_id: original.receipt_id },

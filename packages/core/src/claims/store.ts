@@ -1,12 +1,15 @@
 import { recordSourceStoreWrite } from "../ledger/source-stores";
-import { historicalSourceWriteAllowed, sourceEventsAllowed, requireSourceEvents, sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity } from "../ledger/source-grants";
+import { historicalSourceWriteAllowed, inspectSourceGrant, sourceEventsAllowed, requireSourceEvents, sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity, type SourceReadScope } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
+import { worldClaimReplaySignature } from "./replay-signature";
 import { SelfOriginError, validateEventOrigin, requireExternalEvents } from "../ledger/event-origin";
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "../canon/source-tombstone";
 import { eventFromRow, type EventRow } from "../ledger/event-record";
 import { compareRfc3339 } from "../agents/time";
 import type { Sensitivity } from "../agents/types";
 import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../contracts/retrieval";
+import type { ClaimV2Assertion } from "../contracts/claim-v2";
+import { completeWorldAnchors, parseWorldAdmission, type WorldAdmission } from "../contracts/world-admission";
 import { bareRetrievalId, retrievalDocId } from "../retrieval/ids";
 import type {
   AuthorityTier,
@@ -20,10 +23,11 @@ import type {
   Producer,
 } from "../contracts/proposal";
 import { AUTHORITY_TIERS, CLAIM_SCHEMA, canonicalizeProducer, isClaimKind, isProducer } from "../contracts/proposal";
-import { tableExists } from "../ledger/schema";
+import { tableColumns, tableExists } from "../ledger/schema";
 import { labelClaimSensitivity } from "../sensitivity/store";
 import { stricter } from "../sensitivity/resolve";
 import { isRfc3339 } from "../util/time";
+import { canonicalJson } from "../util/hash";
 import { ulid } from "../util/ulid";
 import {
   authorityFor,
@@ -44,6 +48,8 @@ import {
   type DedupMode,
 } from "./dedup";
 import { ClaimError } from "./errors";
+import { readClaimV2Semantic, commitClaimV2 } from "./claim-v2-commit";
+import { semanticKey } from "./claim-v2-keys";
 import { claimKey, hashBody, normalizeObject, objectsMatch } from "./hash";
 import { isRegisteredPredicate } from "./predicates";
 import { initClaims } from "./init";
@@ -84,10 +90,18 @@ export interface InsertClaimInput {
   /** RFC 0002 §6.4: caps the tier a relayed correction is filed at. */
   relay_ceiling?: AuthorityTier;
   events?: EventFacts[];
+  /** Closed typed admission; the writer recomputes its authority and confidence. */
+  world_admission?: WorldAdmission;
+  /** Typed meaning. Generic legacy claim/v2 records omit this field. */
+  semantic?: ClaimV2Assertion;
 }
 
 /** Exact internal identity of a claim produced by a historical durable decision. */
 export function historicalClaimReplaySignature(input: InsertClaimInput): string {
+  const world = input as InsertClaimInput & { semantic?: unknown; world_admission?: unknown };
+  if (world.semantic !== undefined || world.world_admission !== undefined) {
+    return worldClaimReplaySignature(input);
+  }
   return JSON.stringify([
     input.kind, input.target ?? null, input.subject ?? null, input.predicate ?? null,
     input.object ?? null, input.polarity ?? "positive", input.body, input.frontmatter ?? {},
@@ -278,6 +292,104 @@ function assertInput(input: InsertClaimInput): void {
   ) {
     throw new ClaimError("schema_invalid", "valid_to must be RFC3339 or null");
   }
+  const hasWorld = input.world_admission !== undefined || input.semantic !== undefined;
+  if (hasWorld) {
+    const admission = parseWorldAdmission(input.world_admission);
+    if (admission === null || input.semantic === undefined ||
+      canonicalJson(admission.semantic) !== canonicalJson(input.semantic)) {
+      throw new ClaimError("schema_invalid", "world admission needs its matching typed semantic");
+    }
+  }
+}
+
+function preparedWorldCommit(
+  db: Database,
+  input: InsertClaimInput,
+  scope: SourceReadScope,
+  at: string,
+) {
+  if (input.world_admission === undefined || input.semantic === undefined) return null;
+  const admission = parseWorldAdmission(input.world_admission);
+  if (admission === null || canonicalJson(admission.semantic) !== canonicalJson(input.semantic)) {
+    throw new ClaimError("schema_invalid", "world admission needs its matching typed semantic");
+  }
+  const anchors = completeWorldAnchors(input.semantic);
+  if (anchors.length === 0) {
+    throw new ClaimError("provenance_unresolved", "world admission needs complete semantic anchors");
+  }
+  const supportEventIds = [...new Set(anchors.map((anchor) => anchor.event_id))];
+  const native = input.intent === "correct" && input.provenance.length === 1 &&
+    db.query("SELECT 1 FROM native_owner_evidence WHERE event_id=? AND origin='correction'").get(input.provenance[0]!) !== null;
+  if (native && (supportEventIds.length !== 1 || supportEventIds[0] !== input.provenance[0])) {
+    throw new ClaimError("provenance_unresolved", "native correction support must anchor its correction event");
+  }
+  const bindings = supportEventIds.map((eventId) => db.query<{ source_key: string; content_hash: string }, [string]>(
+    `SELECT b.source_key, e.content_hash FROM source_event_bindings b
+       JOIN events e ON e.event_id=b.event_id WHERE b.event_id=?`,
+  ).get(eventId));
+  if (!native && bindings.some((binding) => binding === null)) {
+    throw new ClaimError("provenance_unresolved", "world admission needs source-bound provenance");
+  }
+  const sourceKey = native ? "native-owner" : bindings[0]!.source_key;
+  if (!native && !bindings.every((binding) => binding!.source_key === sourceKey)) {
+    throw new ClaimError("schema_invalid", "world admission support must come from one source");
+  }
+  const grant = native ? null : inspectSourceGrant(db, sourceKey);
+  if (!native && (grant === null || grant.status !== "active")) {
+    throw new ClaimError("provenance_unresolved", "world admission source grant is not active");
+  }
+  return {
+    semantic: input.semantic,
+    support: {
+      origin: native ? "native_owner" as const : "source" as const,
+      source_key: sourceKey,
+      grant_revision: native ? 0 : grant!.revision,
+      events: supportEventIds.map((eventId, index) => ({ event_id: eventId, event_content_hash: native
+        ? db.query<{ content_hash: string }, [string]>("SELECT content_hash FROM events WHERE event_id=?").get(eventId)?.content_hash ?? ""
+        : bindings[index]!.content_hash })),
+      anchors,
+      admission: { schema: admission.schema, rendering: admission.rendering, epistemicKind: admission.epistemicKind },
+      admitted_at: at,
+    },
+    scope,
+    world_admission: admission,
+  };
+}
+
+function acceptedWorldValues(input: InsertClaimInput, events: EventFacts[]) {
+  const authorityBody=input.world_admission?.rendering.body ?? input.body;
+  const producer = canonicalizeProducer(input.producer);
+  const ownerAttested = events.some((event) => event.taint === "owner" && event.text === authorityBody);
+  const assigned = authorityFor(
+    {
+      producer: producer === "owner" && !ownerAttested ? "deterministic" : producer,
+      taint: input.taint ?? "clean",
+      body: authorityBody,
+      provenance: input.provenance,
+      confidence: input.confidence,
+      ...(input.intent === "correct" && !ownerAttested ? {} : { intent: input.intent }),
+      claim_key: null,
+    },
+    events.map((event) => ({ ...event, taint: ownerAttested ? event.taint : "untrusted" as const })),
+    {
+      producer: input.producer === "owner" && !ownerAttested ? "deterministic" : input.producer,
+      taint: input.taint ?? "clean",
+      body: authorityBody,
+      provenance: input.provenance,
+      ...(input.intent === "correct" && !ownerAttested ? {} : { intent: input.intent }),
+      ...(input.relay_ceiling === undefined ? {} : { relayCeiling: input.relay_ceiling }),
+      hasCorroboration: false,
+    },
+  );
+  return {
+    authority: assigned.authority,
+    confidence: assigned.confidence,
+    epistemicKind: assigned.authority === "model_inference"
+      ? "model_inference" as const
+      : assigned.authority === "owner_correction" || assigned.authority === "owner_authored"
+        ? "owner_assertion" as const
+        : "observed" as const,
+  };
 }
 
 function resolveProvenance(db: Database, ids: readonly string[]): void {
@@ -328,15 +440,15 @@ function loadEventSensitivityHints(
     .map((row) => row.sensitivity_hint);
 }
 
-function insertRow(db: Database, claim: Claim): void {
+function insertRow(db: Database, claim: Claim, worldTyped = false): void {
   db.query(
     `INSERT INTO claims
        (claim_id, kind, target, body, frontmatter, provenance, subjects,
         producer, confidence, status, created_at, body_hash,
         subject, predicate, object, polarity, claim_key, authority,
         sensitivity, taint, model_ref, valid_from, valid_to, asserted_at,
-        retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at, is_world_typed)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     claim.claim_id,
     claim.kind,
@@ -367,6 +479,7 @@ function insertRow(db: Database, claim: Claim): void {
     claim.receipt_id,
     claim.corroboration,
     claim.last_confirmed_at,
+    worldTyped ? 1 : 0,
   );
 }
 
@@ -661,11 +774,12 @@ export function countClaims(
 /** Live writable claims the receipted writer has not yet materialized. */
 export function countUnwrittenLiveClaims(db: Database): number {
   if (!tableExists(db, "claims")) return 0;
+  const typed=tableExists(db,"claim_v2_semantics") ? "AND NOT EXISTS (SELECT 1 FROM claim_v2_semantics v2 WHERE v2.claim_id=claims.claim_id)" : "";
   return (
     db
       .query<{ n: number }, []>(
         `SELECT count(*) AS n FROM claims
-          WHERE status = 'live' AND receipt_id IS NULL AND kind <> 'purge_review'`,
+          WHERE status = 'live' AND receipt_id IS NULL AND kind <> 'purge_review' ${typed}`,
       )
       .get()?.n ?? 0
   );
@@ -694,10 +808,13 @@ export function listUnwrittenLiveClaims(
 ): Claim[] {
   if (!tableExists(db, "claims")) return [];
   const bound = Number.isSafeInteger(limit) && limit > 0 ? limit : 32;
+  const typed = tableExists(db, "claim_v2_semantics")
+    ? "AND NOT EXISTS (SELECT 1 FROM claim_v2_semantics v2 WHERE v2.claim_id=claims.claim_id)"
+    : "";
   return db
     .query<ClaimRow, [number]>(
       `SELECT * FROM claims
-        WHERE status = 'live' AND receipt_id IS NULL AND kind <> 'purge_review'
+        WHERE status = 'live' AND receipt_id IS NULL AND kind <> 'purge_review' ${typed}
         ORDER BY created_at, claim_id
         LIMIT ?`,
     )
@@ -897,6 +1014,61 @@ export function supersedeLiveGroup(
   return out;
 }
 
+/** Typed targeted correction shares the existing supersession journal and retrieval outbox transaction. */
+export function supersedeExactWorldClaim(
+  io: Pick<ClaimsIo, "db" | "retrieval">,
+  winner: Claim,
+  loserId: string,
+  at: string,
+): void {
+  const { db } = io;
+  if (!db.inTransaction)
+    throw new ClaimError(
+      "schema_invalid",
+      "typed supersession requires the claim transaction",
+    );
+  const loser = getClaim(db, loserId);
+  const prior = readClaimV2Semantic(db, loserId);
+  const next = readClaimV2Semantic(db, winner.claim_id);
+  if (
+    loser === null ||
+    loser.status !== "live" ||
+    winner.status !== "live" ||
+    winner.authority !== "owner_correction" ||
+    prior === null ||
+    next === null ||
+    prior.schema !== "kizuki.claim-meaning/v1" ||
+    next.schema !== "kizuki.claim-meaning/v1" ||
+    prior.discriminator !== "assertion" ||
+    next.discriminator !== "assertion" ||
+    prior.predicate !== next.predicate ||
+    canonicalJson(prior.subject) !== canonicalJson(next.subject) ||
+    winner.claim_id === loserId
+  )
+    throw new ClaimError("schema_invalid", "typed correction target changed");
+  const priorValidTo = loser.valid_to;
+  const superseded = {
+    ...loser,
+    status: "superseded" as const,
+    superseded_by: winner.claim_id,
+    retracted_at: at,
+    valid_to: minTimestamp(loser.valid_to, winner.valid_from),
+  };
+  persistClaim(db, superseded);
+  writeSupersession(db, winner.claim_id, loser.claim_id, "R5", priorValidTo, at);
+  const retrieval = io.retrieval;
+  const retrievalAllowed =
+    sourcePolicyEpoch(db) === 0 ||
+    (retrieval !== undefined &&
+      isLocalSourcePort(retrieval) &&
+      sourceEventsAllowed(db, superseded.provenance, {
+        owner: true,
+        purpose: "correction",
+        port: retrieval,
+      }));
+  enqueueRetrieval(db, retrievalAllowed ? io : { db }, superseded, at);
+}
+
 function remainingProvenanceCount(db: Database, claim: Claim): number {
   if (!tableExists(db, "events") || claim.provenance.length === 0) return 0;
   const placeholders = claim.provenance.map(() => "?").join(", ");
@@ -986,6 +1158,22 @@ export async function prepareClaimInsert(
   // A caller cannot alter the prepared draft while the semantic lookup waits.
   input = structuredClone(input);
   assertInput(input);
+  if (input.world_admission !== undefined) {
+    const admission = parseWorldAdmission(input.world_admission);
+    if (admission === null) throw new ClaimError("schema_invalid", "world admission is invalid");
+    if (!tableColumns(io.db, "claims").includes("is_world_typed")) throw new ClaimError("migration_required", "world admission requires ledger migration 32");
+    // World meaning is not a second v1 claim shape. Keep legacy presentation
+    // neutral: source-specific rendering belongs only in immutable support.
+    input = {
+      ...input,
+      body: "",
+      frontmatter: {},
+      subject: null,
+      predicate: null,
+      object: null,
+      subjects: [],
+    };
+  }
   io = { ...io };
   const scope = { owner: canonicalizeProducer(input.producer) !== "model" && !input.producer.startsWith("agent:"),
     model: canonicalizeProducer(input.producer) === "model",
@@ -1010,7 +1198,26 @@ export async function prepareClaimInsert(
     signature: historicalClaimReplaySignature(input),
     apply() {
       if (!io.db.inTransaction) throw new Error("prepared claim requires a transaction");
-      return applyClaimInsert(io, input, mode, nomineeIds);
+      const at = nowOf(io);
+      const world = preparedWorldCommit(io.db, input, scope, at);
+      const existing = world === null ? null : io.db.query<{ claim_id: string }, [string]>(
+          "SELECT claim_id FROM claim_v2_semantics WHERE semantic_key=?",
+        ).get(semanticKey(world.semantic));
+      const existingClaim = existing === null ? null : getClaim(io.db, existing.claim_id);
+      if (existing !== null && existingClaim === null) throw new ClaimError("schema_invalid", "world semantic parent is missing");
+      const result = applyClaimInsert(io, input, mode, nomineeIds, existingClaim);
+      if (world !== null && (result.outcome === "stored" || result.outcome === "contested")) {
+        commitClaimV2(io.db, result.outcome === "stored" ? result.claim.claim_id : result.incoming.claim_id, {
+          ...world,
+          accepted_world: acceptedWorldValues(input, loadEventFacts(io.db, input.provenance)),
+        });
+      } else if (world !== null && result.outcome === "duplicate") {
+        commitClaimV2(io.db, result.claim.claim_id, {
+          ...world,
+          accepted_world: acceptedWorldValues(input, loadEventFacts(io.db, input.provenance)),
+        });
+      }
+      return result;
     },
   };
 }
@@ -1021,6 +1228,7 @@ function applyClaimInsert(
   input: InsertClaimInput,
   mode: DedupMode,
   semanticNomineeIds: readonly string[],
+  worldSemanticMatch: Claim | null = null,
 ): InsertClaimResult {
   const at = nowOf(io);
   const sourceScope = { owner: canonicalizeProducer(input.producer) !== "model" && !input.producer.startsWith("agent:"), model: canonicalizeProducer(input.producer) === "model", purpose: input.intent === "correct" ? "correction" as const : "derive" as const };
@@ -1036,6 +1244,7 @@ function applyClaimInsert(
   }
   resolveProvenance(io.db, input.provenance);
 
+  const authorityBody=input.world_admission?.rendering.body ?? input.body;
   const producer = canonicalizeProducer(input.producer);
   const sourceControl = requireIncomingClaimOrigin(io, input);
   const subject = input.subject ?? input.subjects?.[0] ?? null;
@@ -1045,7 +1254,7 @@ function applyClaimInsert(
   const key =
     subject !== null && predicate !== null ? claimKey(subject, predicate) : null;
   const events = loadEventFacts(io.db, input.provenance);
-  const ownerAttested = events.some(event => event.taint === "owner" && event.text === input.body);
+  const ownerAttested = events.some(event => event.taint === "owner" && event.text === authorityBody);
   const authorityProducer = producer === "owner" && !ownerAttested ? "deterministic" : producer;
   const authorityIntent = input.intent === "correct" && !ownerAttested ? undefined : input.intent;
   const authorityEvents = events.map(event => ({...event, taint: ownerAttested ? event.taint : "untrusted" as const}));
@@ -1069,7 +1278,7 @@ function applyClaimInsert(
     {
       producer: authorityProducer,
       taint: input.taint ?? "clean",
-      body: input.body,
+      body: authorityBody,
       provenance: input.provenance,
       confidence: input.confidence,
       ...(authorityIntent === undefined ? {} : { intent: authorityIntent }),
@@ -1079,7 +1288,7 @@ function applyClaimInsert(
     {
       producer: input.producer === "owner" && !ownerAttested ? "deterministic" : input.producer,
       taint: input.taint ?? "clean",
-      body: input.body,
+      body: authorityBody,
       provenance: input.provenance,
       ...(authorityIntent === undefined ? {} : { intent: authorityIntent }),
       ...(input.relay_ceiling === undefined
@@ -1138,7 +1347,12 @@ function applyClaimInsert(
   };
 
   claim.sensitivity = sourceSensitivity(io.db, claim.provenance, claim.sensitivity);
-  const exact = findExact(io.db, claim.kind, claim.target, claim.body_hash);
+  if (worldSemanticMatch !== null) {
+    return { outcome: "duplicate", claim: worldSemanticMatch, dedup: mode };
+  }
+  const exact = input.world_admission === undefined
+    ? findExact(io.db, claim.kind, claim.target, claim.body_hash)
+    : null;
   if (exact !== null && sourceControl) {
     requireSourceTombstoneProposal(io.db, exact,
       io.vault_path === undefined ? undefined : { vault_path: io.vault_path });
@@ -1224,7 +1438,7 @@ function applyClaimInsert(
   }
 
   const stored: Claim = { ...claim, status: incomingStatus };
-  insertRow(io.db, stored);
+  insertRow(io.db, stored, input.world_admission !== undefined);
   if (incomingStatus !== "skipped") {
     enqueueRetrieval(io.db, io, stored, at);
   }

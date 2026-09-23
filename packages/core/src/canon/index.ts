@@ -28,6 +28,7 @@ export {
   RECEIPT_KINDS,
   countCanonReceipts,
   getCanonReceipt,
+  getCanonReceiptRecord,
   laterReceiptsForPage,
   latestReceiptForPage,
   listCanonReceipts,
@@ -48,6 +49,8 @@ export { undoReceipt } from "./undo";
 export { recoverCanonWrites } from "./recovery";
 export { retryCanonProjectionObligations } from "./projection-obligations";
 export { CanonRecoveryError, inspectCanonRecovery } from "./write-intent";
+export { canonRecoveryNextStep, inspectCanonRecoveryDetail, readCanonRecoveryHold } from "./stage-recovery";
+export type { CanonRecoveryDetail, CanonRecoveryHold, CanonStageInspection, CanonStageRecoveryRecord } from "./stage-recovery";
 export type { CanonRecoveryReport } from "./recovery";
 export type { CanonRecoverySummary } from "./write-intent";
 export type { UndoReceiptOptions } from "./undo";

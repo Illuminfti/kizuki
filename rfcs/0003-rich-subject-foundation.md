@@ -100,9 +100,24 @@ eight anchors per item, four
 candidate refs per mention, eight context refs per claim, 512 UTF-8 bytes per
 label, 400 UTF-16 code units per literal, 1,200 per body, and 256 KiB of response
 JSON before parsing. Input catalogs and aggregate refs are separately bounded.
-Offsets select exact supplied text without Unicode or newline normalization;
-surrogate-pair splits, absent events, unknown handles, duplicate IDs, extra keys,
-and malformed intervals reject the response before any durable effect.
+Offsets select exact supplied text without Unicode or newline normalization.
+Non-JSON output, extra or missing keys, duplicate IDs, exceeded caps and
+structurally malformed mentions reject the response before any durable effect.
+One Markdown code fence around the JSON object is formatting. A mention whose
+anchor does not select quoted text (a surrogate-pair split, an absent event or
+an out-of-range offset) is discarded, and every claim naming it is dropped.
+
+Amended 2026-09-23 after hands-on runs against real providers: a well-formed
+claim that fails its own rules (an unknown or ungrounded reference, an anchor
+outside the quoted records, a malformed interval or value, or an object kind
+its predicate does not permit) is a counted `invalid_claim` per-draft
+abstention rather than a whole-response rejection. Nothing such a claim names
+is resolved or kept. A candidate ref that does not name a request handle or a
+response mention is discarded, never resolved. When a response mention used as
+subject, object or context is anchored in a record the claim already cites, the
+claim's evidence includes that anchor even if the model did not repeat it. A
+mention from another record, a supplied endpoint and every perspective role
+still need their own cited anchors.
 
 Unknown predicates remain counted per-draft abstentions after reference and
 authority checks. Predicate specs declare permitted object kinds; B2 adds the

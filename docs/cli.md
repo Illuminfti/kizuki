@@ -92,6 +92,8 @@ source grant permitting capture. The three policy options must appear together;
 they apply explicit consent before reading content. Without a grant, import
 enrolls the source, refuses capture, and prints the source key and grant command. For local
 Beeper messages, use `connect beeper` followed by `backfill beeper`.
+Use `import beacon --source /absolute/path/runtime.jsonl` for an explicitly
+selected Beacon agent-run snapshot; see [format, consent and limits](beacon-import.md).
 An import runs alongside the serve daemon: see
 [Running commands while the daemon writes](#running-commands-while-the-daemon-writes).
 
@@ -321,13 +323,13 @@ through Core's existing undo path, and then resumes inspection.
 ## tell
 
 ```text
-usage: kizuki tell "<statement>" [--claim CLAIM_ID] [--since TIME] [--until TIME] [--dry-run] [--json] [--verbose]
+usage: kizuki tell "<statement>" [--claim CLAIM_ID|--world-claim TOKEN] [--since TIME] [--until TIME] [--dry-run] [--json] [--verbose]
 ```
 
-Owner correction. `--claim` is required and must name a **live** claim;
-`doctor` lists live ids separately from leftover skipped rows. Rewrites
-affected canon in the same pass. No model required. Prints an undo line
-when a receipt is minted.
+Owner correction. `--claim` names a **live** legacy claim; `--world-claim`
+accepts the opaque claim token emitted by `kizuki world` for the current owner
+namespace. The options are mutually exclusive. Rewrites affected canon in the
+same pass. No model required. Prints an undo line when a receipt is minted.
 
 ## context
 
@@ -353,14 +355,29 @@ and bounded audit coverage.
 
 ```text
 usage: kizuki world --operation situation|concept --ref TOKEN [--json]
+usage: kizuki world --operation find_concepts|find_situations [--label TEXT] [--json]
 ```
 
-Exact Concept or Situation lookup for a 32-byte base64url object token.
-Uses Core `readWorldView`. This revision has no world projection, so a
-valid lookup returns `not_found` for absent, erased, or inaccessible
-anchors. It does not register MCP `world_view`. `--json` prints
-`kizuki.cli.world/v1`. Malformed operations and tokens are usage errors
-before the vault is opened.
+Discover currently authorized Concepts and Situations, then use the returned
+32-byte base64url object token for an exact lookup. The optional label filter is
+a Unicode case-sensitive substring. Homonyms remain separate objects.
+
+CLI, MCP `world_view` and loopback HTTP `/v1/world_view` (plus
+`/v1/mcp/world_view`) use the same Core projection over admitted claims and
+currently eligible support. Cards include evidence, confidence, uncertainty and
+coverage. Unknown, foreign, erased or inaccessible tokens return `not_found`.
+References are bound to the current principal and grant; changing the grant
+invalidates that principal's old tokens.
+
+An empty discovery prints `No admitted matches in your current scope.` and a
+next step on stderr: Concepts and Situations appear only after the model loop
+admits typed claims, so a vault without a model has none.
+
+`--json` prints `kizuki.cli.world/v1` containing the world tool's
+`kizuki.envelope/v2`. It omits global policy epochs and denied counts. Fresh cards
+have a `not_issued` view marker: revision resume is unavailable. MCP/HTTP historical
+requests explicitly return `unavailable/history`. Malformed operations and
+noncanonical tokens are usage errors before the vault is opened.
 
 ## undo
 
@@ -595,7 +612,7 @@ and are not reached by purge.
 usage: kizuki version
 ```
 
-Prints the `@kizuki/cli` package version (`0.1.0` on this revision).
+Prints the `@kizuki/cli` package version (`1.0.0` on this revision).
 
 ## MCP (not a CLI verb)
 

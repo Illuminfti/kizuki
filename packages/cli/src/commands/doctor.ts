@@ -9,10 +9,10 @@ import {
   countUnwrittenLiveClaims,
   countWrittenLiveClaims,
   doctorVault,
-  getCanonReceipt,
+  getCanonReceiptRecord,
   getCheckpoint,
   inspectLedgerHealth,
-  inspectCanonRecovery,
+  inspectCanonRecoveryDetail,
   inspectPurgeHealth,
   inspectServeDoctor,
   latestReceiptForPage,
@@ -93,7 +93,7 @@ interface DoctorReport {
   doctrine: { file: string; state: string }[];
   ledger: ReturnType<typeof inspectLedgerHealth>;
   runtime: SqliteRuntime;
-  canon_recovery: ReturnType<typeof inspectCanonRecovery>;
+  canon_recovery: ReturnType<typeof inspectCanonRecoveryDetail>;
   ok: boolean;
 }
 
@@ -196,7 +196,8 @@ function reconcileReceipts(vaultPath: string, ctx: ReadVaultContext): string[] {
         continue;
       }
       seen.add(receiptId);
-      if (getCanonReceipt(ctx.db, receiptId) === null) {
+      // A purge leaves an erased record for each typed receipt it removes; the row still exists.
+      if (getCanonReceiptRecord(ctx.db, receiptId) === null) {
         orphans.push(`orphan receipt ${receiptId} (no canon_receipts row)`);
       }
     }
@@ -342,9 +343,17 @@ async function collect(
   const problems = vault.pages.flatMap((page) =>
     page.errors.map((error) => ({ page: page.page, error })),
   );
-  const canonRecovery = inspectCanonRecovery(ctx.db);
-  if (canonRecovery.pending || canonRecovery.projection_pending > 0) {
-    problems.push({ page: canonRecovery.page_path ?? "-", error: "canon recovery pending; run: kizuki recover --json" });
+  const canonRecovery = inspectCanonRecoveryDetail(ctx.db, vaultPath);
+  if (canonRecovery.pending) {
+    problems.push({ page: canonRecovery.page_path ?? "-",
+      error: `canon recovery held${canonRecovery.reason === null ? "" : `: ${canonRecovery.reason}`}; next: ${canonRecovery.next}` });
+  } else if (canonRecovery.projection_pending > 0) {
+    problems.push({ page: "-", error: "canon recovery pending; run: kizuki recover --json" });
+  }
+  if (canonRecovery.quarantine.state === "unsafe") {
+    problems.push({ page: ".kizuki/quarantine", error: "quarantine is not a private directory tree (each level must be a directory you own with mode 0700); inside the vault run: chmod 700 .kizuki/quarantine .kizuki/quarantine/canon-stage" });
+  } else if (canonRecovery.quarantined > 0) {
+    problems.push({ page: ".kizuki/quarantine/canon-stage", error: `${canonRecovery.quarantined} foreign canon stage file(s) kept in quarantine for inspection` });
   }
   for (const item of vault.doctrine) {
     if (item.state === "current" || item.state === "owner-edited") continue;
@@ -513,6 +522,9 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   for (const item of report.doctrine) {
     if (item.state === "owner-edited") io.out(`doctrine ${item.file}: owner-edited`);
   }
+  for (const stage of report.canon_recovery.stages) {
+    if (stage.present) io.out(`canon-stage ${stage.stage} ${stage.path} classification=${stage.classification} next_start=${stage.action_on_next_start}`);
+  }
   for (const problem of report.problems) {
     io.out(`problem ${problem.page}: ${problem.error}`);
   }
@@ -523,7 +535,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     io.out(`rail ${rail.rail} status=${rail.status}${extra}`);
   }
   for (const failure of report.serve.failures) {
-    io.out(`serve-failure ${supervisorFailureLine(failure, report.serve.supervisor)}`);
+    io.out(`serve-failure ${supervisorFailureLine(failure, report.serve.supervisor, report.serve.supervisor_exit, report.vault)}`);
   }
   io.out(`status=${report.ok ? "ok" : "failed"}`);
   const firstLive = report.live_claims[0];

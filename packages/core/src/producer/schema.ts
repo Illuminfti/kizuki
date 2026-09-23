@@ -1,5 +1,5 @@
 import { isRfc3339 } from "../util/time";
-import { isPlainObject } from "../util/validate";
+import { isPlainObject, unwrapJsonCodeFence } from "../util/validate";
 import type { ClaimDiagnostic, ClaimDraft, ClaimDraftKind } from "../contracts/producer";
 import type { Sensitivity } from "../agents/types";
 import { diagnosticShape } from "./diagnostics";
@@ -54,9 +54,6 @@ const SENSITIVITIES: ReadonlySet<string> = new Set<Sensitivity>([
   "personal",
   "private",
 ]);
-
-/** One optional Markdown code fence around the object is formatting, not schema. */
-const CODE_FENCE = /^```(?:json)?\s*\n([\s\S]*?)\n```\s*$/;
 
 /** One claim the parser refused; names the field, never the offending value. */
 export interface ClaimRejection {
@@ -193,9 +190,7 @@ export function decodeExtractJson(text: string): DecodeExtractResult {
   if (typeof text !== "string") return fail("response is not text", "response", "text", text);
   if (text.length > MAX_RESPONSE_CHARS) return fail("response exceeds the size cap", "response", "size_cap", text);
 
-  let source = text.trim();
-  const fenced = CODE_FENCE.exec(source);
-  if (fenced !== null && fenced[1] !== undefined) source = fenced[1].trim();
+  const source = unwrapJsonCodeFence(text);
 
   try {
     return { ok: true, value: JSON.parse(source) as unknown };

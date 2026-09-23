@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { PortError } from "@kizuki/core";
 import { MAX_GGUF_FILE_BYTES } from "../src/gguf";
 import {
@@ -28,6 +28,9 @@ import {
   writeFixtureGguf,
 } from "../src/index";
 import { temporaryEmbed, writeTempGguf } from "./helpers";
+
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {

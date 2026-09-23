@@ -1,9 +1,12 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tokenResolver, validTokenRef } from "../src/secrets";
 import { parseSecretRef } from "@kizuki/core";
 import { createHelpers } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const h = createHelpers();
 afterEach(() => h.cleanup());

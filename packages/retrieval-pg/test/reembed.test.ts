@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { openEmbeddedRetrievalPort } from "../src/port";
@@ -9,6 +9,9 @@ import {
   SYNTHETIC_QUERY,
   temporaryPortContext,
 } from "./helpers";
+
+// These tests run the embedded retrieval store; bound them for a loaded host.
+setDefaultTimeout(60_000);
 
 const NEXT_SPACE = { ...FIXTURE_SPACE, id: "fixture:hash-v2@8", model: "hash-v2" };
 

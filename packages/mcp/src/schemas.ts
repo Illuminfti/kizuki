@@ -176,7 +176,8 @@ export const CORRECT_INPUT = z.strictObject({
       claim_id: ID.optional(),
       claim_key: z.string().regex(/^[0-9a-f]{64}$/).optional(),
       subject: ID.optional(),
-    })
+      world_claim: z.strictObject({ kind: z.literal("claim"), token: z.string().regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/) }).optional(),
+    }).refine((target) => [target.claim_id, target.claim_key, target.subject, target.world_claim].filter((value) => value !== undefined).length <= 1, "target names exactly one selector")
     .optional(),
   object: z.string().min(1).max(1024).optional(),
   dry_run: z.boolean().optional(),
@@ -205,3 +206,75 @@ export const PROPOSE_INPUT = z.strictObject({
   provenance: z.array(ID).min(1).max(64),
   confidence: z.number().min(0).max(1).optional(),
 });
+
+const WIRE_TOKEN = z.string().regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/);
+const WORLD_OBJECT_REF = z.strictObject({
+  kind: z.literal("object"),
+  token: WIRE_TOKEN,
+});
+const WORLD_SNAPSHOT_REF = z.strictObject({
+  kind: z.literal("snapshot"),
+  token: WIRE_TOKEN,
+});
+const WORLD_VALID = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("all") }),
+  z.strictObject({ kind: z.literal("unknown_only") }),
+  z.strictObject({ kind: z.literal("at"), at: RFC3339 }),
+  z.strictObject({ kind: z.literal("overlap"), from: RFC3339, until: RFC3339 }),
+]);
+const WORLD_KNOWN_AT = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("current") }),
+  z.strictObject({ kind: z.literal("time"), at: RFC3339 }),
+  z.strictObject({ kind: z.literal("snapshot"), ref: WORLD_SNAPSHOT_REF }),
+]);
+
+export const WORLD_VIEW_INPUT = z.union([
+  z.strictObject({operation:z.enum(["find_concepts","find_situations"]),label:z.string().max(200),valid:WORLD_VALID,knownAt:WORLD_KNOWN_AT}),
+  z.strictObject({
+    operation: z.literal("situation"),
+    situation: WORLD_OBJECT_REF,
+    valid: WORLD_VALID,
+    knownAt: WORLD_KNOWN_AT,
+  }),
+  z.strictObject({
+    operation: z.literal("concept"),
+    concept: WORLD_OBJECT_REF,
+    valid: WORLD_VALID,
+    knownAt: WORLD_KNOWN_AT,
+  }),
+]);
+
+const worldRef = <K extends string>(kind:K) => z.strictObject({kind:z.literal(kind),token:z.string().regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/)});
+const worldEvidence=z.strictObject({admission:worldRef("admission"),eventVersion:worldRef("event_version"),span:z.union([
+  z.strictObject({kind:z.literal("text"),startUtf16:z.number().int().nonnegative(),endUtf16:z.number().int().positive()}),
+  z.strictObject({kind:z.literal("metadata"),field:z.string().max(128)}),
+])});
+const worldRelation=z.strictObject({schema:z.literal("kizuki.relation/v1"),claim:worldRef("claim"),subject:WORLD_OBJECT_REF,predicate:z.string().max(128),
+  object:z.union([z.strictObject({kind:z.literal("literal"),value:z.string().max(400)}),z.strictObject({kind:z.literal("vocabulary"),id:z.string().max(128)}),z.strictObject({kind:z.literal("node"),ref:WORLD_OBJECT_REF})]),
+  perspective:z.strictObject({holder:WORLD_OBJECT_REF.nullable(),speaker:WORLD_OBJECT_REF.nullable(),addressee:WORLD_OBJECT_REF.nullable(),
+    mode:z.enum(["asserted","quoted","reported","hypothetical","suggested","questioned","uncertain"]),interpretation:z.enum(["explicit","inferred"]),evidence:z.array(worldEvidence).max(256)}),
+  context:z.array(WORLD_OBJECT_REF).max(256),polarity:z.enum(["positive","negative"]),
+  valid:z.union([z.strictObject({kind:z.literal("unknown")}),z.strictObject({kind:z.literal("known"),from:z.string(),until:z.string().nullable()})]),
+  temporalBasis:z.enum(["explicit","observed","unknown"]),assessments:z.array(z.strictObject({admission:worldRef("admission"),
+    epistemicKind:z.enum(["observed","reported","owner_assertion","model_inference","hypothesis","recommendation","scenario"]),
+    authority:z.enum(["owner_correction","owner_authored","connector_evidence","model_inference"]),
+    confidence:z.union([z.strictObject({kind:z.literal("unknown")}),z.strictObject({kind:z.literal("known"),value:z.number().min(0).max(1)})]),
+    independence:z.enum(["independent","dependent","unknown"]),evidence:z.array(worldEvidence).max(256)})).max(256),
+  conflict:z.enum(["none_observed","present","unknown"])});
+const worldGaps=z.enum(["coverage","pending_consolidation","stale_dependencies","required_context_overflow","traversal_limit"]);
+const worldCoverage=z.strictObject({status:z.enum(["complete_for_query","partial"]),gaps:z.array(worldGaps).max(5),validWindow:WORLD_VALID,history:z.enum(["retained_for_query","baseline_only","unavailable"])});
+const worldNode=<K extends string>(kind:K)=>z.strictObject({schema:z.literal("kizuki.knowledge-node/v1"),ref:WORLD_OBJECT_REF,kind:z.literal(kind),classificationClaims:z.array(worldRef("claim")).max(256),
+  labels:z.array(z.strictObject({text:z.string().max(400),claim:worldRef("claim")})).max(256),resolution:z.enum(["distinct","resolved","ambiguous"])});
+const worldCommon={summary:z.strictObject({text:z.string().max(1200),admissions:z.array(worldRef("admission")).max(256)}).nullable(),knownAt:z.strictObject({kind:z.literal("current")}),coverage:worldCoverage};
+const worldData=z.union([
+  z.strictObject({schema:z.literal("kizuki.concept-card/v1"),concept:worldNode("concept"),...worldCommon,definitions:z.array(worldRelation).max(256),relations:z.array(worldRelation).max(256),
+    learning:z.array(z.strictObject({facet:z.enum(["exposure","explanation","application","demonstration"]),assertion:worldRelation,assistance:z.enum(["assisted","unassisted","unknown"]),assistanceEvidence:z.array(worldRelation).max(256)})).max(256)}),
+  z.strictObject({schema:z.literal("kizuki.situation-card/v1"),situation:worldNode("situation"),...worldCommon,objective:worldRelation.nullable(),participants:z.array(WORLD_OBJECT_REF).max(256),commitments:z.array(worldRelation).max(256),blocker:worldRelation.nullable(),recentChange:worldRelation.nullable(),uncertainty:z.array(worldRelation).max(256)}),
+  z.strictObject({schema:z.enum(["kizuki.concept-matches/v1","kizuki.situation-matches/v1"]),matches:z.array(z.strictObject({ref:WORLD_OBJECT_REF,labels:z.array(z.string().max(400)).max(256)})).max(32),coverage:worldCoverage}),
+]);
+export const WORLD_ENVELOPE_SHAPE={schema:z.literal("kizuki.envelope/v2"),tool:z.literal("world_view"),principal:worldRef("principal"),at:z.string(),canon:z.array(z.never()).max(0),quoted:z.array(z.never()).max(0),
+  data:z.union([z.strictObject({status:z.literal("not_found")}),z.strictObject({schema:z.literal("kizuki.world-view/v1"),operation:z.enum(["concept","situation","find_concepts","find_situations"]),result:z.union([
+    z.strictObject({status:z.literal("current"),view:z.strictObject({status:z.literal("not_issued")}),data:worldData}),
+    z.strictObject({status:z.literal("incomplete"),data:worldData,reasons:z.array(worldGaps).max(5)}),
+    z.strictObject({status:z.literal("unavailable"),reason:z.enum(["storage","history","budget"])}),
+  ])})])};

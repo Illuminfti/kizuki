@@ -27,6 +27,7 @@ that a provider application or account does not exist.
 | `kizuki.import-pocket` | export import | `connect import-pocket --source PATH` |
 | `kizuki.import-omnivore` | export import | `connect import-omnivore --source PATH` |
 | `kizuki.import-x-archive` | export import | `connect import-x-archive --source PATH` |
+| `kizuki.import-beacon` | agent-run snapshot | [Beacon import](beacon-import.md) |
 | `kizuki.import-legacy-wiki` | estate import | [legacy import](legacy-import.md) |
 | `kizuki.import-legacy-events` | estate import | [legacy import](legacy-import.md) |
 | `kizuki.screenpipe` | offline SQLite | [Screenpipe](#screenpipe) |
@@ -184,12 +185,14 @@ delete Telegram copies. Deletion detection and remote message deletion are
 unsupported. Secret chats are unread. Synthetic native CLI tests do not
 qualify a live Telegram account.
 
-Live-account qualification is unrun. Remaining blockers are project
-`api_id`/`api_hash` registration and custody, a native build that actually
-inlines those credentials, an authorized live account trial, and an
-owner/legal disposition of Telegram API Terms restrictions on using Telegram
-data for AI and ML. Login-code delivery for a given account is unknown until
-that trial. This page does not claim that third-party sign-in is universally
+The 1.0.0 release package inlines the project pair, so sign-in needs no
+environment variables there. Connect, the first state probe, `getMe` and
+sign-out each have a 45-second deadline; a network that never opens fails in
+seconds. Live-account qualification is unrun: no full sign-in, backfill and
+sync on a real account is recorded for this revision, and the owner/legal
+disposition of Telegram API Terms restrictions on using Telegram data for AI
+and ML is still open. Login-code delivery for a given account is unknown until
+such a trial. This page does not claim that third-party sign-in is universally
 prohibited, or that a Telegram application is absent.
 
 ## Gmail
