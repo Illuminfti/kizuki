@@ -61,7 +61,8 @@ describe("dispatchServeTool", () => {
     for (const tool of TOOLS) {
       const envelope = await dispatchServeTool(ctx, tool, args[tool]);
       expect(envelope.tool).toBe(tool);
-      expect(envelope.schema).toBe("kizuki.envelope/v1");
+      // world_view answers in its closed v2 envelope; every other tool keeps v1.
+      expect(envelope.schema).toBe(tool === "world_view" ? "kizuki.envelope/v2" : "kizuki.envelope/v1");
     }
   });
 

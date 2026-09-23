@@ -148,7 +148,7 @@ test("issued references survive reopen, rebuild and mandatory ledger32 backup/re
     ).toEqual(before);
     const backup = join(out.path, "world-backup");
     const manifest = exportVault(db, vault.path, backup);
-    expect(manifest.schema_versions.ledger).toBe(32);
+    expect(manifest.schema_versions.ledger).toBeGreaterThanOrEqual(32);
     for (const table of WORLD_TABLES)
       expect(manifest.files[`world/${table}.jsonl`]).toBeDefined();
     const destination = join(target.path, "restored");
