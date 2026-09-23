@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { createHelpers } from "../helpers";
 import { fakeSystemd } from "./supervisor-fixture";
 
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
+
 const { cleanup, runCli, tempVault } = createHelpers();
 afterEach(cleanup);
 
@@ -13,9 +16,6 @@ test("public install confirms launchd running pid despite disabled substrings", 
   writeFileSync(state, JSON.stringify({ loaded: false }), { mode: 0o600 });
   writeFileSync(join(bin, "launchctl"), `#!${process.execPath}
 import {readFileSync, writeFileSync} from 'node:fs';
-
-// These tests spawn real CLI processes; bound them for a loaded host.
-setDefaultTimeout(30_000);
 const path = ${JSON.stringify(state)};
 const s = JSON.parse(readFileSync(path, 'utf8')), args = process.argv.slice(2);
 let code = 0, stdout = '', stderr = '';

@@ -18,6 +18,9 @@ import { loadCanon } from '../../src/serving/canon';
 import { setSourceGrant, sourceCaptureAdmission, bindSourceEvent, revokeSourceGrant } from '../../src/ledger/source-grants';
 import { ulid } from '../../src/util/ulid';
 
+// These tests do real ledger, vault and process work; bound them for a loaded host.
+setDefaultTimeout(30_000);
+
 const cleanups: (() => void)[] = [];
 afterEach(() => cleanups.splice(0).reverse().forEach(fn => fn()));
 function fixture() { const f = canonFixture(); cleanups.push(f.dispose); return f; }
@@ -284,9 +287,6 @@ test('denied rows may exhaust optional enrichment quota but only generic degrada
 
 import { producedClaimInput } from '../../src/serve/extract';
 import { insertClaim } from '../../src/claims/store';
-
-// These tests do real ledger, vault and process work; bound them for a loaded host.
-setDefaultTimeout(30_000);
 
 test('the real draft materializer needs no frontmatter subjects for current hash-bound identity projection', async () => {
   const f = fixture(), event = labelEvent(f.db);

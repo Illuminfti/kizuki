@@ -11,6 +11,9 @@ import { RAIL_IDS, emptyRunTotals } from "../packages/core/src/serve/types";
 import { installedRailsHealth, readNativeRailDiagnostics, recordInstalledHealth, waitForFreshRails } from "./native-service-health";
 import { Database } from "bun:sqlite";
 
+// These tests spawn real processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
+
 const healthAt = "2026-09-07T00:00:00.000Z";
 function healthyStatus() {
   return { schema: "kizuki.cli.serve/v1", status: "ok", data: { pid: 501, doctor: { ok: true, failures: [],
@@ -318,9 +321,6 @@ test("actual multi-unit cleanup continues after a manager exception and retains 
 });
 
 import { BASELINE_SOURCE_SHA, NATIVE_LIFECYCLE_PHASE_IDS, NATIVE_LIFECYCLE_REGISTRY_SHA256, parseLifecycleArgs, statePhasePassed, upgradePhasePassed, type NativeStateEvidence, type NativeUpgradeEvidence } from "./native-service-lifecycle";
-
-// These tests spawn real processes; bound them for a loaded host.
-setDefaultTimeout(30_000);
 
 test("lifecycle baseline argument is explicit, unique and isolated from artifact proof arguments", () => {
   expect(parseLifecycleArgs(["--artifact", "/candidate", "--baseline-artifact", "/baseline", "--report", "/report"])).toEqual({ artifact: "/candidate", baseline_artifact: "/baseline", report: "/report" });

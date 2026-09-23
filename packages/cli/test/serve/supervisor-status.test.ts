@@ -5,6 +5,9 @@ import { writeServeIntent } from "@kizuki/core";
 import { createHelpers } from "../helpers";
 import { fakeSystemd } from "./supervisor-fixture";
 
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
+
 const { cleanup, runCli, tempVault } = createHelpers();
 afterEach(cleanup);
 
@@ -55,9 +58,6 @@ for (const [name, body, expected, detail] of [
     writeFileSync(join(bin, "launchctl"), `#!${process.execPath}
 import assert from 'node:assert/strict';
 import {appendFileSync} from 'node:fs';
-
-// These tests spawn real CLI processes; bound them for a loaded host.
-setDefaultTimeout(30_000);
 const args=process.argv.slice(2);
 assert.deepEqual(args,['print','gui/'+process.getuid()+'/'+${JSON.stringify("dev.kizuki." + id)}]);
 appendFileSync(${JSON.stringify(trace)},JSON.stringify(args)+'\\n');
