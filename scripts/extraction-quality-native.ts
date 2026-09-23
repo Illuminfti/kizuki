@@ -454,7 +454,10 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
         const page = join(fixture.vault, initialReceipt.page_path), initialBytes = sha256(readFileSync(page));
         // Remove the model before exercising the deterministic consumers.
         writeFileSync(join(fixture.vault, ".kizuki/serve.toml"), "", { mode: 0o600 });
-        const targets = withLedger(fixture.vault, db => inspectOwnerPageCorrectionTargets({ db, vaultPath: fixture.vault }, before.canon[0]!.doc_id));
+        // The owner app addresses a page by its bare page id, not by its retrieval document id.
+        const modelPage = before.canon.find(hit => hit.authority === "model_inference");
+        assert(modelPage !== undefined && modelPage.doc_id.startsWith("page:"), "direct fixture has no model-filed canon page");
+        const targets = withLedger(fixture.vault, db => inspectOwnerPageCorrectionTargets({ db, vaultPath: fixture.vault }, modelPage.doc_id.slice("page:".length)));
         const target = targets.claims.find(claim => "kind" in claim && claim.kind === "world");
         assert(target !== undefined && "target" in target && target.target !== null, "owner page did not expose a supported opaque correction target");
         const correction = await cli<Envelope<{ receipt_id: string }>>(fixture.vault, ["tell", "Ada now coordinates the Juniper archive.", "--world-claim", target.target.world_claim.token, "--json"]);
