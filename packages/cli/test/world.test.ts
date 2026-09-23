@@ -121,3 +121,20 @@ test("CLI tell corrects a world card's opaque claim token", async () => {
   expect(after.exitCode).toBe(0);
   expect(after.stdout).toContain("Use posterior odds after new evidence.");
 });
+
+test("CLI tell names a world claim's predicate and literal values in preview and correction", async () => {
+  const setup = tempVault(), db = openLedger(join(setup.vault, ".kizuki/kizuki.db"));
+  try { await worldFixture(db); } finally { db.close(); }
+  const ref = JSON.parse(runCli(setup.env, "world", "--operation", "find_concepts", "--label", "Bayesian", "--json").stdout).data.data.result.data.matches[0].ref;
+  const claim = JSON.parse(runCli(setup.env, "world", "--operation", "concept", "--ref", ref.token, "--json").stdout).data.data.result.data.definitions[0].claim;
+  const statement = "Use posterior odds after new evidence.";
+  const preview = runCli(setup.env, "tell", statement, "--world-claim", claim.token, "--dry-run");
+  expect(preview.exitCode).toBe(0);
+  expect(preview.stdout).toContain(`Would correct: concept.definition is ${statement} (was: Revise beliefs using evidence).`);
+  expect(preview.stdout).toContain("Would supersede 1 claim.");
+  expect(preview.stdout).not.toContain("Rewrote ");
+  const applied = runCli(setup.env, "tell", statement, "--world-claim", claim.token);
+  expect(applied.exitCode).toBe(0);
+  expect(applied.stdout).toContain(`Corrected: concept.definition is ${statement} (was: Revise beliefs using evidence).`);
+  expect(applied.stdout).toContain("Superseded 1 claim.");
+});
