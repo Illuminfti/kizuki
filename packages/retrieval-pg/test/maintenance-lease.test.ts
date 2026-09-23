@@ -1,9 +1,12 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { openOwnedDirectory } from "@kizuki/core";
 import { WriterLease } from "../src/lease";
+
+// These tests run the embedded retrieval store; bound them for a loaded host.
+setDefaultTimeout(60_000);
 
 test("maintenance preserves legacy live and fresh guards without changing diagnostics", () => {
   const root = mkdtempSync(join(tmpdir(), "maintenance-lease-"));

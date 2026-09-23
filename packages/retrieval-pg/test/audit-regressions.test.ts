@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, setDefaultTimeout } from "bun:test";
 import {
   applyAdjacencyBoost,
   rrfFusion,
@@ -7,6 +7,9 @@ import {
 import type { RecipeCandidate, RecipeEdge } from "../vendor/recipe";
 import { NEIGHBOR_CAP_PER_HOP } from "../vendor/recipe/graph";
 import { finalizeRecipe } from "../src/rank";
+
+// These tests run the embedded retrieval store; bound them for a loaded host.
+setDefaultTimeout(60_000);
 
 function candidate(
   id: string,
