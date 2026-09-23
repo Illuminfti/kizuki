@@ -1,12 +1,15 @@
 import { createAppHost } from "../src/app/host";
 import type { CliIo } from "../src/commands";
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { Database } from "bun:sqlite";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "./helpers";
 import { assertBoundVaultId, openLedgerRead } from "@kizuki/core/internal";
 import { doctorVault } from "@kizuki/core";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const h = createHelpers(); afterEach(h.cleanup);
 const hash = (path: string) => new Bun.CryptoHasher("sha256").update(readFileSync(path)).digest("hex");

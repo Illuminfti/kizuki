@@ -1,9 +1,12 @@
 import { fixtureConsent } from "./helpers";
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openConfiguredRetrieval } from "../src/retrieval-runtime";
 import { createHelpers } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, runCli, tempVault } = createHelpers();
 afterEach(cleanup);

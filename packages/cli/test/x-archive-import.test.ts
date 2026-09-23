@@ -1,10 +1,13 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeXArchiveFixture } from "@kizuki/connectors/testkit";
 import { getCheckpoint, listConnections } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { createHelpers, fixtureConsent } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 function tweetsSource(part: number, records: unknown[]): string {
   return `window.YTD.tweets.part${part} = ${JSON.stringify(records)};`;

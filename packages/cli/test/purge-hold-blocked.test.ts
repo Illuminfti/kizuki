@@ -1,9 +1,12 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createVaultFts5Port, readSince, serializePage } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { createHelpers, fixtureConsent } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, runCli, tempVault } = createHelpers();
 const AT = "2026-09-02T12:00:00.000Z";

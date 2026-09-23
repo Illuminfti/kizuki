@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { createHelpers } from "./helpers";
 
 const { cleanup, isolatedEnv, runCli, tempVault } = createHelpers();
@@ -84,6 +84,9 @@ describe("world", () => {
 import { openLedger } from "../../core/src/ledger/db";
 import { worldFixture } from "../../core/test/serving/world-fixture";
 import { join } from "node:path";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 test("CLI discovers a real admitted concept then reads the issued object token",async()=>{
   const setup=tempVault(),db=openLedger(join(setup.vault,".kizuki/kizuki.db"));

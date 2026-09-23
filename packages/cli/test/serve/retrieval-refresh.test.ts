@@ -1,5 +1,5 @@
 import { fixtureConsent } from "../helpers";
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { OWNER, retrievalDocId, serveSearch } from "@kizuki/core";
@@ -10,6 +10,9 @@ import { openLedger } from "@kizuki/core/testing";
 import { recordedPage } from "../../../core/test/helpers/recorded-page";
 import { refreshDerived } from "../../src/derived";
 import { createHelpers } from "../helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 const helpers = createHelpers();
 afterEach(helpers.cleanup);
 

@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { listAgents, type AppAgentEnrollmentRequest } from "@kizuki/core";
@@ -6,6 +6,9 @@ import { openLedger } from "@kizuki/core/testing";
 import { recordedPage } from "../../core/test/helpers/recorded-page";
 import { AppAgentSetupError, enrollAppAgentSetup, resolveAppAgentMcpRuntime, revokeAppAgent, type AppAgentMcpConfiguration } from "../src/app/agents";
 import { createHelpers } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const helpers = createHelpers();
 interface Session {

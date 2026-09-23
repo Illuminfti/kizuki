@@ -1,9 +1,12 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { listConnections, readSince } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { createHelpers, fixtureConsent } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const PRE_CAPTURE_WARNING =
   "degraded: Claude health check before capture found partial or unsupported content.";

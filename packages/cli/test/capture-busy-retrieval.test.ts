@@ -1,10 +1,13 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { count, revokeSourceGrant, setSourceGrant } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { openEmbeddedRetrievalPort } from "@kizuki/retrieval-pg";
 import { createHelpers } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 const h = createHelpers(); afterEach(h.cleanup);
 
 test("a live retrieval session cannot block source capture, idempotence or consent denial", async () => {

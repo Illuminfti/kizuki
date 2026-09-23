@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "../helpers";
@@ -13,6 +13,9 @@ test("public install confirms launchd running pid despite disabled substrings", 
   writeFileSync(state, JSON.stringify({ loaded: false }), { mode: 0o600 });
   writeFileSync(join(bin, "launchctl"), `#!${process.execPath}
 import {readFileSync, writeFileSync} from 'node:fs';
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 const path = ${JSON.stringify(state)};
 const s = JSON.parse(readFileSync(path, 'utf8')), args = process.argv.slice(2);
 let code = 0, stdout = '', stderr = '';

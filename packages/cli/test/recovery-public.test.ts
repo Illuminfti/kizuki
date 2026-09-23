@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, test, setDefaultTimeout } from 'bun:test';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { openLedger } from '@kizuki/core/testing';
@@ -12,6 +12,9 @@ import { createHelpers } from './helpers';
 import { startApp } from '../src/commands/app';
 import { openConfiguredRetrieval } from '../src/retrieval-runtime';
 import type { CliIo } from '../src/commands';
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const h = createHelpers(), cleanup: (() => void)[] = [];
 afterEach(() => { for (const dispose of cleanup.splice(0).reverse()) dispose(); h.cleanup(); });

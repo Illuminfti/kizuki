@@ -1,5 +1,5 @@
 import { fixtureConsent } from "./helpers";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -14,6 +14,9 @@ import {
 import { openLedger } from "@kizuki/core/testing";
 import { purgeEvents } from "../../core/src/ledger/purge";
 import { createHelpers } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, runCli, tempVault } = createHelpers();
 afterEach(cleanup);

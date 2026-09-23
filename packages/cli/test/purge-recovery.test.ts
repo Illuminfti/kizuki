@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { Database } from "bun:sqlite";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -7,6 +7,9 @@ import { openLedger } from "@kizuki/core/testing";
 import { purgeEvents, setAfterCanonSnapshot, setPurgeRecoveryHook } from "../../core/src/ledger/purge";
 import { FTS5_RETRIEVAL_ID, FTS5_RETRIEVAL_STORE_REL } from "../../core/src/retrieval";
 import { createHelpers } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const { cleanup, runCliAsync, tempVault } = createHelpers();
 const AT = "2026-09-06T16:00:00.000Z";

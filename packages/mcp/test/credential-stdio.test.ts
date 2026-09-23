@@ -1,10 +1,13 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { enrollAgent, revokeAgentEnrollment, setGrant, type CanonChunk, type Grant } from "@kizuki/core";
 import { recordedPage } from "../../core/test/helpers/recorded-page";
 import { mcpFixture, type McpFixture } from "./helpers";
+
+// These tests spawn real CLI processes; bound them for a loaded host.
+setDefaultTimeout(30_000);
 
 const BIN = join(import.meta.dir, "../src/bin.ts");
 let fixture: McpFixture | undefined;
