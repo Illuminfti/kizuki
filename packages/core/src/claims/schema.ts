@@ -503,10 +503,11 @@ export function applyLegacyStagingIdempotency(db: Database): void {
        WHERE status = 'live' AND kind <> 'purge_review'
          AND (content_hash IS NULL OR content_hash = '') ${columnNames(db,"claims").has("is_world_typed") ? "AND is_world_typed=0" : ""}`,
   );
+  // Typed World rows sit outside both legacy idempotency rules.
   db.exec(
     `CREATE UNIQUE INDEX claims_signature_idempotency
        ON claims (content_hash)
-       WHERE status = 'live' AND kind <> 'purge_review' AND content_hash <> ''`,
+       WHERE status = 'live' AND kind <> 'purge_review' AND content_hash <> '' ${columnNames(db,"claims").has("is_world_typed") ? "AND is_world_typed=0" : ""}`,
   );
 }
 
