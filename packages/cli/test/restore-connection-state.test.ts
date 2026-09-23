@@ -14,6 +14,8 @@ afterEach(cleanup);
 // (never a credential, see connections.ts) alongside its backup, `restore`
 // writes it back and catches the event index up, and `doctor` now reports
 // the restored connection exactly as healthy as the original.
+// Each test spawns several real CLI processes, so it needs more than the
+// default per-test budget on a loaded host.
 test("a restored vault keeps its enrolled connection usable and reports healthy", () => {
   const setup = tempVault();
   const imported = runCli(
@@ -51,7 +53,7 @@ test("a restored vault keeps its enrolled connection usable and reports healthy"
   expect(doctorAfter.stdout).toContain(`path=${setup.notes} state=present health=ok`);
   expect(doctorAfter.stdout).toContain("status=ok");
   expect(doctorAfter.exitCode).toBe(0);
-});
+}, 30_000);
 
 test("a restored connection whose source is genuinely gone still reports unhealthy", () => {
   const setup = tempVault();
@@ -78,4 +80,4 @@ test("a restored connection whose source is genuinely gone still reports unhealt
   expect(doctorAfter.stdout).toContain("health=misconfigured");
   expect(doctorAfter.stdout).toContain("status=failed");
   expect(doctorAfter.exitCode).toBe(1);
-});
+}, 30_000);
