@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openLedger } from "../src/ledger/db";
-import { manageDatabaseLifetime } from "../src/ledger/lifetime";
+import { QUERY_CACHE_LIMIT, manageDatabaseLifetime } from "../src/ledger/lifetime";
 import { configureLedgerWalLifecycle } from "../src/ledger/wal-lifecycle";
 
 // These tests spawn real processes; bound them for a loaded host.
@@ -132,6 +132,71 @@ test("the lifetime registry does not strongly retain uncached statements", () =>
   expect(child.stdout.length).toBe(0); expect(child.stderr.length).toBe(0);
 });
 
+test("query() keeps reusing statements after Bun's 20-entry query cache fills", () => {
+  const db = new Database(":memory:"), originalPrepare = db.prepare;
+  let prepared = 0;
+  db.prepare = function(this: Database, ...args: Parameters<Database["prepare"]>) {
+    prepared += 1;
+    return Reflect.apply(originalPrepare, this, args);
+  } as Database["prepare"];
+  manageDatabaseLifetime(db);
+  try {
+    const sql = Array.from({ length: 64 }, (_, i) => `SELECT ${i} AS n`);
+    const first = sql.map(text => db.query(text));
+    for (let round = 0; round < 50; round++) sql.forEach((text, i) => expect(db.query(text)).toBe(first[i]!));
+    expect(prepared).toBe(sql.length);
+  } finally { db.close(); }
+});
+
+test("a long synchronous pass does not pin a statement per query", () => {
+  const script = `
+    import { Database } from "bun:sqlite";
+    import { manageDatabaseLifetime } from ${JSON.stringify(join(import.meta.dir, "../src/ledger/lifetime.ts"))};
+    const db = manageDatabaseLifetime(new Database(":memory:"));
+    const sql = Array.from({ length: 64 }, (_, i) => "SELECT " + i + " AS n WHERE ?1 IS NOT NULL");
+    for (const text of sql) db.query(text).get(1);
+    Bun.gc(true);
+    const before = process.memoryUsage().rss;
+    for (let i = 0; i < 100_000; i++) db.query(sql[i % sql.length]).get(i);
+    const grown = process.memoryUsage().rss - before;
+    if (grown > 64 * 1024 * 1024) throw new Error("one synchronous pass grew " + grown + " bytes");
+    db.close(true);
+  `;
+  const child = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 30_000 });
+  expect(child.exitCode, child.stderr.toString()).toBe(0);
+});
+
+test("explicitly finalized statements are released within one synchronous pass", () => {
+  const script = `
+    import { Database } from "bun:sqlite";
+    import { manageDatabaseLifetime } from ${JSON.stringify(join(import.meta.dir, "../src/ledger/lifetime.ts"))};
+    const db = manageDatabaseLifetime(new Database(":memory:"));
+    const held = db.prepare("SELECT 1 AS n");
+    Bun.gc(true);
+    const before = process.memoryUsage().rss;
+    for (let i = 0; i < 600_000; i++) { using statement = db.prepare("SELECT ?1 AS n"); statement.get(i); }
+    const grown = process.memoryUsage().rss - before;
+    if (grown > 320 * 1024 * 1024) throw new Error("one synchronous pass grew " + grown + " bytes");
+    db.close(true);
+    if (!held.isFinalized) throw new Error("a held statement survived close");
+  `;
+  const child = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 30_000 });
+  expect(child.exitCode, child.stderr.toString()).toBe(0);
+});
+
+test("the query cache is bounded; an evicted statement serves its holder until close", () => {
+  const db = manageDatabaseLifetime(new Database(":memory:"));
+  try {
+    for (let i = 0; i < 20; i++) db.query(`SELECT ${i} AS bun_cached`);
+    const held = db.query("SELECT -1 AS n");
+    for (let i = 0; i < QUERY_CACHE_LIMIT; i++) db.query(`SELECT ${i} AS n`);
+    expect(db.query("SELECT -1 AS n")).not.toBe(held);
+    expect(held.get()).toEqual({ n: -1 });
+    db.close(true);
+    expect(() => held.get()).toThrow();
+  } finally { db.close(); }
+});
+
 test("a finalizer that returns without finalizing is refused and remains retryable", () => {
   const db = manageDatabaseLifetime(new Database(":memory:"));
   const statement = db.prepare("SELECT 1"), originalFinalize = statement.finalize;
@@ -142,4 +207,59 @@ test("a finalizer that returns without finalizing is refused and remains retryab
     expect(() => db.close()).not.toThrow();
     expect(() => statement.get()).toThrow();
   } finally { statement.finalize = originalFinalize; statement.finalize(); db.close(); }
+});
+
+const ROWS_SQL = "SELECT n FROM rows_fixture ORDER BY n";
+
+/** A file WAL ledger, a second connection, and ROWS_SQL either within Bun's
+ * 20-entry query() cache or past it. */
+function walFixture(pastBunCache: boolean) {
+  const root = mkdtempSync(join(tmpdir(), "ledger-lifetime-iterate-")), path = join(root, "ledger.db");
+  const db = manageDatabaseLifetime(new Database(path));
+  db.exec("PRAGMA journal_mode=WAL; CREATE TABLE rows_fixture(n INTEGER); INSERT INTO rows_fixture VALUES(1),(2),(3)");
+  if (pastBunCache) for (let i = 0; i < 25; i++) db.query(`SELECT ${i} AS filler`).get();
+  const other = new Database(path);
+  return { db, other, dispose() { other.close(); db.close(); rmSync(root, { recursive: true, force: true }); } };
+}
+
+async function collectGarbage(): Promise<void> {
+  for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(0); }
+}
+
+const earlyExits: Record<string, (db: Database) => void> = {
+  break: db => { for (const _ of db.query(ROWS_SQL).iterate()) break; },
+  return: db => { (() => { for (const row of db.query(ROWS_SQL).iterate()) return row; })(); },
+  "throw in a rolled-back transaction": db => {
+    expect(() => db.transaction(() => { for (const _ of db.query(ROWS_SQL).iterate()) throw new Error("refused"); }).deferred()).toThrow("refused");
+  },
+  "abandoned iterator": db => { (() => { db.query(ROWS_SQL).iterate().next(); })(); },
+};
+
+for (const pastBunCache of [false, true]) for (const [exit, leave] of Object.entries(earlyExits)) {
+  test(`a query() iteration left early (${exit}, ${pastBunCache ? "past" : "within"} Bun's cache) releases its read snapshot`, async () => {
+    const { db, other, dispose } = walFixture(pastBunCache);
+    try {
+      leave(db);
+      await collectGarbage();
+      other.run("INSERT INTO rows_fixture VALUES(4)");
+      expect(db.query<{ rows: number }, []>("SELECT count(*) AS rows FROM rows_fixture").get()).toEqual({ rows: 4 });
+      expect(() => db.transaction(() => db.run("INSERT INTO rows_fixture VALUES(5)")).immediate()).not.toThrow();
+      expect(other.query("PRAGMA wal_checkpoint(TRUNCATE)").get()).toMatchObject({ busy: 0 });
+      expect(db.query<{ n: number }, []>(ROWS_SQL).all().map(row => row.n)).toEqual([1, 2, 3, 4, 5]);
+    } finally { dispose(); }
+  });
+}
+
+for (const pastBunCache of [false, true]) test(`a nested query() of SQL mid-iteration gets its own statement (${pastBunCache ? "past" : "within"} Bun's cache)`, () => {
+  const { db, dispose } = walFixture(pastBunCache);
+  try {
+    const outer: number[] = [];
+    for (const row of db.query<{ n: number }, []>(ROWS_SQL).iterate()) {
+      outer.push(row.n);
+      expect(db.query<{ n: number }, []>(ROWS_SQL).all().map(inner => inner.n)).toEqual([1, 2, 3]);
+      for (const _ of db.query(ROWS_SQL).iterate()) break;
+      if (outer.length > 3) break;
+    }
+    expect(outer).toEqual([1, 2, 3]);
+  } finally { dispose(); }
 });

@@ -13,7 +13,7 @@ import type {
   CanonicalProducer,
   ClaimTaint,
 } from "../contracts/proposal";
-import { oneShotGet, tableExists } from "../ledger/schema";
+import { tableExists } from "../ledger/schema";
 import type { Writer } from "../vault/write";
 
 /** Shared with the pre-RFC promotion log so a vault keeps one receipt file. */
@@ -246,12 +246,11 @@ export function worldReceiptChain(db: Database, pagePath: string): WorldCanonRec
   return receiptJournalShape(db).typed ? typedReceiptChain(db, pagePath) : [];
 }
 
-/** One bounded schema probe; per-row readers call it once per receipt. */
+/** One bounded schema probe; per-row readers call it once per receipt, so it is cached. */
 function receiptJournalShape(db: Database): { exists: boolean; typed: boolean } {
-  const shape = oneShotGet<{ columns: number; typed: number | null }>(
-    db,
+  const shape = db.query<{ columns: number; typed: number | null }, []>(
     "SELECT count(*) AS columns, max(name = 'prior_receipt_id') AS typed FROM pragma_table_info('canon_receipts')",
-  );
+  ).get();
   return { exists: (shape?.columns ?? 0) > 0, typed: shape?.typed === 1 };
 }
 
