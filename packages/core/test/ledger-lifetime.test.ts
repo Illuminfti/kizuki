@@ -208,3 +208,58 @@ test("a finalizer that returns without finalizing is refused and remains retryab
     expect(() => statement.get()).toThrow();
   } finally { statement.finalize = originalFinalize; statement.finalize(); db.close(); }
 });
+
+const ROWS_SQL = "SELECT n FROM rows_fixture ORDER BY n";
+
+/** A file WAL ledger, a second connection, and ROWS_SQL either within Bun's
+ * 20-entry query() cache or past it. */
+function walFixture(pastBunCache: boolean) {
+  const root = mkdtempSync(join(tmpdir(), "ledger-lifetime-iterate-")), path = join(root, "ledger.db");
+  const db = manageDatabaseLifetime(new Database(path));
+  db.exec("PRAGMA journal_mode=WAL; CREATE TABLE rows_fixture(n INTEGER); INSERT INTO rows_fixture VALUES(1),(2),(3)");
+  if (pastBunCache) for (let i = 0; i < 25; i++) db.query(`SELECT ${i} AS filler`).get();
+  const other = new Database(path);
+  return { db, other, dispose() { other.close(); db.close(); rmSync(root, { recursive: true, force: true }); } };
+}
+
+async function collectGarbage(): Promise<void> {
+  for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(0); }
+}
+
+const earlyExits: Record<string, (db: Database) => void> = {
+  break: db => { for (const _ of db.query(ROWS_SQL).iterate()) break; },
+  return: db => { (() => { for (const row of db.query(ROWS_SQL).iterate()) return row; })(); },
+  "throw in a rolled-back transaction": db => {
+    expect(() => db.transaction(() => { for (const _ of db.query(ROWS_SQL).iterate()) throw new Error("refused"); }).deferred()).toThrow("refused");
+  },
+  "abandoned iterator": db => { (() => { db.query(ROWS_SQL).iterate().next(); })(); },
+};
+
+for (const pastBunCache of [false, true]) for (const [exit, leave] of Object.entries(earlyExits)) {
+  test(`a query() iteration left early (${exit}, ${pastBunCache ? "past" : "within"} Bun's cache) releases its read snapshot`, async () => {
+    const { db, other, dispose } = walFixture(pastBunCache);
+    try {
+      leave(db);
+      await collectGarbage();
+      other.run("INSERT INTO rows_fixture VALUES(4)");
+      expect(db.query<{ rows: number }, []>("SELECT count(*) AS rows FROM rows_fixture").get()).toEqual({ rows: 4 });
+      expect(() => db.transaction(() => db.run("INSERT INTO rows_fixture VALUES(5)")).immediate()).not.toThrow();
+      expect(other.query("PRAGMA wal_checkpoint(TRUNCATE)").get()).toMatchObject({ busy: 0 });
+      expect(db.query<{ n: number }, []>(ROWS_SQL).all().map(row => row.n)).toEqual([1, 2, 3, 4, 5]);
+    } finally { dispose(); }
+  });
+}
+
+for (const pastBunCache of [false, true]) test(`a nested query() of SQL mid-iteration gets its own statement (${pastBunCache ? "past" : "within"} Bun's cache)`, () => {
+  const { db, dispose } = walFixture(pastBunCache);
+  try {
+    const outer: number[] = [];
+    for (const row of db.query<{ n: number }, []>(ROWS_SQL).iterate()) {
+      outer.push(row.n);
+      expect(db.query<{ n: number }, []>(ROWS_SQL).all().map(inner => inner.n)).toEqual([1, 2, 3]);
+      for (const _ of db.query(ROWS_SQL).iterate()) break;
+      if (outer.length > 3) break;
+    }
+    expect(outer).toEqual([1, 2, 3]);
+  } finally { dispose(); }
+});
