@@ -652,7 +652,7 @@ describe("determinism and targets", () => {
     expect(report.pages[0]?.notes).toEqual(["target: flattened"]);
   });
 
-  test("a page body longer than a proposal is truncated and the note says so", () => {
+  test("a page body longer than the cap is truncated and the note says so", () => {
     const body = "x".repeat(300_000);
     const scan: ScanResult = {
       files: [
@@ -667,15 +667,28 @@ describe("determinism and targets", () => {
       truncated: false,
     };
     const { events, report } = plan(scan);
-    // Staging refuses a longer body and would then stage nothing of the page.
-    expect(events[0]?.text).toHaveLength(MAX_PROPOSAL_BODY_CHARS);
+    expect(events[0]?.text).toHaveLength(262_144);
     expect(events[0]?.metadata["text_truncated"]).toBe(true);
-    expect(report.pages[0]?.notes).toEqual(["text_truncated"]);
+    // Its staged page is cut shorter still, and the report says so too.
+    expect(events[0]?.metadata["body_truncated"]).toBe(true);
+    expect(report.pages[0]?.notes).toEqual(["text_truncated", "body_truncated"]);
   });
 
-  test("a body past the proposal bound keeps whole characters only", () => {
-    // An astral character straddles the bound: its high half would be the
-    // last unit kept, and half a character is not text.
+  test("the ledger cap counts characters, not UTF-16 units", () => {
+    const body = "\u{1F600}".repeat(262_145);
+    const content = `---\ntitle: Wide\n---\n${body}`;
+    const { events } = plan({
+      files: [{ relpath: "wide.md", content, mtimeMs: 1, size: content.length }],
+      skipped: [],
+      truncated: false,
+    });
+    expect(events[0]?.text).toBe("\u{1F600}".repeat(262_144));
+    expect(events[0]?.metadata["text_truncated"]).toBe(true);
+  });
+
+  test("a page longer than a proposal keeps its whole text and notes the staged cut", () => {
+    // Staging files only the head of a longer body. The ledger is the
+    // evidence, and recall reads it, so the event keeps the whole page.
     const body = `${"a".repeat(MAX_PROPOSAL_BODY_CHARS - 1)}\u{1F600}tail`;
     const content = `---\ntitle: Long\n---\n${body}`;
     const { events, report } = plan({
@@ -683,10 +696,24 @@ describe("determinism and targets", () => {
       skipped: [],
       truncated: false,
     });
-    expect(events[0]?.text).toBe("a".repeat(MAX_PROPOSAL_BODY_CHARS - 1));
-    expect(events[0]?.metadata["text_truncated"]).toBe(true);
-    expect(page(report, "long.md").notes).toContain("text_truncated");
+    expect(events[0]?.text).toBe(body);
+    expect(events[0]?.metadata["text_truncated"]).toBeUndefined();
+    expect(events[0]?.metadata["body_truncated"]).toBe(true);
+    expect(page(report, "long.md").notes).toEqual(["body_truncated"]);
     expect(page(report, "long.md").target).not.toBeNull();
+  });
+
+  test("a page at the proposal bound is staged whole and carries no note", () => {
+    const body = "a".repeat(MAX_PROPOSAL_BODY_CHARS);
+    const content = `---\ntitle: Full\n---\n${body}`;
+    const { events, report } = plan({
+      files: [{ relpath: "full.md", content, mtimeMs: 1, size: content.length }],
+      skipped: [],
+      truncated: false,
+    });
+    expect(events[0]?.text).toBe(body);
+    expect(events[0]?.metadata["body_truncated"]).toBeUndefined();
+    expect(page(report, "full.md").notes).toEqual([]);
   });
 });
 

@@ -45,6 +45,7 @@ import type { ScanResult } from "./scan";
  * report, and nothing here touches the filesystem.
  */
 
+export const MAX_TEXT_LENGTH = 262_144;
 const MAX_VOCABULARY = 64;
 
 export interface PlanOptions {
@@ -59,12 +60,6 @@ export interface PlanOptions {
    * those.
    */
   pinned?: Record<string, string>;
-}
-
-/** At most `units` UTF-16 units of `text`, never half of a surrogate pair. */
-function headOf(text: string, units: number): string {
-  const last = text.charCodeAt(units - 1);
-  return text.slice(0, last >= 0xd800 && last <= 0xdbff ? units - 1 : units);
 }
 
 interface PageDraft {
@@ -234,13 +229,11 @@ function planPage(
   }
 
   const target = planTarget(relpath, type, mapping, targets, notes, pinned);
-  // The page's prose is the body staging files, and staging refuses a longer
-  // body outright, which would stage nothing of the page at all. Its head
-  // keeps the page, its type, title and target; the note says what was cut.
-  const truncated = parsed.body.length > MAX_PROPOSAL_BODY_CHARS;
+  const points = [...parsed.body];
+  const truncated = points.length > MAX_TEXT_LENGTH;
   if (truncated) notes.push("text_truncated");
   const text = truncated
-    ? headOf(parsed.body, MAX_PROPOSAL_BODY_CHARS)
+    ? points.slice(0, MAX_TEXT_LENGTH).join("")
     : parsed.body;
 
   const extensions: Record<string, FrontmatterValue> = {
@@ -270,6 +263,11 @@ function planPage(
   const checked = validatePageCandidate({ [PAGE_CANDIDATE_KEY]: candidate });
   const usable = checked !== null && checked.ok;
   if (!usable) notes.push("candidate_rejected");
+  // Staging files the head of a longer body as the page. The event keeps the
+  // whole text, because it is the evidence recall reads; the note and the
+  // flag say the staged page is shorter than it.
+  const bodyTruncated = usable && text.length > MAX_PROPOSAL_BODY_CHARS;
+  if (bodyTruncated) notes.push("body_truncated");
 
   const report: LegacyWikiPageReport = {
     ...base,
@@ -310,6 +308,7 @@ function planPage(
           ? { frontmatter: frontmatter.frontmatter }
           : { frontmatter_omitted: frontmatter.omitted }),
         ...(truncated ? { text_truncated: true } : {}),
+        ...(bodyTruncated ? { body_truncated: true } : {}),
         ...(usable ? { [PAGE_CANDIDATE_KEY]: candidate } : {}),
         // The decision record travels with the evidence, so a page reviewed
         // months later still says what the migration did to it.
