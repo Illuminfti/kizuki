@@ -329,6 +329,7 @@ async function runWritePassOwned(
     };
     // Every step files its decision and advances the cursor before the next
     // one starts, so a kill loses at most the request in flight.
+    let retried = false;
     for (let taken = 0; taken < pass.limits.max_calls_per_pass; taken++) {
       let outcome: StepOutcome;
       try {
@@ -343,7 +344,10 @@ async function runWritePassOwned(
       superseded += outcome.superseded;
       errors.push(...outcome.errors);
       stopped = outcome.stopped;
-      if (!outcome.progressed) break;
+      // A rejected response is asked for once more: a nondeterministic model
+      // often answers the same records well on the next request.
+      if (outcome.next === "stop" || (outcome.next === "retry" && retried)) break;
+      retried = outcome.next === "retry";
     }
   }
 
@@ -475,8 +479,12 @@ interface ExtractionPass {
 }
 
 interface StepOutcome {
-  /** False ends the pass's extraction: nothing is left, or the next step would repeat this one. */
-  readonly progressed: boolean;
+  /**
+   * `continue` after durable progress; `retry` after a rejected response to a
+   * request that was sent, which the next step may repeat once; `stop` when
+   * nothing is left or the next step could only repeat this one.
+   */
+  readonly next: "continue" | "retry" | "stop";
   readonly extracted: number;
   readonly deduped: number;
   readonly superseded: number;
@@ -484,8 +492,8 @@ interface StepOutcome {
   readonly errors: readonly string[];
 }
 
-const settled = (progressed: boolean, fields: Partial<Omit<StepOutcome, "progressed">> = {}): StepOutcome =>
-  ({ progressed, extracted: 0, deduped: 0, superseded: 0, stopped: null, errors: [], ...fields });
+const settled = (next: StepOutcome["next"], fields: Partial<Omit<StepOutcome, "next">> = {}): StepOutcome =>
+  ({ next, extracted: 0, deduped: 0, superseded: 0, stopped: null, errors: [], ...fields });
 
 /** A provider that still refuses after the port's bounded retries ends the pass as a typed stop. */
 function modelStop(reason: string, diagnostic: ProducerDiagnostic | undefined): string {
@@ -504,25 +512,29 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
     // Replay files an existing decision; it is not another extraction.
     const filed = await fileProducedDrafts(claims, pending, producer);
     return filed === null
-      ? settled(false, { errors: ["extract cursor changed before durable batch commit"] })
-      : settled(true, { deduped: filed.deduped, superseded: filed.superseded });
+      ? settled("stop", { errors: ["extract cursor changed before durable batch commit"] })
+      : settled("continue", { deduped: filed.deduped, superseded: filed.superseded });
   }
+  const sent = metrics.calls, earlier = metrics.diagnostic;
   const mined = isProducerV2(observed)
     ? await mineLiveDrafts(db, observed, limits)
     : await mineLiveDrafts(db, observed, limits);
-  const diagnostic = metrics.diagnostic === undefined ? [] : [formatProducerDiagnostic(metrics.diagnostic)];
+  // Only this step's request can explain this step's failure.
+  const fresh = metrics.diagnostic === earlier ? undefined : metrics.diagnostic;
+  const diagnostic = fresh === undefined ? [] : [formatProducerDiagnostic(fresh)];
   switch (mined.mined.status) {
     case "unavailable":
-      return settled(false, { stopped: modelStop(mined.mined.reason, metrics.diagnostic), errors: diagnostic });
+      return settled("stop", { stopped: modelStop(mined.mined.reason, fresh), errors: diagnostic });
     case "rejected":
-      return settled(false, { errors: [mined.mined.reason, ...diagnostic] });
+      // A refusal before sending, such as a record too large for any request, repeats identically.
+      return settled(metrics.calls > sent ? "retry" : "stop", { errors: [mined.mined.reason, ...diagnostic] });
     case "empty":
-      if (commitExtractCursor(db, mined)) return settled(true);
-      return settled(false, { errors: mined.cursor === null ? [] : ["extract cursor changed before commit"] });
+      if (commitExtractCursor(db, mined)) return settled("continue");
+      return settled("stop", { errors: mined.cursor === null ? [] : ["extract cursor changed before commit"] });
     case "deferred":
       return commitExtractCursor(db, mined)
-        ? settled(true)
-        : settled(false, { errors: ["extract deferred inputs changed before commit"] });
+        ? settled("continue")
+        : settled("stop", { errors: ["extract deferred inputs changed before commit"] });
     case "ok": {
       // Persist the accepted model output before the first claim write.  A
       // retry must replay this exact decision, never ask a nondeterministic
@@ -532,8 +544,8 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
       if (durable === null) throw new Error("durable extraction decision is missing");
       const filed = await fileProducedDrafts(claims, durable, producer);
       return filed === null
-        ? settled(false, { errors: ["extract cursor changed before commit"] })
-        : settled(true, { extracted: mined.mined.count, deduped: filed.deduped, superseded: filed.superseded });
+        ? settled("stop", { errors: ["extract cursor changed before commit"] })
+        : settled("continue", { extracted: mined.mined.count, deduped: filed.deduped, superseded: filed.superseded });
     }
     default: {
       const _exhaustive: never = mined.mined;

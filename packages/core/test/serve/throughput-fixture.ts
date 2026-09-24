@@ -38,7 +38,7 @@ export interface ThroughputVault {
   dispose(): void;
 }
 
-export function throughputVault(records: number): ThroughputVault {
+export function throughputVault(records: number, text: (index: number) => string = recordText): ThroughputVault {
   const root = mkdtempSync(join(tmpdir(), "kizuki-throughput-"));
   const vault = join(root, "vault");
   initVault(vault);
@@ -71,7 +71,7 @@ export function throughputVault(records: number): ThroughputVault {
             ...validEvent(),
             connector_id: "kizuki.fixture",
             source_record_id: `throughput-${index}`,
-            text: recordText(index),
+            text: text(index),
             subjects: [],
           },
           { source: { source_key: sourceKey, expected_revision: 1 } },
@@ -195,11 +195,12 @@ export function fixtureProducer(
 /**
  * The shipped typed producer over a scripted chat port. `reply` returns
  * "rate_limited" for a request the provider still refuses after the port's
- * own bounded retries, exactly as the OpenAI-compatible port reports it.
+ * own bounded retries, exactly as the OpenAI-compatible port reports it, and
+ * "malformed" for a completion whose text is not a typed response.
  */
 export function scriptedModelProducer(
   vault: string,
-  reply: (request: number) => "ok" | "rate_limited",
+  reply: (request: number, eventIds: readonly string[]) => "ok" | "rate_limited" | "malformed",
 ): { producer: ProducerV2Port; requests: string[][] } {
   const requests: string[][] = [];
   const llm: LlmPort = {
@@ -223,8 +224,11 @@ export function scriptedModelProducer(
         (match) => match[1]!,
       );
       requests.push(ids);
-      if (reply(requests.length) === "rate_limited")
+      const scripted = reply(requests.length, ids);
+      if (scripted === "rate_limited")
         throw new PortError("unavailable", "http 429", true);
+      if (scripted === "malformed")
+        return { text: "{\"schema\":", model: MODEL, usage: { input_tokens: 10, output_tokens: 3 } };
       const texts = new Map(
         ids.map((id) => [
           id,

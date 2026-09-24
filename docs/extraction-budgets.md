@@ -42,8 +42,14 @@ A value outside its range, a fraction or a string keeps that key's default.
   model request, journals the accepted decision, files its claims and commits
   the cursor in one transaction before the next step starts. A kill therefore
   loses at most the request in flight, and the next pass resumes from the
-  durable cursor. A pass ends early when the ledger is drained, a response is
-  rejected, a commit finds the cursor moved, or the model is unavailable.
+  durable cursor. A rejected response (malformed, truncated or refused) is
+  asked for once more in the next step, because a nondeterministic model often
+  answers the same records on a second request; a second rejection in a row
+  ends the pass, and the rejected records wait for the next one. A pass also
+  ends early when the ledger is drained, a request is refused before it is
+  sent, a commit finds the cursor moved, or the model is unavailable. A record
+  too large for one request therefore still holds the cursor, as described
+  under [refusals](#refusals-and-retained-input).
   Steps that make no request, such as advancing over records a source grant
   does not cover, still count toward the limit, so the default pass is the
   same single step as before.
@@ -169,7 +175,8 @@ The focused tests cover rich role metadata, complete context, split text,
 impossible records, denied interleaving, grant changes, successful abstention,
 deferred retries and partial journal replay across restart. The throughput
 tests cover setting bounds, one committed cursor per request, a rate-limited
-stop and its resumption, a real kill during a request, flat statement and
-memory use over 64-request passes, retry backoff and the sync period applied
-at service start. All fixtures are synthetic; they make no provider or account
+stop and its resumption, one retry of a rejected response, an oversized record
+that holds the cursor without a request, a real kill during a request, flat
+statement and memory use over 64-request passes, retry backoff and the sync
+period applied at service start. All fixtures are synthetic; they make no provider or account
 calls.

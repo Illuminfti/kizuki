@@ -264,6 +264,43 @@ test("a rate-limited provider ends the pass as a typed stop and the next pass re
   expect(modelClaims(f.db)).toBe(4);
 });
 
+test("a rejected response is retried once within the pass; a record rejected twice ends it", async () => {
+  const f = fixture(3);
+  const [e0, e1, e2] = f.eventIds as [string, string, string];
+  writeServeToml(f.vault, "[extraction]\nmax_calls_per_pass = 5\nrecords_per_request = 1\n");
+  const flaky = scriptedModelProducer(f.vault, request => request === 2 ? "malformed" : "ok");
+  const recovered = await runRail(f.db, f.vault, "sync", { hooks: { producer: flaky.producer, claims: { db: f.db }, model_ref: MODEL } });
+  expect(flaky.requests).toEqual([[e0], [e1], [e1], [e2]]);
+  expect(recovered).toMatchObject({ status: "degraded", stopped: null, claims_extracted: 3, model: { calls: 4 } });
+  expect(recovered.errors).toContain("model response rejected: bad response");
+  expect(endsAt(readExtractCursor(f.db), e2)).toBe(true);
+
+  const g = fixture(3);
+  const [g0] = g.eventIds as [string];
+  writeServeToml(g.vault, "[extraction]\nmax_calls_per_pass = 5\nrecords_per_request = 1\n");
+  const stuck = scriptedModelProducer(g.vault, () => "malformed");
+  const held = await runRail(g.db, g.vault, "sync", { hooks: { producer: stuck.producer, claims: { db: g.db }, model_ref: MODEL } });
+  // One retry per record, never the rest of the pass on the same record.
+  expect(stuck.requests).toEqual([[g0], [g0]]);
+  expect(held).toMatchObject({ status: "degraded", stopped: null, claims_extracted: 0, model: { calls: 2 } });
+  expect(readExtractCursor(g.db)).toBeNull();
+});
+
+test("a record too large for any request holds the cursor without a request or a retry", async () => {
+  const oversized = "x".repeat(24_001);
+  const g = throughputVault(3, index => index === 1 ? oversized : recordText(index));
+  const db = openLedger(g.ledger);
+  disposers.push(g.dispose, () => db.close());
+  const [e0] = g.eventIds as [string];
+  writeServeToml(g.vault, "[extraction]\nmax_calls_per_pass = 5\nrecords_per_request = 1\n");
+  const model = scriptedModelProducer(g.vault, () => "ok");
+  const receipt = await runRail(db, g.vault, "sync", { hooks: { producer: model.producer, claims: { db }, model_ref: MODEL } });
+  expect(model.requests).toEqual([[e0]]);
+  expect(receipt).toMatchObject({ stopped: null, claims_extracted: 1, model: { calls: 1 } });
+  expect(receipt.errors).toContain("producer v2 input exceeds structural or budget limits");
+  expect(endsAt(readExtractCursor(db), e0)).toBe(true);
+});
+
 test("a kill during a request loses only that request and the next pass resumes after the last filed one", () => {
   const f = fixture(5);
   const [e0, e1, e2] = f.eventIds as [string, string, string];
