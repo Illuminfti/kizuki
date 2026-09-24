@@ -21,6 +21,7 @@ import {
   enrollConnection,
   isPlainObject,
   listConnections,
+  MAX_PROPOSAL_BODY_CHARS,
   sourceCaptureAdmission,
   inspectSourceGrant,
   targetProblem,
@@ -126,14 +127,52 @@ export function markdownCommittedIdentities(
 const WIKI_MAX_FILES = 50_000;
 
 /**
- * Latest live wiki identities for one enrolled source. Identifier and
- * metadata only; never event text. Fail closed on an incompatible inventory.
+ * Whether a page's text is longer than a staged body, in the UTF-16 units
+ * staging counts. SQLite measures code points and bytes, which settle nearly
+ * every page: a code point is at least one unit, and only a character past
+ * U+FFFF is two, which also takes four bytes. A page those cannot settle is
+ * read to be measured; its text goes no further than this function.
+ */
+function longerThanProposal(
+  db: Database,
+  eventId: string,
+  chars: number,
+  bytes: number,
+): boolean {
+  if (chars > MAX_PROPOSAL_BODY_CHARS) return true;
+  if (chars + Math.floor((bytes - chars) / 3) <= MAX_PROPOSAL_BODY_CHARS) {
+    return false;
+  }
+  let row: { text: string } | null;
+  try {
+    row = db
+      .query<{ text: string }, [string]>("SELECT text FROM events WHERE event_id = ?")
+      .get(eventId);
+  } catch (error) {
+    throw new ConnectionError(
+      `wiki committed identities are unreadable: ${errorText(error)}`,
+    );
+  }
+  return row !== null && row.text.length > MAX_PROPOSAL_BODY_CHARS;
+}
+
+/**
+ * Latest live wiki identities for one enrolled source. Identifiers and
+ * metadata go back to the connector, never event text. Fail closed on an
+ * incompatible inventory.
  *
  * A row is still an identity when an earlier build recorded it without the
  * page's content hash: its empty hash matches no page, so the page is
  * re-emitted and the identity heals. A row with no usable page target was
  * never in a snapshot, because the connector records only pages it placed.
  * Neither is grounds to refuse the whole source.
+ *
+ * A row an earlier build stored for a page longer than a staged body is also
+ * given an empty hash. Staging refused that page's body and the retry stored
+ * the page as a duplicate, so the ledger holds the page and no staged page
+ * cites it. This build plans such a page with `body_truncated`, so its event
+ * differs from the stored one: re-emitted once, it is stored again and staged
+ * as its head, and the newer row carries the flag and the page's real hash.
  */
 export function wikiCommittedIdentities(
   db: Database,
@@ -142,14 +181,27 @@ export function wikiCommittedIdentities(
   if (!SOURCE_KEY.test(sourceKey)) {
     throw new ConnectionError("wiki committed identities require a source key");
   }
-  let rows: Array<{ relpath: string; hash: unknown; target: unknown }>;
+  type Row = {
+    event_id: string;
+    relpath: string;
+    hash: unknown;
+    target: unknown;
+    marked: number;
+    chars: number;
+    bytes: number;
+  };
+  let rows: Row[];
   try {
     rows = db
-      .query<{ relpath: string; hash: unknown; target: unknown }, [string, string, number]>(
-        `SELECT relpath, hash, target FROM (
-           SELECT e.source_record_id AS relpath,
+      .query<Row, [string, string, number]>(
+        `SELECT event_id, relpath, hash, target, marked, chars, bytes FROM (
+           SELECT e.event_id,
+                  e.source_record_id AS relpath,
                   json_extract(e.metadata, '$.sha256') AS hash,
                   json_extract(e.metadata, '$.page_candidate.target') AS target,
+                  json_type(e.metadata, '$.body_truncated') IS NOT NULL AS marked,
+                  length(e.text) AS chars,
+                  length(CAST(e.text AS BLOB)) AS bytes,
                   e.deleted,
                   ROW_NUMBER() OVER (
                     PARTITION BY e.source_record_id
@@ -190,8 +242,13 @@ export function wikiCommittedIdentities(
     }
     seen.add(relpath);
     if (typeof target !== "string" || targetProblem(target) !== null) continue;
+    const unstaged =
+      row.marked === 0 && longerThanProposal(db, row.event_id, row.chars, row.bytes);
     files.push([relpath, {
-      hash: typeof hash === "string" && MARKDOWN_SHA256.test(hash) ? hash : "",
+      hash:
+        !unstaged && typeof hash === "string" && MARKDOWN_SHA256.test(hash)
+          ? hash
+          : "",
       target,
     }]);
   }
