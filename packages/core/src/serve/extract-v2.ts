@@ -15,7 +15,7 @@ import {
 } from "../contracts/claim-v2";
 import type { ProducerPort } from "../contracts/producer";
 import type { WorldDraftInsert } from "../producer/world-drafts";
-import { EXTRACT_MAX_OUTPUT_TOKENS } from "../producer/model";
+import { DEFAULT_EXTRACTION_CONFIG, type ExtractionConfig } from "./types";
 import { canonicalJson } from "../util/hash";
 import { isPlainObject } from "../util/validate";
 import { isUlid } from "../util/ulid";
@@ -40,17 +40,25 @@ const WORLD_PREDICATES: ProduceInputV2["predicates"] = [...PREDICATE_REGISTRY.ma
 }))];
 const WORLD_VOCABULARY_REFS = [...new Set(WORLD_VOCABULARY.flatMap(spec => spec.vocabulary_values ?? []))].sort();
 
+/**
+ * One typed request's reservations. A typed response spends roughly 200 tokens
+ * per anchored claim and a truncated response is rejected whole, so the default
+ * reserves 8,192 output tokens.
+ */
+export type WorldRequestBudget = Pick<ExtractionConfig, "max_input_tokens" | "max_output_tokens">;
+
 /** Closed producer-v2 input. Only the host's qualified mapper supplies handles. */
-export function worldProduceInput(events: readonly CaptureEvent[], suppliedRefs: readonly ProducerV2SuppliedRef[] = []): ProduceInputV2 {
+export function worldProduceInput(
+  events: readonly CaptureEvent[],
+  suppliedRefs: readonly ProducerV2SuppliedRef[] = [],
+  budget: WorldRequestBudget = DEFAULT_EXTRACTION_CONFIG,
+): ProduceInputV2 {
   return {
     events: events.map(event => ({ event_id: event.event_id, text: event.text })),
     supplied_refs: suppliedRefs,
     vocabulary_refs: WORLD_VOCABULARY_REFS,
     predicates: WORLD_PREDICATES,
-    // A typed response spends roughly 200 tokens per anchored claim. Eight
-    // quoted records routinely need more than 2,000, and a truncated response
-    // is rejected whole, so reserve the producer's full output ceiling.
-    budget: { max_calls: 1, max_input_tokens: 8_000, max_output_tokens: EXTRACT_MAX_OUTPUT_TOKENS },
+    budget: { max_calls: 1, max_input_tokens: budget.max_input_tokens, max_output_tokens: budget.max_output_tokens },
   };
 }
 

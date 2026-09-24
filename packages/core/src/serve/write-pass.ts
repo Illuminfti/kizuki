@@ -25,7 +25,7 @@ import type { ProduceResultV2, ProducerV2Port } from "../contracts/producer-v2";
 import { formatProducerDiagnostic, readProducerDiagnostic } from "../producer/diagnostics";
 import { invokeProducer, invokeProducerV2 } from "../producer/result";
 import type { WorldDraftInsert } from "../producer/world-drafts";
-import type { RunModelReport } from "./types";
+import { DEFAULT_EXTRACTION_CONFIG, type ExtractionConfig, type RunModelReport } from "./types";
 import {
   prepareClaimInsert,
   retryRetrievalOps,
@@ -183,6 +183,8 @@ function producedCount(result: ExtractionProduceResult): number {
 
 export interface WritePassOptions {
   readonly budget: BudgetTracker;
+  /** Owner throughput settings; absent keeps the one-request pass. */
+  readonly extraction?: ExtractionConfig;
   readonly run_id?: string;
   readonly model_ref?: string | null;
   readonly producer?: ExtractionProducerPort;
@@ -227,7 +229,7 @@ export async function runWritePass(
   vaultPath: string,
   options: WritePassOptions,
 ): Promise<WritePassResult> {
-  const { budget, run_id, model_ref, producer, claims, now } = options;
+  const { budget, extraction, run_id, model_ref, producer, claims, now } = options;
   let capturedClaims: ClaimsIo | undefined;
   if (claims !== undefined) {
     const { db: claimsDb, retrieval, vault_path, now: claimsNow, historical_source_write } = claims;
@@ -239,6 +241,7 @@ export async function runWritePass(
     });
   }
   options = Object.freeze({ budget,
+    ...(extraction === undefined ? {} : { extraction }),
     ...(run_id === undefined ? {} : { run_id }),
     ...(model_ref === undefined ? {} : { model_ref }),
     ...(producer === undefined ? {} : { producer }),
@@ -306,86 +309,41 @@ async function runWritePassOwned(
   const metrics = emptyMetrics();
 
   if (options.producer !== undefined && options.claims !== undefined) {
-    let pendingBatch;
-    try {
-      pendingBatch = readDurableExtractBatch(db, options.producer);
-    } catch (error) {
-      if (!(error instanceof DurableExtractAuthorizationError)) throw error;
-      stopped = `source:${error.code}`;
-      pendingBatch = null;
-    }
-    if (stopped === null && pendingBatch !== null) {
+    const runId = options.run_id ?? ulid();
+    let produced = 0;
+    const observed = observedProducer(options.producer, metrics, (result) => {
+      // One row per run carries the pass's running totals. Before each request
+      // it already charges that request, so a kill mid-call is still counted.
+      if (result !== undefined) produced += producedCount(result);
+      const usage = result === undefined
+        ? { claims_rejected: metrics.rejected, claims_extracted: produced,
+            model: { ...metricResult(metrics).model, calls: metrics.calls + 1, usage_unknown: true } }
+        : { ...metricResult(metrics), claims_extracted: produced };
+      db.query("INSERT INTO extract_usage(run_id,model_ref,metrics,created_at,holder_pid) VALUES (?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET metrics=excluded.metrics").run(
+        runId, options.model_ref ?? null, JSON.stringify(usage), new Date().toISOString(), process.pid,
+      );
+    });
+    const pass: ExtractionPass = {
+      db, claims: options.claims, producer: options.producer, observed, metrics,
+      model_ref: options.model_ref ?? null, limits: options.extraction ?? DEFAULT_EXTRACTION_CONFIG,
+    };
+    // Every step files its decision and advances the cursor before the next
+    // one starts, so a kill loses at most the request in flight.
+    for (let taken = 0; taken < pass.limits.max_calls_per_pass; taken++) {
+      let outcome: StepOutcome;
       try {
-        const filed = await fileProducedDrafts(options.claims, pendingBatch, options.producer);
-        // Replay files an existing decision; it is not another extraction.
-        if (filed === null) errors.push("extract cursor changed before durable batch commit");
-        else { deduped += filed.deduped; superseded += filed.superseded; }
+        outcome = await extractionStep(pass);
       } catch (error) {
         if (!(error instanceof DurableExtractAuthorizationError)) throw error;
         stopped = `source:${error.code}`;
-      }
-    } else if (stopped === null) {
-    const runId = options.run_id ?? ulid();
-    const observed = observedProducer(options.producer, metrics, (result) => {
-      db.query("INSERT INTO extract_usage(run_id,model_ref,metrics,created_at,holder_pid) VALUES (?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET metrics=excluded.metrics").run(
-        runId, options.model_ref ?? null, JSON.stringify(result === undefined ? { claims_rejected: {}, claims_extracted: 0, model: { ...metricResult(metrics).model, calls: 1, usage_unknown: true } } : { ...metricResult(metrics), claims_extracted: producedCount(result) }), new Date().toISOString(), process.pid,
-      );
-    });
-    const mined = isProducerV2(observed)
-      ? await mineLiveDrafts(db, observed)
-      : await mineLiveDrafts(db, observed);
-    switch (mined.mined.status) {
-      case "unavailable":
-        stopped = `model:${mined.mined.reason}`;
-        if (metrics.diagnostic !== undefined) errors.push(formatProducerDiagnostic(metrics.diagnostic));
-        break;
-      case "rejected":
-        errors.push(mined.mined.reason);
-        if (metrics.diagnostic !== undefined) errors.push(formatProducerDiagnostic(metrics.diagnostic));
-        break;
-      case "empty": {
-        if (!commitExtractCursor(db, mined) && mined.cursor !== null) {
-          errors.push("extract cursor changed before commit");
-        }
         break;
       }
-      case "deferred": {
-        if (!commitExtractCursor(db, mined)) errors.push("extract deferred inputs changed before commit");
-        break;
-      }
-      case "ok": {
-        // Persist the accepted model output before the first claim write.  A
-        // retry must replay this exact decision, never ask a nondeterministic
-        // producer to regenerate a partially filed batch.
-        journalExtractBatch(db, mined, options.model_ref ?? null, options.producer);
-        let durable;
-        try {
-          durable = readDurableExtractBatch(db, options.producer);
-        } catch (error) {
-          if (!(error instanceof DurableExtractAuthorizationError)) throw error;
-          stopped = `source:${error.code}`;
-          break;
-        }
-        if (durable === null) throw new Error("durable extraction decision is missing");
-        try {
-          const filed = await fileProducedDrafts(options.claims, durable, options.producer);
-          if (filed === null) errors.push("extract cursor changed before commit");
-          else {
-            extracted = mined.mined.count;
-            deduped += filed.deduped;
-            superseded += filed.superseded;
-          }
-        } catch (error) {
-          if (!(error instanceof DurableExtractAuthorizationError)) throw error;
-          stopped = `source:${error.code}`;
-        }
-        break;
-      }
-      default: {
-        const _exhaustive: never = mined.mined;
-        return _exhaustive;
-      }
-    }
+      extracted += outcome.extracted;
+      deduped += outcome.deduped;
+      superseded += outcome.superseded;
+      errors.push(...outcome.errors);
+      stopped = outcome.stopped;
+      if (!outcome.progressed) break;
     }
   }
 
@@ -503,6 +461,85 @@ function newOccupyingWrites(before: Set<string>, after: Set<string>): number {
     if (!before.has(id)) added += 1;
   }
   return added;
+}
+
+interface ExtractionPass {
+  readonly db: Database;
+  readonly claims: ClaimsIo;
+  readonly producer: ExtractionProducerPort;
+  /** The same port, observed so each request is charged to the run. */
+  readonly observed: ExtractionProducerPort;
+  readonly metrics: ProduceMetrics;
+  readonly model_ref: string | null;
+  readonly limits: ExtractionConfig;
+}
+
+interface StepOutcome {
+  /** False ends the pass's extraction: nothing is left, or the next step would repeat this one. */
+  readonly progressed: boolean;
+  readonly extracted: number;
+  readonly deduped: number;
+  readonly superseded: number;
+  readonly stopped: string | null;
+  readonly errors: readonly string[];
+}
+
+const settled = (progressed: boolean, fields: Partial<Omit<StepOutcome, "progressed">> = {}): StepOutcome =>
+  ({ progressed, extracted: 0, deduped: 0, superseded: 0, stopped: null, errors: [], ...fields });
+
+/** A provider that still refuses after the port's bounded retries ends the pass as a typed stop. */
+function modelStop(reason: string, diagnostic: ProducerDiagnostic | undefined): string {
+  const limited = diagnostic?.stage === "transport" && diagnostic.rule === "http" && diagnostic.http_status === 429;
+  return limited ? "model:rate_limited" : `model:${reason}`;
+}
+
+/**
+ * One durable step: file a pending decision without asking the model again,
+ * or make at most one extraction request and commit its outcome.
+ */
+async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
+  const { db, claims, producer, observed, metrics, model_ref, limits } = pass;
+  const pending = readDurableExtractBatch(db, producer);
+  if (pending !== null) {
+    // Replay files an existing decision; it is not another extraction.
+    const filed = await fileProducedDrafts(claims, pending, producer);
+    return filed === null
+      ? settled(false, { errors: ["extract cursor changed before durable batch commit"] })
+      : settled(true, { deduped: filed.deduped, superseded: filed.superseded });
+  }
+  const mined = isProducerV2(observed)
+    ? await mineLiveDrafts(db, observed, limits)
+    : await mineLiveDrafts(db, observed, limits);
+  const diagnostic = metrics.diagnostic === undefined ? [] : [formatProducerDiagnostic(metrics.diagnostic)];
+  switch (mined.mined.status) {
+    case "unavailable":
+      return settled(false, { stopped: modelStop(mined.mined.reason, metrics.diagnostic), errors: diagnostic });
+    case "rejected":
+      return settled(false, { errors: [mined.mined.reason, ...diagnostic] });
+    case "empty":
+      if (commitExtractCursor(db, mined)) return settled(true);
+      return settled(false, { errors: mined.cursor === null ? [] : ["extract cursor changed before commit"] });
+    case "deferred":
+      return commitExtractCursor(db, mined)
+        ? settled(true)
+        : settled(false, { errors: ["extract deferred inputs changed before commit"] });
+    case "ok": {
+      // Persist the accepted model output before the first claim write.  A
+      // retry must replay this exact decision, never ask a nondeterministic
+      // producer to regenerate a partially filed batch.
+      journalExtractBatch(db, mined, model_ref, producer);
+      const durable = readDurableExtractBatch(db, producer);
+      if (durable === null) throw new Error("durable extraction decision is missing");
+      const filed = await fileProducedDrafts(claims, durable, producer);
+      return filed === null
+        ? settled(false, { errors: ["extract cursor changed before commit"] })
+        : settled(true, { extracted: mined.mined.count, deduped: filed.deduped, superseded: filed.superseded });
+    }
+    default: {
+      const _exhaustive: never = mined.mined;
+      return _exhaustive;
+    }
+  }
 }
 
 async function fileProducedDrafts(

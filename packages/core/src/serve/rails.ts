@@ -22,6 +22,7 @@ import {
   InjectedCrash,
   emptyRunTotals,
   type CrashPoint,
+  type ExtractionConfig,
   type RailId,
   type RunReceipt,
   type RunExecution,
@@ -138,6 +139,7 @@ async function runSyncRail(
   db: Database,
   vaultPath: string,
   budget: BudgetTracker,
+  extraction: ExtractionConfig,
   hooks: AnyRailHooks | undefined,
   runId: string,
   now: () => string,
@@ -154,6 +156,7 @@ async function runSyncRail(
       : await hooks.sync();
   const written = await runWritePass(db, vaultPath, {
     budget,
+    extraction,
     run_id: runId,
     now,
     ...(hooks?.model_ref === undefined ? {} : { model_ref: hooks.model_ref }),
@@ -439,7 +442,7 @@ async function runRailImpl(
       }
       switch (rail) {
         case "sync":
-          partial = await runSyncRail(db, vaultPath, budget, hooks, runId, now);
+          partial = await runSyncRail(db, vaultPath, budget, config.extraction, hooks, runId, now);
           break;
         case "retrieval-sweep":
           partial = await runRetrievalSweep(db, hooks);

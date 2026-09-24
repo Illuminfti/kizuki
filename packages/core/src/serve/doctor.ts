@@ -34,10 +34,12 @@ import {
   type RailDoctor,
   type RailId,
   type RunReceipt,
+  type ServeConfig,
   type ServeDoctorReport,
   type ServeIntent,
   type StoreDoctor,
   type SupervisorLastExit,
+  type ThroughputDoctor,
   type SupervisorStatus,
 } from "./types";
 
@@ -524,6 +526,7 @@ export function inspectServeDoctor(
     config.canon_writes_per_run,
     lastRunUsed,
   );
+  const throughput = throughputDoctor(config, schedules.get("sync")?.period_s ?? config.sync_period_s);
   const stores = storeDoctor(db, vaultPath, now, receipts);
   const cal = calibration(db, receipts, now);
   const failures: string[] = [];
@@ -585,10 +588,25 @@ export function inspectServeDoctor(
     intent,
     rails,
     model,
+    throughput,
     stores,
     calibration: cal,
     ok: failures.length === 0,
     failures,
+  };
+}
+
+function throughputDoctor(config: ServeConfig, syncPeriod: number): ThroughputDoctor {
+  const { max_calls_per_pass, records_per_request, max_input_tokens, max_output_tokens } = config.extraction;
+  const pending = syncPeriod === config.sync_period_s ? "" : ` configured_sync_period_s=${config.sync_period_s} (applies at service start)`;
+  return {
+    sync_period_s: syncPeriod,
+    configured_sync_period_s: config.sync_period_s,
+    max_calls_per_pass,
+    records_per_request,
+    max_input_tokens,
+    max_output_tokens,
+    detail: `throughput sync_period_s=${syncPeriod} max_calls_per_pass=${max_calls_per_pass} records_per_request=${records_per_request} max_input_tokens=${max_input_tokens} max_output_tokens=${max_output_tokens}${pending}`,
   };
 }
 

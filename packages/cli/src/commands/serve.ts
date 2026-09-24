@@ -131,6 +131,7 @@ export const serveCommand: Command = {
         else {
           io.out(`pid=${pid ?? "none"} supervisor=${supervisor.kind} state=${supervisor.state}`);
           io.out(supervisor.detail);
+          io.out(doctor.throughput.detail);
         }
         return doctor.ok ? 0 : 1;
       }

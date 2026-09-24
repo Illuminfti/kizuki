@@ -28,7 +28,9 @@ import {
   serializeDurableWorldDrafts,
   worldProduceInput,
   type ExtractionProducerPort,
+  type WorldRequestBudget,
 } from "./extract-v2";
+import { DEFAULT_EXTRACTION_CONFIG, type ExtractionConfig } from "./types";
 
 const EXTRACT_SOURCE_KEY = "extract";
 const DEFERRED_SCAN_KEY = "extract-deferred-scan";
@@ -243,12 +245,6 @@ function interval(db: Database, previous: string | null, boundary: LedgerCursor)
   if (index < 0 || row?.accepted_at !== boundary.accepted_at) throw new Error("durable extraction boundary is invalid");
   return events.slice(0, index + 1);
 }
-/**
- * A typed response anchors every claim and runs to one to three thousand
- * output tokens per ordinary record, more when a model indents its JSON, so a
- * larger batch can exhaust the producer's output ceiling and be rejected whole.
- */
-const WORLD_RECORDS_PER_CALL = 2;
 function sourceInput(db: Database, event: CaptureEvent, producer: ExtractionProducerPort | undefined): DeferredInput {
   const binding = db.query<{ source_key: string }, [string]>(
     "SELECT source_key FROM source_event_bindings WHERE event_id=?",
@@ -268,8 +264,8 @@ function sourceKey(db: Database, eventId: string): string | null {
     "SELECT source_key FROM source_event_bindings WHERE event_id=?",
   ).get(eventId)?.source_key ?? null;
 }
-function worldInput(db: Database, events: readonly CaptureEvent[]): ProduceInputV2 {
-  return worldProduceInput(events, worldSuppliedReferences(events, eventId => sourceKey(db, eventId)).input);
+function worldInput(db: Database, events: readonly CaptureEvent[], budget: WorldRequestBudget): ProduceInputV2 {
+  return worldProduceInput(events, worldSuppliedReferences(events, eventId => sourceKey(db, eventId)).input, budget);
 }
 function sourceIdentityMatches(db: Database, input: DeferredInput): boolean {
   return sourceKey(db, input.event_id) === input.source_key;
@@ -439,7 +435,7 @@ function journalWorldDrafts(
 ): readonly WorldDraftInsert[] {
   if (mined.world === undefined) throw new Error("producer v2 decision is incomplete");
   const supplied = worldSuppliedReferences(events, eventId => sourceKey(db, eventId));
-  const input = worldProduceInput(events, supplied.input);
+  const input = worldProduceInput(events, supplied.input, mined.world.input.budget);
   if (canonicalJson(input) !== canonicalJson(mined.world.input)) {
     throw new Error("extraction inputs changed during model call");
   }
@@ -836,14 +832,24 @@ export function commitExtractCursor(db: Database, mined: MineResult): boolean {
 }
 
 /**
+ * Typed request limits. A typed response anchors every claim and runs to one to
+ * three thousand output tokens per ordinary record, more when a model indents
+ * its JSON, so more records per request need a larger output reservation or
+ * the response is truncated and rejected whole. The epoch-zero producer keeps
+ * its fixed request budget.
+ */
+export type WorldRequestLimits = Pick<ExtractionConfig, "records_per_request"> & WorldRequestBudget;
+
+/**
  * Session/outcome mine. Unavailable or rejected never advances the cursor
  * (None ≠ []). Empty and ok do.
  */
-export function mineLiveDrafts(db: Database, producer: ProducerPort): Promise<MineResult>;
-export function mineLiveDrafts(db: Database, producer: ProducerV2Port): Promise<MineResult>;
+export function mineLiveDrafts(db: Database, producer: ProducerPort, limits?: WorldRequestLimits): Promise<MineResult>;
+export function mineLiveDrafts(db: Database, producer: ProducerV2Port, limits?: WorldRequestLimits): Promise<MineResult>;
 export async function mineLiveDrafts(
   db: Database,
   producer: ExtractionProducerPort,
+  limits: WorldRequestLimits = DEFAULT_EXTRACTION_CONFIG,
 ): Promise<MineResult> {
   requireAtomicExtractReplay(db);
   const previous_cursor = readExtractCursor(db);
@@ -949,11 +955,11 @@ export async function mineLiveDrafts(
   };
   let selectedCount = v2 ? 0 : 1;
   let selectedInput: ProduceInput | ProduceInputV2 = v2
-    ? worldInput(db, usable.slice(0, 1))
+    ? worldInput(db, usable.slice(0, 1), limits)
     : inputFor(usable.slice(0, 1));
   if (v2) {
-    for (let count = 1; count <= Math.min(usable.length, WORLD_RECORDS_PER_CALL); count++) {
-      const candidate = worldInput(db, usable.slice(0, count));
+    for (let count = 1; count <= Math.min(usable.length, limits.records_per_request); count++) {
+      const candidate = worldInput(db, usable.slice(0, count), limits);
       try {
         const plan = planModelExtractionV2(candidate);
         if (plan.status === "ready") { selectedCount = count; selectedInput = plan.input; }
@@ -993,7 +999,7 @@ export async function mineLiveDrafts(
   if (admitted.length !== usable.length) {
     return { mined: { status: "unavailable", reason: "event origin changed before extraction" }, drafts: [], previous_cursor, cursor: null };
   }
-  selectedInput = v2 ? worldInput(db, usable) : inputFor(usable);
+  selectedInput = v2 ? worldInput(db, usable, limits) : inputFor(usable);
   const selectedIds = new Set(usable.map(event => event.event_id));
   if (source_epoch !== sourcePolicyEpoch(db)) return denied();
   if (v2) {

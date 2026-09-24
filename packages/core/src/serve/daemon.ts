@@ -20,7 +20,7 @@ import {
 import { recoverRunJournal } from "./receipts";
 import { dueRails, runRail, type RailHooks, type RailHooksV2, type RailRuntime, type RailRuntimeV2 } from "./rails";
 import type { RetrievalPort } from "../contracts/retrieval";
-import { initServe, listSchedules } from "./schema";
+import { applyRailPeriod, initServe, listSchedules } from "./schema";
 import { SERVE_PID_PATH, ServeDaemonError, isRailId, type CrashPoint, type RailId } from "./types";
 import { clearServeStopRequest, serveStopRequested } from "./stop-control";
 
@@ -162,6 +162,9 @@ export async function runServeDaemon(
     }
   }
   const config = loadServeConfig(vaultPath);
+  // The journal is replayed and the lease held, so no pending receipt still
+  // expects the old period.
+  applyRailPeriod(db, "sync", config.sync_period_s, process.now());
   const httpEnabled = options.http ?? config.http;
   if (httpEnabled) {
     const retrieval = options.retrieval ?? options.hooks?.claims?.retrieval;
