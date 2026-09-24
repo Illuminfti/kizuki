@@ -4,7 +4,10 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { createBudgetTracker } from "../../src/canon/budget";
 import { listClaims } from "../../src/claims/store";
+import { registerConnection } from "../../src/ledger/connections";
 import { openLedger } from "../../src/ledger/db";
+import { accept } from "../../src/ledger/ledger";
+import { setSourceGrant } from "../../src/ledger/source-grants";
 import { planModelExtractionV2 } from "../../src/producer/model-v2";
 import { EXTRACT_MAX_OUTPUT_TOKENS } from "../../src/producer/model";
 import { loadServeConfig } from "../../src/serve/config";
@@ -36,6 +39,7 @@ import {
   writeServeToml,
   type ThroughputVault,
 } from "./throughput-fixture";
+import { validEvent } from "../fixtures";
 
 const disposers: (() => void)[] = [];
 afterEach(() => {
@@ -352,7 +356,7 @@ test("a truncated multi-record response is asked again for its first record alon
   expect(endsAt(readExtractCursor(f.db), e3)).toBe(true);
 });
 
-test("a record too large for one request is skipped with its reason and the pass goes on", async () => {
+test("a single token too large for any request is skipped with a receipt instead of holding the cursor", async () => {
   const oversized = "x".repeat(24_001);
   const g = throughputVault(3, (index) =>
     index === 1 ? oversized : recordText(index),
@@ -360,29 +364,45 @@ test("a record too large for one request is skipped with its reason and the pass
   const db = openLedger(g.ledger);
   disposers.push(g.dispose, () => db.close());
   const [e0, e1, e2] = g.eventIds as [string, string, string];
-  writeServeToml(
-    g.vault,
-    "[extraction]\nmax_calls_per_pass = 5\nrecords_per_request = 2\n",
-  );
+  writeServeToml(g.vault, "[extraction]\nmax_calls_per_pass = 5\nrecords_per_request = 2\n");
   const model = scriptedModelProducer(g.vault, () => "ok");
-  const receipt = await runRail(db, g.vault, "sync", {
-    hooks: { producer: model.producer, claims: { db }, model_ref: MODEL },
-  });
-  // No request ever carries the oversized record, and it no longer holds the cursor.
+  const receipt = await runRail(db, g.vault, "sync", { hooks: { producer: model.producer, claims: { db }, model_ref: MODEL } });
+  // No request ever carries the unsplittable record, and it no longer holds the cursor.
   expect(model.requests).toEqual([[e0], [e2]]);
   expect(model.requests.flat()).not.toContain(e1);
-  expect(receipt).toMatchObject({
-    status: "degraded",
-    stopped: null,
-    claims_extracted: 2,
-    records_skipped: 1,
-    model: { calls: 2 },
-  });
-  expect(receipt.errors).toContain("record skipped: too large for one request");
+  expect(receipt).toMatchObject({ status: "ok", stopped: null, errors: [], claims_extracted: 2, records_skipped: 0,
+    model: { calls: 2 }, oversized: { segments: 0, skipped: 1 } });
   expect(endsAt(readExtractCursor(db), e2)).toBe(true);
-  expect(
-    inspectServeDoctor(db, g.vault, { model_ref: MODEL }).throughput,
-  ).toMatchObject({ records_skipped: 1 });
+  // The skip is the loop's receipted decision with a retry verb, not a throughput skip.
+  const doctor = inspectServeDoctor(db, g.vault, { model_ref: MODEL });
+  expect(doctor.throughput).toMatchObject({ records_skipped: 0 });
+  expect(doctor.oversized).toMatchObject({ segmenting: 0, skipped: 1, retry: "kizuki serve retry-skipped" });
+});
+
+test("a typed request around a record its grant holds back journals only the records it sent", async () => {
+  const f = fixture(1);
+  const [e0] = f.eventIds as [string];
+  const held = "01J00000000000000000000HVD";
+  registerConnection(f.db, "kizuki.fixture", held);
+  setSourceGrant(f.db, { source_key: held, expected_revision: 0, operation_id: "held-fixture-grant", policy: {
+    purposes: ["capture", "recall", "derive", "extract"], allowed_fields: ["text", "subjects", "attachments", "metadata"],
+    retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public" } });
+  const capture = (sourceKey: string, id: string, text: string): string => {
+    const accepted = accept(f.db, { ...validEvent(), connector_id: "kizuki.fixture", source_record_id: id, text, subjects: [] },
+      { source: { source_key: sourceKey, expected_revision: 1 } });
+    if (accepted.status !== "stored") throw new Error("fixture capture failed");
+    return accepted.event.event_id;
+  };
+  const h1 = capture(held, "held-1", "A held synthetic record.");
+  const e2 = capture("01J00000000000000000000SRC", "throughput-2", recordText(2));
+  writeServeToml(f.vault, "[extraction]\nrecords_per_request = 4\n");
+  const model = scriptedModelProducer(f.vault, () => "ok");
+  const receipt = await runRail(f.db, f.vault, "sync", { hooks: { producer: model.producer, claims: { db: f.db }, model_ref: MODEL } });
+  expect(model.requests).toEqual([[e0, e2]]);
+  expect(receipt).toMatchObject({ status: "ok", errors: [], claims_extracted: 2, model: { calls: 1 } });
+  expect(endsAt(readExtractCursor(f.db), e2)).toBe(true);
+  expect(f.db.query("SELECT event_id FROM extract_deferred_inputs").all()).toEqual([{ event_id: h1 }]);
+  expect(modelClaims(f.db)).toBe(2);
 });
 
 test("a rejection a later request answered past leaves doctor healthy and advances last success", async () => {

@@ -531,6 +531,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(report.serve.supervisor.detail);
   io.out(report.serve.model.detail);
   io.out(report.serve.throughput.detail);
+  io.out(report.serve.oversized.detail);
   for (const rail of report.serve.rails) {
     const extra = rail.reason === null ? "" : ` ${rail.reason}`;
     io.out(`rail ${rail.rail} status=${rail.status}${extra}`);

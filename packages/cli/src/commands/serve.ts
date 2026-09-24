@@ -7,6 +7,7 @@ import {
   queryServeService,
   readServePid,
   requestServeStop,
+  retrySkippedRecords,
   ServeStopError,
   runRail,
   runServeDaemon,
@@ -40,7 +41,7 @@ export const SERVE_SCHEMA = {
 export const serveCommand: Command = {
   name: "serve",
   usage:
-    "serve [--once] [--no-http] [--port N] [--json] [--install] [--uninstall] | serve status [--json] | serve stop | serve run <rail> [--json]",
+    "serve [--once] [--no-http] [--port N] [--json] [--install] [--uninstall] | serve status [--json] | serve stop | serve run <rail> [--json] | serve retry-skipped [--json]",
   summary: "run the always-on loop, or install it as a user service",
   schema: SERVE_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
@@ -132,8 +133,17 @@ export const serveCommand: Command = {
           io.out(`pid=${pid ?? "none"} supervisor=${supervisor.kind} state=${supervisor.state}`);
           io.out(supervisor.detail);
           io.out(doctor.throughput.detail);
+          io.out(doctor.oversized.detail);
         }
         return doctor.ok ? 0 : 1;
+      }
+
+      if (verb === "retry-skipped") {
+        if (rail !== undefined) throw new UsageError(this.usage);
+        const requeued = retrySkippedRecords(ctx.db);
+        if (parsed.flags.has("--json")) io.out(jsonEnvelope("serve", "ok", { requeued }));
+        else io.out(`requeued=${requeued}`);
+        return 0;
       }
 
       if (verb === "stop") {
@@ -205,7 +215,7 @@ export const serveCommand: Command = {
       }
       if (result.http !== null) await result.http.stop();
       return 0;
-    }, { retrieval: verb === "status" || verb === "stop" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required" });
+    }, { retrieval: verb === "status" || verb === "stop" || verb === "retry-skipped" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required" });
     } catch (error) {
       // An older sealed ledger needs the explicit init migration. Restarting
       // the installed unit cannot change that, so it exits as a refusal.

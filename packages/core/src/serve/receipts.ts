@@ -92,6 +92,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
   const diagnostic = readProducerDiagnostic(model["diagnostic"]);
   const modelRefDigest = readModelReferenceDigest(model["model_ref_sha256"]);
   const retrieval = isPlainObject(value["retrieval"]) ? value["retrieval"] : {};
+  const oversized = isPlainObject(value["oversized"]) ? value["oversized"] : null;
   const execution = parseRunExecution(value["execution"]);
   const transition = parseTransition(value["schedule_transition"]);
   if (value["schedule_transition"] !== undefined && transition === undefined) throw new Error("invalid receipt schedule transition");
@@ -146,6 +147,9 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
       wall_ms: numberOr(model["wall_ms"], 0),
       model_ref: typeof model["model_ref"] === "string" ? model["model_ref"] : null,
     },
+    ...(oversized === null ? {} : {
+      oversized: { segments: numberOr(oversized["segments"], 0), skipped: numberOr(oversized["skipped"], 0) },
+    }),
     retrieval: {
       upserts: numberOr(retrieval["upserts"], 0),
       removals: numberOr(retrieval["removals"], 0),

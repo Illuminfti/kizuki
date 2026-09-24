@@ -405,6 +405,7 @@ usage: kizuki serve [--once] [--no-http] [--port N] [--json] [--install] [--unin
        kizuki serve status [--json]
        kizuki serve stop
        kizuki serve run <rail> [--json]
+       kizuki serve retry-skipped [--json]
 ```
 
 Always-on loop. HTTP is loopback unless `--no-http`. `init` installs the
@@ -429,6 +430,14 @@ stops the pass as `model:rate_limited`, and the next pass resumes from the
 durable extraction cursor. A pass never holds the vault writer across a model
 request, and `kizuki serve stop` or a signal ends it before its next request
 as `serve:stop_requested`. See [extraction budgets](extraction-budgets.md#owner-throughput-settings).
+
+A record too large for one typed request is extracted one segment per request.
+One that cannot be split, such as a single token longer than a request, is
+skipped with a `record_oversized_skipped` receipt and the cursor moves on.
+`serve status` and `doctor` print an `oversized records` line with both counts.
+`serve retry-skipped` puts every skipped record back on the deferred queue so
+the loop decides it again, and prints `requeued=N`. See
+[records too large for one request](extraction-budgets.md#records-too-large-for-one-request).
 
 The `retrieval-sweep` rail retries pending retrieval operations and catches
 the lexical index up to the ledger and to canon receipts. A pass indexes a
@@ -529,7 +538,8 @@ Current backups include the bounded deferred-input queue and any one pending
 model decision, so a restore can resume without sending the source text to the
 model again. Backups whose serve schema predates version 8 did not carry this
 recovery state; restore reports that limitation instead of inventing a pending
-decision.
+decision. From serve schema 9, backups also carry the progress of records
+extracted in segments and the receipts of skipped records.
 
 ## recover
 

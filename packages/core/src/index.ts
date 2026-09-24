@@ -1040,6 +1040,7 @@ export {
   readServeIntent,
   readServePid,
   requestServeStop,
+  retrySkippedRecords,
   ServeStopError,
   type ServeStopResult,
   readVaultId,

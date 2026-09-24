@@ -25,7 +25,7 @@ import type { ProduceResultV2, ProducerV2Port } from "../contracts/producer-v2";
 import { formatProducerDiagnostic, readProducerDiagnostic } from "../producer/diagnostics";
 import { invokeProducer, invokeProducerV2, type ValidatedProduceResult } from "../producer/result";
 import type { WorldDraftInsert } from "../producer/world-drafts";
-import { DEFAULT_EXTRACTION_CONFIG, type ExtractionConfig, type RunModelReport } from "./types";
+import { DEFAULT_EXTRACTION_CONFIG, type ExtractionConfig, type RunModelReport, type RunOversizedReport } from "./types";
 import {
   prepareClaimInsert,
   retryRetrievalOps,
@@ -66,24 +66,26 @@ export interface WritePassResult {
   readonly claims_written_extracted: number;
   readonly claims_deduped: number;
   readonly claims_superseded: number;
-  /** Records extraction passed over without claims; each has its reason in `errors`. */
+  /** Records extraction passed over for good without claims; each has its reason in `errors`. */
   readonly records_skipped: number;
   readonly canon_writes: number;
   readonly claims_rejected: Readonly<Record<string, number>>;
   readonly model: Omit<RunModelReport, "model_ref">;
+  /** Segments filed and records skipped with a retry receipt, for records too large for one request. */
+  readonly oversized: RunOversizedReport;
   readonly stopped: string | null;
   readonly errors: readonly string[];
 }
 
 /** A pass's totals, kept across its short writer holds. */
 type PassTally = {
-  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "model" | "errors">]: WritePassResult[K];
-} & { readonly errors: string[] };
+  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "model" | "oversized" | "errors">]: WritePassResult[K];
+} & { readonly oversized: { segments: number; skipped: number }; readonly errors: string[] };
 
 function emptyTally(): PassTally {
   return {
     revived: 0, claims_extracted: 0, claims_written: 0, claims_written_extracted: 0, claims_deduped: 0,
-    claims_superseded: 0, records_skipped: 0, canon_writes: 0, stopped: null, errors: [],
+    claims_superseded: 0, records_skipped: 0, canon_writes: 0, oversized: { segments: 0, skipped: 0 }, stopped: null, errors: [],
   };
 }
 
@@ -326,7 +328,7 @@ export async function runWritePass(
   });
   const tally = emptyTally();
   const metrics = emptyMetrics();
-  const result = (): WritePassResult => ({ ...tally, ...metricResult(metrics) });
+  const result = (): WritePassResult => ({ ...tally, oversized: { ...tally.oversized }, ...metricResult(metrics) });
 
   const opened = await holdWriter(io, (_scope, owned) => { tally.revived = reviveUncontestedSkipped(owned.db); });
   if (!opened.held) { tally.stopped = opened.stopped; return result(); }
@@ -499,6 +501,8 @@ async function runExtraction(
     tally.claims_deduped += outcome.deduped;
     tally.claims_superseded += outcome.superseded;
     tally.records_skipped += outcome.skipped;
+    tally.oversized.segments += outcome.segments;
+    tally.oversized.skipped += outcome.oversized_skipped;
     tally.errors.push(...outcome.errors);
     tally.stopped = outcome.stopped;
     if (outcome.next === "stop") return;
@@ -516,13 +520,18 @@ interface StepOutcome {
   readonly extracted: number;
   readonly deduped: number;
   readonly superseded: number;
+  /** Records passed over for good, each with its reason in `errors`. */
   readonly skipped: number;
+  /** Segments of a record too large for one request that this step settled. */
+  readonly segments: number;
+  /** Records too large for one request passed over with a retry receipt. */
+  readonly oversized_skipped: number;
   readonly stopped: string | null;
   readonly errors: readonly string[];
 }
 
 const settled = (next: StepOutcome["next"], fields: Partial<Omit<StepOutcome, "next">> = {}): StepOutcome =>
-  ({ next, extracted: 0, deduped: 0, superseded: 0, skipped: 0, stopped: null, errors: [], ...fields });
+  ({ next, extracted: 0, deduped: 0, superseded: 0, skipped: 0, segments: 0, oversized_skipped: 0, stopped: null, errors: [], ...fields });
 
 /** A provider that still refuses after the port's bounded retries ends the pass as a typed stop. */
 function modelStop(reason: string, diagnostic: ProducerDiagnostic | undefined): string {
@@ -568,7 +577,11 @@ async function extractionStep(pass: ExtractionPass, retrying: boolean): Promise<
       if (!retrying) return settled("retry", { errors });
       if (mined.model_inputs?.length !== 1) return settled("stop", { errors });
       // A record rejected on its own twice is passed over, so it cannot hold every later one.
-      return advance(pass, { ...mined, mined: { status: "skipped", reason: "rejected on its own twice" } }, errors);
+      const { segment, ...whole } = mined;
+      const twice = { ...whole, mined: { status: "skipped" as const, reason: "rejected on its own twice" } };
+      // A segment keeps its record's filed prefix: the skip receipt lets `serve retry-skipped` resume there.
+      return advance(pass, segment === undefined ? twice
+        : { ...twice, skipped: { event_id: segment.event_id, chars: segment.chars, done: segment.start } }, errors);
     }
     case "skipped":
       return advance(pass, mined);
@@ -588,7 +601,8 @@ async function extractionStep(pass: ExtractionPass, retrying: boolean): Promise<
         const filed = await fileProducedDrafts(claims, durable, producer);
         return filed === null
           ? settled("stop", { errors: ["extract cursor changed before commit"] })
-          : settled("continue", { extracted, deduped: filed.deduped, superseded: filed.superseded });
+          : settled("continue", { extracted, deduped: filed.deduped, superseded: filed.superseded,
+            segments: mined.segment === undefined ? 0 : 1 });
       });
     }
     default: {
@@ -598,12 +612,18 @@ async function extractionStep(pass: ExtractionPass, retrying: boolean): Promise<
   }
 }
 
-/** Advance the cursor past a step's input without filing claims: empty, deferred or skipped. */
+/**
+ * Advance the cursor past a step's input without filing claims: empty,
+ * deferred or skipped. A skip with a retry receipt is recorded there; any
+ * other skip names its reason in the receipt errors.
+ */
 function advance(pass: ExtractionPass, mined: MineResult, errors: readonly string[] = []): Promise<StepOutcome> {
-  const skip = mined.mined.status === "skipped" ? `record skipped: ${mined.mined.reason}` : null;
-  return settle(pass, mined, () => !commitExtractCursor(pass.db, mined)
-    ? settled("stop", { errors: [...errors, "extract cursor changed before commit"] })
-    : settled("continue", skip === null ? { errors } : { skipped: 1, errors: [...errors, skip] }));
+  return settle(pass, mined, () => {
+    if (!commitExtractCursor(pass.db, mined)) return settled("stop", { errors: [...errors, "extract cursor changed before commit"] });
+    if (mined.skipped !== undefined) return settled("continue", { oversized_skipped: 1, errors });
+    if (mined.mined.status === "skipped") return settled("continue", { skipped: 1, errors: [...errors, `record skipped: ${mined.mined.reason}`] });
+    return settled("continue", { segments: mined.segment === undefined ? 0 : 1, errors });
+  });
 }
 
 /**

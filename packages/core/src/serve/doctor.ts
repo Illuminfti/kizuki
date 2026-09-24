@@ -18,6 +18,7 @@ import { serviceFile } from "./service-files";
 import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readModelRunHistory, redactReceiptText, type ModelRunHistory } from "./receipts";
 import { sha256Hex } from "../util/hash";
 import { listSchedules } from "./schema";
+import { countOversizedRecords, RETRY_SKIPPED_COMMAND } from "./extract-oversized";
 import type { SupervisorHost } from "./supervisor";
 import { queryServeService } from "./supervisor";
 import { ensureVaultId } from "./vault-id";
@@ -41,6 +42,7 @@ import {
   type StoreDoctor,
   type SupervisorLastExit,
   type ThroughputDoctor,
+  type OversizedDoctor,
   type SupervisorStatus,
 } from "./types";
 
@@ -552,6 +554,7 @@ export function inspectServeDoctor(
   );
   const skipped = receipts.reduce((sum, receipt) => sum + (receipt.records_skipped ?? 0), 0);
   const throughput = throughputDoctor(config, schedules.get("sync")?.period_s ?? config.sync_period_s, skipped);
+  const oversized = oversizedDoctor(db);
   const stores = storeDoctor(db, vaultPath, now, receipts);
   const cal = calibration(db, receipts, now);
   const failures: string[] = [];
@@ -614,11 +617,20 @@ export function inspectServeDoctor(
     rails,
     model,
     throughput,
+    oversized,
     stores,
     calibration: cal,
     ok: failures.length === 0,
     failures,
   };
+}
+
+/** A skip is the loop's own receipted decision, not a failure; the retry command re-queues skipped records. */
+function oversizedDoctor(db: Database): OversizedDoctor {
+  const { segmenting, skipped } = countOversizedRecords(db);
+  const retry = skipped === 0 ? null : RETRY_SKIPPED_COMMAND;
+  return { segmenting, skipped, retry,
+    detail: `oversized records segmenting=${segmenting} skipped=${skipped}${retry === null ? "" : ` retry: ${retry}`}` };
 }
 
 function throughputDoctor(config: ServeConfig, syncPeriod: number, recordsSkipped: number): ThroughputDoctor {

@@ -51,14 +51,15 @@ A value outside its range, a fraction or a string keeps that key's default.
   request well. A record rejected again on its own is skipped: the cursor
   moves past it without claims, the receipt names the reason (`record skipped:
   rejected on its own twice`) and counts it in `records_skipped`, and the pass
-  goes on. A typed record too large for one request by itself is skipped the
-  same way without a request (`record skipped: too large for one request`).
+  goes on. A typed record too large for one request is asked for one segment
+  per step, or skipped with a receipt when it cannot be split; see
+  [records too large for one request](#records-too-large-for-one-request).
   One record therefore cannot hold every later one. A pass ends early when the
   ledger is drained, the epoch-zero producer refuses a request before sending
   it, a commit finds the cursor moved or its inputs purged, or the model is
   unavailable. Steps that make no request, such as advancing over records a
-  source grant does not cover, still count toward the limit, so the default
-  pass is the same single step as before.
+  source grant does not cover or skipping a record, still count toward the
+  limit, so the default pass is the same single step as before.
 - **Time per pass.** Once `max_pass_seconds` have passed, the pass starts no
   further step; the request in flight finishes and is filed, and the next pass
   resumes from the cursor. Rails run one at a time, so this bounds how long a
@@ -164,15 +165,66 @@ adds the quoted-character diagnostic. Older failed-receipt formats remain
 readable. A planning refusal has zero actual calls and reports its planned
 requirement with `used=0`.
 
-A record that cannot fit by itself is never sent and its text is never
-truncated. Typed extraction skips it: the cursor moves past it without claims,
-the run receipt records `record skipped: too large for one request` and counts
-it in `records_skipped`, and the record stays in the ledger for search, the
-timeline and a later extraction with larger limits or chunking. The receipt
-keeps the count and reason, not the record's identity, for the receipt
-retention window. The epoch-zero legacy producer still refuses such a record
-without an LLM call and leaves the checkpoint before it. These limits are not
-silently raised.
+Record text is never truncated and the per-request limits are never raised.
+The epoch-zero legacy producer still refuses a record that cannot fit by
+itself without an LLM call and keeps its checkpoint before that record.
+Typed world extraction decides such a record itself, as described next.
+
+### Records too large for one request
+
+A typed record that no request can carry whole, because its text exceeds
+24,000 escaped characters or its request exceeds `max_input_tokens`, is
+handled by the loop without an owner step.
+
+- **Segments.** The loop splits the record into segments of at most 24,000
+  escaped characters whose requests also fit `max_input_tokens`, and sends
+  each segment as a request of its own that carries no other record. A split
+  falls on the last paragraph break in the second half of the window, else the
+  last line break there, else the last word boundary. It never falls inside a
+  grapheme, so never inside a surrogate pair, and never inside a fence
+  look-alike that escaping would lengthen.
+- **Anchors.** The model sees only the segment. Before the decision is
+  journaled, every anchor is moved to record offsets, and each must fall on
+  UTF-16 boundaries of the original record and quote exactly the text the
+  model saw. Claims then cite the record like any other, and the claim writer
+  checks them against the stored record text again.
+- **Progress.** `extract_oversized_records` keeps each record's extracted
+  prefix. A segment's decision is journaled together with its end, and filing
+  its claims moves the prefix in the same transaction. The extraction cursor
+  stays before the record until its last segment is filed. A kill loses at
+  most the segment in flight: the next pass resumes at the next unfinished
+  segment, and a journaled segment replays without a new request. Neither
+  files a finished segment's claims again. A record with filed segments never
+  joins a whole-record request. Source consent, the model binding, the retry
+  of a rejected response and the per-request reservations apply to every
+  segment request as they do to any request. Each segment is one step of the
+  pass: the writer is held only to file it, and a stop request or the pass's
+  time budget ends the pass between segments.
+- **Skips.** A window with no word boundary, such as a single 30,000-character
+  token, cannot be split without cutting it. The loop then skips the rest of
+  the record without a request, writes a receipt with reason
+  `record_oversized_skipped`, and moves the cursor on. A segment the model
+  rejects on its own twice is skipped the same way. The receipt holds the
+  event id, the record's UTF-16 length and the offset already extracted, never
+  its text. Claims filed from earlier segments stay.
+- **Reversal.** `kizuki doctor` and `kizuki serve status` print an
+  `oversized records` line with the counts of records being segmented and
+  records skipped, and name `kizuki serve retry-skipped` while any record is
+  skipped. `--json` reports them as `oversized` in the serve doctor report.
+  That command puts every skipped record back on the deferred queue; the loop
+  decides each one again from the offset it already extracted, and skips it
+  again when nothing has changed. A larger `max_input_tokens` can make a
+  skipped record splittable.
+- **Receipts and backups.** A sync run that segmented or skipped a record
+  reports `oversized.segments` and `oversized.skipped` in its run receipt.
+  Backups at serve schema 9 carry segment progress and skip receipts, and
+  restore checks each against the restored record's length.
+
+When not even a small segment fits a request, the record is skipped without a
+request, the run receipt records `record skipped: too large for one request`
+and counts it in `records_skipped`, and the cursor moves on. The record stays
+in the ledger for search, the timeline and a later extraction with larger
+limits.
 
 ## Restart and authorization
 
@@ -198,8 +250,8 @@ under the current authorization checks.
 Use the repository's pinned Bun version:
 
 ```bash
-bun test packages/core/test/serve/extraction-budget.test.ts packages/core/test/serve/extraction-throughput.test.ts packages/core/test/producer/model.test.ts packages/core/test/source-model-egress.test.ts
-bun test packages/llm/test/openai-compatible.test.ts packages/cli/test/serve/extraction-throughput.test.ts
+bun test packages/core/test/serve/extraction-budget.test.ts packages/core/test/serve/extraction-throughput.test.ts packages/core/test/serve/oversized-records.test.ts packages/core/test/producer/model.test.ts packages/core/test/source-model-egress.test.ts
+bun test packages/llm/test/openai-compatible.test.ts packages/cli/test/serve/extraction-throughput.test.ts packages/cli/test/serve/oversized-records.test.ts
 bun test packages/core/test
 bun run typecheck
 bun run verify
@@ -210,11 +262,16 @@ impossible records, denied interleaving, grant changes, successful abstention,
 deferred retries and partial journal replay across restart. The throughput
 tests cover setting bounds, one committed cursor per request, a rate-limited
 stop and its resumption, one narrowed retry of a rejected response, a record
-skipped after two rejections on its own, an oversized record skipped without a
-request, doctor health after a retried rejection and after a rate-limited end,
-a stop request and a real SIGTERM ending the pass at the next step, owner
-writes and `serve stop` during a request, the pass time budget, rail grace
-behind a long pass, a real kill during a request, flat statement and memory
-use over 64-request passes, retry backoff and the sync period applied at
-service start. All fixtures are synthetic; they make no provider or account
-calls.
+skipped after two rejections on its own, doctor health after a retried
+rejection and after a rate-limited end, a stop request and a real SIGTERM
+ending the pass at the next step, owner writes and `serve stop` during a
+request, the pass time budget, rail grace behind a long pass, a real kill
+during a request, flat statement and memory use over 64-request passes, retry
+backoff and the sync period applied at service start. The oversized-record
+tests cover split boundaries, a 60,000-character record extracted in three
+segments whose anchors match the original text, segments shrunk to fit
+`max_input_tokens`, a stop request between segments, the writer free during a
+segment request, a real kill between segments, replay of a journaled segment,
+a skip with its receipt, doctor line and retry, records under the limit,
+purge, and backup and restore. All fixtures are synthetic; they make no
+provider or account calls.
