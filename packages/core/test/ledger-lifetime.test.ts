@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openLedger } from "../src/ledger/db";
-import { manageDatabaseLifetime } from "../src/ledger/lifetime";
+import { QUERY_CACHE_LIMIT, manageDatabaseLifetime } from "../src/ledger/lifetime";
 import { configureLedgerWalLifecycle } from "../src/ledger/wal-lifecycle";
 
 // These tests spawn real processes; bound them for a loaded host.
@@ -130,6 +130,70 @@ test("the lifetime registry does not strongly retain uncached statements", () =>
   const child = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
   expect(child.exitCode, child.stderr.toString()).toBe(0);
   expect(child.stdout.length).toBe(0); expect(child.stderr.length).toBe(0);
+});
+
+test("query() keeps reusing statements after Bun's 20-entry query cache fills", () => {
+  const db = new Database(":memory:"), originalPrepare = db.prepare;
+  let prepared = 0;
+  db.prepare = function(this: Database, ...args: Parameters<Database["prepare"]>) {
+    prepared += 1;
+    return Reflect.apply(originalPrepare, this, args);
+  } as Database["prepare"];
+  manageDatabaseLifetime(db);
+  try {
+    const sql = Array.from({ length: 64 }, (_, i) => `SELECT ${i} AS n`);
+    const first = sql.map(text => db.query(text));
+    for (let round = 0; round < 50; round++) sql.forEach((text, i) => expect(db.query(text)).toBe(first[i]!));
+    expect(prepared).toBe(sql.length);
+  } finally { db.close(); }
+});
+
+test("a long synchronous pass does not pin a statement per query", () => {
+  const script = `
+    import { Database } from "bun:sqlite";
+    import { manageDatabaseLifetime } from ${JSON.stringify(join(import.meta.dir, "../src/ledger/lifetime.ts"))};
+    const db = manageDatabaseLifetime(new Database(":memory:"));
+    const sql = Array.from({ length: 64 }, (_, i) => "SELECT " + i + " AS n WHERE ?1 IS NOT NULL");
+    for (const text of sql) db.query(text).get(1);
+    Bun.gc(true);
+    const before = process.memoryUsage().rss;
+    for (let i = 0; i < 100_000; i++) db.query(sql[i % sql.length]).get(i);
+    const grown = process.memoryUsage().rss - before;
+    if (grown > 64 * 1024 * 1024) throw new Error("one synchronous pass grew " + grown + " bytes");
+    db.close(true);
+  `;
+  const child = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 30_000 });
+  expect(child.exitCode, child.stderr.toString()).toBe(0);
+});
+
+test("explicitly finalized statements are released within one synchronous pass", () => {
+  const script = `
+    import { Database } from "bun:sqlite";
+    import { manageDatabaseLifetime } from ${JSON.stringify(join(import.meta.dir, "../src/ledger/lifetime.ts"))};
+    const db = manageDatabaseLifetime(new Database(":memory:"));
+    const held = db.prepare("SELECT 1 AS n");
+    Bun.gc(true);
+    const before = process.memoryUsage().rss;
+    for (let i = 0; i < 600_000; i++) { using statement = db.prepare("SELECT ?1 AS n"); statement.get(i); }
+    const grown = process.memoryUsage().rss - before;
+    if (grown > 320 * 1024 * 1024) throw new Error("one synchronous pass grew " + grown + " bytes");
+    db.close(true);
+    if (!held.isFinalized) throw new Error("a held statement survived close");
+  `;
+  const child = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 30_000 });
+  expect(child.exitCode, child.stderr.toString()).toBe(0);
+});
+
+test("the query cache is bounded; an evicted statement serves its holder until close", () => {
+  const db = manageDatabaseLifetime(new Database(":memory:"));
+  try {
+    const held = db.query("SELECT -1 AS n");
+    for (let i = 0; i < QUERY_CACHE_LIMIT; i++) db.query(`SELECT ${i} AS n`);
+    expect(db.query("SELECT -1 AS n")).not.toBe(held);
+    expect(held.get()).toEqual({ n: -1 });
+    db.close(true);
+    expect(() => held.get()).toThrow();
+  } finally { db.close(); }
 });
 
 test("a finalizer that returns without finalizing is refused and remains retryable", () => {
