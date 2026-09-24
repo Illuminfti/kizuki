@@ -19,7 +19,7 @@ export function computeOriginBinding(event: OriginIdentity, acceptedAt: string,
 
 /** Only an exact persisted native referent supplies an admission proof. */
 export function nativeRequestDigest(db: Database, eventId: string): string | null {
-  using statement = db.prepare<{
+  const statement = db.query<{
     connector_id: string; origin: string; request_digest: string; recorded_at: string; filing_state: string;
     event_content_hash: string; content_hash: string; observed_at: string; source_bound: number;
   }, [string]>(`SELECT e.connector_id,n.origin,n.request_digest,n.recorded_at,n.filing_state,
