@@ -11,7 +11,11 @@ output tokens. Canon write limits do not increase these model allowances.
 Reasoning models count their hidden reasoning against the same output
 reservation. A model that spends it all before answering returns a truncated
 response, which doctor reports as `model response rejected: response
-truncated`; choose a non-reasoning model or disable reasoning at the provider.
+truncated`. Set `reasoning_effort = "low"` (or `"minimal"`) under
+`[ports.llm]` in `serve.toml` to shorten the hidden reasoning, choose a
+non-reasoning model, or disable reasoning at the provider. Doctor shows the
+effective setting next to the model. See the
+[LLM port configuration](../packages/llm/README.md#config-portsllm).
 
 The serving host selects the largest authorized event prefix that fits one
 request. It checks at most eight candidate prefixes. Each request stays within

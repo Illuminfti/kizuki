@@ -31,6 +31,7 @@ import {
   type SystemOnePort,
 } from "@kizuki/core";
 import { chatCompletionsUrl, parseOpenAiCompatibleConfig, parseSystemOneJevConfig, registerLlmPorts, registerSystemOnePorts, endpointHost, modelRef } from "@kizuki/llm";
+import type { ReasoningEffort } from "@kizuki/llm";
 import { listHostConnections, loadConnector, closeHostConnector } from "./connections";
 import { DERIVED_PASS_RECORDS, tryRefreshDerived } from "./derived";
 import { tokenResolver } from "./secrets";
@@ -157,8 +158,14 @@ interface ServeRuntimeOptions {
   readonly configurationErrorMode?: "throw" | "disable-model";
 }
 
+/** What doctor and serve status show about a bindable model. Never the credential. */
+export interface ModelBindingSummary {
+  readonly model_ref: string;
+  readonly reasoning_effort: ReasoningEffort | null;
+}
+
 /** Validate the held configuration and credential without port/runtime initialization. */
-export async function inspectModelBinding(vaultPath: string, env: Record<string, string | undefined>): Promise<string | null> {
+export async function inspectModelBinding(vaultPath: string, env: Record<string, string | undefined>): Promise<ModelBindingSummary | null> {
   const document = readAppModelConfiguration(vaultPath, value => { parseLlmSelection(value); }, { reconcile: false });
   const selected = parseLlmSelection(document.llm);
   if (selected.id === NONE_LLM_ID) return null;
@@ -172,7 +179,10 @@ export async function inspectModelBinding(vaultPath: string, env: Record<string,
   if (readAppModelConfiguration(vaultPath, value => { parseLlmSelection(value); }, { reconcile: false }).revision !== document.revision) {
     runtimeError("configuration changed during inspection");
   }
-  return modelRef(selected.id, configured.model, endpointHost(configured.base_url));
+  return {
+    model_ref: modelRef(selected.id, configured.model, endpointHost(configured.base_url)),
+    reasoning_effort: configured.reasoning_effort,
+  };
 }
 
 async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; producer?: ProducerPort | ProducerV2Port; systemone?: SystemOnePort }> {
