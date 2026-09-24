@@ -12,7 +12,7 @@ Your context should outlive the tool that learned it.
 [Vision](#the-vision) · [Quick start](#quick-start) · [Architecture](#architecture) · [Agents](#bring-your-agents) · [Roadmap](#roadmap) · [Status](#status)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-2563eb)](LICENSE)
-[![Release: 1.0.0](https://img.shields.io/badge/release-1.0.0-64748b)](#status)
+[![Release: 1.0.1](https://img.shields.io/badge/release-1.0.1-64748b)](#status)
 [![Bun: 1.3.14](https://img.shields.io/badge/Bun-1.3.14-fbf0df?logo=bun)](https://bun.sh)
 
 </div>

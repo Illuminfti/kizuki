@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.0.1 (2026-09-24)
+
+### Fixed
+
+- The background service no longer runs out of memory during sync. Bun's
+  `query()` cache keeps only 20 SQL strings, and every other query prepared a
+  new statement that the connection tracked until the next full collection. A
+  sync pass that wrote canon pages prepared about 32,000 statements per write
+  and reached the service's 2 GiB limit, so the service was killed and
+  restarted every 15 minutes. Each connection now keeps a bounded statement
+  cache (512 SQL strings) in front of Bun's, and a statement left mid-iteration
+  is finalized. On a vault with about 2,700 canon pages, one sync pass now
+  peaks near 300 MB instead of passing 3 GB.
+- The receipt for a sync run that was killed after its model call now says
+  "sync interrupted after model decision" instead of blaming extraction.
+
 ## 1.0.0 (2026-09-23)
 
 First public release. See [docs/CURRENT.md](docs/CURRENT.md) for what this
