@@ -38,7 +38,9 @@ describe("openai-compatible config", () => {
     for (const effort of ["none", "minimal", "low", "medium", "high"] as const) {
       expect(parseOpenAiCompatibleConfig({ base_url: "http://127.0.0.1/v1", model: "synthetic", reasoning_effort: effort }).reasoning_effort).toBe(effort);
     }
-    for (const effort of ["", "max", "LOW", 1, null] as unknown[]) {
+    const parsed = parseOpenAiCompatibleConfig({ base_url: "http://127.0.0.1/v1", model: "synthetic" });
+    expect(parseOpenAiCompatibleConfig({ ...parsed })).toEqual(parsed);
+    for (const effort of ["", "max", "LOW", 1, false] as unknown[]) {
       expect(() => parseOpenAiCompatibleConfig({ base_url: "http://127.0.0.1/v1", model: "synthetic", reasoning_effort: effort }))
         .toThrow("reasoning_effort must be one of none, minimal, low, medium, high");
     }

@@ -115,7 +115,8 @@ function parseRetries(value: unknown): number {
 }
 
 function parseReasoningEffort(value: unknown): ReasoningEffort | null {
-  if (value === undefined) return null;
+  // Null is the parsed form of absence, so a parsed config parses again.
+  if (value === undefined || value === null) return null;
   if (typeof value !== "string" || !(REASONING_EFFORTS as readonly string[]).includes(value)) {
     configError(`reasoning_effort must be one of ${REASONING_EFFORTS.join(", ")}`);
   }
