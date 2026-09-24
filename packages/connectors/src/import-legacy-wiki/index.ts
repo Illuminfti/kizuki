@@ -77,7 +77,11 @@ const MANIFEST: Manifest = freezeManifest({
 });
 
 export interface LegacyWikiIdentity {
-  /** So an edited page is re-emitted and a copied wiki with fresh mtimes is not. */
+  /**
+   * So an edited page is re-emitted and a copied wiki with fresh mtimes is
+   * not. Empty when the ledger row predates page hashes: it matches no page,
+   * so that page is re-emitted once and carries its hash from then on.
+   */
   hash: string;
   /** So a page added later cannot take a target this page is already staged at. */
   target: string;

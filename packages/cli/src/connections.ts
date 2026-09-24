@@ -23,6 +23,7 @@ import {
   listConnections,
   sourceCaptureAdmission,
   inspectSourceGrant,
+  targetProblem,
 } from "@kizuki/core";
 import { TelegramConnector, type TelegramConnectorConfig, type TelegramDeps } from "@kizuki/connector-telegram";
 import { errorText } from "./output";
@@ -127,6 +128,12 @@ const WIKI_MAX_FILES = 50_000;
 /**
  * Latest live wiki identities for one enrolled source. Identifier and
  * metadata only; never event text. Fail closed on an incompatible inventory.
+ *
+ * A row is still an identity when an earlier build recorded it without the
+ * page's content hash: its empty hash matches no page, so the page is
+ * re-emitted and the identity heals. A row with no usable page target was
+ * never in a snapshot, because the connector records only pages it placed.
+ * Neither is grounds to refuse the whole source.
  */
 export function wikiCommittedIdentities(
   db: Database,
@@ -175,18 +182,18 @@ export function wikiCommittedIdentities(
       typeof relpath !== "string" ||
       relpath.length === 0 ||
       new TextEncoder().encode(relpath).byteLength > EVENT_LIMITS.sourceRecordIdBytes ||
-      seen.has(relpath) ||
-      typeof hash !== "string" ||
-      !MARKDOWN_SHA256.test(hash) ||
-      typeof target !== "string" ||
-      target.length === 0
+      seen.has(relpath)
     ) {
       throw new ConnectionError(
         "wiki committed identities are incompatible with scan policy",
       );
     }
     seen.add(relpath);
-    files.push([relpath, { hash, target }]);
+    if (typeof target !== "string" || targetProblem(target) !== null) continue;
+    files.push([relpath, {
+      hash: typeof hash === "string" && MARKDOWN_SHA256.test(hash) ? hash : "",
+      target,
+    }]);
   }
   return files;
 }
