@@ -20,8 +20,14 @@ port; the receipted writer owns canon. Tests use a loopback fake endpoint.
 | `secret_ref` | no | `env:` or `file:` only. A literal key is a startup failure. |
 | `timeout_ms` | no | Default `60000`. |
 | `max_retries` | no | Default `2`. Bounded retries for network failures, timeouts and HTTP 429/502/503/504 share the request deadline. |
+| `reasoning_effort` | no | `none`, `minimal`, `low`, `medium` or `high`. Sent as the top-level `reasoning_effort` request field. Unset sends no field. Any other value is a `config_invalid` refusal. |
 
 `model_ref` recorded by callers is `<port_id>:<model>@<host>`.
+`reasoning_effort` changes only the request body. It is not part of
+`model_ref`, run or canon receipts, or source consent, which binds the
+endpoint and model. `doctor` and `serve status` show it next to the bound
+model, or `provider-default` when unset. Some endpoints make reasoning
+mandatory and answer `none` with HTTP 400.
 
 ## Config (`[ports.systemone]`)
 

@@ -30,8 +30,42 @@ describe("openai-compatible config", () => {
       secret_ref: "env:KIZUKI_MODEL_KEY",
       timeout_ms: 60_000,
       max_retries: 2,
+      reasoning_effort: null,
     });
   });
+
+  test.each(["none", "minimal", "low", "medium", "high"])(
+    "accepts reasoning_effort %s",
+    (effort) => {
+      const parsed = parseOpenAiCompatibleConfig({
+        base_url: "http://127.0.0.1/v1",
+        model: "synthetic",
+        reasoning_effort: effort,
+      });
+      expect(parsed.reasoning_effort).toBe(effort);
+      // The parsed form is itself valid config; callers re-bind it.
+      expect(parseOpenAiCompatibleConfig(parsed)).toEqual(parsed);
+    },
+  );
+
+  test.each([["LOW"], ["extreme"], [""], [" low"], [1], [true], [["low"]], [{ effort: "low" }]])(
+    "refuses reasoning_effort %j instead of ignoring it",
+    (effort) => {
+      expect(() =>
+        parseOpenAiCompatibleConfig({
+          base_url: "http://127.0.0.1/v1",
+          model: "synthetic",
+          reasoning_effort: effort,
+        }),
+      ).toThrow(
+        new PortError(
+          "config_invalid",
+          "reasoning_effort must be one of none, minimal, low, medium, high",
+          false,
+        ),
+      );
+    },
+  );
 
   test("refuses a plaintext key without echoing it", () => {
     let thrown: unknown;
@@ -288,6 +322,53 @@ describe("openai-compatible port", () => {
         message: "http 401",
       });
       expect(calls).toBe(1);
+    } finally {
+      temporary.cleanup();
+    }
+  });
+
+  test("an unset reasoning_effort leaves the request body unchanged", async () => {
+    fake = startFakeEndpoint();
+    const temporary = temporaryLlmContext(OPENAI_COMPATIBLE_LLM_DESCRIPTOR, {
+      base_url: fake.base_url,
+      model: "synthetic",
+    });
+    try {
+      const port = createOpenAiCompatibleLlmPort(temporary.ctx);
+      await port.complete(SAMPLE_REQUEST);
+      expect(JSON.stringify(fake.requests[0]?.body)).toBe(JSON.stringify({
+        model: "synthetic",
+        messages: SAMPLE_REQUEST.messages,
+        max_tokens: SAMPLE_REQUEST.max_output_tokens,
+      }));
+    } finally {
+      temporary.cleanup();
+    }
+  });
+
+  test("a configured reasoning_effort is sent as the top-level request field", async () => {
+    fake = startFakeEndpoint();
+    const temporary = temporaryLlmContext(OPENAI_COMPATIBLE_LLM_DESCRIPTOR, {
+      base_url: fake.base_url,
+      model: "synthetic",
+      reasoning_effort: "low",
+    });
+    try {
+      const port = createOpenAiCompatibleLlmPort(temporary.ctx);
+      const response = await port.complete(SAMPLE_REQUEST);
+      expect(response.text).toBe(SYNTHETIC_TEXT);
+      expect(JSON.stringify(fake.requests[0]?.body)).toBe(JSON.stringify({
+        model: "synthetic",
+        messages: SAMPLE_REQUEST.messages,
+        max_tokens: SAMPLE_REQUEST.max_output_tokens,
+        reasoning_effort: "low",
+      }));
+      // Effort tunes the request only; the recorded model identity is unchanged.
+      expect(port.model_ref).toBe(`${OPENAI_COMPATIBLE_LLM_ID}:synthetic@127.0.0.1`);
+      expect(await port.health()).toEqual({
+        status: "ready",
+        detail: { model_ref: port.model_ref, host: "127.0.0.1" },
+      });
     } finally {
       temporary.cleanup();
     }

@@ -11,12 +11,17 @@ export const MIN_TIMEOUT_MS = 1_000;
 export const MAX_TIMEOUT_MS = 600_000;
 export const MAX_RETRIES = 8;
 
+/** OpenAI's standard `reasoning_effort` values. Unset sends no field. */
+const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
 export interface OpenAiCompatibleLlmConfig {
   readonly base_url: string;
   readonly model: string;
   readonly secret_ref: string | null;
   readonly timeout_ms: number;
   readonly max_retries: number;
+  readonly reasoning_effort: ReasoningEffort | null;
 }
 
 const ALLOWED_KEYS = new Set([
@@ -25,6 +30,7 @@ const ALLOWED_KEYS = new Set([
   "secret_ref",
   "timeout_ms",
   "max_retries",
+  "reasoning_effort",
 ]);
 
 function configError(message: string): never {
@@ -108,6 +114,15 @@ function parseRetries(value: unknown): number {
   return value;
 }
 
+function parseReasoningEffort(value: unknown): ReasoningEffort | null {
+  if (value === undefined || value === null) return null;
+  const effort = REASONING_EFFORTS.find((item) => item === value);
+  if (effort === undefined) {
+    configError(`reasoning_effort must be one of ${REASONING_EFFORTS.join(", ")}`);
+  }
+  return effort;
+}
+
 export function parseOpenAiCompatibleConfig(
   value: unknown,
 ): OpenAiCompatibleLlmConfig {
@@ -140,5 +155,6 @@ export function parseOpenAiCompatibleConfig(
     secret_ref: typeof secret === "string" ? secret : null,
     timeout_ms: parseTimeout(value["timeout_ms"]),
     max_retries: parseRetries(value["max_retries"]),
+    reasoning_effort: parseReasoningEffort(value["reasoning_effort"]),
   };
 }

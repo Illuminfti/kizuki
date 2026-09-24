@@ -21,7 +21,7 @@ export {
   modelRef,
   parseOpenAiCompatibleConfig,
 } from "./config";
-export type { OpenAiCompatibleLlmConfig } from "./config";
+export type { OpenAiCompatibleLlmConfig, ReasoningEffort } from "./config";
 export {
   NONE_LLM_DESCRIPTOR,
   NONE_LLM_ID,

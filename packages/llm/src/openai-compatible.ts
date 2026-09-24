@@ -184,6 +184,7 @@ function buildWireBody(
       content: message.content,
     })),
     max_tokens: request.max_output_tokens,
+    ...(config.reasoning_effort === null ? {} : { reasoning_effort: config.reasoning_effort }),
   };
 }
 
