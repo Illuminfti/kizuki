@@ -514,6 +514,7 @@ describe("public surface", () => {
       "retrievalDocId",
       "retryCanonProjectionObligations",
       "retryRetrievalOps",
+      "retrySkippedRecords",
       "reviveUncontestedSkipped",
       "revokeAgent",
       "revokeAgentEnrollment",

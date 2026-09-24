@@ -286,19 +286,19 @@ test("a rejected response is retried once within the pass; a record rejected twi
   expect(readExtractCursor(g.db)).toBeNull();
 });
 
-test("a record too large for any request holds the cursor without a request or a retry", async () => {
+test("a single token too large for any request is skipped with a receipt instead of holding the cursor", async () => {
   const oversized = "x".repeat(24_001);
   const g = throughputVault(3, index => index === 1 ? oversized : recordText(index));
   const db = openLedger(g.ledger);
   disposers.push(g.dispose, () => db.close());
-  const [e0] = g.eventIds as [string];
+  const [e0, , e2] = g.eventIds as [string, string, string];
   writeServeToml(g.vault, "[extraction]\nmax_calls_per_pass = 5\nrecords_per_request = 1\n");
   const model = scriptedModelProducer(g.vault, () => "ok");
   const receipt = await runRail(db, g.vault, "sync", { hooks: { producer: model.producer, claims: { db }, model_ref: MODEL } });
-  expect(model.requests).toEqual([[e0]]);
-  expect(receipt).toMatchObject({ stopped: null, claims_extracted: 1, model: { calls: 1 } });
-  expect(receipt.errors).toContain("producer v2 input exceeds structural or budget limits");
-  expect(endsAt(readExtractCursor(db), e0)).toBe(true);
+  expect(model.requests).toEqual([[e0], [e2]]);
+  expect(receipt).toMatchObject({ status: "ok", stopped: null, errors: [], claims_extracted: 2, model: { calls: 2 },
+    oversized: { segments: 0, skipped: 1 } });
+  expect(endsAt(readExtractCursor(db), e2)).toBe(true);
 });
 
 test("a kill during a request loses only that request and the next pass resumes after the last filed one", () => {

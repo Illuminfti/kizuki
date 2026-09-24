@@ -52,7 +52,7 @@ export function throughputVault(records: number, text: (index: number) => string
       expected_revision: 0,
       operation_id: "throughput-fixture-grant",
       policy: {
-        purposes: ["capture", "recall", "derive", "extract"],
+        purposes: ["capture", "recall", "derive", "extract", "export"],
         allowed_fields: ["text", "subjects", "attachments", "metadata"],
         retention: "persistent_owned_until_revoked",
         egress: {
@@ -266,6 +266,107 @@ export function scriptedModelProducer(
       model_endpoint: ENDPOINT,
       model: MODEL,
     }),
+    requests,
+  };
+}
+
+export const paragraphLabel = (index: number): string =>
+  `Paragraph ${String(index).padStart(4, "0")}`;
+
+/** Low-entropy synthetic prose of exactly `chars` characters: numbered paragraphs of one repeated sentence. */
+export function paragraphRecord(chars: number): string {
+  let text = "";
+  for (let index = 0; text.length < chars; index++) {
+    text += `${index === 0 ? "" : "\n\n"}${paragraphLabel(index)} describes a synthetic lantern pattern.${" The lantern pattern repeats calmly.".repeat(14)}`;
+  }
+  return text.slice(0, chars);
+}
+
+/** A typed response with one mention and one claim per record, anchored at `[start, end)`. */
+export function anchoredResponse(
+  events: readonly { event_id: string; start: number; end: number; label: string }[],
+) {
+  return {
+    schema: EXTRACT_RESPONSE_V2_SCHEMA,
+    mentions: events.map((event, index) => ({
+      id: `m${index}`,
+      label: event.label,
+      anchor: { event_id: event.event_id, start_utf16: event.start, end_utf16: event.end },
+      candidate_refs: [],
+    })),
+    claims: events.map((event, index) => ({
+      ...typedResponse([{ event_id: event.event_id, text: event.label }]).claims[0]!,
+      id: `c${index}`,
+      subject: { kind: "mention" as const, id: `m${index}` },
+      anchors: [{ event_id: event.event_id, start_utf16: event.start, end_utf16: event.end }],
+    })),
+  };
+}
+
+export interface QuotedRequest {
+  readonly event_ids: readonly string[];
+  /** The quoted text of each record exactly as the model saw it, unescaped fixtures only. */
+  readonly texts: readonly string[];
+}
+
+/**
+ * The shipped typed producer over a chat port that answers every quoted record
+ * with one claim anchored at its first paragraph label, or at its first seven
+ * characters when it has none. `onRequest` runs before the answer is returned.
+ */
+export function segmentModelProducer(
+  vault: string,
+  onRequest: (request: number) => void = () => undefined,
+): { producer: ProducerV2Port; requests: QuotedRequest[] } {
+  const requests: QuotedRequest[] = [];
+  const llm: LlmPort = {
+    descriptor: {
+      id: "kizuki.llm.fixture-segments",
+      kind: "llm",
+      contract: LLM_CONTRACT,
+      contract_minor: 0,
+      supports: ["chat"],
+      requires_lease: false,
+      optional_package: null,
+    },
+    model_ref: MODEL,
+    health: async () => ({ status: "ready", detail: {} }),
+    close: async () => undefined,
+    async complete(request) {
+      const prompt = request.messages.map((message) => message.content).join("\n");
+      const quoted = [
+        ...prompt.matchAll(/<<<KZ-QUOTE ([0-9a-f]{32}) event:([0-9A-HJKMNP-TV-Z]{26})>>>\n([\s\S]*?)\n<<<KZ-END \1>>>/g),
+      ].map((match) => ({ event_id: match[2]!, text: match[3]! }));
+      requests.push({ event_ids: quoted.map((item) => item.event_id), texts: quoted.map((item) => item.text) });
+      onRequest(requests.length);
+      const anchored = quoted.map(({ event_id, text }) => {
+        const label = /Paragraph \d{4}/.exec(text);
+        return label === null
+          ? { event_id, start: 0, end: LABEL_CHARS, label: text.slice(0, LABEL_CHARS) }
+          : { event_id, start: label.index, end: label.index + label[0].length, label: label[0] };
+      });
+      return {
+        text: JSON.stringify(anchoredResponse(anchored)),
+        model: MODEL,
+        usage: { input_tokens: 10, output_tokens: 20 },
+      };
+    },
+  };
+  const producer = createModelProducerV2Port(
+    {
+      vault_path: vault,
+      data_dir: join(vault, ".kizuki"),
+      config: {},
+      secrets: async () => {
+        throw new Error("no secrets in fixtures");
+      },
+      clock: () => new Date().toISOString(),
+      logger: () => undefined,
+    },
+    { llm },
+  );
+  return {
+    producer: bindSourceModelPort(producer, { model_endpoint: ENDPOINT, model: MODEL }),
     requests,
   };
 }

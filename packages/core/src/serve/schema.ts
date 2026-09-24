@@ -93,6 +93,15 @@ CREATE TABLE IF NOT EXISTS extract_deferred_inputs (
   checked_revision INTEGER NOT NULL,
   checked_binding_digest TEXT NOT NULL
 ) STRICT;
+CREATE TABLE IF NOT EXISTS extract_oversized_records (
+  event_id TEXT PRIMARY KEY REFERENCES events(event_id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('segmenting', 'skipped')),
+  chars INTEGER NOT NULL CHECK (chars > 0),
+  done_utf16 INTEGER NOT NULL CHECK (done_utf16 >= 0 AND done_utf16 < chars),
+  pending_end_utf16 INTEGER CHECK (pending_end_utf16 IS NULL OR
+    (status = 'segmenting' AND pending_end_utf16 > done_utf16 AND pending_end_utf16 <= chars)),
+  updated_at TEXT NOT NULL
+) STRICT;
 
 CREATE TABLE IF NOT EXISTS port_state (
   kind TEXT PRIMARY KEY,

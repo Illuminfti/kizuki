@@ -7,7 +7,7 @@ import { MAX_V2_EVENTS, MAX_V2_OUTPUT_TOKENS } from "../contracts/producer-v2";
  * opens a Markdown page itself.
  */
 
-export const SERVE_SCHEMA_VERSION = 8;
+export const SERVE_SCHEMA_VERSION = 9;
 
 export const RUN_RECEIPTS_PATH = ".kizuki/run-receipts.jsonl";
 export const SERVE_INTENT_PATH = ".kizuki/serve-intent";
@@ -126,6 +126,14 @@ export interface RunModelReport {
   readonly model_ref: string | null;
 }
 
+/** Records too large for one request that a pass handled itself. */
+export interface RunOversizedReport {
+  /** Segments filed, one request each. */
+  readonly segments: number;
+  /** Records passed over with a `record_oversized_skipped` receipt. */
+  readonly skipped: number;
+}
+
 export interface RunRetrievalReport {
   readonly upserts: number;
   readonly removals: number;
@@ -177,6 +185,8 @@ export interface RunReceipt {
   readonly canon_writes: number;
   readonly canon_reverts: number;
   readonly model: RunModelReport;
+  /** Present when the pass segmented or skipped a record too large for one request. */
+  readonly oversized?: RunOversizedReport;
   readonly retrieval: RunRetrievalReport;
   readonly budget: Readonly<Record<string, { used: number; limit: number }>>;
   readonly errors: readonly string[];
@@ -345,6 +355,17 @@ export interface ThroughputDoctor extends ExtractionConfig {
   readonly detail: string;
 }
 
+/** Typed extraction records too large for one request. */
+export interface OversizedDoctor {
+  /** Records the loop is extracting one segment per request. */
+  readonly segmenting: number;
+  /** Records passed over with a `record_oversized_skipped` receipt. */
+  readonly skipped: number;
+  /** The command that re-queues skipped records; null when none are skipped. */
+  readonly retry: string | null;
+  readonly detail: string;
+}
+
 export interface ServeDoctorReport {
   readonly supervisor: SupervisorStatus;
   /** Read only for an installed unit that is not running; null otherwise. */
@@ -353,6 +374,7 @@ export interface ServeDoctorReport {
   readonly rails: RailDoctor[];
   readonly model: ModelDoctor;
   readonly throughput: ThroughputDoctor;
+  readonly oversized: OversizedDoctor;
   readonly stores: StoreDoctor;
   readonly calibration: CalibrationDoctor;
   readonly ok: boolean;

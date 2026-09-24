@@ -30,11 +30,13 @@ export type {
   CrashPoint,
   LeaseRow,
   ModelDoctor,
+  OversizedDoctor,
   RailDoctor,
   RailId,
   RailSpec,
   RunReceipt,
   RunExecution,
+  RunOversizedReport,
   RunStatus,
   ScheduleRow,
   ServeConfig,
@@ -113,6 +115,7 @@ export type {
   RunRailOptionsV2,
 } from "./rails";
 export type { ExtractionProducerPort } from "./extract-v2";
+export { retrySkippedRecords } from "./extract";
 export { runWritePass } from "./write-pass";
 export type { WritePassOptions, WritePassResult } from "./write-pass";
 export {

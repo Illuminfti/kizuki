@@ -25,7 +25,7 @@ import type { ProduceResultV2, ProducerV2Port } from "../contracts/producer-v2";
 import { formatProducerDiagnostic, readProducerDiagnostic } from "../producer/diagnostics";
 import { invokeProducer, invokeProducerV2 } from "../producer/result";
 import type { WorldDraftInsert } from "../producer/world-drafts";
-import { DEFAULT_EXTRACTION_CONFIG, type ExtractionConfig, type RunModelReport } from "./types";
+import { DEFAULT_EXTRACTION_CONFIG, type ExtractionConfig, type RunModelReport, type RunOversizedReport } from "./types";
 import {
   prepareClaimInsert,
   retryRetrievalOps,
@@ -62,6 +62,7 @@ export interface WritePassResult {
   readonly canon_writes: number;
   readonly claims_rejected: Readonly<Record<string, number>>;
   readonly model: Omit<RunModelReport, "model_ref">;
+  readonly oversized: RunOversizedReport;
   readonly stopped: string | null;
   readonly errors: readonly string[];
 }
@@ -285,6 +286,7 @@ function stoppedWritePass(stopped: string): WritePassResult {
     claims_superseded: 0,
     canon_writes: 0,
     ...metricResult(emptyMetrics()),
+    oversized: { segments: 0, skipped: 0 },
     stopped,
     errors: [],
   };
@@ -307,6 +309,7 @@ async function runWritePassOwned(
   let stopped: string | null = null;
   const errors: string[] = [];
   const metrics = emptyMetrics();
+  const oversized = { segments: 0, skipped: 0 };
 
   if (options.producer !== undefined && options.claims !== undefined) {
     const runId = options.run_id ?? ulid();
@@ -342,6 +345,8 @@ async function runWritePassOwned(
       extracted += outcome.extracted;
       deduped += outcome.deduped;
       superseded += outcome.superseded;
+      oversized.segments += outcome.segments;
+      oversized.skipped += outcome.skipped;
       errors.push(...outcome.errors);
       stopped = outcome.stopped;
       // A rejected response is asked for once more: a nondeterministic model
@@ -361,6 +366,7 @@ async function runWritePassOwned(
       claims_superseded: superseded,
       canon_writes: 0,
       ...metricResult(metrics),
+      oversized,
       stopped,
       errors,
     };
@@ -427,6 +433,7 @@ async function runWritePassOwned(
     claims_superseded: superseded,
     canon_writes: canonWrites,
     ...metricResult(metrics),
+    oversized,
     stopped,
     errors,
   };
@@ -488,12 +495,16 @@ interface StepOutcome {
   readonly extracted: number;
   readonly deduped: number;
   readonly superseded: number;
+  /** Segments of an oversized record this step filed. */
+  readonly segments: number;
+  /** Oversized records this step passed over with a skip receipt. */
+  readonly skipped: number;
   readonly stopped: string | null;
   readonly errors: readonly string[];
 }
 
 const settled = (next: StepOutcome["next"], fields: Partial<Omit<StepOutcome, "next">> = {}): StepOutcome =>
-  ({ next, extracted: 0, deduped: 0, superseded: 0, stopped: null, errors: [], ...fields });
+  ({ next, extracted: 0, deduped: 0, superseded: 0, segments: 0, skipped: 0, stopped: null, errors: [], ...fields });
 
 /** A provider that still refuses after the port's bounded retries ends the pass as a typed stop. */
 function modelStop(reason: string, diagnostic: ProducerDiagnostic | undefined): string {
@@ -519,6 +530,7 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
   const mined = isProducerV2(observed)
     ? await mineLiveDrafts(db, observed, limits)
     : await mineLiveDrafts(db, observed, limits);
+  const segmentCount = mined.segment === undefined ? 0 : 1;
   // Only this step's request can explain this step's failure.
   const fresh = metrics.diagnostic === earlier ? undefined : metrics.diagnostic;
   const diagnostic = fresh === undefined ? [] : [formatProducerDiagnostic(fresh)];
@@ -529,12 +541,17 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
       // A refusal before sending, such as a record too large for any request, repeats identically.
       return settled(metrics.calls > sent ? "retry" : "stop", { errors: [mined.mined.reason, ...diagnostic] });
     case "empty":
-      if (commitExtractCursor(db, mined)) return settled("continue");
+      if (commitExtractCursor(db, mined)) return settled("continue", { segments: segmentCount });
       return settled("stop", { errors: mined.cursor === null ? [] : ["extract cursor changed before commit"] });
     case "deferred":
       return commitExtractCursor(db, mined)
         ? settled("continue")
         : settled("stop", { errors: ["extract deferred inputs changed before commit"] });
+    case "skipped":
+      // No safe split fits one request: the record is passed over with a receipt, not retried here.
+      return commitExtractCursor(db, mined)
+        ? settled("continue", { skipped: mined.mined.count })
+        : settled("stop", { errors: ["extract cursor changed before commit"] });
     case "ok": {
       // Persist the accepted model output before the first claim write.  A
       // retry must replay this exact decision, never ask a nondeterministic
@@ -545,7 +562,7 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
       const filed = await fileProducedDrafts(claims, durable, producer);
       return filed === null
         ? settled("stop", { errors: ["extract cursor changed before commit"] })
-        : settled("continue", { extracted: mined.mined.count, deduped: filed.deduped, superseded: filed.superseded });
+        : settled("continue", { extracted: mined.mined.count, deduped: filed.deduped, superseded: filed.superseded, segments: segmentCount });
     }
     default: {
       const _exhaustive: never = mined.mined;

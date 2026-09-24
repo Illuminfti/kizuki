@@ -47,12 +47,13 @@ A value outside its range, a fraction or a string keeps that key's default.
   answers the same records on a second request; a second rejection in a row
   ends the pass, and the rejected records wait for the next one. A pass also
   ends early when the ledger is drained, a request is refused before it is
-  sent, a commit finds the cursor moved, or the model is unavailable. A record
-  too large for one request therefore still holds the cursor, as described
-  under [refusals](#refusals-and-retained-input).
+  sent, a commit finds the cursor moved, or the model is unavailable. A typed
+  record too large for one request is asked for one segment per step, or
+  skipped with a receipt when it cannot be split; see
+  [records too large for one request](#records-too-large-for-one-request).
   Steps that make no request, such as advancing over records a source grant
-  does not cover, still count toward the limit, so the default pass is the
-  same single step as before.
+  does not cover or skipping a record, still count toward the limit, so the
+  default pass is the same single step as before.
 - **Per-request limits.** `records_per_request` and the two token reservations
   bound each typed request. More records per request need a larger output
   reservation: an ordinary record's anchored response runs to one to three
@@ -134,11 +135,60 @@ adds the quoted-character diagnostic. Older failed-receipt formats remain
 readable. A planning refusal has zero actual calls and reports its planned
 requirement with `used=0`.
 
-A record that cannot fit by itself is refused without an LLM call. Its text is
-not truncated, and it is not treated as successful empty extraction. The
-checkpoint remains before it so the unprocessed record stays visible to a
-later run. Processing an individually oversized record requires a separate
-chunking decision; these limits are not silently raised.
+Record text is never truncated and the per-request limits are never raised.
+The epoch-zero legacy producer still refuses a record that cannot fit by
+itself without an LLM call and keeps its checkpoint before that record.
+Typed world extraction decides such a record itself, as described next.
+
+### Records too large for one request
+
+A typed record that no request can carry whole, because its text exceeds
+24,000 escaped characters or its request exceeds `max_input_tokens`, is
+handled by the loop without an owner step.
+
+- **Segments.** The loop splits the record into segments of at most 24,000
+  escaped characters whose requests also fit `max_input_tokens`, and sends
+  each segment as a request of its own that carries no other record. A split
+  falls on the last paragraph break in the second half of the window, else the
+  last line break there, else the last word boundary. It never falls inside a
+  grapheme, so never inside a surrogate pair, and never inside a fence
+  look-alike that escaping would lengthen.
+- **Anchors.** The model sees only the segment. Before the decision is
+  journaled, every anchor is moved to record offsets, and each must fall on
+  UTF-16 boundaries of the original record and quote exactly the text the
+  model saw. Claims then cite the record like any other, and the claim writer
+  checks them against the stored record text again.
+- **Progress.** `extract_oversized_records` keeps each record's extracted
+  prefix. A segment's decision is journaled together with its end, and filing
+  its claims moves the prefix in the same transaction. The extraction cursor
+  stays before the record until its last segment is filed. A kill loses at
+  most the segment in flight: the next pass resumes at the next unfinished
+  segment, and a journaled segment replays without a new request. Neither
+  files a finished segment's claims again. A record with filed segments never
+  joins a whole-record request. Source consent, the model binding, the retry
+  of a rejected response and the per-request reservations apply to every
+  segment request as they do to any request.
+- **Skips.** A window with no word boundary, such as a single 30,000-character
+  token, cannot be split without cutting it. The loop then skips the rest of
+  the record without a request, writes a receipt with reason
+  `record_oversized_skipped`, and moves the cursor on. The receipt holds the
+  event id, the record's UTF-16 length and the offset already extracted, never
+  its text. Claims filed from earlier segments stay.
+- **Reversal.** `kizuki doctor` and `kizuki serve status` print an
+  `oversized records` line with the counts of records being segmented and
+  records skipped, and name `kizuki serve retry-skipped` while any record is
+  skipped. `--json` reports them as `oversized` in the serve doctor report.
+  That command puts every skipped record back on the deferred queue; the loop
+  decides each one again from the offset it already extracted, and skips it
+  again when nothing has changed. A larger `max_input_tokens` can make a
+  skipped record splittable.
+- **Receipts and backups.** A sync run that segmented or skipped a record
+  reports `oversized.segments` and `oversized.skipped` in its run receipt.
+  Backups at serve schema 9 carry segment progress and skip receipts, and
+  restore checks each against the restored record's length.
+
+When not even a small segment fits `max_input_tokens`, the request is refused
+before it is sent, as it would be for any record, and the cursor holds.
 
 ## Restart and authorization
 
@@ -164,8 +214,8 @@ under the current authorization checks.
 Use the repository's pinned Bun version:
 
 ```bash
-bun test packages/core/test/serve/extraction-budget.test.ts packages/core/test/serve/extraction-throughput.test.ts packages/core/test/producer/model.test.ts packages/core/test/source-model-egress.test.ts
-bun test packages/llm/test/openai-compatible.test.ts packages/cli/test/serve/extraction-throughput.test.ts
+bun test packages/core/test/serve/extraction-budget.test.ts packages/core/test/serve/extraction-throughput.test.ts packages/core/test/serve/oversized-records.test.ts packages/core/test/producer/model.test.ts packages/core/test/source-model-egress.test.ts
+bun test packages/llm/test/openai-compatible.test.ts packages/cli/test/serve/extraction-throughput.test.ts packages/cli/test/serve/oversized-records.test.ts
 bun test packages/core/test
 bun run typecheck
 bun run verify
@@ -175,8 +225,12 @@ The focused tests cover rich role metadata, complete context, split text,
 impossible records, denied interleaving, grant changes, successful abstention,
 deferred retries and partial journal replay across restart. The throughput
 tests cover setting bounds, one committed cursor per request, a rate-limited
-stop and its resumption, one retry of a rejected response, an oversized record
-that holds the cursor without a request, a real kill during a request, flat
-statement and memory use over 64-request passes, retry backoff and the sync
-period applied at service start. All fixtures are synthetic; they make no provider or account
-calls.
+stop and its resumption, one retry of a rejected response, an unsplittable
+record skipped with a receipt, a real kill during a request, flat statement
+and memory use over 64-request passes, retry backoff and the sync period
+applied at service start. The oversized-record tests cover split boundaries,
+a 60,000-character record extracted in three segments whose anchors match the
+original text, segments shrunk to fit `max_input_tokens`, a real kill between
+segments, replay of a journaled segment, a skip with its receipt, doctor line
+and retry, records under the limit, purge, and backup and restore. All
+fixtures are synthetic; they make no provider or account calls.

@@ -16,11 +16,13 @@ import {
   type ProducerV2Port,
 } from "../../src/contracts/producer-v2";
 import {
+  commitExtractCursor,
   journalExtractBatch,
   mineLiveDrafts,
   readDurableExtractBatch,
   readExtractCursor,
 } from "../../src/serve/extract";
+import { listSkippedRecords } from "../../src/serve/extract-oversized";
 import { canonicalJson } from "../../src/util/hash";
 import { EXTRACT_MAX_OUTPUT_TOKENS } from "../../src/producer/model";
 
@@ -181,7 +183,7 @@ test("v2 durable parsing rejects a re-signed semantic and rendering disagreement
   }
 });
 
-test("v2 rejects an impossible first event without a model call or cursor advance", async () => {
+test("v2 skips an unsplittable first event with a receipt and no model call", async () => {
   const root = mkdtempSync(join(tmpdir(), "extract-v2-oversize-"));
   roots.push(root);
   const vault = join(root, "vault");
@@ -200,9 +202,13 @@ test("v2 rejects an impossible first event without a model call or cursor advanc
   };
   try {
     const mined = await mineLiveDrafts(db, producer);
-    expect(mined.mined).toEqual({ status: "rejected", reason: "producer v2 input exceeds structural or budget limits" });
+    expect(mined.mined).toEqual({ status: "skipped", count: 1 });
+    expect(mined.skipped).toEqual({ event_id: accepted.event.event_id, chars: 24_001, done: 0 });
     expect(calls).toBe(0);
     expect(readExtractCursor(db)).toBeNull();
+    expect(commitExtractCursor(db, mined)).toBe(true);
+    expect(readExtractCursor(db)?.endsWith(accepted.event.event_id)).toBe(true);
+    expect(listSkippedRecords(db).map(row => [row.reason, row.event_id, row.chars])).toEqual([["record_oversized_skipped", accepted.event.event_id, 24_001]]);
     expect(db.query("SELECT * FROM extract_batches").all()).toEqual([]);
   } finally {
     db.close();
