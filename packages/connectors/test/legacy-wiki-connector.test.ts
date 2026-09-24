@@ -18,6 +18,7 @@ import {
   initVault,
   isPlainObject,
   MAX_CURSOR_BYTES,
+  MAX_PROPOSAL_BODY_CHARS,
   MAX_SYNC_BATCH_BYTES,
   MAX_SYNC_BATCH_EVENTS,
   runBatch,
@@ -454,6 +455,36 @@ describe("backfill and sync", () => {
     expect(
       ledger.acceptMany(second.events).every((r) => r.status === "duplicate"),
     ).toBe(true);
+  });
+
+  test("a page longer than a proposal body stages its head and keeps the whole page as evidence", async () => {
+    writeMapping();
+    const body = "lapis lantern\n".repeat(5_000);
+    write("long.md", `---\ntitle: Long\n---\n${body}`);
+    write("short.md", "---\ntitle: Short\n---\nshort\n");
+    const connector = createLegacyWikiConnector({ path: wiki });
+    const batch = await connector.backfill(null);
+    const long = batch.events.find((event) => event.source_record_id === "long.md");
+    expect(long?.text).toBe(body);
+    expect(long?.metadata["text_truncated"]).toBeUndefined();
+    expect(long?.metadata["body_truncated"]).toBe(true);
+    const row = connector.lastReport()?.pages.find((entry) => entry.relpath === "long.md");
+    expect(row?.notes).toContain("body_truncated");
+    expect(row?.target).toBe(target(long) ?? null);
+
+    // Staging holds the page, so the source is not failed for one long page.
+    const db = openLedger(":memory:");
+    const result = runBatch(db, batch, GRANTED);
+    expect(result.errors).toEqual([]);
+    expect(result.stored).toBe(2);
+    const staged = db
+      .query<{ body: string; frontmatter: string }, [string]>(
+        "SELECT body, frontmatter FROM proposals WHERE target = ?",
+      )
+      .get(target(long) ?? "");
+    expect(staged?.body).toBe(body.slice(0, MAX_PROPOSAL_BODY_CHARS));
+    expect(JSON.parse(staged?.frontmatter ?? "{}")["x-body-truncated"]).toBe(true);
+    db.close();
   });
 
   test("a 5000-page wiki backfills with a bounded cursor, resumes, and tombstones", async () => {

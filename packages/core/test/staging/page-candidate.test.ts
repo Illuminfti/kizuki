@@ -12,7 +12,7 @@ import type { Claim } from "../../src/contracts/proposal";
 import { accept } from "../../src/ledger/ledger";
 import { pageCandidateProposal } from "../../src/staging/page-candidate";
 import { DETERMINISTIC_PRODUCER_BUDGET, proposalsForEvent } from "../../src/staging/producers";
-import { fileProposal } from "../../src/staging/proposals";
+import { fileProposal, MAX_PROPOSAL_BODY_CHARS } from "../../src/staging/proposals";
 import { validatePage } from "../../src/vault/schema";
 import { parseFrontmatter } from "../../src/vault/frontmatter";
 import type { CaptureEvent } from "../../src/contracts/event";
@@ -176,6 +176,42 @@ describe("a page candidate on an event", () => {
     if (page === undefined) throw new Error("expected a granted page candidate");
     expect(fileProposal(db, page).outcome).toBe("stored");
     db.close();
+  });
+
+  test("a body longer than staging files is cut to its head and marked", () => {
+    const long = "lapis lantern\n".repeat(5_000);
+    const ev = event({ text: long, metadata: candidateMetadata() });
+    const [, page] = granted(ev);
+    expect(page?.body).toBe(long.slice(0, MAX_PROPOSAL_BODY_CHARS));
+    expect(page?.frontmatter["x-body-truncated"]).toBe(true);
+    // The staged page is the head; the event keeps the whole page.
+    expect(ev.text).toHaveLength(70_000);
+
+    const db = memoryDb([ev]);
+    if (page === undefined) throw new Error("expected a granted page candidate");
+    expect(fileProposal(db, page).outcome).toBe("stored");
+    db.close();
+  });
+
+  test("the cut keeps whole characters only", () => {
+    // An astral character straddles the bound: its high half would be the
+    // last unit kept, and half a character is not text.
+    const text = `${"a".repeat(MAX_PROPOSAL_BODY_CHARS - 1)}\u{1F600}tail`;
+    const [, page] = granted(event({ text, metadata: candidateMetadata() }));
+    expect(page?.body).toBe("a".repeat(MAX_PROPOSAL_BODY_CHARS - 1));
+    expect(page?.frontmatter["x-body-truncated"]).toBe(true);
+  });
+
+  test("a body at the bound is staged whole and unmarked, whatever the candidate claims", () => {
+    const text = "a".repeat(MAX_PROPOSAL_BODY_CHARS);
+    const [, page] = granted(
+      event({
+        text,
+        metadata: candidateMetadata({ extensions: { "x-body-truncated": true } }),
+      }),
+    );
+    expect(page?.body).toBe(text);
+    expect(page?.frontmatter["x-body-truncated"]).toBeUndefined();
   });
 
   test("refiling the same page is a duplicate, not a second staged item", () => {

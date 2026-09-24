@@ -105,6 +105,7 @@ describe("public surface", () => {
       "MAX_CURSOR_BYTES",
       "MAX_FRONTMATTER_ARRAY_ITEMS",
       "MAX_FRONTMATTER_STRING_CHARS",
+      "MAX_PROPOSAL_BODY_CHARS",
       "MAX_RATE_LIMIT_PER_MINUTE",
       "MAX_READ_SINCE",
       "MAX_RERANK_CANDIDATES",

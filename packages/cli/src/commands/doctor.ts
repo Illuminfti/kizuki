@@ -49,6 +49,8 @@ interface DoctorConnection {
   checkpoint: string;
   stored: number;
   errors: number;
+  /** Why the last run failed, first reason only; null when it did not. */
+  last_error: string | null;
   backfill_complete: boolean;
   problem: string | null;
 }
@@ -292,6 +294,7 @@ async function collect(
       checkpoint: checkpoint?.last_run_at ?? "never",
       stored: checkpoint?.last_result.stored ?? 0,
       errors: checkpoint?.last_result.errors.length ?? 0,
+      last_error: scrubDetail(checkpoint?.last_result.errors[0] ?? null),
       backfill_complete: checkpoint?.backfill_complete === true,
     };
     if (host.state === null) {
@@ -510,7 +513,8 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     );
   }
   for (const item of report.connections) {
-    const line = `connection ${item.connector_id} source=${item.source_key} path=${item.path} state=${item.state} health=${item.health} checkpoint=${item.checkpoint} stored=${item.stored} errors=${item.errors} backfill_complete=${item.backfill_complete ? "yes" : "no"}`;
+    const reason = item.last_error === null ? "" : ` last_error=${JSON.stringify(item.last_error)}`;
+    const line = `connection ${item.connector_id} source=${item.source_key} path=${item.path} state=${item.state} health=${item.health} checkpoint=${item.checkpoint} stored=${item.stored} errors=${item.errors} backfill_complete=${item.backfill_complete ? "yes" : "no"}${reason}`;
     io.out(item.problem === null ? line : `${line} ${item.problem}`);
   }
   io.out(`receipts=${report.receipts} orphans=${report.orphans.length}`);

@@ -18,6 +18,7 @@ import {
   runToCompletion,
   readRetrievalDocuments,
   readAppModelConfiguration,
+  redactReceiptError,
   classifyAppModelCredential,
   readAppModelFileCredential,
   type ClaimsIo,
@@ -133,13 +134,14 @@ async function syncConnections(
         events_stored += result.stored;
         events_duplicate += result.duplicates;
         events_synced += result.stored + result.duplicates;
+        // Why, not only that: the receipt is where an owner looks first.
         if (result.errors.length > 0 && errors.length < MAX_SYNC_ERRORS) {
-          errors.push(`connector ${selected.connection.connector_id} sync failed`);
+          errors.push(`connector ${selected.connection.connector_id} sync failed: ${redactReceiptError(result.errors[0])}`);
         }
       } finally { await closeHostConnector(connector); }
-    } catch {
+    } catch (error) {
       if (errors.length < MAX_SYNC_ERRORS) {
-        errors.push(`connector ${selected.connection.connector_id} sync unavailable`);
+        errors.push(`connector ${selected.connection.connector_id} sync unavailable: ${redactReceiptError(error)}`);
       }
     }
   }

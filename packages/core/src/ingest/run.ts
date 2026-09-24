@@ -119,10 +119,10 @@ function processEvent(
     if (produced.status !== "ok") return result;
     for (const proposal of produced.proposals) {
       // Acceptance and extraction are separate steps. A proposal the
-      // staging contract refuses, such as an estate page longer than the
-      // body bound, is this event's error and not grounds to unwrite the raw
-      // row the ledger already accepted: rolling that back would drop the
-      // text from the estate outright rather than leave it unextracted.
+      // staging contract refuses is this event's error and not grounds to
+      // unwrite the raw row the ledger already accepted: rolling that back
+      // would drop the text from the estate outright rather than leave it
+      // unextracted.
       // fileProposal validates before it writes and files under its own
       // savepoint, so nothing half staged survives the refusal.
       try {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  MAX_PROPOSAL_BODY_CHARS,
   PAGE_CANDIDATE_KEY,
   targetProblem,
   validateEventInput,
@@ -668,7 +669,51 @@ describe("determinism and targets", () => {
     const { events, report } = plan(scan);
     expect(events[0]?.text).toHaveLength(262_144);
     expect(events[0]?.metadata["text_truncated"]).toBe(true);
-    expect(report.pages[0]?.notes).toEqual(["text_truncated"]);
+    // Its staged page is cut shorter still, and the report says so too.
+    expect(events[0]?.metadata["body_truncated"]).toBe(true);
+    expect(report.pages[0]?.notes).toEqual(["text_truncated", "body_truncated"]);
+  });
+
+  test("the ledger cap counts characters, not UTF-16 units", () => {
+    const body = "\u{1F600}".repeat(262_145);
+    const content = `---\ntitle: Wide\n---\n${body}`;
+    const { events } = plan({
+      files: [{ relpath: "wide.md", content, mtimeMs: 1, size: content.length }],
+      skipped: [],
+      truncated: false,
+    });
+    expect(events[0]?.text).toBe("\u{1F600}".repeat(262_144));
+    expect(events[0]?.metadata["text_truncated"]).toBe(true);
+  });
+
+  test("a page longer than a proposal keeps its whole text and notes the staged cut", () => {
+    // Staging files only the head of a longer body. The ledger is the
+    // evidence, and recall reads it, so the event keeps the whole page.
+    const body = `${"a".repeat(MAX_PROPOSAL_BODY_CHARS - 1)}\u{1F600}tail`;
+    const content = `---\ntitle: Long\n---\n${body}`;
+    const { events, report } = plan({
+      files: [{ relpath: "long.md", content, mtimeMs: 1, size: content.length }],
+      skipped: [],
+      truncated: false,
+    });
+    expect(events[0]?.text).toBe(body);
+    expect(events[0]?.metadata["text_truncated"]).toBeUndefined();
+    expect(events[0]?.metadata["body_truncated"]).toBe(true);
+    expect(page(report, "long.md").notes).toEqual(["body_truncated"]);
+    expect(page(report, "long.md").target).not.toBeNull();
+  });
+
+  test("a page at the proposal bound is staged whole and carries no note", () => {
+    const body = "a".repeat(MAX_PROPOSAL_BODY_CHARS);
+    const content = `---\ntitle: Full\n---\n${body}`;
+    const { events, report } = plan({
+      files: [{ relpath: "full.md", content, mtimeMs: 1, size: content.length }],
+      skipped: [],
+      truncated: false,
+    });
+    expect(events[0]?.text).toBe(body);
+    expect(events[0]?.metadata["body_truncated"]).toBeUndefined();
+    expect(page(report, "full.md").notes).toEqual([]);
   });
 });
 

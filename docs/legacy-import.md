@@ -390,6 +390,19 @@ so a defaulted page never looks like a decision the previous system made.
   name with no ASCII letters or digits slugs to `page`, so an estate written
   entirely in another script lands on `entities/page`, `entities/page-2` and
   so on. The titles survive intact; only the paths carry no information.
+- **The ledger keeps a page's first 262,144 characters.** A longer page is
+  cut there; its event carries `text_truncated` and the report notes
+  `text_truncated` against the relpath.
+- **A staged page keeps its first 64,000 characters,** counted in UTF-16
+  code units, so an emoji counts as two. That is the longest body staging
+  files. A longer page is staged as its head, with its type, title and
+  target, and its frontmatter carries `x-body-truncated: true`. Its event
+  still holds the whole text for recall and carries `body_truncated`, and the
+  report notes `body_truncated` against the relpath. An earlier release
+  stored such a page but staged nothing of it; the first sync after an
+  upgrade records the page again and stages it. On a wiki of only a few dozen
+  pages, that sync still counts the page as imported, so edit the page and
+  the next sync stages it.
 - **Wiki links are not rewritten.** A `[[Title]]` in a body stays as written.
 - **Attachments are not copied.** An image link stays text.
 - **No LLM, no network, no credentials.** Both importers declare
