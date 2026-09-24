@@ -1,6 +1,7 @@
 import { CLAIM_V2_SCHEMA, rawSubjectRefKey, validateClaimV2Semantic, type ClaimV2Assertion, type ClaimV2Object, type RawSubjectRef, type QualifiedSuppliedRef } from "../contracts/claim-v2";
 import type { AuthorityTier, FrontmatterValue } from "../contracts/proposal";
 import {
+  type DroppedDraftV2,
   type ExtractResponseV2,
   type ProduceInputV2,
   type RichClaimDraft,
@@ -39,6 +40,12 @@ export interface WorldDraftEvent extends OccurrenceEventIdentity {
   readonly subjects: readonly RawSubjectRef[];
 }
 
+/** Writer inputs, and the parsed claims that resolution declined without failing the decision. */
+export interface WorldDrafts {
+  readonly drafts: readonly WorldDraftInsert[];
+  readonly dropped: readonly DroppedDraftV2[];
+}
+
 export interface WorldDraftContext {
   /** Immutable event revisions selected by the host, keyed by event id. */
   readonly events: readonly WorldDraftEvent[];
@@ -63,13 +70,15 @@ function completeAnchors(claim: RichClaimDraft): readonly TextAnchor[] {
 /**
  * Converts a validated producer-v2 response into a writer input without making
  * identity or authority decisions. The writer must still revalidate all
- * occurrence proofs inside its transaction.
+ * occurrence proofs inside its transaction. A claim that parsed but does not
+ * resolve to a canonical typed assertion is dropped as `invalid_claim`, like
+ * any other invalid claim, so it cannot fail its siblings' decision.
  */
 export function prepareWorldDrafts(
   response: ExtractResponseV2,
   input: ProduceInputV2,
   context: WorldDraftContext,
-): readonly WorldDraftInsert[] {
+): WorldDrafts {
   const eventById = new Map(context.events.map(event => [event.event_id, event]));
   if (eventById.size !== context.events.length || new Set(input.events.map(event => event.event_id)).size !== input.events.length) {
     fail("duplicate event identity");
@@ -120,7 +129,8 @@ export function prepareWorldDrafts(
     return { kind: "occurrence", id: mintOccurrenceId(event, event.source_key, mention.anchor) };
   };
 
-  return response.claims.flatMap(claim => {
+  const dropped: DroppedDraftV2[] = [];
+  const drafts = response.claims.flatMap(claim => {
     const anchors = completeAnchors(claim);
     const anchorKeys = new Set(anchors.map(anchorKey));
     if (anchors.length === 0 || !anchors.every(anchor => eventById.has(anchor.event_id))) fail("claim has an out-of-source anchor");
@@ -151,7 +161,10 @@ export function prepareWorldDrafts(
       temporal_basis: claim.temporal_basis,
       anchors: claim.anchors,
     };
-    if (!validateClaimV2Semantic(semantic).ok) fail("resolved claim is not a canonical typed assertion");
+    if (!validateClaimV2Semantic(semantic).ok) {
+      dropped.push({ reason: "invalid_claim", id: claim.id });
+      return [];
+    }
     const provenance = [...new Set(anchors.map(anchor => anchor.event_id))].sort();
     const admission = {
       schema: "kizuki.world-admission/v1" as const,
@@ -164,6 +177,7 @@ export function prepareWorldDrafts(
     return [{ kind: "claim" as const, body: claim.body, frontmatter: {}, provenance, producer: "model" as const, model_ref: context.model_ref,
       confidence: claim.confidence, sensitivity: claim.sensitivity, semantic, world_admission: admission }];
   });
+  return { drafts, dropped };
 }
 
 function toObject(

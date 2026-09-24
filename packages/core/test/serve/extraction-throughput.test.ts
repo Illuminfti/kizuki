@@ -7,7 +7,8 @@ import { listClaims } from "../../src/claims/store";
 import { registerConnection } from "../../src/ledger/connections";
 import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
-import { setSourceGrant } from "../../src/ledger/source-grants";
+import { inheritSourcePortBindings, setSourceGrant } from "../../src/ledger/source-grants";
+import type { ProduceInputV2 } from "../../src/contracts/producer-v2";
 import { planModelExtractionV2 } from "../../src/producer/model-v2";
 import { EXTRACT_MAX_OUTPUT_TOKENS } from "../../src/producer/model";
 import { loadServeConfig } from "../../src/serve/config";
@@ -36,6 +37,7 @@ import {
   recordText,
   scriptedModelProducer,
   throughputVault,
+  typedResponse,
   writeServeToml,
   type ThroughputVault,
 } from "./throughput-fixture";
@@ -403,6 +405,38 @@ test("a typed request around a record its grant holds back journals only the rec
   expect(endsAt(readExtractCursor(f.db), e2)).toBe(true);
   expect(f.db.query("SELECT event_id FROM extract_deferred_inputs").all()).toEqual([{ event_id: h1 }]);
   expect(modelClaims(f.db)).toBe(2);
+});
+
+test("a typed claim that parses but fails durable resolution is dropped as invalid_claim; the pass goes on", async () => {
+  const f = fixture(3);
+  const [, , e2] = f.eventIds as [string, string, string];
+  writeServeToml(f.vault, "[extraction]\nmax_calls_per_pass = 3\nrecords_per_request = 1\n");
+  const base = fixtureProducer(() => f.db);
+  // Two mentions of the same span resolve to one occurrence, so a claim citing
+  // both as context is not a canonical typed assertion once it is resolved.
+  const unresolvable = (events: ProduceInputV2["events"], keep: boolean) => {
+    const good = typedResponse(events);
+    const twin = { ...good.mentions[0]!, id: "m9" };
+    const bad = { ...good.claims[0]!, id: "c9", context: [{ kind: "mention" as const, id: "m0" }, { kind: "mention" as const, id: "m9" }] };
+    return { ...good, mentions: [...good.mentions, twin], claims: [...(keep ? good.claims : []), bad] };
+  };
+  const producer = inheritSourcePortBindings(base.producer, {
+    ...base.producer,
+    async produce(input: ProduceInputV2) {
+      const result = await base.producer.produce(input);
+      const request = base.calls.length;
+      if (result.status !== "ok" || request === 1) return result;
+      return { ...result, response: unresolvable(input.events, request === 2) };
+    },
+  });
+  const receipt = await runRail(f.db, f.vault, "sync", { hooks: { producer, claims: { db: f.db }, model_ref: MODEL } });
+  expect(base.calls).toHaveLength(3);
+  // The second request files its good claim; the third files nothing and still advances.
+  expect(receipt).toMatchObject({ status: "ok", stopped: null, errors: [], claims_extracted: 2,
+    claims_rejected: { invalid_claim: 2 }, model: { calls: 3, answered: 3 } });
+  expect(endsAt(readExtractCursor(f.db), e2)).toBe(true);
+  expect(modelClaims(f.db)).toBe(2);
+  expect(f.db.query("SELECT 1 FROM extract_batches").all()).toEqual([]);
 });
 
 test("a rejection a later request answered past leaves doctor healthy and advances last success", async () => {

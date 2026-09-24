@@ -21,7 +21,7 @@ import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-s
 import { machineOriginPath } from "../canon/origin";
 import type { Claim } from "../contracts/proposal";
 import type { ClaimDraft, ProduceResult, ProducerDiagnostic, ProducerPort } from "../contracts/producer";
-import type { ProduceResultV2, ProducerV2Port } from "../contracts/producer-v2";
+import type { DroppedDraftV2, ProduceResultV2, ProducerV2Port } from "../contracts/producer-v2";
 import { formatProducerDiagnostic, readProducerDiagnostic } from "../producer/diagnostics";
 import { invokeProducer, invokeProducerV2, type ValidatedProduceResult } from "../producer/result";
 import type { WorldDraftInsert } from "../producer/world-drafts";
@@ -451,6 +451,8 @@ interface ExtractionPass {
   readonly metrics: ProduceMetrics;
   readonly model_ref: string | null;
   readonly limits: ExtractionConfig;
+  /** Counts claims an answered request carried that journaling declined, in the run's totals. */
+  readonly decline: (dropped: readonly DroppedDraftV2[]) => void;
 }
 
 async function runExtraction(
@@ -464,21 +466,29 @@ async function runExtraction(
   const { db } = io;
   const runId = options.run_id ?? ulid();
   let produced = 0;
+  const recordUsage = (report: ReturnType<typeof metricResult>): void => {
+    db.query("INSERT INTO extract_usage(run_id,model_ref,metrics,created_at,holder_pid) VALUES (?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET metrics=excluded.metrics").run(
+      runId, options.model_ref ?? null, JSON.stringify({ ...report, claims_extracted: produced }), new Date().toISOString(), process.pid,
+    );
+  };
   const observed = observedProducer(producer, metrics, (result) => {
     // One row per run carries the pass's running totals. Before each request
     // it already charges that request as the pass's unanswered last one, so a
     // kill mid-call is still counted and reported as interrupted.
     if (result !== undefined) produced += producedCount(result);
-    const report = result === undefined
+    recordUsage(result === undefined
       ? metricResult({ ...metrics, calls: metrics.calls + 1, last: { answered: false, usage_unknown: true } })
-      : metricResult(metrics);
-    db.query("INSERT INTO extract_usage(run_id,model_ref,metrics,created_at,holder_pid) VALUES (?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET metrics=excluded.metrics").run(
-      runId, options.model_ref ?? null, JSON.stringify({ ...report, claims_extracted: produced }), new Date().toISOString(), process.pid,
-    );
+      : metricResult(metrics));
   });
   const pass: ExtractionPass = {
     io, db, claims, producer, observed, metrics,
     model_ref: options.model_ref ?? null, limits: options.extraction ?? DEFAULT_EXTRACTION_CONFIG,
+    decline(dropped) {
+      if (dropped.length === 0) return;
+      for (const draft of dropped) count(metrics, draft.reason);
+      produced -= dropped.length;
+      recordUsage(metricResult(metrics));
+    },
   };
   const clock = options.now ?? (() => new Date().toISOString());
   const started = Date.parse(clock());
@@ -590,12 +600,16 @@ async function extractionStep(pass: ExtractionPass, retrying: boolean): Promise<
     case "deferred":
       return advance(pass, mined);
     case "ok": {
-      const extracted = mined.mined.count;
       return settle(pass, mined, async () => {
         // Persist the accepted model output before the first claim write.  A
         // retry must replay this exact decision, never ask a nondeterministic
         // producer to regenerate a partially filed batch.
-        journalExtractBatch(db, mined, model_ref, producer);
+        const journal = journalExtractBatch(db, mined, model_ref, producer);
+        // A claim that parsed but does not resolve is dropped and counted, never the pass's failure.
+        pass.decline(journal.dropped);
+        const extracted = mined.mined.status === "ok" ? mined.mined.count - journal.dropped.length : 0;
+        // Nothing left to file: the step settles like an empty response.
+        if (!journal.journaled) return advanceHeld(pass, { ...mined, mined: { status: "empty" } });
         const durable = readDurableExtractBatch(db, producer);
         if (durable === null) throw new Error("durable extraction decision is missing");
         const filed = await fileProducedDrafts(claims, durable, producer);
@@ -618,12 +632,15 @@ async function extractionStep(pass: ExtractionPass, retrying: boolean): Promise<
  * other skip names its reason in the receipt errors.
  */
 function advance(pass: ExtractionPass, mined: MineResult, errors: readonly string[] = []): Promise<StepOutcome> {
-  return settle(pass, mined, () => {
-    if (!commitExtractCursor(pass.db, mined)) return settled("stop", { errors: [...errors, "extract cursor changed before commit"] });
-    if (mined.skipped !== undefined) return settled("continue", { oversized_skipped: 1, errors });
-    if (mined.mined.status === "skipped") return settled("continue", { skipped: 1, errors: [...errors, `record skipped: ${mined.mined.reason}`] });
-    return settled("continue", { segments: mined.segment === undefined ? 0 : 1, errors });
-  });
+  return settle(pass, mined, () => advanceHeld(pass, mined, errors));
+}
+
+/** The cursor commit of `advance`, for a caller that already holds the writer. */
+function advanceHeld(pass: ExtractionPass, mined: MineResult, errors: readonly string[] = []): StepOutcome {
+  if (!commitExtractCursor(pass.db, mined)) return settled("stop", { errors: [...errors, "extract cursor changed before commit"] });
+  if (mined.skipped !== undefined) return settled("continue", { oversized_skipped: 1, errors });
+  if (mined.mined.status === "skipped") return settled("continue", { skipped: 1, errors: [...errors, `record skipped: ${mined.mined.reason}`] });
+  return settled("continue", { segments: mined.segment === undefined ? 0 : 1, errors });
 }
 
 /**

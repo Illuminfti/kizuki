@@ -8,7 +8,7 @@ import { isUlid } from "../util/ulid";
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent } from "../contracts/event";
 import type { ClaimDraft, ProduceInput, ProducerPort, QuotedEvent } from "../contracts/producer";
-import { MAX_V2_QUOTED_UTF16, type ExtractResponseV2, type ProduceInputV2, type ProducerV2Port } from "../contracts/producer-v2";
+import { MAX_V2_QUOTED_UTF16, type DroppedDraftV2, type ExtractResponseV2, type ProduceInputV2, type ProducerV2Port } from "../contracts/producer-v2";
 import { predicateIds } from "../claims/predicates";
 import { historicalClaimReplaySignature, listClaims } from "../claims/store";
 import type { InsertClaimInput, InsertClaimResult, PreparedClaimInsert } from "../claims/store";
@@ -20,7 +20,7 @@ import type { LedgerCursor } from "../ledger/ledger";
 import { validateEventOrigin, requireExternalEvents, SelfOriginError } from "../ledger/event-origin";
 import { CHARS_PER_TOKEN, EXTRACT_BATCH, MODEL_PRODUCER_ID, planModelExtraction, planModelExtractionV2 } from "../producer";
 import { escapeFenceText } from "../producer/fence";
-import { prepareWorldDrafts, type WorldDraftInsert } from "../producer/world-drafts";
+import { prepareWorldDrafts, type WorldDraftInsert, type WorldDrafts } from "../producer/world-drafts";
 import { canonicalJson } from "../util/hash";
 import { worldSuppliedReferences } from "./world-supplied";
 import {
@@ -465,7 +465,7 @@ function journalWorldDrafts(
   mined: MineResult,
   events: readonly CaptureEvent[],
   modelRef: string | null,
-): readonly WorldDraftInsert[] {
+): WorldDrafts {
   if (mined.world === undefined) throw new Error("producer v2 decision is incomplete");
   const segment = mined.segment;
   const quoted = segment === undefined ? events : events.map(event => segmentEvent(event, segment.start, segment.end));
@@ -499,10 +499,20 @@ function journalWorldDrafts(
     model_ref: modelRef,
   });
 }
+/**
+ * What journaling left to file. `journaled` is false when resolution left no
+ * claim of a typed decision to file: nothing is saved, and the caller settles
+ * the step like an empty response. `dropped` names the claims resolution declined.
+ */
+export interface JournaledExtractBatch {
+  readonly journaled: boolean;
+  readonly dropped: readonly DroppedDraftV2[];
+}
+
 /** Persist the entire decision before filing; no model is called again on replay. */
-export function journalExtractBatch(db: Database, mined: MineResult, modelRef: string | null, producer?: ExtractionProducerPort): void {
-  if (mined.mined.status !== "ok" || mined.cursor === null) return;
-  db.transaction(() => {
+export function journalExtractBatch(db: Database, mined: MineResult, modelRef: string | null, producer?: ExtractionProducerPort): JournaledExtractBatch {
+  if (mined.mined.status !== "ok" || mined.cursor === null) return { journaled: false, dropped: [] };
+  return db.transaction((): JournaledExtractBatch => {
     requireAtomicExtractReplay(db);
     if (mined.source_epoch !== undefined && mined.source_epoch !== sourcePolicyEpoch(db)) throw new Error("source authorization changed during extraction");
     if (readExtractCursor(db) !== mined.previous_cursor) throw new Error("extraction checkpoint changed during model call");
@@ -527,7 +537,11 @@ export function journalExtractBatch(db: Database, mined: MineResult, modelRef: s
     }
     // The request quoted only the model inputs, never the held or passed records between them.
     const sent = new Set(modelInputs.map(input => input.event_id));
-    const drafts = filingVersion === 2 ? journalWorldDrafts(db, mined, events.filter(event => sent.has(event.event_id)), modelRef) : mined.drafts;
+    const world = filingVersion === 2 ? journalWorldDrafts(db, mined, events.filter(event => sent.has(event.event_id)), modelRef) : null;
+    const drafts = world === null ? mined.drafts : world.drafts;
+    const dropped = world?.dropped ?? [];
+    // Resolution declined or omitted every typed claim: there is nothing to journal or file.
+    if (world !== null && drafts.length === 0) return { journaled: false, dropped };
     if (drafts.length === 0) throw new Error("durable extraction batch is corrupt");
     if (segment !== undefined) journalSegment(db, segment);
     saveBatch(db, { filing_version: filingVersion, previous_cursor: mined.previous_cursor, cursor: mined.cursor!, drafts,
@@ -535,6 +549,7 @@ export function journalExtractBatch(db: Database, mined: MineResult, modelRef: s
       model_ref: modelRef, input_ids: events.map(event => event.event_id), mode, model_inputs: modelInputs,
       deferred_inputs: [...(mined.deferred_inputs ?? [])], outcome: "ok", authorization_epoch: null });
     readDurableExtractBatch(db, producer);
+    return { journaled: true, dropped };
   }).immediate();
 }
 
