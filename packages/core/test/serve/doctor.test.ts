@@ -206,6 +206,26 @@ describe("serve doctor", () => {
     db.close();
   });
 
+  test("doctor shows the bound model's reasoning effort beside it", () => {
+    const { path, db } = vault();
+    writeServeIntent(path, "opted-out");
+    const ref = "kizuki.llm.openai-compatible:synthetic@127.0.0.1";
+    const set = inspectServeDoctor(db, path, { model_ref: ref, reasoning_effort: "low" });
+    expect(set.model.canon_writing).toBe("on");
+    expect(set.model.model_ref).toBe(ref);
+    expect(set.model.reasoning_effort).toBe("low");
+    expect(set.model.detail).toStartWith(`canon writing: on (${ref}, reasoning_effort=low);`);
+    const unset = inspectServeDoctor(db, path, { model_ref: ref });
+    expect(unset.model.reasoning_effort).toBeNull();
+    expect(unset.model.detail).toStartWith(`canon writing: on (${ref}, reasoning_effort=provider-default);`);
+    // Without a bound model there is no effort to show.
+    const off = inspectServeDoctor(db, path, { reasoning_effort: "low" });
+    expect(off.model.canon_writing).toBe("off");
+    expect(off.model.reasoning_effort).toBeNull();
+    expect(off.model.detail).not.toContain("reasoning_effort");
+    db.close();
+  });
+
   test("seven days of receipts feed calibration", () => {
     const { path, db } = vault();
     writeServeIntent(path, "opted-out");

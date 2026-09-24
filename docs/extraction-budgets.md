@@ -15,8 +15,11 @@ response, which doctor reports as `model response rejected: response
 truncated`. The pass asks again for the first record alone, and a record whose
 answer is still rejected on its own is skipped without claims (see
 [steps per pass](#owner-throughput-settings)), so such a model loses records
-rather than stalling. Choose a non-reasoning model, lower `[ports.llm]
-reasoning_effort`, or reserve more output tokens.
+rather than stalling. Set `reasoning_effort = "low"` (or `"minimal"`) under
+`[ports.llm]` in `serve.toml` to shorten the hidden reasoning, choose a
+non-reasoning model, or reserve more output tokens. Doctor and `serve status`
+show the effective setting next to the model. See the
+[LLM port configuration](../packages/llm/README.md#config-portsllm).
 
 ## Owner throughput settings
 

@@ -31,6 +31,12 @@ started, is that HTTP failure (its `code`, or 502 without a usable one), never
 a completion.
 
 `model_ref` recorded by callers is `<port_id>:<model>@<host>`.
+`reasoning_effort` changes only the request body. It is not part of
+`model_ref`, run or canon receipts, or source consent, which binds the
+endpoint and model. `doctor` and `serve status` show it next to the bound
+model, or `provider-default` when unset, and `doctor` names a value outside
+the list above as `model configuration invalid`. Some endpoints make reasoning
+mandatory and answer `none` with HTTP 400.
 
 ## Config (`[ports.systemone]`)
 

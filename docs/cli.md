@@ -414,7 +414,10 @@ user service when a supervisor exists. The CLI still runs when the daemon is
 down. Before a rail writes canon, `serve` binds the selected LLM port from
 `[ports.llm]`; a model name by itself never enables writes. `kizuki doctor`
 reports a complete binding as `on` and an incomplete configuration as
-`unverified`. Rails hold the ledger only for the length of one batch; they
+`unverified`. The optional `[ports.llm] reasoning_effort` (`none`,
+`minimal`, `low`, `medium` or `high`) is sent with each model request;
+`doctor` and `serve status` show it next to the bound model, and `doctor`
+names an invalid value. Rails hold the ledger only for the length of one batch; they
 never keep a write transaction open across a network or model call, so owner
 verbs keep working while the loop runs. See
 [Running commands while the daemon writes](#running-commands-while-the-daemon-writes).

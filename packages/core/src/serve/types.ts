@@ -297,6 +297,8 @@ export interface RailDoctor {
 export interface ModelDoctor {
   readonly canon_writing: "on" | "off" | "unverified";
   readonly model_ref: string | null;
+  /** Configured reasoning effort of the bound model; null when none is sent. */
+  readonly reasoning_effort: string | null;
   readonly last_success_at: string | null;
   readonly last_failure: { readonly at: string; readonly detail: string } | null;
   /** Failure of the newest attributable attempt, independently of historical failures. */

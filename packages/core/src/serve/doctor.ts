@@ -50,6 +50,8 @@ export interface ServeDoctorOptions {
   readonly now?: string;
   readonly supervisor?: SupervisorHost;
   readonly model_ref?: string | null;
+  /** The bound port's owner-configured reasoning effort; null sends none. */
+  readonly reasoning_effort?: string | null;
   /** Raw config intent is shown as unverified until a host binds its port. */
   readonly configured_model_ref?: string | null;
 }
@@ -334,6 +336,7 @@ function modelAnswered(receipt: RunReceipt): boolean {
 function modelDoctor(
   history: ModelRunHistory,
   modelRef: string | null | undefined,
+  reasoningEffort: string | null | undefined,
   configuredModelRef: string | null | undefined,
   configCanonDay: number,
   usedToday: number,
@@ -366,9 +369,11 @@ function modelDoctor(
   const historyUnverified = (lastUnattributed !== undefined && receipts.lastIndexOf(lastUnattributed) > lastAttemptIndex) ||
     receipts.lastIndexOf(null) > lastAttemptIndex || (history.truncated && lastAttempt === undefined);
   const unavailable = current.reduce((sum, receipt) => sum + receipt.model.unavailable, 0);
+  const effort = on ? reasoningEffort ?? null : null;
   return {
     canon_writing: on ? "on" : unverified ? "unverified" : "off",
     model_ref: on ? displayRef : null,
+    reasoning_effort: effort,
     last_success_at: lastOk?.finished_at ?? null,
     last_failure: lastFailure,
     current_failure: currentFailure,
@@ -381,7 +386,7 @@ function modelDoctor(
       canon_writes_per_day: { used: usedToday, limit: configCanonDay },
     },
     detail: (on
-      ? `canon writing: on (${displayRef}); last_success=${lastOk?.finished_at ?? "never"} unavailable=${unavailable}${lastFailure === null ? "" : `; last_failure=${lastFailure.detail} (at ${lastFailure.at})`}`
+      ? `canon writing: on (${displayRef}, reasoning_effort=${effort ?? "provider-default"}); last_success=${lastOk?.finished_at ?? "never"} unavailable=${unavailable}${lastFailure === null ? "" : `; last_failure=${lastFailure.detail} (at ${lastFailure.at})`}`
       : unverified
         ? "canon writing: unverified (model configured but not bound by the running host)"
       : "canon writing: off (no model configured — connectors, ledger, search, timeline and undo still work)") +
@@ -546,6 +551,7 @@ export function inspectServeDoctor(
   const model = modelDoctor(
     modelHistory,
     modelRef,
+    options.reasoning_effort,
     configuredModelRef,
     config.canon_writes_per_day,
     usedToday,

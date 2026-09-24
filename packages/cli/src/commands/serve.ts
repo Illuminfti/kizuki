@@ -21,7 +21,7 @@ import { LedgerMigrationRequiredError, withVault } from "../context";
 import { jsonEnvelope } from "../output";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 import { serveSupervisorHost } from "../service-host";
-import { createServeRuntime } from "../serve-runtime";
+import { createServeRuntime, inspectModelBinding } from "../serve-runtime";
 import { runServiceCustodyBroker, startServiceCustody, ServiceCustodyError, type ServiceCustodyHandle } from "@kizuki/core/internal";
 import { custodyUnavailableMessage, launchServiceCustodyBroker, serviceStartupExit } from "../service-custody";
 import { isAbsolute, resolve } from "node:path";
@@ -123,7 +123,14 @@ export const serveCommand: Command = {
 
       if (verb === "status") {
         const supervisor = queryServeService(ctx.vaultPath, host);
-        const doctor = inspectServeDoctor(ctx.db, ctx.vaultPath, { supervisor: host });
+        // The same local, no-network check doctor runs, so both show one model
+        // line. A binding that cannot be inspected stays reported as unverified.
+        const model = await inspectModelBinding(ctx.vaultPath, io.env).catch(() => null);
+        const doctor = inspectServeDoctor(ctx.db, ctx.vaultPath, {
+          supervisor: host,
+          model_ref: model?.model_ref ?? null,
+          reasoning_effort: model?.reasoning_effort ?? null,
+        });
         const pid = readServePid(ctx.vaultPath);
         const body = { pid, supervisor, doctor };
         if (parsed.flags.has("--json")) {
@@ -132,6 +139,7 @@ export const serveCommand: Command = {
         else {
           io.out(`pid=${pid ?? "none"} supervisor=${supervisor.kind} state=${supervisor.state}`);
           io.out(supervisor.detail);
+          io.out(doctor.model.detail);
           io.out(doctor.throughput.detail);
           io.out(doctor.oversized.detail);
         }

@@ -36,13 +36,16 @@ describe("openai-compatible config", () => {
 
   test("accepts only the chat-completions reasoning efforts", () => {
     for (const effort of ["none", "minimal", "low", "medium", "high"] as const) {
-      expect(parseOpenAiCompatibleConfig({ base_url: "http://127.0.0.1/v1", model: "synthetic", reasoning_effort: effort }).reasoning_effort).toBe(effort);
+      const set = parseOpenAiCompatibleConfig({ base_url: "http://127.0.0.1/v1", model: "synthetic", reasoning_effort: effort });
+      expect(set.reasoning_effort).toBe(effort);
+      // The parsed form is itself valid config; callers re-bind it.
+      expect(parseOpenAiCompatibleConfig({ ...set })).toEqual(set);
     }
     const parsed = parseOpenAiCompatibleConfig({ base_url: "http://127.0.0.1/v1", model: "synthetic" });
     expect(parseOpenAiCompatibleConfig({ ...parsed })).toEqual(parsed);
-    for (const effort of ["", "max", "LOW", 1, false] as unknown[]) {
+    for (const effort of ["", "max", "LOW", " low", 1, false, true, ["low"], { effort: "low" }] as unknown[]) {
       expect(() => parseOpenAiCompatibleConfig({ base_url: "http://127.0.0.1/v1", model: "synthetic", reasoning_effort: effort }))
-        .toThrow("reasoning_effort must be one of none, minimal, low, medium, high");
+        .toThrow(new PortError("config_invalid", "reasoning_effort must be one of none, minimal, low, medium, high", false));
     }
   });
 
@@ -133,17 +136,27 @@ describe("openai-compatible port", () => {
   test("sends reasoning_effort only when it is configured", async () => {
     fake = startFakeEndpoint();
     const bodies: unknown[] = [];
+    const refs: (string | null)[] = [];
     for (const extra of [{}, { reasoning_effort: "minimal" }]) {
       const temporary = temporaryLlmContext(OPENAI_COMPATIBLE_LLM_DESCRIPTOR, { base_url: fake.base_url, model: "synthetic", ...extra });
       try {
-        await createOpenAiCompatibleLlmPort(temporary.ctx).complete(SAMPLE_REQUEST);
+        const port = createOpenAiCompatibleLlmPort(temporary.ctx);
+        await port.complete(SAMPLE_REQUEST);
         bodies.push(fake.requests.at(-1)?.body);
+        refs.push(port.model_ref);
       } finally {
         temporary.cleanup();
       }
     }
-    expect(bodies[0]).not.toHaveProperty("reasoning_effort");
+    // Unset leaves the request body exactly as before.
+    expect(JSON.stringify(bodies[0])).toBe(JSON.stringify({
+      model: "synthetic",
+      messages: SAMPLE_REQUEST.messages,
+      max_tokens: SAMPLE_REQUEST.max_output_tokens,
+    }));
     expect(bodies[1]).toMatchObject({ model: "synthetic", reasoning_effort: "minimal" });
+    // Effort tunes the request only; the recorded model identity is unchanged.
+    expect(refs).toEqual([`${OPENAI_COMPATIBLE_LLM_ID}:synthetic@127.0.0.1`, `${OPENAI_COMPATIBLE_LLM_ID}:synthetic@127.0.0.1`]);
   });
 
   test("fails closed before fetch when the secret cannot be resolved", async () => {
