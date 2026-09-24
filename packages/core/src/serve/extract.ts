@@ -519,9 +519,9 @@ export function journalExtractBatch(db: Database, mined: MineResult, modelRef: s
     if (segment !== undefined && (filingVersion !== 2 || modelInputs.length !== 1 || modelInputs[0]!.event_id !== segment.event_id)) {
       throw new Error("extraction inputs changed during model call");
     }
-    const drafts = filingVersion === 2
-      ? journalWorldDrafts(db, mined, segment === undefined ? events : events.filter(event => event.event_id === segment.event_id), modelRef)
-      : mined.drafts;
+    // The request quoted only the model inputs, never the held or passed records between them.
+    const sent = new Set(modelInputs.map(input => input.event_id));
+    const drafts = filingVersion === 2 ? journalWorldDrafts(db, mined, events.filter(event => sent.has(event.event_id)), modelRef) : mined.drafts;
     if (drafts.length === 0) throw new Error("durable extraction batch is corrupt");
     if (segment !== undefined) journalSegment(db, segment);
     saveBatch(db, { filing_version: filingVersion, previous_cursor: mined.previous_cursor, cursor: mined.cursor!, drafts,
