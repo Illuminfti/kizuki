@@ -495,7 +495,8 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
       invalid();
       continue;
     }
-    if ((raw.temporal_basis === "explicit" &&
+    // Mirrors the durable claim contract: any basis but unknown needs a start.
+    if ((raw.temporal_basis !== "unknown" &&
       raw.valid_from === null) ||
       (raw.temporal_basis === "unknown" &&
       (raw.valid_from !== null ||
