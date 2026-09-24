@@ -417,6 +417,19 @@ never keep a write transaction open across a network or model call, so owner
 verbs keep working while the loop runs. See
 [Running commands while the daemon writes](#running-commands-while-the-daemon-writes).
 
+The sync rail runs every 15 minutes and makes one extraction request per pass
+unless `serve.toml` says otherwise: `[serve] sync_period_s` sets the period,
+applied to the persisted schedule when the service starts, and `[extraction]`
+sets `max_calls_per_pass`, `records_per_request`, `max_input_tokens`,
+`max_output_tokens` and `max_pass_seconds`. `serve status` and `doctor` print
+the effective values and the records skipped in the doctor window on a
+`throughput` line; `--json` reports them as `throughput` in the serve doctor
+report. A model that still answers HTTP 429 after the port's bounded retries
+stops the pass as `model:rate_limited`, and the next pass resumes from the
+durable extraction cursor. A pass never holds the vault writer across a model
+request, and `kizuki serve stop` or a signal ends it before its next request
+as `serve:stop_requested`. See [extraction budgets](extraction-budgets.md#owner-throughput-settings).
+
 The `retrieval-sweep` rail retries pending retrieval operations and catches
 the lexical index up to the ledger and to canon receipts. A pass indexes a
 bounded number of records, commits each batch, and records its position, so an

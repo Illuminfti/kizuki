@@ -1,4 +1,5 @@
 import type { ProducerDiagnostic } from "../contracts/producer";
+import { MAX_V2_EVENTS, MAX_V2_OUTPUT_TOKENS } from "../contracts/producer-v2";
 
 /**
  * RFC 0002 §4.6 / §11: daemon rails, leases, run receipts and doctor.
@@ -73,6 +74,9 @@ export const SUPERVISOR_STATES = [
 ] as const;
 export type SupervisorState = (typeof SUPERVISOR_STATES)[number];
 
+export const DEFAULT_SYNC_PERIOD_S = 15 * 60;
+export const SYNC_PERIOD_BOUNDS = { min: 60, max: 86_400 } as const;
+
 export interface RailSpec {
   readonly rail: RailId;
   readonly period_s: number;
@@ -81,7 +85,7 @@ export interface RailSpec {
 }
 
 export const DEFAULT_RAILS: readonly RailSpec[] = [
-  { rail: "sync", period_s: 15 * 60, jitter_s: 90, enabled: true },
+  { rail: "sync", period_s: DEFAULT_SYNC_PERIOD_S, jitter_s: 90, enabled: true },
   { rail: "retrieval-sweep", period_s: 5 * 60, jitter_s: 0, enabled: true },
   { rail: "purge-sweep", period_s: 10 * 60, jitter_s: 0, enabled: true },
   { rail: "embed-backfill", period_s: 60, jitter_s: 0, enabled: true },
@@ -111,9 +115,14 @@ export interface LeaseRow {
 export interface RunModelReport {
   /** Stable identity of the original reference, before display redaction. */
   readonly model_ref_sha256?: string;
+  /** The pass's final request's failure. A pass is judged by how it ended. */
   readonly diagnostic?: ProducerDiagnostic;
-  /** An interrupted producer attempt: token counts are lower bounds, not measured totals. */
+  /** The pass's final producer attempt was interrupted or unverifiable: its token counts are unknown. */
   readonly usage_unknown?: boolean;
+  /** Requests the model answered with a usable response. Absent on older receipts and passes without a request. */
+  readonly answered?: number;
+  /** How the pass's final request ended. Absent on older receipts and passes without a request. */
+  readonly last_request?: "answered" | "failed";
   readonly calls: number;
   readonly input_tokens: number;
   readonly output_tokens: number;
@@ -170,6 +179,11 @@ export interface RunReceipt {
   readonly claims_deduped: number;
   readonly claims_superseded: number;
   readonly claims_rejected: Readonly<Record<string, number>>;
+  /**
+   * Records extraction passed over without claims: too large for one request,
+   * or rejected on their own twice in a row. Absent on older receipts.
+   */
+  readonly records_skipped?: number;
   readonly canon_writes: number;
   readonly canon_reverts: number;
   readonly model: RunModelReport;
@@ -177,6 +191,41 @@ export interface RunReceipt {
   readonly budget: Readonly<Record<string, { used: number; limit: number }>>;
   readonly errors: readonly string[];
 }
+
+/**
+ * Owner-configured extraction throughput (`[extraction]` in serve.toml). The
+ * pass limit applies to every producer; the per-request limits apply to typed
+ * world extraction (producer v2) only.
+ */
+export interface ExtractionConfig {
+  /** Extraction steps one sync pass may take. A step makes at most one model request and files its decision before the next. */
+  readonly max_calls_per_pass: number;
+  /** Records one typed request may carry. */
+  readonly records_per_request: number;
+  /** Estimated input tokens one typed request may reserve. */
+  readonly max_input_tokens: number;
+  /** Output tokens one typed request reserves, reasoning included. */
+  readonly max_output_tokens: number;
+  /** Seconds after which a pass starts no further step; the request in flight finishes. */
+  readonly max_pass_seconds: number;
+}
+
+/** Inclusive bounds; an out-of-range or non-integer value keeps its default. */
+export const EXTRACTION_BOUNDS = {
+  max_calls_per_pass: { min: 1, max: 256 },
+  records_per_request: { min: 1, max: MAX_V2_EVENTS },
+  max_input_tokens: { min: 2_000, max: 32_000 },
+  max_output_tokens: { min: 1_024, max: MAX_V2_OUTPUT_TOKENS },
+  max_pass_seconds: { min: 30, max: 600 },
+} as const satisfies Record<keyof ExtractionConfig, { min: number; max: number }>;
+
+export const DEFAULT_EXTRACTION_CONFIG: ExtractionConfig = {
+  max_calls_per_pass: 1,
+  records_per_request: 2,
+  max_input_tokens: 8_000,
+  max_output_tokens: 8_192,
+  max_pass_seconds: 60,
+};
 
 export interface ServeConfig {
   readonly memory_max: string;
@@ -189,6 +238,9 @@ export interface ServeConfig {
   readonly canon_writes_per_run: number;
   readonly canon_writes_per_day: number;
   readonly journal_retention_days: number;
+  /** Sync rail period, applied to the persisted schedule when the service starts. */
+  readonly sync_period_s: number;
+  readonly extraction: ExtractionConfig;
 }
 
 export const DEFAULT_SERVE_CONFIG: ServeConfig = {
@@ -202,6 +254,8 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   canon_writes_per_run: 32,
   canon_writes_per_day: 256,
   journal_retention_days: RUN_RECEIPT_RETENTION_DAYS,
+  sync_period_s: DEFAULT_SYNC_PERIOD_S,
+  extraction: DEFAULT_EXTRACTION_CONFIG,
 };
 
 export interface SupervisorStatus {
@@ -297,6 +351,16 @@ export interface CalibrationDoctor {
   readonly failures: string[];
 }
 
+/** Effective extraction throughput. `sync_period_s` is the persisted schedule the loop runs on. */
+export interface ThroughputDoctor extends ExtractionConfig {
+  readonly sync_period_s: number;
+  /** serve.toml's period; a service start applies it when it differs. */
+  readonly configured_sync_period_s: number;
+  /** Records extraction passed over in the doctor's receipt window. */
+  readonly records_skipped: number;
+  readonly detail: string;
+}
+
 export interface ServeDoctorReport {
   readonly supervisor: SupervisorStatus;
   /** Read only for an installed unit that is not running; null otherwise. */
@@ -304,6 +368,7 @@ export interface ServeDoctorReport {
   readonly intent: ServeIntent | "unknown";
   readonly rails: RailDoctor[];
   readonly model: ModelDoctor;
+  readonly throughput: ThroughputDoctor;
   readonly stores: StoreDoctor;
   readonly calibration: CalibrationDoctor;
   readonly ok: boolean;

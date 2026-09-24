@@ -37,6 +37,9 @@ export const MAX_V2_QUOTED_UTF16 = 24000;
 
 export const MAX_V2_TRUSTED_REFS = 256;
 
+/** The largest output reservation one typed request may carry, reasoning included; the OpenAI-compatible port's own ceiling. */
+export const MAX_V2_OUTPUT_TOKENS = 16_384;
+
 export interface TextAnchor {
   readonly event_id: string;
   readonly start_utf16: number;
@@ -492,7 +495,8 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
       invalid();
       continue;
     }
-    if ((raw.temporal_basis === "explicit" &&
+    // Mirrors the durable claim contract: any basis but unknown needs a start.
+    if ((raw.temporal_basis !== "unknown" &&
       raw.valid_from === null) ||
       (raw.temporal_basis === "unknown" &&
       (raw.valid_from !== null ||

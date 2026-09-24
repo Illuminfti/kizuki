@@ -22,6 +22,7 @@ import {
   InjectedCrash,
   emptyRunTotals,
   type CrashPoint,
+  type ExtractionConfig,
   type RailId,
   type RunReceipt,
   type RunExecution,
@@ -84,6 +85,8 @@ const processInstance = crypto.randomUUID();
 export interface RunRailOptions {
   readonly execution?: RunExecution;
   readonly now?: () => string;
+  /** The daemon's stop request or signal; a sync pass reads it before every extraction step. */
+  readonly stopRequested?: () => boolean;
   readonly hooks?: RailHooks;
   readonly acquireRuntime?: () => Promise<RailRuntime>;
   readonly crashAfter?: CrashPoint;
@@ -92,6 +95,8 @@ export interface RunRailOptions {
 export interface RunRailOptionsV2 {
   readonly execution?: RunExecution;
   readonly now?: () => string;
+  /** The daemon's stop request or signal; a sync pass reads it before every extraction step. */
+  readonly stopRequested?: () => boolean;
   readonly hooks?: RailHooksV2;
   readonly acquireRuntime?: () => Promise<RailRuntimeV2>;
   readonly crashAfter?: CrashPoint;
@@ -138,9 +143,11 @@ async function runSyncRail(
   db: Database,
   vaultPath: string,
   budget: BudgetTracker,
+  extraction: ExtractionConfig,
   hooks: AnyRailHooks | undefined,
   runId: string,
   now: () => string,
+  stopRequested: (() => boolean) | undefined,
 ): Promise<Partial<RunReceipt>> {
   const synced =
     hooks?.sync === undefined
@@ -154,6 +161,8 @@ async function runSyncRail(
       : await hooks.sync();
   const written = await runWritePass(db, vaultPath, {
     budget,
+    extraction,
+    ...(stopRequested === undefined ? {} : { stopRequested }),
     run_id: runId,
     now,
     ...(hooks?.model_ref === undefined ? {} : { model_ref: hooks.model_ref }),
@@ -185,6 +194,7 @@ async function runSyncRail(
     claims_deduped: written.claims_deduped,
     claims_superseded: written.claims_superseded,
     claims_rejected: written.claims_rejected,
+    records_skipped: written.records_skipped,
     canon_writes: written.canon_writes,
     model: { ...written.model, model_ref: hooks?.model_ref ?? null },
     stopped: written.stopped,
@@ -439,7 +449,7 @@ async function runRailImpl(
       }
       switch (rail) {
         case "sync":
-          partial = await runSyncRail(db, vaultPath, budget, hooks, runId, now);
+          partial = await runSyncRail(db, vaultPath, budget, config.extraction, hooks, runId, now, options.stopRequested);
           break;
         case "retrieval-sweep":
           partial = await runRetrievalSweep(db, hooks);

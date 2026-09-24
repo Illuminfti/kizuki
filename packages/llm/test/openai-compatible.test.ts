@@ -30,7 +30,20 @@ describe("openai-compatible config", () => {
       secret_ref: "env:KIZUKI_MODEL_KEY",
       timeout_ms: 60_000,
       max_retries: 2,
+      reasoning_effort: null,
     });
+  });
+
+  test("accepts only the chat-completions reasoning efforts", () => {
+    for (const effort of ["none", "minimal", "low", "medium", "high"] as const) {
+      expect(parseOpenAiCompatibleConfig({ base_url: "http://127.0.0.1/v1", model: "synthetic", reasoning_effort: effort }).reasoning_effort).toBe(effort);
+    }
+    const parsed = parseOpenAiCompatibleConfig({ base_url: "http://127.0.0.1/v1", model: "synthetic" });
+    expect(parseOpenAiCompatibleConfig({ ...parsed })).toEqual(parsed);
+    for (const effort of ["", "max", "LOW", 1, false] as unknown[]) {
+      expect(() => parseOpenAiCompatibleConfig({ base_url: "http://127.0.0.1/v1", model: "synthetic", reasoning_effort: effort }))
+        .toThrow("reasoning_effort must be one of none, minimal, low, medium, high");
+    }
   });
 
   test("refuses a plaintext key without echoing it", () => {
@@ -115,6 +128,22 @@ describe("openai-compatible port", () => {
     } finally {
       temporary.cleanup();
     }
+  });
+
+  test("sends reasoning_effort only when it is configured", async () => {
+    fake = startFakeEndpoint();
+    const bodies: unknown[] = [];
+    for (const extra of [{}, { reasoning_effort: "minimal" }]) {
+      const temporary = temporaryLlmContext(OPENAI_COMPATIBLE_LLM_DESCRIPTOR, { base_url: fake.base_url, model: "synthetic", ...extra });
+      try {
+        await createOpenAiCompatibleLlmPort(temporary.ctx).complete(SAMPLE_REQUEST);
+        bodies.push(fake.requests.at(-1)?.body);
+      } finally {
+        temporary.cleanup();
+      }
+    }
+    expect(bodies[0]).not.toHaveProperty("reasoning_effort");
+    expect(bodies[1]).toMatchObject({ model: "synthetic", reasoning_effort: "minimal" });
   });
 
   test("fails closed before fetch when the secret cannot be resolved", async () => {
@@ -227,7 +256,7 @@ describe("openai-compatible port", () => {
     }
   });
 
-  test("uses one deadline across retries and retry waits", async () => {
+  test("a retry wait the deadline cannot cover reports the refusal inside that deadline", async () => {
     fake = startFakeEndpoint(
       () => new Response("busy", { status: 429, headers: { "retry-after": "1" } }),
     );
@@ -240,9 +269,82 @@ describe("openai-compatible port", () => {
     try {
       const port = createOpenAiCompatibleLlmPort(temporary.ctx);
       const started = Date.now();
-      await expect(port.complete({ ...SAMPLE_REQUEST, deadline_ms: 80 })).rejects.toMatchObject({ code: "timeout" });
+      await expect(port.complete({ ...SAMPLE_REQUEST, deadline_ms: 80 })).rejects.toMatchObject({ code: "unavailable", message: "http 429" });
       expect(Date.now() - started).toBeLessThan(300);
       expect(fake.requests).toHaveLength(1);
+    } finally {
+      temporary.cleanup();
+    }
+  });
+
+  test("backs off exponentially, honors Retry-After, and caps each wait", async () => {
+    const replies: TransportResult[] = [
+      { ok: false, kind: "http", status: 429, retry_after_ms: null },
+      { ok: false, kind: "http", status: 503, retry_after_ms: null },
+      { ok: false, kind: "transport", status: 0, failure: "network" },
+      { ok: false, kind: "http", status: 429, retry_after_ms: 7_000 },
+      { ok: false, kind: "http", status: 429, retry_after_ms: 90_000 },
+      { ok: false, kind: "http", status: 429, retry_after_ms: null },
+      { ok: true, kind: "ok", status: 200, body: {
+        model: "synthetic", choices: [{ message: { role: "assistant", content: SYNTHETIC_TEXT } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      } },
+    ];
+    let calls = 0;
+    const waits: number[] = [];
+    const temporary = temporaryLlmContext(OPENAI_COMPATIBLE_LLM_DESCRIPTOR, {
+      base_url: "http://127.0.0.1:9/v1", model: "synthetic", max_retries: 6, timeout_ms: 600_000,
+    });
+    try {
+      const port = createOpenAiCompatibleLlmPort(temporary.ctx, {
+        transport: async () => replies[calls++]!,
+        sleep: async (ms) => { waits.push(ms); },
+      });
+      expect((await port.complete({ ...SAMPLE_REQUEST, deadline_ms: 600_000 })).text).toBe(SYNTHETIC_TEXT);
+      expect(calls).toBe(7);
+      expect(waits).toEqual([2_000, 4_000, 8_000, 7_000, 30_000, 30_000]);
+    } finally {
+      temporary.cleanup();
+    }
+  });
+
+  test("an in-band gateway error is that HTTP failure, retried and then reported", async () => {
+    const bodies: unknown[] = [
+      { error: { code: 429, message: "synthetic upstream limit" } },
+      { error: { message: "synthetic upstream failure" }, choices: [] },
+      { error: { code: 429, message: "synthetic upstream limit" } },
+    ];
+    let calls = 0;
+    const temporary = temporaryLlmContext(OPENAI_COMPATIBLE_LLM_DESCRIPTOR, {
+      base_url: "http://127.0.0.1:9/v1", model: "synthetic", max_retries: 2,
+    });
+    try {
+      const port = createOpenAiCompatibleLlmPort(temporary.ctx, {
+        transport: async () => ({ ok: true, kind: "ok", status: 200, body: bodies[calls++] }),
+        sleep: async () => undefined,
+      });
+      const refused = await port.complete(SAMPLE_REQUEST).catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(PortError);
+      expect(refused).toMatchObject({ code: "unavailable", message: "http 429", retryable: true });
+      expect(String((refused as Error).message)).not.toContain("synthetic upstream");
+      expect(calls).toBe(3);
+    } finally {
+      temporary.cleanup();
+    }
+  });
+
+  test("a non-retryable in-band error is not retried", async () => {
+    let calls = 0;
+    const temporary = temporaryLlmContext(OPENAI_COMPATIBLE_LLM_DESCRIPTOR, {
+      base_url: "http://127.0.0.1:9/v1", model: "synthetic", max_retries: 2,
+    });
+    try {
+      const port = createOpenAiCompatibleLlmPort(temporary.ctx, {
+        transport: async () => { calls += 1; return { ok: true, kind: "ok", status: 200, body: { error: { code: 400, message: "bad" } } }; },
+        sleep: async () => undefined,
+      });
+      await expect(port.complete(SAMPLE_REQUEST)).rejects.toMatchObject({ code: "unavailable", message: "http 400" });
+      expect(calls).toBe(1);
     } finally {
       temporary.cleanup();
     }

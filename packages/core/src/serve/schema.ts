@@ -131,6 +131,22 @@ export function seedSchedules(db: Database): void {
   }
 }
 
+/**
+ * Adopt a configured rail period. A shorter period also brings a later due
+ * slot in to one new period from now; it never pushes a due slot back.
+ */
+export function applyRailPeriod(db: Database, rail: RailId, periodSeconds: number, now: string): void {
+  db.transaction(() => {
+    const row = db.query<{ period_s: number; next_run_at: string | null }, [string]>(
+      "SELECT period_s,next_run_at FROM schedules WHERE rail=?",
+    ).get(rail);
+    if (row === null || row.period_s === periodSeconds) return;
+    const latest = new Date(Date.parse(now) + periodSeconds * 1000).toISOString();
+    const next = row.next_run_at !== null && row.next_run_at > latest ? latest : row.next_run_at;
+    db.query("UPDATE schedules SET period_s=?,next_run_at=? WHERE rail=?").run(periodSeconds, next, rail);
+  }).immediate();
+}
+
 export function listSchedules(db: Database): ScheduleRow[] {
   if (!tableExists(db, "schedules")) return [];
   return db
