@@ -1,5 +1,6 @@
 import {
   ENTITY_PAGE_TYPES,
+  MAX_PROPOSAL_BODY_CHARS,
   PAGE_CANDIDATE_KEY,
   PAGE_CANDIDATE_SCHEMA,
   PAGE_SENSITIVITIES,
@@ -44,7 +45,6 @@ import type { ScanResult } from "./scan";
  * report, and nothing here touches the filesystem.
  */
 
-export const MAX_TEXT_LENGTH = 262_144;
 const MAX_VOCABULARY = 64;
 
 export interface PlanOptions {
@@ -59,6 +59,12 @@ export interface PlanOptions {
    * those.
    */
   pinned?: Record<string, string>;
+}
+
+/** At most `units` UTF-16 units of `text`, never half of a surrogate pair. */
+function headOf(text: string, units: number): string {
+  const last = text.charCodeAt(units - 1);
+  return text.slice(0, last >= 0xd800 && last <= 0xdbff ? units - 1 : units);
 }
 
 interface PageDraft {
@@ -228,11 +234,13 @@ function planPage(
   }
 
   const target = planTarget(relpath, type, mapping, targets, notes, pinned);
-  const points = [...parsed.body];
-  const truncated = points.length > MAX_TEXT_LENGTH;
+  // The page's prose is the body staging files, and staging refuses a longer
+  // body outright, which would stage nothing of the page at all. Its head
+  // keeps the page, its type, title and target; the note says what was cut.
+  const truncated = parsed.body.length > MAX_PROPOSAL_BODY_CHARS;
   if (truncated) notes.push("text_truncated");
   const text = truncated
-    ? points.slice(0, MAX_TEXT_LENGTH).join("")
+    ? headOf(parsed.body, MAX_PROPOSAL_BODY_CHARS)
     : parsed.body;
 
   const extensions: Record<string, FrontmatterValue> = {

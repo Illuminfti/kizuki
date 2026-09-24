@@ -42,7 +42,8 @@ export type StagingStatus = (typeof STAGING_STATUSES)[number];
 
 export type { FrontmatterScalar, FrontmatterValue } from "../contracts/proposal";
 
-const MAX_BODY_CHARS = 64_000;
+/** The longest proposal body staging files; a longer one is refused. */
+export const MAX_PROPOSAL_BODY_CHARS = 64_000;
 const MAX_FRONTMATTER_KEYS = 64;
 const MAX_SUBJECTS = 64;
 const MAX_PROVENANCE = 64;
@@ -231,8 +232,8 @@ function validateInput(input: ProposalInput): void {
   if (typeof input.body !== "string") {
     throw new StagingError("body: must be a string");
   }
-  if (input.body.length > MAX_BODY_CHARS) {
-    throw new StagingError(`body: must be at most ${MAX_BODY_CHARS} characters`);
+  if (input.body.length > MAX_PROPOSAL_BODY_CHARS) {
+    throw new StagingError(`body: must be at most ${MAX_PROPOSAL_BODY_CHARS} characters`);
   }
   if (!Array.isArray(input.provenance) || input.provenance.length === 0) {
     throw new StagingError("provenance: must name at least one event_id");

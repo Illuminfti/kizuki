@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  MAX_PROPOSAL_BODY_CHARS,
   PAGE_CANDIDATE_KEY,
   targetProblem,
   validateEventInput,
@@ -651,7 +652,7 @@ describe("determinism and targets", () => {
     expect(report.pages[0]?.notes).toEqual(["target: flattened"]);
   });
 
-  test("a page body longer than the cap is truncated and the note says so", () => {
+  test("a page body longer than a proposal is truncated and the note says so", () => {
     const body = "x".repeat(300_000);
     const scan: ScanResult = {
       files: [
@@ -666,9 +667,26 @@ describe("determinism and targets", () => {
       truncated: false,
     };
     const { events, report } = plan(scan);
-    expect(events[0]?.text).toHaveLength(262_144);
+    // Staging refuses a longer body and would then stage nothing of the page.
+    expect(events[0]?.text).toHaveLength(MAX_PROPOSAL_BODY_CHARS);
     expect(events[0]?.metadata["text_truncated"]).toBe(true);
     expect(report.pages[0]?.notes).toEqual(["text_truncated"]);
+  });
+
+  test("a body past the proposal bound keeps whole characters only", () => {
+    // An astral character straddles the bound: its high half would be the
+    // last unit kept, and half a character is not text.
+    const body = `${"a".repeat(MAX_PROPOSAL_BODY_CHARS - 1)}\u{1F600}tail`;
+    const content = `---\ntitle: Long\n---\n${body}`;
+    const { events, report } = plan({
+      files: [{ relpath: "long.md", content, mtimeMs: 1, size: content.length }],
+      skipped: [],
+      truncated: false,
+    });
+    expect(events[0]?.text).toBe("a".repeat(MAX_PROPOSAL_BODY_CHARS - 1));
+    expect(events[0]?.metadata["text_truncated"]).toBe(true);
+    expect(page(report, "long.md").notes).toContain("text_truncated");
+    expect(page(report, "long.md").target).not.toBeNull();
   });
 });
 

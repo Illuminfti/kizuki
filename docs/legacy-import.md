@@ -390,6 +390,10 @@ so a defaulted page never looks like a decision the previous system made.
   name with no ASCII letters or digits slugs to `page`, so an estate written
   entirely in another script lands on `entities/page`, `entities/page-2` and
   so on. The titles survive intact; only the paths carry no information.
+- **A page keeps its first 64,000 characters.** That is the longest body
+  staging files, and a longer one would be refused outright and stage nothing
+  of the page. The page keeps its type, title and target; its event carries
+  `text_truncated` and the report notes `text_truncated` against the relpath.
 - **Wiki links are not rewritten.** A `[[Title]]` in a body stays as written.
 - **Attachments are not copied.** An image link stays text.
 - **No LLM, no network, no credentials.** Both importers declare
