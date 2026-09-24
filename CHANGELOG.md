@@ -50,11 +50,13 @@
   Each segment is one step of the pass, so the stop request, the pass time
   budget and the short writer hold apply to it.
 - A record that cannot be split safely, such as a single 30,000-character
-  token, or a segment the model rejects on its own twice, is skipped with a
-  `record_oversized_skipped` receipt that holds the event id, length and
+  token, a record whose segments no request can carry, or a segment the model
+  rejects on its own twice, is skipped with a `record_oversized_skipped`
+  receipt that holds the event id, length and
   extracted offset, never the text. `kizuki doctor` and `kizuki serve status`
   print an `oversized records` line, and `kizuki serve retry-skipped` puts
   skipped records back in the queue, resuming after text already filed.
+  Restore refuses segment offsets that fall inside a character.
 
 ### Fixed
 
@@ -81,10 +83,11 @@
   `undo`, `tell`, purge and `kizuki serve stop` go through while a request is
   in flight. `kizuki serve stop`, SIGTERM and SIGINT end a pass before its
   next step.
-- One record can no longer hold the extraction cursor. A rejected response is
-  asked again for its first record alone, and a record rejected on its own
-  twice is skipped, named in the receipt errors and counted in
-  `records_skipped`.
+- With `max_calls_per_pass` set to 2 or more, one record can no longer hold
+  the extraction cursor. A rejected response is asked again in the next step
+  for its first record alone, and a record rejected on its own twice is
+  skipped, named in the receipt errors and counted in `records_skipped`. With
+  the default of 1, the next pass sends the same request again, as in 1.0.1.
 - Doctor judges a pass by its final request, so a rejection that a later
   request answered past no longer shows as a current failure.
 - A typed claim that parsed but failed the journal-time check "resolved claim

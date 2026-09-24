@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
 import { spawnSync } from "node:child_process";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createBudgetTracker } from "../../src/canon/budget";
 import { listClaims } from "../../src/claims/store";
-import { exportVault, restoreVault } from "../../src/export";
+import { exportVault, restoreVault, type ExportManifest, type ExportManifestEntry } from "../../src/export";
+import { accept } from "../../src/ledger/ledger";
 import { openLedger } from "../../src/ledger/db";
 import { purgeEvents } from "../../src/ledger/purge";
 import { escapeFenceText } from "../../src/producer/fence";
@@ -24,6 +26,7 @@ import {
   writeServeToml,
   type QuotedRequest,
 } from "./throughput-fixture";
+import { validEvent } from "../fixtures";
 
 const disposers: (() => void)[] = [];
 afterEach(() => {
@@ -354,3 +357,73 @@ test("purge drops a record's segment progress; backup and restore keep progress 
   await sync(f, model.producer);
   expect(listSkippedRecords(f.db).map((row) => row.event_id)).toEqual([e1]);
 });
+
+test("a record whose segment no request can carry keeps a retry receipt, and a larger budget extracts it", async () => {
+  const f = vaultWith([recordText(0)], "[extraction]\nmax_calls_per_pass = 12\nmax_input_tokens = 2000\n");
+  const [e0] = f.eventIds as [string];
+  // Forty named subjects at the head of the record: their supplied references
+  // alone outgrow a 2,000-token request, so no segment of it can be planned.
+  const names = Array.from({ length: 40 }, (_, index) => `Name${String(index).padStart(2, "0")}x`);
+  const crowded = `${names.join(" ")}\n\n${paragraphRecord(30_000)}`;
+  const accepted = accept(f.db, { ...validEvent(), connector_id: "kizuki.fixture", source_record_id: "crowded", text: crowded,
+    subjects: names.map((name) => ({ subject_id: `person:${name}`, role: "about" as const, display_name: name })) },
+    { source: { source_key: "01J00000000000000000000SRC", expected_revision: 1 } });
+  if (accepted.status !== "stored") throw new Error("fixture capture failed");
+  const e1 = accepted.event.event_id;
+  const model = segmentModelProducer(f.vault);
+  const receipt = await sync(f, model.producer);
+  expect(model.requests.map((request) => request.event_ids)).toEqual([[e0]]);
+  expect(receipt).toMatchObject({ status: "ok", stopped: null, errors: [], records_skipped: 0, oversized: { segments: 0, skipped: 1 } });
+  expect(endsAt(readExtractCursor(f.db), e1)).toBe(true);
+  expect(listSkippedRecords(f.db)).toEqual([{ reason: "record_oversized_skipped", event_id: e1, chars: crowded.length, done_utf16: 0,
+    skipped_at: expect.any(String) }]);
+
+  writeServeToml(f.vault, SETTINGS);
+  expect(retrySkippedRecords(f.db)).toBe(1);
+  const retried = segmentModelProducer(f.vault);
+  const again = await sync(f, retried.producer);
+  expect(segmentsOf(retried.requests, e1).join("")).toBe(crowded);
+  expect(again).toMatchObject({ status: "ok", errors: [], oversized: { skipped: 0 } });
+  expect(listSkippedRecords(f.db)).toEqual([]);
+  expect(oversizedRows(f.db)).toEqual([]);
+});
+
+function hashBytes(bytes: Uint8Array): string {
+  return new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+}
+
+/** Replaces one backup stream and re-signs the manifest, as a tampering writer could. */
+function rewriteBackupStream(backup: string, path: string, rows: readonly Record<string, unknown>[]): void {
+  const manifest = JSON.parse(readFileSync(join(backup, "manifest.json"), "utf8")) as ExportManifest;
+  const bytes = Buffer.from(rows.map((row) => `${JSON.stringify(row)}\n`).join(""));
+  writeFileSync(join(backup, path), bytes);
+  chmodSync(join(backup, path), 0o600);
+  const files: Record<string, ExportManifestEntry> = {};
+  for (const key of Object.keys(manifest.files).sort()) files[key] = manifest.files[key]!;
+  files[path] = { ...files[path]!, count: rows.length, sha256: hashBytes(bytes), size: bytes.byteLength };
+  const unsigned = { schema: manifest.schema, vault_id: manifest.vault_id, created_at: manifest.created_at,
+    schema_versions: manifest.schema_versions, snapshot: manifest.snapshot, complete: manifest.complete, files };
+  const signed = { ...unsigned, manifest_sha256: hashBytes(Buffer.from(`${JSON.stringify(unsigned, null, 2)}\n`)) };
+  writeFileSync(join(backup, "manifest.json"), `${JSON.stringify(signed, null, 2)}\n`);
+  chmodSync(join(backup, "manifest.json"), 0o600);
+}
+
+test("restore refuses segment offsets inside a surrogate pair", () => {
+  const text = `\u{1F600}${recordText(0)}`;
+  const f = vaultWith([text]);
+  const [e0] = f.eventIds as [string];
+  const row = (fields: Record<string, unknown>) => ({ event_id: e0, status: "segmenting", chars: text.length, done_utf16: 0,
+    pending_end_utf16: null, updated_at: "2026-09-24T12:00:00.000Z", ...fields });
+  const attempt = (name: string, fields: Record<string, unknown>) => {
+    const backup = `${f.vault}-${name}-backup`, target = `${f.vault}-${name}-restored`;
+    disposers.push(() => spawnSync("rm", ["-rf", backup, target]));
+    exportVault(f.db, f.vault, backup);
+    rewriteBackupStream(backup, "serve/extract-oversized-records.jsonl", [row(fields)]);
+    return () => restoreVault(backup, target);
+  };
+  // Offsets on character boundaries restore.
+  expect(attempt("boundary", { done_utf16: 2, pending_end_utf16: 4 })).not.toThrow();
+  expect(attempt("done", { done_utf16: 1 })).toThrow("invalid oversized extraction backup value");
+  expect(attempt("pending", { pending_end_utf16: 1 })).toThrow("invalid oversized extraction backup value");
+  expect(attempt("skipped", { status: "skipped", done_utf16: 1 })).toThrow("invalid oversized extraction backup value");
+}, 60_000);

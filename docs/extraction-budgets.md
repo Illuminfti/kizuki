@@ -13,9 +13,9 @@ Reasoning models count their hidden reasoning against the same output
 reservation. A model that spends it all before answering returns a truncated
 response, which doctor reports as `model response rejected: response
 truncated`. The pass asks again for the first record alone, and a record whose
-answer is still rejected on its own is skipped without claims (see
-[steps per pass](#owner-throughput-settings)), so such a model loses records
-rather than stalling. Set `reasoning_effort = "low"` (or `"minimal"`) under
+answer is still rejected on its own is skipped without claims when a pass
+takes two or more steps (see [steps per pass](#owner-throughput-settings)), so
+such a model loses records rather than stalling. Set `reasoning_effort = "low"` (or `"minimal"`) under
 `[ports.llm]` in `serve.toml` to shorten the hidden reasoning, choose a
 non-reasoning model, or reserve more output tokens. Doctor and `serve status`
 show the effective setting next to the model. See the
@@ -57,10 +57,13 @@ A value outside its range, a fraction or a string keeps that key's default.
   goes on. A typed record too large for one request is asked for one segment
   per step, or skipped with a receipt when it cannot be split; see
   [records too large for one request](#records-too-large-for-one-request).
-  One record therefore cannot hold every later one. A pass ends early when the
-  ledger is drained, the epoch-zero producer refuses a request before sending
-  it, a commit finds the cursor moved or its inputs purged, or the model is
-  unavailable. Steps that make no request, such as advancing over records a
+  The narrowed retry is the pass's next step, so it needs a
+  `max_calls_per_pass` of at least 2; with the default of 1 the next pass
+  sends the same request again. With two or more steps, one record therefore
+  cannot hold every later one. A pass ends early when the ledger is drained,
+  the epoch-zero producer refuses a request before sending it, a commit finds
+  the cursor moved or its inputs purged, or the model is unavailable. Steps
+  that make no request, such as advancing over records a
   source grant does not cover or skipping a record, still count toward the
   limit, so the default pass is the same single step as before.
 - **Time per pass.** Once `max_pass_seconds` have passed, the pass starts no
@@ -223,11 +226,11 @@ handled by the loop without an owner step.
   Backups at serve schema 9 carry segment progress and skip receipts, and
   restore checks each against the restored record's length.
 
-When not even a small segment fits a request, the record is skipped without a
-request, the run receipt records `record skipped: too large for one request`
-and counts it in `records_skipped`, and the cursor moves on. The record stays
-in the ledger for search, the timeline and a later extraction with larger
-limits.
+When not even a small segment fits a request, for example because the
+supplied references at the head of a record outgrow `max_input_tokens`, the
+record is skipped the same way, with a `record_oversized_skipped` receipt and
+no request. After `max_input_tokens` is raised, `kizuki serve retry-skipped`
+lets the loop decide it again.
 
 ## Restart and authorization
 

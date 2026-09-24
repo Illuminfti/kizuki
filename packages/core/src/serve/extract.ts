@@ -1210,12 +1210,13 @@ async function mineRecordSegment(
   // A record without text has nothing to extract, like an empty response.
   if (chars === 0) return { ...base, mined: { status: "empty" }, drafts: [] };
   const planned = planRecordSegment(db, record, start, limits);
-  if (planned === "unsplittable") {
-    return { ...base, mined: { status: "skipped", reason: "no safe split fits one request" }, drafts: [],
-      skipped: { event_id: record.event_id, chars, done: start } };
+  // No safe split, or no request that can carry even a small segment: the record
+  // is passed over without a request and keeps a retry receipt, so it cannot hold
+  // the cursor and `serve retry-skipped` or larger limits can decide it again.
+  if (planned === "unsplittable" || planned === "unfit") {
+    return { ...base, mined: { status: "skipped", reason: planned === "unsplittable" ? "no safe split fits one request" : "no request fits a segment" },
+      drafts: [], skipped: { event_id: record.event_id, chars, done: start } };
   }
-  // No request can carry even a small segment: passed over without a request, so it cannot hold the cursor.
-  if (planned === "unfit") return { ...base, mined: { status: "skipped", reason: "too large for one request" }, drafts: [] };
   const segment: RecordSegment = { event_id: record.event_id, start, end: planned.end, chars };
   const produced = (await invokeProducerV2(producer, planned.input)).result;
   if (base.source_epoch !== sourcePolicyEpoch(db)) return denied();

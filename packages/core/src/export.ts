@@ -60,6 +60,7 @@ import {
 } from "./claims/identity";
 import { rebuildDerived } from "./derived";
 import { EVENT_LIMITS, type CaptureEvent } from "./contracts/event";
+import { isUtf16TextBoundary } from "./contracts/producer-v2";
 import { isUlid, ulid } from "./util/ulid";
 import { writeRailCursor } from "./ledger/checkpoints";
 import { NULL_CONNECTION_CONFIG } from "./ledger/connection-state";
@@ -2714,7 +2715,9 @@ function insertOversizedRecord(db: Database, raw: Record<string, unknown>): void
   const text = db.query<{ text: string }, [string]>("SELECT text FROM events WHERE event_id=?").get(eventId)?.text;
   if (!isUlid(eventId) || text === undefined || text.length !== chars || !isRfc3339(updatedAt) ||
       (status !== "segmenting" && status !== "skipped") || !Number.isSafeInteger(done) || done < 0 || done >= chars ||
-      (pending !== null && (status !== "segmenting" || !Number.isSafeInteger(pending) || pending <= done || pending > chars))) {
+      (pending !== null && (status !== "segmenting" || !Number.isSafeInteger(pending) || pending <= done || pending > chars)) ||
+      // Segments start and end on character boundaries; an offset inside a surrogate pair is not one the loop wrote.
+      !isUtf16TextBoundary(text, done) || (pending !== null && !isUtf16TextBoundary(text, pending))) {
     throw new Error("invalid oversized extraction backup value");
   }
   db.query(`INSERT INTO extract_oversized_records (event_id,status,chars,done_utf16,pending_end_utf16,updated_at)
