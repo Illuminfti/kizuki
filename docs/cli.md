@@ -298,7 +298,8 @@ usage: kizuki doctor [--json] [--integrity]
 
 Vault path, event count, claim counts (filed/live/written/unwritten), live
 claim ids (for `tell --claim`), leftover skipped rows, connections,
-checkpoints, derived-index freshness, writer ROLE stamps, machine vs human
+checkpoints (with the first error of each source's last run as `last_error`),
+derived-index freshness, writer ROLE stamps, machine vs human
 origin counts, calibration/liveness probes, receipts, holds, serve rails,
 and `canon writing: on|off`. Off when no model is configured. The default
 report runs SQLite `quick_check` and samples ledger events. `--integrity`

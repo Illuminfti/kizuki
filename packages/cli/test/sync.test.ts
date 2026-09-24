@@ -2,8 +2,8 @@ import { fixtureConsent } from "./helpers";
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { join } from "node:path";
-import { unlinkSync } from "node:fs";
-import { applyCanonWrite, createBudgetTracker, listClaims, listConnections, resolveTarget, setSourceGrant } from "@kizuki/core";
+import { rmSync, unlinkSync } from "node:fs";
+import { applyCanonWrite, createBudgetTracker, listClaims, listConnections, listRunReceipts, resolveTarget, setSourceGrant } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "./helpers";
 
@@ -86,6 +86,32 @@ describe("sync selectors", () => {
     expect(synced.stdout).toContain("kizuki.markdown-folder");
     expect((synced.stdout.match(/events_stored=/g) ?? []).length).toBe(2);
   });
+});
+
+test("a failed source names its underlying reason in the sync receipt and in doctor", () => {
+  const setup = tempVault();
+  expect(runCli(setup.env, "connect", "markdown-folder", "--source", setup.notes).exitCode).toBe(0);
+  const status = JSON.parse(runCli(setup.env, "connect", "status", "--json").stdout);
+  const key = status.data.connections[0].source_key as string;
+  expect(runCli(setup.env, "connect", "grant", "--source", key, ...fixtureConsent(setup.root, "sync-reason")).exitCode).toBe(0);
+  rmSync(setup.notes, { recursive: true });
+
+  const synced = runCli(setup.env, "sync", "--once");
+  expect(synced.exitCode).toBe(1);
+  const db = openLedger(join(setup.vault, ".kizuki/kizuki.db"));
+  try {
+    const [receipt] = listRunReceipts(db, { rail: "sync" });
+    expect(receipt?.errors).toEqual([
+      "connector kizuki.markdown-folder sync failed: kizuki.markdown-folder: cannot access configured root",
+    ]);
+  } finally { db.close(); }
+
+  const doctor = runCli(setup.env, "doctor", "--json");
+  const connection = JSON.parse(doctor.stdout).data.connections[0];
+  expect(connection.errors).toBe(1);
+  expect(connection.last_error).toBe("kizuki.markdown-folder: cannot access configured root");
+  const line = runCli(setup.env, "doctor").stdout.split("\n").find((text) => text.includes(`source=${key}`));
+  expect(line).toContain('errors=1 backfill_complete=no last_error="kizuki.markdown-folder: cannot access configured root"');
 });
 
 for (const args of [["sync", "--once"], ["serve", "run", "sync"]]) test(`${args.join(" ")} initializes the journal on an existing current-schema vault`, () => {

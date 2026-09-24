@@ -7,6 +7,7 @@ import {
 } from "@kizuki/connectors";
 import {
   listConnections,
+  listRunReceipts,
   runBatch,
   setSourceGrant,
   sourceCaptureAdmission,
@@ -184,4 +185,20 @@ test("rows from a build before page hashes re-emit their pages instead of refusi
   );
   expect(settled.exitCode).toBe(0);
   expect(settled.stdout).toContain("events_stored=0");
+});
+
+test("a source that cannot load names why in the sync receipt", () => {
+  const setup = enrolledWiki();
+  rmSync(join(setup.wiki, "kizuki-mapping.json"));
+  expect(h.runCli(setup.env, "sync", "--once", "--vault", setup.vault).exitCode).toBe(1);
+  const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+  try {
+    const [receipt] = listRunReceipts(db, { rail: "sync" });
+    // The receipt redacts the path the owner configured, not the reason.
+    expect(receipt?.errors).toEqual([
+      "connector kizuki.import-legacy-wiki sync unavailable: kizuki.import-legacy-wiki: mapping file not found: [path] see docs/legacy-import.md",
+    ]);
+  } finally {
+    db.close();
+  }
 });
