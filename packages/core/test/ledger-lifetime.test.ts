@@ -187,6 +187,7 @@ test("explicitly finalized statements are released within one synchronous pass",
 test("the query cache is bounded; an evicted statement serves its holder until close", () => {
   const db = manageDatabaseLifetime(new Database(":memory:"));
   try {
+    for (let i = 0; i < 20; i++) db.query(`SELECT ${i} AS bun_cached`);
     const held = db.query("SELECT -1 AS n");
     for (let i = 0; i < QUERY_CACHE_LIMIT; i++) db.query(`SELECT ${i} AS n`);
     expect(db.query("SELECT -1 AS n")).not.toBe(held);

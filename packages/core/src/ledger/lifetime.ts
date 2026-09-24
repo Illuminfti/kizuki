@@ -1,4 +1,4 @@
-import { constants, type Database, type Statement } from "bun:sqlite";
+import type { Database, Statement } from "bun:sqlite";
 
 // Bun 1.3.14 closes its query cache and transaction statements, but uncached
 // prepares can otherwise keep sqlite3_close_v2's connection alive until GC.
@@ -8,8 +8,8 @@ import { constants, type Database, type Statement } from "bun:sqlite";
 // one survived the collections that ran inside its synchronous job, and its
 // native memory is invisible to the JS heap, so a long synchronous pass (a canon
 // write loop) grew by one statement per query. query() therefore keeps a bounded
-// cache of strongly held statements. Explicit prepares and evicted entries are
-// tracked weakly, and finalized ones are swept out of tracking.
+// cache of strongly held statements in front of Bun's. Every prepared statement
+// stays weakly tracked for close(), and finalized ones are swept out of tracking.
 type LiveStatement = Statement & { readonly isFinalized: boolean };
 interface Ownership {
   readonly prepare: Database["prepare"];
@@ -69,18 +69,15 @@ export function manageDatabaseLifetime(db: Database): Database {
     } },
     query: { configurable: true, writable: true, value: function query(this: Database, sql: string) {
       const owner = ownership.get(this);
-      // Bun rejects a non-string or empty query; an unmanaged receiver keeps Bun's cache.
-      if (owner === undefined || typeof sql !== "string" || sql.length === 0) return Reflect.apply(state.query, this, [sql]);
-      const cached = owner.queries.get(sql);
+      const cached = owner?.queries.get(sql);
       if (cached !== undefined && !cached.isFinalized) return cached;
-      owner.queries.delete(sql);
-      const statement = Reflect.apply(owner.prepare, this, [sql, undefined, constants.SQLITE_PREPARE_PERSISTENT]) as LiveStatement;
-      owner.queries.set(sql, statement);
-      if (owner.queries.size > QUERY_CACHE_LIMIT) {
-        const [oldest, evicted] = owner.queries.entries().next().value!;
-        owner.queries.delete(oldest);
-        // A holder may still use it; close() finalizes it while it is alive.
-        track(owner, evicted);
+      // Bun validates, and its own query() prepares through the tracked prepare above.
+      const statement = Reflect.apply(owner?.query ?? state.query, this, [sql]) as LiveStatement;
+      if (owner !== undefined) {
+        owner.queries.delete(sql);
+        owner.queries.set(sql, statement);
+        // An evicted statement stays tracked: its holder can use it until close().
+        if (owner.queries.size > QUERY_CACHE_LIMIT) owner.queries.delete(owner.queries.keys().next().value!);
       }
       return statement;
     } },
@@ -88,7 +85,6 @@ export function manageDatabaseLifetime(db: Database): Database {
       const owner = ownership.get(this);
       const errors: unknown[] = [];
       if (owner !== undefined) {
-        for (const statement of owner.queries.values()) track(owner, statement);
         owner.queries.clear();
         for (const reference of owner.statements) {
           const statement = reference.deref();
