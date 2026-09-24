@@ -60,6 +60,7 @@ import {
 } from "./claims/identity";
 import { rebuildDerived } from "./derived";
 import { EVENT_LIMITS, type CaptureEvent } from "./contracts/event";
+import { isUtf16TextBoundary } from "./contracts/producer-v2";
 import { isUlid, ulid } from "./util/ulid";
 import { writeRailCursor } from "./ledger/checkpoints";
 import { NULL_CONNECTION_CONFIG } from "./ledger/connection-state";
@@ -104,6 +105,7 @@ const STAGING_MARK = ".kizuki-backup-";
 const INCOMPLETE = ".kizuki-backup-incomplete";
 const CONTROL_DIR = ".kizuki";
 const EXTRACT_BATCH_BACKUP = "serve/extract-batches.jsonl";
+const OVERSIZED_RECORDS_BACKUP = "serve/extract-oversized-records.jsonl";
 const RAIL_CURSORS_BACKUP = "rail_cursors.jsonl";
 const MACHINE_BYTE_INTENTS_BACKUP = "ledger/canon-machine-byte-intents.jsonl";
 const MAX_EXTRACT_BATCH_BACKUP_BYTES = 2_000_000;
@@ -323,6 +325,15 @@ interface DeferredInputRow {
   source_key: string | null;
   checked_revision: number;
   checked_binding_digest: string;
+}
+
+interface OversizedRecordRow {
+  event_id: string;
+  status: string;
+  chars: number;
+  done_utf16: number;
+  pending_end_utf16: number | null;
+  updated_at: string;
 }
 
 interface ExtractBatchRow {
@@ -1499,6 +1510,21 @@ function* pageDeferredInputs(db: Database): Generator<DeferredInputRow> {
   }
 }
 
+function* pageOversizedRecords(db: Database): Generator<OversizedRecordRow> {
+  if (!tableExists(db, "extract_oversized_records")) return;
+  let after = "";
+  while (true) {
+    const rows = db.query<OversizedRecordRow, [string, number]>(
+      `SELECT event_id,status,chars,done_utf16,pending_end_utf16,updated_at
+         FROM extract_oversized_records WHERE event_id>? ORDER BY event_id LIMIT ?`,
+    ).all(after, PAGE);
+    if (rows.length === 0) return;
+    yield* rows;
+    if (rows.length < PAGE) return;
+    after = rows.at(-1)!.event_id;
+  }
+}
+
 function* pendingExtractBatch(db: Database): Generator<ExtractBatchRow> {
   validateDurableExtractStorage(db);
   const rows = db.query<ExtractBatchRow, []>(`SELECT previous_cursor,cursor,drafts,model_ref,created_at,input_ids,integrity,outcome,batch_mode,model_inputs,deferred_inputs
@@ -1892,6 +1918,7 @@ function exportVaultOwned(
       writeStream(staging, RAIL_CURSORS_BACKUP, pageRailCursors(db), files, options.signal);
       writeStream(staging, "serve/extract-deferred-inputs.jsonl", pageDeferredInputs(db), files, options.signal);
       writeStream(staging, EXTRACT_BATCH_BACKUP, pendingExtractBatch(db), files, options.signal);
+      writeStream(staging, OVERSIZED_RECORDS_BACKUP, pageOversizedRecords(db), files, options.signal);
 
       if ((files["ledger/events.jsonl"]?.count ?? 0) !== snapshot.event_count) {
         throw new Error("export event stream drifted from the snapshot");
@@ -2005,6 +2032,9 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
         !Number.isSafeInteger(batches.size) || batches.size < 0 || batches.size > MAX_EXTRACT_BATCH_BACKUP_BYTES) {
       throw new Error("backup durable extraction stream exceeds its bound");
     }
+  }
+  if (manifest.schema_versions.serve >= 9 && manifest.files[OVERSIZED_RECORDS_BACKUP] === undefined) {
+    throw new Error("backup oversized extraction stream is missing");
   }
   const identities = manifest.files[IDENTITY_BACKUP];
   if (manifest.schema === BACKUP_SCHEMA && identities === undefined) {
@@ -2671,6 +2701,29 @@ function extractBatchValues(raw: Record<string, unknown>): readonly [
   return [previous, cursor, drafts, modelRef, createdAt, inputIds, digest, outcome, mode, modelInputs, deferredInputs];
 }
 
+/** Segment progress and skip receipts carry offsets and sizes only, checked against the restored event. */
+function insertOversizedRecord(db: Database, raw: Record<string, unknown>): void {
+  if (Object.keys(raw).sort().join(",") !== "chars,done_utf16,event_id,pending_end_utf16,status,updated_at") {
+    throw new Error("invalid oversized extraction backup row");
+  }
+  const eventId = asString(raw.event_id, "event_id");
+  const status = asString(raw.status, "status");
+  const chars = asNumber(raw.chars, "chars");
+  const done = asNumber(raw.done_utf16, "done_utf16");
+  const pending = raw.pending_end_utf16 === null ? null : asNumber(raw.pending_end_utf16, "pending_end_utf16");
+  const updatedAt = asString(raw.updated_at, "updated_at");
+  const text = db.query<{ text: string }, [string]>("SELECT text FROM events WHERE event_id=?").get(eventId)?.text;
+  if (!isUlid(eventId) || text === undefined || text.length !== chars || !isRfc3339(updatedAt) ||
+      (status !== "segmenting" && status !== "skipped") || !Number.isSafeInteger(done) || done < 0 || done >= chars ||
+      (pending !== null && (status !== "segmenting" || !Number.isSafeInteger(pending) || pending <= done || pending > chars)) ||
+      // Segments start and end on character boundaries; an offset inside a surrogate pair is not one the loop wrote.
+      !isUtf16TextBoundary(text, done) || (pending !== null && !isUtf16TextBoundary(text, pending))) {
+    throw new Error("invalid oversized extraction backup value");
+  }
+  db.query(`INSERT INTO extract_oversized_records (event_id,status,chars,done_utf16,pending_end_utf16,updated_at)
+    VALUES (?,?,?,?,?,?)`).run(eventId, status, chars, done, pending, updatedAt);
+}
+
 function insertExtractBatch(db: Database, raw: Record<string, unknown>): void {
   const values = extractBatchValues(raw);
   db.query(`INSERT INTO extract_batches
@@ -2923,6 +2976,15 @@ export function restoreVault(
         }
         if (deferredRequired && batchCount !== manifest.files[EXTRACT_BATCH_BACKUP]!.count) {
           throw new Error("backup durable extraction count mismatch");
+        }
+        const oversizedRequired = manifest.schema_versions.serve >= 9;
+        let oversizedCount = 0;
+        for (const row of streamRows(source, manifest, OVERSIZED_RECORDS_BACKUP, oversizedRequired)) {
+          insertOversizedRecord(db, row);
+          oversizedCount += 1;
+        }
+        if (oversizedRequired && oversizedCount !== manifest.files[OVERSIZED_RECORDS_BACKUP]!.count) {
+          throw new Error("backup oversized extraction count mismatch");
         }
         if (eventFormat === "legacy") {
           bindLegacyEventOrigins(db);

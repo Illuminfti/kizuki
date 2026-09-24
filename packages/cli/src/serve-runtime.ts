@@ -18,6 +18,7 @@ import {
   runToCompletion,
   readRetrievalDocuments,
   readAppModelConfiguration,
+  redactReceiptError,
   classifyAppModelCredential,
   readAppModelFileCredential,
   type ClaimsIo,
@@ -31,6 +32,7 @@ import {
   type SystemOnePort,
 } from "@kizuki/core";
 import { chatCompletionsUrl, parseOpenAiCompatibleConfig, parseSystemOneJevConfig, registerLlmPorts, registerSystemOnePorts, endpointHost, modelRef } from "@kizuki/llm";
+import type { ReasoningEffort } from "@kizuki/llm";
 import { listHostConnections, loadConnector, closeHostConnector } from "./connections";
 import { DERIVED_PASS_RECORDS, tryRefreshDerived } from "./derived";
 import { tokenResolver } from "./secrets";
@@ -133,13 +135,14 @@ async function syncConnections(
         events_stored += result.stored;
         events_duplicate += result.duplicates;
         events_synced += result.stored + result.duplicates;
+        // Why, not only that: the receipt is where an owner looks first.
         if (result.errors.length > 0 && errors.length < MAX_SYNC_ERRORS) {
-          errors.push(`connector ${selected.connection.connector_id} sync failed`);
+          errors.push(`connector ${selected.connection.connector_id} sync failed: ${redactReceiptError(result.errors[0])}`);
         }
       } finally { await closeHostConnector(connector); }
-    } catch {
+    } catch (error) {
       if (errors.length < MAX_SYNC_ERRORS) {
-        errors.push(`connector ${selected.connection.connector_id} sync unavailable`);
+        errors.push(`connector ${selected.connection.connector_id} sync unavailable: ${redactReceiptError(error)}`);
       }
     }
   }
@@ -157,8 +160,14 @@ interface ServeRuntimeOptions {
   readonly configurationErrorMode?: "throw" | "disable-model";
 }
 
+/** What doctor and serve status show about a bindable model. Never the credential. */
+export interface ModelBindingSummary {
+  readonly model_ref: string;
+  readonly reasoning_effort: ReasoningEffort | null;
+}
+
 /** Validate the held configuration and credential without port/runtime initialization. */
-export async function inspectModelBinding(vaultPath: string, env: Record<string, string | undefined>): Promise<string | null> {
+export async function inspectModelBinding(vaultPath: string, env: Record<string, string | undefined>): Promise<ModelBindingSummary | null> {
   const document = readAppModelConfiguration(vaultPath, value => { parseLlmSelection(value); }, { reconcile: false });
   const selected = parseLlmSelection(document.llm);
   if (selected.id === NONE_LLM_ID) return null;
@@ -172,7 +181,10 @@ export async function inspectModelBinding(vaultPath: string, env: Record<string,
   if (readAppModelConfiguration(vaultPath, value => { parseLlmSelection(value); }, { reconcile: false }).revision !== document.revision) {
     runtimeError("configuration changed during inspection");
   }
-  return modelRef(selected.id, configured.model, endpointHost(configured.base_url));
+  return {
+    model_ref: modelRef(selected.id, configured.model, endpointHost(configured.base_url)),
+    reasoning_effort: configured.reasoning_effort,
+  };
 }
 
 async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; producer?: ProducerPort | ProducerV2Port; systemone?: SystemOnePort }> {

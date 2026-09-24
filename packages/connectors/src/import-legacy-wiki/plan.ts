@@ -1,5 +1,6 @@
 import {
   ENTITY_PAGE_TYPES,
+  MAX_PROPOSAL_BODY_CHARS,
   PAGE_CANDIDATE_KEY,
   PAGE_CANDIDATE_SCHEMA,
   PAGE_SENSITIVITIES,
@@ -262,6 +263,11 @@ function planPage(
   const checked = validatePageCandidate({ [PAGE_CANDIDATE_KEY]: candidate });
   const usable = checked !== null && checked.ok;
   if (!usable) notes.push("candidate_rejected");
+  // Staging files the head of a longer body as the page. The event keeps the
+  // whole text, because it is the evidence recall reads; the note and the
+  // flag say the staged page is shorter than it.
+  const bodyTruncated = usable && text.length > MAX_PROPOSAL_BODY_CHARS;
+  if (bodyTruncated) notes.push("body_truncated");
 
   const report: LegacyWikiPageReport = {
     ...base,
@@ -302,6 +308,7 @@ function planPage(
           ? { frontmatter: frontmatter.frontmatter }
           : { frontmatter_omitted: frontmatter.omitted }),
         ...(truncated ? { text_truncated: true } : {}),
+        ...(bodyTruncated ? { body_truncated: true } : {}),
         ...(usable ? { [PAGE_CANDIDATE_KEY]: candidate } : {}),
         // The decision record travels with the evidence, so a page reviewed
         // months later still says what the migration did to it.

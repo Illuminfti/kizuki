@@ -788,6 +788,7 @@ export {
   produceForEvent,
   proposalsForEvent,
 } from "./staging/producers";
+export { MAX_PROPOSAL_BODY_CHARS } from "./staging/proposals";
 export type { DeterministicProduceResult } from "./staging/producers";
 export { BACKUP_SCHEMA, exportVault, restoreVault, verifyBackup } from "./export";
 export type {
@@ -1040,6 +1041,7 @@ export {
   readServeIntent,
   readServePid,
   requestServeStop,
+  retrySkippedRecords,
   ServeStopError,
   type ServeStopResult,
   readVaultId,

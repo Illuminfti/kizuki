@@ -20,7 +20,7 @@ import {
 import { recoverRunJournal } from "./receipts";
 import { dueRails, runRail, type RailHooks, type RailHooksV2, type RailRuntime, type RailRuntimeV2 } from "./rails";
 import type { RetrievalPort } from "../contracts/retrieval";
-import { initServe, listSchedules } from "./schema";
+import { applyRailPeriod, initServe, listSchedules } from "./schema";
 import { SERVE_PID_PATH, ServeDaemonError, isRailId, type CrashPoint, type RailId } from "./types";
 import { clearServeStopRequest, serveStopRequested } from "./stop-control";
 
@@ -147,6 +147,8 @@ export async function runServeDaemon(
   // rail at its durable boundary, then release the runtime, marker and lease.
   let stopping = false;
   const requestStop = (): void => { stopping = true; };
+  // A long sync pass reads the same request before each extraction step.
+  const stopRequested = (): boolean => stopping || serveStopRequested(vaultPath, ownMarker);
   nodeProcess.once("SIGTERM", requestStop);
   nodeProcess.once("SIGINT", requestStop);
   try {
@@ -162,6 +164,9 @@ export async function runServeDaemon(
     }
   }
   const config = loadServeConfig(vaultPath);
+  // The journal is replayed and the lease held, so no pending receipt still
+  // expects the old period.
+  applyRailPeriod(db, "sync", config.sync_period_s, process.now());
   const httpEnabled = options.http ?? config.http;
   if (httpEnabled) {
     const retrieval = options.retrieval ?? options.hooks?.claims?.retrieval;
@@ -191,11 +196,12 @@ export async function runServeDaemon(
         "journal-prune",
       ];
       for (const rail of listed) {
-        if (stopping || serveStopRequested(vaultPath, ownMarker)) break;
+        if (stopRequested()) break;
         if (!isRailId(rail)) continue;
         await runRail(db, vaultPath, rail, {
           ...options,
           now: process.now,
+          stopRequested,
           execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "once", due_at: null },
         });
         receipts += 1;
@@ -203,7 +209,7 @@ export async function runServeDaemon(
       return { receipts, http };
     }
 
-    while (!stopping && !serveStopRequested(vaultPath, ownMarker) && (options.shouldContinue?.() ?? true)) {
+    while (!stopRequested() && (options.shouldContinue?.() ?? true)) {
       heartbeatLease(db, process);
       const due = dueRails(db, process.now());
       const rail = due[0];
@@ -211,6 +217,7 @@ export async function runServeDaemon(
         await runRail(db, vaultPath, rail, {
           ...options,
           now: process.now,
+          stopRequested,
           execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "scheduled",
             due_at: listSchedules(db).find(row => row.rail === rail)?.next_run_at ?? process.now() },
         });

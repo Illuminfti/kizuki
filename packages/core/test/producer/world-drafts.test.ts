@@ -15,7 +15,8 @@ const context: WorldDraftContext = { events: [{ ...event, source_key: sourceKey,
 const response: ExtractResponseV2 = { schema: EXTRACT_RESPONSE_V2_SCHEMA, mentions: [{ id: "m0", label: "Mira", anchor, candidate_refs: [{ kind: "supplied", id: "s0" }] }], claims: [{ id: "c0", subject: { kind: "mention", id: "m0" }, predicate: "classification.instance_of", object: { kind: "vocabulary", ref: { kind: "vocabulary", id: "v-person" } }, perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] }, context: [], polarity: "positive", body: "Mira is a person.", valid_from: null, valid_to: null, temporal_basis: "unknown", confidence: 0.8, sensitivity: "personal", anchors: [anchor] }] };
 
 test("grounds local mentions in the exact immutable event tuple and preserves model-only admission", () => {
-  const [draft] = prepareWorldDrafts(response, input, context);
+  const { drafts: [draft], dropped } = prepareWorldDrafts(response, input, context);
+  expect(dropped).toEqual([]);
   expect(draft).toMatchObject({ producer: "model", model_ref: "fixture-model", semantic: { subject: { kind: "occurrence", id: mintOccurrenceId(event, sourceKey, anchor) }, temporal_basis: "unknown", valid_from: null, valid_to: null }, world_admission: { authority: "model_inference", confidence: 0.8, epistemicKind: "model_inference", rendering: { body: "Mira is a person." } } });
   const insert: InsertClaimInput = draft!;
   expect(insert.provenance).toEqual([eventId]);
@@ -29,7 +30,7 @@ test("rejects forged supplied subjects, unsupported mentions, and anchors outsid
 
 test("supplied subject witnesses cannot cross connector or source namespaces", () => {
   const direct = { ...response, claims: [{ ...response.claims[0]!, subject: { kind: "supplied" as const, id: "s0" } }] };
-  expect(prepareWorldDrafts(direct, input, context)[0]!.semantic.subject).toEqual(supplied);
+  expect(prepareWorldDrafts(direct, input, context).drafts[0]!.semantic.subject).toEqual(supplied);
   for (const namespace of [
     { connector_id: "foreign", source_key: sourceKey },
     { connector_id: "fixture", source_key: "00000000000000000000000003" },
@@ -46,7 +47,7 @@ test("resolved context uses canonical reference order rather than locale collati
     supplied_refs: new Map([["s0", supplied], ["s1", upper], ["s2", lower]]),
   };
   const wire: ExtractResponseV2 = { ...response, claims: [{ ...response.claims[0]!, context: [{ kind: "supplied", id: "s1" }, { kind: "supplied", id: "s2" }] }] };
-  expect(prepareWorldDrafts(wire, extendedInput, extendedContext)[0]!.semantic.context).toEqual([upper, lower]);
+  expect(prepareWorldDrafts(wire, extendedInput, extendedContext).drafts[0]!.semantic.context).toEqual([upper, lower]);
 });
 
 test("rejects a semantic endpoint whose supplied handle lacks cited support", () => {
@@ -59,7 +60,18 @@ test("omits a claim whose evidence spans two sources and keeps its single-source
   const twoSources: WorldDraftContext = { ...context, events: [...context.events,
     { ...event, source_record_id: "r2", event_id: otherId, source_key: "00000000000000000000000004", text: "Mira left Northwind.", subjects: [] }] };
   const wire: ExtractResponseV2 = { ...response, claims: [...response.claims, { ...response.claims[0]!, id: "c1", anchors: [anchor, other] }] };
-  const drafts = prepareWorldDrafts(wire, twoRecords, twoSources);
+  const { drafts } = prepareWorldDrafts(wire, twoRecords, twoSources);
   expect(drafts).toHaveLength(1);
   expect(drafts[0]!.provenance).toEqual([eventId]);
+});
+
+test("drops a parsed claim that does not resolve to a canonical typed assertion and keeps its siblings", () => {
+  // Two mentions of one span resolve to the same occurrence, so a context citing both is not canonical.
+  const twin = { ...response.mentions[0]!, id: "m1" };
+  const bad = { ...response.claims[0]!, id: "c1", context: [{ kind: "mention" as const, id: "m0" }, { kind: "mention" as const, id: "m1" }] };
+  const wire: ExtractResponseV2 = { ...response, mentions: [...response.mentions, twin], claims: [...response.claims, bad] };
+  const prepared = prepareWorldDrafts(wire, input, context);
+  expect(prepared.drafts.map(draft => draft.body)).toEqual(["Mira is a person."]);
+  expect(prepared.dropped).toEqual([{ reason: "invalid_claim", id: "c1" }]);
+  expect(prepareWorldDrafts({ ...wire, claims: [bad] }, input, context)).toEqual({ drafts: [], dropped: [{ reason: "invalid_claim", id: "c1" }] });
 });

@@ -93,6 +93,15 @@ CREATE TABLE IF NOT EXISTS extract_deferred_inputs (
   checked_revision INTEGER NOT NULL,
   checked_binding_digest TEXT NOT NULL
 ) STRICT;
+CREATE TABLE IF NOT EXISTS extract_oversized_records (
+  event_id TEXT PRIMARY KEY REFERENCES events(event_id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('segmenting', 'skipped')),
+  chars INTEGER NOT NULL CHECK (chars > 0),
+  done_utf16 INTEGER NOT NULL CHECK (done_utf16 >= 0 AND done_utf16 < chars),
+  pending_end_utf16 INTEGER CHECK (pending_end_utf16 IS NULL OR
+    (status = 'segmenting' AND pending_end_utf16 > done_utf16 AND pending_end_utf16 <= chars)),
+  updated_at TEXT NOT NULL
+) STRICT;
 
 CREATE TABLE IF NOT EXISTS port_state (
   kind TEXT PRIMARY KEY,
@@ -129,6 +138,22 @@ export function seedSchedules(db: Database): void {
   for (const spec of DEFAULT_RAILS) {
     insert.run(spec.rail, spec.period_s, spec.jitter_s);
   }
+}
+
+/**
+ * Adopt a configured rail period. A shorter period also brings a later due
+ * slot in to one new period from now; it never pushes a due slot back.
+ */
+export function applyRailPeriod(db: Database, rail: RailId, periodSeconds: number, now: string): void {
+  db.transaction(() => {
+    const row = db.query<{ period_s: number; next_run_at: string | null }, [string]>(
+      "SELECT period_s,next_run_at FROM schedules WHERE rail=?",
+    ).get(rail);
+    if (row === null || row.period_s === periodSeconds) return;
+    const latest = new Date(Date.parse(now) + periodSeconds * 1000).toISOString();
+    const next = row.next_run_at !== null && row.next_run_at > latest ? latest : row.next_run_at;
+    db.query("UPDATE schedules SET period_s=?,next_run_at=? WHERE rail=?").run(periodSeconds, next, rail);
+  }).immediate();
 }
 
 export function listSchedules(db: Database): ScheduleRow[] {

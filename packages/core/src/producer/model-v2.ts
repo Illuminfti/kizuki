@@ -6,6 +6,7 @@ import { isPlainObject, unwrapJsonCodeFence, utf8ByteLength } from "../util/vali
 import {
   MAX_V2_ANCHORS_PER_ITEM,
   MAX_V2_EVENTS,
+  MAX_V2_OUTPUT_TOKENS,
   MAX_V2_QUOTED_UTF16,
   MAX_V2_TRUSTED_REFS,
   PRODUCER_V2_CONTRACT,
@@ -18,7 +19,7 @@ import {
 } from "../contracts/producer-v2";
 import { validateProduceResult } from "./result";
 import type { ProducerDiagnostic } from "../contracts/producer";
-import { callModel, DEFAULT_PRODUCER_DEADLINE_MS, EXTRACT_MAX_OUTPUT_TOKENS, CHARS_PER_TOKEN, parseModelProducerConfig } from "./model";
+import { callModel, DEFAULT_PRODUCER_DEADLINE_MS, CHARS_PER_TOKEN, parseModelProducerConfig } from "./model";
 import { hasFenceLeak, hasParsedFenceLeak, newFenceNonce } from "./fence";
 import { buildExtractionV2Messages } from "./prompt-v2";
 import { admitExtractedClaimsV2 } from "./systemone-admit";
@@ -94,7 +95,7 @@ export function planModelExtractionV2(raw: unknown): ModelExtractionV2Plan {
   if (input.budget.max_output_tokens < 1) return { status: "rejected", diagnostic: { stage: "budget", rule: "max_output_tokens", used: 0, requested: 1, limit: input.budget.max_output_tokens } };
   const nonce = newFenceNonce(), messages = buildExtractionV2Messages(input, nonce), inputTokens = estimate(messages);
   if (inputTokens > input.budget.max_input_tokens) return { status: "rejected", diagnostic: { stage: "budget", rule: "max_input_tokens", used: 0, requested: inputTokens, limit: input.budget.max_input_tokens } };
-  return { status: "ready", input, nonce, messages, input_tokens: inputTokens, max_output_tokens: Math.min(EXTRACT_MAX_OUTPUT_TOKENS, input.budget.max_output_tokens) };
+  return { status: "ready", input, nonce, messages, input_tokens: inputTokens, max_output_tokens: Math.min(MAX_V2_OUTPUT_TOKENS, input.budget.max_output_tokens) };
 }
 
 export function createModelProducerV2Port(ctx: PortContext, options: ModelProducerV2Options): ProducerV2Port {

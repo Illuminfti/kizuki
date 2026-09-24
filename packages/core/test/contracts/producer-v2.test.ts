@@ -84,6 +84,15 @@ describe("producer v2 response parser", () => {
     })).toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
   });
 
+  test("drops a dated basis without a start, as the durable claim contract does", () => {
+    for (const basis of ["explicit", "observed"] as const) {
+      expect(parse({ ...response, claims: [{ ...response.claims[0]!, temporal_basis: basis, valid_from: null, valid_to: null }] }))
+        .toEqual({ ok: true, response: { ...response, claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
+    }
+    expect(parse({ ...response, claims: [{ ...response.claims[0]!, temporal_basis: "observed", valid_from: "2026-01-01T00:00:00Z", valid_to: null }] }))
+      .toMatchObject({ ok: true, dropped: [] });
+  });
+
   test("never resolves an arbitrary durable reference or an unknown local reference", () => {
     const arbitrary = structuredClone(response) as any;
     arbitrary.mentions[0]!.candidate_refs = [{ kind: "supplied", id: "durable-secret-id" }, "m0", { kind: "predicate", id: "s0" }, { kind: "supplied", id: "s0" }];

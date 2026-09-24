@@ -298,7 +298,8 @@ usage: kizuki doctor [--json] [--integrity]
 
 Vault path, event count, claim counts (filed/live/written/unwritten), live
 claim ids (for `tell --claim`), leftover skipped rows, connections,
-checkpoints, derived-index freshness, writer ROLE stamps, machine vs human
+checkpoints (with the first error of each source's last run as `last_error`),
+derived-index freshness, writer ROLE stamps, machine vs human
 origin counts, calibration/liveness probes, receipts, holds, serve rails,
 and `canon writing: on|off`. Off when no model is configured. The default
 report runs SQLite `quick_check` and samples ledger events. `--integrity`
@@ -405,6 +406,7 @@ usage: kizuki serve [--once] [--no-http] [--port N] [--json] [--install] [--unin
        kizuki serve status [--json]
        kizuki serve stop
        kizuki serve run <rail> [--json]
+       kizuki serve retry-skipped [--json]
 ```
 
 Always-on loop. HTTP is loopback unless `--no-http`. `init` installs the
@@ -412,10 +414,34 @@ user service when a supervisor exists. The CLI still runs when the daemon is
 down. Before a rail writes canon, `serve` binds the selected LLM port from
 `[ports.llm]`; a model name by itself never enables writes. `kizuki doctor`
 reports a complete binding as `on` and an incomplete configuration as
-`unverified`. Rails hold the ledger only for the length of one batch; they
+`unverified`. The optional `[ports.llm] reasoning_effort` (`none`,
+`minimal`, `low`, `medium` or `high`) is sent with each model request;
+`doctor` and `serve status` show it next to the bound model, and `doctor`
+names an invalid value. Rails hold the ledger only for the length of one batch; they
 never keep a write transaction open across a network or model call, so owner
 verbs keep working while the loop runs. See
 [Running commands while the daemon writes](#running-commands-while-the-daemon-writes).
+
+The sync rail runs every 15 minutes and makes one extraction request per pass
+unless `serve.toml` says otherwise: `[serve] sync_period_s` sets the period,
+applied to the persisted schedule when the service starts, and `[extraction]`
+sets `max_calls_per_pass`, `records_per_request`, `max_input_tokens`,
+`max_output_tokens` and `max_pass_seconds`. `serve status` and `doctor` print
+the effective values and the records skipped in the doctor window on a
+`throughput` line; `--json` reports them as `throughput` in the serve doctor
+report. A model that still answers HTTP 429 after the port's bounded retries
+stops the pass as `model:rate_limited`, and the next pass resumes from the
+durable extraction cursor. A pass never holds the vault writer across a model
+request, and `kizuki serve stop` or a signal ends it before its next request
+as `serve:stop_requested`. See [extraction budgets](extraction-budgets.md#owner-throughput-settings).
+
+A record too large for one typed request is extracted one segment per request.
+One that cannot be split, such as a single token longer than a request, is
+skipped with a `record_oversized_skipped` receipt and the cursor moves on.
+`serve status` and `doctor` print an `oversized records` line with both counts.
+`serve retry-skipped` puts every skipped record back on the deferred queue so
+the loop decides it again, and prints `requeued=N`. See
+[records too large for one request](extraction-budgets.md#records-too-large-for-one-request).
 
 The `retrieval-sweep` rail retries pending retrieval operations and catches
 the lexical index up to the ledger and to canon receipts. A pass indexes a
@@ -516,7 +542,8 @@ Current backups include the bounded deferred-input queue and any one pending
 model decision, so a restore can resume without sending the source text to the
 model again. Backups whose serve schema predates version 8 did not carry this
 recovery state; restore reports that limitation instead of inventing a pending
-decision.
+decision. From serve schema 9, backups also carry the progress of records
+extracted in segments and the receipts of skipped records.
 
 ## recover
 

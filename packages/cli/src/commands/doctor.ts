@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   CLAIM_STATUSES,
   PURGE_SLA_SECONDS,
+  PortError,
   count,
   countClaims,
   countUnwrittenLiveClaims,
@@ -31,7 +32,7 @@ import type { ReadVaultContext } from "../context";
 import { countCanonReceiptRows, indexFreshness, walkCanonReceipts } from "../derived";
 import { clean, errorText, jsonEnvelope } from "../output";
 import { effectiveVaultConfig, loadVaultConfig } from "../vault-config";
-import { inspectModelBinding } from "../serve-runtime";
+import { inspectModelBinding, type ModelBindingSummary } from "../serve-runtime";
 import { serveSupervisorHost } from "../service-host";
 import { supervisorFailureLine } from "../service-custody";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
@@ -49,6 +50,8 @@ interface DoctorConnection {
   checkpoint: string;
   stored: number;
   errors: number;
+  /** Why the last run failed, first reason only; null when it did not. */
+  last_error: string | null;
   backfill_complete: boolean;
   problem: string | null;
 }
@@ -90,6 +93,8 @@ interface DoctorReport {
   problems: { page: string; error: string }[];
   hash_drift: HashDriftCoverage;
   serve: ReturnType<typeof inspectServeDoctor>;
+  /** Why a configured model cannot bind, from the model port's config parser. */
+  model_config_error: string | null;
   doctrine: { file: string; state: string }[];
   ledger: ReturnType<typeof inspectLedgerHealth>;
   runtime: SqliteRuntime;
@@ -292,6 +297,7 @@ async function collect(
       checkpoint: checkpoint?.last_run_at ?? "never",
       stored: checkpoint?.last_result.stored ?? 0,
       errors: checkpoint?.last_result.errors.length ?? 0,
+      last_error: scrubDetail(checkpoint?.last_result.errors[0] ?? null),
       backfill_complete: checkpoint?.backfill_complete === true,
     };
     if (host.state === null) {
@@ -395,10 +401,13 @@ async function collect(
 
   const unhealthy = connections.some((item) => item.health !== "ok");
   const host = serveSupervisorHost(env, vaultPath);
-  let boundModelRef: string | null = null;
+  let boundModel: ModelBindingSummary | null = null;
+  let modelConfigError: string | null = null;
   try {
-    boundModelRef = await withDeadline(HEALTH_DEADLINE_MS, () => inspectModelBinding(ctx.vaultPath, env), "model inspection");
+    boundModel = await withDeadline(HEALTH_DEADLINE_MS, () => inspectModelBinding(ctx.vaultPath, env), "model inspection");
   } catch (error) {
+    // The port's config refusals are fixed text naming the key, never a value.
+    if (error instanceof PortError && error.code === "config_invalid") modelConfigError = clean(error.message);
     // Existing invalid/unbound model configuration remains an explicit disabled
     // writer diagnostic. Pending transactions, custody failures, and inspection
     // deadlines need recovery rather than a silent unbound report.
@@ -410,7 +419,8 @@ async function collect(
   }
   const serve = inspectServeDoctor(ctx.db, vaultPath, {
     supervisor: host,
-    model_ref: boundModelRef,
+    model_ref: boundModel?.model_ref ?? null,
+    reasoning_effort: boundModel?.reasoning_effort ?? null,
   });
   const ok =
     vault.counts.invalid === 0 &&
@@ -458,6 +468,7 @@ async function collect(
     problems,
     hash_drift: hashDriftResult.coverage,
     serve,
+    model_config_error: modelConfigError,
     doctrine: vault.doctrine,
     ledger,
     runtime: readSqliteRuntime(ctx.db),
@@ -510,7 +521,8 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     );
   }
   for (const item of report.connections) {
-    const line = `connection ${item.connector_id} source=${item.source_key} path=${item.path} state=${item.state} health=${item.health} checkpoint=${item.checkpoint} stored=${item.stored} errors=${item.errors} backfill_complete=${item.backfill_complete ? "yes" : "no"}`;
+    const reason = item.last_error === null ? "" : ` last_error=${JSON.stringify(item.last_error)}`;
+    const line = `connection ${item.connector_id} source=${item.source_key} path=${item.path} state=${item.state} health=${item.health} checkpoint=${item.checkpoint} stored=${item.stored} errors=${item.errors} backfill_complete=${item.backfill_complete ? "yes" : "no"}${reason}`;
     io.out(item.problem === null ? line : `${line} ${item.problem}`);
   }
   io.out(`receipts=${report.receipts} orphans=${report.orphans.length}`);
@@ -530,6 +542,9 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   }
   io.out(report.serve.supervisor.detail);
   io.out(report.serve.model.detail);
+  if (report.model_config_error !== null) io.out(`model configuration invalid: ${report.model_config_error}`);
+  io.out(report.serve.throughput.detail);
+  io.out(report.serve.oversized.detail);
   for (const rail of report.serve.rails) {
     const extra = rail.reason === null ? "" : ` ${rail.reason}`;
     io.out(`rail ${rail.rail} status=${rail.status}${extra}`);

@@ -18,6 +18,7 @@ import { serviceFile } from "./service-files";
 import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readModelRunHistory, redactReceiptText, type ModelRunHistory } from "./receipts";
 import { sha256Hex } from "../util/hash";
 import { listSchedules } from "./schema";
+import { countOversizedRecords, RETRY_SKIPPED_COMMAND } from "./extract-oversized";
 import type { SupervisorHost } from "./supervisor";
 import { queryServeService } from "./supervisor";
 import { ensureVaultId } from "./vault-id";
@@ -30,14 +31,18 @@ import {
   RUN_RECEIPT_RETENTION_DAYS,
   type CalibrationBandsReason,
   type CalibrationDoctor,
+  type ExtractionConfig,
   type ModelDoctor,
   type RailDoctor,
   type RailId,
   type RunReceipt,
+  type ServeConfig,
   type ServeDoctorReport,
   type ServeIntent,
   type StoreDoctor,
   type SupervisorLastExit,
+  type ThroughputDoctor,
+  type OversizedDoctor,
   type SupervisorStatus,
 } from "./types";
 
@@ -45,6 +50,8 @@ export interface ServeDoctorOptions {
   readonly now?: string;
   readonly supervisor?: SupervisorHost;
   readonly model_ref?: string | null;
+  /** The bound port's owner-configured reasoning effort; null sends none. */
+  readonly reasoning_effort?: string | null;
   /** Raw config intent is shown as unverified until a host binds its port. */
   readonly configured_model_ref?: string | null;
 }
@@ -72,12 +79,22 @@ function produced(receipt: RunReceipt): boolean {
   );
 }
 
+/**
+ * Rails run one at a time, so every rail can wait behind a sync pass. A
+ * multi-request pass may take its time budget plus the request in flight; the
+ * one-request pass is covered by the ordinary grace period.
+ */
+function syncPassWait(extraction: ExtractionConfig): number {
+  return extraction.max_calls_per_pass > 1 ? extraction.max_pass_seconds : 0;
+}
+
 function railDoctor(
   rail: RailId,
   receipts: RunReceipt[],
   period_s: number,
   now: string,
   expectLiveness: boolean,
+  wait_s: number,
 ): RailDoctor {
   const forRail = receipts.filter((receipt) => receipt.rail === rail);
   const last = forRail.at(-1) ?? null;
@@ -88,7 +105,7 @@ function railDoctor(
     if (receipt === undefined || produced(receipt)) break;
     empty += 1;
   }
-  const grace = period_s;
+  const grace = period_s + wait_s;
   const stale = age !== null && age > 2 * period_s + grace;
   const failed = last?.status === "failed";
   const emptyDown = empty >= EMPTY_STREAK;
@@ -293,8 +310,13 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
   };
 }
 
-/** Whole-call rejection is distinct from a counted, permitted draft drop. */
+/**
+ * A pass is judged by its final request: a rejection a later request answered
+ * past stays counted in the receipt, but it is not a current failure. Whole-call
+ * rejection is distinct from a counted, permitted draft drop.
+ */
 function modelFailure(receipt: RunReceipt): string | null {
+  if (receipt.model.last_request === "answered") return null;
   if (receipt.model.diagnostic !== undefined) return formatProducerDiagnostic(receipt.model.diagnostic);
   if (receipt.model.usage_unknown === true) return "model attempt interrupted; token usage unknown";
   if (receipt.model.unavailable > 0) return "model unavailable";
@@ -304,9 +326,17 @@ function modelFailure(receipt: RunReceipt): string | null {
   return null;
 }
 
+/** The model answered at least one request of the pass, however the pass ended. */
+function modelAnswered(receipt: RunReceipt): boolean {
+  return receipt.model.answered === undefined
+    ? receipt.model.calls > 0 && modelFailure(receipt) === null
+    : receipt.model.answered > 0;
+}
+
 function modelDoctor(
   history: ModelRunHistory,
   modelRef: string | null | undefined,
+  reasoningEffort: string | null | undefined,
   configuredModelRef: string | null | undefined,
   configCanonDay: number,
   usedToday: number,
@@ -327,7 +357,7 @@ function modelDoctor(
     receipt.model.model_ref_sha256 === undefined && receipt.model.model_ref !== null && isRedactedModelReference(receipt.model.model_ref) &&
     receipt.model.model_ref === displayRef && (receipt.model.calls > 0 || modelFailure(receipt) !== null));
   const latestFirst = [...current].reverse();
-  const lastOk = latestFirst.find(receipt => receipt.model.calls > 0 && modelFailure(receipt) === null);
+  const lastOk = latestFirst.find(modelAnswered);
   const lastFailed = latestFirst.find(receipt => modelFailure(receipt) !== null);
   const lastFailure = lastFailed === undefined ? null : { at: lastFailed.finished_at, detail: modelFailure(lastFailed)! };
   const lastAttempt = latestFirst.find(receipt => receipt.model.calls > 0 || modelFailure(receipt) !== null);
@@ -339,9 +369,11 @@ function modelDoctor(
   const historyUnverified = (lastUnattributed !== undefined && receipts.lastIndexOf(lastUnattributed) > lastAttemptIndex) ||
     receipts.lastIndexOf(null) > lastAttemptIndex || (history.truncated && lastAttempt === undefined);
   const unavailable = current.reduce((sum, receipt) => sum + receipt.model.unavailable, 0);
+  const effort = on ? reasoningEffort ?? null : null;
   return {
     canon_writing: on ? "on" : unverified ? "unverified" : "off",
     model_ref: on ? displayRef : null,
+    reasoning_effort: effort,
     last_success_at: lastOk?.finished_at ?? null,
     last_failure: lastFailure,
     current_failure: currentFailure,
@@ -354,7 +386,7 @@ function modelDoctor(
       canon_writes_per_day: { used: usedToday, limit: configCanonDay },
     },
     detail: (on
-      ? `canon writing: on (${displayRef}); last_success=${lastOk?.finished_at ?? "never"} unavailable=${unavailable}${lastFailure === null ? "" : `; last_failure=${lastFailure.detail} (at ${lastFailure.at})`}`
+      ? `canon writing: on (${displayRef}, reasoning_effort=${effort ?? "provider-default"}); last_success=${lastOk?.finished_at ?? "never"} unavailable=${unavailable}${lastFailure === null ? "" : `; last_failure=${lastFailure.detail} (at ${lastFailure.at})`}`
       : unverified
         ? "canon writing: unverified (model configured but not bound by the running host)"
       : "canon writing: off (no model configured — connectors, ledger, search, timeline and undo still work)") +
@@ -496,6 +528,7 @@ export function inspectServeDoctor(
   const receipts = listRunReceipts(db, { since });
   const expectLive = expectRailLiveness(intent, supervisor);
   const schedules = new Map(listSchedules(db).map((row) => [row.rail, row]));
+  const config = loadServeConfig(vaultPath);
   const rails = DEFAULT_RAILS.map((spec) => {
     const schedule = schedules.get(spec.rail);
     return railDoctor(
@@ -504,9 +537,9 @@ export function inspectServeDoctor(
       schedule?.period_s ?? spec.period_s,
       now,
       expectLive,
+      syncPassWait(config.extraction),
     );
   });
-  const config = loadServeConfig(vaultPath);
   const usedToday = receipts
     .filter((receipt) => receipt.finished_at.startsWith(now.slice(0, 10)))
     .reduce((sum, receipt) => sum + receipt.canon_writes, 0);
@@ -518,12 +551,16 @@ export function inspectServeDoctor(
   const model = modelDoctor(
     modelHistory,
     modelRef,
+    options.reasoning_effort,
     configuredModelRef,
     config.canon_writes_per_day,
     usedToday,
     config.canon_writes_per_run,
     lastRunUsed,
   );
+  const skipped = receipts.reduce((sum, receipt) => sum + (receipt.records_skipped ?? 0), 0);
+  const throughput = throughputDoctor(config, schedules.get("sync")?.period_s ?? config.sync_period_s, skipped);
+  const oversized = oversizedDoctor(db);
   const stores = storeDoctor(db, vaultPath, now, receipts);
   const cal = calibration(db, receipts, now);
   const failures: string[] = [];
@@ -585,10 +622,36 @@ export function inspectServeDoctor(
     intent,
     rails,
     model,
+    throughput,
+    oversized,
     stores,
     calibration: cal,
     ok: failures.length === 0,
     failures,
+  };
+}
+
+/** A skip is the loop's own receipted decision, not a failure; the retry command re-queues skipped records. */
+function oversizedDoctor(db: Database): OversizedDoctor {
+  const { segmenting, skipped } = countOversizedRecords(db);
+  const retry = skipped === 0 ? null : RETRY_SKIPPED_COMMAND;
+  return { segmenting, skipped, retry,
+    detail: `oversized records segmenting=${segmenting} skipped=${skipped}${retry === null ? "" : ` retry: ${retry}`}` };
+}
+
+function throughputDoctor(config: ServeConfig, syncPeriod: number, recordsSkipped: number): ThroughputDoctor {
+  const { max_calls_per_pass, records_per_request, max_input_tokens, max_output_tokens, max_pass_seconds } = config.extraction;
+  const pending = syncPeriod === config.sync_period_s ? "" : ` configured_sync_period_s=${config.sync_period_s} (applies at service start)`;
+  return {
+    sync_period_s: syncPeriod,
+    configured_sync_period_s: config.sync_period_s,
+    max_calls_per_pass,
+    records_per_request,
+    max_input_tokens,
+    max_output_tokens,
+    max_pass_seconds,
+    records_skipped: recordsSkipped,
+    detail: `throughput sync_period_s=${syncPeriod} max_calls_per_pass=${max_calls_per_pass} records_per_request=${records_per_request} max_input_tokens=${max_input_tokens} max_output_tokens=${max_output_tokens} max_pass_seconds=${max_pass_seconds} records_skipped=${recordsSkipped}${pending}`,
   };
 }
 

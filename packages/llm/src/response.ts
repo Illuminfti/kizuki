@@ -155,6 +155,19 @@ export function parseChatCompletion(
   };
 }
 
+/**
+ * A gateway that fails after a response has started may answer 200 with an
+ * `error` object and no choices. That body is the failure, never a
+ * completion; a code outside 400-599 reads as a bad gateway.
+ */
+export function inBandErrorStatus(body: unknown): number | null {
+  if (!isPlainObject(body) || !isPlainObject(body["error"])) return null;
+  const choices = body["choices"];
+  if (Array.isArray(choices) && choices.length > 0) return null;
+  const code = body["error"]["code"];
+  return typeof code === "number" && Number.isSafeInteger(code) && code >= 400 && code <= 599 ? code : 502;
+}
+
 export function isRetryableStatus(status: number): boolean {
   return status === 429 || status === 502 || status === 503 || status === 504;
 }

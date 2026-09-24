@@ -19,9 +19,24 @@ port; the receipted writer owns canon. Tests use a loopback fake endpoint.
 | `model` | yes (openai-compatible) | Wire model id, sent as `model`. |
 | `secret_ref` | no | `env:` or `file:` only. A literal key is a startup failure. |
 | `timeout_ms` | no | Default `60000`. |
-| `max_retries` | no | Default `2`. Bounded retries for network failures, timeouts and HTTP 429/502/503/504 share the request deadline. |
+| `max_retries` | no | Default `2`, at most `8`. Bounded retries for network failures, timeouts and HTTP 429/502/503/504 share the request deadline. |
+| `reasoning_effort` | no | `none`, `minimal`, `low`, `medium` or `high`, sent as the chat-completions `reasoning_effort`. Absent sends nothing. Hidden reasoning counts against the output reservation, so a lower effort leaves more of it for the answer. Providers accept different subsets; an unsupported value is refused by the provider. |
+
+A retry waits for the provider's `Retry-After`, or backs off exponentially from
+two seconds without one; every wait is capped at 30 seconds. A wait the
+deadline cannot cover fails the request with the provider's status instead of
+sleeping into a timeout. An HTTP 200 body that carries an `error` object and no
+choices, as some gateways send when generation fails after the response
+started, is that HTTP failure (its `code`, or 502 without a usable one), never
+a completion.
 
 `model_ref` recorded by callers is `<port_id>:<model>@<host>`.
+`reasoning_effort` changes only the request body. It is not part of
+`model_ref`, run or canon receipts, or source consent, which binds the
+endpoint and model. `doctor` and `serve status` show it next to the bound
+model, or `provider-default` when unset, and `doctor` names a value outside
+the list above as `model configuration invalid`. Some endpoints make reasoning
+mandatory and answer `none` with HTTP 400.
 
 ## Config (`[ports.systemone]`)
 

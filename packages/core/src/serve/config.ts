@@ -1,7 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isPlainObject } from "../util/validate";
-import { DEFAULT_SERVE_CONFIG, type ServeConfig } from "./types";
+import {
+  DEFAULT_EXTRACTION_CONFIG,
+  DEFAULT_SERVE_CONFIG,
+  EXTRACTION_BOUNDS,
+  SYNC_PERIOD_BOUNDS,
+  type ExtractionConfig,
+  type ServeConfig,
+} from "./types";
 
 export function serveConfigPath(vaultPath: string): string {
   return join(vaultPath, ".kizuki", "serve.toml");
@@ -11,6 +18,18 @@ function integer(value: unknown, fallback: number, min: number, max: number): nu
   if (typeof value !== "number" || !Number.isSafeInteger(value)) return fallback;
   if (value < min || value > max) return fallback;
   return value;
+}
+
+function extraction(table: Record<string, unknown>): ExtractionConfig {
+  const bounded = (key: keyof ExtractionConfig): number =>
+    integer(table[key], DEFAULT_EXTRACTION_CONFIG[key], EXTRACTION_BOUNDS[key].min, EXTRACTION_BOUNDS[key].max);
+  return {
+    max_calls_per_pass: bounded("max_calls_per_pass"),
+    records_per_request: bounded("records_per_request"),
+    max_input_tokens: bounded("max_input_tokens"),
+    max_output_tokens: bounded("max_output_tokens"),
+    max_pass_seconds: bounded("max_pass_seconds"),
+  };
 }
 
 function text(value: unknown, fallback: string): string {
@@ -55,6 +74,7 @@ export function loadServeConfig(vaultPath: string): ServeConfig {
   if (!isPlainObject(parsed)) return { ...DEFAULT_SERVE_CONFIG };
   const serve = isPlainObject(parsed["serve"]) ? parsed["serve"] : parsed;
   const budget = isPlainObject(parsed["budget"]) ? parsed["budget"] : {};
+  const extract = isPlainObject(parsed["extraction"]) ? parsed["extraction"] : {};
   const host = text(serve["bind_host"], DEFAULT_SERVE_CONFIG.bind_host);
   return {
     memory_max: text(serve["memory_max"], DEFAULT_SERVE_CONFIG.memory_max),
@@ -82,5 +102,12 @@ export function loadServeConfig(vaultPath: string): ServeConfig {
       1,
       365,
     ),
+    sync_period_s: integer(
+      serve["sync_period_s"],
+      DEFAULT_SERVE_CONFIG.sync_period_s,
+      SYNC_PERIOD_BOUNDS.min,
+      SYNC_PERIOD_BOUNDS.max,
+    ),
+    extraction: extraction(extract),
   };
 }

@@ -1,5 +1,106 @@
 # Changelog
 
+## 1.0.2 (2026-09-24)
+
+### Added
+
+- Extraction throughput is now owner-configurable in
+  `<vault>/.kizuki/serve.toml`. `[extraction]` takes `max_calls_per_pass`
+  (1 to 256, default 1), `records_per_request` (1 to 8, default 2),
+  `max_input_tokens` (2,000 to 32,000, default 8,000), `max_output_tokens`
+  (1,024 to 16,384, default 8,192) and `max_pass_seconds` (30 to 600, default
+  60). `[serve] sync_period_s` (60 to 86,400, default 900) sets the sync
+  rail's period and takes effect at the next service start. Without these keys
+  a pass does what it did in 1.0.1: one request of at most two records.
+  `kizuki doctor` and `kizuki serve status` print the effective values on a
+  `throughput` line. Each step of a pass files its claims and commits the
+  cursor before the next request, so a kill loses at most the request in
+  flight. To drain a backlog:
+
+  ```toml
+  [serve]
+  sync_period_s = 300
+
+  [extraction]
+  max_calls_per_pass = 64
+  records_per_request = 2
+  max_pass_seconds = 300
+  ```
+
+  Passes run back to back while the sync rail is due, so keep `sync_period_s`
+  no longer than `max_pass_seconds`. See
+  [extraction budgets](docs/extraction-budgets.md#owner-throughput-settings).
+- `[ports.llm] reasoning_effort` sets the chat-completions `reasoning_effort`
+  field on every model request: `none`, `minimal`, `low`, `medium` or `high`,
+  for example `reasoning_effort = "low"`. Unset sends no field. A model with
+  mandatory reasoning needs it: its hidden reasoning counts against
+  `max_output_tokens`, and without a lower effort it can spend the whole
+  reservation, so the response is truncated and rejected. `kizuki doctor` and
+  `kizuki serve status` show the effective value next to the bound model, or
+  `provider-default` when unset, and `doctor` reports a value outside that
+  list as `model configuration invalid` (`model_config_error` in `--json`).
+  The value is not part of `model_ref`, receipts or source consent.
+- A typed record that no request can carry whole, because it is longer than
+  24,000 characters or its request exceeds `max_input_tokens`, is extracted in
+  segments, one request per segment. A split falls on a paragraph break, else
+  a line break, else a word boundary. Anchors are moved back to record offsets
+  and checked against the original text before anything is filed. Segment
+  progress is kept in the new `extract_oversized_records` table (serve schema
+  9, carried by backups), so a kill resumes at the next unfinished segment.
+  Each segment is one step of the pass, so the stop request, the pass time
+  budget and the short writer hold apply to it.
+- A record that cannot be split safely, such as a single 30,000-character
+  token, a record whose segments no request can carry, or a segment the model
+  rejects on its own twice, is skipped with a `record_oversized_skipped`
+  receipt that holds the event id, length and
+  extracted offset, never the text. `kizuki doctor` and `kizuki serve status`
+  print an `oversized records` line, and `kizuki serve retry-skipped` puts
+  skipped records back in the queue, resuming after text already filed.
+  Restore refuses segment offsets that fall inside a character.
+
+### Fixed
+
+- A legacy-wiki source whose rows predate page hashes failed every sync with
+  "wiki committed identities are incompatible with scan policy" and never
+  committed a cursor. Such a row now heals: the page is emitted again with its
+  hash, and a page deleted since is still withdrawn.
+- A wiki page longer than a staging proposal body (64,000 UTF-16 units) failed
+  its whole batch. Staging now stages the head of the page, marked
+  `x-body-truncated: true`, and the ledger keeps the page text up to the
+  existing 262,144-code-point cap. A long page that an earlier build stored
+  but never staged is planned and staged again.
+- Sync run receipts and `kizuki doctor` name the underlying reason when a
+  source fails, instead of only "connector <id> sync failed" or an error
+  count. The reason passes through the receipt redactor.
+- HTTP 429, 502, 503 and 504 retries back off exponentially from two seconds,
+  or wait for the provider's `Retry-After`, capped at 30 seconds per wait. A
+  wait the request deadline cannot cover reports the provider's refusal
+  instead of a timeout, and an HTTP 200 body with an `error` object and no
+  choices is treated as that HTTP failure. A request still refused with 429
+  ends the pass as `model:rate_limited` (status `stopped`, not `failed`), and
+  the next pass resumes from the durable cursor.
+- A sync pass no longer holds the vault writer across a model request, so
+  `undo`, `tell`, purge and `kizuki serve stop` go through while a request is
+  in flight. `kizuki serve stop`, SIGTERM and SIGINT end a pass before its
+  next step.
+- With `max_calls_per_pass` set to 2 or more, one record can no longer hold
+  the extraction cursor. A rejected response is asked again in the next step
+  for its first record alone, and a record rejected on its own twice is
+  skipped, named in the receipt errors and counted in `records_skipped`. With
+  the default of 1, the next pass sends the same request again, as in 1.0.1.
+- Doctor judges a pass by its final request, so a rejection that a later
+  request answered past no longer shows as a current failure.
+- A typed claim that parsed but failed the journal-time check "resolved claim
+  is not a canonical typed assertion" failed the whole sync run after earlier
+  steps had filed. It is now dropped and counted under
+  `claims_rejected.invalid_claim`, like other invalid typed claims, and its
+  siblings are filed.
+- A typed claim with an explicit or observed time basis but no start is
+  dropped as `invalid_claim` instead of failing the run.
+- A typed request next to a record its source grant holds back failed filing
+  with "extraction inputs changed during model call". The journal now
+  rebuilds the request from the records it actually sent.
+
 ## 1.0.1 (2026-09-24)
 
 ### Fixed
