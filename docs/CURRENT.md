@@ -38,7 +38,7 @@ MCP `correct`) is the update path a person actually uses.
 
 ## What this revision ships
 
-Version 1.0.1.
+Version 1.0.2.
 
 World model: when a configured model and a source grant that permits
 extraction are present, the sync rail runs typed extraction
