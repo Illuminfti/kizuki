@@ -233,7 +233,7 @@ test("owner throughput settings drive a multi-request pass through rate limits, 
 
     // Doctor and serve status report the effective settings; the period waits for a service start.
     const line =
-      "throughput sync_period_s=900 max_calls_per_pass=3 records_per_request=1 max_input_tokens=8000 max_output_tokens=8192 configured_sync_period_s=120 (applies at service start)";
+      "throughput sync_period_s=900 max_calls_per_pass=3 records_per_request=1 max_input_tokens=8000 max_output_tokens=8192 max_pass_seconds=60 records_skipped=0 configured_sync_period_s=120 (applies at service start)";
     const doctor = await cli(setup.env, "doctor");
     expect(doctor.stdout.split("\n")).toContain(line);
     const status = await cli(setup.env, "serve", "status");

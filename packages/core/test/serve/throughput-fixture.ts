@@ -195,12 +195,13 @@ export function fixtureProducer(
 /**
  * The shipped typed producer over a scripted chat port. `reply` returns
  * "rate_limited" for a request the provider still refuses after the port's
- * own bounded retries, exactly as the OpenAI-compatible port reports it, and
+ * own bounded retries, exactly as the OpenAI-compatible port reports it,
+ * "truncated" for a response cut off at its output reservation, and
  * "malformed" for a completion whose text is not a typed response.
  */
 export function scriptedModelProducer(
   vault: string,
-  reply: (request: number, eventIds: readonly string[]) => "ok" | "rate_limited" | "malformed",
+  reply: (request: number, eventIds: readonly string[]) => "ok" | "rate_limited" | "truncated" | "malformed",
 ): { producer: ProducerV2Port; requests: string[][] } {
   const requests: string[][] = [];
   const llm: LlmPort = {
@@ -227,6 +228,8 @@ export function scriptedModelProducer(
       const scripted = reply(requests.length, ids);
       if (scripted === "rate_limited")
         throw new PortError("unavailable", "http 429", true);
+      if (scripted === "truncated")
+        throw new PortError("unavailable", "rejected: response_truncated", false);
       if (scripted === "malformed")
         return { text: "{\"schema\":", model: MODEL, usage: { input_tokens: 10, output_tokens: 3 } };
       const texts = new Map(

@@ -35,11 +35,16 @@ import { DEFAULT_EXTRACTION_CONFIG, type ExtractionConfig } from "./types";
 const EXTRACT_SOURCE_KEY = "extract";
 const DEFERRED_SCAN_KEY = "extract-deferred-scan";
 
-/** Unavailable is not empty. Only empty or a successful mine advances the cursor. */
+/**
+ * Unavailable is not empty. Only empty, deferred, skipped or a successful mine
+ * advances the cursor. Skipped passes over one record without claims, for a
+ * reason the run receipt records, so that record cannot hold every later one.
+ */
 export type ExtractMine =
   | { status: "ok"; count: number }
   | { status: "empty" }
   | { status: "deferred"; count: number }
+  | { status: "skipped"; reason: string }
   | { status: "unavailable"; reason: string }
   | { status: "rejected"; reason: string };
 
@@ -48,6 +53,7 @@ export function shouldAdvanceExtractCursor(result: ExtractMine): boolean {
     case "ok":
     case "empty":
     case "deferred":
+    case "skipped":
       return true;
     case "unavailable":
     case "rejected":
@@ -832,6 +838,22 @@ export function commitExtractCursor(db: Database, mined: MineResult): boolean {
 }
 
 /**
+ * A request runs without the canon writer, so its outcome is settled only while
+ * the state it was planned from still holds: the same cursor and source policy,
+ * every input still in the ledger, and deferred input still queued. An answer
+ * that arrives after a purge or another pass changed that state is discarded.
+ */
+export function extractDecisionCurrent(db: Database, mined: MineResult): boolean {
+  if (readExtractCursor(db) !== mined.previous_cursor) return false;
+  if (mined.source_epoch !== undefined && mined.source_epoch !== sourcePolicyEpoch(db)) return false;
+  const stored = db.query("SELECT 1 FROM events WHERE event_id=?");
+  if (!(mined.input_ids ?? []).every(id => stored.get(id) !== null)) return false;
+  if (mined.mode !== "deferred") return true;
+  const queued = db.query("SELECT 1 FROM extract_deferred_inputs WHERE event_id=?");
+  return (mined.model_inputs ?? []).every(input => queued.get(input.event_id) !== null);
+}
+
+/**
  * Typed request limits. A typed response anchors every claim and runs to one to
  * three thousand output tokens per ordinary record, more when a model indents
  * its JSON, so more records per request need a larger output reservation or
@@ -964,12 +986,8 @@ export async function mineLiveDrafts(
         const plan = planModelExtractionV2(candidate);
         if (plan.status === "ready") { selectedCount = count; selectedInput = plan.input; }
       } catch {
-        // Structural bounds are host-side refusal. They never call the port or advance the cursor.
+        // Structural bounds are host-side refusal. A prefix over them never reaches the port.
       }
-    }
-    if (selectedCount === 0) {
-      return { filing_version: 2, source_epoch, mined: { status: "rejected", reason: "producer v2 input exceeds structural or budget limits" },
-        drafts: [], previous_cursor, cursor: null, input_ids: inputIds, mode, model_inputs: modelInputs, deferred_inputs: deferredInputs };
     }
   } else {
     // Keep an impossible first record on the ordinary observed-producer path:
@@ -982,6 +1000,10 @@ export async function mineLiveDrafts(
       if (plan.status === "ready" && plan.calls.length === 1) { selectedCount = count; selectedInput = candidate; }
     }
   }
+  // A typed record too large for any request by itself is passed over, never
+  // truncated or sent; the epoch-zero producer publishes its own refusal.
+  const oversized = selectedCount === 0;
+  if (oversized) selectedCount = 1;
   if (selectedCount < usable.length) {
     usable = usable.slice(0, selectedCount);
     modelInputs = modelInputs.slice(0, selectedCount);
@@ -994,6 +1016,10 @@ export async function mineLiveDrafts(
       : usable.map(event => event.event_id);
     const included = new Set(inputIds);
     deferredInputs = deferredInputs.filter(input => included.has(input.event_id));
+  }
+  if (oversized) {
+    return { filing_version: 2, source_epoch, mined: { status: "skipped", reason: "too large for one request" }, drafts: [],
+      previous_cursor, cursor, input_ids: inputIds, mode, model_inputs: modelInputs, deferred_inputs: deferredInputs };
   }
   const admitted = db.transaction(() => usable.filter(event => extractEligible(db, event))).immediate();
   if (admitted.length !== usable.length) {

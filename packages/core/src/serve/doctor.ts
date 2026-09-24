@@ -30,6 +30,7 @@ import {
   RUN_RECEIPT_RETENTION_DAYS,
   type CalibrationBandsReason,
   type CalibrationDoctor,
+  type ExtractionConfig,
   type ModelDoctor,
   type RailDoctor,
   type RailId,
@@ -74,12 +75,22 @@ function produced(receipt: RunReceipt): boolean {
   );
 }
 
+/**
+ * Rails run one at a time, so every rail can wait behind a sync pass. A
+ * multi-request pass may take its time budget plus the request in flight; the
+ * one-request pass is covered by the ordinary grace period.
+ */
+function syncPassWait(extraction: ExtractionConfig): number {
+  return extraction.max_calls_per_pass > 1 ? extraction.max_pass_seconds : 0;
+}
+
 function railDoctor(
   rail: RailId,
   receipts: RunReceipt[],
   period_s: number,
   now: string,
   expectLiveness: boolean,
+  wait_s: number,
 ): RailDoctor {
   const forRail = receipts.filter((receipt) => receipt.rail === rail);
   const last = forRail.at(-1) ?? null;
@@ -90,7 +101,7 @@ function railDoctor(
     if (receipt === undefined || produced(receipt)) break;
     empty += 1;
   }
-  const grace = period_s;
+  const grace = period_s + wait_s;
   const stale = age !== null && age > 2 * period_s + grace;
   const failed = last?.status === "failed";
   const emptyDown = empty >= EMPTY_STREAK;
@@ -295,8 +306,13 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
   };
 }
 
-/** Whole-call rejection is distinct from a counted, permitted draft drop. */
+/**
+ * A pass is judged by its final request: a rejection a later request answered
+ * past stays counted in the receipt, but it is not a current failure. Whole-call
+ * rejection is distinct from a counted, permitted draft drop.
+ */
 function modelFailure(receipt: RunReceipt): string | null {
+  if (receipt.model.last_request === "answered") return null;
   if (receipt.model.diagnostic !== undefined) return formatProducerDiagnostic(receipt.model.diagnostic);
   if (receipt.model.usage_unknown === true) return "model attempt interrupted; token usage unknown";
   if (receipt.model.unavailable > 0) return "model unavailable";
@@ -304,6 +320,13 @@ function modelFailure(receipt: RunReceipt): string | null {
     if ((receipt.claims_rejected[reason] ?? 0) > 0 || receipt.errors.includes(reason)) return `model result rejected: ${reason.replaceAll("_", " ")}`;
   }
   return null;
+}
+
+/** The model answered at least one request of the pass, however the pass ended. */
+function modelAnswered(receipt: RunReceipt): boolean {
+  return receipt.model.answered === undefined
+    ? receipt.model.calls > 0 && modelFailure(receipt) === null
+    : receipt.model.answered > 0;
 }
 
 function modelDoctor(
@@ -329,7 +352,7 @@ function modelDoctor(
     receipt.model.model_ref_sha256 === undefined && receipt.model.model_ref !== null && isRedactedModelReference(receipt.model.model_ref) &&
     receipt.model.model_ref === displayRef && (receipt.model.calls > 0 || modelFailure(receipt) !== null));
   const latestFirst = [...current].reverse();
-  const lastOk = latestFirst.find(receipt => receipt.model.calls > 0 && modelFailure(receipt) === null);
+  const lastOk = latestFirst.find(modelAnswered);
   const lastFailed = latestFirst.find(receipt => modelFailure(receipt) !== null);
   const lastFailure = lastFailed === undefined ? null : { at: lastFailed.finished_at, detail: modelFailure(lastFailed)! };
   const lastAttempt = latestFirst.find(receipt => receipt.model.calls > 0 || modelFailure(receipt) !== null);
@@ -498,6 +521,7 @@ export function inspectServeDoctor(
   const receipts = listRunReceipts(db, { since });
   const expectLive = expectRailLiveness(intent, supervisor);
   const schedules = new Map(listSchedules(db).map((row) => [row.rail, row]));
+  const config = loadServeConfig(vaultPath);
   const rails = DEFAULT_RAILS.map((spec) => {
     const schedule = schedules.get(spec.rail);
     return railDoctor(
@@ -506,9 +530,9 @@ export function inspectServeDoctor(
       schedule?.period_s ?? spec.period_s,
       now,
       expectLive,
+      syncPassWait(config.extraction),
     );
   });
-  const config = loadServeConfig(vaultPath);
   const usedToday = receipts
     .filter((receipt) => receipt.finished_at.startsWith(now.slice(0, 10)))
     .reduce((sum, receipt) => sum + receipt.canon_writes, 0);
@@ -526,7 +550,8 @@ export function inspectServeDoctor(
     config.canon_writes_per_run,
     lastRunUsed,
   );
-  const throughput = throughputDoctor(config, schedules.get("sync")?.period_s ?? config.sync_period_s);
+  const skipped = receipts.reduce((sum, receipt) => sum + (receipt.records_skipped ?? 0), 0);
+  const throughput = throughputDoctor(config, schedules.get("sync")?.period_s ?? config.sync_period_s, skipped);
   const stores = storeDoctor(db, vaultPath, now, receipts);
   const cal = calibration(db, receipts, now);
   const failures: string[] = [];
@@ -596,8 +621,8 @@ export function inspectServeDoctor(
   };
 }
 
-function throughputDoctor(config: ServeConfig, syncPeriod: number): ThroughputDoctor {
-  const { max_calls_per_pass, records_per_request, max_input_tokens, max_output_tokens } = config.extraction;
+function throughputDoctor(config: ServeConfig, syncPeriod: number, recordsSkipped: number): ThroughputDoctor {
+  const { max_calls_per_pass, records_per_request, max_input_tokens, max_output_tokens, max_pass_seconds } = config.extraction;
   const pending = syncPeriod === config.sync_period_s ? "" : ` configured_sync_period_s=${config.sync_period_s} (applies at service start)`;
   return {
     sync_period_s: syncPeriod,
@@ -606,7 +631,9 @@ function throughputDoctor(config: ServeConfig, syncPeriod: number): ThroughputDo
     records_per_request,
     max_input_tokens,
     max_output_tokens,
-    detail: `throughput sync_period_s=${syncPeriod} max_calls_per_pass=${max_calls_per_pass} records_per_request=${records_per_request} max_input_tokens=${max_input_tokens} max_output_tokens=${max_output_tokens}${pending}`,
+    max_pass_seconds,
+    records_skipped: recordsSkipped,
+    detail: `throughput sync_period_s=${syncPeriod} max_calls_per_pass=${max_calls_per_pass} records_per_request=${records_per_request} max_input_tokens=${max_input_tokens} max_output_tokens=${max_output_tokens} max_pass_seconds=${max_pass_seconds} records_skipped=${recordsSkipped}${pending}`,
   };
 }
 

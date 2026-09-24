@@ -439,6 +439,8 @@ describe("write pass", () => {
     expect(result.claims_written).toBe(1);
     expect(result.canon_writes).toBe(1);
     expect(result.model).toEqual({
+      answered: 1,
+      last_request: "answered",
       calls: 1,
       input_tokens: 10,
       output_tokens: 4,
@@ -463,7 +465,7 @@ describe("write pass", () => {
       }),
     });
     expect(rejected.model).toEqual({
-      calls: 1, input_tokens: 7, output_tokens: 0, unavailable: 0, wall_ms: expect.any(Number),
+      answered: 0, last_request: "failed", calls: 1, input_tokens: 7, output_tokens: 0, unavailable: 0, wall_ms: expect.any(Number),
     });
     expect(rejected.claims_rejected).toEqual({ schema_invalid: 1 });
 

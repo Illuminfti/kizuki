@@ -5,7 +5,6 @@ import { snapshotCanonIo, withCanonMutationAsync, requireCanonFiles } from "../.
 import { undoReceipt } from "../../src/canon/undo";
 import { correct } from "../../src/correction/correct";
 import { createBudgetTracker } from "../../src/canon/budget";
-import { exportVault } from "../../src/export";
 import { runPurge, resumePurge } from "../../src/ledger/purge";
 import { rebuildRetrieval } from "../../src/retrieval/rebuild";
 import { tryWriteFlock } from "../../src/serve/flock";
@@ -30,7 +29,7 @@ const producerDescriptor: ProducerPort["descriptor"] = {
   supports: ["model"], requires_lease: false, optional_package: null,
 };
 
-test("write pass owns extraction, nested canon publication and receipt settlement", async () => {
+test("write pass owns filing, nested canon publication and receipt settlement, never a model request", async () => {
   const f = fixture();
   await storeClaim(f.db, putEvent(f.db));
   const entered = deferred(), release = deferred();
@@ -38,15 +37,15 @@ test("write pass owns extraction, nested canon publication and receipt settlemen
     descriptor: producerDescriptor, health: async () => ({ status: "ready", detail: {} }), close: async () => {},
     produce: async () => {
       entered.resolve(); await release.promise;
-      expect(tryWriteFlock(f.vault)).toBeNull();
+      expectFree(f.vault);
       return { status: "ok", claims: [], usage: { calls: 0, input_tokens: 0, output_tokens: 0 }, dropped: [] };
     },
   };
   const operation = runWritePass(f.db, f.vault, { budget: createBudgetTracker({ canon_writes_per_run: 2 }), producer,
     model_ref: "kizuki.llm.openai-compatible:synthetic@local", claims: { db: f.db } });
   await entered.promise;
-  expect(tryWriteFlock(f.vault)).toBeNull();
-  expect(() => exportVault(f.db, f.vault, `${f.vault}-backup`)).toThrow("busy");
+  // Owner corrections, undo, purge and backups are not held behind the request.
+  expectFree(f.vault);
   release.resolve();
   const result = await operation;
   expect(result.canon_writes).toBe(1);

@@ -128,12 +128,17 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
           ),
         )
       : {},
+    ...(typeof value["records_skipped"] === "number" && Number.isFinite(value["records_skipped"])
+      ? { records_skipped: value["records_skipped"] }
+      : {}),
     canon_writes: numberOr(value["canon_writes"], totals.canon_writes),
     canon_reverts: numberOr(value["canon_reverts"], totals.canon_reverts),
     model: {
       ...(diagnostic === undefined ? {} : { diagnostic }),
       ...(modelRefDigest === undefined ? {} : { model_ref_sha256: modelRefDigest }),
       ...(model["usage_unknown"] === true ? { usage_unknown: true } : {}),
+      ...(typeof model["answered"] === "number" && Number.isFinite(model["answered"]) ? { answered: model["answered"] } : {}),
+      ...(model["last_request"] === "answered" || model["last_request"] === "failed" ? { last_request: model["last_request"] } : {}),
       calls: numberOr(model["calls"], 0),
       input_tokens: numberOr(model["input_tokens"], 0),
       output_tokens: numberOr(model["output_tokens"], 0),

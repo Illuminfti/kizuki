@@ -16,6 +16,7 @@ import {
   type ProducerV2Port,
 } from "../../src/contracts/producer-v2";
 import {
+  commitExtractCursor,
   journalExtractBatch,
   mineLiveDrafts,
   readDurableExtractBatch,
@@ -181,7 +182,7 @@ test("v2 durable parsing rejects a re-signed semantic and rendering disagreement
   }
 });
 
-test("v2 rejects an impossible first event without a model call or cursor advance", async () => {
+test("v2 passes over an impossible first event without a model call; only its commit advances the cursor", async () => {
   const root = mkdtempSync(join(tmpdir(), "extract-v2-oversize-"));
   roots.push(root);
   const vault = join(root, "vault");
@@ -200,10 +201,13 @@ test("v2 rejects an impossible first event without a model call or cursor advanc
   };
   try {
     const mined = await mineLiveDrafts(db, producer);
-    expect(mined.mined).toEqual({ status: "rejected", reason: "producer v2 input exceeds structural or budget limits" });
+    expect(mined.mined).toEqual({ status: "skipped", reason: "too large for one request" });
+    expect(mined.input_ids).toEqual([accepted.event.event_id]);
     expect(calls).toBe(0);
     expect(readExtractCursor(db)).toBeNull();
     expect(db.query("SELECT * FROM extract_batches").all()).toEqual([]);
+    expect(commitExtractCursor(db, mined)).toBe(true);
+    expect(readExtractCursor(db)?.endsWith(accepted.event.event_id)).toBe(true);
   } finally {
     db.close();
   }

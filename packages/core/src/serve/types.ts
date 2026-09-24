@@ -115,9 +115,14 @@ export interface LeaseRow {
 export interface RunModelReport {
   /** Stable identity of the original reference, before display redaction. */
   readonly model_ref_sha256?: string;
+  /** The pass's final request's failure. A pass is judged by how it ended. */
   readonly diagnostic?: ProducerDiagnostic;
-  /** An interrupted producer attempt: token counts are lower bounds, not measured totals. */
+  /** The pass's final producer attempt was interrupted or unverifiable: its token counts are unknown. */
   readonly usage_unknown?: boolean;
+  /** Requests the model answered with a usable response. Absent on older receipts and passes without a request. */
+  readonly answered?: number;
+  /** How the pass's final request ended. Absent on older receipts and passes without a request. */
+  readonly last_request?: "answered" | "failed";
   readonly calls: number;
   readonly input_tokens: number;
   readonly output_tokens: number;
@@ -174,6 +179,11 @@ export interface RunReceipt {
   readonly claims_deduped: number;
   readonly claims_superseded: number;
   readonly claims_rejected: Readonly<Record<string, number>>;
+  /**
+   * Records extraction passed over without claims: too large for one request,
+   * or rejected on their own twice in a row. Absent on older receipts.
+   */
+  readonly records_skipped?: number;
   readonly canon_writes: number;
   readonly canon_reverts: number;
   readonly model: RunModelReport;
@@ -196,6 +206,8 @@ export interface ExtractionConfig {
   readonly max_input_tokens: number;
   /** Output tokens one typed request reserves, reasoning included. */
   readonly max_output_tokens: number;
+  /** Seconds after which a pass starts no further step; the request in flight finishes. */
+  readonly max_pass_seconds: number;
 }
 
 /** Inclusive bounds; an out-of-range or non-integer value keeps its default. */
@@ -204,6 +216,7 @@ export const EXTRACTION_BOUNDS = {
   records_per_request: { min: 1, max: MAX_V2_EVENTS },
   max_input_tokens: { min: 2_000, max: 32_000 },
   max_output_tokens: { min: 1_024, max: MAX_V2_OUTPUT_TOKENS },
+  max_pass_seconds: { min: 30, max: 600 },
 } as const satisfies Record<keyof ExtractionConfig, { min: number; max: number }>;
 
 export const DEFAULT_EXTRACTION_CONFIG: ExtractionConfig = {
@@ -211,6 +224,7 @@ export const DEFAULT_EXTRACTION_CONFIG: ExtractionConfig = {
   records_per_request: 2,
   max_input_tokens: 8_000,
   max_output_tokens: 8_192,
+  max_pass_seconds: 60,
 };
 
 export interface ServeConfig {
@@ -342,6 +356,8 @@ export interface ThroughputDoctor extends ExtractionConfig {
   readonly sync_period_s: number;
   /** serve.toml's period; a service start applies it when it differs. */
   readonly configured_sync_period_s: number;
+  /** Records extraction passed over in the doctor's receipt window. */
+  readonly records_skipped: number;
   readonly detail: string;
 }
 

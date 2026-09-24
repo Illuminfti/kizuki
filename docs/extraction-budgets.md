@@ -12,9 +12,11 @@ increase these model allowances.
 Reasoning models count their hidden reasoning against the same output
 reservation. A model that spends it all before answering returns a truncated
 response, which doctor reports as `model response rejected: response
-truncated`. Because a truncated request is retried unchanged on the next pass,
-such a model stalls extraction at that record. Choose a non-reasoning model,
-lower `[ports.llm] reasoning_effort`, or reserve more output tokens.
+truncated`. The pass asks again for the first record alone, and a record whose
+answer is still rejected on its own is skipped without claims (see
+[steps per pass](#owner-throughput-settings)), so such a model loses records
+rather than stalling. Choose a non-reasoning model, lower `[ports.llm]
+reasoning_effort`, or reserve more output tokens.
 
 ## Owner throughput settings
 
@@ -30,6 +32,7 @@ max_calls_per_pass = 1     # 1..256; extraction steps one sync pass may take
 records_per_request = 2    # 1..8; typed extraction only
 max_input_tokens = 8000    # 2000..32000; typed extraction only
 max_output_tokens = 8192   # 1024..16384; typed extraction only, reasoning included
+max_pass_seconds = 60      # 30..600; no step starts after this many seconds
 ```
 
 A value outside its range, a fraction or a string keeps that key's default.
@@ -43,16 +46,25 @@ A value outside its range, a fraction or a string keeps that key's default.
   the cursor in one transaction before the next step starts. A kill therefore
   loses at most the request in flight, and the next pass resumes from the
   durable cursor. A rejected response (malformed, truncated or refused) is
-  asked for once more in the next step, because a nondeterministic model often
-  answers the same records on a second request; a second rejection in a row
-  ends the pass, and the rejected records wait for the next one. A pass also
-  ends early when the ledger is drained, a request is refused before it is
-  sent, a commit finds the cursor moved, or the model is unavailable. A record
-  too large for one request therefore still holds the cursor, as described
-  under [refusals](#refusals-and-retained-input).
-  Steps that make no request, such as advancing over records a source grant
-  does not cover, still count toward the limit, so the default pass is the
-  same single step as before.
+  asked for once more in the next step, for the first record of the rejected
+  request alone, because a nondeterministic model often answers a smaller
+  request well. A record rejected again on its own is skipped: the cursor
+  moves past it without claims, the receipt names the reason (`record skipped:
+  rejected on its own twice`) and counts it in `records_skipped`, and the pass
+  goes on. A typed record too large for one request by itself is skipped the
+  same way without a request (`record skipped: too large for one request`).
+  One record therefore cannot hold every later one. A pass ends early when the
+  ledger is drained, the epoch-zero producer refuses a request before sending
+  it, a commit finds the cursor moved or its inputs purged, or the model is
+  unavailable. Steps that make no request, such as advancing over records a
+  source grant does not cover, still count toward the limit, so the default
+  pass is the same single step as before.
+- **Time per pass.** Once `max_pass_seconds` have passed, the pass starts no
+  further step; the request in flight finishes and is filed, and the next pass
+  resumes from the cursor. Rails run one at a time, so this bounds how long a
+  pass keeps retrieval, purge and embedding catch-up waiting. Passes run back
+  to back while the sync rail is due, so for continuous extraction set
+  `sync_period_s` no longer than `max_pass_seconds`.
 - **Per-request limits.** `records_per_request` and the two token reservations
   bound each typed request. More records per request need a larger output
   reservation: an ordinary record's anchored response runs to one to three
@@ -68,11 +80,29 @@ A value outside its range, a fraction or a string keeps that key's default.
   the ones it prepares itself, so a long pass does not accumulate statements
   or heap. Canon writing after extraction keeps its own limits, including at
   most 32 canon writes per pass.
-- **The writer during a pass.** A pass holds the vault writer from its first
-  step to its last canon write. Owner verbs that need the writer, such as
-  `undo` and `tell`, answer `writer_busy` and ask for a retry while it runs,
-  so a pass of many slow requests delays them for its whole length. Prefer
-  several short passes to one long one.
+- **The writer during a pass.** A pass holds the vault writer only for local
+  durable work: filing a step's decision and cursor, and the canon writes that
+  end the pass. It never holds it across a model request, so owner verbs that
+  need the writer, such as `undo`, `tell`, purge and `kizuki serve stop`, go
+  through while a request is in flight. An answer that arrives after a purge or
+  another pass changed its inputs or the cursor is discarded, never filed. An
+  answer waits up to five seconds for a writer another operation holds; after
+  that the pass stops as `lock:busy` and the next one asks again.
+- **Stopping.** `kizuki serve stop`, SIGTERM and SIGINT end a pass before its
+  next step. The request in flight finishes and is filed, canon writing waits
+  for the next start, and the receipt stops as `serve:stop_requested`. The
+  service's stop timeout therefore needs to cover one request, not a pass.
+- **Model health.** A pass is judged by how it ended. The receipt's
+  `model.answered` counts the requests the model answered, and
+  `model.last_request` says whether the final one was answered; its
+  `model.diagnostic` belongs to that final request. Doctor treats a pass with
+  any answered request as a success for `last_success`, and reports a current
+  failure only when the latest pass's final request failed. A rejection that a
+  later request in the same pass answered past stays counted in
+  `claims_rejected` and the receipt's errors. Rails that waited behind a
+  multi-request pass get `max_pass_seconds` of extra grace before doctor calls
+  them stale, and the `throughput` line shows `records_skipped` for the doctor
+  window.
 
 Requests stay sequential. Each step's input is planned from the durable state
 the previous step left: the committed cursor, the deferred queue and its scan
@@ -134,11 +164,15 @@ adds the quoted-character diagnostic. Older failed-receipt formats remain
 readable. A planning refusal has zero actual calls and reports its planned
 requirement with `used=0`.
 
-A record that cannot fit by itself is refused without an LLM call. Its text is
-not truncated, and it is not treated as successful empty extraction. The
-checkpoint remains before it so the unprocessed record stays visible to a
-later run. Processing an individually oversized record requires a separate
-chunking decision; these limits are not silently raised.
+A record that cannot fit by itself is never sent and its text is never
+truncated. Typed extraction skips it: the cursor moves past it without claims,
+the run receipt records `record skipped: too large for one request` and counts
+it in `records_skipped`, and the record stays in the ledger for search, the
+timeline and a later extraction with larger limits or chunking. The receipt
+keeps the count and reason, not the record's identity, for the receipt
+retention window. The epoch-zero legacy producer still refuses such a record
+without an LLM call and leaves the checkpoint before it. These limits are not
+silently raised.
 
 ## Restart and authorization
 
@@ -175,8 +209,12 @@ The focused tests cover rich role metadata, complete context, split text,
 impossible records, denied interleaving, grant changes, successful abstention,
 deferred retries and partial journal replay across restart. The throughput
 tests cover setting bounds, one committed cursor per request, a rate-limited
-stop and its resumption, one retry of a rejected response, an oversized record
-that holds the cursor without a request, a real kill during a request, flat
-statement and memory use over 64-request passes, retry backoff and the sync
-period applied at service start. All fixtures are synthetic; they make no provider or account
+stop and its resumption, one narrowed retry of a rejected response, a record
+skipped after two rejections on its own, an oversized record skipped without a
+request, doctor health after a retried rejection and after a rate-limited end,
+a stop request and a real SIGTERM ending the pass at the next step, owner
+writes and `serve stop` during a request, the pass time budget, rail grace
+behind a long pass, a real kill during a request, flat statement and memory
+use over 64-request passes, retry backoff and the sync period applied at
+service start. All fixtures are synthetic; they make no provider or account
 calls.
