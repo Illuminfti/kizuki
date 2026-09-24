@@ -22,7 +22,7 @@ import {
   parseOpenAiCompatibleConfig,
 } from "./config";
 import type { OpenAiCompatibleLlmConfig } from "./config";
-import { isRetryableStatus, parseChatCompletion } from "./response";
+import { inBandErrorStatus, isRetryableStatus, parseChatCompletion } from "./response";
 import {
   DEFAULT_MAX_RESPONSE_BYTES,
   fetchTransport,
@@ -45,6 +45,8 @@ export const OPENAI_COMPATIBLE_LLM_DESCRIPTOR: PortDescriptor =
 
 export interface OpenAiCompatibleOptions {
   readonly transport?: ChatTransport;
+  /** Waits between attempts; the request deadline still bounds every wait. */
+  readonly sleep?: (ms: number) => Promise<void>;
 }
 
 const ROLES = new Set(["system", "user", "assistant"]);
@@ -52,7 +54,7 @@ const MAX_MESSAGES = 32;
 const MAX_CONTENT_CHARS = 400_000;
 const MAX_OUTPUT_TOKENS = 16_384;
 const RETRY_CAP_MS = 30_000;
-const DEFAULT_RETRY_MS = 2_000;
+const FIRST_RETRY_MS = 2_000;
 
 function requestError(message: string): never {
   throw new PortError("config_invalid", message, false);
@@ -184,6 +186,7 @@ function buildWireBody(
       content: message.content,
     })),
     max_tokens: request.max_output_tokens,
+    ...(config.reasoning_effort === null ? {} : { reasoning_effort: config.reasoning_effort }),
   };
 }
 
@@ -193,6 +196,7 @@ export function createOpenAiCompatibleLlmPort(
 ): LlmPort {
   const config = parseOpenAiCompatibleConfig(ctx.config);
   const transport = options.transport ?? fetchTransport;
+  const wait = options.sleep ?? sleep;
   const host = endpointHost(config.base_url);
   const ref = modelRef(OPENAI_COMPATIBLE_LLM_ID, config.model, host);
   const url = chatCompletionsUrl(config.base_url);
@@ -233,7 +237,9 @@ export function createOpenAiCompatibleLlmPort(
           body,
         }), deadline);
         if (last.ok) {
-          return parseChatCompletion(last.body, config.model);
+          const failed = inBandErrorStatus(last.body);
+          if (failed === null) return parseChatCompletion(last.body, config.model);
+          last = { ok: false, kind: "http", status: failed, retry_after_ms: null };
         }
         const retryable =
           last.kind === "transport"
@@ -242,13 +248,15 @@ export function createOpenAiCompatibleLlmPort(
         if (!retryable || attempt === config.max_retries) {
           transportToError(last);
         }
-        const wait =
+        // Exponential backoff unless the provider names its own wait.
+        const backoff = Math.min(FIRST_RETRY_MS * 2 ** attempt, RETRY_CAP_MS);
+        const delay =
           last.kind === "transport"
-            ? DEFAULT_RETRY_MS
-            : Math.min(last.retry_after_ms ?? DEFAULT_RETRY_MS, RETRY_CAP_MS);
-        const remainingBeforeWait = deadline - Date.now();
-        if (remainingBeforeWait <= 0) throw timeoutError();
-        await beforeDeadline(sleep(Math.min(wait, remainingBeforeWait)), deadline);
+            ? backoff
+            : Math.min(last.retry_after_ms ?? backoff, RETRY_CAP_MS);
+        // A wait the deadline cannot cover reports the refusal, not a timeout.
+        if (delay >= deadline - Date.now()) transportToError(last);
+        await beforeDeadline(wait(delay), deadline);
         attempt += 1;
       }
       if (last === undefined || last.ok) {
