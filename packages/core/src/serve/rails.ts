@@ -414,9 +414,11 @@ async function runRailImpl(
           for (const orphan of db.query<{ run_id: string; holder_pid: number; model_ref: string | null; metrics: string; created_at: string }, []>("SELECT * FROM extract_usage").all()) {
             if (activeRuns.has(orphan.run_id) || (orphan.holder_pid !== process.pid && pidAlive(orphan.holder_pid))) continue;
             const usage = JSON.parse(orphan.metrics) as Pick<RunReceipt, "model" | "claims_rejected" | "claims_extracted">;
+            // The row lives from the model call until the receipt lands: a kill
+            // after the decision may have hit any later stage, not extraction.
             persistRunReceipt(db, vaultPath, { ...emptyRunTotals(), ...usage, run_id: orphan.run_id, rail: "sync",
               started_at: orphan.created_at, finished_at: orphan.created_at, status: "failed", stopped: null,
-              model: { ...usage.model, model_ref: orphan.model_ref }, errors: [usage.model.usage_unknown === true ? "model attempt interrupted; token usage unknown" : "extraction interrupted after model decision"] });
+              model: { ...usage.model, model_ref: orphan.model_ref }, errors: [usage.model.usage_unknown === true ? "model attempt interrupted; token usage unknown" : "sync interrupted after model decision"] });
           }
         });
       } catch (error) {
