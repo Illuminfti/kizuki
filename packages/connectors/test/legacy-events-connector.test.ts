@@ -210,6 +210,25 @@ describe("paging and resume", () => {
       second.events.map((event) => event.source_record_id),
     ).not.toEqual(first.events.map((event) => event.source_record_id));
     expect(runBatch(db, second, { page_candidates: false }).stored).toBe(second.events.length);
+    const ids = [
+      ...first.events.map((event) => event.source_record_id),
+      ...second.events.map((event) => event.source_record_id),
+    ];
+    let cursor = second.cursor;
+    let done = false;
+    for (let page = 2; page < 20 && !done; page += 1) {
+      const next = createLegacyEventsConnector({ path: jsonlPath });
+      const batch = await next.backfill(cursor);
+      expect(Buffer.byteLength(JSON.stringify(batch.events), "utf8")).toBeLessThanOrEqual(
+        MAX_SYNC_BATCH_BYTES,
+      );
+      expect(runBatch(db, batch, { page_candidates: false }).stored).toBe(batch.events.length);
+      ids.push(...batch.events.map((event) => event.source_record_id));
+      cursor = batch.cursor;
+      done = next.lastReport()?.run.done === true;
+    }
+    expect(done).toBe(true);
+    expect(ids).toEqual(Array.from({ length: 1000 }, (_, index) => `dense-${index}`));
     db.close();
   });
 
