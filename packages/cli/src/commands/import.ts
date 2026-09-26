@@ -4,7 +4,7 @@ import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { setSourceGrant, applyConnectionSensitivity, disconnect, runToCompletion, ESTATE_IMPORT_LIMITS, planEstateImport } from "@kizuki/core";
 import type { Connection } from "@kizuki/core";
 import type { Database } from "bun:sqlite";
-import { CLAUDE_IMPORT_CONNECTOR_ID, getConnector } from "@kizuki/connectors";
+import { CLAUDE_IMPORT_CONNECTOR_ID, LEGACY_EVENTS_CONNECTOR_ID, LEGACY_WIKI_CONNECTOR_ID, getConnector } from "@kizuki/connectors";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
   ConnectionError,
@@ -21,8 +21,9 @@ import { formatRunCounts } from "../output";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 export const IMPORT_SCHEMA = {
-  options: ["--source", "--authorization", "--policy", "--expected-revision", "--operation-id"],
+  options: ["--source", "--mapping", "--authorization", "--policy", "--expected-revision", "--operation-id"],
   flags: ["--dry-run", "--json"],
+  bounds: { "--mapping": "FILE (legacy wiki/events only)" },
 } as const satisfies CommandHelpSchema;
 
 function readEstateInput(path: string, limit: number): string {
@@ -53,9 +54,18 @@ function reactivateConnection(db: Database, connection: Connection): void {
   ).run(connection.connector_id, connection.source_key);
 }
 
+/** A flag must not silently replace or be ignored by an existing enrollment. */
+function requireSameMapping(config: Record<string, unknown>, mapping: string | undefined): void {
+  if (mapping !== undefined && config.mapping !== mapping) {
+    throw new ConnectionError(
+      "mapping_conflict: this source already uses a different mapping; reuse its configured mapping",
+    );
+  }
+}
+
 export const importCommand: Command = {
   name: "import",
-  usage: "import <connector> --source PATH [--policy FILE --expected-revision N --operation-id ID] | import estate-slice --source FILE --authorization FILE --dry-run [--json]",
+  usage: "import <connector> --source PATH [--mapping FILE] [--policy FILE --expected-revision N --operation-id ID] | import estate-slice --source FILE --authorization FILE --dry-run [--json]",
   summary: "import a file source, or dry-run an estate slice without writing records",
   schema: IMPORT_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
@@ -69,6 +79,7 @@ export const importCommand: Command = {
       throw new UsageError(this.usage);
     }
     if (rawId === "estate-slice") {
+      if (parsed.options.has("--mapping")) throw new UsageError("--mapping is only supported for import-legacy-wiki and import-legacy-events");
       if (CONSENT_OPTIONS.some((key) => parsed.options.has(key))) throw new UsageError("estate-slice does not accept source grant options");
       const authorization = parsed.options.get("--authorization");
       if (authorization === undefined || !parsed.flags.has("--dry-run")) {
@@ -89,12 +100,18 @@ export const importCommand: Command = {
     if (parsed.options.has("--authorization") || parsed.flags.size > 0) {
       throw new UsageError("--authorization, --dry-run and --json are only supported for estate-slice");
     }
+    const connectorId = resolveConnectorId(rawId);
+    const mappingOption = parsed.options.get("--mapping");
+    if (mappingOption !== undefined && connectorId !== LEGACY_WIKI_CONNECTOR_ID && connectorId !== LEGACY_EVENTS_CONNECTOR_ID) {
+      throw new UsageError("--mapping is only supported for import-legacy-wiki and import-legacy-events");
+    }
+    const mapping = mappingOption === undefined ? undefined : resolve(mappingOption);
     const hasPolicy = CONSENT_OPTIONS.some((key) => parsed.options.has(key));
     if (hasPolicy && !CONSENT_OPTIONS.every((key) => parsed.options.has(key))) throw new UsageError("import policy requires --policy FILE --expected-revision N --operation-id ID");
     const revision = hasPolicy ? expectedRevision(parsed.options.get("--expected-revision")) : undefined;
     const policy = hasPolicy ? readSourcePolicy(parsed.options.get("--policy")!) : undefined;
     const absolute = resolve(source);
-    const connectorId = resolveConnectorId(rawId);
+    const config = mapping === undefined ? { path: absolute } : { path: absolute, mapping };
 
     return withVault(io, async (ctx) => {
       const hosts = listHostConnections(ctx.db, ctx.store, connectorId);
@@ -104,12 +121,14 @@ export const importCommand: Command = {
       let selected = hosts.find(
         (item) => item.state?.config.path === absolute,
       );
+      if (selected?.state) requireSameMapping(selected.state.config, mapping);
       let enrolledThisRun = false;
       if (selected === undefined || selected.state === null) {
         const disconnected = listHostConnections(ctx.db, ctx.store, connectorId, {
           includeDisconnected: true,
         }).find((item) => item.state?.config.path === absolute && item.connection.disconnected_at !== null);
         if (disconnected !== undefined && disconnected.state !== null) {
+          requireSameMapping(disconnected.state.config, mapping);
           reactivateConnection(ctx.db, disconnected.connection);
           selected = {
             ...disconnected,
@@ -117,7 +136,7 @@ export const importCommand: Command = {
           };
           enrolledThisRun = true;
         } else {
-          const connector = getConnector(connectorId, { path: absolute });
+          const connector = getConnector(connectorId, config);
           if (!connector.manifest().auth_modes.includes("none")) {
             throw new ConnectionError(
               `sign-in for ${connectorId} is not wired yet`,
@@ -138,7 +157,7 @@ export const importCommand: Command = {
             {
               schema: "kizuki.cli.connection-state/v1",
               connector_id: connectorId,
-              config: { path: absolute },
+              config,
             },
           );
           applyConnectionSensitivity(ctx.db, connection, connector.manifest());
@@ -147,7 +166,7 @@ export const importCommand: Command = {
             state: {
               schema: "kizuki.cli.connection-state/v1",
               connector_id: connectorId,
-              config: { path: absolute },
+              config,
             },
             problem: null,
           };
