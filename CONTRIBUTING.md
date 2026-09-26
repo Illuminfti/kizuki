@@ -104,7 +104,10 @@ definition C1 recorded. None of it is done. Do not invent an installer, a
 docs site, or a packaged binary.
 
 Agent playbooks live under `.agents/skills/`. [AGENTS.md](AGENTS.md) is
-repository policy.
+repository policy. `scripts/skill-routing.ts` checks the offline fixtures in
+`scripts/skill-routing-fixtures.json` during `bun run verify`. A request can
+select only an existing catalog skill. It cannot invent merge authority, a
+worker schedule, or an approval queue.
 
 ## License
 

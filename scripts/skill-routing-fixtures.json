@@ -1,0 +1,84 @@
+{
+  "invented": [
+    "merge-authority",
+    "worker-scheduler",
+    "independent-reviewer",
+    "default-owner-grant",
+    "canon-approval-queue"
+  ],
+  "fixtures": [
+    {
+      "id": "read-only-explanation",
+      "request": "Explain how the unfamiliar ledger append path works. Do not change any code.",
+      "expect": ["repository-archaeology"],
+      "reject": ["implement-change", "elegance-review", "merge-authority", "worker-scheduler"]
+    },
+    {
+      "id": "bounded-code-change",
+      "request": "Repair the bounded ledger append behavior and prove it with a failing test.",
+      "expect": ["implement-change", "elegance-review"],
+      "reject": ["repository-archaeology", "connector-work", "diagnose-failure", "merge-authority"]
+    },
+    {
+      "id": "uncertain-failure",
+      "request": "The import fails and the cause is uncertain. Do not edit production code until the reproduction is isolated.",
+      "expect": ["diagnose-failure"],
+      "reject": ["implement-change", "elegance-review", "worker-scheduler"]
+    },
+    {
+      "id": "shotgun-fix",
+      "request": "The import fails. Shotgun-edit production code until the suite is green.",
+      "expect": [],
+      "reject": ["diagnose-failure", "implement-change", "worker-scheduler", "merge-authority"]
+    },
+    {
+      "id": "review-not-merge",
+      "request": "Review the pull request at its exact head. Do not merge or grant merge authority.",
+      "expect": ["review-change", "elegance-review"],
+      "reject": ["merge-authority", "implement-change", "independent-reviewer"]
+    },
+    {
+      "id": "connector-change",
+      "request": "Change the provider connector that imports mailbox history.",
+      "expect": ["connector-work", "elegance-review"],
+      "reject": ["implement-change", "merge-authority"]
+    },
+    {
+      "id": "connector-repair-stays-specialist",
+      "request": "Repair the bounded provider connector import path.",
+      "expect": ["connector-work", "elegance-review"],
+      "reject": ["implement-change"]
+    },
+    {
+      "id": "general-implementation",
+      "request": "Repair the bounded claim comparison. This is not a provider connector.",
+      "expect": ["implement-change", "elegance-review"],
+      "reject": ["connector-work"]
+    },
+    {
+      "id": "plan-not-scheduler",
+      "request": "Write a multi-phase plan for a binding contract change. Do not schedule workers.",
+      "expect": ["write-rfc"],
+      "reject": ["worker-scheduler", "implement-change", "elegance-review", "merge-authority"]
+    },
+    {
+      "id": "scheduler-request-is-not-a-plan-route",
+      "request": "Schedule workers to execute a multi-phase plan for a binding contract change.",
+      "expect": [],
+      "reject": ["write-rfc", "worker-scheduler", "implement-change"]
+    },
+    {
+      "id": "unsupported-request",
+      "request": "Translate this synthetic sentence into another synthetic sentence.",
+      "expect": [],
+      "reject": [
+        "implement-change",
+        "merge-authority",
+        "worker-scheduler",
+        "independent-reviewer",
+        "default-owner-grant",
+        "canon-approval-queue"
+      ]
+    }
+  ]
+}

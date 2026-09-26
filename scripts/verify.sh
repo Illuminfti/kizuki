@@ -140,6 +140,7 @@ assert_required_helpers() {
     "$verify_script_dir/verify-dependencies.ts" \
     "$verify_script_dir/verify-workflows.ts" \
     "$verify_script_dir/verify-maestro.ts" \
+    "$verify_script_dir/skill-routing.ts" \
     "$verify_script_dir/network-allowlist.txt" \
     "$verify_script_dir/verify-policy.test.sh" \
     "$verify_script_dir/ci-restrict-origin-refs.sh" \
@@ -244,6 +245,8 @@ main() {
   assert_required_commands
   gate required-helpers
   assert_required_helpers
+  bun "$verify_script_dir/skill-routing.ts"
+  gate skill-routing
   gate full-history
   assert_full_history
   bun "$verify_script_dir/verify-workflows.ts"
