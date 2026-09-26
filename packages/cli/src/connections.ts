@@ -37,7 +37,7 @@ export interface HostConnectionState {
   schema: typeof HOST_STATE_SCHEMA;
   connector_id: string;
   config:
-    | { path: string; base_url?: never; token_secret_ref?: never }
+    | { path: string; mapping?: string; base_url?: never; token_secret_ref?: never }
     | { base_url: string; token_secret_ref: string; path?: never }
     | { secret_ref: string; path?: never; base_url?: never; token_secret_ref?: never }
     | { state_ref: string; path?: never; base_url?: never; token_secret_ref?: never; secret_ref?: never };
@@ -261,7 +261,9 @@ export function encodeHostState(state: HostConnectionState): Uint8Array {
       schema: state.schema,
       connector_id: state.connector_id,
       config: state.config.path !== undefined
-        ? { path: state.config.path }
+        ? state.config.mapping === undefined
+          ? { path: state.config.path }
+          : { path: state.config.path, mapping: state.config.mapping }
         : state.config.base_url !== undefined
           ? { base_url: state.config.base_url, token_secret_ref: state.config.token_secret_ref }
           : "state_ref" in state.config ? { state_ref: state.config.state_ref } : { secret_ref: state.config.secret_ref },
@@ -321,12 +323,26 @@ export function decodeHostState(
     if (configKeys.length !== 1 || typeof ref !== "string" || !/^file:connections\/[0-9A-HJKMNPQRSTVWXYZ]{26}\.state$/.test(ref)) throw new ConnectionError("IMAP connection state requires a core-minted state reference");
     return { schema: HOST_STATE_SCHEMA, connector_id: connectorId, config: { secret_ref: ref } };
   }
-  if (configKeys.length !== 1 || configKeys[0] !== "path") {
+  const legacy = connectorId === LEGACY_WIKI_CONNECTOR_ID || connectorId === LEGACY_EVENTS_CONNECTOR_ID;
+  const hasMapping = Object.hasOwn(config, "mapping");
+  if (!(configKeys.length === 1 && configKeys[0] === "path") &&
+      !(legacy && configKeys.length === 2 && Object.hasOwn(config, "path") && hasMapping)) {
     throw new ConnectionError("connection state config has unexpected keys");
   }
   const path = config["path"];
   if (typeof path !== "string" || path.length === 0 || !isAbsolute(path)) {
     throw new ConnectionError("connection state path must be absolute");
+  }
+  if (hasMapping) {
+    const mapping = config["mapping"];
+    if (typeof mapping !== "string" || !isAbsolute(mapping) || mapping.includes("\0")) {
+      throw new ConnectionError("connection state mapping must be an absolute file path");
+    }
+    return {
+      schema: HOST_STATE_SCHEMA,
+      connector_id: connectorId,
+      config: { path, mapping },
+    };
   }
   return {
     schema: HOST_STATE_SCHEMA,
